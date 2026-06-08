@@ -20,8 +20,7 @@ const approvalRun = beginCognitiveKernelRun({
   channel: 'bluebubbles',
   groupFolder: 'main',
   taskFamily: 'communication',
-  goal:
-    'Communication task from bluebubbles; raw message body stays local. Shape: words=5; question=true; action=true.',
+  goal: 'Communication task from bluebubbles; raw message body stays local. Shape: words=5; question=true; action=true.',
   requestRoute: 'bluebubbles.direct',
   selectedSkillId: 'communication.reply_help',
   selectedSkillPurpose: 'Draft a reply and wait for same-thread approval.',
@@ -66,8 +65,7 @@ const unsafeRun = beginCognitiveKernelRun({
   channel: 'telegram',
   groupFolder: 'main',
   taskFamily: 'communication',
-  goal:
-    'Communication task from telegram; raw message body stays local. Shape: words=5; question=false; action=true.',
+  goal: 'Communication task from telegram; raw message body stays local. Shape: words=5; question=false; action=true.',
   requestRoute: 'direct_assistant',
   selectedSkillId: 'communication.reply_help',
   selectedSkillPurpose: 'Draft a reply without explicit approval.',
@@ -81,7 +79,11 @@ const unsafeSimulations = listCognitiveToolSimulations({
   limit: 50,
 });
 const unsafeTrace = buildCognitiveTraceReport({ runId: unsafeRun.run.runId });
-const unsafeSerialized = JSON.stringify({ unsafeRun, unsafeSimulations, unsafeTrace });
+const unsafeSerialized = JSON.stringify({
+  unsafeRun,
+  unsafeSimulations,
+  unsafeTrace,
+});
 
 assert.equal(unsafeRun.run.status, 'blocked');
 assert.equal(unsafeTrace.simulationStatus, 'block');

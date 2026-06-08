@@ -13,6 +13,7 @@ import {
   insertCognitiveBenchmarkAttempt,
   insertCognitiveReflection,
   insertCognitiveRewardSignal,
+  listCognitiveActionIdentities,
   listCognitiveApprovalPackets,
   listCognitiveAutonomyBudgets,
   listCognitiveBenchmarkAttempts,
@@ -21,10 +22,16 @@ import {
   listCognitiveEvidenceArtifacts,
   listCognitiveExecutionLoopStates,
   listCognitiveExecutionSteps,
+  listCognitiveGovernanceDecisions,
+  listCognitiveGovernancePolicies,
+  listCognitiveGuardrailTripwires,
+  listCognitiveHandoffs,
+  listCognitiveMemoryBlocks,
   listCognitiveProviderCooldowns,
   listCognitivePlanRevisions,
   listCognitiveReflections,
   listCognitiveGoals,
+  listCognitiveRiskSignals,
   listCognitiveRunEvents,
   listCognitiveRewardSignals,
   listCognitiveRuns,
@@ -38,6 +45,7 @@ import {
   pruneCognitiveKernelData,
   replaceCognitiveSubgoalsForRun,
   resolveCognitiveCheckpoint,
+  upsertCognitiveActionIdentity,
   upsertCognitiveApprovalPacket,
   upsertCognitiveAutonomyBudget,
   upsertCognitiveBlackboardEntry,
@@ -46,9 +54,15 @@ import {
   upsertCognitiveExecutionLoopState,
   upsertCognitiveExecutionStep,
   upsertCognitiveGoal,
+  upsertCognitiveGovernanceDecision,
+  upsertCognitiveGovernancePolicy,
+  upsertCognitiveGuardrailTripwire,
+  upsertCognitiveHandoff,
+  upsertCognitiveMemoryBlock,
   upsertCognitivePlanRevision,
   upsertCognitivePolicyDecision,
   upsertCognitiveProviderCooldown,
+  upsertCognitiveRiskSignal,
   upsertCognitiveRun,
   upsertCognitiveRunEvent,
   upsertCognitiveSkillCard,
@@ -58,6 +72,7 @@ import {
   upsertCognitiveTrajectoryScore,
   upsertCognitiveTraceSpan,
   upsertCognitiveToolRegistry,
+  upsertCognitiveWorkbenchState,
   upsertCognitiveWorldBelief,
 } from './db.js';
 import { getBraveSearchStatus } from './brave-search.js';
@@ -71,18 +86,26 @@ import type {
   CognitiveAutonomyBudgetRecord,
   CognitiveBenchmarkAttemptRecord,
   CognitiveBlackboardEntryRecord,
+  CognitiveActionIdentity,
   CognitiveApprovalPacket,
   CognitiveCheckpointRecord,
   CognitiveEvidenceArtifact,
   CognitiveExecutionStep,
   CognitiveExecutionLoopState,
   CognitiveGoalRecord,
+  CognitiveGovernanceDecision,
+  CognitiveGovernancePolicy,
+  CognitiveGovernanceRiskClass,
+  CognitiveGuardrailTripwire,
+  CognitiveHandoff,
+  CognitiveMemoryBlock,
   CognitiveMode,
   CognitivePlanRevision,
   CognitivePolicyDecision,
   CognitiveProviderCooldown,
   CognitiveReflectionRecord,
   CognitiveRunTraceReport,
+  CognitiveRiskSignal,
   CognitiveRewardSignalRecord,
   CognitiveRunRecord,
   CognitiveRunEvent,
@@ -96,6 +119,8 @@ import type {
   CognitiveTrajectoryScore,
   CognitiveToolRegistryRecord,
   CognitiveTraceSpan,
+  CognitiveWorkbenchRole,
+  CognitiveWorkbenchState,
   CognitiveWorldBeliefRecord,
 } from './types.js';
 
@@ -228,6 +253,13 @@ export interface CognitiveKernelResult {
   activeGoal?: CognitiveGoalRecord | null;
   blackboardSnapshot: CognitiveBlackboardEntryRecord[];
   autonomyBudget?: CognitiveAutonomyBudgetRecord | null;
+  actionIdentities: CognitiveActionIdentity[];
+  governanceDecisions: CognitiveGovernanceDecision[];
+  guardrailTripwires: CognitiveGuardrailTripwire[];
+  handoffs: CognitiveHandoff[];
+  riskSignals: CognitiveRiskSignal[];
+  memoryBlocks: CognitiveMemoryBlock[];
+  workbenchState: CognitiveWorkbenchState;
   toolSimulations: CognitiveToolSimulation[];
   policyDecisions: CognitivePolicyDecision[];
   toolResults: CognitiveToolResultEnvelope[];
@@ -403,6 +435,32 @@ export interface CognitiveDoctorReport {
     demotedAdapters: string[];
     nextAction?: string | null;
   };
+  governance: {
+    policies: number;
+    decisions: number;
+    allow: number;
+    warn: number;
+    staged: number;
+    blocked: number;
+    triggeredTripwires: number;
+    riskSignals: number;
+    nextAction?: string | null;
+  };
+  workbench: {
+    status: CognitiveWorkbenchState['status'] | 'none';
+    handoffs: number;
+    memoryBlocks: number;
+    activeGoalId?: string | null;
+    selectedSkillId?: string | null;
+    nextAction?: string | null;
+  };
+  memoryBlocks: {
+    total: number;
+    conflicted: number;
+    blocked: number;
+    poisoningRiskMax: number;
+    latestKinds: string[];
+  };
   nextAction: string;
   privacy: {
     metadataOnly: true;
@@ -507,6 +565,62 @@ function privacyPolicyJson(): string {
     hiddenReasoningStored: false,
     secretsRedacted: true,
   });
+}
+
+const V9_SOURCE_PATTERN_REFS = [
+  'gbrain@805814451ec9e962ceed1b931b9b512d80f70024:source-attribution/conflict-coverage-pattern',
+  'openai-agents-js@5ffee5443eeb362fca0dc7195462e355218b5fe0:packages/agents-core/src/guardrail.ts',
+  'openai-agents-js@5ffee5443eeb362fca0dc7195462e355218b5fe0:packages/agents-core/src/toolGuardrail.ts',
+  'openai-agents-js@5ffee5443eeb362fca0dc7195462e355218b5fe0:packages/agents-core/src/handoff.ts',
+  'openai-agents-js@5ffee5443eeb362fca0dc7195462e355218b5fe0:packages/agents-core/src/tracing/traces.ts',
+  'microsoft-agent-governance-toolkit@e0183314fa0fbaa91a92389d97fb45ac99f03be7:policy-engine/sdk/node/src/adapters.ts',
+  'microsoft-agent-governance-toolkit@e0183314fa0fbaa91a92389d97fb45ac99f03be7:policy-engine/sdk/node/src/adapter-helpers.ts',
+  'microsoft-agent-governance-toolkit@e0183314fa0fbaa91a92389d97fb45ac99f03be7:policy-engine/tests/conformance',
+];
+
+function governanceRiskClasses(): CognitiveGovernanceRiskClass[] {
+  return [
+    'goal_hijack',
+    'prompt_injection',
+    'tool_misuse',
+    'memory_poisoning',
+    'identity_ambiguity',
+    'cascading_failure',
+    'rogue_agent_behavior',
+    'data_exfiltration',
+    'unauthorized_write',
+    'policy_drift',
+  ];
+}
+
+function defaultGovernancePolicy(now: string): CognitiveGovernancePolicy {
+  return {
+    policyId: 'cogpolicy:governed-workbench:v9',
+    createdAt: now,
+    updatedAt: now,
+    policyName: 'Andrea v9 Governed Cognitive Workbench',
+    status: 'active',
+    version: 'v9',
+    defaultAction: 'block',
+    readOnlyAllowed: true,
+    mutatingAllowed: false,
+    approvalRequiredForHighRisk: true,
+    riskClassesJson: safeJson(governanceRiskClasses()),
+    sourcePatternRefsJson: safeJson(V9_SOURCE_PATTERN_REFS, 2400),
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function ensureCognitiveGovernancePolicy(
+  now = nowIso(),
+): CognitiveGovernancePolicy {
+  const policy = defaultGovernancePolicy(now);
+  safeDb(undefined, () => upsertCognitiveGovernancePolicy(policy));
+  return (
+    safeDb([], () =>
+      listCognitiveGovernancePolicies({ status: 'active', limit: 1 }),
+    )[0] || policy
+  );
 }
 
 function defaultToolRegistryRecords(
@@ -993,6 +1107,13 @@ function simulationAggregate(
 }
 
 interface CognitiveExecutionBundle {
+  actionIdentities: CognitiveActionIdentity[];
+  governanceDecisions: CognitiveGovernanceDecision[];
+  guardrailTripwires: CognitiveGuardrailTripwire[];
+  handoffs: CognitiveHandoff[];
+  riskSignals: CognitiveRiskSignal[];
+  memoryBlocks: CognitiveMemoryBlock[];
+  workbenchState: CognitiveWorkbenchState;
   policyDecisions: CognitivePolicyDecision[];
   toolResults: CognitiveToolResultEnvelope[];
   executionSteps: CognitiveExecutionStep[];
@@ -1410,38 +1531,844 @@ function runEvent(input: {
   };
 }
 
+function roleForTool(toolId: string): CognitiveWorkbenchRole {
+  if (toolId === 'local_skill_library') return 'memory_curator';
+  if (toolId === 'provider_council') return 'verifier';
+  if (toolId === 'operator_diagnostics') return 'operator_diagnostician';
+  if (toolId === 'bluebubbles_draft' || toolId === 'approval_stage') {
+    return 'final_arbiter';
+  }
+  if (
+    [
+      'provider_health',
+      'integrations_status',
+      'google_calendar_read',
+      'brave_search',
+      'bluebubbles_status',
+      'cognition_trace',
+    ].includes(toolId)
+  ) {
+    return 'evidence_scout';
+  }
+  return 'executor';
+}
+
+function sideEffectClassFor(input: {
+  plan: CognitiveToolCallPlan;
+  registry?: CognitiveToolRegistryRecord | null;
+}): CognitiveActionIdentity['sideEffectClass'] {
+  if (
+    input.plan.actionClass === 'draft' ||
+    input.plan.actionClass === 'approval_gate' ||
+    input.registry?.approvalPolicy === 'explicit_approval'
+  ) {
+    return 'draft';
+  }
+  if (
+    input.registry?.riskLevel === 'high' &&
+    input.registry?.approvalPolicy !== 'read_only'
+  ) {
+    return 'mutating';
+  }
+  if (
+    input.registry?.approvalPolicy === 'read_only' ||
+    input.plan.actionClass === 'read_only_integration' ||
+    input.plan.actionClass === 'council'
+  ) {
+    return 'read_only';
+  }
+  return 'none';
+}
+
+function actionIdentityFor(input: {
+  run: CognitiveRunRecord;
+  plan: CognitiveToolCallPlan;
+  registry?: CognitiveToolRegistryRecord | null;
+  index: number;
+  now: string;
+}): CognitiveActionIdentity {
+  const contract = input.registry
+    ? adapterContractForTool(input.registry)
+    : null;
+  return {
+    actionId: sanitizeId(
+      `cogaction:${input.run.runId}:${String(input.index + 1).padStart(2, '0')}:${input.plan.toolId}`,
+    ),
+    createdAt: input.now,
+    runId: input.run.runId,
+    toolId: input.plan.toolId,
+    actionClass: input.plan.actionClass,
+    actorRole: roleForTool(input.plan.toolId),
+    policyClass: contract?.policyClass || 'approval_staged',
+    channel: input.run.channel,
+    targetKind:
+      input.plan.actionClass === 'draft' ||
+      input.plan.actionClass === 'approval_gate'
+        ? 'approval_target'
+        : 'metadata_source',
+    targetSummary: redactCouncilText(
+      input.registry?.displayName || input.plan.purpose || input.plan.toolId,
+      260,
+    ),
+    sideEffectClass: sideEffectClassFor({
+      plan: input.plan,
+      registry: input.registry,
+    }),
+    identityRefsJson: safeJson({
+      runId: input.run.runId,
+      selectedSkillId: input.run.selectedSkillId,
+      taskFamily: input.run.taskFamily,
+      sourcePatternRefs: V9_SOURCE_PATTERN_REFS.slice(0, 4),
+    }),
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function severityRank(
+  value:
+    | CognitiveGuardrailTripwire['severity']
+    | CognitiveRiskSignal['severity'],
+): number {
+  return { low: 1, medium: 2, high: 3, critical: 4 }[value] || 0;
+}
+
+function maxSeverity(
+  tripwires: CognitiveGuardrailTripwire[],
+): CognitiveGovernanceDecision['riskLevel'] {
+  const max = tripwires.reduce(
+    (rank, tripwire) => Math.max(rank, severityRank(tripwire.severity)),
+    0,
+  );
+  if (max >= 4) return 'critical';
+  if (max >= 3) return 'high';
+  if (max >= 2) return 'medium';
+  return 'low';
+}
+
+function makeTripwire(input: {
+  runId: string;
+  toolId?: string | null;
+  riskClass: CognitiveGovernanceRiskClass;
+  severity: CognitiveGuardrailTripwire['severity'];
+  source: CognitiveGuardrailTripwire['source'];
+  summary: string;
+  evidenceRefs: string[];
+  nextAction: string;
+  now: string;
+}): CognitiveGuardrailTripwire {
+  return {
+    tripwireId: sanitizeId(
+      `cogtrip:${input.runId}:${input.riskClass}:${input.toolId || 'run'}:${randomUUID()}`,
+    ),
+    createdAt: input.now,
+    runId: input.runId,
+    toolId: input.toolId || null,
+    riskClass: input.riskClass,
+    severity: input.severity,
+    triggered: true,
+    source: input.source,
+    summary: redactCouncilText(input.summary, 420),
+    evidenceRefsJson: safeJson(input.evidenceRefs, 1600),
+    nextAction: redactCouncilText(input.nextAction, 420),
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function guardrailTripwiresFor(input: {
+  run: CognitiveRunRecord;
+  goalText: string;
+  plan: CognitiveToolCallPlan;
+  registry?: CognitiveToolRegistryRecord | null;
+  simulation?: CognitiveToolSimulation | null;
+  action: CognitiveActionIdentity;
+  provider: ReturnType<typeof providerUsability>;
+  now: string;
+}): CognitiveGuardrailTripwire[] {
+  const text = input.goalText.toLowerCase();
+  const tripwires: CognitiveGuardrailTripwire[] = [];
+  const refs = [
+    input.action.actionId,
+    input.simulation?.simulationId || `tool:${input.plan.toolId}`,
+  ];
+  if (!input.registry) {
+    tripwires.push(
+      makeTripwire({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        riskClass: 'policy_drift',
+        severity: 'high',
+        source: 'tool_policy',
+        summary: 'Tool plan references an unregistered adapter.',
+        evidenceRefs: refs,
+        nextAction: 'Register the tool adapter or remove it from the plan.',
+        now: input.now,
+      }),
+    );
+  }
+  if (input.simulation?.status === 'block') {
+    tripwires.push(
+      makeTripwire({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        riskClass: 'tool_misuse',
+        severity: 'high',
+        source: 'tool_policy',
+        summary: 'Tool simulation blocked this step before execution.',
+        evidenceRefs: refs,
+        nextAction:
+          'Repair the simulation issue or stage a clarification before running the tool.',
+        now: input.now,
+      }),
+    );
+  }
+  if (
+    /\b(ignore|bypass|override|disable)\b.{0,40}\b(system|developer|policy|guardrail|instructions?)\b/i.test(
+      text,
+    ) ||
+    /\b(reveal|show|print)\b.{0,40}\b(hidden|system|developer|prompt|chain of thought|reasoning)\b/i.test(
+      text,
+    )
+  ) {
+    tripwires.push(
+      makeTripwire({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        riskClass: 'prompt_injection',
+        severity: 'critical',
+        source: 'goal',
+        summary:
+          'Goal resembles an instruction-override or hidden-prompt request.',
+        evidenceRefs: refs,
+        nextAction:
+          'Decline hidden prompt/reasoning exposure and continue only with safe task metadata.',
+        now: input.now,
+      }),
+    );
+  }
+  const protectiveRawLocal =
+    /\braw (private|message)[^.!?\n]{0,80}\bstays local\b/i.test(text) ||
+    /\bstays local[^.!?\n]{0,80}\braw (private|message)\b/i.test(text);
+  if (
+    !protectiveRawLocal &&
+    /\b(api key|secret|token|password|raw private|raw message|private bod(y|ies)|dump messages?)\b/i.test(
+      text,
+    )
+  ) {
+    tripwires.push(
+      makeTripwire({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        riskClass: 'data_exfiltration',
+        severity: 'critical',
+        source: 'goal',
+        summary:
+          'Goal asks for secret, raw private, or unsanitized content exposure.',
+        evidenceRefs: refs,
+        nextAction:
+          'Refuse raw sensitive data exposure; provide redacted status or recovery steps only.',
+        now: input.now,
+      }),
+    );
+  }
+  if (
+    /\bremember\b.{0,80}\b(ignore|override|always obey|secret|token|password|system|developer)\b/i.test(
+      text,
+    )
+  ) {
+    tripwires.push(
+      makeTripwire({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        riskClass: 'memory_poisoning',
+        severity: 'high',
+        source: 'memory',
+        summary:
+          'Goal attempts to persist unsafe or instruction-like memory content.',
+        evidenceRefs: refs,
+        nextAction:
+          'Do not create durable memory; ask for a safe preference or fact instead.',
+        now: input.now,
+      }),
+    );
+  }
+  if (
+    input.action.sideEffectClass === 'mutating' ||
+    (input.action.sideEffectClass === 'draft' && !input.plan.approvalRequired)
+  ) {
+    tripwires.push(
+      makeTripwire({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        riskClass: 'unauthorized_write',
+        severity: 'critical',
+        source: 'tool_policy',
+        summary:
+          'A mutating or send-adjacent action attempted to pass without approval.',
+        evidenceRefs: refs,
+        nextAction:
+          'Fail closed into an approval packet and wait for explicit same-channel approval.',
+        now: input.now,
+      }),
+    );
+  }
+  if (
+    /\b(auto[- ]?send|always send|run without approval|unrestricted)\b/i.test(
+      text,
+    )
+  ) {
+    tripwires.push(
+      makeTripwire({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        riskClass: 'rogue_agent_behavior',
+        severity: 'high',
+        source: 'goal',
+        summary: 'Goal requests autonomy that exceeds Andrea approval policy.',
+        evidenceRefs: refs,
+        nextAction:
+          'Keep side effects staged and explain the approval boundary plainly.',
+        now: input.now,
+      }),
+    );
+  }
+  if (
+    input.provider.blocked >= 2 &&
+    (input.plan.toolId === 'provider_health' ||
+      input.plan.toolId === 'provider_council')
+  ) {
+    tripwires.push(
+      makeTripwire({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        riskClass: 'cascading_failure',
+        severity: 'medium',
+        source: 'provider',
+        summary:
+          'Multiple providers are blocked or unavailable, reducing independent verification.',
+        evidenceRefs: refs.concat(input.provider.degradedProviderIds),
+        nextAction:
+          'Skip blocked providers honestly and use available evidence with reduced-confidence wording.',
+        now: input.now,
+      }),
+    );
+  }
+  if (
+    input.run.taskFamily === 'communication' &&
+    input.plan.toolId === 'bluebubbles_draft' &&
+    !input.run.channel
+  ) {
+    tripwires.push(
+      makeTripwire({
+        runId: input.run.runId,
+        toolId: input.plan.toolId,
+        riskClass: 'identity_ambiguity',
+        severity: 'high',
+        source: 'handoff',
+        summary:
+          'Communication draft lacks a channel identity for approval continuity.',
+        evidenceRefs: refs,
+        nextAction:
+          'Ask which channel/thread should own the draft before staging approval.',
+        now: input.now,
+      }),
+    );
+  }
+  return tripwires;
+}
+
+function governanceDecisionFor(input: {
+  run: CognitiveRunRecord;
+  plan: CognitiveToolCallPlan;
+  action: CognitiveActionIdentity;
+  policy: CognitiveGovernancePolicy;
+  tripwires: CognitiveGuardrailTripwire[];
+  simulation?: CognitiveToolSimulation | null;
+  registry?: CognitiveToolRegistryRecord | null;
+  now: string;
+}): CognitiveGovernanceDecision {
+  const riskClasses = Array.from(
+    new Set(input.tripwires.map((tripwire) => tripwire.riskClass)),
+  );
+  const tripwireIds = input.tripwires.map((tripwire) => tripwire.tripwireId);
+  const riskLevel = maxSeverity(input.tripwires);
+  const hasCritical = input.tripwires.some(
+    (tripwire) => tripwire.severity === 'critical',
+  );
+  const hasHigh = input.tripwires.some(
+    (tripwire) => tripwire.severity === 'high',
+  );
+  const requiresApproval =
+    input.action.sideEffectClass === 'draft' ||
+    input.action.sideEffectClass === 'mutating' ||
+    input.plan.approvalRequired ||
+    input.registry?.riskLevel === 'high';
+  const readOnlyAllowed =
+    input.policy.readOnlyAllowed &&
+    (input.action.sideEffectClass === 'none' ||
+      input.action.sideEffectClass === 'read_only');
+  const status: CognitiveGovernanceDecision['status'] =
+    hasCritical ||
+    input.simulation?.status === 'block' ||
+    (!input.registry && input.policy.defaultAction === 'block')
+      ? 'block'
+      : requiresApproval
+        ? 'stage_approval'
+        : hasHigh || input.simulation?.status === 'warn'
+          ? 'warn'
+          : readOnlyAllowed
+            ? 'allow'
+            : input.policy.defaultAction;
+  const reason =
+    status === 'block'
+      ? 'Governance guardrail blocked this step before execution.'
+      : status === 'stage_approval'
+        ? 'Governance staged a side-effect-adjacent or high-risk step for explicit approval.'
+        : status === 'warn'
+          ? 'Governance allowed read-only execution with risk warnings.'
+          : 'Governance allowed safe metadata-only read-only execution.';
+  const nextAction =
+    status === 'block'
+      ? input.tripwires[0]?.nextAction ||
+        'Repair the governance blocker before continuing.'
+      : status === 'stage_approval'
+        ? 'Create an approval packet and wait for explicit same-channel approval before side effects.'
+        : status === 'warn'
+          ? 'Continue with reduced-confidence wording and surface the risk in diagnostics.'
+          : 'Continue to the read-only adapter and map sanitized evidence.';
+  return {
+    decisionId: sanitizeId(
+      `coggov:${input.run.runId}:${input.plan.toolId}:${randomUUID()}`,
+    ),
+    createdAt: input.now,
+    runId: input.run.runId,
+    toolId: input.plan.toolId,
+    actionId: input.action.actionId,
+    policyId: input.policy.policyId,
+    interventionPoint:
+      input.plan.actionClass === 'council'
+        ? 'council'
+        : input.plan.actionClass === 'approval_gate'
+          ? 'pre_approval'
+          : 'pre_tool',
+    status,
+    riskLevel,
+    riskClassesJson: safeJson(riskClasses, 1600),
+    tripwireIdsJson: safeJson(tripwireIds, 1600),
+    reason,
+    nextAction,
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
+function riskSignalsForDecision(input: {
+  runId: string;
+  decision: CognitiveGovernanceDecision;
+  tripwires: CognitiveGuardrailTripwire[];
+  now: string;
+}): CognitiveRiskSignal[] {
+  return input.tripwires.map((tripwire) => ({
+    signalId: sanitizeId(
+      `cogrisk:${input.runId}:${tripwire.riskClass}:${randomUUID()}`,
+    ),
+    createdAt: input.now,
+    runId: input.runId,
+    riskClass: tripwire.riskClass,
+    severity: tripwire.severity,
+    status:
+      input.decision.status === 'block' ||
+      input.decision.status === 'stage_approval'
+        ? 'mitigated'
+        : 'open',
+    source: tripwire.source === 'provider' ? 'provider' : 'tripwire',
+    summary: tripwire.summary,
+    evidenceRefsJson: tripwire.evidenceRefsJson,
+    governanceDecisionId: input.decision.decisionId,
+    nextAction: tripwire.nextAction,
+    privacyJson: privacyPolicyJson(),
+  }));
+}
+
+function handoffsForRun(input: {
+  run: CognitiveRunRecord;
+  graph: CognitiveTaskGraph;
+  decisions: CognitiveGovernanceDecision[];
+  evidenceArtifacts: CognitiveEvidenceArtifact[];
+  approvalPackets: CognitiveApprovalPacket[];
+  now: string;
+}): CognitiveHandoff[] {
+  const evidenceRefs = input.evidenceArtifacts
+    .slice(0, 8)
+    .map((artifact) => artifact.artifactId);
+  const blockedDecision = input.decisions.find(
+    (decision) => decision.status === 'block',
+  );
+  const stagedDecision = input.decisions.find(
+    (decision) => decision.status === 'stage_approval',
+  );
+  const handoff = (
+    index: number,
+    fromRole: CognitiveWorkbenchRole,
+    toRole: CognitiveWorkbenchRole,
+    status: CognitiveHandoff['status'],
+    reason: string,
+    decision?: CognitiveGovernanceDecision | null,
+  ): CognitiveHandoff => ({
+    handoffId: sanitizeId(
+      `coghandoff:${input.run.runId}:${String(index).padStart(2, '0')}:${fromRole}:${toRole}`,
+    ),
+    createdAt: input.now,
+    runId: input.run.runId,
+    fromRole,
+    toRole,
+    status,
+    reason: redactCouncilText(reason, 420),
+    evidenceRefsJson: safeJson(evidenceRefs, 1600),
+    governanceDecisionId: decision?.decisionId || null,
+    nextAction:
+      status === 'blocked'
+        ? decision?.nextAction || input.run.nextAction
+        : status === 'skipped'
+          ? 'Skip this role because the current task does not need that lane.'
+          : input.approvalPackets.length > 0
+            ? 'Hold side effects until approval; continue with safe explanation.'
+            : 'Continue to the next workbench role.',
+    privacyJson: privacyPolicyJson(),
+  });
+  const needsVerifier =
+    input.run.cognitiveMode === 'council_verified' ||
+    input.graph.subgoals.some((subgoal) =>
+      subgoal.toolPlan.some((plan) => plan.toolId === 'provider_council'),
+    );
+  return [
+    handoff(
+      1,
+      'planner',
+      'memory_curator',
+      blockedDecision ? 'blocked' : 'completed',
+      'Planner handed the sanitized goal to the memory curator for local-first context.',
+      blockedDecision,
+    ),
+    handoff(
+      2,
+      'memory_curator',
+      'evidence_scout',
+      blockedDecision ? 'blocked' : 'completed',
+      'Memory curator handed cited metadata needs to the evidence scout.',
+      blockedDecision,
+    ),
+    handoff(
+      3,
+      'evidence_scout',
+      'verifier',
+      blockedDecision ? 'blocked' : needsVerifier ? 'completed' : 'skipped',
+      needsVerifier
+        ? 'Evidence scout requested verifier review for a deep or council-backed route.'
+        : 'Verifier was skipped because this route had enough deterministic metadata.',
+      blockedDecision,
+    ),
+    handoff(
+      4,
+      needsVerifier ? 'verifier' : 'evidence_scout',
+      'final_arbiter',
+      blockedDecision ? 'blocked' : 'completed',
+      'Final arbiter received evidence, governance decisions, and verification status.',
+      blockedDecision || stagedDecision,
+    ),
+    handoff(
+      5,
+      'final_arbiter',
+      'executor',
+      blockedDecision
+        ? 'blocked'
+        : input.approvalPackets.length > 0
+          ? 'accepted'
+          : 'completed',
+      input.approvalPackets.length > 0
+        ? 'Executor receives an approval-staged result instead of a side effect.'
+        : 'Executor can answer with sanitized evidence and no side effects.',
+      blockedDecision || stagedDecision,
+    ),
+  ];
+}
+
+function memoryBlocksForRun(input: {
+  run: CognitiveRunRecord;
+  goalText: string;
+  selectedSkill: CognitiveSkillCardRecord | null;
+  provider: ReturnType<typeof providerUsability>;
+  evidenceContract: ReturnType<typeof buildEvidenceContract>;
+  decisions: CognitiveGovernanceDecision[];
+  now: string;
+}): CognitiveMemoryBlock[] {
+  const text = input.goalText.toLowerCase();
+  const injectionRisk =
+    /\b(ignore|override|system|developer|secret|token|password|raw message)\b/i.test(
+      text,
+    );
+  const integrationReport = safeDb(null, () => buildIntegrationDoctorReport());
+  const blockedDecision =
+    input.decisions.find((decision) => decision.status === 'block') || null;
+  const sourceIds = (extra: string[] = []) =>
+    safeJson(
+      [
+        `run:${input.run.runId}`,
+        `skill:${input.selectedSkill?.skillId || input.run.selectedSkillId}`,
+        ...input.evidenceContract.required.map((item) => `evidence:${item}`),
+        ...extra,
+      ],
+      1600,
+    );
+  const make = (
+    blockKind: CognitiveMemoryBlock['blockKind'],
+    summary: string,
+    extraSources: string[] = [],
+    options: {
+      sensitivity?: CognitiveMemoryBlock['sensitivity'];
+      conflictFlags?: string[];
+      poisoningRisk?: number;
+      status?: CognitiveMemoryBlock['status'];
+      freshness?: CognitiveMemoryBlock['freshness'];
+      decision?: CognitiveGovernanceDecision | null;
+    } = {},
+  ): CognitiveMemoryBlock => {
+    const conflictFlags = options.conflictFlags || [];
+    const poisoningRisk = clamp01(options.poisoningRisk || 0);
+    const status =
+      options.status ||
+      (blockedDecision && blockKind === 'operating_rules'
+        ? 'blocked'
+        : conflictFlags.length > 0 || poisoningRisk >= 0.5
+          ? 'conflicted'
+          : 'active');
+    return {
+      blockId: sanitizeId(`cogmem:${input.run.runId}:${blockKind}`),
+      createdAt: input.now,
+      updatedAt: input.now,
+      runId: input.run.runId,
+      blockKind,
+      status,
+      summary: redactCouncilText(summary, 520),
+      sourceIdsJson: sourceIds(extraSources),
+      freshness: options.freshness || 'fresh',
+      sensitivity: options.sensitivity || 'metadata',
+      conflictFlagsJson: safeJson(conflictFlags, 1200),
+      poisoningRisk,
+      governanceDecisionId:
+        options.decision?.decisionId || blockedDecision?.decisionId || null,
+      privacyJson: privacyPolicyJson(),
+    };
+  };
+  return [
+    make(
+      'profile',
+      'Profile block is available as sanitized metadata only; raw personal content is excluded.',
+      ['profile:metadata_only'],
+      { sensitivity: 'private_metadata' },
+    ),
+    make(
+      'preferences',
+      input.selectedSkill
+        ? `Current skill preference uses ${input.selectedSkill.skillId} in ${input.run.cognitiveMode} mode.`
+        : `Current selected skill is ${input.run.selectedSkillId}; durable preference capture requires safe confirmation.`,
+      ['skill_library:selection'],
+      {
+        sensitivity: 'sanitized_digest',
+        conflictFlags:
+          input.run.cognitiveMode === 'approval_staged' ||
+          input.decisions.some(
+            (decision) => decision.status === 'stage_approval',
+          )
+            ? ['approval_required']
+            : [],
+      },
+    ),
+    make(
+      'operating_rules',
+      'Operating rules enforce metadata-only memory, read-only autonomy, and approval-first side effects.',
+      V9_SOURCE_PATTERN_REFS.slice(0, 4),
+      {
+        conflictFlags: input.decisions
+          .filter((decision) => decision.status === 'block')
+          .map((decision) => `blocked:${decision.toolId}`),
+        poisoningRisk: injectionRisk ? 0.7 : 0.05,
+      },
+    ),
+    make(
+      'current_projects',
+      `Current work item is a ${input.run.taskFamily} task in ${input.run.cognitiveMode} mode.`,
+      ['goal:current_project'],
+    ),
+    make(
+      'people_threads',
+      input.run.taskFamily === 'communication'
+        ? 'Communication thread block contains only thread/proof metadata and approval status.'
+        : 'People/thread block is inactive for this task except for metadata references.',
+      ['threads:metadata_only'],
+      {
+        sensitivity:
+          input.run.taskFamily === 'communication'
+            ? 'private_metadata'
+            : 'metadata',
+      },
+    ),
+    make(
+      'skills',
+      input.selectedSkill
+        ? `Skill ${input.selectedSkill.skillId} has status ${input.selectedSkill.promotionState} and outcome score ${input.selectedSkill.latestOutcomeScore}.`
+        : 'No durable skill card was selected; planner used deterministic routing.',
+      ['skill_library:retrieval'],
+      { sensitivity: 'sanitized_digest' },
+    ),
+    make(
+      'provider_health',
+      `${input.provider.healthy} provider(s) healthy, ${input.provider.degraded} degraded, ${input.provider.blocked} blocked.`,
+      input.provider.degradedProviderIds.map(
+        (providerId) => `provider:${providerId}`,
+      ),
+      {
+        conflictFlags:
+          input.provider.blocked > 0
+            ? input.provider.degradedProviderIds.map(
+                (providerId) => `provider_degraded:${providerId}`,
+              )
+            : [],
+        freshness: 'fresh',
+      },
+    ),
+    make(
+      'integration_status',
+      integrationReport
+        ? `Integration status loaded with ${integrationReport.statuses.length} item(s); blockers stay in diagnostics, not memory bodies.`
+        : 'Integration status was unavailable; diagnostics should rerun before relying on live integrations.',
+      ['integrations:doctor'],
+      {
+        conflictFlags: integrationReport
+          ? integrationReport.statuses
+              .filter((item) => item.state !== 'healthy')
+              .slice(0, 6)
+              .map((item) => `integration:${item.integrationId}:${item.state}`)
+          : ['integration_status_unavailable'],
+        freshness: integrationReport ? 'fresh' : 'unknown',
+      },
+    ),
+  ];
+}
+
+function workbenchStateForRun(input: {
+  run: CognitiveRunRecord;
+  handoffs: CognitiveHandoff[];
+  decisions: CognitiveGovernanceDecision[];
+  memoryBlocks: CognitiveMemoryBlock[];
+  riskSignals: CognitiveRiskSignal[];
+  approvalPackets: CognitiveApprovalPacket[];
+  activeGoalId?: string | null;
+  now: string;
+}): CognitiveWorkbenchState {
+  const blocked =
+    input.run.status === 'blocked' ||
+    input.decisions.some((decision) => decision.status === 'block') ||
+    input.handoffs.some((handoff) => handoff.status === 'blocked');
+  const awaitingApproval =
+    input.run.status === 'awaiting_approval' ||
+    input.approvalPackets.length > 0;
+  const openRisk = input.riskSignals.some((signal) => signal.status === 'open');
+  const status: CognitiveWorkbenchState['status'] = blocked
+    ? 'blocked'
+    : awaitingApproval
+      ? 'awaiting_approval'
+      : input.run.status === 'answered'
+        ? 'answered'
+        : openRisk
+          ? 'degraded'
+          : 'active';
+  const nextAction = blocked
+    ? input.decisions.find((decision) => decision.status === 'block')
+        ?.nextAction || input.run.nextAction
+    : awaitingApproval
+      ? 'Wait for explicit approval before side effects; answer with the staged packet and safe next step.'
+      : openRisk
+        ? 'Answer with reduced confidence and rerun diagnostics if the risk persists.'
+        : input.run.nextAction;
+  return {
+    workbenchId: sanitizeId(`cogworkbench:${input.run.runId}`),
+    createdAt: input.now,
+    updatedAt: input.now,
+    runId: input.run.runId,
+    status,
+    activeGoalId: input.activeGoalId || null,
+    selectedSkillId: input.run.selectedSkillId || null,
+    handoffCount: input.handoffs.length,
+    governanceDecisionCount: input.decisions.length,
+    memoryBlockCount: input.memoryBlocks.length,
+    riskSignalCount: input.riskSignals.length,
+    approvalPacketCount: input.approvalPackets.length,
+    nextAction: redactCouncilText(nextAction, 520),
+    stateJson: safeJson(
+      {
+        taskFamily: input.run.taskFamily,
+        cognitiveMode: input.run.cognitiveMode,
+        handoffStatuses: input.handoffs.map((handoff) => ({
+          from: handoff.fromRole,
+          to: handoff.toRole,
+          status: handoff.status,
+        })),
+        governanceStatuses: input.decisions.map((decision) => ({
+          toolId: decision.toolId,
+          status: decision.status,
+          riskLevel: decision.riskLevel,
+        })),
+        memoryKinds: input.memoryBlocks.map((block) => block.blockKind),
+      },
+      3200,
+    ),
+    privacyJson: privacyPolicyJson(),
+  };
+}
+
 function policyDecisionFor(input: {
   runId: string;
   plan: CognitiveToolCallPlan;
   simulation?: CognitiveToolSimulation | null;
   registry?: CognitiveToolRegistryRecord | null;
+  governanceDecision?: CognitiveGovernanceDecision | null;
   now: string;
 }): CognitivePolicyDecision {
   const issues = parseJsonSafe<string[]>(input.simulation?.issuesJson, []);
+  const riskClasses = parseJsonSafe<string[]>(
+    input.governanceDecision?.riskClassesJson,
+    [],
+  );
   const explicitApproval =
     input.plan.approvalRequired ||
+    input.governanceDecision?.status === 'stage_approval' ||
     input.registry?.approvalPolicy === 'explicit_approval' ||
     input.registry?.riskLevel === 'high' ||
     input.plan.actionClass === 'draft' ||
     input.plan.actionClass === 'approval_gate';
   const status: CognitivePolicyDecision['status'] =
-    input.simulation?.status === 'block'
+    input.governanceDecision?.status === 'block'
       ? 'block'
-      : explicitApproval
-        ? 'stage_approval'
-        : input.simulation?.status === 'warn'
-          ? 'allow'
-          : input.registry
+      : input.simulation?.status === 'block'
+        ? 'block'
+        : explicitApproval
+          ? 'stage_approval'
+          : input.simulation?.status === 'warn'
             ? 'allow'
-            : 'skip';
+            : input.registry
+              ? 'allow'
+              : 'skip';
   const reason =
     status === 'block'
-      ? 'Tool simulation blocked this step before execution.'
+      ? input.governanceDecision?.reason ||
+        'Tool simulation blocked this step before execution.'
       : status === 'stage_approval'
-        ? 'Tool is mutating, high-risk, draft/send-adjacent, or explicitly approval-gated.'
+        ? input.governanceDecision?.reason ||
+          'Tool is mutating, high-risk, draft/send-adjacent, or explicitly approval-gated.'
         : status === 'skip'
           ? 'Tool is not registered for execution on this host.'
-          : 'Tool is read-only or local metadata and passed policy gating.';
+          : input.governanceDecision?.status === 'warn'
+            ? input.governanceDecision.reason
+            : 'Tool is read-only or local metadata and passed policy gating.';
   return {
     decisionId: sanitizeId(
       `cogpolicy:${input.runId}:${input.plan.toolId}:${randomUUID()}`,
@@ -1459,7 +2386,10 @@ function policyDecisionFor(input: {
         input.plan.actionClass,
       ),
     riskLevel: input.registry?.riskLevel || 'unknown',
-    issuesJson: safeJson(issues, 1600),
+    issuesJson: safeJson(
+      [...issues, ...riskClasses.map((riskClass) => `governance:${riskClass}`)],
+      1600,
+    ),
     privacyJson: privacyPolicyJson(),
   };
 }
@@ -1939,10 +2869,12 @@ function revisionForStep(input: {
 
 function executeCognitiveToolPlan(input: {
   run: CognitiveRunRecord;
+  goalText: string;
   graph: CognitiveTaskGraph;
   toolPlans: CognitiveToolCallPlan[];
   toolSimulations: CognitiveToolSimulation[];
   registry: CognitiveToolRegistryRecord[];
+  governancePolicy: CognitiveGovernancePolicy;
   providerSnapshots: ProviderHealthSnapshot[];
   provider: ReturnType<typeof providerUsability>;
   selectedSkill: CognitiveSkillCardRecord | null;
@@ -1964,6 +2896,10 @@ function executeCognitiveToolPlan(input: {
     }
   }
   const policyDecisions: CognitivePolicyDecision[] = [];
+  const actionIdentities: CognitiveActionIdentity[] = [];
+  const governanceDecisions: CognitiveGovernanceDecision[] = [];
+  const guardrailTripwires: CognitiveGuardrailTripwire[] = [];
+  const riskSignals: CognitiveRiskSignal[] = [];
   const toolResults: CognitiveToolResultEnvelope[] = [];
   const executionSteps: CognitiveExecutionStep[] = [];
   const evidenceArtifacts: CognitiveEvidenceArtifact[] = [];
@@ -1982,11 +2918,50 @@ function executeCognitiveToolPlan(input: {
   input.toolPlans.forEach((plan, index) => {
     const registry = byTool.get(plan.toolId) || null;
     const simulation = simulationByTool.get(plan.toolId) || null;
+    const action = actionIdentityFor({
+      run: input.run,
+      plan,
+      registry,
+      index,
+      now: input.now,
+    });
+    actionIdentities.push(action);
+    const tripwires = guardrailTripwiresFor({
+      run: input.run,
+      goalText: input.goalText,
+      plan,
+      registry,
+      simulation,
+      action,
+      provider: input.provider,
+      now: input.now,
+    });
+    guardrailTripwires.push(...tripwires);
+    const governanceDecision = governanceDecisionFor({
+      run: input.run,
+      plan,
+      action,
+      policy: input.governancePolicy,
+      tripwires,
+      simulation,
+      registry,
+      now: input.now,
+    });
+    governanceDecisions.push(governanceDecision);
+    riskSignals.push(
+      ...riskSignalsForDecision({
+        runId: input.run.runId,
+        decision: governanceDecision,
+        tripwires,
+        now: input.now,
+      }),
+    );
     const decision = policyDecisionFor({
       runId: input.run.runId,
       plan,
       simulation,
       registry,
+      governanceDecision,
       now: input.now,
     });
     policyDecisions.push(decision);
@@ -2104,9 +3079,20 @@ function executeCognitiveToolPlan(input: {
     runEvents.push(
       runEvent({
         runId: input.run.runId,
-        eventKind: stepStatus === 'executed' ? 'execute' : 'revise',
-        summary: `${plan.toolId} ${stepStatus}.`,
-        refs: [decision.decisionId, result.resultId, step.stepId],
+        eventKind:
+          governanceDecision.status === 'block'
+            ? 'policy'
+            : stepStatus === 'executed'
+              ? 'execute'
+              : 'revise',
+        summary: `${plan.toolId} ${stepStatus}; governance=${governanceDecision.status}.`,
+        refs: [
+          action.actionId,
+          governanceDecision.decisionId,
+          decision.decisionId,
+          result.resultId,
+          step.stepId,
+        ],
         now: input.now,
       }),
     );
@@ -2192,7 +3178,40 @@ function executeCognitiveToolPlan(input: {
     loopState,
     now: input.now,
   });
+  const memoryBlocks = memoryBlocksForRun({
+    run: input.run,
+    goalText: input.goalText,
+    selectedSkill: input.selectedSkill,
+    provider: input.provider,
+    evidenceContract: input.evidenceContract,
+    decisions: governanceDecisions,
+    now: input.now,
+  });
+  const handoffs = handoffsForRun({
+    run: input.run,
+    graph: input.graph,
+    decisions: governanceDecisions,
+    evidenceArtifacts,
+    approvalPackets,
+    now: input.now,
+  });
+  const workbenchState = workbenchStateForRun({
+    run: input.run,
+    handoffs,
+    decisions: governanceDecisions,
+    memoryBlocks,
+    riskSignals,
+    approvalPackets,
+    now: input.now,
+  });
   return {
+    actionIdentities,
+    governanceDecisions,
+    guardrailTripwires,
+    handoffs,
+    riskSignals,
+    memoryBlocks,
+    workbenchState,
     policyDecisions,
     toolResults,
     executionSteps,
@@ -3308,6 +4327,7 @@ export function beginCognitiveKernelRun(
     now: startedAt,
   });
   const providers = providerUsability(providerSnapshots);
+  const governancePolicy = ensureCognitiveGovernancePolicy(startedAt);
   const initialVerification = buildVerification(
     input,
     providers,
@@ -3332,10 +4352,12 @@ export function beginCognitiveKernelRun(
   });
   const execution = executeCognitiveToolPlan({
     run,
+    goalText: input.goal,
     graph,
     toolPlans,
     toolSimulations,
     registry,
+    governancePolicy,
     providerSnapshots,
     provider: providers,
     selectedSkill,
@@ -3382,6 +4404,15 @@ export function beginCognitiveKernelRun(
     loopState: execution.loopStates[0],
     now: startedAt,
   });
+  execution.workbenchState = workbenchStateForRun({
+    run,
+    handoffs: execution.handoffs,
+    decisions: execution.governanceDecisions,
+    memoryBlocks: execution.memoryBlocks,
+    riskSignals: execution.riskSignals,
+    approvalPackets: execution.approvalPackets,
+    now: startedAt,
+  });
   const worldBeliefs = buildWorldBeliefs(input, providers, selectedSkill);
   const providerCooldowns = persistProviderCooldowns({
     snapshots: providerSnapshots,
@@ -3404,6 +4435,7 @@ export function beginCognitiveKernelRun(
   };
   safeDb(undefined, () => {
     upsertCognitiveRun(run);
+    upsertCognitiveGovernancePolicy(governancePolicy);
     persistProviderCooldowns({
       snapshots: providerSnapshots,
       runId: run.runId,
@@ -3411,6 +4443,15 @@ export function beginCognitiveKernelRun(
     });
     for (const simulation of toolSimulations) {
       upsertCognitiveToolSimulation(simulation);
+    }
+    for (const action of execution.actionIdentities) {
+      upsertCognitiveActionIdentity(action);
+    }
+    for (const decision of execution.governanceDecisions) {
+      upsertCognitiveGovernanceDecision(decision);
+    }
+    for (const tripwire of execution.guardrailTripwires) {
+      upsertCognitiveGuardrailTripwire(tripwire);
     }
     for (const decision of execution.policyDecisions) {
       upsertCognitivePolicyDecision(decision);
@@ -3432,6 +4473,15 @@ export function beginCognitiveKernelRun(
     }
     for (const approvalPacket of execution.approvalPackets) {
       upsertCognitiveApprovalPacket(approvalPacket);
+    }
+    for (const handoff of execution.handoffs) {
+      upsertCognitiveHandoff(handoff);
+    }
+    for (const riskSignal of execution.riskSignals) {
+      upsertCognitiveRiskSignal(riskSignal);
+    }
+    for (const memoryBlock of execution.memoryBlocks) {
+      upsertCognitiveMemoryBlock(memoryBlock);
     }
     for (const revision of execution.planRevisions) {
       upsertCognitivePlanRevision(revision);
@@ -3492,6 +4542,17 @@ export function beginCognitiveKernelRun(
       activeCheckpointId: activeCheckpoint?.checkpointId || null,
       now: startedAt,
     });
+    execution.workbenchState = workbenchStateForRun({
+      run,
+      handoffs: execution.handoffs,
+      decisions: execution.governanceDecisions,
+      memoryBlocks: execution.memoryBlocks,
+      riskSignals: execution.riskSignals,
+      approvalPackets: execution.approvalPackets,
+      activeGoalId: activeGoal.goalId,
+      now: startedAt,
+    });
+    upsertCognitiveWorkbenchState(execution.workbenchState);
     persistInitialBlackboard({
       run,
       goal: activeGoal,
@@ -3617,6 +4678,62 @@ export function beginCognitiveKernelRun(
       traceSpan({
         runId: run.runId,
         goalId: activeGoal.goalId,
+        spanKind: 'guardrail',
+        status: execution.governanceDecisions.some(
+          (decision) => decision.status === 'block',
+        )
+          ? 'blocked'
+          : execution.governanceDecisions.some(
+                (decision) =>
+                  decision.status === 'warn' ||
+                  decision.status === 'stage_approval',
+              )
+            ? 'warn'
+            : 'completed',
+        summary: `Governance evaluated ${execution.governanceDecisions.length} action(s) through the v9 policy pack.`,
+        inputSummary: execution.actionIdentities
+          .map((action) => `${action.toolId}:${action.sideEffectClass}`)
+          .join(', '),
+        outputSummary: execution.governanceDecisions
+          .map((decision) => `${decision.toolId}:${decision.status}`)
+          .join(', '),
+        metadata: {
+          policyId: governancePolicy.policyId,
+          decisions: execution.governanceDecisions.length,
+          tripwires: execution.guardrailTripwires.length,
+          riskSignals: execution.riskSignals.length,
+          sourcePatternRefs: V9_SOURCE_PATTERN_REFS,
+        },
+        now: startedAt,
+      }),
+      traceSpan({
+        runId: run.runId,
+        goalId: activeGoal.goalId,
+        spanKind: 'checkpoint',
+        status:
+          execution.workbenchState.status === 'blocked'
+            ? 'blocked'
+            : execution.workbenchState.status === 'degraded' ||
+                execution.workbenchState.status === 'awaiting_approval'
+              ? 'warn'
+              : 'completed',
+        summary: `Workbench snapshot ${execution.workbenchState.status} with ${execution.handoffs.length} handoff(s) and ${execution.memoryBlocks.length} memory block(s).`,
+        inputSummary: execution.handoffs
+          .map((handoff) => `${handoff.fromRole}->${handoff.toRole}`)
+          .join(', '),
+        outputSummary: execution.workbenchState.nextAction,
+        metadata: {
+          workbenchId: execution.workbenchState.workbenchId,
+          handoffCount: execution.handoffs.length,
+          memoryBlockCount: execution.memoryBlocks.length,
+          approvalPacketCount: execution.approvalPackets.length,
+          riskSignalCount: execution.riskSignals.length,
+        },
+        now: startedAt,
+      }),
+      traceSpan({
+        runId: run.runId,
+        goalId: activeGoal.goalId,
         spanKind: 'plan_revision',
         status: execution.planRevisions.some(
           (revision) => revision.revisionKind !== 'success_path',
@@ -3734,6 +4851,13 @@ export function beginCognitiveKernelRun(
       listCognitiveBlackboardEntries({ runId: run.runId, limit: 10 }),
     ),
     autonomyBudget,
+    actionIdentities: execution.actionIdentities,
+    governanceDecisions: execution.governanceDecisions,
+    guardrailTripwires: execution.guardrailTripwires,
+    handoffs: execution.handoffs,
+    riskSignals: execution.riskSignals,
+    memoryBlocks: execution.memoryBlocks,
+    workbenchState: execution.workbenchState,
     toolSimulations,
     policyDecisions: execution.policyDecisions,
     toolResults: execution.toolResults,
@@ -4516,6 +5640,7 @@ export function buildCognitiveDoctorReport(
   providerSnapshots?: ProviderHealthSnapshot[],
 ): CognitiveDoctorReport {
   const registry = ensureCognitiveToolRegistry(generatedAt);
+  const governancePolicy = ensureCognitiveGovernancePolicy(generatedAt);
   const runs = safeDb([], () => listCognitiveRuns({ limit: 50 }));
   const latest = runs[0];
   const subgoals = latest
@@ -4563,6 +5688,14 @@ export function buildCognitiveDoctorReport(
       planRevisions: [],
       runEvents: [],
       trajectoryScores: [],
+      governancePolicies: [governancePolicy],
+      actionIdentities: [],
+      governanceDecisions: [],
+      guardrailTripwires: [],
+      handoffs: [],
+      riskSignals: [],
+      memoryBlocks: [],
+      workbenchStates: [],
       providerCooldowns: [],
       checkpoints: latest ? checkpoints : [],
       privacy: privacyReport(),
@@ -4585,6 +5718,7 @@ export function buildCognitiveDoctorReport(
   const latestLoop = replayPacket.loopStates[0] || null;
   const latestApprovalPacket = replayPacket.approvalPackets[0] || null;
   const latestTrajectory = replayPacket.trajectoryScores[0] || null;
+  const latestWorkbench = replayPacket.workbenchStates[0] || null;
   const demotedAdapters = latestTrajectory
     ? parseJsonSafe<string[]>(latestTrajectory.demotedAdaptersJson, [])
     : [];
@@ -4611,17 +5745,35 @@ export function buildCognitiveDoctorReport(
     .map((run) => `${run.taskFamily}:${run.selectedSkillId}`);
   const ok =
     runs.length > 0 && recent.blockedRuns < Math.max(3, runs.length / 2);
-  const nextAction = !latest
-    ? 'Run one normal ask, one ultrathink ask, and one approval-required draft to seed cognition proof.'
-    : goals.some((goal) => goal.status === 'waiting_approval')
-      ? 'Resolve the latest approval-waiting cognitive goal or let it expire before retrying the mutating task.'
-      : goals.some((goal) => goal.status === 'blocked')
-        ? 'Inspect the latest blocked cognitive goal and add missing evidence or clarification.'
-        : skills.promoted === 0
-          ? 'Let a verified successful run promote at least one cognitive skill card.'
-          : recent.blockedRuns > 0
-            ? 'Inspect the latest blocked run, gather missing evidence, then rerun the task.'
-            : 'Keep the task ladder fresh with quick, ultrathink, read-only, and approval-gated proof turns.';
+  let nextAction =
+    'Keep the task ladder fresh with quick, ultrathink, read-only, and approval-gated proof turns.';
+  if (!latest) {
+    nextAction =
+      'Run one normal ask, one ultrathink ask, and one approval-required draft to seed cognition proof.';
+  } else if (
+    replayPacket.governanceDecisions.some(
+      (decision) => decision.status === 'block',
+    )
+  ) {
+    nextAction =
+      replayPacket.governanceDecisions.find(
+        (decision) => decision.status === 'block',
+      )?.nextAction || 'Repair the latest governance blocker.';
+  } else if (replayPacket.workbenchStates[0]?.nextAction) {
+    nextAction = replayPacket.workbenchStates[0].nextAction;
+  } else if (goals.some((goal) => goal.status === 'waiting_approval')) {
+    nextAction =
+      'Resolve the latest approval-waiting cognitive goal or let it expire before retrying the mutating task.';
+  } else if (goals.some((goal) => goal.status === 'blocked')) {
+    nextAction =
+      'Inspect the latest blocked cognitive goal and add missing evidence or clarification.';
+  } else if (skills.promoted === 0) {
+    nextAction =
+      'Let a verified successful run promote at least one cognitive skill card.';
+  } else if (recent.blockedRuns > 0) {
+    nextAction =
+      'Inspect the latest blocked run, gather missing evidence, then rerun the task.';
+  }
   return {
     generatedAt,
     ok,
@@ -4782,6 +5934,60 @@ export function buildCognitiveDoctorReport(
       demotedAdapters,
       nextAction: latestTrajectory?.nextAction || null,
     },
+    governance: {
+      policies: replayPacket.governancePolicies.length,
+      decisions: replayPacket.governanceDecisions.length,
+      allow: replayPacket.governanceDecisions.filter(
+        (decision) => decision.status === 'allow',
+      ).length,
+      warn: replayPacket.governanceDecisions.filter(
+        (decision) => decision.status === 'warn',
+      ).length,
+      staged: replayPacket.governanceDecisions.filter(
+        (decision) => decision.status === 'stage_approval',
+      ).length,
+      blocked: replayPacket.governanceDecisions.filter(
+        (decision) => decision.status === 'block',
+      ).length,
+      triggeredTripwires: replayPacket.guardrailTripwires.filter(
+        (tripwire) => tripwire.triggered,
+      ).length,
+      riskSignals: replayPacket.riskSignals.length,
+      nextAction:
+        replayPacket.governanceDecisions.find(
+          (decision) => decision.status === 'block',
+        )?.nextAction ||
+        replayPacket.governanceDecisions.find(
+          (decision) => decision.status === 'stage_approval',
+        )?.nextAction ||
+        null,
+    },
+    workbench: {
+      status: latestWorkbench?.status || 'none',
+      handoffs: replayPacket.handoffs.length,
+      memoryBlocks: replayPacket.memoryBlocks.length,
+      activeGoalId: latestWorkbench?.activeGoalId || null,
+      selectedSkillId: latestWorkbench?.selectedSkillId || null,
+      nextAction: latestWorkbench?.nextAction || null,
+    },
+    memoryBlocks: {
+      total: replayPacket.memoryBlocks.length,
+      conflicted: replayPacket.memoryBlocks.filter(
+        (block) => block.status === 'conflicted',
+      ).length,
+      blocked: replayPacket.memoryBlocks.filter(
+        (block) => block.status === 'blocked',
+      ).length,
+      poisoningRiskMax: replayPacket.memoryBlocks.reduce(
+        (max, block) => Math.max(max, block.poisoningRisk),
+        0,
+      ),
+      latestKinds: Array.from(
+        new Set(
+          replayPacket.memoryBlocks.slice(0, 8).map((block) => block.blockKind),
+        ),
+      ),
+    },
     nextAction,
     privacy: privacyReport(),
   };
@@ -4813,22 +6019,39 @@ export function buildCognitiveTraceReport(
   );
   const latestLoop = replayPacket.loopStates[0] || null;
   const latestTrajectory = replayPacket.trajectoryScores[0] || null;
+  const latestWorkbench = replayPacket.workbenchStates[0] || null;
   const ok =
     blockedSpanCount === 0 &&
     simulation.status !== 'block' &&
     execution.status !== 'block' &&
+    replayPacket.governanceDecisions.every(
+      (decision) => decision.status !== 'block',
+    ) &&
     replayPacket.privacy.rawPromptsStored === false;
-  const nextAction = !replayPacket.latestRun
-    ? 'Run one cognitive task to create a trace packet.'
-    : simulation.status === 'block'
-      ? 'Repair the blocked tool simulation before executing this route.'
-      : execution.status === 'block'
-        ? 'Repair or name the blocked read-only tool result before answering.'
-        : activeCooldownProviderIds.length > 0
-          ? 'Proceed with degraded-provider wording until cooldowns expire or provider diagnostics recover.'
-          : blockedSpanCount > 0
-            ? 'Inspect blocked trace spans and rerun after repair.'
-            : replayPacket.latestRun.nextAction;
+  let nextAction = replayPacket.latestRun?.nextAction || '';
+  if (!replayPacket.latestRun) {
+    nextAction = 'Run one cognitive task to create a trace packet.';
+  } else if (
+    replayPacket.governanceDecisions.some(
+      (decision) => decision.status === 'block',
+    )
+  ) {
+    nextAction =
+      replayPacket.governanceDecisions.find(
+        (decision) => decision.status === 'block',
+      )?.nextAction || 'Repair the blocked governance decision.';
+  } else if (simulation.status === 'block') {
+    nextAction =
+      'Repair the blocked tool simulation before executing this route.';
+  } else if (execution.status === 'block') {
+    nextAction =
+      'Repair or name the blocked read-only tool result before answering.';
+  } else if (activeCooldownProviderIds.length > 0) {
+    nextAction =
+      'Proceed with degraded-provider wording until cooldowns expire or provider diagnostics recover.';
+  } else if (blockedSpanCount > 0) {
+    nextAction = 'Inspect blocked trace spans and rerun after repair.';
+  }
   return {
     generatedAt,
     ok,
@@ -4846,6 +6069,11 @@ export function buildCognitiveTraceReport(
     evidenceArtifactCount: replayPacket.evidenceArtifacts.length,
     approvalPacketCount: replayPacket.approvalPackets.length,
     trajectoryScore: latestTrajectory?.overallScore ?? null,
+    governanceDecisionCount: replayPacket.governanceDecisions.length,
+    handoffCount: replayPacket.handoffs.length,
+    memoryBlockCount: replayPacket.memoryBlocks.length,
+    riskSignalCount: replayPacket.riskSignals.length,
+    workbenchStatus: latestWorkbench?.status || 'none',
     planRevisionCount: execution.planRevisions,
     activeCooldownProviderIds,
     nextAction,
@@ -4872,6 +6100,11 @@ export function formatCognitiveTraceReport(
       `Evidence artifacts: ${report.evidenceArtifactCount}`,
       `Approval packets: ${report.approvalPacketCount}`,
       `Trajectory score: ${report.trajectoryScore ?? 'none'}`,
+      `Governance decisions: ${report.governanceDecisionCount}`,
+      `Handoffs: ${report.handoffCount}`,
+      `Memory blocks: ${report.memoryBlockCount}`,
+      `Risk signals: ${report.riskSignalCount}`,
+      `Workbench: ${report.workbenchStatus}`,
       `Plan revisions: ${report.planRevisionCount}`,
       `Tool results: ${report.replayPacket.toolResults.length}`,
       `Policy decisions: ${report.replayPacket.policyDecisions.length}`,
@@ -4993,6 +6226,29 @@ export function formatCognitiveDoctorReport(
     `Promoted route: ${report.trajectory.promotedRoute}`,
     `Demoted adapters: ${report.trajectory.demotedAdapters.join(', ') || 'none'}`,
     `Trajectory next: ${report.trajectory.nextAction || 'none'}`,
+    '',
+    'Governance',
+    `Policies: ${report.governance.policies}`,
+    `Decisions: ${report.governance.decisions}`,
+    `Allow/warn/staged/block: ${report.governance.allow}/${report.governance.warn}/${report.governance.staged}/${report.governance.blocked}`,
+    `Tripwires: ${report.governance.triggeredTripwires}`,
+    `Risk signals: ${report.governance.riskSignals}`,
+    `Governance next: ${report.governance.nextAction || 'none'}`,
+    '',
+    'Workbench',
+    `Status: ${report.workbench.status}`,
+    `Handoffs: ${report.workbench.handoffs}`,
+    `Memory blocks: ${report.workbench.memoryBlocks}`,
+    `Active goal: ${report.workbench.activeGoalId || 'none'}`,
+    `Selected skill: ${report.workbench.selectedSkillId || 'none'}`,
+    `Workbench next: ${report.workbench.nextAction || 'none'}`,
+    '',
+    'Memory Blocks',
+    `Blocks: ${report.memoryBlocks.total}`,
+    `Conflicted: ${report.memoryBlocks.conflicted}`,
+    `Blocked: ${report.memoryBlocks.blocked}`,
+    `Max poisoning risk: ${report.memoryBlocks.poisoningRiskMax.toFixed(2)}`,
+    `Kinds: ${report.memoryBlocks.latestKinds.join(', ') || 'none'}`,
   ];
   if (report.activeRun) {
     lines.push(

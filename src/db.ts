@@ -20,7 +20,83 @@ import {
   AlexaOAuthAuthorizationCodeRecord,
   AlexaOAuthRefreshTokenRecord,
   AlexaPendingSession,
+  AgencyConvergenceAgenda,
+  AgencyConvergenceDecision,
+  AgencyConvergenceRun,
+  AgencyLoopOutcome,
+  AgencyProviderParticipationPlan,
+  AgencyResumePlan,
   AgentThreadState,
+  AgentOSCapabilityDiscoveryReport,
+  AgentOSEpisode,
+  AgentOSEpisodeStep,
+  AgentOSInterrupt,
+  AgentOSResumeToken,
+  AgentOSRoleHandoff,
+  AgentOSSkillProposal,
+  AgentOSPlanArtifact,
+  AgentOSReplayRun,
+  AgentOSToolCard,
+  AgentOSTaskNode,
+  AgentOSTrajectoryEval,
+  HarnessEvalTask,
+  HarnessImprovementProposal,
+  HarnessScorecard,
+  HarnessTrajectory,
+  HarnessVariant,
+  LogicBeliefRevision,
+  LogicBeliefState,
+  LogicClaim,
+  LogicClaimTransition,
+  LogicContradiction,
+  LogicDecision,
+  LogicEvidenceLink,
+  LogicHypothesis,
+  LogicHypothesisSet,
+  LogicMissingPremise,
+  LogicResolutionDecision,
+  LogicUsefulnessScore,
+  TruthAnswerAudit,
+  TruthClaim,
+  TruthContradictionCheck,
+  TruthEvidenceSupport,
+  TruthRewriteDirective,
+  TruthSourceCoverage,
+  AgentRuntimeCheckpoint,
+  AgentRuntimeEvidencePacket,
+  AgentRuntimeEvent,
+  AgentRuntimeGuardrailResult,
+  AgentRuntimeInterrupt,
+  AgentRuntimeResumeToken,
+  AgentRuntimeRun,
+  AgentRuntimeSkillManifest,
+  AgentRuntimeStep,
+  AgentRuntimeWrite,
+  SupervisorAgendaItem,
+  SupervisorBlackboard,
+  SupervisorBlackboardPatch,
+  SupervisorBudget,
+  SupervisorDecision,
+  SupervisorHandoffMessage,
+  SupervisorLoopState,
+  SupervisorParticipant,
+  SupervisorReplayPacket,
+  SupervisorRun,
+  SupervisorTerminationCondition,
+  SessionCluster,
+  SessionContinuityThread,
+  SessionGraphEdge,
+  SessionGraphLinkDecision,
+  SessionGraphNode,
+  SessionGraphSnapshot,
+  SessionGraphSuggestion,
+  WorldModelClaim,
+  WorldModelEvidenceRef,
+  WorldModelOpenQuestion,
+  WorldModelRiskState,
+  WorldModelSkillTrustState,
+  WorldModelSnapshot,
+  WorldModelVerificationNeed,
   CommunicationSignalRecord,
   CommunicationThreadRecord,
   CompanionHandoffRecord,
@@ -44,17 +120,24 @@ import {
   CognitiveAutonomyBudgetRecord,
   CognitiveBenchmarkAttemptRecord,
   CognitiveBlackboardEntryRecord,
+  CognitiveActionIdentity,
   CognitiveApprovalPacket,
   CognitiveCheckpointRecord,
   CognitiveEvidenceArtifact,
   CognitiveExecutionStep,
   CognitiveExecutionLoopState,
   CognitiveGoalRecord,
+  CognitiveGovernanceDecision,
+  CognitiveGovernancePolicy,
+  CognitiveGuardrailTripwire,
+  CognitiveHandoff,
+  CognitiveMemoryBlock,
   CognitivePlanRevision,
   CognitivePolicyDecision,
   CognitiveProviderCooldown,
   CognitiveReflectionRecord,
   CognitiveReplayPacket,
+  CognitiveRiskSignal,
   CognitiveRewardSignalRecord,
   CognitiveRunRecord,
   CognitiveRunEvent,
@@ -66,6 +149,29 @@ import {
   CognitiveTrajectoryScore,
   CognitiveToolRegistryRecord,
   CognitiveTraceSpan,
+  CognitiveWorkbenchState,
+  CognitiveContextBudget,
+  CognitiveGoalStack,
+  CognitiveImprovementProposal,
+  CognitiveOptimizationScorecard,
+  CognitivePolicyVariant,
+  CognitiveProgramManifest,
+  CognitiveProgramRun,
+  CognitiveWorkspaceContextBlock,
+  CognitiveWorkspacePacket,
+  CognitiveExecutiveRunRecord,
+  CognitiveExecutiveToolChoice,
+  CognitiveReflectionSignal,
+  CognitiveWorldSnapshot,
+  AgenticEvalScenarioResult,
+  CriticReviewRecord,
+  ReliabilityObservation,
+  RepairAttemptRecord,
+  RepairCooldownRecord,
+  RouteConfidenceRollup,
+  ToolDependencyLink,
+  ToolReliabilityRollup,
+  ToolReliabilitySubject,
   CognitiveWorldBeliefRecord,
   MissionRecord,
   MissionStepRecord,
@@ -94,8 +200,39 @@ import type { CalendarAutomationRecordInput } from './calendar-automations.js';
 
 let db: Database.Database;
 
+export function isDatabaseInitialized(): boolean {
+  return Boolean(db && db.open);
+}
+
 function redactStoredCognitiveMetadata(value: string, limit = 12000): string {
   return redactCouncilText(value || '', limit);
+}
+
+function sanitizeStoredIdArrayJson(value: string, limit = 12000): string {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    if (!Array.isArray(parsed)) {
+      return redactStoredCognitiveMetadata(value, limit);
+    }
+    const ids = parsed
+      .map((item) =>
+        String(item)
+          .replace(/[^A-Za-z0-9:_-]+/g, '_')
+          .slice(0, 220),
+      )
+      .filter(Boolean);
+    const json = JSON.stringify(ids);
+    if (json.length <= limit) return json;
+    const kept: string[] = [];
+    for (const id of ids) {
+      const next = JSON.stringify({ truncated: true, ids: [...kept, id] });
+      if (next.length > limit) break;
+      kept.push(id);
+    }
+    return JSON.stringify({ truncated: true, ids: kept });
+  } catch {
+    return redactStoredCognitiveMetadata(value, limit);
+  }
 }
 
 export interface CursorOperatorContextRecord {
@@ -1590,6 +1727,1909 @@ function createSchema(database: Database.Database): void {
       ON cognitive_provider_cooldowns(status, cooldown_until DESC);
     CREATE INDEX IF NOT EXISTS idx_cognitive_provider_cooldowns_updated
       ON cognitive_provider_cooldowns(updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_governance_policies (
+      policy_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      policy_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      version TEXT NOT NULL,
+      default_action TEXT NOT NULL,
+      read_only_allowed INTEGER NOT NULL,
+      mutating_allowed INTEGER NOT NULL,
+      approval_required_for_high_risk INTEGER NOT NULL,
+      risk_classes_json TEXT NOT NULL,
+      source_pattern_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_governance_policies_status
+      ON cognitive_governance_policies(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_action_identities (
+      action_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      action_class TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      policy_class TEXT NOT NULL,
+      channel TEXT,
+      target_kind TEXT,
+      target_summary TEXT NOT NULL,
+      side_effect_class TEXT NOT NULL,
+      identity_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_action_identities_run
+      ON cognitive_action_identities(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_action_identities_tool
+      ON cognitive_action_identities(tool_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_governance_decisions (
+      decision_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      action_id TEXT,
+      policy_id TEXT NOT NULL,
+      intervention_point TEXT NOT NULL,
+      status TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      risk_classes_json TEXT NOT NULL,
+      tripwire_ids_json TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (action_id) REFERENCES cognitive_action_identities(action_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_governance_decisions_run
+      ON cognitive_governance_decisions(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_governance_decisions_status
+      ON cognitive_governance_decisions(status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_guardrail_tripwires (
+      tripwire_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      tool_id TEXT,
+      risk_class TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      triggered INTEGER NOT NULL,
+      source TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_guardrail_tripwires_run
+      ON cognitive_guardrail_tripwires(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_guardrail_tripwires_risk
+      ON cognitive_guardrail_tripwires(risk_class, triggered, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_handoffs (
+      handoff_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      from_role TEXT NOT NULL,
+      to_role TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      governance_decision_id TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (governance_decision_id) REFERENCES cognitive_governance_decisions(decision_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_handoffs_run
+      ON cognitive_handoffs(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_handoffs_status
+      ON cognitive_handoffs(status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_risk_signals (
+      signal_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      risk_class TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      governance_decision_id TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (governance_decision_id) REFERENCES cognitive_governance_decisions(decision_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_risk_signals_run
+      ON cognitive_risk_signals(run_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_risk_signals_status
+      ON cognitive_risk_signals(status, severity, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_memory_blocks (
+      block_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      block_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      source_ids_json TEXT NOT NULL,
+      freshness TEXT NOT NULL,
+      sensitivity TEXT NOT NULL,
+      conflict_flags_json TEXT NOT NULL,
+      poisoning_risk REAL NOT NULL,
+      governance_decision_id TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (governance_decision_id) REFERENCES cognitive_governance_decisions(decision_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_memory_blocks_run
+      ON cognitive_memory_blocks(run_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_memory_blocks_kind_status
+      ON cognitive_memory_blocks(block_kind, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_workbench_states (
+      workbench_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      active_goal_id TEXT,
+      selected_skill_id TEXT,
+      handoff_count INTEGER NOT NULL,
+      governance_decision_count INTEGER NOT NULL,
+      memory_block_count INTEGER NOT NULL,
+      risk_signal_count INTEGER NOT NULL,
+      approval_packet_count INTEGER NOT NULL,
+      next_action TEXT NOT NULL,
+      state_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_workbench_states_run
+      ON cognitive_workbench_states(run_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_workbench_states_status
+      ON cognitive_workbench_states(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_os_episodes (
+      episode_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      channel TEXT,
+      root_run_id TEXT,
+      active_run_id TEXT,
+      goal_summary TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      status TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      priority REAL NOT NULL,
+      linked_run_ids_json TEXT NOT NULL,
+      council_run_ids_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      interrupt_ids_json TEXT NOT NULL,
+      approval_packet_ids_json TEXT NOT NULL,
+      memory_block_ids_json TEXT NOT NULL,
+      trajectory_eval_ids_json TEXT NOT NULL,
+      source_coverage_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      completed_at TEXT,
+      FOREIGN KEY (root_run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL,
+      FOREIGN KEY (active_run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_episodes_group_status
+      ON agent_os_episodes(group_folder, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_os_episodes_task_updated
+      ON agent_os_episodes(task_family, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_os_episode_steps (
+      step_id TEXT PRIMARY KEY,
+      episode_id TEXT NOT NULL,
+      run_id TEXT,
+      created_at TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      step_kind TEXT NOT NULL,
+      actor_role TEXT,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      governance_decision_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (episode_id) REFERENCES agent_os_episodes(episode_id) ON DELETE CASCADE,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_episode_steps_episode
+      ON agent_os_episode_steps(episode_id, position ASC);
+    CREATE TABLE IF NOT EXISTS agent_os_interrupts (
+      interrupt_id TEXT PRIMARY KEY,
+      episode_id TEXT NOT NULL,
+      run_id TEXT,
+      checkpoint_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      interrupt_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      resume_token_id TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (episode_id) REFERENCES agent_os_episodes(episode_id) ON DELETE CASCADE,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL,
+      FOREIGN KEY (checkpoint_id) REFERENCES cognitive_checkpoints(checkpoint_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_interrupts_episode_status
+      ON agent_os_interrupts(episode_id, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_os_resume_tokens (
+      resume_token_id TEXT PRIMARY KEY,
+      episode_id TEXT NOT NULL,
+      interrupt_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      continuation_key TEXT NOT NULL,
+      safe_state_json TEXT NOT NULL,
+      expires_at TEXT,
+      used_at TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (episode_id) REFERENCES agent_os_episodes(episode_id) ON DELETE CASCADE,
+      FOREIGN KEY (interrupt_id) REFERENCES agent_os_interrupts(interrupt_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_resume_tokens_status
+      ON agent_os_resume_tokens(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_os_tool_cards (
+      tool_card_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      source_tool_id TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      capability_kind TEXT NOT NULL,
+      policy_class TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      approval_policy TEXT NOT NULL,
+      health_state TEXT NOT NULL,
+      evidence_produced_json TEXT NOT NULL,
+      cooldown_json TEXT NOT NULL,
+      source_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_tool_cards_kind_health
+      ON agent_os_tool_cards(capability_kind, health_state, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_os_role_handoffs (
+      handoff_id TEXT PRIMARY KEY,
+      episode_id TEXT NOT NULL,
+      run_id TEXT,
+      created_at TEXT NOT NULL,
+      from_role TEXT NOT NULL,
+      to_role TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      governance_decision_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (episode_id) REFERENCES agent_os_episodes(episode_id) ON DELETE CASCADE,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_role_handoffs_episode
+      ON agent_os_role_handoffs(episode_id, created_at ASC);
+    CREATE TABLE IF NOT EXISTS agent_os_trajectory_evals (
+      eval_id TEXT PRIMARY KEY,
+      episode_id TEXT NOT NULL,
+      run_id TEXT,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      overall_score REAL NOT NULL,
+      source_coverage REAL NOT NULL,
+      interrupt_safety REAL NOT NULL,
+      approval_safety REAL NOT NULL,
+      tool_usefulness REAL NOT NULL,
+      verification_strength REAL NOT NULL,
+      privacy_safety REAL NOT NULL,
+      promotion_eligible INTEGER NOT NULL,
+      demotion_signals_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (episode_id) REFERENCES agent_os_episodes(episode_id) ON DELETE CASCADE,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_trajectory_evals_episode
+      ON agent_os_trajectory_evals(episode_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_os_skill_proposals (
+      proposal_id TEXT PRIMARY KEY,
+      episode_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      trigger_summary TEXT NOT NULL,
+      skill_summary TEXT NOT NULL,
+      required_tool_card_ids_json TEXT NOT NULL,
+      evidence_needs_json TEXT NOT NULL,
+      approval_rules_json TEXT NOT NULL,
+      verification_checklist_json TEXT NOT NULL,
+      outcome_score REAL NOT NULL,
+      source_episode_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (episode_id) REFERENCES agent_os_episodes(episode_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_skill_proposals_status
+      ON agent_os_skill_proposals(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_os_plan_artifacts (
+      plan_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      status TEXT NOT NULL,
+      plan_only INTEGER NOT NULL,
+      dag_json TEXT NOT NULL,
+      node_ids_json TEXT NOT NULL,
+      governed_tool_nodes_json TEXT NOT NULL,
+      guardrail_decisions_json TEXT NOT NULL,
+      evidence_mappings_json TEXT NOT NULL,
+      cooldown_policies_json TEXT NOT NULL,
+      approval_packet_json TEXT NOT NULL,
+      source_pattern_refs_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_plan_artifacts_task_status
+      ON agent_os_plan_artifacts(task_family, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_os_task_nodes (
+      node_id TEXT PRIMARY KEY,
+      plan_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      node_kind TEXT NOT NULL,
+      role TEXT NOT NULL,
+      status TEXT NOT NULL,
+      policy_class TEXT NOT NULL,
+      approval_required INTEGER NOT NULL,
+      can_run_in_parallel INTEGER NOT NULL,
+      depends_on_node_ids_json TEXT NOT NULL,
+      required_evidence_json TEXT NOT NULL,
+      stop_condition TEXT NOT NULL,
+      tool_card_ids_json TEXT NOT NULL,
+      guardrail_json TEXT NOT NULL,
+      output_evidence_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (plan_id) REFERENCES agent_os_plan_artifacts(plan_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_task_nodes_plan
+      ON agent_os_task_nodes(plan_id, position ASC);
+    CREATE TABLE IF NOT EXISTS agent_os_replay_runs (
+      replay_id TEXT PRIMARY KEY,
+      plan_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      replayed_node_ids_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      policy_decisions_json TEXT NOT NULL,
+      planner_skipped INTEGER NOT NULL,
+      approval_required INTEGER NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (plan_id) REFERENCES agent_os_plan_artifacts(plan_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_os_replay_runs_plan
+      ON agent_os_replay_runs(plan_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS logic_claims (
+      claim_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      predicate TEXT NOT NULL,
+      object_summary TEXT NOT NULL,
+      normalized_text TEXT NOT NULL,
+      claim_kind TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      probability REAL NOT NULL,
+      sensitivity TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source_episode_id TEXT,
+      source_run_id TEXT,
+      evidence_ids_json TEXT NOT NULL,
+      contradiction_ids_json TEXT NOT NULL,
+      supersedes_claim_id TEXT,
+      requires_confirmation INTEGER NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (source_episode_id) REFERENCES agent_os_episodes(episode_id) ON DELETE SET NULL,
+      FOREIGN KEY (source_run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_claims_subject_status
+      ON logic_claims(subject, status, updated_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_logic_claims_normalized
+      ON logic_claims(normalized_text);
+    CREATE TABLE IF NOT EXISTS logic_evidence_links (
+      link_id TEXT PRIMARY KEY,
+      claim_id TEXT NOT NULL,
+      evidence_id TEXT NOT NULL,
+      evidence_kind TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      support TEXT NOT NULL,
+      strength REAL NOT NULL,
+      freshness TEXT NOT NULL,
+      sensitivity TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (claim_id) REFERENCES logic_claims(claim_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_evidence_links_claim
+      ON logic_evidence_links(claim_id);
+    CREATE TABLE IF NOT EXISTS logic_contradictions (
+      contradiction_id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      claim_id_a TEXT NOT NULL,
+      claim_id_b TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (claim_id_a) REFERENCES logic_claims(claim_id) ON DELETE CASCADE,
+      FOREIGN KEY (claim_id_b) REFERENCES logic_claims(claim_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_contradictions_subject_status
+      ON logic_contradictions(subject, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS logic_hypotheses (
+      hypothesis_id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      claim_ids_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      probability REAL NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_hypotheses_subject_status
+      ON logic_hypotheses(subject, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS logic_usefulness_scores (
+      action_id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      episode_id TEXT,
+      created_at TEXT NOT NULL,
+      action_label TEXT NOT NULL,
+      action_kind TEXT NOT NULL,
+      expected_usefulness REAL NOT NULL,
+      effort REAL NOT NULL,
+      reversibility REAL NOT NULL,
+      risk REAL NOT NULL,
+      urgency REAL NOT NULL,
+      user_preference_fit REAL NOT NULL,
+      evidence_sufficiency REAL NOT NULL,
+      total_score REAL NOT NULL,
+      approval_required INTEGER NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (episode_id) REFERENCES agent_os_episodes(episode_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_usefulness_scores_subject_score
+      ON logic_usefulness_scores(subject, total_score DESC, created_at DESC);
+    CREATE TABLE IF NOT EXISTS logic_missing_premises (
+      premise_id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      episode_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      question TEXT NOT NULL,
+      blocker_class TEXT NOT NULL,
+      required_evidence_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (episode_id) REFERENCES agent_os_episodes(episode_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_missing_premises_subject_status
+      ON logic_missing_premises(subject, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS logic_decisions (
+      decision_id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      episode_id TEXT,
+      run_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      selected_claim_ids_json TEXT NOT NULL,
+      selected_hypothesis_id TEXT,
+      selected_action_id TEXT,
+      confidence REAL NOT NULL,
+      utility REAL NOT NULL,
+      rationale_summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (episode_id) REFERENCES agent_os_episodes(episode_id) ON DELETE SET NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_decisions_subject_updated
+      ON logic_decisions(subject, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS logic_belief_states (
+      belief_state_id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      top_claim_ids_json TEXT NOT NULL,
+      hypothesis_ids_json TEXT NOT NULL,
+      contradiction_ids_json TEXT NOT NULL,
+      missing_premise_ids_json TEXT NOT NULL,
+      decision_id TEXT,
+      confidence REAL NOT NULL,
+      probability REAL NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (decision_id) REFERENCES logic_decisions(decision_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_belief_states_subject_updated
+      ON logic_belief_states(subject, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS logic_claim_transitions (
+      transition_id TEXT PRIMARY KEY,
+      claim_id TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      from_status TEXT NOT NULL,
+      to_status TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      evidence_freshness TEXT NOT NULL,
+      source_ids_json TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (claim_id) REFERENCES logic_claims(claim_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_claim_transitions_subject
+      ON logic_claim_transitions(subject, created_at DESC);
+    CREATE TABLE IF NOT EXISTS logic_hypothesis_sets (
+      hypothesis_set_id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      hypothesis_ids_json TEXT NOT NULL,
+      preferred_hypothesis_id TEXT,
+      probability_summary_json TEXT NOT NULL,
+      uncertainty_summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_hypothesis_sets_subject
+      ON logic_hypothesis_sets(subject, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS logic_belief_revisions (
+      revision_id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      previous_belief_state_id TEXT,
+      next_belief_state_id TEXT,
+      transition_ids_json TEXT NOT NULL,
+      hypothesis_set_id TEXT,
+      confidence_before REAL NOT NULL,
+      confidence_after REAL NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (previous_belief_state_id) REFERENCES logic_belief_states(belief_state_id) ON DELETE SET NULL,
+      FOREIGN KEY (next_belief_state_id) REFERENCES logic_belief_states(belief_state_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_belief_revisions_subject
+      ON logic_belief_revisions(subject, created_at DESC);
+    CREATE TABLE IF NOT EXISTS logic_resolution_decisions (
+      resolution_id TEXT PRIMARY KEY,
+      subject TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      claim_ids_json TEXT NOT NULL,
+      transition_ids_json TEXT NOT NULL,
+      resolved_contradiction_ids_json TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      rationale_summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_logic_resolution_decisions_subject
+      ON logic_resolution_decisions(subject, created_at DESC);
+    CREATE TABLE IF NOT EXISTS truth_answer_audits (
+      audit_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      turn_id TEXT,
+      channel TEXT,
+      task_family TEXT,
+      subject TEXT NOT NULL,
+      status TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      support_grade TEXT NOT NULL,
+      claim_ids_json TEXT NOT NULL,
+      unsupported_claim_ids_json TEXT NOT NULL,
+      contradiction_check_ids_json TEXT NOT NULL,
+      rewrite_directive_ids_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      risk_flags_json TEXT NOT NULL,
+      verdict_summary TEXT NOT NULL,
+      rewritten_text_summary TEXT NOT NULL,
+      best_next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_truth_answer_audits_subject
+      ON truth_answer_audits(subject, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_truth_answer_audits_status
+      ON truth_answer_audits(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS truth_claims (
+      claim_id TEXT PRIMARY KEY,
+      audit_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      claim_text TEXT NOT NULL,
+      normalized_text TEXT NOT NULL,
+      claim_kind TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      support_grade TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      risk_flags_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (audit_id) REFERENCES truth_answer_audits(audit_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_truth_claims_audit
+      ON truth_claims(audit_id, support_grade);
+    CREATE TABLE IF NOT EXISTS truth_evidence_support (
+      support_id TEXT PRIMARY KEY,
+      audit_id TEXT NOT NULL,
+      claim_id TEXT NOT NULL,
+      evidence_id TEXT NOT NULL,
+      evidence_kind TEXT NOT NULL,
+      support TEXT NOT NULL,
+      strength REAL NOT NULL,
+      freshness TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (audit_id) REFERENCES truth_answer_audits(audit_id) ON DELETE CASCADE,
+      FOREIGN KEY (claim_id) REFERENCES truth_claims(claim_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_truth_evidence_support_audit
+      ON truth_evidence_support(audit_id);
+    CREATE TABLE IF NOT EXISTS truth_contradiction_checks (
+      check_id TEXT PRIMARY KEY,
+      audit_id TEXT NOT NULL,
+      claim_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      contradiction_ids_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (audit_id) REFERENCES truth_answer_audits(audit_id) ON DELETE CASCADE,
+      FOREIGN KEY (claim_id) REFERENCES truth_claims(claim_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_truth_contradiction_checks_audit
+      ON truth_contradiction_checks(audit_id);
+    CREATE TABLE IF NOT EXISTS truth_rewrite_directives (
+      directive_id TEXT PRIMARY KEY,
+      audit_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      directive TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      suggested_text TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (audit_id) REFERENCES truth_answer_audits(audit_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_truth_rewrite_directives_audit
+      ON truth_rewrite_directives(audit_id);
+    CREATE TABLE IF NOT EXISTS truth_source_coverage (
+      source_coverage_id TEXT PRIMARY KEY,
+      audit_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      coverage_grade TEXT NOT NULL,
+      source_ids_json TEXT NOT NULL,
+      stale_source_ids_json TEXT NOT NULL,
+      missing_source_classes_json TEXT NOT NULL,
+      provider_participation_json TEXT NOT NULL,
+      integration_proof_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (audit_id) REFERENCES truth_answer_audits(audit_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_truth_source_coverage_audit
+      ON truth_source_coverage(audit_id);
+    CREATE TABLE IF NOT EXISTS world_model_snapshots (
+      snapshot_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      logic_belief_state_id TEXT,
+      truth_audit_id TEXT,
+      agent_os_episode_id TEXT,
+      cognitive_run_id TEXT,
+      freshness_policy_json TEXT NOT NULL,
+      claim_ids_json TEXT NOT NULL,
+      evidence_ref_ids_json TEXT NOT NULL,
+      verification_need_ids_json TEXT NOT NULL,
+      open_question_ids_json TEXT NOT NULL,
+      risk_state_ids_json TEXT NOT NULL,
+      skill_trust_ids_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      best_next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_world_model_snapshots_created
+      ON world_model_snapshots(created_at DESC);
+    CREATE TABLE IF NOT EXISTS world_model_evidence_refs (
+      evidence_ref_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      source_kind TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      freshness TEXT NOT NULL,
+      trust TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_world_model_evidence_refs_snapshot
+      ON world_model_evidence_refs(snapshot_id, domain);
+    CREATE TABLE IF NOT EXISTS world_model_claims (
+      claim_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      claim_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      evidence_ref_ids_json TEXT NOT NULL,
+      verification_need_ids_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_world_model_claims_snapshot
+      ON world_model_claims(snapshot_id, domain, status);
+    CREATE TABLE IF NOT EXISTS world_model_verification_needs (
+      need_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      status TEXT NOT NULL,
+      action_kind TEXT NOT NULL,
+      safe_to_run_automatically INTEGER NOT NULL,
+      command TEXT NOT NULL,
+      blocker_class TEXT NOT NULL,
+      evidence_ref_ids_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_world_model_needs_snapshot
+      ON world_model_verification_needs(snapshot_id, status, domain);
+    CREATE TABLE IF NOT EXISTS world_model_open_questions (
+      question_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      status TEXT NOT NULL,
+      question TEXT NOT NULL,
+      required_evidence_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_world_model_questions_snapshot
+      ON world_model_open_questions(snapshot_id, status, domain);
+    CREATE TABLE IF NOT EXISTS world_model_risk_states (
+      risk_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      status TEXT NOT NULL,
+      risk_class TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_world_model_risks_snapshot
+      ON world_model_risk_states(snapshot_id, status, severity);
+    CREATE TABLE IF NOT EXISTS world_model_skill_trust (
+      skill_trust_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      skill_id TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      status TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      outcome_score REAL NOT NULL,
+      source_ids_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_world_model_skill_trust_snapshot
+      ON world_model_skill_trust(snapshot_id, status, task_family);
+    CREATE TABLE IF NOT EXISTS agent_runtime_runs (
+      runtime_run_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      status TEXT NOT NULL,
+      turn_id TEXT,
+      channel TEXT,
+      group_folder TEXT,
+      goal_summary TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      world_snapshot_id TEXT,
+      agent_os_episode_id TEXT,
+      cognitive_run_id TEXT,
+      council_run_id TEXT,
+      logic_belief_state_id TEXT,
+      truth_audit_id TEXT,
+      checkpoint_ids_json TEXT NOT NULL,
+      write_ids_json TEXT NOT NULL,
+      step_ids_json TEXT NOT NULL,
+      evidence_packet_ids_json TEXT NOT NULL,
+      interrupt_ids_json TEXT NOT NULL,
+      guardrail_result_ids_json TEXT NOT NULL,
+      outcome_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_runs_created
+      ON agent_runtime_runs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_runs_turn
+      ON agent_runtime_runs(turn_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_runtime_steps (
+      step_id TEXT PRIMARY KEY,
+      runtime_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      step_kind TEXT NOT NULL,
+      layer TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      refs_json TEXT NOT NULL,
+      evidence_packet_ids_json TEXT NOT NULL,
+      guardrail_result_ids_json TEXT NOT NULL,
+      checkpoint_id TEXT,
+      write_id TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_steps_run
+      ON agent_runtime_steps(runtime_run_id, position);
+    CREATE TABLE IF NOT EXISTS agent_runtime_checkpoints (
+      checkpoint_id TEXT PRIMARY KEY,
+      runtime_run_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      checkpoint_ns TEXT NOT NULL DEFAULT '',
+      parent_checkpoint_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      checkpoint_json TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      pending_write_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_checkpoints_thread
+      ON agent_runtime_checkpoints(thread_id, checkpoint_ns, created_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_runtime_writes (
+      write_id TEXT PRIMARY KEY,
+      checkpoint_id TEXT NOT NULL,
+      runtime_run_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      idx INTEGER NOT NULL,
+      channel TEXT NOT NULL,
+      write_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      value_summary_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      applied_at TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE,
+      FOREIGN KEY (checkpoint_id) REFERENCES agent_runtime_checkpoints(checkpoint_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_writes_checkpoint
+      ON agent_runtime_writes(checkpoint_id, task_id, idx);
+    CREATE TABLE IF NOT EXISTS agent_runtime_guardrail_results (
+      guardrail_result_id TEXT PRIMARY KEY,
+      runtime_run_id TEXT NOT NULL,
+      step_id TEXT,
+      created_at TEXT NOT NULL,
+      intervention_point TEXT NOT NULL,
+      behavior TEXT NOT NULL,
+      status TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      allowed INTEGER NOT NULL,
+      transformed INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      message TEXT NOT NULL,
+      risk_flags_json TEXT NOT NULL,
+      output_info_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_guardrails_run
+      ON agent_runtime_guardrail_results(runtime_run_id, status);
+    CREATE TABLE IF NOT EXISTS agent_runtime_interrupts (
+      interrupt_id TEXT PRIMARY KEY,
+      runtime_run_id TEXT NOT NULL,
+      checkpoint_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      interrupt_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      resume_token_id TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_interrupts_run
+      ON agent_runtime_interrupts(runtime_run_id, status);
+    CREATE TABLE IF NOT EXISTS agent_runtime_resume_tokens (
+      resume_token_id TEXT PRIMARY KEY,
+      runtime_run_id TEXT NOT NULL,
+      interrupt_id TEXT NOT NULL,
+      checkpoint_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      continuation_key TEXT NOT NULL,
+      safe_state_json TEXT NOT NULL,
+      expires_at TEXT,
+      used_at TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE,
+      FOREIGN KEY (interrupt_id) REFERENCES agent_runtime_interrupts(interrupt_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_resume_tokens_run
+      ON agent_runtime_resume_tokens(runtime_run_id, status);
+    CREATE TABLE IF NOT EXISTS agent_runtime_events (
+      event_id TEXT PRIMARY KEY,
+      runtime_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      event_kind TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      truncated INTEGER NOT NULL,
+      refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_events_run
+      ON agent_runtime_events(runtime_run_id, created_at);
+    CREATE TABLE IF NOT EXISTS agent_runtime_evidence_packets (
+      evidence_packet_id TEXT PRIMARY KEY,
+      runtime_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      source_layer TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      support_grade TEXT NOT NULL,
+      freshness TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      citation_coverage REAL NOT NULL,
+      contradiction_tier TEXT NOT NULL,
+      return_policy_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_evidence_run
+      ON agent_runtime_evidence_packets(runtime_run_id, source_layer);
+    CREATE TABLE IF NOT EXISTS agent_runtime_skill_manifests (
+      manifest_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      skill_id TEXT NOT NULL,
+      source_kind TEXT NOT NULL,
+      precedence INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      frontmatter_json TEXT NOT NULL,
+      trigger_json TEXT NOT NULL,
+      tool_refs_json TEXT NOT NULL,
+      approval_rules_json TEXT NOT NULL,
+      evidence_needs_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_skill_manifests_skill
+      ON agent_runtime_skill_manifests(skill_id, precedence DESC, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS supervisor_runs (
+      supervisor_run_id TEXT PRIMARY KEY,
+      runtime_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      goal_summary TEXT NOT NULL,
+      active_participant TEXT NOT NULL,
+      turn_count INTEGER NOT NULL,
+      read_only_tool_steps INTEGER NOT NULL,
+      council_calls INTEGER NOT NULL,
+      clarification_requests INTEGER NOT NULL,
+      blackboard_id TEXT NOT NULL,
+      budget_id TEXT NOT NULL,
+      termination_id TEXT,
+      participant_ids_json TEXT NOT NULL,
+      agenda_item_ids_json TEXT NOT NULL,
+      handoff_ids_json TEXT NOT NULL,
+      decision_ids_json TEXT NOT NULL,
+      blackboard_patch_ids_json TEXT NOT NULL,
+      replay_packet_id TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_runs_runtime
+      ON supervisor_runs(runtime_run_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_supervisor_runs_status
+      ON supervisor_runs(status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS supervisor_participants (
+      participant_id TEXT PRIMARY KEY,
+      supervisor_run_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      instructions_summary TEXT NOT NULL,
+      tool_policy_json TEXT NOT NULL,
+      handoff_targets_json TEXT NOT NULL,
+      source_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (supervisor_run_id) REFERENCES supervisor_runs(supervisor_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_participants_run
+      ON supervisor_participants(supervisor_run_id, role);
+    CREATE TABLE IF NOT EXISTS supervisor_blackboards (
+      blackboard_id TEXT PRIMARY KEY,
+      supervisor_run_id TEXT NOT NULL,
+      runtime_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      goal_summary TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      claim_ids_json TEXT NOT NULL,
+      proof_debt_json TEXT NOT NULL,
+      blocker_json TEXT NOT NULL,
+      handoff_state_json TEXT NOT NULL,
+      approval_state_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (supervisor_run_id) REFERENCES supervisor_runs(supervisor_run_id) ON DELETE CASCADE,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_blackboards_run
+      ON supervisor_blackboards(supervisor_run_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS supervisor_blackboard_patches (
+      patch_id TEXT PRIMARY KEY,
+      blackboard_id TEXT NOT NULL,
+      supervisor_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      participant_role TEXT NOT NULL,
+      patch_kind TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      refs_json TEXT NOT NULL,
+      patch_json TEXT NOT NULL,
+      rejected INTEGER NOT NULL,
+      rejection_reason TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (blackboard_id) REFERENCES supervisor_blackboards(blackboard_id) ON DELETE CASCADE,
+      FOREIGN KEY (supervisor_run_id) REFERENCES supervisor_runs(supervisor_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_patches_run
+      ON supervisor_blackboard_patches(supervisor_run_id, created_at);
+    CREATE TABLE IF NOT EXISTS supervisor_agenda_items (
+      agenda_item_id TEXT PRIMARY KEY,
+      supervisor_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      owner_role TEXT NOT NULL,
+      item_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      policy_class TEXT NOT NULL,
+      required_evidence_json TEXT NOT NULL,
+      result_refs_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (supervisor_run_id) REFERENCES supervisor_runs(supervisor_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_agenda_run
+      ON supervisor_agenda_items(supervisor_run_id, position);
+    CREATE TABLE IF NOT EXISTS supervisor_handoffs (
+      handoff_id TEXT PRIMARY KEY,
+      supervisor_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      from_role TEXT NOT NULL,
+      to_role TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (supervisor_run_id) REFERENCES supervisor_runs(supervisor_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_handoffs_run
+      ON supervisor_handoffs(supervisor_run_id, created_at);
+    CREATE TABLE IF NOT EXISTS supervisor_decisions (
+      decision_id TEXT PRIMARY KEY,
+      supervisor_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      participant_role TEXT NOT NULL,
+      decision_kind TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      risk_flags_json TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (supervisor_run_id) REFERENCES supervisor_runs(supervisor_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_decisions_run
+      ON supervisor_decisions(supervisor_run_id, created_at);
+    CREATE TABLE IF NOT EXISTS supervisor_terminations (
+      termination_id TEXT PRIMARY KEY,
+      supervisor_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (supervisor_run_id) REFERENCES supervisor_runs(supervisor_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_terminations_run
+      ON supervisor_terminations(supervisor_run_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS supervisor_loop_states (
+      loop_state_id TEXT PRIMARY KEY,
+      supervisor_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      turn_index INTEGER NOT NULL,
+      active_role TEXT NOT NULL,
+      next_role TEXT,
+      max_turns INTEGER NOT NULL,
+      completed_agenda_ids_json TEXT NOT NULL,
+      pending_agenda_ids_json TEXT NOT NULL,
+      termination_id TEXT,
+      status TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (supervisor_run_id) REFERENCES supervisor_runs(supervisor_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_loop_states_run
+      ON supervisor_loop_states(supervisor_run_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS supervisor_budgets (
+      budget_id TEXT PRIMARY KEY,
+      supervisor_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      max_turns INTEGER NOT NULL,
+      max_read_only_tool_steps INTEGER NOT NULL,
+      max_council_calls INTEGER NOT NULL,
+      max_clarification_requests INTEGER NOT NULL,
+      used_turns INTEGER NOT NULL,
+      used_read_only_tool_steps INTEGER NOT NULL,
+      used_council_calls INTEGER NOT NULL,
+      used_clarification_requests INTEGER NOT NULL,
+      exhausted INTEGER NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (supervisor_run_id) REFERENCES supervisor_runs(supervisor_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_budgets_run
+      ON supervisor_budgets(supervisor_run_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS supervisor_replay_packets (
+      replay_packet_id TEXT PRIMARY KEY,
+      supervisor_run_id TEXT NOT NULL,
+      runtime_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      blackboard_id TEXT NOT NULL,
+      checkpoint_ids_json TEXT NOT NULL,
+      handoff_ids_json TEXT NOT NULL,
+      decision_ids_json TEXT NOT NULL,
+      agenda_item_ids_json TEXT NOT NULL,
+      termination_id TEXT,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (supervisor_run_id) REFERENCES supervisor_runs(supervisor_run_id) ON DELETE CASCADE,
+      FOREIGN KEY (runtime_run_id) REFERENCES agent_runtime_runs(runtime_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_replay_packets_run
+      ON supervisor_replay_packets(supervisor_run_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS session_graph_snapshots (
+      snapshot_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      node_count INTEGER NOT NULL,
+      edge_count INTEGER NOT NULL,
+      cluster_count INTEGER NOT NULL,
+      suggestion_count INTEGER NOT NULL,
+      source_ledger_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_graph_snapshots_created
+      ON session_graph_snapshots(created_at DESC);
+    CREATE TABLE IF NOT EXISTS session_graph_nodes (
+      node_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      node_kind TEXT NOT NULL,
+      source_kind TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      group_folder TEXT,
+      channel TEXT,
+      thread_key TEXT,
+      person_key TEXT,
+      status TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      summary TEXT NOT NULL,
+      refs_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES session_graph_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_graph_nodes_snapshot
+      ON session_graph_nodes(snapshot_id, node_kind, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_graph_nodes_thread
+      ON session_graph_nodes(thread_key, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS session_graph_edges (
+      edge_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      edge_kind TEXT NOT NULL,
+      from_node_id TEXT NOT NULL,
+      to_node_id TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      review_needed INTEGER NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES session_graph_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_graph_edges_snapshot
+      ON session_graph_edges(snapshot_id, edge_kind, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_graph_edges_nodes
+      ON session_graph_edges(from_node_id, to_node_id);
+    CREATE TABLE IF NOT EXISTS session_clusters (
+      cluster_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      current_theme TEXT NOT NULL,
+      node_ids_json TEXT NOT NULL,
+      edge_ids_json TEXT NOT NULL,
+      linked_surfaces_json TEXT NOT NULL,
+      active_blockers_json TEXT NOT NULL,
+      stale_proof_json TEXT NOT NULL,
+      open_approvals_json TEXT NOT NULL,
+      last_meaningful_activity_at TEXT,
+      evidence_ids_json TEXT NOT NULL,
+      best_next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES session_graph_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_clusters_snapshot
+      ON session_clusters(snapshot_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS session_continuity_threads (
+      continuity_thread_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      cluster_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      node_ids_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES session_graph_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_continuity_threads_snapshot
+      ON session_continuity_threads(snapshot_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS session_graph_suggestions (
+      suggestion_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      cluster_id TEXT,
+      created_at TEXT NOT NULL,
+      suggestion_kind TEXT NOT NULL,
+      priority REAL NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      source_node_ids_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      approval_required INTEGER NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES session_graph_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_graph_suggestions_snapshot
+      ON session_graph_suggestions(snapshot_id, priority DESC, created_at DESC);
+    CREATE TABLE IF NOT EXISTS session_graph_link_decisions (
+      decision_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      edge_id TEXT NOT NULL,
+      decision_status TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      reason TEXT NOT NULL,
+      source_node_ids_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES session_graph_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_graph_link_decisions_snapshot
+      ON session_graph_link_decisions(snapshot_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS agency_convergence_runs (
+      convergence_run_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      status TEXT NOT NULL,
+      selected_action_id TEXT,
+      selected_action_kind TEXT,
+      session_snapshot_id TEXT,
+      refreshed_session_snapshot_id TEXT,
+      world_snapshot_id TEXT,
+      runtime_run_id TEXT,
+      supervisor_run_id TEXT,
+      cognitive_run_id TEXT,
+      logic_belief_state_id TEXT,
+      truth_audit_id TEXT,
+      harness_trajectory_id TEXT,
+      source_ids_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      outcome_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agency_convergence_runs_created
+      ON agency_convergence_runs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agency_convergence_runs_status
+      ON agency_convergence_runs(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS agency_convergence_agendas (
+      agenda_id TEXT PRIMARY KEY,
+      convergence_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      policy_class TEXT NOT NULL,
+      selected_action_id TEXT,
+      action_kind TEXT,
+      priority REAL NOT NULL,
+      action_summary TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (convergence_run_id) REFERENCES agency_convergence_runs(convergence_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agency_convergence_agendas_run
+      ON agency_convergence_agendas(convergence_run_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS agency_convergence_decisions (
+      decision_id TEXT PRIMARY KEY,
+      convergence_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      decision_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      risk_flags_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (convergence_run_id) REFERENCES agency_convergence_runs(convergence_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agency_convergence_decisions_run
+      ON agency_convergence_decisions(convergence_run_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS agency_resume_plans (
+      resume_plan_id TEXT PRIMARY KEY,
+      convergence_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      runtime_run_id TEXT,
+      checkpoint_id TEXT,
+      resume_token_id TEXT,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (convergence_run_id) REFERENCES agency_convergence_runs(convergence_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agency_resume_plans_run
+      ON agency_resume_plans(convergence_run_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS agency_provider_participation_plans (
+      participation_plan_id TEXT PRIMARY KEY,
+      convergence_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      healthy_provider_ids_json TEXT NOT NULL,
+      blocked_provider_ids_json TEXT NOT NULL,
+      skipped_provider_ids_json TEXT NOT NULL,
+      cooldown_provider_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (convergence_run_id) REFERENCES agency_convergence_runs(convergence_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agency_provider_plans_run
+      ON agency_provider_participation_plans(convergence_run_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS agency_loop_outcomes (
+      outcome_id TEXT PRIMARY KEY,
+      convergence_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      runtime_run_id TEXT,
+      truth_audit_id TEXT,
+      refreshed_session_snapshot_id TEXT,
+      outcome_score REAL NOT NULL,
+      flags_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (convergence_run_id) REFERENCES agency_convergence_runs(convergence_run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agency_loop_outcomes_run
+      ON agency_loop_outcomes(convergence_run_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_workspace_packets (
+      packet_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      goal_stack_json TEXT NOT NULL,
+      context_budget_json TEXT NOT NULL,
+      session_snapshot_id TEXT,
+      session_cluster_id TEXT,
+      convergence_run_id TEXT,
+      world_snapshot_id TEXT,
+      runtime_run_id TEXT,
+      supervisor_run_id TEXT,
+      agent_os_episode_id TEXT,
+      cognitive_run_id TEXT,
+      logic_belief_state_id TEXT,
+      truth_audit_id TEXT,
+      council_run_id TEXT,
+      provider_plan_id TEXT,
+      selected_program_id TEXT,
+      context_block_ids_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      approval_blockers_json TEXT NOT NULL,
+      checkpoint_ids_json TEXT NOT NULL,
+      optimization_scorecard_id TEXT,
+      next_safe_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_workspace_packets_created
+      ON cognitive_workspace_packets(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_workspace_packets_status
+      ON cognitive_workspace_packets(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_workspace_context_blocks (
+      block_id TEXT PRIMARY KEY,
+      packet_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      block_kind TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      source_ids_json TEXT NOT NULL,
+      freshness TEXT NOT NULL,
+      sensitivity TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      priority REAL NOT NULL,
+      token_budget INTEGER NOT NULL,
+      included INTEGER NOT NULL,
+      summary TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      conflicts_json TEXT NOT NULL,
+      withheld_reason TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (packet_id) REFERENCES cognitive_workspace_packets(packet_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_workspace_blocks_packet
+      ON cognitive_workspace_context_blocks(packet_id, priority DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_program_manifests (
+      program_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      trigger_summary TEXT NOT NULL,
+      program_summary TEXT NOT NULL,
+      source_trajectory_ids_json TEXT NOT NULL,
+      required_evidence_json TEXT NOT NULL,
+      allowed_tools_json TEXT NOT NULL,
+      approval_rules_json TEXT NOT NULL,
+      verifier_checks_json TEXT NOT NULL,
+      failure_modes_json TEXT NOT NULL,
+      outcome_score REAL NOT NULL,
+      promotion_reason TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_program_manifests_status
+      ON cognitive_program_manifests(status, outcome_score DESC, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_program_runs (
+      program_run_id TEXT PRIMARY KEY,
+      packet_id TEXT NOT NULL,
+      program_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      selected INTEGER NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      policy_result_json TEXT NOT NULL,
+      outcome_score REAL NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (packet_id) REFERENCES cognitive_workspace_packets(packet_id) ON DELETE CASCADE,
+      FOREIGN KEY (program_id) REFERENCES cognitive_program_manifests(program_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_program_runs_packet
+      ON cognitive_program_runs(packet_id, selected DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_policy_variants (
+      variant_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      variant_kind TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      changed_knobs_json TEXT NOT NULL,
+      safety_baseline_json TEXT NOT NULL,
+      source_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_policy_variants_status
+      ON cognitive_policy_variants(status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_improvement_proposals (
+      improvement_proposal_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      proposal_kind TEXT NOT NULL,
+      source_packet_id TEXT,
+      source_scorecard_id TEXT,
+      summary TEXT NOT NULL,
+      expected_score_delta REAL NOT NULL,
+      safety_regression INTEGER NOT NULL,
+      changed_artifacts_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_improvement_proposals_status
+      ON cognitive_improvement_proposals(status, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_optimization_scorecards (
+      scorecard_id TEXT PRIMARY KEY,
+      packet_id TEXT,
+      proposal_id TEXT,
+      variant_id TEXT,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      context_score REAL NOT NULL,
+      program_score REAL NOT NULL,
+      policy_safety_score REAL NOT NULL,
+      evidence_score REAL NOT NULL,
+      truth_score REAL NOT NULL,
+      privacy_score REAL NOT NULL,
+      total_score REAL NOT NULL,
+      failure_flags_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (packet_id) REFERENCES cognitive_workspace_packets(packet_id) ON DELETE CASCADE,
+      FOREIGN KEY (proposal_id) REFERENCES cognitive_improvement_proposals(improvement_proposal_id) ON DELETE SET NULL,
+      FOREIGN KEY (variant_id) REFERENCES cognitive_policy_variants(variant_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_optimization_scorecards_status
+      ON cognitive_optimization_scorecards(status, total_score DESC, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_executive_runs (
+      run_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT,
+      thread_id TEXT,
+      actor_id TEXT,
+      intent_family TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      route_class TEXT NOT NULL,
+      route_key TEXT NOT NULL,
+      capability_id TEXT,
+      approval_required INTEGER NOT NULL,
+      request_summary TEXT NOT NULL,
+      state_summary TEXT NOT NULL,
+      plan_summary TEXT NOT NULL,
+      result_summary TEXT NOT NULL,
+      explanation_json TEXT NOT NULL,
+      used_context_json TEXT NOT NULL,
+      ignored_context_json TEXT NOT NULL,
+      degraded_tools_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      snapshot_id TEXT,
+      outcome_signal_id TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_executive_runs_created
+      ON cognitive_executive_runs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_executive_runs_route
+      ON cognitive_executive_runs(group_folder, intent_family, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_executive_snapshots (
+      snapshot_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      status TEXT NOT NULL,
+      current_focus TEXT NOT NULL,
+      items_json TEXT NOT NULL,
+      used_item_ids_json TEXT NOT NULL,
+      omitted_item_ids_json TEXT NOT NULL,
+      degraded_tools_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_executive_snapshots_created
+      ON cognitive_executive_snapshots(created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_executive_tool_choices (
+      choice_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      capability_id TEXT,
+      selected INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      approval_required INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      fallback_tool_id TEXT,
+      risk_flags_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_executive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_executive_tool_choices_run
+      ON cognitive_executive_tool_choices(run_id, selected DESC, created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_executive_reflection_signals (
+      signal_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      route_key TEXT NOT NULL,
+      capability_id TEXT,
+      signal_kind TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      route_confidence REAL NOT NULL,
+      fallback_used INTEGER NOT NULL,
+      user_response TEXT,
+      friction_key TEXT,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES cognitive_executive_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_executive_reflections_run
+      ON cognitive_executive_reflection_signals(run_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_executive_reflections_friction
+      ON cognitive_executive_reflection_signals(friction_key, created_at DESC);
+    CREATE TABLE IF NOT EXISTS tool_reliability_subjects (
+      subject_id TEXT PRIMARY KEY,
+      subject_kind TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      aliases_json TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      approval_requirement TEXT NOT NULL,
+      channels_json TEXT NOT NULL,
+      source_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_reliability_subjects_kind
+      ON tool_reliability_subjects(subject_kind, display_name);
+    CREATE TABLE IF NOT EXISTS tool_dependency_links (
+      link_id TEXT PRIMARY KEY,
+      subject_id TEXT NOT NULL,
+      dependency_subject_id TEXT NOT NULL,
+      dependency_kind TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      fallback_subject_id TEXT,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_dependency_links_subject
+      ON tool_dependency_links(subject_id, dependency_kind);
+    CREATE TABLE IF NOT EXISTS reliability_observations (
+      observation_id TEXT PRIMARY KEY,
+      subject_id TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      source_kind TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      failure_class TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      fallback_used INTEGER NOT NULL,
+      latency_ms INTEGER,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_reliability_observations_subject
+      ON reliability_observations(subject_id, observed_at DESC);
+    CREATE TABLE IF NOT EXISTS tool_reliability_rollups (
+      subject_id TEXT PRIMARY KEY,
+      updated_at TEXT NOT NULL,
+      sample_count INTEGER NOT NULL,
+      success_rate REAL NOT NULL,
+      degraded_rate REAL NOT NULL,
+      blocked_rate REAL NOT NULL,
+      fallback_rate REAL NOT NULL,
+      reliability_score REAL NOT NULL,
+      current_health TEXT NOT NULL,
+      confidence_cap REAL NOT NULL,
+      cooldown_until TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_reliability_rollups_health
+      ON tool_reliability_rollups(current_health, reliability_score);
+    CREATE TABLE IF NOT EXISTS route_confidence_rollups (
+      route_key TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      attempts INTEGER NOT NULL,
+      average_predicted_confidence REAL NOT NULL,
+      empirical_success_rate REAL NOT NULL,
+      calibration_gap REAL NOT NULL,
+      correction_rate REAL NOT NULL,
+      recommended_confidence_cap REAL NOT NULL,
+      recommended_fallback TEXT,
+      privacy_json TEXT NOT NULL,
+      PRIMARY KEY (route_key, channel)
+    );
+    CREATE TABLE IF NOT EXISTS repair_attempts (
+      attempt_id TEXT PRIMARY KEY,
+      playbook_id TEXT NOT NULL,
+      integration_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      failure_class TEXT NOT NULL,
+      safe_to_apply INTEGER NOT NULL,
+      dry_run INTEGER NOT NULL,
+      validation_status TEXT NOT NULL,
+      rollback_status TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      cooldown_until TEXT,
+      evidence_ids_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_repair_attempts_target
+      ON repair_attempts(integration_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS repair_cooldowns (
+      cooldown_id TEXT PRIMARY KEY,
+      target_id TEXT NOT NULL,
+      playbook_id TEXT NOT NULL,
+      failure_class TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_repair_cooldowns_target
+      ON repair_cooldowns(target_id, expires_at DESC);
+    CREATE TABLE IF NOT EXISTS critic_reviews (
+      review_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      action TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      approval_required INTEGER NOT NULL,
+      risk_flags_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_critic_reviews_created
+      ON critic_reviews(created_at DESC);
+    CREATE TABLE IF NOT EXISTS agentic_eval_results (
+      result_id TEXT PRIMARY KEY,
+      scenario_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      route_score REAL NOT NULL,
+      tool_score REAL NOT NULL,
+      repair_score REAL NOT NULL,
+      safety_score REAL NOT NULL,
+      reflection_score REAL NOT NULL,
+      answer_score REAL NOT NULL,
+      failures_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agentic_eval_results_scenario
+      ON agentic_eval_results(scenario_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS harness_eval_tasks (
+      task_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      prompt_summary TEXT NOT NULL,
+      expected_evidence_json TEXT NOT NULL,
+      safety_invariant_json TEXT NOT NULL,
+      source_pattern_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_harness_eval_tasks_family
+      ON harness_eval_tasks(task_family, created_at DESC);
+    CREATE TABLE IF NOT EXISTS harness_trajectories (
+      trajectory_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      plan_id TEXT,
+      replay_id TEXT,
+      belief_revision_ids_json TEXT NOT NULL,
+      tool_call_summary_json TEXT NOT NULL,
+      guardrail_decision_ids_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      outcome_json TEXT NOT NULL,
+      next_repair_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (task_id) REFERENCES harness_eval_tasks(task_id) ON DELETE CASCADE,
+      FOREIGN KEY (plan_id) REFERENCES agent_os_plan_artifacts(plan_id) ON DELETE SET NULL,
+      FOREIGN KEY (replay_id) REFERENCES agent_os_replay_runs(replay_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_harness_trajectories_task
+      ON harness_trajectories(task_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS harness_variants (
+      variant_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      policy_summary TEXT NOT NULL,
+      changed_knobs_json TEXT NOT NULL,
+      safety_baseline_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_harness_variants_family
+      ON harness_variants(task_family, created_at DESC);
+    CREATE TABLE IF NOT EXISTS harness_scorecards (
+      scorecard_id TEXT PRIMARY KEY,
+      trajectory_id TEXT NOT NULL,
+      variant_id TEXT,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      planning_score REAL NOT NULL,
+      memory_score REAL NOT NULL,
+      tool_safety_score REAL NOT NULL,
+      evidence_score REAL NOT NULL,
+      belief_score REAL NOT NULL,
+      outcome_score REAL NOT NULL,
+      privacy_score REAL NOT NULL,
+      total_score REAL NOT NULL,
+      failure_flags_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (trajectory_id) REFERENCES harness_trajectories(trajectory_id) ON DELETE CASCADE,
+      FOREIGN KEY (variant_id) REFERENCES harness_variants(variant_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_harness_scorecards_status
+      ON harness_scorecards(status, total_score DESC, created_at DESC);
+    CREATE TABLE IF NOT EXISTS harness_improvement_proposals (
+      proposal_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      proposal_kind TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      expected_score_delta REAL NOT NULL,
+      safety_regression INTEGER NOT NULL,
+      source_trajectory_ids_json TEXT NOT NULL,
+      changed_artifacts_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_harness_improvement_proposals_status
+      ON harness_improvement_proposals(status, expected_score_delta DESC, created_at DESC);
     CREATE TABLE IF NOT EXISTS runtime_orchestration_jobs (
       job_id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -1994,6 +4034,22 @@ export function initDatabase(): void {
     cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
     retainLimit: 1000,
   });
+  pruneWorldModelData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
+  pruneAgentRuntimeSpineData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
+  pruneSupervisorData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
+  pruneSessionGraphData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
 
   // Migrate from JSON files if they exist
   migrateJsonState();
@@ -2012,6 +4068,22 @@ export function _initTestDatabase(): void {
     retainLimit: 1000,
   });
   pruneCognitiveKernelData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
+  pruneWorldModelData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
+  pruneAgentRuntimeSpineData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
+  pruneSupervisorData({
+    cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+    retainLimit: 1000,
+  });
+  pruneSessionGraphData({
     cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
     retainLimit: 1000,
   });
@@ -10363,6 +12435,831 @@ export function listCognitiveTrajectoryScores(
   return rows.map((row) => mapCognitiveTrajectoryScoreRow(row));
 }
 
+function mapCognitiveGovernancePolicyRow(row: {
+  policy_id: string;
+  created_at: string;
+  updated_at: string;
+  policy_name: string;
+  status: CognitiveGovernancePolicy['status'];
+  version: string;
+  default_action: CognitiveGovernancePolicy['defaultAction'];
+  read_only_allowed: number;
+  mutating_allowed: number;
+  approval_required_for_high_risk: number;
+  risk_classes_json: string;
+  source_pattern_refs_json: string;
+  privacy_json: string;
+}): CognitiveGovernancePolicy {
+  return {
+    policyId: row.policy_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    policyName: row.policy_name,
+    status: row.status,
+    version: row.version,
+    defaultAction: row.default_action,
+    readOnlyAllowed: row.read_only_allowed === 1,
+    mutatingAllowed: row.mutating_allowed === 1,
+    approvalRequiredForHighRisk: row.approval_required_for_high_risk === 1,
+    riskClassesJson: row.risk_classes_json,
+    sourcePatternRefsJson: row.source_pattern_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveGovernancePolicy(
+  record: CognitiveGovernancePolicy,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_governance_policies (
+        policy_id, created_at, updated_at, policy_name, status, version,
+        default_action, read_only_allowed, mutating_allowed,
+        approval_required_for_high_risk, risk_classes_json,
+        source_pattern_refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(policy_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        policy_name = excluded.policy_name,
+        status = excluded.status,
+        version = excluded.version,
+        default_action = excluded.default_action,
+        read_only_allowed = excluded.read_only_allowed,
+        mutating_allowed = excluded.mutating_allowed,
+        approval_required_for_high_risk = excluded.approval_required_for_high_risk,
+        risk_classes_json = excluded.risk_classes_json,
+        source_pattern_refs_json = excluded.source_pattern_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.policyId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.policyName, 240),
+    record.status,
+    record.version,
+    record.defaultAction,
+    record.readOnlyAllowed ? 1 : 0,
+    record.mutatingAllowed ? 1 : 0,
+    record.approvalRequiredForHighRisk ? 1 : 0,
+    redactStoredCognitiveMetadata(record.riskClassesJson, 2400),
+    redactStoredCognitiveMetadata(record.sourcePatternRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveGovernancePolicies(
+  params: {
+    status?: CognitiveGovernancePolicy['status'];
+    limit?: number;
+  } = {},
+): CognitiveGovernancePolicy[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 20, 100)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_governance_policies
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveGovernancePolicyRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveGovernancePolicyRow(row));
+}
+
+function mapCognitiveActionIdentityRow(row: {
+  action_id: string;
+  created_at: string;
+  run_id: string;
+  tool_id: string;
+  action_class: string;
+  actor_role: CognitiveActionIdentity['actorRole'];
+  policy_class: CognitiveActionIdentity['policyClass'];
+  channel: string | null;
+  target_kind: string | null;
+  target_summary: string;
+  side_effect_class: CognitiveActionIdentity['sideEffectClass'];
+  identity_refs_json: string;
+  privacy_json: string;
+}): CognitiveActionIdentity {
+  return {
+    actionId: row.action_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    toolId: row.tool_id,
+    actionClass: row.action_class,
+    actorRole: row.actor_role,
+    policyClass: row.policy_class,
+    channel: row.channel,
+    targetKind: row.target_kind,
+    targetSummary: row.target_summary,
+    sideEffectClass: row.side_effect_class,
+    identityRefsJson: row.identity_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveActionIdentity(
+  record: CognitiveActionIdentity,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_action_identities (
+        action_id, created_at, run_id, tool_id, action_class, actor_role,
+        policy_class, channel, target_kind, target_summary,
+        side_effect_class, identity_refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(action_id) DO UPDATE SET
+        run_id = excluded.run_id,
+        tool_id = excluded.tool_id,
+        action_class = excluded.action_class,
+        actor_role = excluded.actor_role,
+        policy_class = excluded.policy_class,
+        channel = excluded.channel,
+        target_kind = excluded.target_kind,
+        target_summary = excluded.target_summary,
+        side_effect_class = excluded.side_effect_class,
+        identity_refs_json = excluded.identity_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.actionId,
+    record.createdAt,
+    record.runId,
+    record.toolId,
+    record.actionClass,
+    record.actorRole,
+    record.policyClass,
+    record.channel || null,
+    record.targetKind || null,
+    redactStoredCognitiveMetadata(record.targetSummary, 520),
+    record.sideEffectClass,
+    redactStoredCognitiveMetadata(record.identityRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveActionIdentities(
+  params: { runId?: string; toolId?: string; limit?: number } = {},
+): CognitiveActionIdentity[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.toolId) {
+    clauses.push('tool_id = ?');
+    args.push(params.toolId);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_action_identities
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveActionIdentityRow>[0]>;
+  return rows.map((row) => mapCognitiveActionIdentityRow(row));
+}
+
+function mapCognitiveGovernanceDecisionRow(row: {
+  decision_id: string;
+  created_at: string;
+  run_id: string;
+  tool_id: string;
+  action_id: string | null;
+  policy_id: string;
+  intervention_point: CognitiveGovernanceDecision['interventionPoint'];
+  status: CognitiveGovernanceDecision['status'];
+  risk_level: CognitiveGovernanceDecision['riskLevel'];
+  risk_classes_json: string;
+  tripwire_ids_json: string;
+  reason: string;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveGovernanceDecision {
+  return {
+    decisionId: row.decision_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    toolId: row.tool_id,
+    actionId: row.action_id,
+    policyId: row.policy_id,
+    interventionPoint: row.intervention_point,
+    status: row.status,
+    riskLevel: row.risk_level,
+    riskClassesJson: row.risk_classes_json,
+    tripwireIdsJson: row.tripwire_ids_json,
+    reason: row.reason,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveGovernanceDecision(
+  record: CognitiveGovernanceDecision,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_governance_decisions (
+        decision_id, created_at, run_id, tool_id, action_id, policy_id,
+        intervention_point, status, risk_level, risk_classes_json,
+        tripwire_ids_json, reason, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(decision_id) DO UPDATE SET
+        run_id = excluded.run_id,
+        tool_id = excluded.tool_id,
+        action_id = excluded.action_id,
+        policy_id = excluded.policy_id,
+        intervention_point = excluded.intervention_point,
+        status = excluded.status,
+        risk_level = excluded.risk_level,
+        risk_classes_json = excluded.risk_classes_json,
+        tripwire_ids_json = excluded.tripwire_ids_json,
+        reason = excluded.reason,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.decisionId,
+    record.createdAt,
+    record.runId,
+    record.toolId,
+    record.actionId || null,
+    record.policyId,
+    record.interventionPoint,
+    record.status,
+    record.riskLevel,
+    redactStoredCognitiveMetadata(record.riskClassesJson, 2400),
+    redactStoredCognitiveMetadata(record.tripwireIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.reason, 640),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveGovernanceDecisions(
+  params: {
+    runId?: string;
+    status?: CognitiveGovernanceDecision['status'];
+    limit?: number;
+  } = {},
+): CognitiveGovernanceDecision[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_governance_decisions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveGovernanceDecisionRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveGovernanceDecisionRow(row));
+}
+
+function mapCognitiveGuardrailTripwireRow(row: {
+  tripwire_id: string;
+  created_at: string;
+  run_id: string;
+  tool_id: string | null;
+  risk_class: CognitiveGuardrailTripwire['riskClass'];
+  severity: CognitiveGuardrailTripwire['severity'];
+  triggered: number;
+  source: CognitiveGuardrailTripwire['source'];
+  summary: string;
+  evidence_refs_json: string;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveGuardrailTripwire {
+  return {
+    tripwireId: row.tripwire_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    toolId: row.tool_id,
+    riskClass: row.risk_class,
+    severity: row.severity,
+    triggered: row.triggered === 1,
+    source: row.source,
+    summary: row.summary,
+    evidenceRefsJson: row.evidence_refs_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveGuardrailTripwire(
+  record: CognitiveGuardrailTripwire,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_guardrail_tripwires (
+        tripwire_id, created_at, run_id, tool_id, risk_class, severity,
+        triggered, source, summary, evidence_refs_json, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(tripwire_id) DO UPDATE SET
+        run_id = excluded.run_id,
+        tool_id = excluded.tool_id,
+        risk_class = excluded.risk_class,
+        severity = excluded.severity,
+        triggered = excluded.triggered,
+        source = excluded.source,
+        summary = excluded.summary,
+        evidence_refs_json = excluded.evidence_refs_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.tripwireId,
+    record.createdAt,
+    record.runId,
+    record.toolId || null,
+    record.riskClass,
+    record.severity,
+    record.triggered ? 1 : 0,
+    record.source,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.evidenceRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveGuardrailTripwires(
+  params: { runId?: string; triggered?: boolean; limit?: number } = {},
+): CognitiveGuardrailTripwire[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.triggered !== undefined) {
+    clauses.push('triggered = ?');
+    args.push(params.triggered ? 1 : 0);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_guardrail_tripwires
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveGuardrailTripwireRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveGuardrailTripwireRow(row));
+}
+
+function mapCognitiveHandoffRow(row: {
+  handoff_id: string;
+  created_at: string;
+  run_id: string;
+  from_role: CognitiveHandoff['fromRole'];
+  to_role: CognitiveHandoff['toRole'];
+  status: CognitiveHandoff['status'];
+  reason: string;
+  evidence_refs_json: string;
+  governance_decision_id: string | null;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveHandoff {
+  return {
+    handoffId: row.handoff_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    fromRole: row.from_role,
+    toRole: row.to_role,
+    status: row.status,
+    reason: row.reason,
+    evidenceRefsJson: row.evidence_refs_json,
+    governanceDecisionId: row.governance_decision_id,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveHandoff(record: CognitiveHandoff): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_handoffs (
+        handoff_id, created_at, run_id, from_role, to_role, status, reason,
+        evidence_refs_json, governance_decision_id, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(handoff_id) DO UPDATE SET
+        run_id = excluded.run_id,
+        from_role = excluded.from_role,
+        to_role = excluded.to_role,
+        status = excluded.status,
+        reason = excluded.reason,
+        evidence_refs_json = excluded.evidence_refs_json,
+        governance_decision_id = excluded.governance_decision_id,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.handoffId,
+    record.createdAt,
+    record.runId,
+    record.fromRole,
+    record.toRole,
+    record.status,
+    redactStoredCognitiveMetadata(record.reason, 640),
+    redactStoredCognitiveMetadata(record.evidenceRefsJson, 2400),
+    record.governanceDecisionId || null,
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveHandoffs(
+  params: {
+    runId?: string;
+    status?: CognitiveHandoff['status'];
+    limit?: number;
+  } = {},
+): CognitiveHandoff[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_handoffs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveHandoffRow>[0]>;
+  return rows.map((row) => mapCognitiveHandoffRow(row));
+}
+
+function mapCognitiveRiskSignalRow(row: {
+  signal_id: string;
+  created_at: string;
+  run_id: string;
+  risk_class: CognitiveRiskSignal['riskClass'];
+  severity: CognitiveRiskSignal['severity'];
+  status: CognitiveRiskSignal['status'];
+  source: CognitiveRiskSignal['source'];
+  summary: string;
+  evidence_refs_json: string;
+  governance_decision_id: string | null;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveRiskSignal {
+  return {
+    signalId: row.signal_id,
+    createdAt: row.created_at,
+    runId: row.run_id,
+    riskClass: row.risk_class,
+    severity: row.severity,
+    status: row.status,
+    source: row.source,
+    summary: row.summary,
+    evidenceRefsJson: row.evidence_refs_json,
+    governanceDecisionId: row.governance_decision_id,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveRiskSignal(record: CognitiveRiskSignal): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_risk_signals (
+        signal_id, created_at, run_id, risk_class, severity, status, source,
+        summary, evidence_refs_json, governance_decision_id, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(signal_id) DO UPDATE SET
+        run_id = excluded.run_id,
+        risk_class = excluded.risk_class,
+        severity = excluded.severity,
+        status = excluded.status,
+        source = excluded.source,
+        summary = excluded.summary,
+        evidence_refs_json = excluded.evidence_refs_json,
+        governance_decision_id = excluded.governance_decision_id,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.signalId,
+    record.createdAt,
+    record.runId,
+    record.riskClass,
+    record.severity,
+    record.status,
+    record.source,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.evidenceRefsJson, 2400),
+    record.governanceDecisionId || null,
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveRiskSignals(
+  params: {
+    runId?: string;
+    status?: CognitiveRiskSignal['status'];
+    limit?: number;
+  } = {},
+): CognitiveRiskSignal[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_risk_signals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveRiskSignalRow>[0]>;
+  return rows.map((row) => mapCognitiveRiskSignalRow(row));
+}
+
+function mapCognitiveMemoryBlockRow(row: {
+  block_id: string;
+  created_at: string;
+  updated_at: string;
+  run_id: string;
+  block_kind: CognitiveMemoryBlock['blockKind'];
+  status: CognitiveMemoryBlock['status'];
+  summary: string;
+  source_ids_json: string;
+  freshness: CognitiveMemoryBlock['freshness'];
+  sensitivity: CognitiveMemoryBlock['sensitivity'];
+  conflict_flags_json: string;
+  poisoning_risk: number;
+  governance_decision_id: string | null;
+  privacy_json: string;
+}): CognitiveMemoryBlock {
+  return {
+    blockId: row.block_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    runId: row.run_id,
+    blockKind: row.block_kind,
+    status: row.status,
+    summary: row.summary,
+    sourceIdsJson: row.source_ids_json,
+    freshness: row.freshness,
+    sensitivity: row.sensitivity,
+    conflictFlagsJson: row.conflict_flags_json,
+    poisoningRisk: row.poisoning_risk,
+    governanceDecisionId: row.governance_decision_id,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveMemoryBlock(record: CognitiveMemoryBlock): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_memory_blocks (
+        block_id, created_at, updated_at, run_id, block_kind, status, summary,
+        source_ids_json, freshness, sensitivity, conflict_flags_json,
+        poisoning_risk, governance_decision_id, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(block_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        run_id = excluded.run_id,
+        block_kind = excluded.block_kind,
+        status = excluded.status,
+        summary = excluded.summary,
+        source_ids_json = excluded.source_ids_json,
+        freshness = excluded.freshness,
+        sensitivity = excluded.sensitivity,
+        conflict_flags_json = excluded.conflict_flags_json,
+        poisoning_risk = excluded.poisoning_risk,
+        governance_decision_id = excluded.governance_decision_id,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.blockId,
+    record.createdAt,
+    record.updatedAt,
+    record.runId,
+    record.blockKind,
+    record.status,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.sourceIdsJson, 2400),
+    record.freshness,
+    record.sensitivity,
+    redactStoredCognitiveMetadata(record.conflictFlagsJson, 2400),
+    record.poisoningRisk,
+    record.governanceDecisionId || null,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveMemoryBlocks(
+  params: {
+    runId?: string;
+    blockKind?: CognitiveMemoryBlock['blockKind'];
+    status?: CognitiveMemoryBlock['status'];
+    limit?: number;
+  } = {},
+): CognitiveMemoryBlock[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.blockKind) {
+    clauses.push('block_kind = ?');
+    args.push(params.blockKind);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_memory_blocks
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveMemoryBlockRow>[0]>;
+  return rows.map((row) => mapCognitiveMemoryBlockRow(row));
+}
+
+function mapCognitiveWorkbenchStateRow(row: {
+  workbench_id: string;
+  created_at: string;
+  updated_at: string;
+  run_id: string;
+  status: CognitiveWorkbenchState['status'];
+  active_goal_id: string | null;
+  selected_skill_id: string | null;
+  handoff_count: number;
+  governance_decision_count: number;
+  memory_block_count: number;
+  risk_signal_count: number;
+  approval_packet_count: number;
+  next_action: string;
+  state_json: string;
+  privacy_json: string;
+}): CognitiveWorkbenchState {
+  return {
+    workbenchId: row.workbench_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    runId: row.run_id,
+    status: row.status,
+    activeGoalId: row.active_goal_id,
+    selectedSkillId: row.selected_skill_id,
+    handoffCount: row.handoff_count,
+    governanceDecisionCount: row.governance_decision_count,
+    memoryBlockCount: row.memory_block_count,
+    riskSignalCount: row.risk_signal_count,
+    approvalPacketCount: row.approval_packet_count,
+    nextAction: row.next_action,
+    stateJson: row.state_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveWorkbenchState(
+  record: CognitiveWorkbenchState,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_workbench_states (
+        workbench_id, created_at, updated_at, run_id, status, active_goal_id,
+        selected_skill_id, handoff_count, governance_decision_count,
+        memory_block_count, risk_signal_count, approval_packet_count,
+        next_action, state_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workbench_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        run_id = excluded.run_id,
+        status = excluded.status,
+        active_goal_id = excluded.active_goal_id,
+        selected_skill_id = excluded.selected_skill_id,
+        handoff_count = excluded.handoff_count,
+        governance_decision_count = excluded.governance_decision_count,
+        memory_block_count = excluded.memory_block_count,
+        risk_signal_count = excluded.risk_signal_count,
+        approval_packet_count = excluded.approval_packet_count,
+        next_action = excluded.next_action,
+        state_json = excluded.state_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.workbenchId,
+    record.createdAt,
+    record.updatedAt,
+    record.runId,
+    record.status,
+    record.activeGoalId || null,
+    record.selectedSkillId || null,
+    record.handoffCount,
+    record.governanceDecisionCount,
+    record.memoryBlockCount,
+    record.riskSignalCount,
+    record.approvalPacketCount,
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.stateJson, 3200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveWorkbenchStates(
+  params: {
+    runId?: string;
+    status?: CognitiveWorkbenchState['status'];
+    limit?: number;
+  } = {},
+): CognitiveWorkbenchState[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_workbench_states
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveWorkbenchStateRow>[0]>;
+  return rows.map((row) => mapCognitiveWorkbenchStateRow(row));
+}
+
 function mapCognitivePlanRevisionRow(row: {
   revision_id: string;
   created_at: string;
@@ -10691,6 +13588,31 @@ export function buildCognitiveReplayPacket(params: {
     trajectoryScores: runId
       ? listCognitiveTrajectoryScores({ runId, limit: params.limit || 100 })
       : [],
+    governancePolicies: listCognitiveGovernancePolicies({
+      status: 'active',
+      limit: 20,
+    }),
+    actionIdentities: runId
+      ? listCognitiveActionIdentities({ runId, limit: params.limit || 100 })
+      : [],
+    governanceDecisions: runId
+      ? listCognitiveGovernanceDecisions({ runId, limit: params.limit || 100 })
+      : [],
+    guardrailTripwires: runId
+      ? listCognitiveGuardrailTripwires({ runId, limit: params.limit || 100 })
+      : [],
+    handoffs: runId
+      ? listCognitiveHandoffs({ runId, limit: params.limit || 100 })
+      : [],
+    riskSignals: runId
+      ? listCognitiveRiskSignals({ runId, limit: params.limit || 100 })
+      : [],
+    memoryBlocks: runId
+      ? listCognitiveMemoryBlocks({ runId, limit: params.limit || 100 })
+      : [],
+    workbenchStates: runId
+      ? listCognitiveWorkbenchStates({ runId, limit: params.limit || 100 })
+      : [],
     providerCooldowns: listCognitiveProviderCooldowns({
       status: 'active',
       activeAt: params.generatedAt,
@@ -10707,6 +13629,10078 @@ export function buildCognitiveReplayPacket(params: {
       secretsRedacted: true,
     },
   };
+}
+
+function mapAgentOSEpisodeRow(row: {
+  episode_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  channel: string | null;
+  root_run_id: string | null;
+  active_run_id: string | null;
+  goal_summary: string;
+  task_family: string;
+  status: AgentOSEpisode['status'];
+  mode: AgentOSEpisode['mode'];
+  priority: number;
+  linked_run_ids_json: string;
+  council_run_ids_json: string;
+  evidence_ids_json: string;
+  interrupt_ids_json: string;
+  approval_packet_ids_json: string;
+  memory_block_ids_json: string;
+  trajectory_eval_ids_json: string;
+  source_coverage_json: string;
+  next_action: string;
+  privacy_json: string;
+  completed_at: string | null;
+}): AgentOSEpisode {
+  return {
+    episodeId: row.episode_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    channel: row.channel,
+    rootRunId: row.root_run_id,
+    activeRunId: row.active_run_id,
+    goalSummary: row.goal_summary,
+    taskFamily: row.task_family,
+    status: row.status,
+    mode: row.mode,
+    priority: row.priority,
+    linkedRunIdsJson: row.linked_run_ids_json,
+    councilRunIdsJson: row.council_run_ids_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    interruptIdsJson: row.interrupt_ids_json,
+    approvalPacketIdsJson: row.approval_packet_ids_json,
+    memoryBlockIdsJson: row.memory_block_ids_json,
+    trajectoryEvalIdsJson: row.trajectory_eval_ids_json,
+    sourceCoverageJson: row.source_coverage_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+    completedAt: row.completed_at,
+  };
+}
+
+export function upsertAgentOSEpisode(record: AgentOSEpisode): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO agent_os_episodes (
+        episode_id, created_at, updated_at, group_folder, channel,
+        root_run_id, active_run_id, goal_summary, task_family, status, mode,
+        priority, linked_run_ids_json, council_run_ids_json, evidence_ids_json,
+        interrupt_ids_json, approval_packet_ids_json, memory_block_ids_json,
+        trajectory_eval_ids_json, source_coverage_json, next_action,
+        privacy_json, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(episode_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        channel = excluded.channel,
+        root_run_id = excluded.root_run_id,
+        active_run_id = excluded.active_run_id,
+        goal_summary = excluded.goal_summary,
+        task_family = excluded.task_family,
+        status = excluded.status,
+        mode = excluded.mode,
+        priority = excluded.priority,
+        linked_run_ids_json = excluded.linked_run_ids_json,
+        council_run_ids_json = excluded.council_run_ids_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        interrupt_ids_json = excluded.interrupt_ids_json,
+        approval_packet_ids_json = excluded.approval_packet_ids_json,
+        memory_block_ids_json = excluded.memory_block_ids_json,
+        trajectory_eval_ids_json = excluded.trajectory_eval_ids_json,
+        source_coverage_json = excluded.source_coverage_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json,
+        completed_at = excluded.completed_at
+    `,
+  ).run(
+    record.episodeId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    record.channel || null,
+    record.rootRunId || null,
+    record.activeRunId || null,
+    redactStoredCognitiveMetadata(record.goalSummary, 640),
+    record.taskFamily,
+    record.status,
+    record.mode,
+    record.priority,
+    redactStoredCognitiveMetadata(record.linkedRunIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.councilRunIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.interruptIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.approvalPacketIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.memoryBlockIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.trajectoryEvalIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.sourceCoverageJson, 3200),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+    record.completedAt || null,
+  );
+}
+
+export function getAgentOSEpisode(
+  episodeId: string,
+): AgentOSEpisode | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_episodes
+        WHERE episode_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(episodeId) as Parameters<typeof mapAgentOSEpisodeRow>[0] | undefined;
+  return row ? mapAgentOSEpisodeRow(row) : undefined;
+}
+
+export function listAgentOSEpisodes(
+  params: {
+    groupFolder?: string | null;
+    status?: AgentOSEpisode['status'];
+    taskFamily?: string;
+    limit?: number;
+  } = {},
+): AgentOSEpisode[] {
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_episodes
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSEpisodeRow>[0]>;
+  return rows.map((row) => mapAgentOSEpisodeRow(row));
+}
+
+function mapAgentOSEpisodeStepRow(row: {
+  step_id: string;
+  episode_id: string;
+  run_id: string | null;
+  created_at: string;
+  position: number;
+  step_kind: AgentOSEpisodeStep['stepKind'];
+  actor_role: AgentOSEpisodeStep['actorRole'];
+  status: AgentOSEpisodeStep['status'];
+  summary: string;
+  evidence_refs_json: string;
+  governance_decision_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgentOSEpisodeStep {
+  return {
+    stepId: row.step_id,
+    episodeId: row.episode_id,
+    runId: row.run_id,
+    createdAt: row.created_at,
+    position: row.position,
+    stepKind: row.step_kind,
+    actorRole: row.actor_role,
+    status: row.status,
+    summary: row.summary,
+    evidenceRefsJson: row.evidence_refs_json,
+    governanceDecisionIdsJson: row.governance_decision_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentOSEpisodeStep(record: AgentOSEpisodeStep): void {
+  db.prepare(
+    `
+      INSERT INTO agent_os_episode_steps (
+        step_id, episode_id, run_id, created_at, position, step_kind,
+        actor_role, status, summary, evidence_refs_json,
+        governance_decision_ids_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(step_id) DO UPDATE SET
+        episode_id = excluded.episode_id,
+        run_id = excluded.run_id,
+        position = excluded.position,
+        step_kind = excluded.step_kind,
+        actor_role = excluded.actor_role,
+        status = excluded.status,
+        summary = excluded.summary,
+        evidence_refs_json = excluded.evidence_refs_json,
+        governance_decision_ids_json = excluded.governance_decision_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.stepId,
+    record.episodeId,
+    record.runId || null,
+    record.createdAt,
+    record.position,
+    record.stepKind,
+    record.actorRole || null,
+    record.status,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.evidenceRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.governanceDecisionIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentOSEpisodeSteps(
+  params: {
+    episodeId?: string;
+    runId?: string;
+    stepKind?: AgentOSEpisodeStep['stepKind'];
+    limit?: number;
+  } = {},
+): AgentOSEpisodeStep[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.episodeId) {
+    clauses.push('episode_id = ?');
+    args.push(params.episodeId);
+  }
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.stepKind) {
+    clauses.push('step_kind = ?');
+    args.push(params.stepKind);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_episode_steps
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY position ASC, created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSEpisodeStepRow>[0]>;
+  return rows.map((row) => mapAgentOSEpisodeStepRow(row));
+}
+
+function mapAgentOSInterruptRow(row: {
+  interrupt_id: string;
+  episode_id: string;
+  run_id: string | null;
+  checkpoint_id: string | null;
+  created_at: string;
+  updated_at: string;
+  interrupt_kind: AgentOSInterrupt['interruptKind'];
+  status: AgentOSInterrupt['status'];
+  payload_json: string;
+  resume_token_id: string | null;
+  next_action: string;
+  privacy_json: string;
+}): AgentOSInterrupt {
+  return {
+    interruptId: row.interrupt_id,
+    episodeId: row.episode_id,
+    runId: row.run_id,
+    checkpointId: row.checkpoint_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    interruptKind: row.interrupt_kind,
+    status: row.status,
+    payloadJson: row.payload_json,
+    resumeTokenId: row.resume_token_id,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentOSInterrupt(record: AgentOSInterrupt): void {
+  db.prepare(
+    `
+      INSERT INTO agent_os_interrupts (
+        interrupt_id, episode_id, run_id, checkpoint_id, created_at,
+        updated_at, interrupt_kind, status, payload_json, resume_token_id,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(interrupt_id) DO UPDATE SET
+        episode_id = excluded.episode_id,
+        run_id = excluded.run_id,
+        checkpoint_id = excluded.checkpoint_id,
+        updated_at = excluded.updated_at,
+        interrupt_kind = excluded.interrupt_kind,
+        status = excluded.status,
+        payload_json = excluded.payload_json,
+        resume_token_id = excluded.resume_token_id,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.interruptId,
+    record.episodeId,
+    record.runId || null,
+    record.checkpointId || null,
+    record.createdAt,
+    record.updatedAt,
+    record.interruptKind,
+    record.status,
+    redactStoredCognitiveMetadata(record.payloadJson, 3200),
+    record.resumeTokenId || null,
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentOSInterrupts(
+  params: {
+    episodeId?: string;
+    status?: AgentOSInterrupt['status'];
+    limit?: number;
+  } = {},
+): AgentOSInterrupt[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.episodeId) {
+    clauses.push('episode_id = ?');
+    args.push(params.episodeId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_interrupts
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSInterruptRow>[0]>;
+  return rows.map((row) => mapAgentOSInterruptRow(row));
+}
+
+function mapAgentOSResumeTokenRow(row: {
+  resume_token_id: string;
+  episode_id: string;
+  interrupt_id: string;
+  created_at: string;
+  updated_at: string;
+  status: AgentOSResumeToken['status'];
+  continuation_key: string;
+  safe_state_json: string;
+  expires_at: string | null;
+  used_at: string | null;
+  privacy_json: string;
+}): AgentOSResumeToken {
+  return {
+    resumeTokenId: row.resume_token_id,
+    episodeId: row.episode_id,
+    interruptId: row.interrupt_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    continuationKey: row.continuation_key,
+    safeStateJson: row.safe_state_json,
+    expiresAt: row.expires_at,
+    usedAt: row.used_at,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentOSResumeToken(record: AgentOSResumeToken): void {
+  db.prepare(
+    `
+      INSERT INTO agent_os_resume_tokens (
+        resume_token_id, episode_id, interrupt_id, created_at, updated_at,
+        status, continuation_key, safe_state_json, expires_at, used_at,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(resume_token_id) DO UPDATE SET
+        episode_id = excluded.episode_id,
+        interrupt_id = excluded.interrupt_id,
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        continuation_key = excluded.continuation_key,
+        safe_state_json = excluded.safe_state_json,
+        expires_at = excluded.expires_at,
+        used_at = excluded.used_at,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.resumeTokenId,
+    record.episodeId,
+    record.interruptId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    record.continuationKey,
+    redactStoredCognitiveMetadata(record.safeStateJson, 3200),
+    record.expiresAt || null,
+    record.usedAt || null,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentOSResumeTokens(
+  params: {
+    episodeId?: string;
+    interruptId?: string;
+    status?: AgentOSResumeToken['status'];
+    limit?: number;
+  } = {},
+): AgentOSResumeToken[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.episodeId) {
+    clauses.push('episode_id = ?');
+    args.push(params.episodeId);
+  }
+  if (params.interruptId) {
+    clauses.push('interrupt_id = ?');
+    args.push(params.interruptId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_resume_tokens
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSResumeTokenRow>[0]>;
+  return rows.map((row) => mapAgentOSResumeTokenRow(row));
+}
+
+function mapAgentOSToolCardRow(row: {
+  tool_card_id: string;
+  created_at: string;
+  updated_at: string;
+  source_tool_id: string;
+  display_name: string;
+  capability_kind: AgentOSToolCard['capabilityKind'];
+  policy_class: AgentOSToolCard['policyClass'];
+  risk_level: AgentOSToolCard['riskLevel'];
+  approval_policy: AgentOSToolCard['approvalPolicy'];
+  health_state: AgentOSToolCard['healthState'];
+  evidence_produced_json: string;
+  cooldown_json: string;
+  source_refs_json: string;
+  privacy_json: string;
+}): AgentOSToolCard {
+  return {
+    toolCardId: row.tool_card_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    sourceToolId: row.source_tool_id,
+    displayName: row.display_name,
+    capabilityKind: row.capability_kind,
+    policyClass: row.policy_class,
+    riskLevel: row.risk_level,
+    approvalPolicy: row.approval_policy,
+    healthState: row.health_state,
+    evidenceProducedJson: row.evidence_produced_json,
+    cooldownJson: row.cooldown_json,
+    sourceRefsJson: row.source_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentOSToolCard(record: AgentOSToolCard): void {
+  db.prepare(
+    `
+      INSERT INTO agent_os_tool_cards (
+        tool_card_id, created_at, updated_at, source_tool_id, display_name,
+        capability_kind, policy_class, risk_level, approval_policy,
+        health_state, evidence_produced_json, cooldown_json, source_refs_json,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(tool_card_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        source_tool_id = excluded.source_tool_id,
+        display_name = excluded.display_name,
+        capability_kind = excluded.capability_kind,
+        policy_class = excluded.policy_class,
+        risk_level = excluded.risk_level,
+        approval_policy = excluded.approval_policy,
+        health_state = excluded.health_state,
+        evidence_produced_json = excluded.evidence_produced_json,
+        cooldown_json = excluded.cooldown_json,
+        source_refs_json = excluded.source_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.toolCardId,
+    record.createdAt,
+    record.updatedAt,
+    record.sourceToolId,
+    redactStoredCognitiveMetadata(record.displayName, 240),
+    record.capabilityKind,
+    record.policyClass,
+    record.riskLevel,
+    record.approvalPolicy,
+    record.healthState,
+    redactStoredCognitiveMetadata(record.evidenceProducedJson, 2400),
+    redactStoredCognitiveMetadata(record.cooldownJson, 2400),
+    redactStoredCognitiveMetadata(record.sourceRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentOSToolCards(
+  params: {
+    capabilityKind?: AgentOSToolCard['capabilityKind'];
+    healthState?: AgentOSToolCard['healthState'];
+    limit?: number;
+  } = {},
+): AgentOSToolCard[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.capabilityKind) {
+    clauses.push('capability_kind = ?');
+    args.push(params.capabilityKind);
+  }
+  if (params.healthState) {
+    clauses.push('health_state = ?');
+    args.push(params.healthState);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_tool_cards
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSToolCardRow>[0]>;
+  return rows.map((row) => mapAgentOSToolCardRow(row));
+}
+
+function mapAgentOSRoleHandoffRow(row: {
+  handoff_id: string;
+  episode_id: string;
+  run_id: string | null;
+  created_at: string;
+  from_role: AgentOSRoleHandoff['fromRole'];
+  to_role: AgentOSRoleHandoff['toRole'];
+  status: AgentOSRoleHandoff['status'];
+  reason: string;
+  evidence_refs_json: string;
+  governance_decision_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgentOSRoleHandoff {
+  return {
+    handoffId: row.handoff_id,
+    episodeId: row.episode_id,
+    runId: row.run_id,
+    createdAt: row.created_at,
+    fromRole: row.from_role,
+    toRole: row.to_role,
+    status: row.status,
+    reason: row.reason,
+    evidenceRefsJson: row.evidence_refs_json,
+    governanceDecisionIdsJson: row.governance_decision_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentOSRoleHandoff(record: AgentOSRoleHandoff): void {
+  db.prepare(
+    `
+      INSERT INTO agent_os_role_handoffs (
+        handoff_id, episode_id, run_id, created_at, from_role, to_role,
+        status, reason, evidence_refs_json, governance_decision_ids_json,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(handoff_id) DO UPDATE SET
+        episode_id = excluded.episode_id,
+        run_id = excluded.run_id,
+        from_role = excluded.from_role,
+        to_role = excluded.to_role,
+        status = excluded.status,
+        reason = excluded.reason,
+        evidence_refs_json = excluded.evidence_refs_json,
+        governance_decision_ids_json = excluded.governance_decision_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.handoffId,
+    record.episodeId,
+    record.runId || null,
+    record.createdAt,
+    record.fromRole,
+    record.toRole,
+    record.status,
+    redactStoredCognitiveMetadata(record.reason, 640),
+    redactStoredCognitiveMetadata(record.evidenceRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.governanceDecisionIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentOSRoleHandoffs(
+  params: {
+    episodeId?: string;
+    runId?: string;
+    status?: AgentOSRoleHandoff['status'];
+    limit?: number;
+  } = {},
+): AgentOSRoleHandoff[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.episodeId) {
+    clauses.push('episode_id = ?');
+    args.push(params.episodeId);
+  }
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_role_handoffs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSRoleHandoffRow>[0]>;
+  return rows.map((row) => mapAgentOSRoleHandoffRow(row));
+}
+
+function mapAgentOSTrajectoryEvalRow(row: {
+  eval_id: string;
+  episode_id: string;
+  run_id: string | null;
+  created_at: string;
+  status: AgentOSTrajectoryEval['status'];
+  overall_score: number;
+  source_coverage: number;
+  interrupt_safety: number;
+  approval_safety: number;
+  tool_usefulness: number;
+  verification_strength: number;
+  privacy_safety: number;
+  promotion_eligible: number;
+  demotion_signals_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgentOSTrajectoryEval {
+  return {
+    evalId: row.eval_id,
+    episodeId: row.episode_id,
+    runId: row.run_id,
+    createdAt: row.created_at,
+    status: row.status,
+    overallScore: row.overall_score,
+    sourceCoverage: row.source_coverage,
+    interruptSafety: row.interrupt_safety,
+    approvalSafety: row.approval_safety,
+    toolUsefulness: row.tool_usefulness,
+    verificationStrength: row.verification_strength,
+    privacySafety: row.privacy_safety,
+    promotionEligible: row.promotion_eligible === 1,
+    demotionSignalsJson: row.demotion_signals_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentOSTrajectoryEval(
+  record: AgentOSTrajectoryEval,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agent_os_trajectory_evals (
+        eval_id, episode_id, run_id, created_at, status, overall_score,
+        source_coverage, interrupt_safety, approval_safety, tool_usefulness,
+        verification_strength, privacy_safety, promotion_eligible,
+        demotion_signals_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(eval_id) DO UPDATE SET
+        episode_id = excluded.episode_id,
+        run_id = excluded.run_id,
+        status = excluded.status,
+        overall_score = excluded.overall_score,
+        source_coverage = excluded.source_coverage,
+        interrupt_safety = excluded.interrupt_safety,
+        approval_safety = excluded.approval_safety,
+        tool_usefulness = excluded.tool_usefulness,
+        verification_strength = excluded.verification_strength,
+        privacy_safety = excluded.privacy_safety,
+        promotion_eligible = excluded.promotion_eligible,
+        demotion_signals_json = excluded.demotion_signals_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.evalId,
+    record.episodeId,
+    record.runId || null,
+    record.createdAt,
+    record.status,
+    record.overallScore,
+    record.sourceCoverage,
+    record.interruptSafety,
+    record.approvalSafety,
+    record.toolUsefulness,
+    record.verificationStrength,
+    record.privacySafety,
+    record.promotionEligible ? 1 : 0,
+    redactStoredCognitiveMetadata(record.demotionSignalsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentOSTrajectoryEvals(
+  params: {
+    episodeId?: string;
+    runId?: string;
+    status?: AgentOSTrajectoryEval['status'];
+    limit?: number;
+  } = {},
+): AgentOSTrajectoryEval[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.episodeId) {
+    clauses.push('episode_id = ?');
+    args.push(params.episodeId);
+  }
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_trajectory_evals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSTrajectoryEvalRow>[0]>;
+  return rows.map((row) => mapAgentOSTrajectoryEvalRow(row));
+}
+
+function mapAgentOSSkillProposalRow(row: {
+  proposal_id: string;
+  episode_id: string;
+  created_at: string;
+  updated_at: string;
+  status: AgentOSSkillProposal['status'];
+  task_family: string;
+  trigger_summary: string;
+  skill_summary: string;
+  required_tool_card_ids_json: string;
+  evidence_needs_json: string;
+  approval_rules_json: string;
+  verification_checklist_json: string;
+  outcome_score: number;
+  source_episode_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgentOSSkillProposal {
+  return {
+    proposalId: row.proposal_id,
+    episodeId: row.episode_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    taskFamily: row.task_family,
+    triggerSummary: row.trigger_summary,
+    skillSummary: row.skill_summary,
+    requiredToolCardIdsJson: row.required_tool_card_ids_json,
+    evidenceNeedsJson: row.evidence_needs_json,
+    approvalRulesJson: row.approval_rules_json,
+    verificationChecklistJson: row.verification_checklist_json,
+    outcomeScore: row.outcome_score,
+    sourceEpisodeIdsJson: row.source_episode_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentOSSkillProposal(record: AgentOSSkillProposal): void {
+  db.prepare(
+    `
+      INSERT INTO agent_os_skill_proposals (
+        proposal_id, episode_id, created_at, updated_at, status, task_family,
+        trigger_summary, skill_summary, required_tool_card_ids_json,
+        evidence_needs_json, approval_rules_json, verification_checklist_json,
+        outcome_score, source_episode_ids_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(proposal_id) DO UPDATE SET
+        episode_id = excluded.episode_id,
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        task_family = excluded.task_family,
+        trigger_summary = excluded.trigger_summary,
+        skill_summary = excluded.skill_summary,
+        required_tool_card_ids_json = excluded.required_tool_card_ids_json,
+        evidence_needs_json = excluded.evidence_needs_json,
+        approval_rules_json = excluded.approval_rules_json,
+        verification_checklist_json = excluded.verification_checklist_json,
+        outcome_score = excluded.outcome_score,
+        source_episode_ids_json = excluded.source_episode_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.proposalId,
+    record.episodeId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    record.taskFamily,
+    redactStoredCognitiveMetadata(record.triggerSummary, 640),
+    redactStoredCognitiveMetadata(record.skillSummary, 640),
+    redactStoredCognitiveMetadata(record.requiredToolCardIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.evidenceNeedsJson, 2400),
+    redactStoredCognitiveMetadata(record.approvalRulesJson, 2400),
+    redactStoredCognitiveMetadata(record.verificationChecklistJson, 2400),
+    record.outcomeScore,
+    redactStoredCognitiveMetadata(record.sourceEpisodeIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentOSSkillProposals(
+  params: {
+    episodeId?: string;
+    status?: AgentOSSkillProposal['status'];
+    taskFamily?: string;
+    limit?: number;
+  } = {},
+): AgentOSSkillProposal[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.episodeId) {
+    clauses.push('episode_id = ?');
+    args.push(params.episodeId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_skill_proposals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSSkillProposalRow>[0]>;
+  return rows.map((row) => mapAgentOSSkillProposalRow(row));
+}
+
+function mapAgentOSPlanArtifactRow(row: {
+  plan_id: string;
+  created_at: string;
+  updated_at: string;
+  goal: string;
+  task_family: string;
+  status: AgentOSPlanArtifact['status'];
+  plan_only: number;
+  dag_json: string;
+  node_ids_json: string;
+  governed_tool_nodes_json: string;
+  guardrail_decisions_json: string;
+  evidence_mappings_json: string;
+  cooldown_policies_json: string;
+  approval_packet_json: string;
+  source_pattern_refs_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgentOSPlanArtifact {
+  return {
+    planId: row.plan_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    goal: row.goal,
+    taskFamily: row.task_family,
+    status: row.status,
+    planOnly: row.plan_only === 1,
+    dagJson: row.dag_json,
+    nodeIdsJson: row.node_ids_json,
+    governedToolNodesJson: row.governed_tool_nodes_json,
+    guardrailDecisionsJson: row.guardrail_decisions_json,
+    evidenceMappingsJson: row.evidence_mappings_json,
+    cooldownPoliciesJson: row.cooldown_policies_json,
+    approvalPacketJson: row.approval_packet_json,
+    sourcePatternRefsJson: row.source_pattern_refs_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentOSPlanArtifact(record: AgentOSPlanArtifact): void {
+  db.prepare(
+    `
+      INSERT INTO agent_os_plan_artifacts (
+        plan_id, created_at, updated_at, goal, task_family, status, plan_only,
+        dag_json, node_ids_json, governed_tool_nodes_json,
+        guardrail_decisions_json, evidence_mappings_json,
+        cooldown_policies_json, approval_packet_json, source_pattern_refs_json,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(plan_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        goal = excluded.goal,
+        task_family = excluded.task_family,
+        status = excluded.status,
+        plan_only = excluded.plan_only,
+        dag_json = excluded.dag_json,
+        node_ids_json = excluded.node_ids_json,
+        governed_tool_nodes_json = excluded.governed_tool_nodes_json,
+        guardrail_decisions_json = excluded.guardrail_decisions_json,
+        evidence_mappings_json = excluded.evidence_mappings_json,
+        cooldown_policies_json = excluded.cooldown_policies_json,
+        approval_packet_json = excluded.approval_packet_json,
+        source_pattern_refs_json = excluded.source_pattern_refs_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.planId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.goal, 640),
+    record.taskFamily,
+    record.status,
+    record.planOnly ? 1 : 0,
+    redactStoredCognitiveMetadata(record.dagJson, 6400),
+    redactStoredCognitiveMetadata(record.nodeIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.governedToolNodesJson, 6400),
+    redactStoredCognitiveMetadata(record.guardrailDecisionsJson, 6400),
+    redactStoredCognitiveMetadata(record.evidenceMappingsJson, 6400),
+    redactStoredCognitiveMetadata(record.cooldownPoliciesJson, 3200),
+    redactStoredCognitiveMetadata(record.approvalPacketJson, 3200),
+    redactStoredCognitiveMetadata(record.sourcePatternRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function getAgentOSPlanArtifact(
+  planId: string,
+): AgentOSPlanArtifact | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_plan_artifacts
+        WHERE plan_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(planId) as Parameters<typeof mapAgentOSPlanArtifactRow>[0] | undefined;
+  return row ? mapAgentOSPlanArtifactRow(row) : undefined;
+}
+
+export function listAgentOSPlanArtifacts(
+  params: {
+    taskFamily?: string;
+    status?: AgentOSPlanArtifact['status'];
+    limit?: number;
+  } = {},
+): AgentOSPlanArtifact[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_plan_artifacts
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSPlanArtifactRow>[0]>;
+  return rows.map((row) => mapAgentOSPlanArtifactRow(row));
+}
+
+function mapAgentOSTaskNodeRow(row: {
+  node_id: string;
+  plan_id: string;
+  position: number;
+  node_kind: AgentOSTaskNode['nodeKind'];
+  role: AgentOSTaskNode['role'];
+  status: AgentOSTaskNode['status'];
+  policy_class: AgentOSTaskNode['policyClass'];
+  approval_required: number;
+  can_run_in_parallel: number;
+  depends_on_node_ids_json: string;
+  required_evidence_json: string;
+  stop_condition: string;
+  tool_card_ids_json: string;
+  guardrail_json: string;
+  output_evidence_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgentOSTaskNode {
+  return {
+    nodeId: row.node_id,
+    planId: row.plan_id,
+    position: row.position,
+    nodeKind: row.node_kind,
+    role: row.role,
+    status: row.status,
+    policyClass: row.policy_class,
+    approvalRequired: row.approval_required === 1,
+    canRunInParallel: row.can_run_in_parallel === 1,
+    dependsOnNodeIdsJson: row.depends_on_node_ids_json,
+    requiredEvidenceJson: row.required_evidence_json,
+    stopCondition: row.stop_condition,
+    toolCardIdsJson: row.tool_card_ids_json,
+    guardrailJson: row.guardrail_json,
+    outputEvidenceIdsJson: row.output_evidence_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentOSTaskNode(record: AgentOSTaskNode): void {
+  db.prepare(
+    `
+      INSERT INTO agent_os_task_nodes (
+        node_id, plan_id, position, node_kind, role, status, policy_class,
+        approval_required, can_run_in_parallel, depends_on_node_ids_json,
+        required_evidence_json, stop_condition, tool_card_ids_json,
+        guardrail_json, output_evidence_ids_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(node_id) DO UPDATE SET
+        plan_id = excluded.plan_id,
+        position = excluded.position,
+        node_kind = excluded.node_kind,
+        role = excluded.role,
+        status = excluded.status,
+        policy_class = excluded.policy_class,
+        approval_required = excluded.approval_required,
+        can_run_in_parallel = excluded.can_run_in_parallel,
+        depends_on_node_ids_json = excluded.depends_on_node_ids_json,
+        required_evidence_json = excluded.required_evidence_json,
+        stop_condition = excluded.stop_condition,
+        tool_card_ids_json = excluded.tool_card_ids_json,
+        guardrail_json = excluded.guardrail_json,
+        output_evidence_ids_json = excluded.output_evidence_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.nodeId,
+    record.planId,
+    record.position,
+    record.nodeKind,
+    record.role,
+    record.status,
+    record.policyClass,
+    record.approvalRequired ? 1 : 0,
+    record.canRunInParallel ? 1 : 0,
+    redactStoredCognitiveMetadata(record.dependsOnNodeIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.requiredEvidenceJson, 2400),
+    redactStoredCognitiveMetadata(record.stopCondition, 640),
+    redactStoredCognitiveMetadata(record.toolCardIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.guardrailJson, 3200),
+    redactStoredCognitiveMetadata(record.outputEvidenceIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentOSTaskNodes(
+  params: { planId?: string; limit?: number } = {},
+): AgentOSTaskNode[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.planId) {
+    clauses.push('plan_id = ?');
+    args.push(params.planId);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_task_nodes
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY position ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSTaskNodeRow>[0]>;
+  return rows.map((row) => mapAgentOSTaskNodeRow(row));
+}
+
+function mapAgentOSReplayRunRow(row: {
+  replay_id: string;
+  plan_id: string;
+  created_at: string;
+  status: AgentOSReplayRun['status'];
+  replayed_node_ids_json: string;
+  evidence_ids_json: string;
+  policy_decisions_json: string;
+  planner_skipped: number;
+  approval_required: number;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): AgentOSReplayRun {
+  return {
+    replayId: row.replay_id,
+    planId: row.plan_id,
+    createdAt: row.created_at,
+    status: row.status,
+    replayedNodeIdsJson: row.replayed_node_ids_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    policyDecisionsJson: row.policy_decisions_json,
+    plannerSkipped: row.planner_skipped === 1,
+    approvalRequired: row.approval_required === 1,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentOSReplayRun(record: AgentOSReplayRun): void {
+  db.prepare(
+    `
+      INSERT INTO agent_os_replay_runs (
+        replay_id, plan_id, created_at, status, replayed_node_ids_json,
+        evidence_ids_json, policy_decisions_json, planner_skipped,
+        approval_required, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(replay_id) DO UPDATE SET
+        plan_id = excluded.plan_id,
+        status = excluded.status,
+        replayed_node_ids_json = excluded.replayed_node_ids_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        policy_decisions_json = excluded.policy_decisions_json,
+        planner_skipped = excluded.planner_skipped,
+        approval_required = excluded.approval_required,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.replayId,
+    record.planId,
+    record.createdAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.replayedNodeIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.policyDecisionsJson, 3200),
+    record.plannerSkipped ? 1 : 0,
+    record.approvalRequired ? 1 : 0,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentOSReplayRuns(
+  params: { planId?: string; limit?: number } = {},
+): AgentOSReplayRun[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.planId) {
+    clauses.push('plan_id = ?');
+    args.push(params.planId);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_os_replay_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentOSReplayRunRow>[0]>;
+  return rows.map((row) => mapAgentOSReplayRunRow(row));
+}
+
+export function buildAgentOSCapabilityDiscoveryReport(params: {
+  generatedAt: string;
+  limit?: number;
+}): AgentOSCapabilityDiscoveryReport {
+  const toolCards = listAgentOSToolCards({ limit: params.limit || 200 });
+  return {
+    generatedAt: params.generatedAt,
+    toolCards,
+    healthy: toolCards.filter((card) => card.healthState === 'healthy').length,
+    degraded: toolCards.filter((card) => card.healthState === 'degraded')
+      .length,
+    blocked: toolCards.filter((card) => card.healthState === 'blocked').length,
+    approvalStaged: toolCards.filter(
+      (card) => card.policyClass === 'approval_staged',
+    ).length,
+    readOnly: toolCards.filter((card) => card.policyClass === 'read_only')
+      .length,
+    sourceCoverage: Array.from(
+      new Set(
+        toolCards.flatMap((card) => {
+          try {
+            return JSON.parse(card.sourceRefsJson) as string[];
+          } catch {
+            return [];
+          }
+        }),
+      ),
+    ).slice(0, 50),
+    nextAction:
+      toolCards.length === 0
+        ? 'Run npm run debug:agent-os -- --discover-tools --json to seed the Agent OS capability registry.'
+        : 'Use healthy read-only and approval-staged tool cards for the next episode.',
+    privacy: {
+      metadataOnly: true,
+      rawPromptsStored: false,
+      rawPrivateBodiesStored: false,
+      hiddenReasoningStored: false,
+      secretsRedacted: true,
+    },
+  };
+}
+
+function logicLimit(limit = 100): number {
+  return Math.max(1, Math.min(limit, 500));
+}
+
+function mapLogicClaimRow(row: {
+  claim_id: string;
+  created_at: string;
+  updated_at: string;
+  subject: string;
+  predicate: string;
+  object_summary: string;
+  normalized_text: string;
+  claim_kind: LogicClaim['claimKind'];
+  confidence: number;
+  probability: number;
+  sensitivity: LogicClaim['sensitivity'];
+  status: LogicClaim['status'];
+  source_episode_id: string | null;
+  source_run_id: string | null;
+  evidence_ids_json: string;
+  contradiction_ids_json: string;
+  supersedes_claim_id: string | null;
+  requires_confirmation: number;
+  privacy_json: string;
+}): LogicClaim {
+  return {
+    claimId: row.claim_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    subject: row.subject,
+    predicate: row.predicate,
+    objectSummary: row.object_summary,
+    normalizedText: row.normalized_text,
+    claimKind: row.claim_kind,
+    confidence: row.confidence,
+    probability: row.probability,
+    sensitivity: row.sensitivity,
+    status: row.status,
+    sourceEpisodeId: row.source_episode_id,
+    sourceRunId: row.source_run_id,
+    evidenceIdsJson: row.evidence_ids_json,
+    contradictionIdsJson: row.contradiction_ids_json,
+    supersedesClaimId: row.supersedes_claim_id,
+    requiresConfirmation: row.requires_confirmation === 1,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicClaim(record: LogicClaim): void {
+  db.prepare(
+    `
+      INSERT INTO logic_claims (
+        claim_id, created_at, updated_at, subject, predicate, object_summary,
+        normalized_text, claim_kind, confidence, probability, sensitivity,
+        status, source_episode_id, source_run_id, evidence_ids_json,
+        contradiction_ids_json, supersedes_claim_id, requires_confirmation,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(claim_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        subject = excluded.subject,
+        predicate = excluded.predicate,
+        object_summary = excluded.object_summary,
+        normalized_text = excluded.normalized_text,
+        claim_kind = excluded.claim_kind,
+        confidence = excluded.confidence,
+        probability = excluded.probability,
+        sensitivity = excluded.sensitivity,
+        status = excluded.status,
+        source_episode_id = excluded.source_episode_id,
+        source_run_id = excluded.source_run_id,
+        evidence_ids_json = excluded.evidence_ids_json,
+        contradiction_ids_json = excluded.contradiction_ids_json,
+        supersedes_claim_id = excluded.supersedes_claim_id,
+        requires_confirmation = excluded.requires_confirmation,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.claimId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    redactStoredCognitiveMetadata(record.predicate, 120),
+    redactStoredCognitiveMetadata(record.objectSummary, 640),
+    redactStoredCognitiveMetadata(record.normalizedText, 900),
+    record.claimKind,
+    record.confidence,
+    record.probability,
+    record.sensitivity,
+    record.status,
+    record.sourceEpisodeId || null,
+    record.sourceRunId || null,
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.contradictionIdsJson, 2400),
+    record.supersedesClaimId || null,
+    record.requiresConfirmation ? 1 : 0,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicClaims(
+  params: {
+    subject?: string;
+    status?: LogicClaim['status'];
+    claimKind?: LogicClaim['claimKind'];
+    limit?: number;
+  } = {},
+): LogicClaim[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  if (params.claimKind) {
+    clauses.push('claim_kind = ?');
+    args.push(params.claimKind);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_claims
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicClaimRow>[0]>;
+  return rows.map((row) => mapLogicClaimRow(row));
+}
+
+function mapLogicEvidenceLinkRow(row: {
+  link_id: string;
+  claim_id: string;
+  evidence_id: string;
+  evidence_kind: LogicEvidenceLink['evidenceKind'];
+  source_id: string;
+  support: LogicEvidenceLink['support'];
+  strength: number;
+  freshness: LogicEvidenceLink['freshness'];
+  sensitivity: LogicEvidenceLink['sensitivity'];
+  summary: string;
+  privacy_json: string;
+}): LogicEvidenceLink {
+  return {
+    linkId: row.link_id,
+    claimId: row.claim_id,
+    evidenceId: row.evidence_id,
+    evidenceKind: row.evidence_kind,
+    sourceId: row.source_id,
+    support: row.support,
+    strength: row.strength,
+    freshness: row.freshness,
+    sensitivity: row.sensitivity,
+    summary: row.summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicEvidenceLink(record: LogicEvidenceLink): void {
+  db.prepare(
+    `
+      INSERT INTO logic_evidence_links (
+        link_id, claim_id, evidence_id, evidence_kind, source_id, support,
+        strength, freshness, sensitivity, summary, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(link_id) DO UPDATE SET
+        claim_id = excluded.claim_id,
+        evidence_id = excluded.evidence_id,
+        evidence_kind = excluded.evidence_kind,
+        source_id = excluded.source_id,
+        support = excluded.support,
+        strength = excluded.strength,
+        freshness = excluded.freshness,
+        sensitivity = excluded.sensitivity,
+        summary = excluded.summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.linkId,
+    record.claimId,
+    redactStoredCognitiveMetadata(record.evidenceId, 320),
+    record.evidenceKind,
+    redactStoredCognitiveMetadata(record.sourceId, 320),
+    record.support,
+    record.strength,
+    record.freshness,
+    record.sensitivity,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicEvidenceLinks(
+  params: { claimId?: string; limit?: number } = {},
+): LogicEvidenceLink[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.claimId) {
+    clauses.push('claim_id = ?');
+    args.push(params.claimId);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_evidence_links
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY claim_id ASC, evidence_id ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicEvidenceLinkRow>[0]>;
+  return rows.map((row) => mapLogicEvidenceLinkRow(row));
+}
+
+function mapLogicContradictionRow(row: {
+  contradiction_id: string;
+  subject: string;
+  claim_id_a: string;
+  claim_id_b: string | null;
+  created_at: string;
+  updated_at: string;
+  status: LogicContradiction['status'];
+  severity: LogicContradiction['severity'];
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): LogicContradiction {
+  return {
+    contradictionId: row.contradiction_id,
+    subject: row.subject,
+    claimIdA: row.claim_id_a,
+    claimIdB: row.claim_id_b,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    severity: row.severity,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicContradiction(record: LogicContradiction): void {
+  db.prepare(
+    `
+      INSERT INTO logic_contradictions (
+        contradiction_id, subject, claim_id_a, claim_id_b, created_at,
+        updated_at, status, severity, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(contradiction_id) DO UPDATE SET
+        subject = excluded.subject,
+        claim_id_a = excluded.claim_id_a,
+        claim_id_b = excluded.claim_id_b,
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        severity = excluded.severity,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.contradictionId,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.claimIdA,
+    record.claimIdB || null,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    record.severity,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicContradictions(
+  params: {
+    subject?: string;
+    status?: LogicContradiction['status'];
+    limit?: number;
+  } = {},
+): LogicContradiction[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_contradictions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicContradictionRow>[0]>;
+  return rows.map((row) => mapLogicContradictionRow(row));
+}
+
+function mapLogicHypothesisRow(row: {
+  hypothesis_id: string;
+  subject: string;
+  created_at: string;
+  updated_at: string;
+  claim_ids_json: string;
+  evidence_ids_json: string;
+  probability: number;
+  status: LogicHypothesis['status'];
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): LogicHypothesis {
+  return {
+    hypothesisId: row.hypothesis_id,
+    subject: row.subject,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    claimIdsJson: row.claim_ids_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    probability: row.probability,
+    status: row.status,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicHypothesis(record: LogicHypothesis): void {
+  db.prepare(
+    `
+      INSERT INTO logic_hypotheses (
+        hypothesis_id, subject, created_at, updated_at, claim_ids_json,
+        evidence_ids_json, probability, status, summary, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(hypothesis_id) DO UPDATE SET
+        subject = excluded.subject,
+        updated_at = excluded.updated_at,
+        claim_ids_json = excluded.claim_ids_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        probability = excluded.probability,
+        status = excluded.status,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.hypothesisId,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.claimIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 2400),
+    record.probability,
+    record.status,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicHypotheses(
+  params: {
+    subject?: string;
+    status?: LogicHypothesis['status'];
+    limit?: number;
+  } = {},
+): LogicHypothesis[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_hypotheses
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicHypothesisRow>[0]>;
+  return rows.map((row) => mapLogicHypothesisRow(row));
+}
+
+function mapLogicUsefulnessScoreRow(row: {
+  action_id: string;
+  subject: string;
+  episode_id: string | null;
+  created_at: string;
+  action_label: string;
+  action_kind: LogicUsefulnessScore['actionKind'];
+  expected_usefulness: number;
+  effort: number;
+  reversibility: number;
+  risk: number;
+  urgency: number;
+  user_preference_fit: number;
+  evidence_sufficiency: number;
+  total_score: number;
+  approval_required: number;
+  evidence_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): LogicUsefulnessScore {
+  return {
+    actionId: row.action_id,
+    subject: row.subject,
+    episodeId: row.episode_id,
+    createdAt: row.created_at,
+    actionLabel: row.action_label,
+    actionKind: row.action_kind,
+    expectedUsefulness: row.expected_usefulness,
+    effort: row.effort,
+    reversibility: row.reversibility,
+    risk: row.risk,
+    urgency: row.urgency,
+    userPreferenceFit: row.user_preference_fit,
+    evidenceSufficiency: row.evidence_sufficiency,
+    totalScore: row.total_score,
+    approvalRequired: row.approval_required === 1,
+    evidenceIdsJson: row.evidence_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicUsefulnessScore(record: LogicUsefulnessScore): void {
+  db.prepare(
+    `
+      INSERT INTO logic_usefulness_scores (
+        action_id, subject, episode_id, created_at, action_label,
+        action_kind, expected_usefulness, effort, reversibility, risk,
+        urgency, user_preference_fit, evidence_sufficiency, total_score,
+        approval_required, evidence_ids_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(action_id) DO UPDATE SET
+        subject = excluded.subject,
+        episode_id = excluded.episode_id,
+        action_label = excluded.action_label,
+        action_kind = excluded.action_kind,
+        expected_usefulness = excluded.expected_usefulness,
+        effort = excluded.effort,
+        reversibility = excluded.reversibility,
+        risk = excluded.risk,
+        urgency = excluded.urgency,
+        user_preference_fit = excluded.user_preference_fit,
+        evidence_sufficiency = excluded.evidence_sufficiency,
+        total_score = excluded.total_score,
+        approval_required = excluded.approval_required,
+        evidence_ids_json = excluded.evidence_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.actionId,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.episodeId || null,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.actionLabel, 640),
+    record.actionKind,
+    record.expectedUsefulness,
+    record.effort,
+    record.reversibility,
+    record.risk,
+    record.urgency,
+    record.userPreferenceFit,
+    record.evidenceSufficiency,
+    record.totalScore,
+    record.approvalRequired ? 1 : 0,
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicUsefulnessScores(
+  params: { subject?: string; episodeId?: string; limit?: number } = {},
+): LogicUsefulnessScore[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  if (params.episodeId) {
+    clauses.push('episode_id = ?');
+    args.push(params.episodeId);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_usefulness_scores
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY total_score DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicUsefulnessScoreRow>[0]>;
+  return rows.map((row) => mapLogicUsefulnessScoreRow(row));
+}
+
+function mapLogicMissingPremiseRow(row: {
+  premise_id: string;
+  subject: string;
+  episode_id: string | null;
+  created_at: string;
+  updated_at: string;
+  status: LogicMissingPremise['status'];
+  question: string;
+  blocker_class: string;
+  required_evidence_json: string;
+  next_action: string;
+  privacy_json: string;
+}): LogicMissingPremise {
+  return {
+    premiseId: row.premise_id,
+    subject: row.subject,
+    episodeId: row.episode_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    question: row.question,
+    blockerClass: row.blocker_class,
+    requiredEvidenceJson: row.required_evidence_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicMissingPremise(record: LogicMissingPremise): void {
+  db.prepare(
+    `
+      INSERT INTO logic_missing_premises (
+        premise_id, subject, episode_id, created_at, updated_at, status,
+        question, blocker_class, required_evidence_json, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(premise_id) DO UPDATE SET
+        subject = excluded.subject,
+        episode_id = excluded.episode_id,
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        question = excluded.question,
+        blocker_class = excluded.blocker_class,
+        required_evidence_json = excluded.required_evidence_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.premiseId,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.episodeId || null,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.question, 640),
+    redactStoredCognitiveMetadata(record.blockerClass, 120),
+    redactStoredCognitiveMetadata(record.requiredEvidenceJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicMissingPremises(
+  params: {
+    subject?: string;
+    episodeId?: string;
+    status?: LogicMissingPremise['status'];
+    limit?: number;
+  } = {},
+): LogicMissingPremise[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  if (params.episodeId) {
+    clauses.push('episode_id = ?');
+    args.push(params.episodeId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_missing_premises
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicMissingPremiseRow>[0]>;
+  return rows.map((row) => mapLogicMissingPremiseRow(row));
+}
+
+function mapLogicDecisionRow(row: {
+  decision_id: string;
+  subject: string;
+  episode_id: string | null;
+  run_id: string | null;
+  created_at: string;
+  updated_at: string;
+  status: LogicDecision['status'];
+  selected_claim_ids_json: string;
+  selected_hypothesis_id: string | null;
+  selected_action_id: string | null;
+  confidence: number;
+  utility: number;
+  rationale_summary: string;
+  next_action: string;
+  privacy_json: string;
+}): LogicDecision {
+  return {
+    decisionId: row.decision_id,
+    subject: row.subject,
+    episodeId: row.episode_id,
+    runId: row.run_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    selectedClaimIdsJson: row.selected_claim_ids_json,
+    selectedHypothesisId: row.selected_hypothesis_id,
+    selectedActionId: row.selected_action_id,
+    confidence: row.confidence,
+    utility: row.utility,
+    rationaleSummary: row.rationale_summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicDecision(record: LogicDecision): void {
+  db.prepare(
+    `
+      INSERT INTO logic_decisions (
+        decision_id, subject, episode_id, run_id, created_at, updated_at,
+        status, selected_claim_ids_json, selected_hypothesis_id,
+        selected_action_id, confidence, utility, rationale_summary,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(decision_id) DO UPDATE SET
+        subject = excluded.subject,
+        episode_id = excluded.episode_id,
+        run_id = excluded.run_id,
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        selected_claim_ids_json = excluded.selected_claim_ids_json,
+        selected_hypothesis_id = excluded.selected_hypothesis_id,
+        selected_action_id = excluded.selected_action_id,
+        confidence = excluded.confidence,
+        utility = excluded.utility,
+        rationale_summary = excluded.rationale_summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.decisionId,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.episodeId || null,
+    record.runId || null,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.selectedClaimIdsJson, 2400),
+    record.selectedHypothesisId || null,
+    record.selectedActionId || null,
+    record.confidence,
+    record.utility,
+    redactStoredCognitiveMetadata(record.rationaleSummary, 640),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicDecisions(
+  params: { subject?: string; episodeId?: string; limit?: number } = {},
+): LogicDecision[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  if (params.episodeId) {
+    clauses.push('episode_id = ?');
+    args.push(params.episodeId);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_decisions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicDecisionRow>[0]>;
+  return rows.map((row) => mapLogicDecisionRow(row));
+}
+
+function mapLogicBeliefStateRow(row: {
+  belief_state_id: string;
+  subject: string;
+  created_at: string;
+  updated_at: string;
+  status: LogicBeliefState['status'];
+  top_claim_ids_json: string;
+  hypothesis_ids_json: string;
+  contradiction_ids_json: string;
+  missing_premise_ids_json: string;
+  decision_id: string | null;
+  confidence: number;
+  probability: number;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): LogicBeliefState {
+  return {
+    beliefStateId: row.belief_state_id,
+    subject: row.subject,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    topClaimIdsJson: row.top_claim_ids_json,
+    hypothesisIdsJson: row.hypothesis_ids_json,
+    contradictionIdsJson: row.contradiction_ids_json,
+    missingPremiseIdsJson: row.missing_premise_ids_json,
+    decisionId: row.decision_id,
+    confidence: row.confidence,
+    probability: row.probability,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicBeliefState(record: LogicBeliefState): void {
+  db.prepare(
+    `
+      INSERT INTO logic_belief_states (
+        belief_state_id, subject, created_at, updated_at, status,
+        top_claim_ids_json, hypothesis_ids_json, contradiction_ids_json,
+        missing_premise_ids_json, decision_id, confidence, probability,
+        summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(belief_state_id) DO UPDATE SET
+        subject = excluded.subject,
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        top_claim_ids_json = excluded.top_claim_ids_json,
+        hypothesis_ids_json = excluded.hypothesis_ids_json,
+        contradiction_ids_json = excluded.contradiction_ids_json,
+        missing_premise_ids_json = excluded.missing_premise_ids_json,
+        decision_id = excluded.decision_id,
+        confidence = excluded.confidence,
+        probability = excluded.probability,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.beliefStateId,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.topClaimIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.hypothesisIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.contradictionIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.missingPremiseIdsJson, 2400),
+    record.decisionId || null,
+    record.confidence,
+    record.probability,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicBeliefStates(
+  params: { subject?: string; limit?: number } = {},
+): LogicBeliefState[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_belief_states
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicBeliefStateRow>[0]>;
+  return rows.map((row) => mapLogicBeliefStateRow(row));
+}
+
+function mapLogicClaimTransitionRow(row: {
+  transition_id: string;
+  claim_id: string;
+  subject: string;
+  created_at: string;
+  from_status: LogicClaimTransition['fromStatus'];
+  to_status: LogicClaimTransition['toStatus'];
+  reason: string;
+  evidence_freshness: LogicClaimTransition['evidenceFreshness'];
+  source_ids_json: string;
+  actor: LogicClaimTransition['actor'];
+  next_action: string;
+  privacy_json: string;
+}): LogicClaimTransition {
+  return {
+    transitionId: row.transition_id,
+    claimId: row.claim_id,
+    subject: row.subject,
+    createdAt: row.created_at,
+    fromStatus: row.from_status,
+    toStatus: row.to_status,
+    reason: row.reason,
+    evidenceFreshness: row.evidence_freshness,
+    sourceIdsJson: row.source_ids_json,
+    actor: row.actor,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicClaimTransition(record: LogicClaimTransition): void {
+  db.prepare(
+    `
+      INSERT INTO logic_claim_transitions (
+        transition_id, claim_id, subject, created_at, from_status, to_status,
+        reason, evidence_freshness, source_ids_json, actor, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(transition_id) DO UPDATE SET
+        claim_id = excluded.claim_id,
+        subject = excluded.subject,
+        from_status = excluded.from_status,
+        to_status = excluded.to_status,
+        reason = excluded.reason,
+        evidence_freshness = excluded.evidence_freshness,
+        source_ids_json = excluded.source_ids_json,
+        actor = excluded.actor,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.transitionId,
+    record.claimId,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.createdAt,
+    record.fromStatus,
+    record.toStatus,
+    redactStoredCognitiveMetadata(record.reason, 640),
+    record.evidenceFreshness,
+    redactStoredCognitiveMetadata(record.sourceIdsJson, 2400),
+    record.actor,
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicClaimTransitions(
+  params: { subject?: string; claimId?: string; limit?: number } = {},
+): LogicClaimTransition[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  if (params.claimId) {
+    clauses.push('claim_id = ?');
+    args.push(params.claimId);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_claim_transitions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicClaimTransitionRow>[0]>;
+  return rows.map((row) => mapLogicClaimTransitionRow(row));
+}
+
+function mapLogicHypothesisSetRow(row: {
+  hypothesis_set_id: string;
+  subject: string;
+  created_at: string;
+  updated_at: string;
+  hypothesis_ids_json: string;
+  preferred_hypothesis_id: string | null;
+  probability_summary_json: string;
+  uncertainty_summary: string;
+  next_action: string;
+  privacy_json: string;
+}): LogicHypothesisSet {
+  return {
+    hypothesisSetId: row.hypothesis_set_id,
+    subject: row.subject,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    hypothesisIdsJson: row.hypothesis_ids_json,
+    preferredHypothesisId: row.preferred_hypothesis_id,
+    probabilitySummaryJson: row.probability_summary_json,
+    uncertaintySummary: row.uncertainty_summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicHypothesisSet(record: LogicHypothesisSet): void {
+  db.prepare(
+    `
+      INSERT INTO logic_hypothesis_sets (
+        hypothesis_set_id, subject, created_at, updated_at, hypothesis_ids_json,
+        preferred_hypothesis_id, probability_summary_json,
+        uncertainty_summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(hypothesis_set_id) DO UPDATE SET
+        subject = excluded.subject,
+        updated_at = excluded.updated_at,
+        hypothesis_ids_json = excluded.hypothesis_ids_json,
+        preferred_hypothesis_id = excluded.preferred_hypothesis_id,
+        probability_summary_json = excluded.probability_summary_json,
+        uncertainty_summary = excluded.uncertainty_summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.hypothesisSetId,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.hypothesisIdsJson, 2400),
+    record.preferredHypothesisId || null,
+    redactStoredCognitiveMetadata(record.probabilitySummaryJson, 2400),
+    redactStoredCognitiveMetadata(record.uncertaintySummary, 640),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicHypothesisSets(
+  params: { subject?: string; limit?: number } = {},
+): LogicHypothesisSet[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_hypothesis_sets
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicHypothesisSetRow>[0]>;
+  return rows.map((row) => mapLogicHypothesisSetRow(row));
+}
+
+function mapLogicBeliefRevisionRow(row: {
+  revision_id: string;
+  subject: string;
+  created_at: string;
+  previous_belief_state_id: string | null;
+  next_belief_state_id: string | null;
+  transition_ids_json: string;
+  hypothesis_set_id: string | null;
+  confidence_before: number;
+  confidence_after: number;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): LogicBeliefRevision {
+  return {
+    revisionId: row.revision_id,
+    subject: row.subject,
+    createdAt: row.created_at,
+    previousBeliefStateId: row.previous_belief_state_id,
+    nextBeliefStateId: row.next_belief_state_id,
+    transitionIdsJson: row.transition_ids_json,
+    hypothesisSetId: row.hypothesis_set_id,
+    confidenceBefore: row.confidence_before,
+    confidenceAfter: row.confidence_after,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicBeliefRevision(record: LogicBeliefRevision): void {
+  db.prepare(
+    `
+      INSERT INTO logic_belief_revisions (
+        revision_id, subject, created_at, previous_belief_state_id,
+        next_belief_state_id, transition_ids_json, hypothesis_set_id,
+        confidence_before, confidence_after, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(revision_id) DO UPDATE SET
+        subject = excluded.subject,
+        previous_belief_state_id = excluded.previous_belief_state_id,
+        next_belief_state_id = excluded.next_belief_state_id,
+        transition_ids_json = excluded.transition_ids_json,
+        hypothesis_set_id = excluded.hypothesis_set_id,
+        confidence_before = excluded.confidence_before,
+        confidence_after = excluded.confidence_after,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.revisionId,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.createdAt,
+    record.previousBeliefStateId || null,
+    record.nextBeliefStateId || null,
+    redactStoredCognitiveMetadata(record.transitionIdsJson, 2400),
+    record.hypothesisSetId || null,
+    record.confidenceBefore,
+    record.confidenceAfter,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicBeliefRevisions(
+  params: { subject?: string; limit?: number } = {},
+): LogicBeliefRevision[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_belief_revisions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicBeliefRevisionRow>[0]>;
+  return rows.map((row) => mapLogicBeliefRevisionRow(row));
+}
+
+function mapLogicResolutionDecisionRow(row: {
+  resolution_id: string;
+  subject: string;
+  created_at: string;
+  status: LogicResolutionDecision['status'];
+  claim_ids_json: string;
+  transition_ids_json: string;
+  resolved_contradiction_ids_json: string;
+  confidence: number;
+  rationale_summary: string;
+  next_action: string;
+  privacy_json: string;
+}): LogicResolutionDecision {
+  return {
+    resolutionId: row.resolution_id,
+    subject: row.subject,
+    createdAt: row.created_at,
+    status: row.status,
+    claimIdsJson: row.claim_ids_json,
+    transitionIdsJson: row.transition_ids_json,
+    resolvedContradictionIdsJson: row.resolved_contradiction_ids_json,
+    confidence: row.confidence,
+    rationaleSummary: row.rationale_summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertLogicResolutionDecision(
+  record: LogicResolutionDecision,
+): void {
+  db.prepare(
+    `
+      INSERT INTO logic_resolution_decisions (
+        resolution_id, subject, created_at, status, claim_ids_json,
+        transition_ids_json, resolved_contradiction_ids_json, confidence,
+        rationale_summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(resolution_id) DO UPDATE SET
+        subject = excluded.subject,
+        status = excluded.status,
+        claim_ids_json = excluded.claim_ids_json,
+        transition_ids_json = excluded.transition_ids_json,
+        resolved_contradiction_ids_json = excluded.resolved_contradiction_ids_json,
+        confidence = excluded.confidence,
+        rationale_summary = excluded.rationale_summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.resolutionId,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.createdAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.claimIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.transitionIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.resolvedContradictionIdsJson, 2400),
+    record.confidence,
+    redactStoredCognitiveMetadata(record.rationaleSummary, 640),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listLogicResolutionDecisions(
+  params: { subject?: string; limit?: number } = {},
+): LogicResolutionDecision[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  args.push(logicLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM logic_resolution_decisions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapLogicResolutionDecisionRow>[0]>;
+  return rows.map((row) => mapLogicResolutionDecisionRow(row));
+}
+
+function truthLimit(limit = 100): number {
+  return Math.max(1, Math.min(limit, 500));
+}
+
+function mapTruthAnswerAuditRow(row: {
+  audit_id: string;
+  created_at: string;
+  updated_at: string;
+  turn_id: string | null;
+  channel: string | null;
+  task_family: string | null;
+  subject: string;
+  status: TruthAnswerAudit['status'];
+  confidence: number;
+  support_grade: TruthAnswerAudit['supportGrade'];
+  claim_ids_json: string;
+  unsupported_claim_ids_json: string;
+  contradiction_check_ids_json: string;
+  rewrite_directive_ids_json: string;
+  evidence_ids_json: string;
+  risk_flags_json: string;
+  verdict_summary: string;
+  rewritten_text_summary: string;
+  best_next_action: string;
+  privacy_json: string;
+}): TruthAnswerAudit {
+  return {
+    auditId: row.audit_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    turnId: row.turn_id,
+    channel: row.channel,
+    taskFamily: row.task_family,
+    subject: row.subject,
+    status: row.status,
+    confidence: row.confidence,
+    supportGrade: row.support_grade,
+    claimIdsJson: row.claim_ids_json,
+    unsupportedClaimIdsJson: row.unsupported_claim_ids_json,
+    contradictionCheckIdsJson: row.contradiction_check_ids_json,
+    rewriteDirectiveIdsJson: row.rewrite_directive_ids_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    riskFlagsJson: row.risk_flags_json,
+    verdictSummary: row.verdict_summary,
+    rewrittenTextSummary: row.rewritten_text_summary,
+    bestNextAction: row.best_next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertTruthAnswerAudit(record: TruthAnswerAudit): void {
+  db.prepare(
+    `
+      INSERT INTO truth_answer_audits (
+        audit_id, created_at, updated_at, turn_id, channel, task_family,
+        subject, status, confidence, support_grade, claim_ids_json,
+        unsupported_claim_ids_json, contradiction_check_ids_json,
+        rewrite_directive_ids_json, evidence_ids_json, risk_flags_json,
+        verdict_summary, rewritten_text_summary, best_next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(audit_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        turn_id = excluded.turn_id,
+        channel = excluded.channel,
+        task_family = excluded.task_family,
+        subject = excluded.subject,
+        status = excluded.status,
+        confidence = excluded.confidence,
+        support_grade = excluded.support_grade,
+        claim_ids_json = excluded.claim_ids_json,
+        unsupported_claim_ids_json = excluded.unsupported_claim_ids_json,
+        contradiction_check_ids_json = excluded.contradiction_check_ids_json,
+        rewrite_directive_ids_json = excluded.rewrite_directive_ids_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        risk_flags_json = excluded.risk_flags_json,
+        verdict_summary = excluded.verdict_summary,
+        rewritten_text_summary = excluded.rewritten_text_summary,
+        best_next_action = excluded.best_next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.auditId,
+    record.createdAt,
+    record.updatedAt,
+    record.turnId || null,
+    record.channel || null,
+    record.taskFamily || null,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.status,
+    record.confidence,
+    record.supportGrade,
+    redactStoredCognitiveMetadata(record.claimIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.unsupportedClaimIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.contradictionCheckIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.rewriteDirectiveIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.riskFlagsJson, 2400),
+    redactStoredCognitiveMetadata(record.verdictSummary, 640),
+    redactStoredCognitiveMetadata(record.rewrittenTextSummary, 640),
+    redactStoredCognitiveMetadata(record.bestNextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listTruthAnswerAudits(
+  params: {
+    subject?: string;
+    status?: TruthAnswerAudit['status'];
+    limit?: number;
+  } = {},
+): TruthAnswerAudit[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subject) {
+    clauses.push('subject = ?');
+    args.push(params.subject);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(truthLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM truth_answer_audits
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapTruthAnswerAuditRow>[0]>;
+  return rows.map((row) => mapTruthAnswerAuditRow(row));
+}
+
+function mapTruthClaimRow(row: {
+  claim_id: string;
+  audit_id: string;
+  created_at: string;
+  claim_text: string;
+  normalized_text: string;
+  claim_kind: TruthClaim['claimKind'];
+  confidence: number;
+  support_grade: TruthClaim['supportGrade'];
+  evidence_ids_json: string;
+  risk_flags_json: string;
+  privacy_json: string;
+}): TruthClaim {
+  return {
+    claimId: row.claim_id,
+    auditId: row.audit_id,
+    createdAt: row.created_at,
+    claimText: row.claim_text,
+    normalizedText: row.normalized_text,
+    claimKind: row.claim_kind,
+    confidence: row.confidence,
+    supportGrade: row.support_grade,
+    evidenceIdsJson: row.evidence_ids_json,
+    riskFlagsJson: row.risk_flags_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertTruthClaim(record: TruthClaim): void {
+  db.prepare(
+    `
+      INSERT INTO truth_claims (
+        claim_id, audit_id, created_at, claim_text, normalized_text,
+        claim_kind, confidence, support_grade, evidence_ids_json,
+        risk_flags_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(claim_id) DO UPDATE SET
+        audit_id = excluded.audit_id,
+        claim_text = excluded.claim_text,
+        normalized_text = excluded.normalized_text,
+        claim_kind = excluded.claim_kind,
+        confidence = excluded.confidence,
+        support_grade = excluded.support_grade,
+        evidence_ids_json = excluded.evidence_ids_json,
+        risk_flags_json = excluded.risk_flags_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.claimId,
+    record.auditId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.claimText, 360),
+    redactStoredCognitiveMetadata(record.normalizedText, 640),
+    record.claimKind,
+    record.confidence,
+    record.supportGrade,
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.riskFlagsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listTruthClaims(
+  params: {
+    auditId?: string;
+    supportGrade?: TruthClaim['supportGrade'];
+    limit?: number;
+  } = {},
+): TruthClaim[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.auditId) {
+    clauses.push('audit_id = ?');
+    args.push(params.auditId);
+  }
+  if (params.supportGrade) {
+    clauses.push('support_grade = ?');
+    args.push(params.supportGrade);
+  }
+  args.push(truthLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM truth_claims
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapTruthClaimRow>[0]>;
+  return rows.map((row) => mapTruthClaimRow(row));
+}
+
+function mapTruthEvidenceSupportRow(row: {
+  support_id: string;
+  audit_id: string;
+  claim_id: string;
+  evidence_id: string;
+  evidence_kind: TruthEvidenceSupport['evidenceKind'];
+  support: TruthEvidenceSupport['support'];
+  strength: number;
+  freshness: TruthEvidenceSupport['freshness'];
+  summary: string;
+  privacy_json: string;
+}): TruthEvidenceSupport {
+  return {
+    supportId: row.support_id,
+    auditId: row.audit_id,
+    claimId: row.claim_id,
+    evidenceId: row.evidence_id,
+    evidenceKind: row.evidence_kind,
+    support: row.support,
+    strength: row.strength,
+    freshness: row.freshness,
+    summary: row.summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertTruthEvidenceSupport(record: TruthEvidenceSupport): void {
+  db.prepare(
+    `
+      INSERT INTO truth_evidence_support (
+        support_id, audit_id, claim_id, evidence_id, evidence_kind, support,
+        strength, freshness, summary, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(support_id) DO UPDATE SET
+        audit_id = excluded.audit_id,
+        claim_id = excluded.claim_id,
+        evidence_id = excluded.evidence_id,
+        evidence_kind = excluded.evidence_kind,
+        support = excluded.support,
+        strength = excluded.strength,
+        freshness = excluded.freshness,
+        summary = excluded.summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.supportId,
+    record.auditId,
+    record.claimId,
+    redactStoredCognitiveMetadata(record.evidenceId, 320),
+    record.evidenceKind,
+    record.support,
+    record.strength,
+    record.freshness,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listTruthEvidenceSupport(
+  params: { auditId?: string; claimId?: string; limit?: number } = {},
+): TruthEvidenceSupport[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.auditId) {
+    clauses.push('audit_id = ?');
+    args.push(params.auditId);
+  }
+  if (params.claimId) {
+    clauses.push('claim_id = ?');
+    args.push(params.claimId);
+  }
+  args.push(truthLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM truth_evidence_support
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY strength DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapTruthEvidenceSupportRow>[0]>;
+  return rows.map((row) => mapTruthEvidenceSupportRow(row));
+}
+
+function mapTruthContradictionCheckRow(row: {
+  check_id: string;
+  audit_id: string;
+  claim_id: string;
+  status: TruthContradictionCheck['status'];
+  severity: TruthContradictionCheck['severity'];
+  contradiction_ids_json: string;
+  summary: string;
+  privacy_json: string;
+}): TruthContradictionCheck {
+  return {
+    checkId: row.check_id,
+    auditId: row.audit_id,
+    claimId: row.claim_id,
+    status: row.status,
+    severity: row.severity,
+    contradictionIdsJson: row.contradiction_ids_json,
+    summary: row.summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertTruthContradictionCheck(
+  record: TruthContradictionCheck,
+): void {
+  db.prepare(
+    `
+      INSERT INTO truth_contradiction_checks (
+        check_id, audit_id, claim_id, status, severity,
+        contradiction_ids_json, summary, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(check_id) DO UPDATE SET
+        audit_id = excluded.audit_id,
+        claim_id = excluded.claim_id,
+        status = excluded.status,
+        severity = excluded.severity,
+        contradiction_ids_json = excluded.contradiction_ids_json,
+        summary = excluded.summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.checkId,
+    record.auditId,
+    record.claimId,
+    record.status,
+    record.severity,
+    redactStoredCognitiveMetadata(record.contradictionIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listTruthContradictionChecks(
+  params: {
+    auditId?: string;
+    status?: TruthContradictionCheck['status'];
+    limit?: number;
+  } = {},
+): TruthContradictionCheck[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.auditId) {
+    clauses.push('audit_id = ?');
+    args.push(params.auditId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(truthLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM truth_contradiction_checks
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY severity DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapTruthContradictionCheckRow>[0]>;
+  return rows.map((row) => mapTruthContradictionCheckRow(row));
+}
+
+function mapTruthRewriteDirectiveRow(row: {
+  directive_id: string;
+  audit_id: string;
+  created_at: string;
+  directive: TruthRewriteDirective['directive'];
+  reason: string;
+  suggested_text: string | null;
+  next_action: string;
+  privacy_json: string;
+}): TruthRewriteDirective {
+  return {
+    directiveId: row.directive_id,
+    auditId: row.audit_id,
+    createdAt: row.created_at,
+    directive: row.directive,
+    reason: row.reason,
+    suggestedText: row.suggested_text,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertTruthRewriteDirective(
+  record: TruthRewriteDirective,
+): void {
+  db.prepare(
+    `
+      INSERT INTO truth_rewrite_directives (
+        directive_id, audit_id, created_at, directive, reason, suggested_text,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(directive_id) DO UPDATE SET
+        audit_id = excluded.audit_id,
+        directive = excluded.directive,
+        reason = excluded.reason,
+        suggested_text = excluded.suggested_text,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.directiveId,
+    record.auditId,
+    record.createdAt,
+    record.directive,
+    redactStoredCognitiveMetadata(record.reason, 640),
+    record.suggestedText
+      ? redactStoredCognitiveMetadata(record.suggestedText, 640)
+      : null,
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listTruthRewriteDirectives(
+  params: {
+    auditId?: string;
+    directive?: TruthRewriteDirective['directive'];
+    limit?: number;
+  } = {},
+): TruthRewriteDirective[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.auditId) {
+    clauses.push('audit_id = ?');
+    args.push(params.auditId);
+  }
+  if (params.directive) {
+    clauses.push('directive = ?');
+    args.push(params.directive);
+  }
+  args.push(truthLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM truth_rewrite_directives
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapTruthRewriteDirectiveRow>[0]>;
+  return rows.map((row) => mapTruthRewriteDirectiveRow(row));
+}
+
+function mapTruthSourceCoverageRow(row: {
+  source_coverage_id: string;
+  audit_id: string;
+  created_at: string;
+  coverage_grade: TruthSourceCoverage['coverageGrade'];
+  source_ids_json: string;
+  stale_source_ids_json: string;
+  missing_source_classes_json: string;
+  provider_participation_json: string;
+  integration_proof_json: string;
+  privacy_json: string;
+}): TruthSourceCoverage {
+  return {
+    sourceCoverageId: row.source_coverage_id,
+    auditId: row.audit_id,
+    createdAt: row.created_at,
+    coverageGrade: row.coverage_grade,
+    sourceIdsJson: row.source_ids_json,
+    staleSourceIdsJson: row.stale_source_ids_json,
+    missingSourceClassesJson: row.missing_source_classes_json,
+    providerParticipationJson: row.provider_participation_json,
+    integrationProofJson: row.integration_proof_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertTruthSourceCoverage(record: TruthSourceCoverage): void {
+  db.prepare(
+    `
+      INSERT INTO truth_source_coverage (
+        source_coverage_id, audit_id, created_at, coverage_grade,
+        source_ids_json, stale_source_ids_json, missing_source_classes_json,
+        provider_participation_json, integration_proof_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source_coverage_id) DO UPDATE SET
+        audit_id = excluded.audit_id,
+        coverage_grade = excluded.coverage_grade,
+        source_ids_json = excluded.source_ids_json,
+        stale_source_ids_json = excluded.stale_source_ids_json,
+        missing_source_classes_json = excluded.missing_source_classes_json,
+        provider_participation_json = excluded.provider_participation_json,
+        integration_proof_json = excluded.integration_proof_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.sourceCoverageId,
+    record.auditId,
+    record.createdAt,
+    record.coverageGrade,
+    redactStoredCognitiveMetadata(record.sourceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.staleSourceIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.missingSourceClassesJson, 2400),
+    redactStoredCognitiveMetadata(record.providerParticipationJson, 2400),
+    redactStoredCognitiveMetadata(record.integrationProofJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listTruthSourceCoverage(
+  params: { auditId?: string; limit?: number } = {},
+): TruthSourceCoverage[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.auditId) {
+    clauses.push('audit_id = ?');
+    args.push(params.auditId);
+  }
+  args.push(truthLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM truth_source_coverage
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapTruthSourceCoverageRow>[0]>;
+  return rows.map((row) => mapTruthSourceCoverageRow(row));
+}
+
+function worldLimit(limit = 100): number {
+  return Math.max(1, Math.min(limit, 500));
+}
+
+function mapWorldModelSnapshotRow(row: {
+  snapshot_id: string;
+  created_at: string;
+  updated_at: string;
+  status: WorldModelSnapshot['status'];
+  confidence: number;
+  logic_belief_state_id: string | null;
+  truth_audit_id: string | null;
+  agent_os_episode_id: string | null;
+  cognitive_run_id: string | null;
+  freshness_policy_json: string;
+  claim_ids_json: string;
+  evidence_ref_ids_json: string;
+  verification_need_ids_json: string;
+  open_question_ids_json: string;
+  risk_state_ids_json: string;
+  skill_trust_ids_json: string;
+  summary: string;
+  best_next_action: string;
+  privacy_json: string;
+}): WorldModelSnapshot {
+  return {
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    confidence: row.confidence,
+    logicBeliefStateId: row.logic_belief_state_id,
+    truthAuditId: row.truth_audit_id,
+    agentOSEpisodeId: row.agent_os_episode_id,
+    cognitiveRunId: row.cognitive_run_id,
+    freshnessPolicyJson: row.freshness_policy_json,
+    claimIdsJson: row.claim_ids_json,
+    evidenceRefIdsJson: row.evidence_ref_ids_json,
+    verificationNeedIdsJson: row.verification_need_ids_json,
+    openQuestionIdsJson: row.open_question_ids_json,
+    riskStateIdsJson: row.risk_state_ids_json,
+    skillTrustIdsJson: row.skill_trust_ids_json,
+    summary: row.summary,
+    bestNextAction: row.best_next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertWorldModelSnapshot(record: WorldModelSnapshot): void {
+  db.prepare(
+    `
+      INSERT INTO world_model_snapshots (
+        snapshot_id, created_at, updated_at, status, confidence,
+        logic_belief_state_id, truth_audit_id, agent_os_episode_id,
+        cognitive_run_id, freshness_policy_json, claim_ids_json,
+        evidence_ref_ids_json, verification_need_ids_json,
+        open_question_ids_json, risk_state_ids_json, skill_trust_ids_json,
+        summary, best_next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(snapshot_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        confidence = excluded.confidence,
+        logic_belief_state_id = excluded.logic_belief_state_id,
+        truth_audit_id = excluded.truth_audit_id,
+        agent_os_episode_id = excluded.agent_os_episode_id,
+        cognitive_run_id = excluded.cognitive_run_id,
+        freshness_policy_json = excluded.freshness_policy_json,
+        claim_ids_json = excluded.claim_ids_json,
+        evidence_ref_ids_json = excluded.evidence_ref_ids_json,
+        verification_need_ids_json = excluded.verification_need_ids_json,
+        open_question_ids_json = excluded.open_question_ids_json,
+        risk_state_ids_json = excluded.risk_state_ids_json,
+        skill_trust_ids_json = excluded.skill_trust_ids_json,
+        summary = excluded.summary,
+        best_next_action = excluded.best_next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.snapshotId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    record.confidence,
+    record.logicBeliefStateId || null,
+    record.truthAuditId || null,
+    record.agentOSEpisodeId || null,
+    record.cognitiveRunId || null,
+    redactStoredCognitiveMetadata(record.freshnessPolicyJson, 4800),
+    redactStoredCognitiveMetadata(record.claimIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.evidenceRefIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.verificationNeedIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.openQuestionIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.riskStateIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.skillTrustIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.bestNextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listWorldModelSnapshots(
+  params: { status?: WorldModelSnapshot['status']; limit?: number } = {},
+): WorldModelSnapshot[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM world_model_snapshots
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapWorldModelSnapshotRow>[0]>;
+  return rows.map((row) => mapWorldModelSnapshotRow(row));
+}
+
+function mapWorldModelEvidenceRefRow(row: {
+  evidence_ref_id: string;
+  snapshot_id: string;
+  created_at: string;
+  domain: WorldModelEvidenceRef['domain'];
+  source_kind: WorldModelEvidenceRef['sourceKind'];
+  source_id: string;
+  freshness: WorldModelEvidenceRef['freshness'];
+  trust: WorldModelEvidenceRef['trust'];
+  summary: string;
+  privacy_json: string;
+}): WorldModelEvidenceRef {
+  return {
+    evidenceRefId: row.evidence_ref_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    domain: row.domain,
+    sourceKind: row.source_kind,
+    sourceId: row.source_id,
+    freshness: row.freshness,
+    trust: row.trust,
+    summary: row.summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertWorldModelEvidenceRef(
+  record: WorldModelEvidenceRef,
+): void {
+  db.prepare(
+    `
+      INSERT INTO world_model_evidence_refs (
+        evidence_ref_id, snapshot_id, created_at, domain, source_kind,
+        source_id, freshness, trust, summary, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(evidence_ref_id) DO UPDATE SET
+        snapshot_id = excluded.snapshot_id,
+        domain = excluded.domain,
+        source_kind = excluded.source_kind,
+        source_id = excluded.source_id,
+        freshness = excluded.freshness,
+        trust = excluded.trust,
+        summary = excluded.summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.evidenceRefId,
+    record.snapshotId,
+    record.createdAt,
+    record.domain,
+    record.sourceKind,
+    redactStoredCognitiveMetadata(record.sourceId, 320),
+    record.freshness,
+    record.trust,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listWorldModelEvidenceRefs(
+  params: {
+    snapshotId?: string;
+    domain?: WorldModelEvidenceRef['domain'];
+    limit?: number;
+  } = {},
+): WorldModelEvidenceRef[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.domain) {
+    clauses.push('domain = ?');
+    args.push(params.domain);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM world_model_evidence_refs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapWorldModelEvidenceRefRow>[0]>;
+  return rows.map((row) => mapWorldModelEvidenceRefRow(row));
+}
+
+function mapWorldModelClaimRow(row: {
+  claim_id: string;
+  snapshot_id: string;
+  created_at: string;
+  updated_at: string;
+  domain: WorldModelClaim['domain'];
+  subject: string;
+  claim_kind: WorldModelClaim['claimKind'];
+  status: WorldModelClaim['status'];
+  confidence: number;
+  evidence_ref_ids_json: string;
+  verification_need_ids_json: string;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): WorldModelClaim {
+  return {
+    claimId: row.claim_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    domain: row.domain,
+    subject: row.subject,
+    claimKind: row.claim_kind,
+    status: row.status,
+    confidence: row.confidence,
+    evidenceRefIdsJson: row.evidence_ref_ids_json,
+    verificationNeedIdsJson: row.verification_need_ids_json,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertWorldModelClaim(record: WorldModelClaim): void {
+  db.prepare(
+    `
+      INSERT INTO world_model_claims (
+        claim_id, snapshot_id, created_at, updated_at, domain, subject,
+        claim_kind, status, confidence, evidence_ref_ids_json,
+        verification_need_ids_json, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(claim_id) DO UPDATE SET
+        snapshot_id = excluded.snapshot_id,
+        updated_at = excluded.updated_at,
+        domain = excluded.domain,
+        subject = excluded.subject,
+        claim_kind = excluded.claim_kind,
+        status = excluded.status,
+        confidence = excluded.confidence,
+        evidence_ref_ids_json = excluded.evidence_ref_ids_json,
+        verification_need_ids_json = excluded.verification_need_ids_json,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.claimId,
+    record.snapshotId,
+    record.createdAt,
+    record.updatedAt,
+    record.domain,
+    redactStoredCognitiveMetadata(record.subject, 320),
+    record.claimKind,
+    record.status,
+    record.confidence,
+    redactStoredCognitiveMetadata(record.evidenceRefIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.verificationNeedIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listWorldModelClaims(
+  params: {
+    snapshotId?: string;
+    domain?: WorldModelClaim['domain'];
+    status?: WorldModelClaim['status'];
+    limit?: number;
+  } = {},
+): WorldModelClaim[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.domain) {
+    clauses.push('domain = ?');
+    args.push(params.domain);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM world_model_claims
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapWorldModelClaimRow>[0]>;
+  return rows.map((row) => mapWorldModelClaimRow(row));
+}
+
+function mapWorldModelVerificationNeedRow(row: {
+  need_id: string;
+  snapshot_id: string;
+  created_at: string;
+  updated_at: string;
+  domain: WorldModelVerificationNeed['domain'];
+  status: WorldModelVerificationNeed['status'];
+  action_kind: WorldModelVerificationNeed['actionKind'];
+  safe_to_run_automatically: number;
+  command: string;
+  blocker_class: string;
+  evidence_ref_ids_json: string;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): WorldModelVerificationNeed {
+  return {
+    needId: row.need_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    domain: row.domain,
+    status: row.status,
+    actionKind: row.action_kind,
+    safeToRunAutomatically: row.safe_to_run_automatically === 1,
+    command: row.command,
+    blockerClass: row.blocker_class,
+    evidenceRefIdsJson: row.evidence_ref_ids_json,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertWorldModelVerificationNeed(
+  record: WorldModelVerificationNeed,
+): void {
+  db.prepare(
+    `
+      INSERT INTO world_model_verification_needs (
+        need_id, snapshot_id, created_at, updated_at, domain, status,
+        action_kind, safe_to_run_automatically, command, blocker_class,
+        evidence_ref_ids_json, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(need_id) DO UPDATE SET
+        snapshot_id = excluded.snapshot_id,
+        updated_at = excluded.updated_at,
+        domain = excluded.domain,
+        status = excluded.status,
+        action_kind = excluded.action_kind,
+        safe_to_run_automatically = excluded.safe_to_run_automatically,
+        command = excluded.command,
+        blocker_class = excluded.blocker_class,
+        evidence_ref_ids_json = excluded.evidence_ref_ids_json,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.needId,
+    record.snapshotId,
+    record.createdAt,
+    record.updatedAt,
+    record.domain,
+    record.status,
+    record.actionKind,
+    record.safeToRunAutomatically ? 1 : 0,
+    redactStoredCognitiveMetadata(record.command, 640),
+    redactStoredCognitiveMetadata(record.blockerClass, 160),
+    redactStoredCognitiveMetadata(record.evidenceRefIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listWorldModelVerificationNeeds(
+  params: {
+    snapshotId?: string;
+    domain?: WorldModelVerificationNeed['domain'];
+    status?: WorldModelVerificationNeed['status'];
+    limit?: number;
+  } = {},
+): WorldModelVerificationNeed[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.domain) {
+    clauses.push('domain = ?');
+    args.push(params.domain);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM world_model_verification_needs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapWorldModelVerificationNeedRow>[0]
+  >;
+  return rows.map((row) => mapWorldModelVerificationNeedRow(row));
+}
+
+function mapWorldModelOpenQuestionRow(row: {
+  question_id: string;
+  snapshot_id: string;
+  created_at: string;
+  domain: WorldModelOpenQuestion['domain'];
+  status: WorldModelOpenQuestion['status'];
+  question: string;
+  required_evidence_json: string;
+  next_action: string;
+  privacy_json: string;
+}): WorldModelOpenQuestion {
+  return {
+    questionId: row.question_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    domain: row.domain,
+    status: row.status,
+    question: row.question,
+    requiredEvidenceJson: row.required_evidence_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertWorldModelOpenQuestion(
+  record: WorldModelOpenQuestion,
+): void {
+  db.prepare(
+    `
+      INSERT INTO world_model_open_questions (
+        question_id, snapshot_id, created_at, domain, status, question,
+        required_evidence_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(question_id) DO UPDATE SET
+        snapshot_id = excluded.snapshot_id,
+        domain = excluded.domain,
+        status = excluded.status,
+        question = excluded.question,
+        required_evidence_json = excluded.required_evidence_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.questionId,
+    record.snapshotId,
+    record.createdAt,
+    record.domain,
+    record.status,
+    redactStoredCognitiveMetadata(record.question, 900),
+    redactStoredCognitiveMetadata(record.requiredEvidenceJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listWorldModelOpenQuestions(
+  params: {
+    snapshotId?: string;
+    status?: WorldModelOpenQuestion['status'];
+    limit?: number;
+  } = {},
+): WorldModelOpenQuestion[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM world_model_open_questions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapWorldModelOpenQuestionRow>[0]>;
+  return rows.map((row) => mapWorldModelOpenQuestionRow(row));
+}
+
+function mapWorldModelRiskStateRow(row: {
+  risk_id: string;
+  snapshot_id: string;
+  created_at: string;
+  domain: WorldModelRiskState['domain'];
+  severity: WorldModelRiskState['severity'];
+  status: WorldModelRiskState['status'];
+  risk_class: WorldModelRiskState['riskClass'];
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): WorldModelRiskState {
+  return {
+    riskId: row.risk_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    domain: row.domain,
+    severity: row.severity,
+    status: row.status,
+    riskClass: row.risk_class,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertWorldModelRiskState(record: WorldModelRiskState): void {
+  db.prepare(
+    `
+      INSERT INTO world_model_risk_states (
+        risk_id, snapshot_id, created_at, domain, severity, status,
+        risk_class, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(risk_id) DO UPDATE SET
+        snapshot_id = excluded.snapshot_id,
+        domain = excluded.domain,
+        severity = excluded.severity,
+        status = excluded.status,
+        risk_class = excluded.risk_class,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.riskId,
+    record.snapshotId,
+    record.createdAt,
+    record.domain,
+    record.severity,
+    record.status,
+    record.riskClass,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listWorldModelRiskStates(
+  params: {
+    snapshotId?: string;
+    status?: WorldModelRiskState['status'];
+    limit?: number;
+  } = {},
+): WorldModelRiskState[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM world_model_risk_states
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapWorldModelRiskStateRow>[0]>;
+  return rows.map((row) => mapWorldModelRiskStateRow(row));
+}
+
+function mapWorldModelSkillTrustRow(row: {
+  skill_trust_id: string;
+  snapshot_id: string;
+  created_at: string;
+  skill_id: string;
+  task_family: string;
+  status: WorldModelSkillTrustState['status'];
+  confidence: number;
+  outcome_score: number;
+  source_ids_json: string;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): WorldModelSkillTrustState {
+  return {
+    skillTrustId: row.skill_trust_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    skillId: row.skill_id,
+    taskFamily: row.task_family,
+    status: row.status,
+    confidence: row.confidence,
+    outcomeScore: row.outcome_score,
+    sourceIdsJson: row.source_ids_json,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertWorldModelSkillTrust(
+  record: WorldModelSkillTrustState,
+): void {
+  db.prepare(
+    `
+      INSERT INTO world_model_skill_trust (
+        skill_trust_id, snapshot_id, created_at, skill_id, task_family,
+        status, confidence, outcome_score, source_ids_json, summary,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(skill_trust_id) DO UPDATE SET
+        snapshot_id = excluded.snapshot_id,
+        skill_id = excluded.skill_id,
+        task_family = excluded.task_family,
+        status = excluded.status,
+        confidence = excluded.confidence,
+        outcome_score = excluded.outcome_score,
+        source_ids_json = excluded.source_ids_json,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.skillTrustId,
+    record.snapshotId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.skillId, 320),
+    redactStoredCognitiveMetadata(record.taskFamily, 160),
+    record.status,
+    record.confidence,
+    record.outcomeScore,
+    redactStoredCognitiveMetadata(record.sourceIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listWorldModelSkillTrust(
+  params: {
+    snapshotId?: string;
+    status?: WorldModelSkillTrustState['status'];
+    limit?: number;
+  } = {},
+): WorldModelSkillTrustState[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(worldLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM world_model_skill_trust
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY outcome_score DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapWorldModelSkillTrustRow>[0]>;
+  return rows.map((row) => mapWorldModelSkillTrustRow(row));
+}
+
+export function pruneWorldModelData(params: {
+  cutoffIso: string;
+  retainLimit: number;
+}): void {
+  const childTables = [
+    'world_model_evidence_refs',
+    'world_model_claims',
+    'world_model_verification_needs',
+    'world_model_open_questions',
+    'world_model_risk_states',
+    'world_model_skill_trust',
+  ];
+  for (const table of childTables) {
+    db.prepare(
+      `
+        DELETE FROM ${table}
+        WHERE snapshot_id IN (
+          SELECT snapshot_id
+          FROM world_model_snapshots
+          WHERE created_at < ?
+        )
+      `,
+    ).run(params.cutoffIso);
+  }
+  db.prepare('DELETE FROM world_model_snapshots WHERE created_at < ?').run(
+    params.cutoffIso,
+  );
+  for (const table of childTables) {
+    db.prepare(
+      `
+        DELETE FROM ${table}
+        WHERE snapshot_id NOT IN (
+          SELECT snapshot_id
+          FROM world_model_snapshots
+          ORDER BY created_at DESC
+          LIMIT ?
+        )
+      `,
+    ).run(Math.max(1, params.retainLimit));
+  }
+  db.prepare(
+    `
+      DELETE FROM world_model_snapshots
+      WHERE snapshot_id NOT IN (
+        SELECT snapshot_id
+        FROM world_model_snapshots
+        ORDER BY created_at DESC
+        LIMIT ?
+      )
+    `,
+  ).run(Math.max(1, params.retainLimit));
+}
+
+function runtimeLimit(limit = 100): number {
+  return Math.max(1, Math.min(limit, 500));
+}
+
+function mapAgentRuntimeRunRow(row: {
+  runtime_run_id: string;
+  created_at: string;
+  updated_at: string;
+  mode: AgentRuntimeRun['mode'];
+  status: AgentRuntimeRun['status'];
+  turn_id: string | null;
+  channel: string | null;
+  group_folder: string | null;
+  goal_summary: string;
+  task_family: string;
+  world_snapshot_id: string | null;
+  agent_os_episode_id: string | null;
+  cognitive_run_id: string | null;
+  council_run_id: string | null;
+  logic_belief_state_id: string | null;
+  truth_audit_id: string | null;
+  checkpoint_ids_json: string;
+  write_ids_json: string;
+  step_ids_json: string;
+  evidence_packet_ids_json: string;
+  interrupt_ids_json: string;
+  guardrail_result_ids_json: string;
+  outcome_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgentRuntimeRun {
+  return {
+    runtimeRunId: row.runtime_run_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    mode: row.mode,
+    status: row.status,
+    turnId: row.turn_id,
+    channel: row.channel,
+    groupFolder:
+      row.group_folder && isValidGroupFolder(row.group_folder)
+        ? row.group_folder
+        : null,
+    goalSummary: row.goal_summary,
+    taskFamily: row.task_family,
+    worldSnapshotId: row.world_snapshot_id,
+    agentOSEpisodeId: row.agent_os_episode_id,
+    cognitiveRunId: row.cognitive_run_id,
+    councilRunId: row.council_run_id,
+    logicBeliefStateId: row.logic_belief_state_id,
+    truthAuditId: row.truth_audit_id,
+    checkpointIdsJson: row.checkpoint_ids_json,
+    writeIdsJson: row.write_ids_json,
+    stepIdsJson: row.step_ids_json,
+    evidencePacketIdsJson: row.evidence_packet_ids_json,
+    interruptIdsJson: row.interrupt_ids_json,
+    guardrailResultIdsJson: row.guardrail_result_ids_json,
+    outcomeJson: row.outcome_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentRuntimeRun(record: AgentRuntimeRun): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO agent_runtime_runs (
+        runtime_run_id, created_at, updated_at, mode, status, turn_id, channel,
+        group_folder, goal_summary, task_family, world_snapshot_id,
+        agent_os_episode_id, cognitive_run_id, council_run_id,
+        logic_belief_state_id, truth_audit_id, checkpoint_ids_json,
+        write_ids_json, step_ids_json, evidence_packet_ids_json,
+        interrupt_ids_json, guardrail_result_ids_json, outcome_json,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(runtime_run_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        mode = excluded.mode,
+        status = excluded.status,
+        turn_id = excluded.turn_id,
+        channel = excluded.channel,
+        group_folder = excluded.group_folder,
+        goal_summary = excluded.goal_summary,
+        task_family = excluded.task_family,
+        world_snapshot_id = excluded.world_snapshot_id,
+        agent_os_episode_id = excluded.agent_os_episode_id,
+        cognitive_run_id = excluded.cognitive_run_id,
+        council_run_id = excluded.council_run_id,
+        logic_belief_state_id = excluded.logic_belief_state_id,
+        truth_audit_id = excluded.truth_audit_id,
+        checkpoint_ids_json = excluded.checkpoint_ids_json,
+        write_ids_json = excluded.write_ids_json,
+        step_ids_json = excluded.step_ids_json,
+        evidence_packet_ids_json = excluded.evidence_packet_ids_json,
+        interrupt_ids_json = excluded.interrupt_ids_json,
+        guardrail_result_ids_json = excluded.guardrail_result_ids_json,
+        outcome_json = excluded.outcome_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.runtimeRunId,
+    record.createdAt,
+    record.updatedAt,
+    record.mode,
+    record.status,
+    record.turnId || null,
+    record.channel || null,
+    record.groupFolder || null,
+    redactStoredCognitiveMetadata(record.goalSummary, 900),
+    redactStoredCognitiveMetadata(record.taskFamily, 160),
+    record.worldSnapshotId || null,
+    record.agentOSEpisodeId || null,
+    record.cognitiveRunId || null,
+    record.councilRunId || null,
+    record.logicBeliefStateId || null,
+    record.truthAuditId || null,
+    redactStoredCognitiveMetadata(record.checkpointIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.writeIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.stepIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.evidencePacketIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.interruptIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.guardrailResultIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.outcomeJson, 3200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function getAgentRuntimeRun(
+  runtimeRunId: string,
+): AgentRuntimeRun | undefined {
+  const row = db
+    .prepare('SELECT * FROM agent_runtime_runs WHERE runtime_run_id = ?')
+    .get(runtimeRunId) as
+    | Parameters<typeof mapAgentRuntimeRunRow>[0]
+    | undefined;
+  return row ? mapAgentRuntimeRunRow(row) : undefined;
+}
+
+export function listAgentRuntimeRuns(
+  params: {
+    turnId?: string;
+    status?: AgentRuntimeRun['status'];
+    mode?: AgentRuntimeRun['mode'];
+    limit?: number;
+  } = {},
+): AgentRuntimeRun[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.turnId) {
+    clauses.push('turn_id = ?');
+    args.push(params.turnId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  if (params.mode) {
+    clauses.push('mode = ?');
+    args.push(params.mode);
+  }
+  args.push(runtimeLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_runtime_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentRuntimeRunRow>[0]>;
+  return rows.map((row) => mapAgentRuntimeRunRow(row));
+}
+
+function mapAgentRuntimeStepRow(row: {
+  step_id: string;
+  runtime_run_id: string;
+  created_at: string;
+  position: number;
+  step_kind: AgentRuntimeStep['stepKind'];
+  layer: AgentRuntimeStep['layer'];
+  status: AgentRuntimeStep['status'];
+  summary: string;
+  refs_json: string;
+  evidence_packet_ids_json: string;
+  guardrail_result_ids_json: string;
+  checkpoint_id: string | null;
+  write_id: string | null;
+  next_action: string;
+  privacy_json: string;
+}): AgentRuntimeStep {
+  return {
+    stepId: row.step_id,
+    runtimeRunId: row.runtime_run_id,
+    createdAt: row.created_at,
+    position: row.position,
+    stepKind: row.step_kind,
+    layer: row.layer,
+    status: row.status,
+    summary: row.summary,
+    refsJson: row.refs_json,
+    evidencePacketIdsJson: row.evidence_packet_ids_json,
+    guardrailResultIdsJson: row.guardrail_result_ids_json,
+    checkpointId: row.checkpoint_id,
+    writeId: row.write_id,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentRuntimeStep(record: AgentRuntimeStep): void {
+  db.prepare(
+    `
+      INSERT INTO agent_runtime_steps (
+        step_id, runtime_run_id, created_at, position, step_kind, layer, status,
+        summary, refs_json, evidence_packet_ids_json, guardrail_result_ids_json,
+        checkpoint_id, write_id, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(step_id) DO UPDATE SET
+        runtime_run_id = excluded.runtime_run_id,
+        position = excluded.position,
+        step_kind = excluded.step_kind,
+        layer = excluded.layer,
+        status = excluded.status,
+        summary = excluded.summary,
+        refs_json = excluded.refs_json,
+        evidence_packet_ids_json = excluded.evidence_packet_ids_json,
+        guardrail_result_ids_json = excluded.guardrail_result_ids_json,
+        checkpoint_id = excluded.checkpoint_id,
+        write_id = excluded.write_id,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.stepId,
+    record.runtimeRunId,
+    record.createdAt,
+    record.position,
+    record.stepKind,
+    record.layer,
+    record.status,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.refsJson, 3200),
+    redactStoredCognitiveMetadata(record.evidencePacketIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.guardrailResultIdsJson, 2400),
+    record.checkpointId || null,
+    record.writeId || null,
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentRuntimeSteps(
+  params: { runtimeRunId?: string; limit?: number } = {},
+): AgentRuntimeStep[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  args.push(runtimeLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_runtime_steps
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY position ASC, created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentRuntimeStepRow>[0]>;
+  return rows.map((row) => mapAgentRuntimeStepRow(row));
+}
+
+function mapAgentRuntimeCheckpointRow(row: {
+  checkpoint_id: string;
+  runtime_run_id: string;
+  thread_id: string;
+  checkpoint_ns: string;
+  parent_checkpoint_id: string | null;
+  created_at: string;
+  updated_at: string;
+  status: AgentRuntimeCheckpoint['status'];
+  checkpoint_json: string;
+  metadata_json: string;
+  pending_write_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgentRuntimeCheckpoint {
+  return {
+    checkpointId: row.checkpoint_id,
+    runtimeRunId: row.runtime_run_id,
+    threadId: row.thread_id,
+    checkpointNs: row.checkpoint_ns,
+    parentCheckpointId: row.parent_checkpoint_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    checkpointJson: row.checkpoint_json,
+    metadataJson: row.metadata_json,
+    pendingWriteIdsJson: row.pending_write_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentRuntimeCheckpoint(
+  record: AgentRuntimeCheckpoint,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agent_runtime_checkpoints (
+        checkpoint_id, runtime_run_id, thread_id, checkpoint_ns,
+        parent_checkpoint_id, created_at, updated_at, status, checkpoint_json,
+        metadata_json, pending_write_ids_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(checkpoint_id) DO UPDATE SET
+        runtime_run_id = excluded.runtime_run_id,
+        thread_id = excluded.thread_id,
+        checkpoint_ns = excluded.checkpoint_ns,
+        parent_checkpoint_id = excluded.parent_checkpoint_id,
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        checkpoint_json = excluded.checkpoint_json,
+        metadata_json = excluded.metadata_json,
+        pending_write_ids_json = excluded.pending_write_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.checkpointId,
+    record.runtimeRunId,
+    redactStoredCognitiveMetadata(record.threadId, 320),
+    redactStoredCognitiveMetadata(record.checkpointNs, 160),
+    record.parentCheckpointId || null,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.checkpointJson, 6400),
+    redactStoredCognitiveMetadata(record.metadataJson, 3200),
+    redactStoredCognitiveMetadata(record.pendingWriteIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentRuntimeCheckpoints(
+  params: {
+    runtimeRunId?: string;
+    threadId?: string;
+    status?: AgentRuntimeCheckpoint['status'];
+    limit?: number;
+  } = {},
+): AgentRuntimeCheckpoint[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  if (params.threadId) {
+    clauses.push('thread_id = ?');
+    args.push(params.threadId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(runtimeLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_runtime_checkpoints
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentRuntimeCheckpointRow>[0]>;
+  return rows.map((row) => mapAgentRuntimeCheckpointRow(row));
+}
+
+function mapAgentRuntimeWriteRow(row: {
+  write_id: string;
+  checkpoint_id: string;
+  runtime_run_id: string;
+  task_id: string;
+  idx: number;
+  channel: string;
+  write_type: AgentRuntimeWrite['writeType'];
+  status: AgentRuntimeWrite['status'];
+  value_summary_json: string;
+  created_at: string;
+  applied_at: string | null;
+  privacy_json: string;
+}): AgentRuntimeWrite {
+  return {
+    writeId: row.write_id,
+    checkpointId: row.checkpoint_id,
+    runtimeRunId: row.runtime_run_id,
+    taskId: row.task_id,
+    idx: row.idx,
+    channel: row.channel,
+    writeType: row.write_type,
+    status: row.status,
+    valueSummaryJson: row.value_summary_json,
+    createdAt: row.created_at,
+    appliedAt: row.applied_at,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentRuntimeWrite(record: AgentRuntimeWrite): void {
+  db.prepare(
+    `
+      INSERT INTO agent_runtime_writes (
+        write_id, checkpoint_id, runtime_run_id, task_id, idx, channel,
+        write_type, status, value_summary_json, created_at, applied_at,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(write_id) DO UPDATE SET
+        checkpoint_id = excluded.checkpoint_id,
+        runtime_run_id = excluded.runtime_run_id,
+        task_id = excluded.task_id,
+        idx = excluded.idx,
+        channel = excluded.channel,
+        write_type = excluded.write_type,
+        status = excluded.status,
+        value_summary_json = excluded.value_summary_json,
+        applied_at = excluded.applied_at,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.writeId,
+    record.checkpointId,
+    record.runtimeRunId,
+    redactStoredCognitiveMetadata(record.taskId, 320),
+    record.idx,
+    redactStoredCognitiveMetadata(record.channel, 160),
+    record.writeType,
+    record.status,
+    redactStoredCognitiveMetadata(record.valueSummaryJson, 3200),
+    record.createdAt,
+    record.appliedAt || null,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentRuntimeWrites(
+  params: {
+    runtimeRunId?: string;
+    checkpointId?: string;
+    status?: AgentRuntimeWrite['status'];
+    limit?: number;
+  } = {},
+): AgentRuntimeWrite[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  if (params.checkpointId) {
+    clauses.push('checkpoint_id = ?');
+    args.push(params.checkpointId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(runtimeLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_runtime_writes
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY idx ASC, created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentRuntimeWriteRow>[0]>;
+  return rows.map((row) => mapAgentRuntimeWriteRow(row));
+}
+
+function mapAgentRuntimeGuardrailRow(row: {
+  guardrail_result_id: string;
+  runtime_run_id: string;
+  step_id: string | null;
+  created_at: string;
+  intervention_point: AgentRuntimeGuardrailResult['interventionPoint'];
+  behavior: AgentRuntimeGuardrailResult['behavior'];
+  status: AgentRuntimeGuardrailResult['status'];
+  decision: AgentRuntimeGuardrailResult['decision'];
+  allowed: number;
+  transformed: number;
+  reason: string;
+  message: string;
+  risk_flags_json: string;
+  output_info_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgentRuntimeGuardrailResult {
+  return {
+    guardrailResultId: row.guardrail_result_id,
+    runtimeRunId: row.runtime_run_id,
+    stepId: row.step_id,
+    createdAt: row.created_at,
+    interventionPoint: row.intervention_point,
+    behavior: row.behavior,
+    status: row.status,
+    decision: row.decision,
+    allowed: row.allowed === 1,
+    transformed: row.transformed === 1,
+    reason: row.reason,
+    message: row.message,
+    riskFlagsJson: row.risk_flags_json,
+    outputInfoJson: row.output_info_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentRuntimeGuardrailResult(
+  record: AgentRuntimeGuardrailResult,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agent_runtime_guardrail_results (
+        guardrail_result_id, runtime_run_id, step_id, created_at,
+        intervention_point, behavior, status, decision, allowed, transformed,
+        reason, message, risk_flags_json, output_info_json, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(guardrail_result_id) DO UPDATE SET
+        runtime_run_id = excluded.runtime_run_id,
+        step_id = excluded.step_id,
+        intervention_point = excluded.intervention_point,
+        behavior = excluded.behavior,
+        status = excluded.status,
+        decision = excluded.decision,
+        allowed = excluded.allowed,
+        transformed = excluded.transformed,
+        reason = excluded.reason,
+        message = excluded.message,
+        risk_flags_json = excluded.risk_flags_json,
+        output_info_json = excluded.output_info_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.guardrailResultId,
+    record.runtimeRunId,
+    record.stepId || null,
+    record.createdAt,
+    record.interventionPoint,
+    record.behavior,
+    record.status,
+    record.decision,
+    record.allowed ? 1 : 0,
+    record.transformed ? 1 : 0,
+    redactStoredCognitiveMetadata(record.reason, 900),
+    redactStoredCognitiveMetadata(record.message, 900),
+    redactStoredCognitiveMetadata(record.riskFlagsJson, 2400),
+    redactStoredCognitiveMetadata(record.outputInfoJson, 3200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentRuntimeGuardrailResults(
+  params: {
+    runtimeRunId?: string;
+    status?: AgentRuntimeGuardrailResult['status'];
+    limit?: number;
+  } = {},
+): AgentRuntimeGuardrailResult[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(runtimeLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_runtime_guardrail_results
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentRuntimeGuardrailRow>[0]>;
+  return rows.map((row) => mapAgentRuntimeGuardrailRow(row));
+}
+
+function mapAgentRuntimeInterruptRow(row: {
+  interrupt_id: string;
+  runtime_run_id: string;
+  checkpoint_id: string | null;
+  created_at: string;
+  updated_at: string;
+  interrupt_kind: AgentRuntimeInterrupt['interruptKind'];
+  status: AgentRuntimeInterrupt['status'];
+  payload_json: string;
+  resume_token_id: string | null;
+  next_action: string;
+  privacy_json: string;
+}): AgentRuntimeInterrupt {
+  return {
+    interruptId: row.interrupt_id,
+    runtimeRunId: row.runtime_run_id,
+    checkpointId: row.checkpoint_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    interruptKind: row.interrupt_kind,
+    status: row.status,
+    payloadJson: row.payload_json,
+    resumeTokenId: row.resume_token_id,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentRuntimeInterrupt(
+  record: AgentRuntimeInterrupt,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agent_runtime_interrupts (
+        interrupt_id, runtime_run_id, checkpoint_id, created_at, updated_at,
+        interrupt_kind, status, payload_json, resume_token_id, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(interrupt_id) DO UPDATE SET
+        runtime_run_id = excluded.runtime_run_id,
+        checkpoint_id = excluded.checkpoint_id,
+        updated_at = excluded.updated_at,
+        interrupt_kind = excluded.interrupt_kind,
+        status = excluded.status,
+        payload_json = excluded.payload_json,
+        resume_token_id = excluded.resume_token_id,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.interruptId,
+    record.runtimeRunId,
+    record.checkpointId || null,
+    record.createdAt,
+    record.updatedAt,
+    record.interruptKind,
+    record.status,
+    redactStoredCognitiveMetadata(record.payloadJson, 3200),
+    record.resumeTokenId || null,
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentRuntimeInterrupts(
+  params: {
+    runtimeRunId?: string;
+    status?: AgentRuntimeInterrupt['status'];
+    limit?: number;
+  } = {},
+): AgentRuntimeInterrupt[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(runtimeLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_runtime_interrupts
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentRuntimeInterruptRow>[0]>;
+  return rows.map((row) => mapAgentRuntimeInterruptRow(row));
+}
+
+function mapAgentRuntimeResumeTokenRow(row: {
+  resume_token_id: string;
+  runtime_run_id: string;
+  interrupt_id: string;
+  checkpoint_id: string | null;
+  created_at: string;
+  updated_at: string;
+  status: AgentRuntimeResumeToken['status'];
+  continuation_key: string;
+  safe_state_json: string;
+  expires_at: string | null;
+  used_at: string | null;
+  privacy_json: string;
+}): AgentRuntimeResumeToken {
+  return {
+    resumeTokenId: row.resume_token_id,
+    runtimeRunId: row.runtime_run_id,
+    interruptId: row.interrupt_id,
+    checkpointId: row.checkpoint_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    continuationKey: row.continuation_key,
+    safeStateJson: row.safe_state_json,
+    expiresAt: row.expires_at,
+    usedAt: row.used_at,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentRuntimeResumeToken(
+  record: AgentRuntimeResumeToken,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agent_runtime_resume_tokens (
+        resume_token_id, runtime_run_id, interrupt_id, checkpoint_id,
+        created_at, updated_at, status, continuation_key, safe_state_json,
+        expires_at, used_at, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(resume_token_id) DO UPDATE SET
+        runtime_run_id = excluded.runtime_run_id,
+        interrupt_id = excluded.interrupt_id,
+        checkpoint_id = excluded.checkpoint_id,
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        continuation_key = excluded.continuation_key,
+        safe_state_json = excluded.safe_state_json,
+        expires_at = excluded.expires_at,
+        used_at = excluded.used_at,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.resumeTokenId,
+    record.runtimeRunId,
+    record.interruptId,
+    record.checkpointId || null,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.continuationKey, 320),
+    redactStoredCognitiveMetadata(record.safeStateJson, 3200),
+    record.expiresAt || null,
+    record.usedAt || null,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentRuntimeResumeTokens(
+  params: {
+    runtimeRunId?: string;
+    status?: AgentRuntimeResumeToken['status'];
+    limit?: number;
+  } = {},
+): AgentRuntimeResumeToken[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(runtimeLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_runtime_resume_tokens
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentRuntimeResumeTokenRow>[0]>;
+  return rows.map((row) => mapAgentRuntimeResumeTokenRow(row));
+}
+
+function mapAgentRuntimeEventRow(row: {
+  event_id: string;
+  runtime_run_id: string;
+  created_at: string;
+  event_kind: AgentRuntimeEvent['eventKind'];
+  severity: AgentRuntimeEvent['severity'];
+  summary: string;
+  truncated: number;
+  refs_json: string;
+  privacy_json: string;
+}): AgentRuntimeEvent {
+  return {
+    eventId: row.event_id,
+    runtimeRunId: row.runtime_run_id,
+    createdAt: row.created_at,
+    eventKind: row.event_kind,
+    severity: row.severity,
+    summary: row.summary,
+    truncated: row.truncated === 1,
+    refsJson: row.refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentRuntimeEvent(record: AgentRuntimeEvent): void {
+  db.prepare(
+    `
+      INSERT INTO agent_runtime_events (
+        event_id, runtime_run_id, created_at, event_kind, severity, summary,
+        truncated, refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(event_id) DO UPDATE SET
+        runtime_run_id = excluded.runtime_run_id,
+        event_kind = excluded.event_kind,
+        severity = excluded.severity,
+        summary = excluded.summary,
+        truncated = excluded.truncated,
+        refs_json = excluded.refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.eventId,
+    record.runtimeRunId,
+    record.createdAt,
+    record.eventKind,
+    record.severity,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    record.truncated ? 1 : 0,
+    redactStoredCognitiveMetadata(record.refsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentRuntimeEvents(
+  params: {
+    runtimeRunId?: string;
+    eventKind?: AgentRuntimeEvent['eventKind'];
+    limit?: number;
+  } = {},
+): AgentRuntimeEvent[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  if (params.eventKind) {
+    clauses.push('event_kind = ?');
+    args.push(params.eventKind);
+  }
+  args.push(runtimeLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_runtime_events
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgentRuntimeEventRow>[0]>;
+  return rows.map((row) => mapAgentRuntimeEventRow(row));
+}
+
+function mapAgentRuntimeEvidencePacketRow(row: {
+  evidence_packet_id: string;
+  runtime_run_id: string;
+  created_at: string;
+  source_layer: AgentRuntimeEvidencePacket['sourceLayer'];
+  source_id: string;
+  evidence_ids_json: string;
+  support_grade: AgentRuntimeEvidencePacket['supportGrade'];
+  freshness: AgentRuntimeEvidencePacket['freshness'];
+  confidence: number;
+  citation_coverage: number;
+  contradiction_tier: AgentRuntimeEvidencePacket['contradictionTier'];
+  return_policy_json: string;
+  summary: string;
+  privacy_json: string;
+}): AgentRuntimeEvidencePacket {
+  return {
+    evidencePacketId: row.evidence_packet_id,
+    runtimeRunId: row.runtime_run_id,
+    createdAt: row.created_at,
+    sourceLayer: row.source_layer,
+    sourceId: row.source_id,
+    evidenceIdsJson: row.evidence_ids_json,
+    supportGrade: row.support_grade,
+    freshness: row.freshness,
+    confidence: row.confidence,
+    citationCoverage: row.citation_coverage,
+    contradictionTier: row.contradiction_tier,
+    returnPolicyJson: row.return_policy_json,
+    summary: row.summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentRuntimeEvidencePacket(
+  record: AgentRuntimeEvidencePacket,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agent_runtime_evidence_packets (
+        evidence_packet_id, runtime_run_id, created_at, source_layer,
+        source_id, evidence_ids_json, support_grade, freshness, confidence,
+        citation_coverage, contradiction_tier, return_policy_json, summary,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(evidence_packet_id) DO UPDATE SET
+        runtime_run_id = excluded.runtime_run_id,
+        source_layer = excluded.source_layer,
+        source_id = excluded.source_id,
+        evidence_ids_json = excluded.evidence_ids_json,
+        support_grade = excluded.support_grade,
+        freshness = excluded.freshness,
+        confidence = excluded.confidence,
+        citation_coverage = excluded.citation_coverage,
+        contradiction_tier = excluded.contradiction_tier,
+        return_policy_json = excluded.return_policy_json,
+        summary = excluded.summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.evidencePacketId,
+    record.runtimeRunId,
+    record.createdAt,
+    record.sourceLayer,
+    redactStoredCognitiveMetadata(record.sourceId, 320),
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 3200),
+    record.supportGrade,
+    record.freshness,
+    record.confidence,
+    record.citationCoverage,
+    record.contradictionTier,
+    redactStoredCognitiveMetadata(record.returnPolicyJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentRuntimeEvidencePackets(
+  params: {
+    runtimeRunId?: string;
+    sourceLayer?: AgentRuntimeEvidencePacket['sourceLayer'];
+    limit?: number;
+  } = {},
+): AgentRuntimeEvidencePacket[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  if (params.sourceLayer) {
+    clauses.push('source_layer = ?');
+    args.push(params.sourceLayer);
+  }
+  args.push(runtimeLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_runtime_evidence_packets
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapAgentRuntimeEvidencePacketRow>[0]
+  >;
+  return rows.map((row) => mapAgentRuntimeEvidencePacketRow(row));
+}
+
+function mapAgentRuntimeSkillManifestRow(row: {
+  manifest_id: string;
+  created_at: string;
+  updated_at: string;
+  skill_id: string;
+  source_kind: AgentRuntimeSkillManifest['sourceKind'];
+  precedence: number;
+  status: AgentRuntimeSkillManifest['status'];
+  frontmatter_json: string;
+  trigger_json: string;
+  tool_refs_json: string;
+  approval_rules_json: string;
+  evidence_needs_json: string;
+  summary: string;
+  privacy_json: string;
+}): AgentRuntimeSkillManifest {
+  return {
+    manifestId: row.manifest_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    skillId: row.skill_id,
+    sourceKind: row.source_kind,
+    precedence: row.precedence,
+    status: row.status,
+    frontmatterJson: row.frontmatter_json,
+    triggerJson: row.trigger_json,
+    toolRefsJson: row.tool_refs_json,
+    approvalRulesJson: row.approval_rules_json,
+    evidenceNeedsJson: row.evidence_needs_json,
+    summary: row.summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgentRuntimeSkillManifest(
+  record: AgentRuntimeSkillManifest,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agent_runtime_skill_manifests (
+        manifest_id, created_at, updated_at, skill_id, source_kind, precedence,
+        status, frontmatter_json, trigger_json, tool_refs_json,
+        approval_rules_json, evidence_needs_json, summary, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(manifest_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        skill_id = excluded.skill_id,
+        source_kind = excluded.source_kind,
+        precedence = excluded.precedence,
+        status = excluded.status,
+        frontmatter_json = excluded.frontmatter_json,
+        trigger_json = excluded.trigger_json,
+        tool_refs_json = excluded.tool_refs_json,
+        approval_rules_json = excluded.approval_rules_json,
+        evidence_needs_json = excluded.evidence_needs_json,
+        summary = excluded.summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.manifestId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.skillId, 320),
+    record.sourceKind,
+    record.precedence,
+    record.status,
+    redactStoredCognitiveMetadata(record.frontmatterJson, 3200),
+    redactStoredCognitiveMetadata(record.triggerJson, 2400),
+    redactStoredCognitiveMetadata(record.toolRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.approvalRulesJson, 2400),
+    redactStoredCognitiveMetadata(record.evidenceNeedsJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgentRuntimeSkillManifests(
+  params: {
+    skillId?: string;
+    status?: AgentRuntimeSkillManifest['status'];
+    limit?: number;
+  } = {},
+): AgentRuntimeSkillManifest[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.skillId) {
+    clauses.push('skill_id = ?');
+    args.push(params.skillId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(runtimeLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agent_runtime_skill_manifests
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY precedence DESC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapAgentRuntimeSkillManifestRow>[0]
+  >;
+  return rows.map((row) => mapAgentRuntimeSkillManifestRow(row));
+}
+
+type SupervisorDbValue = string | number | null;
+type SupervisorDbRow = Record<string, SupervisorDbValue>;
+
+function supervisorLimit(limit = 100): number {
+  return Math.max(1, Math.min(limit, 500));
+}
+
+function supervisorRowString(row: SupervisorDbRow, key: string): string {
+  return String(row[key] ?? '');
+}
+
+function supervisorRowNullable(
+  row: SupervisorDbRow,
+  key: string,
+): string | null {
+  const value = row[key];
+  return value === null || value === undefined ? null : String(value);
+}
+
+function supervisorRowNumber(row: SupervisorDbRow, key: string): number {
+  const value = row[key];
+  return typeof value === 'number' ? value : Number(value || 0);
+}
+
+function supervisorRowBoolean(row: SupervisorDbRow, key: string): boolean {
+  return supervisorRowNumber(row, key) === 1;
+}
+
+function parseSupervisorPrivacyJson(
+  value: string,
+): SupervisorReplayPacket['privacy'] {
+  try {
+    JSON.parse(value);
+    return {
+      metadataOnly: true,
+      rawPromptsStored: false,
+      rawPrivateBodiesStored: false,
+      hiddenReasoningStored: false,
+      secretsRedacted: true,
+    };
+  } catch {
+    return {
+      metadataOnly: true,
+      rawPromptsStored: false,
+      rawPrivateBodiesStored: false,
+      hiddenReasoningStored: false,
+      secretsRedacted: true,
+    };
+  }
+}
+
+function supervisorUpsert(
+  table: string,
+  primaryKey: string,
+  columns: string[],
+  values: SupervisorDbValue[],
+): void {
+  const placeholders = columns.map(() => '?').join(', ');
+  const assignments = columns
+    .filter((column) => column !== primaryKey)
+    .map((column) => `${column} = excluded.${column}`)
+    .join(', ');
+  db.prepare(
+    `
+      INSERT INTO ${table} (${columns.join(', ')})
+      VALUES (${placeholders})
+      ON CONFLICT(${primaryKey}) DO UPDATE SET ${assignments}
+    `,
+  ).run(...values);
+}
+
+function mapSupervisorRunRow(row: SupervisorDbRow): SupervisorRun {
+  return {
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    runtimeRunId: supervisorRowString(row, 'runtime_run_id'),
+    createdAt: supervisorRowString(row, 'created_at'),
+    updatedAt: supervisorRowString(row, 'updated_at'),
+    status: supervisorRowString(row, 'status') as SupervisorRun['status'],
+    mode: supervisorRowString(row, 'mode') as SupervisorRun['mode'],
+    goalSummary: supervisorRowString(row, 'goal_summary'),
+    activeParticipant: supervisorRowString(
+      row,
+      'active_participant',
+    ) as SupervisorRun['activeParticipant'],
+    turnCount: supervisorRowNumber(row, 'turn_count'),
+    readOnlyToolSteps: supervisorRowNumber(row, 'read_only_tool_steps'),
+    councilCalls: supervisorRowNumber(row, 'council_calls'),
+    clarificationRequests: supervisorRowNumber(row, 'clarification_requests'),
+    blackboardId: supervisorRowString(row, 'blackboard_id'),
+    budgetId: supervisorRowString(row, 'budget_id'),
+    terminationId: supervisorRowNullable(row, 'termination_id'),
+    participantIdsJson: supervisorRowString(row, 'participant_ids_json'),
+    agendaItemIdsJson: supervisorRowString(row, 'agenda_item_ids_json'),
+    handoffIdsJson: supervisorRowString(row, 'handoff_ids_json'),
+    decisionIdsJson: supervisorRowString(row, 'decision_ids_json'),
+    blackboardPatchIdsJson: supervisorRowString(
+      row,
+      'blackboard_patch_ids_json',
+    ),
+    replayPacketId: supervisorRowNullable(row, 'replay_packet_id'),
+    nextAction: supervisorRowString(row, 'next_action'),
+    privacyJson: supervisorRowString(row, 'privacy_json'),
+  };
+}
+
+export function upsertSupervisorRun(record: SupervisorRun): void {
+  supervisorUpsert(
+    'supervisor_runs',
+    'supervisor_run_id',
+    [
+      'supervisor_run_id',
+      'runtime_run_id',
+      'created_at',
+      'updated_at',
+      'status',
+      'mode',
+      'goal_summary',
+      'active_participant',
+      'turn_count',
+      'read_only_tool_steps',
+      'council_calls',
+      'clarification_requests',
+      'blackboard_id',
+      'budget_id',
+      'termination_id',
+      'participant_ids_json',
+      'agenda_item_ids_json',
+      'handoff_ids_json',
+      'decision_ids_json',
+      'blackboard_patch_ids_json',
+      'replay_packet_id',
+      'next_action',
+      'privacy_json',
+    ],
+    [
+      record.supervisorRunId,
+      record.runtimeRunId,
+      record.createdAt,
+      record.updatedAt,
+      record.status,
+      record.mode,
+      redactStoredCognitiveMetadata(record.goalSummary, 900),
+      record.activeParticipant,
+      record.turnCount,
+      record.readOnlyToolSteps,
+      record.councilCalls,
+      record.clarificationRequests,
+      record.blackboardId,
+      record.budgetId,
+      record.terminationId || null,
+      redactStoredCognitiveMetadata(record.participantIdsJson, 3200),
+      redactStoredCognitiveMetadata(record.agendaItemIdsJson, 3200),
+      redactStoredCognitiveMetadata(record.handoffIdsJson, 3200),
+      redactStoredCognitiveMetadata(record.decisionIdsJson, 3200),
+      redactStoredCognitiveMetadata(record.blackboardPatchIdsJson, 3200),
+      record.replayPacketId || null,
+      redactStoredCognitiveMetadata(record.nextAction, 900),
+      redactStoredCognitiveMetadata(record.privacyJson),
+    ],
+  );
+}
+
+export function getSupervisorRun(
+  supervisorRunId: string,
+): SupervisorRun | undefined {
+  const row = db
+    .prepare('SELECT * FROM supervisor_runs WHERE supervisor_run_id = ?')
+    .get(supervisorRunId) as SupervisorDbRow | undefined;
+  return row ? mapSupervisorRunRow(row) : undefined;
+}
+
+export function listSupervisorRuns(
+  params: {
+    runtimeRunId?: string;
+    status?: SupervisorRun['status'];
+    limit?: number;
+  } = {},
+): SupervisorRun[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorRunRow(row));
+}
+
+function mapSupervisorParticipantRow(
+  row: SupervisorDbRow,
+): SupervisorParticipant {
+  return {
+    participantId: supervisorRowString(row, 'participant_id'),
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    role: supervisorRowString(row, 'role') as SupervisorParticipant['role'],
+    displayName: supervisorRowString(row, 'display_name'),
+    status: supervisorRowString(
+      row,
+      'status',
+    ) as SupervisorParticipant['status'],
+    instructionsSummary: supervisorRowString(row, 'instructions_summary'),
+    toolPolicyJson: supervisorRowString(row, 'tool_policy_json'),
+    handoffTargetsJson: supervisorRowString(row, 'handoff_targets_json'),
+    sourceRefsJson: supervisorRowString(row, 'source_refs_json'),
+    privacyJson: supervisorRowString(row, 'privacy_json'),
+  };
+}
+
+export function upsertSupervisorParticipant(
+  record: SupervisorParticipant,
+): void {
+  supervisorUpsert(
+    'supervisor_participants',
+    'participant_id',
+    [
+      'participant_id',
+      'supervisor_run_id',
+      'role',
+      'display_name',
+      'status',
+      'instructions_summary',
+      'tool_policy_json',
+      'handoff_targets_json',
+      'source_refs_json',
+      'privacy_json',
+    ],
+    [
+      record.participantId,
+      record.supervisorRunId,
+      record.role,
+      redactStoredCognitiveMetadata(record.displayName, 160),
+      record.status,
+      redactStoredCognitiveMetadata(record.instructionsSummary, 900),
+      redactStoredCognitiveMetadata(record.toolPolicyJson, 2400),
+      redactStoredCognitiveMetadata(record.handoffTargetsJson, 2400),
+      redactStoredCognitiveMetadata(record.sourceRefsJson, 2400),
+      redactStoredCognitiveMetadata(record.privacyJson),
+    ],
+  );
+}
+
+export function listSupervisorParticipants(
+  params: { supervisorRunId?: string; limit?: number } = {},
+): SupervisorParticipant[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.supervisorRunId) {
+    clauses.push('supervisor_run_id = ?');
+    args.push(params.supervisorRunId);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_participants
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY role ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorParticipantRow(row));
+}
+
+function mapSupervisorBlackboardRow(
+  row: SupervisorDbRow,
+): SupervisorBlackboard {
+  return {
+    blackboardId: supervisorRowString(row, 'blackboard_id'),
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    runtimeRunId: supervisorRowString(row, 'runtime_run_id'),
+    createdAt: supervisorRowString(row, 'created_at'),
+    updatedAt: supervisorRowString(row, 'updated_at'),
+    status: supervisorRowString(
+      row,
+      'status',
+    ) as SupervisorBlackboard['status'],
+    goalSummary: supervisorRowString(row, 'goal_summary'),
+    evidenceIdsJson: supervisorRowString(row, 'evidence_ids_json'),
+    claimIdsJson: supervisorRowString(row, 'claim_ids_json'),
+    proofDebtJson: supervisorRowString(row, 'proof_debt_json'),
+    blockerJson: supervisorRowString(row, 'blocker_json'),
+    handoffStateJson: supervisorRowString(row, 'handoff_state_json'),
+    approvalStateJson: supervisorRowString(row, 'approval_state_json'),
+    nextAction: supervisorRowString(row, 'next_action'),
+    privacyJson: supervisorRowString(row, 'privacy_json'),
+  };
+}
+
+export function upsertSupervisorBlackboard(record: SupervisorBlackboard): void {
+  supervisorUpsert(
+    'supervisor_blackboards',
+    'blackboard_id',
+    [
+      'blackboard_id',
+      'supervisor_run_id',
+      'runtime_run_id',
+      'created_at',
+      'updated_at',
+      'status',
+      'goal_summary',
+      'evidence_ids_json',
+      'claim_ids_json',
+      'proof_debt_json',
+      'blocker_json',
+      'handoff_state_json',
+      'approval_state_json',
+      'next_action',
+      'privacy_json',
+    ],
+    [
+      record.blackboardId,
+      record.supervisorRunId,
+      record.runtimeRunId,
+      record.createdAt,
+      record.updatedAt,
+      record.status,
+      redactStoredCognitiveMetadata(record.goalSummary, 900),
+      redactStoredCognitiveMetadata(record.evidenceIdsJson, 3200),
+      redactStoredCognitiveMetadata(record.claimIdsJson, 3200),
+      redactStoredCognitiveMetadata(record.proofDebtJson, 3200),
+      redactStoredCognitiveMetadata(record.blockerJson, 3200),
+      redactStoredCognitiveMetadata(record.handoffStateJson, 3200),
+      redactStoredCognitiveMetadata(record.approvalStateJson, 3200),
+      redactStoredCognitiveMetadata(record.nextAction, 900),
+      redactStoredCognitiveMetadata(record.privacyJson),
+    ],
+  );
+}
+
+export function getSupervisorBlackboard(
+  blackboardId: string,
+): SupervisorBlackboard | undefined {
+  const row = db
+    .prepare('SELECT * FROM supervisor_blackboards WHERE blackboard_id = ?')
+    .get(blackboardId) as SupervisorDbRow | undefined;
+  return row ? mapSupervisorBlackboardRow(row) : undefined;
+}
+
+export function listSupervisorBlackboards(
+  params: {
+    supervisorRunId?: string;
+    runtimeRunId?: string;
+    limit?: number;
+  } = {},
+): SupervisorBlackboard[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.supervisorRunId) {
+    clauses.push('supervisor_run_id = ?');
+    args.push(params.supervisorRunId);
+  }
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_blackboards
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorBlackboardRow(row));
+}
+
+function mapSupervisorBlackboardPatchRow(
+  row: SupervisorDbRow,
+): SupervisorBlackboardPatch {
+  return {
+    patchId: supervisorRowString(row, 'patch_id'),
+    blackboardId: supervisorRowString(row, 'blackboard_id'),
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    createdAt: supervisorRowString(row, 'created_at'),
+    participantRole: supervisorRowString(
+      row,
+      'participant_role',
+    ) as SupervisorBlackboardPatch['participantRole'],
+    patchKind: supervisorRowString(
+      row,
+      'patch_kind',
+    ) as SupervisorBlackboardPatch['patchKind'],
+    summary: supervisorRowString(row, 'summary'),
+    refsJson: supervisorRowString(row, 'refs_json'),
+    patchJson: supervisorRowString(row, 'patch_json'),
+    rejected: supervisorRowBoolean(row, 'rejected'),
+    rejectionReason: supervisorRowNullable(row, 'rejection_reason'),
+    privacyJson: supervisorRowString(row, 'privacy_json'),
+  };
+}
+
+export function upsertSupervisorBlackboardPatch(
+  record: SupervisorBlackboardPatch,
+): void {
+  supervisorUpsert(
+    'supervisor_blackboard_patches',
+    'patch_id',
+    [
+      'patch_id',
+      'blackboard_id',
+      'supervisor_run_id',
+      'created_at',
+      'participant_role',
+      'patch_kind',
+      'summary',
+      'refs_json',
+      'patch_json',
+      'rejected',
+      'rejection_reason',
+      'privacy_json',
+    ],
+    [
+      record.patchId,
+      record.blackboardId,
+      record.supervisorRunId,
+      record.createdAt,
+      record.participantRole,
+      record.patchKind,
+      redactStoredCognitiveMetadata(record.summary, 900),
+      redactStoredCognitiveMetadata(record.refsJson, 2400),
+      redactStoredCognitiveMetadata(record.patchJson, 3200),
+      record.rejected ? 1 : 0,
+      record.rejectionReason
+        ? redactStoredCognitiveMetadata(record.rejectionReason, 500)
+        : null,
+      redactStoredCognitiveMetadata(record.privacyJson),
+    ],
+  );
+}
+
+export function listSupervisorBlackboardPatches(
+  params: {
+    supervisorRunId?: string;
+    blackboardId?: string;
+    rejected?: boolean;
+    limit?: number;
+  } = {},
+): SupervisorBlackboardPatch[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.supervisorRunId) {
+    clauses.push('supervisor_run_id = ?');
+    args.push(params.supervisorRunId);
+  }
+  if (params.blackboardId) {
+    clauses.push('blackboard_id = ?');
+    args.push(params.blackboardId);
+  }
+  if (typeof params.rejected === 'boolean') {
+    clauses.push('rejected = ?');
+    args.push(params.rejected ? 1 : 0);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_blackboard_patches
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorBlackboardPatchRow(row));
+}
+
+function mapSupervisorAgendaItemRow(
+  row: SupervisorDbRow,
+): SupervisorAgendaItem {
+  return {
+    agendaItemId: supervisorRowString(row, 'agenda_item_id'),
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    createdAt: supervisorRowString(row, 'created_at'),
+    updatedAt: supervisorRowString(row, 'updated_at'),
+    position: supervisorRowNumber(row, 'position'),
+    ownerRole: supervisorRowString(
+      row,
+      'owner_role',
+    ) as SupervisorAgendaItem['ownerRole'],
+    itemKind: supervisorRowString(
+      row,
+      'item_kind',
+    ) as SupervisorAgendaItem['itemKind'],
+    status: supervisorRowString(
+      row,
+      'status',
+    ) as SupervisorAgendaItem['status'],
+    policyClass: supervisorRowString(
+      row,
+      'policy_class',
+    ) as SupervisorAgendaItem['policyClass'],
+    requiredEvidenceJson: supervisorRowString(row, 'required_evidence_json'),
+    resultRefsJson: supervisorRowString(row, 'result_refs_json'),
+    summary: supervisorRowString(row, 'summary'),
+    nextAction: supervisorRowString(row, 'next_action'),
+    privacyJson: supervisorRowString(row, 'privacy_json'),
+  };
+}
+
+export function upsertSupervisorAgendaItem(record: SupervisorAgendaItem): void {
+  supervisorUpsert(
+    'supervisor_agenda_items',
+    'agenda_item_id',
+    [
+      'agenda_item_id',
+      'supervisor_run_id',
+      'created_at',
+      'updated_at',
+      'position',
+      'owner_role',
+      'item_kind',
+      'status',
+      'policy_class',
+      'required_evidence_json',
+      'result_refs_json',
+      'summary',
+      'next_action',
+      'privacy_json',
+    ],
+    [
+      record.agendaItemId,
+      record.supervisorRunId,
+      record.createdAt,
+      record.updatedAt,
+      record.position,
+      record.ownerRole,
+      record.itemKind,
+      record.status,
+      record.policyClass,
+      redactStoredCognitiveMetadata(record.requiredEvidenceJson, 2400),
+      redactStoredCognitiveMetadata(record.resultRefsJson, 2400),
+      redactStoredCognitiveMetadata(record.summary, 900),
+      redactStoredCognitiveMetadata(record.nextAction, 900),
+      redactStoredCognitiveMetadata(record.privacyJson),
+    ],
+  );
+}
+
+export function listSupervisorAgendaItems(
+  params: {
+    supervisorRunId?: string;
+    status?: SupervisorAgendaItem['status'];
+    limit?: number;
+  } = {},
+): SupervisorAgendaItem[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.supervisorRunId) {
+    clauses.push('supervisor_run_id = ?');
+    args.push(params.supervisorRunId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_agenda_items
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY position ASC, created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorAgendaItemRow(row));
+}
+
+function mapSupervisorHandoffRow(
+  row: SupervisorDbRow,
+): SupervisorHandoffMessage {
+  return {
+    handoffId: supervisorRowString(row, 'handoff_id'),
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    createdAt: supervisorRowString(row, 'created_at'),
+    fromRole: supervisorRowString(
+      row,
+      'from_role',
+    ) as SupervisorHandoffMessage['fromRole'],
+    toRole: supervisorRowString(
+      row,
+      'to_role',
+    ) as SupervisorHandoffMessage['toRole'],
+    status: supervisorRowString(
+      row,
+      'status',
+    ) as SupervisorHandoffMessage['status'],
+    reason: supervisorRowString(row, 'reason'),
+    payloadJson: supervisorRowString(row, 'payload_json'),
+    nextAction: supervisorRowString(row, 'next_action'),
+    privacyJson: supervisorRowString(row, 'privacy_json'),
+  };
+}
+
+export function upsertSupervisorHandoffMessage(
+  record: SupervisorHandoffMessage,
+): void {
+  supervisorUpsert(
+    'supervisor_handoffs',
+    'handoff_id',
+    [
+      'handoff_id',
+      'supervisor_run_id',
+      'created_at',
+      'from_role',
+      'to_role',
+      'status',
+      'reason',
+      'payload_json',
+      'next_action',
+      'privacy_json',
+    ],
+    [
+      record.handoffId,
+      record.supervisorRunId,
+      record.createdAt,
+      record.fromRole,
+      record.toRole,
+      record.status,
+      redactStoredCognitiveMetadata(record.reason, 900),
+      redactStoredCognitiveMetadata(record.payloadJson, 2400),
+      redactStoredCognitiveMetadata(record.nextAction, 900),
+      redactStoredCognitiveMetadata(record.privacyJson),
+    ],
+  );
+}
+
+export function listSupervisorHandoffMessages(
+  params: {
+    supervisorRunId?: string;
+    status?: SupervisorHandoffMessage['status'];
+    limit?: number;
+  } = {},
+): SupervisorHandoffMessage[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.supervisorRunId) {
+    clauses.push('supervisor_run_id = ?');
+    args.push(params.supervisorRunId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_handoffs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorHandoffRow(row));
+}
+
+function mapSupervisorDecisionRow(row: SupervisorDbRow): SupervisorDecision {
+  return {
+    decisionId: supervisorRowString(row, 'decision_id'),
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    createdAt: supervisorRowString(row, 'created_at'),
+    participantRole: supervisorRowString(
+      row,
+      'participant_role',
+    ) as SupervisorDecision['participantRole'],
+    decisionKind: supervisorRowString(
+      row,
+      'decision_kind',
+    ) as SupervisorDecision['decisionKind'],
+    decision: supervisorRowString(
+      row,
+      'decision',
+    ) as SupervisorDecision['decision'],
+    confidence: supervisorRowNumber(row, 'confidence'),
+    evidenceRefsJson: supervisorRowString(row, 'evidence_refs_json'),
+    riskFlagsJson: supervisorRowString(row, 'risk_flags_json'),
+    reason: supervisorRowString(row, 'reason'),
+    nextAction: supervisorRowString(row, 'next_action'),
+    privacyJson: supervisorRowString(row, 'privacy_json'),
+  };
+}
+
+export function upsertSupervisorDecision(record: SupervisorDecision): void {
+  supervisorUpsert(
+    'supervisor_decisions',
+    'decision_id',
+    [
+      'decision_id',
+      'supervisor_run_id',
+      'created_at',
+      'participant_role',
+      'decision_kind',
+      'decision',
+      'confidence',
+      'evidence_refs_json',
+      'risk_flags_json',
+      'reason',
+      'next_action',
+      'privacy_json',
+    ],
+    [
+      record.decisionId,
+      record.supervisorRunId,
+      record.createdAt,
+      record.participantRole,
+      record.decisionKind,
+      record.decision,
+      record.confidence,
+      redactStoredCognitiveMetadata(record.evidenceRefsJson, 2400),
+      redactStoredCognitiveMetadata(record.riskFlagsJson, 2400),
+      redactStoredCognitiveMetadata(record.reason, 900),
+      redactStoredCognitiveMetadata(record.nextAction, 900),
+      redactStoredCognitiveMetadata(record.privacyJson),
+    ],
+  );
+}
+
+export function listSupervisorDecisions(
+  params: {
+    supervisorRunId?: string;
+    decision?: SupervisorDecision['decision'];
+    limit?: number;
+  } = {},
+): SupervisorDecision[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.supervisorRunId) {
+    clauses.push('supervisor_run_id = ?');
+    args.push(params.supervisorRunId);
+  }
+  if (params.decision) {
+    clauses.push('decision = ?');
+    args.push(params.decision);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_decisions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorDecisionRow(row));
+}
+
+function mapSupervisorTerminationRow(
+  row: SupervisorDbRow,
+): SupervisorTerminationCondition {
+  return {
+    terminationId: supervisorRowString(row, 'termination_id'),
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    createdAt: supervisorRowString(row, 'created_at'),
+    reason: supervisorRowString(
+      row,
+      'reason',
+    ) as SupervisorTerminationCondition['reason'],
+    status: supervisorRowString(
+      row,
+      'status',
+    ) as SupervisorTerminationCondition['status'],
+    summary: supervisorRowString(row, 'summary'),
+    nextAction: supervisorRowString(row, 'next_action'),
+    privacyJson: supervisorRowString(row, 'privacy_json'),
+  };
+}
+
+export function upsertSupervisorTerminationCondition(
+  record: SupervisorTerminationCondition,
+): void {
+  supervisorUpsert(
+    'supervisor_terminations',
+    'termination_id',
+    [
+      'termination_id',
+      'supervisor_run_id',
+      'created_at',
+      'reason',
+      'status',
+      'summary',
+      'next_action',
+      'privacy_json',
+    ],
+    [
+      record.terminationId,
+      record.supervisorRunId,
+      record.createdAt,
+      record.reason,
+      record.status,
+      redactStoredCognitiveMetadata(record.summary, 900),
+      redactStoredCognitiveMetadata(record.nextAction, 900),
+      redactStoredCognitiveMetadata(record.privacyJson),
+    ],
+  );
+}
+
+export function listSupervisorTerminationConditions(
+  params: {
+    supervisorRunId?: string;
+    status?: SupervisorTerminationCondition['status'];
+    limit?: number;
+  } = {},
+): SupervisorTerminationCondition[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.supervisorRunId) {
+    clauses.push('supervisor_run_id = ?');
+    args.push(params.supervisorRunId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_terminations
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorTerminationRow(row));
+}
+
+function mapSupervisorLoopStateRow(row: SupervisorDbRow): SupervisorLoopState {
+  return {
+    loopStateId: supervisorRowString(row, 'loop_state_id'),
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    createdAt: supervisorRowString(row, 'created_at'),
+    updatedAt: supervisorRowString(row, 'updated_at'),
+    turnIndex: supervisorRowNumber(row, 'turn_index'),
+    activeRole: supervisorRowString(
+      row,
+      'active_role',
+    ) as SupervisorLoopState['activeRole'],
+    nextRole: supervisorRowNullable(
+      row,
+      'next_role',
+    ) as SupervisorLoopState['nextRole'],
+    maxTurns: supervisorRowNumber(row, 'max_turns'),
+    completedAgendaIdsJson: supervisorRowString(
+      row,
+      'completed_agenda_ids_json',
+    ),
+    pendingAgendaIdsJson: supervisorRowString(row, 'pending_agenda_ids_json'),
+    terminationId: supervisorRowNullable(row, 'termination_id'),
+    status: supervisorRowString(row, 'status') as SupervisorLoopState['status'],
+    privacyJson: supervisorRowString(row, 'privacy_json'),
+  };
+}
+
+export function upsertSupervisorLoopState(record: SupervisorLoopState): void {
+  supervisorUpsert(
+    'supervisor_loop_states',
+    'loop_state_id',
+    [
+      'loop_state_id',
+      'supervisor_run_id',
+      'created_at',
+      'updated_at',
+      'turn_index',
+      'active_role',
+      'next_role',
+      'max_turns',
+      'completed_agenda_ids_json',
+      'pending_agenda_ids_json',
+      'termination_id',
+      'status',
+      'privacy_json',
+    ],
+    [
+      record.loopStateId,
+      record.supervisorRunId,
+      record.createdAt,
+      record.updatedAt,
+      record.turnIndex,
+      record.activeRole,
+      record.nextRole || null,
+      record.maxTurns,
+      redactStoredCognitiveMetadata(record.completedAgendaIdsJson, 2400),
+      redactStoredCognitiveMetadata(record.pendingAgendaIdsJson, 2400),
+      record.terminationId || null,
+      record.status,
+      redactStoredCognitiveMetadata(record.privacyJson),
+    ],
+  );
+}
+
+export function listSupervisorLoopStates(
+  params: {
+    supervisorRunId?: string;
+    status?: SupervisorLoopState['status'];
+    limit?: number;
+  } = {},
+): SupervisorLoopState[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.supervisorRunId) {
+    clauses.push('supervisor_run_id = ?');
+    args.push(params.supervisorRunId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_loop_states
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorLoopStateRow(row));
+}
+
+function mapSupervisorBudgetRow(row: SupervisorDbRow): SupervisorBudget {
+  return {
+    budgetId: supervisorRowString(row, 'budget_id'),
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    createdAt: supervisorRowString(row, 'created_at'),
+    maxTurns: supervisorRowNumber(row, 'max_turns'),
+    maxReadOnlyToolSteps: supervisorRowNumber(row, 'max_read_only_tool_steps'),
+    maxCouncilCalls: supervisorRowNumber(row, 'max_council_calls'),
+    maxClarificationRequests: supervisorRowNumber(
+      row,
+      'max_clarification_requests',
+    ),
+    usedTurns: supervisorRowNumber(row, 'used_turns'),
+    usedReadOnlyToolSteps: supervisorRowNumber(
+      row,
+      'used_read_only_tool_steps',
+    ),
+    usedCouncilCalls: supervisorRowNumber(row, 'used_council_calls'),
+    usedClarificationRequests: supervisorRowNumber(
+      row,
+      'used_clarification_requests',
+    ),
+    exhausted: supervisorRowBoolean(row, 'exhausted'),
+    nextAction: supervisorRowString(row, 'next_action'),
+    privacyJson: supervisorRowString(row, 'privacy_json'),
+  };
+}
+
+export function upsertSupervisorBudget(record: SupervisorBudget): void {
+  supervisorUpsert(
+    'supervisor_budgets',
+    'budget_id',
+    [
+      'budget_id',
+      'supervisor_run_id',
+      'created_at',
+      'max_turns',
+      'max_read_only_tool_steps',
+      'max_council_calls',
+      'max_clarification_requests',
+      'used_turns',
+      'used_read_only_tool_steps',
+      'used_council_calls',
+      'used_clarification_requests',
+      'exhausted',
+      'next_action',
+      'privacy_json',
+    ],
+    [
+      record.budgetId,
+      record.supervisorRunId,
+      record.createdAt,
+      record.maxTurns,
+      record.maxReadOnlyToolSteps,
+      record.maxCouncilCalls,
+      record.maxClarificationRequests,
+      record.usedTurns,
+      record.usedReadOnlyToolSteps,
+      record.usedCouncilCalls,
+      record.usedClarificationRequests,
+      record.exhausted ? 1 : 0,
+      redactStoredCognitiveMetadata(record.nextAction, 900),
+      redactStoredCognitiveMetadata(record.privacyJson),
+    ],
+  );
+}
+
+export function listSupervisorBudgets(
+  params: { supervisorRunId?: string; limit?: number } = {},
+): SupervisorBudget[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.supervisorRunId) {
+    clauses.push('supervisor_run_id = ?');
+    args.push(params.supervisorRunId);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_budgets
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorBudgetRow(row));
+}
+
+function mapSupervisorReplayPacketRow(
+  row: SupervisorDbRow,
+): SupervisorReplayPacket {
+  return {
+    replayPacketId: supervisorRowString(row, 'replay_packet_id'),
+    supervisorRunId: supervisorRowString(row, 'supervisor_run_id'),
+    runtimeRunId: supervisorRowString(row, 'runtime_run_id'),
+    createdAt: supervisorRowString(row, 'created_at'),
+    blackboardId: supervisorRowString(row, 'blackboard_id'),
+    checkpointIdsJson: supervisorRowString(row, 'checkpoint_ids_json'),
+    handoffIdsJson: supervisorRowString(row, 'handoff_ids_json'),
+    decisionIdsJson: supervisorRowString(row, 'decision_ids_json'),
+    agendaItemIdsJson: supervisorRowString(row, 'agenda_item_ids_json'),
+    terminationId: supervisorRowNullable(row, 'termination_id'),
+    summary: supervisorRowString(row, 'summary'),
+    privacy: parseSupervisorPrivacyJson(
+      supervisorRowString(row, 'privacy_json'),
+    ),
+  };
+}
+
+export function upsertSupervisorReplayPacket(
+  record: SupervisorReplayPacket,
+): void {
+  supervisorUpsert(
+    'supervisor_replay_packets',
+    'replay_packet_id',
+    [
+      'replay_packet_id',
+      'supervisor_run_id',
+      'runtime_run_id',
+      'created_at',
+      'blackboard_id',
+      'checkpoint_ids_json',
+      'handoff_ids_json',
+      'decision_ids_json',
+      'agenda_item_ids_json',
+      'termination_id',
+      'summary',
+      'privacy_json',
+    ],
+    [
+      record.replayPacketId,
+      record.supervisorRunId,
+      record.runtimeRunId,
+      record.createdAt,
+      record.blackboardId,
+      redactStoredCognitiveMetadata(record.checkpointIdsJson, 2400),
+      redactStoredCognitiveMetadata(record.handoffIdsJson, 2400),
+      redactStoredCognitiveMetadata(record.decisionIdsJson, 2400),
+      redactStoredCognitiveMetadata(record.agendaItemIdsJson, 2400),
+      record.terminationId || null,
+      redactStoredCognitiveMetadata(record.summary, 900),
+      redactStoredCognitiveMetadata(JSON.stringify(record.privacy)),
+    ],
+  );
+}
+
+export function listSupervisorReplayPackets(
+  params: {
+    supervisorRunId?: string;
+    runtimeRunId?: string;
+    limit?: number;
+  } = {},
+): SupervisorReplayPacket[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.supervisorRunId) {
+    clauses.push('supervisor_run_id = ?');
+    args.push(params.supervisorRunId);
+  }
+  if (params.runtimeRunId) {
+    clauses.push('runtime_run_id = ?');
+    args.push(params.runtimeRunId);
+  }
+  args.push(supervisorLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM supervisor_replay_packets
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as SupervisorDbRow[];
+  return rows.map((row) => mapSupervisorReplayPacketRow(row));
+}
+
+export function pruneSupervisorData(params: {
+  cutoffIso: string;
+  retainLimit: number;
+}): void {
+  const childTables = [
+    'supervisor_participants',
+    'supervisor_blackboards',
+    'supervisor_blackboard_patches',
+    'supervisor_agenda_items',
+    'supervisor_handoffs',
+    'supervisor_decisions',
+    'supervisor_terminations',
+    'supervisor_loop_states',
+    'supervisor_budgets',
+    'supervisor_replay_packets',
+  ];
+  for (const table of childTables) {
+    db.prepare(
+      `
+        DELETE FROM ${table}
+        WHERE supervisor_run_id IN (
+          SELECT supervisor_run_id
+          FROM supervisor_runs
+          WHERE created_at < ?
+        )
+      `,
+    ).run(params.cutoffIso);
+  }
+  db.prepare('DELETE FROM supervisor_runs WHERE created_at < ?').run(
+    params.cutoffIso,
+  );
+  for (const table of childTables) {
+    db.prepare(
+      `
+        DELETE FROM ${table}
+        WHERE supervisor_run_id NOT IN (
+          SELECT supervisor_run_id
+          FROM supervisor_runs
+          ORDER BY created_at DESC
+          LIMIT ?
+        )
+      `,
+    ).run(Math.max(1, params.retainLimit));
+  }
+  db.prepare(
+    `
+      DELETE FROM supervisor_runs
+      WHERE supervisor_run_id NOT IN (
+        SELECT supervisor_run_id
+        FROM supervisor_runs
+        ORDER BY created_at DESC
+        LIMIT ?
+      )
+    `,
+  ).run(Math.max(1, params.retainLimit));
+}
+
+function mapSessionGraphSnapshotRow(row: {
+  snapshot_id: string;
+  created_at: string;
+  updated_at: string;
+  status: SessionGraphSnapshot['status'];
+  node_count: number;
+  edge_count: number;
+  cluster_count: number;
+  suggestion_count: number;
+  source_ledger_json: string;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): SessionGraphSnapshot {
+  return {
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    nodeCount: row.node_count,
+    edgeCount: row.edge_count,
+    clusterCount: row.cluster_count,
+    suggestionCount: row.suggestion_count,
+    sourceLedgerJson: row.source_ledger_json,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertSessionGraphSnapshot(record: SessionGraphSnapshot): void {
+  db.prepare(
+    `
+      INSERT INTO session_graph_snapshots (
+        snapshot_id, created_at, updated_at, status, node_count, edge_count,
+        cluster_count, suggestion_count, source_ledger_json, summary,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(snapshot_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        node_count = excluded.node_count,
+        edge_count = excluded.edge_count,
+        cluster_count = excluded.cluster_count,
+        suggestion_count = excluded.suggestion_count,
+        source_ledger_json = excluded.source_ledger_json,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.snapshotId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    record.nodeCount,
+    record.edgeCount,
+    record.clusterCount,
+    record.suggestionCount,
+    record.sourceLedgerJson,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    record.privacyJson,
+  );
+}
+
+export function listSessionGraphSnapshots(
+  params: { limit?: number } = {},
+): SessionGraphSnapshot[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM session_graph_snapshots
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(Math.max(1, Math.min(params.limit || 20, 1000))) as Array<
+    Parameters<typeof mapSessionGraphSnapshotRow>[0]
+  >;
+  return rows.map((row) => mapSessionGraphSnapshotRow(row));
+}
+
+function mapSessionGraphNodeRow(row: {
+  node_id: string;
+  snapshot_id: string;
+  created_at: string;
+  updated_at: string;
+  node_kind: SessionGraphNode['nodeKind'];
+  source_kind: string;
+  source_id: string;
+  group_folder: string | null;
+  channel: string | null;
+  thread_key: string | null;
+  person_key: string | null;
+  status: string;
+  confidence: number;
+  summary: string;
+  refs_json: string;
+  evidence_ids_json: string;
+  privacy_json: string;
+}): SessionGraphNode {
+  return {
+    nodeId: row.node_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    nodeKind: row.node_kind,
+    sourceKind: row.source_kind,
+    sourceId: row.source_id,
+    groupFolder: row.group_folder,
+    channel: row.channel,
+    threadKey: row.thread_key,
+    personKey: row.person_key,
+    status: row.status,
+    confidence: row.confidence,
+    summary: row.summary,
+    refsJson: row.refs_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertSessionGraphNode(record: SessionGraphNode): void {
+  db.prepare(
+    `
+      INSERT INTO session_graph_nodes (
+        node_id, snapshot_id, created_at, updated_at, node_kind, source_kind,
+        source_id, group_folder, channel, thread_key, person_key, status,
+        confidence, summary, refs_json, evidence_ids_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(node_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        node_kind = excluded.node_kind,
+        source_kind = excluded.source_kind,
+        source_id = excluded.source_id,
+        group_folder = excluded.group_folder,
+        channel = excluded.channel,
+        thread_key = excluded.thread_key,
+        person_key = excluded.person_key,
+        status = excluded.status,
+        confidence = excluded.confidence,
+        summary = excluded.summary,
+        refs_json = excluded.refs_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.nodeId,
+    record.snapshotId,
+    record.createdAt,
+    record.updatedAt,
+    record.nodeKind,
+    record.sourceKind,
+    redactStoredCognitiveMetadata(record.sourceId, 320),
+    record.groupFolder || null,
+    record.channel || null,
+    record.threadKey
+      ? redactStoredCognitiveMetadata(record.threadKey, 320)
+      : null,
+    record.personKey
+      ? redactStoredCognitiveMetadata(record.personKey, 320)
+      : null,
+    redactStoredCognitiveMetadata(record.status, 160),
+    record.confidence,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    record.refsJson,
+    record.evidenceIdsJson,
+    record.privacyJson,
+  );
+}
+
+export function listSessionGraphNodes(
+  params: {
+    snapshotId?: string;
+    nodeKind?: SessionGraphNode['nodeKind'];
+    limit?: number;
+  } = {},
+): SessionGraphNode[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.nodeKind) {
+    clauses.push('node_kind = ?');
+    args.push(params.nodeKind);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 500, 2000)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM session_graph_nodes
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapSessionGraphNodeRow>[0]>;
+  return rows.map((row) => mapSessionGraphNodeRow(row));
+}
+
+function mapSessionGraphEdgeRow(row: {
+  edge_id: string;
+  snapshot_id: string;
+  created_at: string;
+  edge_kind: SessionGraphEdge['edgeKind'];
+  from_node_id: string;
+  to_node_id: string;
+  confidence: number;
+  status: SessionGraphEdge['status'];
+  reason: string;
+  evidence_ids_json: string;
+  review_needed: number;
+  privacy_json: string;
+}): SessionGraphEdge {
+  return {
+    edgeId: row.edge_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    edgeKind: row.edge_kind,
+    fromNodeId: row.from_node_id,
+    toNodeId: row.to_node_id,
+    confidence: row.confidence,
+    status: row.status,
+    reason: row.reason,
+    evidenceIdsJson: row.evidence_ids_json,
+    reviewNeeded: row.review_needed === 1,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertSessionGraphEdge(record: SessionGraphEdge): void {
+  db.prepare(
+    `
+      INSERT INTO session_graph_edges (
+        edge_id, snapshot_id, created_at, edge_kind, from_node_id, to_node_id,
+        confidence, status, reason, evidence_ids_json, review_needed, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(edge_id) DO UPDATE SET
+        edge_kind = excluded.edge_kind,
+        from_node_id = excluded.from_node_id,
+        to_node_id = excluded.to_node_id,
+        confidence = excluded.confidence,
+        status = excluded.status,
+        reason = excluded.reason,
+        evidence_ids_json = excluded.evidence_ids_json,
+        review_needed = excluded.review_needed,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.edgeId,
+    record.snapshotId,
+    record.createdAt,
+    record.edgeKind,
+    record.fromNodeId,
+    record.toNodeId,
+    record.confidence,
+    record.status,
+    redactStoredCognitiveMetadata(record.reason, 900),
+    record.evidenceIdsJson,
+    record.reviewNeeded ? 1 : 0,
+    record.privacyJson,
+  );
+}
+
+export function listSessionGraphEdges(
+  params: {
+    snapshotId?: string;
+    edgeKind?: SessionGraphEdge['edgeKind'];
+    limit?: number;
+  } = {},
+): SessionGraphEdge[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.edgeKind) {
+    clauses.push('edge_kind = ?');
+    args.push(params.edgeKind);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 1000, 5000)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM session_graph_edges
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapSessionGraphEdgeRow>[0]>;
+  return rows.map((row) => mapSessionGraphEdgeRow(row));
+}
+
+function mapSessionClusterRow(row: {
+  cluster_id: string;
+  snapshot_id: string;
+  created_at: string;
+  updated_at: string;
+  status: SessionCluster['status'];
+  current_theme: string;
+  node_ids_json: string;
+  edge_ids_json: string;
+  linked_surfaces_json: string;
+  active_blockers_json: string;
+  stale_proof_json: string;
+  open_approvals_json: string;
+  last_meaningful_activity_at: string | null;
+  evidence_ids_json: string;
+  best_next_action: string;
+  privacy_json: string;
+}): SessionCluster {
+  return {
+    clusterId: row.cluster_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    currentTheme: row.current_theme,
+    nodeIdsJson: row.node_ids_json,
+    edgeIdsJson: row.edge_ids_json,
+    linkedSurfacesJson: row.linked_surfaces_json,
+    activeBlockersJson: row.active_blockers_json,
+    staleProofJson: row.stale_proof_json,
+    openApprovalsJson: row.open_approvals_json,
+    lastMeaningfulActivityAt: row.last_meaningful_activity_at,
+    evidenceIdsJson: row.evidence_ids_json,
+    bestNextAction: row.best_next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertSessionCluster(record: SessionCluster): void {
+  db.prepare(
+    `
+      INSERT INTO session_clusters (
+        cluster_id, snapshot_id, created_at, updated_at, status, current_theme,
+        node_ids_json, edge_ids_json, linked_surfaces_json, active_blockers_json,
+        stale_proof_json, open_approvals_json, last_meaningful_activity_at,
+        evidence_ids_json, best_next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cluster_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        current_theme = excluded.current_theme,
+        node_ids_json = excluded.node_ids_json,
+        edge_ids_json = excluded.edge_ids_json,
+        linked_surfaces_json = excluded.linked_surfaces_json,
+        active_blockers_json = excluded.active_blockers_json,
+        stale_proof_json = excluded.stale_proof_json,
+        open_approvals_json = excluded.open_approvals_json,
+        last_meaningful_activity_at = excluded.last_meaningful_activity_at,
+        evidence_ids_json = excluded.evidence_ids_json,
+        best_next_action = excluded.best_next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.clusterId,
+    record.snapshotId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.currentTheme, 640),
+    record.nodeIdsJson,
+    record.edgeIdsJson,
+    record.linkedSurfacesJson,
+    record.activeBlockersJson,
+    record.staleProofJson,
+    record.openApprovalsJson,
+    record.lastMeaningfulActivityAt || null,
+    record.evidenceIdsJson,
+    redactStoredCognitiveMetadata(record.bestNextAction, 900),
+    record.privacyJson,
+  );
+}
+
+export function listSessionClusters(
+  params: {
+    snapshotId?: string;
+    status?: SessionCluster['status'];
+    limit?: number;
+  } = {},
+): SessionCluster[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 1000)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM session_clusters
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapSessionClusterRow>[0]>;
+  return rows.map((row) => mapSessionClusterRow(row));
+}
+
+function mapSessionContinuityThreadRow(row: {
+  continuity_thread_id: string;
+  snapshot_id: string;
+  cluster_id: string;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  status: SessionContinuityThread['status'];
+  node_ids_json: string;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): SessionContinuityThread {
+  return {
+    continuityThreadId: row.continuity_thread_id,
+    snapshotId: row.snapshot_id,
+    clusterId: row.cluster_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    title: row.title,
+    status: row.status,
+    nodeIdsJson: row.node_ids_json,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertSessionContinuityThread(
+  record: SessionContinuityThread,
+): void {
+  db.prepare(
+    `
+      INSERT INTO session_continuity_threads (
+        continuity_thread_id, snapshot_id, cluster_id, created_at, updated_at,
+        title, status, node_ids_json, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(continuity_thread_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        title = excluded.title,
+        status = excluded.status,
+        node_ids_json = excluded.node_ids_json,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.continuityThreadId,
+    record.snapshotId,
+    record.clusterId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.title, 320),
+    record.status,
+    record.nodeIdsJson,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    record.privacyJson,
+  );
+}
+
+export function listSessionContinuityThreads(
+  params: { snapshotId?: string; clusterId?: string; limit?: number } = {},
+): SessionContinuityThread[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.clusterId) {
+    clauses.push('cluster_id = ?');
+    args.push(params.clusterId);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 1000)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM session_continuity_threads
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapSessionContinuityThreadRow>[0]>;
+  return rows.map((row) => mapSessionContinuityThreadRow(row));
+}
+
+function mapSessionGraphSuggestionRow(row: {
+  suggestion_id: string;
+  snapshot_id: string;
+  cluster_id: string | null;
+  created_at: string;
+  suggestion_kind: SessionGraphSuggestion['suggestionKind'];
+  priority: number;
+  status: SessionGraphSuggestion['status'];
+  summary: string;
+  next_action: string;
+  source_node_ids_json: string;
+  evidence_ids_json: string;
+  approval_required: number;
+  privacy_json: string;
+}): SessionGraphSuggestion {
+  return {
+    suggestionId: row.suggestion_id,
+    snapshotId: row.snapshot_id,
+    clusterId: row.cluster_id,
+    createdAt: row.created_at,
+    suggestionKind: row.suggestion_kind,
+    priority: row.priority,
+    status: row.status,
+    summary: row.summary,
+    nextAction: row.next_action,
+    sourceNodeIdsJson: row.source_node_ids_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    approvalRequired: row.approval_required === 1,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertSessionGraphSuggestion(
+  record: SessionGraphSuggestion,
+): void {
+  db.prepare(
+    `
+      INSERT INTO session_graph_suggestions (
+        suggestion_id, snapshot_id, cluster_id, created_at, suggestion_kind,
+        priority, status, summary, next_action, source_node_ids_json,
+        evidence_ids_json, approval_required, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(suggestion_id) DO UPDATE SET
+        cluster_id = excluded.cluster_id,
+        suggestion_kind = excluded.suggestion_kind,
+        priority = excluded.priority,
+        status = excluded.status,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        source_node_ids_json = excluded.source_node_ids_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        approval_required = excluded.approval_required,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.suggestionId,
+    record.snapshotId,
+    record.clusterId || null,
+    record.createdAt,
+    record.suggestionKind,
+    record.priority,
+    record.status,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    record.sourceNodeIdsJson,
+    record.evidenceIdsJson,
+    record.approvalRequired ? 1 : 0,
+    record.privacyJson,
+  );
+}
+
+export function listSessionGraphSuggestions(
+  params: {
+    snapshotId?: string;
+    clusterId?: string;
+    status?: SessionGraphSuggestion['status'];
+    limit?: number;
+  } = {},
+): SessionGraphSuggestion[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.clusterId) {
+    clauses.push('cluster_id = ?');
+    args.push(params.clusterId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 1000)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM session_graph_suggestions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY priority DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapSessionGraphSuggestionRow>[0]>;
+  return rows.map((row) => mapSessionGraphSuggestionRow(row));
+}
+
+function mapSessionGraphLinkDecisionRow(row: {
+  decision_id: string;
+  snapshot_id: string;
+  created_at: string;
+  edge_id: string;
+  decision_status: SessionGraphLinkDecision['decisionStatus'];
+  confidence: number;
+  reason: string;
+  source_node_ids_json: string;
+  privacy_json: string;
+}): SessionGraphLinkDecision {
+  return {
+    decisionId: row.decision_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    edgeId: row.edge_id,
+    decisionStatus: row.decision_status,
+    confidence: row.confidence,
+    reason: row.reason,
+    sourceNodeIdsJson: row.source_node_ids_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertSessionGraphLinkDecision(
+  record: SessionGraphLinkDecision,
+): void {
+  db.prepare(
+    `
+      INSERT INTO session_graph_link_decisions (
+        decision_id, snapshot_id, created_at, edge_id, decision_status,
+        confidence, reason, source_node_ids_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(decision_id) DO UPDATE SET
+        edge_id = excluded.edge_id,
+        decision_status = excluded.decision_status,
+        confidence = excluded.confidence,
+        reason = excluded.reason,
+        source_node_ids_json = excluded.source_node_ids_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.decisionId,
+    record.snapshotId,
+    record.createdAt,
+    record.edgeId,
+    record.decisionStatus,
+    record.confidence,
+    redactStoredCognitiveMetadata(record.reason, 900),
+    redactStoredCognitiveMetadata(record.sourceNodeIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listSessionGraphLinkDecisions(
+  params: { snapshotId?: string; edgeId?: string; limit?: number } = {},
+): SessionGraphLinkDecision[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.edgeId) {
+    clauses.push('edge_id = ?');
+    args.push(params.edgeId);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 1000, 5000)));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM session_graph_link_decisions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapSessionGraphLinkDecisionRow>[0]
+  >;
+  return rows.map((row) => mapSessionGraphLinkDecisionRow(row));
+}
+
+function agencyLimit(limit = 50): number {
+  return Math.max(1, Math.min(limit, 500));
+}
+
+function mapAgencyConvergenceRunRow(row: {
+  convergence_run_id: string;
+  created_at: string;
+  updated_at: string;
+  mode: AgencyConvergenceRun['mode'];
+  status: AgencyConvergenceRun['status'];
+  selected_action_id: string | null;
+  selected_action_kind: AgencyConvergenceRun['selectedActionKind'];
+  session_snapshot_id: string | null;
+  refreshed_session_snapshot_id: string | null;
+  world_snapshot_id: string | null;
+  runtime_run_id: string | null;
+  supervisor_run_id: string | null;
+  cognitive_run_id: string | null;
+  logic_belief_state_id: string | null;
+  truth_audit_id: string | null;
+  harness_trajectory_id: string | null;
+  source_ids_json: string;
+  evidence_ids_json: string;
+  outcome_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgencyConvergenceRun {
+  return {
+    convergenceRunId: row.convergence_run_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    mode: row.mode,
+    status: row.status,
+    selectedActionId: row.selected_action_id,
+    selectedActionKind: row.selected_action_kind,
+    sessionSnapshotId: row.session_snapshot_id,
+    refreshedSessionSnapshotId: row.refreshed_session_snapshot_id,
+    worldSnapshotId: row.world_snapshot_id,
+    runtimeRunId: row.runtime_run_id,
+    supervisorRunId: row.supervisor_run_id,
+    cognitiveRunId: row.cognitive_run_id,
+    logicBeliefStateId: row.logic_belief_state_id,
+    truthAuditId: row.truth_audit_id,
+    harnessTrajectoryId: row.harness_trajectory_id,
+    sourceIdsJson: row.source_ids_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    outcomeJson: row.outcome_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgencyConvergenceRun(record: AgencyConvergenceRun): void {
+  db.prepare(
+    `
+      INSERT INTO agency_convergence_runs (
+        convergence_run_id, created_at, updated_at, mode, status,
+        selected_action_id, selected_action_kind, session_snapshot_id,
+        refreshed_session_snapshot_id, world_snapshot_id, runtime_run_id,
+        supervisor_run_id, cognitive_run_id, logic_belief_state_id,
+        truth_audit_id, harness_trajectory_id, source_ids_json,
+        evidence_ids_json, outcome_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(convergence_run_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        mode = excluded.mode,
+        status = excluded.status,
+        selected_action_id = excluded.selected_action_id,
+        selected_action_kind = excluded.selected_action_kind,
+        session_snapshot_id = excluded.session_snapshot_id,
+        refreshed_session_snapshot_id = excluded.refreshed_session_snapshot_id,
+        world_snapshot_id = excluded.world_snapshot_id,
+        runtime_run_id = excluded.runtime_run_id,
+        supervisor_run_id = excluded.supervisor_run_id,
+        cognitive_run_id = excluded.cognitive_run_id,
+        logic_belief_state_id = excluded.logic_belief_state_id,
+        truth_audit_id = excluded.truth_audit_id,
+        harness_trajectory_id = excluded.harness_trajectory_id,
+        source_ids_json = excluded.source_ids_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        outcome_json = excluded.outcome_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.convergenceRunId,
+    record.createdAt,
+    record.updatedAt,
+    record.mode,
+    record.status,
+    record.selectedActionId || null,
+    record.selectedActionKind || null,
+    record.sessionSnapshotId || null,
+    record.refreshedSessionSnapshotId || null,
+    record.worldSnapshotId || null,
+    record.runtimeRunId || null,
+    record.supervisorRunId || null,
+    record.cognitiveRunId || null,
+    record.logicBeliefStateId || null,
+    record.truthAuditId || null,
+    record.harnessTrajectoryId || null,
+    sanitizeStoredIdArrayJson(record.sourceIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.outcomeJson, 3200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgencyConvergenceRuns(
+  params: { status?: AgencyConvergenceRun['status']; limit?: number } = {},
+): AgencyConvergenceRun[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(agencyLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agency_convergence_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgencyConvergenceRunRow>[0]>;
+  return rows.map((row) => mapAgencyConvergenceRunRow(row));
+}
+
+export function getAgencyConvergenceRun(
+  convergenceRunId: string,
+): AgencyConvergenceRun | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM agency_convergence_runs
+        WHERE convergence_run_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(convergenceRunId) as
+    | Parameters<typeof mapAgencyConvergenceRunRow>[0]
+    | undefined;
+  return row ? mapAgencyConvergenceRunRow(row) : undefined;
+}
+
+function mapAgencyConvergenceAgendaRow(row: {
+  agenda_id: string;
+  convergence_run_id: string;
+  created_at: string;
+  status: AgencyConvergenceAgenda['status'];
+  policy_class: AgencyConvergenceAgenda['policyClass'];
+  selected_action_id: string | null;
+  action_kind: AgencyConvergenceAgenda['actionKind'];
+  priority: number;
+  action_summary: string;
+  evidence_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgencyConvergenceAgenda {
+  return {
+    agendaId: row.agenda_id,
+    convergenceRunId: row.convergence_run_id,
+    createdAt: row.created_at,
+    status: row.status,
+    policyClass: row.policy_class,
+    selectedActionId: row.selected_action_id,
+    actionKind: row.action_kind,
+    priority: row.priority,
+    actionSummary: row.action_summary,
+    evidenceIdsJson: row.evidence_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgencyConvergenceAgenda(
+  record: AgencyConvergenceAgenda,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agency_convergence_agendas (
+        agenda_id, convergence_run_id, created_at, status, policy_class,
+        selected_action_id, action_kind, priority, action_summary,
+        evidence_ids_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(agenda_id) DO UPDATE SET
+        status = excluded.status,
+        policy_class = excluded.policy_class,
+        selected_action_id = excluded.selected_action_id,
+        action_kind = excluded.action_kind,
+        priority = excluded.priority,
+        action_summary = excluded.action_summary,
+        evidence_ids_json = excluded.evidence_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.agendaId,
+    record.convergenceRunId,
+    record.createdAt,
+    record.status,
+    record.policyClass,
+    record.selectedActionId || null,
+    record.actionKind || null,
+    record.priority,
+    redactStoredCognitiveMetadata(record.actionSummary, 900),
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgencyConvergenceAgendas(
+  params: { convergenceRunId?: string; limit?: number } = {},
+): AgencyConvergenceAgenda[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.convergenceRunId) {
+    clauses.push('convergence_run_id = ?');
+    args.push(params.convergenceRunId);
+  }
+  args.push(agencyLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agency_convergence_agendas
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgencyConvergenceAgendaRow>[0]>;
+  return rows.map((row) => mapAgencyConvergenceAgendaRow(row));
+}
+
+function mapAgencyConvergenceDecisionRow(row: {
+  decision_id: string;
+  convergence_run_id: string;
+  created_at: string;
+  decision_kind: AgencyConvergenceDecision['decisionKind'];
+  status: AgencyConvergenceDecision['status'];
+  reason: string;
+  evidence_ids_json: string;
+  risk_flags_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgencyConvergenceDecision {
+  return {
+    decisionId: row.decision_id,
+    convergenceRunId: row.convergence_run_id,
+    createdAt: row.created_at,
+    decisionKind: row.decision_kind,
+    status: row.status,
+    reason: row.reason,
+    evidenceIdsJson: row.evidence_ids_json,
+    riskFlagsJson: row.risk_flags_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgencyConvergenceDecision(
+  record: AgencyConvergenceDecision,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agency_convergence_decisions (
+        decision_id, convergence_run_id, created_at, decision_kind, status,
+        reason, evidence_ids_json, risk_flags_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(decision_id) DO UPDATE SET
+        decision_kind = excluded.decision_kind,
+        status = excluded.status,
+        reason = excluded.reason,
+        evidence_ids_json = excluded.evidence_ids_json,
+        risk_flags_json = excluded.risk_flags_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.decisionId,
+    record.convergenceRunId,
+    record.createdAt,
+    record.decisionKind,
+    record.status,
+    redactStoredCognitiveMetadata(record.reason, 900),
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.riskFlagsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgencyConvergenceDecisions(
+  params: { convergenceRunId?: string; limit?: number } = {},
+): AgencyConvergenceDecision[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.convergenceRunId) {
+    clauses.push('convergence_run_id = ?');
+    args.push(params.convergenceRunId);
+  }
+  args.push(agencyLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agency_convergence_decisions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapAgencyConvergenceDecisionRow>[0]
+  >;
+  return rows.map((row) => mapAgencyConvergenceDecisionRow(row));
+}
+
+function mapAgencyResumePlanRow(row: {
+  resume_plan_id: string;
+  convergence_run_id: string;
+  created_at: string;
+  status: AgencyResumePlan['status'];
+  runtime_run_id: string | null;
+  checkpoint_id: string | null;
+  resume_token_id: string | null;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): AgencyResumePlan {
+  return {
+    resumePlanId: row.resume_plan_id,
+    convergenceRunId: row.convergence_run_id,
+    createdAt: row.created_at,
+    status: row.status,
+    runtimeRunId: row.runtime_run_id,
+    checkpointId: row.checkpoint_id,
+    resumeTokenId: row.resume_token_id,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgencyResumePlan(record: AgencyResumePlan): void {
+  db.prepare(
+    `
+      INSERT INTO agency_resume_plans (
+        resume_plan_id, convergence_run_id, created_at, status, runtime_run_id,
+        checkpoint_id, resume_token_id, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(resume_plan_id) DO UPDATE SET
+        status = excluded.status,
+        runtime_run_id = excluded.runtime_run_id,
+        checkpoint_id = excluded.checkpoint_id,
+        resume_token_id = excluded.resume_token_id,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.resumePlanId,
+    record.convergenceRunId,
+    record.createdAt,
+    record.status,
+    record.runtimeRunId || null,
+    record.checkpointId || null,
+    record.resumeTokenId || null,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgencyResumePlans(
+  params: { convergenceRunId?: string; limit?: number } = {},
+): AgencyResumePlan[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.convergenceRunId) {
+    clauses.push('convergence_run_id = ?');
+    args.push(params.convergenceRunId);
+  }
+  args.push(agencyLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agency_resume_plans
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgencyResumePlanRow>[0]>;
+  return rows.map((row) => mapAgencyResumePlanRow(row));
+}
+
+function mapAgencyProviderParticipationPlanRow(row: {
+  participation_plan_id: string;
+  convergence_run_id: string;
+  created_at: string;
+  status: AgencyProviderParticipationPlan['status'];
+  healthy_provider_ids_json: string;
+  blocked_provider_ids_json: string;
+  skipped_provider_ids_json: string;
+  cooldown_provider_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): AgencyProviderParticipationPlan {
+  return {
+    participationPlanId: row.participation_plan_id,
+    convergenceRunId: row.convergence_run_id,
+    createdAt: row.created_at,
+    status: row.status,
+    healthyProviderIdsJson: row.healthy_provider_ids_json,
+    blockedProviderIdsJson: row.blocked_provider_ids_json,
+    skippedProviderIdsJson: row.skipped_provider_ids_json,
+    cooldownProviderIdsJson: row.cooldown_provider_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgencyProviderParticipationPlan(
+  record: AgencyProviderParticipationPlan,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agency_provider_participation_plans (
+        participation_plan_id, convergence_run_id, created_at, status,
+        healthy_provider_ids_json, blocked_provider_ids_json,
+        skipped_provider_ids_json, cooldown_provider_ids_json, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(participation_plan_id) DO UPDATE SET
+        status = excluded.status,
+        healthy_provider_ids_json = excluded.healthy_provider_ids_json,
+        blocked_provider_ids_json = excluded.blocked_provider_ids_json,
+        skipped_provider_ids_json = excluded.skipped_provider_ids_json,
+        cooldown_provider_ids_json = excluded.cooldown_provider_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.participationPlanId,
+    record.convergenceRunId,
+    record.createdAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.healthyProviderIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.blockedProviderIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.skippedProviderIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.cooldownProviderIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgencyProviderParticipationPlans(
+  params: { convergenceRunId?: string; limit?: number } = {},
+): AgencyProviderParticipationPlan[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.convergenceRunId) {
+    clauses.push('convergence_run_id = ?');
+    args.push(params.convergenceRunId);
+  }
+  args.push(agencyLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agency_provider_participation_plans
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapAgencyProviderParticipationPlanRow>[0]
+  >;
+  return rows.map((row) => mapAgencyProviderParticipationPlanRow(row));
+}
+
+function mapAgencyLoopOutcomeRow(row: {
+  outcome_id: string;
+  convergence_run_id: string;
+  created_at: string;
+  status: AgencyLoopOutcome['status'];
+  runtime_run_id: string | null;
+  truth_audit_id: string | null;
+  refreshed_session_snapshot_id: string | null;
+  outcome_score: number;
+  flags_json: string;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): AgencyLoopOutcome {
+  return {
+    outcomeId: row.outcome_id,
+    convergenceRunId: row.convergence_run_id,
+    createdAt: row.created_at,
+    status: row.status,
+    runtimeRunId: row.runtime_run_id,
+    truthAuditId: row.truth_audit_id,
+    refreshedSessionSnapshotId: row.refreshed_session_snapshot_id,
+    outcomeScore: row.outcome_score,
+    flagsJson: row.flags_json,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgencyLoopOutcome(record: AgencyLoopOutcome): void {
+  db.prepare(
+    `
+      INSERT INTO agency_loop_outcomes (
+        outcome_id, convergence_run_id, created_at, status, runtime_run_id,
+        truth_audit_id, refreshed_session_snapshot_id, outcome_score,
+        flags_json, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(outcome_id) DO UPDATE SET
+        status = excluded.status,
+        runtime_run_id = excluded.runtime_run_id,
+        truth_audit_id = excluded.truth_audit_id,
+        refreshed_session_snapshot_id = excluded.refreshed_session_snapshot_id,
+        outcome_score = excluded.outcome_score,
+        flags_json = excluded.flags_json,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.outcomeId,
+    record.convergenceRunId,
+    record.createdAt,
+    record.status,
+    record.runtimeRunId || null,
+    record.truthAuditId || null,
+    record.refreshedSessionSnapshotId || null,
+    record.outcomeScore,
+    redactStoredCognitiveMetadata(record.flagsJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgencyLoopOutcomes(
+  params: { convergenceRunId?: string; limit?: number } = {},
+): AgencyLoopOutcome[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.convergenceRunId) {
+    clauses.push('convergence_run_id = ?');
+    args.push(params.convergenceRunId);
+  }
+  args.push(agencyLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agency_loop_outcomes
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgencyLoopOutcomeRow>[0]>;
+  return rows.map((row) => mapAgencyLoopOutcomeRow(row));
+}
+
+function workspaceLimit(limit = 100): number {
+  return Math.max(1, Math.min(limit, 500));
+}
+
+function mapCognitiveWorkspacePacketRow(row: {
+  packet_id: string;
+  created_at: string;
+  updated_at: string;
+  status: CognitiveWorkspacePacket['status'];
+  goal_stack_json: string;
+  context_budget_json: string;
+  session_snapshot_id: string | null;
+  session_cluster_id: string | null;
+  convergence_run_id: string | null;
+  world_snapshot_id: string | null;
+  runtime_run_id: string | null;
+  supervisor_run_id: string | null;
+  agent_os_episode_id: string | null;
+  cognitive_run_id: string | null;
+  logic_belief_state_id: string | null;
+  truth_audit_id: string | null;
+  council_run_id: string | null;
+  provider_plan_id: string | null;
+  selected_program_id: string | null;
+  context_block_ids_json: string;
+  evidence_ids_json: string;
+  approval_blockers_json: string;
+  checkpoint_ids_json: string;
+  optimization_scorecard_id: string | null;
+  next_safe_action: string;
+  privacy_json: string;
+}): CognitiveWorkspacePacket {
+  return {
+    packetId: row.packet_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    goalStackJson: row.goal_stack_json,
+    contextBudgetJson: row.context_budget_json,
+    sessionSnapshotId: row.session_snapshot_id,
+    sessionClusterId: row.session_cluster_id,
+    convergenceRunId: row.convergence_run_id,
+    worldSnapshotId: row.world_snapshot_id,
+    runtimeRunId: row.runtime_run_id,
+    supervisorRunId: row.supervisor_run_id,
+    agentOSEpisodeId: row.agent_os_episode_id,
+    cognitiveRunId: row.cognitive_run_id,
+    logicBeliefStateId: row.logic_belief_state_id,
+    truthAuditId: row.truth_audit_id,
+    councilRunId: row.council_run_id,
+    providerPlanId: row.provider_plan_id,
+    selectedProgramId: row.selected_program_id,
+    contextBlockIdsJson: row.context_block_ids_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    approvalBlockersJson: row.approval_blockers_json,
+    checkpointIdsJson: row.checkpoint_ids_json,
+    optimizationScorecardId: row.optimization_scorecard_id,
+    nextSafeAction: row.next_safe_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveWorkspacePacket(
+  record: CognitiveWorkspacePacket,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_workspace_packets (
+        packet_id, created_at, updated_at, status, goal_stack_json,
+        context_budget_json, session_snapshot_id, session_cluster_id,
+        convergence_run_id, world_snapshot_id, runtime_run_id,
+        supervisor_run_id, agent_os_episode_id, cognitive_run_id,
+        logic_belief_state_id, truth_audit_id, council_run_id,
+        provider_plan_id, selected_program_id, context_block_ids_json,
+        evidence_ids_json, approval_blockers_json, checkpoint_ids_json,
+        optimization_scorecard_id, next_safe_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(packet_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        goal_stack_json = excluded.goal_stack_json,
+        context_budget_json = excluded.context_budget_json,
+        session_snapshot_id = excluded.session_snapshot_id,
+        session_cluster_id = excluded.session_cluster_id,
+        convergence_run_id = excluded.convergence_run_id,
+        world_snapshot_id = excluded.world_snapshot_id,
+        runtime_run_id = excluded.runtime_run_id,
+        supervisor_run_id = excluded.supervisor_run_id,
+        agent_os_episode_id = excluded.agent_os_episode_id,
+        cognitive_run_id = excluded.cognitive_run_id,
+        logic_belief_state_id = excluded.logic_belief_state_id,
+        truth_audit_id = excluded.truth_audit_id,
+        council_run_id = excluded.council_run_id,
+        provider_plan_id = excluded.provider_plan_id,
+        selected_program_id = excluded.selected_program_id,
+        context_block_ids_json = excluded.context_block_ids_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        approval_blockers_json = excluded.approval_blockers_json,
+        checkpoint_ids_json = excluded.checkpoint_ids_json,
+        optimization_scorecard_id = excluded.optimization_scorecard_id,
+        next_safe_action = excluded.next_safe_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.packetId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.goalStackJson, 3200),
+    redactStoredCognitiveMetadata(record.contextBudgetJson, 2400),
+    record.sessionSnapshotId || null,
+    record.sessionClusterId || null,
+    record.convergenceRunId || null,
+    record.worldSnapshotId || null,
+    record.runtimeRunId || null,
+    record.supervisorRunId || null,
+    record.agentOSEpisodeId || null,
+    record.cognitiveRunId || null,
+    record.logicBeliefStateId || null,
+    record.truthAuditId || null,
+    record.councilRunId || null,
+    record.providerPlanId || null,
+    record.selectedProgramId || null,
+    sanitizeStoredIdArrayJson(record.contextBlockIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.approvalBlockersJson, 2400),
+    sanitizeStoredIdArrayJson(record.checkpointIdsJson, 3200),
+    record.optimizationScorecardId || null,
+    redactStoredCognitiveMetadata(record.nextSafeAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function getCognitiveWorkspacePacket(
+  packetId: string,
+): CognitiveWorkspacePacket | undefined {
+  const row = db
+    .prepare('SELECT * FROM cognitive_workspace_packets WHERE packet_id = ?')
+    .get(packetId) as
+    | Parameters<typeof mapCognitiveWorkspacePacketRow>[0]
+    | undefined;
+  return row ? mapCognitiveWorkspacePacketRow(row) : undefined;
+}
+
+export function listCognitiveWorkspacePackets(
+  params: { status?: CognitiveWorkspacePacket['status']; limit?: number } = {},
+): CognitiveWorkspacePacket[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_workspace_packets
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveWorkspacePacketRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveWorkspacePacketRow(row));
+}
+
+function mapCognitiveWorkspaceContextBlockRow(row: {
+  block_id: string;
+  packet_id: string;
+  created_at: string;
+  block_kind: CognitiveWorkspaceContextBlock['blockKind'];
+  source_id: string;
+  source_ids_json: string;
+  freshness: CognitiveWorkspaceContextBlock['freshness'];
+  sensitivity: CognitiveWorkspaceContextBlock['sensitivity'];
+  confidence: number;
+  priority: number;
+  token_budget: number;
+  included: number;
+  summary: string;
+  evidence_ids_json: string;
+  conflicts_json: string;
+  withheld_reason: string | null;
+  privacy_json: string;
+}): CognitiveWorkspaceContextBlock {
+  return {
+    blockId: row.block_id,
+    packetId: row.packet_id,
+    createdAt: row.created_at,
+    blockKind: row.block_kind,
+    sourceId: row.source_id,
+    sourceIdsJson: row.source_ids_json,
+    freshness: row.freshness,
+    sensitivity: row.sensitivity,
+    confidence: row.confidence,
+    priority: row.priority,
+    tokenBudget: row.token_budget,
+    included: row.included === 1,
+    summary: row.summary,
+    evidenceIdsJson: row.evidence_ids_json,
+    conflictsJson: row.conflicts_json,
+    withheldReason: row.withheld_reason,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveWorkspaceContextBlock(
+  record: CognitiveWorkspaceContextBlock,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_workspace_context_blocks (
+        block_id, packet_id, created_at, block_kind, source_id, source_ids_json,
+        freshness, sensitivity, confidence, priority, token_budget, included,
+        summary, evidence_ids_json, conflicts_json, withheld_reason, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(block_id) DO UPDATE SET
+        block_kind = excluded.block_kind,
+        source_id = excluded.source_id,
+        source_ids_json = excluded.source_ids_json,
+        freshness = excluded.freshness,
+        sensitivity = excluded.sensitivity,
+        confidence = excluded.confidence,
+        priority = excluded.priority,
+        token_budget = excluded.token_budget,
+        included = excluded.included,
+        summary = excluded.summary,
+        evidence_ids_json = excluded.evidence_ids_json,
+        conflicts_json = excluded.conflicts_json,
+        withheld_reason = excluded.withheld_reason,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.blockId,
+    record.packetId,
+    record.createdAt,
+    record.blockKind,
+    redactStoredCognitiveMetadata(record.sourceId, 320),
+    sanitizeStoredIdArrayJson(record.sourceIdsJson, 2400),
+    record.freshness,
+    record.sensitivity,
+    record.confidence,
+    record.priority,
+    record.tokenBudget,
+    record.included ? 1 : 0,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.conflictsJson, 2400),
+    record.withheldReason
+      ? redactStoredCognitiveMetadata(record.withheldReason, 500)
+      : null,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveWorkspaceContextBlocks(
+  params: { packetId?: string; included?: boolean; limit?: number } = {},
+): CognitiveWorkspaceContextBlock[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.packetId) {
+    clauses.push('packet_id = ?');
+    args.push(params.packetId);
+  }
+  if (typeof params.included === 'boolean') {
+    clauses.push('included = ?');
+    args.push(params.included ? 1 : 0);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_workspace_context_blocks
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY priority DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveWorkspaceContextBlockRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveWorkspaceContextBlockRow(row));
+}
+
+function mapCognitiveProgramManifestRow(row: {
+  program_id: string;
+  created_at: string;
+  updated_at: string;
+  status: CognitiveProgramManifest['status'];
+  task_family: string;
+  trigger_summary: string;
+  program_summary: string;
+  source_trajectory_ids_json: string;
+  required_evidence_json: string;
+  allowed_tools_json: string;
+  approval_rules_json: string;
+  verifier_checks_json: string;
+  failure_modes_json: string;
+  outcome_score: number;
+  promotion_reason: string;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveProgramManifest {
+  return {
+    programId: row.program_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    taskFamily: row.task_family,
+    triggerSummary: row.trigger_summary,
+    programSummary: row.program_summary,
+    sourceTrajectoryIdsJson: row.source_trajectory_ids_json,
+    requiredEvidenceJson: row.required_evidence_json,
+    allowedToolsJson: row.allowed_tools_json,
+    approvalRulesJson: row.approval_rules_json,
+    verifierChecksJson: row.verifier_checks_json,
+    failureModesJson: row.failure_modes_json,
+    outcomeScore: row.outcome_score,
+    promotionReason: row.promotion_reason,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveProgramManifest(
+  record: CognitiveProgramManifest,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_program_manifests (
+        program_id, created_at, updated_at, status, task_family, trigger_summary,
+        program_summary, source_trajectory_ids_json, required_evidence_json,
+        allowed_tools_json, approval_rules_json, verifier_checks_json,
+        failure_modes_json, outcome_score, promotion_reason, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(program_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        task_family = excluded.task_family,
+        trigger_summary = excluded.trigger_summary,
+        program_summary = excluded.program_summary,
+        source_trajectory_ids_json = excluded.source_trajectory_ids_json,
+        required_evidence_json = excluded.required_evidence_json,
+        allowed_tools_json = excluded.allowed_tools_json,
+        approval_rules_json = excluded.approval_rules_json,
+        verifier_checks_json = excluded.verifier_checks_json,
+        failure_modes_json = excluded.failure_modes_json,
+        outcome_score = excluded.outcome_score,
+        promotion_reason = excluded.promotion_reason,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.programId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.taskFamily, 240),
+    redactStoredCognitiveMetadata(record.triggerSummary, 900),
+    redactStoredCognitiveMetadata(record.programSummary, 900),
+    sanitizeStoredIdArrayJson(record.sourceTrajectoryIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.requiredEvidenceJson, 2400),
+    redactStoredCognitiveMetadata(record.allowedToolsJson, 2400),
+    redactStoredCognitiveMetadata(record.approvalRulesJson, 2400),
+    redactStoredCognitiveMetadata(record.verifierChecksJson, 2400),
+    redactStoredCognitiveMetadata(record.failureModesJson, 2400),
+    record.outcomeScore,
+    redactStoredCognitiveMetadata(record.promotionReason, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveProgramManifests(
+  params: {
+    status?: CognitiveProgramManifest['status'];
+    taskFamily?: string;
+    limit?: number;
+  } = {},
+): CognitiveProgramManifest[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_program_manifests
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY outcome_score DESC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveProgramManifestRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveProgramManifestRow(row));
+}
+
+function mapCognitiveProgramRunRow(row: {
+  program_run_id: string;
+  packet_id: string;
+  program_id: string;
+  created_at: string;
+  status: CognitiveProgramRun['status'];
+  selected: number;
+  evidence_ids_json: string;
+  policy_result_json: string;
+  outcome_score: number;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveProgramRun {
+  return {
+    programRunId: row.program_run_id,
+    packetId: row.packet_id,
+    programId: row.program_id,
+    createdAt: row.created_at,
+    status: row.status,
+    selected: row.selected === 1,
+    evidenceIdsJson: row.evidence_ids_json,
+    policyResultJson: row.policy_result_json,
+    outcomeScore: row.outcome_score,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveProgramRun(record: CognitiveProgramRun): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_program_runs (
+        program_run_id, packet_id, program_id, created_at, status, selected,
+        evidence_ids_json, policy_result_json, outcome_score, next_action,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(program_run_id) DO UPDATE SET
+        status = excluded.status,
+        selected = excluded.selected,
+        evidence_ids_json = excluded.evidence_ids_json,
+        policy_result_json = excluded.policy_result_json,
+        outcome_score = excluded.outcome_score,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.programRunId,
+    record.packetId,
+    record.programId,
+    record.createdAt,
+    record.status,
+    record.selected ? 1 : 0,
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.policyResultJson, 2400),
+    record.outcomeScore,
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveProgramRuns(
+  params: { packetId?: string; programId?: string; limit?: number } = {},
+): CognitiveProgramRun[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.packetId) {
+    clauses.push('packet_id = ?');
+    args.push(params.packetId);
+  }
+  if (params.programId) {
+    clauses.push('program_id = ?');
+    args.push(params.programId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_program_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY selected DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveProgramRunRow>[0]>;
+  return rows.map((row) => mapCognitiveProgramRunRow(row));
+}
+
+function mapCognitivePolicyVariantRow(row: {
+  variant_id: string;
+  created_at: string;
+  status: CognitivePolicyVariant['status'];
+  variant_kind: CognitivePolicyVariant['variantKind'];
+  summary: string;
+  changed_knobs_json: string;
+  safety_baseline_json: string;
+  source_refs_json: string;
+  privacy_json: string;
+}): CognitivePolicyVariant {
+  return {
+    variantId: row.variant_id,
+    createdAt: row.created_at,
+    status: row.status,
+    variantKind: row.variant_kind,
+    summary: row.summary,
+    changedKnobsJson: row.changed_knobs_json,
+    safetyBaselineJson: row.safety_baseline_json,
+    sourceRefsJson: row.source_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitivePolicyVariant(
+  record: CognitivePolicyVariant,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_policy_variants (
+        variant_id, created_at, status, variant_kind, summary,
+        changed_knobs_json, safety_baseline_json, source_refs_json,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(variant_id) DO UPDATE SET
+        status = excluded.status,
+        summary = excluded.summary,
+        changed_knobs_json = excluded.changed_knobs_json,
+        safety_baseline_json = excluded.safety_baseline_json,
+        source_refs_json = excluded.source_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.variantId,
+    record.createdAt,
+    record.status,
+    record.variantKind,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.changedKnobsJson, 2400),
+    redactStoredCognitiveMetadata(record.safetyBaselineJson, 2400),
+    redactStoredCognitiveMetadata(record.sourceRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitivePolicyVariants(
+  params: { status?: CognitivePolicyVariant['status']; limit?: number } = {},
+): CognitivePolicyVariant[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_policy_variants
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitivePolicyVariantRow>[0]>;
+  return rows.map((row) => mapCognitivePolicyVariantRow(row));
+}
+
+function mapCognitiveImprovementProposalRow(row: {
+  improvement_proposal_id: string;
+  created_at: string;
+  updated_at: string;
+  status: CognitiveImprovementProposal['status'];
+  proposal_kind: CognitiveImprovementProposal['proposalKind'];
+  source_packet_id: string | null;
+  source_scorecard_id: string | null;
+  summary: string;
+  expected_score_delta: number;
+  safety_regression: number;
+  changed_artifacts_json: string;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveImprovementProposal {
+  return {
+    improvementProposalId: row.improvement_proposal_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    proposalKind: row.proposal_kind,
+    sourcePacketId: row.source_packet_id,
+    sourceScorecardId: row.source_scorecard_id,
+    summary: row.summary,
+    expectedScoreDelta: row.expected_score_delta,
+    safetyRegression: row.safety_regression === 1,
+    changedArtifactsJson: row.changed_artifacts_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveImprovementProposal(
+  record: CognitiveImprovementProposal,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_improvement_proposals (
+        improvement_proposal_id, created_at, updated_at, status, proposal_kind,
+        source_packet_id, source_scorecard_id, summary, expected_score_delta,
+        safety_regression, changed_artifacts_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(improvement_proposal_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        proposal_kind = excluded.proposal_kind,
+        source_packet_id = excluded.source_packet_id,
+        source_scorecard_id = excluded.source_scorecard_id,
+        summary = excluded.summary,
+        expected_score_delta = excluded.expected_score_delta,
+        safety_regression = excluded.safety_regression,
+        changed_artifacts_json = excluded.changed_artifacts_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.improvementProposalId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    record.proposalKind,
+    record.sourcePacketId || null,
+    record.sourceScorecardId || null,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    record.expectedScoreDelta,
+    record.safetyRegression ? 1 : 0,
+    redactStoredCognitiveMetadata(record.changedArtifactsJson, 3200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveImprovementProposals(
+  params: {
+    status?: CognitiveImprovementProposal['status'];
+    limit?: number;
+  } = {},
+): CognitiveImprovementProposal[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_improvement_proposals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveImprovementProposalRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveImprovementProposalRow(row));
+}
+
+function mapCognitiveOptimizationScorecardRow(row: {
+  scorecard_id: string;
+  packet_id: string | null;
+  proposal_id: string | null;
+  variant_id: string | null;
+  created_at: string;
+  status: CognitiveOptimizationScorecard['status'];
+  context_score: number;
+  program_score: number;
+  policy_safety_score: number;
+  evidence_score: number;
+  truth_score: number;
+  privacy_score: number;
+  total_score: number;
+  failure_flags_json: string;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveOptimizationScorecard {
+  return {
+    scorecardId: row.scorecard_id,
+    packetId: row.packet_id,
+    proposalId: row.proposal_id,
+    variantId: row.variant_id,
+    createdAt: row.created_at,
+    status: row.status,
+    contextScore: row.context_score,
+    programScore: row.program_score,
+    policySafetyScore: row.policy_safety_score,
+    evidenceScore: row.evidence_score,
+    truthScore: row.truth_score,
+    privacyScore: row.privacy_score,
+    totalScore: row.total_score,
+    failureFlagsJson: row.failure_flags_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveOptimizationScorecard(
+  record: CognitiveOptimizationScorecard,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_optimization_scorecards (
+        scorecard_id, packet_id, proposal_id, variant_id, created_at, status,
+        context_score, program_score, policy_safety_score, evidence_score,
+        truth_score, privacy_score, total_score, failure_flags_json,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(scorecard_id) DO UPDATE SET
+        packet_id = excluded.packet_id,
+        proposal_id = excluded.proposal_id,
+        variant_id = excluded.variant_id,
+        status = excluded.status,
+        context_score = excluded.context_score,
+        program_score = excluded.program_score,
+        policy_safety_score = excluded.policy_safety_score,
+        evidence_score = excluded.evidence_score,
+        truth_score = excluded.truth_score,
+        privacy_score = excluded.privacy_score,
+        total_score = excluded.total_score,
+        failure_flags_json = excluded.failure_flags_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.scorecardId,
+    record.packetId || null,
+    record.proposalId || null,
+    record.variantId || null,
+    record.createdAt,
+    record.status,
+    record.contextScore,
+    record.programScore,
+    record.policySafetyScore,
+    record.evidenceScore,
+    record.truthScore,
+    record.privacyScore,
+    record.totalScore,
+    redactStoredCognitiveMetadata(record.failureFlagsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveOptimizationScorecards(
+  params: {
+    packetId?: string;
+    proposalId?: string;
+    status?: CognitiveOptimizationScorecard['status'];
+    limit?: number;
+  } = {},
+): CognitiveOptimizationScorecard[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.packetId) {
+    clauses.push('packet_id = ?');
+    args.push(params.packetId);
+  }
+  if (params.proposalId) {
+    clauses.push('proposal_id = ?');
+    args.push(params.proposalId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_optimization_scorecards
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY total_score DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveOptimizationScorecardRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveOptimizationScorecardRow(row));
+}
+
+function mapCognitiveExecutiveRunRow(row: {
+  run_id: string;
+  created_at: string;
+  updated_at: string;
+  status: CognitiveExecutiveRunRecord['status'];
+  channel: CognitiveExecutiveRunRecord['channel'];
+  group_folder: string;
+  chat_jid: string | null;
+  thread_id: string | null;
+  actor_id: string | null;
+  intent_family: CognitiveExecutiveRunRecord['intentFamily'];
+  confidence: number;
+  route_class: CognitiveExecutiveRunRecord['routeClass'];
+  route_key: string;
+  capability_id: string | null;
+  approval_required: number;
+  request_summary: string;
+  state_summary: string;
+  plan_summary: string;
+  result_summary: string;
+  explanation_json: string;
+  used_context_json: string;
+  ignored_context_json: string;
+  degraded_tools_json: string;
+  evidence_ids_json: string;
+  snapshot_id: string | null;
+  outcome_signal_id: string | null;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveExecutiveRunRecord {
+  return {
+    runId: row.run_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    channel: row.channel,
+    groupFolder: row.group_folder,
+    chatJid: row.chat_jid,
+    threadId: row.thread_id,
+    actorId: row.actor_id,
+    intentFamily: row.intent_family,
+    confidence: row.confidence,
+    routeClass: row.route_class,
+    routeKey: row.route_key,
+    capabilityId: row.capability_id,
+    approvalRequired: row.approval_required === 1,
+    requestSummary: row.request_summary,
+    stateSummary: row.state_summary,
+    planSummary: row.plan_summary,
+    resultSummary: row.result_summary,
+    explanationJson: row.explanation_json,
+    usedContextJson: row.used_context_json,
+    ignoredContextJson: row.ignored_context_json,
+    degradedToolsJson: row.degraded_tools_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    snapshotId: row.snapshot_id,
+    outcomeSignalId: row.outcome_signal_id,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveExecutiveRun(
+  record: CognitiveExecutiveRunRecord,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_executive_runs (
+        run_id, created_at, updated_at, status, channel, group_folder, chat_jid,
+        thread_id, actor_id, intent_family, confidence, route_class, route_key,
+        capability_id, approval_required, request_summary, state_summary,
+        plan_summary, result_summary, explanation_json, used_context_json,
+        ignored_context_json, degraded_tools_json, evidence_ids_json,
+        snapshot_id, outcome_signal_id, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        channel = excluded.channel,
+        group_folder = excluded.group_folder,
+        chat_jid = excluded.chat_jid,
+        thread_id = excluded.thread_id,
+        actor_id = excluded.actor_id,
+        intent_family = excluded.intent_family,
+        confidence = excluded.confidence,
+        route_class = excluded.route_class,
+        route_key = excluded.route_key,
+        capability_id = excluded.capability_id,
+        approval_required = excluded.approval_required,
+        request_summary = excluded.request_summary,
+        state_summary = excluded.state_summary,
+        plan_summary = excluded.plan_summary,
+        result_summary = excluded.result_summary,
+        explanation_json = excluded.explanation_json,
+        used_context_json = excluded.used_context_json,
+        ignored_context_json = excluded.ignored_context_json,
+        degraded_tools_json = excluded.degraded_tools_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        snapshot_id = excluded.snapshot_id,
+        outcome_signal_id = excluded.outcome_signal_id,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.runId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    record.channel,
+    record.groupFolder,
+    record.chatJid || null,
+    record.threadId || null,
+    record.actorId || null,
+    record.intentFamily,
+    record.confidence,
+    record.routeClass,
+    redactStoredCognitiveMetadata(record.routeKey, 320),
+    record.capabilityId || null,
+    record.approvalRequired ? 1 : 0,
+    redactStoredCognitiveMetadata(record.requestSummary, 520),
+    redactStoredCognitiveMetadata(record.stateSummary, 900),
+    redactStoredCognitiveMetadata(record.planSummary, 900),
+    redactStoredCognitiveMetadata(record.resultSummary, 900),
+    redactStoredCognitiveMetadata(record.explanationJson, 2400),
+    redactStoredCognitiveMetadata(record.usedContextJson, 2400),
+    redactStoredCognitiveMetadata(record.ignoredContextJson, 2400),
+    redactStoredCognitiveMetadata(record.degradedToolsJson, 2400),
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 3200),
+    record.snapshotId || null,
+    record.outcomeSignalId || null,
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function getCognitiveExecutiveRun(
+  runId: string,
+): CognitiveExecutiveRunRecord | undefined {
+  const row = db
+    .prepare('SELECT * FROM cognitive_executive_runs WHERE run_id = ?')
+    .get(runId) as
+    | Parameters<typeof mapCognitiveExecutiveRunRow>[0]
+    | undefined;
+  return row ? mapCognitiveExecutiveRunRow(row) : undefined;
+}
+
+export function listCognitiveExecutiveRuns(
+  params: {
+    groupFolder?: string;
+    intentFamily?: CognitiveExecutiveRunRecord['intentFamily'];
+    status?: CognitiveExecutiveRunRecord['status'];
+    limit?: number;
+  } = {},
+): CognitiveExecutiveRunRecord[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('group_folder = ?');
+    args.push(params.groupFolder);
+  }
+  if (params.intentFamily) {
+    clauses.push('intent_family = ?');
+    args.push(params.intentFamily);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_executive_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveExecutiveRunRow>[0]>;
+  return rows.map((row) => mapCognitiveExecutiveRunRow(row));
+}
+
+function mapCognitiveWorldSnapshotRow(row: {
+  snapshot_id: string;
+  created_at: string;
+  group_folder: string;
+  status: CognitiveWorldSnapshot['status'];
+  current_focus: string;
+  items_json: string;
+  used_item_ids_json: string;
+  omitted_item_ids_json: string;
+  degraded_tools_json: string;
+  evidence_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveWorldSnapshot {
+  return {
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    groupFolder: row.group_folder,
+    status: row.status,
+    currentFocus: row.current_focus,
+    itemsJson: row.items_json,
+    usedItemIdsJson: row.used_item_ids_json,
+    omittedItemIdsJson: row.omitted_item_ids_json,
+    degradedToolsJson: row.degraded_tools_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveWorldSnapshot(
+  record: CognitiveWorldSnapshot,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_executive_snapshots (
+        snapshot_id, created_at, group_folder, status, current_focus,
+        items_json, used_item_ids_json, omitted_item_ids_json,
+        degraded_tools_json, evidence_ids_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(snapshot_id) DO UPDATE SET
+        status = excluded.status,
+        current_focus = excluded.current_focus,
+        items_json = excluded.items_json,
+        used_item_ids_json = excluded.used_item_ids_json,
+        omitted_item_ids_json = excluded.omitted_item_ids_json,
+        degraded_tools_json = excluded.degraded_tools_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.snapshotId,
+    record.createdAt,
+    record.groupFolder,
+    record.status,
+    redactStoredCognitiveMetadata(record.currentFocus, 520),
+    redactStoredCognitiveMetadata(record.itemsJson, 6000),
+    sanitizeStoredIdArrayJson(record.usedItemIdsJson, 2400),
+    sanitizeStoredIdArrayJson(record.omittedItemIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.degradedToolsJson, 2400),
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function getCognitiveWorldSnapshot(
+  snapshotId: string,
+): CognitiveWorldSnapshot | undefined {
+  const row = db
+    .prepare(
+      'SELECT * FROM cognitive_executive_snapshots WHERE snapshot_id = ?',
+    )
+    .get(snapshotId) as
+    | Parameters<typeof mapCognitiveWorldSnapshotRow>[0]
+    | undefined;
+  return row ? mapCognitiveWorldSnapshotRow(row) : undefined;
+}
+
+export function listCognitiveWorldSnapshots(
+  params: { groupFolder?: string; limit?: number } = {},
+): CognitiveWorldSnapshot[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('group_folder = ?');
+    args.push(params.groupFolder);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_executive_snapshots
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveWorldSnapshotRow>[0]>;
+  return rows.map((row) => mapCognitiveWorldSnapshotRow(row));
+}
+
+function mapCognitiveExecutiveToolChoiceRow(row: {
+  choice_id: string;
+  run_id: string;
+  created_at: string;
+  tool_id: CognitiveExecutiveToolChoice['toolId'];
+  capability_id: string | null;
+  selected: number;
+  status: CognitiveExecutiveToolChoice['status'];
+  confidence: number;
+  approval_required: number;
+  reason: string;
+  fallback_tool_id: CognitiveExecutiveToolChoice['fallbackToolId'];
+  risk_flags_json: string;
+  privacy_json: string;
+}): CognitiveExecutiveToolChoice {
+  return {
+    choiceId: row.choice_id,
+    runId: row.run_id,
+    createdAt: row.created_at,
+    toolId: row.tool_id,
+    capabilityId: row.capability_id,
+    selected: row.selected === 1,
+    status: row.status,
+    confidence: row.confidence,
+    approvalRequired: row.approval_required === 1,
+    reason: row.reason,
+    fallbackToolId: row.fallback_tool_id,
+    riskFlagsJson: row.risk_flags_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveExecutiveToolChoice(
+  record: CognitiveExecutiveToolChoice,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_executive_tool_choices (
+        choice_id, run_id, created_at, tool_id, capability_id, selected,
+        status, confidence, approval_required, reason, fallback_tool_id,
+        risk_flags_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(choice_id) DO UPDATE SET
+        tool_id = excluded.tool_id,
+        capability_id = excluded.capability_id,
+        selected = excluded.selected,
+        status = excluded.status,
+        confidence = excluded.confidence,
+        approval_required = excluded.approval_required,
+        reason = excluded.reason,
+        fallback_tool_id = excluded.fallback_tool_id,
+        risk_flags_json = excluded.risk_flags_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.choiceId,
+    record.runId,
+    record.createdAt,
+    record.toolId,
+    record.capabilityId || null,
+    record.selected ? 1 : 0,
+    record.status,
+    record.confidence,
+    record.approvalRequired ? 1 : 0,
+    redactStoredCognitiveMetadata(record.reason, 700),
+    record.fallbackToolId || null,
+    redactStoredCognitiveMetadata(record.riskFlagsJson, 1600),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveExecutiveToolChoices(
+  params: { runId?: string; selected?: boolean; limit?: number } = {},
+): CognitiveExecutiveToolChoice[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (typeof params.selected === 'boolean') {
+    clauses.push('selected = ?');
+    args.push(params.selected ? 1 : 0);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_executive_tool_choices
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY selected DESC, confidence DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveExecutiveToolChoiceRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveExecutiveToolChoiceRow(row));
+}
+
+function mapCognitiveReflectionSignalRow(row: {
+  signal_id: string;
+  run_id: string;
+  created_at: string;
+  route_key: string;
+  capability_id: string | null;
+  signal_kind: CognitiveReflectionSignal['signalKind'];
+  outcome: CognitiveReflectionSignal['outcome'];
+  route_confidence: number;
+  fallback_used: number;
+  user_response: CognitiveReflectionSignal['userResponse'];
+  friction_key: string | null;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): CognitiveReflectionSignal {
+  return {
+    signalId: row.signal_id,
+    runId: row.run_id,
+    createdAt: row.created_at,
+    routeKey: row.route_key,
+    capabilityId: row.capability_id,
+    signalKind: row.signal_kind,
+    outcome: row.outcome,
+    routeConfidence: row.route_confidence,
+    fallbackUsed: row.fallback_used === 1,
+    userResponse: row.user_response,
+    frictionKey: row.friction_key,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveReflectionSignal(
+  record: CognitiveReflectionSignal,
+): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_executive_reflection_signals (
+        signal_id, run_id, created_at, route_key, capability_id, signal_kind,
+        outcome, route_confidence, fallback_used, user_response, friction_key,
+        summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(signal_id) DO UPDATE SET
+        route_key = excluded.route_key,
+        capability_id = excluded.capability_id,
+        signal_kind = excluded.signal_kind,
+        outcome = excluded.outcome,
+        route_confidence = excluded.route_confidence,
+        fallback_used = excluded.fallback_used,
+        user_response = excluded.user_response,
+        friction_key = excluded.friction_key,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.signalId,
+    record.runId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.routeKey, 320),
+    record.capabilityId || null,
+    record.signalKind,
+    record.outcome,
+    record.routeConfidence,
+    record.fallbackUsed ? 1 : 0,
+    record.userResponse || null,
+    record.frictionKey || null,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveReflectionSignals(
+  params: { runId?: string; frictionKey?: string; limit?: number } = {},
+): CognitiveReflectionSignal[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.frictionKey) {
+    clauses.push('friction_key = ?');
+    args.push(params.frictionKey);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_executive_reflection_signals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCognitiveReflectionSignalRow>[0]
+  >;
+  return rows.map((row) => mapCognitiveReflectionSignalRow(row));
+}
+
+function boolToInt(value: boolean): number {
+  return value ? 1 : 0;
+}
+
+function intToBool(value: number): boolean {
+  return value === 1;
+}
+
+function mapToolReliabilitySubjectRow(row: {
+  subject_id: string;
+  subject_kind: ToolReliabilitySubject['subjectKind'];
+  display_name: string;
+  aliases_json: string;
+  risk_level: ToolReliabilitySubject['riskLevel'];
+  approval_requirement: ToolReliabilitySubject['approvalRequirement'];
+  channels_json: string;
+  source_refs_json: string;
+  privacy_json: string;
+}): ToolReliabilitySubject {
+  return {
+    subjectId: row.subject_id,
+    subjectKind: row.subject_kind,
+    displayName: row.display_name,
+    aliasesJson: row.aliases_json,
+    riskLevel: row.risk_level,
+    approvalRequirement: row.approval_requirement,
+    channelsJson: row.channels_json,
+    sourceRefsJson: row.source_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertToolReliabilitySubject(
+  record: ToolReliabilitySubject,
+): void {
+  db.prepare(
+    `
+      INSERT INTO tool_reliability_subjects (
+        subject_id, subject_kind, display_name, aliases_json, risk_level,
+        approval_requirement, channels_json, source_refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(subject_id) DO UPDATE SET
+        subject_kind = excluded.subject_kind,
+        display_name = excluded.display_name,
+        aliases_json = excluded.aliases_json,
+        risk_level = excluded.risk_level,
+        approval_requirement = excluded.approval_requirement,
+        channels_json = excluded.channels_json,
+        source_refs_json = excluded.source_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.subjectId,
+    record.subjectKind,
+    redactStoredCognitiveMetadata(record.displayName, 220),
+    redactStoredCognitiveMetadata(record.aliasesJson, 1200),
+    record.riskLevel,
+    record.approvalRequirement,
+    redactStoredCognitiveMetadata(record.channelsJson, 800),
+    redactStoredCognitiveMetadata(record.sourceRefsJson, 1200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listToolReliabilitySubjects(
+  params: {
+    subjectKind?: ToolReliabilitySubject['subjectKind'];
+    limit?: number;
+  } = {},
+): ToolReliabilitySubject[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subjectKind) {
+    clauses.push('subject_kind = ?');
+    args.push(params.subjectKind);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM tool_reliability_subjects
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY subject_kind, display_name
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapToolReliabilitySubjectRow>[0]>;
+  return rows.map((row) => mapToolReliabilitySubjectRow(row));
+}
+
+function mapToolDependencyLinkRow(row: {
+  link_id: string;
+  subject_id: string;
+  dependency_subject_id: string;
+  dependency_kind: ToolDependencyLink['dependencyKind'];
+  reason: string;
+  fallback_subject_id: string | null;
+  privacy_json: string;
+}): ToolDependencyLink {
+  return {
+    linkId: row.link_id,
+    subjectId: row.subject_id,
+    dependencySubjectId: row.dependency_subject_id,
+    dependencyKind: row.dependency_kind,
+    reason: row.reason,
+    fallbackSubjectId: row.fallback_subject_id,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertToolDependencyLink(record: ToolDependencyLink): void {
+  db.prepare(
+    `
+      INSERT INTO tool_dependency_links (
+        link_id, subject_id, dependency_subject_id, dependency_kind, reason,
+        fallback_subject_id, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(link_id) DO UPDATE SET
+        subject_id = excluded.subject_id,
+        dependency_subject_id = excluded.dependency_subject_id,
+        dependency_kind = excluded.dependency_kind,
+        reason = excluded.reason,
+        fallback_subject_id = excluded.fallback_subject_id,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.linkId,
+    record.subjectId,
+    record.dependencySubjectId,
+    record.dependencyKind,
+    redactStoredCognitiveMetadata(record.reason, 520),
+    record.fallbackSubjectId || null,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listToolDependencyLinks(
+  params: {
+    subjectId?: string;
+    dependencySubjectId?: string;
+    limit?: number;
+  } = {},
+): ToolDependencyLink[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subjectId) {
+    clauses.push('subject_id = ?');
+    args.push(params.subjectId);
+  }
+  if (params.dependencySubjectId) {
+    clauses.push('dependency_subject_id = ?');
+    args.push(params.dependencySubjectId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM tool_dependency_links
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY subject_id, dependency_kind
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapToolDependencyLinkRow>[0]>;
+  return rows.map((row) => mapToolDependencyLinkRow(row));
+}
+
+function mapReliabilityObservationRow(row: {
+  observation_id: string;
+  subject_id: string;
+  observed_at: string;
+  source_kind: ReliabilityObservation['sourceKind'];
+  outcome: ReliabilityObservation['outcome'];
+  failure_class: string;
+  confidence: number;
+  fallback_used: number;
+  latency_ms: number | null;
+  summary: string;
+  next_action: string;
+  evidence_ids_json: string;
+  privacy_json: string;
+}): ReliabilityObservation {
+  return {
+    observationId: row.observation_id,
+    subjectId: row.subject_id,
+    observedAt: row.observed_at,
+    sourceKind: row.source_kind,
+    outcome: row.outcome,
+    failureClass: row.failure_class,
+    confidence: row.confidence,
+    fallbackUsed: intToBool(row.fallback_used),
+    latencyMs: row.latency_ms,
+    summary: row.summary,
+    nextAction: row.next_action,
+    evidenceIdsJson: row.evidence_ids_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertReliabilityObservation(
+  record: ReliabilityObservation,
+): void {
+  db.prepare(
+    `
+      INSERT INTO reliability_observations (
+        observation_id, subject_id, observed_at, source_kind, outcome,
+        failure_class, confidence, fallback_used, latency_ms, summary,
+        next_action, evidence_ids_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(observation_id) DO UPDATE SET
+        outcome = excluded.outcome,
+        failure_class = excluded.failure_class,
+        confidence = excluded.confidence,
+        fallback_used = excluded.fallback_used,
+        latency_ms = excluded.latency_ms,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        evidence_ids_json = excluded.evidence_ids_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.observationId,
+    record.subjectId,
+    record.observedAt,
+    record.sourceKind,
+    record.outcome,
+    redactStoredCognitiveMetadata(record.failureClass, 120),
+    record.confidence,
+    boolToInt(record.fallbackUsed),
+    record.latencyMs || null,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listReliabilityObservations(
+  params: { subjectId?: string; limit?: number } = {},
+): ReliabilityObservation[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subjectId) {
+    clauses.push('subject_id = ?');
+    args.push(params.subjectId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM reliability_observations
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY observed_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapReliabilityObservationRow>[0]>;
+  return rows.map((row) => mapReliabilityObservationRow(row));
+}
+
+function mapToolReliabilityRollupRow(row: {
+  subject_id: string;
+  updated_at: string;
+  sample_count: number;
+  success_rate: number;
+  degraded_rate: number;
+  blocked_rate: number;
+  fallback_rate: number;
+  reliability_score: number;
+  current_health: ToolReliabilityRollup['currentHealth'];
+  confidence_cap: number;
+  cooldown_until: string | null;
+  next_action: string;
+  privacy_json: string;
+}): ToolReliabilityRollup {
+  return {
+    subjectId: row.subject_id,
+    updatedAt: row.updated_at,
+    sampleCount: row.sample_count,
+    successRate: row.success_rate,
+    degradedRate: row.degraded_rate,
+    blockedRate: row.blocked_rate,
+    fallbackRate: row.fallback_rate,
+    reliabilityScore: row.reliability_score,
+    currentHealth: row.current_health,
+    confidenceCap: row.confidence_cap,
+    cooldownUntil: row.cooldown_until,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertToolReliabilityRollup(
+  record: ToolReliabilityRollup,
+): void {
+  db.prepare(
+    `
+      INSERT INTO tool_reliability_rollups (
+        subject_id, updated_at, sample_count, success_rate, degraded_rate,
+        blocked_rate, fallback_rate, reliability_score, current_health,
+        confidence_cap, cooldown_until, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(subject_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        sample_count = excluded.sample_count,
+        success_rate = excluded.success_rate,
+        degraded_rate = excluded.degraded_rate,
+        blocked_rate = excluded.blocked_rate,
+        fallback_rate = excluded.fallback_rate,
+        reliability_score = excluded.reliability_score,
+        current_health = excluded.current_health,
+        confidence_cap = excluded.confidence_cap,
+        cooldown_until = excluded.cooldown_until,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.subjectId,
+    record.updatedAt,
+    record.sampleCount,
+    record.successRate,
+    record.degradedRate,
+    record.blockedRate,
+    record.fallbackRate,
+    record.reliabilityScore,
+    record.currentHealth,
+    record.confidenceCap,
+    record.cooldownUntil || null,
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listToolReliabilityRollups(
+  params: {
+    currentHealth?: ToolReliabilityRollup['currentHealth'];
+    limit?: number;
+  } = {},
+): ToolReliabilityRollup[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.currentHealth) {
+    clauses.push('current_health = ?');
+    args.push(params.currentHealth);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM tool_reliability_rollups
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY reliability_score ASC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapToolReliabilityRollupRow>[0]>;
+  return rows.map((row) => mapToolReliabilityRollupRow(row));
+}
+
+function mapRouteConfidenceRollupRow(row: {
+  route_key: string;
+  channel: RouteConfidenceRollup['channel'];
+  updated_at: string;
+  attempts: number;
+  average_predicted_confidence: number;
+  empirical_success_rate: number;
+  calibration_gap: number;
+  correction_rate: number;
+  recommended_confidence_cap: number;
+  recommended_fallback: string | null;
+  privacy_json: string;
+}): RouteConfidenceRollup {
+  return {
+    routeKey: row.route_key,
+    channel: row.channel,
+    updatedAt: row.updated_at,
+    attempts: row.attempts,
+    averagePredictedConfidence: row.average_predicted_confidence,
+    empiricalSuccessRate: row.empirical_success_rate,
+    calibrationGap: row.calibration_gap,
+    correctionRate: row.correction_rate,
+    recommendedConfidenceCap: row.recommended_confidence_cap,
+    recommendedFallback: row.recommended_fallback,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertRouteConfidenceRollup(
+  record: RouteConfidenceRollup,
+): void {
+  db.prepare(
+    `
+      INSERT INTO route_confidence_rollups (
+        route_key, channel, updated_at, attempts, average_predicted_confidence,
+        empirical_success_rate, calibration_gap, correction_rate,
+        recommended_confidence_cap, recommended_fallback, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(route_key, channel) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        attempts = excluded.attempts,
+        average_predicted_confidence = excluded.average_predicted_confidence,
+        empirical_success_rate = excluded.empirical_success_rate,
+        calibration_gap = excluded.calibration_gap,
+        correction_rate = excluded.correction_rate,
+        recommended_confidence_cap = excluded.recommended_confidence_cap,
+        recommended_fallback = excluded.recommended_fallback,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    redactStoredCognitiveMetadata(record.routeKey, 320),
+    record.channel,
+    record.updatedAt,
+    record.attempts,
+    record.averagePredictedConfidence,
+    record.empiricalSuccessRate,
+    record.calibrationGap,
+    record.correctionRate,
+    record.recommendedConfidenceCap,
+    record.recommendedFallback || null,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listRouteConfidenceRollups(
+  params: { routeKey?: string; limit?: number } = {},
+): RouteConfidenceRollup[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.routeKey) {
+    clauses.push('route_key = ?');
+    args.push(params.routeKey);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM route_confidence_rollups
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY recommended_confidence_cap ASC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapRouteConfidenceRollupRow>[0]>;
+  return rows.map((row) => mapRouteConfidenceRollupRow(row));
+}
+
+function mapRepairAttemptRow(row: {
+  attempt_id: string;
+  playbook_id: RepairAttemptRecord['playbookId'];
+  integration_id: string;
+  created_at: string;
+  updated_at: string;
+  status: RepairAttemptRecord['status'];
+  failure_class: string;
+  safe_to_apply: number;
+  dry_run: number;
+  validation_status: RepairAttemptRecord['validationStatus'];
+  rollback_status: RepairAttemptRecord['rollbackStatus'];
+  summary: string;
+  next_action: string;
+  cooldown_until: string | null;
+  evidence_ids_json: string;
+  privacy_json: string;
+}): RepairAttemptRecord {
+  return {
+    attemptId: row.attempt_id,
+    playbookId: row.playbook_id,
+    integrationId: row.integration_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    failureClass: row.failure_class,
+    safeToApply: intToBool(row.safe_to_apply),
+    dryRun: intToBool(row.dry_run),
+    validationStatus: row.validation_status,
+    rollbackStatus: row.rollback_status,
+    summary: row.summary,
+    nextAction: row.next_action,
+    cooldownUntil: row.cooldown_until,
+    evidenceIdsJson: row.evidence_ids_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertRepairAttempt(record: RepairAttemptRecord): void {
+  db.prepare(
+    `
+      INSERT INTO repair_attempts (
+        attempt_id, playbook_id, integration_id, created_at, updated_at,
+        status, failure_class, safe_to_apply, dry_run, validation_status,
+        rollback_status, summary, next_action, cooldown_until,
+        evidence_ids_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(attempt_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        failure_class = excluded.failure_class,
+        safe_to_apply = excluded.safe_to_apply,
+        dry_run = excluded.dry_run,
+        validation_status = excluded.validation_status,
+        rollback_status = excluded.rollback_status,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        cooldown_until = excluded.cooldown_until,
+        evidence_ids_json = excluded.evidence_ids_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.attemptId,
+    record.playbookId,
+    record.integrationId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.failureClass, 180),
+    boolToInt(record.safeToApply),
+    boolToInt(record.dryRun),
+    record.validationStatus,
+    record.rollbackStatus,
+    redactStoredCognitiveMetadata(record.summary, 1200),
+    redactStoredCognitiveMetadata(record.nextAction, 1200),
+    record.cooldownUntil || null,
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listRepairAttempts(
+  params: {
+    integrationId?: string;
+    playbookId?: RepairAttemptRecord['playbookId'];
+    limit?: number;
+  } = {},
+): RepairAttemptRecord[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.integrationId) {
+    clauses.push('integration_id = ?');
+    args.push(params.integrationId);
+  }
+  if (params.playbookId) {
+    clauses.push('playbook_id = ?');
+    args.push(params.playbookId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM repair_attempts
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapRepairAttemptRow>[0]>;
+  return rows.map((row) => mapRepairAttemptRow(row));
+}
+
+function mapRepairCooldownRow(row: {
+  cooldown_id: string;
+  target_id: string;
+  playbook_id: RepairCooldownRecord['playbookId'];
+  failure_class: string;
+  created_at: string;
+  expires_at: string;
+  reason: string;
+  next_action: string;
+  privacy_json: string;
+}): RepairCooldownRecord {
+  return {
+    cooldownId: row.cooldown_id,
+    targetId: row.target_id,
+    playbookId: row.playbook_id,
+    failureClass: row.failure_class,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    reason: row.reason,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertRepairCooldown(record: RepairCooldownRecord): void {
+  db.prepare(
+    `
+      INSERT INTO repair_cooldowns (
+        cooldown_id, target_id, playbook_id, failure_class, created_at,
+        expires_at, reason, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cooldown_id) DO UPDATE SET
+        expires_at = excluded.expires_at,
+        reason = excluded.reason,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.cooldownId,
+    record.targetId,
+    record.playbookId,
+    redactStoredCognitiveMetadata(record.failureClass, 180),
+    record.createdAt,
+    record.expiresAt,
+    redactStoredCognitiveMetadata(record.reason, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listRepairCooldowns(
+  params: { targetId?: string; activeAt?: string; limit?: number } = {},
+): RepairCooldownRecord[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.targetId) {
+    clauses.push('target_id = ?');
+    args.push(params.targetId);
+  }
+  if (params.activeAt) {
+    clauses.push('expires_at > ?');
+    args.push(params.activeAt);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM repair_cooldowns
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY expires_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapRepairCooldownRow>[0]>;
+  return rows.map((row) => mapRepairCooldownRow(row));
+}
+
+function mapCriticReviewRow(row: {
+  review_id: string;
+  created_at: string;
+  actor: string;
+  action: string;
+  channel: CriticReviewRecord['channel'];
+  decision: CriticReviewRecord['decision'];
+  approval_required: number;
+  risk_flags_json: string;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): CriticReviewRecord {
+  return {
+    reviewId: row.review_id,
+    createdAt: row.created_at,
+    actor: row.actor,
+    action: row.action,
+    channel: row.channel,
+    decision: row.decision,
+    approvalRequired: intToBool(row.approval_required),
+    riskFlagsJson: row.risk_flags_json,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCriticReview(record: CriticReviewRecord): void {
+  db.prepare(
+    `
+      INSERT INTO critic_reviews (
+        review_id, created_at, actor, action, channel, decision,
+        approval_required, risk_flags_json, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(review_id) DO UPDATE SET
+        decision = excluded.decision,
+        approval_required = excluded.approval_required,
+        risk_flags_json = excluded.risk_flags_json,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.reviewId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.actor, 180),
+    redactStoredCognitiveMetadata(record.action, 320),
+    record.channel,
+    record.decision,
+    boolToInt(record.approvalRequired),
+    redactStoredCognitiveMetadata(record.riskFlagsJson, 1600),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCriticReviews(
+  params: { limit?: number } = {},
+): CriticReviewRecord[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM critic_reviews
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(workspaceLimit(params.limit)) as Array<
+    Parameters<typeof mapCriticReviewRow>[0]
+  >;
+  return rows.map((row) => mapCriticReviewRow(row));
+}
+
+function mapAgenticEvalScenarioResultRow(row: {
+  result_id: string;
+  scenario_id: string;
+  created_at: string;
+  status: AgenticEvalScenarioResult['status'];
+  route_score: number;
+  tool_score: number;
+  repair_score: number;
+  safety_score: number;
+  reflection_score: number;
+  answer_score: number;
+  failures_json: string;
+  summary: string;
+  privacy_json: string;
+}): AgenticEvalScenarioResult {
+  return {
+    resultId: row.result_id,
+    scenarioId: row.scenario_id,
+    createdAt: row.created_at,
+    status: row.status,
+    routeScore: row.route_score,
+    toolScore: row.tool_score,
+    repairScore: row.repair_score,
+    safetyScore: row.safety_score,
+    reflectionScore: row.reflection_score,
+    answerScore: row.answer_score,
+    failuresJson: row.failures_json,
+    summary: row.summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgenticEvalScenarioResult(
+  record: AgenticEvalScenarioResult,
+): void {
+  db.prepare(
+    `
+      INSERT INTO agentic_eval_results (
+        result_id, scenario_id, created_at, status, route_score, tool_score,
+        repair_score, safety_score, reflection_score, answer_score,
+        failures_json, summary, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(result_id) DO UPDATE SET
+        status = excluded.status,
+        route_score = excluded.route_score,
+        tool_score = excluded.tool_score,
+        repair_score = excluded.repair_score,
+        safety_score = excluded.safety_score,
+        reflection_score = excluded.reflection_score,
+        answer_score = excluded.answer_score,
+        failures_json = excluded.failures_json,
+        summary = excluded.summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.resultId,
+    record.scenarioId,
+    record.createdAt,
+    record.status,
+    record.routeScore,
+    record.toolScore,
+    record.repairScore,
+    record.safetyScore,
+    record.reflectionScore,
+    record.answerScore,
+    redactStoredCognitiveMetadata(record.failuresJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgenticEvalScenarioResults(
+  params: { scenarioId?: string; limit?: number } = {},
+): AgenticEvalScenarioResult[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.scenarioId) {
+    clauses.push('scenario_id = ?');
+    args.push(params.scenarioId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agentic_eval_results
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapAgenticEvalScenarioResultRow>[0]
+  >;
+  return rows.map((row) => mapAgenticEvalScenarioResultRow(row));
+}
+
+export function pruneSessionGraphData(params: {
+  cutoffIso: string;
+  retainLimit: number;
+}): void {
+  db.prepare('DELETE FROM session_graph_snapshots WHERE created_at < ?').run(
+    params.cutoffIso,
+  );
+  db.prepare(
+    `
+      DELETE FROM session_graph_snapshots
+      WHERE snapshot_id NOT IN (
+        SELECT snapshot_id
+        FROM session_graph_snapshots
+        ORDER BY created_at DESC
+        LIMIT ?
+      )
+    `,
+  ).run(Math.max(1, params.retainLimit));
+}
+
+export function pruneAgentRuntimeSpineData(params: {
+  cutoffIso: string;
+  retainLimit: number;
+}): void {
+  const childTables = [
+    'agent_runtime_steps',
+    'agent_runtime_writes',
+    'agent_runtime_checkpoints',
+    'agent_runtime_guardrail_results',
+    'agent_runtime_resume_tokens',
+    'agent_runtime_interrupts',
+    'agent_runtime_events',
+    'agent_runtime_evidence_packets',
+  ];
+  for (const table of childTables) {
+    db.prepare(
+      `
+        DELETE FROM ${table}
+        WHERE runtime_run_id IN (
+          SELECT runtime_run_id
+          FROM agent_runtime_runs
+          WHERE created_at < ?
+        )
+      `,
+    ).run(params.cutoffIso);
+  }
+  db.prepare('DELETE FROM agent_runtime_runs WHERE created_at < ?').run(
+    params.cutoffIso,
+  );
+  for (const table of childTables) {
+    db.prepare(
+      `
+        DELETE FROM ${table}
+        WHERE runtime_run_id NOT IN (
+          SELECT runtime_run_id
+          FROM agent_runtime_runs
+          ORDER BY created_at DESC
+          LIMIT ?
+        )
+      `,
+    ).run(Math.max(1, params.retainLimit));
+  }
+  db.prepare(
+    `
+      DELETE FROM agent_runtime_runs
+      WHERE runtime_run_id NOT IN (
+        SELECT runtime_run_id
+        FROM agent_runtime_runs
+        ORDER BY created_at DESC
+        LIMIT ?
+      )
+    `,
+  ).run(Math.max(1, params.retainLimit));
+}
+
+function harnessLimit(limit = 100): number {
+  return Math.max(1, Math.min(limit, 500));
+}
+
+function mapHarnessEvalTaskRow(row: {
+  task_id: string;
+  created_at: string;
+  task_family: HarnessEvalTask['taskFamily'];
+  prompt_summary: string;
+  expected_evidence_json: string;
+  safety_invariant_json: string;
+  source_pattern_refs_json: string;
+  privacy_json: string;
+}): HarnessEvalTask {
+  return {
+    taskId: row.task_id,
+    createdAt: row.created_at,
+    taskFamily: row.task_family,
+    promptSummary: row.prompt_summary,
+    expectedEvidenceJson: row.expected_evidence_json,
+    safetyInvariantJson: row.safety_invariant_json,
+    sourcePatternRefsJson: row.source_pattern_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertHarnessEvalTask(record: HarnessEvalTask): void {
+  db.prepare(
+    `
+      INSERT INTO harness_eval_tasks (
+        task_id, created_at, task_family, prompt_summary,
+        expected_evidence_json, safety_invariant_json,
+        source_pattern_refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(task_id) DO UPDATE SET
+        task_family = excluded.task_family,
+        prompt_summary = excluded.prompt_summary,
+        expected_evidence_json = excluded.expected_evidence_json,
+        safety_invariant_json = excluded.safety_invariant_json,
+        source_pattern_refs_json = excluded.source_pattern_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.taskId,
+    record.createdAt,
+    record.taskFamily,
+    redactStoredCognitiveMetadata(record.promptSummary, 640),
+    redactStoredCognitiveMetadata(record.expectedEvidenceJson, 2400),
+    redactStoredCognitiveMetadata(record.safetyInvariantJson, 2400),
+    redactStoredCognitiveMetadata(record.sourcePatternRefsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listHarnessEvalTasks(
+  params: { taskFamily?: HarnessEvalTask['taskFamily']; limit?: number } = {},
+): HarnessEvalTask[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM harness_eval_tasks
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapHarnessEvalTaskRow>[0]>;
+  return rows.map((row) => mapHarnessEvalTaskRow(row));
+}
+
+function mapHarnessTrajectoryRow(row: {
+  trajectory_id: string;
+  task_id: string;
+  created_at: string;
+  status: HarnessTrajectory['status'];
+  plan_id: string | null;
+  replay_id: string | null;
+  belief_revision_ids_json: string;
+  tool_call_summary_json: string;
+  guardrail_decision_ids_json: string;
+  evidence_ids_json: string;
+  outcome_json: string;
+  next_repair_action: string;
+  privacy_json: string;
+}): HarnessTrajectory {
+  return {
+    trajectoryId: row.trajectory_id,
+    taskId: row.task_id,
+    createdAt: row.created_at,
+    status: row.status,
+    planId: row.plan_id,
+    replayId: row.replay_id,
+    beliefRevisionIdsJson: row.belief_revision_ids_json,
+    toolCallSummaryJson: row.tool_call_summary_json,
+    guardrailDecisionIdsJson: row.guardrail_decision_ids_json,
+    evidenceIdsJson: row.evidence_ids_json,
+    outcomeJson: row.outcome_json,
+    nextRepairAction: row.next_repair_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertHarnessTrajectory(record: HarnessTrajectory): void {
+  db.prepare(
+    `
+      INSERT INTO harness_trajectories (
+        trajectory_id, task_id, created_at, status, plan_id, replay_id,
+        belief_revision_ids_json, tool_call_summary_json,
+        guardrail_decision_ids_json, evidence_ids_json, outcome_json,
+        next_repair_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(trajectory_id) DO UPDATE SET
+        task_id = excluded.task_id,
+        status = excluded.status,
+        plan_id = excluded.plan_id,
+        replay_id = excluded.replay_id,
+        belief_revision_ids_json = excluded.belief_revision_ids_json,
+        tool_call_summary_json = excluded.tool_call_summary_json,
+        guardrail_decision_ids_json = excluded.guardrail_decision_ids_json,
+        evidence_ids_json = excluded.evidence_ids_json,
+        outcome_json = excluded.outcome_json,
+        next_repair_action = excluded.next_repair_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.trajectoryId,
+    record.taskId,
+    record.createdAt,
+    record.status,
+    record.planId || null,
+    record.replayId || null,
+    redactStoredCognitiveMetadata(record.beliefRevisionIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.toolCallSummaryJson, 2400),
+    redactStoredCognitiveMetadata(record.guardrailDecisionIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.evidenceIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.outcomeJson, 3200),
+    redactStoredCognitiveMetadata(record.nextRepairAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listHarnessTrajectories(
+  params: {
+    taskId?: string;
+    status?: HarnessTrajectory['status'];
+    limit?: number;
+  } = {},
+): HarnessTrajectory[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.taskId) {
+    clauses.push('task_id = ?');
+    args.push(params.taskId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM harness_trajectories
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapHarnessTrajectoryRow>[0]>;
+  return rows.map((row) => mapHarnessTrajectoryRow(row));
+}
+
+function mapHarnessVariantRow(row: {
+  variant_id: string;
+  created_at: string;
+  task_family: HarnessVariant['taskFamily'];
+  policy_summary: string;
+  changed_knobs_json: string;
+  safety_baseline_json: string;
+  privacy_json: string;
+}): HarnessVariant {
+  return {
+    variantId: row.variant_id,
+    createdAt: row.created_at,
+    taskFamily: row.task_family,
+    policySummary: row.policy_summary,
+    changedKnobsJson: row.changed_knobs_json,
+    safetyBaselineJson: row.safety_baseline_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertHarnessVariant(record: HarnessVariant): void {
+  db.prepare(
+    `
+      INSERT INTO harness_variants (
+        variant_id, created_at, task_family, policy_summary,
+        changed_knobs_json, safety_baseline_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(variant_id) DO UPDATE SET
+        task_family = excluded.task_family,
+        policy_summary = excluded.policy_summary,
+        changed_knobs_json = excluded.changed_knobs_json,
+        safety_baseline_json = excluded.safety_baseline_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.variantId,
+    record.createdAt,
+    record.taskFamily,
+    redactStoredCognitiveMetadata(record.policySummary, 640),
+    redactStoredCognitiveMetadata(record.changedKnobsJson, 2400),
+    redactStoredCognitiveMetadata(record.safetyBaselineJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listHarnessVariants(
+  params: { taskFamily?: HarnessVariant['taskFamily']; limit?: number } = {},
+): HarnessVariant[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM harness_variants
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapHarnessVariantRow>[0]>;
+  return rows.map((row) => mapHarnessVariantRow(row));
+}
+
+function mapHarnessScorecardRow(row: {
+  scorecard_id: string;
+  trajectory_id: string;
+  variant_id: string | null;
+  created_at: string;
+  status: HarnessScorecard['status'];
+  planning_score: number;
+  memory_score: number;
+  tool_safety_score: number;
+  evidence_score: number;
+  belief_score: number;
+  outcome_score: number;
+  privacy_score: number;
+  total_score: number;
+  failure_flags_json: string;
+  next_action: string;
+  privacy_json: string;
+}): HarnessScorecard {
+  return {
+    scorecardId: row.scorecard_id,
+    trajectoryId: row.trajectory_id,
+    variantId: row.variant_id,
+    createdAt: row.created_at,
+    status: row.status,
+    planningScore: row.planning_score,
+    memoryScore: row.memory_score,
+    toolSafetyScore: row.tool_safety_score,
+    evidenceScore: row.evidence_score,
+    beliefScore: row.belief_score,
+    outcomeScore: row.outcome_score,
+    privacyScore: row.privacy_score,
+    totalScore: row.total_score,
+    failureFlagsJson: row.failure_flags_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertHarnessScorecard(record: HarnessScorecard): void {
+  db.prepare(
+    `
+      INSERT INTO harness_scorecards (
+        scorecard_id, trajectory_id, variant_id, created_at, status,
+        planning_score, memory_score, tool_safety_score, evidence_score,
+        belief_score, outcome_score, privacy_score, total_score,
+        failure_flags_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(scorecard_id) DO UPDATE SET
+        trajectory_id = excluded.trajectory_id,
+        variant_id = excluded.variant_id,
+        status = excluded.status,
+        planning_score = excluded.planning_score,
+        memory_score = excluded.memory_score,
+        tool_safety_score = excluded.tool_safety_score,
+        evidence_score = excluded.evidence_score,
+        belief_score = excluded.belief_score,
+        outcome_score = excluded.outcome_score,
+        privacy_score = excluded.privacy_score,
+        total_score = excluded.total_score,
+        failure_flags_json = excluded.failure_flags_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.scorecardId,
+    record.trajectoryId,
+    record.variantId || null,
+    record.createdAt,
+    record.status,
+    record.planningScore,
+    record.memoryScore,
+    record.toolSafetyScore,
+    record.evidenceScore,
+    record.beliefScore,
+    record.outcomeScore,
+    record.privacyScore,
+    record.totalScore,
+    redactStoredCognitiveMetadata(record.failureFlagsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listHarnessScorecards(
+  params: {
+    trajectoryId?: string;
+    status?: HarnessScorecard['status'];
+    limit?: number;
+  } = {},
+): HarnessScorecard[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.trajectoryId) {
+    clauses.push('trajectory_id = ?');
+    args.push(params.trajectoryId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM harness_scorecards
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY total_score DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapHarnessScorecardRow>[0]>;
+  return rows.map((row) => mapHarnessScorecardRow(row));
+}
+
+function mapHarnessImprovementProposalRow(row: {
+  proposal_id: string;
+  created_at: string;
+  status: HarnessImprovementProposal['status'];
+  task_family: HarnessImprovementProposal['taskFamily'];
+  proposal_kind: HarnessImprovementProposal['proposalKind'];
+  summary: string;
+  expected_score_delta: number;
+  safety_regression: number;
+  source_trajectory_ids_json: string;
+  changed_artifacts_json: string;
+  next_action: string;
+  privacy_json: string;
+}): HarnessImprovementProposal {
+  return {
+    proposalId: row.proposal_id,
+    createdAt: row.created_at,
+    status: row.status,
+    taskFamily: row.task_family,
+    proposalKind: row.proposal_kind,
+    summary: row.summary,
+    expectedScoreDelta: row.expected_score_delta,
+    safetyRegression: row.safety_regression === 1,
+    sourceTrajectoryIdsJson: row.source_trajectory_ids_json,
+    changedArtifactsJson: row.changed_artifacts_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertHarnessImprovementProposal(
+  record: HarnessImprovementProposal,
+): void {
+  db.prepare(
+    `
+      INSERT INTO harness_improvement_proposals (
+        proposal_id, created_at, status, task_family, proposal_kind, summary,
+        expected_score_delta, safety_regression, source_trajectory_ids_json,
+        changed_artifacts_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(proposal_id) DO UPDATE SET
+        status = excluded.status,
+        task_family = excluded.task_family,
+        proposal_kind = excluded.proposal_kind,
+        summary = excluded.summary,
+        expected_score_delta = excluded.expected_score_delta,
+        safety_regression = excluded.safety_regression,
+        source_trajectory_ids_json = excluded.source_trajectory_ids_json,
+        changed_artifacts_json = excluded.changed_artifacts_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.proposalId,
+    record.createdAt,
+    record.status,
+    record.taskFamily,
+    record.proposalKind,
+    redactStoredCognitiveMetadata(record.summary, 640),
+    record.expectedScoreDelta,
+    record.safetyRegression ? 1 : 0,
+    redactStoredCognitiveMetadata(record.sourceTrajectoryIdsJson, 2400),
+    redactStoredCognitiveMetadata(record.changedArtifactsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 640),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listHarnessImprovementProposals(
+  params: {
+    status?: HarnessImprovementProposal['status'];
+    taskFamily?: HarnessImprovementProposal['taskFamily'];
+    limit?: number;
+  } = {},
+): HarnessImprovementProposal[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM harness_improvement_proposals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY expected_score_delta DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapHarnessImprovementProposalRow>[0]
+  >;
+  return rows.map((row) => mapHarnessImprovementProposalRow(row));
 }
 
 export function pruneCognitiveKernelData(params: {
@@ -10731,6 +23725,13 @@ export function pruneCognitiveKernelData(params: {
     'cognitive_plan_revisions',
     'cognitive_run_events',
     'cognitive_trajectory_scores',
+    'cognitive_action_identities',
+    'cognitive_governance_decisions',
+    'cognitive_guardrail_tripwires',
+    'cognitive_handoffs',
+    'cognitive_risk_signals',
+    'cognitive_memory_blocks',
+    'cognitive_workbench_states',
   ];
   for (const table of childTables) {
     db.prepare(

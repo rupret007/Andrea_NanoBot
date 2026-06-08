@@ -1989,6 +1989,169 @@ export interface CognitiveProviderCooldown {
   privacyJson: string;
 }
 
+export type CognitiveGovernanceRiskClass =
+  | 'goal_hijack'
+  | 'prompt_injection'
+  | 'tool_misuse'
+  | 'memory_poisoning'
+  | 'identity_ambiguity'
+  | 'cascading_failure'
+  | 'rogue_agent_behavior'
+  | 'data_exfiltration'
+  | 'unauthorized_write'
+  | 'policy_drift';
+
+export type CognitiveWorkbenchRole =
+  | 'planner'
+  | 'evidence_scout'
+  | 'memory_curator'
+  | 'operator_diagnostician'
+  | 'verifier'
+  | 'final_arbiter'
+  | 'executor';
+
+export interface CognitiveGovernancePolicy {
+  policyId: string;
+  createdAt: string;
+  updatedAt: string;
+  policyName: string;
+  status: 'active' | 'draft' | 'retired';
+  version: string;
+  defaultAction: 'allow' | 'stage_approval' | 'block';
+  readOnlyAllowed: boolean;
+  mutatingAllowed: boolean;
+  approvalRequiredForHighRisk: boolean;
+  riskClassesJson: string;
+  sourcePatternRefsJson: string;
+  privacyJson: string;
+}
+
+export interface CognitiveActionIdentity {
+  actionId: string;
+  createdAt: string;
+  runId: string;
+  toolId: string;
+  actionClass: string;
+  actorRole: CognitiveWorkbenchRole;
+  policyClass: CognitiveToolAdapterContract['policyClass'];
+  channel?: string | null;
+  targetKind?: string | null;
+  targetSummary: string;
+  sideEffectClass: 'none' | 'read_only' | 'draft' | 'mutating';
+  identityRefsJson: string;
+  privacyJson: string;
+}
+
+export interface CognitiveGovernanceDecision {
+  decisionId: string;
+  createdAt: string;
+  runId: string;
+  toolId: string;
+  actionId?: string | null;
+  policyId: string;
+  interventionPoint:
+    | 'pre_tool'
+    | 'handoff'
+    | 'memory_compile'
+    | 'pre_approval'
+    | 'council'
+    | 'final_answer';
+  status: 'allow' | 'warn' | 'stage_approval' | 'block';
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  riskClassesJson: string;
+  tripwireIdsJson: string;
+  reason: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveGuardrailTripwire {
+  tripwireId: string;
+  createdAt: string;
+  runId: string;
+  toolId?: string | null;
+  riskClass: CognitiveGovernanceRiskClass;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  triggered: boolean;
+  source: 'goal' | 'tool_policy' | 'memory' | 'provider' | 'handoff';
+  summary: string;
+  evidenceRefsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveHandoff {
+  handoffId: string;
+  createdAt: string;
+  runId: string;
+  fromRole: CognitiveWorkbenchRole;
+  toRole: CognitiveWorkbenchRole;
+  status: 'requested' | 'accepted' | 'skipped' | 'blocked' | 'completed';
+  reason: string;
+  evidenceRefsJson: string;
+  governanceDecisionId?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveRiskSignal {
+  signalId: string;
+  createdAt: string;
+  runId: string;
+  riskClass: CognitiveGovernanceRiskClass;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  status: 'open' | 'mitigated' | 'accepted' | 'false_positive';
+  source: 'governance' | 'tripwire' | 'memory' | 'provider' | 'tool';
+  summary: string;
+  evidenceRefsJson: string;
+  governanceDecisionId?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveMemoryBlock {
+  blockId: string;
+  createdAt: string;
+  updatedAt: string;
+  runId: string;
+  blockKind:
+    | 'profile'
+    | 'preferences'
+    | 'operating_rules'
+    | 'current_projects'
+    | 'people_threads'
+    | 'skills'
+    | 'provider_health'
+    | 'integration_status';
+  status: 'active' | 'conflicted' | 'blocked';
+  summary: string;
+  sourceIdsJson: string;
+  freshness: 'fresh' | 'stale' | 'unknown';
+  sensitivity: 'metadata' | 'sanitized_digest' | 'private_metadata';
+  conflictFlagsJson: string;
+  poisoningRisk: number;
+  governanceDecisionId?: string | null;
+  privacyJson: string;
+}
+
+export interface CognitiveWorkbenchState {
+  workbenchId: string;
+  createdAt: string;
+  updatedAt: string;
+  runId: string;
+  status: 'active' | 'answered' | 'awaiting_approval' | 'blocked' | 'degraded';
+  activeGoalId?: string | null;
+  selectedSkillId?: string | null;
+  handoffCount: number;
+  governanceDecisionCount: number;
+  memoryBlockCount: number;
+  riskSignalCount: number;
+  approvalPacketCount: number;
+  nextAction: string;
+  stateJson: string;
+  privacyJson: string;
+}
+
 export interface CognitiveReplayPacket {
   generatedAt: string;
   runId?: string | null;
@@ -2006,6 +2169,14 @@ export interface CognitiveReplayPacket {
   runEvents: CognitiveRunEvent[];
   trajectoryScores: CognitiveTrajectoryScore[];
   providerCooldowns: CognitiveProviderCooldown[];
+  governancePolicies: CognitiveGovernancePolicy[];
+  actionIdentities: CognitiveActionIdentity[];
+  governanceDecisions: CognitiveGovernanceDecision[];
+  guardrailTripwires: CognitiveGuardrailTripwire[];
+  handoffs: CognitiveHandoff[];
+  riskSignals: CognitiveRiskSignal[];
+  memoryBlocks: CognitiveMemoryBlock[];
+  workbenchStates: CognitiveWorkbenchState[];
   checkpoints: CognitiveCheckpointRecord[];
   privacy: {
     metadataOnly: true;
@@ -2031,10 +2202,2696 @@ export interface CognitiveRunTraceReport {
   evidenceArtifactCount: number;
   approvalPacketCount: number;
   trajectoryScore?: number | null;
+  governanceDecisionCount: number;
+  handoffCount: number;
+  memoryBlockCount: number;
+  riskSignalCount: number;
+  workbenchStatus: CognitiveWorkbenchState['status'] | 'none';
   planRevisionCount: number;
   activeCooldownProviderIds: string[];
   nextAction: string;
   replayPacket: CognitiveReplayPacket;
+}
+
+export type AgentOSEpisodeStatus =
+  | 'active'
+  | 'interrupted'
+  | 'awaiting_approval'
+  | 'blocked'
+  | 'completed'
+  | 'abandoned';
+
+export type AgentOSEpisodeMode =
+  | 'quick_episode'
+  | 'read_only_episode'
+  | 'council_verified_episode'
+  | 'approval_staged_episode'
+  | 'operator_episode';
+
+export interface AgentOSEpisode {
+  episodeId: string;
+  createdAt: string;
+  updatedAt: string;
+  groupFolder?: string | null;
+  channel?: string | null;
+  rootRunId?: string | null;
+  activeRunId?: string | null;
+  goalSummary: string;
+  taskFamily: string;
+  status: AgentOSEpisodeStatus;
+  mode: AgentOSEpisodeMode;
+  priority: number;
+  linkedRunIdsJson: string;
+  councilRunIdsJson: string;
+  evidenceIdsJson: string;
+  interruptIdsJson: string;
+  approvalPacketIdsJson: string;
+  memoryBlockIdsJson: string;
+  trajectoryEvalIdsJson: string;
+  sourceCoverageJson: string;
+  nextAction: string;
+  privacyJson: string;
+  completedAt?: string | null;
+}
+
+export type AgentOSEpisodeStepKind =
+  | 'frame'
+  | 'plan'
+  | 'handoff'
+  | 'tool_discovery'
+  | 'memory_compile'
+  | 'tool_step'
+  | 'council'
+  | 'interrupt'
+  | 'verify'
+  | 'trajectory_eval'
+  | 'outcome';
+
+export interface AgentOSEpisodeStep {
+  stepId: string;
+  episodeId: string;
+  runId?: string | null;
+  createdAt: string;
+  position: number;
+  stepKind: AgentOSEpisodeStepKind;
+  actorRole?: CognitiveWorkbenchRole | null;
+  status: 'planned' | 'completed' | 'warn' | 'blocked' | 'approval_staged';
+  summary: string;
+  evidenceRefsJson: string;
+  governanceDecisionIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentOSInterrupt {
+  interruptId: string;
+  episodeId: string;
+  runId?: string | null;
+  checkpointId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  interruptKind:
+    | 'approval_required'
+    | 'evidence_gap'
+    | 'clarification_required'
+    | 'provider_blocked'
+    | 'policy_blocked';
+  status: 'open' | 'resumed' | 'closed' | 'expired';
+  payloadJson: string;
+  resumeTokenId?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentOSResumeToken {
+  resumeTokenId: string;
+  episodeId: string;
+  interruptId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'active' | 'used' | 'expired' | 'revoked';
+  continuationKey: string;
+  safeStateJson: string;
+  expiresAt?: string | null;
+  usedAt?: string | null;
+  privacyJson: string;
+}
+
+export interface AgentOSToolCard {
+  toolCardId: string;
+  createdAt: string;
+  updatedAt: string;
+  sourceToolId: string;
+  displayName: string;
+  capabilityKind:
+    | 'script'
+    | 'integration'
+    | 'cognition_tool'
+    | 'council_mode'
+    | 'skill'
+    | 'debug_surface';
+  policyClass:
+    | 'local_lookup'
+    | 'read_only'
+    | 'council'
+    | 'approval_staged'
+    | 'forbidden';
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  approvalPolicy: CognitiveToolApprovalPolicy;
+  healthState: 'healthy' | 'degraded' | 'blocked' | 'unknown';
+  evidenceProducedJson: string;
+  cooldownJson: string;
+  sourceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface AgentOSRoleHandoff {
+  handoffId: string;
+  episodeId: string;
+  runId?: string | null;
+  createdAt: string;
+  fromRole: CognitiveWorkbenchRole;
+  toRole: CognitiveWorkbenchRole;
+  status: 'requested' | 'accepted' | 'completed' | 'blocked' | 'skipped';
+  reason: string;
+  evidenceRefsJson: string;
+  governanceDecisionIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentOSTrajectoryEval {
+  evalId: string;
+  episodeId: string;
+  runId?: string | null;
+  createdAt: string;
+  status: 'pass' | 'warn' | 'fail';
+  overallScore: number;
+  sourceCoverage: number;
+  interruptSafety: number;
+  approvalSafety: number;
+  toolUsefulness: number;
+  verificationStrength: number;
+  privacySafety: number;
+  promotionEligible: boolean;
+  demotionSignalsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentOSSkillProposal {
+  proposalId: string;
+  episodeId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'candidate' | 'accepted' | 'rejected' | 'quarantined';
+  taskFamily: string;
+  triggerSummary: string;
+  skillSummary: string;
+  requiredToolCardIdsJson: string;
+  evidenceNeedsJson: string;
+  approvalRulesJson: string;
+  verificationChecklistJson: string;
+  outcomeScore: number;
+  sourceEpisodeIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentOSCapabilityDiscoveryReport {
+  generatedAt: string;
+  toolCards: AgentOSToolCard[];
+  healthy: number;
+  degraded: number;
+  blocked: number;
+  approvalStaged: number;
+  readOnly: number;
+  sourceCoverage: string[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export interface AgentOSReport {
+  generatedAt: string;
+  ok: boolean;
+  summary: string;
+  latestEpisode?: AgentOSEpisode | null;
+  episodeSteps: AgentOSEpisodeStep[];
+  interrupts: AgentOSInterrupt[];
+  resumeTokens: AgentOSResumeToken[];
+  toolCards: AgentOSToolCard[];
+  handoffs: AgentOSRoleHandoff[];
+  trajectoryEvals: AgentOSTrajectoryEval[];
+  skillProposals: AgentOSSkillProposal[];
+  capabilityDiscovery: AgentOSCapabilityDiscoveryReport;
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export interface AgentOSTaskNode {
+  nodeId: string;
+  planId: string;
+  position: number;
+  nodeKind:
+    | 'planner'
+    | 'memory_curator'
+    | 'evidence_scout'
+    | 'tool_executor'
+    | 'verifier'
+    | 'arbiter'
+    | 'approval_stager';
+  role: CognitiveWorkbenchRole;
+  status: 'planned' | 'ready' | 'executed' | 'blocked' | 'approval_staged';
+  policyClass: AgentOSToolCard['policyClass'];
+  approvalRequired: boolean;
+  canRunInParallel: boolean;
+  dependsOnNodeIdsJson: string;
+  requiredEvidenceJson: string;
+  stopCondition: string;
+  toolCardIdsJson: string;
+  guardrailJson: string;
+  outputEvidenceIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentOSTaskDAG {
+  dagId: string;
+  planId: string;
+  createdAt: string;
+  taskFamily: string;
+  status: 'planned' | 'replay_ready' | 'executed' | 'blocked';
+  nodeIdsJson: string;
+  edgeIdsJson: string;
+  parallelGroupIdsJson: string;
+  approvalNodeIdsJson: string;
+  evidenceContractJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface GovernedToolNode {
+  nodeId: string;
+  toolCardId: string;
+  policyClass: AgentOSToolCard['policyClass'];
+  prePolicy: string;
+  postPolicy: string;
+  timeoutMs: number;
+  outputRedaction: 'metadata_only' | 'summary_only';
+  retryPolicy: 'none' | 'single_safe_retry' | 'cooldown_skip';
+  approvalBehavior: 'execute_read_only' | 'stage_approval' | 'fail_closed';
+}
+
+export interface ToolGuardrailDecision {
+  decisionId: string;
+  nodeId: string;
+  allowed: boolean;
+  status: 'pass' | 'approval_required' | 'blocked';
+  riskFlagsJson: string;
+  reason: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface ToolEvidenceMapping {
+  mappingId: string;
+  nodeId: string;
+  evidenceIdsJson: string;
+  sourceClassesJson: string;
+  freshness: 'fresh' | 'recent' | 'stale' | 'unknown';
+  summary: string;
+  privacyJson: string;
+}
+
+export interface ToolCooldownPolicy {
+  policyId: string;
+  toolCardId: string;
+  failureClassesJson: string;
+  cooldownMs: number;
+  skipWhenActive: boolean;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentOSPlanArtifact {
+  planId: string;
+  createdAt: string;
+  updatedAt: string;
+  goal: string;
+  taskFamily: string;
+  status: 'planned' | 'replay_ready' | 'replayed' | 'retired';
+  planOnly: boolean;
+  dagJson: string;
+  nodeIdsJson: string;
+  governedToolNodesJson: string;
+  guardrailDecisionsJson: string;
+  evidenceMappingsJson: string;
+  cooldownPoliciesJson: string;
+  approvalPacketJson: string;
+  sourcePatternRefsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentOSPlanPreview {
+  generatedAt: string;
+  plan: AgentOSPlanArtifact;
+  dag: AgentOSTaskDAG;
+  nodes: AgentOSTaskNode[];
+  governedToolNodes: GovernedToolNode[];
+  guardrailDecisions: ToolGuardrailDecision[];
+  evidenceMappings: ToolEvidenceMapping[];
+  cooldownPolicies: ToolCooldownPolicy[];
+  approvalRequired: boolean;
+  executableReadOnlyNodeCount: number;
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export interface AgentOSReplayRun {
+  replayId: string;
+  planId: string;
+  createdAt: string;
+  status: 'replayed' | 'approval_staged' | 'blocked';
+  replayedNodeIdsJson: string;
+  evidenceIdsJson: string;
+  policyDecisionsJson: string;
+  plannerSkipped: boolean;
+  approvalRequired: boolean;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentOSReplayReport {
+  generatedAt: string;
+  plan: AgentOSPlanArtifact;
+  replay: AgentOSReplayRun;
+  nodes: AgentOSTaskNode[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type LogicClaimKind =
+  | 'episode_state'
+  | 'tool_health'
+  | 'integration_state'
+  | 'memory_fact'
+  | 'safety_policy'
+  | 'next_action'
+  | 'user_preference'
+  | 'unknown';
+
+export type LogicClaimStatus =
+  | 'active'
+  | 'stale'
+  | 'superseded'
+  | 'contradicted'
+  | 'resolved'
+  | 'historical'
+  | 'needs_confirmation'
+  | 'rejected';
+
+export type LogicEvidenceFreshness =
+  | 'fresh'
+  | 'recent'
+  | 'stale'
+  | 'expired'
+  | 'unknown';
+
+export interface LogicClaimTransition {
+  transitionId: string;
+  claimId: string;
+  subject: string;
+  createdAt: string;
+  fromStatus: LogicClaimStatus;
+  toStatus: LogicClaimStatus;
+  reason: string;
+  evidenceFreshness: LogicEvidenceFreshness;
+  sourceIdsJson: string;
+  actor: 'logic_kernel' | 'user' | 'agent_os' | 'harness';
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface LogicBeliefRevision {
+  revisionId: string;
+  subject: string;
+  createdAt: string;
+  previousBeliefStateId?: string | null;
+  nextBeliefStateId?: string | null;
+  transitionIdsJson: string;
+  hypothesisSetId?: string | null;
+  confidenceBefore: number;
+  confidenceAfter: number;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface LogicHypothesisSet {
+  hypothesisSetId: string;
+  subject: string;
+  createdAt: string;
+  updatedAt: string;
+  hypothesisIdsJson: string;
+  preferredHypothesisId?: string | null;
+  probabilitySummaryJson: string;
+  uncertaintySummary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface LogicResolutionDecision {
+  resolutionId: string;
+  subject: string;
+  createdAt: string;
+  status:
+    | 'resolved'
+    | 'retired_stale'
+    | 'needs_confirmation'
+    | 'needs_fresh_evidence'
+    | 'kept_uncertain';
+  claimIdsJson: string;
+  transitionIdsJson: string;
+  resolvedContradictionIdsJson: string;
+  confidence: number;
+  rationaleSummary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface LogicClaim {
+  claimId: string;
+  createdAt: string;
+  updatedAt: string;
+  subject: string;
+  predicate: string;
+  objectSummary: string;
+  normalizedText: string;
+  claimKind: LogicClaimKind;
+  confidence: number;
+  probability: number;
+  sensitivity: KnowledgeSensitivity;
+  status: LogicClaimStatus;
+  sourceEpisodeId?: string | null;
+  sourceRunId?: string | null;
+  evidenceIdsJson: string;
+  contradictionIdsJson: string;
+  supersedesClaimId?: string | null;
+  requiresConfirmation: boolean;
+  privacyJson: string;
+}
+
+export interface LogicEvidenceLink {
+  linkId: string;
+  claimId: string;
+  evidenceId: string;
+  evidenceKind:
+    | 'agent_os_episode'
+    | 'cognitive_run'
+    | 'memory_block'
+    | 'tool_card'
+    | 'provider_health'
+    | 'integration_status'
+    | 'trajectory_eval'
+    | 'source_coverage'
+    | 'manual_metadata';
+  sourceId: string;
+  support: 'supports' | 'refutes' | 'context';
+  strength: number;
+  freshness: 'fresh' | 'recent' | 'stale' | 'unknown';
+  sensitivity: KnowledgeSensitivity;
+  summary: string;
+  privacyJson: string;
+}
+
+export interface LogicContradiction {
+  contradictionId: string;
+  subject: string;
+  claimIdA: string;
+  claimIdB?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  status: 'open' | 'resolved' | 'accepted_uncertainty';
+  severity: 'low' | 'medium' | 'high';
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface LogicHypothesis {
+  hypothesisId: string;
+  subject: string;
+  createdAt: string;
+  updatedAt: string;
+  claimIdsJson: string;
+  evidenceIdsJson: string;
+  probability: number;
+  status: 'candidate' | 'preferred' | 'disfavored' | 'rejected';
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface LogicUsefulnessScore {
+  actionId: string;
+  subject: string;
+  episodeId?: string | null;
+  createdAt: string;
+  actionLabel: string;
+  actionKind:
+    | 'answer'
+    | 'read_only'
+    | 'clarification'
+    | 'approval_stage'
+    | 'blocked';
+  expectedUsefulness: number;
+  effort: number;
+  reversibility: number;
+  risk: number;
+  urgency: number;
+  userPreferenceFit: number;
+  evidenceSufficiency: number;
+  totalScore: number;
+  approvalRequired: boolean;
+  evidenceIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface LogicMissingPremise {
+  premiseId: string;
+  subject: string;
+  episodeId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  status: 'open' | 'answered' | 'waived';
+  question: string;
+  blockerClass: string;
+  requiredEvidenceJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface LogicDecision {
+  decisionId: string;
+  subject: string;
+  episodeId?: string | null;
+  runId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  status: 'answer' | 'clarify' | 'stage_approval' | 'blocked';
+  selectedClaimIdsJson: string;
+  selectedHypothesisId?: string | null;
+  selectedActionId?: string | null;
+  confidence: number;
+  utility: number;
+  rationaleSummary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface LogicBeliefState {
+  beliefStateId: string;
+  subject: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'stable' | 'uncertain' | 'conflicted' | 'needs_clarification';
+  topClaimIdsJson: string;
+  hypothesisIdsJson: string;
+  contradictionIdsJson: string;
+  missingPremiseIdsJson: string;
+  decisionId?: string | null;
+  confidence: number;
+  probability: number;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface LogicKernelReport {
+  generatedAt: string;
+  ok: boolean;
+  subject: string;
+  beliefState?: LogicBeliefState | null;
+  claims: LogicClaim[];
+  evidenceLinks: LogicEvidenceLink[];
+  contradictions: LogicContradiction[];
+  hypotheses: LogicHypothesis[];
+  missingPremises: LogicMissingPremise[];
+  usefulnessScores: LogicUsefulnessScore[];
+  decision?: LogicDecision | null;
+  confidence: number;
+  selectedNextAction: string;
+  summary: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export interface LogicReconciliationReport {
+  generatedAt: string;
+  ok: boolean;
+  subject: string;
+  beliefState?: LogicBeliefState | null;
+  revisions: LogicBeliefRevision[];
+  transitions: LogicClaimTransition[];
+  hypothesisSets: LogicHypothesisSet[];
+  resolutionDecisions: LogicResolutionDecision[];
+  staleClaims: LogicClaim[];
+  activeClaims: LogicClaim[];
+  unresolvedContradictions: LogicContradiction[];
+  freshness: {
+    fresh: number;
+    recent: number;
+    stale: number;
+    expired: number;
+    unknown: number;
+  };
+  confidence: number;
+  nextAction: string;
+  summary: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type TruthClaimKind =
+  | 'answer_claim'
+  | 'calendar_certainty'
+  | 'provider_participation'
+  | 'integration_proof'
+  | 'approval_action'
+  | 'memory_fact'
+  | 'research_claim'
+  | 'unknown';
+
+export type TruthSupportGrade =
+  | 'supported'
+  | 'partial'
+  | 'unsupported'
+  | 'contradicted'
+  | 'stale';
+
+export interface TruthClaim {
+  claimId: string;
+  auditId: string;
+  createdAt: string;
+  claimText: string;
+  normalizedText: string;
+  claimKind: TruthClaimKind;
+  confidence: number;
+  supportGrade: TruthSupportGrade;
+  evidenceIdsJson: string;
+  riskFlagsJson: string;
+  privacyJson: string;
+}
+
+export interface TruthEvidenceSupport {
+  supportId: string;
+  auditId: string;
+  claimId: string;
+  evidenceId: string;
+  evidenceKind:
+    | 'logic_claim'
+    | 'logic_evidence'
+    | 'agent_os_episode'
+    | 'council_evidence'
+    | 'provider_health'
+    | 'integration_status'
+    | 'manual_metadata';
+  support: 'supports' | 'refutes' | 'context' | 'stale';
+  strength: number;
+  freshness: LogicEvidenceFreshness;
+  summary: string;
+  privacyJson: string;
+}
+
+export interface TruthContradictionCheck {
+  checkId: string;
+  auditId: string;
+  claimId: string;
+  status: 'none' | 'open' | 'resolved' | 'uncertain';
+  severity: 'low' | 'medium' | 'high';
+  contradictionIdsJson: string;
+  summary: string;
+  privacyJson: string;
+}
+
+export interface TruthCalibrationVerdict {
+  status: 'pass' | 'warn' | 'clarify' | 'block';
+  supportGrade: TruthSupportGrade;
+  confidence: number;
+  clarificationNeeded: boolean;
+  approvalBlocked: boolean;
+  flags: string[];
+  summary: string;
+}
+
+export interface TruthRewriteDirective {
+  directiveId: string;
+  auditId: string;
+  createdAt: string;
+  directive:
+    | 'none'
+    | 'caveat'
+    | 'clarify'
+    | 'block'
+    | 'stage_approval'
+    | 'rewrite';
+  reason: string;
+  suggestedText?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface TruthAnswerAudit {
+  auditId: string;
+  createdAt: string;
+  updatedAt: string;
+  turnId?: string | null;
+  channel?: string | null;
+  taskFamily?: string | null;
+  subject: string;
+  status: TruthCalibrationVerdict['status'];
+  confidence: number;
+  supportGrade: TruthSupportGrade;
+  claimIdsJson: string;
+  unsupportedClaimIdsJson: string;
+  contradictionCheckIdsJson: string;
+  rewriteDirectiveIdsJson: string;
+  evidenceIdsJson: string;
+  riskFlagsJson: string;
+  verdictSummary: string;
+  rewrittenTextSummary: string;
+  bestNextAction: string;
+  privacyJson: string;
+}
+
+export interface TruthSourceCoverage {
+  sourceCoverageId: string;
+  auditId: string;
+  createdAt: string;
+  coverageGrade: 'strong' | 'partial' | 'weak' | 'none';
+  sourceIdsJson: string;
+  staleSourceIdsJson: string;
+  missingSourceClassesJson: string;
+  providerParticipationJson: string;
+  integrationProofJson: string;
+  privacyJson: string;
+}
+
+export interface TruthVerdict {
+  generatedAt: string;
+  audit: TruthAnswerAudit;
+  claims: TruthClaim[];
+  evidenceSupports: TruthEvidenceSupport[];
+  contradictionChecks: TruthContradictionCheck[];
+  rewriteDirectives: TruthRewriteDirective[];
+  sourceCoverage: TruthSourceCoverage;
+  calibration: TruthCalibrationVerdict;
+  rewrittenText: string;
+  bestNextAction: string;
+  summary: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export interface TruthEngineReport {
+  generatedAt: string;
+  ok: boolean;
+  latestAudit?: TruthAnswerAudit | null;
+  claims: TruthClaim[];
+  evidenceSupports: TruthEvidenceSupport[];
+  contradictionChecks: TruthContradictionCheck[];
+  rewriteDirectives: TruthRewriteDirective[];
+  sourceCoverage: TruthSourceCoverage[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type WorldModelDomain =
+  | 'providers'
+  | 'google_calendar'
+  | 'telegram'
+  | 'bluebubbles'
+  | 'alexa'
+  | 'research'
+  | 'image_generation'
+  | 'user_preferences'
+  | 'active_projects'
+  | 'skills'
+  | 'logic'
+  | 'truth'
+  | 'agent_os'
+  | 'cognition'
+  | 'harness';
+
+export type WorldModelFreshness = LogicEvidenceFreshness;
+
+export interface WorldModelFreshnessPolicy {
+  policyId: string;
+  domain: WorldModelDomain;
+  freshForHours: number;
+  staleAfterHours: number;
+  expiresAfterHours: number;
+  manualProofRequired: boolean;
+  nextAction: string;
+}
+
+export interface WorldModelEvidenceRef {
+  evidenceRefId: string;
+  snapshotId: string;
+  createdAt: string;
+  domain: WorldModelDomain;
+  sourceKind:
+    | 'logic_claim'
+    | 'truth_audit'
+    | 'agent_os_episode'
+    | 'cognitive_trace'
+    | 'provider_health'
+    | 'integration_status'
+    | 'memory_block'
+    | 'skill_outcome'
+    | 'harness_trajectory'
+    | 'manual_metadata';
+  sourceId: string;
+  freshness: WorldModelFreshness;
+  trust: 'high' | 'medium' | 'low' | 'blocked';
+  summary: string;
+  privacyJson: string;
+}
+
+export interface WorldModelClaim {
+  claimId: string;
+  snapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+  domain: WorldModelDomain;
+  subject: string;
+  claimKind:
+    | 'current_truth'
+    | 'proof_state'
+    | 'provider_state'
+    | 'integration_state'
+    | 'skill_state'
+    | 'belief_state'
+    | 'risk_state'
+    | 'next_action';
+  status:
+    | 'current'
+    | 'stale'
+    | 'conflicted'
+    | 'proof_debt'
+    | 'needs_confirmation'
+    | 'blocked'
+    | 'unknown';
+  confidence: number;
+  evidenceRefIdsJson: string;
+  verificationNeedIdsJson: string;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface WorldModelVerificationNeed {
+  needId: string;
+  snapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+  domain: WorldModelDomain;
+  status:
+    | 'pending'
+    | 'runnable_read_only'
+    | 'manual_proof'
+    | 'approval_required'
+    | 'resolved'
+    | 'skipped';
+  actionKind: 'read_only_check' | 'manual_proof' | 'approval_stage';
+  safeToRunAutomatically: boolean;
+  command: string;
+  blockerClass: string;
+  evidenceRefIdsJson: string;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface WorldModelOpenQuestion {
+  questionId: string;
+  snapshotId: string;
+  createdAt: string;
+  domain: WorldModelDomain;
+  status: 'open' | 'answered' | 'waived';
+  question: string;
+  requiredEvidenceJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface WorldModelRiskState {
+  riskId: string;
+  snapshotId: string;
+  createdAt: string;
+  domain: WorldModelDomain;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  status: 'open' | 'mitigated' | 'accepted';
+  riskClass:
+    | 'stale_proof'
+    | 'provider_blocked'
+    | 'integration_proof_debt'
+    | 'unsupported_claim'
+    | 'approval_boundary'
+    | 'memory_conflict'
+    | 'unknown';
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface WorldModelSkillTrustState {
+  skillTrustId: string;
+  snapshotId: string;
+  createdAt: string;
+  skillId: string;
+  taskFamily: string;
+  status: 'trusted' | 'probation' | 'quarantined' | 'needs_proof';
+  confidence: number;
+  outcomeScore: number;
+  sourceIdsJson: string;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface WorldModelSnapshot {
+  snapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'stable' | 'degraded' | 'needs_verification' | 'conflicted';
+  confidence: number;
+  logicBeliefStateId?: string | null;
+  truthAuditId?: string | null;
+  agentOSEpisodeId?: string | null;
+  cognitiveRunId?: string | null;
+  freshnessPolicyJson: string;
+  claimIdsJson: string;
+  evidenceRefIdsJson: string;
+  verificationNeedIdsJson: string;
+  openQuestionIdsJson: string;
+  riskStateIdsJson: string;
+  skillTrustIdsJson: string;
+  summary: string;
+  bestNextAction: string;
+  privacyJson: string;
+}
+
+export interface WorldModelDoctorReport {
+  generatedAt: string;
+  ok: boolean;
+  snapshot: WorldModelSnapshot;
+  claims: WorldModelClaim[];
+  evidenceRefs: WorldModelEvidenceRef[];
+  verificationNeeds: WorldModelVerificationNeed[];
+  openQuestions: WorldModelOpenQuestion[];
+  riskStates: WorldModelRiskState[];
+  skillTrust: WorldModelSkillTrustState[];
+  freshness: Record<WorldModelFreshness, number>;
+  proofDebt: {
+    total: number;
+    runnableReadOnly: number;
+    manualProof: number;
+    approvalRequired: number;
+  };
+  safeVerificationRan: boolean;
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type AgentRuntimeSpineMode = 'off' | 'shadow' | 'assistive';
+
+export type AgentRuntimeRunStatus =
+  | 'active'
+  | 'shadowed'
+  | 'awaiting_approval'
+  | 'interrupted'
+  | 'completed'
+  | 'blocked';
+
+export interface AgentRuntimeRun {
+  runtimeRunId: string;
+  createdAt: string;
+  updatedAt: string;
+  mode: AgentRuntimeSpineMode;
+  status: AgentRuntimeRunStatus;
+  turnId?: string | null;
+  channel?: string | null;
+  groupFolder?: string | null;
+  goalSummary: string;
+  taskFamily: string;
+  worldSnapshotId?: string | null;
+  agentOSEpisodeId?: string | null;
+  cognitiveRunId?: string | null;
+  councilRunId?: string | null;
+  logicBeliefStateId?: string | null;
+  truthAuditId?: string | null;
+  checkpointIdsJson: string;
+  writeIdsJson: string;
+  stepIdsJson: string;
+  evidencePacketIdsJson: string;
+  interruptIdsJson: string;
+  guardrailResultIdsJson: string;
+  outcomeJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export type AgentRuntimeStepKind =
+  | 'world_snapshot'
+  | 'goal_plan'
+  | 'supervisor'
+  | 'guardrail'
+  | 'checkpoint'
+  | 'tool_step'
+  | 'evidence'
+  | 'logic'
+  | 'truth'
+  | 'answer'
+  | 'approval'
+  | 'outcome';
+
+export interface AgentRuntimeStep {
+  stepId: string;
+  runtimeRunId: string;
+  createdAt: string;
+  position: number;
+  stepKind: AgentRuntimeStepKind;
+  layer:
+    | 'runtime_spine'
+    | 'supervisor'
+    | 'world_model'
+    | 'agent_os'
+    | 'cognition'
+    | 'council'
+    | 'logic'
+    | 'truth'
+    | 'tool'
+    | 'approval';
+  status:
+    | 'planned'
+    | 'completed'
+    | 'warn'
+    | 'blocked'
+    | 'approval_staged'
+    | 'skipped';
+  summary: string;
+  refsJson: string;
+  evidencePacketIdsJson: string;
+  guardrailResultIdsJson: string;
+  checkpointId?: string | null;
+  writeId?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentRuntimeCheckpoint {
+  checkpointId: string;
+  runtimeRunId: string;
+  threadId: string;
+  checkpointNs: string;
+  parentCheckpointId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  status: 'open' | 'completed' | 'interrupted' | 'resumed';
+  checkpointJson: string;
+  metadataJson: string;
+  pendingWriteIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentRuntimeWrite {
+  writeId: string;
+  checkpointId: string;
+  runtimeRunId: string;
+  taskId: string;
+  idx: number;
+  channel: string;
+  writeType:
+    | 'checkpoint'
+    | 'evidence'
+    | 'approval_packet'
+    | 'resume_state'
+    | 'outcome';
+  status: 'pending' | 'applied' | 'skipped';
+  valueSummaryJson: string;
+  createdAt: string;
+  appliedAt?: string | null;
+  privacyJson: string;
+}
+
+export interface AgentRuntimeGuardrailResult {
+  guardrailResultId: string;
+  runtimeRunId: string;
+  stepId?: string | null;
+  createdAt: string;
+  interventionPoint:
+    | 'input'
+    | 'pre_tool'
+    | 'post_tool'
+    | 'pre_model'
+    | 'post_model'
+    | 'output'
+    | 'checkpoint';
+  behavior:
+    | 'allow'
+    | 'reject_content'
+    | 'throw_exception'
+    | 'stage_approval'
+    | 'transform';
+  status: 'pass' | 'warn' | 'block' | 'approval_required' | 'transformed';
+  decision: 'allow' | 'deny' | 'suspend' | 'transform';
+  allowed: boolean;
+  transformed: boolean;
+  reason: string;
+  message: string;
+  riskFlagsJson: string;
+  outputInfoJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentRuntimeInterrupt {
+  interruptId: string;
+  runtimeRunId: string;
+  checkpointId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  interruptKind:
+    | 'approval_required'
+    | 'abort_reconciliation'
+    | 'evidence_gap'
+    | 'policy_blocked'
+    | 'provider_blocked'
+    | 'resume_requested';
+  status: 'open' | 'resolved' | 'expired';
+  payloadJson: string;
+  resumeTokenId?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgentRuntimeResumeToken {
+  resumeTokenId: string;
+  runtimeRunId: string;
+  interruptId: string;
+  checkpointId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  status: 'active' | 'used' | 'expired' | 'revoked';
+  continuationKey: string;
+  safeStateJson: string;
+  expiresAt?: string | null;
+  usedAt?: string | null;
+  privacyJson: string;
+}
+
+export interface AgentRuntimeEvent {
+  eventId: string;
+  runtimeRunId: string;
+  createdAt: string;
+  eventKind:
+    | 'action'
+    | 'observation'
+    | 'handoff'
+    | 'guardrail'
+    | 'checkpoint'
+    | 'write'
+    | 'abort_reconciliation'
+    | 'skill'
+    | 'world'
+    | 'truth'
+    | 'logic'
+    | 'outcome';
+  severity: 'info' | 'warn' | 'block';
+  summary: string;
+  truncated: boolean;
+  refsJson: string;
+  privacyJson: string;
+}
+
+export interface AgentRuntimeEvidencePacket {
+  evidencePacketId: string;
+  runtimeRunId: string;
+  createdAt: string;
+  sourceLayer:
+    | 'world_model'
+    | 'agent_os'
+    | 'supervisor'
+    | 'cognition'
+    | 'logic'
+    | 'truth'
+    | 'council'
+    | 'tool';
+  sourceId: string;
+  evidenceIdsJson: string;
+  supportGrade: 'strong' | 'partial' | 'weak' | 'none';
+  freshness: LogicEvidenceFreshness;
+  confidence: number;
+  citationCoverage: number;
+  contradictionTier:
+    | 'curated_vs_curated'
+    | 'curated_vs_bulk'
+    | 'bulk_vs_bulk'
+    | 'other';
+  returnPolicyJson: string;
+  summary: string;
+  privacyJson: string;
+}
+
+export interface AgentRuntimeSkillManifest {
+  manifestId: string;
+  createdAt: string;
+  updatedAt: string;
+  skillId: string;
+  sourceKind: 'project' | 'user' | 'runtime';
+  precedence: number;
+  status: 'candidate' | 'trusted' | 'probation' | 'quarantined';
+  frontmatterJson: string;
+  triggerJson: string;
+  toolRefsJson: string;
+  approvalRulesJson: string;
+  evidenceNeedsJson: string;
+  summary: string;
+  privacyJson: string;
+}
+
+export interface AgentRuntimeSpineReport {
+  generatedAt: string;
+  ok: boolean;
+  mode: AgentRuntimeSpineMode;
+  latestRun?: AgentRuntimeRun | null;
+  steps: AgentRuntimeStep[];
+  checkpoints: AgentRuntimeCheckpoint[];
+  writes: AgentRuntimeWrite[];
+  guardrails: AgentRuntimeGuardrailResult[];
+  interrupts: AgentRuntimeInterrupt[];
+  resumeTokens: AgentRuntimeResumeToken[];
+  events: AgentRuntimeEvent[];
+  evidencePackets: AgentRuntimeEvidencePacket[];
+  skillManifests: AgentRuntimeSkillManifest[];
+  supervisorReport?: SupervisorDoctorReport | null;
+  sourceRefs: string[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type SupervisorParticipantRole =
+  | 'planner'
+  | 'evidence_scout'
+  | 'memory_curator'
+  | 'tool_executor'
+  | 'verifier'
+  | 'truth_calibrator'
+  | 'approval_stager'
+  | 'final_arbiter';
+
+export type SupervisorRunStatus =
+  | 'active'
+  | 'completed'
+  | 'awaiting_approval'
+  | 'blocked'
+  | 'terminated'
+  | 'shadowed';
+
+export interface SupervisorRun {
+  supervisorRunId: string;
+  runtimeRunId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: SupervisorRunStatus;
+  mode: AgentRuntimeSpineMode;
+  goalSummary: string;
+  activeParticipant: SupervisorParticipantRole;
+  turnCount: number;
+  readOnlyToolSteps: number;
+  councilCalls: number;
+  clarificationRequests: number;
+  blackboardId: string;
+  budgetId: string;
+  terminationId?: string | null;
+  participantIdsJson: string;
+  agendaItemIdsJson: string;
+  handoffIdsJson: string;
+  decisionIdsJson: string;
+  blackboardPatchIdsJson: string;
+  replayPacketId?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface SupervisorParticipant {
+  participantId: string;
+  supervisorRunId: string;
+  role: SupervisorParticipantRole;
+  displayName: string;
+  status: 'available' | 'active' | 'skipped' | 'blocked';
+  instructionsSummary: string;
+  toolPolicyJson: string;
+  handoffTargetsJson: string;
+  sourceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface SupervisorBlackboard {
+  blackboardId: string;
+  supervisorRunId: string;
+  runtimeRunId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'open' | 'checkpointed' | 'closed';
+  goalSummary: string;
+  evidenceIdsJson: string;
+  claimIdsJson: string;
+  proofDebtJson: string;
+  blockerJson: string;
+  handoffStateJson: string;
+  approvalStateJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface SupervisorBlackboardPatch {
+  patchId: string;
+  blackboardId: string;
+  supervisorRunId: string;
+  createdAt: string;
+  participantRole: SupervisorParticipantRole;
+  patchKind:
+    | 'goal'
+    | 'evidence'
+    | 'claim'
+    | 'proof_debt'
+    | 'tool_result'
+    | 'handoff_state'
+    | 'approval'
+    | 'blocker'
+    | 'next_action';
+  summary: string;
+  refsJson: string;
+  patchJson: string;
+  rejected: boolean;
+  rejectionReason?: string | null;
+  privacyJson: string;
+}
+
+export interface SupervisorAgendaItem {
+  agendaItemId: string;
+  supervisorRunId: string;
+  createdAt: string;
+  updatedAt: string;
+  position: number;
+  ownerRole: SupervisorParticipantRole;
+  itemKind:
+    | 'frame_goal'
+    | 'gather_evidence'
+    | 'compile_memory'
+    | 'run_read_only_tool'
+    | 'verify'
+    | 'calibrate_truth'
+    | 'stage_approval'
+    | 'finalize';
+  status:
+    | 'planned'
+    | 'running'
+    | 'completed'
+    | 'blocked'
+    | 'approval_staged'
+    | 'skipped';
+  policyClass:
+    | 'local_lookup'
+    | 'read_only'
+    | 'council'
+    | 'approval_staged'
+    | 'forbidden';
+  requiredEvidenceJson: string;
+  resultRefsJson: string;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface SupervisorHandoffMessage {
+  handoffId: string;
+  supervisorRunId: string;
+  createdAt: string;
+  fromRole: SupervisorParticipantRole;
+  toRole: SupervisorParticipantRole;
+  status: 'requested' | 'accepted' | 'completed' | 'blocked' | 'skipped';
+  reason: string;
+  payloadJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface SupervisorDecision {
+  decisionId: string;
+  supervisorRunId: string;
+  createdAt: string;
+  participantRole: SupervisorParticipantRole;
+  decisionKind:
+    | 'route'
+    | 'tool_policy'
+    | 'handoff'
+    | 'termination'
+    | 'approval'
+    | 'answer_shape';
+  decision:
+    | 'continue'
+    | 'handoff'
+    | 'run_read_only'
+    | 'stage_approval'
+    | 'ask_clarification'
+    | 'finalize'
+    | 'block';
+  confidence: number;
+  evidenceRefsJson: string;
+  riskFlagsJson: string;
+  reason: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface SupervisorTerminationCondition {
+  terminationId: string;
+  supervisorRunId: string;
+  createdAt: string;
+  reason:
+    | 'final_answer_ready'
+    | 'approval_required'
+    | 'evidence_gap'
+    | 'max_turns'
+    | 'policy_blocked'
+    | 'shadow_mode';
+  status: 'met' | 'not_met';
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface SupervisorLoopState {
+  loopStateId: string;
+  supervisorRunId: string;
+  createdAt: string;
+  updatedAt: string;
+  turnIndex: number;
+  activeRole: SupervisorParticipantRole;
+  nextRole?: SupervisorParticipantRole | null;
+  maxTurns: number;
+  completedAgendaIdsJson: string;
+  pendingAgendaIdsJson: string;
+  terminationId?: string | null;
+  status: 'running' | 'terminated' | 'awaiting_approval' | 'blocked';
+  privacyJson: string;
+}
+
+export interface SupervisorBudget {
+  budgetId: string;
+  supervisorRunId: string;
+  createdAt: string;
+  maxTurns: number;
+  maxReadOnlyToolSteps: number;
+  maxCouncilCalls: number;
+  maxClarificationRequests: number;
+  usedTurns: number;
+  usedReadOnlyToolSteps: number;
+  usedCouncilCalls: number;
+  usedClarificationRequests: number;
+  exhausted: boolean;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface SupervisorReplayPacket {
+  replayPacketId: string;
+  supervisorRunId: string;
+  runtimeRunId: string;
+  createdAt: string;
+  blackboardId: string;
+  checkpointIdsJson: string;
+  handoffIdsJson: string;
+  decisionIdsJson: string;
+  agendaItemIdsJson: string;
+  terminationId?: string | null;
+  summary: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export interface SupervisorDoctorReport {
+  generatedAt: string;
+  ok: boolean;
+  latestRun?: SupervisorRun | null;
+  participants: SupervisorParticipant[];
+  blackboard?: SupervisorBlackboard | null;
+  blackboardPatches: SupervisorBlackboardPatch[];
+  agendaItems: SupervisorAgendaItem[];
+  handoffs: SupervisorHandoffMessage[];
+  decisions: SupervisorDecision[];
+  terminations: SupervisorTerminationCondition[];
+  loopStates: SupervisorLoopState[];
+  budgets: SupervisorBudget[];
+  replayPackets: SupervisorReplayPacket[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type SessionGraphNodeKind =
+  | 'assistant_session'
+  | 'agent_thread'
+  | 'telegram_chat'
+  | 'bluebubbles_thread'
+  | 'alexa_session'
+  | 'communication_thread'
+  | 'life_thread'
+  | 'companion_handoff'
+  | 'runtime_backend_job'
+  | 'cognitive_run'
+  | 'cognitive_checkpoint'
+  | 'cognitive_handoff'
+  | 'agent_os_episode'
+  | 'agent_os_step'
+  | 'agent_os_handoff'
+  | 'runtime_run'
+  | 'runtime_checkpoint'
+  | 'runtime_event'
+  | 'supervisor_run'
+  | 'supervisor_blackboard'
+  | 'supervisor_handoff'
+  | 'world_snapshot'
+  | 'world_claim'
+  | 'world_verification_need'
+  | 'logic_belief'
+  | 'logic_claim'
+  | 'truth_audit'
+  | 'proof_state'
+  | 'operator_job';
+
+export type SessionGraphEdgeKind =
+  | 'explicit_id'
+  | 'handoff'
+  | 'resume_checkpoint'
+  | 'same_channel_thread'
+  | 'same_person_thread'
+  | 'proof_dependency'
+  | 'evidence_support'
+  | 'approval_boundary'
+  | 'semantic_candidate'
+  | 'contains'
+  | 'derived_from';
+
+export type SessionGraphLinkDecisionStatus =
+  | 'accepted'
+  | 'review_needed'
+  | 'rejected';
+
+export type SessionGraphSuggestionKind =
+  | 'resume'
+  | 'verify'
+  | 'ask_clarification'
+  | 'complete_proof'
+  | 'review_link'
+  | 'inspect_status';
+
+export interface SessionGraphSnapshot {
+  snapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'compiled' | 'partial' | 'empty';
+  nodeCount: number;
+  edgeCount: number;
+  clusterCount: number;
+  suggestionCount: number;
+  sourceLedgerJson: string;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface SessionGraphNode {
+  nodeId: string;
+  snapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+  nodeKind: SessionGraphNodeKind;
+  sourceKind: string;
+  sourceId: string;
+  groupFolder?: string | null;
+  channel?: string | null;
+  threadKey?: string | null;
+  personKey?: string | null;
+  status: string;
+  confidence: number;
+  summary: string;
+  refsJson: string;
+  evidenceIdsJson: string;
+  privacyJson: string;
+}
+
+export interface SessionGraphEdge {
+  edgeId: string;
+  snapshotId: string;
+  createdAt: string;
+  edgeKind: SessionGraphEdgeKind;
+  fromNodeId: string;
+  toNodeId: string;
+  confidence: number;
+  status: SessionGraphLinkDecisionStatus;
+  reason: string;
+  evidenceIdsJson: string;
+  reviewNeeded: boolean;
+  privacyJson: string;
+}
+
+export interface SessionCluster {
+  clusterId: string;
+  snapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'active' | 'blocked' | 'stale' | 'review_needed' | 'quiet';
+  currentTheme: string;
+  nodeIdsJson: string;
+  edgeIdsJson: string;
+  linkedSurfacesJson: string;
+  activeBlockersJson: string;
+  staleProofJson: string;
+  openApprovalsJson: string;
+  lastMeaningfulActivityAt?: string | null;
+  evidenceIdsJson: string;
+  bestNextAction: string;
+  privacyJson: string;
+}
+
+export interface SessionContinuityThread {
+  continuityThreadId: string;
+  snapshotId: string;
+  clusterId: string;
+  createdAt: string;
+  updatedAt: string;
+  title: string;
+  status: 'active' | 'needs_review' | 'stale' | 'resolved';
+  nodeIdsJson: string;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface SessionGraphSuggestion {
+  suggestionId: string;
+  snapshotId: string;
+  clusterId?: string | null;
+  createdAt: string;
+  suggestionKind: SessionGraphSuggestionKind;
+  priority: number;
+  status: 'open' | 'review_needed' | 'dismissed' | 'resolved';
+  summary: string;
+  nextAction: string;
+  sourceNodeIdsJson: string;
+  evidenceIdsJson: string;
+  approvalRequired: boolean;
+  privacyJson: string;
+}
+
+export interface SessionGraphLinkDecision {
+  decisionId: string;
+  snapshotId: string;
+  createdAt: string;
+  edgeId: string;
+  decisionStatus: SessionGraphLinkDecisionStatus;
+  confidence: number;
+  reason: string;
+  sourceNodeIdsJson: string;
+  privacyJson: string;
+}
+
+export type SessionContinuityActionKind =
+  | 'resume_checkpoint'
+  | 'review_approval'
+  | 'complete_manual_proof'
+  | 'run_safe_verification'
+  | 'review_candidate_link'
+  | 'inspect_cluster';
+
+export interface SessionContinuityFocus {
+  focusId: string;
+  clusterId: string;
+  status: SessionCluster['status'];
+  priority: number;
+  title: string;
+  linkedSurfaces: string[];
+  blockers: string[];
+  staleProof: string[];
+  approvals: string[];
+  lastMeaningfulActivityAt?: string | null;
+  bestNextAction: string;
+  evidenceIds: string[];
+}
+
+export interface SessionContinuityActionItem {
+  actionId: string;
+  kind: SessionContinuityActionKind;
+  priority: number;
+  status: 'ready' | 'needs_manual' | 'review_needed' | 'blocked_by_approval';
+  summary: string;
+  nextAction: string;
+  clusterId?: string | null;
+  sourceSuggestionIds: string[];
+  sourceNodeIds: string[];
+  evidenceIds: string[];
+  approvalRequired: boolean;
+}
+
+export interface SessionContinuityCockpit {
+  generatedAt: string;
+  status: 'ready' | 'empty' | 'needs_review';
+  focusCount: number;
+  actionCount: number;
+  focuses: SessionContinuityFocus[];
+  actionQueue: SessionContinuityActionItem[];
+  staleProof: SessionContinuityActionItem[];
+  approvalQueue: SessionContinuityActionItem[];
+  reviewQueue: SessionContinuityActionItem[];
+  proofDebt: {
+    total: number;
+    stale: number;
+    manualProof: number;
+    safeReadOnly: number;
+  };
+  reviewNeededCount: number;
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export interface SessionGraphDoctorReport {
+  generatedAt: string;
+  ok: boolean;
+  snapshot: SessionGraphSnapshot;
+  nodes: SessionGraphNode[];
+  edges: SessionGraphEdge[];
+  clusters: SessionCluster[];
+  continuityThreads: SessionContinuityThread[];
+  linkDecisions: SessionGraphLinkDecision[];
+  suggestions: SessionGraphSuggestion[];
+  proofDebt: {
+    total: number;
+    stale: number;
+    manualProof: number;
+    safeReadOnly: number;
+  };
+  cockpit: SessionContinuityCockpit;
+  reviewNeededCount: number;
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type AgencyConvergenceMode = AgentRuntimeSpineMode;
+
+export type AgencyConvergenceRunStatus =
+  | 'running'
+  | 'completed'
+  | 'awaiting_approval'
+  | 'manual_proof_required'
+  | 'blocked'
+  | 'shadowed';
+
+export interface AgencyConvergenceRun {
+  convergenceRunId: string;
+  createdAt: string;
+  updatedAt: string;
+  mode: AgencyConvergenceMode;
+  status: AgencyConvergenceRunStatus;
+  selectedActionId?: string | null;
+  selectedActionKind?: SessionContinuityActionKind | null;
+  sessionSnapshotId?: string | null;
+  refreshedSessionSnapshotId?: string | null;
+  worldSnapshotId?: string | null;
+  runtimeRunId?: string | null;
+  supervisorRunId?: string | null;
+  cognitiveRunId?: string | null;
+  logicBeliefStateId?: string | null;
+  truthAuditId?: string | null;
+  harnessTrajectoryId?: string | null;
+  sourceIdsJson: string;
+  evidenceIdsJson: string;
+  outcomeJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgencyConvergenceAgenda {
+  agendaId: string;
+  convergenceRunId: string;
+  createdAt: string;
+  status:
+    | 'ready'
+    | 'executed'
+    | 'manual_required'
+    | 'approval_required'
+    | 'skipped';
+  policyClass:
+    | 'read_only'
+    | 'approval_staged'
+    | 'manual_proof'
+    | 'inspect_only';
+  selectedActionId?: string | null;
+  actionKind?: SessionContinuityActionKind | null;
+  priority: number;
+  actionSummary: string;
+  evidenceIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgencyConvergenceDecision {
+  decisionId: string;
+  convergenceRunId: string;
+  createdAt: string;
+  decisionKind:
+    | 'execute_read_only'
+    | 'stage_approval'
+    | 'manual_proof'
+    | 'resume_checkpoint'
+    | 'inspect_only'
+    | 'skip';
+  status: 'pass' | 'warn' | 'block' | 'approval_required' | 'manual_required';
+  reason: string;
+  evidenceIdsJson: string;
+  riskFlagsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgencyResumePlan {
+  resumePlanId: string;
+  convergenceRunId: string;
+  createdAt: string;
+  status: 'available' | 'not_needed' | 'approval_required' | 'blocked';
+  runtimeRunId?: string | null;
+  checkpointId?: string | null;
+  resumeTokenId?: string | null;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgencyProviderParticipationPlan {
+  participationPlanId: string;
+  convergenceRunId: string;
+  createdAt: string;
+  status: 'healthy' | 'degraded' | 'blocked';
+  healthyProviderIdsJson: string;
+  blockedProviderIdsJson: string;
+  skippedProviderIdsJson: string;
+  cooldownProviderIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgencyLoopOutcome {
+  outcomeId: string;
+  convergenceRunId: string;
+  createdAt: string;
+  status:
+    | 'completed'
+    | 'manual_required'
+    | 'approval_required'
+    | 'blocked'
+    | 'shadowed';
+  runtimeRunId?: string | null;
+  truthAuditId?: string | null;
+  refreshedSessionSnapshotId?: string | null;
+  outcomeScore: number;
+  flagsJson: string;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgencyConvergenceDoctorReport {
+  generatedAt: string;
+  ok: boolean;
+  latestRun?: AgencyConvergenceRun | null;
+  agendas: AgencyConvergenceAgenda[];
+  decisions: AgencyConvergenceDecision[];
+  resumePlans: AgencyResumePlan[];
+  providerPlans: AgencyProviderParticipationPlan[];
+  outcomes: AgencyLoopOutcome[];
+  sessionGraph: SessionGraphDoctorReport;
+  runtimeReport?: AgentRuntimeSpineReport | null;
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type CognitiveWorkspaceStatus =
+  | 'ready'
+  | 'needs_verification'
+  | 'approval_required'
+  | 'blocked'
+  | 'shadow';
+
+export type CognitiveWorkspaceContextBlockKind =
+  | 'session_continuity'
+  | 'world_model'
+  | 'logic_belief'
+  | 'truth_support'
+  | 'runtime_spine'
+  | 'supervisor_blackboard'
+  | 'agent_os'
+  | 'provider_plan'
+  | 'integration_proof'
+  | 'memory_skill'
+  | 'harness_trajectory'
+  | 'operating_rule';
+
+export interface CognitiveGoalStack {
+  goalStackId: string;
+  createdAt: string;
+  rootGoal: string;
+  activeGoal: string;
+  taskFamily: string;
+  selectedActionId?: string | null;
+  selectedActionKind?: SessionContinuityActionKind | null;
+  priority: number;
+  safeActionOnly: boolean;
+  approvalRequired: boolean;
+  evidenceIdsJson: string;
+  blockersJson: string;
+  nextAction: string;
+}
+
+export interface CognitiveContextBudget {
+  budgetId: string;
+  packetId: string;
+  createdAt: string;
+  maxBlocks: number;
+  includedBlocks: number;
+  withheldBlocks: number;
+  freshnessFloor: LogicEvidenceFreshness;
+  privacyPolicy: 'metadata_only';
+  reason: string;
+}
+
+export interface CognitiveWorkspacePacket {
+  packetId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: CognitiveWorkspaceStatus;
+  goalStackJson: string;
+  contextBudgetJson: string;
+  sessionSnapshotId?: string | null;
+  sessionClusterId?: string | null;
+  convergenceRunId?: string | null;
+  worldSnapshotId?: string | null;
+  runtimeRunId?: string | null;
+  supervisorRunId?: string | null;
+  agentOSEpisodeId?: string | null;
+  cognitiveRunId?: string | null;
+  logicBeliefStateId?: string | null;
+  truthAuditId?: string | null;
+  councilRunId?: string | null;
+  providerPlanId?: string | null;
+  selectedProgramId?: string | null;
+  contextBlockIdsJson: string;
+  evidenceIdsJson: string;
+  approvalBlockersJson: string;
+  checkpointIdsJson: string;
+  optimizationScorecardId?: string | null;
+  nextSafeAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveWorkspaceContextBlock {
+  blockId: string;
+  packetId: string;
+  createdAt: string;
+  blockKind: CognitiveWorkspaceContextBlockKind;
+  sourceId: string;
+  sourceIdsJson: string;
+  freshness: LogicEvidenceFreshness;
+  sensitivity: 'public' | 'internal' | 'private_digest' | 'secret_excluded';
+  confidence: number;
+  priority: number;
+  tokenBudget: number;
+  included: boolean;
+  summary: string;
+  evidenceIdsJson: string;
+  conflictsJson: string;
+  withheldReason?: string | null;
+  privacyJson: string;
+}
+
+export interface CognitiveProgramManifest {
+  programId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'candidate' | 'shadow' | 'trusted' | 'probation' | 'quarantined';
+  taskFamily: string;
+  triggerSummary: string;
+  programSummary: string;
+  sourceTrajectoryIdsJson: string;
+  requiredEvidenceJson: string;
+  allowedToolsJson: string;
+  approvalRulesJson: string;
+  verifierChecksJson: string;
+  failureModesJson: string;
+  outcomeScore: number;
+  promotionReason: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveProgramRun {
+  programRunId: string;
+  packetId: string;
+  programId: string;
+  createdAt: string;
+  status: 'selected' | 'shadowed' | 'blocked' | 'completed';
+  selected: boolean;
+  evidenceIdsJson: string;
+  policyResultJson: string;
+  outcomeScore: number;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitivePolicyVariant {
+  variantId: string;
+  createdAt: string;
+  status: 'candidate' | 'shadow' | 'accepted' | 'rejected';
+  variantKind:
+    | 'route_policy'
+    | 'context_budget'
+    | 'program_manifest'
+    | 'guardrail_policy'
+    | 'eval_template';
+  summary: string;
+  changedKnobsJson: string;
+  safetyBaselineJson: string;
+  sourceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface CognitiveOptimizationScorecard {
+  scorecardId: string;
+  packetId?: string | null;
+  proposalId?: string | null;
+  variantId?: string | null;
+  createdAt: string;
+  status: 'pass' | 'warn' | 'fail';
+  contextScore: number;
+  programScore: number;
+  policySafetyScore: number;
+  evidenceScore: number;
+  truthScore: number;
+  privacyScore: number;
+  totalScore: number;
+  failureFlagsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveImprovementProposal {
+  improvementProposalId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'candidate' | 'accepted' | 'rejected' | 'quarantined';
+  proposalKind:
+    | 'program'
+    | 'policy_variant'
+    | 'context_budget'
+    | 'test_addition';
+  sourcePacketId?: string | null;
+  sourceScorecardId?: string | null;
+  summary: string;
+  expectedScoreDelta: number;
+  safetyRegression: boolean;
+  changedArtifactsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveWorkspaceDoctorReport {
+  generatedAt: string;
+  ok: boolean;
+  packet?: CognitiveWorkspacePacket | null;
+  contextBlocks: CognitiveWorkspaceContextBlock[];
+  programManifests: CognitiveProgramManifest[];
+  programRuns: CognitiveProgramRun[];
+  policyVariants: CognitivePolicyVariant[];
+  optimizationScorecards: CognitiveOptimizationScorecard[];
+  improvementProposals: CognitiveImprovementProposal[];
+  goalStack?: CognitiveGoalStack | null;
+  contextBudget?: CognitiveContextBudget | null;
+  sourceRefs: string[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type CognitiveExecutiveChannel = 'telegram' | 'alexa' | 'bluebubbles';
+
+export type CognitiveExecutiveIntentFamily =
+  | 'next_action'
+  | 'loose_ends'
+  | 'plan_tonight'
+  | 'open_loops'
+  | 'reply_help'
+  | 'save_for_later'
+  | 'list_status'
+  | 'ambiguous_action'
+  | 'explain_choice'
+  | 'other';
+
+export type CognitiveExecutiveRouteClass =
+  | 'direct_answer'
+  | 'daily_companion'
+  | 'chief_of_staff'
+  | 'missions'
+  | 'communication_companion'
+  | 'everyday_capture'
+  | 'knowledge_library'
+  | 'research'
+  | 'message_actions'
+  | 'work_cockpit'
+  | 'telegram_handoff'
+  | 'clarify'
+  | 'unsupported';
+
+export type CognitiveExecutiveToolId =
+  | 'local_direct_answer'
+  | 'calendar'
+  | 'reminders'
+  | 'everyday_capture'
+  | 'communication_companion'
+  | 'life_threads'
+  | 'missions'
+  | 'action_bundles'
+  | 'knowledge_library'
+  | 'research'
+  | 'message_actions'
+  | 'work_cockpit'
+  | 'telegram_handoff'
+  | 'clarifying_question';
+
+export interface CognitiveRequest {
+  requestId: string;
+  createdAt: string;
+  rawAsk: string;
+  normalizedAsk: string;
+  channel: CognitiveExecutiveChannel;
+  groupFolder: string;
+  chatJid?: string | null;
+  threadId?: string | null;
+  actorId?: string | null;
+  activeContextSummary?: string | null;
+  intentFamily: CognitiveExecutiveIntentFamily;
+  confidence: number;
+}
+
+export interface CognitiveWorldSnapshotItem {
+  itemId: string;
+  itemKind:
+    | 'calendar_pressure'
+    | 'reminder'
+    | 'life_thread'
+    | 'communication_thread'
+    | 'mission'
+    | 'action_bundle'
+    | 'list_item'
+    | 'knowledge_source'
+    | 'selected_work'
+    | 'outcome'
+    | 'integration'
+    | 'message_action';
+  sourceId: string;
+  sourceIdsJson: string;
+  summary: string;
+  freshness: LogicEvidenceFreshness;
+  confidence: number;
+  priority: number;
+  reasonUsed: string;
+  reasonOmitted?: string | null;
+}
+
+export interface CognitiveWorldSnapshot {
+  snapshotId: string;
+  createdAt: string;
+  groupFolder: string;
+  status: 'ready' | 'needs_verification' | 'degraded' | 'empty';
+  currentFocus: string;
+  itemsJson: string;
+  usedItemIdsJson: string;
+  omittedItemIdsJson: string;
+  degradedToolsJson: string;
+  evidenceIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveState {
+  stateId: string;
+  createdAt: string;
+  currentFocus: string;
+  activePerson?: string | null;
+  activeThreadId?: string | null;
+  activeMissionId?: string | null;
+  activeListId?: string | null;
+  activeMessageActionId?: string | null;
+  activeWorkItem?: string | null;
+  relevantOpenLoopsJson: string;
+  relevantDeadlinesJson: string;
+  availableToolsJson: string;
+  degradedToolsJson: string;
+  recentOutcomesJson: string;
+  snapshotId?: string | null;
+}
+
+export interface CognitivePlanStep {
+  stepId: string;
+  order: number;
+  label: string;
+  toolId: CognitiveExecutiveToolId;
+  policyClass: 'read_only' | 'approval_required' | 'manual_proof' | 'clarify';
+  expectedOutput: string;
+}
+
+export interface CognitivePlan {
+  planId: string;
+  createdAt: string;
+  selectedRoute: CognitiveExecutiveRouteClass;
+  routeKey: string;
+  capabilityId?: string | null;
+  confidence: number;
+  stepsJson: string;
+  involvedToolsJson: string;
+  approvalRequired: boolean;
+  fallbackRoute?: string | null;
+  explanation: string;
+  usedContextJson: string;
+  ignoredContextJson: string;
+}
+
+export interface CognitiveResult {
+  resultId: string;
+  createdAt: string;
+  status:
+    | 'planned'
+    | 'handled'
+    | 'clarified'
+    | 'approval_staged'
+    | 'failed'
+    | 'deferred';
+  doneSummary: string;
+  failureSummary?: string | null;
+  changedSummary?: string | null;
+  openSummary?: string | null;
+  rememberSummary?: string | null;
+  reviewLaterSummary?: string | null;
+  nextSuggestion: string;
+}
+
+export interface CognitiveExplanation {
+  explanationId: string;
+  runId: string;
+  createdAt: string;
+  routeChosen: string;
+  contextUsedJson: string;
+  contextIgnoredJson: string;
+  approvalReason?: string | null;
+  degradedToolReason?: string | null;
+  fallbackReason?: string | null;
+  nextSafeAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveExecutiveRunRecord {
+  runId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: CognitiveResult['status'];
+  channel: CognitiveExecutiveChannel;
+  groupFolder: string;
+  chatJid?: string | null;
+  threadId?: string | null;
+  actorId?: string | null;
+  intentFamily: CognitiveExecutiveIntentFamily;
+  confidence: number;
+  routeClass: CognitiveExecutiveRouteClass;
+  routeKey: string;
+  capabilityId?: string | null;
+  approvalRequired: boolean;
+  requestSummary: string;
+  stateSummary: string;
+  planSummary: string;
+  resultSummary: string;
+  explanationJson: string;
+  usedContextJson: string;
+  ignoredContextJson: string;
+  degradedToolsJson: string;
+  evidenceIdsJson: string;
+  snapshotId?: string | null;
+  outcomeSignalId?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveExecutiveToolChoice {
+  choiceId: string;
+  runId: string;
+  createdAt: string;
+  toolId: CognitiveExecutiveToolId;
+  capabilityId?: string | null;
+  selected: boolean;
+  status:
+    | 'available'
+    | 'degraded'
+    | 'blocked'
+    | 'approval_required'
+    | 'not_relevant';
+  confidence: number;
+  approvalRequired: boolean;
+  reason: string;
+  fallbackToolId?: CognitiveExecutiveToolId | null;
+  riskFlagsJson: string;
+  privacyJson: string;
+}
+
+export interface CognitiveReflectionSignal {
+  signalId: string;
+  runId: string;
+  createdAt: string;
+  routeKey: string;
+  capabilityId?: string | null;
+  signalKind:
+    | 'route_chosen'
+    | 'answer_sent'
+    | 'action_succeeded'
+    | 'action_failed'
+    | 'action_deferred'
+    | 'approval_staged'
+    | 'fallback_used'
+    | 'user_corrected'
+    | 'user_accepted'
+    | 'ignored';
+  outcome: 'success' | 'warn' | 'fail' | 'deferred' | 'unknown';
+  routeConfidence: number;
+  fallbackUsed: boolean;
+  userResponse?: 'accepted' | 'corrected' | 'ignored' | 'unknown' | null;
+  frictionKey?: string | null;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CognitiveExecutiveDoctorReport {
+  generatedAt: string;
+  ok: boolean;
+  latestRun?: CognitiveExecutiveRunRecord | null;
+  latestSnapshot?: CognitiveWorldSnapshot | null;
+  toolChoices: CognitiveExecutiveToolChoice[];
+  reflectionSignals: CognitiveReflectionSignal[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type ToolReliabilitySubjectKind =
+  | 'capability'
+  | 'route'
+  | 'cognitive_tool'
+  | 'agent_os_card'
+  | 'provider'
+  | 'integration';
+
+export type ToolReliabilityRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+export type ToolReliabilityApprovalRequirement =
+  | 'none'
+  | 'confirmation'
+  | 'main_control'
+  | 'manual_external';
+
+export interface ToolReliabilitySubject {
+  subjectId: string;
+  subjectKind: ToolReliabilitySubjectKind;
+  displayName: string;
+  aliasesJson: string;
+  riskLevel: ToolReliabilityRiskLevel;
+  approvalRequirement: ToolReliabilityApprovalRequirement;
+  channelsJson: string;
+  sourceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface ToolDependencyLink {
+  linkId: string;
+  subjectId: string;
+  dependencySubjectId: string;
+  dependencyKind: 'provider' | 'integration' | 'route' | 'tool' | 'fallback';
+  reason: string;
+  fallbackSubjectId?: string | null;
+  privacyJson: string;
+}
+
+export interface ReliabilityObservation {
+  observationId: string;
+  subjectId: string;
+  observedAt: string;
+  sourceKind:
+    | 'provider_health'
+    | 'integration_doctor'
+    | 'executive_reflection'
+    | 'council'
+    | 'response_feedback'
+    | 'message_action'
+    | 'repair'
+    | 'simulation';
+  outcome:
+    | 'success'
+    | 'degraded'
+    | 'blocked'
+    | 'failed'
+    | 'fallback'
+    | 'unknown';
+  failureClass: string;
+  confidence: number;
+  fallbackUsed: boolean;
+  latencyMs?: number | null;
+  summary: string;
+  nextAction: string;
+  evidenceIdsJson: string;
+  privacyJson: string;
+}
+
+export interface ToolReliabilityRollup {
+  subjectId: string;
+  updatedAt: string;
+  sampleCount: number;
+  successRate: number;
+  degradedRate: number;
+  blockedRate: number;
+  fallbackRate: number;
+  reliabilityScore: number;
+  currentHealth: 'healthy' | 'degraded' | 'blocked' | 'unknown';
+  confidenceCap: number;
+  cooldownUntil?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface RouteConfidenceRollup {
+  routeKey: string;
+  channel: CognitiveExecutiveChannel | 'operator' | 'cross_channel';
+  updatedAt: string;
+  attempts: number;
+  averagePredictedConfidence: number;
+  empiricalSuccessRate: number;
+  calibrationGap: number;
+  correctionRate: number;
+  recommendedConfidenceCap: number;
+  recommendedFallback?: string | null;
+  privacyJson: string;
+}
+
+export interface ToolReliabilityDoctorReport {
+  generatedAt: string;
+  subjects: ToolReliabilitySubject[];
+  rollups: ToolReliabilityRollup[];
+  routeRollups: RouteConfidenceRollup[];
+  topDegraded: ToolReliabilityRollup[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export type RepairPlaybookId =
+  | 'bluebubbles_refresh_all'
+  | 'alexa_ingress_probe'
+  | 'google_calendar_auth_check'
+  | 'provider_quota_cooldown_record'
+  | 'assistant_session_clear_once'
+  | 'work_cockpit_reconcile_selection'
+  | 'scheduled_action_failure_review'
+  | 'webhook_registration_check';
+
+export interface RepairAttemptRecord {
+  attemptId: string;
+  playbookId: RepairPlaybookId;
+  integrationId: string;
+  createdAt: string;
+  updatedAt: string;
+  status:
+    | 'planned'
+    | 'skipped'
+    | 'succeeded'
+    | 'failed'
+    | 'blocked'
+    | 'cooldown';
+  failureClass: string;
+  safeToApply: boolean;
+  dryRun: boolean;
+  validationStatus: 'not_run' | 'passed' | 'failed' | 'manual_required';
+  rollbackStatus: 'not_needed' | 'not_run' | 'succeeded' | 'failed';
+  summary: string;
+  nextAction: string;
+  cooldownUntil?: string | null;
+  evidenceIdsJson: string;
+  privacyJson: string;
+}
+
+export interface RepairCooldownRecord {
+  cooldownId: string;
+  targetId: string;
+  playbookId: RepairPlaybookId;
+  failureClass: string;
+  createdAt: string;
+  expiresAt: string;
+  reason: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface RepairDoctorReport {
+  generatedAt: string;
+  attempts: RepairAttemptRecord[];
+  cooldowns: RepairCooldownRecord[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
+export interface CriticReviewRecord {
+  reviewId: string;
+  createdAt: string;
+  actor: string;
+  action: string;
+  channel: CognitiveExecutiveChannel | 'operator' | 'internal';
+  decision: 'proceed' | 'clarify' | 'stage_approval' | 'block';
+  approvalRequired: boolean;
+  riskFlagsJson: string;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface AgenticEvalScenarioResult {
+  resultId: string;
+  scenarioId: string;
+  createdAt: string;
+  status: 'passed' | 'failed';
+  routeScore: number;
+  toolScore: number;
+  repairScore: number;
+  safetyScore: number;
+  reflectionScore: number;
+  answerScore: number;
+  failuresJson: string;
+  summary: string;
+  privacyJson: string;
+}
+
+export interface HarnessEvalTask {
+  taskId: string;
+  createdAt: string;
+  taskFamily:
+    | 'planning'
+    | 'memory'
+    | 'bluebubbles_draft'
+    | 'calendar'
+    | 'research'
+    | 'provider_degradation'
+    | 'operator_diagnostics'
+    | 'interruption_resume'
+    | 'truth';
+  promptSummary: string;
+  expectedEvidenceJson: string;
+  safetyInvariantJson: string;
+  sourcePatternRefsJson: string;
+  privacyJson: string;
+}
+
+export interface HarnessTrajectory {
+  trajectoryId: string;
+  taskId: string;
+  createdAt: string;
+  status: 'pass' | 'warn' | 'fail';
+  planId?: string | null;
+  replayId?: string | null;
+  beliefRevisionIdsJson: string;
+  toolCallSummaryJson: string;
+  guardrailDecisionIdsJson: string;
+  evidenceIdsJson: string;
+  outcomeJson: string;
+  nextRepairAction: string;
+  privacyJson: string;
+}
+
+export interface HarnessVariant {
+  variantId: string;
+  createdAt: string;
+  taskFamily: HarnessEvalTask['taskFamily'];
+  policySummary: string;
+  changedKnobsJson: string;
+  safetyBaselineJson: string;
+  privacyJson: string;
+}
+
+export interface HarnessScorecard {
+  scorecardId: string;
+  trajectoryId: string;
+  variantId?: string | null;
+  createdAt: string;
+  status: 'pass' | 'warn' | 'fail';
+  planningScore: number;
+  memoryScore: number;
+  toolSafetyScore: number;
+  evidenceScore: number;
+  beliefScore: number;
+  outcomeScore: number;
+  privacyScore: number;
+  claimSupportScore?: number;
+  contradictionHandlingScore?: number;
+  staleEvidenceHandlingScore?: number;
+  calibrationScore?: number;
+  clarificationQualityScore?: number;
+  approvalIntegrityScore?: number;
+  totalScore: number;
+  failureFlagsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface HarnessImprovementProposal {
+  proposalId: string;
+  createdAt: string;
+  status: 'candidate' | 'accepted' | 'rejected';
+  taskFamily: HarnessEvalTask['taskFamily'];
+  proposalKind:
+    | 'skill_card'
+    | 'policy_change'
+    | 'prompt_control'
+    | 'test_addition';
+  summary: string;
+  expectedScoreDelta: number;
+  safetyRegression: boolean;
+  sourceTrajectoryIdsJson: string;
+  changedArtifactsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface HarnessLabReport {
+  generatedAt: string;
+  ok: boolean;
+  tasks: HarnessEvalTask[];
+  trajectories: HarnessTrajectory[];
+  scorecards: HarnessScorecard[];
+  proposals: HarnessImprovementProposal[];
+  averageScore: number;
+  failingTaskFamilies: string[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
 }
 
 export type MessageActionSourceType =

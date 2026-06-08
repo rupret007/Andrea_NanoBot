@@ -32,8 +32,7 @@ function provider(
     lastCheckedAt: checkedAt,
     failureClass,
     quotaState: failureClass === 'quota_or_rate_limit' ? 'blocked' : 'ok',
-    credentialState:
-      failureClass === 'auth_failure' ? 'invalid' : 'configured',
+    credentialState: failureClass === 'auth_failure' ? 'invalid' : 'configured',
     knownExpiresAt: null,
     rotationDueAt: null,
     blocker:
@@ -53,11 +52,11 @@ const kernel = beginCognitiveKernelRun({
   channel: 'telegram',
   groupFolder: 'main',
   taskFamily: 'research',
-  goal:
-    'Ultrathink a live research route, but skip blocked providers honestly and explain the next safe repair step.',
+  goal: 'Ultrathink a live research route, but skip blocked providers honestly and explain the next safe repair step.',
   requestRoute: 'direct_assistant',
   selectedSkillId: 'research.live',
-  selectedSkillPurpose: 'Use local-first evidence, public search only when available, and verifier-safe synthesis.',
+  selectedSkillPurpose:
+    'Use local-first evidence, public search only when available, and verifier-safe synthesis.',
   selectedSkillApprovalNeed: 'none',
   selectedSkillSideEffectRisk: 'low',
   selectedSkillEvidenceLevel: 'partial',
@@ -89,7 +88,14 @@ const doctor = buildCognitiveDoctorReport(checkedAt, [
   provider('gemini_cloud', 'externally_blocked', 'quota_or_rate_limit'),
   provider('anthropic_cloud', 'externally_blocked', 'auth_failure'),
 ]);
-const serialized = JSON.stringify({ kernel, cooldowns, revisions, events, trace, doctor });
+const serialized = JSON.stringify({
+  kernel,
+  cooldowns,
+  revisions,
+  events,
+  trace,
+  doctor,
+});
 
 assert.ok(
   cooldowns.some((cooldown) => cooldown.providerId === 'gemini_cloud'),

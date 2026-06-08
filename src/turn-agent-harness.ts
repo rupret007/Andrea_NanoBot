@@ -32,7 +32,19 @@ import {
   finalizeCognitiveKernelOutcome,
   type CognitiveKernelResult,
 } from './cognitive-kernel.js';
-import type { CouncilOutcomeSignalKind } from './types.js';
+import {
+  beginLogicKernelRun,
+  evaluateLogicAnswerSupport,
+  type LogicKernelResult,
+} from './logic-kernel.js';
+import {
+  beginAgentRuntimeSpineRun,
+  finalizeAgentRuntimeSpineOutcome,
+  recordAgentRuntimeTruthAudit,
+  type AgentRuntimeSpineResult,
+} from './agent-runtime-spine.js';
+import { runTruthEngine } from './truth-engine.js';
+import type { CouncilOutcomeSignalKind, TruthVerdict } from './types.js';
 
 export type TurnAgentChannel = 'telegram' | 'bluebubbles' | 'alexa' | 'system';
 
@@ -132,6 +144,7 @@ export interface PreSendEvaluation {
   approvalCorrectness: 'correct' | 'needs_review' | 'unknown';
   memoryEffect: 'helpful' | 'neutral' | 'harmful' | 'unknown';
   summary: string;
+  truthVerdict?: TruthVerdict | null;
 }
 
 export interface CouncilGuidedReply {
@@ -160,6 +173,8 @@ export interface TurnAgentHarnessContext {
   deliberation?: AndreaPlatformDeliberationResult | null;
   providerCouncil?: AndreaPlatformProviderCouncilResult | null;
   cognitiveRun?: CognitiveKernelResult | null;
+  logicRun?: LogicKernelResult | null;
+  runtimeSpine?: AgentRuntimeSpineResult | null;
   platformHoldReply?: string | null;
   actorId?: string | null;
 }
@@ -788,6 +803,22 @@ export async function beginTurnAgentHarness(
     thinkingPreference: detectThinkingControlPreference(input.text),
     thinkingTrigger: detectThinkingControlTrigger(input.text),
   });
+  const logicRun = beginLogicKernelRun({
+    subject: buildSanitizedGoal(input, taskFamily),
+    cognitiveRun,
+    generatedAt: new Date().toISOString(),
+  });
+  const runtimeSpine = beginAgentRuntimeSpineRun({
+    turnId: input.turnId,
+    channel: input.channel,
+    groupFolder: input.groupFolder,
+    requestRoute: input.requestRoute,
+    taskFamily,
+    goal: buildSanitizedGoal(input, taskFamily),
+    cognitiveRun,
+    logicRun,
+    providerCouncil,
+  });
   return {
     turnId: input.turnId,
     channel: input.channel,
@@ -800,6 +831,8 @@ export async function beginTurnAgentHarness(
     deliberation,
     providerCouncil,
     cognitiveRun,
+    logicRun,
+    runtimeSpine,
     platformHoldReply:
       councilHoldReply || buildPlatformHoldReply(deliberation, contextCompile),
     actorId: input.actorId,
@@ -988,7 +1021,7 @@ function visibleGuidanceLine(
     .split(/\s+/)
     .filter(Boolean);
   const verdict =
-    words.length <= 32 ? words.join(' ') : `${words.slice(0, 32).join(' ')}...`;
+    words.length <= 24 ? words.join(' ') : `${words.slice(0, 24).join(' ')}...`;
   if (!verdict) return '';
   return `Council check: ${verdict}`;
 }
@@ -1169,6 +1202,70 @@ export function evaluateTurnReply(
     flags.push('directive:strip_internal_leakage_active');
   }
 
+  const logicEvaluation = evaluateLogicAnswerSupport({
+    report: input.context?.logicRun?.report,
+    text: rewritten,
+  });
+  if (logicEvaluation.status !== 'pass') {
+    flags.push(...logicEvaluation.flags.map((flag) => `logic:${flag}`));
+    if (logicEvaluation.suggestedRewrite) {
+      rewritten = logicEvaluation.suggestedRewrite;
+      safeRewriteApplied = true;
+    } else if (
+      logicEvaluation.flags.includes('missing_premise_not_disclosed') &&
+      input.context?.logicRun?.report.missingPremises[0]?.question
+    ) {
+      rewritten = [
+        rewritten,
+        '',
+        input.context.logicRun.report.missingPremises[0].question,
+      ].join('\n');
+      safeRewriteApplied = true;
+    } else if (
+      logicEvaluation.flags.includes('contradicted_claim_presented_as_certain')
+    ) {
+      rewritten = rewritten.replace(
+        /\b(definitely|certainly|no doubt|guaranteed|for sure)\b/gi,
+        'based on the current evidence',
+      );
+      safeRewriteApplied = true;
+    }
+  }
+
+  const truthVerdict = runTruthEngine({
+    text: rewritten,
+    turnId: input.context?.turnId || null,
+    channel: input.context?.channel || null,
+    taskFamily: input.context?.taskFamily || null,
+    subject: input.context?.logicRun?.report.subject || null,
+    routeKey: input.routeKey,
+    capabilityId: input.capabilityId,
+    handlerKind: input.handlerKind,
+    responseSource: input.responseSource,
+    blockerClass: input.blockerClass,
+    logicReport: input.context?.logicRun?.report || null,
+    providerCouncil: input.context?.providerCouncil || null,
+  });
+  recordAgentRuntimeTruthAudit({
+    runtime: input.context?.runtimeSpine || null,
+    truthVerdict,
+    textShape: describeTextShape(rewritten),
+  });
+  if (truthVerdict.calibration.status !== 'pass') {
+    flags.push(
+      ...truthVerdict.calibration.flags
+        .filter((flag) => flag !== 'truth_supported')
+        .map((flag) => `truth:${flag}`),
+    );
+    if (truthVerdict.rewrittenText !== rewritten) {
+      rewritten = truthVerdict.rewrittenText;
+      safeRewriteApplied = true;
+      flags.push(
+        `truth_directive:${truthVerdict.rewriteDirectives[0]?.directive || 'rewrite'}`,
+      );
+    }
+  }
+
   const actualEvidence = evidence[0]?.actualLevel || 'unknown';
   const councilDirectives =
     input.context?.providerCouncil?.structuredVerdict?.actionDirectives ||
@@ -1177,18 +1274,33 @@ export function evaluateTurnReply(
   const verifierStop = councilDirectives.some(
     (directive) => directive.directive === 'verifier_stop',
   );
+  const truthEvidenceGap =
+    truthVerdict.calibration.status === 'block'
+      ? 'blocked'
+      : truthVerdict.calibration.status === 'clarify'
+        ? 'major'
+        : truthVerdict.calibration.status === 'warn'
+          ? 'minor'
+          : 'none';
   const evidenceGap =
     verifierStop || input.blockerClass || actualEvidence === 'weak'
       ? 'blocked'
-      : input.context?.deliberation?.expectedEvidence === 'strong' &&
-          actualEvidence !== 'strong'
-        ? 'minor'
-        : 'none';
+      : truthEvidenceGap !== 'none'
+        ? truthEvidenceGap
+        : input.context?.deliberation?.expectedEvidence === 'strong' &&
+            actualEvidence !== 'strong'
+          ? 'minor'
+          : 'none';
   const status = verifierStop
     ? 'block'
-    : evidenceGap === 'blocked'
-      ? 'warn'
-      : 'pass';
+    : truthVerdict.calibration.status === 'block'
+      ? 'block'
+      : evidenceGap === 'blocked'
+        ? 'warn'
+        : truthVerdict.calibration.status === 'clarify' ||
+            truthVerdict.calibration.status === 'warn'
+          ? 'warn'
+          : 'pass';
   return {
     status,
     evidenceLevel: actualEvidence,
@@ -1204,6 +1316,7 @@ export function evaluateTurnReply(
       flags.length > 0
         ? `Pre-send evaluator applied ${flags.join(', ')}.`
         : 'Pre-send evaluator found no blocking issue.',
+    truthVerdict,
   };
 }
 
@@ -1280,6 +1393,15 @@ export async function reflectTurnAgentOutcome(input: {
     blockerClass: input.blockerClass,
     fallbackUsed: input.fallbackUsed,
   });
+  finalizeAgentRuntimeSpineOutcome({
+    runtime: context?.runtimeSpine || null,
+    evaluationStatus: input.evaluation.status,
+    evidenceGap: input.evaluation.evidenceGap,
+    evaluatorFlags: input.evaluation.evaluatorFlags,
+    routeUsed: input.routeUsed,
+    answerClass: input.answerClass || 'unknown',
+    blockerClass: input.blockerClass,
+  });
   if (!context?.deliberation?.taskLedgerId) {
     return {
       routeUsed: input.routeUsed,
@@ -1323,6 +1445,13 @@ export async function reflectTurnAgentOutcome(input: {
       cognitive_status: context.cognitiveRun?.run.status || '',
       cognitive_skill_id: context.cognitiveRun?.run.linkedSkillCardId || '',
       cognitive_next_action: context.cognitiveRun?.run.nextAction || '',
+      truth_audit_id: input.evaluation.truthVerdict?.audit.auditId || '',
+      truth_status: input.evaluation.truthVerdict?.calibration.status || '',
+      truth_support_grade:
+        input.evaluation.truthVerdict?.calibration.supportGrade || '',
+      truth_confidence: String(
+        input.evaluation.truthVerdict?.calibration.confidence || '',
+      ),
       route_used: input.routeUsed,
       answer_class: input.answerClass || 'unknown',
       self_check_status: input.evaluation.status,

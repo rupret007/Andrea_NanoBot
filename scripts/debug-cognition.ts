@@ -7,10 +7,10 @@ import {
   formatCognitiveTraceReport,
   runCognitiveBenchmarkSuite,
 } from '../src/cognitive-kernel.js';
+import { buildAgencyConvergenceStatusText } from '../src/agency-convergence-loop.js';
+import { buildCognitiveWorkspaceStatusText } from '../src/cognitive-workspace.js';
 import { initDatabase, listCognitiveTrajectoryScores } from '../src/db.js';
-import {
-  collectProviderHealthSnapshotsWithLiveProbe,
-} from '../src/provider-live-probe.js';
+import { collectProviderHealthSnapshotsWithLiveProbe } from '../src/provider-live-probe.js';
 
 initDatabase();
 
@@ -22,11 +22,11 @@ const trace = args.includes('--trace');
 const taskDrill = args.includes('--task-drill');
 const configOnly = args.includes('--config-only');
 const trajectory = args.includes('--trajectory');
+const governance = args.includes('--governance');
+const workbench = args.includes('--workbench');
 const executeDrillIndex = args.indexOf('--execute-drill');
 const executeDrill =
-  executeDrillIndex >= 0
-    ? args[executeDrillIndex + 1] || 'research'
-    : null;
+  executeDrillIndex >= 0 ? args[executeDrillIndex + 1] || 'research' : null;
 
 const drillConfig: Record<
   string,
@@ -50,8 +50,7 @@ const drillConfig: Record<
     selectedSkillApprovalNeed: 'none',
     selectedSkillSideEffectRisk: 'low',
     selectedSkillEvidenceLevel: 'partial',
-    goal:
-      'Run a calendar read-only executor drill: gather schedule evidence and explain blockers without writing calendar data.',
+    goal: 'Run a calendar read-only executor drill: gather schedule evidence and explain blockers without writing calendar data.',
     channel: 'telegram',
     requestRoute: 'debug:cognition:execute-drill:calendar',
   },
@@ -63,8 +62,7 @@ const drillConfig: Record<
     selectedSkillApprovalNeed: 'none',
     selectedSkillSideEffectRisk: 'low',
     selectedSkillEvidenceLevel: 'partial',
-    goal:
-      'Run a research read-only executor drill: gather public evidence metadata, skip blocked providers honestly, and explain the next repair action.',
+    goal: 'Run a research read-only executor drill: gather public evidence metadata, skip blocked providers honestly, and explain the next repair action.',
     channel: 'system',
     requestRoute: 'debug:cognition:execute-drill:research',
   },
@@ -76,8 +74,7 @@ const drillConfig: Record<
     selectedSkillApprovalNeed: 'explicit',
     selectedSkillSideEffectRisk: 'high',
     selectedSkillEvidenceLevel: 'partial',
-    goal:
-      'Run a BlueBubbles bounded executor drill from sanitized metadata. Do not send messages; create an approval packet if a draft/send action appears.',
+    goal: 'Run a BlueBubbles bounded executor drill from sanitized metadata. Do not send messages; create an approval packet if a draft/send action appears.',
     channel: 'bluebubbles',
     requestRoute: 'debug:cognition:execute-drill:bluebubbles',
   },
@@ -89,8 +86,7 @@ const drillConfig: Record<
     selectedSkillApprovalNeed: 'explicit',
     selectedSkillSideEffectRisk: 'high',
     selectedSkillEvidenceLevel: 'partial',
-    goal:
-      'Run an operator read-only executor drill: inspect safe status metadata and stage any repair as approval-only.',
+    goal: 'Run an operator read-only executor drill: inspect safe status metadata and stage any repair as approval-only.',
     channel: 'system',
     requestRoute: 'debug:cognition:execute-drill:operator',
   },
@@ -173,7 +169,8 @@ async function main(): Promise<void> {
       turnId: `debug-cognition-execute-${key}-${Date.now().toString(36)}`,
       groupFolder: 'main',
       providerHealthSnapshots: providerSnapshots,
-      thinkingPreference: key === 'research' || key === 'operator' ? 'deep' : null,
+      thinkingPreference:
+        key === 'research' || key === 'operator' ? 'deep' : null,
       thinkingTrigger: `execute-drill:${key}`,
       ...config,
     });
@@ -196,6 +193,11 @@ async function main(): Promise<void> {
             evidenceArtifacts: report.evidenceArtifactCount,
             stepVerifications: report.replayPacket.stepVerifications.length,
             approvalPackets: report.approvalPacketCount,
+            governanceDecisions: report.governanceDecisionCount,
+            handoffs: report.handoffCount,
+            memoryBlocks: report.memoryBlockCount,
+            riskSignals: report.riskSignalCount,
+            workbenchStatus: report.workbenchStatus,
             trajectoryScore: report.trajectoryScore,
             nextAction: report.nextAction,
             privacy: report.replayPacket.privacy,
@@ -245,8 +247,7 @@ async function main(): Promise<void> {
       channel: 'system',
       groupFolder: 'main',
       taskFamily: 'research',
-      goal:
-        'Run a safe cognition task drill: gather read-only status evidence, skip blocked providers honestly, and explain the next repair action.',
+      goal: 'Run a safe cognition task drill: gather read-only status evidence, skip blocked providers honestly, and explain the next repair action.',
       requestRoute: 'debug:cognition:task-drill',
       selectedSkillId: 'research.live_status',
       selectedSkillPurpose:
@@ -278,6 +279,11 @@ async function main(): Promise<void> {
             planRevisionCount: report.planRevisionCount,
             toolResults: report.replayPacket.toolResults.length,
             policyDecisions: report.replayPacket.policyDecisions.length,
+            governanceDecisions: report.governanceDecisionCount,
+            handoffs: report.handoffCount,
+            memoryBlocks: report.memoryBlockCount,
+            riskSignals: report.riskSignalCount,
+            workbenchStatus: report.workbenchStatus,
             providerCooldowns: report.activeCooldownProviderIds,
             nextAction: report.nextAction,
             privacy: report.replayPacket.privacy,
@@ -293,11 +299,12 @@ async function main(): Promise<void> {
   }
 
   if (trace) {
-    const runId = args
-      .find((arg) => arg.startsWith('--run-id='))
-      ?.split('=')
-      .slice(1)
-      .join('=') || null;
+    const runId =
+      args
+        .find((arg) => arg.startsWith('--run-id='))
+        ?.split('=')
+        .slice(1)
+        .join('=') || null;
     const report = buildCognitiveTraceReport({ runId });
     if (json) {
       console.log(JSON.stringify(report, null, 2));
@@ -313,10 +320,93 @@ async function main(): Promise<void> {
     : await collectProviderHealthSnapshotsWithLiveProbe(checkedAt);
   const report = buildCognitiveDoctorReport(checkedAt, providerSnapshots);
 
+  if (governance) {
+    const governanceReport = {
+      generatedAt: checkedAt,
+      status:
+        report.governance.blocked > 0
+          ? 'warn'
+          : report.governance.decisions > 0
+            ? 'pass'
+            : 'warn',
+      governance: report.governance,
+      providerCooldowns: report.providerCooldowns,
+      approvalBlockers: report.approvalBlockers,
+      nextAction: report.governance.nextAction || report.nextAction,
+      privacy: report.privacy,
+    };
+    if (json) {
+      console.log(JSON.stringify(governanceReport, null, 2));
+    } else {
+      console.log(
+        [
+          'Cognition Governance',
+          '',
+          `Status: ${governanceReport.status}`,
+          `Policies: ${report.governance.policies}`,
+          `Decisions: ${report.governance.decisions}`,
+          `Allow/warn/staged/block: ${report.governance.allow}/${report.governance.warn}/${report.governance.staged}/${report.governance.blocked}`,
+          `Tripwires: ${report.governance.triggeredTripwires}`,
+          `Risk signals: ${report.governance.riskSignals}`,
+          `Provider cooldowns: ${report.providerCooldowns.providerIds.join(', ') || 'none'}`,
+          `Approval blockers: ${report.approvalBlockers.join(', ') || 'none'}`,
+          `Next: ${governanceReport.nextAction}`,
+          '',
+          'Privacy: metadata-only; no raw prompts, private message bodies, hidden reasoning, or secrets are stored.',
+        ].join('\n'),
+      );
+    }
+    process.exit(0);
+  }
+
+  if (workbench) {
+    const workbenchReport = {
+      generatedAt: checkedAt,
+      status: report.workbench.status,
+      workbench: report.workbench,
+      memoryBlocks: report.memoryBlocks,
+      approvalPackets: report.approvalPackets,
+      evidenceGaps: report.evidenceGaps,
+      nextAction: report.workbench.nextAction || report.nextAction,
+      privacy: report.privacy,
+    };
+    if (json) {
+      console.log(JSON.stringify(workbenchReport, null, 2));
+    } else {
+      console.log(
+        [
+          'Cognition Workbench',
+          '',
+          `Status: ${report.workbench.status}`,
+          `Handoffs: ${report.workbench.handoffs}`,
+          `Memory blocks: ${report.workbench.memoryBlocks}`,
+          `Active goal: ${report.workbench.activeGoalId || 'none'}`,
+          `Selected skill: ${report.workbench.selectedSkillId || 'none'}`,
+          `Approval packets: ${report.approvalPackets.total}`,
+          `Memory conflicts: ${report.memoryBlocks.conflicted}`,
+          `Max poisoning risk: ${report.memoryBlocks.poisoningRiskMax.toFixed(2)}`,
+          `Evidence gaps: ${report.evidenceGaps.join(', ') || 'none'}`,
+          `Next: ${workbenchReport.nextAction}`,
+          '',
+          'Privacy: metadata-only; no raw prompts, private message bodies, hidden reasoning, or secrets are stored.',
+        ].join('\n'),
+      );
+    }
+    process.exit(0);
+  }
+
   if (json) {
     console.log(JSON.stringify(report, null, 2));
   } else {
-    console.log(formatCognitiveDoctorReport(report));
+    console.log(
+      [
+        formatCognitiveDoctorReport(report),
+        '',
+        buildAgencyConvergenceStatusText(),
+        '',
+        buildCognitiveWorkspaceStatusText(),
+      ].join('\n'),
+    );
   }
 }
 

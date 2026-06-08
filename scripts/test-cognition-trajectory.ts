@@ -38,8 +38,7 @@ const safeResearch = beginCognitiveKernelRun({
   channel: 'telegram',
   groupFolder: 'main',
   taskFamily: 'research',
-  goal:
-    'Run safe read-only research trajectory scoring with enough metadata evidence to answer.',
+  goal: 'Run safe read-only research trajectory scoring with enough metadata evidence to answer.',
   requestRoute: 'test:cognition:trajectory:safe',
   selectedSkillId: 'research.live_or_saved',
   selectedSkillPurpose: 'Use read-only metadata evidence and score trajectory.',
@@ -63,8 +62,7 @@ const approvalCommunication = beginCognitiveKernelRun({
   channel: 'bluebubbles',
   groupFolder: 'main',
   taskFamily: 'communication',
-  goal:
-    'Draft a reply from sanitized BlueBubbles metadata and wait for same-thread approval.',
+  goal: 'Draft a reply from sanitized BlueBubbles metadata and wait for same-thread approval.',
   requestRoute: 'test:cognition:trajectory:approval',
   selectedSkillId: 'communication.reply_help',
   selectedSkillPurpose: 'Draft reply help without sending.',
@@ -79,8 +77,7 @@ const unsafeCommunication = beginCognitiveKernelRun({
   channel: 'telegram',
   groupFolder: 'main',
   taskFamily: 'communication',
-  goal:
-    'Draft and send-adjacent communication task without explicit approval; this should be blocked before side effects.',
+  goal: 'Draft and send-adjacent communication task without explicit approval; this should be blocked before side effects.',
   requestRoute: 'test:cognition:trajectory:unsafe',
   selectedSkillId: 'communication.reply_help',
   selectedSkillPurpose: 'Attempt unsafe send-adjacent work without approval.',

@@ -218,6 +218,39 @@ Treat that review suite as the fast proof that Andrea can:
 - keep Alexa review orientation short and grounded
 - keep Telegram review controls bounded and inspectable
 
+For Cognitive Executive route-selection, world-snapshot, and everyday executive-loop changes, add:
+
+```bash
+npm run test:cognitive-executive
+npm run test:cognitive-executive:routing
+npm run test:cognitive-executive:snapshot
+npm run test:cognitive-executive:tool-selection
+npm run test:cognitive-executive:explainability
+npm run test:tool-reliability
+npm run test:repair
+npm run test:critic-agent
+npm run test:agentic
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/assistant-capability-router.test.ts src/daily-companion.test.ts src/communication-companion.test.ts src/missions.test.ts src/everyday-capture.test.ts src/outcome-reviews.test.ts
+npm run debug:executive -- --refresh
+npm run debug:repair
+npm run debug:agentic
+npm run debug:pilot
+```
+
+Treat that executive suite as the fast proof that Andrea can:
+
+- classify the first eight high-value everyday flows
+- build a bounded current-world snapshot without dumping unrelated context
+- select an existing route instead of inventing a new feature path
+- ask one clarifying question before ambiguous or approval-risk actions
+- record route confidence, fallback, result, and repeated-friction signals
+- explain a route briefly without raw prompts, private bodies, hidden reasoning, raw tool output, or secrets
+- cap route confidence when dependent tools/providers are degraded
+- record bounded repair attempts and cooldowns without hidden side effects
+- pass deterministic agentic simulations before broader live proof
+
+For repair/status work, `integrations:fix` remains guidance-only. Use `integrations:heal -- --id <integration> --dry-run` to create a bounded repair trace; use `--apply` only for playbooks that explicitly stay safe, reversible, or metadata-only.
+
 ## 2. Major Suite
 
 ```bash
@@ -340,12 +373,68 @@ Then validate the public-safe Telegram surface:
 - `npm run debug:cognition -- --config-only --json`
 - `npm run debug:cognition -- --resume`
 - `npm run debug:cognition -- --trace`
+- `npm run debug:cognition -- --governance --json`
+- `npm run debug:cognition -- --workbench --json`
+- `npm run debug:agent-os -- --json`
+- `npm run debug:agent-os -- --episode <id> --json`
+- `npm run debug:agent-os -- --discover-tools --json`
+- `npm run debug:agent-os -- --task-drill --json`
+- `npm run debug:agent-os -- --plan-only "show the plan first for a safe integration check" --json`
+- `npm run debug:agent-os -- --replay-plan <planId> --json`
+- `npm run debug:logic -- --json`
+- `npm run debug:logic -- --subject "<query>" --json`
+- `npm run debug:logic -- --seed --json`
+- `npm run debug:logic -- --reconcile --json`
+- `npm run debug:truth -- --json`
+- `npm run debug:truth -- --subject "<query>" --json`
+- `npm run debug:truth -- --answer "<draft>" --json`
+- `npm run debug:world -- --json`
+- `npm run debug:world -- --stale --json`
+- `npm run debug:world -- --verify-safe --json`
+- `npm run debug:runtime-spine -- --json`
+- `npm run debug:runtime-spine -- --events <runId>`
+- `npm run debug:supervisor -- --json`
+- `npm run debug:supervisor -- --blackboard <blackboardId> --json`
+- `npm run debug:session-graph -- --json`
+- `npm run debug:session-graph -- --cockpit --json`
+- `npm run debug:session-graph -- --suggestions --json`
+- `npm run debug:agency-loop -- --json`
+- `npm run debug:agency-loop -- --agenda --json`
+- `npm run debug:agency-loop -- --resume --json`
+- `npm run debug:agency-loop -- --execute --json`
+- `npm run debug:cognitive-workspace -- --json`
+- `npm run debug:cognitive-workspace -- --optimize --json`
+- `npm run debug:harness -- --json`
+- `npm run debug:harness -- --rho --json`
 - `npm run debug:cognition -- --task-drill`
 - `npm run debug:cognition -- --execute-drill calendar`
 - `npm run debug:cognition -- --execute-drill research`
 - `npm run debug:cognition -- --execute-drill bluebubbles`
 - `npm run debug:cognition -- --execute-drill operator`
 - `npm run debug:cognition -- --trajectory --json`
+- `npm run test:world`
+- `npm run test:world:verification`
+- `npm run test:world:turn-integration`
+- `npm run test:runtime-spine`
+- `npm run test:runtime-checkpoints`
+- `npm run test:runtime-guardrails`
+- `npm run test:supervisor`
+- `npm run test:supervisor:blackboard`
+- `npm run test:supervisor:handoffs`
+- `npm run test:supervisor:loop`
+- `npm run test:session-graph`
+- `npm run test:session-graph:cockpit`
+- `npm run test:session-graph:linking`
+- `npm run test:session-graph:privacy`
+- `npm run test:session-graph:turn-integration`
+- `npm run test:agency-loop`
+- `npm run test:agency-loop:resume`
+- `npm run test:agency-loop:providers`
+- `npm run test:agency-loop:privacy`
+- `npm run test:cognitive-workspace`
+- `npm run test:cognitive-workspace:context`
+- `npm run test:cognitive-workspace:programs`
+- `npm run test:cognitive-workspace:optimizer`
 - `npm run debug:cognition -- --benchmarks`
 - `npm run test:council:tasks`
 - `npm run test:council:ultrathink`
@@ -359,6 +448,21 @@ Then validate the public-safe Telegram surface:
 - `npm run test:cognition:loop`
 - `npm run test:cognition:adapters`
 - `npm run test:cognition:trajectory`
+- `npm run test:cognition:governance`
+- `npm run test:cognition:memory-blocks`
+- `npm run test:cognition:workbench`
+- `npm run test:agent-os`
+- `npm run test:agent-os:interrupts`
+- `npm run test:agent-os:tool-discovery`
+- `npm run test:agent-os:trajectory`
+- `npm run test:logic`
+- `npm run test:logic:reconciliation`
+- `npm run test:truth`
+- `npm run test:truth:harness`
+- `npm run test:agent-os:planner`
+- `npm run test:agent-os:dag-executor`
+- `npm run test:harness`
+- `npm run test:harness:rho`
 - `/cursor_status`
 
 The cognition benchmark ladder must prove more than answer quality: each drill
@@ -371,6 +475,18 @@ cooldown snapshots, deterministic tool-plan simulation, bounded read-only
 execution rounds, replayable checkpoints, typed approval packets, and a next
 safe action without storing raw prompts, private message bodies, hidden
 reasoning, secrets, or raw tool output.
+For v9 governed workbench changes, the same ladder must also prove source-
+attributed governance policies, pre-tool guardrail decisions, replayable role
+handoffs, sanitized memory blocks with conflict/poisoning-risk metadata, and
+approval packets for every mutating or send-adjacent path.
+For v10 Agent OS changes, the same ladder must also prove durable episodes,
+linked cognitive/council/tool evidence, resumable interrupts, typed role
+handoffs, capability tool cards, source coverage scoring, trajectory evals,
+candidate-only skill proposals, and privacy-preserving reports.
+For v12-v14 changes, it must also prove stale/conflicting claim reconciliation,
+saved goal-to-DAG planning, replay from persisted plans without replanning,
+approval-staged mutating nodes, local harness trajectories, deterministic
+scorecards, and candidate-only improvement proposals.
 
 Council provider participation should be explicit in `/council` and
 `debug:council`: `full` means all planned roles participated, `degraded` means

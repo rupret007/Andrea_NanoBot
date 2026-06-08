@@ -18,8 +18,10 @@ import {
   reconcileWindowsHostState,
 } from './host-control.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
+import { buildRepairDoctorReport } from './integration-healer.js';
 import { readOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
 import { readOpenAiUsageState } from './openai-usage-state.js';
+import { buildToolReliabilityDoctorReport } from './tool-reliability.js';
 import {
   getLogControlConfig,
   type LogControlConfig,
@@ -423,6 +425,10 @@ export function formatDebugStatus(): string {
   });
   const guidedRouting = readOpenAiGuidedRoutingState();
   const openAiUsage = readOpenAiUsageState();
+  const reliability = buildToolReliabilityDoctorReport();
+  const repair = buildRepairDoctorReport();
+  const topReliabilityBlocker = reliability.topDegraded[0];
+  const latestRepairAttempt = repair.attempts[0];
   const installedMode =
     process.platform === 'win32'
       ? formatInstallModeLabel(
@@ -468,6 +474,20 @@ export function formatDebugStatus(): string {
     `- Serving commit aligned: ${commitTruth.servingCommitMatchesWorkspaceHead ? 'yes' : 'no'}`,
     `- OpenAI-guided routing backend: ${ANDREA_OPENAI_BACKEND_ENABLED ? `enabled at ${ANDREA_OPENAI_BACKEND_URL}` : 'disabled in this NanoBot runtime'}`,
     `- OpenAI-guided routing last source: ${guidedRouting?.source || 'none yet'}`,
+    `- Tool reliability degraded subjects: ${reliability.topDegraded.length}`,
+    ...(topReliabilityBlocker
+      ? [
+          `- Tool reliability top blocker: ${topReliabilityBlocker.subjectId} (${topReliabilityBlocker.currentHealth}, cap=${topReliabilityBlocker.confidenceCap.toFixed(2)})`,
+          `- Tool reliability next step: ${topReliabilityBlocker.nextAction}`,
+        ]
+      : []),
+    `- Repair recovery cooldowns: ${repair.cooldowns.length}`,
+    ...(latestRepairAttempt
+      ? [
+          `- Latest repair attempt: ${latestRepairAttempt.integrationId}/${latestRepairAttempt.playbookId} ${latestRepairAttempt.status}`,
+          `- Latest repair next step: ${latestRepairAttempt.nextAction}`,
+        ]
+      : []),
     ...(guidedRouting?.routeKind
       ? [
           `- OpenAI-guided routing last route: ${guidedRouting.routeKind}${guidedRouting.capabilityId ? ` (${guidedRouting.capabilityId})` : ''}`,

@@ -51,7 +51,7 @@ These are the commands normal users should rely on:
 - `/mainchat` - show the registered main control chat and recovery steps
 - `/thinking` - show smart auto thinking mode plus deep/quick controls
 - `/council` - show council quality, calibration, provider reliability, and next proof action
-- `/cognition` - show task-engine status, active skill, evidence gaps, approval blockers, and next repair action
+- `/cognition` - show task-engine status, Cognitive Workspace packet, active program, Runtime Spine checkpoints, Supervisor Core blackboard/handoffs, Session Graph continuity clusters, the ranked continuity cockpit, Agency Convergence Loop state, evidence gaps, truth support, World Model proof debt, approval blockers, and next repair action
 - `/memory` - show how memory is used and controlled
 - `/learning` - show durable learning policy and safety rails
 - `/forget` - show how to disable a remembered detail
@@ -63,8 +63,37 @@ Thinking and learning controls:
 - Say `quick answer` or `keep it simple` when you want the fast path.
 - Andrea may show a concise council verdict, but not hidden reasoning or provider debate transcripts.
 - Use `/council`, `council status`, or `council tasks` to inspect the redacted council quality ledger, task-ease drills, and next repair action.
-- Use `/cognition`, `cognition status`, or `why did you choose that?` to inspect the safe task graph, selected skill, durable goal, blackboard trail, autonomy budget, open checkpoint, and outcome-learning status.
+- Use `/cognition`, `cognition status`, `cognitive workspace status`, `agency loop status`, `convergence status`, `runtime spine status`, `agent runtime status`, `supervisor status`, `blackboard status`, `session graph status`, `continuity status`, `what sessions are connected?`, `what belongs together?`, `why did you choose that?`, `why do you believe that?`, `why is that true?`, `what supports that?`, `what could be wrong?`, `how certain are you?`, `what are the alternatives?`, `what's missing?`, `what's most useful next?`, `what changed?`, `what is stale?`, `what do you know for sure?`, `what should you verify next?`, `what is most useful now?`, `what evidence supports this?`, `show the plan first`, or `run the safe checks` to inspect the Cognitive Workspace packet, safe task graph, Agent OS episode, Runtime Spine checkpoints, Supervisor Core blackboard/handoffs, Session Graph continuity clusters, continuity cockpit action queue, Agency Convergence selected action, Logic Kernel claims, Truth Engine support, World Model proof debt, uncertainty, approval blockers, and useful next action. Use `that is stale`, `mark that current`, or `resolve that` only when you are intentionally correcting Andrea's belief state.
 - Say `what did you learn?`, `forget that`, or `do not learn from this` to inspect or steer memory.
+
+## Cognitive Executive
+
+The Cognitive Executive is Andrea's everyday routing loop for high-value asks like `what should I do next`, `what am I forgetting`, `help me plan tonight`, `what's still open`, `what should I say back`, `save that for later`, list readouts, and ambiguous `handle this for me` requests.
+
+It does not replace reminders, missions, action bundles, life threads, communication help, or the Cognitive Workspace. It sits above them, builds a small current-world snapshot, picks the narrowest useful existing capability, preserves approval gates, records the outcome, and keeps one short explanation for later.
+
+Useful explanation asks:
+
+- `why did you suggest that?`
+- `what are you using to decide this?`
+- `why didn't you add it to my calendar?`
+- `why are you bringing that up?`
+- `what's the current focus?`
+
+Boundaries stay the same: Andrea can answer, plan, draft, save, remind, and stage approvals through existing systems, but sends, calendar writes, deletes, service changes, commits, pushes, purchases, and other side effects still require the appropriate confirmation/proof path.
+
+## Repair Status And Tool Reliability
+
+Andrea now tracks a small reliability ledger for the routes, tools, providers, and integrations it depends on. That lets the Cognitive Executive lower confidence, choose a fallback, or explain a blocker when BlueBubbles, Alexa, Calendar, provider quota, or a work lane is degraded.
+
+Repair status is bounded. Andrea can diagnose, record cooldowns, refresh safe metadata, and tell you the exact next proof step. It does not secretly send messages, change calendar events, restart services, commit code, push branches, or make purchases.
+
+Operator checks:
+
+- `npm run debug:executive -- --refresh`
+- `npm run debug:repair`
+- `npm run integrations:heal -- --id bluebubbles --dry-run`
+- `npm run debug:agentic`
 
 Important Cursor rule:
 

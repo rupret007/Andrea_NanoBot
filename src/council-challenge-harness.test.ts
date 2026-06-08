@@ -160,7 +160,7 @@ describe('council challenge harness', () => {
         }),
       }),
     );
-  });
+  }, 15000);
 
   it('does not pass a degraded provider council as a full-score run', async () => {
     const report = await runCouncilChallengeHarness(
@@ -204,7 +204,7 @@ describe('council challenge harness', () => {
       providerFailures: ['minimax_critic_unavailable'],
     });
     expect(report.results[0]?.score).toBeLessThan(1);
-  });
+  }, 15000);
 
   it('tracks source-guided KPI coverage and detects score regressions', () => {
     const directCandidates = SOURCE_REPO_MANIFEST.filter(

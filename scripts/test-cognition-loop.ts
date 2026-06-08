@@ -42,8 +42,7 @@ const kernel = beginCognitiveKernelRun({
   channel: 'telegram',
   groupFolder: 'main',
   taskFamily: 'research',
-  goal:
-    'Research a safe public question using bounded read-only execution; stop when evidence metadata is sufficient.',
+  goal: 'Research a safe public question using bounded read-only execution; stop when evidence metadata is sufficient.',
   requestRoute: 'direct_assistant',
   selectedSkillId: 'research.live_or_saved',
   selectedSkillPurpose:
@@ -54,7 +53,10 @@ const kernel = beginCognitiveKernelRun({
   providerHealthSnapshots: [healthyProvider],
 });
 
-const steps = listCognitiveExecutionSteps({ runId: kernel.run.runId, limit: 50 });
+const steps = listCognitiveExecutionSteps({
+  runId: kernel.run.runId,
+  limit: 50,
+});
 const loopStates = listCognitiveExecutionLoopStates({
   runId: kernel.run.runId,
   limit: 10,

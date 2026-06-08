@@ -50,8 +50,7 @@ const kernel = beginCognitiveKernelRun({
   channel: 'telegram',
   groupFolder: 'main',
   taskFamily: 'operator',
-  goal:
-    'Handle operator turn from telegram via direct_assistant. Safe user intent: ultrathink a read-only diagnosis while known providers are degraded.',
+  goal: 'Handle operator turn from telegram via direct_assistant. Safe user intent: ultrathink a read-only diagnosis while known providers are degraded.',
   requestRoute: 'direct_assistant',
   selectedSkillId: 'operator.diagnostics',
   selectedSkillPurpose: 'Diagnose services without mutating state.',
@@ -110,7 +109,10 @@ assert.ok(
   spans.some((span) => span.spanKind === 'tool_simulation'),
   'trace should include tool simulation span',
 );
-assert.ok(simulations.length > 0, 'run should persist deterministic tool simulations');
+assert.ok(
+  simulations.length > 0,
+  'run should persist deterministic tool simulations',
+);
 assert.ok(
   cooldowns.some((cooldown) => cooldown.providerId === 'gemini_cloud'),
   'Gemini cooldown should be persisted when provider is blocked',
@@ -126,7 +128,10 @@ assert.ok(
 assert.equal(trace.replayPacket.privacy.rawPromptsStored, false);
 assert.equal(trace.replayPacket.privacy.rawPrivateBodiesStored, false);
 assert.equal(trace.replayPacket.privacy.hiddenReasoningStored, false);
-assert.doesNotMatch(serialized, /sk-|AIza|Bearer\s+|raw private body|chain-of-thought/i);
+assert.doesNotMatch(
+  serialized,
+  /sk-|AIza|Bearer\s+|raw private body|chain-of-thought/i,
+);
 
 console.log(
   JSON.stringify(

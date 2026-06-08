@@ -79,8 +79,7 @@ const bluebubbles = runDrill({
   approvalNeed: 'explicit',
   risk: 'high',
   channel: 'bluebubbles',
-  goal:
-    'Use sanitized BlueBubbles thread metadata to draft help; do not send any message.',
+  goal: 'Use sanitized BlueBubbles thread metadata to draft help; do not send any message.',
 });
 const operator = runDrill({
   name: 'operator',
@@ -89,8 +88,7 @@ const operator = runDrill({
   approvalNeed: 'explicit',
   risk: 'high',
   channel: 'system',
-  goal:
-    'Inspect operator diagnostics metadata and stage any repair instead of mutating services.',
+  goal: 'Inspect operator diagnostics metadata and stage any repair instead of mutating services.',
 });
 
 function artifactKinds(runId: string): string[] {
@@ -101,12 +99,8 @@ function artifactKinds(runId: string): string[] {
 
 assert.ok(artifactKinds(calendar.run.runId).includes('calendar_read'));
 assert.ok(artifactKinds(research.run.runId).includes('research_evidence'));
-assert.ok(
-  artifactKinds(bluebubbles.run.runId).includes('bluebubbles_digest'),
-);
-assert.ok(
-  artifactKinds(operator.run.runId).includes('operator_diagnostics'),
-);
+assert.ok(artifactKinds(bluebubbles.run.runId).includes('bluebubbles_digest'));
+assert.ok(artifactKinds(operator.run.runId).includes('operator_diagnostics'));
 
 const blueApproval = listCognitiveApprovalPackets({
   runId: bluebubbles.run.runId,
@@ -118,7 +112,10 @@ const operatorApproval = listCognitiveApprovalPackets({
   status: 'staged',
   limit: 20,
 });
-assert.ok(blueApproval.length >= 1, 'BlueBubbles send-adjacent work must stage approval');
+assert.ok(
+  blueApproval.length >= 1,
+  'BlueBubbles send-adjacent work must stage approval',
+);
 assert.ok(operatorApproval.length >= 1, 'operator work must stage approval');
 assert.equal(bluebubbles.run.status, 'awaiting_approval');
 assert.equal(operator.run.status, 'awaiting_approval');

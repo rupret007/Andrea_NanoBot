@@ -6,6 +6,8 @@ import {
   FLAGSHIP_PILOT_JOURNEYS,
 } from '../src/pilot-mode.js';
 import { refreshRecentResponseFeedbackTruth } from '../src/response-feedback.js';
+import { buildRepairDoctorReport } from '../src/integration-healer.js';
+import { buildToolReliabilityDoctorReport } from '../src/tool-reliability.js';
 import type { FieldTrialSurfaceTruth } from '../src/field-trial-readiness.js';
 import type { PilotJourneyId } from '../src/types.js';
 
@@ -180,6 +182,8 @@ async function main(): Promise<void> {
   const truth = buildFieldTrialOperatorTruth();
   const review = buildPilotReviewDigest();
   const alexaReview = buildAlexaUtteranceReviewDigest();
+  const reliability = buildToolReliabilityDoctorReport();
+  const repair = buildRepairDoctorReport();
   const attention = collectAttentionItems(truth);
   const lines = [
     '*Pilot Review*',
@@ -289,6 +293,22 @@ async function main(): Promise<void> {
     '',
     '*Response Feedback Loop*',
     ...formatResponseFeedbackLoop(),
+    '',
+    '*Executive Reliability And Repair*',
+    `- Degraded tool/route subjects: ${reliability.topDegraded.length}`,
+    ...(reliability.topDegraded.length
+      ? reliability.topDegraded.slice(0, 5).map((item) => {
+          return `- ${item.subjectId}: ${item.currentHealth} / score=${item.reliabilityScore.toFixed(2)} / cap=${item.confidenceCap.toFixed(2)} / next=${item.nextAction}`;
+        })
+      : ['- no degraded tool reliability subjects recorded yet']),
+    `- Repair attempts tracked: ${repair.attempts.length}`,
+    `- Active repair cooldowns: ${repair.cooldowns.length}`,
+    ...(repair.attempts[0]
+      ? [
+          `- latest_repair=${repair.attempts[0].integrationId}/${repair.attempts[0].playbookId} ${repair.attempts[0].status}`,
+          `  next=${repair.attempts[0].nextAction}`,
+        ]
+      : []),
     '',
     '*Alexa Utterance Review*',
     `- Signals tracked: ${alexaReview.totalSignals}`,

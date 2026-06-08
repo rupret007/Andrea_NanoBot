@@ -429,6 +429,39 @@ import {
   formatCognitiveDoctorReport,
   isCognitionDoctorRequest,
 } from './cognitive-kernel.js';
+import { buildAgentOSStatusText, isAgentOSNaturalRequest } from './agent-os.js';
+import { buildLogicStatusText, isLogicNaturalRequest } from './logic-kernel.js';
+import { buildTruthStatusText, isTruthNaturalRequest } from './truth-engine.js';
+import {
+  buildWorldModelStatusText,
+  isWorldModelNaturalRequest,
+} from './world-model.js';
+import {
+  buildAgentRuntimeSpineStatusText,
+  buildSupervisorStatusText,
+  isAgentRuntimeSpineNaturalRequest,
+  isSupervisorNaturalRequest,
+} from './agent-runtime-spine.js';
+import {
+  buildSessionGraphStatusText,
+  isSessionGraphNaturalRequest,
+} from './session-graph.js';
+import {
+  buildAgencyConvergenceStatusText,
+  isAgencyConvergenceNaturalRequest,
+} from './agency-convergence-loop.js';
+import {
+  buildCognitiveWorkspaceStatusText,
+  isCognitiveWorkspaceNaturalRequest,
+} from './cognitive-workspace.js';
+import {
+  beginCognitiveExecutiveTurn,
+  buildCognitiveExecutiveStatusText,
+  finalizeCognitiveExecutiveTurn,
+  formatLatestCognitiveExecutiveExplanation,
+  isCognitiveExecutiveCandidate,
+  isCognitiveExecutiveNaturalRequest,
+} from './cognitive-executive.js';
 import {
   AgentRuntimeName,
   AgentThreadState,
@@ -6508,6 +6541,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return false;
     }
 
+    const executiveContext = beginCognitiveExecutiveTurn({
+      rawAsk: lastContent,
+      channel: conversationChannel,
+      groupFolder: group.folder,
+      chatJid,
+      threadId: missedMessages.at(-1)?.thread_id || null,
+      actorId: missedMessages.at(-1)?.sender || null,
+      turnId: missedMessages.at(-1)?.id || null,
+      requestRoute: requestPolicy.route,
+      activeContextSummary: sharedSeed.summaryText,
+      priorSubjectData: sharedSeed.subjectData as Record<string, unknown>,
+      replyTo: missedMessages.at(-1)?.reply_to || null,
+      now,
+    });
     const pilotRecord = startConversationPilotProof(
       resolveCrossChannelPilotJourney(lastContent),
     );
@@ -6697,6 +6744,25 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
 
       clearActionLayerContext(chatJid);
+      finalizeCognitiveExecutiveTurn({
+        context: executiveContext,
+        status: result.reminderTaskId ? 'handled' : 'handled',
+        resultSummary:
+          result.replyText ||
+          result.bridgeSaveForLaterText ||
+          result.bridgeDraftReference ||
+          result.capabilityResult?.conversationSeed?.summaryText ||
+          'Shared assistant completion handled the follow-up.',
+        changedSummary: result.reminderTaskId
+          ? 'A reminder was created through the existing completion flow.'
+          : result.bridgeSaveForLaterText
+            ? 'The referenced context was saved through the existing life-thread flow.'
+            : null,
+        nextAction:
+          result.capabilityResult?.conversationSeed?.summaryText ||
+          'Use the existing follow-up controls if more action is needed.',
+        now,
+      });
       logger.info(
         {
           component: 'assistant',
@@ -6714,6 +6780,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      finalizeCognitiveExecutiveTurn({
+        context: executiveContext,
+        status: 'failed',
+        resultSummary:
+          err instanceof Error
+            ? err.message
+            : 'Shared assistant completion failed.',
+        blockerClass: 'assistant_completion_send_failed',
+        nextAction: 'Retry the same follow-up after the send path is healthy.',
+        now,
+      });
       completeConversationPilotProof(pilotRecord, {
         outcome: 'internal_failure',
         blockerClass: 'assistant_completion_send_failed',
@@ -6801,7 +6878,76 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         }
       }
     }
+    let priorDailyContext: DailyCompanionContext | null = null;
+    let selectedWork: SelectedWorkContext | null = null;
+    let selectedWorkLoaded = false;
+    const loadSelectedWorkForExecutive =
+      async (): Promise<SelectedWorkContext | null> => {
+        if (!selectedWorkLoaded) {
+          selectedWork = await getSelectedDailyWorkContext(
+            chatJid,
+            missedMessages.at(-1)?.thread_id,
+          );
+          selectedWorkLoaded = true;
+        }
+        return selectedWork;
+      };
+    const executiveContext = isCognitiveExecutiveCandidate(lastContent)
+      ? beginCognitiveExecutiveTurn({
+          rawAsk: lastContent,
+          channel: conversationChannel,
+          groupFolder: group.folder,
+          chatJid,
+          threadId: missedMessages.at(-1)?.thread_id || null,
+          actorId: missedMessages.at(-1)?.sender || null,
+          turnId: missedMessages.at(-1)?.id || null,
+          requestRoute: requestPolicy.route,
+          selectedWork: await loadSelectedWorkForExecutive(),
+          activeContextSummary:
+            priorAssistantCapabilitySeed?.summaryText ||
+            (priorDailyContext = getDailyCompanionContext(chatJid, now))
+              ?.summaryText ||
+            null,
+          priorSubjectData: priorAssistantCapabilitySeed?.subjectData as Record<
+            string,
+            unknown
+          > | null,
+          replyTo: missedMessages.at(-1)?.reply_to || null,
+          capabilityMatchOverride: capabilityMatch,
+          now,
+        })
+      : null;
+    if (executiveContext?.capabilityMatch) {
+      capabilityMatch = executiveContext.capabilityMatch;
+      if (capabilityRouteSource === 'deterministic_fallback') {
+        capabilityRouteSource = 'deterministic_fallback';
+      }
+    }
     if (!capabilityMatch) {
+      if (executiveContext?.plan.selectedRoute === 'clarify') {
+        const clarification =
+          executiveContext.plan.explanation ||
+          'I need one more detail before I can route that safely.';
+        await sendAssistantReplyWithFeedback({
+          text: `${clarification}\n\nWhat exactly do you want me to handle?`,
+          routeKey: executiveContext.plan.routeKey,
+          capabilityId: null,
+          handlerKind: 'local_cognitive_executive',
+          responseSource: 'local_companion',
+          traceReason:
+            'cognitive executive asked for clarification before action selection',
+        });
+        finalizeCognitiveExecutiveTurn({
+          context: executiveContext,
+          status: 'clarified',
+          resultSummary: 'Asked one clarifying question before taking action.',
+          nextAction:
+            'Wait for the user to provide the target, timing, or approval context.',
+          now,
+        });
+        clearSharedAssistantCapabilitySeed(chatJid);
+        return true;
+      }
       return false;
     }
     rememberOpenAiGuidedRoutingState({
@@ -6822,11 +6968,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       selectedModel: openAiGuidedRouteResult?.decision?.selectedModel || null,
       providerMode: openAiGuidedRouteResult?.decision?.providerMode || null,
     });
-    const priorDailyContext = getDailyCompanionContext(chatJid, now);
-    const selectedWork = await getSelectedDailyWorkContext(
-      chatJid,
-      missedMessages.at(-1)?.thread_id,
-    );
+    if (!priorDailyContext) {
+      priorDailyContext = getDailyCompanionContext(chatJid, now);
+    }
+    if (!selectedWorkLoaded) {
+      selectedWork = await loadSelectedWorkForExecutive();
+    }
     const pilotRecord = startConversationPilotProof(
       resolvePilotJourneyFromCapability({
         capabilityId: capabilityMatch.capabilityId,
@@ -6864,6 +7011,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         }),
       });
     } catch (err) {
+      finalizeCognitiveExecutiveTurn({
+        context: executiveContext,
+        status: 'failed',
+        resultSummary:
+          err instanceof Error ? err.message : 'Assistant capability failed.',
+        blockerClass: 'assistant_capability_runtime_failed',
+        nextAction:
+          'Retry after the selected capability runtime path is healthy.',
+        fallbackUsed: capabilityRouteSource === 'deterministic_fallback',
+        now,
+      });
       completeConversationPilotProof(pilotRecord, {
         outcome: 'internal_failure',
         blockerClass: 'assistant_capability_runtime_failed',
@@ -6874,6 +7032,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       throw err;
     }
     if (!result.handled) {
+      finalizeCognitiveExecutiveTurn({
+        context: executiveContext,
+        status: 'failed',
+        resultSummary:
+          'The selected capability declined this turn after route selection.',
+        blockerClass: 'assistant_capability_declined',
+        nextAction:
+          'Fall back to a direct answer or ask one clarifying question.',
+        fallbackUsed: true,
+        now,
+      });
       return false;
     }
 
@@ -7171,8 +7340,40 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           explicitHandoffCreated,
         ),
       );
+      finalizeCognitiveExecutiveTurn({
+        context: executiveContext,
+        status: result.messageAction?.requiresApproval
+          ? 'approval_staged'
+          : 'handled',
+        resultSummary:
+          result.replyText ||
+          result.conversationSeed?.summaryText ||
+          `Handled ${result.capabilityId || capabilityMatch.capabilityId}.`,
+        changedSummary: result.messageAction
+          ? 'A message action draft was prepared through the existing approval-first path.'
+          : result.lifeThreadResult?.referencedThread
+            ? 'A life-thread reference was updated through the existing path.'
+            : null,
+        nextAction: result.messageAction?.requiresApproval
+          ? 'Wait for explicit same-thread approval before sending.'
+          : result.continuationCandidate?.voiceSummary ||
+            result.conversationSeed?.summaryText ||
+            'Use the presented follow-up controls if needed.',
+        fallbackUsed: capabilityRouteSource === 'deterministic_fallback',
+        now,
+      });
       return true;
     } catch (err) {
+      finalizeCognitiveExecutiveTurn({
+        context: executiveContext,
+        status: 'failed',
+        resultSummary:
+          err instanceof Error ? err.message : 'Assistant capability failed.',
+        blockerClass: 'assistant_capability_send_failed',
+        nextAction: 'Retry after the selected capability send path is healthy.',
+        fallbackUsed: capabilityRouteSource === 'deterministic_fallback',
+        now,
+      });
       completeConversationPilotProof(pilotRecord, {
         outcome: 'internal_failure',
         blockerClass: 'assistant_capability_send_failed',
@@ -7520,12 +7721,65 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
 
   const tryHandleCognitionDoctor = async (): Promise<boolean> => {
-    if (!isCognitionDoctorRequest(lastContent)) {
+    if (
+      !isCognitionDoctorRequest(lastContent) &&
+      !isAgentOSNaturalRequest(lastContent) &&
+      !isLogicNaturalRequest(lastContent) &&
+      !isTruthNaturalRequest(lastContent) &&
+      !isWorldModelNaturalRequest(lastContent) &&
+      !isAgentRuntimeSpineNaturalRequest(lastContent) &&
+      !isSupervisorNaturalRequest(lastContent) &&
+      !isSessionGraphNaturalRequest(lastContent) &&
+      !isAgencyConvergenceNaturalRequest(lastContent) &&
+      !isCognitiveWorkspaceNaturalRequest(lastContent) &&
+      !isCognitiveExecutiveNaturalRequest(lastContent)
+    ) {
       return false;
     }
 
+    if (
+      isCognitiveExecutiveNaturalRequest(lastContent) &&
+      /\b(why did you suggest that|why did you choose|what are you using to decide|why didn'?t you|why are you bringing that up|current focus)\b/i.test(
+        lastContent,
+      )
+    ) {
+      await sendAssistantReplyWithFeedback({
+        text: formatLatestCognitiveExecutiveExplanation(),
+        routeKey: 'cognitive_executive.explain',
+        capabilityId: 'cognition.status',
+        handlerKind: 'local_cognitive_executive',
+        responseSource: 'local_companion',
+        traceReason:
+          'answered executive route explanation from local metadata ledger',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
+
     await sendAssistantReplyWithFeedback({
-      text: formatCognitiveDoctorReport(buildCognitiveDoctorReport()),
+      text: [
+        formatCognitiveDoctorReport(buildCognitiveDoctorReport()),
+        '',
+        buildAgentOSStatusText(),
+        '',
+        buildLogicStatusText(),
+        '',
+        buildTruthStatusText(),
+        '',
+        buildWorldModelStatusText(),
+        '',
+        buildAgentRuntimeSpineStatusText(),
+        '',
+        buildSupervisorStatusText(),
+        '',
+        buildSessionGraphStatusText(),
+        '',
+        buildAgencyConvergenceStatusText(),
+        '',
+        buildCognitiveWorkspaceStatusText(),
+        '',
+        buildCognitiveExecutiveStatusText(),
+      ].join('\n'),
       routeKey: 'cognition.doctor',
       capabilityId: 'cognition.status',
       handlerKind: 'local_cognition_doctor',

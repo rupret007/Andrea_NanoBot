@@ -22,8 +22,7 @@ function runSuccess(iteration: number) {
     channel: 'telegram',
     groupFolder: 'main',
     taskFamily: 'research',
-    goal:
-      'Handle research turn from telegram via direct_assistant. Safe user intent: compare options using local context first and public search only for gaps.',
+    goal: 'Handle research turn from telegram via direct_assistant. Safe user intent: compare options using local context first and public search only for gaps.',
     requestRoute: 'direct_assistant',
     selectedSkillId: 'research.live_or_saved',
     selectedSkillPurpose: 'Answer from live providers or saved context.',
@@ -67,8 +66,7 @@ const failure = beginCognitiveKernelRun({
   channel: 'telegram',
   groupFolder: 'main',
   taskFamily: 'communication',
-  goal:
-    'Communication task from bluebubbles; raw message body stays local. Shape: words=5; question=false; action=true.',
+  goal: 'Communication task from bluebubbles; raw message body stays local. Shape: words=5; question=false; action=true.',
   requestRoute: 'bluebubbles.direct',
   selectedSkillId: 'communication.reply_help',
   selectedSkillPurpose: 'Draft replies while preserving send approval.',

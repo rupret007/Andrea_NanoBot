@@ -40,11 +40,11 @@ const readOnlyRun = beginCognitiveKernelRun({
   channel: 'telegram',
   groupFolder: 'main',
   taskFamily: 'calendar',
-  goal:
-    "What's on my calendar tomorrow? Use read-only evidence and do not change anything.",
+  goal: "What's on my calendar tomorrow? Use read-only evidence and do not change anything.",
   requestRoute: 'direct_assistant',
   selectedSkillId: 'calendar.read',
-  selectedSkillPurpose: 'Answer a calendar question from read-only status/evidence.',
+  selectedSkillPurpose:
+    'Answer a calendar question from read-only status/evidence.',
   selectedSkillApprovalNeed: 'none',
   selectedSkillSideEffectRisk: 'low',
   selectedSkillEvidenceLevel: 'partial',
@@ -68,7 +68,14 @@ const revisions = listCognitivePlanRevisions({
   limit: 50,
 });
 const trace = buildCognitiveTraceReport({ runId: readOnlyRun.run.runId });
-const serialized = JSON.stringify({ readOnlyRun, steps, decisions, results, revisions, trace });
+const serialized = JSON.stringify({
+  readOnlyRun,
+  steps,
+  decisions,
+  results,
+  revisions,
+  trace,
+});
 
 assert.ok(steps.length >= 4, 'read-only run should persist execution steps');
 assert.equal(decisions.length, steps.length);
@@ -85,7 +92,10 @@ assert.ok(
 );
 assert.notEqual(trace.executionStatus, 'none');
 assert.ok(trace.executedStepCount >= 1);
-assert.ok(revisions.length >= 1, 'executor should record a plan revision or success path');
+assert.ok(
+  revisions.length >= 1,
+  'executor should record a plan revision or success path',
+);
 assert.doesNotMatch(
   serialized,
   /sk-|AIza|Bearer\s+|raw private body text|raw message body text|chain-of-thought/i,
@@ -96,11 +106,11 @@ const approvalRun = beginCognitiveKernelRun({
   channel: 'bluebubbles',
   groupFolder: 'main',
   taskFamily: 'communication',
-  goal:
-    'Communication task from bluebubbles; raw message body stays local. Shape: words=6; question=false; action=true.',
+  goal: 'Communication task from bluebubbles; raw message body stays local. Shape: words=6; question=false; action=true.',
   requestRoute: 'bluebubbles.direct',
   selectedSkillId: 'communication.reply_help',
-  selectedSkillPurpose: 'Draft a reply but require explicit same-thread approval.',
+  selectedSkillPurpose:
+    'Draft a reply but require explicit same-thread approval.',
   selectedSkillApprovalNeed: 'explicit',
   selectedSkillSideEffectRisk: 'high',
   selectedSkillEvidenceLevel: 'partial',
@@ -120,8 +130,7 @@ assert.equal(approvalRun.run.status, 'awaiting_approval');
 assert.ok(
   approvalSteps.some(
     (step) =>
-      step.toolId === 'bluebubbles_draft' &&
-      step.status === 'approval_staged',
+      step.toolId === 'bluebubbles_draft' && step.status === 'approval_staged',
   ),
   'BlueBubbles draft must stage approval instead of executing a send',
 );
