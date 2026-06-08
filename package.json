@@ -122,6 +122,7 @@
     "debug:agentic": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-agentic.ts",
     "debug:skills": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-skills.ts",
     "debug:learning": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-learning.ts",
+    "debug:improvement": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-improvement.ts",
     "debug:credentials": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-providers.ts credentials",
     "debug:alerts": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-providers.ts alerts",
     "integrations:status": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/integrations.ts status",
@@ -167,7 +168,8 @@
     "test:memory-distillation": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-memory-distillation.ts",
     "test:skill-library": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-skill-library.ts",
     "test:learning-controls": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-learning-controls.ts",
-    "test:learning-privacy": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-learning-privacy.ts"
+    "test:learning-privacy": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-learning-privacy.ts",
+    "test:self-improvement": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-self-improvement.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

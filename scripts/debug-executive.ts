@@ -8,6 +8,10 @@ import {
   formatToolReliabilityReport,
   refreshToolReliabilityFromCurrentTruth,
 } from '../src/tool-reliability.js';
+import {
+  buildAutonomousImprovementLabReport,
+  formatAutonomousImprovementLabReport,
+} from '../src/autonomous-improvement-lab.js';
 
 async function main(): Promise<void> {
   initDatabase();
@@ -19,13 +23,16 @@ async function main(): Promise<void> {
   }
   const executive = buildStoredCognitiveExecutiveReport();
   const reliability = buildToolReliabilityDoctorReport();
+  const improvement = buildAutonomousImprovementLabReport();
   if (json) {
-    console.log(JSON.stringify({ executive, reliability }, null, 2));
+    console.log(JSON.stringify({ executive, reliability, improvement }, null, 2));
     return;
   }
   console.log(formatCognitiveExecutiveReport(executive));
   console.log('');
   console.log(formatToolReliabilityReport(reliability));
+  console.log('');
+  console.log(formatAutonomousImprovementLabReport(improvement));
 }
 
 main().catch((err) => {

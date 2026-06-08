@@ -5028,6 +5028,112 @@ export interface HarnessImprovementProposal {
   privacyJson: string;
 }
 
+export type ImprovementHypothesisStatus =
+  | 'proposed'
+  | 'simulated'
+  | 'patch_planned'
+  | 'validated'
+  | 'blocked'
+  | 'rejected'
+  | 'archived';
+
+export type ImprovementRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+export type ImprovementSourceSignalKind =
+  | 'pilot_proof_gap'
+  | 'repair_attempt'
+  | 'tool_reliability'
+  | 'executive_reflection'
+  | 'learning_distillation'
+  | 'skill_run'
+  | 'harness_proposal'
+  | 'response_feedback'
+  | 'message_action'
+  | 'task_failure';
+
+export type ImprovementFixClass =
+  | 'external_manual_proof'
+  | 'external_config'
+  | 'diagnostic_observation'
+  | 'repair_playbook'
+  | 'route_calibration'
+  | 'skill_adjustment'
+  | 'eval_gap'
+  | 'debug_wording'
+  | 'docs_or_test'
+  | 'unsafe_or_requires_approval';
+
+export interface ImprovementHypothesis {
+  hypothesisId: string;
+  createdAt: string;
+  updatedAt: string;
+  title: string;
+  sourceSignalKind: ImprovementSourceSignalKind;
+  sourceSignalIdsJson: string;
+  affectedCapability: string;
+  expectedBenefit: string;
+  riskLevel: ImprovementRiskLevel;
+  confidence: number;
+  priorityScore: number;
+  proposedTest: string;
+  status: ImprovementHypothesisStatus;
+  fixClass: ImprovementFixClass;
+  externalBlocker: boolean;
+  safetyNotes: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface ImprovementExperiment {
+  experimentId: string;
+  hypothesisId: string;
+  createdAt: string;
+  updatedAt: string;
+  scenarioIdsJson: string;
+  baselineScore: number;
+  candidateScore: number;
+  safetyResult: 'pass' | 'warn' | 'fail' | 'not_run';
+  decision:
+    | 'do_not_patch'
+    | 'prepare_patch_plan'
+    | 'needs_approval'
+    | 'validated'
+    | 'failed';
+  summary: string;
+  privacyJson: string;
+}
+
+export interface CandidatePatchPlan {
+  patchPlanId: string;
+  hypothesisId: string;
+  createdAt: string;
+  updatedAt: string;
+  filesLikelyAffectedJson: string;
+  changeIntent: string;
+  testPlanJson: string;
+  rollbackPlan: string;
+  approvalRequirement:
+    | 'none'
+    | 'explicit_approval'
+    | 'main_control'
+    | 'manual_external';
+  riskLevel: ImprovementRiskLevel;
+  status: 'planned' | 'approved' | 'rejected' | 'implemented' | 'archived';
+  privacyJson: string;
+}
+
+export interface ImprovementOutcome {
+  outcomeId: string;
+  hypothesisId: string;
+  createdAt: string;
+  result: 'improved' | 'regressed' | 'neutral' | 'blocked' | 'not_applied';
+  improvedSummary: string;
+  regressedSummary: string;
+  nextAction: string;
+  learnedLesson: string;
+  privacyJson: string;
+}
+
 export interface HarnessLabReport {
   generatedAt: string;
   ok: boolean;

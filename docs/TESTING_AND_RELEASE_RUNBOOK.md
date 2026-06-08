@@ -501,11 +501,13 @@ For pilot-mode and daily dogfooding specifically, also validate:
 - `npm run debug:pilot`
 - `npm run debug:learning`
 - `npm run debug:skills`
+- `npm run debug:improvement`
 - `npm run test:world-learning`
 - `npm run test:memory-distillation`
 - `npm run test:skill-library`
 - `npm run test:learning-controls`
 - `npm run test:learning-privacy`
+- `npm run test:self-improvement`
 - one flagship ordinary-chat turn: `hi` or `what's up`
 - one daily-guidance turn: `what am I forgetting`
 - one Candace follow-through chain:

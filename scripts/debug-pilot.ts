@@ -8,6 +8,7 @@ import {
 import { refreshRecentResponseFeedbackTruth } from '../src/response-feedback.js';
 import { buildRepairDoctorReport } from '../src/integration-healer.js';
 import { buildToolReliabilityDoctorReport } from '../src/tool-reliability.js';
+import { buildAutonomousImprovementLabReport } from '../src/autonomous-improvement-lab.js';
 import type { FieldTrialSurfaceTruth } from '../src/field-trial-readiness.js';
 import type { PilotJourneyId } from '../src/types.js';
 
@@ -184,6 +185,7 @@ async function main(): Promise<void> {
   const alexaReview = buildAlexaUtteranceReviewDigest();
   const reliability = buildToolReliabilityDoctorReport();
   const repair = buildRepairDoctorReport();
+  const improvement = buildAutonomousImprovementLabReport();
   const attention = collectAttentionItems(truth);
   const lines = [
     '*Pilot Review*',
@@ -309,6 +311,16 @@ async function main(): Promise<void> {
           `  next=${repair.attempts[0].nextAction}`,
         ]
       : []),
+    '',
+    '*Improvement Lab*',
+    `- Hypotheses: ${improvement.hypotheses.length}`,
+    `- Active experiment plans: ${improvement.experiments.length}`,
+    `- Candidate patch plans: ${improvement.patchPlans.length}`,
+    ...(improvement.topCandidates.length
+      ? improvement.topCandidates.slice(0, 5).map((item) => {
+          return `- ${item.affectedCapability}: priority=${item.priorityScore.toFixed(2)} / fix=${item.fixClass} / external=${item.externalBlocker ? 'yes' : 'no'} / next=${item.nextAction}`;
+        })
+      : ['- no improvement hypotheses mined yet']),
     '',
     '*Alexa Utterance Review*',
     `- Signals tracked: ${alexaReview.totalSignals}`,

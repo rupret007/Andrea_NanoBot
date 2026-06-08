@@ -105,8 +105,24 @@ Operator checks:
 
 - `npm run debug:executive -- --refresh`
 - `npm run debug:repair`
+- `npm run debug:improvement`
 - `npm run integrations:heal -- --id bluebubbles --dry-run`
 - `npm run debug:agentic`
+
+## Autonomous Improvement Lab
+
+Andrea can now mine existing pilot, repair, reliability, learning, skill, executive, harness, and feedback metadata into improvement hypotheses. This is bounded self-improvement infrastructure, not autonomous self-modification.
+
+The lab produces:
+
+- hypotheses about repeated friction or missing proof,
+- simulation-first experiments,
+- candidate patch plans for human review,
+- outcomes and lessons for future dogfooding.
+
+It intentionally separates external proof debt from repo bugs. Missing Telegram user-session credentials, Alexa signed `IntentRequest` proof, and BlueBubbles same-thread proof may appear as high-priority operator items, but the lab will not pretend a code patch can complete those live steps.
+
+Safety boundaries stay firm. The lab does not create branches, apply product-behavior patches, restart services, send messages, write calendars, change credentials, commit, push, or mutate live channels automatically. Patch output is plans only unless you explicitly ask for implementation.
 
 Important Cursor rule:
 

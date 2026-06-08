@@ -39,11 +39,15 @@ import {
   AgentOSToolCard,
   AgentOSTaskNode,
   AgentOSTrajectoryEval,
+  CandidatePatchPlan,
   HarnessEvalTask,
   HarnessImprovementProposal,
   HarnessScorecard,
   HarnessTrajectory,
   HarnessVariant,
+  ImprovementExperiment,
+  ImprovementHypothesis,
+  ImprovementOutcome,
   LogicBeliefRevision,
   LogicBeliefState,
   LogicClaim,
@@ -3734,6 +3738,77 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_harness_improvement_proposals_status
       ON harness_improvement_proposals(status, expected_score_delta DESC, created_at DESC);
+    CREATE TABLE IF NOT EXISTS improvement_hypotheses (
+      hypothesis_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      title TEXT NOT NULL,
+      source_signal_kind TEXT NOT NULL,
+      source_signal_ids_json TEXT NOT NULL,
+      affected_capability TEXT NOT NULL,
+      expected_benefit TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      priority_score REAL NOT NULL,
+      proposed_test TEXT NOT NULL,
+      status TEXT NOT NULL,
+      fix_class TEXT NOT NULL,
+      external_blocker INTEGER NOT NULL,
+      safety_notes TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_improvement_hypotheses_priority
+      ON improvement_hypotheses(status, priority_score DESC, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_improvement_hypotheses_capability
+      ON improvement_hypotheses(affected_capability, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS improvement_experiments (
+      experiment_id TEXT PRIMARY KEY,
+      hypothesis_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      scenario_ids_json TEXT NOT NULL,
+      baseline_score REAL NOT NULL,
+      candidate_score REAL NOT NULL,
+      safety_result TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (hypothesis_id) REFERENCES improvement_hypotheses(hypothesis_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_improvement_experiments_hypothesis
+      ON improvement_experiments(hypothesis_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS candidate_patch_plans (
+      patch_plan_id TEXT PRIMARY KEY,
+      hypothesis_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      files_likely_affected_json TEXT NOT NULL,
+      change_intent TEXT NOT NULL,
+      test_plan_json TEXT NOT NULL,
+      rollback_plan TEXT NOT NULL,
+      approval_requirement TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      status TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (hypothesis_id) REFERENCES improvement_hypotheses(hypothesis_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_candidate_patch_plans_status
+      ON candidate_patch_plans(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS improvement_outcomes (
+      outcome_id TEXT PRIMARY KEY,
+      hypothesis_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      result TEXT NOT NULL,
+      improved_summary TEXT NOT NULL,
+      regressed_summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      learned_lesson TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (hypothesis_id) REFERENCES improvement_hypotheses(hypothesis_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_improvement_outcomes_hypothesis
+      ON improvement_outcomes(hypothesis_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS runtime_orchestration_jobs (
       job_id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -24398,6 +24473,400 @@ export function listHarnessImprovementProposals(
     Parameters<typeof mapHarnessImprovementProposalRow>[0]
   >;
   return rows.map((row) => mapHarnessImprovementProposalRow(row));
+}
+
+function mapImprovementHypothesisRow(row: {
+  hypothesis_id: string;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  source_signal_kind: ImprovementHypothesis['sourceSignalKind'];
+  source_signal_ids_json: string;
+  affected_capability: string;
+  expected_benefit: string;
+  risk_level: ImprovementHypothesis['riskLevel'];
+  confidence: number;
+  priority_score: number;
+  proposed_test: string;
+  status: ImprovementHypothesis['status'];
+  fix_class: ImprovementHypothesis['fixClass'];
+  external_blocker: number;
+  safety_notes: string;
+  next_action: string;
+  privacy_json: string;
+}): ImprovementHypothesis {
+  return {
+    hypothesisId: row.hypothesis_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    title: row.title,
+    sourceSignalKind: row.source_signal_kind,
+    sourceSignalIdsJson: row.source_signal_ids_json,
+    affectedCapability: row.affected_capability,
+    expectedBenefit: row.expected_benefit,
+    riskLevel: row.risk_level,
+    confidence: row.confidence,
+    priorityScore: row.priority_score,
+    proposedTest: row.proposed_test,
+    status: row.status,
+    fixClass: row.fix_class,
+    externalBlocker: row.external_blocker === 1,
+    safetyNotes: row.safety_notes,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertImprovementHypothesis(
+  record: ImprovementHypothesis,
+): void {
+  db.prepare(
+    `
+      INSERT INTO improvement_hypotheses (
+        hypothesis_id, created_at, updated_at, title, source_signal_kind,
+        source_signal_ids_json, affected_capability, expected_benefit,
+        risk_level, confidence, priority_score, proposed_test, status,
+        fix_class, external_blocker, safety_notes, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(hypothesis_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        title = excluded.title,
+        source_signal_kind = excluded.source_signal_kind,
+        source_signal_ids_json = excluded.source_signal_ids_json,
+        affected_capability = excluded.affected_capability,
+        expected_benefit = excluded.expected_benefit,
+        risk_level = excluded.risk_level,
+        confidence = excluded.confidence,
+        priority_score = excluded.priority_score,
+        proposed_test = excluded.proposed_test,
+        status = excluded.status,
+        fix_class = excluded.fix_class,
+        external_blocker = excluded.external_blocker,
+        safety_notes = excluded.safety_notes,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.hypothesisId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.title, 320),
+    record.sourceSignalKind,
+    sanitizeStoredIdArrayJson(record.sourceSignalIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.affectedCapability, 240),
+    redactStoredCognitiveMetadata(record.expectedBenefit, 900),
+    record.riskLevel,
+    record.confidence,
+    record.priorityScore,
+    redactStoredCognitiveMetadata(record.proposedTest, 900),
+    record.status,
+    record.fixClass,
+    record.externalBlocker ? 1 : 0,
+    redactStoredCognitiveMetadata(record.safetyNotes, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listImprovementHypotheses(
+  params: {
+    status?: ImprovementHypothesis['status'];
+    affectedCapability?: string;
+    externalBlocker?: boolean;
+    limit?: number;
+  } = {},
+): ImprovementHypothesis[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  if (params.affectedCapability) {
+    clauses.push('affected_capability = ?');
+    args.push(params.affectedCapability);
+  }
+  if (typeof params.externalBlocker === 'boolean') {
+    clauses.push('external_blocker = ?');
+    args.push(params.externalBlocker ? 1 : 0);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM improvement_hypotheses
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY priority_score DESC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapImprovementHypothesisRow>[0]>;
+  return rows.map((row) => mapImprovementHypothesisRow(row));
+}
+
+function mapImprovementExperimentRow(row: {
+  experiment_id: string;
+  hypothesis_id: string;
+  created_at: string;
+  updated_at: string;
+  scenario_ids_json: string;
+  baseline_score: number;
+  candidate_score: number;
+  safety_result: ImprovementExperiment['safetyResult'];
+  decision: ImprovementExperiment['decision'];
+  summary: string;
+  privacy_json: string;
+}): ImprovementExperiment {
+  return {
+    experimentId: row.experiment_id,
+    hypothesisId: row.hypothesis_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    scenarioIdsJson: row.scenario_ids_json,
+    baselineScore: row.baseline_score,
+    candidateScore: row.candidate_score,
+    safetyResult: row.safety_result,
+    decision: row.decision,
+    summary: row.summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertImprovementExperiment(
+  record: ImprovementExperiment,
+): void {
+  db.prepare(
+    `
+      INSERT INTO improvement_experiments (
+        experiment_id, hypothesis_id, created_at, updated_at, scenario_ids_json,
+        baseline_score, candidate_score, safety_result, decision, summary,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(experiment_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        scenario_ids_json = excluded.scenario_ids_json,
+        baseline_score = excluded.baseline_score,
+        candidate_score = excluded.candidate_score,
+        safety_result = excluded.safety_result,
+        decision = excluded.decision,
+        summary = excluded.summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.experimentId,
+    record.hypothesisId,
+    record.createdAt,
+    record.updatedAt,
+    sanitizeStoredIdArrayJson(record.scenarioIdsJson, 3200),
+    record.baselineScore,
+    record.candidateScore,
+    record.safetyResult,
+    record.decision,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listImprovementExperiments(
+  params: { hypothesisId?: string; limit?: number } = {},
+): ImprovementExperiment[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.hypothesisId) {
+    clauses.push('hypothesis_id = ?');
+    args.push(params.hypothesisId);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM improvement_experiments
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapImprovementExperimentRow>[0]>;
+  return rows.map((row) => mapImprovementExperimentRow(row));
+}
+
+function mapCandidatePatchPlanRow(row: {
+  patch_plan_id: string;
+  hypothesis_id: string;
+  created_at: string;
+  updated_at: string;
+  files_likely_affected_json: string;
+  change_intent: string;
+  test_plan_json: string;
+  rollback_plan: string;
+  approval_requirement: CandidatePatchPlan['approvalRequirement'];
+  risk_level: CandidatePatchPlan['riskLevel'];
+  status: CandidatePatchPlan['status'];
+  privacy_json: string;
+}): CandidatePatchPlan {
+  return {
+    patchPlanId: row.patch_plan_id,
+    hypothesisId: row.hypothesis_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    filesLikelyAffectedJson: row.files_likely_affected_json,
+    changeIntent: row.change_intent,
+    testPlanJson: row.test_plan_json,
+    rollbackPlan: row.rollback_plan,
+    approvalRequirement: row.approval_requirement,
+    riskLevel: row.risk_level,
+    status: row.status,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCandidatePatchPlan(record: CandidatePatchPlan): void {
+  db.prepare(
+    `
+      INSERT INTO candidate_patch_plans (
+        patch_plan_id, hypothesis_id, created_at, updated_at,
+        files_likely_affected_json, change_intent, test_plan_json,
+        rollback_plan, approval_requirement, risk_level, status, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(patch_plan_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        files_likely_affected_json = excluded.files_likely_affected_json,
+        change_intent = excluded.change_intent,
+        test_plan_json = excluded.test_plan_json,
+        rollback_plan = excluded.rollback_plan,
+        approval_requirement = excluded.approval_requirement,
+        risk_level = excluded.risk_level,
+        status = excluded.status,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.patchPlanId,
+    record.hypothesisId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.filesLikelyAffectedJson, 3200),
+    redactStoredCognitiveMetadata(record.changeIntent, 900),
+    redactStoredCognitiveMetadata(record.testPlanJson, 2400),
+    redactStoredCognitiveMetadata(record.rollbackPlan, 900),
+    record.approvalRequirement,
+    record.riskLevel,
+    record.status,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCandidatePatchPlans(
+  params: {
+    hypothesisId?: string;
+    status?: CandidatePatchPlan['status'];
+    limit?: number;
+  } = {},
+): CandidatePatchPlan[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.hypothesisId) {
+    clauses.push('hypothesis_id = ?');
+    args.push(params.hypothesisId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM candidate_patch_plans
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCandidatePatchPlanRow>[0]>;
+  return rows.map((row) => mapCandidatePatchPlanRow(row));
+}
+
+function mapImprovementOutcomeRow(row: {
+  outcome_id: string;
+  hypothesis_id: string;
+  created_at: string;
+  result: ImprovementOutcome['result'];
+  improved_summary: string;
+  regressed_summary: string;
+  next_action: string;
+  learned_lesson: string;
+  privacy_json: string;
+}): ImprovementOutcome {
+  return {
+    outcomeId: row.outcome_id,
+    hypothesisId: row.hypothesis_id,
+    createdAt: row.created_at,
+    result: row.result,
+    improvedSummary: row.improved_summary,
+    regressedSummary: row.regressed_summary,
+    nextAction: row.next_action,
+    learnedLesson: row.learned_lesson,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertImprovementOutcome(record: ImprovementOutcome): void {
+  db.prepare(
+    `
+      INSERT INTO improvement_outcomes (
+        outcome_id, hypothesis_id, created_at, result, improved_summary,
+        regressed_summary, next_action, learned_lesson, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(outcome_id) DO UPDATE SET
+        result = excluded.result,
+        improved_summary = excluded.improved_summary,
+        regressed_summary = excluded.regressed_summary,
+        next_action = excluded.next_action,
+        learned_lesson = excluded.learned_lesson,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.outcomeId,
+    record.hypothesisId,
+    record.createdAt,
+    record.result,
+    redactStoredCognitiveMetadata(record.improvedSummary, 900),
+    redactStoredCognitiveMetadata(record.regressedSummary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.learnedLesson, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listImprovementOutcomes(
+  params: { hypothesisId?: string; limit?: number } = {},
+): ImprovementOutcome[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.hypothesisId) {
+    clauses.push('hypothesis_id = ?');
+    args.push(params.hypothesisId);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM improvement_outcomes
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapImprovementOutcomeRow>[0]>;
+  return rows.map((row) => mapImprovementOutcomeRow(row));
 }
 
 export function pruneCognitiveKernelData(params: {
