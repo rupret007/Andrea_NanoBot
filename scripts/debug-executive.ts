@@ -12,6 +12,10 @@ import {
   buildAutonomousImprovementLabReport,
   formatAutonomousImprovementLabReport,
 } from '../src/autonomous-improvement-lab.js';
+import {
+  buildRealityGroundingReport,
+  formatRealityGroundingReport,
+} from '../src/reality-grounding.js';
 
 async function main(): Promise<void> {
   initDatabase();
@@ -24,11 +28,20 @@ async function main(): Promise<void> {
   const executive = buildStoredCognitiveExecutiveReport();
   const reliability = buildToolReliabilityDoctorReport();
   const improvement = buildAutonomousImprovementLabReport();
+  const reality = buildRealityGroundingReport({
+    requestText: 'executive route reality summary',
+    channel: 'operator',
+    persist: false,
+  });
   if (json) {
-    console.log(JSON.stringify({ executive, reliability, improvement }, null, 2));
+    console.log(
+      JSON.stringify({ executive, reliability, improvement, reality }, null, 2),
+    );
     return;
   }
   console.log(formatCognitiveExecutiveReport(executive));
+  console.log('');
+  console.log(formatRealityGroundingReport(reality));
   console.log('');
   console.log(formatToolReliabilityReport(reliability));
   console.log('');

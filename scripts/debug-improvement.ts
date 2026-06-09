@@ -15,6 +15,10 @@ import {
   buildLiveProofGauntletReport,
   formatLiveProofGauntletReport,
 } from '../src/live-proof-gauntlet.js';
+import {
+  buildRealityGroundingReport,
+  formatRealityGroundingReport,
+} from '../src/reality-grounding.js';
 
 initDatabase();
 
@@ -32,15 +36,27 @@ if (shadow) {
     persist: !dryRun,
   });
   const proofGauntlet = buildLiveProofGauntletReport();
+  const reality = buildRealityGroundingReport({
+    proofReport: proofGauntlet,
+    requestText: 'shadow improvement reality gaps',
+    channel: 'operator',
+    persist: false,
+  });
   console.log(
     json
-      ? JSON.stringify({ ...report, patchWorkbench, proofGauntlet }, null, 2)
+      ? JSON.stringify(
+          { ...report, patchWorkbench, proofGauntlet, reality },
+          null,
+          2,
+        )
       : [
           formatShadowImprovementReport(report),
           '',
           formatPatchWorkbenchReport(patchWorkbench),
           '',
           formatLiveProofGauntletReport(proofGauntlet),
+          '',
+          formatRealityGroundingReport(reality),
         ].join('\n'),
   );
   process.exit(0);
@@ -71,11 +87,17 @@ if (proof) {
 
 const report = buildAutonomousImprovementLabReport({ persist: !dryRun });
 const proofGauntlet = buildLiveProofGauntletReport();
+const reality = buildRealityGroundingReport({
+  proofReport: proofGauntlet,
+  requestText: 'improvement lab reality gaps',
+  channel: 'operator',
+  persist: false,
+});
 
 console.log(
   json
-    ? JSON.stringify({ ...report, proofGauntlet }, null, 2)
-    : [formatAutonomousImprovementLabReport(report), '', formatLiveProofGauntletReport(proofGauntlet)].join(
+    ? JSON.stringify({ ...report, proofGauntlet, reality }, null, 2)
+    : [formatAutonomousImprovementLabReport(report), '', formatLiveProofGauntletReport(proofGauntlet), '', formatRealityGroundingReport(reality)].join(
         '\n',
       ),
 );

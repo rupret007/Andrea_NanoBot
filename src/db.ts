@@ -51,6 +51,14 @@ import {
   PatchAttempt,
   PatchReview,
   PatchWorkspace,
+  ActivePerceptionPlan,
+  ActivePerceptionProbe,
+  ProofClosureStep,
+  RealityBelief,
+  RealityContradiction,
+  RealityObservation,
+  RealitySnapshot,
+  RealityVerificationNeed,
   ShadowCandidateSelection,
   ShadowImprovementRun,
   ShadowPatchReport,
@@ -3949,6 +3957,156 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_patch_reviews_attempt
       ON patch_reviews(attempt_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS reality_snapshots (
+      snapshot_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      observation_ids_json TEXT NOT NULL,
+      belief_ids_json TEXT NOT NULL,
+      contradiction_ids_json TEXT NOT NULL,
+      verification_need_ids_json TEXT NOT NULL,
+      recommended_probe_ids_json TEXT NOT NULL,
+      true_now_summary TEXT NOT NULL,
+      stale_summary TEXT NOT NULL,
+      contradiction_summary TEXT NOT NULL,
+      missing_proof_summary TEXT NOT NULL,
+      degraded_tools_summary TEXT NOT NULL,
+      confidence_summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_reality_snapshots_created
+      ON reality_snapshots(created_at DESC);
+    CREATE TABLE IF NOT EXISTS reality_observations (
+      observation_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      observed_thing TEXT NOT NULL,
+      observed_value TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      freshness_window_hours REAL NOT NULL,
+      confidence REAL NOT NULL,
+      sensitivity TEXT NOT NULL,
+      evidence_ref TEXT NOT NULL,
+      raw_content_allowed INTEGER NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES reality_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_reality_observations_snapshot
+      ON reality_observations(snapshot_id, source_type, subject);
+    CREATE TABLE IF NOT EXISTS reality_beliefs (
+      belief_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      belief_summary TEXT NOT NULL,
+      belief_type TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      supporting_observation_ids_json TEXT NOT NULL,
+      contradicting_observation_ids_json TEXT NOT NULL,
+      last_verified_at TEXT,
+      stale_after_at TEXT,
+      status TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES reality_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_reality_beliefs_snapshot
+      ON reality_beliefs(snapshot_id, status, belief_type);
+    CREATE TABLE IF NOT EXISTS reality_verification_needs (
+      need_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      question TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      needed_before_action INTEGER NOT NULL,
+      possible_source_tool TEXT NOT NULL,
+      risk_if_skipped TEXT NOT NULL,
+      urgency TEXT NOT NULL,
+      status TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES reality_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_reality_needs_snapshot
+      ON reality_verification_needs(snapshot_id, status, urgency);
+    CREATE TABLE IF NOT EXISTS reality_contradictions (
+      contradiction_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      contradiction_kind TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      status TEXT NOT NULL,
+      observation_ids_json TEXT NOT NULL,
+      belief_ids_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES reality_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_reality_contradictions_snapshot
+      ON reality_contradictions(snapshot_id, status, severity);
+    CREATE TABLE IF NOT EXISTS active_perception_plans (
+      plan_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      request_summary TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      status TEXT NOT NULL,
+      risk_summary TEXT NOT NULL,
+      probe_ids_json TEXT NOT NULL,
+      skipped_probe_ids_json TEXT NOT NULL,
+      manual_step_ids_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (snapshot_id) REFERENCES reality_snapshots(snapshot_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_active_perception_plans_snapshot
+      ON active_perception_plans(snapshot_id, status);
+    CREATE TABLE IF NOT EXISTS active_perception_probes (
+      probe_id TEXT PRIMARY KEY,
+      plan_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      probe_kind TEXT NOT NULL,
+      target TEXT NOT NULL,
+      safe_to_run_automatically INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      command TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      cooldown_until TEXT,
+      evidence_ids_json TEXT NOT NULL,
+      result_summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (plan_id) REFERENCES active_perception_plans(plan_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_active_perception_probes_plan
+      ON active_perception_probes(plan_id, status, probe_kind);
+    CREATE TABLE IF NOT EXISTS proof_closure_steps (
+      step_id TEXT PRIMARY KEY,
+      plan_id TEXT NOT NULL,
+      proof_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      proof_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      blocker_class TEXT NOT NULL,
+      exact_next_step TEXT NOT NULL,
+      requested_at TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (plan_id) REFERENCES active_perception_plans(plan_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_proof_closure_steps_plan
+      ON proof_closure_steps(plan_id, status);
     CREATE TABLE IF NOT EXISTS runtime_orchestration_jobs (
       job_id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -25736,6 +25894,849 @@ export function listPatchReviews(
     )
     .all(...args) as Array<Parameters<typeof mapPatchReviewRow>[0]>;
   return rows.map((row) => mapPatchReviewRow(row));
+}
+
+function mapRealitySnapshotRow(row: {
+  snapshot_id: string;
+  created_at: string;
+  updated_at: string;
+  status: RealitySnapshot['status'];
+  confidence: number;
+  observation_ids_json: string;
+  belief_ids_json: string;
+  contradiction_ids_json: string;
+  verification_need_ids_json: string;
+  recommended_probe_ids_json: string;
+  true_now_summary: string;
+  stale_summary: string;
+  contradiction_summary: string;
+  missing_proof_summary: string;
+  degraded_tools_summary: string;
+  confidence_summary: string;
+  next_action: string;
+  privacy_json: string;
+}): RealitySnapshot {
+  return {
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    confidence: row.confidence,
+    observationIdsJson: row.observation_ids_json,
+    beliefIdsJson: row.belief_ids_json,
+    contradictionIdsJson: row.contradiction_ids_json,
+    verificationNeedIdsJson: row.verification_need_ids_json,
+    recommendedProbeIdsJson: row.recommended_probe_ids_json,
+    trueNowSummary: row.true_now_summary,
+    staleSummary: row.stale_summary,
+    contradictionSummary: row.contradiction_summary,
+    missingProofSummary: row.missing_proof_summary,
+    degradedToolsSummary: row.degraded_tools_summary,
+    confidenceSummary: row.confidence_summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertRealitySnapshot(record: RealitySnapshot): void {
+  db.prepare(
+    `
+      INSERT INTO reality_snapshots (
+        snapshot_id, created_at, updated_at, status, confidence,
+        observation_ids_json, belief_ids_json, contradiction_ids_json,
+        verification_need_ids_json, recommended_probe_ids_json,
+        true_now_summary, stale_summary, contradiction_summary,
+        missing_proof_summary, degraded_tools_summary, confidence_summary,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(snapshot_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        confidence = excluded.confidence,
+        observation_ids_json = excluded.observation_ids_json,
+        belief_ids_json = excluded.belief_ids_json,
+        contradiction_ids_json = excluded.contradiction_ids_json,
+        verification_need_ids_json = excluded.verification_need_ids_json,
+        recommended_probe_ids_json = excluded.recommended_probe_ids_json,
+        true_now_summary = excluded.true_now_summary,
+        stale_summary = excluded.stale_summary,
+        contradiction_summary = excluded.contradiction_summary,
+        missing_proof_summary = excluded.missing_proof_summary,
+        degraded_tools_summary = excluded.degraded_tools_summary,
+        confidence_summary = excluded.confidence_summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.snapshotId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    record.confidence,
+    sanitizeStoredIdArrayJson(record.observationIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.beliefIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.contradictionIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.verificationNeedIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.recommendedProbeIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.trueNowSummary, 1200),
+    redactStoredCognitiveMetadata(record.staleSummary, 1200),
+    redactStoredCognitiveMetadata(record.contradictionSummary, 1200),
+    redactStoredCognitiveMetadata(record.missingProofSummary, 1200),
+    redactStoredCognitiveMetadata(record.degradedToolsSummary, 1200),
+    redactStoredCognitiveMetadata(record.confidenceSummary, 1200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listRealitySnapshots(
+  params: { status?: RealitySnapshot['status']; limit?: number } = {},
+): RealitySnapshot[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM reality_snapshots
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapRealitySnapshotRow>[0]>;
+  return rows.map((row) => mapRealitySnapshotRow(row));
+}
+
+function mapRealityObservationRow(row: {
+  observation_id: string;
+  snapshot_id: string;
+  created_at: string;
+  source: string;
+  source_type: RealityObservation['sourceType'];
+  subject: string;
+  observed_thing: string;
+  observed_value: string;
+  observed_at: string;
+  freshness_window_hours: number;
+  confidence: number;
+  sensitivity: RealityObservation['sensitivity'];
+  evidence_ref: string;
+  raw_content_allowed: number;
+  privacy_json: string;
+}): RealityObservation {
+  return {
+    observationId: row.observation_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    source: row.source,
+    sourceType: row.source_type,
+    subject: row.subject,
+    observedThing: row.observed_thing,
+    observedValue: row.observed_value,
+    observedAt: row.observed_at,
+    freshnessWindowHours: row.freshness_window_hours,
+    confidence: row.confidence,
+    sensitivity: row.sensitivity,
+    evidenceRef: row.evidence_ref,
+    rawContentAllowed: row.raw_content_allowed === 1,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertRealityObservation(record: RealityObservation): void {
+  db.prepare(
+    `
+      INSERT INTO reality_observations (
+        observation_id, snapshot_id, created_at, source, source_type, subject,
+        observed_thing, observed_value, observed_at, freshness_window_hours,
+        confidence, sensitivity, evidence_ref, raw_content_allowed, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(observation_id) DO UPDATE SET
+        source = excluded.source,
+        source_type = excluded.source_type,
+        subject = excluded.subject,
+        observed_thing = excluded.observed_thing,
+        observed_value = excluded.observed_value,
+        observed_at = excluded.observed_at,
+        freshness_window_hours = excluded.freshness_window_hours,
+        confidence = excluded.confidence,
+        sensitivity = excluded.sensitivity,
+        evidence_ref = excluded.evidence_ref,
+        raw_content_allowed = excluded.raw_content_allowed,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.observationId,
+    record.snapshotId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.source, 240),
+    record.sourceType,
+    redactStoredCognitiveMetadata(record.subject, 240),
+    redactStoredCognitiveMetadata(record.observedThing, 240),
+    redactStoredCognitiveMetadata(record.observedValue, 1200),
+    record.observedAt,
+    record.freshnessWindowHours,
+    record.confidence,
+    record.sensitivity,
+    redactStoredCognitiveMetadata(record.evidenceRef, 240),
+    record.rawContentAllowed ? 1 : 0,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listRealityObservations(
+  params: {
+    snapshotId?: string;
+    sourceType?: RealityObservation['sourceType'];
+    limit?: number;
+  } = {},
+): RealityObservation[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.sourceType) {
+    clauses.push('source_type = ?');
+    args.push(params.sourceType);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM reality_observations
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapRealityObservationRow>[0]>;
+  return rows.map((row) => mapRealityObservationRow(row));
+}
+
+function mapRealityBeliefRow(row: {
+  belief_id: string;
+  snapshot_id: string;
+  created_at: string;
+  updated_at: string;
+  subject: string;
+  belief_summary: string;
+  belief_type: RealityBelief['beliefType'];
+  confidence: number;
+  supporting_observation_ids_json: string;
+  contradicting_observation_ids_json: string;
+  last_verified_at: string | null;
+  stale_after_at: string | null;
+  status: RealityBelief['status'];
+  next_action: string;
+  privacy_json: string;
+}): RealityBelief {
+  return {
+    beliefId: row.belief_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    subject: row.subject,
+    beliefSummary: row.belief_summary,
+    beliefType: row.belief_type,
+    confidence: row.confidence,
+    supportingObservationIdsJson: row.supporting_observation_ids_json,
+    contradictingObservationIdsJson: row.contradicting_observation_ids_json,
+    lastVerifiedAt: row.last_verified_at,
+    staleAfterAt: row.stale_after_at,
+    status: row.status,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertRealityBelief(record: RealityBelief): void {
+  db.prepare(
+    `
+      INSERT INTO reality_beliefs (
+        belief_id, snapshot_id, created_at, updated_at, subject, belief_summary,
+        belief_type, confidence, supporting_observation_ids_json,
+        contradicting_observation_ids_json, last_verified_at, stale_after_at,
+        status, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(belief_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        subject = excluded.subject,
+        belief_summary = excluded.belief_summary,
+        belief_type = excluded.belief_type,
+        confidence = excluded.confidence,
+        supporting_observation_ids_json = excluded.supporting_observation_ids_json,
+        contradicting_observation_ids_json = excluded.contradicting_observation_ids_json,
+        last_verified_at = excluded.last_verified_at,
+        stale_after_at = excluded.stale_after_at,
+        status = excluded.status,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.beliefId,
+    record.snapshotId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.subject, 240),
+    redactStoredCognitiveMetadata(record.beliefSummary, 1200),
+    record.beliefType,
+    record.confidence,
+    sanitizeStoredIdArrayJson(record.supportingObservationIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.contradictingObservationIdsJson, 3200),
+    record.lastVerifiedAt || null,
+    record.staleAfterAt || null,
+    record.status,
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listRealityBeliefs(
+  params: {
+    snapshotId?: string;
+    status?: RealityBelief['status'];
+    limit?: number;
+  } = {},
+): RealityBelief[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM reality_beliefs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY confidence DESC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapRealityBeliefRow>[0]>;
+  return rows.map((row) => mapRealityBeliefRow(row));
+}
+
+function mapRealityVerificationNeedRow(row: {
+  need_id: string;
+  snapshot_id: string;
+  created_at: string;
+  updated_at: string;
+  question: string;
+  reason: string;
+  needed_before_action: number;
+  possible_source_tool: string;
+  risk_if_skipped: RealityVerificationNeed['riskIfSkipped'];
+  urgency: RealityVerificationNeed['urgency'];
+  status: RealityVerificationNeed['status'];
+  evidence_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): RealityVerificationNeed {
+  return {
+    needId: row.need_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    question: row.question,
+    reason: row.reason,
+    neededBeforeAction: row.needed_before_action === 1,
+    possibleSourceTool: row.possible_source_tool,
+    riskIfSkipped: row.risk_if_skipped,
+    urgency: row.urgency,
+    status: row.status,
+    evidenceIdsJson: row.evidence_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertRealityVerificationNeed(
+  record: RealityVerificationNeed,
+): void {
+  db.prepare(
+    `
+      INSERT INTO reality_verification_needs (
+        need_id, snapshot_id, created_at, updated_at, question, reason,
+        needed_before_action, possible_source_tool, risk_if_skipped, urgency,
+        status, evidence_ids_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(need_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        question = excluded.question,
+        reason = excluded.reason,
+        needed_before_action = excluded.needed_before_action,
+        possible_source_tool = excluded.possible_source_tool,
+        risk_if_skipped = excluded.risk_if_skipped,
+        urgency = excluded.urgency,
+        status = excluded.status,
+        evidence_ids_json = excluded.evidence_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.needId,
+    record.snapshotId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.question, 700),
+    redactStoredCognitiveMetadata(record.reason, 900),
+    record.neededBeforeAction ? 1 : 0,
+    redactStoredCognitiveMetadata(record.possibleSourceTool, 240),
+    record.riskIfSkipped,
+    record.urgency,
+    record.status,
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listRealityVerificationNeeds(
+  params: {
+    snapshotId?: string;
+    status?: RealityVerificationNeed['status'];
+    limit?: number;
+  } = {},
+): RealityVerificationNeed[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM reality_verification_needs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapRealityVerificationNeedRow>[0]>;
+  return rows.map((row) => mapRealityVerificationNeedRow(row));
+}
+
+function mapRealityContradictionRow(row: {
+  contradiction_id: string;
+  snapshot_id: string;
+  created_at: string;
+  subject: string;
+  contradiction_kind: RealityContradiction['contradictionKind'];
+  severity: RealityContradiction['severity'];
+  status: RealityContradiction['status'];
+  observation_ids_json: string;
+  belief_ids_json: string;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): RealityContradiction {
+  return {
+    contradictionId: row.contradiction_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    subject: row.subject,
+    contradictionKind: row.contradiction_kind,
+    severity: row.severity,
+    status: row.status,
+    observationIdsJson: row.observation_ids_json,
+    beliefIdsJson: row.belief_ids_json,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertRealityContradiction(record: RealityContradiction): void {
+  db.prepare(
+    `
+      INSERT INTO reality_contradictions (
+        contradiction_id, snapshot_id, created_at, subject, contradiction_kind,
+        severity, status, observation_ids_json, belief_ids_json, summary,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(contradiction_id) DO UPDATE SET
+        subject = excluded.subject,
+        contradiction_kind = excluded.contradiction_kind,
+        severity = excluded.severity,
+        status = excluded.status,
+        observation_ids_json = excluded.observation_ids_json,
+        belief_ids_json = excluded.belief_ids_json,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.contradictionId,
+    record.snapshotId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.subject, 240),
+    record.contradictionKind,
+    record.severity,
+    record.status,
+    sanitizeStoredIdArrayJson(record.observationIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.beliefIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.summary, 1200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listRealityContradictions(
+  params: {
+    snapshotId?: string;
+    status?: RealityContradiction['status'];
+    limit?: number;
+  } = {},
+): RealityContradiction[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM reality_contradictions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapRealityContradictionRow>[0]>;
+  return rows.map((row) => mapRealityContradictionRow(row));
+}
+
+function mapActivePerceptionPlanRow(row: {
+  plan_id: string;
+  snapshot_id: string;
+  created_at: string;
+  request_summary: string;
+  channel: ActivePerceptionPlan['channel'];
+  status: ActivePerceptionPlan['status'];
+  risk_summary: string;
+  probe_ids_json: string;
+  skipped_probe_ids_json: string;
+  manual_step_ids_json: string;
+  next_action: string;
+  privacy_json: string;
+}): ActivePerceptionPlan {
+  return {
+    planId: row.plan_id,
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    requestSummary: row.request_summary,
+    channel: row.channel,
+    status: row.status,
+    riskSummary: row.risk_summary,
+    probeIdsJson: row.probe_ids_json,
+    skippedProbeIdsJson: row.skipped_probe_ids_json,
+    manualStepIdsJson: row.manual_step_ids_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertActivePerceptionPlan(record: ActivePerceptionPlan): void {
+  db.prepare(
+    `
+      INSERT INTO active_perception_plans (
+        plan_id, snapshot_id, created_at, request_summary, channel, status,
+        risk_summary, probe_ids_json, skipped_probe_ids_json,
+        manual_step_ids_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(plan_id) DO UPDATE SET
+        request_summary = excluded.request_summary,
+        channel = excluded.channel,
+        status = excluded.status,
+        risk_summary = excluded.risk_summary,
+        probe_ids_json = excluded.probe_ids_json,
+        skipped_probe_ids_json = excluded.skipped_probe_ids_json,
+        manual_step_ids_json = excluded.manual_step_ids_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.planId,
+    record.snapshotId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.requestSummary, 900),
+    record.channel,
+    record.status,
+    redactStoredCognitiveMetadata(record.riskSummary, 900),
+    sanitizeStoredIdArrayJson(record.probeIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.skippedProbeIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.manualStepIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listActivePerceptionPlans(
+  params: {
+    snapshotId?: string;
+    status?: ActivePerceptionPlan['status'];
+    limit?: number;
+  } = {},
+): ActivePerceptionPlan[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.snapshotId) {
+    clauses.push('snapshot_id = ?');
+    args.push(params.snapshotId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM active_perception_plans
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapActivePerceptionPlanRow>[0]>;
+  return rows.map((row) => mapActivePerceptionPlanRow(row));
+}
+
+function mapActivePerceptionProbeRow(row: {
+  probe_id: string;
+  plan_id: string;
+  created_at: string;
+  probe_kind: ActivePerceptionProbe['probeKind'];
+  target: string;
+  safe_to_run_automatically: number;
+  status: ActivePerceptionProbe['status'];
+  command: string;
+  reason: string;
+  cooldown_until: string | null;
+  evidence_ids_json: string;
+  result_summary: string;
+  next_action: string;
+  privacy_json: string;
+}): ActivePerceptionProbe {
+  return {
+    probeId: row.probe_id,
+    planId: row.plan_id,
+    createdAt: row.created_at,
+    probeKind: row.probe_kind,
+    target: row.target,
+    safeToRunAutomatically: row.safe_to_run_automatically === 1,
+    status: row.status,
+    command: row.command,
+    reason: row.reason,
+    cooldownUntil: row.cooldown_until,
+    evidenceIdsJson: row.evidence_ids_json,
+    resultSummary: row.result_summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertActivePerceptionProbe(
+  record: ActivePerceptionProbe,
+): void {
+  db.prepare(
+    `
+      INSERT INTO active_perception_probes (
+        probe_id, plan_id, created_at, probe_kind, target,
+        safe_to_run_automatically, status, command, reason, cooldown_until,
+        evidence_ids_json, result_summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(probe_id) DO UPDATE SET
+        probe_kind = excluded.probe_kind,
+        target = excluded.target,
+        safe_to_run_automatically = excluded.safe_to_run_automatically,
+        status = excluded.status,
+        command = excluded.command,
+        reason = excluded.reason,
+        cooldown_until = excluded.cooldown_until,
+        evidence_ids_json = excluded.evidence_ids_json,
+        result_summary = excluded.result_summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.probeId,
+    record.planId,
+    record.createdAt,
+    record.probeKind,
+    redactStoredCognitiveMetadata(record.target, 240),
+    record.safeToRunAutomatically ? 1 : 0,
+    record.status,
+    redactStoredCognitiveMetadata(record.command, 500),
+    redactStoredCognitiveMetadata(record.reason, 900),
+    record.cooldownUntil || null,
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.resultSummary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listActivePerceptionProbes(
+  params: {
+    planId?: string;
+    status?: ActivePerceptionProbe['status'];
+    limit?: number;
+  } = {},
+): ActivePerceptionProbe[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.planId) {
+    clauses.push('plan_id = ?');
+    args.push(params.planId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM active_perception_probes
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapActivePerceptionProbeRow>[0]>;
+  return rows.map((row) => mapActivePerceptionProbeRow(row));
+}
+
+function mapProofClosureStepRow(row: {
+  step_id: string;
+  plan_id: string;
+  proof_id: string;
+  created_at: string;
+  proof_name: string;
+  status: ProofClosureStep['status'];
+  blocker_class: string;
+  exact_next_step: string;
+  requested_at: string;
+  evidence_ids_json: string;
+  privacy_json: string;
+}): ProofClosureStep {
+  return {
+    stepId: row.step_id,
+    planId: row.plan_id,
+    proofId: row.proof_id,
+    createdAt: row.created_at,
+    proofName: row.proof_name,
+    status: row.status,
+    blockerClass: row.blocker_class,
+    exactNextStep: row.exact_next_step,
+    requestedAt: row.requested_at,
+    evidenceIdsJson: row.evidence_ids_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertProofClosureStep(record: ProofClosureStep): void {
+  db.prepare(
+    `
+      INSERT INTO proof_closure_steps (
+        step_id, plan_id, proof_id, created_at, proof_name, status,
+        blocker_class, exact_next_step, requested_at, evidence_ids_json,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(step_id) DO UPDATE SET
+        status = excluded.status,
+        blocker_class = excluded.blocker_class,
+        exact_next_step = excluded.exact_next_step,
+        requested_at = excluded.requested_at,
+        evidence_ids_json = excluded.evidence_ids_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.stepId,
+    record.planId,
+    record.proofId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.proofName, 240),
+    record.status,
+    redactStoredCognitiveMetadata(record.blockerClass, 240),
+    redactStoredCognitiveMetadata(record.exactNextStep, 900),
+    record.requestedAt,
+    sanitizeStoredIdArrayJson(record.evidenceIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listProofClosureSteps(
+  params: {
+    planId?: string;
+    status?: ProofClosureStep['status'];
+    limit?: number;
+  } = {},
+): ProofClosureStep[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.planId) {
+    clauses.push('plan_id = ?');
+    args.push(params.planId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM proof_closure_steps
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapProofClosureStepRow>[0]>;
+  return rows.map((row) => mapProofClosureStepRow(row));
 }
 
 export function pruneCognitiveKernelData(params: {

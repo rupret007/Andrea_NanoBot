@@ -63,7 +63,7 @@ Thinking and learning controls:
 - Say `quick answer` or `keep it simple` when you want the fast path.
 - Andrea may show a concise council verdict, but not hidden reasoning or provider debate transcripts.
 - Use `/council`, `council status`, or `council tasks` to inspect the redacted council quality ledger, task-ease drills, and next repair action.
-- Use `/cognition`, `cognition status`, `cognitive workspace status`, `agency loop status`, `convergence status`, `runtime spine status`, `agent runtime status`, `supervisor status`, `blackboard status`, `session graph status`, `continuity status`, `what sessions are connected?`, `what belongs together?`, `why did you choose that?`, `why do you believe that?`, `why is that true?`, `what supports that?`, `what could be wrong?`, `how certain are you?`, `what are the alternatives?`, `what's missing?`, `what's most useful next?`, `what changed?`, `what is stale?`, `what do you know for sure?`, `what should you verify next?`, `what is most useful now?`, `what evidence supports this?`, `show the plan first`, or `run the safe checks` to inspect the Cognitive Workspace packet, safe task graph, Agent OS episode, Runtime Spine checkpoints, Supervisor Core blackboard/handoffs, Session Graph continuity clusters, continuity cockpit action queue, Agency Convergence selected action, Logic Kernel claims, Truth Engine support, World Model proof debt, uncertainty, approval blockers, and useful next action. Use `that is stale`, `mark that current`, or `resolve that` only when you are intentionally correcting Andrea's belief state.
+- Use `/cognition`, `cognition status`, `cognitive workspace status`, `agency loop status`, `convergence status`, `runtime spine status`, `agent runtime status`, `supervisor status`, `blackboard status`, `session graph status`, `continuity status`, `what sessions are connected?`, `what belongs together?`, `why did you choose that?`, `why do you believe that?`, `why is that true?`, `what supports that?`, `what could be wrong?`, `how certain are you?`, `what are the alternatives?`, `what's missing?`, `what's most useful next?`, `what changed?`, `what is stale?`, `what do you know for sure?`, `what's true right now?`, `is text messaging working?`, `what's broken right now?`, `what should you verify next?`, `what is most useful now?`, `what evidence supports this?`, `show the plan first`, or `run the safe checks` to inspect the Cognitive Workspace packet, safe task graph, Agent OS episode, Runtime Spine checkpoints, Supervisor Core blackboard/handoffs, Session Graph continuity clusters, continuity cockpit action queue, Agency Convergence selected action, Logic Kernel claims, Truth Engine support, World Model proof debt, Reality Grounding observations/beliefs, uncertainty, approval blockers, and useful next action. Use `that is stale`, `mark that current`, or `resolve that` only when you are intentionally correcting Andrea's belief state.
 - Say `what did you learn?`, `what do you remember about me`, `what skills have you learned`, `forget that`, `don't use that skill`, `make that my default`, `always ask first`, or `reset that pattern` to inspect or steer memory and learned playbooks.
 
 ## Lifelong Learning And Skills
@@ -161,6 +161,21 @@ Operator checks:
 - `npm run test:proof-gauntlet`
 
 This is bounded self-improvement infrastructure, not AGI, autonomous deployment, or uncontrolled self-modification. Mainline changes remain human-governed.
+
+## Reality Grounding And Active Perception
+
+Reality Grounding is Andrea's compact "what is true right now" layer. It separates direct observations, beliefs, stale proof, contradictions, missing config, external blockers, and repo-side repair candidates before Andrea answers or stages an action.
+
+Use it when you want a grounded status answer:
+
+- `what's true right now?`
+- `is text messaging working?`
+- `what's broken right now?`
+- `what should you verify next?`
+
+Active Perception is request-coupled, not always-on polling. Andrea may plan safe read-only checks such as proof/status reads, tool reliability reads, repair-state reads, or existing authorized readiness checks. Manual proof steps, missing credentials, and external device actions stay explicit.
+
+Reality Grounding differs from memory: memory stores user-confirmed or reviewable facts and skills; Reality Grounding decides whether current evidence is fresh enough to trust before a reply, send, calendar write, repair, or work action.
 
 Important Cursor rule:
 

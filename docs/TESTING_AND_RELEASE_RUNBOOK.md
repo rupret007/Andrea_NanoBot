@@ -391,6 +391,9 @@ Then validate the public-safe Telegram surface:
 - `npm run debug:world -- --json`
 - `npm run debug:world -- --stale --json`
 - `npm run debug:world -- --verify-safe --json`
+- `npm run debug:reality -- --json`
+- `npm run debug:perception -- --json`
+- `npm run proof:guided`
 - `npm run debug:runtime-spine -- --json`
 - `npm run debug:runtime-spine -- --events <runId>`
 - `npm run debug:supervisor -- --json`
@@ -566,6 +569,9 @@ Use this ladder:
 - `npm run improvement:patch-plan`
 - `npm run improvement:patch-dry-run`
 - `npm run debug:proof-gauntlet`
+- `npm run test:reality-grounding`
+- `npm run test:active-perception`
+- `npm run test:truth-maintenance`
 - `npm run test:patch-workbench`
 - `npm run test:proof-gauntlet`
 
@@ -580,6 +586,14 @@ The live proof gauntlet separates proof debt from repo bugs:
 - missing BlueBubbles same-thread message-action proof is live proof debt
 - provider quota/billing blockers remain external/provider blockers
 - repeated failure after config/proof prerequisites are present may become a repair hypothesis
+
+Reality Grounding sits above proof gauntlet and world/truth metadata:
+
+- `debug:reality` answers what is observed, believed, stale, contradicted, blocked, or unknown right now
+- `debug:perception` shows request-coupled read-only probes and manual proof steps; it must not run uncontrolled polling
+- `proof:guided` lists exact proof-closure steps and must never print secrets
+- stale proof and missing config create verification/proof tasks first, not repo patch hypotheses
+- durable or external actions should be staged or clarified when reality confidence is too low
 
 Never claim `live_proven` from harness-only evidence. Mainline changes remain human-governed; the workbench does not auto-merge, auto-push, restart services, send messages, write calendars, change credentials, or mutate live integrations.
 - queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud

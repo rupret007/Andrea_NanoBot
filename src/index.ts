@@ -437,6 +437,11 @@ import {
   isWorldModelNaturalRequest,
 } from './world-model.js';
 import {
+  buildRealityStatusText,
+  formatRealityNaturalResponse,
+  isRealityNaturalRequest,
+} from './reality-grounding.js';
+import {
   applyLearningControl,
   buildLearningDistillationReport,
   formatLearningDistillationReport,
@@ -7840,6 +7845,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       !isLogicNaturalRequest(lastContent) &&
       !isTruthNaturalRequest(lastContent) &&
       !isWorldModelNaturalRequest(lastContent) &&
+      !isRealityNaturalRequest(lastContent) &&
       !isAgentRuntimeSpineNaturalRequest(lastContent) &&
       !isSupervisorNaturalRequest(lastContent) &&
       !isSessionGraphNaturalRequest(lastContent) &&
@@ -7869,6 +7875,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
 
+    if (isRealityNaturalRequest(lastContent)) {
+      await sendAssistantReplyWithFeedback({
+        text: formatRealityNaturalResponse(lastContent),
+        routeKey: 'reality_grounding.status',
+        capabilityId: 'cognition.status',
+        handlerKind: 'local_reality_grounding',
+        responseSource: 'local_companion',
+        traceReason:
+          'answered reality grounding status from metadata-only proof and tool truth',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
+
     await sendAssistantReplyWithFeedback({
       text: [
         formatCognitiveDoctorReport(buildCognitiveDoctorReport()),
@@ -7880,6 +7900,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         buildTruthStatusText(),
         '',
         buildWorldModelStatusText(),
+        '',
+        buildRealityStatusText(),
         '',
         buildAgentRuntimeSpineStatusText(),
         '',

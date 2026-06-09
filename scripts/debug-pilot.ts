@@ -11,6 +11,7 @@ import { buildToolReliabilityDoctorReport } from '../src/tool-reliability.js';
 import { buildAutonomousImprovementLabReport } from '../src/autonomous-improvement-lab.js';
 import { buildShadowImprovementReport } from '../src/shadow-improvement-runner.js';
 import { buildLiveProofGauntletReport } from '../src/live-proof-gauntlet.js';
+import { buildRealityGroundingReport } from '../src/reality-grounding.js';
 import type { FieldTrialSurfaceTruth } from '../src/field-trial-readiness.js';
 import type { PilotJourneyId } from '../src/types.js';
 
@@ -190,6 +191,12 @@ async function main(): Promise<void> {
   const improvement = buildAutonomousImprovementLabReport();
   const shadow = buildShadowImprovementReport({ persist: false });
   const proofGauntlet = buildLiveProofGauntletReport();
+  const reality = buildRealityGroundingReport({
+    proofReport: proofGauntlet,
+    requestText: 'pilot proof debt and reality gaps',
+    channel: 'operator',
+    persist: false,
+  });
   const attention = collectAttentionItems(truth);
   const lines = [
     '*Pilot Review*',
@@ -347,6 +354,13 @@ async function main(): Promise<void> {
       .map((entry) => {
         return `- ${entry.proofName}: ${entry.status} / repo_work=${entry.repoWorkRequired ? 'yes' : 'no'} / next=${entry.nextStep}`;
       })),
+    '',
+    '*Reality Gaps*',
+    `- Snapshot: ${reality.snapshot.status} / confidence=${reality.snapshot.confidence.toFixed(2)}`,
+    `- Contradictions: ${reality.contradictions.length}`,
+    `- Verification needs: ${reality.verificationNeeds.length}`,
+    `- Proof tasks are repo bugs: ${reality.proofDebt.repoWorkRequired > 0 ? 'yes' : 'no'}`,
+    `- Next reality step: ${reality.nextAction}`,
     '',
     '*Alexa Utterance Review*',
     `- Signals tracked: ${alexaReview.totalSignals}`,

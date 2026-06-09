@@ -5316,6 +5316,233 @@ export interface LiveProofGauntletReport {
   privacyJson: string;
 }
 
+export type RealitySourceType =
+  | 'proof_gauntlet'
+  | 'world_model'
+  | 'truth_audit'
+  | 'tool_reliability'
+  | 'repair_state'
+  | 'integration_doctor'
+  | 'executive_reflection'
+  | 'live_status'
+  | 'world_fact'
+  | 'skill_playbook'
+  | 'improvement_lab'
+  | 'manual_metadata';
+
+export type RealitySensitivity = 'low' | 'personal' | 'sensitive' | 'secret';
+
+export type RealityBeliefStatus =
+  | 'confirmed'
+  | 'likely'
+  | 'uncertain'
+  | 'contradicted'
+  | 'stale'
+  | 'externally_blocked'
+  | 'unknown';
+
+export interface RealityObservation {
+  observationId: string;
+  snapshotId: string;
+  createdAt: string;
+  source: string;
+  sourceType: RealitySourceType;
+  subject: string;
+  observedThing: string;
+  observedValue: string;
+  observedAt: string;
+  freshnessWindowHours: number;
+  confidence: number;
+  sensitivity: RealitySensitivity;
+  evidenceRef: string;
+  rawContentAllowed: boolean;
+  privacyJson: string;
+}
+
+export interface RealityBelief {
+  beliefId: string;
+  snapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+  subject: string;
+  beliefSummary: string;
+  beliefType:
+    | 'proof_state'
+    | 'tool_health'
+    | 'integration_state'
+    | 'user_memory'
+    | 'route_confidence'
+    | 'action_readiness'
+    | 'status_truth';
+  confidence: number;
+  supportingObservationIdsJson: string;
+  contradictingObservationIdsJson: string;
+  lastVerifiedAt: string | null;
+  staleAfterAt: string | null;
+  status: RealityBeliefStatus;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface RealityVerificationNeed {
+  needId: string;
+  snapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+  question: string;
+  reason: string;
+  neededBeforeAction: boolean;
+  possibleSourceTool: string;
+  riskIfSkipped: 'low' | 'medium' | 'high' | 'critical';
+  urgency: 'low' | 'normal' | 'high';
+  status:
+    | 'open'
+    | 'runnable_read_only'
+    | 'manual_proof'
+    | 'approval_required'
+    | 'resolved'
+    | 'skipped';
+  evidenceIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export type VerificationNeed = RealityVerificationNeed;
+
+export interface RealityContradiction {
+  contradictionId: string;
+  snapshotId: string;
+  createdAt: string;
+  subject: string;
+  contradictionKind:
+    | 'transport_vs_proof'
+    | 'health_vs_probe'
+    | 'memory_vs_user'
+    | 'proof_vs_patch'
+    | 'provider_vs_route'
+    | 'unsupported_claim';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  status: 'open' | 'downgraded' | 'resolved';
+  observationIdsJson: string;
+  beliefIdsJson: string;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface RealitySnapshot {
+  snapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+  status:
+    | 'grounded'
+    | 'needs_verification'
+    | 'conflicted'
+    | 'externally_blocked';
+  confidence: number;
+  observationIdsJson: string;
+  beliefIdsJson: string;
+  contradictionIdsJson: string;
+  verificationNeedIdsJson: string;
+  recommendedProbeIdsJson: string;
+  trueNowSummary: string;
+  staleSummary: string;
+  contradictionSummary: string;
+  missingProofSummary: string;
+  degradedToolsSummary: string;
+  confidenceSummary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface ActivePerceptionProbe {
+  probeId: string;
+  planId: string;
+  createdAt: string;
+  probeKind:
+    | 'proof_status_read'
+    | 'tool_reliability_read'
+    | 'repair_state_read'
+    | 'calendar_readiness_read'
+    | 'telegram_health_read'
+    | 'bluebubbles_health_read'
+    | 'source_freshness_read'
+    | 'local_metadata_read'
+    | 'work_cockpit_read';
+  target: string;
+  safeToRunAutomatically: boolean;
+  status: 'planned' | 'skipped' | 'manual_required' | 'completed' | 'blocked';
+  command: string;
+  reason: string;
+  cooldownUntil: string | null;
+  evidenceIdsJson: string;
+  resultSummary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface ActivePerceptionPlan {
+  planId: string;
+  snapshotId: string;
+  createdAt: string;
+  requestSummary: string;
+  channel: CognitiveExecutiveChannel | 'operator' | 'internal';
+  status:
+    | 'not_needed'
+    | 'planned'
+    | 'manual_proof_required'
+    | 'blocked'
+    | 'completed';
+  riskSummary: string;
+  probeIdsJson: string;
+  skippedProbeIdsJson: string;
+  manualStepIdsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface ProofClosureStep {
+  stepId: string;
+  planId: string;
+  proofId: string;
+  createdAt: string;
+  proofName: string;
+  status:
+    | 'missing_config'
+    | 'manual_action'
+    | 'externally_blocked'
+    | 'stale_proof'
+    | 'repo_bug'
+    | 'complete';
+  blockerClass: string;
+  exactNextStep: string;
+  requestedAt: string;
+  evidenceIdsJson: string;
+  privacyJson: string;
+}
+
+export interface RealityDoctorReport {
+  generatedAt: string;
+  ok: boolean;
+  snapshot: RealitySnapshot;
+  observations: RealityObservation[];
+  beliefs: RealityBelief[];
+  contradictions: RealityContradiction[];
+  verificationNeeds: RealityVerificationNeed[];
+  perceptionPlan: ActivePerceptionPlan;
+  perceptionProbes: ActivePerceptionProbe[];
+  proofClosureSteps: ProofClosureStep[];
+  proofDebt: {
+    total: number;
+    missingConfig: number;
+    manualProof: number;
+    externallyBlocked: number;
+    repoWorkRequired: number;
+  };
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
 export interface HarnessLabReport {
   generatedAt: string;
   ok: boolean;
