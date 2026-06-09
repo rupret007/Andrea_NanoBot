@@ -9,6 +9,7 @@ import { refreshRecentResponseFeedbackTruth } from '../src/response-feedback.js'
 import { buildRepairDoctorReport } from '../src/integration-healer.js';
 import { buildToolReliabilityDoctorReport } from '../src/tool-reliability.js';
 import { buildAutonomousImprovementLabReport } from '../src/autonomous-improvement-lab.js';
+import { buildShadowImprovementReport } from '../src/shadow-improvement-runner.js';
 import type { FieldTrialSurfaceTruth } from '../src/field-trial-readiness.js';
 import type { PilotJourneyId } from '../src/types.js';
 
@@ -186,6 +187,7 @@ async function main(): Promise<void> {
   const reliability = buildToolReliabilityDoctorReport();
   const repair = buildRepairDoctorReport();
   const improvement = buildAutonomousImprovementLabReport();
+  const shadow = buildShadowImprovementReport({ persist: false });
   const attention = collectAttentionItems(truth);
   const lines = [
     '*Pilot Review*',
@@ -321,6 +323,17 @@ async function main(): Promise<void> {
           return `- ${item.affectedCapability}: priority=${item.priorityScore.toFixed(2)} / fix=${item.fixClass} / external=${item.externalBlocker ? 'yes' : 'no'} / next=${item.nextAction}`;
         })
       : ['- no improvement hypotheses mined yet']),
+    '',
+    '*Shadow Improvement Loop*',
+    `- Status: ${shadow.run.status}`,
+    `- Baseline score: ${shadow.run.baselineScore.toFixed(2)}`,
+    `- Candidate-plan score: ${shadow.run.candidateScore.toFixed(2)}`,
+    `- Regressions: ${shadow.run.regressionCount}`,
+    ...(shadow.patchReports.length
+      ? shadow.patchReports.slice(0, 3).map((item) => {
+          return `- ${item.hypothesisId}: ${item.outcome} / delta=${item.scoreDelta.toFixed(2)} / next=${item.nextAction}`;
+        })
+      : ['- no shadow patch reports yet']),
     '',
     '*Alexa Utterance Review*',
     `- Signals tracked: ${alexaReview.totalSignals}`,

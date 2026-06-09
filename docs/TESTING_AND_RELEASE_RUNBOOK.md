@@ -502,12 +502,15 @@ For pilot-mode and daily dogfooding specifically, also validate:
 - `npm run debug:learning`
 - `npm run debug:skills`
 - `npm run debug:improvement`
+- `npm run debug:improvement -- --shadow`
 - `npm run test:world-learning`
 - `npm run test:memory-distillation`
 - `npm run test:skill-library`
 - `npm run test:learning-controls`
 - `npm run test:learning-privacy`
 - `npm run test:self-improvement`
+- `npm run test:synthetic-gauntlet`
+- `npm run test:shadow-improvement`
 - one flagship ordinary-chat turn: `hi` or `what's up`
 - one daily-guidance turn: `what am I forgetting`
 - one Candace follow-through chain:
@@ -538,6 +541,20 @@ Main-control-chat feedback loop:
 
 - substantive Andrea replies in the registered main Telegram control chat can also show `Not helpful`
 - tapping it saves a private `downvoted_response` pilot issue and offers `Start fix`, `Why`, and `Not now`
+
+## Shadow-Mode Improvement Checks
+
+The v27 Shadow-Mode Improvement Runner turns v26 hypotheses into before/after eval evidence. It is Plan + Eval only: it can select low-risk repo-side candidates, run the synthetic-user gauntlet, compare baseline versus candidate-plan scores, and create patch reports for human review. It must not apply patches, create worktrees, restart services, mutate live integrations, commit, push, send messages, write calendars, change credentials, or learn synthetic data as confirmed user memory.
+
+Use this ladder when evaluating improvement work:
+
+- `npm run debug:improvement -- --dry-run`
+- `npm run debug:improvement -- --shadow --dry-run`
+- `npm run debug:agentic -- --no-persist`
+- `npm run test:synthetic-gauntlet`
+- `npm run test:shadow-improvement`
+
+Expected outcome: external/manual proof debt such as Telegram user-session credentials, Alexa signed `IntentRequest` proof, and BlueBubbles same-thread proof stays classified as proof debt. Repo-side candidates may get patch reports, but implementation still requires an explicit human/Codex coding pass and the normal validation gate.
 - queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud
 - if the miss is primarily an external blocker or manual sync step, Andrea should keep the issue saved and explain that honestly instead of auto-starting a repo fix
 - local hotfixes may validate and restart on-host, but commit/push still require explicit approval

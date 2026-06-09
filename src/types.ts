@@ -5134,6 +5134,89 @@ export interface ImprovementOutcome {
   privacyJson: string;
 }
 
+export type ShadowImprovementRunStatus =
+  | 'baseline_only'
+  | 'compared'
+  | 'blocked'
+  | 'inconclusive';
+
+export type ShadowCandidateDecision =
+  | 'selected'
+  | 'external_blocker'
+  | 'requires_approval'
+  | 'rejected';
+
+export type SyntheticGauntletPhase = 'baseline' | 'candidate_plan';
+
+export interface ShadowImprovementRun {
+  runId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: ShadowImprovementRunStatus;
+  policyJson: string;
+  baselineScore: number;
+  candidateScore: number;
+  regressionCount: number;
+  selectedHypothesisIdsJson: string;
+  externalBlockerIdsJson: string;
+  reportSummary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface ShadowCandidateSelection {
+  selectionId: string;
+  runId: string;
+  hypothesisId: string;
+  createdAt: string;
+  rank: number;
+  decision: ShadowCandidateDecision;
+  rationale: string;
+  riskLevel: ImprovementRiskLevel;
+  fixClass: ImprovementFixClass;
+  expectedScenarioIdsJson: string;
+  approvalRequired: boolean;
+  privacyJson: string;
+}
+
+export interface SyntheticGauntletScenarioResult {
+  resultId: string;
+  runId: string;
+  scenarioId: string;
+  createdAt: string;
+  phase: SyntheticGauntletPhase;
+  status: 'passed' | 'failed';
+  routeScore: number;
+  contextScore: number;
+  usefulnessScore: number;
+  brevityScore: number;
+  safetyScore: number;
+  fallbackScore: number;
+  reflectionScore: number;
+  leakageScore: number;
+  totalScore: number;
+  linkedHypothesisIdsJson: string;
+  failuresJson: string;
+  summary: string;
+  privacyJson: string;
+}
+
+export interface ShadowPatchReport {
+  reportId: string;
+  runId: string;
+  hypothesisId: string;
+  patchPlanId: string | null;
+  createdAt: string;
+  outcome: 'improved' | 'neutral' | 'regressed' | 'inconclusive' | 'blocked';
+  baselineScore: number;
+  candidateScore: number;
+  scoreDelta: number;
+  regressionFlagsJson: string;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
 export interface HarnessLabReport {
   generatedAt: string;
   ok: boolean;

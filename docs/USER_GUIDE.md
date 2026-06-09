@@ -124,6 +124,24 @@ It intentionally separates external proof debt from repo bugs. Missing Telegram 
 
 Safety boundaries stay firm. The lab does not create branches, apply product-behavior patches, restart services, send messages, write calendars, change credentials, commit, push, or mutate live channels automatically. Patch output is plans only unless you explicitly ask for implementation.
 
+### Shadow-Mode Improvement Runner
+
+Andrea can also run a shadow-mode improvement loop over those hypotheses. Shadow mode runs a synthetic-user gauntlet, compares baseline behavior against candidate patch plans, and reports whether a low-risk plan looks improved, neutral, regressed, or inconclusive.
+
+Shadow mode is still Plan + Eval only:
+
+- It may select low-risk repo-side candidates.
+- It may generate before/after scorecards and patch reports.
+- It may flag regressions before anyone edits code.
+- It does not apply patches, create worktrees, restart services, send messages, write calendars, change credentials, commit, push, or mutate live integrations.
+
+Operator checks:
+
+- `npm run debug:improvement -- --shadow`
+- `npm run debug:agentic`
+- `npm run test:synthetic-gauntlet`
+- `npm run test:shadow-improvement`
+
 Important Cursor rule:
 
 - `/cursor_status` is safe to use.

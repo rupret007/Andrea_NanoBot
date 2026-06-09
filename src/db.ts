@@ -48,6 +48,10 @@ import {
   ImprovementExperiment,
   ImprovementHypothesis,
   ImprovementOutcome,
+  ShadowCandidateSelection,
+  ShadowImprovementRun,
+  ShadowPatchReport,
+  SyntheticGauntletScenarioResult,
   LogicBeliefRevision,
   LogicBeliefState,
   LogicClaim,
@@ -3809,6 +3813,85 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_improvement_outcomes_hypothesis
       ON improvement_outcomes(hypothesis_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS shadow_improvement_runs (
+      run_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      policy_json TEXT NOT NULL,
+      baseline_score REAL NOT NULL,
+      candidate_score REAL NOT NULL,
+      regression_count INTEGER NOT NULL,
+      selected_hypothesis_ids_json TEXT NOT NULL,
+      external_blocker_ids_json TEXT NOT NULL,
+      report_summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_shadow_improvement_runs_created
+      ON shadow_improvement_runs(created_at DESC);
+    CREATE TABLE IF NOT EXISTS shadow_candidate_selections (
+      selection_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      hypothesis_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      rank INTEGER NOT NULL,
+      decision TEXT NOT NULL,
+      rationale TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      fix_class TEXT NOT NULL,
+      expected_scenario_ids_json TEXT NOT NULL,
+      approval_required INTEGER NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES shadow_improvement_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (hypothesis_id) REFERENCES improvement_hypotheses(hypothesis_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_shadow_candidate_selections_run
+      ON shadow_candidate_selections(run_id, rank);
+    CREATE TABLE IF NOT EXISTS synthetic_gauntlet_results (
+      result_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      scenario_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      status TEXT NOT NULL,
+      route_score REAL NOT NULL,
+      context_score REAL NOT NULL,
+      usefulness_score REAL NOT NULL,
+      brevity_score REAL NOT NULL,
+      safety_score REAL NOT NULL,
+      fallback_score REAL NOT NULL,
+      reflection_score REAL NOT NULL,
+      leakage_score REAL NOT NULL,
+      total_score REAL NOT NULL,
+      linked_hypothesis_ids_json TEXT NOT NULL,
+      failures_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES shadow_improvement_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_synthetic_gauntlet_results_run
+      ON synthetic_gauntlet_results(run_id, phase, scenario_id);
+    CREATE TABLE IF NOT EXISTS shadow_patch_reports (
+      report_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      hypothesis_id TEXT NOT NULL,
+      patch_plan_id TEXT,
+      created_at TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      baseline_score REAL NOT NULL,
+      candidate_score REAL NOT NULL,
+      score_delta REAL NOT NULL,
+      regression_flags_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES shadow_improvement_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (hypothesis_id) REFERENCES improvement_hypotheses(hypothesis_id) ON DELETE CASCADE,
+      FOREIGN KEY (patch_plan_id) REFERENCES candidate_patch_plans(patch_plan_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_shadow_patch_reports_run
+      ON shadow_patch_reports(run_id, outcome);
     CREATE TABLE IF NOT EXISTS runtime_orchestration_jobs (
       job_id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -24867,6 +24950,437 @@ export function listImprovementOutcomes(
     )
     .all(...args) as Array<Parameters<typeof mapImprovementOutcomeRow>[0]>;
   return rows.map((row) => mapImprovementOutcomeRow(row));
+}
+
+function mapShadowImprovementRunRow(row: {
+  run_id: string;
+  created_at: string;
+  updated_at: string;
+  status: ShadowImprovementRun['status'];
+  policy_json: string;
+  baseline_score: number;
+  candidate_score: number;
+  regression_count: number;
+  selected_hypothesis_ids_json: string;
+  external_blocker_ids_json: string;
+  report_summary: string;
+  next_action: string;
+  privacy_json: string;
+}): ShadowImprovementRun {
+  return {
+    runId: row.run_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    policyJson: row.policy_json,
+    baselineScore: row.baseline_score,
+    candidateScore: row.candidate_score,
+    regressionCount: row.regression_count,
+    selectedHypothesisIdsJson: row.selected_hypothesis_ids_json,
+    externalBlockerIdsJson: row.external_blocker_ids_json,
+    reportSummary: row.report_summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertShadowImprovementRun(record: ShadowImprovementRun): void {
+  db.prepare(
+    `
+      INSERT INTO shadow_improvement_runs (
+        run_id, created_at, updated_at, status, policy_json, baseline_score,
+        candidate_score, regression_count, selected_hypothesis_ids_json,
+        external_blocker_ids_json, report_summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        policy_json = excluded.policy_json,
+        baseline_score = excluded.baseline_score,
+        candidate_score = excluded.candidate_score,
+        regression_count = excluded.regression_count,
+        selected_hypothesis_ids_json = excluded.selected_hypothesis_ids_json,
+        external_blocker_ids_json = excluded.external_blocker_ids_json,
+        report_summary = excluded.report_summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.runId,
+    record.createdAt,
+    record.updatedAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.policyJson, 2400),
+    record.baselineScore,
+    record.candidateScore,
+    record.regressionCount,
+    sanitizeStoredIdArrayJson(record.selectedHypothesisIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.externalBlockerIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.reportSummary, 1200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listShadowImprovementRuns(
+  params: { status?: ShadowImprovementRun['status']; limit?: number } = {},
+): ShadowImprovementRun[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM shadow_improvement_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapShadowImprovementRunRow>[0]>;
+  return rows.map((row) => mapShadowImprovementRunRow(row));
+}
+
+function mapShadowCandidateSelectionRow(row: {
+  selection_id: string;
+  run_id: string;
+  hypothesis_id: string;
+  created_at: string;
+  rank: number;
+  decision: ShadowCandidateSelection['decision'];
+  rationale: string;
+  risk_level: ShadowCandidateSelection['riskLevel'];
+  fix_class: ShadowCandidateSelection['fixClass'];
+  expected_scenario_ids_json: string;
+  approval_required: number;
+  privacy_json: string;
+}): ShadowCandidateSelection {
+  return {
+    selectionId: row.selection_id,
+    runId: row.run_id,
+    hypothesisId: row.hypothesis_id,
+    createdAt: row.created_at,
+    rank: row.rank,
+    decision: row.decision,
+    rationale: row.rationale,
+    riskLevel: row.risk_level,
+    fixClass: row.fix_class,
+    expectedScenarioIdsJson: row.expected_scenario_ids_json,
+    approvalRequired: row.approval_required === 1,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertShadowCandidateSelection(
+  record: ShadowCandidateSelection,
+): void {
+  db.prepare(
+    `
+      INSERT INTO shadow_candidate_selections (
+        selection_id, run_id, hypothesis_id, created_at, rank, decision,
+        rationale, risk_level, fix_class, expected_scenario_ids_json,
+        approval_required, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(selection_id) DO UPDATE SET
+        rank = excluded.rank,
+        decision = excluded.decision,
+        rationale = excluded.rationale,
+        risk_level = excluded.risk_level,
+        fix_class = excluded.fix_class,
+        expected_scenario_ids_json = excluded.expected_scenario_ids_json,
+        approval_required = excluded.approval_required,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.selectionId,
+    record.runId,
+    record.hypothesisId,
+    record.createdAt,
+    record.rank,
+    record.decision,
+    redactStoredCognitiveMetadata(record.rationale, 900),
+    record.riskLevel,
+    record.fixClass,
+    sanitizeStoredIdArrayJson(record.expectedScenarioIdsJson, 3200),
+    record.approvalRequired ? 1 : 0,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listShadowCandidateSelections(
+  params: {
+    runId?: string;
+    decision?: ShadowCandidateSelection['decision'];
+    limit?: number;
+  } = {},
+): ShadowCandidateSelection[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.decision) {
+    clauses.push('decision = ?');
+    args.push(params.decision);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM shadow_candidate_selections
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY rank ASC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapShadowCandidateSelectionRow>[0]
+  >;
+  return rows.map((row) => mapShadowCandidateSelectionRow(row));
+}
+
+function mapSyntheticGauntletScenarioResultRow(row: {
+  result_id: string;
+  run_id: string;
+  scenario_id: string;
+  created_at: string;
+  phase: SyntheticGauntletScenarioResult['phase'];
+  status: SyntheticGauntletScenarioResult['status'];
+  route_score: number;
+  context_score: number;
+  usefulness_score: number;
+  brevity_score: number;
+  safety_score: number;
+  fallback_score: number;
+  reflection_score: number;
+  leakage_score: number;
+  total_score: number;
+  linked_hypothesis_ids_json: string;
+  failures_json: string;
+  summary: string;
+  privacy_json: string;
+}): SyntheticGauntletScenarioResult {
+  return {
+    resultId: row.result_id,
+    runId: row.run_id,
+    scenarioId: row.scenario_id,
+    createdAt: row.created_at,
+    phase: row.phase,
+    status: row.status,
+    routeScore: row.route_score,
+    contextScore: row.context_score,
+    usefulnessScore: row.usefulness_score,
+    brevityScore: row.brevity_score,
+    safetyScore: row.safety_score,
+    fallbackScore: row.fallback_score,
+    reflectionScore: row.reflection_score,
+    leakageScore: row.leakage_score,
+    totalScore: row.total_score,
+    linkedHypothesisIdsJson: row.linked_hypothesis_ids_json,
+    failuresJson: row.failures_json,
+    summary: row.summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertSyntheticGauntletScenarioResult(
+  record: SyntheticGauntletScenarioResult,
+): void {
+  db.prepare(
+    `
+      INSERT INTO synthetic_gauntlet_results (
+        result_id, run_id, scenario_id, created_at, phase, status, route_score,
+        context_score, usefulness_score, brevity_score, safety_score,
+        fallback_score, reflection_score, leakage_score, total_score,
+        linked_hypothesis_ids_json, failures_json, summary, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(result_id) DO UPDATE SET
+        status = excluded.status,
+        route_score = excluded.route_score,
+        context_score = excluded.context_score,
+        usefulness_score = excluded.usefulness_score,
+        brevity_score = excluded.brevity_score,
+        safety_score = excluded.safety_score,
+        fallback_score = excluded.fallback_score,
+        reflection_score = excluded.reflection_score,
+        leakage_score = excluded.leakage_score,
+        total_score = excluded.total_score,
+        linked_hypothesis_ids_json = excluded.linked_hypothesis_ids_json,
+        failures_json = excluded.failures_json,
+        summary = excluded.summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.resultId,
+    record.runId,
+    record.scenarioId,
+    record.createdAt,
+    record.phase,
+    record.status,
+    record.routeScore,
+    record.contextScore,
+    record.usefulnessScore,
+    record.brevityScore,
+    record.safetyScore,
+    record.fallbackScore,
+    record.reflectionScore,
+    record.leakageScore,
+    record.totalScore,
+    sanitizeStoredIdArrayJson(record.linkedHypothesisIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.failuresJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listSyntheticGauntletScenarioResults(
+  params: {
+    runId?: string;
+    phase?: SyntheticGauntletScenarioResult['phase'];
+    limit?: number;
+  } = {},
+): SyntheticGauntletScenarioResult[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.phase) {
+    clauses.push('phase = ?');
+    args.push(params.phase);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM synthetic_gauntlet_results
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC, scenario_id ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapSyntheticGauntletScenarioResultRow>[0]
+  >;
+  return rows.map((row) => mapSyntheticGauntletScenarioResultRow(row));
+}
+
+function mapShadowPatchReportRow(row: {
+  report_id: string;
+  run_id: string;
+  hypothesis_id: string;
+  patch_plan_id: string | null;
+  created_at: string;
+  outcome: ShadowPatchReport['outcome'];
+  baseline_score: number;
+  candidate_score: number;
+  score_delta: number;
+  regression_flags_json: string;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): ShadowPatchReport {
+  return {
+    reportId: row.report_id,
+    runId: row.run_id,
+    hypothesisId: row.hypothesis_id,
+    patchPlanId: row.patch_plan_id,
+    createdAt: row.created_at,
+    outcome: row.outcome,
+    baselineScore: row.baseline_score,
+    candidateScore: row.candidate_score,
+    scoreDelta: row.score_delta,
+    regressionFlagsJson: row.regression_flags_json,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertShadowPatchReport(record: ShadowPatchReport): void {
+  db.prepare(
+    `
+      INSERT INTO shadow_patch_reports (
+        report_id, run_id, hypothesis_id, patch_plan_id, created_at, outcome,
+        baseline_score, candidate_score, score_delta, regression_flags_json,
+        summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(report_id) DO UPDATE SET
+        patch_plan_id = excluded.patch_plan_id,
+        outcome = excluded.outcome,
+        baseline_score = excluded.baseline_score,
+        candidate_score = excluded.candidate_score,
+        score_delta = excluded.score_delta,
+        regression_flags_json = excluded.regression_flags_json,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.reportId,
+    record.runId,
+    record.hypothesisId,
+    record.patchPlanId,
+    record.createdAt,
+    record.outcome,
+    record.baselineScore,
+    record.candidateScore,
+    record.scoreDelta,
+    redactStoredCognitiveMetadata(record.regressionFlagsJson, 2400),
+    redactStoredCognitiveMetadata(record.summary, 900),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listShadowPatchReports(
+  params: {
+    runId?: string;
+    hypothesisId?: string;
+    outcome?: ShadowPatchReport['outcome'];
+    limit?: number;
+  } = {},
+): ShadowPatchReport[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  if (params.hypothesisId) {
+    clauses.push('hypothesis_id = ?');
+    args.push(params.hypothesisId);
+  }
+  if (params.outcome) {
+    clauses.push('outcome = ?');
+    args.push(params.outcome);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM shadow_patch_reports
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapShadowPatchReportRow>[0]>;
+  return rows.map((row) => mapShadowPatchReportRow(row));
 }
 
 export function pruneCognitiveKernelData(params: {

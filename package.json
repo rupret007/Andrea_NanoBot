@@ -77,6 +77,8 @@
     "test:repair": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-repair.ts",
     "test:critic-agent": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-critic-agent.ts",
     "test:agentic": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-agentic.ts",
+    "test:synthetic-gauntlet": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-synthetic-gauntlet.ts",
+    "test:shadow-improvement": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-shadow-improvement.ts",
     "test:stability": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-stability-gate.ts",
     "test:stability:live": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-stability-gate.ts --with-live-verify",
     "services:start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/nanoclaw-host.ps1 start",
