@@ -59,6 +59,15 @@ import {
   RealityObservation,
   RealitySnapshot,
   RealityVerificationNeed,
+  CausalBelief,
+  CounterfactualActionOption,
+  CounterfactualComparison,
+  GoalMilestone,
+  GoalOutcome,
+  GoalPlannerRun,
+  GoalPlanStep,
+  HierarchicalGoal,
+  ProactiveOpportunity,
   ShadowCandidateSelection,
   ShadowImprovementRun,
   ShadowPatchReport,
@@ -4107,6 +4116,182 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_proof_closure_steps_plan
       ON proof_closure_steps(plan_id, status);
+    CREATE TABLE IF NOT EXISTS hierarchical_goals (
+      goal_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      title TEXT NOT NULL,
+      objective TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      owner TEXT NOT NULL,
+      status TEXT NOT NULL,
+      priority TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      related_world_fact_ids_json TEXT NOT NULL,
+      related_skill_ids_json TEXT NOT NULL,
+      related_mission_ids_json TEXT NOT NULL,
+      related_reminder_ids_json TEXT NOT NULL,
+      related_action_bundle_ids_json TEXT NOT NULL,
+      review_cadence TEXT NOT NULL,
+      approval_boundary TEXT NOT NULL,
+      allowed_actions_json TEXT NOT NULL,
+      disallowed_actions_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_hierarchical_goals_group_status
+      ON hierarchical_goals(group_folder, status, priority, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS goal_milestones (
+      milestone_id TEXT PRIMARY KEY,
+      goal_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      title TEXT NOT NULL,
+      desired_outcome TEXT NOT NULL,
+      due_or_review_window TEXT NOT NULL,
+      status TEXT NOT NULL,
+      blocker_ids_json TEXT NOT NULL,
+      dependencies_json TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (goal_id) REFERENCES hierarchical_goals(goal_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_goal_milestones_goal
+      ON goal_milestones(goal_id, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS goal_plan_steps (
+      step_id TEXT PRIMARY KEY,
+      goal_id TEXT NOT NULL,
+      milestone_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      action_summary TEXT NOT NULL,
+      required_context_json TEXT NOT NULL,
+      required_tool TEXT NOT NULL,
+      approval_requirement TEXT NOT NULL,
+      estimated_effort TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      fallback TEXT NOT NULL,
+      status TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (goal_id) REFERENCES hierarchical_goals(goal_id) ON DELETE CASCADE,
+      FOREIGN KEY (milestone_id) REFERENCES goal_milestones(milestone_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_goal_plan_steps_goal
+      ON goal_plan_steps(goal_id, status, position);
+    CREATE TABLE IF NOT EXISTS goal_outcomes (
+      outcome_id TEXT PRIMARY KEY,
+      goal_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      result TEXT NOT NULL,
+      worked_summary TEXT NOT NULL,
+      failed_summary TEXT NOT NULL,
+      changed_summary TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      next_recommendation TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (goal_id) REFERENCES hierarchical_goals(goal_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_goal_outcomes_goal
+      ON goal_outcomes(goal_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS causal_beliefs (
+      belief_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      cause_action TEXT NOT NULL,
+      expected_effect TEXT NOT NULL,
+      context_where_likely_true TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      contradicting_evidence_refs_json TEXT NOT NULL,
+      last_tested_at TEXT,
+      sensitivity TEXT NOT NULL,
+      status TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_causal_beliefs_status
+      ON causal_beliefs(status, confidence DESC, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS counterfactual_comparisons (
+      comparison_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      request_summary TEXT NOT NULL,
+      selected_option_id TEXT,
+      option_ids_json TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_counterfactual_comparisons_created
+      ON counterfactual_comparisons(created_at DESC);
+    CREATE TABLE IF NOT EXISTS counterfactual_action_options (
+      option_id TEXT PRIMARY KEY,
+      comparison_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      action_summary TEXT NOT NULL,
+      expected_benefit REAL NOT NULL,
+      effort REAL NOT NULL,
+      risk REAL NOT NULL,
+      required_proof TEXT NOT NULL,
+      tool_reliability REAL NOT NULL,
+      approval_requirement TEXT NOT NULL,
+      possible_failure TEXT NOT NULL,
+      fallback_plan TEXT NOT NULL,
+      score REAL NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (comparison_id) REFERENCES counterfactual_comparisons(comparison_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_counterfactual_options_comparison
+      ON counterfactual_action_options(comparison_id, score DESC);
+    CREATE TABLE IF NOT EXISTS proactive_opportunities (
+      opportunity_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      trigger_source TEXT NOT NULL,
+      related_goal_id TEXT,
+      opportunity_summary TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      urgency TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      suggested_action TEXT NOT NULL,
+      approval_requirement TEXT NOT NULL,
+      status TEXT NOT NULL,
+      snoozed_until TEXT,
+      evidence_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_proactive_opportunities_group
+      ON proactive_opportunities(group_folder, status, urgency, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS goal_planner_runs (
+      run_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      channel TEXT NOT NULL,
+      request_summary TEXT NOT NULL,
+      intent TEXT NOT NULL,
+      selected_goal_id TEXT,
+      selected_comparison_id TEXT,
+      selected_opportunity_id TEXT,
+      candidate_goal_ids_json TEXT NOT NULL,
+      candidate_opportunity_ids_json TEXT NOT NULL,
+      verification_need_ids_json TEXT NOT NULL,
+      approval_required INTEGER NOT NULL,
+      confidence REAL NOT NULL,
+      summary TEXT NOT NULL,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_goal_planner_runs_created
+      ON goal_planner_runs(created_at DESC);
     CREATE TABLE IF NOT EXISTS runtime_orchestration_jobs (
       job_id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -26737,6 +26922,1028 @@ export function listProofClosureSteps(
     )
     .all(...args) as Array<Parameters<typeof mapProofClosureStepRow>[0]>;
   return rows.map((row) => mapProofClosureStepRow(row));
+}
+
+function mapHierarchicalGoalRow(row: {
+  goal_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  title: string;
+  objective: string;
+  scope: HierarchicalGoal['scope'];
+  owner: HierarchicalGoal['owner'];
+  status: HierarchicalGoal['status'];
+  priority: HierarchicalGoal['priority'];
+  confidence: number;
+  evidence_refs_json: string;
+  related_world_fact_ids_json: string;
+  related_skill_ids_json: string;
+  related_mission_ids_json: string;
+  related_reminder_ids_json: string;
+  related_action_bundle_ids_json: string;
+  review_cadence: HierarchicalGoal['reviewCadence'];
+  approval_boundary: HierarchicalGoal['approvalBoundary'];
+  allowed_actions_json: string;
+  disallowed_actions_json: string;
+  next_action: string;
+  privacy_json: string;
+}): HierarchicalGoal {
+  return {
+    goalId: row.goal_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder: row.group_folder,
+    title: row.title,
+    objective: row.objective,
+    scope: row.scope,
+    owner: row.owner,
+    status: row.status,
+    priority: row.priority,
+    confidence: row.confidence,
+    evidenceRefsJson: row.evidence_refs_json,
+    relatedWorldFactIdsJson: row.related_world_fact_ids_json,
+    relatedSkillIdsJson: row.related_skill_ids_json,
+    relatedMissionIdsJson: row.related_mission_ids_json,
+    relatedReminderIdsJson: row.related_reminder_ids_json,
+    relatedActionBundleIdsJson: row.related_action_bundle_ids_json,
+    reviewCadence: row.review_cadence,
+    approvalBoundary: row.approval_boundary,
+    allowedActionsJson: row.allowed_actions_json,
+    disallowedActionsJson: row.disallowed_actions_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertHierarchicalGoal(record: HierarchicalGoal): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO hierarchical_goals (
+        goal_id, created_at, updated_at, group_folder, title, objective, scope,
+        owner, status, priority, confidence, evidence_refs_json,
+        related_world_fact_ids_json, related_skill_ids_json,
+        related_mission_ids_json, related_reminder_ids_json,
+        related_action_bundle_ids_json, review_cadence, approval_boundary,
+        allowed_actions_json, disallowed_actions_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(goal_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        title = excluded.title,
+        objective = excluded.objective,
+        scope = excluded.scope,
+        owner = excluded.owner,
+        status = excluded.status,
+        priority = excluded.priority,
+        confidence = excluded.confidence,
+        evidence_refs_json = excluded.evidence_refs_json,
+        related_world_fact_ids_json = excluded.related_world_fact_ids_json,
+        related_skill_ids_json = excluded.related_skill_ids_json,
+        related_mission_ids_json = excluded.related_mission_ids_json,
+        related_reminder_ids_json = excluded.related_reminder_ids_json,
+        related_action_bundle_ids_json = excluded.related_action_bundle_ids_json,
+        review_cadence = excluded.review_cadence,
+        approval_boundary = excluded.approval_boundary,
+        allowed_actions_json = excluded.allowed_actions_json,
+        disallowed_actions_json = excluded.disallowed_actions_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.goalId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    redactStoredCognitiveMetadata(record.title, 240),
+    redactStoredCognitiveMetadata(record.objective, 1200),
+    record.scope,
+    record.owner,
+    record.status,
+    record.priority,
+    record.confidence,
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    sanitizeStoredIdArrayJson(record.relatedWorldFactIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.relatedSkillIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.relatedMissionIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.relatedReminderIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.relatedActionBundleIdsJson, 3200),
+    record.reviewCadence,
+    record.approvalBoundary,
+    redactStoredCognitiveMetadata(record.allowedActionsJson, 2400),
+    redactStoredCognitiveMetadata(record.disallowedActionsJson, 2400),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listHierarchicalGoals(
+  params: {
+    groupFolder?: string | null;
+    statuses?: HierarchicalGoal['status'][];
+    limit?: number;
+  } = {},
+): HierarchicalGoal[] {
+  if (!isDatabaseInitialized()) return [];
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('group_folder = ?');
+    args.push(params.groupFolder);
+  }
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM hierarchical_goals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY
+          CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+          updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapHierarchicalGoalRow>[0]>;
+  return rows
+    .filter((row) => !row.group_folder || isValidGroupFolder(row.group_folder))
+    .map((row) => mapHierarchicalGoalRow(row));
+}
+
+export function updateHierarchicalGoalStatus(
+  goalId: string,
+  status: HierarchicalGoal['status'],
+  updatedAt = new Date().toISOString(),
+): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE hierarchical_goals
+        SET status = ?, updated_at = ?
+        WHERE goal_id = ?
+      `,
+    )
+    .run(status, updatedAt, goalId);
+  return result.changes > 0;
+}
+
+function mapGoalMilestoneRow(row: {
+  milestone_id: string;
+  goal_id: string;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  desired_outcome: string;
+  due_or_review_window: string;
+  status: GoalMilestone['status'];
+  blocker_ids_json: string;
+  dependencies_json: string;
+  evidence_refs_json: string;
+  privacy_json: string;
+}): GoalMilestone {
+  return {
+    milestoneId: row.milestone_id,
+    goalId: row.goal_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    title: row.title,
+    desiredOutcome: row.desired_outcome,
+    dueOrReviewWindow: row.due_or_review_window,
+    status: row.status,
+    blockerIdsJson: row.blocker_ids_json,
+    dependenciesJson: row.dependencies_json,
+    evidenceRefsJson: row.evidence_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertGoalMilestone(record: GoalMilestone): void {
+  db.prepare(
+    `
+      INSERT INTO goal_milestones (
+        milestone_id, goal_id, created_at, updated_at, title, desired_outcome,
+        due_or_review_window, status, blocker_ids_json, dependencies_json,
+        evidence_refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(milestone_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        title = excluded.title,
+        desired_outcome = excluded.desired_outcome,
+        due_or_review_window = excluded.due_or_review_window,
+        status = excluded.status,
+        blocker_ids_json = excluded.blocker_ids_json,
+        dependencies_json = excluded.dependencies_json,
+        evidence_refs_json = excluded.evidence_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.milestoneId,
+    record.goalId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.title, 240),
+    redactStoredCognitiveMetadata(record.desiredOutcome, 900),
+    redactStoredCognitiveMetadata(record.dueOrReviewWindow, 240),
+    record.status,
+    sanitizeStoredIdArrayJson(record.blockerIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.dependenciesJson, 3200),
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listGoalMilestones(
+  params: {
+    goalId?: string;
+    status?: GoalMilestone['status'];
+    limit?: number;
+  } = {},
+): GoalMilestone[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.goalId) {
+    clauses.push('goal_id = ?');
+    args.push(params.goalId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM goal_milestones
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapGoalMilestoneRow>[0]>;
+  return rows.map((row) => mapGoalMilestoneRow(row));
+}
+
+function mapGoalPlanStepRow(row: {
+  step_id: string;
+  goal_id: string;
+  milestone_id: string | null;
+  created_at: string;
+  updated_at: string;
+  position: number;
+  action_summary: string;
+  required_context_json: string;
+  required_tool: string;
+  approval_requirement: GoalPlanStep['approvalRequirement'];
+  estimated_effort: GoalPlanStep['estimatedEffort'];
+  risk_level: GoalPlanStep['riskLevel'];
+  fallback: string;
+  status: GoalPlanStep['status'];
+  evidence_refs_json: string;
+  next_action: string;
+  privacy_json: string;
+}): GoalPlanStep {
+  return {
+    stepId: row.step_id,
+    goalId: row.goal_id,
+    milestoneId: row.milestone_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    position: row.position,
+    actionSummary: row.action_summary,
+    requiredContextJson: row.required_context_json,
+    requiredTool: row.required_tool,
+    approvalRequirement: row.approval_requirement,
+    estimatedEffort: row.estimated_effort,
+    riskLevel: row.risk_level,
+    fallback: row.fallback,
+    status: row.status,
+    evidenceRefsJson: row.evidence_refs_json,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertGoalPlanStep(record: GoalPlanStep): void {
+  db.prepare(
+    `
+      INSERT INTO goal_plan_steps (
+        step_id, goal_id, milestone_id, created_at, updated_at, position,
+        action_summary, required_context_json, required_tool,
+        approval_requirement, estimated_effort, risk_level, fallback, status,
+        evidence_refs_json, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(step_id) DO UPDATE SET
+        milestone_id = excluded.milestone_id,
+        updated_at = excluded.updated_at,
+        position = excluded.position,
+        action_summary = excluded.action_summary,
+        required_context_json = excluded.required_context_json,
+        required_tool = excluded.required_tool,
+        approval_requirement = excluded.approval_requirement,
+        estimated_effort = excluded.estimated_effort,
+        risk_level = excluded.risk_level,
+        fallback = excluded.fallback,
+        status = excluded.status,
+        evidence_refs_json = excluded.evidence_refs_json,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.stepId,
+    record.goalId,
+    record.milestoneId || null,
+    record.createdAt,
+    record.updatedAt,
+    record.position,
+    redactStoredCognitiveMetadata(record.actionSummary, 900),
+    redactStoredCognitiveMetadata(record.requiredContextJson, 2400),
+    redactStoredCognitiveMetadata(record.requiredTool, 240),
+    record.approvalRequirement,
+    record.estimatedEffort,
+    record.riskLevel,
+    redactStoredCognitiveMetadata(record.fallback, 700),
+    record.status,
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listGoalPlanSteps(
+  params: {
+    goalId?: string;
+    milestoneId?: string;
+    status?: GoalPlanStep['status'];
+    limit?: number;
+  } = {},
+): GoalPlanStep[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.goalId) {
+    clauses.push('goal_id = ?');
+    args.push(params.goalId);
+  }
+  if (params.milestoneId) {
+    clauses.push('milestone_id = ?');
+    args.push(params.milestoneId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM goal_plan_steps
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY position ASC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapGoalPlanStepRow>[0]>;
+  return rows.map((row) => mapGoalPlanStepRow(row));
+}
+
+export function upsertGoalOutcome(record: GoalOutcome): void {
+  db.prepare(
+    `
+      INSERT INTO goal_outcomes (
+        outcome_id, goal_id, created_at, result, worked_summary,
+        failed_summary, changed_summary, evidence_refs_json,
+        next_recommendation, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(outcome_id) DO UPDATE SET
+        result = excluded.result,
+        worked_summary = excluded.worked_summary,
+        failed_summary = excluded.failed_summary,
+        changed_summary = excluded.changed_summary,
+        evidence_refs_json = excluded.evidence_refs_json,
+        next_recommendation = excluded.next_recommendation,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.outcomeId,
+    record.goalId,
+    record.createdAt,
+    record.result,
+    redactStoredCognitiveMetadata(record.workedSummary, 900),
+    redactStoredCognitiveMetadata(record.failedSummary, 900),
+    redactStoredCognitiveMetadata(record.changedSummary, 900),
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    redactStoredCognitiveMetadata(record.nextRecommendation, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listGoalOutcomes(
+  params: { goalId?: string; limit?: number } = {},
+): GoalOutcome[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.goalId) {
+    clauses.push('goal_id = ?');
+    args.push(params.goalId);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM goal_outcomes
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<{
+    outcome_id: string;
+    goal_id: string;
+    created_at: string;
+    result: GoalOutcome['result'];
+    worked_summary: string;
+    failed_summary: string;
+    changed_summary: string;
+    evidence_refs_json: string;
+    next_recommendation: string;
+    privacy_json: string;
+  }>;
+  return rows.map((row) => ({
+    outcomeId: row.outcome_id,
+    goalId: row.goal_id,
+    createdAt: row.created_at,
+    result: row.result,
+    workedSummary: row.worked_summary,
+    failedSummary: row.failed_summary,
+    changedSummary: row.changed_summary,
+    evidenceRefsJson: row.evidence_refs_json,
+    nextRecommendation: row.next_recommendation,
+    privacyJson: row.privacy_json,
+  }));
+}
+
+function mapCausalBeliefRow(row: {
+  belief_id: string;
+  created_at: string;
+  updated_at: string;
+  cause_action: string;
+  expected_effect: string;
+  context_where_likely_true: string;
+  confidence: number;
+  evidence_refs_json: string;
+  contradicting_evidence_refs_json: string;
+  last_tested_at: string | null;
+  sensitivity: CausalBelief['sensitivity'];
+  status: CausalBelief['status'];
+  next_action: string;
+  privacy_json: string;
+}): CausalBelief {
+  return {
+    beliefId: row.belief_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    causeAction: row.cause_action,
+    expectedEffect: row.expected_effect,
+    contextWhereLikelyTrue: row.context_where_likely_true,
+    confidence: row.confidence,
+    evidenceRefsJson: row.evidence_refs_json,
+    contradictingEvidenceRefsJson: row.contradicting_evidence_refs_json,
+    lastTestedAt: row.last_tested_at,
+    sensitivity: row.sensitivity,
+    status: row.status,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCausalBelief(record: CausalBelief): void {
+  db.prepare(
+    `
+      INSERT INTO causal_beliefs (
+        belief_id, created_at, updated_at, cause_action, expected_effect,
+        context_where_likely_true, confidence, evidence_refs_json,
+        contradicting_evidence_refs_json, last_tested_at, sensitivity, status,
+        next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(belief_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        cause_action = excluded.cause_action,
+        expected_effect = excluded.expected_effect,
+        context_where_likely_true = excluded.context_where_likely_true,
+        confidence = excluded.confidence,
+        evidence_refs_json = excluded.evidence_refs_json,
+        contradicting_evidence_refs_json = excluded.contradicting_evidence_refs_json,
+        last_tested_at = excluded.last_tested_at,
+        sensitivity = excluded.sensitivity,
+        status = excluded.status,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.beliefId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.causeAction, 700),
+    redactStoredCognitiveMetadata(record.expectedEffect, 900),
+    redactStoredCognitiveMetadata(record.contextWhereLikelyTrue, 900),
+    record.confidence,
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    sanitizeStoredIdArrayJson(record.contradictingEvidenceRefsJson, 3200),
+    record.lastTestedAt || null,
+    record.sensitivity,
+    record.status,
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCausalBeliefs(
+  params: { status?: CausalBelief['status']; limit?: number } = {},
+): CausalBelief[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM causal_beliefs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY confidence DESC, updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCausalBeliefRow>[0]>;
+  return rows.map((row) => mapCausalBeliefRow(row));
+}
+
+function mapCounterfactualComparisonRow(row: {
+  comparison_id: string;
+  created_at: string;
+  request_summary: string;
+  selected_option_id: string | null;
+  option_ids_json: string;
+  decision: CounterfactualComparison['decision'];
+  reason: string;
+  confidence: number;
+  next_action: string;
+  privacy_json: string;
+}): CounterfactualComparison {
+  return {
+    comparisonId: row.comparison_id,
+    createdAt: row.created_at,
+    requestSummary: row.request_summary,
+    selectedOptionId: row.selected_option_id,
+    optionIdsJson: row.option_ids_json,
+    decision: row.decision,
+    reason: row.reason,
+    confidence: row.confidence,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCounterfactualComparison(
+  record: CounterfactualComparison,
+): void {
+  db.prepare(
+    `
+      INSERT INTO counterfactual_comparisons (
+        comparison_id, created_at, request_summary, selected_option_id,
+        option_ids_json, decision, reason, confidence, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(comparison_id) DO UPDATE SET
+        selected_option_id = excluded.selected_option_id,
+        option_ids_json = excluded.option_ids_json,
+        decision = excluded.decision,
+        reason = excluded.reason,
+        confidence = excluded.confidence,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.comparisonId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.requestSummary, 900),
+    record.selectedOptionId || null,
+    sanitizeStoredIdArrayJson(record.optionIdsJson, 3200),
+    record.decision,
+    redactStoredCognitiveMetadata(record.reason, 1200),
+    record.confidence,
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCounterfactualComparisons(
+  params: { limit?: number } = {},
+): CounterfactualComparison[] {
+  if (!isDatabaseInitialized()) return [];
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM counterfactual_comparisons
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(harnessLimit(params.limit)) as Array<
+    Parameters<typeof mapCounterfactualComparisonRow>[0]
+  >;
+  return rows.map((row) => mapCounterfactualComparisonRow(row));
+}
+
+function mapCounterfactualActionOptionRow(row: {
+  option_id: string;
+  comparison_id: string;
+  created_at: string;
+  action_summary: string;
+  expected_benefit: number;
+  effort: number;
+  risk: number;
+  required_proof: string;
+  tool_reliability: number;
+  approval_requirement: CounterfactualActionOption['approvalRequirement'];
+  possible_failure: string;
+  fallback_plan: string;
+  score: number;
+  evidence_refs_json: string;
+  privacy_json: string;
+}): CounterfactualActionOption {
+  return {
+    optionId: row.option_id,
+    comparisonId: row.comparison_id,
+    createdAt: row.created_at,
+    actionSummary: row.action_summary,
+    expectedBenefit: row.expected_benefit,
+    effort: row.effort,
+    risk: row.risk,
+    requiredProof: row.required_proof,
+    toolReliability: row.tool_reliability,
+    approvalRequirement: row.approval_requirement,
+    possibleFailure: row.possible_failure,
+    fallbackPlan: row.fallback_plan,
+    score: row.score,
+    evidenceRefsJson: row.evidence_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCounterfactualActionOption(
+  record: CounterfactualActionOption,
+): void {
+  db.prepare(
+    `
+      INSERT INTO counterfactual_action_options (
+        option_id, comparison_id, created_at, action_summary, expected_benefit,
+        effort, risk, required_proof, tool_reliability, approval_requirement,
+        possible_failure, fallback_plan, score, evidence_refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(option_id) DO UPDATE SET
+        action_summary = excluded.action_summary,
+        expected_benefit = excluded.expected_benefit,
+        effort = excluded.effort,
+        risk = excluded.risk,
+        required_proof = excluded.required_proof,
+        tool_reliability = excluded.tool_reliability,
+        approval_requirement = excluded.approval_requirement,
+        possible_failure = excluded.possible_failure,
+        fallback_plan = excluded.fallback_plan,
+        score = excluded.score,
+        evidence_refs_json = excluded.evidence_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.optionId,
+    record.comparisonId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.actionSummary, 900),
+    record.expectedBenefit,
+    record.effort,
+    record.risk,
+    redactStoredCognitiveMetadata(record.requiredProof, 700),
+    record.toolReliability,
+    record.approvalRequirement,
+    redactStoredCognitiveMetadata(record.possibleFailure, 900),
+    redactStoredCognitiveMetadata(record.fallbackPlan, 900),
+    record.score,
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCounterfactualActionOptions(
+  params: { comparisonId?: string; limit?: number } = {},
+): CounterfactualActionOption[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.comparisonId) {
+    clauses.push('comparison_id = ?');
+    args.push(params.comparisonId);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM counterfactual_action_options
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY score DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapCounterfactualActionOptionRow>[0]
+  >;
+  return rows.map((row) => mapCounterfactualActionOptionRow(row));
+}
+
+function mapProactiveOpportunityRow(row: {
+  opportunity_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  trigger_source: string;
+  related_goal_id: string | null;
+  opportunity_summary: string;
+  reason: string;
+  urgency: ProactiveOpportunity['urgency'];
+  confidence: number;
+  suggested_action: string;
+  approval_requirement: ProactiveOpportunity['approvalRequirement'];
+  status: ProactiveOpportunity['status'];
+  snoozed_until: string | null;
+  evidence_refs_json: string;
+  privacy_json: string;
+}): ProactiveOpportunity {
+  return {
+    opportunityId: row.opportunity_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder: row.group_folder,
+    triggerSource: row.trigger_source,
+    relatedGoalId: row.related_goal_id,
+    opportunitySummary: row.opportunity_summary,
+    reason: row.reason,
+    urgency: row.urgency,
+    confidence: row.confidence,
+    suggestedAction: row.suggested_action,
+    approvalRequirement: row.approval_requirement,
+    status: row.status,
+    snoozedUntil: row.snoozed_until,
+    evidenceRefsJson: row.evidence_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertProactiveOpportunity(record: ProactiveOpportunity): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO proactive_opportunities (
+        opportunity_id, created_at, updated_at, group_folder, trigger_source,
+        related_goal_id, opportunity_summary, reason, urgency, confidence,
+        suggested_action, approval_requirement, status, snoozed_until,
+        evidence_refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(opportunity_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        trigger_source = excluded.trigger_source,
+        related_goal_id = excluded.related_goal_id,
+        opportunity_summary = excluded.opportunity_summary,
+        reason = excluded.reason,
+        urgency = excluded.urgency,
+        confidence = excluded.confidence,
+        suggested_action = excluded.suggested_action,
+        approval_requirement = excluded.approval_requirement,
+        status = excluded.status,
+        snoozed_until = excluded.snoozed_until,
+        evidence_refs_json = excluded.evidence_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.opportunityId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    redactStoredCognitiveMetadata(record.triggerSource, 240),
+    record.relatedGoalId || null,
+    redactStoredCognitiveMetadata(record.opportunitySummary, 900),
+    redactStoredCognitiveMetadata(record.reason, 900),
+    record.urgency,
+    record.confidence,
+    redactStoredCognitiveMetadata(record.suggestedAction, 900),
+    record.approvalRequirement,
+    record.status,
+    record.snoozedUntil || null,
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listProactiveOpportunities(
+  params: {
+    groupFolder?: string | null;
+    statuses?: ProactiveOpportunity['status'][];
+    limit?: number;
+  } = {},
+): ProactiveOpportunity[] {
+  if (!isDatabaseInitialized()) return [];
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('group_folder = ?');
+    args.push(params.groupFolder);
+  }
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM proactive_opportunities
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY
+          CASE urgency WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
+          confidence DESC,
+          updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapProactiveOpportunityRow>[0]>;
+  return rows
+    .filter((row) => !row.group_folder || isValidGroupFolder(row.group_folder))
+    .map((row) => mapProactiveOpportunityRow(row));
+}
+
+export function updateProactiveOpportunityStatus(
+  opportunityId: string,
+  status: ProactiveOpportunity['status'],
+  updatedAt = new Date().toISOString(),
+  snoozedUntil?: string | null,
+): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE proactive_opportunities
+        SET status = ?, updated_at = ?, snoozed_until = COALESCE(?, snoozed_until)
+        WHERE opportunity_id = ?
+      `,
+    )
+    .run(status, updatedAt, snoozedUntil || null, opportunityId);
+  return result.changes > 0;
+}
+
+function mapGoalPlannerRunRow(row: {
+  run_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  channel: GoalPlannerRun['channel'];
+  request_summary: string;
+  intent: GoalPlannerRun['intent'];
+  selected_goal_id: string | null;
+  selected_comparison_id: string | null;
+  selected_opportunity_id: string | null;
+  candidate_goal_ids_json: string;
+  candidate_opportunity_ids_json: string;
+  verification_need_ids_json: string;
+  approval_required: number;
+  confidence: number;
+  summary: string;
+  next_action: string;
+  privacy_json: string;
+}): GoalPlannerRun {
+  return {
+    runId: row.run_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder: row.group_folder,
+    channel: row.channel,
+    requestSummary: row.request_summary,
+    intent: row.intent,
+    selectedGoalId: row.selected_goal_id,
+    selectedComparisonId: row.selected_comparison_id,
+    selectedOpportunityId: row.selected_opportunity_id,
+    candidateGoalIdsJson: row.candidate_goal_ids_json,
+    candidateOpportunityIdsJson: row.candidate_opportunity_ids_json,
+    verificationNeedIdsJson: row.verification_need_ids_json,
+    approvalRequired: row.approval_required === 1,
+    confidence: row.confidence,
+    summary: row.summary,
+    nextAction: row.next_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertGoalPlannerRun(record: GoalPlannerRun): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO goal_planner_runs (
+        run_id, created_at, updated_at, group_folder, channel, request_summary,
+        intent, selected_goal_id, selected_comparison_id,
+        selected_opportunity_id, candidate_goal_ids_json,
+        candidate_opportunity_ids_json, verification_need_ids_json,
+        approval_required, confidence, summary, next_action, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        group_folder = excluded.group_folder,
+        channel = excluded.channel,
+        request_summary = excluded.request_summary,
+        intent = excluded.intent,
+        selected_goal_id = excluded.selected_goal_id,
+        selected_comparison_id = excluded.selected_comparison_id,
+        selected_opportunity_id = excluded.selected_opportunity_id,
+        candidate_goal_ids_json = excluded.candidate_goal_ids_json,
+        candidate_opportunity_ids_json = excluded.candidate_opportunity_ids_json,
+        verification_need_ids_json = excluded.verification_need_ids_json,
+        approval_required = excluded.approval_required,
+        confidence = excluded.confidence,
+        summary = excluded.summary,
+        next_action = excluded.next_action,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.runId,
+    record.createdAt,
+    record.updatedAt,
+    record.groupFolder || null,
+    record.channel,
+    redactStoredCognitiveMetadata(record.requestSummary, 900),
+    record.intent,
+    record.selectedGoalId || null,
+    record.selectedComparisonId || null,
+    record.selectedOpportunityId || null,
+    sanitizeStoredIdArrayJson(record.candidateGoalIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.candidateOpportunityIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.verificationNeedIdsJson, 3200),
+    record.approvalRequired ? 1 : 0,
+    record.confidence,
+    redactStoredCognitiveMetadata(record.summary, 1200),
+    redactStoredCognitiveMetadata(record.nextAction, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listGoalPlannerRuns(
+  params: {
+    groupFolder?: string | null;
+    intent?: GoalPlannerRun['intent'];
+    limit?: number;
+  } = {},
+): GoalPlannerRun[] {
+  if (!isDatabaseInitialized()) return [];
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('group_folder = ?');
+    args.push(params.groupFolder);
+  }
+  if (params.intent) {
+    clauses.push('intent = ?');
+    args.push(params.intent);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM goal_planner_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapGoalPlannerRunRow>[0]>;
+  return rows
+    .filter((row) => !row.group_folder || isValidGroupFolder(row.group_folder))
+    .map((row) => mapGoalPlannerRunRow(row));
 }
 
 export function pruneCognitiveKernelData(params: {

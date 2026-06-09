@@ -19,6 +19,10 @@ import {
   buildRealityGroundingReport,
   formatRealityGroundingReport,
 } from '../src/reality-grounding.js';
+import {
+  buildHierarchicalPlannerReport,
+  formatGoalPlannerReport,
+} from '../src/goal-planner.js';
 
 initDatabase();
 
@@ -42,10 +46,14 @@ if (shadow) {
     channel: 'operator',
     persist: false,
   });
+  const planner = buildHierarchicalPlannerReport({
+    requestText: 'help me get Andrea closer to done',
+    persist: false,
+  });
   console.log(
     json
       ? JSON.stringify(
-          { ...report, patchWorkbench, proofGauntlet, reality },
+          { ...report, patchWorkbench, proofGauntlet, reality, planner },
           null,
           2,
         )
@@ -57,6 +65,8 @@ if (shadow) {
           formatLiveProofGauntletReport(proofGauntlet),
           '',
           formatRealityGroundingReport(reality),
+          '',
+          formatGoalPlannerReport(planner),
         ].join('\n'),
   );
   process.exit(0);
@@ -93,11 +103,15 @@ const reality = buildRealityGroundingReport({
   channel: 'operator',
   persist: false,
 });
+const planner = buildHierarchicalPlannerReport({
+  requestText: 'help me get Andrea closer to done',
+  persist: false,
+});
 
 console.log(
   json
-    ? JSON.stringify({ ...report, proofGauntlet, reality }, null, 2)
-    : [formatAutonomousImprovementLabReport(report), '', formatLiveProofGauntletReport(proofGauntlet), '', formatRealityGroundingReport(reality)].join(
+    ? JSON.stringify({ ...report, proofGauntlet, reality, planner }, null, 2)
+    : [formatAutonomousImprovementLabReport(report), '', formatLiveProofGauntletReport(proofGauntlet), '', formatRealityGroundingReport(reality), '', formatGoalPlannerReport(planner)].join(
         '\n',
       ),
 );

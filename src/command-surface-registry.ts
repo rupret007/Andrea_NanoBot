@@ -2136,7 +2136,29 @@ export const OPERATOR_SCRIPT_SURFACES: readonly CommandSurfaceEntry[] = [
     discoverability: ['operator_docs'],
     truthClass: 'operator_only',
     summary:
-      'Redacted Cognitive Executive route, chosen tool, confidence, context, and tool-reliability report.',
+      'Redacted Cognitive Executive route, chosen tool, confidence, context, goal-planner summary, and tool-reliability report.',
+  },
+  {
+    id: 'debug_goal_planner',
+    preferredAlias: 'npm run debug:goals',
+    acceptedAliases: [
+      'npm run debug:goals',
+      'npm run debug:goals -- --json',
+      'npm run debug:planner',
+      'npm run debug:planner -- --json',
+      'npm run debug:opportunities',
+      'npm run debug:opportunities -- --json',
+      'npm run test:goal-planning',
+      'npm run test:causal-planner',
+      'npm run test:proactive-opportunities',
+    ],
+    audience: 'operator',
+    surfaceKind: 'script',
+    channelScope: ['operator'],
+    discoverability: ['operator_docs'],
+    truthClass: 'operator_only',
+    summary:
+      'Redacted hierarchical goals, causal beliefs, counterfactual options, proactive opportunities, proof blockers, and next safe action.',
   },
   {
     id: 'debug_repair',

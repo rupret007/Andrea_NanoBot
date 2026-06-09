@@ -5651,6 +5651,233 @@ export interface MessageActionRecord {
   sentAt?: string | null;
 }
 
+export type HierarchicalGoalStatus =
+  | 'proposed'
+  | 'active'
+  | 'paused'
+  | 'blocked'
+  | 'completed'
+  | 'archived';
+
+export type HierarchicalGoalScope =
+  | 'personal'
+  | 'household'
+  | 'relationship'
+  | 'work'
+  | 'andrea_project'
+  | 'general';
+
+export type HierarchicalGoalOwner = 'user' | 'andrea' | 'shared' | 'external';
+
+export type HierarchicalGoalPriority = 'low' | 'normal' | 'high' | 'urgent';
+
+export type GoalApprovalBoundary =
+  | 'read_only'
+  | 'approval_required'
+  | 'manual_external'
+  | 'operator_only';
+
+export interface HierarchicalGoal {
+  goalId: string;
+  createdAt: string;
+  updatedAt: string;
+  groupFolder?: string | null;
+  title: string;
+  objective: string;
+  scope: HierarchicalGoalScope;
+  owner: HierarchicalGoalOwner;
+  status: HierarchicalGoalStatus;
+  priority: HierarchicalGoalPriority;
+  confidence: number;
+  evidenceRefsJson: string;
+  relatedWorldFactIdsJson: string;
+  relatedSkillIdsJson: string;
+  relatedMissionIdsJson: string;
+  relatedReminderIdsJson: string;
+  relatedActionBundleIdsJson: string;
+  reviewCadence: 'none' | 'daily' | 'weekly' | 'monthly' | 'on_demand';
+  approvalBoundary: GoalApprovalBoundary;
+  allowedActionsJson: string;
+  disallowedActionsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface GoalMilestone {
+  milestoneId: string;
+  goalId: string;
+  createdAt: string;
+  updatedAt: string;
+  title: string;
+  desiredOutcome: string;
+  dueOrReviewWindow: string;
+  status: 'proposed' | 'active' | 'blocked' | 'done' | 'skipped';
+  blockerIdsJson: string;
+  dependenciesJson: string;
+  evidenceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface GoalPlanStep {
+  stepId: string;
+  goalId: string;
+  milestoneId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  position: number;
+  actionSummary: string;
+  requiredContextJson: string;
+  requiredTool: string;
+  approvalRequirement: GoalApprovalBoundary;
+  estimatedEffort: 'tiny' | 'small' | 'medium' | 'large';
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  fallback: string;
+  status:
+    | 'proposed'
+    | 'ready'
+    | 'blocked'
+    | 'approval_required'
+    | 'done'
+    | 'skipped';
+  evidenceRefsJson: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface GoalOutcome {
+  outcomeId: string;
+  goalId: string;
+  createdAt: string;
+  result: 'worked' | 'failed' | 'changed' | 'deferred' | 'unknown';
+  workedSummary: string;
+  failedSummary: string;
+  changedSummary: string;
+  evidenceRefsJson: string;
+  nextRecommendation: string;
+  privacyJson: string;
+}
+
+export interface CausalBelief {
+  beliefId: string;
+  createdAt: string;
+  updatedAt: string;
+  causeAction: string;
+  expectedEffect: string;
+  contextWhereLikelyTrue: string;
+  confidence: number;
+  evidenceRefsJson: string;
+  contradictingEvidenceRefsJson: string;
+  lastTestedAt?: string | null;
+  sensitivity: RealitySensitivity;
+  status: 'likely' | 'uncertain' | 'contradicted' | 'stale';
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface CounterfactualActionOption {
+  optionId: string;
+  comparisonId: string;
+  createdAt: string;
+  actionSummary: string;
+  expectedBenefit: number;
+  effort: number;
+  risk: number;
+  requiredProof: string;
+  toolReliability: number;
+  approvalRequirement: GoalApprovalBoundary;
+  possibleFailure: string;
+  fallbackPlan: string;
+  score: number;
+  evidenceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface CounterfactualComparison {
+  comparisonId: string;
+  createdAt: string;
+  requestSummary: string;
+  selectedOptionId?: string | null;
+  optionIdsJson: string;
+  decision: 'recommend' | 'clarify' | 'stage_approval' | 'do_nothing';
+  reason: string;
+  confidence: number;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface ProactiveOpportunity {
+  opportunityId: string;
+  createdAt: string;
+  updatedAt: string;
+  groupFolder?: string | null;
+  triggerSource: string;
+  relatedGoalId?: string | null;
+  opportunitySummary: string;
+  reason: string;
+  urgency: 'low' | 'normal' | 'high';
+  confidence: number;
+  suggestedAction: string;
+  approvalRequirement: GoalApprovalBoundary;
+  status:
+    | 'proposed'
+    | 'shown'
+    | 'accepted'
+    | 'ignored'
+    | 'snoozed'
+    | 'dismissed';
+  snoozedUntil?: string | null;
+  evidenceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface GoalPlannerRun {
+  runId: string;
+  createdAt: string;
+  updatedAt: string;
+  groupFolder?: string | null;
+  channel: CognitiveExecutiveChannel | 'operator' | 'internal';
+  requestSummary: string;
+  intent:
+    | 'direct'
+    | 'clarify'
+    | 'plan'
+    | 'goal_proposal'
+    | 'goal_update'
+    | 'communication_draft'
+    | 'proof_task'
+    | 'repair_task'
+    | 'counterfactual'
+    | 'no_action';
+  selectedGoalId?: string | null;
+  selectedComparisonId?: string | null;
+  selectedOpportunityId?: string | null;
+  candidateGoalIdsJson: string;
+  candidateOpportunityIdsJson: string;
+  verificationNeedIdsJson: string;
+  approvalRequired: boolean;
+  confidence: number;
+  summary: string;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface GoalPlannerDoctorReport {
+  generatedAt: string;
+  latestRun?: GoalPlannerRun | null;
+  activeGoals: HierarchicalGoal[];
+  proposedGoals: HierarchicalGoal[];
+  blockedGoals: HierarchicalGoal[];
+  staleGoals: HierarchicalGoal[];
+  milestones: GoalMilestone[];
+  planSteps: GoalPlanStep[];
+  comparisons: CounterfactualComparison[];
+  options: CounterfactualActionOption[];
+  causalBeliefs: CausalBelief[];
+  opportunities: ProactiveOpportunity[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
 export interface MissionSuggestedAction {
   kind: MissionSuggestedActionKind;
   label: string;

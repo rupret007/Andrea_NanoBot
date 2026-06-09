@@ -12,6 +12,8 @@ import { buildAutonomousImprovementLabReport } from '../src/autonomous-improveme
 import { buildShadowImprovementReport } from '../src/shadow-improvement-runner.js';
 import { buildLiveProofGauntletReport } from '../src/live-proof-gauntlet.js';
 import { buildRealityGroundingReport } from '../src/reality-grounding.js';
+import { buildHierarchicalPlannerReport } from '../src/goal-planner.js';
+import { buildProactiveOpportunityReport } from '../src/proactive-opportunities.js';
 import type { FieldTrialSurfaceTruth } from '../src/field-trial-readiness.js';
 import type { PilotJourneyId } from '../src/types.js';
 
@@ -197,6 +199,14 @@ async function main(): Promise<void> {
     channel: 'operator',
     persist: false,
   });
+  const planner = buildHierarchicalPlannerReport({
+    requestText: 'what should I do next for pilot readiness?',
+    persist: false,
+  });
+  const opportunities = buildProactiveOpportunityReport({
+    reality,
+    persist: false,
+  });
   const attention = collectAttentionItems(truth);
   const lines = [
     '*Pilot Review*',
@@ -358,6 +368,18 @@ async function main(): Promise<void> {
     '*Reality Gaps*',
     `- Snapshot: ${reality.snapshot.status} / confidence=${reality.snapshot.confidence.toFixed(2)}`,
     `- Contradictions: ${reality.contradictions.length}`,
+    '',
+    '*Goal Planning And Opportunities*',
+    `- Latest planner intent: ${planner.latestRun?.intent || 'none'}`,
+    `- Planner confidence: ${planner.latestRun?.confidence.toFixed(2) || '0.00'}`,
+    `- Active/proposed/blocked goals: ${planner.activeGoals.length}/${planner.proposedGoals.length}/${planner.blockedGoals.length}`,
+    `- Opportunities: ${opportunities.opportunities.length}`,
+    ...(opportunities.topOpportunity
+      ? [
+          `- top_opportunity=${opportunities.topOpportunity.opportunitySummary}`,
+          `  next=${opportunities.topOpportunity.suggestedAction}`,
+        ]
+      : ['- no proactive opportunity selected']),
     `- Verification needs: ${reality.verificationNeeds.length}`,
     `- Proof tasks are repo bugs: ${reality.proofDebt.repoWorkRequired > 0 ? 'yes' : 'no'}`,
     `- Next reality step: ${reality.nextAction}`,

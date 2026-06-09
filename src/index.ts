@@ -478,6 +478,11 @@ import {
   isCognitiveExecutiveNaturalRequest,
 } from './cognitive-executive.js';
 import {
+  buildGoalPlannerStatusText,
+  formatGoalPlannerNaturalResponse,
+  isGoalPlannerNaturalRequest,
+} from './goal-planner.js';
+import {
   AgentRuntimeName,
   AgentThreadState,
   Channel,
@@ -7851,7 +7856,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       !isSessionGraphNaturalRequest(lastContent) &&
       !isAgencyConvergenceNaturalRequest(lastContent) &&
       !isCognitiveWorkspaceNaturalRequest(lastContent) &&
-      !isCognitiveExecutiveNaturalRequest(lastContent)
+      !isCognitiveExecutiveNaturalRequest(lastContent) &&
+      !isGoalPlannerNaturalRequest(lastContent)
     ) {
       return false;
     }
@@ -7889,6 +7895,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
 
+    if (isGoalPlannerNaturalRequest(lastContent)) {
+      await sendAssistantReplyWithFeedback({
+        text: formatGoalPlannerNaturalResponse(lastContent),
+        routeKey: 'goal_planner.status',
+        capabilityId: 'cognition.status',
+        handlerKind: 'local_goal_planner',
+        responseSource: 'local_companion',
+        traceReason:
+          'answered goal-directed planning request from metadata-only planner',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
+
     await sendAssistantReplyWithFeedback({
       text: [
         formatCognitiveDoctorReport(buildCognitiveDoctorReport()),
@@ -7914,6 +7934,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         buildCognitiveWorkspaceStatusText(),
         '',
         buildCognitiveExecutiveStatusText(),
+        '',
+        buildGoalPlannerStatusText(),
       ].join('\n'),
       routeKey: 'cognition.doctor',
       capabilityId: 'cognition.status',

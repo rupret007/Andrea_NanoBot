@@ -16,6 +16,10 @@ import {
   buildRealityGroundingReport,
   formatRealityGroundingReport,
 } from '../src/reality-grounding.js';
+import {
+  buildHierarchicalPlannerReport,
+  formatGoalPlannerReport,
+} from '../src/goal-planner.js';
 
 async function main(): Promise<void> {
   initDatabase();
@@ -33,13 +37,23 @@ async function main(): Promise<void> {
     channel: 'operator',
     persist: false,
   });
+  const planner = buildHierarchicalPlannerReport({
+    requestText: 'executive goal and planning summary',
+    persist: false,
+  });
   if (json) {
     console.log(
-      JSON.stringify({ executive, reliability, improvement, reality }, null, 2),
+      JSON.stringify(
+        { executive, planner, reliability, improvement, reality },
+        null,
+        2,
+      ),
     );
     return;
   }
   console.log(formatCognitiveExecutiveReport(executive));
+  console.log('');
+  console.log(formatGoalPlannerReport(planner));
   console.log('');
   console.log(formatRealityGroundingReport(reality));
   console.log('');

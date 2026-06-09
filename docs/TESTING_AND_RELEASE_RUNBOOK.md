@@ -230,8 +230,14 @@ npm run test:tool-reliability
 npm run test:repair
 npm run test:critic-agent
 npm run test:agentic
+npm run test:goal-planning
+npm run test:causal-planner
+npm run test:proactive-opportunities
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/assistant-capability-router.test.ts src/daily-companion.test.ts src/communication-companion.test.ts src/missions.test.ts src/everyday-capture.test.ts src/outcome-reviews.test.ts
 npm run debug:executive -- --refresh
+npm run debug:goals
+npm run debug:planner
+npm run debug:opportunities
 npm run debug:repair
 npm run debug:agentic
 npm run debug:pilot
@@ -247,6 +253,9 @@ Treat that executive suite as the fast proof that Andrea can:
 - explain a route briefly without raw prompts, private bodies, hidden reasoning, raw tool output, or secrets
 - cap route confidence when dependent tools/providers are degraded
 - record bounded repair attempts and cooldowns without hidden side effects
+- convert durable multi-step asks into proposed goals with milestones and approval-aware steps
+- compare `do nothing`, `verify first`, and `safe next step` options without exposing hidden reasoning
+- surface at most one reply-coupled proactive opportunity and respect dismiss/snooze controls
 - pass deterministic agentic simulations before broader live proof
 
 For repair/status work, `integrations:fix` remains guidance-only. Use `integrations:heal -- --id <integration> --dry-run` to create a bounded repair trace; use `--apply` only for playbooks that explicitly stay safe, reversible, or metadata-only.
@@ -594,6 +603,17 @@ Reality Grounding sits above proof gauntlet and world/truth metadata:
 - `proof:guided` lists exact proof-closure steps and must never print secrets
 - stale proof and missing config create verification/proof tasks first, not repo patch hypotheses
 - durable or external actions should be staged or clarified when reality confidence is too low
+
+Hierarchical Goal Planning sits above Reality Grounding and Cognitive Executive:
+
+- `debug:goals` shows proposed/active/blocked goals, milestones, steps, causal beliefs, counterfactual comparisons, opportunities, and the next safe action
+- `debug:planner` runs one request through the goal-directed planner
+- `debug:opportunities` shows reply-coupled opportunities and suppression state
+- `test:goal-planning`, `test:causal-planner`, and `test:proactive-opportunities` are the focused v30 gate
+- goals do not replace missions, reminders, skills, action bundles, communication companion, or improvement lab; they orchestrate those existing systems
+- sends, calendar writes, restarts, commits, pushes, purchases, deletes, and credentials remain approval-gated
+
+Never treat proactive opportunities as background autonomy. They are normal-reply suggestions only.
 
 Never claim `live_proven` from harness-only evidence. Mainline changes remain human-governed; the workbench does not auto-merge, auto-push, restart services, send messages, write calendars, change credentials, or mutate live integrations.
 - queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud

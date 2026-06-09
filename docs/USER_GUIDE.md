@@ -63,7 +63,7 @@ Thinking and learning controls:
 - Say `quick answer` or `keep it simple` when you want the fast path.
 - Andrea may show a concise council verdict, but not hidden reasoning or provider debate transcripts.
 - Use `/council`, `council status`, or `council tasks` to inspect the redacted council quality ledger, task-ease drills, and next repair action.
-- Use `/cognition`, `cognition status`, `cognitive workspace status`, `agency loop status`, `convergence status`, `runtime spine status`, `agent runtime status`, `supervisor status`, `blackboard status`, `session graph status`, `continuity status`, `what sessions are connected?`, `what belongs together?`, `why did you choose that?`, `why do you believe that?`, `why is that true?`, `what supports that?`, `what could be wrong?`, `how certain are you?`, `what are the alternatives?`, `what's missing?`, `what's most useful next?`, `what changed?`, `what is stale?`, `what do you know for sure?`, `what's true right now?`, `is text messaging working?`, `what's broken right now?`, `what should you verify next?`, `what is most useful now?`, `what evidence supports this?`, `show the plan first`, or `run the safe checks` to inspect the Cognitive Workspace packet, safe task graph, Agent OS episode, Runtime Spine checkpoints, Supervisor Core blackboard/handoffs, Session Graph continuity clusters, continuity cockpit action queue, Agency Convergence selected action, Logic Kernel claims, Truth Engine support, World Model proof debt, Reality Grounding observations/beliefs, uncertainty, approval blockers, and useful next action. Use `that is stale`, `mark that current`, or `resolve that` only when you are intentionally correcting Andrea's belief state.
+- Use `/cognition`, `cognition status`, `cognitive workspace status`, `agency loop status`, `convergence status`, `runtime spine status`, `agent runtime status`, `supervisor status`, `blackboard status`, `session graph status`, `continuity status`, `what sessions are connected?`, `what belongs together?`, `why did you choose that?`, `why do you believe that?`, `why is that true?`, `what supports that?`, `what could be wrong?`, `how certain are you?`, `what are the alternatives?`, `what's missing?`, `what's most useful next?`, `what changed?`, `what is stale?`, `what do you know for sure?`, `what's true right now?`, `is text messaging working?`, `what's broken right now?`, `what should you verify next?`, `what is most useful now?`, `what evidence supports this?`, `what goals are active?`, `what are we trying to accomplish?`, `show me the plan`, `what is blocking this?`, `what is the safest next step?`, `what if we do nothing?`, `stop suggesting that`, or `run the safe checks` to inspect the Cognitive Workspace packet, safe task graph, Agent OS episode, Runtime Spine checkpoints, Supervisor Core blackboard/handoffs, Session Graph continuity clusters, continuity cockpit action queue, Agency Convergence selected action, Logic Kernel claims, Truth Engine support, World Model proof debt, Reality Grounding observations/beliefs, Hierarchical Goal Planner, uncertainty, approval blockers, and useful next action. Use `that is stale`, `mark that current`, or `resolve that` only when you are intentionally correcting Andrea's belief state.
 - Say `what did you learn?`, `what do you remember about me`, `what skills have you learned`, `forget that`, `don't use that skill`, `make that my default`, `always ask first`, or `reset that pattern` to inspect or steer memory and learned playbooks.
 
 ## Lifelong Learning And Skills
@@ -94,6 +94,38 @@ Useful explanation asks:
 - `what's the current focus?`
 
 Boundaries stay the same: Andrea can answer, plan, draft, save, remind, and stage approvals through existing systems, but sends, calendar writes, deletes, service changes, commits, pushes, purchases, and other side effects still require the appropriate confirmation/proof path.
+
+## Hierarchical Goals And Proactive Suggestions
+
+Andrea can now turn durable, multi-step asks into compact proposed goals instead of scattering them across reminders, missions, skills, proof debt, and improvement notes. The planner is deliberately bounded:
+
+- multi-step asks start as `proposed` goals unless you explicitly say `make this a goal`
+- goals decompose into a few milestones and practical steps, not a full project-management system
+- causal beliefs explain why Andrea drafts instead of sends when Messages proof is stale, asks for a missing time before calendar writes, or falls back when a provider is quota-blocked
+- counterfactual asks like `what if we do nothing?` compare doing nothing, verifying first, and taking one safe next step
+- proactive suggestions are reply-coupled only: Andrea may show one relevant suggestion in a normal answer, but it does not background nag
+
+Useful controls:
+
+- `what goals are active?`
+- `what are we trying to accomplish?`
+- `show me the plan`
+- `simplify the plan`
+- `what is blocking this?`
+- `what is the safest next step?`
+- `what if we do nothing?`
+- `pause that goal`
+- `mark that done`
+- `stop suggesting that`
+- `do not bring this up unless I ask`
+
+Operator checks:
+
+- `npm run debug:goals`
+- `npm run debug:planner`
+- `npm run debug:opportunities`
+
+This is bounded goal-directed reasoning, not AGI or autonomous control. Goals and opportunities stage or suggest work through existing systems; they do not bypass approval gates.
 
 ## Repair Status And Tool Reliability
 
