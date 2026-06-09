@@ -5217,6 +5217,105 @@ export interface ShadowPatchReport {
   privacyJson: string;
 }
 
+export type PatchWorkspaceStatus =
+  | 'plan_only'
+  | 'branch_prepared'
+  | 'patch_applied'
+  | 'tests_passing'
+  | 'tests_failed'
+  | 'reverted'
+  | 'awaiting_approval'
+  | 'ready_to_merge'
+  | 'rejected'
+  | 'merged';
+
+export interface PatchWorkspace {
+  workspaceId: string;
+  hypothesisId: string;
+  patchPlanId: string | null;
+  branchName: string;
+  baseCommit: string;
+  status: PatchWorkspaceStatus;
+  createdAt: string;
+  updatedAt: string;
+  riskLevel: ImprovementRiskLevel;
+  allowedFilesJson: string;
+  disallowedFilesJson: string;
+  workspacePath: string | null;
+  policyJson: string;
+  privacyJson: string;
+}
+
+export interface PatchAttempt {
+  attemptId: string;
+  workspaceId: string;
+  patchPlanId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  filesChangedJson: string;
+  diffSummary: string;
+  testsRunJson: string;
+  beforeScore: number;
+  afterScore: number;
+  regressionsJson: string;
+  safetyResult: 'pass' | 'warn' | 'fail' | 'not_run';
+  status:
+    | 'planned'
+    | 'applied'
+    | 'tests_passing'
+    | 'tests_failed'
+    | 'reverted'
+    | 'blocked';
+  privacyJson: string;
+}
+
+export interface PatchReview {
+  reviewId: string;
+  attemptId: string;
+  createdAt: string;
+  recommendation:
+    | 'reject'
+    | 'keep_branch'
+    | 'request_approval'
+    | 'ready_to_merge';
+  approvalRequired: boolean;
+  rollbackPlan: string;
+  mergeReadiness: 'not_ready' | 'ready_after_approval' | 'ready' | 'blocked';
+  reviewerNotes: string;
+  privacyJson: string;
+}
+
+export type LiveProofGauntletStatus =
+  | 'live_proven'
+  | 'near_live_only'
+  | 'missing_config'
+  | 'externally_blocked'
+  | 'stale'
+  | 'failed';
+
+export interface LiveProofGauntletEntry {
+  proofId: string;
+  proofName: string;
+  status: LiveProofGauntletStatus;
+  lastProofAt: string;
+  nextStep: string;
+  repoWorkRequired: boolean;
+  blockerOwner: 'none' | 'repo_side' | 'external';
+  evidenceIdsJson: string;
+  detail: string;
+  privacyJson: string;
+}
+
+export interface LiveProofGauntletReport {
+  generatedAt: string;
+  entries: LiveProofGauntletEntry[];
+  liveProvenCount: number;
+  proofDebtCount: number;
+  repoWorkRequiredCount: number;
+  nextAction: string;
+  privacyJson: string;
+}
+
 export interface HarnessLabReport {
   generatedAt: string;
   ok: boolean;

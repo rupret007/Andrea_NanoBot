@@ -555,6 +555,33 @@ Use this ladder when evaluating improvement work:
 - `npm run test:shadow-improvement`
 
 Expected outcome: external/manual proof debt such as Telegram user-session credentials, Alexa signed `IntentRequest` proof, and BlueBubbles same-thread proof stays classified as proof debt. Repo-side candidates may get patch reports, but implementation still requires an explicit human/Codex coding pass and the normal validation gate.
+
+## Approval-Gated Patch Workbench And Live Proof Gauntlet
+
+The v28 patch workbench is the first approval-gated bridge from shadow reports to isolated patch evaluation. Its default mode is still dry-run: it records candidate workspaces, patch attempts, patch reviews, git safety, and proof-debt separation without modifying main.
+
+Use this ladder:
+
+- `npm run debug:improvement -- --workbench --dry-run`
+- `npm run improvement:patch-plan`
+- `npm run improvement:patch-dry-run`
+- `npm run debug:proof-gauntlet`
+- `npm run test:patch-workbench`
+- `npm run test:proof-gauntlet`
+
+Only explicitly requested low-risk workspace commands may prepare a local candidate branch/worktree. The default allowlist is docs, debug/status copy, eval additions, harmless wording, synthetic-gauntlet/report formatting, operator report formatting, and proof-debt wording clarity. Message sending, calendar writes, credentials/auth, restarts/deploys, destructive operations, privacy/memory behavior, runtime execution behavior, and approval gates are blocked by default.
+
+The first real patch recipe is `proof-debt-report-clarity`; it writes a docs/report artifact inside an isolated candidate workspace. It does not change routing, providers, message sending, calendar writes, credentials, services, runtime behavior, or approval gates.
+
+The live proof gauntlet separates proof debt from repo bugs:
+
+- missing Telegram user-session env is `missing_config`, not a repo failure
+- missing Alexa signed `IntentRequest` is manual proof debt
+- missing BlueBubbles same-thread message-action proof is live proof debt
+- provider quota/billing blockers remain external/provider blockers
+- repeated failure after config/proof prerequisites are present may become a repair hypothesis
+
+Never claim `live_proven` from harness-only evidence. Mainline changes remain human-governed; the workbench does not auto-merge, auto-push, restart services, send messages, write calendars, change credentials, or mutate live integrations.
 - queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud
 - if the miss is primarily an external blocker or manual sync step, Andrea should keep the issue saved and explain that honestly instead of auto-starting a repo fix
 - local hotfixes may validate and restart on-host, but commit/push still require explicit approval

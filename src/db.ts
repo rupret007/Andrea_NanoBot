@@ -48,6 +48,9 @@ import {
   ImprovementExperiment,
   ImprovementHypothesis,
   ImprovementOutcome,
+  PatchAttempt,
+  PatchReview,
+  PatchWorkspace,
   ShadowCandidateSelection,
   ShadowImprovementRun,
   ShadowPatchReport,
@@ -3892,6 +3895,60 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_shadow_patch_reports_run
       ON shadow_patch_reports(run_id, outcome);
+    CREATE TABLE IF NOT EXISTS patch_workspaces (
+      workspace_id TEXT PRIMARY KEY,
+      hypothesis_id TEXT NOT NULL,
+      patch_plan_id TEXT,
+      branch_name TEXT NOT NULL,
+      base_commit TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      allowed_files_json TEXT NOT NULL,
+      disallowed_files_json TEXT NOT NULL,
+      workspace_path TEXT,
+      policy_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (hypothesis_id) REFERENCES improvement_hypotheses(hypothesis_id) ON DELETE CASCADE,
+      FOREIGN KEY (patch_plan_id) REFERENCES candidate_patch_plans(patch_plan_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_patch_workspaces_status
+      ON patch_workspaces(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS patch_attempts (
+      attempt_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      patch_plan_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      files_changed_json TEXT NOT NULL,
+      diff_summary TEXT NOT NULL,
+      tests_run_json TEXT NOT NULL,
+      before_score REAL NOT NULL,
+      after_score REAL NOT NULL,
+      regressions_json TEXT NOT NULL,
+      safety_result TEXT NOT NULL,
+      status TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (workspace_id) REFERENCES patch_workspaces(workspace_id) ON DELETE CASCADE,
+      FOREIGN KEY (patch_plan_id) REFERENCES candidate_patch_plans(patch_plan_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_patch_attempts_workspace
+      ON patch_attempts(workspace_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS patch_reviews (
+      review_id TEXT PRIMARY KEY,
+      attempt_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      recommendation TEXT NOT NULL,
+      approval_required INTEGER NOT NULL,
+      rollback_plan TEXT NOT NULL,
+      merge_readiness TEXT NOT NULL,
+      reviewer_notes TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (attempt_id) REFERENCES patch_attempts(attempt_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_patch_reviews_attempt
+      ON patch_reviews(attempt_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS runtime_orchestration_jobs (
       job_id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -25381,6 +25438,304 @@ export function listShadowPatchReports(
     )
     .all(...args) as Array<Parameters<typeof mapShadowPatchReportRow>[0]>;
   return rows.map((row) => mapShadowPatchReportRow(row));
+}
+
+function mapPatchWorkspaceRow(row: {
+  workspace_id: string;
+  hypothesis_id: string;
+  patch_plan_id: string | null;
+  branch_name: string;
+  base_commit: string;
+  status: PatchWorkspace['status'];
+  created_at: string;
+  updated_at: string;
+  risk_level: PatchWorkspace['riskLevel'];
+  allowed_files_json: string;
+  disallowed_files_json: string;
+  workspace_path: string | null;
+  policy_json: string;
+  privacy_json: string;
+}): PatchWorkspace {
+  return {
+    workspaceId: row.workspace_id,
+    hypothesisId: row.hypothesis_id,
+    patchPlanId: row.patch_plan_id,
+    branchName: row.branch_name,
+    baseCommit: row.base_commit,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    riskLevel: row.risk_level,
+    allowedFilesJson: row.allowed_files_json,
+    disallowedFilesJson: row.disallowed_files_json,
+    workspacePath: row.workspace_path,
+    policyJson: row.policy_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertPatchWorkspace(record: PatchWorkspace): void {
+  db.prepare(
+    `
+      INSERT INTO patch_workspaces (
+        workspace_id, hypothesis_id, patch_plan_id, branch_name, base_commit,
+        status, created_at, updated_at, risk_level, allowed_files_json,
+        disallowed_files_json, workspace_path, policy_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_id) DO UPDATE SET
+        patch_plan_id = excluded.patch_plan_id,
+        branch_name = excluded.branch_name,
+        base_commit = excluded.base_commit,
+        status = excluded.status,
+        updated_at = excluded.updated_at,
+        risk_level = excluded.risk_level,
+        allowed_files_json = excluded.allowed_files_json,
+        disallowed_files_json = excluded.disallowed_files_json,
+        workspace_path = excluded.workspace_path,
+        policy_json = excluded.policy_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.workspaceId,
+    record.hypothesisId,
+    record.patchPlanId,
+    redactStoredCognitiveMetadata(record.branchName, 240),
+    redactStoredCognitiveMetadata(record.baseCommit, 80),
+    record.status,
+    record.createdAt,
+    record.updatedAt,
+    record.riskLevel,
+    redactStoredCognitiveMetadata(record.allowedFilesJson, 3200),
+    redactStoredCognitiveMetadata(record.disallowedFilesJson, 3200),
+    record.workspacePath
+      ? redactStoredCognitiveMetadata(record.workspacePath, 700)
+      : null,
+    redactStoredCognitiveMetadata(record.policyJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listPatchWorkspaces(
+  params: {
+    status?: PatchWorkspace['status'];
+    hypothesisId?: string;
+    limit?: number;
+  } = {},
+): PatchWorkspace[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  if (params.hypothesisId) {
+    clauses.push('hypothesis_id = ?');
+    args.push(params.hypothesisId);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM patch_workspaces
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapPatchWorkspaceRow>[0]>;
+  return rows.map((row) => mapPatchWorkspaceRow(row));
+}
+
+function mapPatchAttemptRow(row: {
+  attempt_id: string;
+  workspace_id: string;
+  patch_plan_id: string | null;
+  created_at: string;
+  updated_at: string;
+  files_changed_json: string;
+  diff_summary: string;
+  tests_run_json: string;
+  before_score: number;
+  after_score: number;
+  regressions_json: string;
+  safety_result: PatchAttempt['safetyResult'];
+  status: PatchAttempt['status'];
+  privacy_json: string;
+}): PatchAttempt {
+  return {
+    attemptId: row.attempt_id,
+    workspaceId: row.workspace_id,
+    patchPlanId: row.patch_plan_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    filesChangedJson: row.files_changed_json,
+    diffSummary: row.diff_summary,
+    testsRunJson: row.tests_run_json,
+    beforeScore: row.before_score,
+    afterScore: row.after_score,
+    regressionsJson: row.regressions_json,
+    safetyResult: row.safety_result,
+    status: row.status,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertPatchAttempt(record: PatchAttempt): void {
+  db.prepare(
+    `
+      INSERT INTO patch_attempts (
+        attempt_id, workspace_id, patch_plan_id, created_at, updated_at,
+        files_changed_json, diff_summary, tests_run_json, before_score,
+        after_score, regressions_json, safety_result, status, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(attempt_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        files_changed_json = excluded.files_changed_json,
+        diff_summary = excluded.diff_summary,
+        tests_run_json = excluded.tests_run_json,
+        before_score = excluded.before_score,
+        after_score = excluded.after_score,
+        regressions_json = excluded.regressions_json,
+        safety_result = excluded.safety_result,
+        status = excluded.status,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.attemptId,
+    record.workspaceId,
+    record.patchPlanId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.filesChangedJson, 3200),
+    redactStoredCognitiveMetadata(record.diffSummary, 1200),
+    redactStoredCognitiveMetadata(record.testsRunJson, 3200),
+    record.beforeScore,
+    record.afterScore,
+    redactStoredCognitiveMetadata(record.regressionsJson, 2400),
+    record.safetyResult,
+    record.status,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listPatchAttempts(
+  params: {
+    workspaceId?: string;
+    status?: PatchAttempt['status'];
+    limit?: number;
+  } = {},
+): PatchAttempt[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.workspaceId) {
+    clauses.push('workspace_id = ?');
+    args.push(params.workspaceId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM patch_attempts
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapPatchAttemptRow>[0]>;
+  return rows.map((row) => mapPatchAttemptRow(row));
+}
+
+function mapPatchReviewRow(row: {
+  review_id: string;
+  attempt_id: string;
+  created_at: string;
+  recommendation: PatchReview['recommendation'];
+  approval_required: number;
+  rollback_plan: string;
+  merge_readiness: PatchReview['mergeReadiness'];
+  reviewer_notes: string;
+  privacy_json: string;
+}): PatchReview {
+  return {
+    reviewId: row.review_id,
+    attemptId: row.attempt_id,
+    createdAt: row.created_at,
+    recommendation: row.recommendation,
+    approvalRequired: row.approval_required === 1,
+    rollbackPlan: row.rollback_plan,
+    mergeReadiness: row.merge_readiness,
+    reviewerNotes: row.reviewer_notes,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertPatchReview(record: PatchReview): void {
+  db.prepare(
+    `
+      INSERT INTO patch_reviews (
+        review_id, attempt_id, created_at, recommendation, approval_required,
+        rollback_plan, merge_readiness, reviewer_notes, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(review_id) DO UPDATE SET
+        recommendation = excluded.recommendation,
+        approval_required = excluded.approval_required,
+        rollback_plan = excluded.rollback_plan,
+        merge_readiness = excluded.merge_readiness,
+        reviewer_notes = excluded.reviewer_notes,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.reviewId,
+    record.attemptId,
+    record.createdAt,
+    record.recommendation,
+    record.approvalRequired ? 1 : 0,
+    redactStoredCognitiveMetadata(record.rollbackPlan, 900),
+    record.mergeReadiness,
+    redactStoredCognitiveMetadata(record.reviewerNotes, 1200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listPatchReviews(
+  params: {
+    attemptId?: string;
+    recommendation?: PatchReview['recommendation'];
+    limit?: number;
+  } = {},
+): PatchReview[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.attemptId) {
+    clauses.push('attempt_id = ?');
+    args.push(params.attemptId);
+  }
+  if (params.recommendation) {
+    clauses.push('recommendation = ?');
+    args.push(params.recommendation);
+  }
+  args.push(harnessLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM patch_reviews
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapPatchReviewRow>[0]>;
+  return rows.map((row) => mapPatchReviewRow(row));
 }
 
 export function pruneCognitiveKernelData(params: {

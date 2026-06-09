@@ -142,6 +142,26 @@ Operator checks:
 - `npm run test:synthetic-gauntlet`
 - `npm run test:shadow-improvement`
 
+### Approval-Gated Patch Workbench And Live Proof Gauntlet
+
+Andrea can now turn a shadow improvement report into a patch-workbench review. The default path is still dry-run: it records candidate workspaces, patch attempts, safety decisions, and review notes without changing main.
+
+The workbench may only prepare an isolated local candidate branch/worktree when explicitly invoked, and the first allowlisted recipe is limited to proof-debt/report clarity. It cannot merge, push, restart services, send messages, write calendars, change credentials, alter approval gates, or mutate live integrations.
+
+Live proof is tracked separately from repo bugs. The proof gauntlet reports Telegram user-session config, Telegram bot proof, Alexa signed `IntentRequest`, BlueBubbles same-thread message-action proof, Google Calendar live write proof, research/provider proof, and image generation proof with exact next steps.
+
+Operator checks:
+
+- `npm run debug:improvement -- --workbench`
+- `npm run debug:proof-gauntlet`
+- `npm run improvement:patch-plan`
+- `npm run improvement:patch-dry-run`
+- `npm run improvement:patch-review`
+- `npm run test:patch-workbench`
+- `npm run test:proof-gauntlet`
+
+This is bounded self-improvement infrastructure, not AGI, autonomous deployment, or uncontrolled self-modification. Mainline changes remain human-governed.
+
 Important Cursor rule:
 
 - `/cursor_status` is safe to use.

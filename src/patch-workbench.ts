@@ -1,0 +1,766 @@
+import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { buildShadowImprovementReport } from './shadow-improvement-runner.js';
+import { redactCouncilText } from './council-safety.js';
+import {
+  isDatabaseInitialized,
+  listCandidatePatchPlans,
+  upsertPatchAttempt,
+  upsertPatchReview,
+  upsertPatchWorkspace,
+} from './db.js';
+import type {
+  CandidatePatchPlan,
+  ImprovementHypothesis,
+  PatchAttempt,
+  PatchReview,
+  PatchWorkspace,
+  ShadowPatchReport,
+} from './types.js';
+
+export type PatchWorkbenchMode =
+  | 'dry_run'
+  | 'prepare_workspace'
+  | 'apply_low_risk';
+
+const PRIVACY = {
+  metadataOnly: true,
+  rawPromptsStored: false,
+  rawPrivateBodiesStored: false,
+  hiddenReasoningStored: false,
+  secretsRedacted: true,
+  providerDebatesStored: false,
+  rawToolOutputStored: false,
+} as const;
+
+export const PATCH_WORKBENCH_POLICY = {
+  defaultMode: 'dry_run',
+  createsBranchesOrWorktreesByDefault: false,
+  appliesProductBehaviorPatchesByDefault: false,
+  mergesOrPushes: false,
+  restartsServices: false,
+  mutatesLiveIntegrations: false,
+  autoSendsMessages: false,
+  autoWritesCalendars: false,
+  allowedCategories: [
+    'docs',
+    'debug/status copy',
+    'eval additions',
+    'harmless wording',
+    'synthetic-gauntlet scoring/report formatting',
+    'operator report formatting',
+    'proof-debt wording clarity',
+  ],
+  blockedCategories: [
+    'message sending',
+    'calendar writes',
+    'credential/auth',
+    'service restart/deploy',
+    'destructive actions',
+    'privacy/memory behavior',
+    'runtime execution behavior',
+    'approval gates',
+  ],
+} as const;
+
+export interface PatchWorkbenchGitSafety {
+  ok: boolean;
+  branch: string;
+  head: string;
+  clean: boolean;
+  blocker: string;
+  nextAction: string;
+}
+
+export interface PatchPlanSafetyDecision {
+  allowed: boolean;
+  approvalRequired: boolean;
+  safetyResult: PatchAttempt['safetyResult'];
+  reason: string;
+  allowedFiles: string[];
+  disallowedFiles: string[];
+}
+
+export interface PatchWorkbenchReport {
+  generatedAt: string;
+  mode: PatchWorkbenchMode;
+  gitSafety: PatchWorkbenchGitSafety;
+  shadowRunId: string;
+  workspaces: PatchWorkspace[];
+  attempts: PatchAttempt[];
+  reviews: PatchReview[];
+  selectedHypotheses: ImprovementHypothesis[];
+  patchReports: ShadowPatchReport[];
+  externalProofDebt: ImprovementHypothesis[];
+  policy: typeof PATCH_WORKBENCH_POLICY;
+  nextAction: string;
+  privacy: typeof PRIVACY;
+}
+
+const SECRET_RE =
+  /\bsk-(?:proj-|api-|ant-api03-)?[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{20,}|BSA-[A-Za-z0-9_-]{10,}|gh[pousr]_[A-Za-z0-9_]{16,}|crsr_[A-Za-z0-9_]{16,}|\b\d{7,}:[A-Za-z0-9_-]{20,}|password[:=]|secret[:=]|raw private body|hidden reasoning|chain[- ]of[- ]thought|provider debate|raw tool output/i;
+
+function nowIso(now?: Date): string {
+  return (now || new Date()).toISOString();
+}
+
+function hashId(prefix: string, value: string): string {
+  return `${prefix}:${crypto
+    .createHash('sha256')
+    .update(value)
+    .digest('hex')
+    .slice(0, 24)}`;
+}
+
+function safeText(value: string | null | undefined, limit = 900): string {
+  const text = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  if (SECRET_RE.test(text)) return '[redacted patch workbench metadata]';
+  return redactCouncilText(text, limit);
+}
+
+function safeJson(value: unknown, limit = 3200): string {
+  try {
+    const json = JSON.stringify(value ?? null);
+    return safeText(
+      json.length <= limit
+        ? json
+        : JSON.stringify({
+            truncated: true,
+            preview: json.slice(0, Math.max(32, limit - 120)),
+          }),
+      limit,
+    );
+  } catch {
+    return 'null';
+  }
+}
+
+function privacyJson(): string {
+  return safeJson(PRIVACY, 1200);
+}
+
+function parseJsonArray(value: string | null | undefined): string[] {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function slug(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'candidate'
+  );
+}
+
+function git(repoRoot: string, args: string[]): string {
+  return execFileSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+export function evaluateGitSafety(
+  repoRoot = process.cwd(),
+): PatchWorkbenchGitSafety {
+  try {
+    const branch = git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const head = git(repoRoot, ['rev-parse', 'HEAD']);
+    const status = git(repoRoot, ['status', '--porcelain']);
+    const clean = status.length === 0;
+    if (branch !== 'main') {
+      return {
+        ok: false,
+        branch,
+        head,
+        clean,
+        blocker: 'not_on_main',
+        nextAction:
+          'Return to a clean main branch before preparing an improvement workspace.',
+      };
+    }
+    if (!clean) {
+      return {
+        ok: false,
+        branch,
+        head,
+        clean,
+        blocker: 'dirty_main',
+        nextAction:
+          'Commit, stash, or discard unrelated work before preparing an improvement workspace.',
+      };
+    }
+    return {
+      ok: true,
+      branch,
+      head,
+      clean,
+      blocker: 'none',
+      nextAction:
+        'Main is clean; an explicitly requested candidate workspace can be prepared.',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      branch: 'unknown',
+      head: 'unknown',
+      clean: false,
+      blocker: 'git_unavailable',
+      nextAction: `Inspect git manually before preparing an improvement workspace: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+}
+
+function defaultAllowedFiles(): string[] {
+  return [
+    'docs/**',
+    'scripts/debug-*.ts',
+    'scripts/test-*.ts',
+    'scripts/test-synthetic-gauntlet.ts',
+    'scripts/test-shadow-improvement.ts',
+    'src/shadow-improvement-runner.ts',
+    'src/patch-workbench.ts',
+    'src/live-proof-gauntlet.ts',
+  ];
+}
+
+function defaultDisallowedFiles(): string[] {
+  return [
+    '.env',
+    '.env.*',
+    'src/index.ts',
+    'src/channels/**',
+    'src/google-calendar*.ts',
+    'src/message-actions.ts',
+    'src/integration-healer.ts',
+    'src/tool-reliability.ts',
+    'src/critic-agent.ts',
+    'scripts/nanoclaw-host.ps1',
+    'scripts/andrea-startup.ps1',
+    'package-lock.json',
+  ];
+}
+
+function fileMatchesAllowed(pathname: string): boolean {
+  return (
+    pathname.startsWith('docs/') ||
+    /^scripts\/(?:debug-|test-).+\.ts$/.test(pathname) ||
+    pathname === 'src/shadow-improvement-runner.ts' ||
+    pathname === 'src/patch-workbench.ts' ||
+    pathname === 'src/live-proof-gauntlet.ts'
+  );
+}
+
+function fileMatchesBlocked(pathname: string): boolean {
+  return (
+    pathname.startsWith('.env') ||
+    pathname === 'src/index.ts' ||
+    pathname.startsWith('src/channels/') ||
+    /^src\/google-calendar/.test(pathname) ||
+    pathname === 'src/message-actions.ts' ||
+    pathname === 'src/integration-healer.ts' ||
+    pathname === 'src/tool-reliability.ts' ||
+    pathname === 'src/critic-agent.ts' ||
+    pathname === 'package-lock.json' ||
+    pathname.endsWith('.ps1')
+  );
+}
+
+export function evaluatePatchPlanSafety(
+  plan: CandidatePatchPlan | null,
+  hypothesis: ImprovementHypothesis,
+  filesChanged: string[] = plan
+    ? parseJsonArray(plan.filesLikelyAffectedJson)
+    : [],
+): PatchPlanSafetyDecision {
+  const blockedFiles = filesChanged.filter(fileMatchesBlocked);
+  const notAllowedFiles = filesChanged.filter(
+    (file) => !fileMatchesAllowed(file),
+  );
+  const riskyText =
+    `${hypothesis.affectedCapability} ${hypothesis.title} ${hypothesis.nextAction} ${plan?.changeIntent || ''}`.toLowerCase();
+  if (hypothesis.externalBlocker) {
+    return {
+      allowed: false,
+      approvalRequired: true,
+      safetyResult: 'warn',
+      reason:
+        'External proof or config debt cannot be converted into an automatic repo patch.',
+      allowedFiles: defaultAllowedFiles(),
+      disallowedFiles: defaultDisallowedFiles(),
+    };
+  }
+  if (
+    hypothesis.riskLevel !== 'low' ||
+    /send|calendar write|credential|auth|restart|deploy|delete|purchase|approval gate|private memory|runtime execution/.test(
+      riskyText,
+    )
+  ) {
+    return {
+      allowed: false,
+      approvalRequired: true,
+      safetyResult: 'warn',
+      reason:
+        'This candidate touches behavior that requires explicit approval before patching.',
+      allowedFiles: defaultAllowedFiles(),
+      disallowedFiles: defaultDisallowedFiles(),
+    };
+  }
+  if (blockedFiles.length || notAllowedFiles.length) {
+    return {
+      allowed: false,
+      approvalRequired: true,
+      safetyResult: 'warn',
+      reason: `Likely affected files are outside the default low-risk allowlist: ${[
+        ...blockedFiles,
+        ...notAllowedFiles,
+      ]
+        .slice(0, 5)
+        .join(', ')}`,
+      allowedFiles: defaultAllowedFiles(),
+      disallowedFiles: defaultDisallowedFiles(),
+    };
+  }
+  return {
+    allowed: true,
+    approvalRequired: false,
+    safetyResult: 'pass',
+    reason:
+      'Patch plan is low risk, repo-side, testable, and limited to docs/debug/eval/reporting files.',
+    allowedFiles: defaultAllowedFiles(),
+    disallowedFiles: defaultDisallowedFiles(),
+  };
+}
+
+function workspaceFor(params: {
+  hypothesis: ImprovementHypothesis;
+  plan: CandidatePatchPlan | null;
+  generatedAt: string;
+  baseCommit: string;
+  status: PatchWorkspace['status'];
+  workspacePath?: string | null;
+}): PatchWorkspace {
+  const workspaceId = hashId(
+    'patch-workspace',
+    `${params.hypothesis.hypothesisId}|${params.plan?.patchPlanId || 'none'}`,
+  );
+  const shortId = workspaceId.split(':')[1]?.slice(0, 8) || 'candidate';
+  const branchName = `codex/improvement/${slug(
+    params.hypothesis.affectedCapability,
+  )}-${shortId}`;
+  return {
+    workspaceId,
+    hypothesisId: params.hypothesis.hypothesisId,
+    patchPlanId: params.plan?.patchPlanId || null,
+    branchName,
+    baseCommit: params.baseCommit,
+    status: params.status,
+    createdAt: params.generatedAt,
+    updatedAt: params.generatedAt,
+    riskLevel: params.hypothesis.riskLevel,
+    allowedFilesJson: safeJson(defaultAllowedFiles(), 2400),
+    disallowedFilesJson: safeJson(defaultDisallowedFiles(), 2400),
+    workspacePath: params.workspacePath || null,
+    policyJson: safeJson(PATCH_WORKBENCH_POLICY, 2400),
+    privacyJson: privacyJson(),
+  };
+}
+
+function attemptFor(params: {
+  workspace: PatchWorkspace;
+  plan: CandidatePatchPlan | null;
+  report: ShadowPatchReport;
+  generatedAt: string;
+  filesChanged: string[];
+  diffSummary: string;
+  safety: PatchPlanSafetyDecision;
+  status: PatchAttempt['status'];
+}): PatchAttempt {
+  return {
+    attemptId: hashId(
+      'patch-attempt',
+      `${params.workspace.workspaceId}|${params.report.reportId}`,
+    ),
+    workspaceId: params.workspace.workspaceId,
+    patchPlanId: params.plan?.patchPlanId || null,
+    createdAt: params.generatedAt,
+    updatedAt: params.generatedAt,
+    filesChangedJson: safeJson(params.filesChanged, 2400),
+    diffSummary: safeText(params.diffSummary, 1200),
+    testsRunJson: safeJson(
+      [
+        'npm run test:synthetic-gauntlet',
+        'npm run test:shadow-improvement',
+        'npm run test:patch-workbench',
+      ],
+      2400,
+    ),
+    beforeScore: params.report.baselineScore,
+    afterScore: params.report.candidateScore,
+    regressionsJson: params.report.regressionFlagsJson,
+    safetyResult: params.safety.safetyResult,
+    status: params.status,
+    privacyJson: privacyJson(),
+  };
+}
+
+function reviewFor(params: {
+  attempt: PatchAttempt;
+  safety: PatchPlanSafetyDecision;
+  generatedAt: string;
+  report: ShadowPatchReport;
+  mode: PatchWorkbenchMode;
+}): PatchReview {
+  const hasRegression = params.report.outcome === 'regressed';
+  const recommendation: PatchReview['recommendation'] = hasRegression
+    ? 'reject'
+    : params.safety.allowed && params.mode === 'apply_low_risk'
+      ? 'request_approval'
+      : params.safety.allowed
+        ? 'keep_branch'
+        : 'request_approval';
+  return {
+    reviewId: hashId('patch-review', params.attempt.attemptId),
+    attemptId: params.attempt.attemptId,
+    createdAt: params.generatedAt,
+    recommendation,
+    approvalRequired:
+      recommendation !== 'reject' || params.safety.approvalRequired,
+    rollbackPlan:
+      'If a candidate worktree exists, run `git worktree remove <path>` and delete the local candidate branch after review.',
+    mergeReadiness: hasRegression
+      ? 'blocked'
+      : params.safety.allowed && params.mode === 'apply_low_risk'
+        ? 'ready_after_approval'
+        : 'not_ready',
+    reviewerNotes: safeText(
+      `${params.safety.reason} Shadow outcome=${params.report.outcome}; delta=${params.report.scoreDelta.toFixed(
+        2,
+      )}. No push or mainline merge is authorized by this workbench.`,
+      1200,
+    ),
+    privacyJson: privacyJson(),
+  };
+}
+
+function worktreeRoot(repoRoot: string): string {
+  return path.join(
+    path.dirname(repoRoot),
+    `${path.basename(repoRoot)}-improvement-worktrees`,
+  );
+}
+
+function prepareWorktree(params: {
+  repoRoot: string;
+  workspace: PatchWorkspace;
+}): string {
+  const root = worktreeRoot(params.repoRoot);
+  fs.mkdirSync(root, { recursive: true });
+  const workspacePath = path.join(
+    root,
+    params.workspace.workspaceId.replace(/[^A-Za-z0-9_-]+/g, '_'),
+  );
+  if (!fs.existsSync(workspacePath)) {
+    execFileSync(
+      'git',
+      [
+        'worktree',
+        'add',
+        '-b',
+        params.workspace.branchName,
+        workspacePath,
+        params.workspace.baseCommit,
+      ],
+      { cwd: params.repoRoot, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+  }
+  return workspacePath;
+}
+
+export function applyProofDebtReportClarityRecipe(params: {
+  workspacePath: string;
+  generatedAt?: string;
+  selectedReports?: ShadowPatchReport[];
+}): { filesChanged: string[]; diffSummary: string } {
+  const generatedAt = params.generatedAt || nowIso();
+  const reportDir = path.join(
+    params.workspacePath,
+    'docs',
+    'improvement-patch-reports',
+  );
+  fs.mkdirSync(reportDir, { recursive: true });
+  const reportPath = path.join(reportDir, 'proof-debt-report-clarity.md');
+  const selected = params.selectedReports || [];
+  const lines = [
+    '# Proof Debt Report Clarity Candidate',
+    '',
+    `Generated: ${generatedAt}`,
+    '',
+    'This candidate is produced by the v28 patch workbench as a low-risk docs/reporting patch. It does not change routing, provider use, message sending, calendar writes, credentials, services, runtime behavior, or approval gates.',
+    '',
+    '## Candidate Shadow Reports',
+    selected.length
+      ? selected
+          .slice(0, 5)
+          .map(
+            (item) =>
+              `- ${item.hypothesisId}: ${item.outcome}, delta=${item.scoreDelta.toFixed(2)}, plan=${item.patchPlanId || 'none'}`,
+          )
+          .join('\n')
+      : '- none',
+    '',
+    '## Review Boundary',
+    '- External proof debt stays proof debt.',
+    '- Repo patches stay isolated until a human explicitly approves merge.',
+    '- No candidate branch is pushed by the workbench.',
+    '',
+  ];
+  fs.writeFileSync(reportPath, `${lines.join('\n')}\n`, 'utf8');
+  return {
+    filesChanged: [
+      'docs/improvement-patch-reports/proof-debt-report-clarity.md',
+    ],
+    diffSummary:
+      'Added a low-risk proof-debt report clarity artifact inside the isolated candidate workspace.',
+  };
+}
+
+export function buildPatchWorkbenchReport(
+  params: {
+    now?: Date;
+    persist?: boolean;
+    mode?: PatchWorkbenchMode;
+    repoRoot?: string;
+    selectedLimit?: number;
+  } = {},
+): PatchWorkbenchReport {
+  const generatedAt = nowIso(params.now);
+  const mode = params.mode || 'dry_run';
+  const repoRoot = params.repoRoot || process.cwd();
+  const gitSafety = evaluateGitSafety(repoRoot);
+  const shadow = buildShadowImprovementReport({
+    now: params.now,
+    persist: params.persist !== false,
+    selectedLimit: params.selectedLimit || 3,
+  });
+  const patchPlans =
+    params.persist === false
+      ? shadow.patchReports
+          .map((report) => report.patchPlanId)
+          .filter(Boolean)
+          .map((id) =>
+            listCandidatePatchPlans({ limit: 80 }).find(
+              (plan) => plan.patchPlanId === id,
+            ),
+          )
+          .filter((plan): plan is CandidatePatchPlan => Boolean(plan))
+      : listCandidatePatchPlans({ limit: 80 });
+  const plansById = new Map(patchPlans.map((plan) => [plan.patchPlanId, plan]));
+  const hypothesesById = new Map(
+    shadow.selectedHypotheses.map((item) => [item.hypothesisId, item]),
+  );
+  const workspaces: PatchWorkspace[] = [];
+  const attempts: PatchAttempt[] = [];
+  const reviews: PatchReview[] = [];
+  const shouldPrepare =
+    mode === 'prepare_workspace' || mode === 'apply_low_risk';
+  let appliedOne = false;
+
+  for (const report of shadow.patchReports.slice(
+    0,
+    params.selectedLimit || 3,
+  )) {
+    const hypothesis = hypothesesById.get(report.hypothesisId);
+    if (!hypothesis) continue;
+    const plan = report.patchPlanId
+      ? plansById.get(report.patchPlanId) || null
+      : null;
+    const planFiles = plan ? parseJsonArray(plan.filesLikelyAffectedJson) : [];
+    const recipeFiles = [
+      'docs/improvement-patch-reports/proof-debt-report-clarity.md',
+    ];
+    const safety =
+      mode === 'apply_low_risk' && !appliedOne
+        ? evaluatePatchPlanSafety(plan, hypothesis, recipeFiles)
+        : evaluatePatchPlanSafety(plan, hypothesis, planFiles);
+    let workspace = workspaceFor({
+      hypothesis,
+      plan,
+      generatedAt,
+      baseCommit: gitSafety.head,
+      status:
+        shouldPrepare && gitSafety.ok && safety.allowed
+          ? 'branch_prepared'
+          : safety.allowed
+            ? 'plan_only'
+            : 'awaiting_approval',
+    });
+    let filesChanged: string[] = [];
+    let diffSummary =
+      mode === 'dry_run'
+        ? 'Dry-run only; no workspace, branch, or patch was created.'
+        : safety.allowed
+          ? 'Workspace preparation is available only when main is clean and the operator explicitly selects this mode.'
+          : safety.reason;
+
+    if (shouldPrepare && safety.allowed && gitSafety.ok && !appliedOne) {
+      const preparedPath = prepareWorktree({ repoRoot, workspace });
+      workspace = {
+        ...workspace,
+        workspacePath: preparedPath,
+        status: mode === 'apply_low_risk' ? 'patch_applied' : 'branch_prepared',
+      };
+      if (mode === 'apply_low_risk') {
+        const applied = applyProofDebtReportClarityRecipe({
+          workspacePath: preparedPath,
+          generatedAt,
+          selectedReports: shadow.patchReports,
+        });
+        filesChanged = applied.filesChanged;
+        diffSummary = applied.diffSummary;
+        appliedOne = true;
+      } else {
+        diffSummary =
+          'Prepared an isolated local candidate worktree; no files were changed.';
+      }
+    }
+
+    const attempt = attemptFor({
+      workspace,
+      plan,
+      report,
+      generatedAt,
+      filesChanged,
+      diffSummary,
+      safety,
+      status:
+        workspace.status === 'patch_applied'
+          ? 'applied'
+          : safety.allowed
+            ? 'planned'
+            : 'blocked',
+    });
+    const review = reviewFor({
+      attempt,
+      safety,
+      generatedAt,
+      report,
+      mode,
+    });
+    workspaces.push(workspace);
+    attempts.push(attempt);
+    reviews.push(review);
+  }
+
+  if (params.persist !== false && isDatabaseInitialized()) {
+    for (const workspace of workspaces) upsertPatchWorkspace(workspace);
+    for (const attempt of attempts) upsertPatchAttempt(attempt);
+    for (const review of reviews) upsertPatchReview(review);
+  }
+
+  const applied = attempts.some((attempt) => attempt.status === 'applied');
+  const blocked = reviews.filter(
+    (review) => review.mergeReadiness === 'blocked',
+  );
+  return {
+    generatedAt,
+    mode,
+    gitSafety,
+    shadowRunId: shadow.run.runId,
+    workspaces,
+    attempts,
+    reviews,
+    selectedHypotheses: shadow.selectedHypotheses,
+    patchReports: shadow.patchReports,
+    externalProofDebt: shadow.externalBlockers,
+    policy: PATCH_WORKBENCH_POLICY,
+    nextAction: blocked.length
+      ? 'Reject or revise blocked patch plans before any implementation.'
+      : applied
+        ? 'Review the isolated candidate worktree; merge/push still requires explicit approval.'
+        : mode === 'dry_run'
+          ? 'Use improvement:patch-dry-run for reports; use an explicit prepare/apply command only when ready for an isolated local candidate worktree.'
+          : 'Resolve git safety blockers or review the prepared workspace before proceeding.',
+    privacy: PRIVACY,
+  };
+}
+
+export function formatPatchWorkbenchReport(
+  report: PatchWorkbenchReport,
+): string {
+  const lines = [
+    '*Approval-Gated Patch Workbench*',
+    `Generated: ${report.generatedAt}`,
+    `Mode: ${report.mode}`,
+    `Git safety: ${report.gitSafety.ok ? 'ok' : 'blocked'} / branch=${report.gitSafety.branch} / clean=${report.gitSafety.clean ? 'yes' : 'no'} / blocker=${report.gitSafety.blocker}`,
+    `Shadow run: ${report.shadowRunId}`,
+    `Policy: dry-run default / no auto-merge / no auto-push / no services / no live sends or calendar writes`,
+    '',
+    '*Candidate Workspaces*',
+  ];
+  if (!report.workspaces.length) {
+    lines.push('- none');
+  } else {
+    for (const workspace of report.workspaces.slice(0, 5)) {
+      lines.push(
+        `- ${workspace.workspaceId}: ${workspace.status} / branch=${workspace.branchName} / risk=${workspace.riskLevel}`,
+      );
+      if (workspace.workspacePath)
+        lines.push(`  path=${workspace.workspacePath}`);
+    }
+  }
+  lines.push('', '*Patch Attempts*');
+  if (!report.attempts.length) {
+    lines.push('- none');
+  } else {
+    for (const attempt of report.attempts.slice(0, 5)) {
+      lines.push(
+        `- ${attempt.attemptId}: ${attempt.status} / safety=${attempt.safetyResult} / before=${attempt.beforeScore.toFixed(2)} / after=${attempt.afterScore.toFixed(2)}`,
+      );
+      lines.push(`  diff=${attempt.diffSummary}`);
+    }
+  }
+  lines.push('', '*Patch Reviews*');
+  if (!report.reviews.length) {
+    lines.push('- none');
+  } else {
+    for (const review of report.reviews.slice(0, 5)) {
+      lines.push(
+        `- ${review.reviewId}: ${review.recommendation} / readiness=${review.mergeReadiness} / approval=${review.approvalRequired ? 'yes' : 'no'}`,
+      );
+      lines.push(`  notes=${review.reviewerNotes}`);
+    }
+  }
+  lines.push('', '*External Or Manual Proof Debt*');
+  if (!report.externalProofDebt.length) {
+    lines.push('- none classified');
+  } else {
+    for (const item of report.externalProofDebt.slice(0, 6)) {
+      lines.push(`- ${item.affectedCapability}: ${item.nextAction}`);
+    }
+  }
+  lines.push('', `Next: ${report.nextAction}`);
+  lines.push(
+    'Privacy: metadata-only; no raw prompts, private bodies, hidden reasoning, provider debates, raw tool output, or secrets.',
+  );
+  return lines.join('\n');
+}
+
+export function createTempPatchRecipeWorkspace(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'andrea-patch-workbench-'));
+}

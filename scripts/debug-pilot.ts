@@ -10,6 +10,7 @@ import { buildRepairDoctorReport } from '../src/integration-healer.js';
 import { buildToolReliabilityDoctorReport } from '../src/tool-reliability.js';
 import { buildAutonomousImprovementLabReport } from '../src/autonomous-improvement-lab.js';
 import { buildShadowImprovementReport } from '../src/shadow-improvement-runner.js';
+import { buildLiveProofGauntletReport } from '../src/live-proof-gauntlet.js';
 import type { FieldTrialSurfaceTruth } from '../src/field-trial-readiness.js';
 import type { PilotJourneyId } from '../src/types.js';
 
@@ -188,6 +189,7 @@ async function main(): Promise<void> {
   const repair = buildRepairDoctorReport();
   const improvement = buildAutonomousImprovementLabReport();
   const shadow = buildShadowImprovementReport({ persist: false });
+  const proofGauntlet = buildLiveProofGauntletReport();
   const attention = collectAttentionItems(truth);
   const lines = [
     '*Pilot Review*',
@@ -334,6 +336,17 @@ async function main(): Promise<void> {
           return `- ${item.hypothesisId}: ${item.outcome} / delta=${item.scoreDelta.toFixed(2)} / next=${item.nextAction}`;
         })
       : ['- no shadow patch reports yet']),
+    '',
+    '*Live Proof Gauntlet*',
+    `- Live proven: ${proofGauntlet.liveProvenCount}/${proofGauntlet.entries.length}`,
+    `- Proof debt: ${proofGauntlet.proofDebtCount}`,
+    `- Repo work required: ${proofGauntlet.repoWorkRequiredCount}`,
+    ...(proofGauntlet.entries
+      .filter((entry) => entry.status !== 'live_proven')
+      .slice(0, 5)
+      .map((entry) => {
+        return `- ${entry.proofName}: ${entry.status} / repo_work=${entry.repoWorkRequired ? 'yes' : 'no'} / next=${entry.nextStep}`;
+      })),
     '',
     '*Alexa Utterance Review*',
     `- Signals tracked: ${alexaReview.totalSignals}`,
