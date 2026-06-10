@@ -475,31 +475,6 @@ function resolveBlueBubblesConversationPresentationChatJid(
   return normalizeBlueBubblesConversationChatJid(action.presentationChatJid);
 }
 
-function resolveBlueBubblesSelfThreadPresentationChatJid(
-  action: Pick<MessageActionRecord, 'presentationChatJid'>,
-): string | null {
-  const presentationChatJid =
-    resolveBlueBubblesConversationPresentationChatJid(action);
-  if (
-    !presentationChatJid ||
-    !isBlueBubblesSelfThreadAliasJid(presentationChatJid)
-  ) {
-    return null;
-  }
-  return presentationChatJid;
-}
-
-function getMessageActionFreshnessTimestamp(
-  action: Pick<
-    MessageActionRecord,
-    'lastActionAt' | 'lastUpdatedAt' | 'createdAt'
-  >,
-): number {
-  return Date.parse(
-    action.lastActionAt || action.lastUpdatedAt || action.createdAt || '',
-  );
-}
-
 function buildBlueBubblesMessageActionContinuityKey(
   action: Pick<
     MessageActionRecord,
@@ -526,27 +501,6 @@ function buildBlueBubblesMessageActionContinuityKey(
   return `${presentationChatJid}|${targetChatJid}|${normalizedDraft}`;
 }
 
-function buildBlueBubblesSelfThreadContinuityKey(
-  action: Pick<
-    MessageActionRecord,
-    | 'presentationChatJid'
-    | 'targetConversationJson'
-    | 'draftText'
-    | 'targetChannel'
-    | 'targetKind'
-  >,
-): string | null {
-  const presentationChatJid =
-    resolveBlueBubblesSelfThreadPresentationChatJid(action);
-  if (!presentationChatJid) {
-    return null;
-  }
-  return buildBlueBubblesMessageActionContinuityKey({
-    ...action,
-    presentationChatJid,
-  });
-}
-
 function findFreshBlueBubblesDraftPresentation(params: {
   chatJids: string[];
   now: Date;
@@ -570,13 +524,6 @@ function findFreshBlueBubblesDraftPresentation(params: {
         );
       }) || null
   );
-}
-
-function findFreshBlueBubblesSelfThreadDraftPresentation(params: {
-  chatJids: string[];
-  now: Date;
-}): ReturnType<typeof listRecentMessagesForChat>[number] | null {
-  return findFreshBlueBubblesDraftPresentation(params);
 }
 
 function listBlueBubblesMessageActionContinuityCandidates(params: {
@@ -632,16 +579,6 @@ function listBlueBubblesMessageActionContinuityCandidates(params: {
       } => Boolean(entry),
     )
     .sort((left, right) => right.engagedAtMs - left.engagedAtMs);
-}
-
-function listBlueBubblesSelfThreadContinuityCandidates(params: {
-  groupFolder: string;
-  canonicalSelfThreadChatJid: string;
-}) {
-  return listBlueBubblesMessageActionContinuityCandidates({
-    groupFolder: params.groupFolder,
-    canonicalChatJid: params.canonicalSelfThreadChatJid,
-  });
 }
 
 function containsHighRiskMessagingCue(text: string): boolean {
@@ -1897,7 +1834,7 @@ function humanSendFailure(): string {
 }
 
 function describeSendSuccess(
-  record: MessageActionRecord,
+  _record: MessageActionRecord,
   target: MessageTarget,
 ): string {
   if (target.kind === 'external_thread') {
@@ -2223,15 +2160,6 @@ async function persistDeferredReminder(params: {
     replyText: params.reminderOnly
       ? `Andrea: I kept the draft unsent and I'll remind you about it around ${hint}.`
       : `Andrea: I saved that to revisit before sending, and I'll bring it back around ${hint}.`,
-    updatedAction,
-  };
-  const replyText = params.reminderOnly
-    ? `Andrea: I'll remind you about that ${hint}.`
-    : `Andrea: I saved that to revisit before sending, and I'll bring it back ${hint}.`;
-  return {
-    replyText: params.reminderOnly
-      ? `Andrea: I’ll remind you about that ${hint}.`
-      : `Andrea: I saved that to send later and I’ll bring it back ${hint}.`,
     updatedAction,
   };
 }
@@ -3406,7 +3334,7 @@ export function listBlueBubblesMessageActionContinuitySnapshots(params: {
 
 function isBlueBubblesAndreaDirectedInstruction(rawText: string): boolean {
   const normalized = normalizeText(rawText).toLowerCase();
-  return /(?:^|[\s([{\-])@andrea\b/.test(normalized);
+  return /(?:^|[\s([{-])@andrea\b/.test(normalized);
 }
 
 export function canUseBareBlueBubblesMessageActionFollowup(params: {

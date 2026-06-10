@@ -51,9 +51,7 @@ import {
   type CalendarActiveEventContext,
 } from './calendar-assistant.js';
 import {
-  buildDelegationRuleListPresentation,
   buildDelegationRulePreview,
-  buildDelegationRuleWhyText,
   saveDelegationRuleFromPreview,
   updateDelegationRuleMode,
 } from './delegation-rules.js';
@@ -156,7 +154,6 @@ import {
 import {
   buildCalendarCompanionEventReply,
   buildCalendarCompanionFailureReply,
-  buildCalendarCompanionReminderReply,
   buildGracefulDegradedReply,
 } from './conversational-core.js';
 import { getUserFacingErrorDetail } from './user-facing-error.js';
@@ -187,27 +184,20 @@ import {
   advancePendingGoogleCalendarCreate,
   buildGoogleCalendarSchedulingContextState,
   buildPendingGoogleCalendarCreateState,
-  formatGoogleCalendarCreatePrompt,
   isExplicitGoogleCalendarCreateRequest,
   planGoogleCalendarCreate,
   type GoogleCalendarSchedulingContextState,
   type PendingGoogleCalendarCreateState,
 } from './google-calendar-create.js';
 import {
-  advancePendingCalendarReminder,
   advancePendingGoogleCalendarEventAction,
   buildActiveGoogleCalendarEventContextState,
-  buildEventReminderTaskPlan,
   formatPendingGoogleCalendarEventActionPrompt,
   isActiveGoogleCalendarEventContextExpired,
-  isPendingCalendarReminderExpired,
   isPendingGoogleCalendarEventActionExpired,
   matchGoogleCalendarTrackedEvents,
-  planCalendarEventReminder,
   planGoogleCalendarEventAction,
-  resolveCalendarReminderLookup,
   type ActiveGoogleCalendarEventContextState,
-  type PendingCalendarReminderState,
   type PendingGoogleCalendarEventActionState,
 } from './google-calendar-followthrough.js';
 import { planContextualReminder } from './local-reminder.js';
@@ -264,7 +254,7 @@ export interface AlexaStatus {
   lastSignedResponseSource?: string;
 }
 
-export interface AlexaCompanionDeps extends Partial<CompanionHandoffDeps> {}
+export type AlexaCompanionDeps = Partial<CompanionHandoffDeps>;
 
 interface AlexaSignedRequestState {
   updatedAt: string;
@@ -1495,17 +1485,6 @@ function buildRequestIntent(requestEnvelope: RequestEnvelope): Intent | null {
   return request.type === 'IntentRequest' ? request.intent : null;
 }
 
-function buildLinkAccountBarrier(
-  speech: string,
-  reprompt?: string,
-): AlexaBarrierResponse {
-  return {
-    kind: 'link-account',
-    speech,
-    reprompt,
-  };
-}
-
 function assertTrustedSkillRequest(
   requestEnvelope: RequestEnvelope,
   config: AlexaConfig,
@@ -1680,17 +1659,6 @@ function parseAlexaPendingCalendarEventAction(
   return isPendingGoogleCalendarEventActionExpired(parsed, now)
     ? undefined
     : parsed;
-}
-
-function parseAlexaPendingCalendarReminder(
-  state: AlexaConversationState | undefined,
-  now = new Date(),
-): PendingCalendarReminderState | undefined {
-  const parsed = parseAlexaJsonField<PendingCalendarReminderState>(
-    state?.subjectData.pendingCalendarReminderJson,
-  );
-  if (!parsed) return undefined;
-  return isPendingCalendarReminderExpired(parsed, now) ? undefined : parsed;
 }
 
 function buildAlexaAssistantTaskState(params: {
@@ -2872,7 +2840,7 @@ function buildAlexaBridgeConversationState(
 
 async function runLinkedAlexaTurn(
   handlerInput: HandlerInput,
-  config: AlexaConfig,
+  _config: AlexaConfig,
   assistantName: string,
   principal: AlexaPrincipal,
   linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
@@ -3226,7 +3194,10 @@ export function createAlexaSkill(
   };
 
   const resolveAlexaEventContextFromUtterance = async (
-    linked: Extract<ReturnType<typeof resolveAlexaLinkedAccount>, { ok: true }>,
+    _linked: Extract<
+      ReturnType<typeof resolveAlexaLinkedAccount>,
+      { ok: true }
+    >,
     utterance: string,
     now: Date,
   ): Promise<

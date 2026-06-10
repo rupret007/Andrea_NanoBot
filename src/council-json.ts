@@ -65,6 +65,6 @@ function tryParse(value: string): unknown | null {
 function repairJson(value: string): string {
   return value
     .replace(/,(\s*[}\]])/g, '$1')
-    .replace(/(?<=[:{,\[]\s*)'([^']*?)'(?=\s*[,}\]:])/g, '"$1"')
+    .replace(/(?<=[:{,[]\s*)'([^']*?)'(?=\s*[,}\]:])/g, '"$1"')
     .replace(/("(?:[^"\\]|\\.)*?)\n((?:[^"\\]|\\.)*?")/g, '$1\\n$2');
 }

@@ -47,10 +47,8 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
-  CONTAINER_RUNTIME_NAME,
   cleanupOrphans,
   ensureContainerRuntimeRunning,
-  getContainerRuntimeStatus,
 } from './container-runtime.js';
 import {
   createCalendarAutomation,
@@ -68,7 +66,6 @@ import {
   getRegisteredMainChat,
   getResponseFeedback,
   getResponseFeedbackByRemediationJob,
-  listRecentResponseFeedback,
   listAllCursorAgents,
   listCalendarAutomationsForChat,
   getAllRegisteredGroups,
@@ -112,13 +109,11 @@ import { startBlueBubblesControlServer } from './bluebubbles-control-server.js';
 import { planSimpleReminder } from './local-reminder.js';
 import {
   buildCalendarAssistantResponse,
-  planCalendarAssistantLookup,
   type CalendarSchedulingContext,
 } from './calendar-assistant.js';
 import { type SelectedWorkContext } from './daily-command-center.js';
 import {
   buildDailyCompanionResponse,
-  isPotentialDailyCompanionPrompt,
   type DailyCompanionContext,
   type DailyCompanionMode,
 } from './daily-companion.js';
@@ -217,7 +212,6 @@ import {
 } from './bluebubbles-self-thread.js';
 import { interpretBlueBubblesDirectTurn } from './messages-fluidity.js';
 import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
-import { readEnvFile } from './env.js';
 import {
   collectProviderHealthSnapshots,
   formatProviderHealthAlertMessage,
@@ -659,7 +653,6 @@ import {
 } from './andrea-openai-runtime.js';
 import {
   formatRuntimeBackendCreateAcceptedMessage,
-  extractRuntimeBackendJobIdFromText,
   formatRuntimeBackendFailure,
   formatRuntimeBackendFollowupAcceptedMessage,
   formatRuntimeBackendJobCard,
@@ -670,10 +663,7 @@ import {
 } from './runtime-shell.js';
 import {
   buildRuntimeReplyContextMissingMessage,
-  buildRuntimeSelectionMissingMessage,
   computeRuntimeCardContextExpiry,
-  resolveRuntimeJobTarget,
-  resolveRuntimeLogsTarget,
   resolveRuntimeReplyContext,
 } from './runtime-chat-context.js';
 import {
@@ -9827,21 +9817,21 @@ async function main(): Promise<void> {
     'Usage: /cursor-create [--model MODEL_ID] [--repo REPO_URL] [--ref GIT_REF] [--pr PR_URL] [--branch BRANCH_NAME] [--auto-pr] [--cursor-github-app] [--skip-reviewer] PROMPT';
   const CURSOR_DOWNLOAD_USAGE =
     'Usage: /cursor-download [AGENT_ID|LIST_NUMBER|current] ABSOLUTE_PATH';
-  const CURSOR_ARTIFACT_LINK_USAGE =
+  const _CURSOR_ARTIFACT_LINK_USAGE =
     'Usage: /cursor-artifact-link AGENT_ID ABSOLUTE_PATH';
-  const RUNTIME_CREATE_USAGE = 'Usage: /runtime-create TEXT';
-  const RUNTIME_JOBS_USAGE = 'Usage: /runtime-jobs [LIMIT] [BEFORE_JOB_ID]';
-  const RUNTIME_JOB_USAGE = 'Usage: /runtime-job [JOB_ID]';
-  const RUNTIME_FOLLOWUP_USAGE = 'Usage: /runtime-followup JOB_ID TEXT';
-  const RUNTIME_STOP_USAGE = 'Usage: /runtime-stop [JOB_ID]';
-  const RUNTIME_LOGS_USAGE = 'Usage: /runtime-logs [JOB_ID] [LINES]';
+  const _RUNTIME_CREATE_USAGE = 'Usage: /runtime-create TEXT';
+  const _RUNTIME_JOBS_USAGE = 'Usage: /runtime-jobs [LIMIT] [BEFORE_JOB_ID]';
+  const _RUNTIME_JOB_USAGE = 'Usage: /runtime-job [JOB_ID]';
+  const _RUNTIME_FOLLOWUP_USAGE = 'Usage: /runtime-followup JOB_ID TEXT';
+  const _RUNTIME_STOP_USAGE = 'Usage: /runtime-stop [JOB_ID]';
+  const _RUNTIME_LOGS_USAGE = 'Usage: /runtime-logs [JOB_ID] [LINES]';
   const CURSOR_TERMINAL_USAGE =
     'Usage: /cursor-terminal [AGENT_ID|LIST_NUMBER|current] COMMAND';
-  const CURSOR_TERMINAL_STATUS_USAGE =
+  const _CURSOR_TERMINAL_STATUS_USAGE =
     'Usage: /cursor-terminal-status [AGENT_ID|LIST_NUMBER|current]';
-  const CURSOR_TERMINAL_LOG_USAGE =
+  const _CURSOR_TERMINAL_LOG_USAGE =
     'Usage: /cursor-terminal-log [AGENT_ID|LIST_NUMBER|current] [LIMIT]';
-  const CURSOR_TERMINAL_STOP_USAGE =
+  const _CURSOR_TERMINAL_STOP_USAGE =
     'Usage: /cursor-terminal-stop [AGENT_ID|LIST_NUMBER|current]';
   const MAX_CURSOR_TERMINAL_REPLY_CHARS = 3000;
   const MAX_CURSOR_TERMINAL_LINES = 40;
@@ -10556,6 +10546,7 @@ async function main(): Promise<void> {
         stderr ||
           stdout ||
           `git ${args.join(' ')} failed in ${ACTIVE_REPO_ROOT}.`,
+        { cause: err },
       );
     }
   }
@@ -12660,7 +12651,7 @@ async function main(): Promise<void> {
     );
   }
 
-  function resolveRuntimeGroupTarget(
+  function _resolveRuntimeGroupTarget(
     token: string,
   ): { chatJid: string; group: RegisteredGroup } | null {
     const trimmed = token.trim();
@@ -12713,7 +12704,7 @@ async function main(): Promise<void> {
     }
   }
 
-  function getCurrentRuntimeSelection(
+  function _getCurrentRuntimeSelection(
     chatJid: string,
     groupFolder: string,
   ): string | null {
@@ -12906,7 +12897,7 @@ async function main(): Promise<void> {
     return true;
   }
 
-  async function runOperatorRuntimeFollowup(
+  async function _runOperatorRuntimeFollowup(
     operatorChatJid: string,
     targetChatJid: string,
     targetGroup: RegisteredGroup,
@@ -12956,7 +12947,7 @@ async function main(): Promise<void> {
     }
   }
 
-  async function handleRuntimeStatus(chatJid: string): Promise<void> {
+  async function _handleRuntimeStatus(chatJid: string): Promise<void> {
     const context = await resolveRuntimeBackendContext(chatJid);
     if (!context) return;
 
@@ -13021,7 +13012,7 @@ async function main(): Promise<void> {
     }
   }
 
-  async function handleRuntimeCreate(
+  async function _handleRuntimeCreate(
     chatJid: string,
     promptText: string,
     actorId?: string,
@@ -13053,7 +13044,7 @@ async function main(): Promise<void> {
     }
   }
 
-  async function handleRuntimeJobs(
+  async function _handleRuntimeJobs(
     chatJid: string,
     limit: number,
     beforeJobId?: string,
@@ -13092,7 +13083,7 @@ async function main(): Promise<void> {
     }
   }
 
-  async function handleRuntimeJob(
+  async function _handleRuntimeJob(
     chatJid: string,
     jobId: string,
     usedSelection = false,
@@ -13133,7 +13124,7 @@ async function main(): Promise<void> {
     }
   }
 
-  async function handleRuntimeFollowup(
+  async function _handleRuntimeFollowup(
     chatJid: string,
     jobId: string,
     promptText: string,
@@ -13167,7 +13158,7 @@ async function main(): Promise<void> {
     }
   }
 
-  async function handleRuntimeStop(
+  async function _handleRuntimeStop(
     chatJid: string,
     jobId: string,
     actorId?: string,
@@ -13210,7 +13201,7 @@ async function main(): Promise<void> {
     }
   }
 
-  async function handleRuntimeLogs(
+  async function _handleRuntimeLogs(
     chatJid: string,
     jobId: string,
     limit: number,

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { buildChiefOfStaffTurn } from './chief-of-staff.js';
 import { analyzeCommunicationMessage } from './communication-companion.js';
-import { _initTestDatabase, createTask } from './db.js';
+import { _initTestDatabase } from './db.js';
 import {
   buildLifeThreadSnapshot,
   handleLifeThreadCommand,

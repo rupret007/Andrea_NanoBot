@@ -918,12 +918,6 @@ function buildPlan(input: {
     ...(selectedToolStatus === 'degraded' ? ['tool_degraded'] : []),
     ...(selectedToolStatus === 'blocked' ? ['tool_blocked'] : []),
   ];
-  const fallbackRoute =
-    selectedToolStatus === 'blocked'
-      ? 'clarify_or_local_direct_answer'
-      : routeClass === 'clarify'
-        ? 'ask_one_clarifying_question'
-        : null;
   const baseConfidence =
     input.capabilityMatch || routeClass === 'direct_answer'
       ? input.request.confidence

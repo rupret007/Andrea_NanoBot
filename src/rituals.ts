@@ -413,13 +413,6 @@ function inferTonightAnchor(now: Date): string {
   return target.toISOString();
 }
 
-function inferTomorrowAnchor(now: Date): string {
-  const target = new Date(now);
-  target.setDate(target.getDate() + 1);
-  target.setHours(9, 0, 0, 0);
-  return target.toISOString();
-}
-
 function pinCurrentContextToEveningReset(input: RitualCommandInput): string {
   const now = input.now || new Date();
   const referencedThreadId = input.priorContext?.usedThreadIds?.[0] || null;

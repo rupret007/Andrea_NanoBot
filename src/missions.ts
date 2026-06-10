@@ -1117,7 +1117,7 @@ export async function buildMissionTurn(
   const { snapshot, stepFocus } = await buildMissionSnapshot(input, existing);
   let mission = snapshot.mission;
   let steps = snapshot.steps;
-  let blockers = [...snapshot.blockers];
+  const blockers = [...snapshot.blockers];
   let suggestedActions = [...snapshot.suggestedActions];
 
   if (input.mode === 'manage') {

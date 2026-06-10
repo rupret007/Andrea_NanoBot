@@ -108,7 +108,7 @@ describe('renderJobStatusCard', () => {
 
 describe('JobStatusCard streaming', () => {
   it('debounces edits within minEditIntervalMs and flushes when the window passes', async () => {
-    const { channel, sends, edits } = makeChannel();
+    const { channel, edits } = makeChannel();
     let now = 0;
     const card = new JobStatusCard({
       channel,
@@ -191,7 +191,7 @@ describe('JobStatusCard streaming', () => {
   });
 
   it('caps edits at maxEditsPerCard then sends a fresh card', async () => {
-    const { channel, sends, edits } = makeChannel();
+    const { channel, edits } = makeChannel();
     let now = 0;
     const card = new JobStatusCard({
       channel,
@@ -248,7 +248,7 @@ describe('JobStatusCard streaming', () => {
   });
 
   it('truncates outputTail to outputTailMaxChars from the end of the text', async () => {
-    const { channel, sends, edits } = makeChannel();
+    const { channel, edits } = makeChannel();
     let now = 0;
     const card = new JobStatusCard({
       channel,

@@ -179,8 +179,6 @@ import {
   CognitiveToolRegistryRecord,
   CognitiveTraceSpan,
   CognitiveWorkbenchState,
-  CognitiveContextBudget,
-  CognitiveGoalStack,
   CognitiveImprovementProposal,
   CognitiveOptimizationScorecard,
   CognitivePolicyVariant,

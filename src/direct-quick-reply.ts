@@ -14,7 +14,7 @@ const MAX_ABS_MATH_RESULT = 1_000_000_000_000;
 
 function stripAndreaAddressing(normalized: string): string {
   return normalized
-    .replace(/(^|[\s([{\-])@andrea\b[,:;!?-]*/g, '$1')
+    .replace(/(^|[\s([{-])@andrea\b[,:;!?-]*/g, '$1')
     .replace(
       /^(hi|hello|hey|good morning|good afternoon|good evening)\s+andrea\b[,:;!?-]*/g,
       '$1 ',

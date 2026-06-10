@@ -140,10 +140,7 @@ export interface KnowledgeSearchResult {
 }
 
 function normalizeKnowledgeText(value: string): string {
-  return value
-    .replace(/\r\n/g, '\n')
-    .replace(/\u0000/g, '')
-    .trim();
+  return value.replace(/\r\n/g, '\n').split('\u0000').join('').trim();
 }
 
 function deriveSummary(text: string): string {

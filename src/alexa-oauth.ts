@@ -411,7 +411,7 @@ async function readRawBody(request: http.IncomingMessage): Promise<string> {
 }
 
 function issueAccessToken(
-  config: AlexaOAuthConfig,
+  _config: AlexaOAuthConfig,
   displayName: string,
   groupFolder: string,
   createdAt: string,

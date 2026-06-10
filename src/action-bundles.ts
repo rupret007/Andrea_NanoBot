@@ -36,7 +36,6 @@ import {
 import { handleRitualCommand } from './rituals.js';
 import type {
   ActionBundleActionRecord,
-  ActionBundleActionStatus,
   ActionBundleActionType,
   ActionBundleOriginKind,
   ActionBundlePresentationChannel,

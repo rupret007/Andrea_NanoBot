@@ -1,23 +1,30 @@
 # Andrea Field-Trial Demo Pack
 
-Use this as the canonical demo and dogfood checklist for the current Windows host.
+Use this as the demo and dogfood checklist for the current operator host. Command output wins over this file whenever they disagree.
+
+## Canonical Truth Order
+
+1. `npm run debug:status`
+2. `npm run setup -- --step verify`
+3. `npm run debug:pilot`
+4. this checklist
 
 ## Readiness Matrix
 
 | Surface | Current truth | Exact blocker | Owner | Smallest next action |
 | --- | --- | --- | --- | --- |
-| Telegram companion | `live_proven` | none | none | Keep `npm run telegram:user:smoke` current before demos |
-| Alexa companion | `live_proven` with manual sync pending | latest repo interaction-model hash is not marked synced locally yet | external/manual | Import/build `docs/alexa/interaction-model.en-US.json`, then run `npm run setup -- --step alexa-model-sync mark-synced` |
-| BlueBubbles companion | `live_proven` | none | none | Keep `npm run debug:bluebubbles -- --live` current and preserve the canonical self-thread proof chain |
+| Telegram user-session proof | `externally_blocked` | missing `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH` | external/config | Set the credentials, then run `npm run telegram:user:smoke` |
+| Alexa companion | `near_live_only` | no fresh signed handled `IntentRequest` recorded | external/live turn | Use a real simulator/device turn, then run `npm run services:status` |
+| BlueBubbles companion | `degraded_but_usable` | missing fresh same-thread message-action proof | live turn | Run one same-chat draft -> `send it` or `send it later tonight` proof |
 | Google Calendar | `live_proven` | none | none | Keep `npm run debug:google-calendar` current |
-| Work cockpit | `live_proven` | none | none | Re-run one `/cursor` sanity flow after restart |
-| Life threads / communication | `live_proven` | none | none | Re-run one Candace chain in Telegram |
-| Chief-of-staff / missions | `live_proven` | none | none | Re-run one nightly-planning chain |
-| Knowledge library | `live_proven` | none | none | Re-run one save plus one grounded answer |
-| Action bundles / delegation / outcome review | `live_proven` | none | none | Re-run one approve/partial/review chain if this release touched bundle behavior |
-| Research mode | `externally_blocked` | provider quota/billing | external | Restore provider quota/billing, then rerun `npm run debug:research-mode` |
-| Image generation | `externally_blocked` | provider quota/billing/access | external | Restore provider quota/billing/access, then rerun `npm run debug:research-mode` |
-| Startup / host-control / watchdog / health | `live_proven` | none for core host; optional local gateway compatibility lane is degraded | external/provider | Keep `services:status`, `setup verify`, and `debug:status` aligned after each restart |
+| Work cockpit | `near_live_only` / proof-stale | no fresh flagship work-cockpit turn | operator/live turn | Re-run one `/cursor` sanity flow |
+| Life threads / communication | `near_live_only` / proof-stale | no fresh Candace/communication chain | operator/live turn | Re-run one Candace follow-through chain |
+| Chief-of-staff / missions | `near_live_only` / proof-stale | no fresh planning journey | operator/live turn | Re-run one nightly-planning or mission chain |
+| Knowledge library | `near_live_only` / proof-stale | no fresh save plus grounded answer | operator/live turn | Re-run one save and one library-grounded answer |
+| Action bundles / delegation / outcome review | `near_live_only` / proof-stale | no fresh approve/partial/review chain | operator/live turn | Re-run one action-bundle review chain |
+| Research mode | `live_proven` | none | none | Keep the proof fresh if it will be demoed |
+| Image generation | `live_proven` | none | none | Keep the proof fresh if it will be demoed |
+| Startup / host-control / watchdog / health | `live_proven` | none for core host | none | Keep `services:status`, `setup verify`, and `debug:status` aligned after each restart |
 
 ## Operator Preflight
 
@@ -32,26 +39,43 @@ npm run debug:pilot
 
 Confirm:
 
-- `phase=running_ready`
+- host state is `running_ready`
 - `serving_commit_matches_workspace_head=true`
-- repo root is `C:\Users\rupret\Desktop\Andrea_NanoBot`
-- Node is `22.22.2`
-- `LAUNCH_CANDIDATE_STATUS` reads one of:
-  - `core_ready`
-  - `core_ready_with_manual_surface_sync`
-  - `provider_blocked_but_core_usable`
-- manual sync, optional provider blockers, and proof freshness gaps are explicit instead of vague
+- active repo and serving commit are aligned
+- `LAUNCH_CANDIDATE_STATUS` is not described as ready while Telegram, Alexa, or same-host flagship proof is missing
+- external blockers and proof freshness gaps are explicit instead of vague
 
 Important truth:
 
-- `setup verify` now follows **pass core, warn extras**
-- optional provider blockers and proof freshness gaps should not be described as host failure
-- on this host today, the normal story is:
-  - core companion is ready
-  - Alexa still wants one local model-sync marker
-  - BlueBubbles is now live-proven on this host after a real same-thread ask -> drafted `message_action` -> `send it` chain in `bb:iMessage;-;+14695405551`
-  - OpenBubbles is not a live provider here; it stays an operator-only feasibility track until a supported Windows-native observation/reply surface is proven
-  - research and image generation are optional provider-blocked lanes
+- `setup verify` can prove assistant execution while still failing launch readiness because external proof/config gates are open.
+- `ASSISTANT_EXECUTION_PROBE: ok` means the assistant answered; a final failed launch status should be read with the listed blockers, not as an ambiguous runtime failure.
+- Telegram is blocked by missing user-session API credentials until `npm run telegram:user:smoke` succeeds.
+- Alexa is not `live_proven` until a fresh signed handled `IntentRequest` is recorded.
+- BlueBubbles is usable, but not fully live-proven until a fresh same-thread message-action proof is recorded.
+- Research and image generation are currently live-proven advanced lanes, not core launch blockers.
+
+## Proof Recovery Checklist
+
+Close proof debt in this order:
+
+1. Telegram
+   - Set `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`.
+   - Run `npm run telegram:user:smoke`.
+   - Success shape: no missing-credential blocker, user-session smoke records a request/response proof, and `debug:status` no longer reports Telegram as `externally_blocked`.
+2. Alexa
+   - From the real Alexa simulator or device, say `Open Andrea Assistant`, then `What am I forgetting?`.
+   - Run `npm run services:status` and `npm run debug:pilot`.
+   - Success shape: latest signed request is a handled `IntentRequest`, the proof is inside the freshness window, and Alexa reports `live_proven`.
+3. BlueBubbles
+   - Run `npm run debug:bluebubbles -- --live`.
+   - In the same Messages chat, ask Andrea to draft a reply, then execute `send it` or `send it later tonight`.
+   - Success shape: transport and webhook stay ready, and the same-thread inbound/outbound/message-action proof is fresh.
+4. Flagship journeys
+   - Re-run ordinary chat, daily guidance, Candace follow-through, mission planning, work cockpit, cross-channel handoff, knowledge library, and action-bundle review.
+   - Run `npm run debug:pilot`.
+   - Success shape: flagship proof freshness improves without any stale `live_proven` claims.
+
+Treat missing credentials, manual signed turns, phone/device availability, and provider account limits as external blockers. Treat deterministic command failures, incorrect blocker classification, or mismatched docs as repo bugs.
 
 ## Flagship Demo Flows
 
@@ -148,7 +172,7 @@ Important truth:
 - What makes it impressive:
   - same assistant voice in a distinct spoken surface
 - If an optional dependency is blocked:
-  - if the latest model hash is not marked synced, say the exact console/build step and show the current status output
+  - if no fresh signed handled `IntentRequest` is recorded, run the live simulator/device proof before calling Alexa launch-ready
 
 ### 8. Cross-channel handoff
 
@@ -189,7 +213,7 @@ Important truth:
 
 ## Same-Day Demo Story
 
-Default showable story on this host:
+Default showable story after proof recovery:
 
 1. Telegram ordinary conversation
 2. Telegram daily guidance
@@ -204,19 +228,20 @@ Default showable story on this host:
 
 Optional lanes that should be described honestly:
 
-- Alexa latest-model sync may still need one manual console/build confirmation
-- BlueBubbles is live-proven on this host after the canonical same-thread `message_action` proof chain recorded on April 14, 2026
-- outward research and image generation are provider-blocked and should be framed as optional premium lanes, not core failure
+- Alexa is voice-ready only after a fresh signed handled `IntentRequest`.
+- BlueBubbles is usable but needs a fresh same-thread `message_action` proof before it should be called `live_proven`.
+- Research and image generation are advanced lanes. They are currently live-proven, but they should not distract from the five core journeys.
 
 ## Short Pilot Checklist
 
 1. Run `npm run services:status`, `npm run setup -- --step verify`, `npm run debug:status`, and `npm run debug:pilot`.
-2. Confirm `SERVICE: running_ready` and `serving_commit_matches_workspace_head=true`.
+2. Confirm host state is `running_ready` and `serving_commit_matches_workspace_head=true`.
 3. Confirm the launch story is still:
-   - core companion ready
-   - Alexa proof live with manual sync pending only if applicable
-   - BlueBubbles `live_proven` when the canonical same-thread `message_action` proof chain is still fresh on this host
-   - optional provider blockers explicit
+   - no stale `live_proven` claims
+   - Telegram user-session proof unblocked only after credentials and smoke test
+   - Alexa `live_proven` only after a fresh signed handled `IntentRequest`
+   - BlueBubbles `live_proven` only after a fresh same-thread `message_action` proof chain
+   - proof-stale flagship journeys named plainly
 4. Re-run one short Telegram chain:
    - `hi`
    - `what am I forgetting`
@@ -236,18 +261,20 @@ Optional lanes that should be described honestly:
 
 ## Exact Next Steps If Blocked
 
-- Alexa model sync pending:
-  - import/build `docs/alexa/interaction-model.en-US.json`
-  - run `npm run setup -- --step alexa-model-sync mark-synced`
-- BlueBubbles bridge-health gap:
+- Telegram externally blocked:
+  - set `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`
+  - run `npm run telegram:user:smoke`
+- Alexa near-live only:
+  - run one real signed simulator/device flow: `Open Andrea Assistant`, then `What am I forgetting?`
+  - run `npm run services:status`
+  - if the model hash is no longer marked synced, import/build `docs/alexa/interaction-model.en-US.json`, then run `npm run setup -- --step alexa-model-sync mark-synced`
+- BlueBubbles proof gap:
   - run `npm run debug:bluebubbles -- --live`
-  - check the recent-message endpoint and shadow-poll path for this Windows host
-  - then retry the same 1:1 Messages thread
-- Outward research blocked:
-  - restore provider quota/billing
-  - rerun `npm run debug:research-mode`
-- Image generation blocked:
-  - restore provider billing/access
-  - rerun `npm run debug:research-mode`
+  - retry the same Messages chat draft -> `send it` proof chain
+- Flagship proof stale:
+  - rerun the short pilot chain plus one work-cockpit continuation
+  - run `npm run debug:pilot`
+- Research or image generation regresses:
+  - check provider account/billing/quota and rerun the relevant debug command
 
-These are exact next steps, not reasons to call the core Andrea product broken when `SERVICE: running_ready`.
+These are exact next steps, not reasons to call the repo broken when host health is `running_ready` and the blocker is external proof/config.

@@ -194,7 +194,7 @@ function humanizeThreadTitle(rawTitle: string): string {
     .replace(/\s+/g, ' ')
     .split(/(\s+|\/|-)/)
     .map((part) => {
-      if (!part.trim() || /^[\/-]$/.test(part)) return part;
+      if (!part.trim() || /^[/ -]$/.test(part)) return part;
       return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
     })
     .join('');

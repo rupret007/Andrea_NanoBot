@@ -92,7 +92,6 @@ import type {
   MediaGenerationResult,
   MessageActionRecord,
   MissionExecutionContext,
-  MissionPlanSnapshot,
   MissionSuggestedAction,
   NewMessage,
   SendMessageOptions,
@@ -449,21 +448,6 @@ function buildCapabilityTrace(
     responseSource,
     reason,
     notes,
-  };
-}
-
-function buildCompanionMessagePayload(
-  title: string,
-  text: string,
-  followupSuggestions: string[] = [],
-  sourceSummary?: string,
-): CompanionHandoffPayload {
-  return {
-    kind: 'message',
-    title: normalizeText(title) || 'Andrea follow-up',
-    text: text.trim(),
-    sourceSummary: sourceSummary?.trim() || undefined,
-    followupSuggestions: followupSuggestions.filter(Boolean).slice(0, 3),
   };
 }
 

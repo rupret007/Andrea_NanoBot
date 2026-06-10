@@ -133,7 +133,7 @@ function resolveGroupContext(
   return resolved;
 }
 
-export interface AndreaRuntimeBackendLane extends BackendLane {}
+export type AndreaRuntimeBackendLane = BackendLane;
 
 export interface AndreaRuntimeBackendLaneOptions {
   resolveGroupByFolder(

@@ -55,25 +55,17 @@ Andrea is designed to be practically useful every day: schedule help, reminders,
 
 ---
 
-## Signature Flows
+## Flagship Journeys
 
-The best way to understand Andrea now is through the flagship journeys it should nail end to end:
+Andrea should be presented as a practical personal assistant with proof-gated channels and bounded action. Lead with five journeys:
 
-- Alexa or Telegram schedule check -> calendar move/add/remind follow-up
-- `What's on my calendar tomorrow?` -> short read -> add, move, or reminder continuation
-- `Help me set this up` -> proposed Andrea setup -> approved default lists, routines, and surfaces
-- `Add milk to my shopping list` -> zero-setup capture -> grouped list readout -> done, defer, remind, move, or plan
-- `What do we need from the store?` / `What's left for tonight?` -> household smart view -> one useful slice -> Telegram continuation when needed
-- `Remind me to take my pills at 9` -> saved reminder -> one practical next step
-- `What bills do I need to pay this week?` -> open follow-through -> reminder or plan
-- `What's missing for dinner?` / `What should I handle this weekend?` -> meal or weekend smart view -> one practical next move
-- `Make this a monthly bill` -> recurring obligation -> resurfaces when due instead of disappearing into a second task system
-- `What am I forgetting?` -> one open loop -> reminder, save, or tracking action
-- `What should I say back?` -> draft -> approve/send, save under thread, remind later, or queue a bounded send-later -> honest review state
-- `Help me plan tonight / tomorrow morning / meals this week` -> next step -> blocker -> confirmed action
-- `What do I owe people?` -> open communication loop -> remind later or thread follow-up
-- source-grounded research -> richer detail -> save to library
-- BlueBubbles message help -> summarize -> draft -> remind later -> optional Telegram escalation
+- ordinary chat and daily guidance
+- reminders, calendar, and list capture
+- communication follow-through
+- mission and chief-of-staff planning
+- work cockpit continuity
+
+Advanced lanes such as research, image generation, self-improvement, and broad provider diagnostics are useful, but they are not the core launch story.
 
 These flows are now backed by one shared capability graph, one continuation/handoff layer, and one productized proof harness:
 
@@ -85,21 +77,23 @@ Treat that flagship-flow suite and harness as the main product proof. The subsys
 
 ## Field-Trial Truth
 
-Current host truth for the Mac mini:
+Static docs are not the source of truth for launch readiness. Use this order whenever surfaces disagree:
+
+1. `npm run debug:status`
+2. `npm run setup -- --step verify`
+3. `npm run debug:pilot`
+4. docs
+
+Current host truth from the local operator commands:
 
 - `Host state: running_ready` is the canonical runtime health signal for this machine.
-- Healthy/configured lanes:
-  - host-control, watchdog, and local runtime health
-  - OpenAI, Anthropic/Claude, Gemini, MiniMax, and Brave Search provider diagnostics
-  - BlueBubbles transport on local-first `127.0.0.1:1234` with the Cloudflare server URL kept as fallback/diagnostic only
-- Proof-gated lanes:
-  - Telegram has a real request/response marker, but should be refreshed with `npm run telegram:user:smoke` when judging launch freshness
-  - BlueBubbles is transport-ready with a registered private webhook, but becomes `live_proven` only after the fresh same-thread proof records inbound, outbound, and a same-thread message-action decision
-  - outward research, image generation, and flagship product journeys still need same-host proof turns before they should be called fresh/live
-- External/manual blockers:
-  - Google Calendar is not connected on this host until the OAuth setup flow is completed
-  - Alexa still needs the Developer Console model sync plus one real signed simulator/device IntentRequest
-- `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on the same core/manual-sync/provider-blocked story
+- Active repo and serving commit should match before any live proof is trusted.
+- `live_proven`: host health, Google Calendar, research, and image generation.
+- `degraded_but_usable`: BlueBubbles transport is ready and the private webhook is registered, but the same-thread message-action proof needs a fresh run.
+- `near_live_only`: Alexa model sync is marked synced, but there is no fresh signed handled `IntentRequest`.
+- `externally_blocked`: Telegram user-session proof is missing `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`.
+- Work cockpit, life threads, communication companion, missions, knowledge library, and action bundles are repo-ready but proof-stale until refreshed on this host.
+- `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on the same proof/config blocker story
 - `npm run debug:pilot` is the proof-freshness and dogfooding surface for flagship journeys, degraded-but-usable fallback, and exact next steps
 
 For the current demo/field-trial script, use [docs/DEMO_CHECKLIST.md](docs/DEMO_CHECKLIST.md).
@@ -573,7 +567,7 @@ Notes:
 - if the browser reaches the Google callback but `auth` still times out, finish the same current-repo OAuth run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
 - reminder phrasing still creates reminders, not Google Calendar events
 - a host is only live-proven for Google Calendar writes after `auth`, `discover`, `validate`, and one disposable create-event proof all succeed on that host
-- on this Mac mini, Google Calendar currently remains an external setup blocker until the OAuth flow is completed and validated
+- on this host, Google Calendar is currently `live_proven`; if a future run reports `missing_config`, rerun OAuth setup before claiming calendar launch readiness
 
 ## What Andrea Can Do
 

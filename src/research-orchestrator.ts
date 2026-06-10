@@ -1118,7 +1118,7 @@ function summarizeOutsideResearch(
 }
 
 function summarizeLocalResearch(
-  request: ResearchRequest,
+  _request: ResearchRequest,
   context: LocalResearchContext,
   plan: ResearchPlan,
   options: {

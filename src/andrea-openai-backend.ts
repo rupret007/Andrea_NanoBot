@@ -307,14 +307,6 @@ function isAbortLikeError(err: unknown): boolean {
   );
 }
 
-async function parseJsonResponse<T>(response: Response): Promise<T> {
-  const raw = await response.text();
-  if (!raw.trim()) {
-    return {} as T;
-  }
-  return JSON.parse(raw) as T;
-}
-
 async function requestJson<T>(
   fetchImpl: typeof fetch,
   baseUrl: string,

@@ -60,7 +60,6 @@ import { readProviderProofState } from './provider-proof-state.js';
 import type {
   AppleMessagesBridgeAvailability,
   AppleMessagesProviderName,
-  MessageActionRecord,
   PilotJourneyEventRecord,
   PilotJourneyId,
 } from './types.js';
@@ -700,13 +699,6 @@ export interface BuildFieldTrialOperatorTruthOptions {
     | 'quota_blocked'
     | 'degraded'
     | 'available';
-}
-
-interface OpenSelfThreadMessageActionEntry {
-  action: MessageActionRecord;
-  chatJid: string;
-  engagedAt: string;
-  engagedAtMs: number;
 }
 
 interface PilotReviewSnapshotLike {
@@ -1464,9 +1456,6 @@ function buildAlexaTruth(
   const proofFreshness = pilotProofFallback
     ? 'fresh'
     : assessment.proofFreshness;
-  const proofAgeMs = pilotProofFallback
-    ? pilotProofFallback.proofAgeMs
-    : assessment.proofAgeMs;
   const proofAgeMinutes = pilotProofFallback
     ? pilotProofFallback.proofAgeMinutes
     : assessment.proofAgeMinutes;

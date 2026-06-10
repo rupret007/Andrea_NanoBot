@@ -26,6 +26,8 @@ import { readEnvFile } from '../src/env.js';
 import {
   buildFieldTrialOperatorTruth,
   type FieldTrialAlexaTruth,
+  type FieldTrialCoreStatus,
+  type FieldTrialLaunchCandidateStatus,
 } from '../src/field-trial-readiness.js';
 import {
   assessAlexaLiveProof,
@@ -80,6 +82,13 @@ export interface AssistantExecutionProbeResult {
   status: 'ok' | 'skipped' | 'failed';
   reason: string;
   detail?: string;
+}
+
+export interface VerifyStatusResolution {
+  status: 'success' | 'attention_needed' | 'failed';
+  reason: string;
+  detail: string;
+  assistantExecutionUsable: boolean;
 }
 
 interface LocalOpenAiGatewayState {
@@ -803,7 +812,7 @@ async function runAssistantExecutionSubprobe(input: {
           output.newSessionId ? `session=${output.newSessionId}` : '',
           sawRecoveryAttempt || output.recoveryAttempted
             ? 'assistant execution recovered after one retry'
-            : 'assistant execution produced a real assistant answer',
+            : 'assistant execution produced a real assistant answer; post-output idle cleanup is non-fatal',
         ]
           .filter(Boolean)
           .join(' | '),
@@ -1463,6 +1472,63 @@ export function buildBlockedAssistantExecutionProbeResult(input: {
     status: 'skipped',
     reason: 'blocked_by_credential_runtime_failure',
     detail,
+  };
+}
+
+export function resolveVerifyStatus(input: {
+  launchCandidateStatus: FieldTrialLaunchCandidateStatus;
+  coreStatus: FieldTrialCoreStatus;
+  launchSummary: string;
+  launchNextSteps: string[];
+  assistantExecutionProbe: AssistantExecutionProbeResult;
+}): VerifyStatusResolution {
+  const assistantExecutionUsable = input.assistantExecutionProbe.status === 'ok';
+  const nextSteps = input.launchNextSteps.filter(Boolean).join(' | ');
+  const detail = truncateDetail(
+    [
+      input.launchSummary,
+      assistantExecutionUsable
+        ? 'Assistant execution probe is ok; post-output idle cleanup is non-fatal.'
+        : `Assistant execution probe is ${input.assistantExecutionProbe.status} (${input.assistantExecutionProbe.reason}).`,
+      nextSteps ? `Next: ${nextSteps}` : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
+  );
+
+  if (
+    input.launchCandidateStatus === 'core_ready' ||
+    input.launchCandidateStatus === 'core_ready_with_manual_surface_sync' ||
+    input.launchCandidateStatus === 'provider_blocked_but_core_usable'
+  ) {
+    return {
+      status: 'success',
+      reason:
+        input.launchCandidateStatus === 'core_ready'
+          ? 'launch_ready'
+          : input.launchCandidateStatus,
+      detail,
+      assistantExecutionUsable,
+    };
+  }
+
+  if (input.launchCandidateStatus === 'near_live_only') {
+    return {
+      status: 'attention_needed',
+      reason: 'fresh_proof_gap',
+      detail,
+      assistantExecutionUsable,
+    };
+  }
+
+  return {
+    status: 'failed',
+    reason:
+      input.coreStatus === 'blocked'
+        ? 'launch_blocked_by_external_proof_config'
+        : 'launch_blocked',
+    detail,
+    assistantExecutionUsable,
   };
 }
 

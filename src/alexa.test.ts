@@ -437,7 +437,9 @@ describe('createAlexaSkill', () => {
   beforeEach(() => {
     try {
       fs.unlinkSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH);
-    } catch {}
+    } catch {
+      // Test cleanup only: the proof file may not exist.
+    }
     _initTestDatabase();
     mockedRunAlexaAssistantTurn.mockReset();
     mockedBuildDailyCompanionResponse.mockReset();
@@ -2534,7 +2536,9 @@ describe('startAlexaServer', () => {
     }
     try {
       fs.unlinkSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH);
-    } catch {}
+    } catch {
+      // Test cleanup only: the proof file may not exist.
+    }
     vi.unstubAllEnvs();
   });
 

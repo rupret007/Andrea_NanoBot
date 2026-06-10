@@ -46,7 +46,6 @@ import type {
   EverydayListItem,
   EverydayListItemKind,
   EverydayListRecurrenceKind,
-  EverydayListItemState,
   EverydayListScope,
   OperatingProfile,
   OperatingProfileIntake,
@@ -54,7 +53,6 @@ import type {
   OperatingProfilePlan,
   OperatingProfilePlanGroup,
   OperatingProfilePlanIntegration,
-  OperatingProfileSuggestion,
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 

@@ -45,7 +45,7 @@ export function getPendingBootAlertPath(projectRoot = process.cwd()): string {
 export function redactStartupText(value: string): string {
   let output = value;
   for (const pattern of SECRET_PATTERNS) {
-    output = output.replace(pattern, (match, prefix: string | undefined) =>
+    output = output.replace(pattern, (_match, prefix: string | undefined) =>
       prefix && /^[?&]/.test(prefix) ? `${prefix}***` : '***',
     );
   }

@@ -31,7 +31,7 @@ export type CalendarCompanionSuccessAction = 'create_event' | 'update_event';
 function normalizeText(input: string): string {
   return input
     .toLowerCase()
-    .replace(/(^|[\s([{\-])@andrea\b[,:;!?-]*/g, '$1')
+    .replace(/(^|[\s([{-])@andrea\b[,:;!?-]*/g, '$1')
     .replace(/\s+/g, ' ')
     .replace(/[\u201c\u201d]/g, '"')
     .replace(/[\u2018\u2019]/g, "'")

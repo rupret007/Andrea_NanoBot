@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto';
 
-import { resolveCompanionToneProfileFromFacts } from './companion-personality.js';
 import {
   createTask,
   deleteCommunicationThread,
@@ -37,7 +36,6 @@ import type {
   CommunicationSignalRecord,
   CommunicationSuggestedAction,
   CommunicationThreadRecord,
-  CommunicationTrackingMode,
   CommunicationUrgency,
   LifeThread,
   ProfileFactWithSubject,

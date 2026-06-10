@@ -8,7 +8,6 @@ import { deliverCompanionHandoff } from './cross-channel-handoffs.js';
 import {
   _closeDatabase,
   _initTestDatabase,
-  createTask,
   getAllTasks,
   getCommunicationThread,
   getLifeThread,

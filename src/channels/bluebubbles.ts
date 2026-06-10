@@ -6,7 +6,6 @@ import http, {
 } from 'http';
 
 import {
-  createDefaultBlueBubblesMonitorState,
   type BlueBubblesDetectionState,
   type BlueBubblesEvidenceKind,
   readBlueBubblesMonitorState,
@@ -558,7 +557,9 @@ async function fetchBlueBubblesWithTimeout(
     });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`BlueBubbles request timed out after ${timeoutMs} ms`);
+      throw new Error(`BlueBubbles request timed out after ${timeoutMs} ms`, {
+        cause: error,
+      });
     }
     throw error;
   } finally {

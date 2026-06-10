@@ -89,16 +89,6 @@ function hashId(prefix: string, value: string): string {
   return `${prefix}:${createHash('sha256').update(value).digest('hex').slice(0, 24)}`;
 }
 
-function parseJsonArray(value: string | null | undefined): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
-  } catch {
-    return [];
-  }
-}
-
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
