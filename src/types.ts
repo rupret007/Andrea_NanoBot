@@ -6999,3 +6999,267 @@ export type OnChatMetadata = (
   channel?: string,
   isGroup?: boolean,
 ) => void;
+
+// ===========================================================================
+// v32 General Intelligence Control Plane
+// ===========================================================================
+
+export type ControlPlaneChannel =
+  | CognitiveExecutiveChannel
+  | 'operator'
+  | 'internal';
+
+export type AutonomyLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+export interface AutonomyDecision {
+  level: AutonomyLevel;
+  levelLabel: string;
+  operationSummary: string;
+  matchedRule: string;
+  allowed: boolean;
+  requiresExplicitApproval: boolean;
+  requiresOperatorContext: boolean;
+  rationale: string;
+}
+
+export type ActionIntentStatus =
+  | 'proposed'
+  | 'needs_clarification'
+  | 'needs_verification'
+  | 'needs_approval'
+  | 'approved'
+  | 'scheduled'
+  | 'attempted'
+  | 'succeeded'
+  | 'failed'
+  | 'repaired'
+  | 'deferred'
+  | 'cancelled'
+  | 'archived';
+
+export type ActionIntentType =
+  | 'message_send'
+  | 'calendar_write'
+  | 'reminder'
+  | 'household'
+  | 'repair'
+  | 'patch'
+  | 'experiment'
+  | 'research'
+  | 'status'
+  | 'other';
+
+export type ActionIntentRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+export type ActionIntentSourceSystem =
+  | 'message_actions'
+  | 'action_bundles'
+  | 'calendar'
+  | 'goal_planner'
+  | 'repair_runtime'
+  | 'patch_workbench'
+  | 'improvement_lab'
+  | 'control_plane';
+
+export interface ActionIntentRecord {
+  actionId: string;
+  createdAt: string;
+  updatedAt: string;
+  title: string;
+  sourceRequestSummary: string;
+  sourceChannel: ControlPlaneChannel;
+  relatedGoalId?: string | null;
+  relatedPlanStepId?: string | null;
+  relatedThreadId?: string | null;
+  relatedCalendarEventId?: string | null;
+  relatedSkillId?: string | null;
+  relatedProofNeedId?: string | null;
+  actionType: ActionIntentType;
+  riskLevel: ActionIntentRiskLevel;
+  autonomyLevel: number;
+  approvalRequirement: 'none' | 'explicit_approval' | 'operator_context';
+  status: ActionIntentStatus;
+  statusReason: string;
+  sourceSystem: ActionIntentSourceSystem;
+  sourceKey: string;
+  privacyJson: string;
+}
+
+export interface ActionAttemptRecord {
+  attemptId: string;
+  actionId: string;
+  attemptedAt: string;
+  toolUsed: string;
+  preflightId?: string | null;
+  preflightVerdict: string;
+  result: 'succeeded' | 'failed' | 'blocked' | 'deferred';
+  failureReason?: string | null;
+  repairSuggestion?: string | null;
+  evidenceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface ActionReviewRecord {
+  actionReviewId: string;
+  actionId: string;
+  createdAt: string;
+  outcome:
+    | 'completed'
+    | 'partial'
+    | 'failed'
+    | 'skipped'
+    | 'deferred'
+    | 'unknown';
+  userSatisfaction: 'satisfied' | 'corrected' | 'dissatisfied' | 'unknown';
+  whatChanged: string;
+  lessons: string;
+  followUpActionId?: string | null;
+  privacyJson: string;
+}
+
+export type ActionPreflightVerdict =
+  | 'proceed'
+  | 'clarify'
+  | 'verify'
+  | 'request_approval'
+  | 'defer'
+  | 'block'
+  | 'offer_fallback';
+
+export type ActionPreflightCheckId =
+  | 'object_clarity'
+  | 'required_info'
+  | 'reality_freshness'
+  | 'tool_reliability'
+  | 'approval'
+  | 'channel_allowed'
+  | 'safer_fallback'
+  | 'duplicate'
+  | 'contradiction'
+  | 'risk_classification';
+
+export interface ActionPreflightCheck {
+  checkId: ActionPreflightCheckId;
+  status: 'pass' | 'warn' | 'fail' | 'skipped';
+  detail: string;
+}
+
+export interface ActionPreflightRecord {
+  preflightId: string;
+  actionId?: string | null;
+  createdAt: string;
+  actionSummary: string;
+  actionType: ActionIntentType;
+  channel: ControlPlaneChannel;
+  riskLevel: ActionIntentRiskLevel;
+  autonomyLevel: number;
+  verdict: ActionPreflightVerdict;
+  checksJson: string;
+  criticDecision:
+    | 'proceed'
+    | 'clarify'
+    | 'stage_approval'
+    | 'block'
+    | 'not_run';
+  fallbackSuggestion?: string | null;
+  blockerSummary: string;
+  privacyJson: string;
+}
+
+export interface CognitiveEpisodeRecord {
+  episodeId: string;
+  createdAt: string;
+  askSummary: string;
+  channel: ControlPlaneChannel;
+  goalId?: string | null;
+  reasoningMode: string;
+  selectedContextSummary: string;
+  actionId?: string | null;
+  result:
+    | 'answered'
+    | 'action_proposed'
+    | 'action_executed'
+    | 'clarified'
+    | 'deferred'
+    | 'failed';
+  userCorrection?: string | null;
+  confidence: number;
+  lesson: string;
+  followUpNeeded?: string | null;
+  sensitivity: 'normal' | 'sensitive';
+  retentionPolicy: 'standard_90d' | 'short_7d' | 'pinned';
+  privacyJson: string;
+}
+
+export interface CapabilityStateRecord {
+  capabilityId: string;
+  updatedAt: string;
+  displayName: string;
+  enabled: boolean;
+  proofStatus:
+    | 'live_proven'
+    | 'stale'
+    | 'missing_config'
+    | 'manual_proof_required'
+    | 'externally_blocked'
+    | 'unproven';
+  lastSuccessAt?: string | null;
+  lastFailureAt?: string | null;
+  reliabilityScore: number;
+  requiredConfig: string;
+  currentBlocker?: string | null;
+  allowedChannels: string;
+  approvalRequirement: 'none' | 'explicit_approval' | 'operator_context';
+  fallbackCapabilityId?: string | null;
+  confidence: number;
+  autonomyLevel: number;
+  privacyJson: string;
+}
+
+export interface BlackboardSnapshotRecord {
+  snapshotId: string;
+  createdAt: string;
+  currentRequestSummary: string;
+  activeGoalSummary?: string | null;
+  activePlanStepSummary?: string | null;
+  activeActionId?: string | null;
+  workingMemoryFocus?: string | null;
+  realitySummary: string;
+  proofDebtOpen: number;
+  toolReliabilitySummary: string;
+  approvalNeedsCount: number;
+  likelyIntent: string;
+  recentCorrectionsSummary: string;
+  outcomeSignalSummary: string;
+  improvementSignalSummary: string;
+  recommendedNextStep: string;
+  privacyJson: string;
+}
+
+export interface StrategyEvalRunRecord {
+  evalRunId: string;
+  createdAt: string;
+  scenarioId: string;
+  scenarioTitle: string;
+  expectedMode: string;
+  selectedMode: string;
+  modeCorrect: boolean;
+  scoresJson: string;
+  totalScore: number;
+  notes: string;
+  privacyJson: string;
+}
+
+export interface AgiGauntletResultRecord {
+  resultId: string;
+  runId: string;
+  createdAt: string;
+  scenarioId: string;
+  scenarioTitle: string;
+  passed: boolean;
+  score: number;
+  subsystem: string;
+  safetyRiskFlagsJson: string;
+  detail: string;
+  privacyJson: string;
+}

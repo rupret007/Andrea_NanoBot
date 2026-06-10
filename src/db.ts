@@ -200,6 +200,15 @@ import {
   WorkingMemoryFrame,
   AgenticEvalScenarioResult,
   CriticReviewRecord,
+  ActionIntentRecord,
+  ActionAttemptRecord,
+  ActionReviewRecord,
+  ActionPreflightRecord,
+  CognitiveEpisodeRecord,
+  CapabilityStateRecord,
+  BlackboardSnapshotRecord,
+  StrategyEvalRunRecord,
+  AgiGauntletResultRecord,
   ReliabilityObservation,
   RepairAttemptRecord,
   RepairCooldownRecord,
@@ -3827,6 +3836,168 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_critic_reviews_created
       ON critic_reviews(created_at DESC);
+    CREATE TABLE IF NOT EXISTS action_intents (
+      action_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      title TEXT NOT NULL,
+      source_request_summary TEXT NOT NULL,
+      source_channel TEXT NOT NULL,
+      related_goal_id TEXT,
+      related_plan_step_id TEXT,
+      related_thread_id TEXT,
+      related_calendar_event_id TEXT,
+      related_skill_id TEXT,
+      related_proof_need_id TEXT,
+      action_type TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      autonomy_level INTEGER NOT NULL,
+      approval_requirement TEXT NOT NULL,
+      status TEXT NOT NULL,
+      status_reason TEXT NOT NULL,
+      source_system TEXT NOT NULL,
+      source_key TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_action_intents_status
+      ON action_intents(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_action_intents_source
+      ON action_intents(source_system, source_key);
+    CREATE TABLE IF NOT EXISTS action_attempts (
+      attempt_id TEXT PRIMARY KEY,
+      action_id TEXT NOT NULL,
+      attempted_at TEXT NOT NULL,
+      tool_used TEXT NOT NULL,
+      preflight_id TEXT,
+      preflight_verdict TEXT NOT NULL,
+      result TEXT NOT NULL,
+      failure_reason TEXT,
+      repair_suggestion TEXT,
+      evidence_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_action_attempts_action
+      ON action_attempts(action_id, attempted_at DESC);
+    CREATE TABLE IF NOT EXISTS action_intent_reviews (
+      action_review_id TEXT PRIMARY KEY,
+      action_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      user_satisfaction TEXT NOT NULL,
+      what_changed TEXT NOT NULL,
+      lessons TEXT NOT NULL,
+      follow_up_action_id TEXT,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_action_intent_reviews_action
+      ON action_intent_reviews(action_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS action_preflights (
+      preflight_id TEXT PRIMARY KEY,
+      action_id TEXT,
+      created_at TEXT NOT NULL,
+      action_summary TEXT NOT NULL,
+      action_type TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      autonomy_level INTEGER NOT NULL,
+      verdict TEXT NOT NULL,
+      checks_json TEXT NOT NULL,
+      critic_decision TEXT NOT NULL,
+      fallback_suggestion TEXT,
+      blocker_summary TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_action_preflights_created
+      ON action_preflights(created_at DESC);
+    CREATE TABLE IF NOT EXISTS cognitive_episodes (
+      episode_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      ask_summary TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      goal_id TEXT,
+      reasoning_mode TEXT NOT NULL,
+      selected_context_summary TEXT NOT NULL,
+      action_id TEXT,
+      result TEXT NOT NULL,
+      user_correction TEXT,
+      confidence REAL NOT NULL,
+      lesson TEXT NOT NULL,
+      follow_up_needed TEXT,
+      sensitivity TEXT NOT NULL,
+      retention_policy TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cognitive_episodes_created
+      ON cognitive_episodes(created_at DESC);
+    CREATE TABLE IF NOT EXISTS capability_states (
+      capability_id TEXT PRIMARY KEY,
+      updated_at TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      enabled INTEGER NOT NULL,
+      proof_status TEXT NOT NULL,
+      last_success_at TEXT,
+      last_failure_at TEXT,
+      reliability_score REAL NOT NULL,
+      required_config TEXT NOT NULL,
+      current_blocker TEXT,
+      allowed_channels TEXT NOT NULL,
+      approval_requirement TEXT NOT NULL,
+      fallback_capability_id TEXT,
+      confidence REAL NOT NULL,
+      autonomy_level INTEGER NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS blackboard_snapshots (
+      snapshot_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      current_request_summary TEXT NOT NULL,
+      active_goal_summary TEXT,
+      active_plan_step_summary TEXT,
+      active_action_id TEXT,
+      working_memory_focus TEXT,
+      reality_summary TEXT NOT NULL,
+      proof_debt_open INTEGER NOT NULL,
+      tool_reliability_summary TEXT NOT NULL,
+      approval_needs_count INTEGER NOT NULL,
+      likely_intent TEXT NOT NULL,
+      recent_corrections_summary TEXT NOT NULL,
+      outcome_signal_summary TEXT NOT NULL,
+      improvement_signal_summary TEXT NOT NULL,
+      recommended_next_step TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_blackboard_snapshots_created
+      ON blackboard_snapshots(created_at DESC);
+    CREATE TABLE IF NOT EXISTS strategy_eval_runs (
+      eval_run_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      scenario_id TEXT NOT NULL,
+      scenario_title TEXT NOT NULL,
+      expected_mode TEXT NOT NULL,
+      selected_mode TEXT NOT NULL,
+      mode_correct INTEGER NOT NULL,
+      scores_json TEXT NOT NULL,
+      total_score REAL NOT NULL,
+      notes TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_strategy_eval_runs_scenario
+      ON strategy_eval_runs(scenario_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS agi_gauntlet_results (
+      result_id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      scenario_id TEXT NOT NULL,
+      scenario_title TEXT NOT NULL,
+      passed INTEGER NOT NULL,
+      score REAL NOT NULL,
+      subsystem TEXT NOT NULL,
+      safety_risk_flags_json TEXT NOT NULL,
+      detail TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agi_gauntlet_results_run
+      ON agi_gauntlet_results(run_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS agentic_eval_results (
       result_id TEXT PRIMARY KEY,
       scenario_id TEXT NOT NULL,
@@ -25338,6 +25509,940 @@ export function listCriticReviews(
     Parameters<typeof mapCriticReviewRow>[0]
   >;
   return rows.map((row) => mapCriticReviewRow(row));
+}
+
+// ===========================================================================
+// v32 General Intelligence Control Plane stores
+// ===========================================================================
+
+function mapActionIntentRow(row: {
+  action_id: string;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  source_request_summary: string;
+  source_channel: ActionIntentRecord['sourceChannel'];
+  related_goal_id: string | null;
+  related_plan_step_id: string | null;
+  related_thread_id: string | null;
+  related_calendar_event_id: string | null;
+  related_skill_id: string | null;
+  related_proof_need_id: string | null;
+  action_type: ActionIntentRecord['actionType'];
+  risk_level: ActionIntentRecord['riskLevel'];
+  autonomy_level: number;
+  approval_requirement: ActionIntentRecord['approvalRequirement'];
+  status: ActionIntentRecord['status'];
+  status_reason: string;
+  source_system: ActionIntentRecord['sourceSystem'];
+  source_key: string;
+  privacy_json: string;
+}): ActionIntentRecord {
+  return {
+    actionId: row.action_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    title: row.title,
+    sourceRequestSummary: row.source_request_summary,
+    sourceChannel: row.source_channel,
+    relatedGoalId: row.related_goal_id,
+    relatedPlanStepId: row.related_plan_step_id,
+    relatedThreadId: row.related_thread_id,
+    relatedCalendarEventId: row.related_calendar_event_id,
+    relatedSkillId: row.related_skill_id,
+    relatedProofNeedId: row.related_proof_need_id,
+    actionType: row.action_type,
+    riskLevel: row.risk_level,
+    autonomyLevel: row.autonomy_level,
+    approvalRequirement: row.approval_requirement,
+    status: row.status,
+    statusReason: row.status_reason,
+    sourceSystem: row.source_system,
+    sourceKey: row.source_key,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertActionIntent(record: ActionIntentRecord): void {
+  db.prepare(
+    `
+      INSERT INTO action_intents (
+        action_id, created_at, updated_at, title, source_request_summary,
+        source_channel, related_goal_id, related_plan_step_id,
+        related_thread_id, related_calendar_event_id, related_skill_id,
+        related_proof_need_id, action_type, risk_level, autonomy_level,
+        approval_requirement, status, status_reason, source_system,
+        source_key, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(action_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        title = excluded.title,
+        source_request_summary = excluded.source_request_summary,
+        related_goal_id = excluded.related_goal_id,
+        related_plan_step_id = excluded.related_plan_step_id,
+        related_thread_id = excluded.related_thread_id,
+        related_calendar_event_id = excluded.related_calendar_event_id,
+        related_skill_id = excluded.related_skill_id,
+        related_proof_need_id = excluded.related_proof_need_id,
+        action_type = excluded.action_type,
+        risk_level = excluded.risk_level,
+        autonomy_level = excluded.autonomy_level,
+        approval_requirement = excluded.approval_requirement,
+        status = excluded.status,
+        status_reason = excluded.status_reason,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.actionId,
+    record.createdAt,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.title, 240),
+    redactStoredCognitiveMetadata(record.sourceRequestSummary, 320),
+    record.sourceChannel,
+    record.relatedGoalId ?? null,
+    record.relatedPlanStepId ?? null,
+    record.relatedThreadId ?? null,
+    record.relatedCalendarEventId ?? null,
+    record.relatedSkillId ?? null,
+    record.relatedProofNeedId ?? null,
+    record.actionType,
+    record.riskLevel,
+    record.autonomyLevel,
+    record.approvalRequirement,
+    record.status,
+    redactStoredCognitiveMetadata(record.statusReason, 400),
+    record.sourceSystem,
+    redactStoredCognitiveMetadata(record.sourceKey, 200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listActionIntents(
+  params: {
+    statuses?: ActionIntentRecord['status'][];
+    sourceSystem?: ActionIntentRecord['sourceSystem'];
+    actionType?: ActionIntentRecord['actionType'];
+    limit?: number;
+  } = {},
+): ActionIntentRecord[] {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  if (params.sourceSystem) {
+    clauses.push('source_system = ?');
+    args.push(params.sourceSystem);
+  }
+  if (params.actionType) {
+    clauses.push('action_type = ?');
+    args.push(params.actionType);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM action_intents
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapActionIntentRow>[0]>;
+  return rows.map((row) => mapActionIntentRow(row));
+}
+
+export function getActionIntent(actionId: string): ActionIntentRecord | null {
+  const row = db
+    .prepare('SELECT * FROM action_intents WHERE action_id = ?')
+    .get(actionId) as Parameters<typeof mapActionIntentRow>[0] | undefined;
+  return row ? mapActionIntentRow(row) : null;
+}
+
+export function getActionIntentBySource(
+  sourceSystem: ActionIntentRecord['sourceSystem'],
+  sourceKey: string,
+): ActionIntentRecord | null {
+  const row = db
+    .prepare(
+      'SELECT * FROM action_intents WHERE source_system = ? AND source_key = ? ORDER BY updated_at DESC LIMIT 1',
+    )
+    .get(sourceSystem, sourceKey) as
+    | Parameters<typeof mapActionIntentRow>[0]
+    | undefined;
+  return row ? mapActionIntentRow(row) : null;
+}
+
+function mapActionAttemptRow(row: {
+  attempt_id: string;
+  action_id: string;
+  attempted_at: string;
+  tool_used: string;
+  preflight_id: string | null;
+  preflight_verdict: string;
+  result: ActionAttemptRecord['result'];
+  failure_reason: string | null;
+  repair_suggestion: string | null;
+  evidence_refs_json: string;
+  privacy_json: string;
+}): ActionAttemptRecord {
+  return {
+    attemptId: row.attempt_id,
+    actionId: row.action_id,
+    attemptedAt: row.attempted_at,
+    toolUsed: row.tool_used,
+    preflightId: row.preflight_id,
+    preflightVerdict: row.preflight_verdict,
+    result: row.result,
+    failureReason: row.failure_reason,
+    repairSuggestion: row.repair_suggestion,
+    evidenceRefsJson: row.evidence_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertActionAttempt(record: ActionAttemptRecord): void {
+  db.prepare(
+    `
+      INSERT INTO action_attempts (
+        attempt_id, action_id, attempted_at, tool_used, preflight_id,
+        preflight_verdict, result, failure_reason, repair_suggestion,
+        evidence_refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(attempt_id) DO UPDATE SET
+        result = excluded.result,
+        failure_reason = excluded.failure_reason,
+        repair_suggestion = excluded.repair_suggestion,
+        evidence_refs_json = excluded.evidence_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.attemptId,
+    record.actionId,
+    record.attemptedAt,
+    redactStoredCognitiveMetadata(record.toolUsed, 200),
+    record.preflightId ?? null,
+    record.preflightVerdict,
+    record.result,
+    record.failureReason
+      ? redactStoredCognitiveMetadata(record.failureReason, 400)
+      : null,
+    record.repairSuggestion
+      ? redactStoredCognitiveMetadata(record.repairSuggestion, 400)
+      : null,
+    redactStoredCognitiveMetadata(record.evidenceRefsJson, 1600),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listActionAttempts(
+  params: { actionId?: string; limit?: number } = {},
+): ActionAttemptRecord[] {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+  if (params.actionId) {
+    clauses.push('action_id = ?');
+    args.push(params.actionId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM action_attempts
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY attempted_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapActionAttemptRow>[0]>;
+  return rows.map((row) => mapActionAttemptRow(row));
+}
+
+function mapActionReviewRow(row: {
+  action_review_id: string;
+  action_id: string;
+  created_at: string;
+  outcome: ActionReviewRecord['outcome'];
+  user_satisfaction: ActionReviewRecord['userSatisfaction'];
+  what_changed: string;
+  lessons: string;
+  follow_up_action_id: string | null;
+  privacy_json: string;
+}): ActionReviewRecord {
+  return {
+    actionReviewId: row.action_review_id,
+    actionId: row.action_id,
+    createdAt: row.created_at,
+    outcome: row.outcome,
+    userSatisfaction: row.user_satisfaction,
+    whatChanged: row.what_changed,
+    lessons: row.lessons,
+    followUpActionId: row.follow_up_action_id,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertActionReview(record: ActionReviewRecord): void {
+  db.prepare(
+    `
+      INSERT INTO action_intent_reviews (
+        action_review_id, action_id, created_at, outcome, user_satisfaction,
+        what_changed, lessons, follow_up_action_id, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(action_review_id) DO UPDATE SET
+        outcome = excluded.outcome,
+        user_satisfaction = excluded.user_satisfaction,
+        what_changed = excluded.what_changed,
+        lessons = excluded.lessons,
+        follow_up_action_id = excluded.follow_up_action_id,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.actionReviewId,
+    record.actionId,
+    record.createdAt,
+    record.outcome,
+    record.userSatisfaction,
+    redactStoredCognitiveMetadata(record.whatChanged, 400),
+    redactStoredCognitiveMetadata(record.lessons, 600),
+    record.followUpActionId ?? null,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listActionReviews(
+  params: { actionId?: string; limit?: number } = {},
+): ActionReviewRecord[] {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+  if (params.actionId) {
+    clauses.push('action_id = ?');
+    args.push(params.actionId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM action_intent_reviews
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapActionReviewRow>[0]>;
+  return rows.map((row) => mapActionReviewRow(row));
+}
+
+function mapActionPreflightRow(row: {
+  preflight_id: string;
+  action_id: string | null;
+  created_at: string;
+  action_summary: string;
+  action_type: ActionPreflightRecord['actionType'];
+  channel: ActionPreflightRecord['channel'];
+  risk_level: ActionPreflightRecord['riskLevel'];
+  autonomy_level: number;
+  verdict: ActionPreflightRecord['verdict'];
+  checks_json: string;
+  critic_decision: ActionPreflightRecord['criticDecision'];
+  fallback_suggestion: string | null;
+  blocker_summary: string;
+  privacy_json: string;
+}): ActionPreflightRecord {
+  return {
+    preflightId: row.preflight_id,
+    actionId: row.action_id,
+    createdAt: row.created_at,
+    actionSummary: row.action_summary,
+    actionType: row.action_type,
+    channel: row.channel,
+    riskLevel: row.risk_level,
+    autonomyLevel: row.autonomy_level,
+    verdict: row.verdict,
+    checksJson: row.checks_json,
+    criticDecision: row.critic_decision,
+    fallbackSuggestion: row.fallback_suggestion,
+    blockerSummary: row.blocker_summary,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertActionPreflight(record: ActionPreflightRecord): void {
+  db.prepare(
+    `
+      INSERT INTO action_preflights (
+        preflight_id, action_id, created_at, action_summary, action_type,
+        channel, risk_level, autonomy_level, verdict, checks_json,
+        critic_decision, fallback_suggestion, blocker_summary, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(preflight_id) DO UPDATE SET
+        verdict = excluded.verdict,
+        checks_json = excluded.checks_json,
+        critic_decision = excluded.critic_decision,
+        fallback_suggestion = excluded.fallback_suggestion,
+        blocker_summary = excluded.blocker_summary,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.preflightId,
+    record.actionId ?? null,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.actionSummary, 320),
+    record.actionType,
+    record.channel,
+    record.riskLevel,
+    record.autonomyLevel,
+    record.verdict,
+    redactStoredCognitiveMetadata(record.checksJson, 4000),
+    record.criticDecision,
+    record.fallbackSuggestion
+      ? redactStoredCognitiveMetadata(record.fallbackSuggestion, 400)
+      : null,
+    redactStoredCognitiveMetadata(record.blockerSummary, 600),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listActionPreflights(
+  params: {
+    verdict?: ActionPreflightRecord['verdict'];
+    limit?: number;
+  } = {},
+): ActionPreflightRecord[] {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+  if (params.verdict) {
+    clauses.push('verdict = ?');
+    args.push(params.verdict);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM action_preflights
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapActionPreflightRow>[0]>;
+  return rows.map((row) => mapActionPreflightRow(row));
+}
+
+function mapCognitiveEpisodeRow(row: {
+  episode_id: string;
+  created_at: string;
+  ask_summary: string;
+  channel: CognitiveEpisodeRecord['channel'];
+  goal_id: string | null;
+  reasoning_mode: string;
+  selected_context_summary: string;
+  action_id: string | null;
+  result: CognitiveEpisodeRecord['result'];
+  user_correction: string | null;
+  confidence: number;
+  lesson: string;
+  follow_up_needed: string | null;
+  sensitivity: CognitiveEpisodeRecord['sensitivity'];
+  retention_policy: CognitiveEpisodeRecord['retentionPolicy'];
+  privacy_json: string;
+}): CognitiveEpisodeRecord {
+  return {
+    episodeId: row.episode_id,
+    createdAt: row.created_at,
+    askSummary: row.ask_summary,
+    channel: row.channel,
+    goalId: row.goal_id,
+    reasoningMode: row.reasoning_mode,
+    selectedContextSummary: row.selected_context_summary,
+    actionId: row.action_id,
+    result: row.result,
+    userCorrection: row.user_correction,
+    confidence: row.confidence,
+    lesson: row.lesson,
+    followUpNeeded: row.follow_up_needed,
+    sensitivity: row.sensitivity,
+    retentionPolicy: row.retention_policy,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCognitiveEpisode(record: CognitiveEpisodeRecord): void {
+  db.prepare(
+    `
+      INSERT INTO cognitive_episodes (
+        episode_id, created_at, ask_summary, channel, goal_id,
+        reasoning_mode, selected_context_summary, action_id, result,
+        user_correction, confidence, lesson, follow_up_needed, sensitivity,
+        retention_policy, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(episode_id) DO UPDATE SET
+        result = excluded.result,
+        user_correction = excluded.user_correction,
+        confidence = excluded.confidence,
+        lesson = excluded.lesson,
+        follow_up_needed = excluded.follow_up_needed,
+        sensitivity = excluded.sensitivity,
+        retention_policy = excluded.retention_policy,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.episodeId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.askSummary, 240),
+    record.channel,
+    record.goalId ?? null,
+    record.reasoningMode,
+    redactStoredCognitiveMetadata(record.selectedContextSummary, 400),
+    record.actionId ?? null,
+    record.result,
+    record.userCorrection
+      ? redactStoredCognitiveMetadata(record.userCorrection, 240)
+      : null,
+    record.confidence,
+    redactStoredCognitiveMetadata(record.lesson, 400),
+    record.followUpNeeded
+      ? redactStoredCognitiveMetadata(record.followUpNeeded, 240)
+      : null,
+    record.sensitivity,
+    record.retentionPolicy,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCognitiveEpisodes(
+  params: {
+    channel?: CognitiveEpisodeRecord['channel'];
+    withCorrectionsOnly?: boolean;
+    limit?: number;
+  } = {},
+): CognitiveEpisodeRecord[] {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+  if (params.channel) {
+    clauses.push('channel = ?');
+    args.push(params.channel);
+  }
+  if (params.withCorrectionsOnly) {
+    clauses.push('user_correction IS NOT NULL');
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM cognitive_episodes
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCognitiveEpisodeRow>[0]>;
+  return rows.map((row) => mapCognitiveEpisodeRow(row));
+}
+
+export function pruneCognitiveEpisodes(params: { now?: string } = {}): number {
+  const now = params.now ?? new Date().toISOString();
+  const shortCutoff = new Date(
+    new Date(now).getTime() - 7 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const standardCutoff = new Date(
+    new Date(now).getTime() - 90 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const result = db
+    .prepare(
+      `
+        DELETE FROM cognitive_episodes
+        WHERE (retention_policy = 'short_7d' AND created_at < ?)
+           OR (retention_policy = 'standard_90d' AND created_at < ?)
+      `,
+    )
+    .run(shortCutoff, standardCutoff);
+  return result.changes;
+}
+
+function mapCapabilityStateRow(row: {
+  capability_id: string;
+  updated_at: string;
+  display_name: string;
+  enabled: number;
+  proof_status: CapabilityStateRecord['proofStatus'];
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  reliability_score: number;
+  required_config: string;
+  current_blocker: string | null;
+  allowed_channels: string;
+  approval_requirement: CapabilityStateRecord['approvalRequirement'];
+  fallback_capability_id: string | null;
+  confidence: number;
+  autonomy_level: number;
+  privacy_json: string;
+}): CapabilityStateRecord {
+  return {
+    capabilityId: row.capability_id,
+    updatedAt: row.updated_at,
+    displayName: row.display_name,
+    enabled: intToBool(row.enabled),
+    proofStatus: row.proof_status,
+    lastSuccessAt: row.last_success_at,
+    lastFailureAt: row.last_failure_at,
+    reliabilityScore: row.reliability_score,
+    requiredConfig: row.required_config,
+    currentBlocker: row.current_blocker,
+    allowedChannels: row.allowed_channels,
+    approvalRequirement: row.approval_requirement,
+    fallbackCapabilityId: row.fallback_capability_id,
+    confidence: row.confidence,
+    autonomyLevel: row.autonomy_level,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertCapabilityState(record: CapabilityStateRecord): void {
+  db.prepare(
+    `
+      INSERT INTO capability_states (
+        capability_id, updated_at, display_name, enabled, proof_status,
+        last_success_at, last_failure_at, reliability_score, required_config,
+        current_blocker, allowed_channels, approval_requirement,
+        fallback_capability_id, confidence, autonomy_level, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(capability_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        display_name = excluded.display_name,
+        enabled = excluded.enabled,
+        proof_status = excluded.proof_status,
+        last_success_at = excluded.last_success_at,
+        last_failure_at = excluded.last_failure_at,
+        reliability_score = excluded.reliability_score,
+        required_config = excluded.required_config,
+        current_blocker = excluded.current_blocker,
+        allowed_channels = excluded.allowed_channels,
+        approval_requirement = excluded.approval_requirement,
+        fallback_capability_id = excluded.fallback_capability_id,
+        confidence = excluded.confidence,
+        autonomy_level = excluded.autonomy_level,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.capabilityId,
+    record.updatedAt,
+    redactStoredCognitiveMetadata(record.displayName, 160),
+    boolToInt(record.enabled),
+    record.proofStatus,
+    record.lastSuccessAt ?? null,
+    record.lastFailureAt ?? null,
+    record.reliabilityScore,
+    redactStoredCognitiveMetadata(record.requiredConfig, 400),
+    record.currentBlocker
+      ? redactStoredCognitiveMetadata(record.currentBlocker, 400)
+      : null,
+    record.allowedChannels,
+    record.approvalRequirement,
+    record.fallbackCapabilityId ?? null,
+    record.confidence,
+    record.autonomyLevel,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listCapabilityStates(
+  params: {
+    proofStatus?: CapabilityStateRecord['proofStatus'];
+    limit?: number;
+  } = {},
+): CapabilityStateRecord[] {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+  if (params.proofStatus) {
+    clauses.push('proof_status = ?');
+    args.push(params.proofStatus);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM capability_states
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY capability_id ASC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapCapabilityStateRow>[0]>;
+  return rows.map((row) => mapCapabilityStateRow(row));
+}
+
+function mapBlackboardSnapshotRow(row: {
+  snapshot_id: string;
+  created_at: string;
+  current_request_summary: string;
+  active_goal_summary: string | null;
+  active_plan_step_summary: string | null;
+  active_action_id: string | null;
+  working_memory_focus: string | null;
+  reality_summary: string;
+  proof_debt_open: number;
+  tool_reliability_summary: string;
+  approval_needs_count: number;
+  likely_intent: string;
+  recent_corrections_summary: string;
+  outcome_signal_summary: string;
+  improvement_signal_summary: string;
+  recommended_next_step: string;
+  privacy_json: string;
+}): BlackboardSnapshotRecord {
+  return {
+    snapshotId: row.snapshot_id,
+    createdAt: row.created_at,
+    currentRequestSummary: row.current_request_summary,
+    activeGoalSummary: row.active_goal_summary,
+    activePlanStepSummary: row.active_plan_step_summary,
+    activeActionId: row.active_action_id,
+    workingMemoryFocus: row.working_memory_focus,
+    realitySummary: row.reality_summary,
+    proofDebtOpen: row.proof_debt_open,
+    toolReliabilitySummary: row.tool_reliability_summary,
+    approvalNeedsCount: row.approval_needs_count,
+    likelyIntent: row.likely_intent,
+    recentCorrectionsSummary: row.recent_corrections_summary,
+    outcomeSignalSummary: row.outcome_signal_summary,
+    improvementSignalSummary: row.improvement_signal_summary,
+    recommendedNextStep: row.recommended_next_step,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertBlackboardSnapshot(
+  record: BlackboardSnapshotRecord,
+): void {
+  db.prepare(
+    `
+      INSERT INTO blackboard_snapshots (
+        snapshot_id, created_at, current_request_summary, active_goal_summary,
+        active_plan_step_summary, active_action_id, working_memory_focus,
+        reality_summary, proof_debt_open, tool_reliability_summary,
+        approval_needs_count, likely_intent, recent_corrections_summary,
+        outcome_signal_summary, improvement_signal_summary,
+        recommended_next_step, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(snapshot_id) DO UPDATE SET
+        recommended_next_step = excluded.recommended_next_step,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.snapshotId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.currentRequestSummary, 240),
+    record.activeGoalSummary
+      ? redactStoredCognitiveMetadata(record.activeGoalSummary, 240)
+      : null,
+    record.activePlanStepSummary
+      ? redactStoredCognitiveMetadata(record.activePlanStepSummary, 240)
+      : null,
+    record.activeActionId ?? null,
+    record.workingMemoryFocus
+      ? redactStoredCognitiveMetadata(record.workingMemoryFocus, 240)
+      : null,
+    redactStoredCognitiveMetadata(record.realitySummary, 400),
+    record.proofDebtOpen,
+    redactStoredCognitiveMetadata(record.toolReliabilitySummary, 400),
+    record.approvalNeedsCount,
+    redactStoredCognitiveMetadata(record.likelyIntent, 160),
+    redactStoredCognitiveMetadata(record.recentCorrectionsSummary, 400),
+    redactStoredCognitiveMetadata(record.outcomeSignalSummary, 400),
+    redactStoredCognitiveMetadata(record.improvementSignalSummary, 400),
+    redactStoredCognitiveMetadata(record.recommendedNextStep, 320),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listBlackboardSnapshots(
+  params: { limit?: number } = {},
+): BlackboardSnapshotRecord[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM blackboard_snapshots
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(workspaceLimit(params.limit)) as Array<
+    Parameters<typeof mapBlackboardSnapshotRow>[0]
+  >;
+  return rows.map((row) => mapBlackboardSnapshotRow(row));
+}
+
+function mapStrategyEvalRunRow(row: {
+  eval_run_id: string;
+  created_at: string;
+  scenario_id: string;
+  scenario_title: string;
+  expected_mode: string;
+  selected_mode: string;
+  mode_correct: number;
+  scores_json: string;
+  total_score: number;
+  notes: string;
+  privacy_json: string;
+}): StrategyEvalRunRecord {
+  return {
+    evalRunId: row.eval_run_id,
+    createdAt: row.created_at,
+    scenarioId: row.scenario_id,
+    scenarioTitle: row.scenario_title,
+    expectedMode: row.expected_mode,
+    selectedMode: row.selected_mode,
+    modeCorrect: intToBool(row.mode_correct),
+    scoresJson: row.scores_json,
+    totalScore: row.total_score,
+    notes: row.notes,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertStrategyEvalRun(record: StrategyEvalRunRecord): void {
+  db.prepare(
+    `
+      INSERT INTO strategy_eval_runs (
+        eval_run_id, created_at, scenario_id, scenario_title, expected_mode,
+        selected_mode, mode_correct, scores_json, total_score, notes,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(eval_run_id) DO UPDATE SET
+        selected_mode = excluded.selected_mode,
+        mode_correct = excluded.mode_correct,
+        scores_json = excluded.scores_json,
+        total_score = excluded.total_score,
+        notes = excluded.notes,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.evalRunId,
+    record.createdAt,
+    record.scenarioId,
+    redactStoredCognitiveMetadata(record.scenarioTitle, 200),
+    record.expectedMode,
+    record.selectedMode,
+    boolToInt(record.modeCorrect),
+    redactStoredCognitiveMetadata(record.scoresJson, 2000),
+    record.totalScore,
+    redactStoredCognitiveMetadata(record.notes, 600),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listStrategyEvalRuns(
+  params: { scenarioId?: string; limit?: number } = {},
+): StrategyEvalRunRecord[] {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+  if (params.scenarioId) {
+    clauses.push('scenario_id = ?');
+    args.push(params.scenarioId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM strategy_eval_runs
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapStrategyEvalRunRow>[0]>;
+  return rows.map((row) => mapStrategyEvalRunRow(row));
+}
+
+function mapAgiGauntletResultRow(row: {
+  result_id: string;
+  run_id: string;
+  created_at: string;
+  scenario_id: string;
+  scenario_title: string;
+  passed: number;
+  score: number;
+  subsystem: string;
+  safety_risk_flags_json: string;
+  detail: string;
+  privacy_json: string;
+}): AgiGauntletResultRecord {
+  return {
+    resultId: row.result_id,
+    runId: row.run_id,
+    createdAt: row.created_at,
+    scenarioId: row.scenario_id,
+    scenarioTitle: row.scenario_title,
+    passed: intToBool(row.passed),
+    score: row.score,
+    subsystem: row.subsystem,
+    safetyRiskFlagsJson: row.safety_risk_flags_json,
+    detail: row.detail,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAgiGauntletResult(record: AgiGauntletResultRecord): void {
+  db.prepare(
+    `
+      INSERT INTO agi_gauntlet_results (
+        result_id, run_id, created_at, scenario_id, scenario_title, passed,
+        score, subsystem, safety_risk_flags_json, detail, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(result_id) DO UPDATE SET
+        passed = excluded.passed,
+        score = excluded.score,
+        safety_risk_flags_json = excluded.safety_risk_flags_json,
+        detail = excluded.detail,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.resultId,
+    record.runId,
+    record.createdAt,
+    record.scenarioId,
+    redactStoredCognitiveMetadata(record.scenarioTitle, 200),
+    boolToInt(record.passed),
+    record.score,
+    record.subsystem,
+    redactStoredCognitiveMetadata(record.safetyRiskFlagsJson, 1200),
+    redactStoredCognitiveMetadata(record.detail, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAgiGauntletResults(
+  params: { runId?: string; limit?: number } = {},
+): AgiGauntletResultRecord[] {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM agi_gauntlet_results
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAgiGauntletResultRow>[0]>;
+  return rows.map((row) => mapAgiGauntletResultRow(row));
 }
 
 function mapAgenticEvalScenarioResultRow(row: {

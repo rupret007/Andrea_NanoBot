@@ -481,6 +481,26 @@ import {
   isMetacognitionNaturalRequest,
 } from './metacognition.js';
 import {
+  formatBlackboardNaturalResponse,
+  isBlackboardNaturalRequest,
+} from './cognitive-blackboard.js';
+import {
+  formatActionLifecycleNaturalResponse,
+  isActionLifecycleNaturalRequest,
+} from './action-lifecycle.js';
+import {
+  formatCapabilityNaturalResponse,
+  isCapabilityNaturalRequest,
+} from './capability-self-model.js';
+import {
+  formatEpisodeNaturalResponse,
+  isEpisodeNaturalRequest,
+} from './cognitive-episodes.js';
+import {
+  formatAutonomyNaturalResponse,
+  isAutonomyNaturalRequest,
+} from './autonomy-governor.js';
+import {
   AgentRuntimeName,
   AgentThreadState,
   Channel,
@@ -7852,9 +7872,84 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       !isCognitiveWorkspaceNaturalRequest(lastContent) &&
       !isMetacognitionNaturalRequest(lastContent) &&
       !isCognitiveExecutiveNaturalRequest(lastContent) &&
-      !isGoalPlannerNaturalRequest(lastContent)
+      !isGoalPlannerNaturalRequest(lastContent) &&
+      !isBlackboardNaturalRequest(lastContent) &&
+      !isActionLifecycleNaturalRequest(lastContent) &&
+      !isCapabilityNaturalRequest(lastContent) &&
+      !isEpisodeNaturalRequest(lastContent) &&
+      !isAutonomyNaturalRequest(lastContent)
     ) {
       return false;
+    }
+
+    if (isBlackboardNaturalRequest(lastContent)) {
+      await sendAssistantReplyWithFeedback({
+        text: formatBlackboardNaturalResponse(lastContent),
+        routeKey: 'control_plane.blackboard',
+        capabilityId: 'cognition.status',
+        handlerKind: 'local_cognitive_blackboard',
+        responseSource: 'local_companion',
+        traceReason:
+          'answered current-state request from metadata-only cognitive blackboard',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
+
+    if (isActionLifecycleNaturalRequest(lastContent)) {
+      await sendAssistantReplyWithFeedback({
+        text: formatActionLifecycleNaturalResponse(lastContent),
+        routeKey: 'control_plane.action_lifecycle',
+        capabilityId: 'cognition.status',
+        handlerKind: 'local_action_lifecycle',
+        responseSource: 'local_companion',
+        traceReason:
+          'answered pending-action request from metadata-only action lifecycle ledger',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
+
+    if (isCapabilityNaturalRequest(lastContent)) {
+      await sendAssistantReplyWithFeedback({
+        text: formatCapabilityNaturalResponse(lastContent),
+        routeKey: 'control_plane.capabilities',
+        capabilityId: 'cognition.status',
+        handlerKind: 'local_capability_self_model',
+        responseSource: 'local_companion',
+        traceReason:
+          'answered capability/setup request from metadata-only capability self-model',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
+
+    if (isEpisodeNaturalRequest(lastContent)) {
+      await sendAssistantReplyWithFeedback({
+        text: formatEpisodeNaturalResponse(lastContent),
+        routeKey: 'control_plane.episodes',
+        capabilityId: 'cognition.status',
+        handlerKind: 'local_cognitive_episodes',
+        responseSource: 'local_companion',
+        traceReason:
+          'answered learning-recall request from redacted episodic memory summaries',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
+
+    if (isAutonomyNaturalRequest(lastContent)) {
+      await sendAssistantReplyWithFeedback({
+        text: formatAutonomyNaturalResponse(),
+        routeKey: 'control_plane.autonomy',
+        capabilityId: 'cognition.status',
+        handlerKind: 'local_autonomy_governor',
+        responseSource: 'local_companion',
+        traceReason:
+          'answered autonomy-boundary request from static governor policy',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
     }
 
     if (isMetacognitionNaturalRequest(lastContent)) {

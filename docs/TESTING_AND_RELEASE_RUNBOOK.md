@@ -233,6 +233,14 @@ npm run test:agentic
 npm run test:goal-planning
 npm run test:causal-planner
 npm run test:proactive-opportunities
+npm run test:autonomy
+npm run test:action-lifecycle
+npm run test:action-preflight
+npm run test:blackboard
+npm run test:episodes
+npm run test:capabilities
+npm run test:strategy-evals
+npm run test:agi-gauntlet
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/assistant-capability-router.test.ts src/daily-companion.test.ts src/communication-companion.test.ts src/missions.test.ts src/everyday-capture.test.ts src/outcome-reviews.test.ts
 npm run debug:executive -- --refresh
 npm run debug:goals
@@ -622,6 +630,13 @@ Metacognitive Workspace sits above the Cognitive Executive and Goal Planner:
 - `debug:deliberation` shows candidate routes, critic objections, final recommendation, fallback, approval boundary, and confirms hidden reasoning is not stored
 - focused v31 gate: `test:working-memory`, `test:metacognition`, `test:deliberation`, and `test:confidence-calibration`
 - natural checks such as `are you sure?`, `what context are you using?`, `think harder`, and `don't overthink it` should affect mode/confidence without bypassing existing approval gates
+
+The v32 General Intelligence Control Plane sits above all of it:
+
+- focused v32 gate: `test:autonomy`, `test:action-lifecycle`, `test:action-preflight`, `test:blackboard`, `test:episodes`, `test:capabilities`, `test:strategy-evals`, and `test:agi-gauntlet`
+- `debug:agi-readiness` runs the ten-scenario whole-assistant gauntlet against an isolated synthetic database by default; its score is a bounded-readiness signal, never an AGI claim
+- every action intent carries an autonomy level (0–7); levels 5+ always require explicit approval, level 6 adds operator context, level 7 is never executed
+- the action preflight composes critic review, autonomy policy, reality/truth state, and tool reliability into one verdict; the strictest signal always wins and nothing in v32 executes side effects itself
 
 Never claim `live_proven` from harness-only evidence. Mainline changes remain human-governed; the workbench does not auto-merge, auto-push, restart services, send messages, write calendars, change credentials, or mutate live integrations.
 - queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud

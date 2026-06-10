@@ -149,7 +149,36 @@ Useful natural controls:
 
 This is bounded metacognition, not hidden chain-of-thought exposure. Andrea may show a concise decision summary, confidence reason, context summary, or verification path, but it does not store or reveal raw private bodies, prompts, provider debates, hidden reasoning, secrets, or raw tool output.
 
-## Repair Status And Tool Reliability
+## General Intelligence Control Plane (v32)
+
+Andrea is not AGI, and this layer does not make it AGI. The control plane is a bounded, testable, approval-governed architecture that makes Andrea's existing subsystems behave like one coherent assistant. Jeff stays in control of every external action.
+
+What it adds:
+
+- **Unified Action Lifecycle.** Every meaningful action — message sends, calendar writes, reminders, plan steps, repairs, patch work — is tracked as one action intent moving through explicit statuses (proposed → needs approval → approved → attempted → succeeded/failed → reviewed). Existing systems keep doing the work; the lifecycle mirrors them so nothing is invisible.
+- **Action Preflight.** Before any durable or external action, ten consistent checks run: object clarity, required info, reality/proof freshness, tool reliability, approval, channel fit, safer fallback, duplicates, contradictions, and risk. The strictest signal wins, and the verdict is one of proceed / clarify / verify / request approval / defer / block / offer fallback.
+- **Cognitive Blackboard.** A bounded snapshot of what matters right now — active goal, plan step, focus, reality, proof debt, tool health, approval needs — with exactly one recommended next step. Assembled from the systems of record, never free-written.
+- **Reflective Episodic Memory.** Compact, redacted episode summaries (never raw transcripts): what you asked, what Andrea did, what you corrected, what was learned. Sensitive episodes are flagged and kept only 7 days; standard episodes 90 days.
+- **Capability Self-Model.** Andrea knows what it can and cannot do right now, grounded in live proof, reliability, and config presence (config is checked by name only — values are never stored). Missing setup stays classified as external/config debt, never as a repo bug.
+- **Autonomy Governor.** Every operation maps to a level from 0 (answer only) to 7 (never allowed). Levels 5+ always require your explicit approval; level 6 adds the operator surface; level 7 never executes. Nothing in v32 weakens an existing gate.
+- **AGI-Readiness Gauntlet.** A ten-scenario benchmark that scores Andrea as a whole assistant — calendar pressure, ambiguous asks, broken tools, planning, self-improvement, memory corrections, confidence challenges, recovery, cross-channel handoff, and safety. The score measures bounded readiness on synthetic scenarios; it is explicitly not an intelligence claim.
+
+Natural asks that now work:
+
+- `what are you doing right now?`
+- `what is waiting on me?`
+- `what can you actually do today?`
+- `can you send texts?`
+- `what is broken?` / `what needs setup?`
+- `what did you try?` / `what failed?`
+- `what did you learn?`
+- `what should we do next?`
+- `why didn't you do that?`
+- `what do you need approval for?`
+
+Telegram is the rich management surface; Alexa answers stay short; BlueBubbles stays calm and bounded; `debug:*` surfaces stay exact and operator-only.
+
+
 
 Andrea now tracks a small reliability ledger for the routes, tools, providers, and integrations it depends on. That lets the Cognitive Executive lower confidence, choose a fallback, or explain a blocker when BlueBubbles, Alexa, Calendar, provider quota, or a work lane is degraded.
 
