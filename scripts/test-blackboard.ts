@@ -4,6 +4,7 @@ import {
   _closeDatabase,
   _initTestDatabase,
   listBlackboardSnapshots,
+  upsertToolReliabilityRollup,
 } from '../src/db.js';
 import {
   buildCognitiveBlackboard,
@@ -12,6 +13,7 @@ import {
   isBlackboardNaturalRequest,
 } from '../src/cognitive-blackboard.js';
 import { createActionIntent } from '../src/action-lifecycle.js';
+import type { ProviderHealthSnapshot } from '../src/provider-health.js';
 
 _initTestDatabase();
 
@@ -60,6 +62,48 @@ assert.equal(isBlackboardNaturalRequest('what should we do next?'), false);
 assert.equal(isBlackboardNaturalRequest('blackboard status'), true);
 const natural = formatBlackboardNaturalResponse('blackboard status');
 assert.match(natural, /next step/i);
+
+upsertToolReliabilityRollup({
+  subjectId: 'provider:brave_search',
+  updatedAt: '2026-06-09T13:10:00.000Z',
+  sampleCount: 4,
+  successRate: 0,
+  degradedRate: 0,
+  blockedRate: 1,
+  fallbackRate: 0,
+  reliabilityScore: 0.1,
+  currentHealth: 'blocked',
+  confidenceCap: 0.22,
+  cooldownUntil: null,
+  nextAction: 'Wait for Brave quota recovery.',
+  privacyJson: '{}',
+});
+const healthyBraveProvider: ProviderHealthSnapshot = {
+  providerId: 'brave_search',
+  kind: 'search',
+  state: 'healthy',
+  lastHealthyAt: '2026-06-09T13:11:00.000Z',
+  lastCheckedAt: '2026-06-09T13:11:00.000Z',
+  failureClass: 'none',
+  quotaState: 'unknown',
+  credentialState: 'configured',
+  knownExpiresAt: null,
+  rotationDueAt: null,
+  blocker: '',
+  nextAction: '',
+  metadata: {},
+};
+const freshProviderBlackboard = buildCognitiveBlackboard({
+  requestText: 'blackboard status',
+  now: '2026-06-09T13:12:00.000Z',
+  persist: false,
+  providerHealthSnapshots: [healthyBraveProvider],
+});
+assert.doesNotMatch(
+  freshProviderBlackboard.toolReliabilitySummary,
+  /provider:brave_search \(blocked\)/,
+  'fresh provider health should prevent stale blocked provider rollups from leaking into blackboard',
+);
 
 _closeDatabase();
 console.log('cognitive blackboard tests passed');

@@ -14,7 +14,15 @@ import {
   listBlackboardSnapshots,
   upsertBlackboardSnapshot,
 } from './db.js';
-import type { BlackboardSnapshotRecord, ControlPlaneChannel } from './types.js';
+import {
+  collectProviderHealthSnapshots,
+  type ProviderHealthSnapshot,
+} from './provider-health.js';
+import type {
+  BlackboardSnapshotRecord,
+  ControlPlaneChannel,
+  ToolReliabilityRollup,
+} from './types.js';
 
 // ---------------------------------------------------------------------------
 // v32 Cognitive Blackboard
@@ -46,6 +54,33 @@ export interface BuildBlackboardInput {
   channel?: ControlPlaneChannel;
   now?: string;
   persist?: boolean;
+  providerHealthSnapshots?: ProviderHealthSnapshot[];
+}
+
+function providerHealthAsRollupHealth(
+  provider: ProviderHealthSnapshot,
+): ToolReliabilityRollup['currentHealth'] {
+  if (provider.state === 'healthy') return 'healthy';
+  if (provider.state === 'degraded') return 'degraded';
+  if (
+    provider.state === 'externally_blocked' ||
+    provider.state === 'not_configured'
+  ) {
+    return 'blocked';
+  }
+  return 'unknown';
+}
+
+function effectiveRollupHealth(
+  rollup: ToolReliabilityRollup,
+  providers: ProviderHealthSnapshot[],
+): ToolReliabilityRollup['currentHealth'] {
+  if (!rollup.subjectId.startsWith('provider:')) return rollup.currentHealth;
+  const providerId = rollup.subjectId.replace(/^provider:/, '');
+  const provider = providers.find((item) => item.providerId === providerId);
+  return provider
+    ? providerHealthAsRollupHealth(provider)
+    : rollup.currentHealth;
 }
 
 export function buildCognitiveBlackboard(
@@ -106,7 +141,13 @@ export function buildCognitiveBlackboard(
     : 'No reality snapshot recorded yet.';
 
   const rollups = dbReady ? listToolReliabilityRollups({ limit: 100 }) : [];
-  const unhealthy = rollups.filter(
+  const providerHealth =
+    input.providerHealthSnapshots ?? collectProviderHealthSnapshots(createdAt);
+  const effectiveRollups = rollups.map((rollup) => ({
+    ...rollup,
+    currentHealth: effectiveRollupHealth(rollup, providerHealth),
+  }));
+  const unhealthy = effectiveRollups.filter(
     (rollup) =>
       rollup.currentHealth === 'blocked' || rollup.currentHealth === 'degraded',
   );
