@@ -5,12 +5,14 @@ import {
   listGoalMilestones,
   listGoalPlanSteps,
   listHierarchicalGoals,
+  upsertProactiveOpportunity,
 } from '../src/db.js';
 import {
   buildHierarchicalPlannerReport,
   formatGoalPlannerReport,
   planGoalDirectedRequest,
 } from '../src/goal-planner.js';
+import type { ProactiveOpportunity } from '../src/types.js';
 
 _initTestDatabase();
 
@@ -49,6 +51,28 @@ assert.ok(andrea.steps.some((step) => step.requiredTool === 'improvement_lab'));
 assert.ok(andrea.run.approvalRequired);
 assert.match(andrea.response, /Approval: required/);
 
+const staleBraveOpportunity: ProactiveOpportunity = {
+  opportunityId: 'opportunity_stale_brave_blocker',
+  createdAt: '2026-06-09T12:06:00.000Z',
+  updatedAt: '2026-06-09T12:06:00.000Z',
+  groupFolder: null,
+  triggerSource: 'contradiction:provider_vs_route',
+  relatedGoalId: null,
+  opportunitySummary:
+    'Research routes must not claim Brave participation while Brave Search is blocked.',
+  reason: 'Old persisted provider contradiction.',
+  urgency: 'normal',
+  confidence: 0.72,
+  suggestedAction:
+    'Use local knowledge or healthy providers until Brave quota recovers.',
+  approvalRequirement: 'read_only',
+  status: 'proposed',
+  snoozedUntil: null,
+  evidenceRefsJson: JSON.stringify(['contradiction:old_brave']),
+  privacyJson: JSON.stringify({ metadataOnly: true }),
+};
+upsertProactiveOpportunity(staleBraveOpportunity);
+
 const report = buildHierarchicalPlannerReport({
   requestText: 'what should I do next',
   now: '2026-06-09T12:10:00.000Z',
@@ -56,6 +80,7 @@ const report = buildHierarchicalPlannerReport({
 const formatted = formatGoalPlannerReport(report);
 assert.match(formatted, /Hierarchical Goal Planner/);
 assert.match(formatted, /Causal Beliefs/);
+assert.doesNotMatch(formatted, /Brave Search is blocked/);
 assert.doesNotMatch(formatted, /sk-[A-Za-z0-9_-]{12,}/);
 
 _closeDatabase();

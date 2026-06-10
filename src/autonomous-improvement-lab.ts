@@ -23,6 +23,10 @@ import {
   buildFieldTrialOperatorTruth,
   type FieldTrialSurfaceTruth,
 } from './field-trial-readiness.js';
+import {
+  collectProviderHealthSnapshots,
+  type ProviderHealthSnapshot,
+} from './provider-health.js';
 import type {
   CandidatePatchPlan,
   CognitiveReflectionSignal,
@@ -347,8 +351,30 @@ function repairHypotheses(
 function reliabilityHypotheses(
   rollups: ToolReliabilityRollup[],
   now: string,
+  providerHealth: ProviderHealthSnapshot[] = [],
 ): ImprovementHypothesis[] {
   return rollups
+    .map((rollup) => {
+      if (
+        rollup.subjectId === 'provider:brave_search' &&
+        providerHealth.some(
+          (provider) =>
+            provider.providerId === 'brave_search' &&
+            provider.state === 'healthy',
+        )
+      ) {
+        return {
+          ...rollup,
+          sampleCount: Math.max(rollup.sampleCount, 1),
+          successRate: Math.max(rollup.successRate, 1),
+          reliabilityScore: Math.max(rollup.reliabilityScore, 0.9),
+          currentHealth: 'healthy' as const,
+          confidenceCap: Math.max(rollup.confidenceCap, 0.95),
+          nextAction: 'No action needed.',
+        };
+      }
+      return rollup;
+    })
     .filter(
       (rollup) =>
         rollup.currentHealth !== 'healthy' ||
@@ -782,6 +808,7 @@ function collectHypotheses(now: string): {
   hypotheses: ImprovementHypothesis[];
   signalSummary: AutonomousImprovementLabReport['signalSummary'];
 } {
+  const providerHealth = collectProviderHealthSnapshots(now);
   const repairs = listRepairAttempts({ limit: 120 });
   const rollups = listToolReliabilityRollups({ limit: 200 });
   const reflections = listCognitiveReflectionSignals({ limit: 240 });
@@ -792,8 +819,19 @@ function collectHypotheses(now: string): {
   const proof = proofGapHypotheses(now);
   const hypotheses = dedupeHypotheses([
     ...proof,
-    ...repairHypotheses(repairs, now),
-    ...reliabilityHypotheses(rollups, now),
+    ...repairHypotheses(
+      repairs.filter((attempt) => {
+        if (!/brave_search/i.test(attempt.integrationId)) return true;
+        if (!/quota|auth|credential/i.test(attempt.failureClass)) return true;
+        return !providerHealth.some(
+          (provider) =>
+            provider.providerId === 'brave_search' &&
+            provider.state === 'healthy',
+        );
+      }),
+      now,
+    ),
+    ...reliabilityHypotheses(rollups, now, providerHealth),
     ...executiveReflectionHypotheses(reflections, now),
     ...learningHypotheses(distillations, now),
     ...skillRunHypotheses(skillRuns, now),
@@ -904,17 +942,44 @@ export function buildAutonomousImprovementLabReport(
     params.persist === false
       ? outcomes
       : listImprovementOutcomes({ limit: 40 });
-  const topCandidates = storedHypotheses.slice(0, 8);
-  const externalBlockers = storedHypotheses
+  const providerHealth = collectProviderHealthSnapshots(generatedAt);
+  const visibleHypotheses = storedHypotheses.filter((item) => {
+    if (!/brave_search/i.test(item.affectedCapability)) return true;
+    const braveHealthy = providerHealth.some(
+      (provider) =>
+        provider.providerId === 'brave_search' && provider.state === 'healthy',
+    );
+    if (!braveHealthy) return true;
+    return !(
+      item.externalBlocker ||
+      /quota|blocked|recovered|healthy/i.test(
+        `${item.title} ${item.nextAction} ${item.fixClass}`,
+      )
+    );
+  });
+  const visibleHypothesisIds = new Set(
+    visibleHypotheses.map((item) => item.hypothesisId),
+  );
+  const visibleExperiments = storedExperiments.filter((item) =>
+    visibleHypothesisIds.has(item.hypothesisId),
+  );
+  const visiblePatchPlans = storedPatchPlans.filter((item) =>
+    visibleHypothesisIds.has(item.hypothesisId),
+  );
+  const visibleOutcomes = storedOutcomes.filter((item) =>
+    visibleHypothesisIds.has(item.hypothesisId),
+  );
+  const topCandidates = visibleHypotheses.slice(0, 8);
+  const externalBlockers = visibleHypotheses
     .filter((item) => item.externalBlocker)
     .slice(0, 8);
   const actionable = topCandidates.find((item) => !item.externalBlocker);
   return {
     generatedAt,
-    hypotheses: storedHypotheses,
-    experiments: storedExperiments,
-    patchPlans: storedPatchPlans,
-    outcomes: storedOutcomes,
+    hypotheses: visibleHypotheses,
+    experiments: visibleExperiments,
+    patchPlans: visiblePatchPlans,
+    outcomes: visibleOutcomes,
     topCandidates,
     selectedForExperiment,
     externalBlockers,

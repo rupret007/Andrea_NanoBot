@@ -1077,11 +1077,13 @@ export function buildHierarchicalPlannerReport(
     }),
   );
   const causalBeliefs = seedCausalBeliefs(now, persist);
-  const opportunities = listProactiveOpportunities({
+  const opportunityReport = buildProactiveOpportunityReport({
     groupFolder: params.groupFolder,
-    statuses: ['proposed', 'shown', 'snoozed'],
-    limit: 10,
+    now: new Date(now),
+    persist: false,
+    realityReport: result.reality,
   });
+  const opportunities = opportunityReport.opportunities.slice(0, 10);
   return {
     generatedAt: now,
     latestRun: result.run || listGoalPlannerRuns({ limit: 1 })[0] || null,

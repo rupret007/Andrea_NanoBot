@@ -149,6 +149,39 @@ describe('field-trial readiness', () => {
     expect(truth.telegram.blocker).toBe('');
   });
 
+  it('does not let operator-safe dogfood events become live proof blockers', () => {
+    insertPilotJourneyEvent({
+      eventId: 'dogfood-ordinary-chat-config',
+      journeyId: 'ordinary_chat',
+      channel: 'telegram',
+      groupFolder: 'dogfood-live',
+      chatJid: null,
+      threadId: null,
+      routeKey: 'dogfood:texting_status:proof_capability_status',
+      systemsInvolved: ['proof_gauntlet', 'capability_self_model'],
+      outcome: 'externally_blocked',
+      blockerClass: 'missing_config',
+      blockerOwner: 'external',
+      degradedPath: 'operator_safe_dogfood_not_live_proof',
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      currentWorkRef: null,
+      summaryText:
+        'Operator-safe dogfood: texting_status. This is not live proof.',
+      startedAt: '2026-04-08T11:55:00.000Z',
+      completedAt: '2026-04-08T11:55:00.000Z',
+      durationMs: 0,
+    });
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.journeys.ordinary_chat.proofState).toBe('near_live_only');
+    expect(truth.journeys.ordinary_chat.nextAction).toMatch(/Send `hi`/);
+  });
+
   it('keeps Telegram live-proven when the same-boot roundtrip is recent but the hourly probe is merely overdue', () => {
     const snapshot: HostControlSnapshot = {
       paths: resolveHostControlPaths(tempDir),

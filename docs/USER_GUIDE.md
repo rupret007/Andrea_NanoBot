@@ -237,13 +237,21 @@ Operator checks:
 
 - `npm run debug:improvement -- --workbench`
 - `npm run debug:proof-gauntlet`
+- `npm run dogfood:live`
 - `npm run improvement:patch-plan`
 - `npm run improvement:patch-dry-run`
 - `npm run improvement:patch-review`
+- `npm run test:dogfood-gauntlet`
 - `npm run test:patch-workbench`
 - `npm run test:proof-gauntlet`
 
 This is bounded self-improvement infrastructure, not AGI, autonomous deployment, or uncontrolled self-modification. Mainline changes remain human-governed.
+
+### Live Dogfood Gauntlet
+
+Andrea can now run an operator-safe dogfood pass over natural requests such as `what should I do next?`, `what am I forgetting?`, `is text messaging working?`, `help me plan tonight`, `what should I say back?`, `add that to my calendar`, `fix yourself`, and `are you sure?`.
+
+This is not background autonomy and it is not live proof by itself. The dogfood pass uses existing proof, capability, reality, blackboard, planner, preflight, metacognition, improvement, and pilot surfaces to classify what would happen. It may record metadata-only pilot outcomes, but it does not send messages, write calendars, restart services, push code, change credentials, mutate integrations, or mark manual proof debt complete.
 
 ## Reality Grounding And Active Perception
 

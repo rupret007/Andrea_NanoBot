@@ -612,6 +612,29 @@ Reality Grounding sits above proof gauntlet and world/truth metadata:
 - stale proof and missing config create verification/proof tasks first, not repo patch hypotheses
 - durable or external actions should be staged or clarified when reality confidence is too low
 
+The live dogfood gauntlet exercises real-world-feeling requests through existing
+routers in operator-safe mode:
+
+- `npm run dogfood:live` runs ten natural scenarios such as next action, forgetting,
+  texting status, tonight planning, reply help, calendar ambiguity, self-fix, and
+  confidence checks
+- it may record metadata-only pilot outcomes, but these are marked as
+  operator-safe dogfood and do **not** count as live proof closure
+- it never sends messages, writes calendars, restarts services, pushes code,
+  changes credentials, or mutates live integrations
+- `npm run test:dogfood-gauntlet` checks scoring, proof classification, privacy,
+  and consistency with proof/capability/reality truth
+
+When this Mac host must restart Andrea after a validated repo change, use:
+
+```bash
+npm run build
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run services:status
+```
+
+Treat `services:status` serving-commit alignment as the acceptance check.
+
 Hierarchical Goal Planning sits above Reality Grounding and Cognitive Executive:
 
 - `debug:goals` shows proposed/active/blocked goals, milestones, steps, causal beliefs, counterfactual comparisons, opportunities, and the next safe action
@@ -1031,7 +1054,8 @@ Important truth:
 After meaningful runtime or operator-surface changes:
 
 ```bash
-npm run services:restart
+npm run build
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 npm run setup -- --step verify
 ```
 

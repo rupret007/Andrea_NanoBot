@@ -1081,11 +1081,22 @@ function isLiveProvenPilotOutcome(
   return outcome === 'success';
 }
 
+function isOperatorSafeDogfoodEvent(event: PilotJourneyEventRecord): boolean {
+  return (
+    event.routeKey?.startsWith('dogfood:') === true ||
+    /operator-safe dogfood/i.test(event.summaryText || '')
+  );
+}
+
 function getRecentJourneyEvent(
   review: PilotReviewSnapshotLike,
   predicate: (event: PilotJourneyEventRecord) => boolean,
 ): PilotJourneyEventRecord | null {
-  return review.recentEvents.find(predicate) || null;
+  return (
+    review.recentEvents.find(
+      (event) => !isOperatorSafeDogfoodEvent(event) && predicate(event),
+    ) || null
+  );
 }
 
 function getJourneyEventById(
