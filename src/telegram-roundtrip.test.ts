@@ -329,4 +329,48 @@ describe('telegram roundtrip health', () => {
     expect(state.lastSuccessAt).toBeNull();
     expect(state.consecutiveFailures).toBe(0);
   });
+
+  it('does not let a user-session config gap erase recent bot proof', () => {
+    const hostState = seedRunningHost();
+    const readyState = writeAssistantReadyState('1.2.42');
+    const assistantHealthState = writeAssistantHealthState({
+      appVersion: '1.2.42',
+      channelHealth: [
+        {
+          name: 'telegram',
+          configured: true,
+          state: 'ready',
+          updatedAt: '2026-04-04T12:10:00.000Z',
+          lastReadyAt: '2026-04-04T12:10:00.000Z',
+          detail: 'Telegram polling connected.',
+        },
+      ],
+    });
+    recordOrganicTelegramRoundtripSuccess({
+      target: 'tg:123',
+      observedAt: '2026-04-04T12:10:00.000Z',
+    });
+    const poisonedState = recordTelegramProbeUnconfigured(
+      'Telegram user-session credentials are missing. Set TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH first.',
+      process.cwd(),
+      {
+        source: 'live_smoke',
+        target: 'tg:123',
+        observedAt: '2026-04-04T12:20:00.000Z',
+      },
+    );
+
+    const assessment = assessTelegramRoundtripState({
+      assistantHealthState,
+      telegramRoundtripState: poisonedState,
+      hostState,
+      readyState,
+      now: new Date('2026-04-04T12:45:00.000Z'),
+    });
+
+    expect(poisonedState.status).toBe('unconfigured');
+    expect(poisonedState.lastSuccessAt).toBe('2026-04-04T12:10:00.000Z');
+    expect(assessment.status).toBe('healthy');
+    expect(assessment.detail).toContain('bot proof remains healthy');
+  });
 });

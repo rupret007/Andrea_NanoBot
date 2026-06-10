@@ -16,7 +16,6 @@ import {
   getTelegramRoundtripAssessment,
   recordTelegramProbeFailure,
   recordTelegramProbeSuccess,
-  recordTelegramProbeUnconfigured,
 } from './telegram-roundtrip.js';
 
 const DEFAULT_REPLY_TIMEOUT_MS = 30_000;
@@ -1141,7 +1140,7 @@ function printTelegramSendResult(result: TelegramSendAndCaptureResult): void {
   }
 }
 
-async function runTelegramPingProbe(options?: {
+export async function runTelegramPingProbe(options?: {
   mode?: 'scheduled_probe' | 'live_smoke';
   projectRoot?: string;
   force?: boolean;
@@ -1152,9 +1151,6 @@ async function runTelegramPingProbe(options?: {
   if (mode === 'scheduled_probe' && !options?.force) {
     const assessment = getTelegramRoundtripAssessment(projectRoot);
     if (assessment.status === 'unconfigured') {
-      recordTelegramProbeUnconfigured(assessment.detail, projectRoot, {
-        source: mode,
-      });
       return {
         ok: false,
         status: 'unconfigured',
@@ -1179,9 +1175,6 @@ async function runTelegramPingProbe(options?: {
   const config = resolveTelegramUserSessionConfig(projectRoot);
   const configAssessment = assessTelegramLiveProbeConfig(config);
   if (!configAssessment.configured) {
-    recordTelegramProbeUnconfigured(configAssessment.detail, projectRoot, {
-      source: mode,
-    });
     return {
       ok: false,
       status: 'unconfigured',
@@ -1196,9 +1189,6 @@ async function runTelegramPingProbe(options?: {
     target = await ensureTelegramTestTarget(config);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    recordTelegramProbeUnconfigured(detail, projectRoot, {
-      source: mode,
-    });
     return {
       ok: false,
       status: 'unconfigured',
@@ -1217,10 +1207,6 @@ async function runTelegramPingProbe(options?: {
         client = connected.client;
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
-        recordTelegramProbeUnconfigured(detail, projectRoot, {
-          source: mode,
-          target,
-        });
         return {
           ok: false,
           status: 'unconfigured',

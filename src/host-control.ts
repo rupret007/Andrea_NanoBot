@@ -1579,38 +1579,10 @@ export function assessTelegramRoundtripState(input: {
     };
   }
 
-  if (roundtrip.status === 'unconfigured') {
-    return {
-      status: 'unconfigured',
-      detail:
-        roundtrip.detail ||
-        'Telegram user-session probe is not configured on this machine.',
-      updatedAt: roundtrip.updatedAt,
-      lastOkAt: roundtrip.lastSuccessAt,
-      lastProbeAt: roundtrip.lastProbeAt,
-      nextDueAt: roundtrip.nextDueAt,
-      due: false,
-    };
-  }
-
   const bootIdMismatch =
     Boolean(hostState?.bootId) &&
     Boolean(roundtrip.bootId) &&
     roundtrip.bootId !== hostState?.bootId;
-  if (bootIdMismatch) {
-    return {
-      status: inStartupGrace ? 'pending' : 'degraded',
-      detail: inStartupGrace
-        ? 'Telegram roundtrip is waiting for post-restart confirmation.'
-        : 'Telegram roundtrip health is from an older assistant boot.',
-      updatedAt: roundtrip.updatedAt,
-      lastOkAt: roundtrip.lastSuccessAt,
-      lastProbeAt: roundtrip.lastProbeAt,
-      nextDueAt: roundtrip.nextDueAt,
-      due: !inStartupGrace,
-    };
-  }
-
   const nextDueAtMs = parseTime(roundtrip.nextDueAt);
   const lastSuccessAtMs = parseTime(roundtrip.lastSuccessAt);
   const computedTopOfHourNextDueAt =
@@ -1626,6 +1598,25 @@ export function assessTelegramRoundtripState(input: {
         : lastSuccessAtMs != null
           ? lastSuccessAtMs + probeIntervalMs
           : null;
+  const computedNextDueAtIso =
+    computedNextDueAt != null
+      ? new Date(computedNextDueAt).toISOString()
+      : roundtrip.nextDueAt;
+
+  if (bootIdMismatch) {
+    return {
+      status: inStartupGrace ? 'pending' : 'degraded',
+      detail: inStartupGrace
+        ? 'Telegram roundtrip is waiting for post-restart confirmation.'
+        : 'Telegram roundtrip health is from an older assistant boot.',
+      updatedAt: roundtrip.updatedAt,
+      lastOkAt: roundtrip.lastSuccessAt,
+      lastProbeAt: roundtrip.lastProbeAt,
+      nextDueAt: computedNextDueAtIso,
+      due: !inStartupGrace,
+    };
+  }
+
   const due =
     computedNextDueAt == null
       ? roundtrip.status !== 'healthy'
@@ -1637,6 +1628,49 @@ export function assessTelegramRoundtripState(input: {
     now.getTime() - computedNextDueAt < overdueGraceMs &&
     lastSuccessAtMs != null &&
     now.getTime() - lastSuccessAtMs < probeIntervalMs;
+
+  if (roundtrip.status === 'unconfigured') {
+    const recentSameHostSuccess =
+      lastSuccessAtMs != null &&
+      now.getTime() - lastSuccessAtMs <= probeIntervalMs * 2;
+    if (recentSameHostSuccess && telegramTransportState?.status !== 'blocked') {
+      return {
+        status: 'healthy',
+        detail:
+          'Telegram bot proof remains healthy from the last successful same-host roundtrip; the user-session probe is not configured.',
+        updatedAt: roundtrip.updatedAt,
+        lastOkAt: roundtrip.lastSuccessAt,
+        lastProbeAt: roundtrip.lastProbeAt,
+        nextDueAt: computedNextDueAtIso,
+        due: false,
+      };
+    }
+
+    if (lastSuccessAtMs != null) {
+      return {
+        status: 'degraded',
+        detail:
+          'Telegram bot proof has an older successful roundtrip, but it needs a fresh bot turn; the user-session probe is not configured.',
+        updatedAt: roundtrip.updatedAt,
+        lastOkAt: roundtrip.lastSuccessAt,
+        lastProbeAt: roundtrip.lastProbeAt,
+        nextDueAt: computedNextDueAtIso,
+        due: true,
+      };
+    }
+
+    return {
+      status: 'unconfigured',
+      detail:
+        roundtrip.detail ||
+        'Telegram user-session probe is not configured on this machine.',
+      updatedAt: roundtrip.updatedAt,
+      lastOkAt: roundtrip.lastSuccessAt,
+      lastProbeAt: roundtrip.lastProbeAt,
+      nextDueAt: roundtrip.nextDueAt,
+      due: false,
+    };
+  }
 
   if (
     roundtrip.status === 'healthy' &&
@@ -1651,10 +1685,7 @@ export function assessTelegramRoundtripState(input: {
       updatedAt: roundtrip.updatedAt,
       lastOkAt: roundtrip.lastSuccessAt,
       lastProbeAt: roundtrip.lastProbeAt,
-      nextDueAt:
-        computedNextDueAt != null
-          ? new Date(computedNextDueAt).toISOString()
-          : roundtrip.nextDueAt,
+      nextDueAt: computedNextDueAtIso,
       due,
     };
   }
@@ -1667,10 +1698,7 @@ export function assessTelegramRoundtripState(input: {
       updatedAt: roundtrip.updatedAt,
       lastOkAt: roundtrip.lastSuccessAt,
       lastProbeAt: roundtrip.lastProbeAt,
-      nextDueAt:
-        computedNextDueAt != null
-          ? new Date(computedNextDueAt).toISOString()
-          : roundtrip.nextDueAt,
+      nextDueAt: computedNextDueAtIso,
       due: false,
     };
   }
@@ -1684,10 +1712,7 @@ export function assessTelegramRoundtripState(input: {
       updatedAt: roundtrip.updatedAt,
       lastOkAt: roundtrip.lastSuccessAt,
       lastProbeAt: roundtrip.lastProbeAt,
-      nextDueAt:
-        computedNextDueAt != null
-          ? new Date(computedNextDueAt).toISOString()
-          : roundtrip.nextDueAt,
+      nextDueAt: computedNextDueAtIso,
       due: false,
     };
   }
@@ -1700,10 +1725,7 @@ export function assessTelegramRoundtripState(input: {
     updatedAt: roundtrip.updatedAt,
     lastOkAt: roundtrip.lastSuccessAt,
     lastProbeAt: roundtrip.lastProbeAt,
-    nextDueAt:
-      computedNextDueAt != null
-        ? new Date(computedNextDueAt).toISOString()
-        : roundtrip.nextDueAt,
+    nextDueAt: computedNextDueAtIso,
     due,
   };
 }

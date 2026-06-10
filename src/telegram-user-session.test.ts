@@ -5,6 +5,14 @@ import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  persistNanoclawHostState,
+  readTelegramRoundtripState,
+  writeAssistantHealthState,
+  writeAssistantReadyState,
+  type NanoclawHostState,
+} from './host-control.js';
+import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
+import {
   assessTelegramLiveProbeConfig,
   DEFAULT_TELEGRAM_LIVE_TEST_MESSAGES,
   didTelegramReplyChange,
@@ -22,6 +30,7 @@ import {
   parseTelegramTapCommandArgs,
   resolveTelegramTapButtonTarget,
   resolveTelegramUserSessionConfig,
+  runTelegramPingProbe,
   withTelegramUserSessionLock,
 } from './telegram-user-session.js';
 
@@ -172,6 +181,82 @@ describe('assessTelegramLiveProbeConfig', () => {
       configured: true,
       detail: 'Telegram live /ping probe credentials are configured.',
     });
+  });
+});
+
+describe('runTelegramPingProbe', () => {
+  it('does not downgrade bot proof when the user-session probe is missing config', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-tg-smoke-'));
+    const previousCwd = process.cwd();
+    const hostState: NanoclawHostState = {
+      bootId: 'boot-telegram-bot-proof',
+      phase: 'running_ready',
+      pid: process.pid,
+      installMode: 'manual_host_control',
+      nodePath: process.execPath,
+      nodeVersion: process.version,
+      startedAt: '2026-06-10T17:40:00.000Z',
+      readyAt: '2026-06-10T17:41:00.000Z',
+      lastError: '',
+      dependencyState: 'ok',
+      dependencyError: '',
+      stdoutLogPath: path.join(tempDir, 'logs', 'nanoclaw.log'),
+      stderrLogPath: path.join(tempDir, 'logs', 'nanoclaw.error.log'),
+      hostLogPath: path.join(tempDir, 'logs', 'nanoclaw.host.log'),
+    };
+
+    try {
+      process.chdir(tempDir);
+      vi.stubEnv('TELEGRAM_USER_API_ID', '');
+      vi.stubEnv('TELEGRAM_USER_API_HASH', '');
+      vi.stubEnv('TELEGRAM_USER_SESSION', '');
+      vi.stubEnv('TELEGRAM_USER_SESSION_FILE', '');
+      vi.stubEnv('TELEGRAM_TEST_TARGET', '');
+      vi.stubEnv('TELEGRAM_TEST_CHAT_ID', '');
+
+      persistNanoclawHostState(hostState, tempDir);
+      writeAssistantReadyState('1.2.42', tempDir);
+      writeAssistantHealthState(
+        {
+          appVersion: '1.2.42',
+          updatedAt: '2026-06-10T17:42:00.000Z',
+          channelHealth: [
+            {
+              name: 'telegram',
+              configured: true,
+              state: 'ready',
+              updatedAt: '2026-06-10T17:42:00.000Z',
+              detail: 'Telegram polling connected.',
+            },
+          ],
+        },
+        tempDir,
+      );
+      recordOrganicTelegramRoundtripSuccess(
+        {
+          target: 'tg:123',
+          observedAt: '2026-06-10T17:44:36.333Z',
+        },
+        tempDir,
+      );
+
+      const result = await runTelegramPingProbe({
+        mode: 'live_smoke',
+        projectRoot: tempDir,
+        force: true,
+      });
+      const state = readTelegramRoundtripState(tempDir);
+
+      expect(result.status).toBe('unconfigured');
+      expect(result.stage).toBe('config');
+      expect(state?.status).toBe('healthy');
+      expect(state?.source).toBe('organic');
+      expect(state?.lastSuccessAt).toBe('2026-06-10T17:44:36.333Z');
+    } finally {
+      vi.unstubAllEnvs();
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
