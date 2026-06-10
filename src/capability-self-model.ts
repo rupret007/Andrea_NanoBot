@@ -8,6 +8,10 @@ import {
   upsertCapabilityState,
 } from './db.js';
 import { readEnvFile } from './env.js';
+import {
+  collectProviderHealthSnapshots,
+  type ProviderHealthSnapshot,
+} from './provider-health.js';
 import type { CapabilityStateRecord, ControlPlaneChannel } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -194,6 +198,7 @@ export function buildCapabilitySelfModel(
     persist?: boolean;
     env?: Record<string, string | undefined>;
     envFileValues?: Record<string, string | undefined>;
+    providerHealthSnapshots?: ProviderHealthSnapshot[];
   } = {},
 ): CapabilitySelfModelReport {
   const generatedAt = nowIso(params.now);
@@ -211,6 +216,9 @@ export function buildCapabilitySelfModel(
   const env = params.env ?? process.env;
   const envFileValues =
     params.envFileValues ?? readEnvFile(requiredConfigNames);
+  const providerHealth =
+    params.providerHealthSnapshots ??
+    collectProviderHealthSnapshots(generatedAt);
   const states: CapabilityStateRecord[] = [];
 
   for (const definition of CAPABILITY_DEFINITIONS) {
@@ -234,6 +242,13 @@ export function buildCapabilitySelfModel(
     const proofStep = definition.proofNameHint
       ? proofSteps.find((step) =>
           definition.proofNameHint!.test(step.proofName),
+        )
+      : undefined;
+    const provider = definition.reliabilitySubjectId?.startsWith('provider:')
+      ? providerHealth.find(
+          (item) =>
+            item.providerId ===
+            definition.reliabilitySubjectId!.replace(/^provider:/, ''),
         )
       : undefined;
 
@@ -268,14 +283,27 @@ export function buildCapabilitySelfModel(
           currentBlocker = proofStep.exactNextStep;
       }
     } else if (rollup) {
-      proofStatus =
-        rollup.currentHealth === 'healthy'
-          ? 'live_proven'
-          : rollup.currentHealth === 'blocked'
-            ? 'externally_blocked'
-            : 'stale';
-      if (rollup.currentHealth !== 'healthy') {
-        currentBlocker = rollup.nextAction;
+      if (provider) {
+        proofStatus =
+          provider.state === 'healthy'
+            ? 'live_proven'
+            : provider.state === 'externally_blocked' ||
+                provider.state === 'not_configured'
+              ? 'externally_blocked'
+              : 'stale';
+        if (provider.state !== 'healthy') {
+          currentBlocker = provider.nextAction || provider.blocker || null;
+        }
+      } else {
+        proofStatus =
+          rollup.currentHealth === 'healthy'
+            ? 'live_proven'
+            : rollup.currentHealth === 'blocked'
+              ? 'externally_blocked'
+              : 'stale';
+        if (rollup.currentHealth !== 'healthy') {
+          currentBlocker = rollup.nextAction;
+        }
       }
     } else if (!definition.requiredConfig.length) {
       // Pure-internal capabilities are proven by construction.
@@ -298,7 +326,10 @@ export function buildCapabilitySelfModel(
     );
 
     const reliabilityScore =
-      rollup?.reliabilityScore ?? (proofStatus === 'live_proven' ? 0.9 : 0.4);
+      provider?.state === 'healthy'
+        ? Math.max(rollup?.reliabilityScore ?? 0, 0.9)
+        : (rollup?.reliabilityScore ??
+          (proofStatus === 'live_proven' ? 0.9 : 0.4));
     const enabled =
       proofStatus !== 'missing_config' && proofStatus !== 'externally_blocked';
     const confidence = Math.max(

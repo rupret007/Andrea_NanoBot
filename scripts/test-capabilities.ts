@@ -4,6 +4,7 @@ import {
   _closeDatabase,
   _initTestDatabase,
   listCapabilityStates,
+  upsertToolReliabilityRollup,
 } from '../src/db.js';
 import {
   buildCapabilitySelfModel,
@@ -63,6 +64,54 @@ for (const id of [
   assert.notEqual(state.proofStatus, 'missing_config');
   assert.doesNotMatch(state.currentBlocker ?? '', /Missing config/);
 }
+
+upsertToolReliabilityRollup({
+  subjectId: 'provider:brave_search',
+  updatedAt: '2026-06-09T15:00:00.000Z',
+  sampleCount: 3,
+  successRate: 0,
+  degradedRate: 0,
+  blockedRate: 1,
+  fallbackRate: 0,
+  reliabilityScore: 0.17,
+  currentHealth: 'blocked',
+  confidenceCap: 0.22,
+  cooldownUntil: null,
+  nextAction: 'Wait for Brave quota recovery.',
+  privacyJson: '{}',
+});
+const freshProviderReport = buildCapabilitySelfModel({
+  now: '2026-06-09T16:02:00.000Z',
+  persist: false,
+  env: {},
+  envFileValues: {
+    BRAVE_SEARCH_API_KEY: 'set',
+  },
+  providerHealthSnapshots: [
+    {
+      providerId: 'brave_search',
+      kind: 'search',
+      state: 'healthy',
+      lastHealthyAt: '2026-06-09T16:02:00.000Z',
+      lastCheckedAt: '2026-06-09T16:02:00.000Z',
+      failureClass: 'none',
+      quotaState: 'unknown',
+      credentialState: 'configured',
+      knownExpiresAt: null,
+      rotationDueAt: null,
+      blocker: '',
+      nextAction: '',
+      metadata: {},
+    },
+  ],
+});
+const research = freshProviderReport.states.find(
+  (item) => item.capabilityId === 'research.web',
+);
+assert.ok(research);
+assert.equal(research.proofStatus, 'live_proven');
+assert.equal(research.currentBlocker, null);
+assert.ok(research.reliabilityScore >= 0.9);
 
 // External sends always require explicit approval regardless of proof.
 for (const id of [
