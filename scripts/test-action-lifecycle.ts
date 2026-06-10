@@ -41,6 +41,7 @@ const approved = transitionActionIntent({
   to: 'approved',
   reason: 'Jeff approved in Telegram',
   hasExplicitUserApproval: true,
+  approvedCapability: 'messages.send.bluebubbles',
 });
 assert.equal(approved.ok, true);
 assert.equal(approved.record?.status, 'approved');
@@ -92,6 +93,56 @@ const blocked = createActionIntent({
   actionType: 'other',
 });
 assert.equal(blocked.status, 'cancelled');
+
+// Approval must be bound to a concrete capability.
+const unboundIntent = createActionIntent({
+  title: 'Send a later reminder text',
+  sourceRequestSummary: 'send a text later',
+  sourceChannel: 'telegram',
+  actionType: 'message_send',
+  now: '2026-06-09T20:05:00.000Z',
+});
+const unboundApproval = transitionActionIntent({
+  actionId: unboundIntent.actionId,
+  to: 'approved',
+  reason: 'approval without capability binding',
+  hasExplicitUserApproval: true,
+});
+assert.equal(unboundApproval.ok, false);
+assert.equal(
+  unboundApproval.error,
+  'approval_capability_binding_required',
+);
+
+// High-risk operator approvals need verified operator context.
+const patchIntent = createActionIntent({
+  title: 'Push the production patch',
+  sourceRequestSummary: 'git push the patch to main',
+  sourceChannel: 'operator',
+  actionType: 'patch',
+  now: '2026-06-09T20:06:00.000Z',
+});
+const unverifiedOperatorApproval = transitionActionIntent({
+  actionId: patchIntent.actionId,
+  to: 'approved',
+  reason: 'operator approval without verified context',
+  hasExplicitUserApproval: true,
+  approvedCapability: 'git.push.main',
+});
+assert.equal(unverifiedOperatorApproval.ok, false);
+assert.equal(
+  unverifiedOperatorApproval.error,
+  'operator_context_required_but_not_verified',
+);
+const verifiedOperatorApproval = transitionActionIntent({
+  actionId: patchIntent.actionId,
+  to: 'approved',
+  reason: 'operator approved from main control',
+  hasExplicitUserApproval: true,
+  approvedCapability: 'git.push.main',
+  mainControlVerified: true,
+});
+assert.equal(verifiedOperatorApproval.ok, true);
 
 // Sync mirrors existing systems without throwing on an empty workspace.
 const sync = syncActionIntentsFromSources({ groupFolder: 'main' });

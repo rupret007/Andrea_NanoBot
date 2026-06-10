@@ -233,7 +233,7 @@ export function getLatestBlackboardSnapshot(): BlackboardSnapshotRecord | null {
 }
 
 export function isBlackboardNaturalRequest(text: string): boolean {
-  return /\b(what are you doing right now|what matters (most )?right now|what('?| i)s on your (plate|mind)|current state|situational awareness|what should (we|i) do next)\b/i.test(
+  return /\b(what are you doing right now|what matters (most )?right now|what('?| i)s on your (plate|mind)|current state|situational awareness|show (me )?(the )?(blackboard|current state)|blackboard status)\b/i.test(
     text || '',
   );
 }

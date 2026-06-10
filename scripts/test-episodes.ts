@@ -40,7 +40,8 @@ const sensitive = recordCognitiveEpisode({
 });
 assert.equal(sensitive.sensitivity, 'sensitive');
 assert.equal(sensitive.retentionPolicy, 'short_7d');
-assert.match(sensitive.askSummary, /\[sensitive topic\]/);
+assert.match(sensitive.askSummary, /\[sensitive topic redacted\]/);
+assert.ok(!sensitive.askSummary.includes('medication'));
 
 // Corrections create strategy learning signals.
 recordCognitiveEpisode({
@@ -55,6 +56,18 @@ const signals = listStrategyLearningSignals({ limit: 5 });
 assert.ok(
   signals.some((signal) => /corrected/i.test(signal.strategyAdjustment)),
 );
+
+// Sensitive corrections are stored as category markers, not raw text.
+const sensitiveCorrection = recordCognitiveEpisode({
+  askSummary: 'preference correction',
+  channel: 'telegram',
+  reasoningMode: 'unknown_future_mode',
+  result: 'answered',
+  userCorrection: 'my password is hunter2, do not store it',
+  now: '2026-06-09T14:03:00.000Z',
+});
+assert.equal(sensitiveCorrection.userCorrection, '[sensitive correction redacted]');
+assert.equal(sensitiveCorrection.reasoningMode, 'retrieve_grounded');
 
 // Retention prunes old short-lived episodes but keeps recent ones.
 recordCognitiveEpisode({
@@ -74,7 +87,7 @@ assert.ok(
 
 const report = buildEpisodeMemoryReport({ now: '2026-06-09T15:01:00.000Z' });
 assert.ok(report.totalRecent >= 3);
-assert.equal(report.corrections, 1);
+assert.equal(report.corrections, 2);
 assert.match(formatEpisodeMemoryReport(report), /Reflective Episodic Memory/);
 
 assert.equal(isEpisodeNaturalRequest('what did you learn today?'), true);

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 
+import { redactCouncilText } from './council-safety.js';
 import {
   isDatabaseInitialized,
   listCognitiveEpisodes,
@@ -11,6 +12,7 @@ import {
 import type {
   CognitiveEpisodeRecord,
   ControlPlaneChannel,
+  ReasoningMode,
   StrategyLearningSignal,
   WorkingMemoryFrame,
 } from './types.js';
@@ -35,12 +37,37 @@ const PRIVACY_JSON = JSON.stringify({
 const SENSITIVE_HINT_RE =
   /\b(health|medical|therapy|password|ssn|bank|salary|diagnos|medication|divorce|legal)\b/i;
 
+const REASONING_MODES = new Set<ReasoningMode>([
+  'fast_direct',
+  'clarify_first',
+  'retrieve_grounded',
+  'plan_stepwise',
+  'compare_counterfactuals',
+  'verify_then_act',
+  'deliberate_with_critic',
+  'defer_or_handoff',
+]);
+
 function nowIso(now?: string): string {
   return now ?? new Date().toISOString();
 }
 
 function hashId(prefix: string, value: string): string {
   return `${prefix}_${crypto.createHash('sha256').update(value).digest('hex').slice(0, 16)}`;
+}
+
+function sanitizeEpisodeText(
+  value: string | null | undefined,
+  limit: number,
+): string | null {
+  const redacted = redactCouncilText(value ?? '', limit).trim();
+  return redacted || null;
+}
+
+function normalizeReasoningMode(value: string): ReasoningMode {
+  return REASONING_MODES.has(value as ReasoningMode)
+    ? (value as ReasoningMode)
+    : 'retrieve_grounded';
 }
 
 export interface RecordCognitiveEpisodeInput {
@@ -69,31 +96,43 @@ export function recordCognitiveEpisode(
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 240);
+  const sanitizedAskSummary = sanitizeEpisodeText(askSummary, 240);
+  const sanitizedCorrection = sanitizeEpisodeText(input.userCorrection, 240);
+  const correctionSensitive =
+    !!sanitizedCorrection && SENSITIVE_HINT_RE.test(sanitizedCorrection);
   const sensitivity =
     input.sensitivity ??
-    (SENSITIVE_HINT_RE.test(askSummary) ? 'sensitive' : 'normal');
+    (SENSITIVE_HINT_RE.test(askSummary) || correctionSensitive
+      ? 'sensitive'
+      : 'normal');
+  const normalizedReasoningMode = normalizeReasoningMode(input.reasoningMode);
   const retentionPolicy =
     input.retentionPolicy ??
-    (sensitivity === 'sensitive' ? 'short_7d' : 'standard_90d');
+    (sensitivity === 'sensitive' || correctionSensitive
+      ? 'short_7d'
+      : 'standard_90d');
   const record: CognitiveEpisodeRecord = {
     episodeId: hashId('episode', `${askSummary}|${input.channel}|${createdAt}`),
     createdAt,
     askSummary:
       sensitivity === 'sensitive'
-        ? `[sensitive topic] ${askSummary.slice(0, 60)}…`
-        : askSummary,
+        ? '[sensitive topic redacted]'
+        : (sanitizedAskSummary ?? 'unknown ask'),
     channel: input.channel,
     goalId: input.goalId ?? null,
-    reasoningMode: input.reasoningMode,
+    reasoningMode: normalizedReasoningMode,
     selectedContextSummary: (
-      input.selectedContextSummary ?? 'not recorded'
+      sanitizeEpisodeText(input.selectedContextSummary, 400) ?? 'not recorded'
     ).slice(0, 400),
     actionId: input.actionId ?? null,
     result: input.result,
-    userCorrection: input.userCorrection?.slice(0, 240) ?? null,
+    userCorrection: correctionSensitive
+      ? '[sensitive correction redacted]'
+      : sanitizedCorrection,
     confidence: Math.max(0, Math.min(1, input.confidence ?? 0.5)),
-    lesson: (input.lesson ?? 'No explicit lesson recorded.').slice(0, 400),
-    followUpNeeded: input.followUpNeeded?.slice(0, 240) ?? null,
+    lesson:
+      sanitizeEpisodeText(input.lesson, 400) ?? 'No explicit lesson recorded.',
+    followUpNeeded: sanitizeEpisodeText(input.followUpNeeded, 240),
     sensitivity,
     retentionPolicy,
     privacyJson: PRIVACY_JSON,
@@ -122,8 +161,7 @@ export function recordCognitiveEpisode(
         itemIdsJson: '[]',
         selectedItemIdsJson: '[]',
         ignoredItemIdsJson: '[]',
-        recommendedReasoningMode:
-          record.reasoningMode as WorkingMemoryFrame['recommendedReasoningMode'],
+        recommendedReasoningMode: normalizedReasoningMode,
         confidence: record.confidence,
         expiresAt: frameExpiry,
         staleAfter: frameExpiry,
@@ -135,8 +173,7 @@ export function recordCognitiveEpisode(
         frameId: record.episodeId,
         createdAt,
         requestFamily: 'other',
-        selectedMode:
-          record.reasoningMode as StrategyLearningSignal['selectedMode'],
+        selectedMode: normalizedReasoningMode,
         routeKey: null,
         toolId: null,
         confidence: record.confidence,

@@ -56,7 +56,9 @@ assert.ok(voice.length < 240);
 
 assert.equal(isBlackboardNaturalRequest('what are you doing right now?'), true);
 assert.equal(isBlackboardNaturalRequest('what matters right now?'), true);
-const natural = formatBlackboardNaturalResponse('what should we do next?');
+assert.equal(isBlackboardNaturalRequest('what should we do next?'), false);
+assert.equal(isBlackboardNaturalRequest('blackboard status'), true);
+const natural = formatBlackboardNaturalResponse('blackboard status');
 assert.match(natural, /next step/i);
 
 _closeDatabase();

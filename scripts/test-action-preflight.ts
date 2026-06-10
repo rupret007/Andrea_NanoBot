@@ -87,6 +87,15 @@ const blockedTool = runActionPreflight({
 });
 assert.equal(blockedTool.verdict, 'defer');
 
+// Blocked tools defer before asking for approval, so Andrea does not request
+// approval for work it already knows it cannot execute.
+const blockedToolWithoutApproval = runActionPreflight({
+  actionSummary: 'create the dentist event on Thursday at 3pm titled "Dentist"',
+  actionType: 'calendar_write',
+  channel: 'telegram',
+});
+assert.equal(blockedToolWithoutApproval.verdict, 'defer');
+
 // High-risk verification need forces verify ahead of approval.
 upsertRealitySnapshot({
   snapshotId: 'snap_test',

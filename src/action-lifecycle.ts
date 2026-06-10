@@ -172,6 +172,8 @@ export interface TransitionActionIntentInput {
   to: ActionIntentStatus;
   reason: string;
   hasExplicitUserApproval?: boolean;
+  approvedCapability?: string | null;
+  mainControlVerified?: boolean;
   now?: string;
   persist?: boolean;
 }
@@ -197,16 +199,31 @@ export function transitionActionIntent(
       error: `illegal_transition:${existing.status}->${input.to}`,
     };
   }
-  if (
-    input.to === 'approved' &&
-    existing.approvalRequirement !== 'none' &&
-    !input.hasExplicitUserApproval
-  ) {
-    return {
-      ok: false,
-      record: existing,
-      error: 'approval_required_but_not_provided',
-    };
+  if (input.to === 'approved' && existing.approvalRequirement !== 'none') {
+    if (!input.hasExplicitUserApproval) {
+      return {
+        ok: false,
+        record: existing,
+        error: 'approval_required_but_not_provided',
+      };
+    }
+    if (!input.approvedCapability) {
+      return {
+        ok: false,
+        record: existing,
+        error: 'approval_capability_binding_required',
+      };
+    }
+    if (
+      existing.approvalRequirement === 'operator_context' &&
+      !input.mainControlVerified
+    ) {
+      return {
+        ok: false,
+        record: existing,
+        error: 'operator_context_required_but_not_verified',
+      };
+    }
   }
   const updated: ActionIntentRecord = {
     ...existing,

@@ -380,15 +380,15 @@ export function runActionPreflight(
     blockers.push(
       realityStatus === 'fail' ? realityDetail : contradictionDetail,
     );
+  } else if (toolStatus === 'fail') {
+    verdict = 'defer';
+    blockers.push(toolDetail);
   } else if (
     approvalStatus === 'fail' ||
     critic?.decision === 'stage_approval'
   ) {
     verdict = 'request_approval';
     blockers.push(approvalDetail);
-  } else if (toolStatus === 'fail') {
-    verdict = 'defer';
-    blockers.push(toolDetail);
   } else if (critic?.decision === 'clarify') {
     verdict = 'clarify';
     blockers.push('Critic agent requested clarification.');
