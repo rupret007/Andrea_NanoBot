@@ -33,11 +33,7 @@ const fakeTruth: any = {
     'Telegram user-session credentials are missing.',
   ),
   journeys: {
-    ordinary_chat: surface(
-      'near_live_only',
-      'none',
-      'Send hi in Telegram.',
-    ),
+    ordinary_chat: surface('near_live_only', 'none', 'Send hi in Telegram.'),
   },
   alexa: {
     ...surface(
@@ -101,10 +97,46 @@ assert.equal(
   byName.get('Google Calendar live write proof')?.status,
   'live_proven',
 );
-assert.equal(byName.get('Research/provider proof')?.status, 'externally_blocked');
+assert.equal(
+  byName.get('Research/provider proof')?.status,
+  'externally_blocked',
+);
 assert.ok(report.proofDebtCount >= 4);
 assert.equal(report.repoWorkRequiredCount, 0);
 assert.match(report.nextAction, /Telegram user-session/);
+
+const liveTelegramBotMissingUserSession = buildLiveProofGauntletReport({
+  now: new Date('2026-06-09T13:00:00.000Z'),
+  env: {
+    TELEGRAM_USER_API_ID: '',
+    TELEGRAM_USER_API_HASH: '',
+  },
+  truth: {
+    ...fakeTruth,
+    telegram: surface('live_proven', 'none', 'No action needed.'),
+    journeys: {
+      ordinary_chat: surface('near_live_only', 'none', 'Send hi in Telegram.'),
+    },
+  },
+});
+const liveTelegramBotEntries = new Map(
+  liveTelegramBotMissingUserSession.entries.map((entry) => [
+    entry.proofName,
+    entry,
+  ]),
+);
+assert.equal(
+  liveTelegramBotEntries.get('Telegram user-session proof')?.status,
+  'missing_config',
+);
+assert.equal(
+  liveTelegramBotEntries.get('Telegram bot proof')?.status,
+  'live_proven',
+);
+assert.equal(
+  liveTelegramBotEntries.get('Telegram bot proof')?.repoWorkRequired,
+  false,
+);
 
 const staleBlueBubbles = buildLiveProofGauntletReport({
   now: new Date('2026-06-09T13:00:00.000Z'),

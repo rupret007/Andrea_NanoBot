@@ -188,6 +188,76 @@ describe('turn agent harness', () => {
     expect(context?.platformHoldReply).toContain('Which thread should I use?');
   });
 
+  it('recognizes read-only calendar lookup asks as safe local-first turns', async () => {
+    const { isSafeReadOnlyCalendarLookupAsk } =
+      await import('./turn-agent-harness.js');
+
+    expect(isSafeReadOnlyCalendarLookupAsk("what's on my schedule")).toBe(true);
+    expect(
+      isSafeReadOnlyCalendarLookupAsk("what's on my schedule tomorrow"),
+    ).toBe(true);
+    expect(isSafeReadOnlyCalendarLookupAsk('add that to my calendar')).toBe(
+      false,
+    );
+  });
+
+  it('does not run provider council for safe read-only calendar lookups', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body || '{}')) as Record<
+            string,
+            unknown
+          >,
+        });
+        if (String(input).endsWith('/skill-evolution-report')) {
+          return new Response(JSON.stringify({ active_skills: [] }), {
+            status: 200,
+          });
+        }
+        if (String(input).endsWith('/council-run')) {
+          throw new Error('safe calendar lookup should not call council');
+        }
+        return new Response(
+          JSON.stringify({
+            task: { task_ledger_id: 'task-calendar' },
+            progress: { progress_ledger_id: 'progress-calendar' },
+            plan: { plan_id: 'plan-calendar', route: 'direct_integration' },
+            decision: {
+              decision_id: 'decision-calendar',
+              selected_route: 'direct_integration',
+              execution_posture: 'execute_now',
+              answer_strategy: 'narrow_claim',
+              selected_policy_id: 'direct_integration',
+              expected_evidence: 'strong',
+            },
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    );
+
+    const { beginTurnAgentHarness } = await import('./turn-agent-harness.js');
+    const context = await beginTurnAgentHarness({
+      turnId: 'turn-calendar-read',
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: "what's on my schedule tomorrow",
+      requestRoute: 'protected_assistant',
+    });
+
+    expect(context?.taskFamily).toBe('calendar');
+    expect(context?.providerCouncil).toBeNull();
+    expect(context?.platformHoldReply).toBeNull();
+    expect(calls.some((call) => call.url.endsWith('/council-run'))).toBe(false);
+  });
+
   it('runs provider council for complex research and operator turns', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
@@ -479,6 +549,89 @@ describe('turn agent harness', () => {
     expect(firstLine).toMatch(/\.\.\.$/);
     expect(evaluation.rewrittenText).toContain(
       "I don't see anything at 3 PM tomorrow.",
+    );
+  });
+
+  it('hides council hold jargon from user-facing block replies', async () => {
+    const { evaluateTurnReply } = await import('./turn-agent-harness.js');
+
+    const evaluation = evaluateTurnReply({
+      context: {
+        turnId: 'turn-block-council-guidance',
+        channel: 'telegram',
+        groupFolder: 'main',
+        requestRoute: 'protected_assistant',
+        taskFamily: 'calendar',
+        meaningful: true,
+        selectedSkill: {
+          skillId: 'calendar.availability',
+          taskFamily: 'calendar',
+          purpose: 'calendar',
+          inputs: [],
+          outputs: [],
+          evidenceLevel: 'strong',
+          sideEffectRisk: 'none',
+          approvalNeed: 'none',
+          failureModes: [],
+          examples: [],
+        },
+        contextCompile: {
+          readPlan: {
+            taskFamily: 'calendar',
+            readTiers: ['working'],
+            hotPath: true,
+            safeWriteClasses: [],
+            reason: 'calendar',
+            sources: [],
+          },
+          selectedSkill: {
+            skillId: 'calendar.availability',
+            taskFamily: 'calendar',
+            purpose: 'calendar',
+            inputs: [],
+            outputs: [],
+            evidenceLevel: 'strong',
+            sideEffectRisk: 'none',
+            approvalNeed: 'none',
+            failureModes: [],
+            examples: [],
+          },
+          memoryTiers: ['working'],
+          metadata: {},
+          effectiveDirectives: [],
+        },
+        deliberation: {
+          selectedRoute: 'direct_integration',
+          expectedEvidence: 'strong',
+        },
+        platformHoldReply: null,
+        providerCouncil: {
+          councilRunId: 'council-block',
+          mode: 'dual_review',
+          finalRoute: 'dual_review',
+          approvalRequired: false,
+          answerGuidance: {
+            status: 'block',
+            visibleVerdict:
+              'Hold or block until the missing requirement is resolved.',
+            answerDirection:
+              'Use the local calendar lookup path before blocking.',
+            confidence: 0.3,
+            uncertainty: 'missing proof',
+            blocker: 'calendar evidence is missing',
+            sourceMemberIds: ['openai_cloud'],
+          },
+        },
+      },
+      text: 'Calendar answer placeholder.',
+      routeKey: 'calendar_local_fast_path',
+    });
+
+    expect(evaluation.rewrittenText).toContain(
+      'I need to hold this until the blocker is resolved',
+    );
+    expect(evaluation.rewrittenText).not.toMatch(
+      /Council check|Hold or block/i,
     );
   });
 

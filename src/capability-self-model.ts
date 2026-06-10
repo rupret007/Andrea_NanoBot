@@ -325,11 +325,15 @@ export function buildCapabilitySelfModel(
         observation.outcome === 'failed' || observation.outcome === 'blocked',
     );
 
-    const reliabilityScore =
+    const reliabilityScoreBase =
       provider?.state === 'healthy'
         ? Math.max(rollup?.reliabilityScore ?? 0, 0.9)
         : (rollup?.reliabilityScore ??
           (proofStatus === 'live_proven' ? 0.9 : 0.4));
+    const reliabilityScore =
+      proofStatus === 'live_proven'
+        ? Math.max(reliabilityScoreBase, 0.9)
+        : reliabilityScoreBase;
     const enabled =
       proofStatus !== 'missing_config' && proofStatus !== 'externally_blocked';
     const confidence = Math.max(

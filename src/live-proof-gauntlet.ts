@@ -172,11 +172,14 @@ export function buildLiveProofGauntletReport(
   });
   const telegramBot = entryFromSurface({
     proofName: 'Telegram bot proof',
-    surface: truth.journeys.ordinary_chat,
-    evidenceIds: ['proof:telegram_bot', 'journey:ordinary_chat'],
+    surface: truth.telegram,
+    evidenceIds: ['proof:telegram_bot', 'surface:telegram'],
     nextStepOverride:
-      truth.journeys.ordinary_chat.nextAction ||
-      'Send `hi` or `what am I forgetting` in Telegram, then rerun npm run debug:pilot.',
+      truth.telegram.proofState === 'live_proven'
+        ? 'No action needed.'
+        : truth.journeys.ordinary_chat.nextAction ||
+          'Send `hi` or `what am I forgetting` in Telegram, then rerun npm run debug:pilot.',
+    repoWorkRequiredOverride: false,
   });
   const alexa = entryFromSurface({
     proofName: 'Alexa signed IntentRequest proof',

@@ -25,6 +25,7 @@ import {
   detectThinkingControlTrigger,
   sanitizeCouncilIntentSnippet,
 } from './thinking-controls.js';
+import { planCalendarAssistantLookup } from './calendar-assistant.js';
 import { recordCouncilOutcomeSignal } from './council-quality.js';
 import { classifyCouncilLearningCandidate } from './council-learning-classifier.js';
 import {
@@ -611,6 +612,12 @@ function shouldRunProviderCouncil(input: {
   deliberation?: AndreaPlatformDeliberationResult | null;
 }): boolean {
   const text = normalize(input.text);
+  if (
+    input.taskFamily === 'calendar' &&
+    isSafeReadOnlyCalendarLookupAsk(input.text)
+  ) {
+    return false;
+  }
   const thinkingControl = detectThinkingControlPreference(input.text);
   const highRiskRequired =
     input.taskFamily === 'operator' ||
@@ -658,6 +665,13 @@ function shouldRunProviderCouncil(input: {
   return (
     input.deliberation?.executionPosture === 'learn_first' ||
     input.deliberation?.executionPosture === 'approval_first'
+  );
+}
+
+export function isSafeReadOnlyCalendarLookupAsk(text: string): boolean {
+  if (!planCalendarAssistantLookup(text)) return false;
+  return !/\b(?:add|create|book|move|reschedule|cancel|delete|remove|change|edit|update)\b[\s\S]{0,80}\b(?:calendar|event|meeting|appointment|call)\b/i.test(
+    text,
   );
 }
 
@@ -1043,7 +1057,7 @@ export function applyCouncilGuidanceToReply(
   }
   if (guidance.status === 'block' && guidance.blocker) {
     return {
-      text: `${guidanceLine}\n\nI need to hold this until the blocker is resolved: ${guidance.blocker}`,
+      text: `I need to hold this until the blocker is resolved: ${guidance.blocker}`,
       applied: true,
       flags: ['provider_council_guidance_applied', 'provider_council_block'],
     };

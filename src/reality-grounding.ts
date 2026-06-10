@@ -782,7 +782,6 @@ function buildPerceptionPlan(input: {
     });
   }
   for (const entry of input.proofReport.entries) {
-    if (entry.status === 'live_proven') continue;
     closureSteps.push({
       stepId: hashId('proof:closure', `${input.snapshotId}|${entry.proofId}`),
       planId: hashId(

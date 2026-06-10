@@ -6,6 +6,8 @@ import {
   listCapabilityStates,
   upsertToolReliabilityRollup,
 } from '../src/db.js';
+import { buildLiveProofGauntletReport } from '../src/live-proof-gauntlet.js';
+import { buildRealityGroundingReport } from '../src/reality-grounding.js';
 import {
   buildCapabilitySelfModel,
   formatCapabilityNaturalResponse,
@@ -40,6 +42,83 @@ if (!process.env.TELEGRAM_USER_API_ID || !process.env.TELEGRAM_USER_API_HASH) {
   assert.match(userSession.currentBlocker ?? '', /external\/config debt/);
   assert.equal(userSession.enabled, false);
 }
+
+function surface(
+  proofState: 'live_proven' | 'near_live_only' | 'externally_blocked',
+  blockerOwner: 'none' | 'repo_side' | 'external',
+  nextAction: string,
+  blocker = '',
+) {
+  return {
+    proofState,
+    blocker,
+    blockerOwner,
+    nextAction,
+    detail: `${proofState} detail`,
+  };
+}
+
+buildRealityGroundingReport({
+  generatedAt: '2026-06-09T16:00:30.000Z',
+  persist: true,
+  proofReport: buildLiveProofGauntletReport({
+    now: new Date('2026-06-09T16:00:30.000Z'),
+    env: { TELEGRAM_USER_API_ID: '', TELEGRAM_USER_API_HASH: '' },
+    truth: {
+      telegram: surface('live_proven', 'none', 'No action needed.'),
+      journeys: {
+        ordinary_chat: surface(
+          'near_live_only',
+          'none',
+          'Send hi in Telegram.',
+        ),
+      },
+      alexa: {
+        ...surface(
+          'near_live_only',
+          'external',
+          'Use Alexa simulator/device for a signed IntentRequest.',
+        ),
+        lastHandledProofAt: 'none',
+        lastSignedRequestAt: 'none',
+        proofFreshness: 'none',
+      },
+      bluebubbles: {
+        ...surface(
+          'near_live_only',
+          'external',
+          'Complete the same-thread proof.',
+        ),
+        messageActionProofState: 'none',
+        messageActionProofAt: 'none',
+        messageActionProofChatJid: 'none',
+      },
+      googleCalendar: surface('live_proven', 'none', 'No action needed.'),
+      research: surface('live_proven', 'none', 'No action needed.'),
+      imageGeneration: surface('live_proven', 'none', 'No action needed.'),
+    } as any,
+  }),
+});
+const liveTelegramCapabilityReport = buildCapabilitySelfModel({
+  now: '2026-06-09T16:00:31.000Z',
+  persist: false,
+  env: {},
+  envFileValues: {
+    TELEGRAM_BOT_TOKEN: 'set',
+  },
+});
+const telegramSend = liveTelegramCapabilityReport.states.find(
+  (state) => state.capabilityId === 'messages.send.telegram',
+);
+const telegramUserSession = liveTelegramCapabilityReport.states.find(
+  (state) => state.capabilityId === 'telegram.user_session',
+);
+assert.ok(telegramSend);
+assert.equal(telegramSend.proofStatus, 'live_proven');
+assert.equal(telegramSend.currentBlocker, null);
+assert.ok(telegramSend.reliabilityScore >= 0.9);
+assert.ok(telegramUserSession);
+assert.equal(telegramUserSession.proofStatus, 'missing_config');
 
 const fileBackedConfigReport = buildCapabilitySelfModel({
   now: '2026-06-09T16:01:00.000Z',

@@ -192,6 +192,7 @@ import {
 import {
   beginTurnAgentHarness,
   evaluateTurnReply,
+  isSafeReadOnlyCalendarLookupAsk,
   reflectTurnAgentOutcome,
   type TurnAgentHarnessContext,
 } from './turn-agent-harness.js';
@@ -3770,6 +3771,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // state actually accumulates per actor instead of staying empty.
       actorId: latestUserMessage?.sender || chatJid,
     });
+  const shouldDeferPlatformHoldForLocalCalendarLookup =
+    (requestPolicy.route === 'direct_assistant' ||
+      requestPolicy.route === 'protected_assistant') &&
+    isSafeReadOnlyCalendarLookupAsk(lastContent);
   const sendAssistantReplyWithFeedback = async (params: {
     text: string;
     sendOptions?: SendMessageOptions;
@@ -3937,6 +3942,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
   if (
     turnAgentHarness?.platformHoldReply &&
+    !shouldDeferPlatformHoldForLocalCalendarLookup &&
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant')
   ) {
