@@ -73,6 +73,7 @@ import {
   parseAlexaSessionPayload,
   saveAlexaPendingSession,
 } from './alexa-session.js';
+import type { PendingCalendarReminderState } from './google-calendar-followthrough.js';
 import {
   acceptProposedProfileFact,
   handlePersonalizationCommand,

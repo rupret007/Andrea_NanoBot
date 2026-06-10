@@ -14,6 +14,7 @@ import { buildLiveProofGauntletReport } from '../src/live-proof-gauntlet.js';
 import { buildRealityGroundingReport } from '../src/reality-grounding.js';
 import { buildHierarchicalPlannerReport } from '../src/goal-planner.js';
 import { buildProactiveOpportunityReport } from '../src/proactive-opportunities.js';
+import { buildMetacognitionDoctorReport } from '../src/metacognition.js';
 import type { FieldTrialSurfaceTruth } from '../src/field-trial-readiness.js';
 import type { PilotJourneyId } from '../src/types.js';
 
@@ -203,6 +204,11 @@ async function main(): Promise<void> {
     requestText: 'what should I do next for pilot readiness?',
     persist: false,
   });
+  const metacognition = buildMetacognitionDoctorReport({
+    requestText: 'what should I do next for pilot readiness?',
+    channel: 'operator',
+    persist: false,
+  });
   const opportunities = buildProactiveOpportunityReport({
     reality,
     persist: false,
@@ -383,6 +389,25 @@ async function main(): Promise<void> {
     `- Verification needs: ${reality.verificationNeeds.length}`,
     `- Proof tasks are repo bugs: ${reality.proofDebt.repoWorkRequired > 0 ? 'yes' : 'no'}`,
     `- Next reality step: ${reality.nextAction}`,
+    '',
+    '*Metacognitive Routing*',
+    `- Mode: ${metacognition.decision?.mode || 'none'}`,
+    `- Confidence: ${
+      metacognition.calibration
+        ? `${metacognition.calibration.label} (${metacognition.calibration.score.toFixed(2)})`
+        : 'unknown'
+    }`,
+    `- Active focus: ${metacognition.focus?.primaryFocus || 'none'}`,
+    `- Warnings: ${
+      metacognition.warnings.length
+        ? metacognition.warnings
+            .slice(0, 5)
+            .map((warning) => warning.warningKind)
+            .join(', ')
+        : 'none'
+    }`,
+    `- Strategy signals: ${metacognition.strategySignals.length}`,
+    `- Next safe action: ${metacognition.nextAction}`,
     '',
     '*Alexa Utterance Review*',
     `- Signals tracked: ${alexaReview.totalSignals}`,

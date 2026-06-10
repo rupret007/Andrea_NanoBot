@@ -2161,6 +2161,29 @@ export const OPERATOR_SCRIPT_SURFACES: readonly CommandSurfaceEntry[] = [
       'Redacted hierarchical goals, causal beliefs, counterfactual options, proactive opportunities, proof blockers, and next safe action.',
   },
   {
+    id: 'debug_metacognition',
+    preferredAlias: 'npm run debug:metacognition',
+    acceptedAliases: [
+      'npm run debug:working-memory',
+      'npm run debug:working-memory -- --json',
+      'npm run debug:metacognition',
+      'npm run debug:metacognition -- --json',
+      'npm run debug:deliberation',
+      'npm run debug:deliberation -- --json',
+      'npm run test:working-memory',
+      'npm run test:metacognition',
+      'npm run test:deliberation',
+      'npm run test:confidence-calibration',
+    ],
+    audience: 'operator',
+    surfaceKind: 'script',
+    channelScope: ['operator'],
+    discoverability: ['operator_docs'],
+    truthClass: 'operator_only',
+    summary:
+      'Redacted working memory, reasoning mode, confidence calibration, deliberation summary, warnings, and strategy learning signals.',
+  },
+  {
     id: 'debug_repair',
     preferredAlias: 'npm run debug:repair',
     acceptedAliases: [

@@ -139,6 +139,9 @@
     "debug:goals": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-goals.ts",
     "debug:planner": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-planner.ts",
     "debug:opportunities": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-opportunities.ts",
+    "debug:working-memory": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-working-memory.ts",
+    "debug:metacognition": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-metacognition.ts",
+    "debug:deliberation": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-deliberation.ts",
     "proof:live": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-proof-gauntlet.ts",
     "proof:guided": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/proof-guided.ts",
     "improvement:patch-plan": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-patch-workbench.ts --dry-run",
@@ -190,7 +193,11 @@
     "test:skill-library": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-skill-library.ts",
     "test:learning-controls": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-learning-controls.ts",
     "test:learning-privacy": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-learning-privacy.ts",
-    "test:self-improvement": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-self-improvement.ts"
+    "test:self-improvement": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-self-improvement.ts",
+    "test:working-memory": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-working-memory.ts",
+    "test:metacognition": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-metacognition.ts",
+    "test:deliberation": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-deliberation.ts",
+    "test:confidence-calibration": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-confidence-calibration.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

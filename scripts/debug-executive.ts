@@ -20,6 +20,10 @@ import {
   buildHierarchicalPlannerReport,
   formatGoalPlannerReport,
 } from '../src/goal-planner.js';
+import {
+  buildMetacognitionDoctorReport,
+  formatMetacognitionReport,
+} from '../src/metacognition.js';
 
 async function main(): Promise<void> {
   initDatabase();
@@ -41,10 +45,15 @@ async function main(): Promise<void> {
     requestText: 'executive goal and planning summary',
     persist: false,
   });
+  const metacognition = buildMetacognitionDoctorReport({
+    requestText: 'executive route and confidence summary',
+    channel: 'operator',
+    persist: false,
+  });
   if (json) {
     console.log(
       JSON.stringify(
-        { executive, planner, reliability, improvement, reality },
+        { executive, planner, metacognition, reliability, improvement, reality },
         null,
         2,
       ),
@@ -54,6 +63,8 @@ async function main(): Promise<void> {
   console.log(formatCognitiveExecutiveReport(executive));
   console.log('');
   console.log(formatGoalPlannerReport(planner));
+  console.log('');
+  console.log(formatMetacognitionReport(metacognition));
   console.log('');
   console.log(formatRealityGroundingReport(reality));
   console.log('');

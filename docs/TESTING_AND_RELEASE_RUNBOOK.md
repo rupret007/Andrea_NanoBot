@@ -615,6 +615,14 @@ Hierarchical Goal Planning sits above Reality Grounding and Cognitive Executive:
 
 Never treat proactive opportunities as background autonomy. They are normal-reply suggestions only.
 
+Metacognitive Workspace sits above the Cognitive Executive and Goal Planner:
+
+- `debug:working-memory` shows the current bounded working-memory frame, selected context, ignored context, focus reason, freshness, confidence, and next safe action
+- `debug:metacognition` shows the selected reasoning mode, confidence calibration, warnings, and recent strategy signals
+- `debug:deliberation` shows candidate routes, critic objections, final recommendation, fallback, approval boundary, and confirms hidden reasoning is not stored
+- focused v31 gate: `test:working-memory`, `test:metacognition`, `test:deliberation`, and `test:confidence-calibration`
+- natural checks such as `are you sure?`, `what context are you using?`, `think harder`, and `don't overthink it` should affect mode/confidence without bypassing existing approval gates
+
 Never claim `live_proven` from harness-only evidence. Mainline changes remain human-governed; the workbench does not auto-merge, auto-push, restart services, send messages, write calendars, change credentials, or mutate live integrations.
 - queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud
 - if the miss is primarily an external blocker or manual sync step, Andrea should keep the issue saved and explain that honestly instead of auto-starting a repo fix

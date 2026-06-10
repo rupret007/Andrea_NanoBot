@@ -124,8 +124,30 @@ Operator checks:
 - `npm run debug:goals`
 - `npm run debug:planner`
 - `npm run debug:opportunities`
+- `npm run debug:working-memory`
+- `npm run debug:metacognition`
+- `npm run debug:deliberation`
 
 This is bounded goal-directed reasoning, not AGI or autonomous control. Goals and opportunities stage or suggest work through existing systems; they do not bypass approval gates.
+
+## Metacognitive Reasoning
+
+Andrea keeps a compact working-memory frame for high-value turns so it can decide what context matters, how hard to reason, how confident to sound, and when to clarify or verify first.
+
+Useful natural controls:
+
+- `are you sure?`
+- `what are you basing that on?`
+- `what context are you using?`
+- `what are you unsure about?`
+- `what would make you more confident?`
+- `think harder`
+- `keep it simple`
+- `don't overthink it`
+- `use only what you know for sure`
+- `reset current focus`
+
+This is bounded metacognition, not hidden chain-of-thought exposure. Andrea may show a concise decision summary, confidence reason, context summary, or verification path, but it does not store or reveal raw private bodies, prompts, provider debates, hidden reasoning, secrets, or raw tool output.
 
 ## Repair Status And Tool Reliability
 

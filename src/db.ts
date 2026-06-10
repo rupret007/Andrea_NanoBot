@@ -186,10 +186,18 @@ import {
   CognitiveProgramRun,
   CognitiveWorkspaceContextBlock,
   CognitiveWorkspacePacket,
+  AttentionFocus,
   CognitiveExecutiveRunRecord,
   CognitiveExecutiveToolChoice,
   CognitiveReflectionSignal,
   CognitiveWorldSnapshot,
+  ConfidenceCalibration,
+  DeliberationRecord,
+  GlobalWorkspaceSnapshot,
+  MemoryItem,
+  ReasoningModeDecision,
+  StrategyLearningSignal,
+  WorkingMemoryFrame,
   AgenticEvalScenarioResult,
   CriticReviewRecord,
   ReliabilityObservation,
@@ -3542,6 +3550,163 @@ function createSchema(database: Database.Database): void {
       ON cognitive_executive_reflection_signals(run_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_cognitive_executive_reflections_friction
       ON cognitive_executive_reflection_signals(friction_key, created_at DESC);
+    CREATE TABLE IF NOT EXISTS working_memory_frames (
+      frame_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      group_folder TEXT,
+      chat_jid TEXT,
+      thread_id TEXT,
+      request_summary TEXT NOT NULL,
+      current_ask_summary TEXT NOT NULL,
+      active_goal_id TEXT,
+      active_object_summary TEXT NOT NULL,
+      item_ids_json TEXT NOT NULL,
+      selected_item_ids_json TEXT NOT NULL,
+      ignored_item_ids_json TEXT NOT NULL,
+      recommended_reasoning_mode TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      expires_at TEXT NOT NULL,
+      stale_after TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_working_memory_frames_created
+      ON working_memory_frames(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_working_memory_frames_channel
+      ON working_memory_frames(channel, group_folder, created_at DESC);
+    CREATE TABLE IF NOT EXISTS working_memory_items (
+      item_id TEXT PRIMARY KEY,
+      frame_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      item_kind TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      relevance REAL NOT NULL,
+      freshness TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      source TEXT NOT NULL,
+      source_id TEXT,
+      sensitivity TEXT NOT NULL,
+      include_in_user_answer INTEGER NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (frame_id) REFERENCES working_memory_frames(frame_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_working_memory_items_frame
+      ON working_memory_items(frame_id, relevance DESC, created_at DESC);
+    CREATE TABLE IF NOT EXISTS attention_focuses (
+      focus_id TEXT PRIMARY KEY,
+      frame_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      primary_focus TEXT NOT NULL,
+      secondary_focus TEXT,
+      ignored_context_json TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      expected_next_step TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (frame_id) REFERENCES working_memory_frames(frame_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_attention_focuses_frame
+      ON attention_focuses(frame_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS global_workspace_snapshots (
+      workspace_id TEXT PRIMARY KEY,
+      frame_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      request_summary TEXT NOT NULL,
+      active_goal_id TEXT,
+      selected_item_ids_json TEXT NOT NULL,
+      route_candidates_json TEXT NOT NULL,
+      uncertainty_json TEXT NOT NULL,
+      proof_state_json TEXT NOT NULL,
+      tool_availability_json TEXT NOT NULL,
+      safety_concerns_json TEXT NOT NULL,
+      selected_reasoning_mode TEXT NOT NULL,
+      recommended_next_action TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (frame_id) REFERENCES working_memory_frames(frame_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_global_workspace_snapshots_frame
+      ON global_workspace_snapshots(frame_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS reasoning_mode_decisions (
+      decision_id TEXT PRIMARY KEY,
+      frame_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      mode_reason TEXT NOT NULL,
+      required_context_json TEXT NOT NULL,
+      allowed_tools_json TEXT NOT NULL,
+      approval_requirement TEXT NOT NULL,
+      output_shape TEXT NOT NULL,
+      failure_mode TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      warnings_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (frame_id) REFERENCES working_memory_frames(frame_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_reasoning_mode_decisions_frame
+      ON reasoning_mode_decisions(frame_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS confidence_calibrations (
+      calibration_id TEXT PRIMARY KEY,
+      frame_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      label TEXT NOT NULL,
+      score REAL NOT NULL,
+      proof_freshness_score REAL NOT NULL,
+      tool_reliability_score REAL NOT NULL,
+      reality_confidence_score REAL NOT NULL,
+      missing_info_penalty REAL NOT NULL,
+      contradiction_penalty REAL NOT NULL,
+      route_history_score REAL NOT NULL,
+      skill_reliability_score REAL NOT NULL,
+      correction_penalty REAL NOT NULL,
+      reason TEXT NOT NULL,
+      what_would_increase_confidence TEXT NOT NULL,
+      action_allowed TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (frame_id) REFERENCES working_memory_frames(frame_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_confidence_calibrations_frame
+      ON confidence_calibrations(frame_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS deliberation_records (
+      deliberation_id TEXT PRIMARY KEY,
+      frame_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      candidate_routes_json TEXT NOT NULL,
+      critic_objections_json TEXT NOT NULL,
+      final_recommendation TEXT NOT NULL,
+      fallback TEXT NOT NULL,
+      approval_required INTEGER NOT NULL,
+      hidden_reasoning_stored INTEGER NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (frame_id) REFERENCES working_memory_frames(frame_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_deliberation_records_frame
+      ON deliberation_records(frame_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS strategy_learning_signals (
+      signal_id TEXT PRIMARY KEY,
+      frame_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      request_family TEXT NOT NULL,
+      selected_mode TEXT NOT NULL,
+      route_key TEXT,
+      tool_id TEXT,
+      confidence REAL NOT NULL,
+      warning_kinds_json TEXT NOT NULL,
+      user_response TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      fallback_used INTEGER NOT NULL,
+      strategy_adjustment TEXT NOT NULL,
+      improvement_hint TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (frame_id) REFERENCES working_memory_frames(frame_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_strategy_learning_signals_frame
+      ON strategy_learning_signals(frame_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_strategy_learning_signals_mode
+      ON strategy_learning_signals(selected_mode, outcome, created_at DESC);
     CREATE TABLE IF NOT EXISTS tool_reliability_subjects (
       subject_id TEXT PRIMARY KEY,
       subject_kind TEXT NOT NULL,
@@ -23597,6 +23762,864 @@ export function listCognitiveReflectionSignals(
     Parameters<typeof mapCognitiveReflectionSignalRow>[0]
   >;
   return rows.map((row) => mapCognitiveReflectionSignalRow(row));
+}
+
+function mapWorkingMemoryFrameRow(row: {
+  frame_id: string;
+  created_at: string;
+  updated_at: string;
+  channel: WorkingMemoryFrame['channel'];
+  group_folder: string | null;
+  chat_jid: string | null;
+  thread_id: string | null;
+  request_summary: string;
+  current_ask_summary: string;
+  active_goal_id: string | null;
+  active_object_summary: string;
+  item_ids_json: string;
+  selected_item_ids_json: string;
+  ignored_item_ids_json: string;
+  recommended_reasoning_mode: WorkingMemoryFrame['recommendedReasoningMode'];
+  confidence: number;
+  expires_at: string;
+  stale_after: string;
+  privacy_json: string;
+}): WorkingMemoryFrame {
+  return {
+    frameId: row.frame_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    channel: row.channel,
+    groupFolder: row.group_folder,
+    chatJid: row.chat_jid,
+    threadId: row.thread_id,
+    requestSummary: row.request_summary,
+    currentAskSummary: row.current_ask_summary,
+    activeGoalId: row.active_goal_id,
+    activeObjectSummary: row.active_object_summary,
+    itemIdsJson: row.item_ids_json,
+    selectedItemIdsJson: row.selected_item_ids_json,
+    ignoredItemIdsJson: row.ignored_item_ids_json,
+    recommendedReasoningMode: row.recommended_reasoning_mode,
+    confidence: row.confidence,
+    expiresAt: row.expires_at,
+    staleAfter: row.stale_after,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertWorkingMemoryFrame(record: WorkingMemoryFrame): void {
+  assertOptionalGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO working_memory_frames (
+        frame_id, created_at, updated_at, channel, group_folder, chat_jid,
+        thread_id, request_summary, current_ask_summary, active_goal_id,
+        active_object_summary, item_ids_json, selected_item_ids_json,
+        ignored_item_ids_json, recommended_reasoning_mode, confidence,
+        expires_at, stale_after, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(frame_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        channel = excluded.channel,
+        group_folder = excluded.group_folder,
+        chat_jid = excluded.chat_jid,
+        thread_id = excluded.thread_id,
+        request_summary = excluded.request_summary,
+        current_ask_summary = excluded.current_ask_summary,
+        active_goal_id = excluded.active_goal_id,
+        active_object_summary = excluded.active_object_summary,
+        item_ids_json = excluded.item_ids_json,
+        selected_item_ids_json = excluded.selected_item_ids_json,
+        ignored_item_ids_json = excluded.ignored_item_ids_json,
+        recommended_reasoning_mode = excluded.recommended_reasoning_mode,
+        confidence = excluded.confidence,
+        expires_at = excluded.expires_at,
+        stale_after = excluded.stale_after,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.frameId,
+    record.createdAt,
+    record.updatedAt,
+    record.channel,
+    record.groupFolder || null,
+    record.chatJid || null,
+    record.threadId || null,
+    redactStoredCognitiveMetadata(record.requestSummary, 900),
+    redactStoredCognitiveMetadata(record.currentAskSummary, 900),
+    record.activeGoalId || null,
+    redactStoredCognitiveMetadata(record.activeObjectSummary, 900),
+    sanitizeStoredIdArrayJson(record.itemIdsJson, 4800),
+    sanitizeStoredIdArrayJson(record.selectedItemIdsJson, 3200),
+    sanitizeStoredIdArrayJson(record.ignoredItemIdsJson, 3200),
+    record.recommendedReasoningMode,
+    record.confidence,
+    record.expiresAt,
+    record.staleAfter,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listWorkingMemoryFrames(
+  params: {
+    groupFolder?: string | null;
+    channel?: WorkingMemoryFrame['channel'];
+    limit?: number;
+  } = {},
+): WorkingMemoryFrame[] {
+  if (!isDatabaseInitialized()) return [];
+  assertOptionalGroupFolder(params.groupFolder);
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.groupFolder) {
+    clauses.push('group_folder = ?');
+    args.push(params.groupFolder);
+  }
+  if (params.channel) {
+    clauses.push('channel = ?');
+    args.push(params.channel);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM working_memory_frames
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapWorkingMemoryFrameRow>[0]>;
+  return rows
+    .filter((row) => !row.group_folder || isValidGroupFolder(row.group_folder))
+    .map((row) => mapWorkingMemoryFrameRow(row));
+}
+
+function mapMemoryItemRow(row: {
+  item_id: string;
+  frame_id: string;
+  created_at: string;
+  item_kind: MemoryItem['itemKind'];
+  summary: string;
+  relevance: number;
+  freshness: MemoryItem['freshness'];
+  confidence: number;
+  source: string;
+  source_id: string | null;
+  sensitivity: MemoryItem['sensitivity'];
+  include_in_user_answer: number;
+  evidence_refs_json: string;
+  privacy_json: string;
+}): MemoryItem {
+  return {
+    itemId: row.item_id,
+    frameId: row.frame_id,
+    createdAt: row.created_at,
+    itemKind: row.item_kind,
+    summary: row.summary,
+    relevance: row.relevance,
+    freshness: row.freshness,
+    confidence: row.confidence,
+    source: row.source,
+    sourceId: row.source_id,
+    sensitivity: row.sensitivity,
+    includeInUserAnswer: row.include_in_user_answer === 1,
+    evidenceRefsJson: row.evidence_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertMemoryItem(record: MemoryItem): void {
+  db.prepare(
+    `
+      INSERT INTO working_memory_items (
+        item_id, frame_id, created_at, item_kind, summary, relevance,
+        freshness, confidence, source, source_id, sensitivity,
+        include_in_user_answer, evidence_refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(item_id) DO UPDATE SET
+        item_kind = excluded.item_kind,
+        summary = excluded.summary,
+        relevance = excluded.relevance,
+        freshness = excluded.freshness,
+        confidence = excluded.confidence,
+        source = excluded.source,
+        source_id = excluded.source_id,
+        sensitivity = excluded.sensitivity,
+        include_in_user_answer = excluded.include_in_user_answer,
+        evidence_refs_json = excluded.evidence_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.itemId,
+    record.frameId,
+    record.createdAt,
+    record.itemKind,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    record.relevance,
+    record.freshness,
+    record.confidence,
+    redactStoredCognitiveMetadata(record.source, 240),
+    record.sourceId || null,
+    record.sensitivity,
+    record.includeInUserAnswer ? 1 : 0,
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listMemoryItems(
+  params: {
+    frameId?: string;
+    includeInUserAnswer?: boolean;
+    limit?: number;
+  } = {},
+): MemoryItem[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.frameId) {
+    clauses.push('frame_id = ?');
+    args.push(params.frameId);
+  }
+  if (typeof params.includeInUserAnswer === 'boolean') {
+    clauses.push('include_in_user_answer = ?');
+    args.push(params.includeInUserAnswer ? 1 : 0);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM working_memory_items
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY relevance DESC, confidence DESC, created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapMemoryItemRow>[0]>;
+  return rows.map((row) => mapMemoryItemRow(row));
+}
+
+function mapAttentionFocusRow(row: {
+  focus_id: string;
+  frame_id: string;
+  created_at: string;
+  primary_focus: string;
+  secondary_focus: string | null;
+  ignored_context_json: string;
+  reason: string;
+  expected_next_step: string;
+  privacy_json: string;
+}): AttentionFocus {
+  return {
+    focusId: row.focus_id,
+    frameId: row.frame_id,
+    createdAt: row.created_at,
+    primaryFocus: row.primary_focus,
+    secondaryFocus: row.secondary_focus,
+    ignoredContextJson: row.ignored_context_json,
+    reason: row.reason,
+    expectedNextStep: row.expected_next_step,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertAttentionFocus(record: AttentionFocus): void {
+  db.prepare(
+    `
+      INSERT INTO attention_focuses (
+        focus_id, frame_id, created_at, primary_focus, secondary_focus,
+        ignored_context_json, reason, expected_next_step, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(focus_id) DO UPDATE SET
+        primary_focus = excluded.primary_focus,
+        secondary_focus = excluded.secondary_focus,
+        ignored_context_json = excluded.ignored_context_json,
+        reason = excluded.reason,
+        expected_next_step = excluded.expected_next_step,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.focusId,
+    record.frameId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.primaryFocus, 700),
+    record.secondaryFocus
+      ? redactStoredCognitiveMetadata(record.secondaryFocus, 700)
+      : null,
+    redactStoredCognitiveMetadata(record.ignoredContextJson, 2400),
+    redactStoredCognitiveMetadata(record.reason, 900),
+    redactStoredCognitiveMetadata(record.expectedNextStep, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listAttentionFocuses(
+  params: { frameId?: string; limit?: number } = {},
+): AttentionFocus[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.frameId) {
+    clauses.push('frame_id = ?');
+    args.push(params.frameId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM attention_focuses
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapAttentionFocusRow>[0]>;
+  return rows.map((row) => mapAttentionFocusRow(row));
+}
+
+function mapGlobalWorkspaceSnapshotRow(row: {
+  workspace_id: string;
+  frame_id: string;
+  created_at: string;
+  request_summary: string;
+  active_goal_id: string | null;
+  selected_item_ids_json: string;
+  route_candidates_json: string;
+  uncertainty_json: string;
+  proof_state_json: string;
+  tool_availability_json: string;
+  safety_concerns_json: string;
+  selected_reasoning_mode: GlobalWorkspaceSnapshot['selectedReasoningMode'];
+  recommended_next_action: string;
+  evidence_refs_json: string;
+  privacy_json: string;
+}): GlobalWorkspaceSnapshot {
+  return {
+    workspaceId: row.workspace_id,
+    frameId: row.frame_id,
+    createdAt: row.created_at,
+    requestSummary: row.request_summary,
+    activeGoalId: row.active_goal_id,
+    selectedItemIdsJson: row.selected_item_ids_json,
+    routeCandidatesJson: row.route_candidates_json,
+    uncertaintyJson: row.uncertainty_json,
+    proofStateJson: row.proof_state_json,
+    toolAvailabilityJson: row.tool_availability_json,
+    safetyConcernsJson: row.safety_concerns_json,
+    selectedReasoningMode: row.selected_reasoning_mode,
+    recommendedNextAction: row.recommended_next_action,
+    evidenceRefsJson: row.evidence_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertGlobalWorkspaceSnapshot(
+  record: GlobalWorkspaceSnapshot,
+): void {
+  db.prepare(
+    `
+      INSERT INTO global_workspace_snapshots (
+        workspace_id, frame_id, created_at, request_summary, active_goal_id,
+        selected_item_ids_json, route_candidates_json, uncertainty_json,
+        proof_state_json, tool_availability_json, safety_concerns_json,
+        selected_reasoning_mode, recommended_next_action, evidence_refs_json,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_id) DO UPDATE SET
+        request_summary = excluded.request_summary,
+        active_goal_id = excluded.active_goal_id,
+        selected_item_ids_json = excluded.selected_item_ids_json,
+        route_candidates_json = excluded.route_candidates_json,
+        uncertainty_json = excluded.uncertainty_json,
+        proof_state_json = excluded.proof_state_json,
+        tool_availability_json = excluded.tool_availability_json,
+        safety_concerns_json = excluded.safety_concerns_json,
+        selected_reasoning_mode = excluded.selected_reasoning_mode,
+        recommended_next_action = excluded.recommended_next_action,
+        evidence_refs_json = excluded.evidence_refs_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.workspaceId,
+    record.frameId,
+    record.createdAt,
+    redactStoredCognitiveMetadata(record.requestSummary, 900),
+    record.activeGoalId || null,
+    sanitizeStoredIdArrayJson(record.selectedItemIdsJson, 3200),
+    redactStoredCognitiveMetadata(record.routeCandidatesJson, 3200),
+    redactStoredCognitiveMetadata(record.uncertaintyJson, 3200),
+    redactStoredCognitiveMetadata(record.proofStateJson, 3200),
+    redactStoredCognitiveMetadata(record.toolAvailabilityJson, 3200),
+    redactStoredCognitiveMetadata(record.safetyConcernsJson, 3200),
+    record.selectedReasoningMode,
+    redactStoredCognitiveMetadata(record.recommendedNextAction, 900),
+    sanitizeStoredIdArrayJson(record.evidenceRefsJson, 3200),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listGlobalWorkspaceSnapshots(
+  params: { frameId?: string; limit?: number } = {},
+): GlobalWorkspaceSnapshot[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.frameId) {
+    clauses.push('frame_id = ?');
+    args.push(params.frameId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM global_workspace_snapshots
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapGlobalWorkspaceSnapshotRow>[0]>;
+  return rows.map((row) => mapGlobalWorkspaceSnapshotRow(row));
+}
+
+function mapReasoningModeDecisionRow(row: {
+  decision_id: string;
+  frame_id: string;
+  created_at: string;
+  mode: ReasoningModeDecision['mode'];
+  mode_reason: string;
+  required_context_json: string;
+  allowed_tools_json: string;
+  approval_requirement: ReasoningModeDecision['approvalRequirement'];
+  output_shape: ReasoningModeDecision['outputShape'];
+  failure_mode: string;
+  confidence: number;
+  warnings_json: string;
+  privacy_json: string;
+}): ReasoningModeDecision {
+  return {
+    decisionId: row.decision_id,
+    frameId: row.frame_id,
+    createdAt: row.created_at,
+    mode: row.mode,
+    modeReason: row.mode_reason,
+    requiredContextJson: row.required_context_json,
+    allowedToolsJson: row.allowed_tools_json,
+    approvalRequirement: row.approval_requirement,
+    outputShape: row.output_shape,
+    failureMode: row.failure_mode,
+    confidence: row.confidence,
+    warningsJson: row.warnings_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertReasoningModeDecision(
+  record: ReasoningModeDecision,
+): void {
+  db.prepare(
+    `
+      INSERT INTO reasoning_mode_decisions (
+        decision_id, frame_id, created_at, mode, mode_reason,
+        required_context_json, allowed_tools_json, approval_requirement,
+        output_shape, failure_mode, confidence, warnings_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(decision_id) DO UPDATE SET
+        mode = excluded.mode,
+        mode_reason = excluded.mode_reason,
+        required_context_json = excluded.required_context_json,
+        allowed_tools_json = excluded.allowed_tools_json,
+        approval_requirement = excluded.approval_requirement,
+        output_shape = excluded.output_shape,
+        failure_mode = excluded.failure_mode,
+        confidence = excluded.confidence,
+        warnings_json = excluded.warnings_json,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.decisionId,
+    record.frameId,
+    record.createdAt,
+    record.mode,
+    redactStoredCognitiveMetadata(record.modeReason, 900),
+    redactStoredCognitiveMetadata(record.requiredContextJson, 2400),
+    redactStoredCognitiveMetadata(record.allowedToolsJson, 2400),
+    record.approvalRequirement,
+    record.outputShape,
+    redactStoredCognitiveMetadata(record.failureMode, 900),
+    record.confidence,
+    redactStoredCognitiveMetadata(record.warningsJson, 2400),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listReasoningModeDecisions(
+  params: {
+    frameId?: string;
+    mode?: ReasoningModeDecision['mode'];
+    limit?: number;
+  } = {},
+): ReasoningModeDecision[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.frameId) {
+    clauses.push('frame_id = ?');
+    args.push(params.frameId);
+  }
+  if (params.mode) {
+    clauses.push('mode = ?');
+    args.push(params.mode);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM reasoning_mode_decisions
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapReasoningModeDecisionRow>[0]>;
+  return rows.map((row) => mapReasoningModeDecisionRow(row));
+}
+
+function mapConfidenceCalibrationRow(row: {
+  calibration_id: string;
+  frame_id: string;
+  created_at: string;
+  label: ConfidenceCalibration['label'];
+  score: number;
+  proof_freshness_score: number;
+  tool_reliability_score: number;
+  reality_confidence_score: number;
+  missing_info_penalty: number;
+  contradiction_penalty: number;
+  route_history_score: number;
+  skill_reliability_score: number;
+  correction_penalty: number;
+  reason: string;
+  what_would_increase_confidence: string;
+  action_allowed: ConfidenceCalibration['actionAllowed'];
+  privacy_json: string;
+}): ConfidenceCalibration {
+  return {
+    calibrationId: row.calibration_id,
+    frameId: row.frame_id,
+    createdAt: row.created_at,
+    label: row.label,
+    score: row.score,
+    proofFreshnessScore: row.proof_freshness_score,
+    toolReliabilityScore: row.tool_reliability_score,
+    realityConfidenceScore: row.reality_confidence_score,
+    missingInfoPenalty: row.missing_info_penalty,
+    contradictionPenalty: row.contradiction_penalty,
+    routeHistoryScore: row.route_history_score,
+    skillReliabilityScore: row.skill_reliability_score,
+    correctionPenalty: row.correction_penalty,
+    reason: row.reason,
+    whatWouldIncreaseConfidence: row.what_would_increase_confidence,
+    actionAllowed: row.action_allowed,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertConfidenceCalibration(
+  record: ConfidenceCalibration,
+): void {
+  db.prepare(
+    `
+      INSERT INTO confidence_calibrations (
+        calibration_id, frame_id, created_at, label, score,
+        proof_freshness_score, tool_reliability_score, reality_confidence_score,
+        missing_info_penalty, contradiction_penalty, route_history_score,
+        skill_reliability_score, correction_penalty, reason,
+        what_would_increase_confidence, action_allowed, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(calibration_id) DO UPDATE SET
+        label = excluded.label,
+        score = excluded.score,
+        proof_freshness_score = excluded.proof_freshness_score,
+        tool_reliability_score = excluded.tool_reliability_score,
+        reality_confidence_score = excluded.reality_confidence_score,
+        missing_info_penalty = excluded.missing_info_penalty,
+        contradiction_penalty = excluded.contradiction_penalty,
+        route_history_score = excluded.route_history_score,
+        skill_reliability_score = excluded.skill_reliability_score,
+        correction_penalty = excluded.correction_penalty,
+        reason = excluded.reason,
+        what_would_increase_confidence = excluded.what_would_increase_confidence,
+        action_allowed = excluded.action_allowed,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.calibrationId,
+    record.frameId,
+    record.createdAt,
+    record.label,
+    record.score,
+    record.proofFreshnessScore,
+    record.toolReliabilityScore,
+    record.realityConfidenceScore,
+    record.missingInfoPenalty,
+    record.contradictionPenalty,
+    record.routeHistoryScore,
+    record.skillReliabilityScore,
+    record.correctionPenalty,
+    redactStoredCognitiveMetadata(record.reason, 900),
+    redactStoredCognitiveMetadata(record.whatWouldIncreaseConfidence, 900),
+    record.actionAllowed,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listConfidenceCalibrations(
+  params: { frameId?: string; limit?: number } = {},
+): ConfidenceCalibration[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.frameId) {
+    clauses.push('frame_id = ?');
+    args.push(params.frameId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM confidence_calibrations
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapConfidenceCalibrationRow>[0]>;
+  return rows.map((row) => mapConfidenceCalibrationRow(row));
+}
+
+function mapDeliberationRecordRow(row: {
+  deliberation_id: string;
+  frame_id: string;
+  created_at: string;
+  status: DeliberationRecord['status'];
+  trigger: string;
+  candidate_routes_json: string;
+  critic_objections_json: string;
+  final_recommendation: string;
+  fallback: string;
+  approval_required: number;
+  hidden_reasoning_stored: number;
+  privacy_json: string;
+}): DeliberationRecord {
+  return {
+    deliberationId: row.deliberation_id,
+    frameId: row.frame_id,
+    createdAt: row.created_at,
+    status: row.status,
+    trigger: row.trigger,
+    candidateRoutesJson: row.candidate_routes_json,
+    criticObjectionsJson: row.critic_objections_json,
+    finalRecommendation: row.final_recommendation,
+    fallback: row.fallback,
+    approvalRequired: row.approval_required === 1,
+    hiddenReasoningStored: row.hidden_reasoning_stored === 1,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertDeliberationRecord(record: DeliberationRecord): void {
+  db.prepare(
+    `
+      INSERT INTO deliberation_records (
+        deliberation_id, frame_id, created_at, status, trigger,
+        candidate_routes_json, critic_objections_json, final_recommendation,
+        fallback, approval_required, hidden_reasoning_stored, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(deliberation_id) DO UPDATE SET
+        status = excluded.status,
+        trigger = excluded.trigger,
+        candidate_routes_json = excluded.candidate_routes_json,
+        critic_objections_json = excluded.critic_objections_json,
+        final_recommendation = excluded.final_recommendation,
+        fallback = excluded.fallback,
+        approval_required = excluded.approval_required,
+        hidden_reasoning_stored = excluded.hidden_reasoning_stored,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.deliberationId,
+    record.frameId,
+    record.createdAt,
+    record.status,
+    redactStoredCognitiveMetadata(record.trigger, 700),
+    redactStoredCognitiveMetadata(record.candidateRoutesJson, 3200),
+    redactStoredCognitiveMetadata(record.criticObjectionsJson, 3200),
+    redactStoredCognitiveMetadata(record.finalRecommendation, 900),
+    redactStoredCognitiveMetadata(record.fallback, 900),
+    record.approvalRequired ? 1 : 0,
+    record.hiddenReasoningStored ? 1 : 0,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listDeliberationRecords(
+  params: {
+    frameId?: string;
+    status?: DeliberationRecord['status'];
+    limit?: number;
+  } = {},
+): DeliberationRecord[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.frameId) {
+    clauses.push('frame_id = ?');
+    args.push(params.frameId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM deliberation_records
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapDeliberationRecordRow>[0]>;
+  return rows.map((row) => mapDeliberationRecordRow(row));
+}
+
+function mapStrategyLearningSignalRow(row: {
+  signal_id: string;
+  frame_id: string;
+  created_at: string;
+  request_family: StrategyLearningSignal['requestFamily'];
+  selected_mode: StrategyLearningSignal['selectedMode'];
+  route_key: string | null;
+  tool_id: string | null;
+  confidence: number;
+  warning_kinds_json: string;
+  user_response: StrategyLearningSignal['userResponse'];
+  outcome: StrategyLearningSignal['outcome'];
+  fallback_used: number;
+  strategy_adjustment: string;
+  improvement_hint: string;
+  privacy_json: string;
+}): StrategyLearningSignal {
+  return {
+    signalId: row.signal_id,
+    frameId: row.frame_id,
+    createdAt: row.created_at,
+    requestFamily: row.request_family,
+    selectedMode: row.selected_mode,
+    routeKey: row.route_key,
+    toolId: row.tool_id,
+    confidence: row.confidence,
+    warningKindsJson: row.warning_kinds_json,
+    userResponse: row.user_response,
+    outcome: row.outcome,
+    fallbackUsed: row.fallback_used === 1,
+    strategyAdjustment: row.strategy_adjustment,
+    improvementHint: row.improvement_hint,
+    privacyJson: row.privacy_json,
+  };
+}
+
+export function upsertStrategyLearningSignal(
+  record: StrategyLearningSignal,
+): void {
+  db.prepare(
+    `
+      INSERT INTO strategy_learning_signals (
+        signal_id, frame_id, created_at, request_family, selected_mode,
+        route_key, tool_id, confidence, warning_kinds_json, user_response,
+        outcome, fallback_used, strategy_adjustment, improvement_hint,
+        privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(signal_id) DO UPDATE SET
+        request_family = excluded.request_family,
+        selected_mode = excluded.selected_mode,
+        route_key = excluded.route_key,
+        tool_id = excluded.tool_id,
+        confidence = excluded.confidence,
+        warning_kinds_json = excluded.warning_kinds_json,
+        user_response = excluded.user_response,
+        outcome = excluded.outcome,
+        fallback_used = excluded.fallback_used,
+        strategy_adjustment = excluded.strategy_adjustment,
+        improvement_hint = excluded.improvement_hint,
+        privacy_json = excluded.privacy_json
+    `,
+  ).run(
+    record.signalId,
+    record.frameId,
+    record.createdAt,
+    record.requestFamily,
+    record.selectedMode,
+    record.routeKey || null,
+    record.toolId || null,
+    record.confidence,
+    redactStoredCognitiveMetadata(record.warningKindsJson, 2400),
+    record.userResponse,
+    record.outcome,
+    record.fallbackUsed ? 1 : 0,
+    redactStoredCognitiveMetadata(record.strategyAdjustment, 900),
+    redactStoredCognitiveMetadata(record.improvementHint, 900),
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listStrategyLearningSignals(
+  params: {
+    frameId?: string;
+    selectedMode?: StrategyLearningSignal['selectedMode'];
+    outcome?: StrategyLearningSignal['outcome'];
+    limit?: number;
+  } = {},
+): StrategyLearningSignal[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.frameId) {
+    clauses.push('frame_id = ?');
+    args.push(params.frameId);
+  }
+  if (params.selectedMode) {
+    clauses.push('selected_mode = ?');
+    args.push(params.selectedMode);
+  }
+  if (params.outcome) {
+    clauses.push('outcome = ?');
+    args.push(params.outcome);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM strategy_learning_signals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapStrategyLearningSignalRow>[0]>;
+  return rows.map((row) => mapStrategyLearningSignalRow(row));
 }
 
 function boolToInt(value: boolean): number {

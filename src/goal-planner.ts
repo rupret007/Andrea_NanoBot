@@ -18,6 +18,7 @@ import {
 } from './db.js';
 import { buildAutonomousImprovementLabReport } from './autonomous-improvement-lab.js';
 import { buildLiveProofGauntletReport } from './live-proof-gauntlet.js';
+import { analyzeMetacognitiveTurn } from './metacognition.js';
 import { buildPatchWorkbenchReport } from './patch-workbench.js';
 import {
   applyProactiveOpportunityControl,
@@ -841,6 +842,16 @@ export function planGoalDirectedRequest(
       channel,
       persist: false,
     });
+  const metacognition = analyzeMetacognitiveTurn({
+    rawAsk: text,
+    channel,
+    groupFolder,
+    intentFamily: 'next_action',
+    realityReport: reality,
+    reliabilityReport: buildToolReliabilityDoctorReport(),
+    now,
+    persist,
+  });
   const control = applyGoalControl(text, groupFolder, now);
   seedCausalBeliefs(now, persist);
   const intent = classifyIntent(text);
@@ -927,7 +938,8 @@ export function planGoalDirectedRequest(
   const needs = reality.verificationNeeds.slice(0, 8);
   const approvalRequired =
     steps.some((step) => step.approvalRequirement !== 'read_only') ||
-    Boolean(comparison?.decision === 'stage_approval');
+    Boolean(comparison?.decision === 'stage_approval') ||
+    metacognition.calibration.actionAllowed === 'approval_only';
   const candidateGoals = listHierarchicalGoals({
     groupFolder,
     statuses: ['active', 'proposed', 'blocked'],
@@ -957,6 +969,10 @@ export function planGoalDirectedRequest(
       needs.length * 0.02 -
       reality.contradictions.length * 0.04,
   );
+  const calibratedConfidence = Math.min(
+    confidence,
+    metacognition.calibration.score,
+  );
   const run: GoalPlannerRun = {
     runId: id('goal_run', now, text),
     createdAt: now,
@@ -974,7 +990,7 @@ export function planGoalDirectedRequest(
     ),
     verificationNeedIdsJson: jsonIds(needs.map((need) => need.needId)),
     approvalRequired,
-    confidence,
+    confidence: calibratedConfidence,
     summary,
     nextAction,
     privacyJson: jsonValue(PRIVACY),

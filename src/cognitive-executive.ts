@@ -34,6 +34,11 @@ import {
   type IntegrationDoctorReport,
   type IntegrationStatus,
 } from './integration-doctor.js';
+import {
+  analyzeMetacognitiveTurn,
+  buildMetacognitionDoctorReport,
+  type MetacognitiveTurnAnalysis,
+} from './metacognition.js';
 import { scoreRouteCandidate } from './tool-reliability.js';
 import type {
   CognitiveExecutiveChannel,
@@ -86,6 +91,7 @@ export interface CognitiveExecutiveContext {
   toolChoices: CognitiveExecutiveToolChoice[];
   explanation: CognitiveExplanation;
   capabilityMatch?: AssistantCapabilityMatch | null;
+  metacognition?: MetacognitiveTurnAnalysis | null;
 }
 
 export interface FinalizeCognitiveExecutiveInput {
@@ -895,21 +901,28 @@ function buildPlan(input: {
   snapshotItems: CognitiveWorldSnapshotItem[];
   capabilityMatch: AssistantCapabilityMatch | null;
   integrationReport: IntegrationDoctorReport;
+  metacognition?: MetacognitiveTurnAnalysis | null;
 }): { plan: CognitivePlan; toolChoices: CognitiveExecutiveToolChoice[] } {
   const capabilityId = input.capabilityMatch?.capabilityId || null;
   let routeClass = routeClassForCapability(capabilityId);
   if (input.request.intentFamily === 'ambiguous_action' && !capabilityId) {
     routeClass = 'clarify';
   }
+  if (input.metacognition?.decision.mode === 'clarify_first') {
+    routeClass = 'clarify';
+  }
   if (input.request.intentFamily === 'explain_choice') {
     routeClass = 'direct_answer';
   }
   const selectedTool = toolForRoute(routeClass);
-  const approvalRequired = approvalRequiredFor({
-    text: input.request.normalizedAsk,
-    routeClass,
-    capabilityId,
-  });
+  const approvalRequired =
+    approvalRequiredFor({
+      text: input.request.normalizedAsk,
+      routeClass,
+      capabilityId,
+    }) ||
+    input.metacognition?.calibration.actionAllowed === 'approval_only' ||
+    input.metacognition?.decision.approvalRequirement === 'approval_required';
   const selectedToolStatus = approvalRequired
     ? 'approval_required'
     : statusForTool(selectedTool, input.integrationReport);
@@ -931,6 +944,13 @@ function buildPlan(input: {
   });
   if (routeScore.cap < baseConfidence) {
     selectedRiskFlags.push('confidence_capped_by_reliability');
+  }
+  if (input.metacognition?.warnings.length) {
+    selectedRiskFlags.push(
+      ...input.metacognition.warnings.map(
+        (warning) => `metacognition:${warning.warningKind}`,
+      ),
+    );
   }
   const reliabilityReason = routeScore.reasons.join(' ');
   const reliabilityFallback =
@@ -984,7 +1004,10 @@ function buildPlan(input: {
     selectedRoute: routeClass,
     routeKey: provisionalRouteKey,
     capabilityId,
-    confidence: routeScore.confidence,
+    confidence: Math.min(
+      routeScore.confidence,
+      input.metacognition?.calibration.score ?? routeScore.confidence,
+    ),
     stepsJson: safeJson(steps, 2400),
     involvedToolsJson: safeJson([selectedTool], 1200),
     approvalRequired,
@@ -994,6 +1017,9 @@ function buildPlan(input: {
         ? 'The ask implies action but lacks a safe target, timing, or approval context.'
         : [
             `The ask matches ${input.request.intentFamily}; ${selectedTool} is the narrowest useful route.`,
+            input.metacognition
+              ? `Reasoning mode: ${input.metacognition.decision.mode}; confidence ${input.metacognition.calibration.label}.`
+              : null,
             reliabilityReason ? `Reliability note: ${reliabilityReason}` : null,
           ]
             .filter(Boolean)
@@ -1244,12 +1270,31 @@ export function beginCognitiveExecutiveTurn(
     snapshotItems: items,
     selectedWork: input.selectedWork,
   });
+  const metacognition = analyzeMetacognitiveTurn({
+    rawAsk: input.rawAsk,
+    channel: input.channel,
+    groupFolder: input.groupFolder,
+    chatJid: input.chatJid,
+    threadId: input.threadId,
+    intentFamily: request.intentFamily,
+    activeContextSummary: input.activeContextSummary,
+    selectedWorkSummary: input.selectedWork
+      ? `${input.selectedWork.title} (${input.selectedWork.statusLabel}): ${
+          input.selectedWork.summary || input.selectedWork.laneLabel
+        }`
+      : null,
+    snapshot,
+    snapshotItems: items,
+    now: input.now,
+    persist: input.persist,
+  });
   const { plan, toolChoices } = buildPlan({
     request,
     snapshot,
     snapshotItems: items,
     capabilityMatch,
     integrationReport,
+    metacognition,
   });
   const result = initialResult({ request, plan });
   const runId = hashId('cogexec:run', request.requestId);
@@ -1279,6 +1324,7 @@ export function beginCognitiveExecutiveTurn(
     toolChoices: toolChoices.map((choice) => ({ ...choice, runId })),
     explanation,
     capabilityMatch,
+    metacognition,
   };
   if (input.persist !== false && isDatabaseInitialized()) {
     upsertCognitiveExecutiveRun(run);
@@ -1494,6 +1540,7 @@ export function formatCognitiveExecutiveReport(
   report: CognitiveExecutiveDoctorReport = buildStoredCognitiveExecutiveReport(),
 ): string {
   const run = report.latestRun;
+  const metacognition = buildMetacognitionDoctorReport();
   if (!run) {
     return [
       '*Cognitive Executive*',
@@ -1511,8 +1558,17 @@ export function formatCognitiveExecutiveReport(
     `Intent: ${run.intentFamily} (${run.confidence.toFixed(2)})`,
     `Route: ${run.routeKey}`,
     `Tool: ${selectedTool?.toolId || 'none'} (${selectedTool?.status || 'unknown'})`,
+    metacognition.decision
+      ? `Reasoning: ${metacognition.decision.mode} / ${metacognition.calibration?.label || 'unknown'} confidence`
+      : 'Reasoning: none recorded',
     `Focus: ${run.stateSummary}`,
     `Why: ${run.planSummary}`,
+    metacognition.focus
+      ? `Attention: ${metacognition.focus.primaryFocus}`
+      : null,
+    metacognition.warnings.length
+      ? `Warnings: ${metacognition.warnings.map((warning) => warning.warningKind).join(', ')}`
+      : 'Warnings: none',
     summarizeLearnedSnapshotContext(report.latestSnapshot),
     run.approvalRequired
       ? 'Approval: required before any side effect.'
@@ -1520,7 +1576,9 @@ export function formatCognitiveExecutiveReport(
     summarizeJsonList(run.degradedToolsJson, 'Degraded tools'),
     `Next: ${run.nextAction}`,
     'Privacy: metadata-only; no raw prompts, private bodies, hidden reasoning, raw tool output, or secrets are stored.',
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export function buildCognitiveExecutiveStatusText(): string {
@@ -1529,6 +1587,7 @@ export function buildCognitiveExecutiveStatusText(): string {
 
 export function formatLatestCognitiveExecutiveExplanation(): string {
   const report = buildStoredCognitiveExecutiveReport();
+  const metacognition = buildMetacognitionDoctorReport();
   const run = report.latestRun;
   if (!run) {
     return 'I do not have a recent executive route to explain yet.';
@@ -1547,6 +1606,12 @@ export function formatLatestCognitiveExecutiveExplanation(): string {
     selectedTool
       ? `I used ${selectedTool.toolId} because ${selectedTool.reason}`
       : 'I did not record a selected tool.',
+    metacognition.decision
+      ? `I used ${metacognition.decision.mode} mode because ${metacognition.decision.modeReason}`
+      : null,
+    metacognition.calibration
+      ? `Confidence was ${metacognition.calibration.label}: ${metacognition.calibration.reason}`
+      : null,
     parsed.degradedToolReason
       ? `I avoided or caveated degraded tools: ${parsed.degradedToolReason}`
       : null,

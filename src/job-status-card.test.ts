@@ -108,7 +108,7 @@ describe('renderJobStatusCard', () => {
 
 describe('JobStatusCard streaming', () => {
   it('debounces edits within minEditIntervalMs and flushes when the window passes', async () => {
-    const { channel, edits } = makeChannel();
+    const { channel, sends, edits } = makeChannel();
     let now = 0;
     const card = new JobStatusCard({
       channel,
@@ -131,7 +131,7 @@ describe('JobStatusCard streaming', () => {
   });
 
   it('always flushes on terminal status regardless of debounce window', async () => {
-    const { channel, edits } = makeChannel();
+    const { channel, sends, edits } = makeChannel();
     let now = 0;
     const card = new JobStatusCard({
       channel,
@@ -169,7 +169,7 @@ describe('JobStatusCard streaming', () => {
   });
 
   it('skips a second edit when the rendered text matches the previous edit', async () => {
-    const { channel, edits } = makeChannel();
+    const { channel, sends, edits } = makeChannel();
     let now = 0;
     const card = new JobStatusCard({
       channel,
@@ -191,7 +191,7 @@ describe('JobStatusCard streaming', () => {
   });
 
   it('caps edits at maxEditsPerCard then sends a fresh card', async () => {
-    const { channel, edits } = makeChannel();
+    const { channel, sends, edits } = makeChannel();
     let now = 0;
     const card = new JobStatusCard({
       channel,

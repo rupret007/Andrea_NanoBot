@@ -869,6 +869,7 @@ async function runAssistantExecutionSubprobeWithRetry(input: {
         : [firstAttempt.detail, retryNote, secondAttempt.detail]
             .filter(Boolean)
             .join(' | '),
+      480,
     ),
   };
 }
@@ -977,6 +978,7 @@ export async function probeAssistantExecution(
         ]
           .filter(Boolean)
           .join(' | '),
+        1200,
       ),
     };
   } catch (err) {

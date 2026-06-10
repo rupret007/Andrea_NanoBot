@@ -4521,6 +4521,219 @@ export type CognitiveExecutiveToolId =
   | 'telegram_handoff'
   | 'clarifying_question';
 
+export type MemoryItemKind =
+  | 'user_ask'
+  | 'fact'
+  | 'proof'
+  | 'goal'
+  | 'plan'
+  | 'message_context'
+  | 'tool_state'
+  | 'uncertainty'
+  | 'correction'
+  | 'outcome';
+
+export type ReasoningMode =
+  | 'fast_direct'
+  | 'clarify_first'
+  | 'retrieve_grounded'
+  | 'plan_stepwise'
+  | 'compare_counterfactuals'
+  | 'verify_then_act'
+  | 'deliberate_with_critic'
+  | 'defer_or_handoff';
+
+export type ConfidenceCalibrationLabel = 'high' | 'medium' | 'low' | 'blocked';
+
+export interface WorkingMemoryFrame {
+  frameId: string;
+  createdAt: string;
+  updatedAt: string;
+  channel: CognitiveExecutiveChannel | 'operator' | 'internal';
+  groupFolder?: string | null;
+  chatJid?: string | null;
+  threadId?: string | null;
+  requestSummary: string;
+  currentAskSummary: string;
+  activeGoalId?: string | null;
+  activeObjectSummary: string;
+  itemIdsJson: string;
+  selectedItemIdsJson: string;
+  ignoredItemIdsJson: string;
+  recommendedReasoningMode: ReasoningMode;
+  confidence: number;
+  expiresAt: string;
+  staleAfter: string;
+  privacyJson: string;
+}
+
+export interface MemoryItem {
+  itemId: string;
+  frameId: string;
+  createdAt: string;
+  itemKind: MemoryItemKind;
+  summary: string;
+  relevance: number;
+  freshness: LogicEvidenceFreshness;
+  confidence: number;
+  source: string;
+  sourceId?: string | null;
+  sensitivity: RealitySensitivity;
+  includeInUserAnswer: boolean;
+  evidenceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface AttentionFocus {
+  focusId: string;
+  frameId: string;
+  createdAt: string;
+  primaryFocus: string;
+  secondaryFocus?: string | null;
+  ignoredContextJson: string;
+  reason: string;
+  expectedNextStep: string;
+  privacyJson: string;
+}
+
+export interface GlobalWorkspaceSnapshot {
+  workspaceId: string;
+  frameId: string;
+  createdAt: string;
+  requestSummary: string;
+  activeGoalId?: string | null;
+  selectedItemIdsJson: string;
+  routeCandidatesJson: string;
+  uncertaintyJson: string;
+  proofStateJson: string;
+  toolAvailabilityJson: string;
+  safetyConcernsJson: string;
+  selectedReasoningMode: ReasoningMode;
+  recommendedNextAction: string;
+  evidenceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface MetacognitiveWarning {
+  warningKind:
+    | 'overconfidence'
+    | 'insufficient_evidence'
+    | 'stale_context'
+    | 'conflicting_context'
+    | 'repeated_fallback'
+    | 'tool_unavailable'
+    | 'user_uncertainty_check'
+    | 'high_risk_action'
+    | 'ambiguous_reference';
+  severity: 'low' | 'medium' | 'high';
+  summary: string;
+  nextAction: string;
+}
+
+export interface ReasoningModeDecision {
+  decisionId: string;
+  frameId: string;
+  createdAt: string;
+  mode: ReasoningMode;
+  modeReason: string;
+  requiredContextJson: string;
+  allowedToolsJson: string;
+  approvalRequirement: GoalApprovalBoundary;
+  outputShape:
+    | 'direct'
+    | 'one_question'
+    | 'short_plan'
+    | 'verified_answer'
+    | 'handoff';
+  failureMode: string;
+  confidence: number;
+  warningsJson: string;
+  privacyJson: string;
+}
+
+export interface ConfidenceCalibration {
+  calibrationId: string;
+  frameId: string;
+  createdAt: string;
+  label: ConfidenceCalibrationLabel;
+  score: number;
+  proofFreshnessScore: number;
+  toolReliabilityScore: number;
+  realityConfidenceScore: number;
+  missingInfoPenalty: number;
+  contradictionPenalty: number;
+  routeHistoryScore: number;
+  skillReliabilityScore: number;
+  correctionPenalty: number;
+  reason: string;
+  whatWouldIncreaseConfidence: string;
+  actionAllowed:
+    | 'answer'
+    | 'clarify'
+    | 'verify_first'
+    | 'approval_only'
+    | 'blocked';
+  privacyJson: string;
+}
+
+export interface DeliberationRecord {
+  deliberationId: string;
+  frameId: string;
+  createdAt: string;
+  status: 'not_needed' | 'completed' | 'blocked';
+  trigger: string;
+  candidateRoutesJson: string;
+  criticObjectionsJson: string;
+  finalRecommendation: string;
+  fallback: string;
+  approvalRequired: boolean;
+  hiddenReasoningStored: boolean;
+  privacyJson: string;
+}
+
+export interface StrategyLearningSignal {
+  signalId: string;
+  frameId: string;
+  createdAt: string;
+  requestFamily:
+    | CognitiveExecutiveIntentFamily
+    | 'goal_planner'
+    | 'status'
+    | 'other';
+  selectedMode: ReasoningMode;
+  routeKey?: string | null;
+  toolId?: CognitiveExecutiveToolId | string | null;
+  confidence: number;
+  warningKindsJson: string;
+  userResponse:
+    | 'accepted'
+    | 'corrected'
+    | 'ignored'
+    | 'asked_for_more_reasoning'
+    | 'asked_for_less_detail'
+    | 'unknown';
+  outcome: 'success' | 'warn' | 'fail' | 'deferred' | 'unknown';
+  fallbackUsed: boolean;
+  strategyAdjustment: string;
+  improvementHint: string;
+  privacyJson: string;
+}
+
+export interface MetacognitionDoctorReport {
+  generatedAt: string;
+  ok: boolean;
+  latestFrame?: WorkingMemoryFrame | null;
+  focus?: AttentionFocus | null;
+  workspace?: GlobalWorkspaceSnapshot | null;
+  decision?: ReasoningModeDecision | null;
+  calibration?: ConfidenceCalibration | null;
+  deliberation?: DeliberationRecord | null;
+  strategySignals: StrategyLearningSignal[];
+  warnings: MetacognitiveWarning[];
+  nextAction: string;
+  privacy: CognitiveReplayPacket['privacy'];
+}
+
 export interface CognitiveRequest {
   requestId: string;
   createdAt: string;

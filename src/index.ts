@@ -477,6 +477,10 @@ import {
   isGoalPlannerNaturalRequest,
 } from './goal-planner.js';
 import {
+  formatMetacognitionNaturalResponse,
+  isMetacognitionNaturalRequest,
+} from './metacognition.js';
+import {
   AgentRuntimeName,
   AgentThreadState,
   Channel,
@@ -7846,10 +7850,25 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       !isSessionGraphNaturalRequest(lastContent) &&
       !isAgencyConvergenceNaturalRequest(lastContent) &&
       !isCognitiveWorkspaceNaturalRequest(lastContent) &&
+      !isMetacognitionNaturalRequest(lastContent) &&
       !isCognitiveExecutiveNaturalRequest(lastContent) &&
       !isGoalPlannerNaturalRequest(lastContent)
     ) {
       return false;
+    }
+
+    if (isMetacognitionNaturalRequest(lastContent)) {
+      await sendAssistantReplyWithFeedback({
+        text: formatMetacognitionNaturalResponse(lastContent),
+        routeKey: 'metacognition.explain',
+        capabilityId: 'cognition.status',
+        handlerKind: 'local_metacognition',
+        responseSource: 'local_companion',
+        traceReason:
+          'answered metacognitive confidence/context request from metadata-only ledger',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
     }
 
     if (
