@@ -7,6 +7,7 @@ import {
   evaluateGoalDirectedRealityCheck,
   formatRealityNaturalResponse,
 } from '../src/reality-grounding.js';
+import type { ProviderHealthSnapshot } from '../src/provider-health.js';
 import type { ToolReliabilityDoctorReport } from '../src/types.js';
 
 initDatabase();
@@ -105,6 +106,7 @@ const report = buildRealityGroundingReport({
   generatedAt: '2026-06-09T13:00:00.000Z',
   proofReport,
   reliabilityReport: fakeReliability,
+  providerHealthSnapshots: [],
   requestText: 'what is true right now?',
   persist: false,
 });
@@ -130,7 +132,50 @@ assert.ok(
   'blocked Brave should prevent fake provider participation',
 );
 assert.equal(report.proofDebt.repoWorkRequired, 0);
-assert.doesNotMatch(JSON.stringify(report), /sk-proj-|raw private body|hidden reasoning|provider debate|raw tool output/i);
+assert.doesNotMatch(
+  JSON.stringify(report),
+  /sk-proj-|raw private body|hidden reasoning|provider debate|raw tool output/i,
+);
+
+const healthyBraveProvider: ProviderHealthSnapshot = {
+  providerId: 'brave_search',
+  kind: 'search',
+  state: 'healthy',
+  lastHealthyAt: '2026-06-09T13:02:00.000Z',
+  lastCheckedAt: '2026-06-09T13:02:00.000Z',
+  failureClass: 'none',
+  quotaState: 'unknown',
+  credentialState: 'configured',
+  knownExpiresAt: null,
+  rotationDueAt: null,
+  blocker: '',
+  nextAction: '',
+  metadata: {},
+};
+const freshProviderReport = buildRealityGroundingReport({
+  generatedAt: '2026-06-09T13:02:00.000Z',
+  proofReport,
+  reliabilityReport: fakeReliability,
+  providerHealthSnapshots: [healthyBraveProvider],
+  requestText: 'what is true right now?',
+  persist: false,
+});
+assert.ok(
+  freshProviderReport.beliefs.some(
+    (belief) =>
+      belief.subject === 'provider:brave_search' &&
+      belief.status === 'confirmed',
+  ),
+  'fresh healthy provider truth should override stale blocked rollup',
+);
+assert.ok(
+  !freshProviderReport.contradictions.some(
+    (item) =>
+      item.subject === 'provider:brave_search' &&
+      item.contradictionKind === 'provider_vs_route',
+  ),
+  'fresh healthy Brave provider truth should not report stale provider contradiction',
+);
 
 const calendarCheck = evaluateGoalDirectedRealityCheck({
   actionKind: 'calendar_write',
@@ -150,6 +195,9 @@ assert.equal(messageCheck.decision, 'offer_safe_alternative');
 
 const natural = formatRealityNaturalResponse('is text messaging working?');
 assert.match(natural, /partly ready|not fully proven|Messages/i);
-assert.doesNotMatch(natural, /hidden reasoning|raw tool output|provider debate/i);
+assert.doesNotMatch(
+  natural,
+  /hidden reasoning|raw tool output|provider debate/i,
+);
 
 console.log('reality grounding tests passed');

@@ -20,6 +20,10 @@ import {
   buildLiveProofGauntletReport,
   formatLiveProofGauntletReport,
 } from './live-proof-gauntlet.js';
+import {
+  collectProviderHealthSnapshots,
+  type ProviderHealthSnapshot,
+} from './provider-health.js';
 import { buildToolReliabilityDoctorReport } from './tool-reliability.js';
 import {
   buildWorldModelReport,
@@ -64,6 +68,7 @@ export interface BuildRealityGroundingInput {
   proofReport?: LiveProofGauntletReport;
   worldReport?: WorldModelDoctorReport;
   reliabilityReport?: ToolReliabilityDoctorReport;
+  providerHealthSnapshots?: ProviderHealthSnapshot[];
   improvementReport?: AutonomousImprovementLabReport;
 }
 
@@ -224,6 +229,76 @@ function rollupObservationStatus(
 
 function rollupConfidence(rollup: ToolReliabilityRollup): number {
   return clamp01(Math.max(rollup.confidenceCap, rollup.reliabilityScore));
+}
+
+function providerHealthForRollup(
+  rollup: ToolReliabilityRollup,
+  providers: ProviderHealthSnapshot[],
+): ProviderHealthSnapshot | undefined {
+  if (!rollup.subjectId.startsWith('provider:')) return undefined;
+  const providerId = rollup.subjectId.replace(/^provider:/, '');
+  return providers.find((provider) => provider.providerId === providerId);
+}
+
+function providerHealthAsRollupHealth(
+  provider: ProviderHealthSnapshot,
+): ToolReliabilityRollup['currentHealth'] {
+  if (provider.state === 'healthy') return 'healthy';
+  if (provider.state === 'degraded') return 'degraded';
+  if (
+    provider.state === 'externally_blocked' ||
+    provider.state === 'not_configured'
+  ) {
+    return 'blocked';
+  }
+  return 'unknown';
+}
+
+function confidenceForEffectiveHealth(
+  health: ToolReliabilityRollup['currentHealth'],
+): number {
+  if (health === 'healthy') return 0.95;
+  if (health === 'degraded') return 0.58;
+  if (health === 'blocked') return 0.22;
+  return 0.5;
+}
+
+function effectiveRollupView(
+  rollup: ToolReliabilityRollup,
+  providers: ProviderHealthSnapshot[],
+): {
+  currentHealth: ToolReliabilityRollup['currentHealth'];
+  reliabilityScore: number;
+  confidenceCap: number;
+  confidence: number;
+  nextAction: string;
+  sourceDetail: string;
+} {
+  const provider = providerHealthForRollup(rollup, providers);
+  if (!provider) {
+    return {
+      currentHealth: rollup.currentHealth,
+      reliabilityScore: rollup.reliabilityScore,
+      confidenceCap: rollup.confidenceCap,
+      confidence: rollupConfidence(rollup),
+      nextAction: rollup.nextAction,
+      sourceDetail: 'rollup',
+    };
+  }
+  const health = providerHealthAsRollupHealth(provider);
+  const cap = confidenceForEffectiveHealth(health);
+  return {
+    currentHealth: health,
+    reliabilityScore:
+      health === 'healthy'
+        ? Math.max(rollup.reliabilityScore, 0.9)
+        : Math.min(rollup.reliabilityScore, cap),
+    confidenceCap:
+      health === 'healthy' ? Math.max(rollup.confidenceCap, cap) : cap,
+    confidence: cap,
+    nextAction: provider.nextAction || provider.blocker || rollup.nextAction,
+    sourceDetail: 'provider_health',
+  };
 }
 
 function observation(input: {
@@ -466,6 +541,7 @@ function buildReliabilityRecords(input: {
   snapshotId: string;
   now: string;
   reliabilityReport: ToolReliabilityDoctorReport;
+  providerHealthSnapshots: ProviderHealthSnapshot[];
 }): {
   observations: RealityObservation[];
   beliefs: RealityBelief[];
@@ -477,6 +553,10 @@ function buildReliabilityRecords(input: {
   const needs: RealityVerificationNeed[] = [];
   const contradictions: RealityContradiction[] = [];
   for (const rollup of input.reliabilityReport.rollups.slice(0, 30)) {
+    const effective = effectiveRollupView(
+      rollup,
+      input.providerHealthSnapshots,
+    );
     const obs = observation({
       snapshotId: input.snapshotId,
       now: input.now,
@@ -484,31 +564,34 @@ function buildReliabilityRecords(input: {
       sourceType: 'tool_reliability',
       subject: rollup.subjectId,
       thing: 'tool_health',
-      value: `${rollup.currentHealth}; score=${rollup.reliabilityScore.toFixed(2)}; cap=${rollup.confidenceCap.toFixed(2)}; next=${rollup.nextAction}`,
-      confidence: rollupConfidence(rollup),
+      value: `${effective.currentHealth}; score=${effective.reliabilityScore.toFixed(2)}; cap=${effective.confidenceCap.toFixed(2)}; source=${effective.sourceDetail}; next=${effective.nextAction}`,
+      confidence: effective.confidence,
       evidenceRef: `rollup:${rollup.subjectId}`,
       freshnessWindowHours: 24,
     });
     observations.push(obs);
-    const status = rollupObservationStatus(rollup);
+    const status = rollupObservationStatus({
+      ...rollup,
+      currentHealth: effective.currentHealth,
+    });
     const belief = makeBelief({
       snapshotId: input.snapshotId,
       now: input.now,
       subject: rollup.subjectId,
-      summary: `${rollup.subjectId} reliability is ${rollup.currentHealth}; route confidence cap is ${rollup.confidenceCap.toFixed(2)}.`,
+      summary: `${rollup.subjectId} reliability is ${effective.currentHealth}; route confidence cap is ${effective.confidenceCap.toFixed(2)}.`,
       type: rollup.subjectId.startsWith('provider:')
         ? 'tool_health'
         : 'route_confidence',
       status,
-      confidence: rollupConfidence(rollup),
+      confidence: effective.confidence,
       supporting: [obs.observationId],
       staleHours: 24,
-      nextAction: rollup.nextAction,
+      nextAction: effective.nextAction,
     });
     beliefs.push(belief);
     if (
-      rollup.currentHealth === 'blocked' ||
-      rollup.currentHealth === 'unknown'
+      effective.currentHealth === 'blocked' ||
+      effective.currentHealth === 'unknown'
     ) {
       needs.push(
         makeNeed({
@@ -516,7 +599,7 @@ function buildReliabilityRecords(input: {
           now: input.now,
           subject: rollup.subjectId,
           question: `Can ${rollup.subjectId} be trusted for routing right now?`,
-          reason: `${rollup.subjectId} reliability is ${rollup.currentHealth}.`,
+          reason: `${rollup.subjectId} reliability is ${effective.currentHealth}.`,
           neededBeforeAction: /calendar|message|work_cockpit/.test(
             rollup.subjectId,
           ),
@@ -524,13 +607,13 @@ function buildReliabilityRecords(input: {
           risk: rollup.subjectId.includes('message') ? 'high' : 'medium',
           status: 'runnable_read_only',
           evidence: [obs.observationId],
-          nextAction: rollup.nextAction,
+          nextAction: effective.nextAction,
         }),
       );
     }
     if (
       rollup.subjectId.includes('brave') &&
-      rollup.currentHealth === 'blocked'
+      effective.currentHealth === 'blocked'
     ) {
       contradictions.push(
         makeContradiction({
@@ -799,6 +882,9 @@ export function buildRealityGroundingReport(
   const proofReport = input.proofReport || buildLiveProofGauntletReport();
   const reliabilityReport =
     input.reliabilityReport || buildToolReliabilityDoctorReport();
+  const providerHealthSnapshots =
+    input.providerHealthSnapshots ||
+    collectProviderHealthSnapshots(generatedAt);
   const worldInput: BuildWorldModelInput = {
     generatedAt,
     persist: false,
@@ -820,6 +906,7 @@ export function buildRealityGroundingReport(
     snapshotId,
     now: generatedAt,
     reliabilityReport,
+    providerHealthSnapshots,
   });
   const worldRecords = buildWorldRecords({
     snapshotId,
@@ -927,10 +1014,21 @@ export function buildRealityGroundingReport(
     missingProofSummary: proofReport.proofDebtCount
       ? `${proofReport.proofDebtCount} proof item(s) need closure; repo work required=${proofReport.repoWorkRequiredCount}.`
       : 'All tracked proof surfaces are live-proven.',
-    degradedToolsSummary: reliabilityReport.topDegraded.length
-      ? reliabilityReport.topDegraded
+    degradedToolsSummary: reliabilityRecords.beliefs.filter(
+      (belief) =>
+        (belief.beliefType === 'tool_health' ||
+          belief.beliefType === 'route_confidence') &&
+        belief.status !== 'confirmed',
+    ).length
+      ? reliabilityRecords.beliefs
+          .filter(
+            (belief) =>
+              (belief.beliefType === 'tool_health' ||
+                belief.beliefType === 'route_confidence') &&
+              belief.status !== 'confirmed',
+          )
           .slice(0, 5)
-          .map((rollup) => `${rollup.subjectId}:${rollup.currentHealth}`)
+          .map((belief) => `${belief.subject}:${belief.status}`)
           .join(', ')
       : 'No degraded tools reported.',
     confidenceSummary: `Reality confidence ${confidence.toFixed(2)} from ${observations.length} observation(s), ${beliefs.length} belief(s), ${verificationNeeds.length} verification need(s), and ${contradictions.length} contradiction(s).`,
