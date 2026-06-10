@@ -14,7 +14,11 @@ import {
 
 _initTestDatabase();
 
-const report = buildCapabilitySelfModel({ now: '2026-06-09T16:00:00.000Z' });
+const report = buildCapabilitySelfModel({
+  now: '2026-06-09T16:00:00.000Z',
+  env: {},
+  envFileValues: {},
+});
 assert.ok(report.states.length >= 8);
 
 // Internal capabilities are proven by construction.
@@ -34,6 +38,30 @@ if (!process.env.TELEGRAM_USER_API_ID || !process.env.TELEGRAM_USER_API_HASH) {
   assert.equal(userSession.proofStatus, 'missing_config');
   assert.match(userSession.currentBlocker ?? '', /external\/config debt/);
   assert.equal(userSession.enabled, false);
+}
+
+const fileBackedConfigReport = buildCapabilitySelfModel({
+  now: '2026-06-09T16:01:00.000Z',
+  persist: false,
+  env: {},
+  envFileValues: {
+    BLUEBUBBLES_BASE_URL: 'set',
+    GOOGLE_CALENDAR_CLIENT_ID: 'set',
+    BRAVE_SEARCH_API_KEY: 'set',
+  },
+});
+for (const id of [
+  'messages.send.bluebubbles',
+  'calendar.read',
+  'calendar.write',
+  'research.web',
+]) {
+  const state = fileBackedConfigReport.states.find(
+    (item) => item.capabilityId === id,
+  );
+  assert.ok(state, `missing capability ${id}`);
+  assert.notEqual(state.proofStatus, 'missing_config');
+  assert.doesNotMatch(state.currentBlocker ?? '', /Missing config/);
 }
 
 // External sends always require explicit approval regardless of proof.

@@ -7,6 +7,7 @@ import {
   listToolReliabilityRollups,
   upsertCapabilityState,
 } from './db.js';
+import { readEnvFile } from './env.js';
 import type { CapabilityStateRecord, ControlPlaneChannel } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,7 @@ interface CapabilityDefinition {
   capabilityId: string;
   displayName: string;
   requiredConfig: string[];
+  requiredConfigAnyOf?: string[][];
   reliabilitySubjectId?: string;
   proofNameHint?: RegExp;
   allowedChannels: ControlPlaneChannel[];
@@ -128,7 +130,8 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'research.web',
     displayName: 'Web research',
-    requiredConfig: ['BRAVE_API_KEY'],
+    requiredConfig: [],
+    requiredConfigAnyOf: [['BRAVE_API_KEY', 'BRAVE_SEARCH_API_KEY']],
     reliabilitySubjectId: 'provider:brave_search',
     allowedChannels: [
       'telegram',
@@ -186,18 +189,43 @@ export interface CapabilitySelfModelReport {
 }
 
 export function buildCapabilitySelfModel(
-  params: { now?: string; persist?: boolean } = {},
+  params: {
+    now?: string;
+    persist?: boolean;
+    env?: Record<string, string | undefined>;
+    envFileValues?: Record<string, string | undefined>;
+  } = {},
 ): CapabilitySelfModelReport {
   const generatedAt = nowIso(params.now);
   const dbReady = isDatabaseInitialized();
   const rollups = dbReady ? listToolReliabilityRollups({ limit: 100 }) : [];
   const proofSteps = dbReady ? listProofClosureSteps({ limit: 100 }) : [];
+  const requiredConfigNames = Array.from(
+    new Set(
+      CAPABILITY_DEFINITIONS.flatMap((item) => [
+        ...item.requiredConfig,
+        ...(item.requiredConfigAnyOf ?? []).flat(),
+      ]),
+    ),
+  );
+  const env = params.env ?? process.env;
+  const envFileValues =
+    params.envFileValues ?? readEnvFile(requiredConfigNames);
   const states: CapabilityStateRecord[] = [];
 
   for (const definition of CAPABILITY_DEFINITIONS) {
-    const missingConfig = definition.requiredConfig.filter(
-      (name) => !process.env[name],
+    const hasConfig = (name: string) =>
+      Boolean(env[name] || envFileValues[name]);
+    const missingRequiredConfig = definition.requiredConfig.filter(
+      (name) => !env[name] && !envFileValues[name],
     );
+    const missingAlternativeConfig = (definition.requiredConfigAnyOf ?? [])
+      .filter((group) => !group.some(hasConfig))
+      .map((group) => group.join('|'));
+    const missingConfig = [
+      ...missingRequiredConfig,
+      ...missingAlternativeConfig,
+    ];
     const rollup = definition.reliabilitySubjectId
       ? rollups.find(
           (entry) => entry.subjectId === definition.reliabilitySubjectId,
@@ -295,7 +323,13 @@ export function buildCapabilitySelfModel(
       lastSuccessAt: lastSuccess?.observedAt ?? null,
       lastFailureAt: lastFailure?.observedAt ?? null,
       reliabilityScore,
-      requiredConfig: definition.requiredConfig.join(',') || 'none',
+      requiredConfig:
+        [
+          ...definition.requiredConfig,
+          ...(definition.requiredConfigAnyOf ?? []).map((group) =>
+            group.join('|'),
+          ),
+        ].join(',') || 'none',
       currentBlocker,
       allowedChannels: definition.allowedChannels.join(','),
       approvalRequirement: definition.approvalRequirement,
