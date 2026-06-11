@@ -10,6 +10,7 @@ import {
 import {
   buildHierarchicalPlannerReport,
   formatGoalPlannerReport,
+  isGoalPlannerNaturalRequest,
   planGoalDirectedRequest,
 } from '../src/goal-planner.js';
 import type { ProactiveOpportunity } from '../src/types.js';
@@ -82,6 +83,9 @@ assert.match(formatted, /Hierarchical Goal Planner/);
 assert.match(formatted, /Causal Beliefs/);
 assert.doesNotMatch(formatted, /Brave Search is blocked/);
 assert.doesNotMatch(formatted, /sk-[A-Za-z0-9_-]{12,}/);
+assert.equal(isGoalPlannerNaturalRequest('what should I do next?'), false);
+assert.equal(isGoalPlannerNaturalRequest('show me the plan'), true);
+assert.equal(isGoalPlannerNaturalRequest('what if we do nothing?'), true);
 
 _closeDatabase();
 console.log('goal planning tests passed');

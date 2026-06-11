@@ -1124,6 +1124,10 @@ export function matchAssistantCapabilityRequest(
   if (looksLikeCalendarLookupPrompt(normalized)) {
     return null;
   }
+  const dailyMatch = matchDailyPrompt(normalized);
+  if (dailyMatch?.capabilityId === 'daily.whats_next') {
+    return dailyMatch;
+  }
 
   return (
     matchPilotPrompt(normalized) ||
@@ -1131,7 +1135,7 @@ export function matchAssistantCapabilityRequest(
     matchEverydayCapturePrompt(normalized) ||
     matchMissionPrompt(normalized) ||
     matchStaffPrompt(normalized) ||
-    matchDailyPrompt(normalized) ||
+    dailyMatch ||
     matchReminderOverviewPrompt(normalized) ||
     matchHouseholdPrompt(normalized) ||
     matchCommunicationPrompt(normalized) ||

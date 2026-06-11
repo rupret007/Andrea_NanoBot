@@ -1188,7 +1188,6 @@ export function isGoalPlannerNaturalRequest(text: string): boolean {
     lower === 'what is the safest next step' ||
     lower === "what's the safest next step" ||
     lower === 'what if we do nothing' ||
-    lower === 'what should i do next' ||
     lower === 'what should i work on' ||
     lower === 'stop suggesting that' ||
     lower === 'do not bring this up unless i ask' ||
