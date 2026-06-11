@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  buildAppleCalendarJxaScript,
   buildCalendarAssistantResponse,
   buildCalendarAssistantReply,
   planCalendarAssistantLookup,
@@ -65,6 +66,15 @@ function createGoogleCalendarFetchMock(input: {
 }
 
 describe('planCalendarAssistantLookup', () => {
+  it('passes Apple Calendar JXA dates through the supported run argv handler', () => {
+    const script = buildAppleCalendarJxaScript();
+
+    expect(script).toContain('function run(argv)');
+    expect(script).toContain('new Date(argv[0])');
+    expect(script).toContain('new Date(argv[1])');
+    expect(script).not.toContain('ARGV');
+  });
+
   it('parses schedule asks for tomorrow', () => {
     const plan = planCalendarAssistantLookup(
       "Hey what's on my schedule tomorrow",

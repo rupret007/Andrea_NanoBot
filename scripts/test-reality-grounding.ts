@@ -71,6 +71,21 @@ const fakeReliability: ToolReliabilityDoctorReport = {
   routeRollups: [],
   rollups: [
     {
+      subjectId: 'integration:google_calendar',
+      updatedAt: '2026-06-09T13:00:00.000Z',
+      sampleCount: 6,
+      successRate: 1,
+      degradedRate: 0,
+      blockedRate: 0,
+      fallbackRate: 0,
+      reliabilityScore: 0.95,
+      currentHealth: 'healthy',
+      confidenceCap: 0.95,
+      cooldownUntil: null,
+      nextAction: 'No action needed.',
+      privacyJson: '{}',
+    },
+    {
       subjectId: 'provider:brave_search',
       updatedAt: '2026-06-09T13:00:00.000Z',
       sampleCount: 4,
@@ -175,6 +190,47 @@ assert.ok(
       item.contradictionKind === 'provider_vs_route',
   ),
   'fresh healthy Brave provider truth should not report stale provider contradiction',
+);
+
+const blockedCalendarTruth = {
+  ...fakeTruth,
+  googleCalendar: surface(
+    'externally_blocked',
+    'external',
+    'Re-run the Google Calendar auth setup.',
+    'Google Calendar token refresh failed.',
+    'Google token refresh 400: invalid_grant',
+  ),
+};
+const blockedCalendarProof = buildLiveProofGauntletReport({
+  now: new Date('2026-06-09T13:04:00.000Z'),
+  env: { TELEGRAM_USER_API_ID: '', TELEGRAM_USER_API_HASH: '' },
+  truth: blockedCalendarTruth,
+});
+const blockedCalendarReport = buildRealityGroundingReport({
+  generatedAt: '2026-06-09T13:04:00.000Z',
+  proofReport: blockedCalendarProof,
+  reliabilityReport: fakeReliability,
+  providerHealthSnapshots: [],
+  requestText: 'what is true right now?',
+  persist: false,
+});
+assert.ok(
+  blockedCalendarReport.beliefs.some(
+    (belief) =>
+      belief.subject === 'integration:google_calendar' &&
+      belief.status === 'externally_blocked' &&
+      /proof is blocked/.test(belief.beliefSummary),
+  ),
+  'fresh proof gauntlet calendar blocker should override stale healthy reliability',
+);
+assert.ok(
+  !blockedCalendarReport.beliefs.some(
+    (belief) =>
+      belief.subject === 'integration:google_calendar' &&
+      belief.status === 'confirmed',
+  ),
+  'blocked calendar proof must not leave a confirmed calendar reliability belief',
 );
 
 const calendarCheck = evaluateGoalDirectedRealityCheck({

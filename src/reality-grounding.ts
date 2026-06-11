@@ -263,9 +263,51 @@ function confidenceForEffectiveHealth(
   return 0.5;
 }
 
+function proofHealthAsRollupHealth(
+  entry: LiveProofGauntletEntry,
+): ToolReliabilityRollup['currentHealth'] {
+  if (entry.status === 'live_proven') return 'healthy';
+  if (entry.status === 'near_live_only' || entry.status === 'stale') {
+    return 'degraded';
+  }
+  if (
+    entry.status === 'missing_config' ||
+    entry.status === 'externally_blocked' ||
+    entry.status === 'failed'
+  ) {
+    return 'blocked';
+  }
+  return 'unknown';
+}
+
+function proofEntryForReliabilitySubject(
+  subjectId: string,
+  proofReport: LiveProofGauntletReport,
+): LiveProofGauntletEntry | undefined {
+  const match = (pattern: RegExp) =>
+    proofReport.entries.find((entry) => pattern.test(entry.proofName));
+  if (/^(integration:google_calendar|tool:calendar)$/.test(subjectId)) {
+    return match(/Google Calendar/i);
+  }
+  if (/^(integration:bluebubbles|tool:message_actions)$/.test(subjectId)) {
+    return match(/BlueBubbles/i);
+  }
+  if (subjectId === 'integration:alexa') {
+    return match(/Alexa/i);
+  }
+  if (subjectId === 'integration:telegram') {
+    return match(/Telegram bot/i);
+  }
+  if (/^(tool:research|provider:brave_search)$/.test(subjectId)) {
+    return match(/Research\/provider/i);
+  }
+  return undefined;
+}
+
 function effectiveRollupView(
   rollup: ToolReliabilityRollup,
   providers: ProviderHealthSnapshot[],
+  proofReport: LiveProofGauntletReport,
 ): {
   currentHealth: ToolReliabilityRollup['currentHealth'];
   reliabilityScore: number;
@@ -274,6 +316,28 @@ function effectiveRollupView(
   nextAction: string;
   sourceDetail: string;
 } {
+  const proofEntry = proofEntryForReliabilitySubject(
+    rollup.subjectId,
+    proofReport,
+  );
+  if (proofEntry && proofEntry.status !== 'live_proven') {
+    const health = proofHealthAsRollupHealth(proofEntry);
+    const confidence = proofConfidence(proofEntry);
+    return {
+      currentHealth: health,
+      reliabilityScore:
+        health === 'healthy'
+          ? Math.max(rollup.reliabilityScore, 0.9)
+          : Math.min(rollup.reliabilityScore, confidence),
+      confidenceCap:
+        health === 'healthy'
+          ? Math.max(rollup.confidenceCap, confidence)
+          : Math.min(rollup.confidenceCap, confidence),
+      confidence,
+      nextAction: proofEntry.nextStep || rollup.nextAction,
+      sourceDetail: 'proof_gauntlet',
+    };
+  }
   const provider = providerHealthForRollup(rollup, providers);
   if (!provider) {
     return {
@@ -542,6 +606,7 @@ function buildReliabilityRecords(input: {
   now: string;
   reliabilityReport: ToolReliabilityDoctorReport;
   providerHealthSnapshots: ProviderHealthSnapshot[];
+  proofReport: LiveProofGauntletReport;
 }): {
   observations: RealityObservation[];
   beliefs: RealityBelief[];
@@ -556,6 +621,7 @@ function buildReliabilityRecords(input: {
     const effective = effectiveRollupView(
       rollup,
       input.providerHealthSnapshots,
+      input.proofReport,
     );
     const obs = observation({
       snapshotId: input.snapshotId,
@@ -578,7 +644,10 @@ function buildReliabilityRecords(input: {
       snapshotId: input.snapshotId,
       now: input.now,
       subject: rollup.subjectId,
-      summary: `${rollup.subjectId} reliability is ${effective.currentHealth}; route confidence cap is ${effective.confidenceCap.toFixed(2)}.`,
+      summary:
+        effective.sourceDetail === 'proof_gauntlet'
+          ? `${rollup.subjectId} proof is ${effective.currentHealth}; route confidence cap is ${effective.confidenceCap.toFixed(2)}.`
+          : `${rollup.subjectId} reliability is ${effective.currentHealth}; route confidence cap is ${effective.confidenceCap.toFixed(2)}.`,
       type: rollup.subjectId.startsWith('provider:')
         ? 'tool_health'
         : 'route_confidence',
@@ -906,6 +975,7 @@ export function buildRealityGroundingReport(
     now: generatedAt,
     reliabilityReport,
     providerHealthSnapshots,
+    proofReport,
   });
   const worldRecords = buildWorldRecords({
     snapshotId,

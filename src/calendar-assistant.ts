@@ -938,6 +938,8 @@ function resolveCalendarConfig(
   env?: Record<string, string | undefined>,
 ): CalendarAssistantConfig {
   const envFile = readEnvFile([...CALENDAR_ENV_KEYS]);
+  const testRuntime =
+    process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
   const appleLocalEnabledValue = resolveConfigValue(
     'APPLE_CALENDAR_LOCAL_ENABLED',
     envFile,
@@ -953,7 +955,7 @@ function resolveCalendarConfig(
   return {
     appleLocalEnabled: appleLocalEnabledValue
       ? appleLocalEnabledValue.toLowerCase() !== 'false'
-      : true,
+      : !env && !testRuntime,
     appleCalDavUrl,
     appleCalDavUsername:
       resolveConfigValue('APPLE_CALDAV_USERNAME', envFile, env)?.trim() || null,
@@ -1375,30 +1377,7 @@ async function defaultAppleCalendarScriptRunner(
   startIso: string,
   endIso: string,
 ): Promise<string> {
-  const script = `
-const app = Application('Calendar');
-const start = new Date(ARGV[0]);
-const end = new Date(ARGV[1]);
-const rows = [];
-for (const cal of app.calendars()) {
-  const events = cal.events();
-  for (const ev of events) {
-    const eventStart = new Date(ev.startDate());
-    const eventEnd = new Date(ev.endDate());
-    if (!(eventStart < end && eventEnd > start)) continue;
-    rows.push({
-      id: String(typeof ev.id === 'function' ? ev.id() : ''),
-      title: String(typeof ev.summary === 'function' ? ev.summary() : typeof ev.name === 'function' ? ev.name() : 'Untitled event'),
-      startIso: eventStart.toISOString(),
-      endIso: eventEnd.toISOString(),
-      allDay: Boolean(typeof ev.alldayEvent === 'function' ? ev.alldayEvent() : false),
-      location: typeof ev.location === 'function' ? String(ev.location() || '') : '',
-      calendarName: String(typeof cal.name === 'function' ? cal.name() : 'Apple Calendar')
-    });
-  }
-}
-JSON.stringify(rows);
-`;
+  const script = buildAppleCalendarJxaScript();
 
   return await new Promise<string>((resolve, reject) => {
     const proc = spawn(
@@ -1428,6 +1407,35 @@ JSON.stringify(rows);
       }
     });
   });
+}
+
+export function buildAppleCalendarJxaScript(): string {
+  return `
+function run(argv) {
+const app = Application('Calendar');
+const start = new Date(argv[0]);
+const end = new Date(argv[1]);
+const rows = [];
+for (const cal of app.calendars()) {
+  const events = cal.events();
+  for (const ev of events) {
+    const eventStart = new Date(ev.startDate());
+    const eventEnd = new Date(ev.endDate());
+    if (!(eventStart < end && eventEnd > start)) continue;
+    rows.push({
+      id: String(typeof ev.id === 'function' ? ev.id() : ''),
+      title: String(typeof ev.summary === 'function' ? ev.summary() : typeof ev.name === 'function' ? ev.name() : 'Untitled event'),
+      startIso: eventStart.toISOString(),
+      endIso: eventEnd.toISOString(),
+      allDay: Boolean(typeof ev.alldayEvent === 'function' ? ev.alldayEvent() : false),
+      location: typeof ev.location === 'function' ? String(ev.location() || '') : '',
+      calendarName: String(typeof cal.name === 'function' ? cal.name() : 'Apple Calendar')
+    });
+  }
+}
+return JSON.stringify(rows);
+}
+`;
 }
 
 async function loadAppleLocalEvents(
