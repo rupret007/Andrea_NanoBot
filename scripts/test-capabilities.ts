@@ -144,6 +144,69 @@ for (const id of [
   assert.doesNotMatch(state.currentBlocker ?? '', /Missing config/);
 }
 
+buildRealityGroundingReport({
+  generatedAt: '2026-06-09T16:01:30.000Z',
+  persist: true,
+  proofReport: buildLiveProofGauntletReport({
+    now: new Date('2026-06-09T16:01:30.000Z'),
+    env: { TELEGRAM_USER_API_ID: '', TELEGRAM_USER_API_HASH: '' },
+    truth: {
+      telegram: surface('live_proven', 'none', 'No action needed.'),
+      journeys: {
+        ordinary_chat: surface(
+          'near_live_only',
+          'none',
+          'Send hi in Telegram.',
+        ),
+      },
+      alexa: {
+        ...surface(
+          'near_live_only',
+          'external',
+          'Use Alexa simulator/device for a signed IntentRequest.',
+        ),
+        lastHandledProofAt: 'none',
+        lastSignedRequestAt: 'none',
+        proofFreshness: 'none',
+      },
+      bluebubbles: {
+        ...surface(
+          'near_live_only',
+          'external',
+          'Complete the same-thread proof.',
+        ),
+        messageActionProofState: 'none',
+        messageActionProofAt: 'none',
+        messageActionProofChatJid: 'none',
+      },
+      googleCalendar: surface(
+        'externally_blocked',
+        'external',
+        'Re-run Google Calendar auth.',
+      ),
+      research: surface('live_proven', 'none', 'No action needed.'),
+      imageGeneration: surface('live_proven', 'none', 'No action needed.'),
+    } as any,
+  }),
+});
+const blockedCalendarCapabilityReport = buildCapabilitySelfModel({
+  now: '2026-06-09T16:01:31.000Z',
+  persist: false,
+  env: {},
+  envFileValues: {
+    GOOGLE_CALENDAR_CLIENT_ID: 'set',
+  },
+});
+for (const id of ['calendar.read', 'calendar.write']) {
+  const state = blockedCalendarCapabilityReport.states.find(
+    (item) => item.capabilityId === id,
+  );
+  assert.ok(state, `missing capability ${id}`);
+  assert.equal(state.proofStatus, 'externally_blocked');
+  assert.equal(state.enabled, false);
+  assert.match(state.currentBlocker ?? '', /Google Calendar auth/i);
+}
+
 upsertToolReliabilityRollup({
   subjectId: 'provider:brave_search',
   updatedAt: '2026-06-09T15:00:00.000Z',

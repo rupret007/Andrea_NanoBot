@@ -99,7 +99,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     displayName: 'Read Google Calendar',
     requiredConfig: ['GOOGLE_CALENDAR_CLIENT_ID'],
     reliabilitySubjectId: 'integration:google_calendar',
-    proofNameHint: /calendar.*(read|auth)/i,
+    proofNameHint: /google calendar|calendar.*(read|write|create|auth)/i,
     allowedChannels: [
       'telegram',
       'alexa',
@@ -115,7 +115,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     displayName: 'Create Google Calendar events (after approval)',
     requiredConfig: ['GOOGLE_CALENDAR_CLIENT_ID'],
     reliabilitySubjectId: 'integration:google_calendar',
-    proofNameHint: /calendar.*(write|create|auth)/i,
+    proofNameHint: /google calendar|calendar.*(read|write|create|auth)/i,
     allowedChannels: ['telegram', 'operator'],
     approvalRequirement: 'explicit_approval',
     fallbackCapabilityId: 'calendar.read',
