@@ -630,6 +630,15 @@ function shouldRunProviderCouncil(input: {
   if (thinkingControl === 'deep') {
     return true;
   }
+  if (
+    input.taskFamily === 'assistant' &&
+    input.selectedSkill.skillId === 'assistant.daily_guidance' &&
+    !/\b(complex|hard|deep|architecture|diagnose|repair|debug|review|critic|second opinion|autonomous|agentic)\b/.test(
+      text,
+    )
+  ) {
+    return false;
+  }
   if (input.taskFamily === 'operator' || input.taskFamily === 'code') {
     return true;
   }
@@ -1029,7 +1038,16 @@ function explainProviderBlockerSoft(text: string): string {
 function visibleGuidanceLine(
   guidance: AndreaPlatformCouncilAnswerGuidance,
 ): string {
-  const words = guidance.visibleVerdict
+  const cleaned = guidance.visibleVerdict
+    .replace(/^Proceed with a concise verified answer\.\s*/i, '')
+    .replace(/^Proceed carefully and name uncertainty\.\s*/i, '')
+    .replace(/^Ask one clarifying question before acting\.\s*/i, '')
+    .replace(
+      /^Hold or block until the missing requirement is resolved\.\s*/i,
+      '',
+    )
+    .trim();
+  const words = cleaned
     .replace(/\s+/g, ' ')
     .trim()
     .split(/\s+/)
@@ -1037,7 +1055,7 @@ function visibleGuidanceLine(
   const verdict =
     words.length <= 24 ? words.join(' ') : `${words.slice(0, 24).join(' ')}...`;
   if (!verdict) return '';
-  return `Council check: ${verdict}`;
+  return `Quick check: ${verdict}`;
 }
 
 export function applyCouncilGuidanceToReply(
@@ -1062,13 +1080,16 @@ export function applyCouncilGuidanceToReply(
       flags: ['provider_council_guidance_applied', 'provider_council_block'],
     };
   }
-  if (
-    guidance.status === 'clarify' &&
-    guidance.clarifyingQuestion &&
-    !/\?\s*$/.test(text.trim())
-  ) {
+  if (guidance.status === 'clarify' && !/\?\s*$/.test(text.trim())) {
+    const question =
+      guidance.clarifyingQuestion ||
+      (guidance.answerDirection &&
+      !/^ask one clarifying question/i.test(guidance.answerDirection)
+        ? guidance.answerDirection
+        : null) ||
+      'What context should I use before I answer that?';
     return {
-      text: `${guidanceLine}\n\n${guidance.clarifyingQuestion}`,
+      text: question,
       applied: true,
       flags: ['provider_council_guidance_applied', 'provider_council_clarify'],
     };

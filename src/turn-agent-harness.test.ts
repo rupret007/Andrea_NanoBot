@@ -258,6 +258,63 @@ describe('turn agent harness', () => {
     expect(calls.some((call) => call.url.endsWith('/council-run'))).toBe(false);
   });
 
+  it('keeps routine daily guidance local-first instead of council-held', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body || '{}')) as Record<
+            string,
+            unknown
+          >,
+        });
+        if (String(input).endsWith('/skill-evolution-report')) {
+          return new Response(JSON.stringify({ active_skills: [] }), {
+            status: 200,
+          });
+        }
+        if (String(input).endsWith('/council-run')) {
+          throw new Error('routine daily guidance should not call council');
+        }
+        return new Response(
+          JSON.stringify({
+            task: { task_ledger_id: 'task-daily' },
+            progress: { progress_ledger_id: 'progress-daily' },
+            plan: { plan_id: 'plan-daily', route: 'local_capability' },
+            decision: {
+              decision_id: 'decision-daily',
+              selected_route: 'local_capability',
+              execution_posture: 'execute_now',
+              selected_policy_id: 'local_capability',
+              expected_evidence: 'partial',
+            },
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    );
+
+    const { beginTurnAgentHarness } = await import('./turn-agent-harness.js');
+    const context = await beginTurnAgentHarness({
+      turnId: 'turn-daily-guidance-read',
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what am I forgetting',
+      requestRoute: 'direct_assistant',
+    });
+
+    expect(context?.taskFamily).toBe('assistant');
+    expect(context?.selectedSkill.skillId).toBe('assistant.daily_guidance');
+    expect(context?.providerCouncil).toBeNull();
+    expect(context?.platformHoldReply).toBeNull();
+    expect(calls.some((call) => call.url.endsWith('/council-run'))).toBe(false);
+  });
+
   it('runs provider council for complex research and operator turns', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
@@ -462,7 +519,8 @@ describe('turn agent harness', () => {
       routeKey: 'daily.priority',
     });
 
-    expect(guided.rewrittenText).toContain('Council check:');
+    expect(guided.rewrittenText).toContain('Quick check:');
+    expect(guided.rewrittenText).not.toContain('Council check:');
     expect(guided.evaluatorFlags).toContain(
       'provider_council_guidance_applied',
     );
@@ -628,11 +686,93 @@ describe('turn agent harness', () => {
     });
 
     expect(evaluation.rewrittenText).toContain(
-      'I need to hold this until the blocker is resolved',
+      'I only have partial support for that.',
     );
     expect(evaluation.rewrittenText).not.toMatch(
       /Council check|Hold or block/i,
     );
+  });
+
+  it('hides council clarify jargon from user-facing clarification replies', async () => {
+    const { evaluateTurnReply } = await import('./turn-agent-harness.js');
+
+    const evaluation = evaluateTurnReply({
+      context: {
+        turnId: 'turn-clarify-council-guidance',
+        channel: 'telegram',
+        groupFolder: 'main',
+        requestRoute: 'direct_assistant',
+        taskFamily: 'assistant',
+        meaningful: true,
+        selectedSkill: {
+          skillId: 'assistant.daily_guidance',
+          taskFamily: 'assistant',
+          purpose: 'guidance',
+          inputs: [],
+          outputs: [],
+          evidenceLevel: 'partial',
+          sideEffectRisk: 'none',
+          approvalNeed: 'none',
+          failureModes: [],
+          examples: [],
+        },
+        contextCompile: {
+          readPlan: {
+            taskFamily: 'assistant',
+            readTiers: ['working'],
+            hotPath: true,
+            safeWriteClasses: [],
+            reason: 'guidance',
+            sources: [],
+          },
+          selectedSkill: {
+            skillId: 'assistant.daily_guidance',
+            taskFamily: 'assistant',
+            purpose: 'guidance',
+            inputs: [],
+            outputs: [],
+            evidenceLevel: 'partial',
+            sideEffectRisk: 'none',
+            approvalNeed: 'none',
+            failureModes: [],
+            examples: [],
+          },
+          memoryTiers: ['working'],
+          metadata: {},
+          effectiveDirectives: [],
+        },
+        deliberation: {
+          selectedRoute: 'local_capability',
+          expectedEvidence: 'partial',
+        },
+        platformHoldReply: null,
+        providerCouncil: {
+          councilRunId: 'council-clarify',
+          mode: 'dual_review',
+          finalRoute: 'dual_review',
+          approvalRequired: false,
+          answerGuidance: {
+            status: 'clarify',
+            visibleVerdict:
+              'Ask one clarifying question before acting. Ask what context the user wants checked.',
+            answerDirection: 'Ask what context the user wants checked.',
+            confidence: 0.45,
+            uncertainty: 'missing context',
+            sourceMemberIds: ['openai_cloud'],
+          },
+        },
+      },
+      text: 'I need a little more context.',
+      routeKey: 'daily_guidance',
+    });
+
+    expect(evaluation.rewrittenText).toBe(
+      'Ask what context the user wants checked.',
+    );
+    expect(evaluation.rewrittenText).not.toMatch(
+      /Council check|Ask one clarifying question before acting|Hold or block/i,
+    );
+    expect(evaluation.evaluatorFlags).toContain('provider_council_clarify');
   });
 
   it('keeps approval-first message sending even when council guidance sounds permissive', async () => {
