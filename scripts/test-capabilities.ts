@@ -204,6 +204,10 @@ for (const id of ['calendar.read', 'calendar.write']) {
   assert.ok(state, `missing capability ${id}`);
   assert.equal(state.proofStatus, 'externally_blocked');
   assert.equal(state.enabled, false);
+  assert.ok(
+    state.reliabilityScore <= 0.22,
+    'externally blocked calendar capabilities must not report high reliability',
+  );
   assert.match(state.currentBlocker ?? '', /Google Calendar auth/i);
 }
 

@@ -333,7 +333,11 @@ export function buildCapabilitySelfModel(
     const reliabilityScore =
       proofStatus === 'live_proven'
         ? Math.max(reliabilityScoreBase, 0.9)
-        : reliabilityScoreBase;
+        : proofStatus === 'missing_config'
+          ? Math.min(reliabilityScoreBase, 0.05)
+          : proofStatus === 'externally_blocked'
+            ? Math.min(reliabilityScoreBase, 0.22)
+            : reliabilityScoreBase;
     const enabled =
       proofStatus !== 'missing_config' && proofStatus !== 'externally_blocked';
     const confidence = Math.max(
