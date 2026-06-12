@@ -117,6 +117,7 @@ describe('command surface registry', () => {
         '/debug-level',
         '/debug-reset',
         '/debug-logs',
+        '/integrations',
         '/alexa-status',
         '/amazon-status',
         '/amazon-search',
@@ -255,6 +256,7 @@ describe('command surface docs', () => {
     expect(publicGuide).toContain('Help me plan tonight');
     expect(publicGuide).not.toContain('/alexa-status');
     expect(publicGuide).not.toContain('/debug-status');
+    expect(publicGuide).not.toContain('/integrations');
     expect(publicGuide).not.toContain('/amazon-search');
     expect(publicGuide).not.toContain('/cursor-ui');
     expect(publicGuide).not.toContain('/bundle-toggle');
@@ -292,6 +294,8 @@ describe('command surface docs', () => {
     expect(commandReference).toContain('/cursor-ui *');
     expect(commandReference).toContain('/bundle-*');
     expect(commandReference).toContain('/remote-control');
+    expect(commandReference).toContain('/integrations');
+    expect(commandReference).toContain('Safe guided integration recovery');
     expect(commandReference).toContain('internal');
     expect(commandReference).toContain('operator-only');
     expect(commandReference).toContain('Telegram feedback controls');

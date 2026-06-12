@@ -413,6 +413,7 @@ import {
   isIntegrationDoctorRequest,
   parseIntegrationFixTarget,
 } from './integration-doctor.js';
+import { runIntegrationRecoveryCommand } from './integration-recovery.js';
 import {
   formatCouncilDoctorReport,
   buildCouncilDoctorReport,
@@ -718,6 +719,7 @@ import {
   DEBUG_RESET_COMMANDS,
   DEBUG_STATUS_COMMANDS,
   getCommandAccessDecision,
+  INTEGRATION_RECOVERY_COMMANDS,
   isMainControlChat,
   normalizeCommandToken,
   PURCHASE_APPROVE_COMMANDS,
@@ -11753,6 +11755,23 @@ async function main(): Promise<void> {
     });
   }
 
+  async function handleIntegrationRecovery(
+    chatJid: string,
+    rawTrimmed: string,
+    message?: NewMessage,
+  ): Promise<void> {
+    try {
+      const result = await runIntegrationRecoveryCommand(rawTrimmed);
+      await sendCursorMessage(chatJid, result.text, message);
+    } catch (err) {
+      await sendCursorMessage(
+        chatJid,
+        formatUserFacingOperationFailure('Integration recovery failed', err),
+        message,
+      );
+    }
+  }
+
   async function handleDebugLevel(
     chatJid: string,
     rawTrimmed: string,
@@ -15934,6 +15953,13 @@ async function main(): Promise<void> {
       if (DEBUG_STATUS_COMMANDS.has(commandToken)) {
         handleDebugStatus(chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Debug status command error'),
+        );
+        return;
+      }
+
+      if (INTEGRATION_RECOVERY_COMMANDS.has(commandToken)) {
+        handleIntegrationRecovery(chatJid, rawTrimmed, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Integration recovery command error'),
         );
         return;
       }

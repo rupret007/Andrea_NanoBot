@@ -11,20 +11,20 @@ Use this as the demo and dogfood checklist for the current operator host. Comman
 
 ## Readiness Matrix
 
-| Surface | Current truth | Exact blocker | Owner | Smallest next action |
-| --- | --- | --- | --- | --- |
-| Telegram user-session proof | `externally_blocked` | missing `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH` | external/config | Set the credentials, then run `npm run telegram:user:smoke` |
-| Alexa companion | `near_live_only` | no fresh signed handled `IntentRequest` recorded | external/live turn | Use a real simulator/device turn, then run `npm run services:status` |
-| BlueBubbles companion | `degraded_but_usable` | missing fresh same-thread message-action proof | live turn | Run one same-chat draft -> `send it` or `send it later tonight` proof |
-| Google Calendar | `live_proven` | none | none | Keep `npm run debug:google-calendar` current |
-| Work cockpit | `near_live_only` / proof-stale | no fresh flagship work-cockpit turn | operator/live turn | Re-run one `/cursor` sanity flow |
-| Life threads / communication | `near_live_only` / proof-stale | no fresh Candace/communication chain | operator/live turn | Re-run one Candace follow-through chain |
-| Chief-of-staff / missions | `near_live_only` / proof-stale | no fresh planning journey | operator/live turn | Re-run one nightly-planning or mission chain |
-| Knowledge library | `near_live_only` / proof-stale | no fresh save plus grounded answer | operator/live turn | Re-run one save and one library-grounded answer |
-| Action bundles / delegation / outcome review | `near_live_only` / proof-stale | no fresh approve/partial/review chain | operator/live turn | Re-run one action-bundle review chain |
-| Research mode | `live_proven` | none | none | Keep the proof fresh if it will be demoed |
-| Image generation | `live_proven` | none | none | Keep the proof fresh if it will be demoed |
-| Startup / host-control / watchdog / health | `live_proven` | none for core host | none | Keep `services:status`, `setup verify`, and `debug:status` aligned after each restart |
+| Surface                                      | Current truth                  | Exact blocker                                               | Owner              | Smallest next action                                                                  |
+| -------------------------------------------- | ------------------------------ | ----------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------- |
+| Telegram user-session proof                  | `externally_blocked`           | missing `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH` | external/config    | Set the credentials, then run `npm run telegram:user:smoke`                           |
+| Alexa companion                              | `near_live_only`               | no fresh signed handled `IntentRequest` recorded            | external/live turn | Use a real simulator/device turn, then run `npm run services:status`                  |
+| BlueBubbles companion                        | `degraded_but_usable`          | missing fresh same-thread message-action proof              | live turn          | Run one same-chat draft -> `send it` or `send it later tonight` proof                 |
+| Google Calendar                              | `externally_blocked`           | token refresh returns `invalid_grant`                       | external/OAuth     | Reauthorize with the current repo, then run `npm run debug:google-calendar`           |
+| Work cockpit                                 | `near_live_only` / proof-stale | no fresh flagship work-cockpit turn                         | operator/live turn | Re-run one `/cursor` sanity flow                                                      |
+| Life threads / communication                 | `near_live_only` / proof-stale | no fresh Candace/communication chain                        | operator/live turn | Re-run one Candace follow-through chain                                               |
+| Chief-of-staff / missions                    | `near_live_only` / proof-stale | no fresh planning journey                                   | operator/live turn | Re-run one nightly-planning or mission chain                                          |
+| Knowledge library                            | `near_live_only` / proof-stale | no fresh save plus grounded answer                          | operator/live turn | Re-run one save and one library-grounded answer                                       |
+| Action bundles / delegation / outcome review | `near_live_only` / proof-stale | no fresh approve/partial/review chain                       | operator/live turn | Re-run one action-bundle review chain                                                 |
+| Research mode                                | `live_proven`                  | none                                                        | none               | Keep the proof fresh if it will be demoed                                             |
+| Image generation                             | `live_proven`                  | none                                                        | none               | Keep the proof fresh if it will be demoed                                             |
+| Startup / host-control / watchdog / health   | `live_proven`                  | none for core host                                          | none               | Keep `services:status`, `setup verify`, and `debug:status` aligned after each restart |
 
 ## Operator Preflight
 
@@ -52,6 +52,7 @@ Important truth:
 - Telegram is blocked by missing user-session API credentials until `npm run telegram:user:smoke` succeeds.
 - Alexa is not `live_proven` until a fresh signed handled `IntentRequest` is recorded.
 - BlueBubbles is usable, but not fully live-proven until a fresh same-thread message-action proof is recorded.
+- Google Calendar is currently blocked by a stale or revoked OAuth grant; reauthorize before claiming calendar launch readiness.
 - Research and image generation are currently live-proven advanced lanes, not core launch blockers.
 
 ## Proof Recovery Checklist
@@ -62,15 +63,20 @@ Close proof debt in this order:
    - Set `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`.
    - Run `npm run telegram:user:smoke`.
    - Success shape: no missing-credential blocker, user-session smoke records a request/response proof, and `debug:status` no longer reports Telegram as `externally_blocked`.
-2. Alexa
-   - From the real Alexa simulator or device, say `Open Andrea Assistant`, then `What am I forgetting?`.
-   - Run `npm run services:status` and `npm run debug:pilot`.
-   - Success shape: latest signed request is a handled `IntentRequest`, the proof is inside the freshness window, and Alexa reports `live_proven`.
+2. Google Calendar
+   - Run `npm run setup -- --step google-calendar auth --client-secret-json "<client-secret.json>"`.
+   - Complete browser consent for the current repo.
+   - Run `npm run debug:google-calendar` and `npm run services:status`.
+   - Success shape: token refresh succeeds, provider discovery works, and a disposable live-write proof is current.
 3. BlueBubbles
    - Run `npm run debug:bluebubbles -- --live`.
    - In the same Messages chat, ask Andrea to draft a reply, then execute `send it` or `send it later tonight`.
    - Success shape: transport and webhook stay ready, and the same-thread inbound/outbound/message-action proof is fresh.
-4. Flagship journeys
+4. Alexa
+   - From the real Alexa simulator or device, say `Open Andrea Assistant`, then `What am I forgetting?`.
+   - Run `npm run services:status` and `npm run debug:pilot`.
+   - Success shape: latest signed request is a handled `IntentRequest`, the proof is inside the freshness window, and Alexa reports `live_proven`.
+5. Flagship journeys
    - Re-run ordinary chat, daily guidance, Candace follow-through, mission planning, work cockpit, cross-channel handoff, knowledge library, and action-bundle review.
    - Run `npm run debug:pilot`.
    - Success shape: flagship proof freshness improves without any stale `live_proven` claims.

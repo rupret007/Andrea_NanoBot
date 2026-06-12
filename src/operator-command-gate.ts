@@ -164,6 +164,20 @@ export const DEBUG_RESET_COMMANDS = new Set(['/debug-reset', '/debug_reset']);
 
 export const DEBUG_LOGS_COMMANDS = new Set(['/debug-logs', '/debug_logs']);
 
+export const INTEGRATION_RECOVERY_COMMANDS = new Set([
+  '/integrations',
+  '/integrations-status',
+  '/integrations_status',
+  '/integrations-recover',
+  '/integrations_recover',
+  '/integrations-doctor',
+  '/integrations_doctor',
+  '/fix-integrations',
+  '/fix_integrations',
+  '/repair-integrations',
+  '/repair_integrations',
+]);
+
 export const ALEXA_STATUS_COMMANDS = new Set([
   '/alexa',
   '/alexa-status',
@@ -235,6 +249,7 @@ const MAIN_CONTROL_ONLY_COMMANDS = new Set([
   ...DEBUG_LEVEL_COMMANDS,
   ...DEBUG_RESET_COMMANDS,
   ...DEBUG_LOGS_COMMANDS,
+  ...INTEGRATION_RECOVERY_COMMANDS,
   ...ALEXA_STATUS_COMMANDS,
   ...AMAZON_STATUS_COMMANDS,
   ...AMAZON_SEARCH_COMMANDS,

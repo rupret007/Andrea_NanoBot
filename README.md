@@ -88,10 +88,11 @@ Current host truth from the local operator commands:
 
 - `Host state: running_ready` is the canonical runtime health signal for this machine.
 - Active repo and serving commit should match before any live proof is trusted.
-- `live_proven`: host health, Google Calendar, research, and image generation.
+- Dated recovery snapshot: [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md).
+- `live_proven`: host health, research, and image generation.
 - `degraded_but_usable`: BlueBubbles transport is ready and the private webhook is registered, but the same-thread message-action proof needs a fresh run.
-- `near_live_only`: Alexa model sync is marked synced, but there is no fresh signed handled `IntentRequest`.
-- `externally_blocked`: Telegram user-session proof is missing `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`.
+- `near_live_only`: Telegram bot proof needs one fresh same-host Telegram turn, and Alexa model sync is marked synced but there is no fresh signed handled `IntentRequest`.
+- `externally_blocked`: Google Calendar token refresh is currently failing with `invalid_grant`; Telegram user-session proof is missing `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`.
 - Work cockpit, life threads, communication companion, missions, knowledge library, and action bundles are repo-ready but proof-stale until refreshed on this host.
 - `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on the same proof/config blocker story
 - `npm run debug:pilot` is the proof-freshness and dogfooding surface for flagship journeys, degraded-but-usable fallback, and exact next steps
@@ -567,7 +568,7 @@ Notes:
 - if the browser reaches the Google callback but `auth` still times out, finish the same current-repo OAuth run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
 - reminder phrasing still creates reminders, not Google Calendar events
 - a host is only live-proven for Google Calendar writes after `auth`, `discover`, `validate`, and one disposable create-event proof all succeed on that host
-- on this host, Google Calendar is currently `live_proven`; if a future run reports `missing_config`, rerun OAuth setup before claiming calendar launch readiness
+- on this host, Google Calendar is currently `externally_blocked` by `invalid_grant`; rerun the current-repo OAuth setup and validation before claiming calendar launch readiness
 
 ## What Andrea Can Do
 

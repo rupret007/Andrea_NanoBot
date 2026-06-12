@@ -5070,6 +5070,7 @@ export type RepairPlaybookId =
   | 'bluebubbles_refresh_all'
   | 'alexa_ingress_probe'
   | 'google_calendar_auth_check'
+  | 'telegram_user_session_auth_check'
   | 'provider_quota_cooldown_record'
   | 'assistant_session_clear_once'
   | 'work_cockpit_reconcile_selection'

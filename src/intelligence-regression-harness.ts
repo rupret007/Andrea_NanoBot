@@ -125,7 +125,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'assistant',
-      councilMode: 'dual_review',
+      councilMode: 'none',
       evidenceLevel: 'partial',
       approvalNeed: 'none',
     },
@@ -140,7 +140,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'calendar',
-      councilMode: 'dual_review',
+      councilMode: 'none',
       evidenceLevel: 'partial',
       approvalNeed: 'conditional',
       safeRewriteApplied: true,
@@ -326,6 +326,9 @@ function actualMetadata(input: {
       input.reflectionTraceGradeId ||
       input.context?.deliberation?.traceGradeId ||
       '',
+    cognitive_run_id: input.context?.cognitiveRun?.run.runId || '',
+    logic_decision_id: input.context?.logicRun?.decision.decisionId || '',
+    runtime_run_id: input.context?.runtimeSpine?.run.runtimeRunId || '',
     council_id: input.context?.providerCouncil?.councilRunId || '',
     council_mode: input.context?.providerCouncil?.mode || 'none',
     council_member_count: String(
@@ -512,9 +515,12 @@ async function runScenario(
             (reflection?.reflection?.traceGradeId ||
               context.deliberation.traceGradeId ||
               context.providerCouncil?.councilRunId)) ||
+          context.cognitiveRun?.run.runId ||
+          context.logicRun?.decision.decisionId ||
+          context.runtimeSpine?.run.runtimeRunId ||
           context.providerCouncil?.councilRunId,
         ),
-      'Meaningful scenario is linked to deliberation, trace-grade, or local council evidence.',
+      'Meaningful scenario is linked to platform deliberation, local cognitive trace, runtime trace, or council evidence.',
       criticalGates,
     ),
   );

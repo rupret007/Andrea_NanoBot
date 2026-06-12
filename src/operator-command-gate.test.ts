@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   getCommandAccessDecision,
+  INTEGRATION_RECOVERY_COMMANDS,
   isMainControlChat,
   normalizeCommandToken,
 } from './operator-command-gate.js';
@@ -65,6 +66,53 @@ describe('operator command gate', () => {
       isMain: true,
     });
     expect(allowed.allowed).toBe(true);
+  });
+
+  it('keeps integration recovery commands main-control-only', () => {
+    const blocked = getCommandAccessDecision('/integrations', undefined);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.reason).toBe('main_control_only');
+
+    const aliasBlocked = getCommandAccessDecision('/fix-integrations', {
+      name: 'Family',
+      folder: 'family',
+      trigger: '@andrea',
+      added_at: '2026-03-29T00:00:00.000Z',
+      isMain: false,
+    });
+    expect(aliasBlocked.allowed).toBe(false);
+
+    const allowed = getCommandAccessDecision('/repair_integrations', {
+      name: 'Andrea Main',
+      folder: 'main',
+      trigger: '@andrea',
+      added_at: '2026-03-29T00:00:00.000Z',
+      isMain: true,
+    });
+    expect(allowed.allowed).toBe(true);
+  });
+
+  it('keeps every integration recovery alias behind the main control gate', () => {
+    const main = {
+      name: 'Andrea Main',
+      folder: 'main',
+      trigger: '@andrea',
+      added_at: '2026-03-29T00:00:00.000Z',
+      isMain: true,
+    };
+    const nonMain = {
+      name: 'Family',
+      folder: 'family',
+      trigger: '@andrea',
+      added_at: '2026-03-29T00:00:00.000Z',
+      isMain: false,
+    };
+
+    for (const command of INTEGRATION_RECOVERY_COMMANDS) {
+      expect(getCommandAccessDecision(command, undefined).allowed).toBe(false);
+      expect(getCommandAccessDecision(command, nonMain).allowed).toBe(false);
+      expect(getCommandAccessDecision(command, main).allowed).toBe(true);
+    }
   });
 
   it('blocks advanced commands in non-main chats', () => {

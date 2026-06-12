@@ -58,6 +58,8 @@ function addMinutes(now: Date, minutes: number): string {
 function playbookForIntegration(id: string): RepairPlaybookId {
   const normalized = id.toLowerCase();
   if (normalized.includes('bluebubbles')) return 'bluebubbles_refresh_all';
+  if (normalized.includes('telegram'))
+    return 'telegram_user_session_auth_check';
   if (normalized.includes('alexa')) return 'alexa_ingress_probe';
   if (
     normalized.includes('google_calendar') ||
@@ -120,6 +122,7 @@ function safeToApply(playbookId: RepairPlaybookId): boolean {
   return (
     playbookId === 'bluebubbles_refresh_all' ||
     playbookId === 'google_calendar_auth_check' ||
+    playbookId === 'telegram_user_session_auth_check' ||
     playbookId === 'provider_quota_cooldown_record' ||
     playbookId === 'work_cockpit_reconcile_selection' ||
     playbookId === 'scheduled_action_failure_review' ||
@@ -141,11 +144,12 @@ function playbookSummary(params: {
   validation: RepairAttemptRecord['validationStatus'];
   cooldownMinutes: number;
 } {
-  const prefix = params.dryRun ? 'Planned' : 'Applied safe metadata repair for';
   switch (params.playbookId) {
     case 'bluebubbles_refresh_all':
       return {
-        summary: `${prefix} BlueBubbles readiness refresh and proof reconciliation for ${params.id}.`,
+        summary: params.dryRun
+          ? `Planned BlueBubbles readiness refresh and proof reconciliation for ${params.id}.`
+          : `Recorded proof-drill checklist and safe metadata refresh for BlueBubbles ${params.id}.`,
         nextAction:
           'Run npm run debug:bluebubbles -- --live, then complete same-thread proof if still needed.',
         status: params.status?.state === 'healthy' ? 'succeeded' : 'planned',
@@ -155,7 +159,9 @@ function playbookSummary(params: {
       };
     case 'alexa_ingress_probe':
       return {
-        summary: `${prefix} Alexa local/public ingress status probe for ${params.id}.`,
+        summary: params.dryRun
+          ? `Planned Alexa local/public ingress status probe for ${params.id}.`
+          : `Recorded recovery checklist for Alexa local/public ingress status and signed proof for ${params.id}.`,
         nextAction:
           'Use Alexa Developer Console/app for signed live proof; code will not fake an IntentRequest.',
         status: params.status?.state === 'healthy' ? 'succeeded' : 'planned',
@@ -164,7 +170,9 @@ function playbookSummary(params: {
       };
     case 'google_calendar_auth_check':
       return {
-        summary: `${prefix} Google Calendar auth/config classification for ${params.id}.`,
+        summary: params.dryRun
+          ? `Planned Google Calendar auth/config classification for ${params.id}.`
+          : `Recorded recovery checklist for Google Calendar auth/config classification for ${params.id}.`,
         nextAction:
           params.status?.state === 'needs_auth'
             ? 'Re-run Google Calendar OAuth setup; invalid or missing OAuth cannot be repaired automatically.'
@@ -174,9 +182,23 @@ function playbookSummary(params: {
           params.status?.state === 'healthy' ? 'passed' : 'manual_required',
         cooldownMinutes: 60,
       };
+    case 'telegram_user_session_auth_check':
+      return {
+        summary: params.dryRun
+          ? `Planned Telegram user-session config/auth classification for ${params.id}.`
+          : `Recorded recovery checklist for Telegram user-session config/auth classification for ${params.id}.`,
+        nextAction:
+          'Set TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH if missing, run npm run telegram:user:auth if the session is missing, then run npm run telegram:user:smoke.',
+        status: params.status?.state === 'healthy' ? 'succeeded' : 'planned',
+        validation:
+          params.status?.state === 'healthy' ? 'passed' : 'manual_required',
+        cooldownMinutes: 60,
+      };
     case 'provider_quota_cooldown_record':
       return {
-        summary: `${prefix} provider quota/auth/transport cooldown classification for ${params.id}.`,
+        summary: params.dryRun
+          ? `Planned provider quota/auth/transport cooldown classification for ${params.id}.`
+          : `Recorded provider quota/auth/transport cooldown classification for ${params.id}.`,
         nextAction:
           params.provider?.nextAction ||
           'Route around the blocked provider and rerun provider diagnostics later.',
@@ -188,7 +210,9 @@ function playbookSummary(params: {
       };
     case 'assistant_session_clear_once':
       return {
-        summary: `${prefix} one-shot stale assistant-session recovery plan for ${params.id}.`,
+        summary: params.dryRun
+          ? `Planned one-shot stale assistant-session recovery plan for ${params.id}.`
+          : `Recorded one-shot stale assistant-session recovery plan for ${params.id}.`,
         nextAction:
           'Clear stale session once only, retry once, then keep the calm fallback if it still fails.',
         status: 'planned',
@@ -197,7 +221,9 @@ function playbookSummary(params: {
       };
     case 'work_cockpit_reconcile_selection':
       return {
-        summary: `${prefix} stale work-cockpit selection reconciliation for ${params.id}.`,
+        summary: params.dryRun
+          ? `Planned stale work-cockpit selection reconciliation for ${params.id}.`
+          : `Recorded stale work-cockpit selection reconciliation for ${params.id}.`,
         nextAction:
           'Reconcile current runtime/Cursor lane state before claiming there is no current work.',
         status: 'planned',
@@ -206,7 +232,9 @@ function playbookSummary(params: {
       };
     case 'scheduled_action_failure_review':
       return {
-        summary: `${prefix} scheduled task/message-action failure review for ${params.id}.`,
+        summary: params.dryRun
+          ? `Planned scheduled task/message-action failure review for ${params.id}.`
+          : `Recorded scheduled task/message-action failure review for ${params.id}.`,
         nextAction:
           'Preserve draft/state, mark failed or carried over, and retry only transient transport with no receipt.',
         status: 'planned',
@@ -215,7 +243,9 @@ function playbookSummary(params: {
       };
     case 'webhook_registration_check':
       return {
-        summary: `${prefix} webhook registration diagnosis for ${params.id}.`,
+        summary: params.dryRun
+          ? `Planned webhook registration diagnosis for ${params.id}.`
+          : `Recorded webhook registration diagnosis for ${params.id}.`,
         nextAction:
           'Distinguish missing public base URL from registration failure; only reversible webhook changes are allowed.',
         status: 'planned',

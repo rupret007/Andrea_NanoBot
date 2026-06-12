@@ -237,6 +237,30 @@ function providerBlockReason(
   return `${providerId} is ${snapshot.state}.`;
 }
 
+function runtimeFailureFlag(
+  providerId: string,
+  fallbackFlag: string,
+  failure: string | null | undefined,
+): string {
+  const normalized = String(failure || '').toLowerCase();
+  if (
+    /\b(quota|rate[- ]?limit|billing|balance|insufficient|resource_exhausted)\b/.test(
+      normalized,
+    )
+  ) {
+    return `${providerId}_quota_or_rate_limit`;
+  }
+  if (
+    /\b(api key|unauthorized|auth|credential|permission)\b/.test(normalized)
+  ) {
+    return `${providerId}_auth_failure`;
+  }
+  if (/\b(timeout|timed out|transport|network|fetch|dns)\b/.test(normalized)) {
+    return `${providerId}_transport_error`;
+  }
+  return fallbackFlag;
+}
+
 function applyActiveProviderCooldowns(
   snapshots: ProviderHealthSnapshot[],
   checkedAt: string,
@@ -743,7 +767,7 @@ export async function runObservableProviderCouncil(
           memberCount: 0,
           skippedMemberCount: 0,
           blockedMemberCount: 0,
-          riskFlags: ['platform_council_record_unavailable'],
+          riskFlags: ['platform_council_record_local_fallback'],
         };
 
   const councilRunId = council.councilRunId || localCouncilRunId;
@@ -1140,7 +1164,14 @@ export async function runObservableProviderCouncil(
         : 'medium',
     riskFlags: planner.text
       ? []
-      : [plannerPlan?.riskFlag || 'openai_planner_unavailable'].filter(Boolean),
+      : [
+          plannerPlan?.riskFlag ||
+            runtimeFailureFlag(
+              'openai_cloud',
+              'openai_planner_unavailable',
+              plannerText,
+            ),
+        ].filter(Boolean),
     metadata: {
       request_id: planner.requestId || '',
       provider_participation_action: plannerPlan?.action || 'call',
@@ -1195,7 +1226,12 @@ export async function runObservableProviderCouncil(
       riskFlags: synthesizer.text
         ? []
         : [
-            synthesizerPlan?.riskFlag || 'anthropic_reasoner_unavailable',
+            synthesizerPlan?.riskFlag ||
+              runtimeFailureFlag(
+                'anthropic_cloud',
+                'anthropic_reasoner_unavailable',
+                synthesizerText,
+              ),
           ].filter(Boolean),
       metadata: {
         request_id: synthesizer.requestId || '',
@@ -1229,7 +1265,7 @@ export async function runObservableProviderCouncil(
       criticText = criticPlan.reason;
       await recordPlannedSkip(criticPlan, criticPrompt);
     } else {
-      const criticCall = await callTimed(
+      let criticCall = await callTimed(
         () =>
           roleSemaphore.run(() =>
             runMiniMax({
@@ -1245,7 +1281,47 @@ export async function runObservableProviderCouncil(
         (err) => providerFailureFromException('MiniMax critic', err),
         budgetPolicy.roleTimeoutMs,
       );
-      const critic = normalizeProviderArtifact(criticCall.result);
+      let critic = normalizeProviderArtifact(criticCall.result);
+      let criticFallbackReason = '';
+      if (!critic.text && budgetPolicy.fallbackAllowed) {
+        criticFallbackReason =
+          critic.providerFailure ||
+          'MiniMax complex critic produced no artifact.';
+        retryCount += 1;
+        recordFailureSignature({
+          role: 'critic',
+          providerId: 'minimax_cloud',
+          failure: criticFallbackReason,
+        }).forEach((flag) => providerFailures.push(flag));
+        const fallbackCall = await callTimed(
+          () =>
+            roleSemaphore.run(() =>
+              runMiniMax({
+                system:
+                  'You are Andrea council challenger. Use the fast critic route to find missing assumptions and safer alternatives.',
+                prompt: [
+                  criticPrompt,
+                  `Primary MiniMax critic fallback reason: ${criticFallbackReason}`,
+                  'Produce a concise challenge now.',
+                ].join('\n'),
+                modelTier: 'fast',
+                maxTokens: 700,
+                temperature: 0.2,
+              }),
+            ),
+          now,
+          (err) => providerFailureFromException('MiniMax fast critic', err),
+          budgetPolicy.roleTimeoutMs,
+        );
+        const fallback = normalizeProviderArtifact(fallbackCall.result);
+        if (fallback.text) {
+          critic = fallback;
+          criticCall = {
+            result: fallbackCall.result,
+            latencyMs: criticCall.latencyMs + fallbackCall.latencyMs,
+          };
+        }
+      }
       criticText =
         critic.text ||
         critic.providerFailure ||
@@ -1270,13 +1346,21 @@ export async function runObservableProviderCouncil(
         estimatedTokenCount: estimateTokens(criticPrompt, criticText),
         estimatedCostTier: mode === 'max_iq_council' ? 'high' : 'medium',
         riskFlags: critic.text
-          ? []
-          : [criticPlan?.riskFlag || 'minimax_critic_unavailable'].filter(
-              Boolean,
-            ),
+          ? criticFallbackReason
+            ? ['minimax_fast_fallback_used']
+            : []
+          : [
+              criticPlan?.riskFlag ||
+                runtimeFailureFlag(
+                  'minimax_cloud',
+                  'minimax_critic_unavailable',
+                  criticText,
+                ),
+            ].filter(Boolean),
         metadata: {
           request_id: critic.requestId || '',
           provider_participation_action: criticPlan?.action || 'call',
+          fallback_reason: critic.text ? criticFallbackReason : '',
         },
       });
     }
@@ -1476,7 +1560,14 @@ export async function runObservableProviderCouncil(
           ? verifierFallbackReason
             ? ['gemini_fast_fallback_used']
             : []
-          : [geminiVerifierPlan?.riskFlag || 'gemini_verifier_unavailable'],
+          : [
+              geminiVerifierPlan?.riskFlag ||
+                runtimeFailureFlag(
+                  'gemini_cloud',
+                  'gemini_verifier_unavailable',
+                  verifierText,
+                ),
+            ],
         metadata: {
           request_id: verifier.requestId || '',
           provider_participation_action: geminiVerifierPlan?.action || 'call',

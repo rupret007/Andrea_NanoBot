@@ -343,6 +343,148 @@ describe('provider council runner', () => {
     );
   });
 
+  it('falls back to the fast MiniMax critic when the complex critic produces no artifact', async () => {
+    const members: Array<Record<string, unknown>> = [];
+    const runMiniMax = vi
+      .fn()
+      .mockResolvedValueOnce({
+        providerFailure:
+          'MiniMax complex critic returned an empty text payload.',
+      })
+      .mockResolvedValueOnce({
+        text: 'Fast critic verdict: warn, keep the uncertainty visible.',
+        model: 'MiniMax-M2.7-highspeed',
+        requestId: 'minimax-fast-1',
+      });
+
+    const result = await runObservableProviderCouncil(
+      {
+        goal: 'Review a deep daily-agent routing decision.',
+        taskFamily: 'operator',
+        channel: 'system',
+        correlationId: 'turn-council-minimax-fallback',
+        requestedMode: 'max_iq_council',
+      },
+      {
+        emitProviderCouncil: vi.fn(async () => ({
+          councilRunId: 'council-minimax-fallback',
+          mode: 'max_iq_council' as const,
+          traceId: 'turn-council-minimax-fallback',
+        })),
+        emitCouncilEvent: vi.fn(async () => ({})),
+        emitMemberResult: vi.fn(async (member) => {
+          members.push(member as unknown as Record<string, unknown>);
+          return {};
+        }),
+        finalizeCouncil: vi.fn(async () => ({})),
+        searchBrave: vi.fn(async () => ({
+          query: 'q',
+          results: [],
+        })),
+        runOpenAi: vi.fn(async () => ({
+          text: 'Planner artifact.',
+          model: 'gpt-5.4',
+        })),
+        runAnthropic: vi.fn(async () => ({
+          text: 'Independent reasoner artifact.',
+          model: 'claude-test-sonnet',
+        })),
+        runMiniMax,
+        runGemini: vi.fn(async () => ({
+          text: 'Verifier artifact.',
+          model: 'gemini-2.5-pro',
+        })),
+      },
+    );
+
+    expect(runMiniMax).toHaveBeenCalledTimes(2);
+    expect(runMiniMax.mock.calls[0]?.[0]).toMatchObject({
+      modelTier: 'complex',
+    });
+    expect(runMiniMax.mock.calls[1]?.[0]).toMatchObject({
+      modelTier: 'fast',
+    });
+    expect(
+      members.find((member) => member.memberId === 'minimax_cloud'),
+    ).toMatchObject({
+      status: 'completed',
+      model: 'MiniMax-M2.7-highspeed',
+      riskFlags: ['minimax_fast_fallback_used'],
+    });
+    expect(result?.providerFailures || []).not.toContain(
+      'minimax_critic_unavailable',
+    );
+  });
+
+  it('classifies live Gemini verifier quota failures as external provider blockers', async () => {
+    const members: Array<Record<string, unknown>> = [];
+    const runGemini = vi
+      .fn()
+      .mockResolvedValueOnce({
+        providerFailure:
+          'Gemini rate limit or quota blocked this request. Wait for quota recovery.',
+        status: 429,
+      })
+      .mockResolvedValueOnce({
+        providerFailure:
+          'Gemini rate limit or quota blocked this request. Wait for quota recovery.',
+        status: 429,
+      });
+
+    const result = await runObservableProviderCouncil(
+      {
+        goal: 'Verify a provider-sensitive route.',
+        taskFamily: 'operator',
+        channel: 'system',
+        correlationId: 'turn-council-gemini-quota',
+        requestedMode: 'max_iq_council',
+      },
+      {
+        emitProviderCouncil: vi.fn(async () => ({
+          councilRunId: 'council-gemini-quota',
+          mode: 'max_iq_council' as const,
+          traceId: 'turn-council-gemini-quota',
+        })),
+        emitCouncilEvent: vi.fn(async () => ({})),
+        emitMemberResult: vi.fn(async (member) => {
+          members.push(member as unknown as Record<string, unknown>);
+          return {};
+        }),
+        finalizeCouncil: vi.fn(async () => ({})),
+        searchBrave: vi.fn(async () => ({
+          query: 'q',
+          results: [],
+        })),
+        runOpenAi: vi.fn(async () => ({
+          text: 'Planner artifact.',
+          model: 'gpt-5.4',
+        })),
+        runAnthropic: vi.fn(async () => ({
+          text: 'Independent reasoner artifact.',
+          model: 'claude-test-sonnet',
+        })),
+        runMiniMax: vi.fn(async () => ({
+          text: 'Critic artifact.',
+          model: 'MiniMax-M2.7',
+        })),
+        runGemini,
+      },
+    );
+
+    expect(
+      members.find((member) => member.memberId === 'gemini_cloud'),
+    ).toMatchObject({
+      status: 'blocked',
+      riskFlags: expect.arrayContaining(['gemini_cloud_quota_or_rate_limit']),
+    });
+    expect(result?.providerFailures || []).toContain(
+      'gemini_cloud_quota_or_rate_limit',
+    );
+    expect(result?.providerFailures || []).not.toContain(
+      'gemini_verifier_unavailable',
+    );
+  });
+
   it('plans around blocked providers and substitutes OpenAI verifier when Gemini is unavailable', async () => {
     const members: Array<Record<string, unknown>> = [];
     const finalize = vi.fn(async () => ({}));
