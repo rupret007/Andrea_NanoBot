@@ -2678,6 +2678,37 @@ describe('field-trial readiness', () => {
     expect(truth.pilotIssues.openCount).toBe(0);
   });
 
+  it('keeps external work cockpit dependency failures out of repo-side truth', () => {
+    const started = startPilotJourney({
+      journeyId: 'work_cockpit',
+      systemsInvolved: ['work_cockpit', 'cursor_lane'],
+      summaryText: 'Work cockpit dashboard',
+      routeKey: 'dashboard_open',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      threadId: 'thread-1',
+      startedAt: '2026-04-07T17:00:00.000Z',
+    });
+    expect(started).toBeTruthy();
+    completePilotJourney({
+      eventId: started!.eventId,
+      outcome: 'externally_blocked',
+      blockerClass: 'work_cockpit_external_dependency_blocked',
+      blockerOwner: 'external',
+      completedAt: '2026-04-07T17:00:10.000Z',
+      summaryText: 'Credit balance is too low',
+    });
+
+    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
+
+    expect(truth.workCockpit.proofState).toBe('externally_blocked');
+    expect(truth.workCockpit.blockerOwner).toBe('external');
+    expect(truth.workCockpit.blocker).toContain('external dependency');
+    expect(truth.journeys.work_cockpit.proofState).toBe('externally_blocked');
+    expect(truth.journeys.work_cockpit.blockerOwner).toBe('external');
+  });
+
   it('surfaces degraded-but-usable journey truth instead of counting it as live-proven', () => {
     const started = startPilotJourney({
       journeyId: 'cross_channel_handoff',

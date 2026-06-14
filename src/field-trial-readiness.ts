@@ -1207,10 +1207,18 @@ function buildJourneyTruthFromEvent(params: {
   }
 
   if (params.event.outcome === 'internal_failure') {
+    const blockerOwner =
+      params.event.blockerOwner === 'none'
+        ? 'repo_side'
+        : params.event.blockerOwner;
+    const blocker =
+      blockerOwner === 'external'
+        ? `${params.label} hit an external dependency failure during the most recent proof run.`
+        : `${params.label} hit a repo-side failure during the most recent proof run.`;
     return buildTruth({
       proofState: 'near_live_only',
-      blocker: `${params.label} hit a repo-side failure during the most recent proof run.`,
-      blockerOwner: 'repo_side',
+      blocker,
+      blockerOwner,
       nextAction: params.nearLiveNextAction,
       detail:
         params.event.summaryText ||

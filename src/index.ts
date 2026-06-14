@@ -576,6 +576,7 @@ import { parseUnifiedJobCommand } from './unified-job-command-parser.js';
 import {
   formatUserFacingOperationFailure,
   getUserFacingErrorDetail,
+  isUserFacingExternalDependencyDetail,
 } from './user-facing-error.js';
 import { resolveEffectiveIdleTimeout } from './runtime-timeout.js';
 import {
@@ -13524,12 +13525,19 @@ async function main(): Promise<void> {
         });
       }
     } catch (err) {
+      const errorDetail = getUserFacingErrorDetail(err);
+      const externalDependencyFailure =
+        isUserFacingExternalDependencyDetail(errorDetail);
       if (pilotRecord) {
         completePilotJourney({
           eventId: pilotRecord.eventId,
-          outcome: 'internal_failure',
-          blockerClass: 'work_cockpit_dashboard_failed',
-          blockerOwner: 'repo_side',
+          outcome: externalDependencyFailure
+            ? 'externally_blocked'
+            : 'internal_failure',
+          blockerClass: externalDependencyFailure
+            ? 'work_cockpit_external_dependency_blocked'
+            : 'work_cockpit_dashboard_failed',
+          blockerOwner: externalDependencyFailure ? 'external' : 'repo_side',
           summaryText:
             err instanceof Error
               ? err.message
@@ -13570,12 +13578,19 @@ async function main(): Promise<void> {
         });
       }
     } catch (err) {
+      const errorDetail = getUserFacingErrorDetail(err);
+      const externalDependencyFailure =
+        isUserFacingExternalDependencyDetail(errorDetail);
       if (pilotRecord) {
         completePilotJourney({
           eventId: pilotRecord.eventId,
-          outcome: 'internal_failure',
-          blockerClass: 'current_work_quick_open_failed',
-          blockerOwner: 'repo_side',
+          outcome: externalDependencyFailure
+            ? 'externally_blocked'
+            : 'internal_failure',
+          blockerClass: externalDependencyFailure
+            ? 'work_cockpit_external_dependency_blocked'
+            : 'current_work_quick_open_failed',
+          blockerOwner: externalDependencyFailure ? 'external' : 'repo_side',
           summaryText:
             err instanceof Error
               ? err.message

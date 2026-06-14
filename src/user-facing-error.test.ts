@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatUserFacingOperationFailure,
   getUserFacingErrorDetail,
+  isUserFacingExternalDependencyDetail,
 } from './user-facing-error.js';
 
 describe('getUserFacingErrorDetail', () => {
@@ -24,6 +25,25 @@ describe('getUserFacingErrorDetail', () => {
     ).toBe('The request timed out before it finished on my side.');
   });
 
+  it('maps credit-balance failures to an external quota message', () => {
+    expect(
+      getUserFacingErrorDetail(new Error('Credit balance is too low')),
+    ).toBe('The external service is rate-limited or out of quota right now.');
+  });
+
+  it('maps disabled runtime integrations to an external dependency message', () => {
+    const detail = getUserFacingErrorDetail(
+      new Error(
+        'Andrea OpenAI backend is not enabled in this NanoBot runtime.',
+      ),
+    );
+
+    expect(detail).toBe(
+      'The external integration is not enabled in this runtime.',
+    );
+    expect(isUserFacingExternalDependencyDetail(detail)).toBe(true);
+  });
+
   it('maps not-found failures to a safe missing-item message', () => {
     expect(
       getUserFacingErrorDetail(new Error('Cursor agent bc_123 not found')),
@@ -39,6 +59,7 @@ describe('getUserFacingErrorDetail', () => {
       'Something went wrong on my side while handling that request.',
     );
     expect(detail).not.toContain('stacktrace');
+    expect(isUserFacingExternalDependencyDetail(detail)).toBe(false);
   });
 });
 

@@ -7,6 +7,20 @@ function includesAny(haystack: string, needles: readonly string[]): boolean {
   return needles.some((needle) => haystack.includes(needle));
 }
 
+const EXTERNAL_DEPENDENCY_DETAILS = [
+  'The external service is rate-limited or out of quota right now.',
+  'The external integration credentials were rejected.',
+  'The external integration is not enabled in this runtime.',
+  'The external integration is currently unreachable.',
+] as const;
+
+export function isUserFacingExternalDependencyDetail(detail: string): boolean {
+  const normalized = detail.trim().toLowerCase();
+  return EXTERNAL_DEPENDENCY_DETAILS.some(
+    (externalDetail) => externalDetail.toLowerCase() === normalized,
+  );
+}
+
 export function getUserFacingErrorDetail(err: unknown): string {
   const message = normalizeErrorMessage(err).trim().toLowerCase();
 
@@ -29,6 +43,8 @@ export function getUserFacingErrorDetail(err: unknown): string {
     includesAny(message, [
       'insufficient_quota',
       'quota',
+      'credit balance',
+      'balance is too low',
       'rate limit',
       'rate-limit',
       'too many requests',
@@ -50,6 +66,17 @@ export function getUserFacingErrorDetail(err: unknown): string {
     ])
   ) {
     return 'The external integration credentials were rejected.';
+  }
+
+  if (
+    includesAny(message, [
+      'backend is not enabled',
+      'not enabled in this nanobot runtime',
+      'not enabled in this runtime',
+      'disabled in this nanobot runtime',
+    ])
+  ) {
+    return 'The external integration is not enabled in this runtime.';
   }
 
   if (
