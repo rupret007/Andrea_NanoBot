@@ -45,6 +45,23 @@ describe('buildAssistantCapabilityExecutionInput', () => {
     expect(result.timeWindowKind).toBe('today');
   });
 
+  it('does not inherit the prior thread target for recent text review asks', () => {
+    const result = buildAssistantCapabilityExecutionInput({
+      lastContent: 'Review my recent texts',
+      capabilityMatch: {
+        capabilityId: 'communication.review_recent_texts',
+        canonicalText: 'review recent text messages from the last 24 hours',
+      },
+      priorSubjectData: {
+        threadTitle: 'Candace',
+        personName: 'Candace',
+      },
+    });
+
+    expect(result.threadTitle).toBeNull();
+    expect(result.personName).toBeUndefined();
+  });
+
   it('still reuses prior communication context for other communication follow-ups', () => {
     const result = buildAssistantCapabilityExecutionInput({
       lastContent: 'What should I say back?',

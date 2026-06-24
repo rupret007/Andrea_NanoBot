@@ -4,10 +4,12 @@ import {
   beginAgentOSEpisode,
   buildAgentOSReport,
   discoverAgentOSToolCards,
+  previewAgentOSPlan,
 } from '../src/agent-os.js';
 import {
   _closeDatabase,
   _initTestDatabase,
+  listAgentRuntimeSkillManifests,
   listAgentOSEpisodeSteps,
   listAgentOSEpisodes,
   listAgentOSTrajectoryEvals,
@@ -64,9 +66,16 @@ const evals = listAgentOSTrajectoryEvals({
 });
 const report = buildAgentOSReport({ episodeId: result.episode.episodeId });
 const cards = discoverAgentOSToolCards(checkedAt);
+const manifests = listAgentRuntimeSkillManifests({ status: 'candidate' });
+const deepWorkPreview = previewAgentOSPlan({
+  goal: 'Council-governed deep work: verify with council and prepare a safe plan to send a text later.',
+  generatedAt: checkedAt,
+});
 const serialized = JSON.stringify({ result, report, cards });
 
-assert.ok(episodes.some((episode) => episode.episodeId === result.episode.episodeId));
+assert.ok(
+  episodes.some((episode) => episode.episodeId === result.episode.episodeId),
+);
 assert.ok(steps.some((step) => step.stepKind === 'frame'));
 assert.ok(steps.some((step) => step.stepKind === 'tool_discovery'));
 assert.ok(steps.some((step) => step.stepKind === 'memory_compile'));
@@ -77,6 +86,21 @@ assert.equal(report.privacy.rawPrivateBodiesStored, false);
 assert.equal(report.privacy.hiddenReasoningStored, false);
 assert.ok(report.capabilityDiscovery.toolCards.length >= 4);
 assert.ok(report.capabilityDiscovery.sourceCoverage.length >= 4);
+assert.ok(report.runtimeSkillManifests.length >= manifests.length);
+if (report.skillProposals.length > 0) {
+  assert.ok(
+    manifests.some((manifest) => manifest.skillId.includes('agent_os.')),
+    'candidate skill proposals should create runtime skill manifests',
+  );
+}
+assert.ok(
+  deepWorkPreview.nodes.some((node) => node.policyClass === 'council'),
+  'deep work preview should include a council verification node',
+);
+assert.ok(
+  deepWorkPreview.nodes.some((node) => node.approvalRequired),
+  'deep work preview should stage side-effectful actions for approval',
+);
 assert.doesNotMatch(
   serialized,
   /sk-|AIza|Bearer\s+|raw private body text|raw message body text|chain-of-thought/i,

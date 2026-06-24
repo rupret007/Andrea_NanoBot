@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  buildCouncilReplayReport,
   buildCouncilDoctorReport,
   calibrateCouncilMode,
   formatCouncilDoctorReport,
+  formatCouncilReplayReport,
   recordCouncilOutcomeSignal,
   recordCouncilRunLedger,
 } from './council-quality.js';
@@ -14,6 +16,37 @@ import {
   listCouncilOutcomeSignals,
 } from './db.js';
 import type { AndreaPlatformProviderCouncilResult } from './andrea-platform-bridge.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
+
+function providerHealth(
+  providerId: string,
+  state: ProviderHealthSnapshot['state'] = 'healthy',
+  failureClass: ProviderHealthSnapshot['failureClass'] = 'none',
+): ProviderHealthSnapshot {
+  return {
+    providerId,
+    kind: providerId === 'brave_search' ? 'search' : 'llm',
+    state,
+    lastHealthyAt: state === 'healthy' ? '2026-06-04T10:02:00.000Z' : null,
+    lastCheckedAt: '2026-06-04T10:02:00.000Z',
+    failureClass,
+    quotaState: state === 'healthy' ? 'ok' : 'unknown',
+    credentialState: state === 'healthy' ? 'configured' : 'unknown',
+    knownExpiresAt: null,
+    rotationDueAt: null,
+    blocker: '',
+    nextAction: '',
+    metadata: {},
+  };
+}
+
+const healthyCoreProviders = [
+  providerHealth('openai_cloud'),
+  providerHealth('anthropic_cloud'),
+  providerHealth('gemini_cloud'),
+  providerHealth('minimax_cloud'),
+  providerHealth('brave_search'),
+];
 
 function verdict(
   overrides: Partial<
@@ -228,14 +261,121 @@ describe('council quality ledger', () => {
       providerFailures: ['provider token=sk-proj-abcdefghijklmnopqrstuvwx'],
     });
 
-    const report = buildCouncilDoctorReport('2026-06-04T10:02:00.000Z');
+    const report = buildCouncilDoctorReport('2026-06-04T10:02:00.000Z', {
+      providerHealth: healthyCoreProviders,
+    });
     const formatted = formatCouncilDoctorReport(report);
 
     expect(report.ok).toBe(false);
     expect(report.nextAction).toContain('test:council:medium');
+    expect(formatted).toContain('Current providers:');
+    expect(formatted).toContain('openai_cloud=healthy');
+    expect(formatted).toContain('Historical degraded providers:');
     expect(JSON.stringify(report)).not.toContain('sk-proj-');
     expect(formatted).toContain('Council Status');
     expect(formatted).not.toContain('sk-proj-');
+  });
+
+  it('treats historical provider degradation as stale when current providers are healthy', () => {
+    for (const id of ['a', 'b', 'c']) {
+      recordCouncilRunLedger({
+        councilRunId: `council-historical-provider-${id}`,
+        taskFamily: 'operator',
+        requestedMode: 'max_iq_council',
+        chosenMode: 'max_iq_council',
+        calibration: calibrateCouncilMode({
+          taskFamily: 'operator',
+          requestedMode: 'max_iq_council',
+        }),
+        structuredVerdict: verdict({
+          replayArtifact: {
+            replaySummary: 'Historical provider participation degraded.',
+            memberStatuses: [
+              {
+                memberId: 'anthropic_cloud',
+                providerId: 'anthropic_cloud',
+                role: 'synthesizer',
+                status: 'skipped',
+                verdict: 'inconclusive',
+                confidence: 0,
+                schemaStatus: 'invalid_fallback',
+                schemaIssues: ['transport unavailable'],
+                evidenceIds: ['intent:test'],
+                riskFlags: ['anthropic_cloud_transport_error'],
+              },
+            ],
+          },
+          replaySummary: 'Historical provider participation degraded.',
+        }),
+        providerFailures: ['anthropic_cloud_transport_error'],
+      });
+    }
+
+    const report = buildCouncilDoctorReport('2026-06-04T10:02:00.000Z', {
+      providerHealth: healthyCoreProviders,
+    });
+    const formatted = formatCouncilDoctorReport(report);
+
+    expect(
+      report.providerReliability.some((provider) => provider.degraded),
+    ).toBe(true);
+    expect(report.nextAction).toContain('Providers are currently healthy');
+    expect(report.providerParticipation?.nextAction).toContain(
+      'providers are currently healthy',
+    );
+    expect(formatted).toContain('Historical degraded providers:');
+    expect(formatted).not.toContain('Repair required provider health');
+  });
+
+  it('formats a redacted replay report without raw prompts or secret values', () => {
+    recordCouncilRunLedger({
+      councilRunId: 'council-replay-secret',
+      taskFamily: 'operator',
+      requestedMode: 'dual_review',
+      chosenMode: 'dual_review',
+      calibration: calibrateCouncilMode({
+        taskFamily: 'operator',
+        requestedMode: 'dual_review',
+      }),
+      structuredVerdict: verdict({
+        confidence: 0.66,
+        evidenceScorecard: {
+          requiredGrade: 'strong',
+          availableGrade: 'partial',
+          freshnessCoverage: {
+            total: 1,
+            fresh: 1,
+            stale: 0,
+            unknown: 0,
+            notApplicable: 0,
+          },
+          sourceCoverage: { provider_health: 1 },
+          privateContentPolicy: 'metadata_only',
+          gapCount: 1,
+          gapIds: ['integration_alexa_manual_action_required'],
+          sourceClasses: ['provider_health'],
+          confidencePenalty: 0.1,
+        },
+        replaySummary:
+          'Council replay mentions token=sk-proj-abcdefghijklmnopqrstuvwx but stores metadata only.',
+      }),
+      providerFailures: ['provider token=sk-proj-abcdefghijklmnopqrstuvwx'],
+      riskFlags: ['raw_prompt_not_stored'],
+    });
+
+    const report = buildCouncilReplayReport(
+      '2026-06-04T10:02:00.000Z',
+      'council-replay-secret',
+    );
+    const formatted = formatCouncilReplayReport(report);
+
+    expect(formatted).toContain('Council Replay');
+    expect(formatted).toContain('Members:');
+    expect(formatted).toContain('integration_alexa_manual_action_required');
+    expect(formatted).not.toContain('sk-proj-');
+    expect(JSON.stringify(report)).not.toContain('sk-proj-');
+    expect(report.privacy.rawPromptsStored).toBe(false);
+    expect(report.privacy.rawPrivateBodiesStored).toBe(false);
   });
 
   it('surfaces provider participation skips and verifier substitutions in doctor output', () => {

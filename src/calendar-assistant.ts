@@ -2873,7 +2873,7 @@ function buildDefaultCalendarReply(
         if (!fullyConfirmed) {
           return `I didn't find anything blocking ${result.plan.label} for ${result.plan.durationLabel || `${result.plan.durationMinutes} minutes`} in the calendars I could read.${incompleteNote}`;
         }
-        return `Yes, you have time ${result.plan.label} for ${result.plan.durationLabel || `${result.plan.durationMinutes} minutes`}.`;
+        return `I don't see anything blocking ${result.plan.label} for ${result.plan.durationLabel || `${result.plan.durationMinutes} minutes`}.`;
       }
 
       return [
@@ -2917,7 +2917,10 @@ function buildDefaultCalendarReply(
       if (!fullyConfirmed) {
         return `I didn't find anything blocking ${result.plan.label} in the calendars I could read.${incompleteNote}`;
       }
-      return [`You look open ${result.plan.label}.`, ...allDayLines]
+      return [
+        `I don't see anything blocking ${result.plan.label}.`,
+        ...allDayLines,
+      ]
         .filter(Boolean)
         .join('\n');
     }
@@ -2934,7 +2937,7 @@ function buildDefaultCalendarReply(
     }
 
     return [
-      `You're partly open ${result.plan.label}.`,
+      `I found some open time ${result.plan.label}.`,
       ...rangeEvents,
       '',
       ...formatOpenWindows(openWindows, result.plan.timeZone),
@@ -2955,7 +2958,7 @@ function buildDefaultCalendarReply(
     }
 
     if (result.plan.intent === 'availability') {
-      return `You look free ${result.plan.label}.`;
+      return `I don't see anything blocking ${result.plan.label}.`;
     }
     return `I don't see anything on ${formatSubjectLabel(result.plan)} ${result.plan.label}.`;
   }

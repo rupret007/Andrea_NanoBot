@@ -213,12 +213,32 @@ describe('assistant capability router', () => {
     expect(
       matchAssistantCapabilityRequest('What texts need me?'),
     ).toMatchObject({
-      capabilityId: 'communication.open_loops',
+      capabilityId: 'communication.review_recent_texts',
     });
     expect(
       matchAssistantCapabilityRequest('What texts need me right now?'),
     ).toMatchObject({
-      capabilityId: 'communication.open_loops',
+      capabilityId: 'communication.review_recent_texts',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Review my texts today'),
+    ).toMatchObject({
+      capabilityId: 'communication.review_recent_texts',
+      arguments: expect.objectContaining({
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      }),
+    });
+    expect(
+      matchAssistantCapabilityRequest('review my recent text messages'),
+    ).toMatchObject({
+      capabilityId: 'communication.review_recent_texts',
+      canonicalText: 'review recent text messages from the last 24 hours',
+    });
+    expect(
+      matchAssistantCapabilityRequest('what should I reply to in my texts'),
+    ).toMatchObject({
+      capabilityId: 'communication.review_recent_texts',
     });
     expect(
       matchAssistantCapabilityRequest("What's still open with Candace?"),
@@ -320,6 +340,44 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'research.summarize',
     });
+  });
+
+  it('matches memory activation and setup lifecycle prompts cleanly', () => {
+    expect(
+      matchAssistantCapabilityRequest('Finish my Andrea setup'),
+    ).toMatchObject({
+      capabilityId: 'capture.profile_setup',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Show my setup completeness'),
+    ).toMatchObject({
+      capabilityId: 'memory.explain',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Export my profile pack'),
+    ).toMatchObject({
+      capabilityId: 'memory.explain',
+    });
+    expect(
+      matchAssistantCapabilityRequest('Why do you know that?'),
+    ).toMatchObject({
+      capabilityId: 'memory.explain',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What did you learn about me?'),
+    ).toMatchObject({
+      capabilityId: 'memory.explain',
+    });
+    expect(matchAssistantCapabilityRequest('Accept learning #1')).toMatchObject(
+      {
+        capabilityId: 'memory.remember',
+      },
+    );
+    expect(matchAssistantCapabilityRequest('Reject learning #1')).toMatchObject(
+      {
+        capabilityId: 'memory.forget',
+      },
+    );
   });
 
   it('matches chief-of-staff prioritization, prep, decision, and explainability prompts cleanly', () => {
@@ -717,6 +775,12 @@ describe('assistant capability router', () => {
       capabilityId: 'missions.execute',
       continuation: true,
     });
+    expect(
+      continueAssistantCapabilityFromAlexaState('handle this', state),
+    ).toMatchObject({
+      capabilityId: 'missions.execute',
+      continuation: true,
+    });
   });
 
   it('continues the active mission context from shared assistant seed in direct chat', () => {
@@ -750,6 +814,43 @@ describe('assistant capability router', () => {
         subjectData,
       ),
     ).toBeNull();
+  });
+
+  it('routes proposed follow-through review prompts and selected follow-ups', () => {
+    expect(
+      matchAssistantCapabilityRequest('show proposed reminders'),
+    ).toMatchObject({
+      capabilityId: 'rituals.followthrough',
+    });
+    expect(
+      matchAssistantCapabilityRequest('what follow-through should I approve'),
+    ).toMatchObject({
+      capabilityId: 'rituals.followthrough',
+    });
+
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('approve #1', {
+        activeCapabilityId: 'rituals.followthrough',
+        followthroughReviewJson: JSON.stringify({
+          kind: 'followthrough_review',
+          items: [],
+        }),
+      }),
+    ).toMatchObject({
+      capabilityId: 'rituals.followthrough',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'remind me about #2 tonight',
+        {
+          activeCapabilityId: 'rituals.followthrough',
+        },
+      ),
+    ).toMatchObject({
+      capabilityId: 'rituals.followthrough',
+      continuation: true,
+    });
   });
 
   it('keeps Pulse follow-ups on the active capability', () => {
@@ -967,6 +1068,68 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'communication.draft_reply',
       reason: 'matched relationship-aware draft phrasing',
+    });
+  });
+
+  it('binds selected item follow-ups to the recent text review context', () => {
+    const subjectData = {
+      activeCapabilityId: 'communication.review_recent_texts' as const,
+      recentTextReviewJson: JSON.stringify({
+        version: 1,
+        items: [
+          {
+            itemId: 'review-1',
+            rank: 1,
+            section: 'needs_reply',
+            chatJid: 'bb:iMessage;-;+14695550123',
+            chatLabel: 'Candace',
+            summaryText: 'Candace asked whether dinner still works tonight.',
+          },
+          {
+            itemId: 'review-2',
+            rank: 2,
+            section: 'needs_reply',
+            chatJid: 'bb:iMessage;-;+14695550124',
+            chatLabel: 'Alex',
+            summaryText: 'Alex asked for the set list.',
+          },
+          {
+            itemId: 'review-3',
+            rank: 3,
+            section: 'worth_watching',
+            chatJid: 'bb:iMessage;-;+14695550125',
+            chatLabel: 'Morgan',
+            summaryText: 'Morgan mentioned a loose follow-up.',
+          },
+        ],
+      }),
+    };
+
+    for (const prompt of [
+      'draft #1',
+      'make #2 warmer',
+      'remind me about #3 tonight',
+      'save #2',
+      'skip #1',
+      'mark #1 handled',
+      'why #1',
+    ]) {
+      expect(
+        continueAssistantCapabilityFromPriorSubjectData(prompt, subjectData),
+      ).toMatchObject({
+        capabilityId: 'communication.draft_reply',
+        continuation: true,
+      });
+    }
+
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('save #2', {
+        activeCapabilityId: 'communication.draft_reply',
+        recentTextReviewJson: subjectData.recentTextReviewJson,
+      }),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+      continuation: true,
     });
   });
 

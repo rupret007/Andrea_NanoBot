@@ -36,7 +36,8 @@ function seedReflection(turnId: string): void {
     status: 'failed',
     resultSummary: 'Route needed a clearer next-step decision.',
     failureSummary: 'Route confidence was too high for missing context.',
-    nextAction: 'Ask one clarifying question before choosing a high-risk action.',
+    nextAction:
+      'Ask one clarifying question before choosing a high-risk action.',
     blockerClass: 'route_confidence_mismatch',
     fallbackUsed: true,
     now: new Date(now),
@@ -47,7 +48,7 @@ seedReflection('self-improve-turn-1');
 seedReflection('self-improve-turn-2');
 
 const externalProvider: ToolReliabilityRollup = {
-  subjectId: 'provider:anthropic_cloud',
+  subjectId: 'provider:test_blocked_cloud',
   updatedAt: now,
   sampleCount: 3,
   successRate: 0,
@@ -160,14 +161,28 @@ assert.ok(report.hypotheses.length >= 4, 'expected mined hypotheses');
 assert.equal(report.patchPlanPolicy.plansOnly, true);
 assert.equal(report.patchPlanPolicy.autoAppliesProductPatches, false);
 assert.equal(report.patchPlanPolicy.pushesWithoutValidation, false);
+assert.ok(report.topCandidates.length > 0, 'expected ranked top candidates');
+assert.notEqual(
+  report.topCandidates[0]?.fixClass,
+  'repair_playbook',
+  'daily-agent learning and feedback should outrank generic repair churn when both are actionable',
+);
+assert.ok(
+  ['executive_reflection', 'response_feedback'].includes(
+    report.topCandidates[0]?.sourceSignalKind ?? '',
+  ),
+  'top candidate should be daily-agent feedback or executive learning',
+);
 
 const external = report.hypotheses.find(
-  (item) => item.affectedCapability === 'provider:anthropic_cloud',
+  (item) => item.affectedCapability === 'provider:test_blocked_cloud',
 );
 assert.ok(external, 'blocked external provider should become a hypothesis');
 assert.equal(external?.externalBlocker, true);
 assert.equal(
-  report.patchPlans.some((plan) => plan.hypothesisId === external?.hypothesisId),
+  report.patchPlans.some(
+    (plan) => plan.hypothesisId === external?.hypothesisId,
+  ),
   false,
   'blocked external provider should not become a repo patch plan',
 );
@@ -193,11 +208,15 @@ const highRiskExperiment = report.experiments.find(
 assert.equal(highRiskExperiment?.decision, 'needs_approval');
 
 assert.ok(
-  report.hypotheses.some((item) => item.sourceSignalKind === 'executive_reflection'),
+  report.hypotheses.some(
+    (item) => item.sourceSignalKind === 'executive_reflection',
+  ),
   'repeated executive friction should become a hypothesis',
 );
 assert.ok(
-  report.hypotheses.some((item) => item.sourceSignalKind === 'response_feedback'),
+  report.hypotheses.some(
+    (item) => item.sourceSignalKind === 'response_feedback',
+  ),
   'repo-side feedback should become a hypothesis',
 );
 assert.doesNotMatch(

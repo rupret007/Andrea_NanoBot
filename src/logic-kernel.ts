@@ -261,6 +261,7 @@ function reportFromCognitiveRun(
     handoffs: [],
     trajectoryEvals: [],
     skillProposals: [],
+    runtimeSkillManifests: [],
     capabilityDiscovery: {
       generatedAt,
       toolCards: [],

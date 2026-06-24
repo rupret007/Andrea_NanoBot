@@ -2,7 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { AssistantCapabilityId } from './assistant-capabilities.js';
 import {
+  continueAssistantCapabilityFromPriorSubjectData,
   matchAssistantCapabilityRequest,
+  type AssistantCapabilityContinuationSubjectData,
   type AssistantCapabilityMatch,
 } from './assistant-capability-router.js';
 import { redactCouncilText } from './council-safety.js';
@@ -245,6 +247,17 @@ export function detectCognitiveExecutiveIntent(rawText: string): {
       family: 'explain_choice',
       confidence: 0.92,
       reason: 'matched executive explanation wording',
+    };
+  }
+  if (
+    /^(send me the full(?:er)? version|what('?s| is) blocking this|what('?s| is) the blocker|handle this|handle that|take care of this|take care of that|deal with this|deal with that)\b/.test(
+      text,
+    )
+  ) {
+    return {
+      family: 'ambiguous_action',
+      confidence: 0.88,
+      reason: 'matched reference-bound action ask',
     };
   }
   if (
@@ -885,6 +898,18 @@ function selectCapability(input: {
   override?: AssistantCapabilityMatch | null;
 }): AssistantCapabilityMatch | null {
   if (input.override) return input.override;
+  const continuation = input.priorSubjectData
+    ? continueAssistantCapabilityFromPriorSubjectData(
+        input.request.normalizedAsk,
+        input.priorSubjectData as AssistantCapabilityContinuationSubjectData,
+      )
+    : null;
+  if (continuation) {
+    return {
+      ...continuation,
+      reason: `${continuation.reason}; cognitive executive used active context`,
+    };
+  }
   if (input.request.intentFamily === 'ambiguous_action') return null;
   if (input.request.intentFamily === 'explain_choice') return null;
   const direct = matchAssistantCapabilityRequest(input.request.normalizedAsk);
@@ -893,6 +918,27 @@ function selectCapability(input: {
     return null;
   }
   return null;
+}
+
+function concreteClarifyingQuestion(request: CognitiveRequest): string {
+  const text = request.normalizedAsk.toLowerCase();
+  if (/^send me the full(?:er)? version\b/.test(text)) {
+    return 'What should I send the full version of?';
+  }
+  if (
+    /^what('?s| is) blocking this\b/.test(text) ||
+    /^what('?s| is) the blocker\b/.test(text)
+  ) {
+    return 'Which plan, thread, or task should I check for the blocker?';
+  }
+  if (
+    /^(handle this|handle that|take care of this|take care of that|deal with this|deal with that)\b/.test(
+      text,
+    )
+  ) {
+    return 'What should I handle, and should I keep it to a draft for approval?';
+  }
+  return 'What target should I use for this?';
 }
 
 function buildPlan(input: {
@@ -1014,7 +1060,7 @@ function buildPlan(input: {
     fallbackRoute: reliabilityFallback,
     explanation:
       routeClass === 'clarify'
-        ? 'The ask implies action but lacks a safe target, timing, or approval context.'
+        ? concreteClarifyingQuestion(input.request)
         : [
             `The ask matches ${input.request.intentFamily}; ${selectedTool} is the narrowest useful route.`,
             input.metacognition

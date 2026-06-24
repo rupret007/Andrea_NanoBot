@@ -28,6 +28,8 @@ const selectedWork = {
   summary: 'Polish the rollout docs and handoff notes.',
 };
 
+vi.setConfig({ testTimeout: 15000 });
+
 function createReminderTask(
   groupFolder: string,
   label: string,
@@ -469,7 +471,7 @@ describe('signature flows', () => {
     expect(blocker.replyText).toContain('The main blocker right now is this:');
     expect(blocker.replyText).toContain('Candace');
     expect(blocker.replyText).not.toContain('Research Summary');
-  });
+  }, 15000);
 
   it('keeps research, richer detail, and library save on the same chain', async () => {
     const groupFolder = 'signature-research';

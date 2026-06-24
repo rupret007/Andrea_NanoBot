@@ -307,6 +307,7 @@ function fallbackAgentOSReport(input: {
     handoffs: [],
     trajectoryEvals: [],
     skillProposals: [],
+    runtimeSkillManifests: [],
     capabilityDiscovery,
     nextAction:
       'Initialize the database before expecting durable Agent OS episode history.',

@@ -82,12 +82,57 @@ assert.equal(approvalContext?.plan.approvalRequired, true);
 assert.equal(selectedApprovalTool?.status, 'approval_required');
 assert.match(selectedApprovalTool?.riskFlagsJson || '', /approval_required/);
 
+const missionBlockerContext = beginCognitiveExecutiveTurn({
+  rawAsk: "what's blocking this",
+  channel: 'telegram',
+  groupFolder: 'main',
+  chatJid: 'telegram:main',
+  turnId: 'tool:mission-blocker-continuation',
+  priorSubjectData: {
+    activeCapabilityId: 'missions.propose',
+    missionId: 'mission-1',
+    missionSummary: 'Plan Friday dinner with Candace.',
+  },
+  now,
+});
+const selectedMissionBlockerTool = missionBlockerContext?.toolChoices.find(
+  (choice) => choice.selected,
+);
+assert.equal(missionBlockerContext?.capabilityMatch?.capabilityId, 'missions.explain');
+assert.equal(missionBlockerContext?.plan.selectedRoute, 'missions');
+assert.equal(selectedMissionBlockerTool?.toolId, 'missions');
+assert.equal(missionBlockerContext?.plan.approvalRequired, false);
+
+const missionHandleContext = beginCognitiveExecutiveTurn({
+  rawAsk: 'handle this for me',
+  channel: 'telegram',
+  groupFolder: 'main',
+  chatJid: 'telegram:main',
+  turnId: 'tool:mission-handle-continuation',
+  priorSubjectData: {
+    activeCapabilityId: 'missions.propose',
+    missionId: 'mission-1',
+    missionSummary: 'Plan Friday dinner with Candace.',
+  },
+  now,
+});
+const selectedMissionHandleTool = missionHandleContext?.toolChoices.find(
+  (choice) => choice.selected,
+);
+assert.equal(missionHandleContext?.capabilityMatch?.capabilityId, 'missions.execute');
+assert.equal(missionHandleContext?.plan.selectedRoute, 'missions');
+assert.equal(selectedMissionHandleTool?.toolId, 'missions');
+assert.equal(missionHandleContext?.plan.approvalRequired, true);
+assert.equal(selectedMissionHandleTool?.status, 'approval_required');
+
 console.log(
   JSON.stringify(
     {
       status: 'pass',
       researchTool: selectedResearchTool,
       approvalTool: selectedApprovalTool,
+      missionBlockerTool: selectedMissionBlockerTool,
+      missionHandleTool: selectedMissionHandleTool,
     },
     null,
     2,

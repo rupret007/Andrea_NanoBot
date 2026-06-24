@@ -960,7 +960,7 @@ export function buildTurnEvidenceCards(
 }
 
 function hasInternalLeakage(text: string): boolean {
-  return /\b(codex_local|openai_cloud|anthropic_cloud|minimax_cloud|gemini_cloud|claude_legacy|task_ledger|progress_ledger|trace_grade|platform coordinator|worker_id|selected_policy_id)\b/i.test(
+  return /\b(codex_local|openai_cloud|anthropic_cloud|minimax_cloud|gemini_cloud|claude_legacy|task_ledger|progress_ledger|trace_grade|platform coordinator|worker_id|selected_policy_id|selected policy|route_calibration|manual_sync_only|repo_side|provider_council)\b/i.test(
     text,
   );
 }
@@ -974,8 +974,13 @@ function stripInternalLeakage(text: string): string {
     .replace(/\btask_ledger\b/gi, 'task record')
     .replace(/\bprogress_ledger\b/gi, 'progress record')
     .replace(/\btrace_grade\b/gi, 'trace check')
-    .replace(/\bselected_policy_id\b/gi, 'selected policy')
-    .replace(/\bplatform coordinator\b/gi, 'control plane');
+    .replace(/\bselected_policy_id\b/gi, 'approval setting')
+    .replace(/\bselected policy\b/gi, 'approval setting')
+    .replace(/\bplatform coordinator\b/gi, 'control plane')
+    .replace(/\broute_calibration\b/gi, 'routing tune-up')
+    .replace(/\bmanual_sync_only\b/gi, 'manual setup step')
+    .replace(/\brepo_side\b/gi, 'local app side')
+    .replace(/\bprovider_council\b/gi, 'review');
 }
 
 function narrowCalendarCertainty(text: string): string {
@@ -1058,6 +1063,23 @@ function visibleGuidanceLine(
   return `Quick check: ${verdict}`;
 }
 
+function visibleBlockerText(blocker: string): string {
+  const cleaned = blocker.replace(/\s+/g, ' ').trim();
+  if (
+    /\b(?:openai|anthropic|gemini|minimax|brave|codex)_(?:cloud|local|search|[a-z_]+)|(?:transport|provider|quota|auth|credential)_error\b/i.test(
+      cleaned,
+    )
+  ) {
+    return 'a provider transport or verification issue';
+  }
+  return cleaned
+    .replace(
+      /\b(?:task_ledger|progress_ledger|selected_policy_id|worker_id)\b/gi,
+      'internal tracking',
+    )
+    .replace(/\bplatform coordinator\b/gi, 'review step');
+}
+
 export function applyCouncilGuidanceToReply(
   context: TurnAgentHarnessContext | null,
   text: string,
@@ -1075,7 +1097,9 @@ export function applyCouncilGuidanceToReply(
   }
   if (guidance.status === 'block' && guidance.blocker) {
     return {
-      text: `I need to hold this until the blocker is resolved: ${guidance.blocker}`,
+      text: `I need to hold this until the blocker is resolved: ${visibleBlockerText(
+        guidance.blocker,
+      )}`,
       applied: true,
       flags: ['provider_council_guidance_applied', 'provider_council_block'],
     };

@@ -14,8 +14,8 @@ _initTestDatabase();
 
 const report = runAgiGauntlet({ now: '2026-06-09T18:00:00.000Z' });
 
-// All ten scenarios ran.
-assert.equal(report.results.length, 10);
+// All eleven scenarios ran.
+assert.equal(report.results.length, 11);
 
 // Safety-critical scenarios must pass outright.
 const byId = new Map(
@@ -29,6 +29,11 @@ assert.equal(
 );
 assert.equal(byId.get('broken_tool')?.passed, true, 'broken tool failed');
 assert.equal(byId.get('recovery_problem')?.passed, true, 'recovery failed');
+assert.equal(
+  byId.get('optional_surface_boundary')?.passed,
+  true,
+  'optional surface boundary failed',
+);
 
 // No safety risk flags anywhere.
 assert.deepEqual(report.safetyRisks, []);

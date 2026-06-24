@@ -2,17 +2,28 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { buildChiefOfStaffTurn } from './chief-of-staff.js';
 import { analyzeCommunicationMessage } from './communication-companion.js';
-import { _initTestDatabase } from './db.js';
+import {
+  upsertLifeThread,
+  upsertOperatingProfile,
+  upsertProfileFact,
+  upsertProfileSubject,
+  _initTestDatabase,
+} from './db.js';
 import {
   buildLifeThreadSnapshot,
   handleLifeThreadCommand,
 } from './life-threads.js';
+import { upsertOutcomeRecord } from './outcome-reviews.js';
 import type {
   GroundedDaySnapshot,
   SelectedWorkContext,
   UpcomingReminderSummary,
 } from './daily-command-center.js';
-import type { LifeThreadSnapshot, ScheduledTask } from './types.js';
+import type {
+  LifeThreadSnapshot,
+  OperatingProfilePlan,
+  ScheduledTask,
+} from './types.js';
 
 const selectedWork: SelectedWorkContext = {
   laneLabel: 'Cursor',
@@ -328,5 +339,248 @@ describe('chief-of-staff', () => {
     expect(result.snapshot.mainSignal?.title).toContain('Pest control');
     expect(result.snapshot.mainSignal?.title).not.toBe('Follow-up');
     expect(result.summaryText).not.toContain('Keep Follow-up in view');
+  });
+
+  it('uses personal context graph coverage as a daily intelligence signal', async () => {
+    const now = new Date('2026-04-06T17:30:00.000Z');
+    const plan: OperatingProfilePlan = {
+      summary: 'Andrea should keep family logistics and replies moving.',
+      trackedAreas: ['messages'],
+      defaultGroups: [],
+      routines: ['morning check-in'],
+      reminderSuggestions: [],
+      richerSurface: 'telegram',
+      desiredIntegrations: [],
+      learningPolicy: 'suggest_then_confirm',
+    };
+    upsertOperatingProfile({
+      profileId: 'profile-main',
+      groupFolder: 'main',
+      status: 'active',
+      version: 1,
+      basedOnProfileId: null,
+      intakeJson: JSON.stringify({
+        rawText: 'setup',
+        routines: plan.routines,
+        trackingPriorities: plan.trackedAreas,
+        defaultGroups: [],
+        integrationsWanted: ['BlueBubbles'],
+        richerSurface: 'telegram',
+        scope: 'family',
+        notes: [],
+      }),
+      planJson: JSON.stringify(plan),
+      sourceChannel: 'telegram',
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      approvedAt: now.toISOString(),
+      supersededAt: null,
+    });
+    upsertProfileSubject({
+      id: 'subject-self',
+      groupFolder: 'main',
+      kind: 'self',
+      canonicalName: 'self',
+      displayName: 'You',
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      disabledAt: null,
+    });
+    upsertProfileFact({
+      id: 'fact-style',
+      groupFolder: 'main',
+      subjectId: 'subject-self',
+      category: 'conversational_style',
+      factKey: 'setup.communication_style',
+      valueJson: JSON.stringify({
+        value: 'Warm and concise.',
+        memoryScope: 'user',
+        confidence: 0.82,
+        freshness: 'current',
+        source: 'guided_profile_setup',
+      }),
+      state: 'accepted',
+      sourceChannel: 'telegram',
+      sourceSummary: 'Warm and concise.',
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      decidedAt: now.toISOString(),
+    });
+
+    const result = await buildChiefOfStaffTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what matters most today',
+      mode: 'prioritize',
+      now,
+      groundedSnapshot: createGroundedSnapshot(now),
+      lifeThreadSnapshot: createLifeThreadSnapshot(),
+    });
+
+    expect(result.snapshot.signalsUsed).toContain('context_graph');
+    expect(result.detailText).toContain('morning check-in');
+    expect(result.detailText).toContain('turn this into a reminder');
+  });
+
+  it('ranks approved follow-through outcomes above generic context hints', async () => {
+    const now = new Date('2026-04-06T17:30:00.000Z');
+    upsertOutcomeRecord({
+      groupFolder: 'main',
+      sourceType: 'followthrough_candidate',
+      sourceKey: 'followthrough:school-form',
+      status: 'deferred',
+      completionSummary: 'Approved local follow-through reminder for #1.',
+      nextFollowupText: 'Reminder saved for tonight: check the school form.',
+      dueAt: '2026-04-07T01:00:00.000Z',
+      linkedRefs: {
+        followthroughCandidateId: 'followthrough:school-form',
+        reminderTaskId: 'task-school-form',
+        agentOSEpisodeId: 'agentos:episode:followthrough:school-form',
+      },
+      now,
+    });
+
+    const result = await buildChiefOfStaffTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what matters most today',
+      mode: 'prioritize',
+      now,
+      groundedSnapshot: createGroundedSnapshot(now),
+      lifeThreadSnapshot: createLifeThreadSnapshot(),
+    });
+
+    expect(result.snapshot.mainSignal?.title).toBe('Approved follow-through');
+    expect(result.snapshot.mainSignal?.summaryText).toContain('school form');
+    expect(result.snapshot.signalsUsed).toContain('followthrough_outcomes');
+    expect(result.snapshot.pressurePoints).toContain('Approved follow-through');
+  });
+
+  it('lets accepted setup memory make the context graph the ranked daily signal', async () => {
+    const now = new Date('2026-04-06T17:30:00.000Z');
+    const plan: OperatingProfilePlan = {
+      summary: 'Andrea should keep family logistics and replies moving.',
+      trackedAreas: ['messages', 'family logistics'],
+      defaultGroups: [],
+      routines: ['evening reset'],
+      reminderSuggestions: [],
+      richerSurface: 'telegram',
+      desiredIntegrations: [],
+      learningPolicy: 'suggest_then_confirm',
+    };
+    upsertOperatingProfile({
+      profileId: 'profile-main',
+      groupFolder: 'main',
+      status: 'active',
+      version: 1,
+      basedOnProfileId: null,
+      intakeJson: JSON.stringify({
+        rawText: 'setup',
+        routines: plan.routines,
+        trackingPriorities: plan.trackedAreas,
+        defaultGroups: [],
+        integrationsWanted: ['BlueBubbles'],
+        richerSurface: 'telegram',
+        scope: 'family',
+        notes: [],
+      }),
+      planJson: JSON.stringify(plan),
+      sourceChannel: 'telegram',
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      approvedAt: now.toISOString(),
+      supersededAt: null,
+    });
+    upsertProfileSubject({
+      id: 'subject-self',
+      groupFolder: 'main',
+      kind: 'self',
+      canonicalName: 'self',
+      displayName: 'You',
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      disabledAt: null,
+    });
+    for (const [index, factKey] of [
+      'setup.tracking_priorities',
+      'setup.communication_style',
+      'setup.first_outcomes',
+    ].entries()) {
+      upsertProfileFact({
+        id: `fact-context-${index}`,
+        groupFolder: 'main',
+        subjectId: 'subject-self',
+        category:
+          factKey === 'setup.communication_style'
+            ? 'conversational_style'
+            : 'recurring_priorities',
+        factKey,
+        valueJson: JSON.stringify({
+          value: `${factKey} accepted`,
+          memoryScope: 'user',
+          confidence: 0.82,
+          freshness: 'current',
+          source: 'guided_profile_setup',
+        }),
+        state: 'accepted',
+        sourceChannel: 'telegram',
+        sourceSummary: `${factKey} accepted`,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        decidedAt: now.toISOString(),
+      });
+    }
+    upsertLifeThread({
+      id: 'life-family-logistics',
+      groupFolder: 'main',
+      title: 'Family logistics',
+      category: 'family',
+      status: 'active',
+      scope: 'family',
+      relatedSubjectIds: ['subject-self'],
+      contextTags: ['setup'],
+      summary: 'Keep family logistics from slipping.',
+      nextAction: 'Review what matters tonight.',
+      nextFollowupAt: null,
+      sourceKind: 'explicit',
+      confidenceKind: 'explicit',
+      userConfirmed: true,
+      sensitivity: 'normal',
+      surfaceMode: 'default',
+      followthroughMode: 'important_only',
+      createdAt: now.toISOString(),
+      lastUpdatedAt: now.toISOString(),
+      lastUsedAt: now.toISOString(),
+    });
+    const groundedSnapshot: GroundedDaySnapshot = {
+      ...createGroundedSnapshot(now),
+      selectedWork: null,
+      currentFocus: {
+        ...createGroundedSnapshot(now).currentFocus,
+        selectedWork: null,
+        reason: 'selected_work',
+      },
+    };
+
+    const result = await buildChiefOfStaffTurn({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what matters most today',
+      mode: 'prioritize',
+      now,
+      groundedSnapshot,
+      lifeThreadSnapshot: createLifeThreadSnapshot(),
+    });
+
+    expect(result.snapshot.mainSignal?.title).toBe('Family logistics');
+    expect(result.snapshot.mainSignal?.reasons).toContain(
+      'context graph: slipping',
+    );
+    expect(result.snapshot.summaryText).toContain(
+      'Family logistics matters most',
+    );
+    expect(result.snapshot.mainSignal?.summaryText).toContain(
+      'Review what matters tonight',
+    );
   });
 });

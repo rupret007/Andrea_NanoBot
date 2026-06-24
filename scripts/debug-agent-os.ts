@@ -19,14 +19,54 @@ const discoverTools = args.includes('--discover-tools');
 const taskDrill = args.includes('--task-drill');
 const planOnlyIndex = args.indexOf('--plan-only');
 const planOnlyGoal = planOnlyIndex >= 0 ? args[planOnlyIndex + 1] || '' : null;
+const deepWorkIndex = args.indexOf('--deep-work');
+const deepWorkGoal = deepWorkIndex >= 0 ? args[deepWorkIndex + 1] || '' : null;
 const replayPlanIndex = args.indexOf('--replay-plan');
-const replayPlanId = replayPlanIndex >= 0 ? args[replayPlanIndex + 1] || '' : null;
+const replayPlanId =
+  replayPlanIndex >= 0 ? args[replayPlanIndex + 1] || '' : null;
 const episodeIndex = args.indexOf('--episode');
 const episodeId = episodeIndex >= 0 ? args[episodeIndex + 1] || null : null;
 const configOnly = args.includes('--config-only');
 
 async function main(): Promise<void> {
   const generatedAt = new Date().toISOString();
+
+  if (deepWorkGoal !== null) {
+    const goal =
+      deepWorkGoal ||
+      'Prepare a council-governed deep-work plan with tool-truth checks and approval gates.';
+    const preview = previewAgentOSPlan({
+      goal: `Council-governed deep work: verify with council, check current tool truth, stage any approvals, and do not execute side effects. ${goal}`,
+      generatedAt,
+    });
+    const councilNodes = preview.nodes.filter(
+      (node) => node.policyClass === 'council',
+    );
+    const approvalNodes = preview.nodes.filter((node) => node.approvalRequired);
+    const councilToolCards = preview.governedToolNodes.filter((node) =>
+      /council/i.test(node.toolCardId),
+    );
+    const output = {
+      generatedAt,
+      status: preview.approvalRequired ? 'approval_staged' : 'pass',
+      mode: 'council_governed_deep_work',
+      planId: preview.plan.planId,
+      taskFamily: preview.plan.taskFamily,
+      nodes: preview.nodes.length,
+      councilNodes: councilNodes.length,
+      councilToolCards: councilToolCards.length,
+      approvalNodes: approvalNodes.length,
+      approvalRequired: preview.approvalRequired,
+      nextAction: preview.nextAction,
+      privacy: preview.privacy,
+    };
+    console.log(
+      json
+        ? JSON.stringify(output, null, 2)
+        : formatAgentOSPlanPreview(preview),
+    );
+    process.exit(0);
+  }
 
   if (planOnlyGoal !== null) {
     const preview = previewAgentOSPlan({
@@ -46,7 +86,11 @@ async function main(): Promise<void> {
       nextAction: preview.nextAction,
       privacy: preview.privacy,
     };
-    console.log(json ? JSON.stringify(output, null, 2) : formatAgentOSPlanPreview(preview));
+    console.log(
+      json
+        ? JSON.stringify(output, null, 2)
+        : formatAgentOSPlanPreview(preview),
+    );
     process.exit(0);
   }
 
@@ -66,7 +110,11 @@ async function main(): Promise<void> {
       nextAction: report.nextAction,
       privacy: report.privacy,
     };
-    console.log(json ? JSON.stringify(output, null, 2) : formatAgentOSReplayReport(report));
+    console.log(
+      json
+        ? JSON.stringify(output, null, 2)
+        : formatAgentOSReplayReport(report),
+    );
     process.exit(0);
   }
 
@@ -81,7 +129,9 @@ async function main(): Promise<void> {
       nextAction: report.capabilityDiscovery.nextAction,
       privacy: report.privacy,
     };
-    console.log(json ? JSON.stringify(output, null, 2) : formatAgentOSReport(report));
+    console.log(
+      json ? JSON.stringify(output, null, 2) : formatAgentOSReport(report),
+    );
     process.exit(0);
   }
 
@@ -118,12 +168,18 @@ async function main(): Promise<void> {
       nextAction: result.report.nextAction,
       privacy: result.report.privacy,
     };
-    console.log(json ? JSON.stringify(output, null, 2) : formatAgentOSReport(result.report));
+    console.log(
+      json
+        ? JSON.stringify(output, null, 2)
+        : formatAgentOSReport(result.report),
+    );
     process.exit(0);
   }
 
   const report = buildAgentOSReport({ episodeId, generatedAt });
-  console.log(json ? JSON.stringify(report, null, 2) : formatAgentOSReport(report));
+  console.log(
+    json ? JSON.stringify(report, null, 2) : formatAgentOSReport(report),
+  );
 }
 
 main().catch((error) => {

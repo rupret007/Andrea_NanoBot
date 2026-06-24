@@ -16,6 +16,7 @@ import {
 import {
   getProfileFactByKey,
   getProfileSubjectByKey,
+  listOutcomesForGroup,
   listCommunicationThreadsForGroup,
   listProfileFactsForGroup,
   updateProfileFactState,
@@ -24,6 +25,10 @@ import {
 } from './db.js';
 import { searchKnowledgeLibrary } from './knowledge-library.js';
 import { buildLifeThreadSnapshot } from './life-threads.js';
+import {
+  buildPersonalContextGraph,
+  type PersonalContextGraphReport,
+} from './personal-context-graph.js';
 import type {
   ChiefOfStaffContext,
   ChiefOfStaffHorizon,
@@ -35,6 +40,7 @@ import type {
   CommunicationThreadRecord,
   LifeThread,
   LifeThreadSnapshot,
+  OutcomeRecord,
   ProfileFact,
   ProfileFactWithSubject,
   ProfileSubject,
@@ -487,6 +493,166 @@ function buildCommunicationSignal(
   };
 }
 
+function safeJsonParseRefs(value: string | null | undefined): {
+  reminderTaskId?: string;
+} {
+  const parsed = safeJsonParse<Record<string, unknown>>(value || undefined, {});
+  return {
+    reminderTaskId:
+      typeof parsed.reminderTaskId === 'string'
+        ? parsed.reminderTaskId
+        : undefined,
+  };
+}
+
+function buildFollowThroughOutcomeSignal(
+  outcomes: OutcomeRecord[],
+): ChiefOfStaffSignal | null {
+  const active = outcomes.find((outcome) => {
+    if (outcome.sourceType !== 'followthrough_candidate') return false;
+    if (outcome.status === 'failed') return true;
+    if (outcome.status !== 'deferred') return false;
+    return Boolean(safeJsonParseRefs(outcome.linkedRefsJson).reminderTaskId);
+  });
+  const deferred =
+    active ||
+    outcomes.find(
+      (outcome) =>
+        outcome.sourceType === 'followthrough_candidate' &&
+        outcome.status === 'deferred',
+    );
+  const outcome = active || deferred || null;
+  if (!outcome) return null;
+
+  const refs = safeJsonParseRefs(outcome.linkedRefsJson);
+  const isApproved =
+    outcome.status === 'deferred' && Boolean(refs.reminderTaskId);
+  const isBlocked = outcome.status === 'failed';
+  const title = isBlocked
+    ? 'Blocked follow-through'
+    : isApproved
+      ? 'Approved follow-through'
+      : 'Deferred follow-through';
+  const summaryText =
+    outcome.blockerText ||
+    outcome.nextFollowupText ||
+    outcome.completionSummary ||
+    'A follow-through item is waiting in the local outcome loop.';
+
+  return {
+    kind: isBlocked ? 'pressure_point' : 'commitment',
+    title,
+    summaryText,
+    scope: 'mixed',
+    urgency: isApproved || isBlocked ? 'high' : 'medium',
+    importance: 'high',
+    recommendedAction: isBlocked
+      ? 'follow_up'
+      : isApproved
+        ? 'do_now'
+        : 'watch',
+    reasons: [
+      'follow-through outcome',
+      isApproved
+        ? 'approved local reminder'
+        : isBlocked
+          ? 'needs clarification'
+          : 'deferred by you',
+    ],
+    dueLabel: outcome.dueAt || null,
+  };
+}
+
+function buildContextGraphSignal(
+  report: PersonalContextGraphReport,
+): ChiefOfStaffSignal | null {
+  const topInsight =
+    report.rankedInsights.find(
+      (insight) =>
+        insight.kind !== 'setup_gap' && insight.kind !== 'memory_gap',
+    ) || null;
+  const hasCoverage =
+    report.coverage.activeProfile ||
+    report.coverage.memoryFacts > 0 ||
+    report.coverage.lifeThreads > 0 ||
+    report.coverage.communicationThreads > 0 ||
+    report.coverage.reminders > 0;
+  if (!hasCoverage) return null;
+  if (topInsight) {
+    const urgency: ChiefOfStaffSignalStrength =
+      topInsight.priorityScore >= 0.72
+        ? 'high'
+        : topInsight.priorityScore >= 0.46
+          ? 'medium'
+          : 'low';
+    return {
+      kind:
+        topInsight.kind === 'needs_reply'
+          ? 'open_loop'
+          : topInsight.kind === 'slipping' || topInsight.kind === 'setup_gap'
+            ? 'pressure_point'
+            : 'focus_candidate',
+      title: topInsight.title,
+      summaryText: `${topInsight.reason} Next: ${topInsight.nextAction}`,
+      scope: 'mixed',
+      urgency,
+      importance:
+        topInsight.kind === 'can_wait'
+          ? 'low'
+          : topInsight.priorityScore >= 0.58
+            ? 'high'
+            : 'medium',
+      recommendedAction:
+        topInsight.kind === 'can_wait'
+          ? 'watch'
+          : topInsight.kind === 'needs_reply'
+            ? 'follow_up'
+            : 'prepare',
+      reasons: [
+        `context graph: ${topInsight.kind.replace(/_/g, ' ')}`,
+        ...topInsight.riskFlags.slice(0, 2),
+      ],
+    };
+  }
+  if (!report.coverage.activeProfile) {
+    return {
+      kind: 'pressure_point',
+      title: 'Finish Andrea setup',
+      summaryText:
+        'Andrea has some live context, but setup memory is not active yet.',
+      scope: 'personal',
+      urgency: 'low',
+      importance: 'medium',
+      recommendedAction: 'prepare',
+      reasons: ['setup gap', 'context graph coverage'],
+    };
+  }
+  const linkedText =
+    report.coverage.linkedCommunicationThreads > 0
+      ? `${report.coverage.linkedCommunicationThreads} linked conversation${report.coverage.linkedCommunicationThreads === 1 ? '' : 's'}`
+      : `${report.coverage.memoryFacts} accepted memory fact${report.coverage.memoryFacts === 1 ? '' : 's'}`;
+  const hasDailyContext =
+    report.coverage.memoryFacts >= 3 &&
+    (report.coverage.lifeThreads > 0 ||
+      report.coverage.linkedCommunicationThreads > 0);
+  return {
+    kind: 'focus_candidate',
+    title: 'Personal context graph',
+    summaryText: `Andrea can use ${linkedText} plus ${report.coverage.lifeThreads} life thread${report.coverage.lifeThreads === 1 ? '' : 's'} to judge what matters, who needs a reply, what is slipping, and what can wait.`,
+    scope: 'mixed',
+    urgency: hasDailyContext ? 'medium' : 'low',
+    importance: hasDailyContext
+      ? 'high'
+      : report.readinessScore >= 0.5
+        ? 'medium'
+        : 'low',
+    recommendedAction: hasDailyContext ? 'prepare' : 'watch',
+    reasons: hasDailyContext
+      ? ['accepted memory', 'active life context']
+      : ['memory coverage', 'context graph coverage'],
+  };
+}
+
 function buildCurrentWorkSignal(
   work: SelectedWorkContext | null | undefined,
 ): ChiefOfStaffSignal | null {
@@ -847,6 +1013,18 @@ export async function buildChiefOfStaffSnapshot(
     communicationThreads,
     input.priorCommunicationSubjectIds,
   );
+  const contextGraph = buildPersonalContextGraph({
+    groupFolder: input.groupFolder,
+    now,
+  });
+  const followThroughOutcomes = listOutcomesForGroup({
+    groupFolder: input.groupFolder,
+    sourceTypes: ['followthrough_candidate'],
+    statuses: ['deferred', 'failed'],
+    includeSuppressed: true,
+    limit: 20,
+    now: now.toISOString(),
+  });
   const horizonCalendar = input.groundedSnapshot
     ? horizon === 'today'
       ? grounded.calendar
@@ -885,6 +1063,10 @@ export async function buildChiefOfStaffSnapshot(
     'open_loop',
   );
   const communicationSignal = buildCommunicationSignal(communicationCandidate);
+  const followThroughOutcomeSignal = buildFollowThroughOutcomeSignal(
+    followThroughOutcomes,
+  );
+  const contextGraphSignal = buildContextGraphSignal(contextGraph);
   const workSignal = preferences.workSuggestionsEnabled
     ? buildCurrentWorkSignal(selectedWork)
     : null;
@@ -914,6 +1096,8 @@ export async function buildChiefOfStaffSnapshot(
     dueThreadSignal,
     carryoverSignal,
     communicationSignal,
+    followThroughOutcomeSignal,
+    contextGraphSignal,
     workSignal,
     opportunitySignal,
   ].filter((signal): signal is ChiefOfStaffSignal => Boolean(signal));
@@ -945,7 +1129,9 @@ export async function buildChiefOfStaffSnapshot(
       ? 'high'
       : signals.length >= 2
         ? 'medium'
-        : 'low';
+        : mainSignal?.importance === 'high' && mainSignal.urgency !== 'low'
+          ? 'medium'
+          : 'low';
   const signalsUsed = [
     eventSignal ? 'calendar' : null,
     reminderSignal ? 'reminders' : null,
@@ -953,6 +1139,8 @@ export async function buildChiefOfStaffSnapshot(
       ? 'life_threads'
       : null,
     communicationSignal ? 'communication_threads' : null,
+    followThroughOutcomeSignal ? 'followthrough_outcomes' : null,
+    contextGraphSignal ? 'context_graph' : null,
     workSignal ? 'current_work' : null,
     knowledgeItems.length > 0 ? 'knowledge_library' : null,
   ].filter((value): value is string => Boolean(value));
@@ -968,6 +1156,7 @@ export async function buildChiefOfStaffSnapshot(
     slippingSignal?.title || null,
     dueThreadSignal?.title || null,
     communicationSignal?.title || null,
+    followThroughOutcomeSignal?.title || null,
   ].filter((value): value is string => Boolean(value));
   const opportunities = [
     opportunitySignal?.summaryText || null,
@@ -991,7 +1180,13 @@ export async function buildChiefOfStaffSnapshot(
   } else if (input.mode === 'prioritize' && mainSignal) {
     summaryText = `${mainSignal.title} matters most because ${mainSignal.reasons[0]}.`;
   }
-  if (confidence === 'low') {
+  if (
+    confidence === 'low' &&
+    !(
+      mainSignal?.title === 'Personal context graph' &&
+      mainSignal.reasons.includes('accepted memory')
+    )
+  ) {
     summaryText = buildLowConfidenceSummary(horizon, scope);
   }
 

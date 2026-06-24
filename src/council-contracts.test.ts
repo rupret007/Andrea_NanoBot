@@ -180,4 +180,60 @@ describe('council contracts', () => {
     expect(serialized).toContain('[REDACTED_SECRET]');
     expect(serialized).not.toContain('sk-proj-testSecretValue1234567890abcdef');
   });
+
+  it('keeps read-only planner blocks as warnings when verifier can proceed', () => {
+    const planner = parseCouncilMemberArtifact({
+      memberId: 'openai_cloud',
+      providerId: 'openai_cloud',
+      role: 'planner',
+      status: 'completed',
+      defaultConfidence: 0.8,
+      text: JSON.stringify({
+        verdict: 'block',
+        confidence: 0.76,
+        evidence_grade: 'partial',
+        recommended_action: 'block',
+        answer_direction: 'Avoid overclaiming tool recovery.',
+        uncertainty: 'One provider was flaky.',
+        risk_flags: ['tool_recovery_uncertainty'],
+        evidence_ids: ['intent:test'],
+        approval_need: 'none',
+        blocker: 'Planner wants stronger evidence before answering.',
+      }),
+    });
+    const verifier = parseCouncilMemberArtifact({
+      memberId: 'gemini_cloud',
+      providerId: 'gemini_cloud',
+      role: 'verifier',
+      status: 'completed',
+      defaultConfidence: 0.8,
+      text: JSON.stringify({
+        verdict: 'pass',
+        confidence: 0.82,
+        evidence_grade: 'partial',
+        recommended_action: 'answer',
+        answer_direction: 'Answer with uncertainty visible.',
+        uncertainty: 'Low.',
+        risk_flags: [],
+        evidence_ids: ['intent:test'],
+        approval_need: 'none',
+      }),
+    });
+
+    const verdict = buildCouncilVerdict({
+      councilRunId: 'council-soft-planner-block',
+      mode: 'dual_review',
+      artifacts: [planner, verifier],
+      evidencePack: baseEvidencePack,
+      providerFailures: [],
+      allowedSideEffects: 'read_only',
+      runBudget: baseBudget,
+    });
+
+    expect(verdict.status).toBe('warn');
+    expect(verdict.recommendedAction).toBe('answer');
+    expect(
+      verdict.actionDirectives.map((item) => item.directive),
+    ).not.toContain('verifier_stop');
+  });
 });

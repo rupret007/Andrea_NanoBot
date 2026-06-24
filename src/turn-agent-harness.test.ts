@@ -915,7 +915,7 @@ describe('turn agent harness', () => {
         },
         platformHoldReply: null,
       },
-      text: 'You look free at 3 PM tomorrow. codex_local can check the task_ledger.',
+      text: 'You look free at 3 PM tomorrow. codex_local can check the task_ledger; route_calibration is repo_side and manual_sync_only.',
       routeKey: 'calendar_lookup',
       responseSource: 'local_companion',
     });
@@ -923,6 +923,9 @@ describe('turn agent harness', () => {
     expect(evaluation.safeRewriteApplied).toBe(true);
     expect(evaluation.rewrittenText).toContain("I don't see anything");
     expect(evaluation.rewrittenText).not.toContain('codex_local');
+    expect(evaluation.rewrittenText).not.toContain('route_calibration');
+    expect(evaluation.rewrittenText).not.toContain('repo_side');
+    expect(evaluation.rewrittenText).not.toContain('manual_sync_only');
     expect(evaluation.evaluatorFlags).toContain('calendar_certainty_repaired');
     expect(evaluation.evaluatorFlags).toContain('operator_leakage_repaired');
   });

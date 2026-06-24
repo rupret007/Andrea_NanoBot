@@ -21,6 +21,7 @@ import {
   listAgentOSTaskNodes,
   listAgentOSToolCards,
   listAgentOSTrajectoryEvals,
+  listAgentRuntimeSkillManifests,
   listCognitiveProviderCooldowns,
   listCognitiveToolRegistry,
   upsertAgentOSEpisode,
@@ -34,7 +35,9 @@ import {
   upsertAgentOSTaskNode,
   upsertAgentOSToolCard,
   upsertAgentOSTrajectoryEval,
+  upsertAgentRuntimeSkillManifest,
 } from './db.js';
+import { makeRuntimeSkillManifest } from './agent-runtime-glue.js';
 import type {
   AgentOSCapabilityDiscoveryReport,
   AgentOSEpisode,
@@ -54,6 +57,7 @@ import type {
   AgentOSTaskNode,
   AgentOSToolCard,
   AgentOSTrajectoryEval,
+  AgentRuntimeSkillManifest,
   CognitiveApprovalPacket,
   CognitiveCheckpointRecord,
   CognitiveHandoff,
@@ -836,6 +840,56 @@ function skillProposalFor(input: {
   };
 }
 
+function runtimeSkillManifestForProposal(input: {
+  proposal: AgentOSSkillProposal;
+  toolCards: AgentOSToolCard[];
+  now: string;
+}): AgentRuntimeSkillManifest {
+  const requiredToolCardIds = parseJsonArray(
+    input.proposal.requiredToolCardIdsJson,
+  );
+  const requiredCards = input.toolCards.filter((card) =>
+    requiredToolCardIds.includes(card.toolCardId),
+  );
+  const approvalRules = parseJsonArray(input.proposal.approvalRulesJson);
+  const evidenceNeeds = parseJsonArray(input.proposal.evidenceNeedsJson);
+  const mutatingCardPresent = requiredCards.some(
+    (card) =>
+      card.policyClass === 'approval_staged' ||
+      card.approvalPolicy === 'explicit_approval' ||
+      card.riskLevel === 'high',
+  );
+  return makeRuntimeSkillManifest({
+    generatedAt: input.now,
+    skillId: `agent_os.${input.proposal.taskFamily}.episode_pattern`,
+    sourceKind: 'runtime',
+    frontmatter: {
+      sourceProposalId: input.proposal.proposalId,
+      sourceEpisodeIds: parseJsonArray(input.proposal.sourceEpisodeIdsJson),
+      safetyClass: mutatingCardPresent ? 'approval_gated_write' : 'read_only',
+      promotionState: input.proposal.status,
+      outcomeScore: input.proposal.outcomeScore,
+      marketplaceReady: false,
+    },
+    trigger: {
+      taskFamily: input.proposal.taskFamily,
+      summary: input.proposal.triggerSummary,
+    },
+    toolRefs: requiredCards.map((card) => card.sourceToolId),
+    approvalRules: [
+      ...approvalRules,
+      'Runtime candidate manifests do not grant new permissions.',
+      'Promotion requires explicit confirmation after verified success.',
+    ],
+    evidenceNeeds: [
+      ...evidenceNeeds,
+      'Agent OS replay remains metadata-only.',
+      'Action preflight must pass before any mutating step.',
+    ],
+    summary: input.proposal.skillSummary,
+  });
+}
+
 function taskFamilyForGoal(goal: string): string {
   const normalized = goal.toLowerCase();
   if (/calendar|meeting|schedule|tomorrow|today/.test(normalized))
@@ -1520,7 +1574,12 @@ export function beginAgentOSEpisode(input: BeginAgentOSEpisodeInput): {
   upsertAgentOSEpisode(episode);
 
   const proposal = skillProposalFor({ episode, evalRecord, toolCards, now });
-  if (proposal) upsertAgentOSSkillProposal(proposal);
+  if (proposal) {
+    upsertAgentOSSkillProposal(proposal);
+    upsertAgentRuntimeSkillManifest(
+      runtimeSkillManifestForProposal({ proposal, toolCards, now }),
+    );
+  }
 
   return {
     kernel,
@@ -1577,6 +1636,10 @@ export function buildAgentOSReport(
   const skillProposals = episodeId
     ? listAgentOSSkillProposals({ episodeId, limit: 20 })
     : [];
+  const runtimeSkillManifests = listAgentRuntimeSkillManifests({
+    status: 'candidate',
+    limit: 20,
+  });
   const blockingInterrupt = interrupts.find(
     (interrupt) => interrupt.status === 'open',
   );
@@ -1622,6 +1685,7 @@ export function buildAgentOSReport(
     handoffs,
     trajectoryEvals,
     skillProposals,
+    runtimeSkillManifests,
     capabilityDiscovery,
     nextAction,
     privacy: privacyReport(),
@@ -1655,6 +1719,7 @@ export function formatAgentOSReport(report: AgentOSReport): string {
       `Trajectory score: ${latestEval?.overallScore ?? 'none'}`,
       `Source coverage: ${latestEval?.sourceCoverage ?? 'none'}`,
       `Skill proposals: ${report.skillProposals.length}`,
+      `Runtime skill manifests: ${report.runtimeSkillManifests.length}`,
       `Next: ${report.nextAction}`,
       '',
       'Privacy: metadata-only; no raw prompts, private message bodies, hidden reasoning, raw tool output, or secrets are stored.',

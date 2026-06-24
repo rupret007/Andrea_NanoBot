@@ -602,6 +602,13 @@ export function buildCouncilVerdict(
   );
   const verifier = completed.find((artifact) => artifact.role === 'verifier');
   const blockers = completed.filter((artifact) => artifact.verdict === 'block');
+  const hardBlockers = blockers.filter(
+    (artifact) =>
+      artifact.role === 'verifier' ||
+      artifact.role === 'synthesizer' ||
+      artifact.approvalNeed === 'explicit' ||
+      input.allowedSideEffects === 'approval_required',
+  );
   const clarifiers = completed.filter(
     (artifact) => artifact.verdict === 'clarify',
   );
@@ -631,7 +638,7 @@ export function buildCouncilVerdict(
   ).length;
 
   let status: CouncilVerdictStatus = 'pass';
-  if (verifier?.verdict === 'block' || blockers.length > 0) {
+  if (verifier?.verdict === 'block' || hardBlockers.length > 0) {
     status = 'block';
   } else if (verifier?.verdict === 'clarify' || clarifiers.length > 0) {
     status = 'clarify';
@@ -640,6 +647,7 @@ export function buildCouncilVerdict(
     input.providerFailures.length > 0 ||
     evidenceWeakForRequirement ||
     schemaInvalidCount > 0 ||
+    blockers.length > 0 ||
     completed.some((artifact) =>
       ['warn', 'inconclusive'].includes(artifact.verdict),
     )
@@ -682,11 +690,11 @@ export function buildCouncilVerdict(
     ]),
   );
   const blocker =
-    blockers[0]?.blocker ||
+    hardBlockers[0]?.blocker ||
     (status === 'block'
       ? source?.blocker ||
         input.providerFailures[0] ||
-        'Council blocked the answer until evidence, safety, or approval requirements are resolved.'
+        'Review blocked the answer until evidence, safety, or approval requirements are resolved.'
       : null);
   const uncertainty =
     input.providerFailures.length > 0
@@ -836,7 +844,7 @@ function buildCouncilActionDirectives(input: {
       priority: 'high',
       reason: redactCouncilText(
         input.blocker ||
-          'Council blocked this answer until evidence, safety, or approval requirements are resolved.',
+          'Review blocked this answer until evidence, safety, or approval requirements are resolved.',
         320,
       ),
       stopReason: input.blocker || 'council_block',
