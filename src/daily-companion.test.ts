@@ -220,7 +220,12 @@ describe('buildDailyCompanionResponse', () => {
 
     expect(response?.mode).toBe('midday_reground');
     expect(response?.reply).toContain('The best next move is still Ship docs.');
-    expect(response?.reply).toContain('Current work: Ship docs (Running)');
+    expect(response?.reply).toContain('Next:');
+    expect(response?.reply).toContain('Why:');
+    expect(response?.reply).not.toContain('Current work:');
+    expect(
+      response?.reply.split('\n').filter(Boolean).length,
+    ).toBeLessThanOrEqual(3);
     expect(response?.recommendationKind).toBe('do_now');
   });
 
@@ -398,8 +403,13 @@ describe('buildDailyCompanionResponse', () => {
       },
     );
 
-    expect(response?.reply).toContain('Candace wants a follow-up');
-    expect(response?.reply).toContain('Keep in mind:');
+    expect(response?.reply).toContain(
+      'The conversation most likely to slip is Candace.',
+    );
+    expect(response?.reply).toContain('Next: Reply to Candace');
+    expect(response?.reply).toContain('Why:');
+    expect(response?.reply).not.toContain('Keep in mind:');
+    expect(response?.reply.split('\n').filter(Boolean)).toHaveLength(3);
     expect(response?.signalsUsed).toContain('communication_threads');
   });
 
@@ -564,6 +574,12 @@ describe('buildDailyCompanionResponse', () => {
     expect(response?.reply).toContain(
       'The easiest thing to forget right now is call Candace.',
     );
+    expect(response?.reply).toContain('Next: Handle call Candace');
+    expect(response?.reply).toContain('Why:');
+    expect(response?.reply.split('\n').filter(Boolean)).toHaveLength(3);
+    expect(response?.reply).not.toContain('- ');
+    expect(response?.reply).not.toContain('route_calibration');
+    expect(response?.reply).not.toContain('repo_side');
     expect(response?.reply).not.toContain(
       'The next grounded thing is your schedule, because I do not have a better signal than that yet.',
     );
@@ -1094,7 +1110,10 @@ describe('buildDailyCompanionResponse', () => {
     expect(response?.reply).toContain(
       'The next thing that still needs attention is Candace',
     );
-    expect(response?.reply).toContain('Thread follow-up: Candace');
+    expect(response?.reply).toContain('Next:');
+    expect(response?.reply).toContain('Why:');
+    expect(response?.reply).not.toContain('Thread follow-up:');
+    expect(response?.reply.split('\n').filter(Boolean)).toHaveLength(3);
     expect(response?.context.usedThreadTitles).toContain('Candace');
   });
 

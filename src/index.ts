@@ -6971,8 +6971,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         const clarification =
           executiveContext.plan.explanation ||
           'I need one more detail before I can route that safely.';
+        const clarificationText = /\?\s*$/.test(clarification.trim())
+          ? clarification
+          : `${clarification}\n\nWhat exactly do you want me to handle?`;
         await sendAssistantReplyWithFeedback({
-          text: `${clarification}\n\nWhat exactly do you want me to handle?`,
+          text: clarificationText,
           routeKey: executiveContext.plan.routeKey,
           capabilityId: null,
           handlerKind: 'local_cognitive_executive',

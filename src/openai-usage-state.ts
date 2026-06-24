@@ -8,7 +8,11 @@ export const OPENAI_USAGE_STATE_KEY = 'openai_usage_last';
 
 export interface OpenAiUsageState {
   at: string;
-  surface: 'research' | 'messages_fluidity' | 'everyday_capture';
+  surface:
+    | 'research'
+    | 'messages_fluidity'
+    | 'everyday_capture'
+    | 'recent_text_review';
   selectedModelTier?: OpenAiModelTier | null;
   selectedModel?: string | null;
   providerMode?: OpenAiProviderMode | null;

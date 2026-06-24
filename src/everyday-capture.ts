@@ -8,6 +8,8 @@ import {
   getActiveOperatingProfile,
   getEverydayListGroup,
   getEverydayListItem,
+  getProfileFactByKey,
+  getProfileSubjectByKey,
   getRouterState,
   listEverydayListGroups,
   listEverydayListItems,
@@ -19,8 +21,11 @@ import {
   updateOperatingProfileSuggestionState,
   upsertEverydayListGroup,
   upsertEverydayListItem,
+  upsertLifeThread,
   upsertOperatingProfile,
   upsertOperatingProfileSuggestion,
+  upsertProfileFact,
+  upsertProfileSubject,
   deleteEverydayListItem,
 } from './db.js';
 import { handleLifeThreadCommand } from './life-threads.js';
@@ -47,12 +52,15 @@ import type {
   EverydayListItemKind,
   EverydayListRecurrenceKind,
   EverydayListScope,
+  LifeThread,
   OperatingProfile,
   OperatingProfileIntake,
   OperatingProfileLearningMode,
   OperatingProfilePlan,
   OperatingProfilePlanGroup,
   OperatingProfilePlanIntegration,
+  ProfileFact,
+  ProfileSubject,
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
@@ -133,6 +141,23 @@ interface ProfileSetupState {
   createdAt: string;
   draftProfileId?: string;
   notes: string[];
+  currentQuestionId?: ProfileSetupQuestionId | null;
+  answers?: Partial<Record<ProfileSetupQuestionId, string>>;
+}
+
+type ProfileSetupQuestionId =
+  | 'people'
+  | 'tracking'
+  | 'rhythm'
+  | 'style'
+  | 'integrations'
+  | 'privacy'
+  | 'outcomes';
+
+interface ProfileSetupQuestion {
+  id: ProfileSetupQuestionId;
+  shortLabel: string;
+  prompt: string;
 }
 
 interface PendingReminderState {
@@ -261,6 +286,54 @@ const DEFAULT_GROUP_TEMPLATES: Record<
   },
 };
 
+const PROFILE_SETUP_QUESTIONS: ProfileSetupQuestion[] = [
+  {
+    id: 'people',
+    shortLabel: 'people',
+    prompt:
+      'Who matters most for Andrea to understand first? Names, roles, or groups are enough.',
+  },
+  {
+    id: 'tracking',
+    shortLabel: 'tracking',
+    prompt:
+      'What should Andrea keep track of day to day? Think texts, errands, bills, meals, work, family, health, or loose ends.',
+  },
+  {
+    id: 'rhythm',
+    shortLabel: 'rhythm',
+    prompt:
+      'What rhythm should Andrea know about? Morning checks, evening reset, weekly planning, school/work cadence, anything like that.',
+  },
+  {
+    id: 'style',
+    shortLabel: 'style',
+    prompt:
+      'How should Andrea talk to you? Short and direct, warm, detailed, blunt, playful, or something else?',
+  },
+  {
+    id: 'integrations',
+    shortLabel: 'channels',
+    prompt:
+      'Which channels and tools matter first? Telegram, texts, calendar, reminders, email, Alexa, or something else.',
+  },
+  {
+    id: 'privacy',
+    shortLabel: 'privacy',
+    prompt:
+      'What should Andrea be careful about learning, surfacing, or sharing back to you?',
+  },
+  {
+    id: 'outcomes',
+    shortLabel: 'outcomes',
+    prompt: 'What are the first three outcomes you want Andrea to help with?',
+  },
+];
+
+const PROFILE_SETUP_QUESTION_IDS = PROFILE_SETUP_QUESTIONS.map(
+  (question) => question.id,
+);
+
 const WEEKDAY_INDEX: Record<string, number> = {
   sunday: 0,
   monday: 1,
@@ -334,6 +407,415 @@ function joinNaturalLanguage(items: string[]): string {
   if (items.length === 1) return items[0]!;
   if (items.length === 2) return `${items[0]} and ${items[1]}`;
   return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
+}
+
+function normalizeSetupAnswer(value: string): string {
+  return clip(
+    value
+      .replace(/\b(skip|not sure|none yet|nothing yet)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    700,
+  );
+}
+
+function redactSetupExportText(value: string, max = 220): string {
+  return clip(value, max)
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]')
+    .replace(/\+?\d[\d\s().-]{6,}\d/g, '[phone]')
+    .replace(/\bbb:[^\s"']+/gi, '[chat]')
+    .replace(/\b(?:iMessage|SMS);[^\s"']+/gi, '[chat]');
+}
+
+function looksLikeOneShotSetup(text: string): boolean {
+  const lower = normalizeText(text).toLowerCase();
+  const matches = [
+    /\btrack|keep track|watch|remember\b/.test(lower),
+    /\bshopping|grocery|errand|bill|meal|meds?|household|follow-through|calendar|messages|texts?\b/.test(
+      lower,
+    ),
+    /\btelegram|alexa|bluebubbles|calendar|imessage|messages|texts?\b/.test(
+      lower,
+    ),
+    lower.length > 140,
+  ].filter(Boolean).length;
+  return matches >= 2;
+}
+
+function firstProfileSetupQuestion(): ProfileSetupQuestion {
+  return PROFILE_SETUP_QUESTIONS[0]!;
+}
+
+function getProfileSetupQuestion(
+  id: ProfileSetupQuestionId | null | undefined,
+): ProfileSetupQuestion {
+  return (
+    PROFILE_SETUP_QUESTIONS.find((question) => question.id === id) ||
+    firstProfileSetupQuestion()
+  );
+}
+
+function nextProfileSetupQuestionId(
+  answers: Partial<Record<ProfileSetupQuestionId, string>>,
+): ProfileSetupQuestionId | null {
+  return (
+    PROFILE_SETUP_QUESTIONS.find(
+      (question) => !normalizeText(answers[question.id] || ''),
+    )?.id || null
+  );
+}
+
+function formatProfileSetupQuestion(
+  channel: EverydayCaptureCommandInput['channel'],
+  question: ProfileSetupQuestion,
+  answers: Partial<Record<ProfileSetupQuestionId, string>> = {},
+): string {
+  const questionIndex = PROFILE_SETUP_QUESTION_IDS.indexOf(question.id) + 1;
+  const total = PROFILE_SETUP_QUESTIONS.length;
+  if (channel === 'alexa') {
+    return question.prompt;
+  }
+  const answeredCount = PROFILE_SETUP_QUESTION_IDS.filter((id) =>
+    normalizeText(answers[id] || ''),
+  ).length;
+  return [
+    question.id === 'people'
+      ? '*5-minute Andrea setup*\nI’ll ask a few quick questions, then turn the answers into memory, lists, and first outcomes. We’ll cover what you want Andrea to track right after this.'
+      : '*Andrea setup*',
+    '',
+    `Step ${questionIndex}/${total}: ${question.shortLabel}`,
+    question.prompt,
+    answeredCount > 0 ? `Progress: ${answeredCount}/${total} answered.` : '',
+    'You can say `skip` for anything.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildGuidedSetupIntakeText(
+  answers: Partial<Record<ProfileSetupQuestionId, string>>,
+  notes: string[] = [],
+): string {
+  const lines = PROFILE_SETUP_QUESTIONS.map((question) => {
+    const answer = normalizeText(answers[question.id] || '');
+    return answer ? `${question.shortLabel}: ${answer}` : '';
+  }).filter(Boolean);
+  return [...lines, ...notes].filter(Boolean).join('\n');
+}
+
+function answerFromIntake(
+  answers: Partial<Record<ProfileSetupQuestionId, string>>,
+  id: ProfileSetupQuestionId,
+  intake: OperatingProfileIntake,
+): string {
+  const direct = normalizeText(answers[id] || '');
+  if (direct) return direct;
+  if (id === 'tracking') return intake.trackingPriorities.join(', ');
+  if (id === 'rhythm') return intake.routines.join(', ');
+  if (id === 'integrations') return intake.integrationsWanted.join(', ');
+  if (id === 'outcomes') return intake.notes.join(', ');
+  return '';
+}
+
+function profileSubjectId(
+  groupFolder: string,
+  kind: ProfileSubject['kind'],
+  canonicalName: string,
+): string {
+  return `profile:subject:${crypto
+    .createHash('sha256')
+    .update(`${groupFolder}|${kind}|${canonicalName}`)
+    .digest('hex')
+    .slice(0, 24)}`;
+}
+
+function canonicalPersonName(value: string): string {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/['"]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
+}
+
+function ensureProfileSubject(params: {
+  groupFolder: string;
+  kind: ProfileSubject['kind'];
+  displayName: string;
+  nowIso: string;
+}): ProfileSubject {
+  const canonicalName =
+    params.kind === 'self'
+      ? 'self'
+      : params.kind === 'household'
+        ? 'household'
+        : canonicalPersonName(params.displayName);
+  const existing = getProfileSubjectByKey(
+    params.groupFolder,
+    params.kind,
+    canonicalName,
+  );
+  const record: ProfileSubject = existing
+    ? {
+        ...existing,
+        displayName: params.displayName,
+        updatedAt: params.nowIso,
+      }
+    : {
+        id: profileSubjectId(params.groupFolder, params.kind, canonicalName),
+        groupFolder: params.groupFolder,
+        kind: params.kind,
+        canonicalName,
+        displayName: params.displayName,
+        createdAt: params.nowIso,
+        updatedAt: params.nowIso,
+        disabledAt: null,
+      };
+  upsertProfileSubject(record);
+  return record;
+}
+
+function setupMemoryValue(params: {
+  value: unknown;
+  questionId?: ProfileSetupQuestionId;
+  nowIso: string;
+}) {
+  return {
+    value: params.value,
+    memoryScope: 'user',
+    confidence: 0.82,
+    freshness: 'current',
+    source: 'guided_profile_setup',
+    questionId: params.questionId || null,
+    learnedAt: params.nowIso,
+  };
+}
+
+function upsertSetupFact(params: {
+  groupFolder: string;
+  subject: ProfileSubject;
+  category: ProfileFact['category'];
+  factKey: string;
+  value: unknown;
+  sourceChannel: EverydayCaptureCommandInput['channel'];
+  sourceSummary: string;
+  nowIso: string;
+}): ProfileFact {
+  const existing = getProfileFactByKey(
+    params.groupFolder,
+    params.subject.id,
+    params.category,
+    params.factKey,
+  );
+  const record: ProfileFact = {
+    id: existing?.id || crypto.randomUUID(),
+    groupFolder: params.groupFolder,
+    subjectId: params.subject.id,
+    category: params.category,
+    factKey: params.factKey,
+    valueJson: JSON.stringify(params.value),
+    state: 'accepted',
+    sourceChannel: params.sourceChannel,
+    sourceSummary: redactSetupExportText(params.sourceSummary, 240),
+    createdAt: existing?.createdAt || params.nowIso,
+    updatedAt: params.nowIso,
+    decidedAt: params.nowIso,
+  };
+  upsertProfileFact(record);
+  return record;
+}
+
+function extractGuidedPeople(answer: string): string[] {
+  return normalizeText(answer)
+    .split(/\b(?:and|plus)\b|[,;/&]+/i)
+    .map((part) => normalizeText(part))
+    .filter((part) => {
+      if (part.length < 2 || part.length > 80) return false;
+      if (/\d{3,}|@|https?:|privacy|careful|skip/i.test(part)) return false;
+      return true;
+    })
+    .slice(0, 8);
+}
+
+function seedMemoryFromApprovedSetup(params: {
+  groupFolder: string;
+  channel: EverydayCaptureCommandInput['channel'];
+  activeProfile: OperatingProfile;
+  plan: OperatingProfilePlan;
+  state: ProfileSetupState | null;
+  nowIso: string;
+}): void {
+  const intake = safeJsonParse<OperatingProfileIntake>(
+    params.activeProfile.intakeJson,
+    {
+      rawText: '',
+      routines: [],
+      trackingPriorities: [],
+      defaultGroups: [],
+      integrationsWanted: [],
+      richerSurface: 'telegram',
+      scope: 'personal',
+      notes: [],
+    },
+  );
+  const answers = params.state?.answers || {};
+  const self = ensureProfileSubject({
+    groupFolder: params.groupFolder,
+    kind: 'self',
+    displayName: 'You',
+    nowIso: params.nowIso,
+  });
+  const peopleAnswer = answerFromIntake(answers, 'people', intake);
+  const peopleSubjects = extractGuidedPeople(peopleAnswer).map((name) =>
+    ensureProfileSubject({
+      groupFolder: params.groupFolder,
+      kind: 'person',
+      displayName: name,
+      nowIso: params.nowIso,
+    }),
+  );
+
+  if (peopleSubjects.length > 0) {
+    for (const person of peopleSubjects) {
+      upsertSetupFact({
+        groupFolder: params.groupFolder,
+        subject: person,
+        category: 'people',
+        factKey: 'setup.known_person',
+        value: setupMemoryValue({
+          value: { name: person.displayName },
+          questionId: 'people',
+          nowIso: params.nowIso,
+        }),
+        sourceChannel: params.channel,
+        sourceSummary: peopleAnswer,
+        nowIso: params.nowIso,
+      });
+    }
+  }
+
+  const factSpecs: Array<{
+    category: ProfileFact['category'];
+    factKey: string;
+    questionId: ProfileSetupQuestionId;
+    value: unknown;
+    source: string;
+  }> = [
+    {
+      category: 'preferences',
+      factKey: 'setup.tracking_priorities',
+      questionId: 'tracking',
+      value: {
+        trackedAreas: params.plan.trackedAreas,
+        defaultGroups: params.plan.defaultGroups.map((group) => group.title),
+      },
+      source: answerFromIntake(answers, 'tracking', intake),
+    },
+    {
+      category: 'routines',
+      factKey: 'setup.daily_rhythm',
+      questionId: 'rhythm',
+      value: params.plan.routines,
+      source: answerFromIntake(answers, 'rhythm', intake),
+    },
+    {
+      category: 'conversational_style',
+      factKey: 'setup.communication_style',
+      questionId: 'style',
+      value: answerFromIntake(answers, 'style', intake),
+      source: answerFromIntake(answers, 'style', intake),
+    },
+    {
+      category: 'preferences',
+      factKey: 'setup.integration_priorities',
+      questionId: 'integrations',
+      value: params.plan.desiredIntegrations.map((integration) => ({
+        name: integration.name,
+        readiness: integration.readiness,
+      })),
+      source: answerFromIntake(answers, 'integrations', intake),
+    },
+    {
+      category: 'preferences',
+      factKey: 'setup.privacy_comfort',
+      questionId: 'privacy',
+      value: answerFromIntake(answers, 'privacy', intake),
+      source: answerFromIntake(answers, 'privacy', intake),
+    },
+    {
+      category: 'recurring_priorities',
+      factKey: 'setup.first_outcomes',
+      questionId: 'outcomes',
+      value: answerFromIntake(answers, 'outcomes', intake),
+      source: answerFromIntake(answers, 'outcomes', intake),
+    },
+  ];
+
+  for (const spec of factSpecs) {
+    if (
+      (Array.isArray(spec.value) && spec.value.length === 0) ||
+      (!Array.isArray(spec.value) && !normalizeText(String(spec.value || '')))
+    ) {
+      continue;
+    }
+    upsertSetupFact({
+      groupFolder: params.groupFolder,
+      subject: self,
+      category: spec.category,
+      factKey: spec.factKey,
+      value: setupMemoryValue({
+        value: spec.value,
+        questionId: spec.questionId,
+        nowIso: params.nowIso,
+      }),
+      sourceChannel: params.channel,
+      sourceSummary: spec.source || params.plan.summary,
+      nowIso: params.nowIso,
+    });
+  }
+
+  const outcomeSummary =
+    answerFromIntake(answers, 'outcomes', intake) || params.plan.summary;
+  const threadId = `life:setup:first_outcomes:${crypto
+    .createHash('sha256')
+    .update(`${params.groupFolder}|${outcomeSummary}`)
+    .digest('hex')
+    .slice(0, 16)}`;
+  const lifeThread: LifeThread = {
+    id: threadId,
+    groupFolder: params.groupFolder,
+    title: 'First outcomes',
+    category: 'personal',
+    status: 'active',
+    scope: intake.scope === 'family' ? 'family' : intake.scope,
+    relatedSubjectIds: [
+      self.id,
+      ...peopleSubjects.map((subject) => subject.id),
+    ],
+    contextTags: ['profile_setup', 'first_outcomes'],
+    summary: redactSetupExportText(outcomeSummary, 360),
+    nextAction:
+      'Use this setup to prioritize the first useful daily-agent wins.',
+    nextFollowupAt: null,
+    sourceKind: 'explicit',
+    confidenceKind: 'explicit',
+    userConfirmed: true,
+    sensitivity: /health|medical|private|sensitive|relationship|legal/i.test(
+      outcomeSummary,
+    )
+      ? 'sensitive'
+      : 'normal',
+    surfaceMode: 'default',
+    followthroughMode: 'important_only',
+    lastSurfacedAt: null,
+    snoozedUntil: null,
+    linkedTaskId: null,
+    mergedIntoThreadId: null,
+    createdAt: params.nowIso,
+    lastUpdatedAt: params.nowIso,
+    lastUsedAt: params.nowIso,
+  };
+  upsertLifeThread(lifeThread);
 }
 
 function toTitleCase(value: string): string {
@@ -594,9 +1076,112 @@ function buildDeterministicPlan(
   };
 }
 
+function normalizeProfilePlanText(value: unknown): string {
+  if (typeof value === 'string') return clip(value, 120);
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    for (const key of [
+      'title',
+      'name',
+      'label',
+      'kind',
+      'area',
+      'summary',
+      'purpose',
+      'text',
+      'value',
+    ]) {
+      const candidate = record[key];
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return clip(candidate, 120);
+      }
+    }
+  }
+  return '';
+}
+
+function normalizeProfilePlanTextList(
+  value: unknown,
+  fallback: string[],
+): string[] {
+  if (!Array.isArray(value)) return fallback;
+  const normalized = value
+    .map(normalizeProfilePlanText)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return normalized.length ? [...new Set(normalized)] : fallback;
+}
+
+function normalizeProfilePlanGroup(
+  value: unknown,
+): OperatingProfilePlanGroup | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const title = normalizeProfilePlanText(record.title ?? record.name);
+  if (!title) return null;
+  const kind =
+    typeof record.kind === 'string' && record.kind.trim()
+      ? (record.kind as EverydayListGroupKind)
+      : 'general';
+  const scope =
+    record.scope === 'household' ||
+    record.scope === 'family' ||
+    record.scope === 'mixed'
+      ? record.scope
+      : 'personal';
+  return {
+    title,
+    kind,
+    scope,
+    purpose:
+      normalizeProfilePlanText(record.purpose ?? record.summary) ||
+      'Keep this area visible during daily planning.',
+  };
+}
+
+function normalizeProfilePlanGroups(
+  value: unknown,
+  fallback: OperatingProfilePlanGroup[],
+): OperatingProfilePlanGroup[] {
+  if (!Array.isArray(value)) return fallback;
+  const groups = value
+    .map(normalizeProfilePlanGroup)
+    .filter((group): group is OperatingProfilePlanGroup => Boolean(group));
+  return groups.length ? groups : fallback;
+}
+
+function normalizeProfilePlanIntegrations(
+  value: unknown,
+): OperatingProfilePlanIntegration[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item): OperatingProfilePlanIntegration | null => {
+      if (!item || typeof item !== 'object') return null;
+      const record = item as Record<string, unknown>;
+      const name = normalizeProfilePlanText(record.name ?? record.title);
+      if (!name) return null;
+      const readiness =
+        record.readiness === 'connected' ||
+        record.readiness === 'missing_manual' ||
+        record.readiness === 'not_requested'
+          ? record.readiness
+          : 'missing_manual';
+      return {
+        name,
+        readiness,
+        note:
+          typeof record.note === 'string' && record.note.trim()
+            ? clip(record.note, 160)
+            : null,
+      };
+    })
+    .filter((item): item is OperatingProfilePlanIntegration => Boolean(item));
+}
+
 async function synthesizePlanWithOpenAi(
   intake: OperatingProfileIntake,
 ): Promise<OperatingProfilePlan | null> {
+  if (process.env.ANDREA_PROFILE_SETUP_CLOUD === 'disabled') return null;
   const openAi = resolveOpenAiProviderConfig();
   if (!openAi) return null;
   const prompt = [
@@ -674,24 +1259,32 @@ async function synthesizePlanWithOpenAi(
       });
       return {
         summary: clip(parsed.summary, 220),
-        trackedAreas: Array.isArray(parsed.trackedAreas)
-          ? parsed.trackedAreas.map((item) => String(item))
-          : intake.trackingPriorities,
-        defaultGroups: parsed.defaultGroups as OperatingProfilePlanGroup[],
-        routines: Array.isArray(parsed.routines)
-          ? parsed.routines.map((item) => String(item))
-          : intake.routines,
+        trackedAreas: normalizeProfilePlanTextList(
+          parsed.trackedAreas,
+          intake.trackingPriorities,
+        ),
+        defaultGroups: normalizeProfilePlanGroups(
+          parsed.defaultGroups,
+          buildPlanGroupsFromTrackedAreas(
+            intake.trackingPriorities,
+            intake.scope,
+          ),
+        ),
+        routines: normalizeProfilePlanTextList(
+          parsed.routines,
+          intake.routines,
+        ),
         reminderSuggestions: Array.isArray(parsed.reminderSuggestions)
-          ? parsed.reminderSuggestions.map((item) => String(item))
+          ? normalizeProfilePlanTextList(parsed.reminderSuggestions, [])
           : [],
         richerSurface:
           parsed.richerSurface === 'alexa' ||
           parsed.richerSurface === 'bluebubbles'
             ? parsed.richerSurface
             : 'telegram',
-        desiredIntegrations: Array.isArray(parsed.desiredIntegrations)
-          ? (parsed.desiredIntegrations as OperatingProfilePlanIntegration[])
-          : [],
+        desiredIntegrations: normalizeProfilePlanIntegrations(
+          parsed.desiredIntegrations,
+        ),
         learningPolicy: DEFAULT_LEARNING_POLICY,
       };
     }
@@ -2863,6 +3456,30 @@ async function handleProfileSetup(
   const activeProfile = getActiveOperatingProfile(input.groupFolder) || null;
   const state = input.chatJid ? readProfileSetupState(input.chatJid) : null;
 
+  if (/^(restart setup|start setup over|start over)$/i.test(lower)) {
+    if (input.chatJid) {
+      const firstQuestion = firstProfileSetupQuestion();
+      writeProfileSetupState(input.chatJid, {
+        version: 1,
+        createdAt: nowIso,
+        notes: [],
+        answers: {},
+        currentQuestionId: firstQuestion.id,
+      });
+      return buildResult({
+        mode: 'profile_setup',
+        replyText: formatProfileSetupQuestion(input.channel, firstQuestion),
+        summaryText: 'restarted Andrea setup',
+        subjectKind: 'general',
+        conversationData: {
+          activeTaskKind: 'profile_setup',
+          activeOperatingProfileId: activeProfile?.profileId,
+        },
+        supportedFollowups: ['say_more'],
+      });
+    }
+  }
+
   if (/^show me my current setup$/i.test(lower)) {
     return buildResult({
       mode: 'profile_review',
@@ -2880,17 +3497,17 @@ async function handleProfileSetup(
   }
 
   if (!state && input.chatJid) {
+    const firstQuestion = firstProfileSetupQuestion();
     writeProfileSetupState(input.chatJid, {
       version: 1,
       createdAt: nowIso,
       notes: [],
+      answers: {},
+      currentQuestionId: firstQuestion.id,
     });
     return buildResult({
       mode: 'profile_setup',
-      replyText:
-        input.channel === 'alexa'
-          ? 'Tell me the routines, lists, and follow-through you want me to track for you. Mention things like meals, pills, bills, errands, household stuff, and which surface should be richer.'
-          : 'Tell me what you want Andrea to track for you. Good things to mention are routines, groceries, errands, bills, meal plans, meds, household follow-through, and which surface should be richer.',
+      replyText: formatProfileSetupQuestion(input.channel, firstQuestion),
       summaryText: 'starting Andrea setup',
       subjectKind: 'general',
       conversationData: {
@@ -2939,6 +3556,14 @@ async function handleProfileSetup(
       learningPolicy: DEFAULT_LEARNING_POLICY,
     });
     seedGroupsFromPlan(input.groupFolder, active.profileId, plan, nowIso);
+    seedMemoryFromApprovedSetup({
+      groupFolder: input.groupFolder,
+      channel: input.channel,
+      activeProfile: active,
+      plan,
+      state,
+      nowIso,
+    });
     if (input.chatJid) writeProfileSetupState(input.chatJid, null);
     return buildResult({
       mode: 'profile_setup',
@@ -2957,7 +3582,54 @@ async function handleProfileSetup(
     });
   }
 
-  const intake = extractIntake(input.text);
+  let draftState = state;
+  let intakeText = input.text;
+  if (state && !state.draftProfileId && input.chatJid) {
+    const currentQuestion = getProfileSetupQuestion(state.currentQuestionId);
+    const answers: Partial<Record<ProfileSetupQuestionId, string>> = {
+      ...(state.answers || {}),
+    };
+    const oneShot =
+      Object.keys(answers).length === 0 && looksLikeOneShotSetup(input.text);
+    if (!oneShot) {
+      const answer = normalizeSetupAnswer(input.text);
+      if (answer) answers[currentQuestion.id] = answer;
+      const nextQuestionId = nextProfileSetupQuestionId(answers);
+      if (nextQuestionId) {
+        const nextQuestion = getProfileSetupQuestion(nextQuestionId);
+        writeProfileSetupState(input.chatJid, {
+          ...state,
+          answers,
+          currentQuestionId: nextQuestionId,
+          notes: [...(state.notes || []), answer].filter(Boolean).slice(-8),
+        });
+        return buildResult({
+          mode: 'profile_setup',
+          replyText: formatProfileSetupQuestion(
+            input.channel,
+            nextQuestion,
+            answers,
+          ),
+          summaryText: `Andrea setup question: ${nextQuestion.shortLabel}`,
+          subjectKind: 'general',
+          conversationData: {
+            activeTaskKind: 'profile_setup',
+            activeOperatingProfileId: activeProfile?.profileId,
+          },
+          supportedFollowups: ['say_more'],
+        });
+      }
+      intakeText = buildGuidedSetupIntakeText(answers, state.notes);
+    }
+    draftState = {
+      ...state,
+      answers,
+      currentQuestionId: null,
+      notes: [...(state.notes || []), input.text].slice(-8),
+    };
+  }
+
+  const intake = extractIntake(intakeText);
   const plan =
     (await synthesizePlanWithOpenAi(intake)) || buildDeterministicPlan(intake);
   const existingProfiles = listOperatingProfilesForGroup(input.groupFolder);
@@ -2979,9 +3651,11 @@ async function handleProfileSetup(
   if (input.chatJid) {
     writeProfileSetupState(input.chatJid, {
       version: 1,
-      createdAt: state?.createdAt || nowIso,
+      createdAt: draftState?.createdAt || nowIso,
       draftProfileId: draft.profileId,
-      notes: [...(state?.notes || []), intake.rawText].slice(-6),
+      currentQuestionId: null,
+      answers: draftState?.answers || {},
+      notes: [...(draftState?.notes || []), intake.rawText].slice(-8),
     });
   }
   return buildResult({
@@ -3630,7 +4304,7 @@ export async function handleEverydayCaptureCommand(
   }
 
   if (
-    /^(help me set this up|walk me through what you should track for me|update my setup|change what you track|show me my current setup)\b/i.test(
+    /^(help me set this up|finish my andrea setup|finish setup|walk me through what you should track for me|update my setup|change what you track|show me my current setup)\b/i.test(
       normalized,
     ) ||
     profileSetupState

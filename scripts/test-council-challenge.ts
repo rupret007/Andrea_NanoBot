@@ -17,6 +17,7 @@ function parseArgs(): {
   baseline: boolean;
   compare: boolean;
   failOnRegression: boolean;
+  liveProviderProbe: boolean;
 } {
   const args = new Set(process.argv.slice(2));
   const tierArg = process.argv
@@ -31,11 +32,13 @@ function parseArgs(): {
     'ladder') as CouncilChallengeRunTier;
   return {
     tier,
-    recordToPlatform: !args.has('--no-record'),
-    createRepairPlans: !args.has('--no-repair-plan'),
+    recordToPlatform: args.has('--record') && !args.has('--no-record'),
+    createRepairPlans:
+      args.has('--repair-plan') && !args.has('--no-repair-plan'),
     baseline: args.has('--baseline'),
     compare: args.has('--compare'),
     failOnRegression: args.has('--fail-on-regression'),
+    liveProviderProbe: args.has('--live-provider-probe'),
   };
 }
 
@@ -104,6 +107,7 @@ const report = await runCouncilChallengeHarness({
   baseline,
   compareToBaseline: options.compare,
   baselineMode: options.baseline,
+  liveProviderProbe: options.liveProviderProbe,
 });
 
 if (options.baseline) {

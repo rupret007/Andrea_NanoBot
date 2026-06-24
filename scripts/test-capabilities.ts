@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import {
   _closeDatabase,
   _initTestDatabase,
+  createTask,
   listCapabilityStates,
+  listRealitySnapshots,
+  upsertActivePerceptionPlan,
+  upsertProofClosureStep,
   upsertToolReliabilityRollup,
 } from '../src/db.js';
 import { buildLiveProofGauntletReport } from '../src/live-proof-gauntlet.js';
@@ -12,8 +16,10 @@ import {
   buildCapabilitySelfModel,
   formatCapabilityNaturalResponse,
   formatCapabilityReport,
+  getDailyCoreAttentionStates,
   isCapabilityNaturalRequest,
 } from '../src/capability-self-model.js';
+import type { IntegrationDoctorReport } from '../src/integration-doctor.js';
 
 _initTestDatabase();
 
@@ -120,6 +126,79 @@ assert.ok(telegramSend.reliabilityScore >= 0.9);
 assert.ok(telegramUserSession);
 assert.equal(telegramUserSession.proofStatus, 'missing_config');
 
+const latestSnapshot = listRealitySnapshots({ limit: 1 })[0];
+assert.ok(latestSnapshot, 'expected a reality snapshot for proof step fixture');
+upsertActivePerceptionPlan({
+  planId: 'test-plan',
+  snapshotId: latestSnapshot.snapshotId,
+  createdAt: '2026-06-09T16:00:00.000Z',
+  requestSummary: 'test stale proof fixture',
+  channel: 'internal',
+  status: 'manual_proof_required',
+  riskSummary: 'test only',
+  probeIdsJson: '[]',
+  skippedProbeIdsJson: '[]',
+  manualStepIdsJson: '["stale-telegram-proof"]',
+  nextAction: 'Send hi in Telegram.',
+  privacyJson: '{}',
+});
+upsertProofClosureStep({
+  stepId: 'stale-telegram-proof',
+  planId: 'test-plan',
+  proofId: 'telegram-bot',
+  createdAt: '2026-06-09T16:00:00.000Z',
+  proofName: 'Telegram bot proof',
+  status: 'manual_action',
+  blockerClass: 'manual_live_proof_needed',
+  exactNextStep: 'Send hi in Telegram.',
+  requestedAt: '2026-06-09T16:00:00.000Z',
+  evidenceIdsJson: '[]',
+  privacyJson: '{}',
+});
+const healthyTelegramIntegration: IntegrationDoctorReport = {
+  generatedAt: '2026-06-09T16:00:32.000Z',
+  summary: {
+    total: 1,
+    healthy: 1,
+    actionNeeded: 0,
+    needsProof: 0,
+    manualOrExternal: 0,
+  },
+  statuses: [
+    {
+      integrationId: 'telegram',
+      label: 'Telegram',
+      state: 'healthy',
+      credentialState: 'configured',
+      transportState: 'healthy',
+      proofState: 'healthy',
+      lastHealthyAt: '2026-06-09T16:00:32.000Z',
+      lastFailure: '',
+      blockerOwner: 'none',
+      nextAction: '',
+      repairability: 'status_only',
+      safeActions: [],
+      detail: 'Telegram is healthy.',
+    },
+  ],
+  secretsRedacted: true,
+};
+const staleProofHealthyTelegramReport = buildCapabilitySelfModel({
+  now: '2026-06-09T16:00:33.000Z',
+  persist: false,
+  env: {},
+  envFileValues: {
+    TELEGRAM_BOT_TOKEN: 'set',
+  },
+  integrationReport: healthyTelegramIntegration,
+});
+const staleProofTelegramSend = staleProofHealthyTelegramReport.states.find(
+  (state) => state.capabilityId === 'messages.send.telegram',
+);
+assert.ok(staleProofTelegramSend);
+assert.equal(staleProofTelegramSend.proofStatus, 'live_proven');
+assert.equal(staleProofTelegramSend.currentBlocker, null);
+
 const fileBackedConfigReport = buildCapabilitySelfModel({
   now: '2026-06-09T16:01:00.000Z',
   persist: false,
@@ -196,6 +275,34 @@ const blockedCalendarCapabilityReport = buildCapabilitySelfModel({
   envFileValues: {
     GOOGLE_CALENDAR_CLIENT_ID: 'set',
   },
+  integrationReport: {
+    generatedAt: '2026-06-09T16:01:31.000Z',
+    summary: {
+      total: 1,
+      healthy: 0,
+      actionNeeded: 1,
+      needsProof: 0,
+      manualOrExternal: 1,
+    },
+    statuses: [
+      {
+        integrationId: 'google_calendar',
+        label: 'Google Calendar',
+        state: 'externally_blocked',
+        credentialState: 'invalid',
+        transportState: 'blocked',
+        proofState: 'externally_blocked',
+        lastHealthyAt: null,
+        lastFailure: 'Google Calendar auth failed.',
+        blockerOwner: 'external',
+        nextAction: 'Re-run Google Calendar auth.',
+        repairability: 'guided_manual',
+        safeActions: ['Run Google Calendar auth setup.'],
+        detail: 'Google Calendar auth failed.',
+      },
+    ],
+    secretsRedacted: true,
+  },
 });
 for (const id of ['calendar.read', 'calendar.write']) {
   const state = blockedCalendarCapabilityReport.states.find(
@@ -258,6 +365,158 @@ assert.ok(research);
 assert.equal(research.proofStatus, 'live_proven');
 assert.equal(research.currentBlocker, null);
 assert.ok(research.reliabilityScore >= 0.9);
+
+upsertToolReliabilityRollup({
+  subjectId: 'tool:message_actions',
+  updatedAt: '2026-06-09T15:30:00.000Z',
+  sampleCount: 0,
+  successRate: 0,
+  degradedRate: 0,
+  blockedRate: 0,
+  fallbackRate: 0,
+  reliabilityScore: 0,
+  currentHealth: 'unknown',
+  confidenceCap: 0.5,
+  cooldownUntil: null,
+  nextAction: 'Collect one fresh status observation.',
+  privacyJson: '{}',
+});
+createTask({
+  id: 'task-reminder-proof',
+  group_folder: 'main',
+  chat_jid: 'tg:main',
+  prompt: 'Send a concise reminder telling the user to check the oven.',
+  script: null,
+  schedule_type: 'once',
+  schedule_value: '2026-06-09T18:00:00.000Z',
+  context_mode: 'isolated',
+  next_run: '2026-06-09T18:00:00.000Z',
+  status: 'active',
+  created_at: '2026-06-09T16:02:30.000Z',
+});
+const reminderEvidenceReport = buildCapabilitySelfModel({
+  now: '2026-06-09T16:02:45.000Z',
+  persist: false,
+  env: {},
+  envFileValues: {},
+});
+const reminders = reminderEvidenceReport.states.find(
+  (item) => item.capabilityId === 'reminders.internal',
+);
+assert.ok(reminders);
+assert.equal(reminders.proofStatus, 'live_proven');
+assert.equal(reminders.currentBlocker, null);
+
+const coreReadyOptionalVoiceReport = buildCapabilitySelfModel({
+  now: '2026-06-09T16:03:00.000Z',
+  persist: false,
+  env: {},
+  envFileValues: {
+    TELEGRAM_BOT_TOKEN: 'set',
+    BLUEBUBBLES_BASE_URL: 'set',
+    GOOGLE_CALENDAR_CLIENT_ID: 'set',
+    BRAVE_SEARCH_API_KEY: 'set',
+    ALEXA_SKILL_ID: 'set',
+  },
+  providerHealthSnapshots: [
+    {
+      providerId: 'brave_search',
+      kind: 'search',
+      state: 'healthy',
+      lastHealthyAt: '2026-06-09T16:03:00.000Z',
+      lastCheckedAt: '2026-06-09T16:03:00.000Z',
+      failureClass: 'none',
+      quotaState: 'unknown',
+      credentialState: 'configured',
+      knownExpiresAt: null,
+      rotationDueAt: null,
+      blocker: '',
+      nextAction: '',
+      metadata: {},
+    },
+  ],
+  integrationReport: {
+    generatedAt: '2026-06-09T16:03:00.000Z',
+    summary: {
+      total: 4,
+      healthy: 3,
+      actionNeeded: 1,
+      needsProof: 0,
+      manualOrExternal: 1,
+    },
+    statuses: [
+      {
+        integrationId: 'telegram',
+        label: 'Telegram',
+        state: 'healthy',
+        credentialState: 'configured',
+        transportState: 'healthy',
+        proofState: 'healthy',
+        lastHealthyAt: '2026-06-09T16:03:00.000Z',
+        lastFailure: '',
+        blockerOwner: 'none',
+        nextAction: '',
+        repairability: 'status_only',
+        safeActions: [],
+        detail: 'Telegram is healthy.',
+      },
+      {
+        integrationId: 'bluebubbles',
+        label: 'BlueBubbles',
+        state: 'healthy',
+        credentialState: 'configured',
+        transportState: 'healthy',
+        proofState: 'healthy',
+        lastHealthyAt: '2026-06-09T16:03:00.000Z',
+        lastFailure: '',
+        blockerOwner: 'none',
+        nextAction: '',
+        repairability: 'status_only',
+        safeActions: [],
+        detail: 'BlueBubbles is healthy.',
+      },
+      {
+        integrationId: 'google_calendar',
+        label: 'Google Calendar',
+        state: 'healthy',
+        credentialState: 'configured',
+        transportState: 'healthy',
+        proofState: 'healthy',
+        lastHealthyAt: '2026-06-09T16:03:00.000Z',
+        lastFailure: '',
+        blockerOwner: 'none',
+        nextAction: '',
+        repairability: 'status_only',
+        safeActions: [],
+        detail: 'Google Calendar is healthy.',
+      },
+      {
+        integrationId: 'alexa',
+        label: 'Alexa',
+        state: 'manual_action_required',
+        credentialState: 'configured',
+        transportState: 'healthy',
+        proofState: 'near_live_only',
+        lastHealthyAt: null,
+        lastFailure: '',
+        blockerOwner: 'external',
+        nextAction: 'Use a real device or authenticated simulator.',
+        repairability: 'guided_manual',
+        safeActions: [],
+        detail: 'Alexa needs a fresh signed IntentRequest.',
+      },
+    ],
+    secretsRedacted: true,
+  },
+});
+assert.equal(getDailyCoreAttentionStates(coreReadyOptionalVoiceReport).length, 0);
+assert.equal(coreReadyOptionalVoiceReport.dailyCore.needsAttention, 0);
+assert.equal(coreReadyOptionalVoiceReport.optionalSurfaces.needsAttention, 1);
+assert.match(
+  formatCapabilityReport(coreReadyOptionalVoiceReport),
+  /Daily core: \d+\/\d+ ready \(0 need attention\)/,
+);
+assert.match(formatCapabilityReport(coreReadyOptionalVoiceReport), /OPTIONAL/);
 
 // External sends always require explicit approval regardless of proof.
 for (const id of [

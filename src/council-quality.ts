@@ -21,6 +21,10 @@ import type {
   CouncilProviderReliabilitySnapshot,
   CouncilRunLedgerRecord,
 } from './types.js';
+import {
+  collectProviderHealthSnapshots,
+  type ProviderHealthSnapshot,
+} from './provider-health.js';
 
 const LOW_CONFIDENCE_THRESHOLD = 0.55;
 const CALIBRATION_LOOKBACK = 40;
@@ -35,6 +39,31 @@ interface CouncilMemberStatusForQuality {
   confidence?: number;
   schemaStatus?: string;
   riskFlags?: string[];
+}
+
+export interface CouncilReplayReport {
+  generatedAt: string;
+  latestRunId: string | null;
+  taskFamily: string | null;
+  mode: string | null;
+  finalStatus: string | null;
+  recommendedAction: string | null;
+  confidence: number | null;
+  evidenceGrade: string | null;
+  approvalNeed: string | null;
+  evidenceScorecard: Record<string, unknown>;
+  evidenceGaps: string[];
+  providerFailures: string[];
+  riskFlags: string[];
+  members: CouncilMemberStatusForQuality[];
+  confidenceMath: Record<string, unknown>;
+  budget: Record<string, unknown>;
+  replaySummary: string;
+  privacy: {
+    redactedMetadataOnly: boolean;
+    rawPromptsStored: boolean;
+    rawPrivateBodiesStored: boolean;
+  };
 }
 
 export interface CouncilCalibrationInput {
@@ -290,12 +319,23 @@ function safeListCouncilRunLedger(params: {
 
 export function buildCouncilDoctorReport(
   now = new Date().toISOString(),
+  options: { providerHealth?: ProviderHealthSnapshot[] } = {},
 ): CouncilDoctorReport {
   const runs = listCouncilRunLedger({ limit: DOCTOR_LOOKBACK });
   const signals = listCouncilOutcomeSignals({ limit: DOCTOR_LOOKBACK });
   const taskEase = buildCouncilTaskEaseReport({ now: new Date(now) });
+  const currentProviderHealth =
+    options.providerHealth || safeCollectProviderHealth(now);
+  const currentHealthyProviderIds = new Set(
+    currentProviderHealth
+      .filter((provider) => provider.state === 'healthy')
+      .map((provider) => provider.providerId),
+  );
   const providerReliability = buildCouncilProviderReliability(runs);
-  const providerParticipation = buildLatestProviderParticipation(runs);
+  const providerParticipation = buildLatestProviderParticipation(
+    runs,
+    currentHealthyProviderIds,
+  );
   const lowConfidenceRuns = runs.filter(
     (run) => run.confidence < LOW_CONFIDENCE_THRESHOLD,
   ).length;
@@ -318,12 +358,24 @@ export function buildCouncilDoctorReport(
     lowConfidenceRuns === 0 &&
     schemaInvalidRuns === 0 &&
     providerReliability.every((provider) => !provider.degraded);
+  const hasHistoricallyDegradedProviders = providerReliability.some(
+    (provider) => provider.degraded,
+  );
+  const currentCoreProvidersHealthy = [
+    'openai_cloud',
+    'anthropic_cloud',
+    'gemini_cloud',
+    'minimax_cloud',
+    'brave_search',
+  ].every((providerId) => currentHealthyProviderIds.has(providerId));
   const nextAction =
     runs.length === 0
       ? 'Run one `ultrathink` Telegram proof turn, then rerun npm run debug:council.'
       : ok
         ? 'Run a fresh live `ultrathink` proof after major changes, then keep the challenge ladder green.'
-        : 'Run npm run test:council:medium and one live `ultrathink` proof, then inspect degraded provider/replay reasons.';
+        : currentCoreProvidersHealthy && hasHistoricallyDegradedProviders
+          ? 'Providers are currently healthy; run npm run test:council:medium and one live `ultrathink` proof to retire stale degradation history.'
+          : 'Run npm run test:council:medium and one live `ultrathink` proof, then inspect degraded provider/replay reasons.';
   const lastRun = runs[0];
 
   return {
@@ -353,6 +405,13 @@ export function buildCouncilDoctorReport(
       outcomeSignals: signals.length,
     },
     providerReliability,
+    currentProviderHealth: currentProviderHealth.map((provider) => ({
+      providerId: provider.providerId,
+      state: provider.state,
+      failureClass: provider.failureClass,
+      quotaState: provider.quotaState,
+      credentialState: provider.credentialState,
+    })),
     providerParticipation,
     degradedReasons,
     evidenceGaps,
@@ -383,6 +442,21 @@ export function formatCouncilDoctorReport(report: CouncilDoctorReport): string {
       (provider) =>
         `${provider.providerId}/${provider.role} ${(provider.recentFailureRate * 100).toFixed(0)}%`,
     );
+  const currentProviders = (report.currentProviderHealth || [])
+    .slice()
+    .sort((a, b) => a.providerId.localeCompare(b.providerId))
+    .map((provider) =>
+      provider.state === 'healthy'
+        ? `${provider.providerId}=healthy`
+        : `${provider.providerId}=${provider.state}/${provider.failureClass}`,
+    );
+  const replay = buildCouncilReplayReport(report.generatedAt);
+  const replayLines = replay.latestRunId
+    ? [
+        `Latest discussion: action=${replay.recommendedAction || 'unknown'} evidence=${String(replay.evidenceScorecard.availableGrade || 'unknown')}/${String(replay.evidenceScorecard.requiredGrade || 'unknown')} members=${replay.members.length}`,
+        `Council risks: ${[...replay.providerFailures, ...replay.riskFlags].slice(0, 4).join(', ') || 'none'}`,
+      ]
+    : ['Latest discussion: none recorded'];
   return [
     'Council Status',
     '',
@@ -394,21 +468,111 @@ export function formatCouncilDoctorReport(report: CouncilDoctorReport): string {
     `Outcome signals: ${report.recent.outcomeSignals}`,
     `Schema invalid runs: ${report.recent.schemaInvalidRuns}`,
     `Low-confidence runs: ${report.recent.lowConfidenceRuns}`,
-    `Degraded providers: ${degradedProviders.join(', ') || 'none'}`,
+    `Current providers: ${currentProviders.join(', ') || 'unknown'}`,
+    `Historical degraded providers: ${degradedProviders.join(', ') || 'none'}`,
     report.providerParticipation
       ? `Provider participation: ${report.providerParticipation.status} skipped=${report.providerParticipation.skippedProviderIds.join(', ') || 'none'} substituted=${report.providerParticipation.substitutedRoles.join(', ') || 'none'}`
       : 'Provider participation: none recorded',
+    ...replayLines,
     `Evidence gaps: ${report.evidenceGaps.slice(0, 4).join(', ') || 'none'}`,
     report.taskEase
       ? `Task-ease: ${report.taskEase.status} score=${report.taskEase.score.toFixed(2)} source_patterns=${report.taskEase.sourcePatternCoverage} quality_gates=${report.taskEase.qualityGateCoverage} outcome_signals=${report.taskEase.outcomeSignalCount}`
       : 'Task-ease: unavailable',
     `Privacy: secrets redacted, raw prompts stored=${report.privacy.rawPromptsStored}, raw private bodies stored=${report.privacy.rawPrivateBodiesStored}`,
-    `Next: ${report.taskEase?.nextAction || report.nextAction}`,
+    `Next: ${report.nextAction || report.taskEase?.nextAction || 'rerun npm run debug:council after a proof turn.'}`,
+  ].join('\n');
+}
+
+export function buildCouncilReplayReport(
+  now = new Date().toISOString(),
+  councilRunId?: string,
+): CouncilReplayReport {
+  const latest =
+    (councilRunId ? safeGetCouncilRunLedger(councilRunId) : undefined) ||
+    listCouncilRunLedger({ limit: 1 })[0] ||
+    null;
+  const evidenceScorecard = latest
+    ? parseJsonObject(latest.evidenceScorecardJson)
+    : {};
+  const confidenceMath = latest
+    ? parseJsonObject(latest.confidenceMathJson)
+    : {};
+  const budget = latest ? parseJsonObject(latest.budgetJson) : {};
+  const evidenceGaps = Array.isArray(evidenceScorecard.gapIds)
+    ? evidenceScorecard.gapIds
+        .map((gap) => redactCouncilText(String(gap), 120))
+        .filter(Boolean)
+    : [];
+  return {
+    generatedAt: now,
+    latestRunId: latest?.councilRunId || null,
+    taskFamily: latest?.taskFamily || null,
+    mode: latest?.chosenMode || null,
+    finalStatus: latest?.finalStatus || null,
+    recommendedAction: latest?.recommendedAction || null,
+    confidence: latest ? latest.confidence : null,
+    evidenceGrade: latest?.evidenceGrade || null,
+    approvalNeed: latest?.approvalNeed || null,
+    evidenceScorecard,
+    evidenceGaps,
+    providerFailures: latest
+      ? parseJsonArray(latest.providerFailuresJson)
+          .map((failure) => redactCouncilText(String(failure), 120))
+          .filter(Boolean)
+      : [],
+    riskFlags: latest
+      ? parseJsonArray(latest.riskFlagsJson)
+          .map((flag) => redactCouncilText(String(flag), 120))
+          .filter(Boolean)
+      : [],
+    members: latest ? parseMemberStatuses(latest.memberStatusesJson) : [],
+    confidenceMath,
+    budget,
+    replaySummary: latest?.replaySummary || 'No council run recorded yet.',
+    privacy: {
+      redactedMetadataOnly: true,
+      rawPromptsStored: false,
+      rawPrivateBodiesStored: false,
+    },
+  };
+}
+
+export function formatCouncilReplayReport(report: CouncilReplayReport): string {
+  const memberLines = report.members.length
+    ? report.members.slice(0, 8).map((member) => {
+        const label = `${member.role || 'member'}/${member.providerId || member.memberId || 'unknown'}`;
+        const confidence =
+          typeof member.confidence === 'number'
+            ? ` confidence=${member.confidence.toFixed(2)}`
+            : '';
+        const risks =
+          member.riskFlags && member.riskFlags.length > 0
+            ? ` risks=${member.riskFlags.slice(0, 3).join(',')}`
+            : '';
+        return `- ${label}: ${member.status || 'unknown'} verdict=${member.verdict || 'unknown'}${confidence} schema=${member.schemaStatus || 'unknown'}${risks}`;
+      })
+    : ['- none recorded'];
+  return [
+    'Council Replay',
+    '',
+    `Latest run: ${report.latestRunId || 'none'}`,
+    `Task/mode: ${report.taskFamily || 'none'} / ${report.mode || 'none'}`,
+    `Final: ${report.finalStatus || 'none'} action=${report.recommendedAction || 'none'} confidence=${typeof report.confidence === 'number' ? report.confidence.toFixed(2) : 'unknown'} approval=${report.approvalNeed || 'unknown'}`,
+    `Evidence: ${String(report.evidenceScorecard.availableGrade || 'unknown')}/${String(report.evidenceScorecard.requiredGrade || 'unknown')} gaps=${report.evidenceGaps.join(', ') || 'none'}`,
+    `Provider failures: ${report.providerFailures.join(', ') || 'none'}`,
+    `Risk flags: ${report.riskFlags.join(', ') || 'none'}`,
+    'Members:',
+    ...memberLines,
+    `Confidence math: ${JSON.stringify(report.confidenceMath)}`,
+    `Budget: ${JSON.stringify(report.budget)}`,
+    `Replay: ${report.replaySummary}`,
+    'Privacy: redacted metadata only; raw prompts/private bodies stored=false',
   ].join('\n');
 }
 
 function buildLatestProviderParticipation(
   records: CouncilRunLedgerRecord[],
+  currentHealthyProviderIds = new Set<string>(),
 ): CouncilDoctorReport['providerParticipation'] {
   const latest = records[0];
   if (!latest) {
@@ -462,7 +626,15 @@ function buildLatestProviderParticipation(
       member.status === 'blocked' &&
       member.role !== 'verifier' &&
       member.role !== 'critic' &&
-      member.role !== 'evidence_scout',
+      member.role !== 'evidence_scout' &&
+      !(
+        currentHealthyProviderIds.has(
+          member.providerId || member.memberId || 'unknown',
+        ) &&
+        (member.riskFlags || []).some((flag) =>
+          /(?:^|_)transport_error$/i.test(flag),
+        )
+      ),
   );
   const status =
     members.length === 0
@@ -486,9 +658,14 @@ function buildLatestProviderParticipation(
         ? 'Provider participation is full for the latest council run.'
         : status === 'none'
           ? 'Run one council proof turn before judging provider participation.'
-          : status === 'minimal'
-            ? 'Repair required provider health before trusting deep council routes.'
-            : 'Proceed with degraded-provider wording and rerun provider diagnostics after quota/auth recovery.',
+          : currentHealthyProviderIds.size > 0 &&
+              skippedProviderIds.every((providerId) =>
+                currentHealthyProviderIds.has(providerId),
+              )
+            ? 'Latest run had degraded participation, but providers are currently healthy; rerun a council proof to refresh the ledger.'
+            : status === 'minimal'
+              ? 'Repair required provider health before trusting deep council routes.'
+              : 'Proceed with degraded-provider wording and rerun provider diagnostics after quota/auth recovery.',
   };
 }
 
@@ -643,6 +820,14 @@ function parseJsonObject(value: string): Record<string, unknown> {
       : {};
   } catch {
     return {};
+  }
+}
+
+function safeCollectProviderHealth(now: string): ProviderHealthSnapshot[] {
+  try {
+    return collectProviderHealthSnapshots(now);
+  } catch {
+    return [];
   }
 }
 

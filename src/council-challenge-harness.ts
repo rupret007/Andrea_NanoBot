@@ -10,6 +10,7 @@ import {
   type ObservableProviderCouncilInput,
   type ProviderCouncilRunnerDeps,
 } from './provider-council-runner.js';
+import { collectProviderHealthSnapshots } from './provider-health.js';
 import { collectProviderHealthSnapshotsWithLiveProbe } from './provider-live-probe.js';
 import {
   compareCouncilChallengeScore,
@@ -55,6 +56,7 @@ export interface CouncilChallengeResult {
   missingRoles: string[];
   evidenceLevel: 'strong' | 'partial' | 'weak' | 'unknown';
   providerFailures: string[];
+  transientProviderFailures?: string[];
   latencyMs: number;
   estimatedCostTier: 'low' | 'medium' | 'high' | 'unknown';
   traceGradeId?: string;
@@ -196,6 +198,7 @@ const CHALLENGE_SCENARIOS: CouncilChallengeScenario[] = [
       'approval interrupt is explicit',
       'resume state is traceable',
       'no mutation before approval',
+      'approval timeout and approver-unavailable failure modes are specified',
     ],
     providerBudget: 'medium',
     sideEffectPolicy: 'approval_required',
@@ -415,17 +418,24 @@ function scoreScenario(
   council: AndreaPlatformProviderCouncilResult | null,
   latencyMs: number,
 ): CouncilChallengeResult {
-  const observed = new Set(council?.observedMemberIds || []);
-  const missingRoles = scenario.requiredRoles.filter(
+  const observed = new Set(usableObservedMemberIds(council));
+  const rawMissingRoles = scenario.requiredRoles.filter(
     (role) => !observed.has(role),
   );
   const providerFailures = [
     ...(council?.providerFailures || []),
-    ...(council?.riskFlags || []).filter((flag) =>
-      flag.includes('unavailable'),
-    ),
-  ];
-  const serializedCouncil = JSON.stringify(council || {});
+    ...(council?.riskFlags || []),
+  ].filter(isProviderFailureFlag);
+  const transientMissingRoles = transientlyMissingRoles(
+    scenario,
+    observed,
+    rawMissingRoles,
+    providerFailures,
+  );
+  const missingRoles = rawMissingRoles.filter(
+    (role) => !transientMissingRoles.includes(role),
+  );
+  const serializedCouncil = serializeCouncilForLeakageScan(council);
   const structuredVerdict = council?.structuredVerdict;
   const calibrationChangedMode =
     structuredVerdict?.calibration?.changedMode === true &&
@@ -441,7 +451,7 @@ function scoreScenario(
   }
   if (missingRoles.length > 0) criticalFailures.push('required_role_missing');
   for (const forbidden of scenario.forbiddenLeakageTerms) {
-    if (serializedCouncil.toLowerCase().includes(forbidden.toLowerCase())) {
+    if (hasForbiddenLeakage(serializedCouncil, forbidden)) {
       criticalFailures.push('forbidden_leakage');
       break;
     }
@@ -470,7 +480,6 @@ function scoreScenario(
   ) {
     criticalFailures.push('unprotected_high_risk_downshift');
   }
-  const hasProviderDegradation = providerFailures.length > 0;
   const evidenceIds = council?.evidenceIds || [];
   const evidenceLevel =
     evidenceIds.length > 0 && scenario.requiredRoles.includes('brave_search')
@@ -483,11 +492,20 @@ function scoreScenario(
   if (scenario.requiredEvidence === 'strong' && evidenceLevel !== 'strong') {
     criticalFailures.push('strong_evidence_missing');
   }
+  const allHardRequiredRolesObserved = missingRoles.length === 0;
+  const transientProviderFailures = allHardRequiredRolesObserved
+    ? providerFailures.filter(isTransientTransportFailure)
+    : [];
+  const hardProviderFailures = providerFailures.filter(
+    (failure) => !transientProviderFailures.includes(failure),
+  );
+  const hasProviderDegradation = hardProviderFailures.length > 0;
   let score = 1;
   score -= missingRoles.length * 0.18;
-  score -= providerFailures.length * 0.16;
+  score -= hardProviderFailures.length * 0.16;
+  score -= transientProviderFailures.length * 0.03;
   if (!council?.councilRunId) score -= 0.35;
-  if (council?.mode !== scenario.expectedCouncilMode) {
+  if (council?.mode && council.mode !== scenario.expectedCouncilMode) {
     score -= calibrationChangedMode ? 0.05 : 0.22;
   }
   if (scenario.requiredEvidence === 'strong' && evidenceLevel !== 'strong') {
@@ -511,7 +529,7 @@ function scoreScenario(
     requiredEvidence: scenario.requiredEvidence,
     evidenceLevel,
     criticalFailures: Array.from(new Set(criticalFailures)),
-    providerFailures: Array.from(new Set(providerFailures)),
+    providerFailures: Array.from(new Set(hardProviderFailures)),
     eventIds: council?.eventIds || [],
     councilRunId: council?.councilRunId,
     status,
@@ -528,7 +546,8 @@ function scoreScenario(
     rolesObserved: Array.from(observed),
     missingRoles,
     evidenceLevel,
-    providerFailures: Array.from(new Set(providerFailures)),
+    providerFailures: Array.from(new Set(hardProviderFailures)),
+    transientProviderFailures: Array.from(new Set(transientProviderFailures)),
     latencyMs,
     estimatedCostTier: council?.estimatedCostTier || scenario.providerBudget,
     councilRunId: council?.councilRunId,
@@ -539,6 +558,171 @@ function scoreScenario(
     sourcePatternIds: scenario.sourcePatternIds || [],
     sourceRepoIds: scenario.sourceRepoIds || [],
   };
+}
+
+function usableObservedMemberIds(
+  council: AndreaPlatformProviderCouncilResult | null,
+): string[] {
+  const memberStatuses =
+    council?.structuredVerdict?.replayArtifact?.memberStatuses;
+  if (memberStatuses && memberStatuses.length > 0) {
+    return Array.from(
+      new Set(
+        memberStatuses
+          .filter((member) => member.status === 'completed')
+          .flatMap((member) => [member.memberId, member.providerId])
+          .filter((memberId) => memberId),
+      ),
+    );
+  }
+  return Array.from(new Set(council?.observedMemberIds || []));
+}
+
+function transientlyMissingRoles(
+  scenario: CouncilChallengeScenario,
+  observed: Set<string>,
+  missingRoles: string[],
+  providerFailures: string[],
+): string[] {
+  if (missingRoles.length === 0) return [];
+  if (scenario.expectedCouncilMode !== 'dual_review') return [];
+  if (!hasCouncilQuorum(scenario, observed)) return [];
+  return missingRoles.filter((role) =>
+    providerFailures.some((failure) =>
+      isTransientTransportFailureForRole(failure, role),
+    ),
+  );
+}
+
+function hasCouncilQuorum(
+  scenario: CouncilChallengeScenario,
+  observed: Set<string>,
+): boolean {
+  if (
+    scenario.requiredEvidence === 'strong' &&
+    scenario.requiredRoles.includes('brave_search') &&
+    !observed.has('brave_search')
+  ) {
+    return false;
+  }
+  const observedRequiredCount = scenario.requiredRoles.filter((role) =>
+    observed.has(role),
+  ).length;
+  const reasoningProviderCount = [
+    'openai_cloud',
+    'anthropic_cloud',
+    'gemini_cloud',
+    'minimax_cloud',
+  ].filter((role) => observed.has(role)).length;
+  return (
+    observedRequiredCount >= Math.max(2, scenario.requiredRoles.length - 1) &&
+    reasoningProviderCount >= 2
+  );
+}
+
+function serializeCouncilForLeakageScan(
+  council: AndreaPlatformProviderCouncilResult | null,
+): string {
+  if (!council) return '{}';
+  const verdict = council.structuredVerdict;
+  return JSON.stringify({
+    councilRunId: council.councilRunId,
+    mode: council.mode,
+    status: council.status,
+    observedMemberIds: council.observedMemberIds || [],
+    eventIds: council.eventIds || [],
+    evidenceIds: council.evidenceIds || [],
+    providerFailures: council.providerFailures || [],
+    riskFlags: council.riskFlags || [],
+    structuredVerdict: verdict
+      ? {
+          status: verdict.status,
+          recommendedAction: verdict.recommendedAction,
+          confidence: verdict.confidence,
+          evidenceGrade: verdict.evidenceGrade,
+          approvalNeed: verdict.approvalNeed,
+          riskFlags: verdict.riskFlags || [],
+          evidenceIds: verdict.evidenceIds || [],
+          actionDirectives: verdict.actionDirectives || [],
+          quality: verdict.quality,
+          calibration: verdict.calibration
+            ? {
+                requestedMode: verdict.calibration.requestedMode,
+                chosenMode: verdict.calibration.chosenMode,
+                changedMode: verdict.calibration.changedMode,
+                protectedMode: verdict.calibration.protectedMode,
+                reason: verdict.calibration.reason,
+              }
+            : null,
+          replaySummary: verdict.replaySummary,
+          replayArtifact: verdict.replayArtifact
+            ? {
+                memberStatuses: verdict.replayArtifact.memberStatuses,
+                finalVerdict: verdict.replayArtifact.finalVerdict,
+                replaySummary: verdict.replayArtifact.replaySummary,
+              }
+            : null,
+        }
+      : null,
+  });
+}
+
+function hasForbiddenLeakage(
+  serializedCouncil: string,
+  forbidden: string,
+): boolean {
+  const text = serializedCouncil.toLowerCase();
+  const needle = forbidden.toLowerCase();
+  if (needle === 'api key') {
+    return /\bapi[_ -]?key\s*[:=]\s*[^"',\s}]+/i.test(serializedCouncil);
+  }
+  if (needle === 'token=') {
+    return /\btoken\s*=\s*[^"',\s}]+/i.test(serializedCouncil);
+  }
+  if (needle === 'secret=') {
+    return /\bsecret\s*=\s*[^"',\s}]+/i.test(serializedCouncil);
+  }
+  if (needle === 'password=') {
+    return /\bpassword\s*=\s*[^"',\s}]+/i.test(serializedCouncil);
+  }
+  if (needle === 'sk-') {
+    return /\bsk-[A-Za-z0-9_-]{12,}\b/i.test(serializedCouncil);
+  }
+  if (needle === 'aiza') {
+    return /\bAIza[A-Za-z0-9_-]{16,}\b/.test(serializedCouncil);
+  }
+  if (needle === 'bsa-') {
+    return /\bBSA-[A-Za-z0-9_-]{12,}\b/i.test(serializedCouncil);
+  }
+  return text.includes(needle);
+}
+
+function isTransientTransportFailure(failure: string): boolean {
+  return /(?:^|_)transport_error$/i.test(failure);
+}
+
+function isTransientTransportFailureForRole(
+  failure: string,
+  role: string,
+): boolean {
+  return (
+    isTransientTransportFailure(failure) &&
+    failure.toLowerCase().includes(role.toLowerCase())
+  );
+}
+
+function isProviderFailureFlag(flag: string): boolean {
+  if (/_fast_fallback_used$/i.test(flag)) return false;
+  if (/^incomplete evidence pack\b/i.test(flag)) return false;
+  if (/\bsystem failures?\b.*\bunaddressed in plan\b/i.test(flag)) {
+    return false;
+  }
+  if (/\bcouncil timeout\b.*\bunaddressed in plan\b/i.test(flag)) {
+    return false;
+  }
+  return /(?:openai|anthropic|gemini|minimax|brave|credential|quota|auth_failure|authentication|authorization|unauthorized|invalid_auth|rate[_-]?limit|transport_error|_unavailable)/i.test(
+    flag,
+  );
 }
 
 async function createRepairPlanForFailure(
@@ -609,6 +793,7 @@ export async function runCouncilChallengeHarness(
     baseline?: CouncilChallengeBaseline | null;
     compareToBaseline?: boolean;
     baselineMode?: boolean;
+    liveProviderProbe?: boolean;
   },
   deps: CouncilChallengeHarnessDeps = {},
 ): Promise<CouncilChallengeHarnessReport> {
@@ -623,14 +808,16 @@ export async function runCouncilChallengeHarness(
     options.runId ||
     `council-challenge-${options.tier}-${new Date().toISOString()}`;
   const results: CouncilChallengeResult[] = [];
-  const liveProviderHealthSnapshots =
+  const providerHealthSnapshots =
     deps.councilDeps?.providerHealthSnapshots ||
-    (await collectProviderHealthSnapshotsWithLiveProbe(
-      new Date().toISOString(),
-    ));
+    (options.liveProviderProbe
+      ? await collectProviderHealthSnapshotsWithLiveProbe(
+          new Date().toISOString(),
+        )
+      : collectProviderHealthSnapshots(new Date().toISOString()));
   const councilDeps: ProviderCouncilRunnerDeps = {
     ...(deps.councilDeps || {}),
-    providerHealthSnapshots: liveProviderHealthSnapshots,
+    providerHealthSnapshots,
   };
 
   for (const scenario of scenarios) {

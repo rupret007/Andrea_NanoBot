@@ -18,6 +18,8 @@ const scenarios = [
   ['save that for later', 'save_for_later'],
   ["what's on my list?", 'list_status'],
   ['handle this for me', 'ambiguous_action'],
+  ['send me the full version', 'ambiguous_action'],
+  ["what's blocking this", 'ambiguous_action'],
 ] as const;
 
 for (const [text, expected] of scenarios) {
@@ -54,6 +56,24 @@ const ambiguous = beginCognitiveExecutiveTurn({
 });
 assert.equal(ambiguous?.plan.selectedRoute, 'clarify');
 assert.equal(ambiguous?.plan.approvalRequired, false);
+assert.equal(
+  ambiguous?.plan.explanation,
+  'What should I handle, and should I keep it to a draft for approval?',
+);
+
+const fullVersion = beginCognitiveExecutiveTurn({
+  rawAsk: 'send me the full version',
+  channel: 'telegram',
+  groupFolder: 'main',
+  chatJid: 'telegram:main',
+  turnId: 'route:full-version',
+  now,
+});
+assert.equal(fullVersion?.plan.selectedRoute, 'clarify');
+assert.equal(
+  fullVersion?.plan.explanation,
+  'What should I send the full version of?',
+);
 
 console.log(
   JSON.stringify(

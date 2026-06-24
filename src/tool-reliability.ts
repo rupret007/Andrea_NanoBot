@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 
 import {
+  getAllTasks,
   isDatabaseInitialized,
   listCognitiveExecutiveToolChoices,
   listCognitiveReflectionSignals,
@@ -32,6 +33,7 @@ import type {
   ToolReliabilityDoctorReport,
   ToolReliabilityRollup,
   ToolReliabilitySubject,
+  ScheduledTask,
 } from './types.js';
 
 const PRIVACY = {
@@ -112,11 +114,20 @@ const STATIC_SUBJECTS: ToolReliabilitySubject[] = [
   subject(
     'tool:message_actions',
     'cognitive_tool',
-    'Message actions',
+    'Message send actions',
     ['send later', 'reply draft'],
     'critical',
     'confirmation',
     ['telegram', 'bluebubbles'],
+  ),
+  subject(
+    'tool:reminders',
+    'cognitive_tool',
+    'Internal reminders',
+    ['reminder', 'follow-up'],
+    'medium',
+    'none',
+    ['telegram', 'alexa', 'bluebubbles', 'operator', 'internal'],
   ),
   subject(
     'tool:work_cockpit',
@@ -276,7 +287,7 @@ const STATIC_LINKS: ToolDependencyLink[] = [
     'tool:message_actions',
     'integration:bluebubbles',
     'integration',
-    'Message actions depend on bounded Messages proof.',
+    'Message send actions depend on bounded Messages proof.',
   ),
   link(
     'tool:research',
@@ -387,6 +398,44 @@ function observation(params: {
     nextAction: params.nextAction || '',
     evidenceIdsJson: json(params.evidenceIds || []),
     privacyJson: privacyJson(),
+  };
+}
+
+function isReminderTask(task: ScheduledTask): boolean {
+  return /\breminder\b/i.test(task.prompt || '');
+}
+
+function summarizeReminderTaskEvidence(
+  tasks: ScheduledTask[],
+  generatedAt: string,
+): {
+  hasEvidence: boolean;
+  lastEvidenceAt: string | null;
+  evidenceIds: string[];
+} {
+  const nowMs = Date.parse(generatedAt);
+  const recentWindowMs = 30 * 24 * 60 * 60 * 1000;
+  const reminderTasks = tasks.filter(isReminderTask);
+  const active = reminderTasks.find((task) => task.status === 'active');
+  if (active) {
+    return {
+      hasEvidence: true,
+      lastEvidenceAt: active.created_at || active.next_run || null,
+      evidenceIds: [`scheduled_task:${active.id}`],
+    };
+  }
+  const recentCompleted = reminderTasks.find((task) => {
+    if (task.status !== 'completed') return false;
+    const evidenceAt = Date.parse(task.last_run || task.created_at || '');
+    return Number.isFinite(evidenceAt) && nowMs - evidenceAt <= recentWindowMs;
+  });
+  return {
+    hasEvidence: Boolean(recentCompleted),
+    lastEvidenceAt:
+      recentCompleted?.last_run || recentCompleted?.created_at || null,
+    evidenceIds: recentCompleted
+      ? [`scheduled_task:${recentCompleted.id}`]
+      : [],
   };
 }
 
@@ -560,6 +609,28 @@ export async function refreshToolReliabilityFromCurrentTruth(
       }),
     );
   }
+  const reminderEvidence = summarizeReminderTaskEvidence(
+    getAllTasks(),
+    observedAt,
+  );
+  upsertReliabilityObservation(
+    observation({
+      subjectId: 'tool:reminders',
+      observedAt: reminderEvidence.lastEvidenceAt || observedAt,
+      sourceKind: 'message_action',
+      outcome: reminderEvidence.hasEvidence ? 'success' : 'unknown',
+      failureClass: reminderEvidence.hasEvidence
+        ? 'none'
+        : 'no_recent_reminder_task',
+      summary: reminderEvidence.hasEvidence
+        ? 'Internal reminder scheduler has active or recent reminder task evidence.'
+        : 'No active or recent internal reminder task evidence is recorded.',
+      nextAction: reminderEvidence.hasEvidence
+        ? ''
+        : 'Create or observe one reminder task for end-to-end proof.',
+      evidenceIds: reminderEvidence.evidenceIds,
+    }),
+  );
   const choices = listCognitiveExecutiveToolChoices({ limit: 80 });
   for (const choice of choices) {
     upsertReliabilityObservation(
@@ -661,10 +732,22 @@ export function buildToolReliabilityDoctorReport(
   }
   seedToolReliabilityRegistry();
   const subjects = listToolReliabilitySubjects({ limit: 500 });
-  const rollups = listToolReliabilityRollups({ limit: 500 });
+  const storedRollups = listToolReliabilityRollups({ limit: 500 });
+  const rollupBySubject = new Map(
+    storedRollups.map((rollup) => [rollup.subjectId, rollup]),
+  );
+  const tasks = getAllTasks();
+  const rollups = storedRollups.map((rollup) => ({
+    ...rollup,
+    currentHealth: effectiveDoctorRollupHealth(rollup, rollupBySubject, tasks),
+  }));
   const routeRollups = listRouteConfidenceRollups({ limit: 100 });
   const topDegraded = rollups
     .filter((rollup) => rollup.currentHealth !== 'healthy')
+    .sort(
+      (a, b) =>
+        degradedSubjectRank(a.subjectId) - degradedSubjectRank(b.subjectId),
+    )
     .slice(0, 8);
   return {
     generatedAt,
@@ -677,6 +760,67 @@ export function buildToolReliabilityDoctorReport(
       'Run one executive turn and one integrations status refresh to improve route calibration.',
     privacy: PRIVACY,
   };
+}
+
+function degradedSubjectRank(subjectId: string): number {
+  if (subjectId === 'integration:alexa') return 80;
+  if (subjectId === 'tool:work_cockpit') return 60;
+  if (subjectId.startsWith('provider:')) return 20;
+  if (subjectId.startsWith('integration:')) return 10;
+  if (subjectId.startsWith('tool:')) return 5;
+  return 30;
+}
+
+function dependencyRollupHealth(
+  subjectId: string,
+  rollups: Map<string, ToolReliabilityRollup>,
+): ToolReliabilityRollup['currentHealth'] | null {
+  return rollups.get(subjectId)?.currentHealth ?? null;
+}
+
+function effectiveDoctorRollupHealth(
+  rollup: ToolReliabilityRollup,
+  rollups: Map<string, ToolReliabilityRollup>,
+  tasks: ScheduledTask[],
+): ToolReliabilityRollup['currentHealth'] {
+  switch (rollup.subjectId) {
+    case 'tool:calendar':
+    case 'route:cognitive_executive.daily_companion':
+      return (
+        dependencyRollupHealth('integration:google_calendar', rollups) ??
+        rollup.currentHealth
+      );
+    case 'tool:research':
+    case 'route:cognitive_executive.research':
+      return (
+        dependencyRollupHealth('provider:brave_search', rollups) ??
+        rollup.currentHealth
+      );
+    case 'tool:message_actions': {
+      const bluebubbles = dependencyRollupHealth(
+        'integration:bluebubbles',
+        rollups,
+      );
+      return bluebubbles ?? rollup.currentHealth;
+    }
+    case 'tool:reminders':
+      if (summarizeReminderTaskEvidence(tasks, rollup.updatedAt).hasEvidence) {
+        return 'healthy';
+      }
+      return rollup.currentHealth;
+    case 'route:cognitive_executive.communication_companion':
+      return (
+        dependencyRollupHealth('integration:bluebubbles', rollups) ??
+        rollup.currentHealth
+      );
+    case 'route:cognitive_executive.everyday_capture':
+      return (
+        dependencyRollupHealth('integration:telegram', rollups) ??
+        rollup.currentHealth
+      );
+    default:
+      return rollup.currentHealth;
+  }
 }
 
 export function formatToolReliabilityReport(

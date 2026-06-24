@@ -24,6 +24,7 @@ import {
 } from './delegation-rules.js';
 import { handleLifeThreadCommand } from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
+import { runActionPreflight } from './action-preflight.js';
 import {
   syncOutcomeFromMessageActionRecord,
   syncOutcomeFromReminderTask,
@@ -108,6 +109,7 @@ export interface CreateMessageActionFromDraftParams {
     | 'household_followthrough'
     | 'general'
     | null;
+  forceApproval?: boolean;
   delegationRuleId?: string | null;
   delegationMode?: MessageActionRecord['delegationMode'];
   delegationExplanation?: string | null;
@@ -764,6 +766,7 @@ export function createOrRefreshMessageActionFromDraft(
     communicationContext: params.communicationContext || 'general',
   });
   const autoSendEligible =
+    !params.forceApproval &&
     Boolean(ruleMatch.rule) &&
     ruleMatch.autoApplied &&
     isNarrowSafeDelegatedSendCandidate(
@@ -807,27 +810,34 @@ export function createOrRefreshMessageActionFromDraft(
     sendStatus,
     followupAt: reuseExisting ? existing?.followupAt || null : null,
     requiresApproval,
-    delegationRuleId: params.delegationRuleId || ruleMatch.rule?.ruleId || null,
-    delegationMode:
-      params.delegationMode || ruleMatch.effectiveApprovalMode || null,
+    delegationRuleId: params.forceApproval
+      ? null
+      : params.delegationRuleId || ruleMatch.rule?.ruleId || null,
+    delegationMode: params.forceApproval
+      ? null
+      : params.delegationMode || ruleMatch.effectiveApprovalMode || null,
     explanationJson: JSON.stringify(
       buildExplanation({
         sourceSummary: params.sourceSummary,
         trustLevel,
         requiresApproval,
-        delegationExplanation:
-          params.delegationExplanation || ruleMatch.explanation || null,
+        delegationExplanation: params.forceApproval
+          ? null
+          : params.delegationExplanation || ruleMatch.explanation || null,
       }),
     ),
     linkedRefsJson: JSON.stringify(
       buildLinkedRefs({
         ...params,
-        delegationRuleId:
-          params.delegationRuleId || ruleMatch.rule?.ruleId || null,
-        delegationMode:
-          params.delegationMode || ruleMatch.effectiveApprovalMode || null,
-        delegationExplanation:
-          params.delegationExplanation || ruleMatch.explanation || null,
+        delegationRuleId: params.forceApproval
+          ? null
+          : params.delegationRuleId || ruleMatch.rule?.ruleId || null,
+        delegationMode: params.forceApproval
+          ? null
+          : params.delegationMode || ruleMatch.effectiveApprovalMode || null,
+        delegationExplanation: params.forceApproval
+          ? null
+          : params.delegationExplanation || ruleMatch.explanation || null,
       }),
     ),
     platformMessageId: reuseExisting
@@ -970,6 +980,36 @@ function stampBlueBubblesProofDrillAction(params: {
     lastUpdatedAt: nowIso,
   });
   return getMessageAction(params.action.messageActionId) || params.action;
+}
+
+function recordBlueBubblesProofDrillDeferredDecision(params: {
+  action: MessageActionRecord;
+  now: Date;
+}): MessageActionRecord {
+  const nowIso = params.now.toISOString();
+  const linkedRefs = {
+    ...parseLinkedRefsRecord(params.action),
+    bluebubblesProofDrill: true,
+    proofDrillDeferredAt: nowIso,
+    proofDrillDecision: 'send_it_later_tonight',
+  };
+  pauseScheduledTask(params.action.scheduledTaskId);
+  updateMessageAction(params.action.messageActionId, {
+    sendStatus: 'deferred',
+    followupAt: null,
+    scheduledTaskId: null,
+    requiresApproval: false,
+    trustLevel: 'draft_only',
+    approvedAt: null,
+    lastActionKind: 'remind_instead',
+    lastActionAt: nowIso,
+    linkedRefsJson: JSON.stringify(linkedRefs),
+    lastUpdatedAt: nowIso,
+  });
+  const updatedAction =
+    getMessageAction(params.action.messageActionId) || params.action;
+  syncOutcomeFromMessageActionRecord(updatedAction, params.now);
+  return updatedAction;
 }
 
 export interface BlueBubblesProofDrillSnapshot {
@@ -2373,8 +2413,64 @@ async function executeSendOperation(params: {
   action: MessageActionRecord;
   deps: MessageActionExecutionDeps;
   now: Date;
+  hasExplicitUserApproval?: boolean;
 }): Promise<SendExecutionResult> {
   const target = parseTarget(params.action);
+  const preflight = runActionPreflight({
+    actionId: params.action.messageActionId,
+    actionSummary: `send message to ${
+      target.kind === 'external_thread'
+        ? target.personName || params.action.sourceSummary || 'external thread'
+        : 'self companion thread'
+    }`,
+    actionType: 'message_send',
+    channel: params.action.targetChannel,
+    hasExplicitUserApproval: Boolean(
+      params.hasExplicitUserApproval ||
+      params.action.approvedAt ||
+      params.action.sendStatus === 'approved' ||
+      params.action.trustLevel === 'schedule_send' ||
+      params.action.trustLevel === 'delegated_safe_send',
+    ),
+    approvedCapability:
+      params.action.targetChannel === 'telegram'
+        ? 'messages.send.telegram'
+        : 'messages.send.bluebubbles',
+    mainControlVerified: params.deps.channel === 'telegram',
+    objectClear: true,
+    requiredInfo: [
+      { name: 'target chat', present: Boolean(target.chatJid) },
+      { name: 'draft text', present: Boolean(params.action.draftText.trim()) },
+    ],
+  });
+  if (preflight.verdict !== 'proceed') {
+    pauseScheduledTask(params.action.scheduledTaskId);
+    updateMessageAction(params.action.messageActionId, {
+      sendStatus: 'drafted',
+      followupAt: null,
+      scheduledTaskId: null,
+      requiresApproval: true,
+      trustLevel: normalizeTrustLevelAfterQueue(params.action),
+      approvedAt: null,
+      lastActionKind: 'drafted',
+      lastActionAt: params.now.toISOString(),
+      lastUpdatedAt: params.now.toISOString(),
+    });
+    const updatedAction =
+      getMessageAction(params.action.messageActionId) || params.action;
+    syncCommunicationThreadState({
+      action: updatedAction,
+      now: params.now,
+      mode: 'drafted',
+    });
+    syncOutcomeFromMessageActionRecord(updatedAction, params.now);
+    return {
+      action: updatedAction,
+      replyText: `Andrea: I kept that as a draft because the final action preflight returned ${preflight.verdict}: ${preflight.record.blockerSummary}`,
+      target,
+      didSend: false,
+    };
+  }
   const sendOptions: SendMessageOptions =
     target.kind === 'external_thread'
       ? {
@@ -2498,6 +2594,7 @@ export async function runScheduledMessageActionByTaskId(
     action,
     deps,
     now,
+    hasExplicitUserApproval: true,
   });
   return {
     handled: true,
@@ -2773,6 +2870,22 @@ export async function applyMessageActionOperation(
     if (action.delegationRuleId) {
       recordDelegationRuleOverride(action.delegationRuleId, now);
     }
+    if (isBlueBubblesProofDrillAction(action)) {
+      const updatedAction = recordBlueBubblesProofDrillDeferredDecision({
+        action,
+        now,
+      });
+      return {
+        handled: true,
+        action: updatedAction,
+        replyText:
+          'Andrea: BlueBubbles proof drill deferred decision is recorded.',
+        presentation: buildMessageActionPresentation(
+          updatedAction,
+          deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+        ),
+      };
+    }
     const eligibility = validateScheduledSendEligibility(action);
     if (eligibility.ok) {
       const scheduled = await createScheduledSend({
@@ -2846,6 +2959,7 @@ export async function applyMessageActionOperation(
       action,
       deps,
       now,
+      hasExplicitUserApproval: true,
     });
     return {
       handled: true,

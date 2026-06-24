@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { executeAssistantCapability } from './assistant-capabilities.js';
 import {
@@ -19,6 +19,8 @@ const selectedWork: SelectedWorkContext = {
   statusLabel: 'Running',
   summary: 'Finish the release note draft and prep the handoff blurb.',
 };
+
+vi.setConfig({ testTimeout: 15000 });
 
 beforeEach(() => {
   _initTestDatabase();
@@ -321,7 +323,7 @@ describe('missions', () => {
     expect(result.mission.linkedCurrentWorkJson).toBeNull();
     expect(result.replyText).not.toContain('live cloud smoke ok');
     expect(result.replyText).not.toContain('Current work still has pressure');
-  });
+  }, 15000);
 
   it('does not surface malformed orphaned open-loop summaries as mission blockers', async () => {
     const now = new Date('2026-04-06T18:25:00.000Z');

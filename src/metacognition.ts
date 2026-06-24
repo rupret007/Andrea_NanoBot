@@ -179,6 +179,11 @@ function itemKindFromSnapshot(
   return 'fact';
 }
 
+function priorityToRelevance(item: CognitiveWorldSnapshotItem): number {
+  if (!Number.isFinite(item.priority)) return clamp01(item.confidence);
+  return clamp01(item.priority > 1 ? item.priority / 100 : item.priority);
+}
+
 export interface BuildMetacognitiveInput {
   rawAsk: string;
   channel: CognitiveExecutiveChannel | 'operator' | 'internal';
@@ -308,7 +313,7 @@ function buildMemoryItems(input: {
       itemId: hashId('memory:item', `${input.frameId}|snapshot|${item.itemId}`),
       itemKind: itemKindFromSnapshot(item),
       summary: item.summary,
-      relevance: clamp01(item.priority / 100 || item.confidence),
+      relevance: priorityToRelevance(item),
       freshness: item.freshness,
       confidence: item.confidence,
       source: `executive_snapshot:${item.itemKind}`,

@@ -1017,7 +1017,7 @@ END:VCALENDAR</c:calendar-data>
       },
     );
 
-    expect(reply).toBe('You look open tomorrow afternoon.');
+    expect(reply).toBe("I don't see anything blocking tomorrow afternoon.");
   });
 
   it('summarizes partial open time after a requested boundary', async () => {
@@ -1056,7 +1056,7 @@ END:VCALENDAR</c:calendar-data>
       },
     );
 
-    expect(reply).toContain("You're partly open after 3 PM tomorrow.");
+    expect(reply).toContain('I found some open time after 3 PM tomorrow.');
     expect(reply).toContain('3:00 PM-3:30 PM School pickup');
     expect(reply).toContain('Open: 3:30 PM-12:00 AM');
   });

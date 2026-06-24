@@ -32,6 +32,7 @@ import {
   syncOutcomeFromMessageActionRecord,
   syncOutcomeFromMissionRecord,
   syncOutcomeFromReminderTask,
+  upsertOutcomeRecord,
 } from './outcome-reviews.js';
 import type {
   CommunicationThreadRecord,
@@ -373,6 +374,80 @@ describe('outcome reviews', () => {
       'usual reminder rule',
     );
     expect(presentation.text).toContain('usual reminder rule');
+  });
+
+  it('renders follow-through outcome states without raw identifiers', () => {
+    const now = new Date('2026-04-08T20:07:00.000Z');
+    upsertOutcomeRecord({
+      groupFolder: 'main',
+      sourceType: 'followthrough_candidate',
+      sourceKey: 'followthrough:approved',
+      status: 'deferred',
+      completionSummary: 'Approved local follow-through reminder for #1.',
+      nextFollowupText: 'Reminder saved for tonight.',
+      dueAt: '2026-04-09T01:00:00.000Z',
+      linkedRefs: {
+        followthroughCandidateId: 'followthrough:approved',
+        reminderTaskId: 'task-approved',
+        agentOSEpisodeId: 'agentos:episode:followthrough:approved',
+      },
+      now,
+    });
+    upsertOutcomeRecord({
+      groupFolder: 'main',
+      sourceType: 'followthrough_candidate',
+      sourceKey: 'followthrough:deferred',
+      status: 'deferred',
+      completionSummary: 'Deferred follow-through candidate #2.',
+      nextFollowupText: 'Bring this back in a later follow-through review.',
+      linkedRefs: {
+        followthroughCandidateId: 'followthrough:deferred',
+      },
+      now,
+    });
+    upsertOutcomeRecord({
+      groupFolder: 'main',
+      sourceType: 'followthrough_candidate',
+      sourceKey: 'followthrough:blocked',
+      status: 'failed',
+      completionSummary: 'Blocked follow-through candidate #3.',
+      blockerText:
+        'Needs explicit audience before tracking bb:iMessage;-;+14695550123.',
+      linkedRefs: {
+        followthroughCandidateId: 'followthrough:blocked',
+        agentOSEpisodeId: 'agentos:episode:followthrough:blocked',
+      },
+      now,
+    });
+
+    expect(matchOutcomeReviewPrompt('review follow-through outcomes')).toEqual({
+      kind: 'followthrough_review',
+    });
+    expect(matchOutcomeReviewPrompt('what did I approve')).toEqual({
+      kind: 'followthrough_approved',
+    });
+
+    const snapshot = buildReviewSnapshot({
+      groupFolder: 'main',
+      match: { kind: 'followthrough_review' },
+      now,
+    });
+    const presentation = buildOutcomeReviewResponse({
+      groupFolder: 'main',
+      match: { kind: 'followthrough_review' },
+      channel: 'telegram',
+      now,
+    });
+
+    expect(snapshot.followthroughApproved).toHaveLength(1);
+    expect(snapshot.followthroughDeferred).toHaveLength(1);
+    expect(snapshot.followthroughBlocked).toHaveLength(1);
+    expect(presentation.text).toContain('*Approved Follow-Through*');
+    expect(presentation.text).toContain('*Deferred Follow-Through*');
+    expect(presentation.text).toContain('*Blocked Follow-Through*');
+    expect(presentation.text).not.toContain('+14695550123');
+    expect(presentation.text).not.toContain('bb:iMessage');
+    expect(presentation.text).not.toContain('agentos:episode');
   });
 
   it('separates message review sections for sent, scheduled, failed, and unsent drafts', () => {

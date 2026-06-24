@@ -13,10 +13,12 @@ import {
   getUpcomingReminders,
   type SelectedWorkContext,
 } from './daily-command-center.js';
+import { buildUsefulDailyCommandCenter } from './useful-daily-command-center.js';
 import {
   createTask,
   getAllChats,
   getAllTasks,
+  getMessageActionBySource,
   listMessagesForChatWindow,
   listProfileFactsForGroup,
 } from './db.js';
@@ -29,6 +31,7 @@ import {
   handlePersonalizationCommand,
   type PersonalizationCommandResult,
 } from './assistant-personalization.js';
+import { handleMemoryActivationCommand } from './memory-activation.js';
 import { resolveCompanionToneProfileFromFacts } from './companion-personality.js';
 import {
   isResearchPrompt,
@@ -60,9 +63,32 @@ import {
   manageCommunicationTracking,
 } from './communication-companion.js';
 import { summarizeBlueBubblesThreadDigest } from './messages-fluidity.js';
-import { resolveBlueBubblesThreadTargetByName } from './message-actions.js';
-import { createOrRefreshMessageActionFromDraft } from './message-actions.js';
+import {
+  applyMessageActionOperation,
+  createOrRefreshMessageActionFromDraft,
+  resolveBlueBubblesThreadTargetByName,
+  type MessageActionOperation,
+} from './message-actions.js';
 import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
+import {
+  buildRecentTextReviewSeedJson,
+  buildReviewDraftPrompt,
+  formatRecentTextReviewFreshnessBlockedReply,
+  formatRecentTextReviewUnboundReply,
+  formatRecentTextReviewItemWhyReply,
+  formatRecentTextReviewReply,
+  parseRecentTextReviewItemFollowup,
+  recordRecentTextReviewOutcome,
+  resolveRecentTextReviewFollowupTarget,
+  reviewRecentTexts,
+  validateRecentTextReviewFollowupFreshness,
+  type RecentTextReviewOutcome,
+} from './recent-text-review.js';
+import {
+  buildFollowThroughOutcomeMetadata,
+  handleFollowThroughActivationCommand,
+  type FollowThroughOutcomeKind,
+} from './follow-through-activation.js';
 import { buildChiefOfStaffTurn } from './chief-of-staff.js';
 import {
   buildMissionExecutionContext,
@@ -90,7 +116,9 @@ import type {
   EverydayListScope,
   KnowledgeSourceRecord,
   MediaGenerationResult,
+  MessageActionLastActionKind,
   MessageActionRecord,
+  MessageActionSendStatus,
   MissionExecutionContext,
   MissionSuggestedAction,
   NewMessage,
@@ -106,6 +134,7 @@ export type AssistantCapabilityId =
   | 'daily.whats_next'
   | 'daily.loose_ends'
   | 'daily.evening_reset'
+  | 'daily.command_center'
   | 'household.candace_upcoming'
   | 'household.family_open_loops'
   | 'followthrough.remind_before_anchor'
@@ -134,6 +163,7 @@ export type AssistantCapabilityId =
   | 'knowledge.reindex_source'
   | 'communication.understand_message'
   | 'communication.summarize_thread'
+  | 'communication.review_recent_texts'
   | 'communication.draft_reply'
   | 'communication.open_loops'
   | 'communication.manage_tracking'
@@ -245,6 +275,8 @@ export interface AssistantCapabilityContext {
     communicationSubjectIds?: string[];
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
+    recentTextReviewJson?: string;
+    followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
     missionId?: string;
     missionSummary?: string;
@@ -337,6 +369,8 @@ export interface AssistantCapabilityConversationSeed {
     communicationSubjectIds?: string[];
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
+    recentTextReviewJson?: string;
+    followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
     missionId?: string;
     missionSummary?: string;
@@ -392,6 +426,27 @@ export interface AssistantCapabilityResult {
   handoffPayload?: CompanionHandoffPayload;
   continuationCandidate?: CompanionContinuationCandidate;
   messageAction?: MessageActionRecord;
+  outcomeMetadata?: AssistantCapabilityOutcomeMetadata;
+}
+
+export interface AssistantCapabilityOutcomeMetadata {
+  source: 'recent_text_review' | 'followthrough_activation';
+  outcomeKind: RecentTextReviewOutcome | FollowThroughOutcomeKind;
+  handled: boolean;
+  capabilityId: AssistantCapabilityId;
+  messageActionId?: string;
+  sendStatus?: MessageActionSendStatus;
+  lastActionKind?: MessageActionLastActionKind | null;
+  itemId?: string;
+  itemRank?: number;
+  taskId?: string;
+  agentOSEpisodeId?: string;
+  providerUsed?: 'local' | 'openai';
+  counts?: {
+    needsReply: number;
+    worthWatching: number;
+    noReplyNeeded: number;
+  };
 }
 
 export interface AssistantCapabilityDescriptor {
@@ -961,6 +1016,42 @@ async function runMemoryCapability(
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const activation = handleMemoryActivationCommand({
+    groupFolder: context.groupFolder,
+    channel: context.channel,
+    text: input.canonicalText || input.text || '',
+    conversationSummary: context.conversationSummary,
+    replyText: context.replyText,
+    factIdHint: context.factIdHint,
+    now: context.now,
+  });
+  if (activation.handled) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: activation.responseText || 'Okay.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      conversationSeed: {
+        flowKey: descriptor.id.replace(/\./g, '_'),
+        subjectKind: 'memory_fact',
+        summaryText: activation.responseText || descriptor.label,
+        guidanceGoal: 'explainability',
+        subjectData: {
+          activeCapabilityId: descriptor.id,
+          profileFactId: activation.referencedFactId,
+        },
+        supportedFollowups: descriptor.followupActions,
+        responseSource: 'local_companion',
+      },
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'memory_local',
+        'handled by memory activation layer',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
   const result = handlePersonalizationCommand({
     groupFolder: context.groupFolder,
     channel: context.channel,
@@ -1053,6 +1144,74 @@ async function runRitualFollowthroughCapability(
   if (!context.groupFolder) return { handled: false };
   const canonicalText =
     input.canonicalText || input.text || 'what should I follow up on';
+  const activation = await handleFollowThroughActivationCommand({
+    groupFolder: context.groupFolder,
+    channel: context.channel,
+    chatJid: context.chatJid,
+    text: canonicalText,
+    now: context.now,
+    priorReviewJson: context.priorSubjectData?.followthroughReviewJson,
+  });
+  if (activation.handled) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        context.channel === 'alexa'
+          ? activation.replyText
+              .replace(/\s+-\s+/g, '. ')
+              .replace(/\n+/g, ' ')
+              .slice(0, 700)
+          : activation.replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      conversationSeed: {
+        flowKey: descriptor.id.replace(/\./g, '_'),
+        subjectKind: 'general',
+        summaryText:
+          activation.selectedItem?.title ||
+          'Follow-through candidates are ready for approval.',
+        guidanceGoal: 'action_follow_through',
+        subjectData: {
+          activeCapabilityId: descriptor.id,
+          followthroughReviewJson: activation.reviewSeedJson,
+          lastAnswerSummary:
+            activation.selectedItem?.whyItMatters ||
+            'Andrea reviewed proposed follow-through candidates.',
+          lastRecommendation:
+            activation.selectedItem?.safeNextAction ||
+            'Approve one candidate with timing when you want local tracking.',
+          conversationFocus:
+            activation.selectedItem?.title || 'follow-through approval',
+        },
+        supportedFollowups: descriptor.followupActions,
+        responseSource: 'local_companion',
+        hasActionItem: activation.outcomeKind !== 'reviewed',
+        hasRiskSignal: activation.outcomeKind.startsWith('blocked'),
+        reminderCandidate: true,
+      },
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'handled by follow-through activation layer',
+        [
+          `outcome: ${activation.outcomeKind}`,
+          activation.selectedItem
+            ? `item: ${activation.selectedItem.rank}`
+            : 'review list',
+        ],
+      ),
+      followupActions: descriptor.followupActions,
+      outcomeMetadata: buildFollowThroughOutcomeMetadata({
+        outcomeKind: activation.outcomeKind,
+        handled: true,
+        capabilityId: descriptor.id,
+        item: activation.selectedItem,
+        taskId: activation.taskId,
+        agentOSEpisodeId: activation.agentOSEpisodeId,
+      }),
+    };
+  }
   const dailyResponse = await buildDailyCompanionResponse(canonicalText, {
     channel: context.channel,
     groupFolder: context.groupFolder,
@@ -1747,6 +1906,7 @@ function buildCommunicationConversationSeed(input: {
   lastCommunicationSummary?: string;
   messageActionId?: string;
   messageActionSummary?: string;
+  recentTextReviewJson?: string;
   continuationCandidate?: CompanionContinuationCandidate;
   supportedFollowups?: AlexaConversationFollowupAction[];
 }): AssistantCapabilityConversationSeed {
@@ -1766,6 +1926,7 @@ function buildCommunicationConversationSeed(input: {
       communicationLifeThreadIds: input.communicationLifeThreadIds,
       lastCommunicationSummary:
         input.lastCommunicationSummary || input.summaryText,
+      recentTextReviewJson: input.recentTextReviewJson,
       messageActionId: input.messageActionId,
       messageActionSummary: input.messageActionSummary,
       companionContinuationJson: serializeCompanionContinuation(
@@ -2872,6 +3033,78 @@ async function runCommunicationThreadSummaryCapability(
   };
 }
 
+async function runRecentTextReviewCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+  const result = await reviewRecentTexts({
+    groupFolder: context.groupFolder,
+    now: context.now,
+    channel: context.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+    timeWindowKind: input.timeWindowKind || 'default_24h',
+    timeWindowValue: input.timeWindowValue || 24,
+    cloudAnalysisMode: 'disabled',
+  });
+  const replyText = formatRecentTextReviewReply({
+    result,
+    channel: context.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+  });
+  const firstItem = result.needsReply[0] || result.worthWatching[0];
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      result.providerUsed === 'openai' ? 'research_openai' : 'local_companion',
+      'reviewed recent synced Messages for priority and reply needs',
+      [
+        `window:${result.window.label}`,
+        `needs_reply:${result.needsReply.length}`,
+        `worth_watching:${result.worthWatching.length}`,
+      ],
+    ),
+    conversationSeed: {
+      flowKey: descriptor.id.replace(/\./g, '_'),
+      subjectKind: 'communication_thread',
+      summaryText: result.summaryText,
+      guidanceGoal: 'action_follow_through',
+      subjectData: {
+        activeCapabilityId: descriptor.id,
+        conversationFocus: 'recent synced Messages review',
+        threadTitle: firstItem?.chatLabel || 'recent text review',
+        personName: firstItem?.chatLabel,
+        communicationThreadId: firstItem?.communicationThreadId || undefined,
+        communicationSubjectIds: firstItem?.linkedSubjectIds || [],
+        communicationLifeThreadIds: firstItem?.linkedLifeThreadIds || [],
+        lastCommunicationSummary: firstItem?.summaryText || result.summaryText,
+        recentTextReviewJson: buildRecentTextReviewSeedJson(result),
+      },
+      supportedFollowups: descriptor.followupActions,
+      responseSource: 'local_companion',
+    },
+    followupActions: descriptor.followupActions,
+    outcomeMetadata: {
+      source: 'recent_text_review',
+      outcomeKind: result.items.some((item) => item.suggestedReply)
+        ? 'suggested'
+        : 'reviewed',
+      handled: true,
+      capabilityId: descriptor.id,
+      providerUsed: result.providerUsed,
+      counts: {
+        needsReply: result.needsReply.length,
+        worthWatching: result.worthWatching.length,
+        noReplyNeeded: result.noReplyNeeded.length,
+      },
+    },
+  };
+}
+
 async function runCommunicationUnderstandCapability(
   descriptor: AssistantCapabilityDescriptor,
   context: AssistantCapabilityContext,
@@ -2962,13 +3195,358 @@ async function runCommunicationUnderstandCapability(
   };
 }
 
+function mapRecentTextReviewFollowupToMessageOperation(
+  followup: ReturnType<typeof parseRecentTextReviewItemFollowup>,
+): MessageActionOperation | null {
+  if (!followup) return null;
+  if (followup.kind === 'remind') {
+    return {
+      kind: 'remind_instead',
+      timingHint: followup.timingHint || null,
+    };
+  }
+  if (followup.kind === 'save') return { kind: 'save_to_thread' };
+  if (followup.kind === 'skip') return { kind: 'skip' };
+  return null;
+}
+
+function mapRecentTextReviewFollowupToOutcome(
+  followup: ReturnType<typeof parseRecentTextReviewItemFollowup>,
+): RecentTextReviewOutcome {
+  if (!followup) return 'drafted';
+  if (followup.kind === 'remind') return 'reminded';
+  if (followup.kind === 'save') return 'saved';
+  if (followup.kind === 'skip') return 'skipped';
+  if (followup.kind === 'handled' || followup.kind === 'why') return 'handled';
+  return 'drafted';
+}
+
+function buildRecentTextReviewFollowupSeed(input: {
+  descriptor: AssistantCapabilityDescriptor;
+  context: AssistantCapabilityContext;
+  summaryText: string;
+  item: NonNullable<
+    ReturnType<typeof parseRecentTextReviewItemFollowup>
+  >['item'];
+}): AssistantCapabilityConversationSeed {
+  return {
+    flowKey: 'communication_review_recent_texts',
+    subjectKind: 'communication_thread',
+    summaryText: input.summaryText,
+    guidanceGoal: 'action_follow_through',
+    subjectData: {
+      ...input.context.priorSubjectData,
+      activeCapabilityId: 'communication.review_recent_texts',
+      conversationFocus: input.item.summaryText,
+      threadTitle: input.item.chatLabel,
+      personName: input.item.chatLabel,
+      communicationThreadId: input.item.communicationThreadId || undefined,
+      communicationSubjectIds: input.item.linkedSubjectIds || [],
+      communicationLifeThreadIds: input.item.linkedLifeThreadIds || [],
+      lastCommunicationSummary: input.item.summaryText,
+      recentTextReviewJson:
+        input.context.priorSubjectData?.recentTextReviewJson,
+    },
+    supportedFollowups: input.descriptor.followupActions,
+    responseSource: 'local_companion',
+  };
+}
+
 async function runCommunicationDraftCapability(
   descriptor: AssistantCapabilityDescriptor,
   context: AssistantCapabilityContext,
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
-  const rawCommunicationText = input.text || input.canonicalText || '';
+  const reviewItemFollowup = parseRecentTextReviewItemFollowup({
+    seedJson: context.priorSubjectData?.recentTextReviewJson,
+    userText: input.text || input.canonicalText || '',
+  });
+  if (reviewItemFollowup && reviewItemFollowup.kind !== 'why') {
+    const freshness = validateRecentTextReviewFollowupFreshness({
+      seedJson: context.priorSubjectData?.recentTextReviewJson,
+      item: reviewItemFollowup.item,
+      now: context.now,
+    });
+    if (!freshness.ok) {
+      recordRecentTextReviewOutcome({
+        groupFolder: context.groupFolder,
+        item: reviewItemFollowup.item,
+        outcome: freshness.outcome,
+        now: context.now,
+        timingHint: reviewItemFollowup.timingHint || null,
+      });
+      const replyText = formatRecentTextReviewFreshnessBlockedReply(
+        reviewItemFollowup.item,
+        freshness,
+      );
+      return {
+        handled: true,
+        capabilityId: descriptor.id,
+        replyText,
+        outputShape: descriptor.preferredOutputShape[context.channel],
+        trace: buildCapabilityTrace(
+          descriptor,
+          context,
+          'local_companion',
+          freshness.outcome === 'blocked_unbound'
+            ? 'blocked an unbound recent text review follow-up before action'
+            : 'blocked a stale recent text review follow-up before action',
+          [freshness.reason],
+        ),
+        followupActions: descriptor.followupActions,
+        outcomeMetadata: {
+          source: 'recent_text_review',
+          outcomeKind: freshness.outcome,
+          handled: false,
+          capabilityId: descriptor.id,
+          itemId: reviewItemFollowup.item.itemId,
+          itemRank: reviewItemFollowup.item.rank,
+        },
+      };
+    }
+  }
+  if (reviewItemFollowup?.kind === 'why') {
+    const replyText = formatRecentTextReviewItemWhyReply(
+      reviewItemFollowup.item,
+    );
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'explained the selected recent text review item',
+      ),
+      conversationSeed: buildRecentTextReviewFollowupSeed({
+        descriptor,
+        context,
+        summaryText: replyText,
+        item: reviewItemFollowup.item,
+      }),
+      followupActions: descriptor.followupActions,
+      outcomeMetadata: {
+        source: 'recent_text_review',
+        outcomeKind: 'handled',
+        handled: true,
+        capabilityId: descriptor.id,
+        itemId: reviewItemFollowup.item.itemId,
+        itemRank: reviewItemFollowup.item.rank,
+      },
+    };
+  }
+  if (reviewItemFollowup?.kind === 'handled') {
+    const recorded = recordRecentTextReviewOutcome({
+      groupFolder: context.groupFolder,
+      item: reviewItemFollowup.item,
+      outcome: 'handled',
+      now: context.now,
+    });
+    const replyText = recorded
+      ? `Marked #${reviewItemFollowup.item.rank} handled. I did not draft or send anything.`
+      : formatRecentTextReviewUnboundReply(reviewItemFollowup.item);
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        recorded
+          ? 'marked a recent text review item handled without drafting'
+          : 'could not bind a recent text review item to a current thread',
+      ),
+      conversationSeed: buildRecentTextReviewFollowupSeed({
+        descriptor,
+        context,
+        summaryText: replyText,
+        item: reviewItemFollowup.item,
+      }),
+      followupActions: descriptor.followupActions,
+      outcomeMetadata: {
+        source: 'recent_text_review',
+        outcomeKind: 'handled',
+        handled: recorded,
+        capabilityId: descriptor.id,
+        itemId: reviewItemFollowup.item.itemId,
+        itemRank: reviewItemFollowup.item.rank,
+      },
+    };
+  }
+  const reviewDraftPrompt = buildReviewDraftPrompt({
+    seedJson: context.priorSubjectData?.recentTextReviewJson,
+    userText: input.text || input.canonicalText || '',
+  });
+  const selectedReviewItem =
+    reviewDraftPrompt?.item || reviewItemFollowup?.item || null;
+  const selectedReviewTarget = selectedReviewItem
+    ? resolveRecentTextReviewFollowupTarget(selectedReviewItem)
+    : null;
+  const earlyReviewOperation =
+    mapRecentTextReviewFollowupToMessageOperation(reviewItemFollowup);
+  const earlyReviewActionSourceKey = selectedReviewItem
+    ? selectedReviewItem.itemId ||
+      selectedReviewItem.communicationThreadId ||
+      null
+    : null;
+  const earlyReusableReviewAction =
+    earlyReviewOperation && earlyReviewActionSourceKey
+      ? getMessageActionBySource(
+          context.groupFolder,
+          'communication_thread',
+          earlyReviewActionSourceKey,
+        )
+      : undefined;
+  if (
+    earlyReviewOperation &&
+    earlyReusableReviewAction &&
+    earlyReusableReviewAction.sendStatus !== 'sent' &&
+    earlyReusableReviewAction.sendStatus !== 'skipped'
+  ) {
+    const operationChatJid =
+      context.chatJid || earlyReusableReviewAction.presentationChatJid;
+    const operationResult = operationChatJid
+      ? await applyMessageActionOperation(
+          earlyReusableReviewAction.messageActionId,
+          earlyReviewOperation,
+          {
+            groupFolder: context.groupFolder,
+            channel: context.channel,
+            chatJid: operationChatJid,
+            currentTime: context.now,
+            sendToTarget: async () => {
+              throw new Error(
+                'recent text review follow-up cannot send messages',
+              );
+            },
+          },
+        )
+      : { handled: false };
+    if (operationResult.handled) {
+      const finalAction = operationResult.action || earlyReusableReviewAction;
+      if (selectedReviewItem) {
+        recordRecentTextReviewOutcome({
+          groupFolder: context.groupFolder,
+          item: selectedReviewItem,
+          outcome: mapRecentTextReviewFollowupToOutcome(reviewItemFollowup),
+          now: context.now,
+          timingHint: reviewItemFollowup?.timingHint || null,
+        });
+      }
+      return {
+        handled: true,
+        capabilityId: descriptor.id,
+        replyText:
+          operationResult.replyText ||
+          operationResult.presentation?.text ||
+          'Updated that recent text follow-up.',
+        sendOptions: operationResult.presentation?.inlineActionRows.length
+          ? { inlineActionRows: operationResult.presentation.inlineActionRows }
+          : undefined,
+        outputShape: descriptor.preferredOutputShape[context.channel],
+        conversationSeed: selectedReviewItem
+          ? buildRecentTextReviewFollowupSeed({
+              descriptor,
+              context,
+              summaryText:
+                operationResult.replyText ||
+                operationResult.presentation?.summaryText ||
+                'Updated that recent text follow-up.',
+              item: selectedReviewItem,
+            })
+          : undefined,
+        trace: buildCapabilityTrace(
+          descriptor,
+          context,
+          'local_companion',
+          'applied a selected recent text review follow-up to an existing draft',
+        ),
+        followupActions: descriptor.followupActions,
+        messageAction: finalAction,
+        outcomeMetadata: selectedReviewItem
+          ? {
+              source: 'recent_text_review',
+              outcomeKind:
+                mapRecentTextReviewFollowupToOutcome(reviewItemFollowup),
+              handled: true,
+              capabilityId: descriptor.id,
+              messageActionId: finalAction.messageActionId,
+              sendStatus: finalAction.sendStatus,
+              lastActionKind: finalAction.lastActionKind || null,
+              itemId: selectedReviewItem.itemId,
+              itemRank: selectedReviewItem.rank,
+            }
+          : undefined,
+      };
+    }
+  }
+  if (selectedReviewItem && selectedReviewTarget && !selectedReviewTarget.ok) {
+    const replyText = formatRecentTextReviewUnboundReply(selectedReviewItem);
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'blocked an unbound recent text review follow-up before drafting',
+      ),
+      followupActions: descriptor.followupActions,
+      outcomeMetadata: {
+        source: 'recent_text_review',
+        outcomeKind: 'blocked_unbound',
+        handled: false,
+        capabilityId: descriptor.id,
+        itemId: selectedReviewItem.itemId,
+        itemRank: selectedReviewItem.rank,
+      },
+    };
+  }
+  const rawCommunicationText =
+    reviewDraftPrompt?.text ||
+    (selectedReviewItem
+      ? `Use this recent text review item without sending anything yet. Thread: ${selectedReviewItem.chatLabel}. Context: ${selectedReviewItem.summaryText}. Why it matters: ${selectedReviewItem.whyText || selectedReviewItem.recommendedAction || 'recent synced Messages review'}.`
+      : input.text || input.canonicalText || '');
+  const priorContextForDraft = reviewDraftPrompt?.item
+    ? {
+        ...context.priorSubjectData,
+        threadTitle: selectedReviewItem?.chatLabel,
+        personName: selectedReviewItem?.chatLabel,
+        communicationThreadId: undefined,
+        communicationSubjectIds:
+          selectedReviewItem?.linkedSubjectIds ||
+          context.priorSubjectData?.communicationSubjectIds,
+        communicationLifeThreadIds:
+          selectedReviewItem?.linkedLifeThreadIds ||
+          context.priorSubjectData?.communicationLifeThreadIds,
+        lastCommunicationSummary:
+          selectedReviewItem?.summaryText ||
+          context.priorSubjectData?.lastCommunicationSummary,
+      }
+    : selectedReviewItem
+      ? {
+          ...context.priorSubjectData,
+          threadTitle: selectedReviewItem.chatLabel,
+          personName: selectedReviewItem.chatLabel,
+          communicationThreadId: undefined,
+          communicationSubjectIds:
+            selectedReviewItem.linkedSubjectIds ||
+            context.priorSubjectData?.communicationSubjectIds,
+          communicationLifeThreadIds:
+            selectedReviewItem.linkedLifeThreadIds ||
+            context.priorSubjectData?.communicationLifeThreadIds,
+          lastCommunicationSummary:
+            selectedReviewItem.summaryText ||
+            context.priorSubjectData?.lastCommunicationSummary,
+        }
+      : context.priorSubjectData;
   const draft =
     context.channel === 'bluebubbles'
       ? await draftCommunicationReplyWithChannelFluidity({
@@ -2978,7 +3556,7 @@ async function runCommunicationDraftCapability(
           text: rawCommunicationText,
           replyText: context.replyText,
           conversationSummary: context.conversationSummary,
-          priorContext: context.priorSubjectData,
+          priorContext: priorContextForDraft,
           now: context.now,
         })
       : draftCommunicationReply({
@@ -2988,7 +3566,7 @@ async function runCommunicationDraftCapability(
           text: rawCommunicationText,
           replyText: context.replyText,
           conversationSummary: context.conversationSummary,
-          priorContext: context.priorSubjectData,
+          priorContext: priorContextForDraft,
           now: context.now,
         });
   const replyText = formatCommunicationDraftReply(context.channel, draft);
@@ -3008,28 +3586,73 @@ async function runCommunicationDraftCapability(
     };
   }
 
+  const reviewOperation = earlyReviewOperation;
+  const reviewActionSourceKey = selectedReviewItem
+    ? selectedReviewItem.itemId ||
+      selectedReviewItem.communicationThreadId ||
+      draft.thread?.id ||
+      null
+    : null;
+  const reusableReviewAction =
+    reviewOperation && reviewActionSourceKey
+      ? getMessageActionBySource(
+          context.groupFolder,
+          'communication_thread',
+          reviewActionSourceKey,
+        )
+      : undefined;
   const messageAction =
     context.channel === 'alexa' || !context.chatJid
       ? undefined
       : draft.thread?.id
-        ? createOrRefreshMessageActionFromDraft({
-            groupFolder: context.groupFolder,
-            presentationChannel: context.channel,
-            presentationChatJid: context.chatJid,
-            presentationThreadId: context.priorSubjectData?.threadId || null,
-            sourceType: 'communication_thread',
-            sourceKey: draft.thread.id,
-            sourceSummary: draft.summaryText || 'Drafted reply',
-            draftText: draft.draftText || replyText,
-            personName:
-              draft.linkedSubjects[0]?.displayName || draft.thread.title,
-            threadTitle:
-              draft.linkedLifeThreads[0]?.title || draft.thread.title,
-            communicationThreadId: draft.thread.id,
-            threadId: draft.linkedLifeThreads[0]?.id,
-            communicationContext: 'reply_followthrough',
-            now: context.now,
-          })
+        ? reusableReviewAction &&
+          reusableReviewAction.sendStatus !== 'sent' &&
+          reusableReviewAction.sendStatus !== 'skipped'
+          ? reusableReviewAction
+          : createOrRefreshMessageActionFromDraft({
+              groupFolder: context.groupFolder,
+              presentationChannel: context.channel,
+              presentationChatJid: context.chatJid,
+              presentationThreadId: priorContextForDraft?.threadId || null,
+              sourceType: 'communication_thread',
+              sourceKey:
+                reviewActionSourceKey ||
+                selectedReviewItem?.communicationThreadId ||
+                draft.thread.id,
+              sourceSummary:
+                selectedReviewItem?.summaryText ||
+                draft.summaryText ||
+                'Drafted reply',
+              draftText: draft.draftText || replyText,
+              personName:
+                selectedReviewItem?.chatLabel ||
+                draft.linkedSubjects[0]?.displayName ||
+                draft.thread.title,
+              threadTitle:
+                selectedReviewItem?.chatLabel ||
+                draft.linkedLifeThreads[0]?.title ||
+                draft.thread.title,
+              communicationThreadId:
+                selectedReviewItem?.communicationThreadId || draft.thread.id,
+              threadId: draft.linkedLifeThreads[0]?.id,
+              communicationContext: 'reply_followthrough',
+              forceApproval: Boolean(selectedReviewItem),
+              targetOverride:
+                selectedReviewItem && selectedReviewTarget?.ok
+                  ? {
+                      kind: 'external_thread',
+                      chatJid: selectedReviewTarget.chatJid!,
+                      threadId: null,
+                      replyToMessageId: null,
+                      isGroup: selectedReviewTarget.isGroup || false,
+                      personName:
+                        selectedReviewTarget.personName ||
+                        selectedReviewItem.chatLabel,
+                    }
+                  : null,
+              targetChannelOverride: selectedReviewItem ? 'bluebubbles' : null,
+              now: context.now,
+            })
         : context.channel === 'bluebubbles' &&
             draft.linkedSubjects[0]?.displayName
           ? (() => {
@@ -3047,8 +3670,7 @@ async function runCommunicationDraftCapability(
                 groupFolder: context.groupFolder,
                 presentationChannel: 'bluebubbles',
                 presentationChatJid: context.chatJid,
-                presentationThreadId:
-                  context.priorSubjectData?.threadId || null,
+                presentationThreadId: priorContextForDraft?.threadId || null,
                 sourceType: 'manual_prompt',
                 sourceKey: `bluebubbles-channel-draft:${resolvedTarget.target.chatJid}:${dedupeSeed}`,
                 sourceSummary:
@@ -3075,6 +3697,50 @@ async function runCommunicationDraftCapability(
             })()
           : undefined;
 
+  let finalReplyText = replyText;
+  let finalMessageAction = messageAction;
+  let finalSendOptions:
+    | Pick<SendMessageOptions, 'inlineActions' | 'inlineActionRows'>
+    | undefined;
+  const operationChatJid =
+    context.chatJid || messageAction?.presentationChatJid;
+  if (reviewOperation && messageAction && operationChatJid) {
+    const operationResult = await applyMessageActionOperation(
+      messageAction.messageActionId,
+      reviewOperation,
+      {
+        groupFolder: context.groupFolder,
+        channel: context.channel,
+        chatJid: operationChatJid,
+        currentTime: context.now,
+        sendToTarget: async () => {
+          throw new Error('recent text review follow-up cannot send messages');
+        },
+      },
+    );
+    if (operationResult.handled) {
+      finalMessageAction = operationResult.action || messageAction;
+      finalReplyText =
+        operationResult.replyText ||
+        operationResult.presentation?.text ||
+        finalReplyText;
+      if (operationResult.presentation?.inlineActionRows.length) {
+        finalSendOptions = {
+          inlineActionRows: operationResult.presentation.inlineActionRows,
+        };
+      }
+    }
+  }
+  if (selectedReviewItem && finalMessageAction) {
+    recordRecentTextReviewOutcome({
+      groupFolder: context.groupFolder,
+      item: selectedReviewItem,
+      outcome: mapRecentTextReviewFollowupToOutcome(reviewItemFollowup),
+      now: context.now,
+      timingHint: reviewItemFollowup?.timingHint || null,
+    });
+  }
+
   const continuationCandidate = buildCommunicationContinuationCandidate({
     descriptor,
     summaryText: draft.summaryText || 'I drafted a reply.',
@@ -3086,8 +3752,8 @@ async function runCommunicationDraftCapability(
     communicationLifeThreadIds: draft.linkedLifeThreads.map(
       (thread) => thread.id,
     ),
-    messageActionId: messageAction?.messageActionId,
-    messageActionSummary: messageAction?.sourceSummary || undefined,
+    messageActionId: finalMessageAction?.messageActionId,
+    messageActionSummary: finalMessageAction?.sourceSummary || undefined,
   });
   const supportedFollowups = extendCompanionFollowups(
     descriptor.followupActions,
@@ -3097,16 +3763,22 @@ async function runCommunicationDraftCapability(
   return {
     handled: true,
     capabilityId: descriptor.id,
-    replyText,
+    replyText: finalReplyText,
+    sendOptions: finalSendOptions,
     outputShape: descriptor.preferredOutputShape[context.channel],
     conversationSeed: buildCommunicationConversationSeed({
       descriptor,
       summaryText: draft.summaryText || 'I drafted a reply.',
-      conversationFocus: rawCommunicationText || draft.summaryText || '',
+      conversationFocus:
+        selectedReviewItem?.summaryText ||
+        rawCommunicationText ||
+        draft.summaryText ||
+        '',
       personName: draft.linkedSubjects[0]?.displayName,
       threadId: draft.linkedLifeThreads[0]?.id,
       threadTitle: draft.linkedLifeThreads[0]?.title || draft.thread?.title,
-      communicationThreadId: draft.thread?.id,
+      communicationThreadId:
+        selectedReviewItem?.communicationThreadId || draft.thread?.id,
       communicationSubjectIds: draft.linkedSubjects.map(
         (subject) => subject.id,
       ),
@@ -3114,8 +3786,9 @@ async function runCommunicationDraftCapability(
         (thread) => thread.id,
       ),
       lastCommunicationSummary: draft.summaryText,
-      messageActionId: messageAction?.messageActionId,
-      messageActionSummary: messageAction?.sourceSummary || undefined,
+      recentTextReviewJson: context.priorSubjectData?.recentTextReviewJson,
+      messageActionId: finalMessageAction?.messageActionId,
+      messageActionSummary: finalMessageAction?.sourceSummary || undefined,
       continuationCandidate,
       supportedFollowups,
     }),
@@ -3129,7 +3802,20 @@ async function runCommunicationDraftCapability(
     followupActions: supportedFollowups,
     handoffPayload: continuationCandidate.handoffPayload,
     continuationCandidate,
-    messageAction,
+    messageAction: finalMessageAction,
+    outcomeMetadata: selectedReviewItem
+      ? {
+          source: 'recent_text_review',
+          outcomeKind: mapRecentTextReviewFollowupToOutcome(reviewItemFollowup),
+          handled: true,
+          capabilityId: descriptor.id,
+          messageActionId: finalMessageAction?.messageActionId,
+          sendStatus: finalMessageAction?.sendStatus,
+          lastActionKind: finalMessageAction?.lastActionKind || null,
+          itemId: selectedReviewItem.itemId,
+          itemRank: selectedReviewItem.rank,
+        }
+      : undefined,
   };
 }
 
@@ -3314,6 +4000,57 @@ async function runChiefOfStaffCapability(
     followupActions: supportedFollowups,
     handoffPayload: continuationCandidate.handoffPayload,
     continuationCandidate,
+  };
+}
+
+async function runUsefulDailyCommandCenterCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+  const result = buildUsefulDailyCommandCenter({
+    groupFolder: context.groupFolder,
+    now: context.now,
+  });
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText:
+      context.channel === 'alexa'
+        ? result.replyText.replace(/\n+/g, ' ').slice(0, 700)
+        : result.replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: {
+      flowKey: 'daily_command_center',
+      subjectKind: 'day_brief',
+      summaryText: 'Andrea reviewed the useful daily command center.',
+      guidanceGoal: 'action_follow_through',
+      subjectData: {
+        activeCapabilityId: descriptor.id,
+        followthroughReviewJson: result.reviewSeedJson,
+        lastAnswerSummary: 'Daily command center reviewed.',
+        lastRecommendation:
+          result.selectedFollowthrough?.safeNextAction ||
+          'Review what needs reply, what can wait, and what is safe to track.',
+        conversationFocus: 'daily command center',
+      },
+      supportedFollowups: descriptor.followupActions,
+      responseSource: 'local_companion',
+      hasActionItem: true,
+      reminderCandidate: Boolean(result.selectedFollowthrough),
+    },
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'local_companion',
+      'composed useful daily command center',
+      [
+        `needs_reply: ${result.counts.needsReply}`,
+        `ready_followthrough: ${result.counts.readyFollowthrough}`,
+        `can_wait: ${result.counts.canWait}`,
+      ],
+    ),
+    followupActions: descriptor.followupActions,
   };
 }
 
@@ -5788,6 +6525,70 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
         CAPABILITY_DESCRIPTORS[61]!,
         cloneContext(context),
         input,
+      ),
+  },
+  {
+    id: 'communication.review_recent_texts',
+    label: 'Review Recent Texts',
+    category: 'communication',
+    requiredInputs: ['text'],
+    optionalInputs: ['timeWindowKind', 'timeWindowValue'],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: false,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'chat_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'draft_follow_up',
+      'create_reminder',
+      'save_for_later',
+    ],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runRecentTextReviewCapability(
+        CAPABILITY_DESCRIPTORS[62]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'daily.command_center',
+    label: 'Daily Command Center',
+    category: 'daily',
+    requiredInputs: [],
+    optionalInputs: ['text'],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: true,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'voice_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: [
+      'anything_else',
+      'shorter',
+      'say_more',
+      'create_reminder',
+      'memory_control',
+    ],
+    handlerKind: 'local',
+    execute: (context) =>
+      runUsefulDailyCommandCenterCapability(
+        CAPABILITY_DESCRIPTORS[63]!,
+        cloneContext(context),
       ),
   },
 ];

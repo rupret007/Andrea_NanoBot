@@ -63,7 +63,11 @@ export interface OutcomeReviewPromptMatch {
     | 'messages_sent_today'
     | 'messages_scheduled'
     | 'messages_failed'
-    | 'messages_after_approval';
+    | 'messages_after_approval'
+    | 'followthrough_review'
+    | 'followthrough_approved'
+    | 'followthrough_deferred'
+    | 'followthrough_waiting';
   personName?: string;
 }
 
@@ -95,6 +99,11 @@ export interface OutcomeReviewSnapshot {
   messageFailed: OutcomeReviewItem[];
   messageUnsentDrafts: OutcomeReviewItem[];
   messageChangedAfterApproval: OutcomeReviewItem[];
+  followthroughApproved: OutcomeReviewItem[];
+  followthroughDeferred: OutcomeReviewItem[];
+  followthroughBlocked: OutcomeReviewItem[];
+  followthroughHandled: OutcomeReviewItem[];
+  followthroughDismissed: OutcomeReviewItem[];
 }
 
 export interface OutcomeReviewPresentation {
@@ -154,8 +163,17 @@ function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
 }
 
+function redactReviewText(value: string): string {
+  return value
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]')
+    .replace(/\+?\d[\d\s().-]{6,}\d/g, '[phone]')
+    .replace(/\bbb:[^\s"']+/gi, '[chat]')
+    .replace(/\b(?:iMessage|SMS);[^\s"']+/gi, '[chat]')
+    .replace(/\b(?:sk|xox|ghp|gho|AIza)[A-Za-z0-9_-]{16,}\b/g, '[secret]');
+}
+
 function clipText(value: string | null | undefined, max = 140): string {
-  const normalized = normalizeText(value);
+  const normalized = redactReviewText(normalizeText(value));
   if (!normalized) return '';
   if (normalized.length <= max) return normalized;
   return `${normalized.slice(0, max - 3).trimEnd()}...`;
@@ -289,6 +307,16 @@ function buildSourceLabel(
       'Conversation'
     );
   }
+  if (outcome.sourceType === 'followthrough_candidate') {
+    if (outcome.status === 'completed') return 'Handled follow-through';
+    if (outcome.status === 'skipped') return 'Dismissed follow-through';
+    if (outcome.status === 'failed') return 'Blocked follow-through';
+    if (outcome.status === 'deferred' && linkedRefs.reminderTaskId) {
+      return 'Approved follow-through';
+    }
+    if (outcome.status === 'deferred') return 'Deferred follow-through';
+    return 'Follow-through candidate';
+  }
   if (outcome.sourceType === 'cross_channel_handoff') {
     const handoff = getCompanionHandoff(outcome.sourceKey);
     return (
@@ -325,8 +353,12 @@ function buildReviewItem(outcome: OutcomeRecord): OutcomeReviewItem {
         .join(' '),
       160,
     ),
-    nextFollowupText: outcome.nextFollowupText,
-    blockerText: outcome.blockerText,
+    nextFollowupText: outcome.nextFollowupText
+      ? redactReviewText(outcome.nextFollowupText)
+      : outcome.nextFollowupText,
+    blockerText: outcome.blockerText
+      ? redactReviewText(outcome.blockerText)
+      : outcome.blockerText,
   };
 }
 
@@ -1200,6 +1232,27 @@ function buildSections(
       action.lastActionKind !== 'approved'
     );
   });
+  const followthroughItems = items.filter(
+    (item) => item.outcome.sourceType === 'followthrough_candidate',
+  );
+  const followthroughApproved = followthroughItems.filter(
+    (item) =>
+      item.outcome.status === 'deferred' &&
+      Boolean(item.linkedRefs.reminderTaskId),
+  );
+  const followthroughDeferred = followthroughItems.filter(
+    (item) =>
+      item.outcome.status === 'deferred' && !item.linkedRefs.reminderTaskId,
+  );
+  const followthroughBlocked = followthroughItems.filter(
+    (item) => item.outcome.status === 'failed',
+  );
+  const followthroughHandled = followthroughItems.filter(
+    (item) => item.outcome.status === 'completed',
+  );
+  const followthroughDismissed = followthroughItems.filter(
+    (item) => item.outcome.status === 'skipped',
+  );
 
   return {
     match,
@@ -1220,6 +1273,11 @@ function buildSections(
     messageFailed: limitItems(messageFailed),
     messageUnsentDrafts: limitItems(messageUnsentDrafts),
     messageChangedAfterApproval: limitItems(messageChangedAfterApproval),
+    followthroughApproved: limitItems(followthroughApproved),
+    followthroughDeferred: limitItems(followthroughDeferred),
+    followthroughBlocked: limitItems(followthroughBlocked),
+    followthroughHandled: limitItems(followthroughHandled),
+    followthroughDismissed: limitItems(followthroughDismissed),
   };
 }
 
@@ -1265,6 +1323,30 @@ export function buildReviewSnapshot(params: {
     items = items.filter((item) =>
       personScopeMatches(item, params.match.personName || ''),
     );
+  }
+  if (params.match.kind.startsWith('followthrough_')) {
+    rawItems = rawItems.filter(
+      (item) => item.outcome.sourceType === 'followthrough_candidate',
+    );
+    if (params.match.kind === 'followthrough_approved') {
+      rawItems = rawItems.filter(
+        (item) =>
+          item.outcome.status === 'deferred' &&
+          Boolean(item.linkedRefs.reminderTaskId),
+      );
+    } else if (params.match.kind === 'followthrough_deferred') {
+      rawItems = rawItems.filter(
+        (item) =>
+          item.outcome.status === 'deferred' && !item.linkedRefs.reminderTaskId,
+      );
+    } else if (params.match.kind === 'followthrough_waiting') {
+      rawItems = rawItems.filter(
+        (item) =>
+          item.outcome.status !== 'completed' &&
+          item.outcome.status !== 'skipped',
+      );
+    }
+    items = dedupeReviewItems(rawItems);
   }
 
   return buildSections(
@@ -1331,6 +1413,26 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
       addSection('Scheduled Sends', snapshot.messageScheduled);
       addSection('Sent Today', snapshot.messageSentToday);
       break;
+    case 'followthrough_approved':
+      addSection('Approved Follow-Through', snapshot.followthroughApproved);
+      addSection('Blocked Follow-Through', snapshot.followthroughBlocked);
+      break;
+    case 'followthrough_deferred':
+      addSection('Deferred Follow-Through', snapshot.followthroughDeferred);
+      addSection('Approved Follow-Through', snapshot.followthroughApproved);
+      break;
+    case 'followthrough_waiting':
+      addSection('Approved Follow-Through', snapshot.followthroughApproved);
+      addSection('Deferred Follow-Through', snapshot.followthroughDeferred);
+      addSection('Blocked Follow-Through', snapshot.followthroughBlocked);
+      break;
+    case 'followthrough_review':
+      addSection('Approved Follow-Through', snapshot.followthroughApproved);
+      addSection('Deferred Follow-Through', snapshot.followthroughDeferred);
+      addSection('Blocked Follow-Through', snapshot.followthroughBlocked);
+      addSection('Handled Follow-Through', snapshot.followthroughHandled);
+      addSection('Dismissed Follow-Through', snapshot.followthroughDismissed);
+      break;
     case 'not_done_today':
       addSection('Still Open Tonight', snapshot.stillOpenTonight);
       addSection('Carry Into Tomorrow', snapshot.carryIntoTomorrow);
@@ -1380,6 +1482,9 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
       addSection('Still Open Tonight', snapshot.stillOpenTonight);
       addSection('Carry Into Tomorrow', snapshot.carryIntoTomorrow);
       addMessagingSections();
+      addSection('Approved Follow-Through', snapshot.followthroughApproved);
+      addSection('Deferred Follow-Through', snapshot.followthroughDeferred);
+      addSection('Blocked Follow-Through', snapshot.followthroughBlocked);
       addSection('Blocked', snapshot.blocked);
       break;
   }
@@ -1406,6 +1511,8 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
     lead = 'Andrea: Here is what failed to send.';
   } else if (snapshot.match.kind === 'messages_after_approval') {
     lead = 'Andrea: Here is what changed after approval.';
+  } else if (snapshot.match.kind.startsWith('followthrough_')) {
+    lead = 'Andrea: Here is the follow-through review.';
   } else if (snapshot.match.kind === 'slipped') {
     lead = 'Andrea: Here is what looks like it slipped.';
   }
@@ -1414,6 +1521,8 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
 
 function buildAlexaReviewText(snapshot: OutcomeReviewSnapshot): string {
   const firstOpen =
+    snapshot.followthroughApproved[0] ||
+    snapshot.followthroughDeferred[0] ||
     snapshot.stillOpenTonight[0] ||
     snapshot.carryIntoTomorrow[0] ||
     snapshot.blocked[0] ||
@@ -1494,8 +1603,19 @@ export function buildOutcomeReviewResponse(params: {
       ...snapshot.messageUnsentDrafts,
       ...snapshot.owedReplies,
     ];
+  } else if (snapshot.match.kind.startsWith('followthrough_')) {
+    focusItems = [
+      ...snapshot.followthroughApproved,
+      ...snapshot.followthroughDeferred,
+      ...snapshot.followthroughBlocked,
+      ...snapshot.followthroughHandled,
+      ...snapshot.followthroughDismissed,
+    ];
   } else {
     focusItems = [
+      ...snapshot.followthroughApproved,
+      ...snapshot.followthroughDeferred,
+      ...snapshot.followthroughBlocked,
       ...snapshot.stillOpenTonight,
       ...snapshot.carryIntoTomorrow,
       ...snapshot.blocked,
@@ -1562,6 +1682,22 @@ export function matchOutcomeReviewPrompt(
     };
   }
   if (/^daily review\b/.test(normalized)) return { kind: 'daily_review' };
+  if (
+    /^review follow-through outcomes\b/.test(normalized) ||
+    /^review followthrough outcomes\b/.test(normalized) ||
+    /^follow-through review\b/.test(normalized)
+  ) {
+    return { kind: 'followthrough_review' };
+  }
+  if (/^what did i approve\b/.test(normalized)) {
+    return { kind: 'followthrough_approved' };
+  }
+  if (/^what did i defer\b/.test(normalized)) {
+    return { kind: 'followthrough_deferred' };
+  }
+  if (/^what is still waiting for me\b/.test(normalized)) {
+    return { kind: 'followthrough_waiting' };
+  }
   if (/^weekly review\b/.test(normalized)) return { kind: 'weekly_review' };
   if (/what messages were sent today/.test(normalized)) {
     return { kind: 'messages_sent_today' };
