@@ -229,6 +229,7 @@
     "agi:trace": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-trace.ts",
     "agi:scorecard": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-scorecard.ts",
     "agi:scorecard:live": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-scorecard.ts --live",
+    "agi:readiness": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-readiness.ts",
     "agi:demo": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-demo.ts",
     "agi:backup": "bash scripts/agi-backup.sh",
     "agi:restore:check": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-memory-restore-check.ts"

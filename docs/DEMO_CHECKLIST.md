@@ -6,8 +6,13 @@ Use this as the demo and dogfood checklist for the current operator host. Comman
 
 1. `npm run debug:status`
 2. `npm run setup -- --step verify`
-3. `npm run debug:pilot`
-4. this checklist
+3. `npm run agi:readiness -- --write --no-live-probe`
+4. `npm run debug:pilot`
+5. this checklist
+
+The readiness matrix below is historical operator guidance, not a live claim.
+When it disagrees with `agi:readiness`, treat the command output as truth and
+update the proof before demoing that lane.
 
 ## Readiness Matrix
 
@@ -22,8 +27,8 @@ Use this as the demo and dogfood checklist for the current operator host. Comman
 | Chief-of-staff / missions                    | `near_live_only` / proof-stale | no fresh planning journey                                   | operator/live turn | Re-run one nightly-planning or mission chain                                          |
 | Knowledge library                            | `near_live_only` / proof-stale | no fresh save plus grounded answer                          | operator/live turn | Re-run one save and one library-grounded answer                                       |
 | Action bundles / delegation / outcome review | `near_live_only` / proof-stale | no fresh approve/partial/review chain                       | operator/live turn | Re-run one action-bundle review chain                                                 |
-| Research mode                                | `live_proven`                  | none                                                        | none               | Keep the proof fresh if it will be demoed                                             |
-| Image generation                             | `live_proven`                  | none                                                        | none               | Keep the proof fresh if it will be demoed                                             |
+| Research mode                                | command-derived                | provider credential/proof may be stale on a new host        | external/config    | Run `npm run agi:readiness -- --write --no-live-probe` before claiming live proof     |
+| Image generation                             | command-derived                | provider credential/proof may be stale on a new host        | external/config    | Run `npm run agi:readiness -- --write --no-live-probe` before claiming live proof     |
 | Startup / host-control / watchdog / health   | `live_proven`                  | none for core host                                          | none               | Keep `services:status`, `setup verify`, and `debug:status` aligned after each restart |
 
 ## Operator Preflight
@@ -53,7 +58,7 @@ Important truth:
 - Alexa is not `live_proven` until a fresh signed handled `IntentRequest` is recorded.
 - BlueBubbles is usable, but not fully live-proven until a fresh same-thread message-action proof is recorded.
 - Google Calendar is currently blocked by a stale or revoked OAuth grant; reauthorize before claiming calendar launch readiness.
-- Research and image generation are currently live-proven advanced lanes, not core launch blockers.
+- Research and image generation are optional advanced lanes; claim them only when the latest readiness report says they are live-proven.
 
 ## Proof Recovery Checklist
 
@@ -215,7 +220,7 @@ Treat missing credentials, manual signed turns, phone/device availability, and p
 - What makes it impressive:
   - Andrea behaves like a practical assistant instead of flattening everything into one tool
 - If an optional dependency is blocked:
-  - Google Calendar itself is live here, so avoid using research/image blockers as excuses in this flow
+  - If Google Calendar is blocked in the readiness report, show the confirmation and fallback path instead of claiming a live write
 
 ## Same-Day Demo Story
 

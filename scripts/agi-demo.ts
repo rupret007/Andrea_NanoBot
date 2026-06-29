@@ -9,6 +9,18 @@ import {
   runAgiScorecard,
   writeAgiScorecardArtifacts,
 } from "../src/agi-scorecard.js";
+import {
+  type AgiReadinessReport,
+  buildAgiReadinessReport,
+  collectPublishStatus,
+  formatAgiReadinessMarkdown,
+  writeAgiReadinessArtifacts,
+} from "../src/agi-readiness.js";
+import { initDatabase } from "../src/db.js";
+import { buildIntegrationDoctorReport } from "../src/integration-doctor.js";
+import { buildLiveProofGauntletReport } from "../src/live-proof-gauntlet.js";
+import { collectProviderHealthSnapshots } from "../src/provider-health.js";
+import { runAgiDoctor } from "./agi-doctor.js";
 import { replayQuestions, type ReplayResult } from "./agi-replay.js";
 
 interface DemoPrompt {
@@ -118,6 +130,9 @@ function formatDemoPacket(input: {
   scorecard?: AgiScorecardResult;
   scorecardMarkdown?: string;
   scorecardDir?: string;
+  readiness?: AgiReadinessReport;
+  readinessMarkdown?: string;
+  readinessDir?: string;
   liveReadiness: string[];
 }): string {
   const lines: string[] = [
@@ -178,12 +193,43 @@ function formatDemoPacket(input: {
     );
   }
 
+  if (input.readiness) {
+    lines.push("", "## Live Readiness Score");
+    lines.push(
+      `- Overall readiness: ${(input.readiness.overallReadinessScore * 100).toFixed(1)}% (${input.readiness.launchGrade})`,
+    );
+    lines.push(
+      `- Live proof: ${input.readiness.proofDebt.liveProven}/${input.readiness.proofDebt.total} proven; ${input.readiness.proofDebt.debtCount} debt item(s)`,
+    );
+    lines.push(
+      `- Top recommendation: ${
+        input.readiness.recommendations[0] ??
+        "Keep deterministic scorecard green before expanding live proof."
+      }`,
+    );
+    if (input.readiness.blockers.length) {
+      lines.push("- Current blockers:");
+      for (const blocker of input.readiness.blockers.slice(0, 5)) {
+        lines.push(
+          `  - ${blocker.category}: ${blocker.label} - ${blocker.action}`,
+        );
+      }
+    }
+  }
+
   if (input.scorecardMarkdown) {
     lines.push("", "## Scorecard Snapshot", "");
     lines.push(input.scorecardMarkdown.trim());
   }
+  if (input.readinessMarkdown) {
+    lines.push("", "## Readiness Snapshot", "");
+    lines.push(input.readinessMarkdown.trim());
+  }
   if (input.scorecardDir) {
     lines.push("", `Scorecard artifacts: ${input.scorecardDir}`);
+  }
+  if (input.readinessDir) {
+    lines.push(`Readiness artifacts: ${input.readinessDir}`);
   }
 
   lines.push(
@@ -228,6 +274,21 @@ async function main(): Promise<void> {
   const scorecardMarkdown = scorecard
     ? formatAgiScorecardMarkdown(scorecard)
     : undefined;
+  const readiness = scorecard
+    ? await buildDemoReadiness({
+        generatedAt,
+        scorecard,
+      })
+    : undefined;
+  const readinessArtifacts = readiness
+    ? await writeAgiReadinessArtifacts(readiness, { stateDir })
+    : undefined;
+  const readinessMarkdown = readiness
+    ? formatAgiReadinessMarkdown({
+        ...readiness,
+        artifactPaths: readinessArtifacts,
+      })
+    : undefined;
   const liveReadiness = liveReadinessNotes();
   const packet = formatDemoPacket({
     generatedAt,
@@ -235,6 +296,9 @@ async function main(): Promise<void> {
     scorecard,
     scorecardMarkdown,
     scorecardDir: scorecardArtifacts?.dir,
+    readiness,
+    readinessMarkdown,
+    readinessDir: readinessArtifacts?.dir,
     liveReadiness,
   });
   const markdownPath = join(dir, "demo-packet.md");
@@ -249,8 +313,14 @@ async function main(): Promise<void> {
         telegramPrompts: TELEGRAM_DEMO_PROMPTS,
         replayResults,
         scorecard,
+        readiness,
         liveReadiness,
-        artifacts: { markdownPath, jsonPath, scorecard: scorecardArtifacts },
+        artifacts: {
+          markdownPath,
+          jsonPath,
+          scorecard: scorecardArtifacts,
+          readiness: readinessArtifacts,
+        },
       },
       null,
       2,
@@ -259,11 +329,46 @@ async function main(): Promise<void> {
   );
 
   if (hasFlag("--json")) {
-    console.log(JSON.stringify({ markdownPath, jsonPath, scorecardArtifacts }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          markdownPath,
+          jsonPath,
+          scorecardArtifacts,
+          readinessArtifacts,
+        },
+        null,
+        2,
+      ),
+    );
   } else {
     console.log(packet);
     console.log(`Demo packet: ${markdownPath}`);
   }
+}
+
+async function buildDemoReadiness(input: {
+  generatedAt: string;
+  scorecard: AgiScorecardResult;
+}): Promise<AgiReadinessReport> {
+  initDatabase();
+  const doctor = await runAgiDoctor();
+  const providers = collectProviderHealthSnapshots(input.generatedAt);
+  const integrations = buildIntegrationDoctorReport({
+    now: new Date(input.generatedAt),
+    providers,
+  });
+  const liveProof = buildLiveProofGauntletReport({
+    now: new Date(input.generatedAt),
+  });
+  return buildAgiReadinessReport({
+    generatedAt: input.generatedAt,
+    scorecard: input.scorecard,
+    doctor,
+    integrations,
+    liveProof,
+    publishStatus: collectPublishStatus(),
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

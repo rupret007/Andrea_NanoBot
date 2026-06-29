@@ -21,6 +21,9 @@ describe("AGI scorecard", () => {
     expect(result.grade).toMatch(/^[ABC][+-]?$/);
     expect(result.estimatedCostUsd).toBe(0);
     expect(result.pendingActions).toEqual([]);
+    expect(result.regressions).toEqual([]);
+    expect(result.weaknesses).toEqual([]);
+    expect(result.recommendations.length).toBeGreaterThan(0);
     expect(result.scenarioResults.length).toBeGreaterThan(20);
     for (const dimension of AGI_SCORECARD_DIMENSIONS) {
       expect(result.dimensionScores[dimension]).toBeGreaterThanOrEqual(0);

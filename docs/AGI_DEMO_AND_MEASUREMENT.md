@@ -14,17 +14,23 @@ completion. It is deliberately not a claim of general intelligence.
   safety regressions or a low overall score.
 - `npm run agi:scorecard:live` uses the same scorecard wrapper in live mode.
   Use this after provider and Telegram credentials are configured.
+- `npm run agi:readiness -- --json --no-live-probe` merges scorecard,
+  doctor checks, integration status, live-proof debt, and publish blockers into
+  one operator-facing launch report without making live provider calls.
+- `npm run agi:readiness -- --write --no-live-probe` writes
+  `readiness.json` plus `readiness.md` under `~/.andrea/evals/<run-id>/`.
 - `npm run agi:demo` generates an operator demo packet with exact CLI prompts,
   Telegram canary prompts, deterministic replay output, live-readiness notes,
-  scorecard highlights, and the latest scorecard snapshot.
+  scorecard highlights, readiness highlights, and the latest scorecard snapshot.
 
 ## Demo Flow
 
 1. Run `npm run agi:doctor` and fix missing required local state.
 2. Run `npm run agi:scorecard`.
-3. Run `npm run agi:demo`.
-4. Open the generated demo packet in `~/.andrea/evals/`.
-5. If Telegram is configured, send the packet's canary prompts to the bot with
+3. Run `npm run agi:readiness -- --write --no-live-probe`.
+4. Run `npm run agi:demo`.
+5. Open the generated demo packet and readiness report in `~/.andrea/evals/`.
+6. If Telegram is configured, send the packet's canary prompts to the bot with
    `ANDREA_USE_AGI=1`.
 
 ## What To Show
@@ -37,7 +43,7 @@ completion. It is deliberately not a claim of general intelligence.
 - Prompt-injection resistance: malicious instructions are quarantined.
 - Provider fallback: Andrea explains degraded mode instead of bluffing.
 - Post-run proof: show the scorecard dimensions, merge-blocking regressions,
-  measured weaknesses, and recommendations.
+  measured weaknesses, live-readiness blockers, and recommendations.
 
 ## Interpreting The Score
 

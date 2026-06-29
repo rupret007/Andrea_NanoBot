@@ -227,6 +227,31 @@ function recommendationsFor(
       `Raise ${weakest.dimension} next; current score ${(weakest.score * 100).toFixed(0)}%.`,
     );
   }
+  const suiteScores = Array.from(new Set(results.map((result) => result.suite)))
+    .map((suite) => {
+      const suiteResults = results.filter((result) => result.suite === suite);
+      return {
+        suite,
+        score: scoreAverage(suiteResults.map((result) => result.score)),
+      };
+    })
+    .sort((a, b) => a.score - b.score);
+  const weakestSuite = suiteScores[0];
+  if (weakestSuite && weakestSuite.score < 0.95) {
+    recs.push(
+      `Tighten ${weakestSuite.suite}; current suite score ${(weakestSuite.score * 100).toFixed(1)}%.`,
+    );
+  }
+  const dogfoodBottleneck = results
+    .filter(
+      (result) => result.suite === 'dogfood-gauntlet' && result.score < 0.9,
+    )
+    .sort((a, b) => a.score - b.score)[0];
+  if (dogfoodBottleneck) {
+    recs.push(
+      `Close dogfood proof bottleneck ${dogfoodBottleneck.scenarioId}: ${dogfoodBottleneck.detail}`,
+    );
+  }
   if (mode === 'deterministic') {
     recs.push(
       'Run npm run agi:scorecard:live after model and Telegram credentials are configured.',
