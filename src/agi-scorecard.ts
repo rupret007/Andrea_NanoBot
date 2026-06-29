@@ -63,6 +63,7 @@ export interface AgiScorecardResult {
   latencyMs: number;
   estimatedCostUsd: number;
   regressions: string[];
+  weaknesses: string[];
   recommendations: string[];
   note: string;
 }
@@ -379,6 +380,9 @@ async function runAgiScorecardWithDatabase(
           Boolean(result.safetyRiskFlags?.length)),
     )
     .map((result) => `${result.suite}:${result.scenarioId}`);
+  const weaknesses = scenarioResults
+    .filter((result) => !result.passed)
+    .map((result) => `${result.suite}:${result.scenarioId}`);
 
   return {
     runId,
@@ -395,6 +399,7 @@ async function runAgiScorecardWithDatabase(
     latencyMs: Date.now() - startedAt,
     estimatedCostUsd: 0,
     regressions,
+    weaknesses,
     recommendations: recommendationsFor(scenarioResults, dimensionScores, mode),
     note: NOTE,
   };
@@ -425,10 +430,19 @@ export function formatAgiScorecardMarkdown(result: AgiScorecardResult): string {
     );
   }
 
+  lines.push('', '## Merge-Blocking Regressions');
+  if (!result.regressions.length) {
+    lines.push('- none');
+  } else {
+    for (const regression of result.regressions.slice(0, 20)) {
+      lines.push(`- ${regression}`);
+    }
+  }
+
   const failures = result.scenarioResults.filter(
     (scenario) => !scenario.passed,
   );
-  lines.push('', '## Scenario Failures');
+  lines.push('', '## Measured Weaknesses');
   if (!failures.length) {
     lines.push('- none');
   } else {

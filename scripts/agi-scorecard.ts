@@ -21,6 +21,7 @@ function readValue(name: string): string | undefined {
 async function main(): Promise<void> {
   const mode = hasFlag("--live") ? "live" : "deterministic";
   const minScore = Number(readValue("--min-score") ?? "0.8");
+  const failOnAnyFailure = hasFlag("--fail-on-any-failure");
   const result = await runAgiScorecard({
     mode,
     includeDogfood: !hasFlag("--no-dogfood"),
@@ -40,7 +41,14 @@ async function main(): Promise<void> {
     }
   }
 
-  if (result.overallScore < minScore || result.regressions.length > 0) {
+  const hasAnyFailure = result.scenarioResults.some(
+    (scenario) => !scenario.passed,
+  );
+  if (
+    result.overallScore < minScore ||
+    result.regressions.length > 0 ||
+    (failOnAnyFailure && hasAnyFailure)
+  ) {
     process.exitCode = 1;
   }
 }

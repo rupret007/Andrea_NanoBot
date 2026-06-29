@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  type AgiScorecardResult,
   formatAgiScorecardMarkdown,
   runAgiScorecard,
   writeAgiScorecardArtifacts,
@@ -81,19 +82,59 @@ function expandHome(path: string): string {
   return path;
 }
 
+function isConfigured(value: string | undefined): boolean {
+  return Boolean(value && value.trim());
+}
+
+function liveReadinessNotes(): string[] {
+  const providerConfigured =
+    isConfigured(process.env.ANTHROPIC_API_KEY) ||
+    isConfigured(process.env.OPENAI_API_KEY) ||
+    isConfigured(process.env.OLLAMA_BASE_URL);
+  return [
+    providerConfigured
+      ? "Provider path configured for opt-in live proof runs."
+      : "Provider credentials/base URL missing; live provider proof should remain skipped.",
+    process.env.ANDREA_USE_AGI === "1"
+      ? "ANDREA_USE_AGI=1 is set for AGI runtime routing."
+      : "ANDREA_USE_AGI is not 1; live channels should stay on legacy routing.",
+    isConfigured(process.env.TELEGRAM_BOT_TOKEN)
+      ? "Telegram bot token configured for canary prompts."
+      : "Telegram bot token missing; Telegram canary is not live-ready.",
+  ];
+}
+
+function replayStrategyLabel(result: ReplayResult): string {
+  const strategy = (result.trace as { strategy?: unknown }).strategy;
+  if (typeof strategy === "string" && strategy.trim()) {
+    return strategy;
+  }
+  return result.trace.nodes.length ? "recorded_in_trace" : "stub_provider";
+}
+
 function formatDemoPacket(input: {
   generatedAt: string;
   replayResults: ReplayResult[];
+  scorecard?: AgiScorecardResult;
   scorecardMarkdown?: string;
   scorecardDir?: string;
+  liveReadiness: string[];
 }): string {
   const lines: string[] = [
     "# Andrea Edge AGI Demo Packet",
     "",
     `Generated: ${input.generatedAt}`,
     "",
-    "## CLI Script",
+    "## Live Readiness",
   ];
+  for (const note of input.liveReadiness) {
+    lines.push(`- ${note}`);
+  }
+
+  lines.push(
+    "",
+    "## CLI Script",
+  );
   for (const prompt of CLI_DEMO_PROMPTS) {
     lines.push(`- ${prompt.label}: ${prompt.text}`);
     lines.push(`  Expected signal: ${prompt.expectedSignal}`);
@@ -106,7 +147,7 @@ function formatDemoPacket(input: {
     for (const result of input.replayResults) {
       lines.push(`- ${result.question.text}`);
       lines.push(`  Reply: ${result.reply}`);
-      lines.push(`  Strategy: ${result.trace.strategy}`);
+      lines.push(`  Strategy: ${replayStrategyLabel(result)}`);
       lines.push(`  Nodes: ${result.trace.nodes.length}`);
     }
   }
@@ -114,6 +155,27 @@ function formatDemoPacket(input: {
   lines.push("", "## Telegram Canary Script");
   for (const prompt of TELEGRAM_DEMO_PROMPTS) {
     lines.push(`- ${prompt}`);
+  }
+
+  if (input.scorecard) {
+    const regressions = input.scorecard.regressions.length
+      ? input.scorecard.regressions.join(", ")
+      : "none";
+    const weaknesses = input.scorecard.weaknesses.length
+      ? input.scorecard.weaknesses.join(", ")
+      : "none";
+    lines.push("", "## Scorecard Highlights");
+    lines.push(
+      `- Overall: ${(input.scorecard.overallScore * 100).toFixed(1)}% (${input.scorecard.grade})`,
+    );
+    lines.push(`- Merge-blocking regressions: ${regressions}`);
+    lines.push(`- Measured weaknesses: ${weaknesses}`);
+    lines.push(
+      `- Recommended next fix: ${
+        input.scorecard.recommendations[0] ??
+        "Keep deterministic scorecard green before expanding live-provider proof."
+      }`,
+    );
   }
 
   if (input.scorecardMarkdown) {
@@ -166,11 +228,14 @@ async function main(): Promise<void> {
   const scorecardMarkdown = scorecard
     ? formatAgiScorecardMarkdown(scorecard)
     : undefined;
+  const liveReadiness = liveReadinessNotes();
   const packet = formatDemoPacket({
     generatedAt,
     replayResults,
+    scorecard,
     scorecardMarkdown,
     scorecardDir: scorecardArtifacts?.dir,
+    liveReadiness,
   });
   const markdownPath = join(dir, "demo-packet.md");
   const jsonPath = join(dir, "demo-packet.json");
@@ -184,6 +249,7 @@ async function main(): Promise<void> {
         telegramPrompts: TELEGRAM_DEMO_PROMPTS,
         replayResults,
         scorecard,
+        liveReadiness,
         artifacts: { markdownPath, jsonPath, scorecard: scorecardArtifacts },
       },
       null,

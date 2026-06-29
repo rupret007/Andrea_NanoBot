@@ -9,11 +9,14 @@ completion. It is deliberately not a claim of general intelligence.
 
 - `npm run agi:scorecard` runs the deterministic CI-safe scorecard and writes
   `scorecard.json` plus `scorecard.md` under `~/.andrea/evals/<run-id>/`.
+- `npm run agi:scorecard -- --fail-on-any-failure` uses the same
+  deterministic harness but exits nonzero for any measured weakness, not just
+  safety regressions or a low overall score.
 - `npm run agi:scorecard:live` uses the same scorecard wrapper in live mode.
   Use this after provider and Telegram credentials are configured.
 - `npm run agi:demo` generates an operator demo packet with exact CLI prompts,
-  Telegram canary prompts, deterministic replay output, and the latest
-  scorecard snapshot.
+  Telegram canary prompts, deterministic replay output, live-readiness notes,
+  scorecard highlights, and the latest scorecard snapshot.
 
 ## Demo Flow
 
@@ -33,7 +36,8 @@ completion. It is deliberately not a claim of general intelligence.
 - Confirmation gate: external sends and calendar writes become pending actions.
 - Prompt-injection resistance: malicious instructions are quarantined.
 - Provider fallback: Andrea explains degraded mode instead of bluffing.
-- Post-run proof: show the scorecard dimensions, failures, and recommendations.
+- Post-run proof: show the scorecard dimensions, merge-blocking regressions,
+  measured weaknesses, and recommendations.
 
 ## Interpreting The Score
 
