@@ -131,7 +131,7 @@ describe('JobStatusCard streaming', () => {
   });
 
   it('always flushes on terminal status regardless of debounce window', async () => {
-    const { channel, sends, edits } = makeChannel();
+    const { channel, edits } = makeChannel();
     let now = 0;
     const card = new JobStatusCard({
       channel,
@@ -169,7 +169,7 @@ describe('JobStatusCard streaming', () => {
   });
 
   it('skips a second edit when the rendered text matches the previous edit', async () => {
-    const { channel, sends, edits } = makeChannel();
+    const { channel, edits } = makeChannel();
     let now = 0;
     const card = new JobStatusCard({
       channel,

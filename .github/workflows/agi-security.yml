@@ -1,0 +1,32 @@
+name: Security
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+      - name: Install
+        run: npm ci
+      - name: npm audit (high+)
+        run: npm audit --audit-level=high
+      - name: Detect secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: .
+          base: main
+          head: HEAD
+          extra_args: --only-verified
+      - name: Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: p/typescript p/owasp-top-ten p/security-audit

@@ -313,6 +313,38 @@ function applyActiveProviderCooldowns(
   });
 }
 
+function withInjectedProviderHealthOverrides(
+  snapshots: ProviderHealthSnapshot[],
+  deps: ProviderCouncilRunnerDeps,
+  checkedAt: string,
+): ProviderHealthSnapshot[] {
+  const injectedProviderIds = new Set<string>();
+  if (deps.runOpenAi) injectedProviderIds.add('openai_cloud');
+  if (deps.runAnthropic) injectedProviderIds.add('anthropic_cloud');
+  if (deps.runMiniMax) injectedProviderIds.add('minimax_cloud');
+  if (deps.runGemini) injectedProviderIds.add('gemini_cloud');
+  if (deps.searchBrave) injectedProviderIds.add('brave_search');
+  if (injectedProviderIds.size === 0) return snapshots;
+  return snapshots.map((snapshot) =>
+    injectedProviderIds.has(snapshot.providerId)
+      ? {
+          ...snapshot,
+          state: 'healthy',
+          lastHealthyAt: checkedAt,
+          failureClass: 'none',
+          quotaState: 'unknown',
+          credentialState: 'configured',
+          blocker: '',
+          nextAction: '',
+          metadata: {
+            ...snapshot.metadata,
+            injectedProvider: 'true',
+          },
+        }
+      : snapshot,
+  );
+}
+
 function buildProviderParticipationPlan(input: {
   mode: string;
   taskFamily: PlatformTaskFamily;
@@ -780,10 +812,13 @@ export async function runObservableProviderCouncil(
   const checkedAt = new Date().toISOString();
   const rawProviderHealthSnapshots =
     deps.providerHealthSnapshots || collectProviderHealthSnapshots(checkedAt);
-  const providerHealthSnapshots = applyActiveProviderCooldowns(
-    rawProviderHealthSnapshots,
-    checkedAt,
-  );
+  const providerHealthSnapshots = deps.providerHealthSnapshots
+    ? applyActiveProviderCooldowns(rawProviderHealthSnapshots, checkedAt)
+    : withInjectedProviderHealthOverrides(
+        applyActiveProviderCooldowns(rawProviderHealthSnapshots, checkedAt),
+        deps,
+        checkedAt,
+      );
   const evidenceScoutEnabled = shouldUseEvidenceScout(mode, input.taskFamily);
   const reviewersEnabled = shouldUseReviewer(mode);
   const participationPlan = buildProviderParticipationPlan({

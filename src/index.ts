@@ -14,6 +14,7 @@ import {
   ASSISTANT_NAME,
   ASSISTANT_NAME_SOURCE,
   AGENT_RUNTIME_FALLBACK,
+  ANDREA_USE_AGI,
   ANDREA_OPENAI_BACKEND_ENABLED,
   ANDREA_OPENAI_BACKEND_URL,
   ANDREA_PLATFORM_COORDINATOR_ENABLED,
@@ -757,6 +758,8 @@ import {
   auditRegisteredMainChat,
   type RegisteredMainChatRecord,
 } from './main-chat-audit.js';
+import { bootstrapAgi } from './agi-bootstrap.js';
+import type { AgiRuntime } from './agi-runtime.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -794,6 +797,15 @@ const SHARED_ASSISTANT_CONTEXT_TTL_MS = 10 * 60 * 1000;
 const OUTCOME_REVIEW_CONTEXT_PREFIX = 'outcome_review_context:';
 const OUTCOME_REVIEW_CONTEXT_TTL_MS = 30 * 60 * 1000;
 const DELEGATION_RULE_CONTEXT_PREFIX = 'delegation_rule_context:';
+let agiRuntime: AgiRuntime | null = null;
+let agiRuntimeInitFailed = false;
+let agiRuntimeLastInitFailedAt = 0;
+const AGI_RUNTIME_BOOT_RETRY_MS = 60_000;
+const AGI_PENDING_CONFIRMATION_TTL_MS = 5 * 60 * 1000;
+const pendingAgiConfirmationsById = new Map<
+  string,
+  { chatJid: string; scope: string; sender: string; createdAt: number }
+>();
 
 function getGoogleCalendarPendingStateKey(chatJid: string): string {
   return `${GOOGLE_CALENDAR_PENDING_STATE_PREFIX}${canonicalizeBlueBubblesSelfThreadJid(chatJid) || chatJid}`;
@@ -2429,6 +2441,26 @@ function buildCalendarLookupInlineActionRows(
   ];
 }
 
+function buildAgiPendingActionRows(
+  actions: { pendingId: string; tool: string }[] | undefined,
+): SendMessageOptions['inlineActionRows'] {
+  if (!actions?.length) return undefined;
+  const rows: NonNullable<SendMessageOptions['inlineActionRows']> = [];
+  for (const action of actions.slice(0, 3)) {
+    rows.push([
+      {
+        label: `Approve ${action.tool}`,
+        actionId: `/agi-confirm ${action.pendingId}`,
+      },
+      {
+        label: 'Decline',
+        actionId: `/agi-decline ${action.pendingId}`,
+      },
+    ]);
+  }
+  return rows;
+}
+
 function buildGoogleCalendarCreateInlineActionRows(
   state: PendingGoogleCalendarCreateState,
 ): SendMessageOptions['inlineActionRows'] {
@@ -2966,6 +2998,73 @@ function getOrRecoverCursor(chatJid: string): string {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+}
+
+async function getAgiRuntimeOrNull(): Promise<AgiRuntime | null> {
+  if (!ANDREA_USE_AGI) return null;
+  if (agiRuntime) return agiRuntime;
+  if (
+    agiRuntimeInitFailed &&
+    Date.now() - agiRuntimeLastInitFailedAt < AGI_RUNTIME_BOOT_RETRY_MS
+  ) {
+    return null;
+  }
+  try {
+    agiRuntime = await bootstrapAgi({}, { skipSignalHooks: true });
+    agiRuntimeInitFailed = false;
+    agiRuntimeLastInitFailedAt = 0;
+    logger.info({ component: 'agi_runtime' }, 'AGI runtime bootstrapped');
+    return agiRuntime;
+  } catch (err) {
+    agiRuntimeInitFailed = true;
+    agiRuntimeLastInitFailedAt = Date.now();
+    logger.warn(
+      { component: 'agi_runtime', err },
+      'AGI runtime bootstrap failed; continuing on legacy runtime',
+    );
+    return null;
+  }
+}
+
+function prunePendingAgiConfirmations(now = Date.now()): void {
+  for (const [pendingId, pending] of pendingAgiConfirmationsById) {
+    if (now - pending.createdAt > AGI_PENDING_CONFIRMATION_TTL_MS) {
+      pendingAgiConfirmationsById.delete(pendingId);
+    }
+  }
+}
+
+async function handleAgiConfirmationCommand(params: {
+  chatJid: string;
+  msg: NewMessage;
+  approve: boolean;
+  pendingId: string;
+}): Promise<string> {
+  if (!ANDREA_USE_AGI) return 'AGI runtime is not enabled.';
+  prunePendingAgiConfirmations();
+  const pending = pendingAgiConfirmationsById.get(params.pendingId);
+  if (!pending || pending.chatJid !== params.chatJid) {
+    return 'That AGI confirmation is unknown or expired.';
+  }
+  if (
+    pending.sender &&
+    pending.sender !== (params.msg.sender || params.chatJid)
+  ) {
+    return 'That AGI confirmation belongs to a different sender.';
+  }
+  const agi = await getAgiRuntimeOrNull();
+  if (!agi) return 'AGI runtime is unavailable; no action was taken.';
+  pendingAgiConfirmationsById.delete(params.pendingId);
+  const out = await agi.confirmTool(params.pendingId, params.approve, {
+    chatJid: pending.scope,
+  });
+  if (!params.approve) return 'Declined. No action was taken.';
+  if (out.ok) return 'Approved and completed.';
+  if ('error' in out && out.error) return `Approval failed: ${out.error}`;
+  if ('decision' in out && out.decision) {
+    return `Approval blocked: ${out.decision.reason}`;
+  }
+  return 'Approval did not complete.';
 }
 
 function persistAgentThread(
@@ -3943,6 +4042,86 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
     return sent;
   };
+
+  async function tryHandleAgiRuntimeTurn(): Promise<boolean> {
+    if (!ANDREA_USE_AGI || !channel || !group || channel.name !== 'telegram') {
+      return false;
+    }
+    const agi = await getAgiRuntimeOrNull();
+    if (!agi) return false;
+    try {
+      const history = promptMessages
+        .slice(0, -1)
+        .map((m) => ({
+          role: m.is_bot_message ? ('assistant' as const) : ('user' as const),
+          content: m.content,
+        }))
+        .filter((m) => m.content.trim().length > 0);
+      const out = await agi.ask({
+        scope: group.folder,
+        text: lastContent,
+        source: `telegram:${chatJid}`,
+        initiatedByUser: true,
+        history,
+      });
+      if (out.failed) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { component: 'agi_runtime', chatJid, groupFolder: group.folder },
+          'AGI runtime returned failed result; rolling back cursor for legacy fallback',
+        );
+        return false;
+      }
+      const pendingRows = buildAgiPendingActionRows(out.pendingActions);
+      const pendingText =
+        out.pendingActions && out.pendingActions.length > 0
+          ? `\n\nPending approval:\n${out.pendingActions
+              .map((a) => `- ${a.tool}: ${a.reason}\n  Args: ${a.argsPreview}`)
+              .join('\n')}`
+          : '';
+      prunePendingAgiConfirmations();
+      for (const action of out.pendingActions ?? []) {
+        pendingAgiConfirmationsById.set(action.pendingId, {
+          chatJid,
+          scope: group.folder,
+          sender: latestUserMessage?.sender || chatJid,
+          createdAt: Date.now(),
+        });
+      }
+      await sendAssistantReplyWithFeedback({
+        text: out.reply + pendingText,
+        sendOptions: pendingRows?.length
+          ? { inlineActionRows: pendingRows }
+          : undefined,
+        routeKey: 'agi_runtime',
+        handlerKind: 'agi_runtime',
+        responseSource: 'agi_runtime',
+        traceReason: 'handled Telegram canary turn through AGI runtime',
+      });
+      lastDirectAssistantTextByChatJid[chatJid] = out.reply;
+      logger.info(
+        {
+          component: 'agi_runtime',
+          chatJid,
+          groupFolder: group.folder,
+          pendingActions: out.pendingActions?.length ?? 0,
+          strategy: out.trace.answer ? 'completed' : 'unknown',
+        },
+        'Handled Telegram canary turn through AGI runtime',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { component: 'agi_runtime', chatJid, groupFolder: group.folder, err },
+        'AGI runtime canary turn failed; rolling back cursor for legacy fallback',
+      );
+      return false;
+    }
+  }
+
   if (
     turnAgentHarness?.platformHoldReply &&
     !shouldDeferPlatformHoldForLocalCalendarLookup &&
@@ -8434,6 +8613,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
+  if (await tryHandleAgiRuntimeTurn()) {
+    return true;
+  }
+
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const configuredTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
@@ -9215,7 +9398,16 @@ async function startMessageLoop(): Promise<void> {
             },
           );
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          if (ANDREA_USE_AGI && channel.name === 'telegram') {
+            queue.enqueueMessageCheck(chatJid);
+            if (sessionState === 'idle_assistant') {
+              queue.closeStdin(chatJid);
+            }
+            logger.debug(
+              { chatJid, count: messagesToSend.length },
+              'Queued Telegram AGI canary turn instead of piping to active container',
+            );
+          } else if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -9924,6 +10116,11 @@ async function main(): Promise<void> {
       ).catch((err) =>
         logger.warn({ err }, 'BlueBubbles control API shutdown failed'),
       );
+    }
+    if (agiRuntime) {
+      await agiRuntime
+        .shutdown()
+        .catch((err) => logger.warn({ err }, 'AGI runtime shutdown failed'));
     }
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -15763,6 +15960,33 @@ async function main(): Promise<void> {
             { chatJid, sender: msg.sender },
             'sender-allowlist: dropping message before command handling',
           );
+        }
+        return;
+      }
+
+      const agiConfirmMatch = rawTrimmed.match(
+        /^\/agi-(confirm|decline)\s+(\S+)/i,
+      );
+      if (agiConfirmMatch) {
+        const channel = findChannel(channels, chatJid);
+        if (channel) {
+          handleAgiConfirmationCommand({
+            chatJid,
+            msg,
+            approve: agiConfirmMatch[1].toLowerCase() === 'confirm',
+            pendingId: agiConfirmMatch[2],
+          })
+            .then((reply) => channel.sendMessage(chatJid, reply))
+            .catch((err) => {
+              logger.warn(
+                { component: 'agi_runtime', chatJid, err },
+                'AGI confirmation command failed',
+              );
+              return channel.sendMessage(
+                chatJid,
+                'AGI confirmation failed before any action was taken.',
+              );
+            });
         }
         return;
       }

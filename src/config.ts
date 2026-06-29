@@ -11,6 +11,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_HAS_OWN_NUMBER',
   'AGENT_RUNTIME_DEFAULT',
   'AGENT_RUNTIME_FALLBACK',
+  'ANDREA_USE_AGI',
   'ANDREA_OPENAI_BACKEND_ENABLED',
   'ANDREA_OPENAI_BACKEND_URL',
   'ANDREA_OPENAI_BACKEND_TIMEOUT_MS',
@@ -101,6 +102,13 @@ export const AGENT_RUNTIME_FALLBACK =
   normalizeConfiguredAgentRuntime(
     process.env.AGENT_RUNTIME_FALLBACK || envConfig.AGENT_RUNTIME_FALLBACK,
   ) || 'openai_cloud';
+export const ANDREA_USE_AGI = ['1', 'true', 'yes'].includes(
+  (
+    process.env.ANDREA_USE_AGI ||
+    envConfig.ANDREA_USE_AGI ||
+    'false'
+  ).toLowerCase(),
+);
 export const ANDREA_OPENAI_BACKEND_ENABLED =
   (process.env.ANDREA_OPENAI_BACKEND_ENABLED ||
     envConfig.ANDREA_OPENAI_BACKEND_ENABLED ||
