@@ -7,6 +7,12 @@ import { HashEmbedder } from "../src/models/embedding-client.js";
 import type { ProviderAdapter } from "../src/models/router.js";
 import type { Integration, RegisteredTool } from "../src/integrations/types.js";
 import type { CognitiveResult } from "../src/agi-core/index.js";
+import {
+  _closeDatabase,
+  _initTestDatabase,
+  isDatabaseInitialized,
+  listWorldFacts,
+} from "../src/db.js";
 
 let dir: string;
 beforeEach(async () => {
@@ -14,7 +20,8 @@ beforeEach(async () => {
   AgiRuntime.__resetSingletonForTests();
 });
 afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
+  if (isDatabaseInitialized()) _closeDatabase();
+  await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   AgiRuntime.__resetSingletonForTests();
 });
 
@@ -121,6 +128,34 @@ describe("AgiRuntime.ask resilience", () => {
     expect(out.reply).toMatch(/model-meltdown/);
     expect(out.trace).toBeDefined();
     expect(out.trace.nodes).toEqual([]);
+  });
+
+  it("returns canonical runtime metadata and truth calibration", async () => {
+    _initTestDatabase();
+    const rt = await AgiRuntime.create(baseOpts());
+    vi.spyOn(rt.cognition, "think").mockResolvedValue({
+      answer: "This is a calibrated test answer.",
+      strategy: "direct",
+      trace: {
+        goal: "truth check",
+        startedAt: Date.now(),
+        finishedAt: Date.now(),
+        nodes: [],
+        acceptedPath: [],
+        answer: "This is a calibrated test answer.",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 1,
+        costUsd: 0,
+      },
+    });
+    const out = await rt.ask({
+      scope: "test",
+      text: "truth check",
+      source: "telegram:test-chat",
+    });
+    expect(out.runId).toMatch(/^runtime:run:/);
+    expect(out.truth?.auditId).toMatch(/^truth:audit:/);
+    expect(out.liveProofTags).toContain("telegram_canary");
   });
 });
 
@@ -286,6 +321,34 @@ describe("AgiRuntime.invokeTool / confirmTool flow", () => {
     expect(second.ok).toBe(false);
     expect("decision" in second && second.decision?.kind).toBe("deny");
     expect("decision" in second && second.decision?.reason).toMatch(/Budget exceeded/i);
+  });
+
+  it("provides built-in memory tools backed by the belief ledger", async () => {
+    _initTestDatabase();
+    const rt = await AgiRuntime.create(baseOpts());
+    const saved = await rt.invokeTool({
+      name: "memory.save_fact",
+      args: {
+        fact: "Jeff prefers concise launch-readiness reports.",
+        scope: "test",
+        sensitivity: "personal",
+      },
+      initiatedByUser: true,
+    });
+    expect(saved.ok).toBe(true);
+    const facts = listWorldFacts({ groupFolder: "test", limit: 10 });
+    expect(facts.some((fact) => fact.summary.includes("concise"))).toBe(true);
+
+    const factId = facts[0].factId;
+    const explained = await rt.invokeTool({
+      name: "memory.explain_source",
+      args: { factId, scope: "test" },
+      initiatedByUser: true,
+    });
+    expect(explained.ok).toBe(true);
+    expect(JSON.stringify("output" in explained ? explained.output : "")).toContain(
+      factId,
+    );
   });
 });
 

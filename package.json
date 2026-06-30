@@ -231,6 +231,13 @@
     "agi:scorecard:live": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-scorecard.ts --live",
     "agi:readiness": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-readiness.ts",
     "agi:demo": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-demo.ts",
+    "agi:run": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-run.ts",
+    "agi:bench:external": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-bench.ts --suite=external",
+    "agi:bench:gaia": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-bench.ts --suite=gaia",
+    "agi:bench:bfcl": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-bench.ts --suite=bfcl",
+    "agi:bench:swe-lite": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-bench.ts --suite=swe-lite",
+    "agi:bench:tau": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-bench.ts --suite=tau",
+    "agi:proof:telegram": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-proof-telegram.ts",
     "agi:backup": "bash scripts/agi-backup.sh",
     "agi:restore:check": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-memory-restore-check.ts"
   },

@@ -16,7 +16,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { runCouncil } from './council.js';
-import { reactLoop } from './planner.js';
+import { planAndExecute, reactLoop } from './planner.js';
 import { refine } from './self-critique.js';
 import { searchTreeOfThoughts } from './tree-of-thoughts.js';
 import {
@@ -28,7 +28,7 @@ import {
   type ToolResult,
 } from './types.js';
 
-export type Strategy = 'direct' | 'react' | 'tot' | 'council';
+export type Strategy = 'direct' | 'react' | 'plan_execute' | 'tot' | 'council';
 
 /**
  * Shared budget tracker threaded through every strategy. Mutating a single
@@ -153,6 +153,9 @@ export class CognitiveCore {
       case 'react':
         answer = await this.react(ctx, trace, budget);
         break;
+      case 'plan_execute':
+        answer = await this.planExecute(ctx, trace, budget);
+        break;
       case 'tot':
         answer = await this.tot(ctx, cfg, trace, budget);
         break;
@@ -178,6 +181,7 @@ export class CognitiveCore {
     trace: CognitionTrace,
     budget: CognitionBudget,
   ): Promise<Strategy> {
+    if (shouldPlanExecute(ctx)) return 'plan_execute';
     let out;
     try {
       out = await this.model.complete({
@@ -291,6 +295,119 @@ export class CognitiveCore {
       parentId = id;
     }
     return result.answer || bestSoFar || '(no answer)';
+  }
+
+  // -- Strategy: durable plan-and-execute ----------------------------------
+
+  private async planExecute(
+    ctx: CognitiveContext,
+    trace: CognitionTrace,
+    budget: CognitionBudget,
+  ): Promise<string> {
+    if (!ctx.tools || ctx.tools.length === 0 || !ctx.toolRunner) {
+      return this.tot(ctx, DEFAULT_COGNITION_CONFIG, trace, budget);
+    }
+
+    const result = await planAndExecute({
+      goal: ctx.goal,
+      tools: ctx.tools,
+      plan: async ({ goal, tools, observations }) => {
+        if (budgetExceeded(budget)) return { steps: [], tokens: 0 };
+        const out = await this.model.complete({
+          model: this.model.primary,
+          system:
+            (ctx.system ?? '') +
+            '\nReturn JSON only: {"steps":[{"description":"...","tool":"optional.tool","args":{},"requires":[],"produces":[]}]}.\n' +
+            'Only include a tool when concrete arguments are known. Prefer read-only tools unless the user clearly asked for an action.\n' +
+            'Available tools:\n' +
+            tools
+              .map((tool) => `- ${tool.name}: ${tool.description}`)
+              .join('\n'),
+          messages: [
+            ...(ctx.history ?? []),
+            {
+              role: 'user',
+              content:
+                goal +
+                (observations?.length
+                  ? `\n\nPrior observations:\n${observations.join('\n')}`
+                  : ''),
+            },
+          ],
+          temperature: 0,
+          maxTokens: 1200,
+        });
+        accumulate(trace, out);
+        chargeBudget(budget, out);
+        return {
+          steps: parsePlanSteps(out.text, tools),
+          tokens: out.outputTokens,
+        };
+      },
+      run: ctx.toolRunner,
+    });
+
+    for (const [index, step] of result.plan.steps.entries()) {
+      const id = `${ctx.traceId}:plan:${index}`;
+      trace.nodes.push({
+        id,
+        parentId: index > 0 ? `${ctx.traceId}:plan:${index - 1}` : undefined,
+        thought: `${step.status}: ${step.description}`,
+        plan: result.plan.steps.map((s) => s.description),
+        depth: index + 1,
+        createdAt: Date.now(),
+        toolCall:
+          step.tool && step.args
+            ? {
+                tool: step.tool,
+                args: step.args,
+                callId: step.result?.callId ?? id,
+              }
+            : undefined,
+        toolResult: step.result,
+        score: step.status === 'done' ? 1 : step.status === 'failed' ? 0 : 0.5,
+      });
+      trace.acceptedPath.push(id);
+    }
+
+    if (budgetExceeded(budget)) {
+      return result.ok
+        ? 'I completed the available plan steps before the budget ran out.'
+        : 'I started a plan but could not complete it within budget.';
+    }
+
+    const summary = await this.model.complete({
+      model: this.model.primary,
+      system: ctx.system,
+      messages: [
+        { role: 'user', content: ctx.goal },
+        {
+          role: 'assistant',
+          content:
+            'Plan execution summary:\n' +
+            result.plan.steps
+              .map((step, i) => {
+                const observed = step.result
+                  ? JSON.stringify(
+                      step.result.output ?? step.result.error ?? '',
+                    )
+                  : '';
+                return `${i + 1}. ${step.status}: ${step.description}${observed ? ` -> ${observed}` : ''}`;
+              })
+              .join('\n'),
+        },
+        {
+          role: 'user',
+          content:
+            'State the final answer. Mention any failed or approval-staged step plainly.',
+        },
+      ],
+      temperature: 0,
+      maxTokens: 1000,
+    });
+    accumulate(trace, summary);
+    chargeBudget(budget, summary);
+    return summary.text;
   }
 
   // -- Strategy: tree-of-thoughts ------------------------------------------
@@ -569,6 +686,70 @@ function reactPrompt(tools: ToolDescriptor[]): string {
     'Tools:',
     ...tools.map((t) => `- ${t.name}: ${t.description}`),
   ].join('\n');
+}
+
+function shouldPlanExecute(ctx: CognitiveContext): boolean {
+  const goal = ctx.goal.toLowerCase();
+  if (!ctx.tools?.length || !ctx.toolRunner) return false;
+  if (
+    /\b(first|then|after that|before that|multi[- ]?step|step by step|plan and execute|coordinate|prepare|get ready|set up|research and|find and|check and|compare and)\b/.test(
+      goal,
+    )
+  ) {
+    return true;
+  }
+  const actionLike =
+    /\b(send|write|schedule|create|update|save|remember|lookup|read|search|fetch|summarize)\b/.test(
+      goal,
+    );
+  const conjunctions = (goal.match(/\b(and|then)\b/g) ?? []).length;
+  return actionLike && conjunctions >= 2;
+}
+
+function parsePlanSteps(
+  text: string,
+  tools: ToolDescriptor[],
+): {
+  description: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  requires?: string[];
+  produces?: string[];
+}[] {
+  const available = new Set(tools.map((tool) => tool.name));
+  try {
+    const parsed = JSON.parse(extractJson(text)) as { steps?: unknown };
+    const rawSteps = Array.isArray(parsed.steps) ? parsed.steps : [];
+    return rawSteps
+      .map((raw) => {
+        const step = raw as Record<string, unknown>;
+        const tool = typeof step.tool === 'string' ? step.tool : undefined;
+        const args =
+          step.args &&
+          typeof step.args === 'object' &&
+          !Array.isArray(step.args)
+            ? (step.args as Record<string, unknown>)
+            : undefined;
+        return {
+          description:
+            typeof step.description === 'string'
+              ? step.description.slice(0, 500)
+              : 'Execute planned step',
+          tool: tool && available.has(tool) ? tool : undefined,
+          args,
+          requires: Array.isArray(step.requires)
+            ? step.requires.map(String).slice(0, 8)
+            : undefined,
+          produces: Array.isArray(step.produces)
+            ? step.produces.map(String).slice(0, 8)
+            : undefined,
+        };
+      })
+      .filter((step) => step.description.trim().length > 0)
+      .slice(0, 12);
+  } catch {
+    return [{ description: text.slice(0, 500) || 'Plan the requested task' }];
+  }
 }
 
 export function tryParseReact(s: string): {

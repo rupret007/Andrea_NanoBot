@@ -145,6 +145,61 @@ describe("CognitiveCore.classify fallbacks", () => {
     expect(result.trace.nodes[0].toolResult?.output).toEqual({ hits: ["alpha"] });
   });
 
+  it("uses plan_execute for multi-step tool tasks and records executed steps", async () => {
+    const tool: ToolDescriptor = {
+      name: "memory.explain_source",
+      description: "Explain a memory source",
+      schema: { type: "object", properties: { query: { type: "string" } } },
+      effect: "read",
+    };
+    const runner = vi.fn(async (call: ToolInvocation): Promise<ToolResult> => ({
+      callId: call.callId,
+      ok: true,
+      output: { source: "belief-ledger" },
+    }));
+    const client = makeStub(({ model, messages, system }) => {
+      if (model === "small") {
+        const last = messages[messages.length - 1]?.content ?? "";
+        if (last.includes("Draft:")) {
+          return JSON.stringify({ acceptable: true, severity: 0, issues: [] });
+        }
+        return "direct";
+      }
+      if (system?.includes("Return JSON only")) {
+        return JSON.stringify({
+          steps: [
+            {
+              description: "Explain the saved source",
+              tool: "memory.explain_source",
+              args: { query: "launch reports" },
+            },
+          ],
+        });
+      }
+      if (messages.some((m) => m.content.includes("Plan execution summary"))) {
+        return "The source is the belief ledger.";
+      }
+      return "fallback";
+    });
+    const core = new CognitiveCore(client);
+
+    const result = await core.think({
+      traceId: "trace-plan",
+      goal: "First check the saved source, then summarize it",
+      tools: [tool],
+      toolRunner: runner,
+    });
+
+    expect(result.strategy).toBe("plan_execute");
+    expect(result.answer).toBe("The source is the belief ledger.");
+    expect(runner).toHaveBeenCalledWith({
+      tool: "memory.explain_source",
+      args: { query: "launch reports" },
+      callId: expect.any(String),
+    });
+    expect(result.trace.nodes[0].toolCall?.tool).toBe("memory.explain_source");
+  });
+
   it("council with fewer than 2 panelists falls through to ToT", async () => {
     // Panel of 1 forces the fallthrough to ToT.
     const client = makeStub(({ model, messages }) => {

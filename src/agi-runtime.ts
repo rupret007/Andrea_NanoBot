@@ -39,6 +39,32 @@ import {
 } from './safety/index.js';
 import { Reflector } from './reflection/index.js';
 import { SkillsSubsystem } from './skills/index.js';
+import {
+  beginAgentRuntimeSpineRun,
+  finalizeAgentRuntimeSpineOutcome,
+  recordAgentRuntimeTruthAudit,
+  type AgentRuntimeSpineResult,
+} from './agent-runtime-spine.js';
+import {
+  isDatabaseInitialized,
+  listWorldFactEvidenceLinks,
+  listWorldFacts,
+  upsertWorldFact,
+  upsertWorldFactEvidenceLink,
+} from './db.js';
+import {
+  runtimeHashId,
+  runtimePrivacyJson,
+  runtimeSafeJson,
+} from './agent-runtime-glue.js';
+import { buildLogicKernelReport } from './logic-kernel.js';
+import { runTruthEngine } from './truth-engine.js';
+import type {
+  TruthVerdict,
+  WorldFactRecord,
+  WorldFactSensitivity,
+  WorldFactType,
+} from './types.js';
 
 /**
  * Module-level guard that prevents accidental construction of two AGI
@@ -127,11 +153,31 @@ export interface AskCitation {
   upstreamUrl?: string;
 }
 
+export interface AskTruthView {
+  auditId: string;
+  status: TruthVerdict['calibration']['status'];
+  supportGrade: TruthVerdict['calibration']['supportGrade'];
+  confidence: number;
+  flags: string[];
+  summary: string;
+}
+
+export interface AskMemoryWriteView {
+  id: string;
+  kind: string;
+  summary: string;
+}
+
 export interface AskResult {
   reply: string;
   trace: CognitiveResult['trace'];
   pendingActions?: PendingActionView[];
   citations?: AskCitation[];
+  runId?: string;
+  truth?: AskTruthView;
+  memoryWrites?: AskMemoryWriteView[];
+  resumeToken?: string;
+  liveProofTags?: string[];
   failed?: boolean;
 }
 
@@ -305,6 +351,15 @@ export class AgiRuntime {
         });
       }
     }
+    try {
+      await rt.registry.register(rt.createMemoryIntegration());
+    } catch (err) {
+      await rt.safeAudit({
+        scope: 'memory',
+        kind: 'integration.init_failed',
+        payload: { error: err instanceof Error ? err.message : String(err) },
+      });
+    }
     for (const integration of opts.integrations) {
       try {
         await rt.registry.register(integration);
@@ -351,6 +406,9 @@ export class AgiRuntime {
     history?: { role: 'user' | 'assistant'; content: string }[];
   }): Promise<AskResult> {
     const { scope, text, source } = params;
+    const generatedAt = new Date().toISOString();
+    const channel = channelFromSource(source);
+    const liveProofTags = liveProofTagsFor({ source, scope });
 
     // Prompt-injection scan on user text.
     const scan = scanInjection(text);
@@ -406,6 +464,15 @@ export class AgiRuntime {
     // in the same scope+ms. Append a UUID suffix for global uniqueness.
     const traceId = `${scope}-${Date.now()}-${randomUUID()}`;
     const pendingActions: PendingActionView[] = [];
+    const memoryWrites: AskMemoryWriteView[] = [];
+    const runtime = await this.safeBeginRuntimeSpine({
+      traceId,
+      scope,
+      text,
+      source,
+      channel,
+      generatedAt,
+    });
     const ctx: CognitiveContext = {
       traceId,
       goal: prompt,
@@ -446,6 +513,7 @@ export class AgiRuntime {
             error: `Confirmation required (${pendingId}): ${reason}`,
           };
         }
+        collectMemoryWrites(out, memoryWrites);
         if ('decision' in out && out.decision?.kind === 'deny') {
           return { callId: call.callId, ok: false, error: out.decision.reason };
         }
@@ -483,9 +551,33 @@ export class AgiRuntime {
         reply: `Andrea hit an internal error: ${short.slice(0, 200)}`,
         trace: errorTrace,
         pendingActions: pendingActions.length ? pendingActions : undefined,
+        runId: runtime?.run.runtimeRunId,
+        resumeToken: activeResumeToken(runtime),
+        liveProofTags,
         failed: true,
       };
     }
+
+    const truth = await this.safeCalibrateTruth({
+      traceId,
+      text,
+      answer: result.answer,
+      scope,
+      channel,
+      runtime,
+      generatedAt,
+    });
+    const reply = truth?.rewrittenText || result.answer;
+    if (reply !== result.answer) {
+      result.answer = reply;
+      result.trace.answer = reply;
+    }
+    await this.safeFinalizeRuntimeSpine({
+      runtime,
+      generatedAt,
+      strategy: result.strategy,
+      truth,
+    });
 
     // Best-effort persistence below this line — the user already has their
     // reply, so a failed write should NEVER be observable as a rejected
@@ -501,7 +593,7 @@ export class AgiRuntime {
         id: ctx.traceId + '.reply',
         scope,
         actor: 'assistant',
-        content: result.answer,
+        content: reply,
       });
     } catch (err) {
       await this.safeAudit({
@@ -543,9 +635,452 @@ export class AgiRuntime {
     });
 
     return {
-      reply: result.answer,
+      reply,
       trace: result.trace,
       pendingActions: pendingActions.length ? pendingActions : undefined,
+      runId: runtime?.run.runtimeRunId,
+      truth: truth ? truthView(truth) : undefined,
+      memoryWrites: memoryWrites.length ? memoryWrites : undefined,
+      resumeToken: activeResumeToken(runtime),
+      liveProofTags,
+    };
+  }
+
+  private async safeBeginRuntimeSpine(params: {
+    traceId: string;
+    scope: string;
+    text: string;
+    source?: string;
+    channel: string;
+    generatedAt: string;
+  }): Promise<AgentRuntimeSpineResult | null> {
+    try {
+      return beginAgentRuntimeSpineRun({
+        turnId: params.traceId,
+        channel: params.channel,
+        groupFolder: params.scope,
+        goal: params.text,
+        generatedAt: params.generatedAt,
+        mode: 'assistive',
+        persist: isDatabaseInitialized(),
+      });
+    } catch (err) {
+      await this.safeAudit({
+        scope: params.scope,
+        kind: 'runtime_spine.begin.failed',
+        payload: { error: err instanceof Error ? err.message : String(err) },
+      });
+      return null;
+    }
+  }
+
+  private async safeCalibrateTruth(params: {
+    traceId: string;
+    text: string;
+    answer: string;
+    scope: string;
+    channel: string;
+    runtime: AgentRuntimeSpineResult | null;
+    generatedAt: string;
+  }): Promise<TruthVerdict | undefined> {
+    try {
+      const logicReport = buildLogicKernelReport({
+        subject: params.text,
+        episodeId: params.runtime?.run.agentOSEpisodeId,
+        generatedAt: params.generatedAt,
+      });
+      const truth = runTruthEngine({
+        text: params.answer,
+        turnId: params.traceId,
+        channel: params.channel,
+        taskFamily: params.runtime?.run.taskFamily,
+        subject: params.text,
+        logicReport,
+        generatedAt: params.generatedAt,
+        persist: isDatabaseInitialized(),
+      });
+      recordAgentRuntimeTruthAudit({
+        runtime: params.runtime,
+        truthVerdict: truth,
+        generatedAt: params.generatedAt,
+        textShape: `${params.answer.trim().split(/\s+/).filter(Boolean).length}_words`,
+      });
+      return truth;
+    } catch (err) {
+      await this.safeAudit({
+        scope: params.scope,
+        kind: 'truth.calibration.failed',
+        payload: { error: err instanceof Error ? err.message : String(err) },
+      });
+      return undefined;
+    }
+  }
+
+  private async safeFinalizeRuntimeSpine(params: {
+    runtime: AgentRuntimeSpineResult | null;
+    generatedAt: string;
+    strategy: CognitiveResult['strategy'];
+    truth?: TruthVerdict;
+  }): Promise<void> {
+    try {
+      finalizeAgentRuntimeSpineOutcome({
+        runtime: params.runtime,
+        generatedAt: params.generatedAt,
+        evaluationStatus:
+          params.truth?.calibration.status === 'block'
+            ? 'block'
+            : params.truth?.calibration.status === 'warn' ||
+                params.truth?.calibration.status === 'clarify'
+              ? 'warn'
+              : 'pass',
+        evidenceGap:
+          params.truth?.sourceCoverage.coverageGrade === 'none'
+            ? 'truth_source_coverage_none'
+            : null,
+        evaluatorFlags: params.truth?.calibration.flags ?? [],
+        routeUsed: params.strategy,
+        answerClass: params.truth?.calibration.supportGrade,
+        blockerClass:
+          params.truth?.calibration.status === 'block' ? 'truth_block' : null,
+      });
+    } catch (err) {
+      await this.safeAudit({
+        scope: 'runtime',
+        kind: 'runtime_spine.finalize.failed',
+        payload: { error: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+
+  private createMemoryIntegration(): Integration {
+    return {
+      id: 'memory',
+      displayName: 'Andrea Memory',
+      enabled: true,
+      init: async () => undefined,
+      register: async () => [
+        {
+          name: 'save_fact',
+          description:
+            'Save a durable user fact, preference, goal, responsibility, or useful memory with provenance.',
+          schema: {
+            type: 'object',
+            required: ['fact'],
+            properties: {
+              fact: { type: 'string' },
+              subject: { type: 'string' },
+              scope: { type: 'string' },
+              factType: { type: 'string' },
+              sensitivity: { type: 'string' },
+              confidence: { type: 'number' },
+            },
+          },
+          effect: 'write',
+          integrationId: 'memory',
+          handler: async (args) => this.handleMemorySaveFact(args),
+        },
+        {
+          name: 'correct_fact',
+          description:
+            'Record a correction that supersedes an old memory or belief without deleting audit history.',
+          schema: {
+            type: 'object',
+            required: ['correction'],
+            properties: {
+              correction: { type: 'string' },
+              factId: { type: 'string' },
+              oldFact: { type: 'string' },
+              scope: { type: 'string' },
+            },
+          },
+          effect: 'write',
+          integrationId: 'memory',
+          handler: async (args) => this.handleMemoryCorrectFact(args),
+        },
+        {
+          name: 'mark_stale',
+          description:
+            'Mark a saved belief stale when it may no longer be true.',
+          schema: {
+            type: 'object',
+            required: ['factId'],
+            properties: {
+              factId: { type: 'string' },
+              reason: { type: 'string' },
+            },
+          },
+          effect: 'write',
+          integrationId: 'memory',
+          handler: async (args) => this.handleMemoryStatus(args, 'stale'),
+        },
+        {
+          name: 'forget',
+          description:
+            'Forget a saved belief for user privacy. Requires confirmation because it is destructive.',
+          schema: {
+            type: 'object',
+            required: ['factId'],
+            properties: {
+              factId: { type: 'string' },
+              reason: { type: 'string' },
+            },
+          },
+          effect: 'destructive',
+          integrationId: 'memory',
+          handler: async (args) => this.handleMemoryStatus(args, 'forgotten'),
+        },
+        {
+          name: 'explain_source',
+          description:
+            'Explain where a memory or belief came from, including evidence and freshness.',
+          schema: {
+            type: 'object',
+            properties: {
+              factId: { type: 'string' },
+              query: { type: 'string' },
+              scope: { type: 'string' },
+            },
+          },
+          effect: 'read',
+          integrationId: 'memory',
+          handler: async (args) => this.handleMemoryExplainSource(args),
+        },
+      ],
+    };
+  }
+
+  private async handleMemorySaveFact(args: Record<string, unknown>) {
+    const fact = String(args.fact ?? '').trim();
+    if (!fact) throw new Error('fact is required');
+    const scope = safeMemoryScope(args.scope);
+    const now = new Date().toISOString();
+    const factId = runtimeHashId('world:fact:memory', `${scope}|${fact}`);
+    const sensitivity = normalizeSensitivity(args.sensitivity);
+    const confidence = normalizeConfidence(args.confidence, 0.72);
+    const factType = normalizeFactType(args.factType, fact);
+    await this.memory.remember({
+      kind: 'semantic',
+      content: fact,
+      scope,
+      importance: confidence,
+      observedAt: Date.now(),
+      lastAccessed: Date.now(),
+      source: 'memory.save_fact',
+      tags: ['belief-ledger', factType],
+    });
+    if (isDatabaseInitialized()) {
+      const groupFolder = worldFactGroupFolder(scope);
+      const record: WorldFactRecord = {
+        factId,
+        createdAt: now,
+        updatedAt: now,
+        groupFolder,
+        factType,
+        summary: fact,
+        confidence,
+        evidenceRefsJson: runtimeSafeJson(
+          [
+            'memory.save_fact',
+            `scope:${scope}`,
+            String(args.subject ?? ''),
+          ].filter(Boolean),
+          1200,
+        ),
+        lastSeenAt: now,
+        lastConfirmedAt: now,
+        sensitivity,
+        autoSurfacePolicy:
+          sensitivity === 'sensitive' ? 'ask_first' : 'when_relevant',
+        reviewAfterAt: reviewAfter(now, sensitivity),
+        expiresAt: null,
+        status:
+          sensitivity === 'sensitive' ? 'pending_confirmation' : 'confirmed',
+        sourceKind: 'agi_memory_tool',
+        nextAction:
+          sensitivity === 'sensitive'
+            ? 'Ask before surfacing this sensitive memory.'
+            : 'Use when relevant and cite memory provenance if asked.',
+        privacyJson: runtimePrivacyJson(),
+      };
+      upsertWorldFact(record);
+      upsertWorldFactEvidenceLink({
+        linkId: runtimeHashId('world:fact:evidence', `${factId}|${now}`),
+        factId,
+        createdAt: now,
+        evidenceSourceKind: 'memory_tool',
+        evidenceSourceId: 'memory.save_fact',
+        confidenceDelta: confidence,
+        summary: 'Saved through Andrea memory tool.',
+        privacyJson: runtimePrivacyJson(),
+      });
+    }
+    return {
+      saved: true,
+      memoryWriteIds: [factId],
+      memoryWrites: [{ id: factId, kind: 'fact', summary: fact }],
+    };
+  }
+
+  private async handleMemoryCorrectFact(args: Record<string, unknown>) {
+    const correction = String(args.correction ?? '').trim();
+    if (!correction) throw new Error('correction is required');
+    const scope = safeMemoryScope(args.scope);
+    const now = new Date().toISOString();
+    const oldFact = String(args.oldFact ?? '').trim();
+    const targetId = String(args.factId ?? '').trim();
+    const correctionId = runtimeHashId(
+      'world:fact:correction',
+      `${scope}|${targetId}|${oldFact}|${correction}`,
+    );
+    await this.memory.remember({
+      kind: 'procedural',
+      content: `Correction: ${correction}${oldFact ? ` (replaces: ${oldFact})` : ''}`,
+      scope,
+      importance: 0.9,
+      observedAt: Date.now(),
+      lastAccessed: Date.now(),
+      source: 'memory.correct_fact',
+      tags: ['belief-ledger', 'correction'],
+    });
+    if (isDatabaseInitialized()) {
+      if (targetId) {
+        const target = listWorldFacts({
+          groupFolder: worldFactGroupFolder(scope) ?? undefined,
+          limit: 100,
+        }).find((fact) => fact.factId === targetId);
+        if (target) {
+          upsertWorldFact({
+            ...target,
+            updatedAt: now,
+            status: 'stale',
+            confidence: Math.min(target.confidence, 0.35),
+            nextAction: `Superseded by correction ${correctionId}.`,
+          });
+        }
+      }
+      upsertWorldFact({
+        factId: correctionId,
+        createdAt: now,
+        updatedAt: now,
+        groupFolder: worldFactGroupFolder(scope),
+        factType: 'friction_pattern',
+        summary: correction,
+        confidence: 0.88,
+        evidenceRefsJson: runtimeSafeJson(
+          [targetId, oldFact, 'memory.correct_fact'].filter(Boolean),
+          1600,
+        ),
+        lastSeenAt: now,
+        lastConfirmedAt: now,
+        sensitivity: 'personal',
+        autoSurfacePolicy: 'when_relevant',
+        reviewAfterAt: reviewAfter(now, 'personal'),
+        expiresAt: null,
+        status: 'confirmed',
+        sourceKind: 'agi_memory_correction',
+        nextAction:
+          'Prefer this correction over older conflicting memories; mention uncertainty if conflict remains.',
+        privacyJson: runtimePrivacyJson(),
+      });
+    }
+    return {
+      corrected: true,
+      memoryWriteIds: [correctionId],
+      memoryWrites: [
+        { id: correctionId, kind: 'correction', summary: correction },
+      ],
+    };
+  }
+
+  private async handleMemoryStatus(
+    args: Record<string, unknown>,
+    status: 'stale' | 'forgotten',
+  ) {
+    const factId = String(args.factId ?? '').trim();
+    if (!factId) throw new Error('factId is required');
+    const now = new Date().toISOString();
+    let found: WorldFactRecord | undefined;
+    if (isDatabaseInitialized()) {
+      found = listWorldFacts({ limit: 500 }).find(
+        (fact) => fact.factId === factId,
+      );
+      if (found) {
+        upsertWorldFact({
+          ...found,
+          updatedAt: now,
+          status,
+          confidence:
+            status === 'forgotten' ? 0 : Math.min(found.confidence, 0.3),
+          nextAction:
+            status === 'forgotten'
+              ? `Do not surface. Forget requested: ${String(args.reason ?? '').slice(0, 160)}`
+              : `Verify before reuse. Stale reason: ${String(args.reason ?? '').slice(0, 160)}`,
+        });
+      }
+    }
+    return {
+      updated: Boolean(found) || !isDatabaseInitialized(),
+      status,
+      memoryWriteIds: [factId],
+      memoryWrites: [
+        {
+          id: factId,
+          kind: status,
+          summary: found?.summary ?? `Marked ${status}`,
+        },
+      ],
+    };
+  }
+
+  private async handleMemoryExplainSource(args: Record<string, unknown>) {
+    const factId = String(args.factId ?? '').trim();
+    const scope = safeMemoryScope(args.scope);
+    const query = String(args.query ?? '').trim();
+    const facts = isDatabaseInitialized()
+      ? listWorldFacts({
+          groupFolder: worldFactGroupFolder(scope) ?? undefined,
+          limit: 100,
+        })
+      : [];
+    const fact =
+      (factId
+        ? facts.find((candidate) => candidate.factId === factId)
+        : undefined) ||
+      (query
+        ? facts.find((candidate) =>
+            candidate.summary.toLowerCase().includes(query.toLowerCase()),
+          )
+        : undefined);
+    const vectorHits = query
+      ? await this.memory.recall({
+          text: query,
+          scopes: [scope, 'global'],
+          topK: 3,
+        })
+      : [];
+    return {
+      fact: fact
+        ? {
+            id: fact.factId,
+            summary: fact.summary,
+            status: fact.status,
+            confidence: fact.confidence,
+            freshness: fact.lastConfirmedAt ? 'confirmed' : 'observed',
+            sensitivity: fact.sensitivity,
+            sourceKind: fact.sourceKind,
+            evidenceRefs: safeJsonArray(fact.evidenceRefsJson),
+            evidenceLinks: isDatabaseInitialized()
+              ? listWorldFactEvidenceLinks({ factId: fact.factId, limit: 10 })
+              : [],
+          }
+        : null,
+      semanticRecall: vectorHits.map((hit) => ({
+        id: hit.entry.id,
+        kind: hit.entry.kind,
+        source: hit.entry.source,
+        score: hit.score,
+        summary: hit.entry.content.slice(0, 300),
+      })),
     };
   }
 
@@ -890,5 +1425,144 @@ async function fileExists(path: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+function channelFromSource(source: string | undefined): string {
+  const raw = (source || 'cli').split(':')[0]?.trim().toLowerCase() || 'cli';
+  return raw.replace(/[^a-z0-9_-]/g, '_').slice(0, 80) || 'cli';
+}
+
+function liveProofTagsFor(params: {
+  source?: string;
+  scope: string;
+}): string[] {
+  const channel = channelFromSource(params.source);
+  return Array.from(
+    new Set(
+      [
+        `channel:${channel}`,
+        channel === 'telegram' ? 'telegram_canary' : '',
+        params.scope ? 'scope_bound' : '',
+        'runtime_spine',
+        'truth_calibrated',
+      ].filter(Boolean),
+    ),
+  );
+}
+
+function truthView(truth: TruthVerdict): AskTruthView {
+  return {
+    auditId: truth.audit.auditId,
+    status: truth.calibration.status,
+    supportGrade: truth.calibration.supportGrade,
+    confidence: truth.calibration.confidence,
+    flags: truth.calibration.flags,
+    summary: truth.summary,
+  };
+}
+
+function activeResumeToken(
+  runtime: AgentRuntimeSpineResult | null,
+): string | undefined {
+  return runtime?.report.resumeTokens.find((token) => token.status === 'active')
+    ?.resumeTokenId;
+}
+
+function collectMemoryWrites(value: unknown, out: AskMemoryWriteView[]): void {
+  const output =
+    value && typeof value === 'object' && 'output' in value
+      ? (value as { output?: unknown }).output
+      : value;
+  if (!output || typeof output !== 'object') return;
+  const raw = (output as { memoryWrites?: unknown }).memoryWrites;
+  if (!Array.isArray(raw)) return;
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    const id = String(record.id ?? '').trim();
+    if (!id) continue;
+    out.push({
+      id,
+      kind: String(record.kind ?? 'memory'),
+      summary: String(record.summary ?? '').slice(0, 300),
+    });
+  }
+}
+
+function safeMemoryScope(value: unknown): string {
+  const raw = String(value ?? 'global').trim();
+  const normalized = raw.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120);
+  return normalized || 'global';
+}
+
+function worldFactGroupFolder(scope: string): string | null {
+  if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(scope) && scope !== 'global') {
+    return scope;
+  }
+  return null;
+}
+
+function normalizeSensitivity(value: unknown): WorldFactSensitivity {
+  const raw = String(value ?? '').toLowerCase();
+  if (raw === 'sensitive') return 'sensitive';
+  if (raw === 'personal') return 'personal';
+  return 'low';
+}
+
+function normalizeConfidence(value: unknown, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(1, n));
+}
+
+function normalizeFactType(value: unknown, fact: string): WorldFactType {
+  const raw = String(value ?? '').toLowerCase();
+  const allowed: WorldFactType[] = [
+    'person',
+    'household',
+    'responsibility',
+    'active_goal',
+    'active_concern',
+    'routine',
+    'communication_obligation',
+    'calendar_pressure',
+    'bill',
+    'errand',
+    'grocery',
+    'meal',
+    'preference',
+    'delegated_default',
+    'tool_health',
+    'friction_pattern',
+  ];
+  if (allowed.includes(raw as WorldFactType)) return raw as WorldFactType;
+  const lower = fact.toLowerCase();
+  if (/\b(like|prefer|favorite|hate|avoid)\b/.test(lower)) return 'preference';
+  if (/\b(goal|trying to|working on|project)\b/.test(lower)) {
+    return 'active_goal';
+  }
+  if (/\b(remind|responsible|owns|handle|needs to)\b/.test(lower)) {
+    return 'responsibility';
+  }
+  return 'active_concern';
+}
+
+function reviewAfter(
+  nowIso: string,
+  sensitivity: WorldFactSensitivity,
+): string {
+  const now = Date.parse(nowIso);
+  const days =
+    sensitivity === 'sensitive' ? 7 : sensitivity === 'personal' ? 30 : 90;
+  return new Date(now + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function safeJsonArray(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
   }
 }

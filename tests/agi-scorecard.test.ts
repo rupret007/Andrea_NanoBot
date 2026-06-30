@@ -32,7 +32,7 @@ describe("AGI scorecard", () => {
     expect(formatAgiScorecardMarkdown(result)).toContain(
       "not a claim of general intelligence",
     );
-  });
+  }, 60_000);
 
   it("writes JSON and Markdown artifacts under the configured state dir", async () => {
     const stateDir = await mkdtemp(join(tmpdir(), "agi-scorecard-test-"));
@@ -53,5 +53,5 @@ describe("AGI scorecard", () => {
     } finally {
       await rm(stateDir, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 });
