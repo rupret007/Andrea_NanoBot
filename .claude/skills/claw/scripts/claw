@@ -297,7 +297,15 @@ def run_container(
 
     t_err.join(timeout=5)
     t_out.join(timeout=5)
-    proc.wait()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        dbg("container stop did not complete, force killing container")
+        proc.kill()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            dbg("container remained alive after force kill")
     dbg(f"container done (rc={proc.returncode}), {len(stdout_lines)} stdout lines")
     stdout = "\n".join(stdout_lines)
 

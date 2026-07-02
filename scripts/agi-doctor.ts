@@ -19,6 +19,12 @@ export interface DoctorReport {
   checks: DoctorCheck[];
 }
 
+interface DoctorReportOutput {
+  ok: boolean;
+  stateDir: '<redacted>';
+  checks: DoctorCheck[];
+}
+
 const INTEGRATION_REQUIREMENTS: Record<string, readonly string[]> = {
   notion: ['NOTION_TOKEN'],
   linear: ['LINEAR_API_KEY'],
@@ -102,12 +108,19 @@ async function checkStateDir(stateDir: string): Promise<DoctorCheck> {
     const probe = join(stateDir, `.doctor-${process.pid}-${Date.now()}`);
     await writeFile(probe, 'ok\n', 'utf8');
     await rm(probe, { force: true });
-    return { name: 'state_dir', status: 'ok', detail: `${stateDir} writable` };
+    return {
+      name: 'state_dir',
+      status: 'ok',
+      detail: 'state directory writable',
+    };
   } catch (err) {
     return {
       name: 'state_dir',
       status: 'fail',
-      detail: `${stateDir} is not writable: ${err instanceof Error ? err.message : String(err)}`,
+      detail: `state directory is not writable: ${redactPathInDetail(
+        err instanceof Error ? err.message : String(err),
+        stateDir,
+      )}`,
     };
   }
 }
@@ -178,7 +191,7 @@ async function checkAuditChain(auditPath: string): Promise<DoctorCheck> {
     return {
       name: 'audit_chain',
       status: 'warn',
-      detail: `${auditPath} does not exist yet`,
+      detail: 'audit log does not exist yet',
     };
   }
   try {
@@ -212,13 +225,29 @@ function truthy(v: string | undefined): boolean {
   return ['1', 'true', 'yes'].includes((v ?? '').toLowerCase());
 }
 
+function redactPathInDetail(value: string, stateDir: string): string {
+  return value.split(stateDir).join('<state_dir>').split(homedir()).join('~');
+}
+
+function reportForOutput(report: DoctorReport): DoctorReportOutput {
+  return {
+    ok: report.ok,
+    stateDir: '<redacted>',
+    checks: report.checks.map((check) => ({
+      ...check,
+      detail: redactPathInDetail(check.detail, report.stateDir),
+    })),
+  };
+}
+
 function printReport(report: DoctorReport, json: boolean): void {
+  const output = reportForOutput(report);
   if (json) {
-    console.log(JSON.stringify(report, null, 2));
+    console.log(JSON.stringify(output, null, 2));
     return;
   }
-  console.log(`AGI doctor stateDir=${report.stateDir}`);
-  for (const check of report.checks) {
+  console.log(`AGI doctor stateDir=${output.stateDir}`);
+  for (const check of output.checks) {
     console.log(`${check.status}: ${check.name} - ${check.detail}`);
   }
 }

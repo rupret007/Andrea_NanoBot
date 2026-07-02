@@ -294,10 +294,52 @@ export async function safeFetchText(
 }
 
 function cleanHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
+  return stripElementBlocks(stripElementBlocks(html, 'script'), 'style')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function stripElementBlocks(html: string, tagName: 'script' | 'style'): string {
+  let output = html;
+  let lower = output.toLowerCase();
+  const startNeedle = `<${tagName}`;
+  const endNeedle = `</${tagName}`;
+  let searchFrom = 0;
+
+  while (searchFrom < lower.length) {
+    const start = lower.indexOf(startNeedle, searchFrom);
+    if (start < 0) break;
+
+    const startNameEnd = start + startNeedle.length;
+    const afterName = lower[startNameEnd] ?? '';
+    if (afterName && !/[\s>/]/.test(afterName)) {
+      searchFrom = startNameEnd;
+      continue;
+    }
+
+    const startTagEnd = lower.indexOf('>', startNameEnd);
+    if (startTagEnd < 0) {
+      output = output.slice(0, start);
+      break;
+    }
+
+    const endStart = lower.indexOf(endNeedle, startTagEnd + 1);
+    if (endStart < 0) {
+      output = output.slice(0, start);
+      break;
+    }
+
+    const endTagEnd = lower.indexOf('>', endStart + endNeedle.length);
+    if (endTagEnd < 0) {
+      output = output.slice(0, start);
+      break;
+    }
+
+    output = output.slice(0, start) + output.slice(endTagEnd + 1);
+    lower = output.toLowerCase();
+    searchFrom = start;
+  }
+
+  return output;
 }
