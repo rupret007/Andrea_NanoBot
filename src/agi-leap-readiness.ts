@@ -224,6 +224,44 @@ function scoreTextReview(
   );
 }
 
+function scoreDurableAutonomy(report: PersonalContextGraphReport): number {
+  const followthroughNodes = report.nodes.filter(
+    (node) => node.nodeKind === 'followthrough_candidate',
+  );
+  const hasVerifiedFollowthrough = followthroughNodes.some(
+    (node) =>
+      node.refs?.hasReminder === true || node.refs?.outcomeKind === 'approved',
+  );
+  const hasRecordedOutcome =
+    followthroughNodes.some(
+      (node) =>
+        typeof node.refs?.outcomeKind === 'string' &&
+        node.refs.outcomeKind !== 'proposed',
+    ) ||
+    report.rankedInsights.some((insight) =>
+      insight.riskFlags.some((flag) => /^followthrough_/.test(flag)),
+    );
+  const hasApprovalGate = report.rankedInsights.some((insight) =>
+    /approval|confirm|review before|do not|no automatic/i.test(
+      `${insight.nextAction} ${insight.reason} ${insight.riskFlags.join(' ')}`,
+    ),
+  );
+
+  return round3(
+    (report.coverage.activeProfile ? 0.16 : 0) +
+      report.readinessScore * 0.14 +
+      0.18 +
+      (hasVerifiedFollowthrough
+        ? 0.18
+        : report.coverage.followthroughCandidates > 0
+          ? 0.08
+          : 0) +
+      (hasRecordedOutcome ? 0.07 : 0) +
+      (report.coverage.reminders > 0 ? 0.07 : 0) +
+      (hasApprovalGate ? 0.06 : 0),
+  );
+}
+
 export function buildAgiLeapReadinessReport(params: {
   groupFolder: string;
   now?: Date;
@@ -247,7 +285,7 @@ export function buildAgiLeapReadinessReport(params: {
   const textReviewScore = scoreTextReview(contextGraphScore, contextGraph);
   const skillSystemScore = scoreSkills(installedSkillManifests);
   const councilHealthScore = 0.78;
-  const durableAutonomyScore = 0.72;
+  const durableAutonomyScore = scoreDurableAutonomy(contextGraph);
   const overallScore = round3(
     setupCompletenessScore * 0.2 +
       memoryQualityScore * 0.2 +

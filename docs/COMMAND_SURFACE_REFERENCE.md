@@ -177,7 +177,7 @@ These are real product surface, but they should not show up in public slash help
 | Family                     | Truth           | What it backs                                                                                                       |
 | -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `/cursor-ui *`             | `operator_only` | Work-cockpit buttons and tiles such as status, jobs, current work, runtime, wizard, follow-up, and terminal actions |
-| `/bundle-*`                | `bounded`       | Action bundle buttons such as run, skip, show, pick, and defer                                                      |
+| `/bundle-*`                | `bounded`       | Legacy follow-through review buttons such as run, skip, show, pick, and defer                                      |
 | `/runtime-*` card actions  | `operator_only` | Runtime card buttons inside the work cockpit                                                                        |
 | Review controls            | `bounded`       | `send`, `send later`, `remind later`, `save under thread`, `keep as draft`                                          |
 | Telegram feedback controls | `operator_only` | Main-control-chat `Not helpful`, `Start fix`, `Why`, and `Not now` feedback/remediation actions                     |

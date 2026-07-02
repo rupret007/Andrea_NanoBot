@@ -163,6 +163,10 @@ describe('useful daily command center', () => {
     expect(result.replyText).toContain('Follow-through to approve');
     expect(result.replyText).toContain('System truth');
     expect(result.replyText).toContain('review before drafting');
+    expect(result.replyText).toContain('Safe fallback');
+    expect(
+      result.replyText.split('\n').filter((line) => /^#\d+ /.test(line.trim())),
+    ).toHaveLength(1);
     expect(result.replyText).not.toContain('+14695550123');
     expect(result.replyText).not.toContain('bb:iMessage');
     expect(result.replyText).not.toContain('violet zebra');
@@ -198,6 +202,62 @@ describe('useful daily command center', () => {
     expect(result.replyText).toMatch(
       /Do first\nApproved follow-through: Keep this local reminder visible/,
     );
+  });
+
+  it('asks for confirmation when the safest visible item is inferred or group-scoped', () => {
+    const plan: OperatingProfilePlan = {
+      summary: 'Andrea should track text follow-through carefully.',
+      trackedAreas: ['texts'],
+      defaultGroups: [],
+      routines: [],
+      reminderSuggestions: [],
+      richerSurface: 'telegram',
+      desiredIntegrations: [],
+      learningPolicy: 'suggest_then_confirm',
+    };
+    upsertOperatingProfile({
+      profileId: 'profile-main',
+      groupFolder: 'main',
+      status: 'active',
+      version: 1,
+      basedOnProfileId: null,
+      intakeJson: JSON.stringify({ source: 'test' }),
+      planJson: JSON.stringify(plan),
+      sourceChannel: 'telegram',
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      approvedAt: now.toISOString(),
+      supersededAt: null,
+    });
+    upsertProfileSubject({
+      id: 'subject-main-riley',
+      groupFolder: 'main',
+      kind: 'person',
+      canonicalName: 'riley',
+      displayName: 'Riley',
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      disabledAt: null,
+    });
+    seedCommunicationThread({
+      linkedLifeThreadIds: [],
+      channelChatJid: 'bb:iMessage;chat;+14695550123;+14695550124',
+      inferenceState: 'assistant_inferred',
+      suggestedNextAction: 'create_reminder',
+    });
+
+    const result = buildUsefulDailyCommandCenter({
+      groupFolder: 'main',
+      now,
+    });
+
+    expect(result.replyText).toContain(
+      'confirm the exact thread or audience before tracking',
+    );
+    expect(result.replyText).toContain('Try `why this one` first');
+    expect(result.replyText).not.toContain('approve local tracking');
+    expect(result.replyText).not.toContain('+14695550123');
+    expect(result.replyText).not.toContain('bb:iMessage');
   });
 
   it('seeds follow-through approval and supports approving the safest one', async () => {

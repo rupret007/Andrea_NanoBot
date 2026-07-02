@@ -283,7 +283,7 @@ function buildSourceLabel(
   if (outcome.sourceType === 'action_bundle') {
     return (
       getActionBundleSnapshot(outcome.sourceKey)?.bundle.title ||
-      'Action bundle'
+      'Follow-through review'
     );
   }
   if (outcome.sourceType === 'message_action') {

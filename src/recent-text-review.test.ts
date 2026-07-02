@@ -629,6 +629,89 @@ describe('recent text review', () => {
     ).toBeNull();
   });
 
+  it('binds pronoun follow-ups to the first actionable recent text review item', () => {
+    const seedJson = JSON.stringify({
+      version: 1,
+      items: [
+        {
+          itemId: 'review-1',
+          rank: 1,
+          section: 'needs_reply',
+          chatLabel: 'Candace',
+          summaryText: 'Candace asked whether dinner still works tonight.',
+          whyText: 'asks for an answer; has timing pressure',
+          recommendedAction: 'Draft a reply.',
+          suggestedReply: 'I saw this and will check before I answer.',
+        },
+        {
+          itemId: 'review-2',
+          rank: 2,
+          section: 'worth_watching',
+          chatLabel: 'Alex',
+          summaryText: 'Alex mentioned a loose follow-up.',
+          whyText: 'worth keeping visible',
+          recommendedAction: 'Set a reminder if useful.',
+        },
+      ],
+    });
+
+    expect(
+      parseRecentTextReviewItemFollowup({ seedJson, userText: 'draft it' }),
+    ).toMatchObject({
+      kind: 'draft',
+      item: { rank: 1, chatLabel: 'Candace' },
+    });
+    expect(
+      parseRecentTextReviewItemFollowup({
+        seedJson,
+        userText: 'make that warmer',
+      }),
+    ).toMatchObject({
+      kind: 'draft',
+      style: 'warmer',
+      item: { rank: 1, chatLabel: 'Candace' },
+    });
+    expect(
+      parseRecentTextReviewItemFollowup({
+        seedJson,
+        userText: 'remind me about that tonight',
+      }),
+    ).toMatchObject({
+      kind: 'remind',
+      timingHint: 'tonight',
+      item: { rank: 1, chatLabel: 'Candace' },
+    });
+    expect(
+      parseRecentTextReviewItemFollowup({ seedJson, userText: 'save that' }),
+    ).toMatchObject({
+      kind: 'save',
+      item: { rank: 1, chatLabel: 'Candace' },
+    });
+    expect(
+      parseRecentTextReviewItemFollowup({ seedJson, userText: 'skip it' }),
+    ).toMatchObject({
+      kind: 'skip',
+      item: { rank: 1, chatLabel: 'Candace' },
+    });
+    expect(
+      parseRecentTextReviewItemFollowup({ seedJson, userText: 'mark handled' }),
+    ).toMatchObject({
+      kind: 'handled',
+      item: { rank: 1, chatLabel: 'Candace' },
+    });
+    expect(
+      formatRecentTextReviewItemWhyReply(
+        parseRecentTextReviewItemFollowup({
+          seedJson,
+          userText: 'why that',
+        })!.item,
+      ),
+    ).toContain('asks for an answer');
+    expect(
+      buildReviewDraftPrompt({ seedJson, userText: 'make it warmer' })?.text,
+    ).toContain('Starting suggestion');
+  });
+
   it('detects stale review seeds before selected-item actions', () => {
     const seedJson = JSON.stringify({
       version: 1,

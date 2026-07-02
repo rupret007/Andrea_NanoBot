@@ -585,6 +585,9 @@ function looksLikeConflictSummaryQuery(normalized: string): boolean {
 
 function looksLikeAgendaQuery(normalized: string): boolean {
   return (
+    /\bwhat(?:'s| is)\b[\s\S]{0,60}\bon my agenda\b/.test(normalized) ||
+    /\bwhat is on my agenda\b/.test(normalized) ||
+    /\bwhat(?:'s| is)\b[\s\S]{0,80}\bagenda\b/.test(normalized) ||
     /\bwhat(?:'s| is)\b[\s\S]{0,80}\b(calendar|schedule)\b/.test(normalized) ||
     /\bwhat does my\b[\s\S]{0,80}\blook like\b/.test(normalized) ||
     /\bwhat do i have\b/.test(normalized) ||
@@ -2076,6 +2079,16 @@ function formatStatusDetailList(statuses: CalendarProviderStatus[]): string {
     .join('\n');
 }
 
+function hasCalendarAuthRefreshFailure(
+  statuses: CalendarProviderStatus[],
+): boolean {
+  return statuses.some((status) =>
+    /\binvalid[_ -]?grant\b|\binvalid refresh token\b|\bfresh oauth\b|\breauthori[sz]e\b/i.test(
+      status.detail,
+    ),
+  );
+}
+
 interface CalendarReplyStatusContext {
   configuredStatuses: CalendarProviderStatus[];
   readyStatuses: CalendarProviderStatus[];
@@ -2518,6 +2531,15 @@ function buildUnavailableCalendarReply(
   }
 
   if (!configuredReady) {
+    if (hasCalendarAuthRefreshFailure(configuredStatuses)) {
+      return [
+        "I can't check your calendar right now because Google Calendar needs a fresh sign-in.",
+        '',
+        'Next: reauthorize Google Calendar, then try the agenda lookup again.',
+        '',
+        formatStatusDetailList(configuredStatuses),
+      ].join('\n');
+    }
     return [
       `I can't confirm your calendar right now because ${formatStatusLabelList(configuredStatuses)} ${configuredStatuses.length === 1 ? 'is' : 'are'} unavailable on this host.`,
       '',

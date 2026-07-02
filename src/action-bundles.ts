@@ -334,9 +334,9 @@ function deriveBundleTitle(
   if (sourceContext.personName) return `${sourceContext.personName} next steps`;
   switch (originKind) {
     case 'mission':
-      return 'Mission action bundle';
+      return 'Mission follow-through review';
     case 'communication':
-      return 'Follow-up bundle';
+      return 'Follow-up review';
     case 'chief_of_staff':
       return 'Chief-of-staff next steps';
     case 'daily_guidance':
@@ -346,7 +346,7 @@ function deriveBundleTitle(
     case 'handoff':
       return 'Handoff next steps';
     default:
-      return 'Action bundle';
+      return 'Follow-through review';
   }
 }
 
@@ -910,7 +910,7 @@ export function buildActionBundlePresentation(
     {},
   );
   const selectionMode = mode === 'selection';
-  const lines = ['*Action bundle*', `*${snapshot.bundle.title}*`];
+  const lines = ['*Follow-through review*', `*${snapshot.bundle.title}*`];
   if (sourceContext.whyLine) {
     lines.push(sourceContext.whyLine);
   }

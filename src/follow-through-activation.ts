@@ -77,6 +77,77 @@ export interface FollowThroughCommandResult {
   agentOSEpisodeId?: string;
 }
 
+export type FollowThroughActivationCandidateSelector =
+  | 'safest'
+  | 'first'
+  | number;
+
+export interface FollowThroughActivationItemSummary {
+  rank: number;
+  title: string;
+  whyItMatters: string;
+  source: string;
+  safeNextAction: string;
+  approvalReadiness: FollowThroughReviewItem['approvalReadiness'];
+  suggestedTiming: string;
+  riskFlags: string[];
+  decisionScore: number;
+}
+
+export interface FollowThroughActivationPreviewResult {
+  kind: 'followthrough_activation_preview';
+  mode: 'preview';
+  readOnly: true;
+  generatedAt: string;
+  groupFolder: string;
+  candidate: string;
+  itemCount: number;
+  readyCount: number;
+  selectedItem: FollowThroughActivationItemSummary | null;
+  approvalPhrase: string | null;
+  fallbackPhrases: string[];
+  blockedReason: string | null;
+  reviewSeedJson: string;
+  privacy: {
+    metadataOnly: true;
+    rawIdentifiersIncluded: false;
+    rawTranscriptsIncluded: false;
+    secretsRedacted: true;
+    liveActionsExecuted: false;
+  };
+}
+
+export interface FollowThroughActivationApplyResult {
+  kind: 'followthrough_activation_apply';
+  mode: 'apply';
+  generatedAt: string;
+  groupFolder: string;
+  candidate: string;
+  timing: string;
+  applied: boolean;
+  outcomeKind: FollowThroughOutcomeKind;
+  selectedItem: FollowThroughActivationItemSummary | null;
+  replyText: string;
+  taskId?: string;
+  outcomeId?: string;
+  agentOSEpisodeId?: string;
+  mutationSummary: {
+    localReminderMetadata: boolean;
+    outcomeRecord: boolean;
+    agentOSEpisode: boolean;
+    liveMessageSent: false;
+    calendarWritten: false;
+    credentialChanged: false;
+  };
+  privacy: {
+    metadataOnly: true;
+    rawIdentifiersIncluded: false;
+    rawTranscriptsIncluded: false;
+    secretsRedacted: true;
+    liveActionsExecuted: false;
+  };
+}
+
 interface FollowThroughReviewSeed {
   kind: 'followthrough_review';
   generatedAt: string;
@@ -102,6 +173,7 @@ interface ParsedFollowThroughCommand {
   rank?: number;
   timing?: string | null;
   selectSafest?: boolean;
+  selectCurrent?: boolean;
 }
 
 function normalizeText(value: string | null | undefined): string {
@@ -187,12 +259,17 @@ function safeItemFromNode(
   rankSeed: number,
 ): FollowThroughReviewItem {
   const section = sectionForNode(node);
+  const nodeRiskFlags =
+    typeof node.refs?.riskFlags === 'string'
+      ? node.refs.riskFlags.split(',').map(normalizeRiskFlag).filter(Boolean)
+      : [];
   const base = {
     nodeId: node.nodeId,
     label: node.label,
     summary: node.summary,
     source: node.refs?.source,
     status: 'proposed',
+    riskFlags: nodeRiskFlags,
   };
   return enrichDecisionFields({
     itemId: `followthrough:${hashStable(base)}`,
@@ -207,7 +284,9 @@ function safeItemFromNode(
     source: sourceLabelForSection(section),
     safeNextAction:
       'Approve with timing to create local reminder tracking, or dismiss it.',
-    riskFlags: ['proposed_only', 'approval_required'],
+    riskFlags: [
+      ...new Set(['proposed_only', 'approval_required', ...nodeRiskFlags]),
+    ].slice(0, 8),
     relatedNodeIds: [node.nodeId],
     priorityScore: 0.5,
     candidateNodeId: node.nodeId,
@@ -555,7 +634,7 @@ export function formatFollowThroughReview(
         : `why #${best.rank}`;
     lines.push(
       '',
-      `Best first approval: #${best.rank} ${best.title}`,
+      `Safest first approval: #${best.rank} ${best.title}`,
       `Why: ${best.decisionRationale.join(', ')}.`,
       `Suggested timing: ${best.suggestedTiming}.`,
       `Readiness: ${best.approvalReadiness.replace(/_/g, ' ')}. Try: \`${command}\`.`,
@@ -601,16 +680,43 @@ function parseCommand(text: string): ParsedFollowThroughCommand {
       : { kind: 'approve', selectSafest: true };
   }
   if (
+    /^(?:why|explain)\s+(?:it|this|this one|that|that one)$/i.test(normalized)
+  ) {
+    return { kind: 'why', selectCurrent: true };
+  }
+  if (
     /^(?:why|explain)\b/.test(normalized) ||
     /\bwhy\b.*(?:#|number|item)\s*\d+/i.test(normalized)
   ) {
     return { kind: 'why', rank };
   }
+  if (
+    /^(?:defer|snooze)\s+(?:it|this|this one|that|that one)$/i.test(normalized)
+  ) {
+    return { kind: 'defer', selectCurrent: true };
+  }
   if (/^(?:defer|snooze)\b/.test(normalized)) {
     return { kind: 'defer', rank };
   }
+  if (
+    /^(?:dismiss|skip|ignore)\s+(?:it|this|this one|that|that one)$/i.test(
+      normalized,
+    )
+  ) {
+    return { kind: 'dismiss', selectCurrent: true };
+  }
   if (/^(?:dismiss|skip|ignore)\b/.test(normalized)) {
     return { kind: 'dismiss', rank };
+  }
+  if (
+    /^mark\s+(?:it|this|this one|that|that one)\s+(?:as\s*)?(?:handled|done|resolved)\b/i.test(
+      normalized,
+    )
+  ) {
+    return { kind: 'handled', selectCurrent: true };
+  }
+  if (/^(?:mark\s*)?(?:handled|done|resolved)$/i.test(normalized)) {
+    return { kind: 'handled', selectCurrent: true };
   }
   if (
     /^(?:mark\s*)?(?:(?:#|number|item)\s*)?\d+\s*(?:as\s*)?(?:handled|done|resolved)\b/i.test(
@@ -650,7 +756,7 @@ function normalizeTimingForReminder(
 ): string | null {
   const value = normalizeText(timing).toLowerCase();
   if (!value) return null;
-  if (value === 'tonight') return 'today tonight';
+  if (value === 'tonight') return 'tonight';
   if (value === 'this evening') return 'today evening';
   if (value === 'this afternoon') return 'today afternoon';
   if (value === 'this morning') return 'today morning';
@@ -893,6 +999,7 @@ export async function handleFollowThroughActivationCommand(params: {
   text?: string | null;
   now?: Date;
   priorReviewJson?: string | null;
+  metadataOnly?: boolean;
 }): Promise<FollowThroughCommandResult> {
   const command = parseCommand(params.text || '');
   const review = reviewFromSeedOrFresh({
@@ -913,7 +1020,9 @@ export async function handleFollowThroughActivationCommand(params: {
 
   const item = command.selectSafest
     ? safestApprovalItem(review.items)
-    : itemByRank(review.items, command.rank);
+    : command.selectCurrent
+      ? bestFirstApproval(review.items)
+      : itemByRank(review.items, command.rank);
   if (!item) {
     return {
       handled: true,
@@ -1074,7 +1183,14 @@ export async function handleFollowThroughActivationCommand(params: {
         selectedItem: item,
       };
     }
-    createTask(planned.task);
+    const task = params.metadataOnly
+      ? {
+          ...planned.task,
+          status: 'paused' as const,
+          prompt: `Approval-gated follow-through metadata: ${planned.task.prompt}`,
+        }
+      : planned.task;
+    createTask(task);
     const episodeId = recordEpisode({
       groupFolder: params.groupFolder,
       channel: params.channel,
@@ -1085,23 +1201,33 @@ export async function handleFollowThroughActivationCommand(params: {
       groupFolder: params.groupFolder,
       item,
       status: 'deferred',
-      summary: `Approved local follow-through reminder for #${item.rank}.`,
-      nextFollowupText: planned.confirmation,
-      dueAt: planned.task.next_run,
+      summary: params.metadataOnly
+        ? `Staged approval-gated local follow-through metadata for #${item.rank}.`
+        : `Approved local follow-through reminder for #${item.rank}.`,
+      nextFollowupText: params.metadataOnly
+        ? `Paused local reminder metadata for #${item.rank}; explicit activation is required before delivery. ${planned.confirmation}`
+        : planned.confirmation,
+      dueAt: task.next_run,
       reviewHorizon: 'today',
       agentOSEpisodeId: episodeId,
-      reminderTaskId: planned.task.id,
+      reminderTaskId: task.id,
       now: params.now,
     });
     return {
       handled: true,
-      replyText: `${planned.confirmation}\n\nI recorded this as local follow-through tracking only. No message was sent and no calendar was changed.`,
+      replyText: params.metadataOnly
+        ? [
+            `I staged #${item.rank} as approval-gated local follow-through metadata.`,
+            `Timing target: ${planned.confirmation.replace(/^Okay\.\s*/i, '')}`,
+            'It is paused until explicitly activated. No message was sent and no calendar was changed.',
+          ].join('\n')
+        : `${planned.confirmation}\n\nI recorded this as local follow-through tracking only. No message was sent and no calendar was changed.`,
       review,
       reviewSeedJson: review.reviewSeedJson,
       outcomeKind: 'approved',
       selectedItem: item,
       outcome,
-      taskId: planned.task.id,
+      taskId: task.id,
       agentOSEpisodeId: episodeId,
     };
   }
@@ -1213,5 +1339,190 @@ export function buildFollowThroughOutcomeMetadata(params: {
     itemRank: params.item?.rank,
     taskId: params.taskId,
     agentOSEpisodeId: params.agentOSEpisodeId,
+  };
+}
+
+function candidateLabel(
+  candidate: FollowThroughActivationCandidateSelector,
+): string {
+  return typeof candidate === 'number' ? `#${candidate}` : candidate;
+}
+
+function summarizeActivationItem(
+  item: FollowThroughReviewItem | null,
+): FollowThroughActivationItemSummary | null {
+  if (!item) return null;
+  return {
+    rank: item.rank,
+    title: clip(item.title, 120),
+    whyItMatters: clip(item.whyItMatters, 160),
+    source: clip(item.source, 80),
+    safeNextAction: clip(item.safeNextAction, 160),
+    approvalReadiness: item.approvalReadiness,
+    suggestedTiming: item.suggestedTiming,
+    riskFlags: item.riskFlags,
+    decisionScore: Number(item.decisionScore.toFixed(3)),
+  };
+}
+
+function selectActivationItem(
+  items: FollowThroughReviewItem[],
+  candidate: FollowThroughActivationCandidateSelector,
+): FollowThroughReviewItem | null {
+  if (typeof candidate === 'number') return itemByRank(items, candidate);
+  if (candidate === 'first') return bestFirstApproval(items);
+  return safestApprovalItem(items) || bestFirstApproval(items);
+}
+
+function activationApprovalPhrase(
+  item: FollowThroughReviewItem | null,
+  candidate: FollowThroughActivationCandidateSelector,
+  timing?: string | null,
+): string | null {
+  if (!item) return null;
+  if (item.approvalReadiness !== 'ready') return `why #${item.rank}`;
+  const when = normalizeText(timing || item.suggestedTiming || 'tonight');
+  if (candidate === 'safest') return `approve the safest one ${when}`;
+  return `remind me about #${item.rank} ${when}`;
+}
+
+export function buildFollowThroughActivationPreview(params: {
+  groupFolder: string;
+  candidate?: FollowThroughActivationCandidateSelector;
+  timing?: string | null;
+  now?: Date;
+}): FollowThroughActivationPreviewResult {
+  const candidate = params.candidate ?? 'safest';
+  const review = buildFollowThroughReview({
+    groupFolder: params.groupFolder,
+    now: params.now,
+  });
+  const selected = selectActivationItem(review.items, candidate);
+  const selectedSummary = summarizeActivationItem(selected);
+  const blockedReason = selected
+    ? selected.approvalReadiness === 'confirm_first'
+      ? 'Confirm the exact audience or thread before local tracking.'
+      : selected.approvalReadiness === 'watch_only'
+        ? 'This item is better to watch than activate right now.'
+        : null
+    : 'No follow-through candidate is available.';
+
+  return {
+    kind: 'followthrough_activation_preview',
+    mode: 'preview',
+    readOnly: true,
+    generatedAt: review.generatedAt,
+    groupFolder: params.groupFolder,
+    candidate: candidateLabel(candidate),
+    itemCount: review.items.length,
+    readyCount: review.items.filter(
+      (item) => item.approvalReadiness === 'ready',
+    ).length,
+    selectedItem: selectedSummary,
+    approvalPhrase: activationApprovalPhrase(
+      selected,
+      candidate,
+      params.timing,
+    ),
+    fallbackPhrases: selected ? ['why this one', 'defer it'] : [],
+    blockedReason,
+    reviewSeedJson: review.reviewSeedJson,
+    privacy: {
+      metadataOnly: true,
+      rawIdentifiersIncluded: false,
+      rawTranscriptsIncluded: false,
+      secretsRedacted: true,
+      liveActionsExecuted: false,
+    },
+  };
+}
+
+export async function applyFollowThroughActivation(params: {
+  groupFolder: string;
+  candidate?: FollowThroughActivationCandidateSelector;
+  timing: string;
+  channel?: 'telegram' | 'bluebubbles' | 'alexa';
+  chatJid?: string | null;
+  now?: Date;
+  metadataOnly?: boolean;
+}): Promise<FollowThroughActivationApplyResult> {
+  const candidate = params.candidate ?? 'safest';
+  const preview = buildFollowThroughActivationPreview({
+    groupFolder: params.groupFolder,
+    candidate,
+    timing: params.timing,
+    now: params.now,
+  });
+  const selectedRank = preview.selectedItem?.rank;
+  if (!selectedRank) {
+    return {
+      kind: 'followthrough_activation_apply',
+      mode: 'apply',
+      generatedAt: preview.generatedAt,
+      groupFolder: params.groupFolder,
+      candidate: candidateLabel(candidate),
+      timing: params.timing,
+      applied: false,
+      outcomeKind: 'blocked_unbound',
+      selectedItem: null,
+      replyText:
+        'No follow-through candidate is available. Run the preview again after Andrea has current context.',
+      mutationSummary: {
+        localReminderMetadata: false,
+        outcomeRecord: false,
+        agentOSEpisode: false,
+        liveMessageSent: false,
+        calendarWritten: false,
+        credentialChanged: false,
+      },
+      privacy: {
+        metadataOnly: true,
+        rawIdentifiersIncluded: false,
+        rawTranscriptsIncluded: false,
+        secretsRedacted: true,
+        liveActionsExecuted: false,
+      },
+    };
+  }
+
+  const result = await handleFollowThroughActivationCommand({
+    groupFolder: params.groupFolder,
+    channel: params.channel || 'telegram',
+    chatJid: params.chatJid ?? `local:followthrough:${params.groupFolder}`,
+    text: `remind me about #${selectedRank} ${params.timing}`,
+    now: params.now,
+    priorReviewJson: preview.reviewSeedJson,
+    metadataOnly: params.metadataOnly ?? true,
+  });
+
+  return {
+    kind: 'followthrough_activation_apply',
+    mode: 'apply',
+    generatedAt: preview.generatedAt,
+    groupFolder: params.groupFolder,
+    candidate: candidateLabel(candidate),
+    timing: params.timing,
+    applied: result.outcomeKind === 'approved',
+    outcomeKind: result.outcomeKind,
+    selectedItem: summarizeActivationItem(result.selectedItem || null),
+    replyText: clip(result.replyText, 800),
+    taskId: result.taskId,
+    outcomeId: result.outcome?.outcomeId,
+    agentOSEpisodeId: result.agentOSEpisodeId,
+    mutationSummary: {
+      localReminderMetadata: Boolean(result.taskId),
+      outcomeRecord: Boolean(result.outcome),
+      agentOSEpisode: Boolean(result.agentOSEpisodeId),
+      liveMessageSent: false,
+      calendarWritten: false,
+      credentialChanged: false,
+    },
+    privacy: {
+      metadataOnly: true,
+      rawIdentifiersIncluded: false,
+      rawTranscriptsIncluded: false,
+      secretsRedacted: true,
+      liveActionsExecuted: false,
+    },
   };
 }

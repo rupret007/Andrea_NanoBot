@@ -1052,6 +1052,14 @@ function visibleGuidanceLine(
       '',
     )
     .trim();
+  if (
+    /\b(?:cannot|can't)\s+say\s+every\s+provider\s+participated\b/i.test(
+      cleaned,
+    ) ||
+    /\bprovider(?:s)?\s+participated\b/i.test(cleaned)
+  ) {
+    return '';
+  }
   const words = cleaned
     .replace(/\s+/g, ' ')
     .trim()
@@ -1311,12 +1319,20 @@ export function evaluateTurnReply(
     textShape: describeTextShape(rewritten),
   });
   if (truthVerdict.calibration.status !== 'pass') {
+    const suppressRoutineResearchCaveat =
+      input.context?.taskFamily === 'research' &&
+      input.responseSource === 'research_local' &&
+      !input.blockerClass &&
+      truthVerdict.rewriteDirectives[0]?.directive === 'caveat';
     flags.push(
       ...truthVerdict.calibration.flags
         .filter((flag) => flag !== 'truth_supported')
         .map((flag) => `truth:${flag}`),
     );
-    if (truthVerdict.rewrittenText !== rewritten) {
+    if (
+      truthVerdict.rewrittenText !== rewritten &&
+      !suppressRoutineResearchCaveat
+    ) {
       rewritten = truthVerdict.rewrittenText;
       safeRewriteApplied = true;
       flags.push(

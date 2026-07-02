@@ -823,7 +823,7 @@ function modeSpec(mode: ReasoningMode): ReasoningModeSpec {
         'goal planner',
         'missions',
         'reminders',
-        'action bundles',
+        'follow-through reviews',
       ]),
       approvalRequirement: 'read_only',
       outputShape: 'short_plan',

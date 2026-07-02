@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 
 import {
   getCommunicationThread,
@@ -1635,6 +1635,17 @@ function findReviewSeedItemByRank(
   return seed.items.find((candidate) => candidate.rank === rank) || null;
 }
 
+function findCurrentReviewSeedItem(
+  seed: ParsedRecentTextReviewSeed,
+): ParsedRecentTextReviewSeed['items'][number] | null {
+  return (
+    seed.items.find((candidate) => candidate.section === 'needs_reply') ||
+    seed.items.find((candidate) => candidate.section === 'worth_watching') ||
+    seed.items[0] ||
+    null
+  );
+}
+
 function inferReviewDraftStyle(
   normalized: string,
 ): RecentTextReviewItemFollowup['style'] {
@@ -1652,6 +1663,27 @@ export function parseRecentTextReviewItemFollowup(input: {
   if (!seed || seed.items.length === 0) return null;
   const normalized = normalizeText(input.userText).toLowerCase();
   if (!normalized) return null;
+  const currentItem = findCurrentReviewSeedItem(seed);
+  const pronounTarget =
+    '(?:it|this|this one|that|that one|the first one|first one)';
+
+  const draftPronoun =
+    new RegExp(
+      `^(?:draft|reply to|respond to|rewrite)\\s+${pronounTarget}(?:\\s+for me)?\\b`,
+      'i',
+    ).test(normalized) ||
+    new RegExp(
+      `^(?:make|rewrite)\\s+${pronounTarget}\\s+(?:warmer|shorter|more direct|less stiff|more blunt)\\b`,
+      'i',
+    ).test(normalized) ||
+    /^(?:warmer|shorter|more direct|less stiff|more blunt)$/i.test(normalized);
+  if (draftPronoun && currentItem) {
+    return {
+      kind: 'draft',
+      item: currentItem,
+      style: inferReviewDraftStyle(normalized),
+    };
+  }
 
   const draftMatch =
     normalized.match(
@@ -1664,6 +1696,20 @@ export function parseRecentTextReviewItemFollowup(input: {
       kind: 'draft',
       item,
       style: inferReviewDraftStyle(normalized),
+    };
+  }
+
+  const reminderPronoun = normalized.match(
+    new RegExp(
+      `^remind me(?:\\s+(?:about|to review|to reply to|on|for))?\\s+${pronounTarget}(?:\\s+(.+))?$`,
+      'i',
+    ),
+  );
+  if (reminderPronoun && currentItem) {
+    return {
+      kind: 'remind',
+      item: currentItem,
+      timingHint: normalizeText(reminderPronoun[1] || '') || null,
     };
   }
 
@@ -1680,6 +1726,12 @@ export function parseRecentTextReviewItemFollowup(input: {
     };
   }
 
+  const savePronoun = new RegExp(
+    `^(?:save|remember|track|keep track of)\\s+${pronounTarget}\\b`,
+    'i',
+  ).test(normalized);
+  if (savePronoun && currentItem) return { kind: 'save', item: currentItem };
+
   const saveMatch = normalized.match(
     /^(?:save|remember|track|keep track of)\s*(?:item\s*)?(?:#|number\s*)?(\d+)\b/i,
   );
@@ -1689,6 +1741,12 @@ export function parseRecentTextReviewItemFollowup(input: {
     return { kind: 'save', item };
   }
 
+  const skipPronoun = new RegExp(
+    `^(?:skip|dismiss|ignore)\\s+${pronounTarget}\\b`,
+    'i',
+  ).test(normalized);
+  if (skipPronoun && currentItem) return { kind: 'skip', item: currentItem };
+
   const skipMatch = normalized.match(
     /^(?:skip|dismiss|ignore)\s*(?:item\s*)?(?:#|number\s*)?(\d+)\b/i,
   );
@@ -1696,6 +1754,16 @@ export function parseRecentTextReviewItemFollowup(input: {
     const item = findReviewSeedItemByRank(seed, skipMatch[1]);
     if (!item) return null;
     return { kind: 'skip', item };
+  }
+
+  const handledPronoun =
+    new RegExp(
+      `^mark\\s+${pronounTarget}\\s+(?:as\\s*)?(?:handled|done|resolved)\\b`,
+      'i',
+    ).test(normalized) ||
+    /^(?:mark\s*)?(?:handled|done|resolved)$/i.test(normalized);
+  if (handledPronoun && currentItem) {
+    return { kind: 'handled', item: currentItem };
   }
 
   const handledMatch =
@@ -1710,6 +1778,12 @@ export function parseRecentTextReviewItemFollowup(input: {
     if (!item) return null;
     return { kind: 'handled', item };
   }
+
+  const whyPronoun =
+    new RegExp(`^(?:why|explain)\\s+${pronounTarget}\\b`, 'i').test(
+      normalized,
+    ) || /^(?:why|explain)$/i.test(normalized);
+  if (whyPronoun && currentItem) return { kind: 'why', item: currentItem };
 
   const whyMatch = normalized.match(
     /^(?:why|explain)\s*(?:item\s*)?(?:#|number\s*)?(\d+)\b/i,

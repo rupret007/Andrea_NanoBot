@@ -142,16 +142,16 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/m
 npm run debug:missions
 ```
 
-For Action Bundle and approval-flow changes, add:
+For follow-through review and approval-flow changes, add:
 
 ```bash
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts src/assistant-capabilities.test.ts
 npm run telegram:user:smoke
 ```
 
-Treat that bundle suite as the fast proof that Andrea can:
+Treat that review suite as the fast proof that Andrea can:
 
-- synthesize a compact bundle
+- synthesize compact approval items
 - approve all or a subset
 - execute through existing reminder/draft/thread/library/handoff systems
 - report partial success or failure calmly
@@ -641,7 +641,7 @@ Hierarchical Goal Planning sits above Reality Grounding and Cognitive Executive:
 - `debug:planner` runs one request through the goal-directed planner
 - `debug:opportunities` shows reply-coupled opportunities and suppression state
 - `test:goal-planning`, `test:causal-planner`, and `test:proactive-opportunities` are the focused v30 gate
-- goals do not replace missions, reminders, skills, action bundles, communication companion, or improvement lab; they orchestrate those existing systems
+- goals do not replace missions, reminders, skills, follow-through reviews, communication companion, or improvement lab; they orchestrate those existing systems
 - sends, calendar writes, restarts, commits, pushes, purchases, deletes, and credentials remain approval-gated
 
 Never treat proactive opportunities as background autonomy. They are normal-reply suggestions only.

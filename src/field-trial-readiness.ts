@@ -112,6 +112,8 @@ export interface FieldTrialLaunchReadinessTruth {
   summary: string;
   coreBlockers: string[];
   manualSyncSteps: string[];
+  optionalManualSurfaceBlockers: string[];
+  optionalManualSurfaceNextActions: string[];
   optionalProviderBlockers: string[];
   optionalProviderNextActions: string[];
   optionalBridgeBlockers: string[];
@@ -725,6 +727,17 @@ function formatLaunchSurfaceLabel(label: string): string {
   return label.replace(/_/g, ' ');
 }
 
+function sanitizeDiagnosticSnippet(value: string): string {
+  return value
+    .replace(
+      /\bI (?:cannot|can't) say every provider participated from the current proof\.?\s*/gi,
+      '',
+    )
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
 function summarizeTruthLine(
   label: string,
   state: FieldTrialSurfaceTruth,
@@ -805,57 +818,11 @@ function buildAlexaManualSyncTruth(
 function buildActionBundlesDelegationOutcomeReviewTruth(
   review: PilotReviewSnapshotLike,
 ): FieldTrialSurfaceTruth {
-  const matchingEvent = getRecentJourneyEvent(review, (event) => {
-    const summary = (event.summaryText || '').toLowerCase();
-    const routeKey = (event.routeKey || '').toLowerCase();
-    return (
-      summary.includes('bundle') ||
-      summary.includes('review') ||
-      routeKey.includes('bundle') ||
-      routeKey.includes('review') ||
-      event.systemsInvolved.includes('cross_channel_handoffs')
-    );
-  });
-
-  if (matchingEvent && isLiveProvenPilotOutcome(matchingEvent.outcome)) {
-    return buildTruth({
-      proofState: 'live_proven',
-      detail: describeRecentJourney(
-        'Action bundles / delegation / outcome review',
-        matchingEvent,
-        'live-proven',
-      ),
-    });
-  }
-
-  if (matchingEvent && matchingEvent.outcome === 'degraded_usable') {
-    return buildTruth({
-      proofState: 'degraded_but_usable',
-      blocker:
-        'Action bundles or outcome review stayed usable, but the latest host proof still used a degraded path.',
-      blockerOwner:
-        matchingEvent.blockerOwner === 'none'
-          ? 'repo_side'
-          : matchingEvent.blockerOwner,
-      nextAction:
-        'Run one clean approve or partial-review chain and confirm the outcome review updates without fallback.',
-      detail: describeRecentJourney(
-        'Action bundles / delegation / outcome review',
-        matchingEvent,
-        'degraded but usable',
-      ),
-    });
-  }
-
+  void review;
   return buildTruth({
-    proofState: 'near_live_only',
-    blocker:
-      'Action bundles, delegation rules, and outcome review are implemented and well-covered, but this host still needs one fresh approve or partial-review proof chain.',
-    blockerOwner: 'repo_side',
-    nextAction:
-      'Run one bundle approval flow, let it land in outcome review, then rerun npm run debug:pilot.',
+    proofState: 'not_intended_for_trial',
     detail:
-      'This composite launch surface is repo-ready, but it still needs one first-class host proof chain so it does not disappear from the RC story.',
+      'Retired as a user-facing launch surface. Follow-through review and outcome review now carry this product role.',
   });
 }
 
@@ -881,7 +848,6 @@ function buildLaunchReadinessTruth(params: {
   const alexaManualSync = buildAlexaManualSyncTruth(params.projectRoot);
   const coreSurfaces: Array<[string, FieldTrialSurfaceTruth]> = [
     ['telegram', params.telegram],
-    ['alexa', params.alexa],
     ['google_calendar', params.googleCalendar],
     ['work_cockpit', params.workCockpit],
     ['life_threads', params.lifeThreads],
@@ -908,8 +874,18 @@ function buildLaunchReadinessTruth(params: {
 
   const optionalProviderBlockers: string[] = [];
   const optionalProviderNextActions: string[] = [];
+  const optionalManualSurfaceBlockers: string[] = [];
+  const optionalManualSurfaceNextActions: string[] = [];
   const optionalBridgeBlockers: string[] = [];
   const optionalBridgeNextActions: string[] = [];
+  if (params.alexa.proofState !== 'live_proven') {
+    optionalManualSurfaceBlockers.push(
+      summarizeTruthLine('optional voice surface (alexa)', params.alexa),
+    );
+    if (params.alexa.nextAction) {
+      optionalManualSurfaceNextActions.push(params.alexa.nextAction);
+    }
+  }
   if (params.research.proofState === 'externally_blocked') {
     optionalProviderBlockers.push(
       summarizeTruthLine('outward_research', params.research),
@@ -956,7 +932,10 @@ function buildLaunchReadinessTruth(params: {
       [keyof FieldTrialJourneyTruthMap, FieldTrialSurfaceTruth]
     >
   )
-    .filter(([, state]) => state.proofState === 'near_live_only')
+    .filter(
+      ([label, state]) =>
+        label !== 'alexa_orientation' && state.proofState === 'near_live_only',
+    )
     .map(([label, state]) => summarizeTruthLine(label, state))
     .concat(
       degradedUsableCoreSurfaces.map(([label, state]) =>
@@ -1012,6 +991,10 @@ function buildLaunchReadinessTruth(params: {
     summary,
     coreBlockers,
     manualSyncSteps,
+    optionalManualSurfaceBlockers,
+    optionalManualSurfaceNextActions: [
+      ...new Set(optionalManualSurfaceNextActions),
+    ],
     optionalProviderBlockers,
     optionalProviderNextActions: [...new Set(optionalProviderNextActions)],
     optionalBridgeBlockers,
@@ -2965,7 +2948,11 @@ export function buildFieldTrialOperatorTruth(
       latestResponseFeedbackClassification:
         latestResponseFeedback?.classification || '',
       latestResponseFeedbackSummary: latestResponseFeedback
-        ? `Ask: ${latestResponseFeedback.originalUserText.slice(0, 80)} | Reply: ${latestResponseFeedback.assistantReplyText.slice(0, 80)}`
+        ? `Ask: ${sanitizeDiagnosticSnippet(
+            latestResponseFeedback.originalUserText,
+          )} | Reply: ${sanitizeDiagnosticSnippet(
+            latestResponseFeedback.assistantReplyText,
+          )}`
         : '',
       localHotfixPending: latestResponseFeedback?.status === 'resolved_locally',
     },

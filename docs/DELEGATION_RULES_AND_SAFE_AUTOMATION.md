@@ -165,7 +165,7 @@ Instead:
 That means the product boundary stays clear:
 
 - missions = plan structure
-- action bundles = explicit approved actions
+- follow-through reviews = explicit approved actions
 - delegation rules = remembered safe defaults
 - outcomes and reviews = what actually happened
 

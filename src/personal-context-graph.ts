@@ -562,6 +562,9 @@ function buildFollowthroughCandidates(params: {
         'proposed_only',
         'approval_required',
         communicationThreadIsGroup(thread) ? 'group_chat_confirm_audience' : '',
+        thread.inferenceState !== 'user_confirmed'
+          ? 'assistant_inferred_link'
+          : '',
       ].filter(Boolean),
     });
   }
@@ -606,6 +609,7 @@ function addFollowthroughCandidateNodes(params: {
         outcomeStatus: outcome?.status || null,
         outcomeKind: status,
         hasReminder: Boolean(parseOutcomeLinkedRefs(outcome).reminderTaskId),
+        riskFlags: candidate.riskFlags.join(','),
       },
     });
     if (params.profileNodeId) {

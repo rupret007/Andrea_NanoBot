@@ -196,6 +196,9 @@ describe('turn agent harness', () => {
     expect(
       isSafeReadOnlyCalendarLookupAsk("what's on my schedule tomorrow"),
     ).toBe(true);
+    expect(
+      isSafeReadOnlyCalendarLookupAsk("What's on my agenda for today?"),
+    ).toBe(true);
     expect(isSafeReadOnlyCalendarLookupAsk('add that to my calendar')).toBe(
       false,
     );
@@ -522,6 +525,75 @@ describe('turn agent harness', () => {
     expect(guided.rewrittenText).toContain('Quick check:');
     expect(guided.rewrittenText).not.toContain('Council check:');
     expect(guided.evaluatorFlags).toContain(
+      'provider_council_guidance_applied',
+    );
+  });
+
+  it('does not prepend provider-participation boilerplate to normal replies', async () => {
+    const { evaluateTurnReply } = await import('./turn-agent-harness.js');
+
+    const evaluation = evaluateTurnReply({
+      context: {
+        turnId: 'turn-weather',
+        channel: 'telegram',
+        groupFolder: 'main',
+        requestRoute: 'protected_assistant',
+        taskFamily: 'research',
+        meaningful: true,
+        selectedSkill: {
+          skillId: 'research.web',
+          taskFamily: 'research',
+          purpose: 'Answer live lookup questions.',
+          inputs: ['query'],
+          outputs: ['answer'],
+          evidenceLevel: 'partial',
+          sideEffectRisk: 'none',
+          approvalNeed: 'none',
+          failureModes: [],
+          examples: [],
+        },
+        contextCompile: {
+          readPlan: {} as never,
+          selectedSkill: {
+            skillId: 'research.web',
+            taskFamily: 'research',
+            purpose: 'Answer live lookup questions.',
+            inputs: ['query'],
+            outputs: ['answer'],
+            evidenceLevel: 'partial',
+            sideEffectRisk: 'none',
+            approvalNeed: 'none',
+            failureModes: [],
+            examples: [],
+          },
+          metadata: {},
+          memoryTiers: [],
+          effectiveDirectives: [],
+        },
+        providerCouncil: {
+          councilRunId: 'council-weather',
+          mode: 'fast',
+          answerGuidance: {
+            status: 'warn',
+            visibleVerdict:
+              'I cannot say every provider participated from the current proof.',
+            confidence: 0.7,
+            uncertainty: 'One provider skipped.',
+            sourceMemberIds: ['openai_cloud'],
+          },
+        } as never,
+      },
+      text: '*Research Summary*\nOklahoma City is warm and mostly cloudy.',
+      routeKey: 'research.topic',
+      capabilityId: 'research.topic',
+      handlerKind: 'research',
+      responseSource: 'research_local',
+    });
+
+    expect(evaluation.rewrittenText).toMatch(/^\*Research Summary\*/);
+    expect(evaluation.rewrittenText).not.toContain('provider participated');
+    expect(evaluation.rewrittenText).not.toContain('providers participated');
+    expect(evaluation.evaluatorFlags).not.toContain(
       'provider_council_guidance_applied',
     );
   });

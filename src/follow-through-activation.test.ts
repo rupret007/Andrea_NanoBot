@@ -14,6 +14,8 @@ import {
   upsertProfileSubject,
 } from './db.js';
 import {
+  applyFollowThroughActivation,
+  buildFollowThroughActivationPreview,
   buildFollowThroughReview,
   formatFollowThroughReview,
   handleFollowThroughActivationCommand,
@@ -203,7 +205,7 @@ describe('follow-through activation', () => {
     });
 
     expect(result.outcomeKind).toBe('reviewed');
-    expect(result.replyText).toContain('Best first approval');
+    expect(result.replyText).toContain('Safest first approval');
     expect(result.replyText).toContain('Suggested timing');
     expect(result.replyText).toContain('Readiness: ready');
     expect(result.replyText).toContain('remind me about #');
@@ -273,6 +275,90 @@ describe('follow-through activation', () => {
     expect(
       listAgentOSEpisodes({ groupFolder: 'main', limit: 10 }).length,
     ).toBeGreaterThan(0);
+  });
+
+  it('previews local follow-through activation without writing state', () => {
+    seedSafeFollowThrough();
+
+    const preview = buildFollowThroughActivationPreview({
+      groupFolder: 'main',
+      candidate: 'safest',
+      timing: 'tonight',
+      now,
+    });
+
+    expect(preview.readOnly).toBe(true);
+    expect(preview.selectedItem?.approvalReadiness).toBe('ready');
+    expect(preview.approvalPhrase).toContain('approve the safest one tonight');
+    expect(preview.fallbackPhrases).toEqual(['why this one', 'defer it']);
+    expect(getTasksForGroup('main')).toHaveLength(0);
+    expect(listOutcomesForGroup({ groupFolder: 'main' })).toHaveLength(0);
+    expect(JSON.stringify(preview)).not.toContain('+14695550123');
+    expect(JSON.stringify(preview)).not.toContain('bb:iMessage');
+  });
+
+  it('applies local follow-through activation as paused metadata only', async () => {
+    seedSafeFollowThrough();
+
+    const result = await applyFollowThroughActivation({
+      groupFolder: 'main',
+      candidate: 'safest',
+      timing: 'tonight',
+      chatJid: 'local:followthrough:main',
+      now,
+    });
+
+    expect(result.applied).toBe(true);
+    expect(result.outcomeKind).toBe('approved');
+    expect(result.mutationSummary).toMatchObject({
+      localReminderMetadata: true,
+      outcomeRecord: true,
+      agentOSEpisode: true,
+      liveMessageSent: false,
+      calendarWritten: false,
+      credentialChanged: false,
+    });
+    expect(result.replyText).toContain('paused');
+    expect(result.replyText).not.toContain('[phone]');
+    const tasks = getTasksForGroup('main');
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]?.status).toBe('paused');
+    expect(tasks[0]?.chat_jid).toBe('local:followthrough:main');
+    expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(0);
+    const outcomes = listOutcomesForGroup({ groupFolder: 'main' });
+    expect(outcomes[0]).toMatchObject({
+      sourceType: 'followthrough_candidate',
+      status: 'deferred',
+      userConfirmed: true,
+    });
+    expect(result.agentOSEpisodeId).toBeTruthy();
+    expect(getAgentOSEpisode(result.agentOSEpisodeId!)).toBeTruthy();
+  });
+
+  it('supports first-safe convenience approval with timing', async () => {
+    seedSafeFollowThrough();
+
+    const review = await handleFollowThroughActivationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      text: 'what should Andrea track',
+      now,
+    });
+    const result = await handleFollowThroughActivationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      text: 'approve the first safe one tomorrow morning',
+      now,
+      priorReviewJson: review.reviewSeedJson,
+    });
+
+    expect(result.outcomeKind).toBe('approved');
+    expect(result.selectedItem?.approvalReadiness).toBe('ready');
+    expect(result.replyText).toContain('No message was sent');
+    expect(getTasksForGroup('main')).toHaveLength(1);
+    expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(0);
   });
 
   it('supports why, defer, dismiss, and handled item follow-ups', async () => {
@@ -366,6 +452,37 @@ describe('follow-through activation', () => {
     expect(outcomes[0]?.linkedRefsJson).toContain('agentOSEpisodeId');
   });
 
+  it('blocks debug activation for group or inferred candidates with one clarification', async () => {
+    seedProfile();
+    seedLifeThread();
+    seedCommunicationThread({
+      channelChatJid: 'bb:iMessage;chat;+14695550123;+14695550124',
+      inferenceState: 'assistant_inferred',
+    });
+
+    const result = await applyFollowThroughActivation({
+      groupFolder: 'main',
+      candidate: 1,
+      timing: 'tonight',
+      chatJid: 'local:followthrough:main',
+      now,
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.outcomeKind).toBe('blocked_risky');
+    expect(result.replyText).toContain('confirm the exact audience or thread');
+    expect(result.mutationSummary).toMatchObject({
+      localReminderMetadata: false,
+      outcomeRecord: true,
+      agentOSEpisode: true,
+      liveMessageSent: false,
+      calendarWritten: false,
+      credentialChanged: false,
+    });
+    expect(getTasksForGroup('main')).toHaveLength(0);
+    expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(0);
+  });
+
   it('marks risky group candidates as confirmation-first while recommending safer approvals first', async () => {
     seedProfile();
     seedLifeThread();
@@ -382,10 +499,61 @@ describe('follow-through activation', () => {
       now,
     });
 
-    expect(result.replyText).toContain('Best first approval');
+    expect(result.replyText).toContain('Safest first approval');
     expect(result.replyText).toContain('Readiness: ready. Try: `remind me');
     expect(result.replyText).toContain('Readiness: confirm first');
     expect(result.replyText).toContain('group_chat_confirm_audience');
+    expect(getTasksForGroup('main')).toHaveLength(0);
+  });
+
+  it('binds pronoun follow-ups to the surfaced safest item', async () => {
+    seedSafeFollowThrough();
+
+    const review = await handleFollowThroughActivationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      text: 'what should I approve',
+      now,
+    });
+    const why = await handleFollowThroughActivationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      text: 'why this one',
+      now,
+      priorReviewJson: review.reviewSeedJson,
+    });
+    const defer = await handleFollowThroughActivationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      text: 'defer it',
+      now,
+      priorReviewJson: review.reviewSeedJson,
+    });
+    const dismiss = await handleFollowThroughActivationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      text: 'dismiss it',
+      now,
+      priorReviewJson: review.reviewSeedJson,
+    });
+    const handled = await handleFollowThroughActivationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      text: 'mark handled',
+      now,
+      priorReviewJson: review.reviewSeedJson,
+    });
+
+    expect(why.outcomeKind).toBe('explained');
+    expect(why.selectedItem?.rank).toBe(1);
+    expect(defer.outcomeKind).toBe('deferred');
+    expect(dismiss.outcomeKind).toBe('dismissed');
+    expect(handled.outcomeKind).toBe('handled');
     expect(getTasksForGroup('main')).toHaveLength(0);
   });
 

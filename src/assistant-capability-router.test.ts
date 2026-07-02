@@ -134,6 +134,11 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'research.recommend',
     });
+    expect(
+      matchAssistantCapabilityRequest("What's the next step?"),
+    ).toMatchObject({
+      capabilityId: 'daily.whats_next',
+    });
     for (const prompt of [
       'What is the weather today in Dallas?',
       "What's the weather today in Dallas.",
@@ -1113,6 +1118,13 @@ describe('assistant capability router', () => {
       'skip #1',
       'mark #1 handled',
       'why #1',
+      'draft it',
+      'make that warmer',
+      'remind me about that tonight',
+      'save that',
+      'skip it',
+      'mark handled',
+      'why that',
     ]) {
       expect(
         continueAssistantCapabilityFromPriorSubjectData(prompt, subjectData),
@@ -1131,6 +1143,50 @@ describe('assistant capability router', () => {
       capabilityId: 'communication.draft_reply',
       continuation: true,
     });
+  });
+
+  it('binds pronoun follow-ups to the active follow-through review context', () => {
+    const subjectData = {
+      activeCapabilityId: 'daily.command_center' as const,
+      followthroughReviewJson: JSON.stringify({
+        kind: 'followthrough_review',
+        generatedAt: '2026-06-29T18:00:00.000Z',
+        groupFolder: 'main',
+        items: [
+          {
+            itemId: 'followthrough:1',
+            rank: 1,
+            section: 'routine_related',
+            title: 'Morning check-in',
+            whyItMatters: 'Setup says this rhythm matters.',
+            source: 'guided setup routine',
+            safeNextAction: 'Approve with timing.',
+            riskFlags: ['proposed_only', 'approval_required'],
+            relatedNodeIds: [],
+            priorityScore: 0.5,
+            decisionScore: 0.6,
+            approvalReadiness: 'ready',
+            suggestedTiming: 'tomorrow morning',
+            decisionRationale: ['safe local reminder candidate'],
+            snapshotHash: 'snapshot',
+          },
+        ],
+      }),
+    };
+
+    for (const prompt of [
+      'why this one',
+      'defer it',
+      'dismiss it',
+      'mark handled',
+    ]) {
+      expect(
+        continueAssistantCapabilityFromPriorSubjectData(prompt, subjectData),
+      ).toMatchObject({
+        capabilityId: 'rituals.followthrough',
+        continuation: true,
+      });
+    }
   });
 
   it('leaves explicit handoff and completion follow-ups to the Alexa action layer', () => {

@@ -1433,6 +1433,66 @@ END:VCALENDAR</c:calendar-data>
     expect(reply).not.toContain("I don't see anything");
   });
 
+  it('treats agenda phrasing as a read-only calendar lookup', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            summary: 'Jeff',
+            items: [],
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const reply = await buildCalendarAssistantReply(
+      "What's on my agenda for today?",
+      {
+        now: new Date('2026-03-31T09:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        platform: 'win32',
+        env: {
+          GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toBe("I don't see anything on your calendar today.");
+  });
+
+  it('names Google reauthorization when the refresh token is invalid_grant', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: 'invalid_grant',
+            error_description: 'Token has been expired or revoked.',
+          }),
+          { status: 400 },
+        ),
+    );
+
+    const reply = await buildCalendarAssistantReply(
+      "What's on my agenda for today?",
+      {
+        now: new Date('2026-03-31T09:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        platform: 'win32',
+        env: {
+          GOOGLE_CALENDAR_REFRESH_TOKEN: 'expired-refresh-token',
+          GOOGLE_CALENDAR_CLIENT_ID: 'client-id',
+          GOOGLE_CALENDAR_CLIENT_SECRET: 'client-secret',
+        },
+        fetchImpl,
+      },
+    );
+
+    expect(reply).toContain('Google Calendar needs a fresh sign-in');
+    expect(reply).toContain('reauthorize Google Calendar');
+    expect(reply).not.toContain("I didn't find anything");
+  });
+
   it('shows confirmed Google events with a partial warning when one configured calendar fails', async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);

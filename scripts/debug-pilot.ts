@@ -42,7 +42,10 @@ function formatJourneyHealthLines(
     const lines = [
       `- ${JOURNEY_LABELS[journeyId]}: ${journeyTruth.proofState} / 24h=${digest.usage24h} / 7d=${digest.usage7d} / last_success=${formatTimestamp(digest.latestSuccessAt)} / freshness=${digest.proofFreshness}`,
     ];
-    if (digest.latestUsableAt && digest.latestUsableAt !== digest.latestSuccessAt) {
+    if (
+      digest.latestUsableAt &&
+      digest.latestUsableAt !== digest.latestSuccessAt
+    ) {
       lines.push(`  latest usable fallback: ${digest.latestUsableAt}`);
     }
     if (digest.latestProblemEvent) {
@@ -78,7 +81,10 @@ function collectAttentionItems(
       return;
     }
     const line = `- ${label}: ${state.blocker || state.detail}${state.nextAction ? ` Next: ${state.nextAction}` : ''}`;
-    if (state.blockerOwner === 'repo_side' || state.proofState === 'degraded_but_usable') {
+    if (
+      state.blockerOwner === 'repo_side' ||
+      state.proofState === 'degraded_but_usable'
+    ) {
       repoSide.push(line);
       return;
     }
@@ -99,10 +105,6 @@ function collectAttentionItems(
   push('Alexa', truth.alexa);
   push('BlueBubbles', truth.bluebubbles);
   push('Google Calendar', truth.googleCalendar);
-  push(
-    'Action bundles / delegation / outcome review',
-    truth.actionBundlesDelegationOutcomeReview,
-  );
   push('Research', truth.research);
   push('Image generation', truth.imageGeneration);
 
@@ -138,12 +140,16 @@ function formatHistoricalRecurringFailures(
   });
 }
 
-function formatOpenIssues(review: ReturnType<typeof buildPilotReviewDigest>): string[] {
+function formatOpenIssues(
+  review: ReturnType<typeof buildPilotReviewDigest>,
+): string[] {
   if (review.openIssues.length === 0) {
     return ['- none'];
   }
   return review.openIssues.slice(0, 8).map((issue) => {
-    const linkedJourney = issue.journeyEventId ? ` / journey=${issue.journeyEventId}` : '';
+    const linkedJourney = issue.journeyEventId
+      ? ` / journey=${issue.journeyEventId}`
+      : '';
     const blocker =
       issue.blockerClass && issue.blockerClass !== 'none'
         ? ` / blocker=${issue.blockerClass}`
@@ -162,10 +168,12 @@ function formatAlexaUtteranceReview(
     ];
   }
 
-  return digest.groupedPatterns.slice(0, 8).flatMap((item) => [
-    `- ${item.utterance} / family=${item.family} / route=${item.routeOutcome} / blocker=${item.blockerClass} / attempts=${item.attempts} / latest=${item.latestAt}`,
-    `  suggestion: ${item.operatorHint}`,
-  ]);
+  return digest.groupedPatterns
+    .slice(0, 8)
+    .flatMap((item) => [
+      `- ${item.utterance} / family=${item.family} / route=${item.routeOutcome} / blocker=${item.blockerClass} / attempts=${item.attempts} / latest=${item.latestAt}`,
+      `  suggestion: ${item.operatorHint}`,
+    ]);
 }
 
 function formatResponseFeedbackLoop(): string[] {
@@ -269,10 +277,10 @@ async function main(): Promise<void> {
     `  server_seen_chat=${truth.bluebubbles.mostRecentServerSeenChatJid} / server_seen_at=${truth.bluebubbles.mostRecentServerSeenAt}`,
     `  webhook_seen_chat=${truth.bluebubbles.mostRecentWebhookObservedChatJid} / webhook_seen_at=${truth.bluebubbles.mostRecentWebhookObservedAt}`,
     `  last_inbound=${truth.bluebubbles.lastInboundObservedAt} / chat=${truth.bluebubbles.lastInboundChatJid} / self_authored=${truth.bluebubbles.lastInboundWasSelfAuthored}`,
-      `  last_outbound=${truth.bluebubbles.lastOutboundResult} / target_kind=${truth.bluebubbles.lastOutboundTargetKind} / target=${truth.bluebubbles.lastOutboundTarget}`,
-      `  last_send_error=${truth.bluebubbles.lastSendErrorDetail}`,
-      `  send_method=${truth.bluebubbles.sendMethod} / private_api_available=${truth.bluebubbles.privateApiAvailable}`,
-      `  metadata_hydration=${truth.bluebubbles.lastMetadataHydrationSource} / attempted_targets=${truth.bluebubbles.attemptedTargetSequence}`,
+    `  last_outbound=${truth.bluebubbles.lastOutboundResult} / target_kind=${truth.bluebubbles.lastOutboundTargetKind} / target=${truth.bluebubbles.lastOutboundTarget}`,
+    `  last_send_error=${truth.bluebubbles.lastSendErrorDetail}`,
+    `  send_method=${truth.bluebubbles.sendMethod} / private_api_available=${truth.bluebubbles.privateApiAvailable}`,
+    `  metadata_hydration=${truth.bluebubbles.lastMetadataHydrationSource} / attempted_targets=${truth.bluebubbles.attemptedTargetSequence}`,
     `  shadow_poll_ok=${truth.bluebubbles.shadowPollLastOkAt} / shadow_poll_error=${truth.bluebubbles.shadowPollLastError}`,
     `  transport_detail=${truth.bluebubbles.transportDetail}`,
     ...(truth.bluebubbles.blocker
@@ -294,7 +302,6 @@ async function main(): Promise<void> {
     `- Communication companion: ${truth.communicationCompanion.proofState}`,
     `- Chief-of-staff / missions: ${truth.chiefOfStaffMissions.proofState}`,
     `- Knowledge library: ${truth.knowledgeLibrary.proofState}`,
-    `- Action bundles / delegation / outcome review: ${truth.actionBundlesDelegationOutcomeReview.proofState}`,
     `- Research: ${truth.research.proofState}`,
     `- Image generation: ${truth.imageGeneration.proofState}`,
     `- Host health: ${truth.hostHealth.proofState}`,
@@ -364,12 +371,12 @@ async function main(): Promise<void> {
     `- Live proven: ${proofGauntlet.liveProvenCount}/${proofGauntlet.entries.length}`,
     `- Proof debt: ${proofGauntlet.proofDebtCount}`,
     `- Repo work required: ${proofGauntlet.repoWorkRequiredCount}`,
-    ...(proofGauntlet.entries
+    ...proofGauntlet.entries
       .filter((entry) => entry.status !== 'live_proven')
       .slice(0, 5)
       .map((entry) => {
         return `- ${entry.proofName}: ${entry.status} / repo_work=${entry.repoWorkRequired ? 'yes' : 'no'} / next=${entry.nextStep}`;
-      })),
+      }),
     '',
     '*Reality Gaps*',
     `- Snapshot: ${reality.snapshot.status} / confidence=${reality.snapshot.confidence.toFixed(2)}`,

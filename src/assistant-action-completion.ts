@@ -520,7 +520,7 @@ export async function completeAssistantActionFromAlexa(
     if (!snapshot) {
       return {
         handled: true,
-        replyText: 'I do not have that action bundle handy anymore.',
+        replyText: 'I do not have that follow-through review handy anymore.',
       };
     }
     return {
@@ -639,12 +639,12 @@ export async function completeAssistantActionFromAlexa(
           return {
             ...deliveryResult,
             replyText:
-              'Okay. I sent the fuller version to Telegram and lined up the action bundle there too.',
+              'Okay. I sent the fuller version to Telegram and lined up the follow-through review there too.',
           };
         }
         return {
           handled: true,
-          replyText: 'Okay. I sent the action bundle to Telegram.',
+          replyText: 'Okay. I sent the follow-through review to Telegram.',
         };
       }
     }

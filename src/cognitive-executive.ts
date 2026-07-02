@@ -655,7 +655,7 @@ export function buildCognitiveWorldSnapshot(input: {
         summary: `${bundle.bundle.title}: ${bundle.actions.filter((action) => action.status !== 'executed').length} open action(s).`,
         priority: 0.82,
         freshness: 'fresh',
-        reasonUsed: 'open action bundle is resumable',
+        reasonUsed: 'open follow-through review is resumable',
       }),
     );
   }

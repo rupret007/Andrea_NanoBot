@@ -1,6 +1,6 @@
 # Messaging Trust Ladder And Live Delivery
 
-Andrea's messaging trust ladder is the bounded layer that sits on top of the communication companion, BlueBubbles delivery, action bundles, delegation rules, and outcome reviews.
+Andrea's messaging trust ladder is the bounded layer that sits on top of the communication companion, BlueBubbles delivery, follow-through reviews, delegation rules, and outcome reviews.
 
 It exists so Andrea can move from:
 

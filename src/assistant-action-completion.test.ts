@@ -533,10 +533,10 @@ describe('assistant action completion', () => {
     );
 
     expect(result.handled).toBe(true);
-    expect(result.replyText).toContain('action bundle');
+    expect(result.replyText).toContain('follow-through review');
     expect(sendTelegramMessage).toHaveBeenCalledWith(
       'tg:main',
-      expect.stringContaining('*Action bundle*'),
+      expect.stringContaining('*Follow-through review*'),
       expect.objectContaining({
         inlineActionRows: expect.any(Array),
       }),

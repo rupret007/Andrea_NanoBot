@@ -8,8 +8,10 @@ import {
   buildResponseFeedbackCaptureReply,
   buildResponseFeedbackRemediationPrompt,
   classifyResponseFeedbackCandidate,
+  getResponseFeedbackRouteRegressionCoverage,
   parseResponseFeedbackAction,
   refreshResponseFeedbackRecordTruth,
+  resolveResponseFeedbackIfRouteRegressionCovered,
   resolvePendingResponseFeedbackApproval,
   selectResponseFeedbackLane,
   selectResponseFeedbackRetryLane,
@@ -487,6 +489,81 @@ describe('response feedback helpers', () => {
 
     expect(result.classification).toBe('repo_side_broken');
     expect(result.status).toBe('awaiting_confirmation');
+  });
+
+  it('identifies route regression coverage without marking every old feedback row broken', () => {
+    expect(
+      getResponseFeedbackRouteRegressionCoverage(
+        buildRecord({
+          routeKey: 'calendar_local_fast_path',
+          capabilityId: 'calendar.local_lookup',
+          responseSource: 'local_companion',
+          originalUserText: "What's on my agenda for today?",
+        }),
+      ),
+    ).toMatchObject({
+      coverageKey: 'calendar.local_lookup.telegram_agenda',
+    });
+    expect(
+      getResponseFeedbackRouteRegressionCoverage(
+        buildRecord({
+          routeKey: 'research.topic',
+          capabilityId: 'research.topic',
+          responseSource: 'research_local',
+          originalUserText: "What's the weather in Oklahoma City today?",
+        }),
+      ),
+    ).toMatchObject({
+      coverageKey: 'research.local.no_provider_boilerplate',
+    });
+    expect(
+      getResponseFeedbackRouteRegressionCoverage(
+        buildRecord({
+          routeKey: 'direct_assistant',
+          capabilityId: null,
+          responseSource: 'container_agent',
+          originalUserText: 'hello',
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('marks stale feedback resolved only when matching route regressions are covered', () => {
+    const covered = buildRecord({
+      status: 'blocked_external',
+      classification: 'externally_blocked',
+      routeKey: 'research.topic',
+      capabilityId: 'research.topic',
+      responseSource: 'research_local',
+      blockerClass: null,
+      blockerOwner: 'external',
+      originalUserText: "What's the weather in Oklahoma City today?",
+    });
+    upsertResponseFeedback(covered);
+
+    const resolved = resolveResponseFeedbackIfRouteRegressionCovered(covered, {
+      now: new Date('2026-06-29T18:00:00.000Z'),
+    });
+
+    expect(resolved.resolved).toBe(true);
+    expect(resolved.record.status).toBe('resolved_locally');
+    expect(resolved.record.operatorNote).toContain('Metadata-only resolution');
+    expect(resolved.record.linkedRefs).toMatchObject({
+      feedbackRouteCoverageKey: 'research.local.no_provider_boilerplate',
+      feedbackRouteCoverageResolvedAt: '2026-06-29T18:00:00.000Z',
+    });
+
+    const uncovered = buildRecord({
+      feedbackId: '22222222-2222-3333-4444-555555555555',
+      routeKey: 'direct_assistant',
+      capabilityId: null,
+      responseSource: 'container_agent',
+      originalUserText: 'do the thing',
+    });
+    const skipped = resolveResponseFeedbackIfRouteRegressionCovered(uncovered);
+
+    expect(skipped.resolved).toBe(false);
+    expect(skipped.reason).toContain('No matching local route regression');
   });
 
   it('prefers cloud repair lanes before falling back to codex local, and never auto-selects cursor desktop', () => {

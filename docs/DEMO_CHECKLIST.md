@@ -27,6 +27,7 @@ update the proof before demoing that lane.
 | Chief-of-staff / missions                    | `near_live_only` / proof-stale | no fresh planning journey                                   | operator/live turn | Re-run one nightly-planning or mission chain                                          |
 | Knowledge library                            | `near_live_only` / proof-stale | no fresh save plus grounded answer                          | operator/live turn | Re-run one save and one library-grounded answer                                       |
 | Action bundles / delegation / outcome review | `near_live_only` / proof-stale | no fresh approve/partial/review chain                       | operator/live turn | Re-run one action-bundle review chain                                                 |
+| Follow-through review                        | `not_intended_for_trial`       | retired as a standalone launch proof surface                | none               | Use daily command center and action-bundle review proofs instead                      |
 | Research mode                                | command-derived                | provider credential/proof may be stale on a new host        | external/config    | Run `npm run agi:readiness -- --write --no-live-probe` before claiming live proof     |
 | Image generation                             | command-derived                | provider credential/proof may be stale on a new host        | external/config    | Run `npm run agi:readiness -- --write --no-live-probe` before claiming live proof     |
 | Startup / host-control / watchdog / health   | `live_proven`                  | none for core host                                          | none               | Keep `services:status`, `setup verify`, and `debug:status` aligned after each restart |
@@ -82,7 +83,7 @@ Close proof debt in this order:
    - Run `npm run services:status` and `npm run debug:pilot`.
    - Success shape: latest signed request is a handled `IntentRequest`, the proof is inside the freshness window, and Alexa reports `live_proven`.
 5. Flagship journeys
-   - Re-run ordinary chat, daily guidance, Candace follow-through, mission planning, work cockpit, cross-channel handoff, knowledge library, and action-bundle review.
+   - Re-run ordinary chat, daily guidance, Candace follow-through, mission planning, work cockpit, cross-channel handoff, knowledge library, and follow-through review.
    - Run `npm run debug:pilot`.
    - Success shape: flagship proof freshness improves without any stale `live_proven` claims.
 
@@ -241,7 +242,7 @@ Optional lanes that should be described honestly:
 
 - Alexa is voice-ready only after a fresh signed handled `IntentRequest`.
 - BlueBubbles is usable but needs a fresh same-thread `message_action` proof before it should be called `live_proven`.
-- Research and image generation are advanced lanes. They are currently live-proven, but they should not distract from the five core journeys.
+- Research and image generation are advanced lanes. Their live status is command-derived, so demo them only when the latest readiness report says they are live-proven.
 
 ## Short Pilot Checklist
 
