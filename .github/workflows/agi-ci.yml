@@ -19,6 +19,11 @@ on:
 env:
   TZ: America/Chicago
 
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
