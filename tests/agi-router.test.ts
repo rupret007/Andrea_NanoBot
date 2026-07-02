@@ -115,6 +115,17 @@ describe("model router", () => {
     expect(ranked[0].provider).toBe("anthropic");
   });
 
+  it("does not route to catalog providers without registered adapters", async () => {
+    const r = new ModelRouter();
+    r.registerAdapter(stub("local"));
+    const out = await r.complete({
+      messages: [{ role: "user", content: "hi" }],
+      preferId: "gpt-5",
+      preferIdOptional: true,
+    });
+    expect(out.model).toBe("llama3.3:70b");
+  });
+
   it("preferId in pool but mid-pack is promoted to first", () => {
     const r = new ModelRouter();
     r.registerAdapter(stub("anthropic"));

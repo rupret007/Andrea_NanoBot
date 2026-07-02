@@ -12,7 +12,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type {
   EmbeddingClient,
   MemoryEntry,
@@ -124,6 +125,7 @@ export class VectorStore {
     // Atomic-ish: write to .tmp, then rename. rename is atomic on POSIX
     // within the same filesystem, so a crash mid-write leaves either the
     // old file or the new file intact, never a truncated mix.
+    await mkdir(dirname(this.opts.path), { recursive: true });
     await writeFile(tmp, body, 'utf8');
     await rename(tmp, this.opts.path);
     this.dirty = 0;

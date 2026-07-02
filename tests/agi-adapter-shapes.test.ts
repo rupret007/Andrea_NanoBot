@@ -7,7 +7,10 @@ import {
   OpenAIAdapter,
   toOpenAIMessages,
 } from "../src/models/openai-adapter.js";
-import { OllamaAdapter } from "../src/models/local-ollama-adapter.js";
+import {
+  OllamaAdapter,
+  modelSpecFromOllamaTag,
+} from "../src/models/local-ollama-adapter.js";
 import { HashEmbedder } from "../src/models/embedding-client.js";
 import { fetchWithTimeoutAndRetry } from "../src/models/http-utils.js";
 import { DEFAULT_CATALOG, type ModelSpec } from "../src/models/router.js";
@@ -205,6 +208,23 @@ describe("adapter request body shapes", () => {
     expect(calls[0].url).toBe("http://localhost:11434/api/chat");
     const body = JSON.parse(String(calls[0].init.body));
     expect(body.model).toBe("llama3.3:70b");
+  });
+
+  it("Ollama: converts discovered local tags into routable model specs", () => {
+    const spec = modelSpecFromOllamaTag({
+      name: "qwen2.5:0.5b",
+      model: "qwen2.5:0.5b",
+      details: { family: "qwen2", context_length: 32768 },
+      capabilities: ["completion", "tools"],
+    });
+    expect(spec).toMatchObject({
+      id: "qwen2.5:0.5b",
+      provider: "local",
+      family: "qwen2",
+      contextTokens: 32768,
+      available: true,
+    });
+    expect(spec?.capabilities).toContain("tool_use");
   });
 });
 

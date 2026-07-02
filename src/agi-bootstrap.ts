@@ -17,6 +17,7 @@ import {
   DEFAULT_CATALOG,
   HashEmbedder,
   OllamaAdapter,
+  discoverOllamaModels,
   OpenAIAdapter,
   VoyageEmbedder,
 } from './models/index.js';
@@ -133,9 +134,12 @@ export async function bootstrapAgi(
   if (env.OPENAI_API_KEY) {
     providers.push(new OpenAIAdapter(env.OPENAI_API_KEY, DEFAULT_CATALOG));
   }
-  // Local Ollama is always registered, marked unavailable if unreachable.
-  const ollama = new OllamaAdapter(DEFAULT_CATALOG, env.OLLAMA_BASE_URL);
-  if (await ollama.healthCheck()) {
+  const ollamaBaseUrl = env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
+  const ollamaModels = await discoverOllamaModels(ollamaBaseUrl).catch(
+    () => [],
+  );
+  const ollama = new OllamaAdapter(ollamaModels, ollamaBaseUrl);
+  if (ollamaModels.length > 0) {
     providers.push(ollama);
   }
 

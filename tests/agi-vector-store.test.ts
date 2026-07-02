@@ -237,6 +237,16 @@ describe("vector store", () => {
     for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
   });
 
+  it("flush creates the persistence directory when missing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vstore-missing-parent-"));
+    const path = join(dir, "nested", "vec.jsonl");
+    const embed = new HashEmbedder(16);
+    const store = new VectorStore(embed, { path });
+    await store.flush();
+    const body = await readFile(path, "utf8");
+    expect(body).toContain("__vectorStoreHeader");
+  });
+
   it("flush load drops file when persisted embedder doesn't match", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vstore-mismatch-"));
     const path = join(dir, "vec.jsonl");

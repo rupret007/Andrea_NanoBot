@@ -299,6 +299,7 @@ export class ModelRouter {
     const requires = req.requires ?? [];
     const pool = this.catalog.filter((m) => {
       if (!m.available) return false;
+      if (!this.adapters.has(m.provider)) return false;
       if (req.excludeProviders && req.excludeProviders.includes(m.provider))
         return false;
       if (!requires.every((c) => m.capabilities.includes(c))) return false;
@@ -323,6 +324,10 @@ export class ModelRouter {
         if (!known) {
           reasons.push('not in catalog');
         } else {
+          if (!this.adapters.has(known.provider))
+            reasons.push(
+              `no registered adapter for provider "${known.provider}"`,
+            );
           if (!known.available) reasons.push('marked unavailable');
           if (
             req.excludeProviders &&
