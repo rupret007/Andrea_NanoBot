@@ -16,6 +16,9 @@ on:
   push:
     branches: [main]
 
+env:
+  TZ: America/Chicago
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -35,7 +38,7 @@ jobs:
       - name: Format check
         run: npm run format:check
       - name: Test (AGI subset)
-        run: npm test -- tests/agi
+        run: npm run test:agi
       - name: Audit (npm)
         run: npm audit --audit-level=high || true
       - name: Codeql init

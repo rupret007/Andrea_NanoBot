@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
 
+env:
+  TZ: America/Chicago
+
 jobs:
   ci:
     strategy:
