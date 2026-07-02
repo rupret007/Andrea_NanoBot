@@ -586,6 +586,11 @@ import {
 } from './direct-quick-reply.js';
 import { routeCompanionTurnWithOpenAiBackend } from './openai-guided-routing.js';
 import { recordOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
+import {
+  delegateToOpenClawAgent,
+  formatOpenClawDelegationResponse,
+  parseOpenClawDelegationRequest,
+} from './openclaw-connector.js';
 import { buildDirectAssistantContinuationPrompt } from './direct-assistant-continuation.js';
 import {
   getAssistantSessionStorageKey,
@@ -724,6 +729,7 @@ import {
   INTEGRATION_RECOVERY_COMMANDS,
   isMainControlChat,
   normalizeCommandToken,
+  OPENCLAW_AGENT_COMMANDS,
   PURCHASE_APPROVE_COMMANDS,
   PURCHASE_CANCEL_COMMANDS,
   PURCHASE_REQUEST_COMMANDS,
@@ -11953,6 +11959,25 @@ async function main(): Promise<void> {
     });
   }
 
+  async function handleOpenClawDelegation(
+    chatJid: string,
+    promptText: string,
+    message?: NewMessage,
+  ): Promise<void> {
+    const prompt = promptText.trim();
+    if (!prompt) {
+      await sendCursorMessage(chatJid, 'Usage: /openclaw <message>', message);
+      return;
+    }
+
+    const result = await delegateToOpenClawAgent({ message: prompt });
+    await sendCursorMessage(
+      chatJid,
+      formatOpenClawDelegationResponse(result),
+      message,
+    );
+  }
+
   async function handleIntegrationRecovery(
     chatJid: string,
     rawTrimmed: string,
@@ -16110,6 +16135,35 @@ async function main(): Promise<void> {
         return;
       }
 
+      const openClawDelegationRequest =
+        parseOpenClawDelegationRequest(rawTrimmed);
+      if (openClawDelegationRequest) {
+        if (!mainControlChat) {
+          const channel = findChannel(channels, chatJid);
+          channel
+            ?.sendMessage(
+              chatJid,
+              "OpenClaw delegation is restricted to Andrea's main control chat.",
+              buildOperatorSendOptions(msg),
+            )
+            .catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'OpenClaw delegation restriction reply failed',
+              ),
+            );
+          return;
+        }
+        handleOpenClawDelegation(
+          chatJid,
+          openClawDelegationRequest.prompt,
+          msg,
+        ).catch((err) =>
+          logger.error({ err, chatJid }, 'OpenClaw delegation command error'),
+        );
+        return;
+      }
+
       const bundleCommand = parseBundleCommand(rawTrimmed);
       if (bundleCommand) {
         applyAndPresentActionBundle({
@@ -16192,6 +16246,13 @@ async function main(): Promise<void> {
       if (DEBUG_STATUS_COMMANDS.has(commandToken)) {
         handleDebugStatus(chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Debug status command error'),
+        );
+        return;
+      }
+
+      if (OPENCLAW_AGENT_COMMANDS.has(commandToken)) {
+        handleOpenClawDelegation(chatJid, '', msg).catch((err) =>
+          logger.error({ err, chatJid }, 'OpenClaw delegation command error'),
         );
         return;
       }

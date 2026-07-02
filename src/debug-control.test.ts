@@ -17,6 +17,7 @@ import {
   resetDebugLevel,
   setAssistantExecutionProbeState,
   setDebugLevel,
+  setOpenClawStatusProviderForTest,
 } from './debug-control.js';
 import {
   _closeDatabase,
@@ -32,10 +33,31 @@ import {
 import { getLogControlConfig, setLogControlConfig } from './logger.js';
 import { recordOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
 import { recordOpenAiUsageState } from './openai-usage-state.js';
+import type { OpenClawStatusSummary } from './openclaw-connector.js';
+
+function buildDisabledOpenClawStatus(): OpenClawStatusSummary {
+  return {
+    enabled: false,
+    gatewayUrl: 'ws://127.0.0.1:18789',
+    cli: 'openclaw',
+    gatewayState: 'disabled',
+    gatewayReachable: null,
+    cliAvailable: true,
+    detail: 'disabled',
+    version: null,
+    pid: null,
+    serviceState: null,
+    defaultModel: null,
+    authUsable: null,
+    authProviders: [],
+    errors: [],
+  };
+}
 
 describe('debug control', () => {
   beforeEach(() => {
     _initTestDatabase();
+    setOpenClawStatusProviderForTest(buildDisabledOpenClawStatus);
     setLogControlConfig({
       globalLevel: 'info',
       scopedOverrides: {},
@@ -45,6 +67,7 @@ describe('debug control', () => {
   });
 
   afterEach(() => {
+    setOpenClawStatusProviderForTest(null);
     _closeDatabase();
   });
 
@@ -109,6 +132,34 @@ describe('debug control', () => {
     );
   });
 
+  it('includes sanitized OpenClaw status in the debug surface', () => {
+    setOpenClawStatusProviderForTest(() => ({
+      enabled: true,
+      gatewayUrl: 'ws://127.0.0.1:18789',
+      cli: 'openclaw',
+      gatewayState: 'live',
+      gatewayReachable: true,
+      cliAvailable: true,
+      detail: 'profile=openai:manual=sk-proj-super-secret',
+      version: '2026.6.11',
+      pid: 32159,
+      serviceState: 'running',
+      defaultModel: 'openai/gpt-5.5',
+      authUsable: true,
+      authProviders: ['openai'],
+      errors: [],
+    }));
+
+    const status = formatDebugStatus();
+
+    expect(status).toContain('OpenClaw integration: enabled');
+    expect(status).toContain('OpenClaw gateway: live');
+    expect(status).toContain('OpenClaw default model: openai/gpt-5.5');
+    expect(status).toContain('OpenClaw provider auth: usable (openai)');
+    expect(status).not.toContain('sk-proj');
+    expect(status).not.toContain('manual=');
+  });
+
   it('builds actionable debug panel buttons', () => {
     expect(
       buildDebugStatusInlineActions().map((action) => action.label),
@@ -139,10 +190,12 @@ describe('debug log tails', () => {
     fs.mkdirSync(path.join(tempDir, 'logs'), { recursive: true });
     process.chdir(tempDir);
     _initTestDatabase();
+    setOpenClawStatusProviderForTest(buildDisabledOpenClawStatus);
   });
 
   afterEach(() => {
     process.chdir(previousCwd);
+    setOpenClawStatusProviderForTest(null);
     _closeDatabase();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });

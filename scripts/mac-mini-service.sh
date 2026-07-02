@@ -76,6 +76,7 @@ install_service() {
   if is_bootstrapped; then
     launchctl bootout "$(domain)" "$PLIST" >/dev/null 2>&1 || true
   fi
+  launchctl enable "$(service_target)" >/dev/null 2>&1 || true
   launchctl bootstrap "$(domain)" "$PLIST"
   launchctl enable "$(service_target)"
   launchctl kickstart -k "$(service_target)"
@@ -95,6 +96,7 @@ start_service() {
     install_service
     return
   fi
+  launchctl enable "$(service_target)" >/dev/null 2>&1 || true
   if ! is_bootstrapped; then
     launchctl bootstrap "$(domain)" "$PLIST"
   fi

@@ -15,6 +15,8 @@ const envConfig = readEnvFile([
   'ANDREA_OPENAI_BACKEND_ENABLED',
   'ANDREA_OPENAI_BACKEND_URL',
   'ANDREA_OPENAI_BACKEND_TIMEOUT_MS',
+  'ANDREA_OPENCLAW_AGENT_DELEGATION',
+  'ANDREA_OPENCLAW_ENABLED',
   'ANDREA_PLATFORM_COORDINATOR_ENABLED',
   'ANDREA_PLATFORM_COORDINATOR_URL',
   'ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME',
@@ -27,6 +29,10 @@ const envConfig = readEnvFile([
   'OPENAI_MODEL_FALLBACK',
   'OPENAI_MODEL_SIMPLE',
   'OPENAI_MODEL_STANDARD',
+  'OPENCLAW_AGENT_ID',
+  'OPENCLAW_CLI',
+  'OPENCLAW_GATEWAY_URL',
+  'OPENCLAW_STATUS_TIMEOUT_MS',
   'ONECLI_URL',
   'TZ',
 ]);
@@ -124,6 +130,37 @@ export const ANDREA_OPENAI_BACKEND_TIMEOUT_MS = parseInt(
     envConfig.ANDREA_OPENAI_BACKEND_TIMEOUT_MS ||
     '15000',
   10,
+);
+export const ANDREA_OPENCLAW_ENABLED = ['1', 'true', 'yes'].includes(
+  (
+    process.env.ANDREA_OPENCLAW_ENABLED ||
+    envConfig.ANDREA_OPENCLAW_ENABLED ||
+    'false'
+  ).toLowerCase(),
+);
+export const ANDREA_OPENCLAW_AGENT_DELEGATION = ['1', 'true', 'yes'].includes(
+  (
+    process.env.ANDREA_OPENCLAW_AGENT_DELEGATION ||
+    envConfig.ANDREA_OPENCLAW_AGENT_DELEGATION ||
+    'false'
+  ).toLowerCase(),
+);
+export const OPENCLAW_GATEWAY_URL =
+  process.env.OPENCLAW_GATEWAY_URL ||
+  envConfig.OPENCLAW_GATEWAY_URL ||
+  'ws://127.0.0.1:18789';
+export const OPENCLAW_CLI =
+  process.env.OPENCLAW_CLI || envConfig.OPENCLAW_CLI || 'openclaw';
+export const OPENCLAW_AGENT_ID =
+  process.env.OPENCLAW_AGENT_ID || envConfig.OPENCLAW_AGENT_ID || 'main';
+export const OPENCLAW_STATUS_TIMEOUT_MS = Math.max(
+  1000,
+  parseInt(
+    process.env.OPENCLAW_STATUS_TIMEOUT_MS ||
+      envConfig.OPENCLAW_STATUS_TIMEOUT_MS ||
+      '5000',
+    10,
+  ) || 5000,
 );
 export const ANDREA_PLATFORM_COORDINATOR_ENABLED =
   (process.env.ANDREA_PLATFORM_COORDINATOR_ENABLED ||

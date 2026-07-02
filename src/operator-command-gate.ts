@@ -164,6 +164,8 @@ export const DEBUG_RESET_COMMANDS = new Set(['/debug-reset', '/debug_reset']);
 
 export const DEBUG_LOGS_COMMANDS = new Set(['/debug-logs', '/debug_logs']);
 
+export const OPENCLAW_AGENT_COMMANDS = new Set(['/openclaw']);
+
 export const INTEGRATION_RECOVERY_COMMANDS = new Set([
   '/integrations',
   '/integrations-status',
@@ -249,6 +251,7 @@ const MAIN_CONTROL_ONLY_COMMANDS = new Set([
   ...DEBUG_LEVEL_COMMANDS,
   ...DEBUG_RESET_COMMANDS,
   ...DEBUG_LOGS_COMMANDS,
+  ...OPENCLAW_AGENT_COMMANDS,
   ...INTEGRATION_RECOVERY_COMMANDS,
   ...ALEXA_STATUS_COMMANDS,
   ...AMAZON_STATUS_COMMANDS,
