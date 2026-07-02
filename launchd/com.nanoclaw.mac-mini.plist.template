@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{LABEL}}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{PROJECT_ROOT}}/scripts/mac-mini-service-runner.sh</string>
+        <string>{{PROJECT_ROOT}}</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{{PROJECT_ROOT}}</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+        <key>PATH</key>
+        <string>{{PATH}}</string>
+        <key>ASSISTANT_NAME</key>
+        <string>{{ASSISTANT_NAME}}</string>
+        <key>NANOCLAW_LAUNCHD_LABEL</key>
+        <string>{{LABEL}}</string>
+        <key>ANDREA_STATE_DIR</key>
+        <string>{{ANDREA_STATE_DIR}}</string>
+        <key>ANDREA_LOG_DIR</key>
+        <string>{{LOG_DIR}}</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/mac-mini-service.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/mac-mini-service.err.log</string>
+</dict>
+</plist>

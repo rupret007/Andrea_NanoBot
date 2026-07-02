@@ -117,6 +117,7 @@ describe('command surface registry', () => {
         '/debug-level',
         '/debug-reset',
         '/debug-logs',
+        '/openclaw',
         '/integrations',
         '/alexa-status',
         '/amazon-status',

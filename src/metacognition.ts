@@ -60,7 +60,7 @@ const SECRET_OR_PRIVATE_RE =
   /\bsk-(?:proj-|api-|ant-api03-)?[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{20,}|BSA-[A-Za-z0-9_-]{10,}|gh[pousr]_[A-Za-z0-9_]{16,}|crsr_[A-Za-z0-9_]{16,}|\b\d{7,}:[A-Za-z0-9_-]{20,}|password[:=]|secret[:=]|raw private body|hidden reasoning|chain[- ]of[- ]thought/i;
 
 const MUTATING_ACTION_RE =
-  /\b(send|sent|delete|remove|buy|purchase|order|commit|push|restart|stop service|change service|create event|add (?:that|it|this) to (?:my )?calendar|schedule (?:that|it|this)|cancel|write|post)\b/i;
+  /\b(send|sent|delete|remove|buy|purchase|order|commit|restart|stop service|change service|create event|add (?:that|it|this) to (?:my )?calendar|schedule (?:that|it|this)|cancel|write|post)\b|\b(?:git\s+push|push (?:the )?(?:fix|change|commit|branch|code|patch|release|deploy|deployment|to (?:main|prod|production)))\b/i;
 
 const CALENDAR_WRITE_RE =
   /\b(add|create|schedule|put|move).{0,40}\b(calendar|event|meeting|appointment)\b|\b(add|schedule) (?:that|it|this)\b/i;
@@ -159,6 +159,38 @@ function isDeepControl(text: string): boolean {
 
 function isUncertaintyCheck(text: string): boolean {
   return /\b(are you sure|how sure|how certain|what could be wrong|what would make you more confident|what are you unsure about)\b/i.test(
+    text,
+  );
+}
+
+function isPreparationPlanningAsk(text: string): boolean {
+  return /\b(help me get ready|help me prepare|get ready|prepare|prep)\b.{0,120}\b(weekend|show|family visiting|family|practice|trip|event|rollout)\b|\b(weekend|show|family visiting|family|practice|trip|event|rollout)\b.{0,120}\b(get ready|prepare|prep|plan)\b/i.test(
+    text,
+  );
+}
+
+function isExplicitTradeoffAsk(text: string): boolean {
+  return /\b(compare|trade[- ]?off|pros and cons|options)\b|\bshould (?:we|i) .{0,100}\b(?:or|vs\.?|versus)\b|\b(?:vs\.?|versus)\b/i.test(
+    text,
+  );
+}
+
+function isReadOnlyCalendarAsk(text: string): boolean {
+  if (CALENDAR_WRITE_RE.test(text) || MUTATING_ACTION_RE.test(text)) {
+    return false;
+  }
+  return (
+    /\b(calendar|agenda|schedule|appointments?|events?|meetings?)\b/i.test(
+      text,
+    ) &&
+    /\b(what|when|where|who|do i have|am i|free|busy|today|tomorrow|this week|next week|on my|what'?s|whats)\b/i.test(
+      text,
+    )
+  );
+}
+
+function isStatusVerificationAsk(text: string): boolean {
+  return /text messaging|bluebubbles|provider|working|true right now|broken|\bstatus\b|\bproof\b|\bready\b/i.test(
     text,
   );
 }
@@ -598,9 +630,10 @@ function selectMode(input: {
   }
   if (isDeepControl(text)) return 'deliberate_with_critic';
   if (missingCalendarTime) return 'clarify_first';
-  if (isUncertaintyCheck(text)) return 'retrieve_grounded';
   if (MUTATING_ACTION_RE.test(text) || input.approvalRequired)
     return 'verify_then_act';
+  if (isUncertaintyCheck(text)) return 'retrieve_grounded';
+  if (isExplicitTradeoffAsk(text)) return 'compare_counterfactuals';
   if (
     /what if|what would happen|what should i do next|safest next|blocking|blocked/i.test(
       text,
@@ -608,6 +641,7 @@ function selectMode(input: {
   ) {
     return 'compare_counterfactuals';
   }
+  if (isPreparationPlanningAsk(text)) return 'plan_stepwise';
   if (
     input.intentFamily === 'plan_tonight' ||
     input.intentFamily === 'next_action' ||
@@ -618,13 +652,10 @@ function selectMode(input: {
       ? 'compare_counterfactuals'
       : 'plan_stepwise';
   }
-  if (
-    /text messaging|bluebubbles|calendar|provider|working|true right now|broken/i.test(
-      text,
-    )
-  ) {
-    return 'verify_then_act';
+  if (isReadOnlyCalendarAsk(text)) {
+    return input.channel === 'alexa' ? 'fast_direct' : 'retrieve_grounded';
   }
+  if (isStatusVerificationAsk(text)) return 'verify_then_act';
   if (input.channel === 'alexa' && hasHighRisk) return 'defer_or_handoff';
   if (
     input.reality.proofDebt.total > 0 &&
@@ -969,6 +1000,8 @@ export function analyzeMetacognitiveTurn(
     ...(mode === 'compare_counterfactuals'
       ? ['goal_planner', 'reality_grounding']
       : []),
+    ...(mode === 'plan_stepwise' ? ['goal_planner', 'action_bundles'] : []),
+    ...(mode === 'retrieve_grounded' ? ['memory_recall', 'status_reads'] : []),
     ...(mode === 'verify_then_act' ? ['verify_status', 'stage_approval'] : []),
     ...(mode === 'fast_direct' ? ['direct_answer'] : []),
   ].filter(Boolean);

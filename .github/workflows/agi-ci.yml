@@ -1,0 +1,49 @@
+name: AGI Layer CI
+
+on:
+  pull_request:
+    paths:
+      - "src/agi-core/**"
+      - "src/memory/**"
+      - "src/models/**"
+      - "src/integrations/**"
+      - "src/safety/**"
+      - "src/reflection/**"
+      - "src/agi-runtime.ts"
+      - "src/agi-bootstrap.ts"
+      - "tests/agi-*"
+      - ".github/workflows/agi-ci.yml"
+  push:
+    branches: [main]
+
+env:
+  TZ: America/Chicago
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint (AGI tree only)
+        run: npm run lint -- src/agi-core src/memory src/models src/integrations src/safety src/reflection
+      - name: Format check
+        run: npm run format:check
+      - name: Test (AGI subset)
+        run: npm run test:agi
+      - name: Audit (npm)
+        run: npm audit --audit-level=high || true
+      - name: Codeql init
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - name: Codeql analyze
+        uses: github/codeql-action/analyze@v3

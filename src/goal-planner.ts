@@ -6,7 +6,6 @@ import {
   listGoalPlannerRuns,
   listGoalPlanSteps,
   listHierarchicalGoals,
-  listProactiveOpportunities,
   upsertCausalBelief,
   upsertCounterfactualActionOption,
   upsertCounterfactualComparison,

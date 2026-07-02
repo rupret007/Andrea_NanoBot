@@ -21,6 +21,11 @@ import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
 import { buildRepairDoctorReport } from './integration-healer.js';
 import { readOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
 import { readOpenAiUsageState } from './openai-usage-state.js';
+import {
+  formatOpenClawDebugStatusLines,
+  getOpenClawStatusSummary,
+  type OpenClawStatusSummary,
+} from './openclaw-connector.js';
 import { buildToolReliabilityDoctorReport } from './tool-reliability.js';
 import {
   getLogControlConfig,
@@ -74,6 +79,14 @@ export interface ParsedDebugScope {
 
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
 let lastPersistedLogControlRaw = '';
+let openClawStatusProvider: () => OpenClawStatusSummary =
+  getOpenClawStatusSummary;
+
+export function setOpenClawStatusProviderForTest(
+  provider: (() => OpenClawStatusSummary) | null,
+): void {
+  openClawStatusProvider = provider || getOpenClawStatusSummary;
+}
 
 function cloneLogControlConfig(config: LogControlConfig): LogControlConfig {
   return {
@@ -425,6 +438,7 @@ export function formatDebugStatus(): string {
   });
   const guidedRouting = readOpenAiGuidedRoutingState();
   const openAiUsage = readOpenAiUsageState();
+  const openClawStatus = openClawStatusProvider();
   const reliability = buildToolReliabilityDoctorReport();
   const repair = buildRepairDoctorReport();
   const topReliabilityBlocker = reliability.topDegraded[0];
@@ -473,6 +487,7 @@ export function formatDebugStatus(): string {
     `- Workspace HEAD: ${commitTruth.workspaceGitCommit}`,
     `- Serving commit aligned: ${commitTruth.servingCommitMatchesWorkspaceHead ? 'yes' : 'no'}`,
     `- OpenAI-guided routing backend: ${ANDREA_OPENAI_BACKEND_ENABLED ? `enabled at ${ANDREA_OPENAI_BACKEND_URL}` : 'disabled in this NanoBot runtime'}`,
+    ...formatOpenClawDebugStatusLines(openClawStatus),
     `- OpenAI-guided routing last source: ${guidedRouting?.source || 'none yet'}`,
     `- Tool reliability degraded subjects: ${reliability.topDegraded.length}`,
     ...(topReliabilityBlocker
