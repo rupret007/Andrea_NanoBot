@@ -304,6 +304,14 @@ For live environments where credential/runtime probes should be exercised each r
 npm run test:stability:live
 ```
 
+For a long deterministic script inventory after the standard gate:
+
+```bash
+npm run test:deterministic:sweep
+```
+
+This continues through independent `test:*` scripts, reports all failures at the end, and intentionally excludes interactive, aggregate, live, baseline-writing, and cloud-provider council tiers.
+
 ## 4. CI-Safe Suite
 
 ```bash
@@ -662,6 +670,7 @@ The v32 General Intelligence Control Plane sits above all of it:
 - the action preflight composes critic review, autonomy policy, reality/truth state, and tool reliability into one verdict; the strictest signal always wins and nothing in v32 executes side effects itself
 
 Never claim `live_proven` from harness-only evidence. Mainline changes remain human-governed; the workbench does not auto-merge, auto-push, restart services, send messages, write calendars, change credentials, or mutate live integrations.
+
 - queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud
 - if the miss is primarily an external blocker or manual sync step, Andrea should keep the issue saved and explain that honestly instead of auto-starting a repo fix
 - local hotfixes may validate and restart on-host, but commit/push still require explicit approval
