@@ -23,6 +23,7 @@ import {
 import {
   parseAllSyncedMessagesSummaryIntent,
   looksLikeGenericThreadSummaryPrompt,
+  parseRecentTextReviewIntent,
   parseThreadSummaryIntent,
 } from './thread-summary-routing.js';
 import type { CompanionRouteArguments } from './types.js';
@@ -41,6 +42,8 @@ export interface AssistantCapabilityContinuationSubjectData {
   activeCapabilityId?: AssistantCapabilityId;
   activeTaskKind?: string;
   activeListGroupId?: string;
+  recentTextReviewJson?: string;
+  followthroughReviewJson?: string;
 }
 
 function stripAndreaAddressing(value: string): string {
@@ -81,6 +84,89 @@ function isBareCommunicationDraftFollowup(value: string): boolean {
   );
 }
 
+function isReviewItemFollowup(value: string): boolean {
+  const trimmed = value.trim();
+  const pronounTarget =
+    '(?:it|this|this one|that|that one|the first one|first one)';
+  return (
+    new RegExp(
+      `^(?:draft|reply to|respond to|rewrite)\\s+${pronounTarget}(?:\\s+for me)?\\b`,
+      'i',
+    ).test(trimmed) ||
+    new RegExp(
+      `^(?:make|rewrite)\\s+${pronounTarget}\\s+(?:warmer|shorter|more direct|less stiff|more blunt)\\b`,
+      'i',
+    ).test(trimmed) ||
+    /^(?:warmer|shorter|more direct|less stiff|more blunt)$/i.test(trimmed) ||
+    /^(?:(?:draft|reply to|respond to|make|rewrite|warm(?:er)?|more direct|shorter)\s*(?:item\s*)?)?(?:#|number\s*)?\d+\b/i.test(
+      trimmed,
+    ) ||
+    new RegExp(
+      `^remind me(?:\\s+(?:about|to review|to reply to|on|for))?\\s+${pronounTarget}(?:\\s+.+)?$`,
+      'i',
+    ).test(trimmed) ||
+    /^remind me(?:\s+(?:about|to review|to reply to|on|for))?\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
+      trimmed,
+    ) ||
+    new RegExp(
+      `^(?:save|remember|track|keep track of)\\s+${pronounTarget}\\b`,
+      'i',
+    ).test(trimmed) ||
+    /^(?:save|remember|track|keep track of)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
+      trimmed,
+    ) ||
+    new RegExp(`^(?:skip|dismiss|ignore)\\s+${pronounTarget}\\b`, 'i').test(
+      trimmed,
+    ) ||
+    /^(?:skip|dismiss|ignore)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
+      trimmed,
+    ) ||
+    new RegExp(
+      `^mark\\s+${pronounTarget}\\s+(?:as\\s*)?(?:handled|done|resolved)\\b`,
+      'i',
+    ).test(trimmed) ||
+    /^(?:mark\s*)?(?:handled|done|resolved)$/i.test(trimmed) ||
+    /^(?:mark\s*)?(?:item\s*)?(?:#|number\s*)?\d+\s*(?:as\s*)?(?:handled|done|resolved)\b/i.test(
+      trimmed,
+    ) ||
+    /^(?:handled|done|resolved)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
+      trimmed,
+    ) ||
+    new RegExp(`^(?:why|explain)\\s+${pronounTarget}\\b`, 'i').test(trimmed) ||
+    /^(?:why|explain)$/i.test(trimmed) ||
+    /^(?:why|explain)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(trimmed)
+  );
+}
+
+function isFollowThroughItemFollowup(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    /^approve\s+(?:the\s+)?(?:(?:first\s+)?safe(?:st)?)(?:\s+one)?(?:\s+.+)?$/i.test(
+      trimmed,
+    ) ||
+    /^(?:why|explain)\s+(?:it|this|this one|that|that one)$/i.test(trimmed) ||
+    /^(?:defer|snooze|dismiss|skip|ignore)\s+(?:it|this|this one|that|that one)$/i.test(
+      trimmed,
+    ) ||
+    /^mark\s+(?:it|this|this one|that|that one)\s+(?:as\s*)?(?:handled|done|resolved)\b/i.test(
+      trimmed,
+    ) ||
+    /^(?:mark\s*)?(?:handled|done|resolved)$/i.test(trimmed) ||
+    /^(?:approve|defer|dismiss|skip|ignore|why|explain)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
+      trimmed,
+    ) ||
+    /^remind me(?:\s+(?:about|to track|to remember|on|for))?\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
+      trimmed,
+    ) ||
+    /^(?:mark\s*)?(?:item\s*)?(?:#|number\s*)?\d+\s*(?:as\s*)?(?:handled|done|resolved)\b/i.test(
+      trimmed,
+    ) ||
+    /^(?:handled|done|resolved)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
+      trimmed,
+    )
+  );
+}
+
 function isAlexaLocalVoiceAsk(value: string): boolean {
   return /^(what time is it|what day is it|what'?s up|whats up|can you help me|help me|what can you do)$/i.test(
     value.trim(),
@@ -93,6 +179,8 @@ function matchProfileSetupPrompt(
   const lower = normalized.toLowerCase();
   if (
     /^help me set this up\b/.test(lower) ||
+    /^finish my andrea setup\b/.test(lower) ||
+    /^finish setup\b/.test(lower) ||
     /^walk me through what you should track for me\b/.test(lower) ||
     /^update my setup\b/.test(lower) ||
     /^change what you track\b/.test(lower)
@@ -404,6 +492,20 @@ function looksLikeCalendarLookupPrompt(normalized: string): boolean {
 function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   if (
+    lower === 'what should i do today' ||
+    lower === 'what needs me' ||
+    lower === 'what is slipping' ||
+    lower === "what's slipping" ||
+    lower === 'show my daily command center'
+  ) {
+    return {
+      capabilityId: 'daily.command_center',
+      normalizedText: normalized,
+      canonicalText: 'show my daily command center',
+      reason: 'matched useful daily command center phrasing',
+    };
+  }
+  if (
     lower === 'good morning' ||
     lower === 'what should i know about today' ||
     lower === 'what matters today' ||
@@ -423,7 +525,10 @@ function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
     lower === 'what should i do next' ||
     lower === "what's next" ||
     lower === 'what is next' ||
-    lower === 'what should i do now'
+    lower === 'what should i do now' ||
+    lower === "what's the next step" ||
+    lower === 'what is the next step' ||
+    lower === 'what should the next step be'
   ) {
     return {
       capabilityId: 'daily.whats_next',
@@ -568,14 +673,38 @@ function matchMemoryPrompt(
   const lower = normalized.toLowerCase();
   if (
     /^why did you say that\b/.test(lower) ||
+    /^why (?:do|did) you know (?:that|this)\b/.test(lower) ||
+    /^why do you know\b/.test(lower) ||
     /^what are you using to personalize this\b/.test(lower) ||
-    /^what do you remember about\b/.test(lower)
+    /^what do you remember about\b/.test(lower) ||
+    /^show my setup completeness\b/.test(lower) ||
+    /^export my profile pack\b/.test(lower) ||
+    /^what did you learn(?: about me)?\b/.test(lower) ||
+    /^what have you learned(?: about me)?\b/.test(lower) ||
+    /^daily learning review\b/.test(lower) ||
+    /^review what you learned\b/.test(lower)
   ) {
     return {
       capabilityId: 'memory.explain',
       normalizedText: normalized,
       canonicalText: normalized,
       reason: 'matched explainability or memory inspection phrasing',
+    };
+  }
+  if (/^accept learning\b/.test(lower) || /^edit learning\b/.test(lower)) {
+    return {
+      capabilityId: 'memory.remember',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched learning review accept/edit phrasing',
+    };
+  }
+  if (/^reject learning\b/.test(lower)) {
+    return {
+      capabilityId: 'memory.forget',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched learning review rejection phrasing',
     };
   }
   if (
@@ -687,7 +816,13 @@ function matchRitualPrompt(
     /^what follow-?ups am i carrying right now\b/.test(lower) ||
     /^what have i been putting off\b/.test(lower) ||
     /^show me my carryover threads\b/.test(lower) ||
-    /^what('?s| is) still open right now\b/.test(lower)
+    /^what('?s| is) still open right now\b/.test(lower) ||
+    /^what follow-through should i approve\b/.test(lower) ||
+    /^show proposed reminders\b/.test(lower) ||
+    /^what should andrea track\b/.test(lower) ||
+    /^what('?s| is) slipping\b/.test(lower) ||
+    /^show follow-through candidates\b/.test(lower) ||
+    /^what should i approve\b/.test(lower)
   ) {
     return {
       capabilityId: 'rituals.followthrough',
@@ -721,6 +856,16 @@ function matchCommunicationPrompt(
   normalized: string,
 ): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
+  const recentTextReviewIntent = parseRecentTextReviewIntent(normalized);
+  if (recentTextReviewIntent) {
+    return {
+      capabilityId: 'communication.review_recent_texts',
+      normalizedText: normalized,
+      canonicalText: recentTextReviewIntent.canonicalText,
+      arguments: recentTextReviewIntent.arguments,
+      reason: 'matched recent text review phrasing',
+    };
+  }
   const allSyncedSummaryIntent =
     parseAllSyncedMessagesSummaryIntent(normalized);
   if (allSyncedSummaryIntent) {
@@ -1125,7 +1270,10 @@ export function matchAssistantCapabilityRequest(
     return null;
   }
   const dailyMatch = matchDailyPrompt(normalized);
-  if (dailyMatch?.capabilityId === 'daily.whats_next') {
+  if (
+    dailyMatch?.capabilityId === 'daily.whats_next' ||
+    dailyMatch?.capabilityId === 'daily.command_center'
+  ) {
     return dailyMatch;
   }
 
@@ -1181,6 +1329,19 @@ function continueAssistantCapabilityFromActiveCapability(
         continuation: true,
       };
     }
+  }
+
+  if (
+    activeCapabilityId === 'rituals.followthrough' &&
+    isFollowThroughItemFollowup(normalized)
+  ) {
+    return {
+      capabilityId: 'rituals.followthrough',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'continuing follow-through approval from the active context',
+      continuation: true,
+    };
   }
 
   if (
@@ -1313,12 +1474,18 @@ function continueAssistantCapabilityFromActiveCapability(
       /^stop suggesting that\b/.test(lower) ||
       /^mark this handled\b/.test(lower) ||
       /^mark this done\b/.test(lower) ||
+      /^(handle this|handle that|take care of this|take care of that|deal with this|deal with that)\b/.test(
+        lower,
+      ) ||
       /^(okay )?do that\b/.test(lower) ||
       /^(do it|draft it|remind me|save that|track that|start (?:the )?research)\b/.test(
         lower,
       ))
   ) {
     const nextCapabilityId =
+      /^(handle this|handle that|take care of this|take care of that|deal with this|deal with that)\b/.test(
+        lower,
+      ) ||
       /^(okay )?do that\b/.test(lower) ||
       /^(do it|draft it|remind me|save that|track that|start (?:the )?research)\b/.test(
         lower,
@@ -1369,7 +1536,10 @@ function continueAssistantCapabilityFromActiveCapability(
     activeCapabilityId?.startsWith('communication.')
   ) {
     return {
-      capabilityId: 'communication.open_loops',
+      capabilityId:
+        activeCapabilityId === 'communication.review_recent_texts'
+          ? 'communication.review_recent_texts'
+          : 'communication.open_loops',
       normalizedText: normalized,
       canonicalText: normalized,
       reason:
@@ -1414,7 +1584,51 @@ export function continueAssistantCapabilityFromPriorSubjectData(
     !subjectData.activeCapabilityId?.startsWith('capture.') &&
     isSharedAssistantCompletionFollowup(normalized.toLowerCase())
   ) {
+    if (subjectData.recentTextReviewJson && isReviewItemFollowup(normalized)) {
+      return {
+        capabilityId: 'communication.draft_reply',
+        normalizedText: normalized,
+        canonicalText: normalized,
+        reason: 'continuing the recent text review with a selected item',
+        continuation: true,
+      };
+    }
+    if (
+      (subjectData.followthroughReviewJson ||
+        subjectData.activeCapabilityId === 'rituals.followthrough') &&
+      isFollowThroughItemFollowup(normalized)
+    ) {
+      return {
+        capabilityId: 'rituals.followthrough',
+        normalizedText: normalized,
+        canonicalText: normalized,
+        reason: 'continuing the follow-through review with a selected item',
+        continuation: true,
+      };
+    }
     return null;
+  }
+  if (subjectData.recentTextReviewJson && isReviewItemFollowup(normalized)) {
+    return {
+      capabilityId: 'communication.draft_reply',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'continuing the recent text review with a selected item',
+      continuation: true,
+    };
+  }
+  if (
+    (subjectData.followthroughReviewJson ||
+      subjectData.activeCapabilityId === 'rituals.followthrough') &&
+    isFollowThroughItemFollowup(normalized)
+  ) {
+    return {
+      capabilityId: 'rituals.followthrough',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'continuing the follow-through review with a selected item',
+      continuation: true,
+    };
   }
   return continueAssistantCapabilityFromActiveCapability(
     normalized,

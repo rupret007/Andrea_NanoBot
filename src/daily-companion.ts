@@ -31,7 +31,10 @@ import { buildChiefOfStaffSnapshot } from './chief-of-staff.js';
 import { getEverydayCaptureSignal } from './everyday-capture.js';
 import { getMissionCarryoverSignal } from './missions.js';
 import { getResolvedRitualProfile } from './rituals.js';
-import { buildSignatureFlowText } from './signature-flows.js';
+import {
+  buildSignatureFlowText,
+  stripSignatureFlowSystemPrefix,
+} from './signature-flows.js';
 import type {
   AlexaConversationFollowupAction,
   AlexaConversationSubjectKind,
@@ -883,6 +886,51 @@ function formatTextReply(
     .join('\n');
 }
 
+function humanizePracticalDailyDetail(line: string | null | undefined): string {
+  const stripped = stripSignatureFlowSystemPrefix(line);
+  if (!stripped) return '';
+  const patterns: Array<[RegExp, (value: string) => string]> = [
+    [/^Next:\s*/i, (value) => value],
+    [/^Reminder:\s*/i, (value) => `the reminder is ${value}`],
+    [/^Open block:\s*/i, (value) => `you have ${value}`],
+    [/^Thread follow-up:\s*/i, (value) => value],
+    [/^Slipping:\s*/i, (value) => value],
+    [/^Tomorrow pressure:\s*/i, (value) => `tomorrow has ${value}`],
+    [/^Keep on deck:\s*/i, (value) => value],
+    [/^Work:\s*/i, (value) => value],
+  ];
+  for (const [pattern, formatter] of patterns) {
+    if (!pattern.test(stripped)) continue;
+    return formatter(stripped.replace(pattern, '').trim()).trim();
+  }
+  return stripped.trim();
+}
+
+function formatPracticalDailyReply(input: {
+  lead: string;
+  detailLines: string[];
+  recommendation: string | null;
+  whyLine?: string | null;
+}): string {
+  const lead = ensureSentence(input.lead);
+  const next = input.recommendation
+    ? ensureSentence(input.recommendation)
+    : null;
+  const reason =
+    input.whyLine ||
+    input.detailLines
+      .map(humanizePracticalDailyDetail)
+      .find((line) => line && line.toLowerCase() !== input.lead.toLowerCase());
+
+  return [
+    lead,
+    next ? `Next: ${next}` : null,
+    reason ? `Why: ${ensureSentence(reason)}` : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join('\n');
+}
+
 function ensureSentence(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return trimmed;
@@ -1438,6 +1486,9 @@ function finalizeDraft(
     nextAction: draft.recommendationText,
     whyLine: journeyWhyLine,
   });
+  const usePracticalDailyReply =
+    channel !== 'alexa' &&
+    (draft.mode === 'midday_reground' || draft.mode === 'open_guidance');
   const reply =
     channel === 'alexa'
       ? formatAlexaReply(
@@ -1447,15 +1498,22 @@ function finalizeDraft(
           prefs.directMode,
           personalityLine,
         )
-      : shouldUseSignatureJourneyEnvelope(channel, draft.mode)
-        ? flagshipTextReply
-        : formatTextReply(
-            draft.lead,
-            [...draft.detailLines, draft.recommendationText || null].filter(
-              Boolean,
-            ) as string[],
-            personalityLine,
-          );
+      : usePracticalDailyReply
+        ? formatPracticalDailyReply({
+            lead: draft.lead,
+            detailLines: draft.detailLines,
+            recommendation: draft.recommendationText,
+            whyLine: journeyWhyLine,
+          })
+        : shouldUseSignatureJourneyEnvelope(channel, draft.mode)
+          ? flagshipTextReply
+          : formatTextReply(
+              draft.lead,
+              [...draft.detailLines, draft.recommendationText || null].filter(
+                Boolean,
+              ) as string[],
+              personalityLine,
+            );
 
   const shortText =
     channel === 'alexa'

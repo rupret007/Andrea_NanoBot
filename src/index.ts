@@ -3883,6 +3883,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant') &&
     isSafeReadOnlyCalendarLookupAsk(lastContent);
+  const shouldDeferPlatformHoldForLocalUsefulCapability =
+    (requestPolicy.route === 'direct_assistant' ||
+      requestPolicy.route === 'protected_assistant') &&
+    Boolean(
+      quickReply ||
+      matchAssistantCapabilityRequest(lastContent) ||
+      shouldDeferPlatformHoldForLocalCalendarLookup,
+    );
   const sendAssistantReplyWithFeedback = async (params: {
     text: string;
     sendOptions?: SendMessageOptions;
@@ -4130,7 +4138,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (
     turnAgentHarness?.platformHoldReply &&
-    !shouldDeferPlatformHoldForLocalCalendarLookup &&
+    !shouldDeferPlatformHoldForLocalUsefulCapability &&
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant')
   ) {
@@ -7156,8 +7164,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         const clarification =
           executiveContext.plan.explanation ||
           'I need one more detail before I can route that safely.';
+        const clarificationText = /\?\s*$/.test(clarification.trim())
+          ? clarification
+          : `${clarification}\n\nWhat exactly do you want me to handle?`;
         await sendAssistantReplyWithFeedback({
-          text: `${clarification}\n\nWhat exactly do you want me to handle?`,
+          text: clarificationText,
           routeKey: executiveContext.plan.routeKey,
           capabilityId: null,
           handlerKind: 'local_cognitive_executive',
@@ -16172,7 +16183,7 @@ async function main(): Promise<void> {
           operation: bundleCommand.operation,
           now: new Date(),
         }).catch((err) =>
-          logger.error({ err, chatJid }, 'Action bundle command error'),
+          logger.error({ err, chatJid }, 'Follow-through review command error'),
         );
         return;
       }

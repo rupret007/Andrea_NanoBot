@@ -20,8 +20,10 @@ export function buildAssistantCapabilityExecutionInput(params: {
     args?.personName,
   );
   const allowPriorThreadTarget =
-    params.capabilityMatch.capabilityId !== 'communication.summarize_thread' ||
-    hasExplicitThreadTarget;
+    ![
+      'communication.summarize_thread',
+      'communication.review_recent_texts',
+    ].includes(params.capabilityMatch.capabilityId) || hasExplicitThreadTarget;
 
   return {
     text: params.lastContent,

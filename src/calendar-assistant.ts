@@ -585,6 +585,9 @@ function looksLikeConflictSummaryQuery(normalized: string): boolean {
 
 function looksLikeAgendaQuery(normalized: string): boolean {
   return (
+    /\bwhat(?:'s| is)\b[\s\S]{0,60}\bon my agenda\b/.test(normalized) ||
+    /\bwhat is on my agenda\b/.test(normalized) ||
+    /\bwhat(?:'s| is)\b[\s\S]{0,80}\bagenda\b/.test(normalized) ||
     /\bwhat(?:'s| is)\b[\s\S]{0,80}\b(calendar|schedule)\b/.test(normalized) ||
     /\bwhat does my\b[\s\S]{0,80}\blook like\b/.test(normalized) ||
     /\bwhat do i have\b/.test(normalized) ||
@@ -2076,6 +2079,16 @@ function formatStatusDetailList(statuses: CalendarProviderStatus[]): string {
     .join('\n');
 }
 
+function hasCalendarAuthRefreshFailure(
+  statuses: CalendarProviderStatus[],
+): boolean {
+  return statuses.some((status) =>
+    /\binvalid[_ -]?grant\b|\binvalid refresh token\b|\bfresh oauth\b|\breauthori[sz]e\b/i.test(
+      status.detail,
+    ),
+  );
+}
+
 interface CalendarReplyStatusContext {
   configuredStatuses: CalendarProviderStatus[];
   readyStatuses: CalendarProviderStatus[];
@@ -2518,6 +2531,15 @@ function buildUnavailableCalendarReply(
   }
 
   if (!configuredReady) {
+    if (hasCalendarAuthRefreshFailure(configuredStatuses)) {
+      return [
+        "I can't check your calendar right now because Google Calendar needs a fresh sign-in.",
+        '',
+        'Next: reauthorize Google Calendar, then try the agenda lookup again.',
+        '',
+        formatStatusDetailList(configuredStatuses),
+      ].join('\n');
+    }
     return [
       `I can't confirm your calendar right now because ${formatStatusLabelList(configuredStatuses)} ${configuredStatuses.length === 1 ? 'is' : 'are'} unavailable on this host.`,
       '',
@@ -2873,7 +2895,7 @@ function buildDefaultCalendarReply(
         if (!fullyConfirmed) {
           return `I didn't find anything blocking ${result.plan.label} for ${result.plan.durationLabel || `${result.plan.durationMinutes} minutes`} in the calendars I could read.${incompleteNote}`;
         }
-        return `Yes, you have time ${result.plan.label} for ${result.plan.durationLabel || `${result.plan.durationMinutes} minutes`}.`;
+        return `I don't see anything blocking ${result.plan.label} for ${result.plan.durationLabel || `${result.plan.durationMinutes} minutes`}.`;
       }
 
       return [
@@ -2917,7 +2939,10 @@ function buildDefaultCalendarReply(
       if (!fullyConfirmed) {
         return `I didn't find anything blocking ${result.plan.label} in the calendars I could read.${incompleteNote}`;
       }
-      return [`You look open ${result.plan.label}.`, ...allDayLines]
+      return [
+        `I don't see anything blocking ${result.plan.label}.`,
+        ...allDayLines,
+      ]
         .filter(Boolean)
         .join('\n');
     }
@@ -2934,7 +2959,7 @@ function buildDefaultCalendarReply(
     }
 
     return [
-      `You're partly open ${result.plan.label}.`,
+      `I found some open time ${result.plan.label}.`,
       ...rangeEvents,
       '',
       ...formatOpenWindows(openWindows, result.plan.timeZone),
@@ -2955,7 +2980,7 @@ function buildDefaultCalendarReply(
     }
 
     if (result.plan.intent === 'availability') {
-      return `You look free ${result.plan.label}.`;
+      return `I don't see anything blocking ${result.plan.label}.`;
     }
     return `I don't see anything on ${formatSubjectLabel(result.plan)} ${result.plan.label}.`;
   }

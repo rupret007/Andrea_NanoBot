@@ -14,6 +14,7 @@ import {
   listEverydayListItems,
   listLifeThreadsForGroup,
   listOperatingProfileSuggestions,
+  listProfileFactsForGroup,
   _initTestDatabase,
 } from './db.js';
 import {
@@ -21,6 +22,7 @@ import {
   handleEverydayCaptureCommand,
   type EverydayCaptureCommandInput,
 } from './everyday-capture.js';
+import { buildAgiLeapReadinessReport } from './agi-leap-readiness.js';
 
 function buildInput(
   text: string,
@@ -128,6 +130,81 @@ describe('everyday capture', () => {
         'Tonight',
         'Household',
         'General',
+      ]),
+    );
+  });
+
+  it('walks a guided setup ladder and seeds explainable memory after approval', async () => {
+    const start = await handleEverydayCaptureCommand(
+      buildInput('help me set this up'),
+    );
+    expect(start.replyText).toContain('Step 1/7');
+
+    const people = await handleEverydayCaptureCommand(
+      buildInput('Candace, Travis, and school group'),
+    );
+    expect(people.replyText).toContain('Step 2/7');
+
+    await handleEverydayCaptureCommand(
+      buildInput('Texts needing replies, bills, groceries, errands, meals'),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('Morning check-in and Sunday weekly planning'),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('Warm but concise, with one practical next step'),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('Telegram, BlueBubbles texts, and Google Calendar'),
+    );
+    await handleEverydayCaptureCommand(
+      buildInput('Ask before surfacing sensitive relationship details'),
+    );
+    const proposal = await handleEverydayCaptureCommand(
+      buildInput(
+        'Help me reply to important texts, keep family logistics from slipping, and prepare for the day.',
+      ),
+    );
+
+    expect(proposal.replyText).toContain('*Proposed Andrea setup*');
+    const approval = await handleEverydayCaptureCommand(
+      buildInput('approve that'),
+    );
+    expect(approval.replyText).toContain('saved that setup');
+
+    const facts = listProfileFactsForGroup('main', ['accepted']);
+    expect(facts.map((fact) => fact.factKey)).toEqual(
+      expect.arrayContaining([
+        'setup.tracking_priorities',
+        'setup.communication_style',
+        'setup.privacy_comfort',
+        'setup.first_outcomes',
+      ]),
+    );
+    const tracking = facts.find(
+      (fact) => fact.factKey === 'setup.tracking_priorities',
+    );
+    expect(tracking?.valueJson).toContain('"memoryScope":"user"');
+    expect(tracking?.valueJson).toContain('"freshness":"current"');
+    expect(
+      listLifeThreadsForGroup('main', ['active']).map((thread) => thread.title),
+    ).toContain('First outcomes');
+    const readiness = buildAgiLeapReadinessReport({
+      groupFolder: 'main',
+      now: new Date('2026-04-12T09:00:00-05:00'),
+    });
+    expect(readiness.setupCompletenessScore).toBeGreaterThan(0);
+    expect(readiness.memoryQualityScore).toBeGreaterThan(0);
+    expect(readiness.contextGraphScore).toBeGreaterThan(0);
+    expect(readiness.profilePack.setupCompleteness.answeredSetupAreas).toEqual(
+      expect.arrayContaining([
+        'people',
+        'tracking',
+        'rhythm',
+        'style',
+        'integrations',
+        'privacy',
+        'outcomes',
       ]),
     );
   });
@@ -351,7 +428,9 @@ describe('everyday capture', () => {
       getEverydayListItem(householdId!)?.linkageJson || '{}',
     ) as { threadId?: string };
     expect(threadLinkage.threadId).toBeTruthy();
-    expect(listLifeThreadsForGroup('main')).toHaveLength(1);
+    expect(
+      listLifeThreadsForGroup('main').map((lifeThread) => lifeThread.id),
+    ).toContain(threadLinkage.threadId);
   });
 
   it('keeps Alexa list readout concise and offers Telegram when the slice is long', async () => {

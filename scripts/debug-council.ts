@@ -1,6 +1,8 @@
 import {
   buildCouncilDoctorReport,
+  buildCouncilReplayReport,
   formatCouncilDoctorReport,
+  formatCouncilReplayReport,
 } from '../src/council-quality.js';
 import {
   buildCouncilMetricGlossaryMeta,
@@ -18,6 +20,7 @@ const json = process.argv.slice(2).includes('--json');
 const tasks = process.argv.slice(2).includes('--tasks');
 const metrics = process.argv.slice(2).includes('--metrics');
 const evidence = process.argv.slice(2).includes('--evidence');
+const replay = process.argv.slice(2).includes('--replay');
 
 function parseJsonObject(value: string): Record<string, unknown> {
   try {
@@ -106,6 +109,16 @@ if (evidence) {
         'Privacy: redacted metadata only; raw prompts/private bodies stored=false',
       ].join('\n'),
     );
+  }
+  process.exit(0);
+}
+
+if (replay) {
+  const report = buildCouncilReplayReport();
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log(formatCouncilReplayReport(report));
   }
   process.exit(0);
 }

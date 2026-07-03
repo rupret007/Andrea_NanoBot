@@ -83,7 +83,7 @@ Safety boundaries do not change. Andrea may learn safer defaults and better rout
 
 The Cognitive Executive is Andrea's everyday routing loop for high-value asks like `what should I do next`, `what am I forgetting`, `help me plan tonight`, `what's still open`, `what should I say back`, `save that for later`, list readouts, and ambiguous `handle this for me` requests.
 
-It does not replace reminders, missions, action bundles, life threads, communication help, or the Cognitive Workspace. It sits above them, builds a small current-world snapshot, picks the narrowest useful existing capability, preserves approval gates, records the outcome, and keeps one short explanation for later.
+It does not replace reminders, missions, follow-through reviews, life threads, communication help, or the Cognitive Workspace. It sits above them, builds a small current-world snapshot, picks the narrowest useful existing capability, preserves approval gates, records the outcome, and keeps one short explanation for later.
 
 Useful explanation asks:
 

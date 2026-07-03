@@ -1,4 +1,5 @@
 import {
+  getAllTasks,
   isDatabaseInitialized,
   listActionPreflights,
   listCapabilityStates,
@@ -12,7 +13,13 @@ import {
   collectProviderHealthSnapshots,
   type ProviderHealthSnapshot,
 } from './provider-health.js';
+import {
+  buildIntegrationDoctorReport,
+  type IntegrationDoctorReport,
+  type IntegrationStatus,
+} from './integration-doctor.js';
 import type { CapabilityStateRecord, ControlPlaneChannel } from './types.js';
+import type { ScheduledTask } from './types.js';
 
 // ---------------------------------------------------------------------------
 // v32 Capability Self-Model
@@ -36,6 +43,7 @@ const PRIVACY_JSON = JSON.stringify({
 interface CapabilityDefinition {
   capabilityId: string;
   displayName: string;
+  focusTier: 'daily_core' | 'operator_support' | 'optional_surface';
   requiredConfig: string[];
   requiredConfigAnyOf?: string[][];
   reliabilitySubjectId?: string;
@@ -50,6 +58,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'messages.draft',
     displayName: 'Draft messages and replies',
+    focusTier: 'daily_core',
     requiredConfig: [],
     allowedChannels: [
       'telegram',
@@ -64,6 +73,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'messages.send.telegram',
     displayName: 'Send Telegram messages (after approval)',
+    focusTier: 'daily_core',
     requiredConfig: ['TELEGRAM_BOT_TOKEN'],
     reliabilitySubjectId: 'integration:telegram',
     proofNameHint: /telegram.*bot|bot.*telegram/i,
@@ -75,6 +85,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'messages.send.bluebubbles',
     displayName: 'Send iMessage via BlueBubbles (after approval)',
+    focusTier: 'daily_core',
     requiredConfig: ['BLUEBUBBLES_BASE_URL'],
     reliabilitySubjectId: 'integration:bluebubbles',
     proofNameHint: /bluebubbles|same.thread/i,
@@ -86,6 +97,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'telegram.user_session',
     displayName: 'Telegram user-session automation',
+    focusTier: 'operator_support',
     requiredConfig: ['TELEGRAM_USER_API_ID', 'TELEGRAM_USER_API_HASH'],
     reliabilitySubjectId: 'integration:telegram',
     proofNameHint: /telegram.*user/i,
@@ -97,6 +109,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'calendar.read',
     displayName: 'Read Google Calendar',
+    focusTier: 'daily_core',
     requiredConfig: ['GOOGLE_CALENDAR_CLIENT_ID'],
     reliabilitySubjectId: 'integration:google_calendar',
     proofNameHint: /google calendar|calendar.*(read|write|create|auth)/i,
@@ -113,6 +126,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'calendar.write',
     displayName: 'Create Google Calendar events (after approval)',
+    focusTier: 'daily_core',
     requiredConfig: ['GOOGLE_CALENDAR_CLIENT_ID'],
     reliabilitySubjectId: 'integration:google_calendar',
     proofNameHint: /google calendar|calendar.*(read|write|create|auth)/i,
@@ -124,6 +138,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'voice.alexa',
     displayName: 'Alexa voice conversations',
+    focusTier: 'optional_surface',
     requiredConfig: ['ALEXA_SKILL_ID'],
     reliabilitySubjectId: 'integration:alexa',
     proofNameHint: /alexa.*(intent|signed)/i,
@@ -134,6 +149,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'research.web',
     displayName: 'Web research',
+    focusTier: 'daily_core',
     requiredConfig: [],
     requiredConfigAnyOf: [['BRAVE_API_KEY', 'BRAVE_SEARCH_API_KEY']],
     reliabilitySubjectId: 'provider:brave_search',
@@ -150,8 +166,9 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'reminders.internal',
     displayName: 'Internal reminders and follow-ups',
+    focusTier: 'daily_core',
     requiredConfig: [],
-    reliabilitySubjectId: 'tool:message_actions',
+    reliabilitySubjectId: 'tool:reminders',
     allowedChannels: [
       'telegram',
       'alexa',
@@ -165,6 +182,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'repair.runtime',
     displayName: 'Self-healing repair playbooks',
+    focusTier: 'operator_support',
     requiredConfig: [],
     allowedChannels: ['operator', 'internal'],
     approvalRequirement: 'operator_context',
@@ -173,6 +191,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     capabilityId: 'patch.workbench',
     displayName: 'Approval-gated patch workbench',
+    focusTier: 'operator_support',
     requiredConfig: [],
     allowedChannels: ['operator'],
     approvalRequirement: 'operator_context',
@@ -190,6 +209,123 @@ export interface CapabilitySelfModelReport {
   ready: number;
   blocked: number;
   needsSetup: number;
+  dailyCore: {
+    total: number;
+    ready: number;
+    needsAttention: number;
+  };
+  optionalSurfaces: {
+    total: number;
+    ready: number;
+    needsAttention: number;
+  };
+  operatorSupport: {
+    total: number;
+    ready: number;
+    needsAttention: number;
+  };
+}
+
+function definitionForCapability(
+  capabilityId: string,
+): CapabilityDefinition | undefined {
+  return CAPABILITY_DEFINITIONS.find(
+    (definition) => definition.capabilityId === capabilityId,
+  );
+}
+
+function focusTierForCapability(
+  state: Pick<CapabilityStateRecord, 'capabilityId'>,
+): CapabilityDefinition['focusTier'] {
+  return definitionForCapability(state.capabilityId)?.focusTier ?? 'daily_core';
+}
+
+function needsAttention(state: CapabilityStateRecord): boolean {
+  return state.proofStatus !== 'live_proven';
+}
+
+function summarizeFocusTier(
+  states: CapabilityStateRecord[],
+  focusTier: CapabilityDefinition['focusTier'],
+): CapabilitySelfModelReport['dailyCore'] {
+  const scoped = states.filter(
+    (state) => focusTierForCapability(state) === focusTier,
+  );
+  return {
+    total: scoped.length,
+    ready: scoped.filter((state) => state.proofStatus === 'live_proven').length,
+    needsAttention: scoped.filter(needsAttention).length,
+  };
+}
+
+export function getDailyCoreCapabilityStates(
+  report: CapabilitySelfModelReport,
+): CapabilityStateRecord[] {
+  return report.states.filter(
+    (state) => focusTierForCapability(state) === 'daily_core',
+  );
+}
+
+export function getDailyCoreAttentionStates(
+  report: CapabilitySelfModelReport,
+): CapabilityStateRecord[] {
+  return getDailyCoreCapabilityStates(report).filter(needsAttention);
+}
+
+function sortCapabilityStatesForDisplay(
+  states: CapabilityStateRecord[],
+): CapabilityStateRecord[] {
+  const tierRank: Record<CapabilityDefinition['focusTier'], number> = {
+    daily_core: 0,
+    operator_support: 1,
+    optional_surface: 2,
+  };
+  return [...states].sort((a, b) => {
+    const tierDelta =
+      tierRank[focusTierForCapability(a)] - tierRank[focusTierForCapability(b)];
+    if (tierDelta !== 0) return tierDelta;
+    const attentionDelta =
+      Number(needsAttention(b)) - Number(needsAttention(a));
+    if (attentionDelta !== 0) return attentionDelta;
+    return a.capabilityId.localeCompare(b.capabilityId);
+  });
+}
+
+function focusLabelForCapability(state: CapabilityStateRecord): string {
+  const focusTier = focusTierForCapability(state);
+  if (focusTier === 'daily_core') return 'CORE';
+  if (focusTier === 'operator_support') return 'OPERATOR';
+  return 'OPTIONAL';
+}
+
+function isReminderTask(task: ScheduledTask): boolean {
+  return /\breminder\b/i.test(task.prompt || '');
+}
+
+function summarizeReminderTaskEvidence(
+  tasks: ScheduledTask[],
+  generatedAt: string,
+): { hasEvidence: boolean; lastEvidenceAt: string | null } {
+  const nowMs = Date.parse(generatedAt);
+  const recentWindowMs = 30 * 24 * 60 * 60 * 1000;
+  const reminderTasks = tasks.filter(isReminderTask);
+  const active = reminderTasks.find((task) => task.status === 'active');
+  if (active) {
+    return {
+      hasEvidence: true,
+      lastEvidenceAt: active.created_at || active.next_run || null,
+    };
+  }
+  const recentCompleted = reminderTasks.find((task) => {
+    if (task.status !== 'completed') return false;
+    const evidenceAt = Date.parse(task.last_run || task.created_at || '');
+    return Number.isFinite(evidenceAt) && nowMs - evidenceAt <= recentWindowMs;
+  });
+  return {
+    hasEvidence: Boolean(recentCompleted),
+    lastEvidenceAt:
+      recentCompleted?.last_run || recentCompleted?.created_at || null,
+  };
 }
 
 export function buildCapabilitySelfModel(
@@ -199,12 +335,14 @@ export function buildCapabilitySelfModel(
     env?: Record<string, string | undefined>;
     envFileValues?: Record<string, string | undefined>;
     providerHealthSnapshots?: ProviderHealthSnapshot[];
+    integrationReport?: IntegrationDoctorReport;
   } = {},
 ): CapabilitySelfModelReport {
   const generatedAt = nowIso(params.now);
   const dbReady = isDatabaseInitialized();
   const rollups = dbReady ? listToolReliabilityRollups({ limit: 100 }) : [];
   const proofSteps = dbReady ? listProofClosureSteps({ limit: 100 }) : [];
+  const scheduledTasks = dbReady ? getAllTasks() : [];
   const requiredConfigNames = Array.from(
     new Set(
       CAPABILITY_DEFINITIONS.flatMap((item) => [
@@ -219,6 +357,9 @@ export function buildCapabilitySelfModel(
   const providerHealth =
     params.providerHealthSnapshots ??
     collectProviderHealthSnapshots(generatedAt);
+  const integrationReport =
+    params.integrationReport ||
+    buildIntegrationDoctorReport({ now: new Date(generatedAt) });
   const states: CapabilityStateRecord[] = [];
 
   for (const definition of CAPABILITY_DEFINITIONS) {
@@ -251,17 +392,30 @@ export function buildCapabilitySelfModel(
             definition.reliabilitySubjectId!.replace(/^provider:/, ''),
         )
       : undefined;
+    const integration = definition.reliabilitySubjectId?.startsWith(
+      'integration:',
+    )
+      ? integrationReport.statuses.find(
+          (item) =>
+            item.integrationId ===
+            definition.reliabilitySubjectId!.replace(/^integration:/, ''),
+        )
+      : undefined;
 
     let proofStatus: CapabilityStateRecord['proofStatus'] = 'unproven';
     let currentBlocker: string | null = null;
     if (missingConfig.length) {
       proofStatus = 'missing_config';
       currentBlocker = `Missing config (external/config debt, not a repo bug): ${missingConfig.join(', ')}`;
+    } else if (proofStep?.status === 'complete') {
+      proofStatus = 'live_proven';
+    } else if (integration) {
+      const integrationProof =
+        capabilityProofStatusFromIntegration(integration);
+      proofStatus = integrationProof.proofStatus;
+      currentBlocker = integrationProof.currentBlocker;
     } else if (proofStep) {
       switch (proofStep.status) {
-        case 'complete':
-          proofStatus = 'live_proven';
-          break;
         case 'stale_proof':
           proofStatus = 'stale';
           currentBlocker = proofStep.exactNextStep;
@@ -282,7 +436,13 @@ export function buildCapabilitySelfModel(
           proofStatus = 'unproven';
           currentBlocker = proofStep.exactNextStep;
       }
-    } else if (rollup) {
+    } else if (
+      rollup &&
+      !(
+        definition.capabilityId === 'reminders.internal' &&
+        rollup.currentHealth === 'unknown'
+      )
+    ) {
       if (provider) {
         proofStatus =
           provider.state === 'healthy'
@@ -308,6 +468,15 @@ export function buildCapabilitySelfModel(
     } else if (!definition.requiredConfig.length) {
       // Pure-internal capabilities are proven by construction.
       proofStatus = 'live_proven';
+    }
+
+    const reminderEvidence =
+      definition.capabilityId === 'reminders.internal'
+        ? summarizeReminderTaskEvidence(scheduledTasks, generatedAt)
+        : null;
+    if (reminderEvidence?.hasEvidence) {
+      proofStatus = 'live_proven';
+      currentBlocker = null;
     }
 
     const observations =
@@ -359,7 +528,8 @@ export function buildCapabilitySelfModel(
       displayName: definition.displayName,
       enabled,
       proofStatus,
-      lastSuccessAt: lastSuccess?.observedAt ?? null,
+      lastSuccessAt:
+        lastSuccess?.observedAt ?? reminderEvidence?.lastEvidenceAt ?? null,
       lastFailureAt: lastFailure?.observedAt ?? null,
       reliabilityScore,
       requiredConfig:
@@ -383,6 +553,9 @@ export function buildCapabilitySelfModel(
     }
   }
 
+  const dailyCore = summarizeFocusTier(states, 'daily_core');
+  const optionalSurfaces = summarizeFocusTier(states, 'optional_surface');
+  const operatorSupport = summarizeFocusTier(states, 'operator_support');
   return {
     generatedAt,
     states,
@@ -394,6 +567,52 @@ export function buildCapabilitySelfModel(
     ).length,
     needsSetup: states.filter((state) => state.proofStatus === 'missing_config')
       .length,
+    dailyCore,
+    optionalSurfaces,
+    operatorSupport,
+  };
+}
+
+function capabilityProofStatusFromIntegration(integration: IntegrationStatus): {
+  proofStatus: CapabilityStateRecord['proofStatus'];
+  currentBlocker: string | null;
+} {
+  if (integration.state === 'healthy') {
+    return { proofStatus: 'live_proven', currentBlocker: null };
+  }
+  if (
+    integration.state === 'externally_blocked' ||
+    integration.state === 'needs_auth' ||
+    integration.state === 'manual_action_required'
+  ) {
+    return {
+      proofStatus: 'externally_blocked',
+      currentBlocker:
+        integration.nextAction || integration.lastFailure || integration.detail,
+    };
+  }
+  if (integration.state === 'near_live_only') {
+    return {
+      proofStatus: 'manual_proof_required',
+      currentBlocker:
+        integration.nextAction || integration.lastFailure || integration.detail,
+    };
+  }
+  if (
+    integration.state === 'degraded_but_usable' ||
+    integration.state === 'needs_proof' ||
+    integration.state === 'repo_fix_available'
+  ) {
+    return {
+      proofStatus: 'stale',
+      currentBlocker:
+        integration.nextAction || integration.lastFailure || integration.detail,
+    };
+  }
+  return {
+    proofStatus: 'unproven',
+    currentBlocker:
+      integration.nextAction || integration.lastFailure || integration.detail,
   };
 }
 
@@ -411,7 +630,16 @@ export function formatCapabilityReport(
   lines.push(
     `Capabilities: ${report.states.length} (ready ${report.ready}, blocked/missing-config ${report.blocked})`,
   );
-  for (const state of report.states) {
+  lines.push(
+    `Daily core: ${report.dailyCore.ready}/${report.dailyCore.total} ready (${report.dailyCore.needsAttention} need attention)`,
+  );
+  lines.push(
+    `Optional surfaces: ${report.optionalSurfaces.ready}/${report.optionalSurfaces.total} ready (${report.optionalSurfaces.needsAttention} need attention)`,
+  );
+  lines.push(
+    `Operator support: ${report.operatorSupport.ready}/${report.operatorSupport.total} ready (${report.operatorSupport.needsAttention} need attention)`,
+  );
+  for (const state of sortCapabilityStatesForDisplay(report.states)) {
     const flag =
       state.proofStatus === 'live_proven'
         ? 'OK'
@@ -419,7 +647,7 @@ export function formatCapabilityReport(
           ? 'SETUP'
           : state.proofStatus.toUpperCase();
     lines.push(
-      `- [${flag}] ${state.displayName} — reliability ${state.reliabilityScore.toFixed(2)}, approval: ${state.approvalRequirement}, autonomy L${state.autonomyLevel}${state.currentBlocker ? ` — blocker: ${state.currentBlocker}` : ''}`,
+      `- [${flag}/${focusLabelForCapability(state)}] ${state.displayName} — reliability ${state.reliabilityScore.toFixed(2)}, approval: ${state.approvalRequirement}, autonomy L${state.autonomyLevel}${state.currentBlocker ? ` — blocker: ${state.currentBlocker}` : ''}`,
     );
   }
   return lines.join('\n');
@@ -463,19 +691,49 @@ export function formatCapabilityNaturalResponse(text: string): string {
       ask,
     )
   ) {
-    const blocked = report.states.filter(
-      (state) => state.proofStatus !== 'live_proven',
+    const coreAttention = getDailyCoreAttentionStates(report);
+    const optionalAttention = report.states.filter(
+      (state) =>
+        focusTierForCapability(state) === 'optional_surface' &&
+        needsAttention(state),
     );
-    if (!blocked.length) {
+    const operatorAttention = report.states.filter(
+      (state) =>
+        focusTierForCapability(state) === 'operator_support' &&
+        needsAttention(state),
+    );
+    if (
+      !coreAttention.length &&
+      !optionalAttention.length &&
+      !operatorAttention.length
+    ) {
       return 'Nothing is broken right now — all tracked capabilities have live proof.';
     }
     const lines = [
-      `${blocked.length} capabilit${blocked.length === 1 ? 'y' : 'ies'} need attention:`,
+      coreAttention.length
+        ? `${coreAttention.length} core daily-agent capabilit${coreAttention.length === 1 ? 'y' : 'ies'} need attention:`
+        : 'Core daily-agent capabilities are ready.',
     ];
-    for (const state of blocked.slice(0, 6)) {
+    for (const state of coreAttention.slice(0, 6)) {
       lines.push(
         `- ${state.displayName}: ${state.proofStatus.replace(/_/g, ' ')}${state.currentBlocker ? ` — ${state.currentBlocker}` : ''}`,
       );
+    }
+    if (optionalAttention.length) {
+      lines.push('Optional/manual surfaces not in the core loop:');
+      for (const state of optionalAttention.slice(0, 3)) {
+        lines.push(
+          `- ${state.displayName}: ${state.proofStatus.replace(/_/g, ' ')}${state.currentBlocker ? ` — ${state.currentBlocker}` : ''}`,
+        );
+      }
+    }
+    if (operatorAttention.length) {
+      lines.push('Operator support that may need attention:');
+      for (const state of operatorAttention.slice(0, 3)) {
+        lines.push(
+          `- ${state.displayName}: ${state.proofStatus.replace(/_/g, ' ')}${state.currentBlocker ? ` — ${state.currentBlocker}` : ''}`,
+        );
+      }
     }
     return lines.join('\n');
   }
@@ -493,19 +751,32 @@ export function formatCapabilityNaturalResponse(text: string): string {
     return 'I do not have a recent record of holding back an action. If you tell me which action you mean, I can check the lifecycle ledger.';
   }
 
-  const ready = report.states.filter(
+  const readyCore = getDailyCoreCapabilityStates(report).filter(
     (state) => state.proofStatus === 'live_proven',
   );
-  const lines = ['What I can do right now:'];
-  for (const state of ready) {
+  const lines = [
+    `What I can do right now through the daily core (${report.dailyCore.ready}/${report.dailyCore.total} ready):`,
+  ];
+  for (const state of readyCore) {
     lines.push(`- ${state.displayName}`);
   }
-  const needsWork = report.states.filter(
-    (state) => state.proofStatus !== 'live_proven',
+  const coreNeedsWork = getDailyCoreAttentionStates(report);
+  if (coreNeedsWork.length) {
+    lines.push('Daily core needs setup or fresh proof:');
+    for (const state of coreNeedsWork) {
+      lines.push(
+        `- ${state.displayName} (${state.proofStatus.replace(/_/g, ' ')})`,
+      );
+    }
+  }
+  const optionalNeedsWork = report.states.filter(
+    (state) =>
+      focusTierForCapability(state) === 'optional_surface' &&
+      needsAttention(state),
   );
-  if (needsWork.length) {
-    lines.push('Needs setup or fresh proof:');
-    for (const state of needsWork) {
+  if (optionalNeedsWork.length) {
+    lines.push('Optional/manual surfaces can wait:');
+    for (const state of optionalNeedsWork) {
       lines.push(
         `- ${state.displayName} (${state.proofStatus.replace(/_/g, ' ')})`,
       );

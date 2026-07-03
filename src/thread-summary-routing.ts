@@ -189,6 +189,58 @@ export function looksLikeGenericThreadSummaryPrompt(
   );
 }
 
+export function parseRecentTextReviewIntent(
+  rawText: string | null | undefined,
+): ThreadSummaryIntent | null {
+  const normalized = normalizeForMatch(rawText || '');
+  if (!normalized) return null;
+  const lower = normalized.toLowerCase();
+  if (/\b(news|article|website|page|video|podcast|email|mail)\b/.test(lower)) {
+    return null;
+  }
+  const matchesReview =
+    /\b(?:review|check|scan)\s+(?:my\s+)?(?:recent\s+|latest\s+|today'?s\s+|todays\s+)?(?:text(?: message)?s?|messages|texts)\b/.test(
+      lower,
+    ) ||
+    /\b(?:what|which)\s+(?:texts?|text messages?|messages?)\s+(?:need|needs|require|requires)\s+(?:me|my reply|a reply|an answer|attention)\b/.test(
+      lower,
+    ) ||
+    /\b(?:what should i|what do i need to|who should i)\s+(?:reply|respond|answer)\s+(?:to|back to)?\b/.test(
+      lower,
+    ) ||
+    /\b(?:summari[sz]e|summerize|sumarize)\s+(?:my\s+)?recent interactions\b/.test(
+      lower,
+    ) ||
+    /\b(?:texts?|messages?)\s+(?:i owe|that i owe|waiting on me|needing me|need a reply)\b/.test(
+      lower,
+    );
+  if (!matchesReview) return null;
+
+  const { kind, value } = parseWindow(normalized);
+  const canonicalText =
+    kind === 'today'
+      ? 'review recent text messages from today'
+      : kind === 'yesterday'
+        ? 'review recent text messages from yesterday'
+        : kind === 'this_week'
+          ? 'review recent text messages from this week'
+          : kind === 'last_hours'
+            ? `review recent text messages from the last ${value || 1} hours`
+            : kind === 'last_days'
+              ? `review recent text messages from the last ${value || 1} days`
+              : 'review recent text messages from the last 24 hours';
+  return {
+    canonicalText,
+    arguments: {
+      targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+      targetChatName: 'all synced Messages',
+      threadTitle: 'recent text review',
+      timeWindowKind: kind,
+      timeWindowValue: value,
+    },
+  };
+}
+
 export function parseAllSyncedMessagesSummaryIntent(
   rawText: string | null | undefined,
 ): ThreadSummaryIntent | null {

@@ -278,8 +278,17 @@ export function planContextualReminder(
     const daypartMatch = timingText.match(
       /^(today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+(morning|afternoon|evening|tonight)$/i,
     );
-    if (daypartMatch) {
-      const [, dayPhrase, dayPart] = daypartMatch;
+    const dayPhrase = daypartMatch
+      ? daypartMatch[1]
+      : timingText === 'tonight'
+        ? 'today'
+        : null;
+    const dayPart = daypartMatch
+      ? daypartMatch[2]
+      : timingText === 'tonight'
+        ? 'tonight'
+        : null;
+    if (dayPhrase && dayPart) {
       const normalizedDayPart = dayPart.toLowerCase();
       const scheduledAt = resolveReminderDate(
         dayPhrase,
@@ -297,7 +306,9 @@ export function planContextualReminder(
         scheduledAt,
         whenLabel:
           dayPhrase.toLowerCase() === 'today'
-            ? `today ${normalizedDayPart}`
+            ? normalizedDayPart === 'tonight'
+              ? 'tonight'
+              : `today ${normalizedDayPart}`
             : dayPhrase.toLowerCase() === 'tomorrow'
               ? `tomorrow ${normalizedDayPart}`
               : `${dayPhrase[0].toUpperCase()}${dayPhrase.slice(1).toLowerCase()} ${normalizedDayPart}`,
@@ -418,7 +429,10 @@ export function planSimpleReminder(
     const timeLabel = `${hour}${minute === 0 ? '' : `:${pad(minute)}`}${meridiem.toLowerCase()}`;
     const normalizedDayPart = dayPart.toLowerCase();
     if (dayPhrase.toLowerCase() === 'today') {
-      whenLabel = `today ${normalizedDayPart} at ${timeLabel}`;
+      whenLabel =
+        normalizedDayPart === 'tonight'
+          ? `tonight at ${timeLabel}`
+          : `today ${normalizedDayPart} at ${timeLabel}`;
     } else if (dayPhrase.toLowerCase() === 'tomorrow') {
       whenLabel = `tomorrow ${normalizedDayPart} at ${timeLabel}`;
     } else {

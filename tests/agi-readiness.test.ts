@@ -123,7 +123,9 @@ describe('AGI readiness', () => {
       liveProof: liveProof([]),
       publishStatus: publish({
         ghAuthenticated: false,
-        blockers: ['Authenticate GitHub CLI with `gh auth login` before push/PR.'],
+        blockers: [
+          'Authenticate GitHub CLI with `gh auth login` before push/PR.',
+        ],
       }),
     });
     const publishBlocker = report.blockers.find(
@@ -203,7 +205,15 @@ function scorecard(): AgiScorecardResult {
     overallScore: 0.98,
     grade: 'A+',
     scenarioResults: [],
-    suiteSummaries: [{ suite: 'strategy-evals', score: 0.98, passed: true, scenarioCount: 1, failingCount: 0 }],
+    suiteSummaries: [
+      {
+        suite: 'strategy-evals',
+        score: 0.98,
+        passed: true,
+        scenarioCount: 1,
+        failingCount: 0,
+      },
+    ],
     dimensionScores,
     tracePaths: [],
     toolsUsed: [],
@@ -261,7 +271,8 @@ function integrations(statuses: IntegrationStatus[]): IntegrationDoctorReport {
       total: statuses.length,
       healthy: statuses.filter((item) => item.state === 'healthy').length,
       actionNeeded: statuses.filter((item) => item.state !== 'healthy').length,
-      needsProof: statuses.filter((item) => item.state === 'needs_proof').length,
+      needsProof: statuses.filter((item) => item.state === 'needs_proof')
+        .length,
       manualOrExternal: statuses.filter((item) =>
         ['manual_action_required', 'externally_blocked', 'needs_auth'].includes(
           item.state,
@@ -297,12 +308,27 @@ function liveProof(entries: LiveProofGauntletEntry[]): LiveProofGauntletReport {
   const liveProvenCount = entries.filter(
     (entry) => entry.status === 'live_proven',
   ).length;
+  const dailyCoreEntries = entries.filter(
+    (entry) => !/Alexa signed IntentRequest/i.test(entry.proofName),
+  );
   return {
     generatedAt: '2026-06-29T12:00:00.000Z',
     entries,
     liveProvenCount,
     proofDebtCount: entries.length - liveProvenCount,
-    repoWorkRequiredCount: entries.filter((entry) => entry.repoWorkRequired).length,
+    dailyCoreLiveProvenCount: dailyCoreEntries.filter(
+      (entry) => entry.status === 'live_proven',
+    ).length,
+    dailyCoreProofDebtCount: dailyCoreEntries.filter(
+      (entry) => entry.status !== 'live_proven',
+    ).length,
+    optionalProofDebtCount: entries.filter(
+      (entry) =>
+        /Alexa signed IntentRequest/i.test(entry.proofName) &&
+        entry.status !== 'live_proven',
+    ).length,
+    repoWorkRequiredCount: entries.filter((entry) => entry.repoWorkRequired)
+      .length,
     nextAction:
       entries.find((entry) => entry.status !== 'live_proven')?.nextStep ??
       'All proof surfaces are live-proven.',

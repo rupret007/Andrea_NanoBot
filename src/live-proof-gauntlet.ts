@@ -107,6 +107,10 @@ function repoWorkRequiredFor(surface: FieldTrialSurfaceTruth): boolean {
   );
 }
 
+function isOptionalProofEntry(entry: LiveProofGauntletEntry): boolean {
+  return /Alexa signed IntentRequest/i.test(entry.proofName);
+}
+
 function entryFromSurface(params: {
   proofName: string;
   surface: FieldTrialSurfaceTruth;
@@ -243,20 +247,41 @@ export function buildLiveProofGauntletReport(
   const liveProvenCount = entries.filter(
     (entry) => entry.status === 'live_proven',
   ).length;
+  const dailyCoreEntries = entries.filter(
+    (entry) => !isOptionalProofEntry(entry),
+  );
+  const dailyCoreLiveProvenCount = dailyCoreEntries.filter(
+    (entry) => entry.status === 'live_proven',
+  ).length;
   const repoWorkRequiredCount = entries.filter(
     (entry) => entry.repoWorkRequired,
   ).length;
   const proofDebtCount = entries.length - liveProvenCount;
-  const firstDebt = entries.find((entry) => entry.status !== 'live_proven');
+  const dailyCoreProofDebtCount =
+    dailyCoreEntries.length - dailyCoreLiveProvenCount;
+  const optionalProofDebtCount = entries.filter(
+    (entry) => isOptionalProofEntry(entry) && entry.status !== 'live_proven',
+  ).length;
+  const firstDailyCoreDebt = dailyCoreEntries.find(
+    (entry) => entry.status !== 'live_proven',
+  );
+  const firstOptionalDebt = entries.find(
+    (entry) => isOptionalProofEntry(entry) && entry.status !== 'live_proven',
+  );
   return {
     generatedAt,
     entries,
     liveProvenCount,
     proofDebtCount,
+    dailyCoreLiveProvenCount,
+    dailyCoreProofDebtCount,
+    optionalProofDebtCount,
     repoWorkRequiredCount,
-    nextAction: firstDebt
-      ? `${firstDebt.proofName}: ${firstDebt.nextStep}`
-      : 'All tracked live proof surfaces are currently live-proven.',
+    nextAction: firstDailyCoreDebt
+      ? `${firstDailyCoreDebt.proofName}: ${firstDailyCoreDebt.nextStep}`
+      : firstOptionalDebt
+        ? `Daily-core proofs are current. Optional ${firstOptionalDebt.proofName}: ${firstOptionalDebt.nextStep}`
+        : 'All tracked live proof surfaces are currently live-proven.',
     privacyJson: privacyJson(),
   };
 }
@@ -269,6 +294,9 @@ export function formatLiveProofGauntletReport(
     `Generated: ${report.generatedAt}`,
     `Live proven: ${report.liveProvenCount}/${report.entries.length}`,
     `Proof debt: ${report.proofDebtCount}`,
+    `Daily-core live proven: ${report.dailyCoreLiveProvenCount}/${report.entries.length - 1}`,
+    `Daily-core proof debt: ${report.dailyCoreProofDebtCount}`,
+    `Optional proof debt: ${report.optionalProofDebtCount}`,
     `Repo work required: ${report.repoWorkRequiredCount}`,
     '',
     '*Proof Entries*',

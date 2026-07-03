@@ -9,8 +9,10 @@ import {
   getTaskById,
   storeChatMetadata,
   storeMessageDirect,
+  updateMessageAction,
   upsertCommunicationThread,
   upsertDelegationRule,
+  upsertToolReliabilityRollup,
 } from './db.js';
 import { getBlueBubblesCanonicalSelfThreadJid } from './bluebubbles-self-thread.js';
 import {
@@ -472,6 +474,39 @@ describe('message actions', () => {
       resolveBlueBubblesProofDrillSnapshot({
         groupFolder: 'main',
         now: new Date('2026-04-16T16:02:00.000Z'),
+      }).proofDrillState,
+    ).toBe('deferred');
+  });
+
+  it('records late-night BlueBubbles proof drill deferral without requiring a schedulable reminder', async () => {
+    const started = startBlueBubblesProofDrill({
+      groupFolder: 'main',
+      now: new Date('2026-06-16T04:57:00.000Z'),
+    });
+    const sendToTarget = vi.fn(async () => ({ platformMessageId: 'unused' }));
+
+    const deferred = await applyMessageActionOperation(
+      started.action.messageActionId,
+      { kind: 'defer', timingHint: 'later tonight' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: started.action.presentationChatJid || '',
+        currentTime: new Date('2026-06-16T04:58:00.000Z'),
+        sendToTarget,
+      },
+    );
+
+    expect(deferred.action?.sendStatus).toBe('deferred');
+    expect(deferred.action?.lastActionKind).toBe('remind_instead');
+    expect(deferred.action?.followupAt).toBeNull();
+    expect(deferred.action?.scheduledTaskId).toBeNull();
+    expect(deferred.replyText).toContain('deferred decision is recorded');
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(
+      resolveBlueBubblesProofDrillSnapshot({
+        groupFolder: 'main',
+        now: new Date('2026-06-16T04:58:00.000Z'),
       }).proofDrillState,
     ).toBe('deferred');
   });
@@ -1198,6 +1233,70 @@ describe('message actions', () => {
     expect(result.replyText).toContain('made it warmer');
     expect(getMessageAction(action.messageActionId)?.draftText).toContain(
       'keep it easy',
+    );
+  });
+
+  it('blocks an approved send at the final preflight when the target integration is unhealthy', async () => {
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:40:00.000Z'),
+    });
+    updateMessageAction(action.messageActionId, {
+      sendStatus: 'approved',
+      approvedAt: '2026-04-08T19:41:00.000Z',
+      requiresApproval: false,
+      trustLevel: 'approve_before_send',
+    });
+    upsertToolReliabilityRollup({
+      subjectId: 'integration:bluebubbles',
+      updatedAt: '2026-04-08T19:41:00.000Z',
+      sampleCount: 3,
+      successRate: 0,
+      degradedRate: 0,
+      blockedRate: 1,
+      fallbackRate: 0,
+      reliabilityScore: 0.05,
+      currentHealth: 'blocked',
+      confidenceCap: 0.2,
+      cooldownUntil: null,
+      nextAction: 'Complete same-thread message-action proof.',
+      privacyJson: '{"metadataOnly":true}',
+    });
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:should-not-send',
+    }));
+
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:42:00.000Z'),
+        sendToTarget,
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('final action preflight returned defer');
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getMessageAction(action.messageActionId)?.sendStatus).toBe(
+      'drafted',
+    );
+    expect(getCommunicationThread(thread.id)?.suggestedNextAction).toBe(
+      'draft_reply',
     );
   });
 

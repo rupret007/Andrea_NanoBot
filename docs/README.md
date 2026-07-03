@@ -24,7 +24,7 @@ Use this shorthand when you need the current host story fast:
   - Alexa companion while the fresh handled proof remains current
   - Google Calendar scheduling
   - unified work cockpit with Codex/OpenAI runtime
-  - life-thread, communication-companion, mission, chief-of-staff, knowledge-library, and action-bundle / outcome-review flows
+  - life-thread, communication-companion, mission, chief-of-staff, knowledge-library, follow-through review, and outcome-review flows
   - startup / host-control / watchdog / health
 - **manual surface sync still pending**
   - Alexa's latest repo interaction-model hash has not been marked as synced locally yet
@@ -108,7 +108,7 @@ Use these when you are enabling or validating specific capabilities:
 | Telegram onboarding and command UX | [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md) |
 | Formal command inventory           | [COMMAND_SURFACE_REFERENCE.md](COMMAND_SURFACE_REFERENCE.md)             |
 | Telegram operator live testing     | [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md)   |
-| Approval Center / Action Bundles   | [ACTION_BUNDLES.md](ACTION_BUNDLES.md)                                   |
+| Follow-Through Reviews / Approvals | [ACTION_BUNDLES.md](ACTION_BUNDLES.md)                                   |
 | Delegation Rules / Safe Automation | [DELEGATION_RULES_AND_SAFE_AUTOMATION.md](DELEGATION_RULES_AND_SAFE_AUTOMATION.md) |
 | Messaging Trust Ladder / Live Delivery | [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md) |
 | Outcome Tracking / Reviews         | [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md)       |

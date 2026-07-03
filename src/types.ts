@@ -1142,6 +1142,7 @@ export type OutcomeSourceType =
   | 'action_bundle'
   | 'message_action'
   | 'reminder'
+  | 'followthrough_candidate'
   | 'life_thread'
   | 'communication_thread'
   | 'current_work'
@@ -1179,6 +1180,8 @@ export interface OutcomeLinkedRefs {
   delegationRuleId?: string;
   delegationMode?: DelegationApprovalMode | null;
   delegationExplanation?: string | null;
+  followthroughCandidateId?: string;
+  agentOSEpisodeId?: string;
 }
 
 export interface OutcomeRecord {
@@ -1308,6 +1311,13 @@ export interface CouncilDoctorReport {
     outcomeSignals: number;
   };
   providerReliability: CouncilProviderReliabilitySnapshot[];
+  currentProviderHealth?: Array<{
+    providerId: string;
+    state: string;
+    failureClass: string;
+    quotaState: string;
+    credentialState: string;
+  }>;
   providerParticipation?: {
     status: 'full' | 'degraded' | 'minimal' | 'none';
     skippedProviderIds: string[];
@@ -2566,6 +2576,7 @@ export interface AgentOSReport {
   handoffs: AgentOSRoleHandoff[];
   trajectoryEvals: AgentOSTrajectoryEval[];
   skillProposals: AgentOSSkillProposal[];
+  runtimeSkillManifests: AgentRuntimeSkillManifest[];
   capabilityDiscovery: AgentOSCapabilityDiscoveryReport;
   nextAction: string;
   privacy: CognitiveReplayPacket['privacy'];
@@ -5525,6 +5536,9 @@ export interface LiveProofGauntletReport {
   entries: LiveProofGauntletEntry[];
   liveProvenCount: number;
   proofDebtCount: number;
+  dailyCoreLiveProvenCount: number;
+  dailyCoreProofDebtCount: number;
+  optionalProofDebtCount: number;
   repoWorkRequiredCount: number;
   nextAction: string;
   privacyJson: string;
@@ -6301,6 +6315,10 @@ export interface PilotIssueLinkedRefs {
   repairTestsPassed?: string;
   repairFinalHealthState?: string;
   verificationEvidenceIds?: string[];
+  feedbackRouteCoverageKey?: string;
+  feedbackRouteCoverageSummary?: string;
+  feedbackRouteCoverageCommand?: string;
+  feedbackRouteCoverageResolvedAt?: string;
   deploymentAttemptId?: string;
   repoHeadAtStart?: string;
   repoDirtyPathsAtStart?: string[];

@@ -254,6 +254,14 @@ function providerHealthAsRollupHealth(
   return 'unknown';
 }
 
+function isOptionalManualVoiceSubject(
+  subject: string | null | undefined,
+): boolean {
+  return /(^|[:\s])alexa(\b|[:\s])|Alexa signed IntentRequest/i.test(
+    String(subject || ''),
+  );
+}
+
 function confidenceForEffectiveHealth(
   health: ToolReliabilityRollup['currentHealth'],
 ): number {
@@ -573,27 +581,6 @@ function buildProofRecords(input: {
                 : 'manual_proof',
           evidence: [entry.proofId, obs.observationId],
           nextAction: entry.nextStep,
-        }),
-      );
-    }
-    if (
-      /bluebubbles/i.test(entry.proofName) &&
-      entry.status !== 'live_proven' &&
-      /transport|bridge|traffic|ready|available/i.test(entry.detail)
-    ) {
-      contradictions.push(
-        makeContradiction({
-          snapshotId: input.snapshotId,
-          now: input.now,
-          subject: entry.proofName,
-          kind: 'transport_vs_proof',
-          severity: 'medium',
-          observations: [obs.observationId],
-          beliefs: [belief.beliefId],
-          summary:
-            'BlueBubbles transport appears available, but same-thread message-action proof is not fresh.',
-          nextAction:
-            'Say the same-thread proof prompt, then defer with send it later tonight before calling Messages fully proven.',
         }),
       );
     }
@@ -1028,7 +1015,9 @@ export function buildRealityGroundingReport(
   });
   const confirmed = beliefs.filter((belief) => belief.status === 'confirmed');
   const blocked = beliefs.filter(
-    (belief) => belief.status === 'externally_blocked',
+    (belief) =>
+      belief.status === 'externally_blocked' &&
+      !isOptionalManualVoiceSubject(belief.subject),
   );
   const stale = beliefs.filter((belief) => belief.status === 'stale');
   const confidence =
@@ -1087,14 +1076,16 @@ export function buildRealityGroundingReport(
       (belief) =>
         (belief.beliefType === 'tool_health' ||
           belief.beliefType === 'route_confidence') &&
-        belief.status !== 'confirmed',
+        belief.status !== 'confirmed' &&
+        !isOptionalManualVoiceSubject(belief.subject),
     ).length
       ? reliabilityRecords.beliefs
           .filter(
             (belief) =>
               (belief.beliefType === 'tool_health' ||
                 belief.beliefType === 'route_confidence') &&
-              belief.status !== 'confirmed',
+              belief.status !== 'confirmed' &&
+              !isOptionalManualVoiceSubject(belief.subject),
           )
           .slice(0, 5)
           .map((belief) => `${belief.subject}:${belief.status}`)

@@ -11,6 +11,10 @@ import {
   AndreaOpenAiBackendClient,
 } from './andrea-openai-backend.js';
 import { parseGitDirtyPaths } from './git-status-paths.js';
+import {
+  getResponseFeedbackRouteRegressionCoverage,
+  type ResponseFeedbackRouteRegressionCoverage,
+} from './response-feedback-route-coverage.js';
 import type {
   ChannelInlineAction,
   PilotBlockerOwner,
@@ -19,6 +23,8 @@ import type {
   ResponseFeedbackRuntimePreference,
   SendMessageOptions,
 } from './types.js';
+
+export { getResponseFeedbackRouteRegressionCoverage } from './response-feedback-route-coverage.js';
 
 export type ResponseFeedbackActionKind =
   | 'capture'
@@ -92,6 +98,74 @@ function normalizeText(value: string | null | undefined): string {
 
 function normalizeTaskStatus(status: string | null | undefined): string {
   return (status || '').trim().toLowerCase();
+}
+
+function isResolvableFeedbackStatus(
+  status: ResponseFeedbackRecord['status'],
+): boolean {
+  return [
+    'captured',
+    'awaiting_confirmation',
+    'failed',
+    'blocked_external',
+  ].includes(status);
+}
+
+export function resolveResponseFeedbackIfRouteRegressionCovered(
+  record: ResponseFeedbackRecord,
+  options: { now?: Date; dryRun?: boolean } = {},
+): {
+  resolved: boolean;
+  coverage: ResponseFeedbackRouteRegressionCoverage | null;
+  record: ResponseFeedbackRecord;
+  reason: string;
+} {
+  const coverage = getResponseFeedbackRouteRegressionCoverage(record);
+  if (!coverage) {
+    return {
+      resolved: false,
+      coverage,
+      record,
+      reason: 'No matching local route regression coverage is registered.',
+    };
+  }
+  if (!isResolvableFeedbackStatus(record.status)) {
+    return {
+      resolved: false,
+      coverage,
+      record,
+      reason: `Feedback status ${record.status} is not eligible for metadata-only route resolution.`,
+    };
+  }
+  if (options.dryRun) {
+    return {
+      resolved: true,
+      coverage,
+      record,
+      reason:
+        'Route regression coverage matches; dry run did not update feedback metadata.',
+    };
+  }
+  const resolvedAt = (options.now || new Date()).toISOString();
+  const updated = updateResponseFeedback(record.feedbackId, {
+    status: 'resolved_locally',
+    linkedRefs: {
+      ...(record.linkedRefs || {}),
+      feedbackRouteCoverageKey: coverage.coverageKey,
+      feedbackRouteCoverageSummary: coverage.summary,
+      feedbackRouteCoverageCommand: coverage.evidenceCommand,
+      feedbackRouteCoverageResolvedAt: resolvedAt,
+    },
+    operatorNote: `${coverage.summary} Metadata-only resolution; no live action was executed.`,
+    updatedAt: resolvedAt,
+  });
+  return {
+    resolved: true,
+    coverage,
+    record: updated,
+    reason:
+      'Feedback row marked resolved using local route regression coverage.',
+  };
 }
 
 function isSuccessfulResponseFeedbackTaskStatus(

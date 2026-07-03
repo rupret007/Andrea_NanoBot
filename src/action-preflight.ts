@@ -44,9 +44,8 @@ const SPECIFIC_OBJECT_RE =
   /\b(at \d|on (mon|tue|wed|thu|fri|sat|sun)|tomorrow|tonight|today|named?|titled|with [A-Z][a-z]+|to [A-Z][a-z]+|"[^"]+")\b/;
 
 const TOOL_SUBJECT_BY_ACTION_TYPE: Partial<Record<ActionIntentType, string>> = {
-  message_send: 'integration:bluebubbles',
   calendar_write: 'integration:google_calendar',
-  reminder: 'tool:message_actions',
+  reminder: 'tool:reminders',
   research: 'provider:brave_search',
 };
 
@@ -84,6 +83,33 @@ function nowIso(now?: string): string {
 
 function hashId(prefix: string, value: string): string {
   return `${prefix}_${crypto.createHash('sha256').update(value).digest('hex').slice(0, 16)}`;
+}
+
+function messageSendToolSubject(
+  input: Pick<ActionPreflightInput, 'approvedCapability' | 'channel'>,
+): string | undefined {
+  if (input.channel === 'telegram') return 'integration:telegram';
+  if (input.channel === 'bluebubbles') return 'integration:bluebubbles';
+  if (input.approvedCapability === 'messages.send.telegram') {
+    return 'integration:telegram';
+  }
+  if (input.approvedCapability === 'messages.send.bluebubbles') {
+    return 'integration:bluebubbles';
+  }
+  return undefined;
+}
+
+function toolSubjectForAction(
+  input: Pick<
+    ActionPreflightInput,
+    'actionType' | 'approvedCapability' | 'channel' | 'toolSubjectId'
+  >,
+): string | undefined {
+  if (input.toolSubjectId) return input.toolSubjectId;
+  if (input.actionType === 'message_send') {
+    return messageSendToolSubject(input);
+  }
+  return TOOL_SUBJECT_BY_ACTION_TYPE[input.actionType];
 }
 
 export function runActionPreflight(
@@ -155,8 +181,7 @@ export function runActionPreflight(
   });
 
   // 4. Tool reliability
-  const subjectId =
-    input.toolSubjectId ?? TOOL_SUBJECT_BY_ACTION_TYPE[input.actionType];
+  const subjectId = toolSubjectForAction(input);
   let toolStatus: ActionPreflightCheck['status'] = 'pass';
   let toolDetail = 'No tool reliability concern recorded.';
   if (dbReady && subjectId) {

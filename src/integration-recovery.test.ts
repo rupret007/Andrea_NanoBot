@@ -66,6 +66,9 @@ function proofEntry(
 function proofReport(
   entries: LiveProofGauntletEntry[],
 ): LiveProofGauntletReport {
+  const dailyCoreEntries = entries.filter(
+    (entry) => !/Alexa signed IntentRequest/i.test(entry.proofName),
+  );
   return {
     generatedAt,
     entries,
@@ -73,6 +76,17 @@ function proofReport(
       .length,
     proofDebtCount: entries.filter((entry) => entry.status !== 'live_proven')
       .length,
+    dailyCoreLiveProvenCount: dailyCoreEntries.filter(
+      (entry) => entry.status === 'live_proven',
+    ).length,
+    dailyCoreProofDebtCount: dailyCoreEntries.filter(
+      (entry) => entry.status !== 'live_proven',
+    ).length,
+    optionalProofDebtCount: entries.filter(
+      (entry) =>
+        /Alexa signed IntentRequest/i.test(entry.proofName) &&
+        entry.status !== 'live_proven',
+    ).length,
     repoWorkRequiredCount: entries.filter((entry) => entry.repoWorkRequired)
       .length,
     nextAction: 'next proof action',

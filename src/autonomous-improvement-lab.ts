@@ -24,6 +24,10 @@ import {
   type FieldTrialSurfaceTruth,
 } from './field-trial-readiness.js';
 import {
+  buildIntegrationDoctorReport,
+  type IntegrationDoctorReport,
+} from './integration-doctor.js';
+import {
   collectProviderHealthSnapshots,
   type ProviderHealthSnapshot,
 } from './provider-health.js';
@@ -352,15 +356,23 @@ function reliabilityHypotheses(
   rollups: ToolReliabilityRollup[],
   now: string,
   providerHealth: ProviderHealthSnapshot[] = [],
+  integrationReport?: IntegrationDoctorReport,
 ): ImprovementHypothesis[] {
+  const healthyIntegrationIds = new Set(
+    (integrationReport?.statuses || [])
+      .filter((status) => status.state === 'healthy')
+      .map((status) => status.integrationId),
+  );
   return rollups
     .map((rollup) => {
+      const providerId = rollup.subjectId.startsWith('provider:')
+        ? rollup.subjectId.replace(/^provider:/, '')
+        : null;
       if (
-        rollup.subjectId === 'provider:brave_search' &&
+        providerId &&
         providerHealth.some(
           (provider) =>
-            provider.providerId === 'brave_search' &&
-            provider.state === 'healthy',
+            provider.providerId === providerId && provider.state === 'healthy',
         )
       ) {
         return {
@@ -372,6 +384,20 @@ function reliabilityHypotheses(
           confidenceCap: Math.max(rollup.confidenceCap, 0.95),
           nextAction: 'No action needed.',
         };
+      }
+      if (rollup.subjectId.startsWith('integration:')) {
+        const integrationId = rollup.subjectId.replace(/^integration:/, '');
+        if (healthyIntegrationIds.has(integrationId)) {
+          return {
+            ...rollup,
+            sampleCount: Math.max(rollup.sampleCount, 1),
+            successRate: Math.max(rollup.successRate, 1),
+            reliabilityScore: Math.max(rollup.reliabilityScore, 0.9),
+            currentHealth: 'healthy' as const,
+            confidenceCap: Math.max(rollup.confidenceCap, 0.95),
+            nextAction: 'No action needed.',
+          };
+        }
       }
       return rollup;
     })
@@ -425,6 +451,52 @@ function reliabilityHypotheses(
           : 'Prepare an observation/debug patch plan or add a focused reliability fixture.',
       });
     });
+}
+
+function isHiddenByCurrentIntegrationHealth(
+  item: ImprovementHypothesis,
+  integrationReport: IntegrationDoctorReport,
+): boolean {
+  const text =
+    `${item.affectedCapability} ${item.title} ${item.nextAction}`.toLowerCase();
+  const sourceCanBeStale =
+    item.sourceSignalKind === 'pilot_proof_gap' ||
+    item.sourceSignalKind === 'repair_attempt' ||
+    item.sourceSignalKind === 'tool_reliability';
+  if (!sourceCanBeStale) return false;
+
+  const aliases: Record<string, string[]> = {
+    telegram: [
+      'integration:telegram',
+      'telegram user',
+      'telegram_user_session',
+      'telegram bot',
+    ],
+    bluebubbles: [
+      'integration:bluebubbles',
+      'bluebubbles',
+      'bluebubbles_same-thread_proof',
+      'same-thread proof',
+    ],
+    google_calendar: [
+      'integration:google_calendar',
+      'google calendar',
+      'google_calendar',
+    ],
+    research: ['integration:research', 'research proof'],
+    image_generation: [
+      'integration:image_generation',
+      'image generation',
+      'image_generation',
+    ],
+  };
+
+  return integrationReport.statuses.some((status) => {
+    if (status.state !== 'healthy') return false;
+    const terms = aliases[status.integrationId];
+    if (!terms) return false;
+    return terms.some((term) => text.includes(term));
+  });
 }
 
 function executiveReflectionHypotheses(
@@ -637,9 +709,38 @@ function dedupeHypotheses(
       byId.set(item.hypothesisId, item);
     }
   }
-  return Array.from(byId.values()).sort(
-    (a, b) => b.priorityScore - a.priorityScore,
-  );
+  return sortHypothesesForDailyAgent(Array.from(byId.values()));
+}
+
+function dailyAgentRankScore(item: ImprovementHypothesis): number {
+  const text =
+    `${item.affectedCapability} ${item.title} ${item.fixClass} ${item.nextAction}`.toLowerCase();
+  let boost = 0;
+  if (
+    /\b(daily|loose_ends|communication|message|calendar|mission|goal|planner|blackboard|capability|memory|metacognition|cognitive_executive|followthrough|follow-through|candace)\b/.test(
+      text,
+    )
+  ) {
+    boost += 0.08;
+  }
+  if (item.sourceSignalKind === 'response_feedback') boost += 0.08;
+  if (item.sourceSignalKind === 'executive_reflection') boost += 0.06;
+  if (item.sourceSignalKind === 'learning_distillation') boost += 0.04;
+  if (item.fixClass === 'repair_playbook') boost -= 0.03;
+  if (item.externalBlocker) boost -= 0.18;
+  if (item.riskLevel === 'high') boost -= 0.08;
+  if (item.riskLevel === 'critical') boost -= 0.2;
+  return item.priorityScore + boost;
+}
+
+function sortHypothesesForDailyAgent(
+  hypotheses: ImprovementHypothesis[],
+): ImprovementHypothesis[] {
+  return [...hypotheses].sort((a, b) => {
+    const rank = dailyAgentRankScore(b) - dailyAgentRankScore(a);
+    if (Math.abs(rank) > 0.0001) return rank;
+    return b.priorityScore - a.priorityScore;
+  });
 }
 
 function experimentFor(
@@ -809,6 +910,10 @@ function collectHypotheses(now: string): {
   signalSummary: AutonomousImprovementLabReport['signalSummary'];
 } {
   const providerHealth = collectProviderHealthSnapshots(now);
+  const integrationReport = buildIntegrationDoctorReport({
+    now: new Date(now),
+    providers: providerHealth,
+  });
   const repairs = listRepairAttempts({ limit: 120 });
   const rollups = listToolReliabilityRollups({ limit: 200 });
   const reflections = listCognitiveReflectionSignals({ limit: 240 });
@@ -820,18 +925,31 @@ function collectHypotheses(now: string): {
   const hypotheses = dedupeHypotheses([
     ...proof,
     ...repairHypotheses(
-      repairs.filter((attempt) => {
-        if (!/brave_search/i.test(attempt.integrationId)) return true;
-        if (!/quota|auth|credential/i.test(attempt.failureClass)) return true;
-        return !providerHealth.some(
-          (provider) =>
-            provider.providerId === 'brave_search' &&
-            provider.state === 'healthy',
-        );
-      }),
+      repairs
+        .filter((attempt) => {
+          if (!/brave_search/i.test(attempt.integrationId)) return true;
+          if (!/quota|auth|credential/i.test(attempt.failureClass)) return true;
+          return !providerHealth.some(
+            (provider) =>
+              provider.providerId === 'brave_search' &&
+              provider.state === 'healthy',
+          );
+        })
+        .filter((attempt) => {
+          if (
+            !/bluebubbles|telegram|google_calendar/i.test(attempt.integrationId)
+          ) {
+            return true;
+          }
+          return !integrationReport.statuses.some(
+            (status) =>
+              status.integrationId === attempt.integrationId &&
+              status.state === 'healthy',
+          );
+        }),
       now,
     ),
-    ...reliabilityHypotheses(rollups, now, providerHealth),
+    ...reliabilityHypotheses(rollups, now, providerHealth, integrationReport),
     ...executiveReflectionHypotheses(reflections, now),
     ...learningHypotheses(distillations, now),
     ...skillRunHypotheses(skillRuns, now),
@@ -898,7 +1016,7 @@ export function buildAutonomousImprovementLabReport(
       upsertImprovementHypothesis(item);
     }
   }
-  const selectedForExperiment = hypotheses
+  const selectedForExperiment = sortHypothesesForDailyAgent(hypotheses)
     .filter((item) => item.status !== 'rejected' && item.status !== 'archived')
     .slice(0, params.selectedLimit || 5);
   const experiments = selectedForExperiment.map((item) =>
@@ -943,20 +1061,31 @@ export function buildAutonomousImprovementLabReport(
       ? outcomes
       : listImprovementOutcomes({ limit: 40 });
   const providerHealth = collectProviderHealthSnapshots(generatedAt);
-  const visibleHypotheses = storedHypotheses.filter((item) => {
-    if (!/brave_search/i.test(item.affectedCapability)) return true;
-    const braveHealthy = providerHealth.some(
-      (provider) =>
-        provider.providerId === 'brave_search' && provider.state === 'healthy',
-    );
-    if (!braveHealthy) return true;
-    return !(
-      item.externalBlocker ||
-      /quota|blocked|recovered|healthy/i.test(
-        `${item.title} ${item.nextAction} ${item.fixClass}`,
-      )
-    );
+  const integrationReport = buildIntegrationDoctorReport({
+    now: new Date(generatedAt),
+    providers: providerHealth,
   });
+  const visibleHypotheses = sortHypothesesForDailyAgent(
+    storedHypotheses.filter((item) => {
+      if (isHiddenByCurrentIntegrationHealth(item, integrationReport)) {
+        return false;
+      }
+      const providerMatch = item.affectedCapability.match(/^provider:(.+)$/);
+      if (!providerMatch) return true;
+      const providerHealthy = providerHealth.some(
+        (provider) =>
+          provider.providerId === providerMatch[1] &&
+          provider.state === 'healthy',
+      );
+      if (!providerHealthy) return true;
+      return !(
+        item.externalBlocker ||
+        /quota|blocked|recovered|healthy/i.test(
+          `${item.title} ${item.nextAction} ${item.fixClass}`,
+        )
+      );
+    }),
+  );
   const visibleHypothesisIds = new Set(
     visibleHypotheses.map((item) => item.hypothesisId),
   );

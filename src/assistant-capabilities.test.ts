@@ -6,17 +6,103 @@ import {
   getAssistantCapabilityRegistry,
 } from './assistant-capabilities.js';
 import {
+  buildRecentTextReviewSeedJson,
+  reviewRecentTexts,
+} from './recent-text-review.js';
+import {
   createTask,
+  getCommunicationThread,
+  getTaskById,
+  listCommunicationSignalsForThread,
   listKnowledgeSourcesForGroup,
   listMessageActionsForGroup,
   storeChatMetadata,
   storeMessage,
   _initTestDatabase,
+  upsertCommunicationThread,
+  upsertDelegationRule,
 } from './db.js';
 import { planSimpleReminder } from './local-reminder.js';
 import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
+import type {
+  CommunicationThreadRecord,
+  DelegationRuleRecord,
+} from './types.js';
 
 const originalFetch = globalThis.fetch;
+
+vi.setConfig({ testTimeout: 15000 });
+
+function seedRecentTextSafeSendRule(
+  overrides: Partial<DelegationRuleRecord> = {},
+): DelegationRuleRecord {
+  const rule: DelegationRuleRecord = {
+    ruleId: overrides.ruleId || 'rule-recent-text-safe-send',
+    groupFolder: overrides.groupFolder || 'main',
+    title: overrides.title || 'Recent text safe-send rule',
+    triggerType: overrides.triggerType || 'communication_context',
+    triggerScope: overrides.triggerScope || 'personal',
+    conditionsJson:
+      overrides.conditionsJson ||
+      JSON.stringify({
+        actionType: 'send_message',
+        personName: 'Candace',
+        communicationContext: 'reply_followthrough',
+      }),
+    delegatedActionsJson:
+      overrides.delegatedActionsJson ||
+      JSON.stringify([{ actionType: 'send_message' }]),
+    approvalMode: overrides.approvalMode || 'auto_apply_when_safe',
+    status: overrides.status || 'active',
+    createdAt: overrides.createdAt || '2026-04-15T12:00:00.000Z',
+    lastUsedAt: overrides.lastUsedAt ?? null,
+    timesUsed: overrides.timesUsed ?? 1,
+    timesAutoApplied: overrides.timesAutoApplied ?? 0,
+    timesOverridden: overrides.timesOverridden ?? 0,
+    lastOutcomeStatus: overrides.lastOutcomeStatus ?? null,
+    userConfirmed: overrides.userConfirmed ?? true,
+    channelApplicabilityJson:
+      overrides.channelApplicabilityJson ||
+      JSON.stringify(['telegram', 'bluebubbles']),
+    safetyLevel: overrides.safetyLevel || 'safe_to_auto_after_delegation',
+  };
+  upsertDelegationRule(rule);
+  return rule;
+}
+
+function seedCommunicationThread(
+  overrides: Partial<CommunicationThreadRecord> = {},
+): CommunicationThreadRecord {
+  const now = overrides.updatedAt || '2026-04-15T16:00:00.000Z';
+  const record: CommunicationThreadRecord = {
+    id: overrides.id || 'comm-candace',
+    groupFolder: overrides.groupFolder || 'main',
+    title: overrides.title || 'Candace',
+    linkedSubjectIds: overrides.linkedSubjectIds || [],
+    linkedLifeThreadIds: overrides.linkedLifeThreadIds || [],
+    channel: overrides.channel || 'bluebubbles',
+    channelChatJid: overrides.channelChatJid || 'bb:iMessage;-;+14695550123',
+    lastInboundSummary:
+      overrides.lastInboundSummary ||
+      'Candace asked whether dinner still works tonight.',
+    lastOutboundSummary: overrides.lastOutboundSummary || null,
+    followupState: overrides.followupState || 'reply_needed',
+    urgency: overrides.urgency || 'soon',
+    followupDueAt: overrides.followupDueAt || null,
+    suggestedNextAction: overrides.suggestedNextAction || 'draft_reply',
+    toneStyleHints: overrides.toneStyleHints || [],
+    lastContactAt: overrides.lastContactAt || now,
+    lastMessageId: overrides.lastMessageId || null,
+    linkedTaskId: overrides.linkedTaskId || null,
+    inferenceState: overrides.inferenceState || 'assistant_inferred',
+    trackingMode: overrides.trackingMode || 'default',
+    createdAt: overrides.createdAt || now,
+    updatedAt: now,
+    disabledAt: overrides.disabledAt || null,
+  };
+  upsertCommunicationThread(record);
+  return record;
+}
 
 describe('assistant capabilities', () => {
   beforeEach(() => {
@@ -97,6 +183,14 @@ describe('assistant capabilities', () => {
     ).toMatchObject({
       category: 'communication',
       safeForAlexa: true,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+    });
+    expect(
+      getAssistantCapability('communication.review_recent_texts'),
+    ).toMatchObject({
+      category: 'communication',
+      safeForAlexa: false,
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
@@ -336,6 +430,498 @@ describe('assistant capabilities', () => {
     expect(result.replyText).toContain('Messages chat');
     expect(result.replyText).not.toContain('+14695550123');
     expect(result.trace?.notes).toContain('window:today');
+  });
+
+  it('reviews recent texts without creating message actions until a selected draft follow-up', async () => {
+    seedRecentTextSafeSendRule();
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:10:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'review-candace-1',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Can you confirm if dinner still works tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+
+    const review = await executeAssistantCapability({
+      capabilityId: 'communication.review_recent_texts',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'review recent text messages from today',
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(review.handled).toBe(true);
+    expect(review.replyText).toContain('Needs reply');
+    expect(review.replyText).toContain('draft #1');
+    expect(review.outcomeMetadata).toMatchObject({
+      source: 'recent_text_review',
+      outcomeKind: 'suggested',
+      counts: {
+        needsReply: 1,
+        worthWatching: 0,
+        noReplyNeeded: 0,
+      },
+    });
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+    const seedJson = review.conversationSeed?.subjectData?.recentTextReviewJson;
+    expect(seedJson).toBeTruthy();
+    expect(seedJson).not.toContain('bb:iMessage');
+    expect(seedJson).not.toContain('+14695550123');
+    expect(seedJson).not.toContain('review-candace-1');
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        priorSubjectData: review.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'draft #1',
+        canonicalText: 'draft #1',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.messageAction).toMatchObject({
+      targetChannel: 'bluebubbles',
+      targetKind: 'external_thread',
+      sendStatus: 'drafted',
+      requiresApproval: true,
+      delegationRuleId: null,
+    });
+    expect(draft.outcomeMetadata).toMatchObject({
+      source: 'recent_text_review',
+      outcomeKind: 'drafted',
+      sendStatus: 'drafted',
+      itemRank: 1,
+    });
+  });
+
+  it('handles numbered recent text review follow-ups without sending messages', async () => {
+    seedCommunicationThread({
+      id: 'comm-candace-review',
+      title: 'Candace',
+      channelChatJid: 'bb:iMessage;-;+14695550123',
+    });
+    seedCommunicationThread({
+      id: 'comm-alex-review',
+      title: 'Alex',
+      channelChatJid: 'bb:iMessage;-;+14695550124',
+    });
+    seedCommunicationThread({
+      id: 'comm-morgan-review',
+      title: 'Morgan',
+      channelChatJid: 'bb:iMessage;-;+14695550125',
+    });
+    const recentTextReviewJson = JSON.stringify({
+      version: 1,
+      reviewedAt: '2026-04-15T17:00:00.000Z',
+      items: [
+        {
+          itemId: 'review-1',
+          rank: 1,
+          section: 'needs_reply',
+          communicationThreadId: 'comm-candace-review',
+          chatLabel: 'Candace',
+          isGroup: false,
+          summaryText: 'Candace asked whether dinner still works tonight.',
+          whyText: 'asks for an answer; has timing pressure',
+          recommendedAction: 'Draft a reply.',
+          linkedSubjectIds: [],
+          linkedLifeThreadIds: [],
+        },
+        {
+          itemId: 'review-2',
+          rank: 2,
+          section: 'needs_reply',
+          communicationThreadId: 'comm-alex-review',
+          chatLabel: 'Alex',
+          isGroup: false,
+          summaryText: 'Alex asked for a set list update.',
+          whyText: 'latest message from them after your last reply',
+          recommendedAction: 'Draft a warmer reply.',
+          suggestedReply: 'I saw this and will send it shortly.',
+          linkedSubjectIds: [],
+          linkedLifeThreadIds: [],
+        },
+        {
+          itemId: 'review-3',
+          rank: 3,
+          section: 'worth_watching',
+          communicationThreadId: 'comm-morgan-review',
+          chatLabel: 'Morgan',
+          isGroup: false,
+          summaryText: 'Morgan mentioned a loose follow-up for tonight.',
+          whyText: 'worth keeping visible',
+          recommendedAction: 'Set a reminder if useful.',
+          linkedSubjectIds: [],
+          linkedLifeThreadIds: [],
+        },
+      ],
+    });
+    const baseContext = {
+      channel: 'telegram' as const,
+      groupFolder: 'main',
+      chatJid: 'tg:8004355504',
+      now: new Date('2026-04-15T17:05:00.000Z'),
+      priorSubjectData: {
+        activeCapabilityId: 'communication.review_recent_texts' as const,
+        recentTextReviewJson,
+      },
+    };
+
+    const warmer = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: baseContext,
+      input: {
+        text: 'make #2 warmer',
+        canonicalText: 'make #2 warmer',
+      },
+    });
+
+    expect(warmer.handled).toBe(true);
+    expect(warmer.messageAction).toMatchObject({
+      targetChannel: 'bluebubbles',
+      targetKind: 'external_thread',
+      sendStatus: 'drafted',
+      requiresApproval: true,
+    });
+    expect(warmer.outcomeMetadata).toMatchObject({
+      outcomeKind: 'drafted',
+      itemRank: 2,
+      sendStatus: 'drafted',
+    });
+    expect(
+      warmer.conversationSeed?.subjectData?.recentTextReviewJson,
+    ).toBeTruthy();
+
+    const reminder = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        ...baseContext,
+        priorSubjectData: warmer.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'remind me about #3 tonight',
+        canonicalText: 'remind me about #3 tonight',
+      },
+    });
+    const reminderRefs = JSON.parse(
+      reminder.messageAction?.linkedRefsJson || '{}',
+    );
+
+    expect(reminder.handled).toBe(true);
+    expect(reminder.replyText).toContain('kept the draft unsent');
+    expect(reminder.messageAction).toMatchObject({
+      sendStatus: 'deferred',
+      lastActionKind: 'remind_instead',
+    });
+    expect(reminder.outcomeMetadata).toMatchObject({
+      outcomeKind: 'reminded',
+      lastActionKind: 'remind_instead',
+      itemRank: 3,
+    });
+    expect(getCommunicationThread('comm-morgan-review')).toMatchObject({
+      followupState: 'scheduled',
+      suggestedNextAction: 'create_reminder',
+    });
+    expect(getTaskById(reminderRefs.reminderTaskId)?.prompt).toContain(
+      'Revisit this draft reply',
+    );
+
+    const saved = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: baseContext,
+      input: {
+        text: 'save #2',
+        canonicalText: 'save #2',
+      },
+    });
+
+    expect(saved.handled).toBe(true);
+    expect(saved.messageAction).toMatchObject({
+      sendStatus: 'deferred',
+      lastActionKind: 'save_to_thread',
+      requiresApproval: false,
+    });
+    expect(saved.outcomeMetadata).toMatchObject({
+      outcomeKind: 'saved',
+      lastActionKind: 'save_to_thread',
+      itemRank: 2,
+    });
+
+    const skipped = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: baseContext,
+      input: {
+        text: 'skip #1',
+        canonicalText: 'skip #1',
+      },
+    });
+
+    expect(skipped.handled).toBe(true);
+    expect(skipped.messageAction).toMatchObject({
+      sendStatus: 'skipped',
+      lastActionKind: 'skipped',
+    });
+    expect(skipped.outcomeMetadata).toMatchObject({
+      outcomeKind: 'skipped',
+      lastActionKind: 'skipped',
+      itemRank: 1,
+    });
+    expect(getCommunicationThread('comm-candace-review')).toMatchObject({
+      followupState: 'ignored',
+      suggestedNextAction: 'ignore',
+    });
+
+    const actionCountBeforeWhy = listMessageActionsForGroup({
+      groupFolder: 'main',
+      includeSent: true,
+    }).length;
+    const why = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: baseContext,
+      input: {
+        text: 'why #1',
+        canonicalText: 'why #1',
+      },
+    });
+
+    expect(why.handled).toBe(true);
+    expect(why.replyText).toContain('asks for an answer');
+    expect(why.outcomeMetadata).toMatchObject({
+      outcomeKind: 'handled',
+      itemRank: 1,
+    });
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(actionCountBeforeWhy);
+
+    const handled = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: baseContext,
+      input: {
+        text: 'mark #2 handled',
+        canonicalText: 'mark #2 handled',
+      },
+    });
+
+    expect(handled.handled).toBe(true);
+    expect(handled.messageAction).toBeUndefined();
+    expect(handled.replyText).toContain('did not draft or send');
+    expect(handled.outcomeMetadata).toMatchObject({
+      outcomeKind: 'handled',
+      itemRank: 2,
+    });
+    expect(getCommunicationThread('comm-alex-review')).toMatchObject({
+      followupState: 'resolved',
+      suggestedNextAction: 'ignore',
+    });
+    expect(
+      listCommunicationSignalsForThread('comm-alex-review').some((signal) =>
+        signal.summaryText.includes('handled'),
+      ),
+    ).toBe(true);
+  });
+
+  it('blocks stale selected recent-text items before drafting', async () => {
+    seedCommunicationThread({
+      id: 'comm-stale-review',
+      title: 'Candace',
+      channelChatJid: 'bb:iMessage;-;+14695550123',
+    });
+    const staleSeedJson = JSON.stringify({
+      version: 1,
+      reviewedAt: '2026-04-13T00:00:00.000Z',
+      items: [
+        {
+          itemId: 'review-stale',
+          rank: 1,
+          section: 'needs_reply',
+          communicationThreadId: 'comm-stale-review',
+          chatLabel: 'Candace',
+          isGroup: false,
+          summaryText: 'Candace asked whether dinner still works tonight.',
+          whyText: 'asks for an answer',
+          linkedSubjectIds: [],
+          linkedLifeThreadIds: [],
+        },
+      ],
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        priorSubjectData: {
+          activeCapabilityId: 'communication.review_recent_texts' as const,
+          recentTextReviewJson: staleSeedJson,
+        },
+      },
+      input: {
+        text: 'draft #1',
+        canonicalText: 'draft #1',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('text review is stale');
+    expect(result.messageAction).toBeUndefined();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('blocks selected recent-text follow-ups when the thread changed after review', async () => {
+    seedRecentTextSafeSendRule();
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:10:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'cap-freshness-1',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Can you confirm dinner tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+    const review = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+    const recentTextReviewJson = buildRecentTextReviewSeedJson(review);
+    storeMessage({
+      id: 'cap-freshness-2',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'me',
+      sender_name: 'Jeff',
+      content: 'Yes, dinner still works.',
+      timestamp: '2026-04-15T17:03:00.000Z',
+      is_from_me: true,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        priorSubjectData: {
+          activeCapabilityId: 'communication.review_recent_texts' as const,
+          recentTextReviewJson,
+        },
+      },
+      input: {
+        text: 'draft #1',
+        canonicalText: 'draft #1',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('thread changed');
+    expect(result.messageAction).toBeUndefined();
+    expect(result.outcomeMetadata).toMatchObject({
+      outcomeKind: 'blocked_stale',
+      handled: false,
+      itemRank: 1,
+    });
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('blocks mark-handled when a selected review item loses its Messages binding', async () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:10:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'cap-unbound-1',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Can you confirm dinner tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+    const review = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+    const recentTextReviewJson = buildRecentTextReviewSeedJson(review);
+    const threadId = review.items[0]!.communicationThreadId!;
+    upsertCommunicationThread({
+      ...getCommunicationThread(threadId)!,
+      channel: 'telegram',
+      channelChatJid: 'tg:other-thread',
+      updatedAt: '2026-04-15T17:03:00.000Z',
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        priorSubjectData: {
+          activeCapabilityId: 'communication.review_recent_texts' as const,
+          recentTextReviewJson,
+        },
+      },
+      input: {
+        text: 'mark #1 handled',
+        canonicalText: 'mark #1 handled',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('current Messages thread binding');
+    expect(result.messageAction).toBeUndefined();
+    expect(result.outcomeMetadata).toMatchObject({
+      outcomeKind: 'blocked_unbound',
+      handled: false,
+      itemRank: 1,
+    });
+    expect(getCommunicationThread(threadId)).toMatchObject({
+      followupState: 'reply_needed',
+    });
   });
 
   it('reads upcoming reminders from local scheduled tasks', async () => {
@@ -744,7 +1330,7 @@ describe('assistant capabilities', () => {
     });
 
     expect(telegram.replyText).toContain('*Research Summary*');
-    expect(telegram.replyText).toContain('*Why this route*');
+    expect(telegram.replyText).not.toContain('*Why this route*');
     expect(alexa.replyText).toContain('Want');
     expect(alexa.researchResult?.routeExplanation).toContain('local context');
     expect(alexa.followupActions).toEqual(
@@ -1187,8 +1773,13 @@ describe('assistant capabilities', () => {
     expect(status.handled).toBe(true);
     expect(status.replyText).toContain('Morning brief: scheduled');
     expect(followthrough.handled).toBe(true);
-    expect(followthrough.replyText).toContain('Follow-through right now');
-    expect(followthrough.trace?.responseSource).toBe('life_thread_local');
+    expect(followthrough.replyText).toContain('Follow-through candidates');
+    expect(followthrough.replyText).toContain('approve #1');
+    expect(followthrough.trace?.responseSource).toBe('local_companion');
+    expect(followthrough.outcomeMetadata).toMatchObject({
+      source: 'followthrough_activation',
+      outcomeKind: 'reviewed',
+    });
     expect(alexaFollowthrough.handled).toBe(true);
     expect(alexaFollowthrough.replyText).not.toContain('- ');
   });

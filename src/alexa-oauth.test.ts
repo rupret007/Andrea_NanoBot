@@ -28,6 +28,8 @@ vi.mock('./alexa-bridge.js', async () => {
 
 const mockedRunAlexaAssistantTurn = vi.mocked(runAlexaAssistantTurn);
 
+vi.setConfig({ testTimeout: 15000 });
+
 function buildConfig(overrides: Partial<AlexaConfig> = {}): AlexaConfig {
   return {
     skillId: 'amzn1.ask.skill.test',

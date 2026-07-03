@@ -365,7 +365,7 @@ describe('Alexa speech shaping', () => {
     expect(shaped).toBe('First sentence. Second sentence. Third sentence.');
   });
 
-  it('softens repetitive action-bundle boilerplate before Alexa speaks it', () => {
+  it('softens repetitive approval-item boilerplate before Alexa speaks it', () => {
     const shaped = shapeAlexaSpeech(
       'Candace still needs a dinner answer tonight. I have 3 next steps ready: send a short reply, save it for later, or turn it into a reminder.',
     );

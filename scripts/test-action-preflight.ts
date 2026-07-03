@@ -61,6 +61,33 @@ const approvedSend = runActionPreflight({
 });
 assert.equal(approvedSend.verdict, 'proceed');
 
+// Message sends check the reliability for their target channel, not a fixed
+// BlueBubbles dependency.
+upsertToolReliabilityRollup({
+  subjectId: 'integration:telegram',
+  updatedAt: '2026-06-09T20:00:30.000Z',
+  sampleCount: 6,
+  successRate: 0,
+  degradedRate: 0.2,
+  blockedRate: 0.8,
+  fallbackRate: 0,
+  reliabilityScore: 0.08,
+  currentHealth: 'blocked',
+  confidenceCap: 0.2,
+  cooldownUntil: null,
+  nextAction: 'Re-run Telegram bot health check.',
+  privacyJson: '{"metadataOnly":true}',
+});
+const blockedTelegramSend = runActionPreflight({
+  actionSummary: 'send the update to Jeff on Telegram',
+  actionType: 'message_send',
+  channel: 'telegram',
+  hasExplicitUserApproval: true,
+  approvedCapability: 'messages.send.telegram',
+  evidenceIds: ['approval:telegram'],
+});
+assert.equal(blockedTelegramSend.verdict, 'defer');
+
 // Blocked tool defers even with approval.
 upsertToolReliabilityRollup({
   subjectId: 'integration:google_calendar',
@@ -95,6 +122,44 @@ const blockedToolWithoutApproval = runActionPreflight({
   channel: 'telegram',
 });
 assert.equal(blockedToolWithoutApproval.verdict, 'defer');
+
+// Reminder preflight is split from message-send reliability.
+upsertToolReliabilityRollup({
+  subjectId: 'tool:message_actions',
+  updatedAt: '2026-06-09T20:01:30.000Z',
+  sampleCount: 4,
+  successRate: 0,
+  degradedRate: 0,
+  blockedRate: 1,
+  fallbackRate: 0,
+  reliabilityScore: 0.05,
+  currentHealth: 'blocked',
+  confidenceCap: 0.2,
+  cooldownUntil: null,
+  nextAction: 'Complete same-thread send proof.',
+  privacyJson: '{"metadataOnly":true}',
+});
+upsertToolReliabilityRollup({
+  subjectId: 'tool:reminders',
+  updatedAt: '2026-06-09T20:01:45.000Z',
+  sampleCount: 3,
+  successRate: 1,
+  degradedRate: 0,
+  blockedRate: 0,
+  fallbackRate: 0,
+  reliabilityScore: 0.95,
+  currentHealth: 'healthy',
+  confidenceCap: 0.95,
+  cooldownUntil: null,
+  nextAction: 'none',
+  privacyJson: '{"metadataOnly":true}',
+});
+const reminder = runActionPreflight({
+  actionSummary: 'remind me to check the oven at 6pm',
+  actionType: 'reminder',
+  channel: 'telegram',
+});
+assert.equal(reminder.verdict, 'proceed');
 
 // High-risk verification need forces verify ahead of approval.
 upsertRealitySnapshot({

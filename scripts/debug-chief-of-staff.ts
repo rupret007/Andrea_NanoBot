@@ -1,5 +1,11 @@
-import { executeAssistantCapability } from '../src/assistant-capabilities.js';
+import type { CalendarLookupSnapshot } from '../src/calendar-assistant.js';
+import { buildChiefOfStaffTurn } from '../src/chief-of-staff.js';
 import { analyzeCommunicationMessage } from '../src/communication-companion.js';
+import {
+  buildCurrentFocusSnapshot,
+  type GroundedDaySnapshot,
+  type UpcomingReminderSummary,
+} from '../src/daily-command-center.js';
 import { _initTestDatabase, createTask } from '../src/db.js';
 import { handleLifeThreadCommand } from '../src/life-threads.js';
 
@@ -9,6 +15,70 @@ function printBlock(title: string, lines: string[]): void {
     process.stdout.write(`${line}\n`);
   }
   process.stdout.write('\n');
+}
+
+function buildFixtureGroundedSnapshot(
+  now: Date,
+  selectedWork: GroundedDaySnapshot['selectedWork'],
+): GroundedDaySnapshot {
+  const nextEvent = {
+    id: 'fixture-dinner',
+    providerId: 'fixture' as const,
+    providerLabel: 'Fixture',
+    title: 'Dinner planning',
+    startIso: '2026-04-06T18:00:00.000Z',
+    endIso: '2026-04-06T19:00:00.000Z',
+    allDay: false,
+    calendarId: 'fixture',
+    calendarName: 'Fixture',
+  };
+  const openWindow = {
+    start: new Date('2026-04-06T15:00:00.000Z'),
+    end: new Date('2026-04-06T17:30:00.000Z'),
+  };
+  const calendar: CalendarLookupSnapshot = {
+    unavailableReply: null,
+    fullyConfirmed: true,
+    incompleteNoteBody: '',
+    timedEvents: [nextEvent],
+    allDayEvents: [],
+    nextTimedEvent: nextEvent,
+    activeAllDayEvents: [],
+    openWindows: [openWindow],
+    conflictGroups: [],
+    adjacencyClusters: [],
+    densityLine: 'Fixture calendar has one anchor and one open window.',
+  };
+  const reminders: UpcomingReminderSummary[] = [
+    {
+      id: 'chief-reminder',
+      label: 'Reply to Candace about dinner tonight',
+      nextRunIso: '2026-04-06T19:00:00.000Z',
+    },
+    {
+      id: 'chief-band-reminder',
+      label: 'Bring the band set list before rehearsal',
+      nextRunIso: '2026-04-06T22:00:00.000Z',
+    },
+  ];
+  const todayReminders = reminders;
+  const meaningfulOpenWindows = [openWindow];
+  return {
+    now,
+    timeZone: 'America/Chicago',
+    calendar,
+    selectedWork,
+    reminders,
+    todayReminders,
+    meaningfulOpenWindows,
+    currentFocus: buildCurrentFocusSnapshot({
+      now,
+      nextReminder: reminders[0] || null,
+      nextEvent,
+      nextMeaningfulOpenWindow: openWindow,
+      selectedWork,
+    }),
+  };
 }
 
 async function main(): Promise<void> {
@@ -63,122 +133,94 @@ async function main(): Promise<void> {
     now,
   });
 
+  const selectedWork = {
+    laneLabel: 'Cursor',
+    title: 'Ship release notes',
+    statusLabel: 'Running',
+    summary: 'Tighten the release note draft and prep the handoff blurb.',
+  };
   const context = {
     groupFolder,
     chatJid,
     now,
-    selectedWork: {
-      laneLabel: 'Cursor',
-      title: 'Ship release notes',
-      statusLabel: 'Running',
-      summary: 'Tighten the release note draft and prep the handoff blurb.',
-    },
+    selectedWork,
+    groundedSnapshot: buildFixtureGroundedSnapshot(now, selectedWork),
   } as const;
 
-  const matters = await executeAssistantCapability({
-    capabilityId: 'staff.prioritize',
-    context: {
-      channel: 'telegram',
-      ...context,
-    },
-    input: {
-      canonicalText: 'what matters most today',
-    },
+  const matters = await buildChiefOfStaffTurn({
+    channel: 'telegram',
+    ...context,
+    text: 'what matters most today',
+    mode: 'prioritize',
   });
 
-  const forgetting = await executeAssistantCapability({
-    capabilityId: 'daily.loose_ends',
-    context: {
-      channel: 'telegram',
-      ...context,
-    },
-    input: {
-      canonicalText: 'what am I forgetting',
-    },
+  const forgetting = await buildChiefOfStaffTurn({
+    channel: 'telegram',
+    ...context,
+    text: 'what am I forgetting',
+    mode: 'prioritize',
   });
 
-  const tonight = await executeAssistantCapability({
-    capabilityId: 'daily.evening_reset',
-    context: {
-      channel: 'alexa',
-      ...context,
-    },
-    input: {
-      canonicalText: 'what should I remember tonight',
-    },
+  const tonight = await buildChiefOfStaffTurn({
+    channel: 'alexa',
+    ...context,
+    text: 'what should I remember tonight',
+    mode: 'plan_horizon',
   });
 
-  const candace = await executeAssistantCapability({
-    capabilityId: 'household.candace_upcoming',
-    context: {
-      channel: 'telegram',
-      ...context,
-    },
-    input: {
-      canonicalText: "what's still open with Candace",
-    },
+  const candace = await buildChiefOfStaffTurn({
+    channel: 'telegram',
+    ...context,
+    text: "what's still open with Candace",
+    mode: 'prioritize',
   });
 
-  const nextMove = await executeAssistantCapability({
-    capabilityId: 'staff.prioritize',
-    context: {
-      channel: 'alexa',
-      ...context,
-    },
-    input: {
-      canonicalText: 'what should I do next',
-    },
+  const nextMove = await buildChiefOfStaffTurn({
+    channel: 'alexa',
+    ...context,
+    text: 'what should I do next',
+    mode: 'prioritize',
   });
 
-  const explain = await executeAssistantCapability({
-    capabilityId: 'staff.explain',
-    context: {
-      channel: 'telegram',
-      ...context,
-      priorSubjectData: matters.conversationSeed?.subjectData,
-    },
-    input: {
-      canonicalText: 'why are you bringing that up',
-    },
+  const explain = await buildChiefOfStaffTurn({
+    channel: 'telegram',
+    ...context,
+    text: 'why are you bringing that up',
+    mode: 'explain',
+    priorChiefOfStaffContextJson: JSON.stringify(matters.context),
   });
 
   printBlock('WHAT MATTERS TODAY', [
-    `handled: ${matters.handled}`,
+    'handled: true',
     `reply: ${matters.replyText || 'none'}`,
-    `signals: ${
-      matters.continuationCandidate?.chiefOfStaffContextJson
-        ? JSON.parse(matters.continuationCandidate.chiefOfStaffContextJson).snapshot.signalsUsed.join(', ')
-        : 'none'
-    }`,
+    `signals: ${matters.snapshot.signalsUsed.join(', ') || 'none'}`,
   ]);
 
   printBlock('WHAT AM I FORGETTING', [
-    `handled: ${forgetting.handled}`,
+    'handled: true',
     `reply: ${forgetting.replyText || 'none'}`,
-    `signals: ${forgetting.dailyResponse?.context.signalsUsed.join(', ') || 'none'}`,
+    `signals: ${forgetting.snapshot.signalsUsed.join(', ') || 'none'}`,
   ]);
 
   printBlock('WHAT SHOULD I REMEMBER TONIGHT', [
-    `handled: ${tonight.handled}`,
+    'handled: true',
     `reply: ${tonight.replyText || 'none'}`,
   ]);
 
   printBlock("WHAT'S STILL OPEN WITH CANDACE", [
-    `handled: ${candace.handled}`,
+    'handled: true',
     `reply: ${candace.replyText || 'none'}`,
   ]);
 
   printBlock('WHAT SHOULD I DO NEXT', [
-    `handled: ${nextMove.handled}`,
+    'handled: true',
     `reply: ${nextMove.replyText || 'none'}`,
   ]);
 
   printBlock('WHY ARE YOU BRINGING THAT UP', [
-    `handled: ${explain.handled}`,
+    'handled: true',
     `reply: ${explain.replyText || 'none'}`,
-    `chief_of_staff_context: ${
-      explain.conversationSeed?.subjectData?.chiefOfStaffContextJson ? 'present' : 'missing'
-    }`,
+    `chief_of_staff_context: ${explain.context ? 'present' : 'missing'}`,
   ]);
 }
 

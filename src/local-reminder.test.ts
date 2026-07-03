@@ -157,6 +157,22 @@ describe('planContextualReminder', () => {
     expect(planned?.task.schedule_value).toBe('2026-04-01T17:00:00');
   });
 
+  it('formats tonight follow-up timing without saying today tonight', () => {
+    const planned = planContextualReminder(
+      'tonight',
+      'first outcomes',
+      'main',
+      'local:followthrough:main',
+      new Date('2026-06-30T13:00:00-05:00'),
+    );
+
+    expect(planned).not.toBeNull();
+    expect(planned?.confirmation).toContain(
+      "Okay. I'll remind you tonight to first outcomes.",
+    );
+    expect(planned?.confirmation).not.toContain('today tonight');
+  });
+
   it('supports time-before-day follow-up phrasing for action-layer reminder capture', () => {
     const planned = planContextualReminder(
       "I'd like it to be at 12:00PM today.",
