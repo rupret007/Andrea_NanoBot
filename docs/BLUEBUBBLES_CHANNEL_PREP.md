@@ -27,8 +27,35 @@ Use these operator truth surfaces:
 - `GET /v1/bluebubbles/status` on the BlueBubbles control API when `BLUEBUBBLES_CONTROL_API_ENABLED=true`
 - `GET /v1/bluebubbles/doctor` on the BlueBubbles control API for blocker taxonomy and next action
 - `npm run bluebubbles:mcp` for the thin stdio MCP bridge over that authenticated control API
+- `npm run openclaw:bridge:status` to verify OpenClaw can see Andrea's BlueBubbles MCP bridge without receiving any Andrea control tokens
 
 OpenBubbles is still an operator-only feasibility track. Andrea does not use it for this Mac mini BlueBubbles bridge.
+
+## OpenClaw Bridge
+
+OpenClaw can call Andrea-hosted BlueBubbles tools through an OpenClaw-managed MCP server named `andrea-bluebubbles`.
+
+Register or refresh the bridge on the Mac mini with:
+
+```bash
+npm run openclaw:bridge:install
+npm run openclaw:bridge:status -- --json
+npm run openclaw:bridge:probe -- --json
+```
+
+The installer registers the local stdio command and then applies OpenClaw's native tool filter. It exposes read/status tools plus `bluebubbles_execute_message_action`; it intentionally excludes `bluebubbles_send`, so send-like work must still go through Andrea's same-thread message-action gates.
+
+OpenClaw keeps its own auth store. Andrea does not copy OpenClaw secrets, and the OpenClaw MCP config does not store `BLUEBUBBLES_CONTROL_TOKEN`; the MCP process reads Andrea's local `.env` from this checkout.
+
+Required local-only control API env:
+
+```bash
+BLUEBUBBLES_CONTROL_API_ENABLED=true
+BLUEBUBBLES_CONTROL_HOST=127.0.0.1
+BLUEBUBBLES_CONTROL_PORT=4315
+BLUEBUBBLES_CONTROL_BASE_URL=http://127.0.0.1:4315
+BLUEBUBBLES_CONTROL_TOKEN=<local random token>
+```
 
 ## V1 Scope
 
@@ -229,13 +256,14 @@ Success should show:
 - a recent `bluebubbles_most_recent_chat`
 - non-`none` `bluebubbles_last_inbound`
 - non-`none` `bluebubbles_last_outbound`
-   - `message_action_proof_state=fresh`
+  - `message_action_proof_state=fresh`
 
 Use `npm run debug:bluebubbles -- --proof-timeline` when the proof state does
 not promote. It prints a metadata-only reconciliation of the canonical
 self-thread, aliases, inbound/outbound shapes, active action, last safe
 decision, confirmation, blocker category, and next step. It never prints raw
 private message bodies.
+
 - `message_action_proof_chat` matching the same BlueBubbles thread
 
 If the proof still says `degraded_but_usable` or `near_live_only`, treat that as honest host truth rather than a soft failure:

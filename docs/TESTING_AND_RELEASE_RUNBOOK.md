@@ -86,6 +86,7 @@ For BlueBubbles channel changes, add:
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/bluebubbles-self-thread.test.ts src/channels/bluebubbles.test.ts src/messages-fluidity.test.ts src/bluebubbles-control-server.test.ts src/bluebubbles-monitor-state.test.ts src/message-actions.test.ts src/field-trial-readiness.test.ts src/companion-conversation-binding.test.ts src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts
 npm run debug:bluebubbles
 npm run debug:bluebubbles -- --live
+npm run openclaw:bridge:status -- --json
 ```
 
 On the Mac mini, prefer local `127.0.0.1:1234` first and keep the Cloudflare BlueBubbles URL as fallback/diagnostic only. If Andrea cannot reach the local endpoint, `debug:bluebubbles -- --live` should read as `transport_unreachable`, not a generic healthy/degraded blur.
@@ -662,6 +663,7 @@ The v32 General Intelligence Control Plane sits above all of it:
 - the action preflight composes critic review, autonomy policy, reality/truth state, and tool reliability into one verdict; the strictest signal always wins and nothing in v32 executes side effects itself
 
 Never claim `live_proven` from harness-only evidence. Mainline changes remain human-governed; the workbench does not auto-merge, auto-push, restart services, send messages, write calendars, change credentials, or mutate live integrations.
+
 - queued remediation prefers Codex local, then Codex cloud, then Cursor Cloud
 - if the miss is primarily an external blocker or manual sync step, Andrea should keep the issue saved and explain that honestly instead of auto-starting a repo fix
 - local hotfixes may validate and restart on-host, but commit/push still require explicit approval

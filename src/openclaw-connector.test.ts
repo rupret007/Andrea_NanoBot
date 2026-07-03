@@ -8,6 +8,7 @@ import {
   getOpenClawStatusSummary,
   parseOpenClawDelegationRequest,
   parseOpenClawJsonOutput,
+  redactOpenClawText,
   type OpenClawAsyncRunner,
   type OpenClawConnectorConfig,
   type OpenClawSyncRunner,
@@ -143,6 +144,25 @@ describe('OpenClaw connector', () => {
     expect(
       parseOpenClawJsonOutput('warning one\nwarning two\n{"ok":true}'),
     ).toEqual({ ok: true });
+  });
+
+  it('redacts bridge tokens, bearer values, and OpenClaw auth profile labels', () => {
+    const redacted = redactOpenClawText(
+      [
+        'BLUEBUBBLES_CONTROL_TOKEN=bb-secret-token',
+        'Authorization: Bearer bb-super-secret-bearer',
+        'profile=openai:manual=sk-proj-super-secret',
+        'OPENAI_API_KEY=sk-proj-another-secret',
+      ].join(' '),
+    );
+
+    expect(redacted).toContain('BLUEBUBBLES_CONTROL_TOKEN=[redacted]');
+    expect(redacted).toContain('Authorization=[redacted]');
+    expect(redacted).toContain('profile=[redacted]');
+    expect(redacted).not.toContain('bb-secret-token');
+    expect(redacted).not.toContain('bb-super-secret-bearer');
+    expect(redacted).not.toContain('manual=');
+    expect(redacted).not.toContain('sk-proj');
   });
 
   it('detects explicit OpenClaw delegation requests only', () => {

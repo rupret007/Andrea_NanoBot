@@ -26,6 +26,11 @@ import {
   getOpenClawStatusSummary,
   type OpenClawStatusSummary,
 } from './openclaw-connector.js';
+import {
+  formatOpenClawAndreaBridgeDebugStatusLines,
+  getOpenClawAndreaBridgeStatusSummary,
+  type OpenClawAndreaBridgeStatusSummary,
+} from './openclaw-andrea-bridge.js';
 import { buildToolReliabilityDoctorReport } from './tool-reliability.js';
 import {
   getLogControlConfig,
@@ -81,11 +86,20 @@ let refreshInterval: ReturnType<typeof setInterval> | null = null;
 let lastPersistedLogControlRaw = '';
 let openClawStatusProvider: () => OpenClawStatusSummary =
   getOpenClawStatusSummary;
+let openClawAndreaBridgeStatusProvider: () => OpenClawAndreaBridgeStatusSummary =
+  getOpenClawAndreaBridgeStatusSummary;
 
 export function setOpenClawStatusProviderForTest(
   provider: (() => OpenClawStatusSummary) | null,
 ): void {
   openClawStatusProvider = provider || getOpenClawStatusSummary;
+}
+
+export function setOpenClawAndreaBridgeStatusProviderForTest(
+  provider: (() => OpenClawAndreaBridgeStatusSummary) | null,
+): void {
+  openClawAndreaBridgeStatusProvider =
+    provider || getOpenClawAndreaBridgeStatusSummary;
 }
 
 function cloneLogControlConfig(config: LogControlConfig): LogControlConfig {
@@ -439,6 +453,7 @@ export function formatDebugStatus(): string {
   const guidedRouting = readOpenAiGuidedRoutingState();
   const openAiUsage = readOpenAiUsageState();
   const openClawStatus = openClawStatusProvider();
+  const openClawAndreaBridgeStatus = openClawAndreaBridgeStatusProvider();
   const reliability = buildToolReliabilityDoctorReport();
   const repair = buildRepairDoctorReport();
   const topReliabilityBlocker = reliability.topDegraded[0];
@@ -488,6 +503,7 @@ export function formatDebugStatus(): string {
     `- Serving commit aligned: ${commitTruth.servingCommitMatchesWorkspaceHead ? 'yes' : 'no'}`,
     `- OpenAI-guided routing backend: ${ANDREA_OPENAI_BACKEND_ENABLED ? `enabled at ${ANDREA_OPENAI_BACKEND_URL}` : 'disabled in this NanoBot runtime'}`,
     ...formatOpenClawDebugStatusLines(openClawStatus),
+    ...formatOpenClawAndreaBridgeDebugStatusLines(openClawAndreaBridgeStatus),
     `- OpenAI-guided routing last source: ${guidedRouting?.source || 'none yet'}`,
     `- Tool reliability degraded subjects: ${reliability.topDegraded.length}`,
     ...(topReliabilityBlocker

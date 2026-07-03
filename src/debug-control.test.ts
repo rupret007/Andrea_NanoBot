@@ -17,6 +17,7 @@ import {
   resetDebugLevel,
   setAssistantExecutionProbeState,
   setDebugLevel,
+  setOpenClawAndreaBridgeStatusProviderForTest,
   setOpenClawStatusProviderForTest,
 } from './debug-control.js';
 import {
@@ -34,6 +35,7 @@ import { getLogControlConfig, setLogControlConfig } from './logger.js';
 import { recordOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
 import { recordOpenAiUsageState } from './openai-usage-state.js';
 import type { OpenClawStatusSummary } from './openclaw-connector.js';
+import type { OpenClawAndreaBridgeStatusSummary } from './openclaw-andrea-bridge.js';
 
 function buildDisabledOpenClawStatus(): OpenClawStatusSummary {
   return {
@@ -54,10 +56,55 @@ function buildDisabledOpenClawStatus(): OpenClawStatusSummary {
   };
 }
 
+function buildDisabledOpenClawAndreaBridgeStatus(): OpenClawAndreaBridgeStatusSummary {
+  return {
+    enabled: false,
+    serverName: 'andrea-bluebubbles',
+    state: 'disabled',
+    registrationState: 'unknown',
+    registrationMatchesExpected: null,
+    openClawGatewayState: 'disabled',
+    openClawGatewayReachable: null,
+    openClawCliAvailable: true,
+    mcpToolCount: 0,
+    requiredToolCount: 9,
+    requiredToolsAvailable: false,
+    missingTools: [],
+    directSendExposed: false,
+    probeOk: null,
+    blocker: 'OpenClaw integration is disabled.',
+    detail: 'OpenClaw integration is disabled.',
+    controlEnv: {
+      configured: false,
+      apiEnabled: false,
+      localOnly: false,
+      host: null,
+      port: null,
+      baseUrl: null,
+      tokenPresent: false,
+      missingValues: [],
+      detail: 'disabled',
+      requiredValues: [],
+    },
+    controlHealth: {
+      checked: false,
+      reachable: null,
+      ok: null,
+      statusCode: null,
+      connected: null,
+      proofState: null,
+      detail: 'not checked',
+    },
+  };
+}
+
 describe('debug control', () => {
   beforeEach(() => {
     _initTestDatabase();
     setOpenClawStatusProviderForTest(buildDisabledOpenClawStatus);
+    setOpenClawAndreaBridgeStatusProviderForTest(
+      buildDisabledOpenClawAndreaBridgeStatus,
+    );
     setLogControlConfig({
       globalLevel: 'info',
       scopedOverrides: {},
@@ -68,6 +115,7 @@ describe('debug control', () => {
 
   afterEach(() => {
     setOpenClawStatusProviderForTest(null);
+    setOpenClawAndreaBridgeStatusProviderForTest(null);
     _closeDatabase();
   });
 
@@ -162,6 +210,58 @@ describe('debug control', () => {
     expect(status).not.toContain('manual=');
   });
 
+  it('includes sanitized OpenClaw Andrea bridge status in the debug surface', () => {
+    setOpenClawAndreaBridgeStatusProviderForTest(() => ({
+      enabled: true,
+      serverName: 'andrea-bluebubbles',
+      state: 'degraded',
+      registrationState: 'registered',
+      registrationMatchesExpected: true,
+      openClawGatewayState: 'live',
+      openClawGatewayReachable: true,
+      openClawCliAvailable: true,
+      mcpToolCount: 8,
+      requiredToolCount: 9,
+      requiredToolsAvailable: false,
+      missingTools: ['bluebubbles_execute_message_action'],
+      directSendExposed: false,
+      probeOk: true,
+      blocker:
+        'BLUEBUBBLES_CONTROL_TOKEN=super-secret profile=openai:manual=sk-proj-super-secret',
+      detail: 'degraded',
+      controlEnv: {
+        configured: false,
+        apiEnabled: true,
+        localOnly: true,
+        host: '127.0.0.1',
+        port: 4315,
+        baseUrl: 'http://127.0.0.1:4315',
+        tokenPresent: true,
+        missingValues: [],
+        detail: 'configured',
+        requiredValues: [],
+      },
+      controlHealth: {
+        checked: false,
+        reachable: null,
+        ok: null,
+        statusCode: null,
+        connected: null,
+        proofState: null,
+        detail: 'not checked',
+      },
+    }));
+
+    const status = formatDebugStatus();
+
+    expect(status).toContain('OpenClaw Andrea bridge: degraded');
+    expect(status).toContain('OpenClaw Andrea bridge MCP tools: 8/9');
+    expect(status).toContain('OpenClaw Andrea bridge blocker:');
+    expect(status).not.toContain('super-secret');
+    expect(status).not.toContain('manual=');
+    expect(status).not.toContain('sk-proj');
+  });
+
   it('builds actionable debug panel buttons', () => {
     expect(
       buildDebugStatusInlineActions().map((action) => action.label),
@@ -193,11 +293,15 @@ describe('debug log tails', () => {
     process.chdir(tempDir);
     _initTestDatabase();
     setOpenClawStatusProviderForTest(buildDisabledOpenClawStatus);
+    setOpenClawAndreaBridgeStatusProviderForTest(
+      buildDisabledOpenClawAndreaBridgeStatus,
+    );
   });
 
   afterEach(() => {
     process.chdir(previousCwd);
     setOpenClawStatusProviderForTest(null);
+    setOpenClawAndreaBridgeStatusProviderForTest(null);
     _closeDatabase();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });

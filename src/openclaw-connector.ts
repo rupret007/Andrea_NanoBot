@@ -155,8 +155,13 @@ export function parseOpenClawJsonOutput(rawOutput: string): unknown {
   throw new Error('OpenClaw JSON output was incomplete.');
 }
 
-export function redactOpenClawText(value: string): string {
+export function redactOpenClawText(value: string, maxLength = 500): string {
   return String(value || '')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [redacted]')
+    .replace(
+      /\b([A-Z0-9_]*(?:TOKEN|SECRET|API_KEY|AUTHORIZATION|AUTH)[A-Z0-9_]*)\s*=\s*(?!<)[^\s,;]+/g,
+      '$1=[redacted]',
+    )
     .replace(/\bsk-[A-Za-z0-9._-]{8,}/g, '[redacted]')
     .replace(/\bgh[pousr]_[A-Za-z0-9_]{12,}/g, '[redacted]')
     .replace(
@@ -164,10 +169,15 @@ export function redactOpenClawText(value: string): string {
       '[redacted]',
     )
     .replace(
-      /\b(api[_-]?key|auth(?:orization)?|bearer|secret|token)\s*[:=]\s*[^\s,;]+/gi,
+      /\b[A-Za-z0-9_-]+:(?:manual|profile)=[^\s,;)"']+/gi,
+      '[redacted-profile]',
+    )
+    .replace(/\b(profile|label)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(
+      /\b(api[_-]?key|auth(?:orization)?|bearer|secret|token)\s*[:=]\s*(?!<)[^\s,;]+/gi,
       '$1=[redacted]',
     )
-    .slice(0, 500);
+    .slice(0, maxLength);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
