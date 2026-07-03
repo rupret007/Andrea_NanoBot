@@ -17,21 +17,36 @@ _initTestDatabase();
 const checkedAt = '2026-06-06T13:00:00.000Z';
 const suffix = Date.now().toString(36);
 
-const healthyProvider: ProviderHealthSnapshot = {
-  providerId: 'openai_cloud',
-  kind: 'llm',
-  state: 'healthy',
-  lastHealthyAt: checkedAt,
-  lastCheckedAt: checkedAt,
-  failureClass: 'none',
-  quotaState: 'ok',
-  credentialState: 'configured',
-  knownExpiresAt: null,
-  rotationDueAt: null,
-  blocker: '',
-  nextAction: '',
-  metadata: {},
-};
+// The adapter only reads status in this deterministic smoke; no network call is made.
+process.env.BRAVE_SEARCH_ENABLED = 'true';
+process.env.BRAVE_SEARCH_API_KEY =
+  process.env.BRAVE_SEARCH_API_KEY || 'deterministic-test-key';
+
+function healthyProvider(
+  providerId: string,
+  kind: ProviderHealthSnapshot['kind'],
+): ProviderHealthSnapshot {
+  return {
+    providerId,
+    kind,
+    state: 'healthy',
+    lastHealthyAt: checkedAt,
+    lastCheckedAt: checkedAt,
+    failureClass: 'none',
+    quotaState: 'ok',
+    credentialState: 'configured',
+    knownExpiresAt: null,
+    rotationDueAt: null,
+    blocker: '',
+    nextAction: '',
+    metadata: {},
+  };
+}
+
+const healthyProviders: ProviderHealthSnapshot[] = [
+  healthyProvider('openai_cloud', 'llm'),
+  healthyProvider('brave_search', 'search'),
+];
 
 const safeResearch = beginCognitiveKernelRun({
   turnId: `cognition-trajectory-safe-${suffix}`,
@@ -45,7 +60,7 @@ const safeResearch = beginCognitiveKernelRun({
   selectedSkillApprovalNeed: 'none',
   selectedSkillSideEffectRisk: 'low',
   selectedSkillEvidenceLevel: 'partial',
-  providerHealthSnapshots: [healthyProvider],
+  providerHealthSnapshots: healthyProviders,
 });
 
 finalizeCognitiveKernelOutcome({
@@ -69,7 +84,7 @@ const approvalCommunication = beginCognitiveKernelRun({
   selectedSkillApprovalNeed: 'explicit',
   selectedSkillSideEffectRisk: 'high',
   selectedSkillEvidenceLevel: 'partial',
-  providerHealthSnapshots: [healthyProvider],
+  providerHealthSnapshots: healthyProviders,
 });
 
 const unsafeCommunication = beginCognitiveKernelRun({
@@ -84,7 +99,7 @@ const unsafeCommunication = beginCognitiveKernelRun({
   selectedSkillApprovalNeed: 'none',
   selectedSkillSideEffectRisk: 'high',
   selectedSkillEvidenceLevel: 'partial',
-  providerHealthSnapshots: [healthyProvider],
+  providerHealthSnapshots: healthyProviders,
 });
 
 const safeScores = listCognitiveTrajectoryScores({
