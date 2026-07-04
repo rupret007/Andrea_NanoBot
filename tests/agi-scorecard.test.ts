@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   AGI_SCORECARD_DIMENSIONS,
@@ -11,12 +11,16 @@ import {
 } from "../src/agi-scorecard.js";
 
 describe("AGI scorecard", () => {
-  it("builds a deterministic intelligence scorecard", async () => {
-    const result = await runAgiScorecard({
+  let result: Awaited<ReturnType<typeof runAgiScorecard>>;
+
+  beforeAll(async () => {
+    result = await runAgiScorecard({
       generatedAt: "2026-06-29T12:00:00.000Z",
       includeDogfood: false,
     });
+  }, 180_000);
 
+  it("builds a deterministic intelligence scorecard", () => {
     expect(result.overallScore).toBeGreaterThan(0.8);
     expect(result.grade).toMatch(/^[ABC][+-]?$/);
     expect(result.estimatedCostUsd).toBe(0);
@@ -32,15 +36,11 @@ describe("AGI scorecard", () => {
     expect(formatAgiScorecardMarkdown(result)).toContain(
       "not a claim of general intelligence",
     );
-  }, 60_000);
+  });
 
   it("writes JSON and Markdown artifacts under the configured state dir", async () => {
     const stateDir = await mkdtemp(join(tmpdir(), "agi-scorecard-test-"));
     try {
-      const result = await runAgiScorecard({
-        generatedAt: "2026-06-29T12:05:00.000Z",
-        includeDogfood: false,
-      });
       const artifacts = await writeAgiScorecardArtifacts(result, { stateDir });
       const json = JSON.parse(await readFile(artifacts.jsonPath, "utf8")) as {
         runId: string;

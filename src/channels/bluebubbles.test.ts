@@ -1598,6 +1598,87 @@ describe('BlueBubbles channel', () => {
     }
   });
 
+  it('does not mark stale server history as a fresh missed inbound', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-12T20:10:00.000Z'));
+
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/message')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                guid: 'stale-missed-msg-1',
+                text: 'This is older history',
+                senderName: 'Jeff',
+                handle: { address: '+14695550123', displayName: 'Jeff' },
+                dateCreated: '2026-04-12T19:40:00.000Z',
+                isFromMe: false,
+                chats: [
+                  {
+                    guid: 'iMessage;-;+14695550123',
+                    displayName: 'Jeff',
+                    isGroup: false,
+                    participants: [{ address: '+14695550123' }],
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+
+    const onHealthUpdate = vi.fn();
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate,
+      },
+    );
+
+    try {
+      await channel.connect();
+
+      const latestHealth = onHealthUpdate.mock.calls.at(-1)?.[0];
+      expect(latestHealth?.detail).toContain('detection healthy');
+      expect(latestHealth?.detail).not.toContain(
+        'detection suspected_missed_inbound',
+      );
+
+      const monitorState = readBlueBubblesMonitorState();
+      expect(monitorState.recentEvidence).toEqual([]);
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
   it('sends one Telegram fallback notice after repeated missed inbound evidence and then enters cooldown', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-12T20:10:00.000Z'));

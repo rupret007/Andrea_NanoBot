@@ -1811,6 +1811,13 @@ export class BlueBubblesChannel implements Channel {
     signature: string,
     observedAt: string,
   ): void {
+    const observedAtMs = Date.parse(observedAt);
+    if (
+      !Number.isFinite(observedAtMs) ||
+      Date.now() - observedAtMs > BLUEBUBBLES_EVIDENCE_WINDOW_MS
+    ) {
+      return;
+    }
     if (
       this.monitorState.recentEvidence.some(
         (entry) => entry.kind === kind && entry.signature === signature,
@@ -2398,10 +2405,12 @@ export class BlueBubblesChannel implements Channel {
           (observedAt && observedAt >= row.message.timestamp) ||
           hasStoredMessage(row.chatJid, row.message.id);
         const ageMs = nowMs - Date.parse(row.message.timestamp);
+        const inEvidenceWindow = ageMs <= BLUEBUBBLES_EVIDENCE_WINDOW_MS;
         if (
           !observed &&
           Number.isFinite(ageMs) &&
-          ageMs >= BLUEBUBBLES_MISSED_INBOUND_GRACE_MS
+          ageMs >= BLUEBUBBLES_MISSED_INBOUND_GRACE_MS &&
+          inEvidenceWindow
         ) {
           if (!latestMissed) {
             latestMissed = {
