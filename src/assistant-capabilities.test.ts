@@ -1346,6 +1346,56 @@ describe('assistant capabilities', () => {
     expect(alexa.handoffPayload?.kind).toBe('message');
   });
 
+  it('labels MiniMax-backed research with a MiniMax trace source', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');
+    vi.stubEnv('MINIMAX_ENABLED', 'true');
+    vi.stubEnv('MINIMAX_API_KEY', 'test-minimax-key');
+    vi.stubEnv('MINIMAX_ANTHROPIC_BASE_URL', 'https://minimax.test/anthropic');
+    vi.stubEnv('MINIMAX_MODEL_COMPLEX', 'MiniMax-M3');
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          content: [
+            {
+              type: 'text',
+              text: [
+                'Summary: MiniMax can synthesize the comparison from the available prompt, with live grounding unavailable in this test.',
+                'Findings:',
+                '- It keeps the answer bounded.',
+                '- It does not use OpenAI.',
+                'Recommendation: Treat this as a MiniMax-backed research answer.',
+                'Follow-ups:',
+                '- Want live sources checked too?',
+              ].join('\n'),
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'research.compare',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        canonicalText: 'Compare meal delivery options for this week',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.researchResult?.providerUsed).toBe('minimax_anthropic');
+    expect(result.trace?.responseSource).toBe('research_minimax');
+    expect(result.replyText).not.toContain('I only have partial support');
+  });
+
   it('keeps blocked weather lookups calm on protected user surfaces', async () => {
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.OPENAI_BASE_URL = 'https://example.test/v1';

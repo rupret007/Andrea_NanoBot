@@ -5,6 +5,7 @@ import { handleLifeThreadCommand } from './life-threads.js';
 import { saveKnowledgeSource } from './knowledge-library.js';
 import * as openAiProvider from './openai-provider.js';
 import {
+  buildOutsideResearchSearchQuery,
   isResearchPrompt,
   planResearchRequest,
   runResearchOrchestrator,
@@ -63,6 +64,35 @@ describe('research orchestrator', () => {
     expect(plan.sources.webSearch).toBe(true);
   });
 
+  it('plans movie showtime prompts onto live web-backed research', () => {
+    const plan = planResearchRequest({
+      query:
+        "Tell me if there's any showings a project runway project Hail Mary after 10 PM tonight in Highland Village, Texas",
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-07-04T18:00:00.000Z'),
+    });
+
+    expect(plan.primarySource).toBe('openai_responses');
+    expect(plan.sources.webSearch).toBe(true);
+    expect(plan.sources.braveSearch).toBe(true);
+  });
+
+  it('enriches public search queries for movie showtime lookup', () => {
+    const query = buildOutsideResearchSearchQuery({
+      query:
+        "Tell me if there's any showings a project runway project Hail Mary after 10 PM tonight in Highland Village, Texas",
+      now: new Date('2026-07-04T18:00:00.000Z'),
+    });
+
+    expect(query).toContain('Project Hail Mary');
+    expect(query).toContain('movie showtimes');
+    expect(query).toContain('after 10 PM');
+    expect(query).toContain('tonight');
+    expect(query).toContain('July 4, 2026');
+    expect(query).toContain('Highland Village, Texas');
+  });
+
   it('recognizes plain factoid and explanatory prompts as research-worthy without catching local utilities', () => {
     expect(isResearchPrompt("What is Jar Jar Binks' species?")).toBe(true);
     expect(isResearchPrompt('What should I know about Jar Jar Binks?')).toBe(
@@ -70,6 +100,137 @@ describe('research orchestrator', () => {
     );
     expect(isResearchPrompt('What time is it in Australia?')).toBe(false);
     expect(isResearchPrompt("What's still open with Candace?")).toBe(false);
+  });
+
+  it('uses the enriched public search query for showtime lookups', async () => {
+    vi.spyOn(openAiProvider, 'getOpenAiProviderStatus').mockReturnValue({
+      configured: false,
+      missing: ['OPENAI_API_KEY'],
+      baseUrl: 'https://api.openai.com/v1',
+      simpleModel: 'gpt-5.4-mini',
+      standardModel: 'gpt-5.4',
+      complexModel: 'gpt-5.4',
+      researchModel: 'gpt-5.4',
+      imageModel: 'gpt-image-1',
+    });
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'true');
+    vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-brave-key');
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = new URL(String(input));
+      expect(url.searchParams.get('q')).toContain(
+        'Project Hail Mary movie showtimes',
+      );
+      expect(url.searchParams.get('q')).toContain('after 10 PM');
+      expect(url.searchParams.get('q')).toContain('Highland Village');
+      return new Response(
+        JSON.stringify({
+          web: {
+            results: [
+              {
+                title: 'AMC Highland Village 12 Showtimes',
+                url: 'https://www.amctheatres.com/movie-theatres/dallas-ft-worth/amc-highland-village-12/showtimes',
+                description:
+                  'Find movie times and buy tickets for AMC Highland Village 12.',
+              },
+            ],
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const result = await runResearchOrchestrator({
+      query:
+        'Are there any Project Hail Mary showtimes after 10 PM tonight near Highland Village?',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-07-04T18:00:00.000Z'),
+    });
+
+    expect(result.providerUsed).toBe('brave_search');
+    expect(result.summaryText).toContain('AMC Highland Village 12');
+    expect(result.debugPath).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('brave_search.query=Project Hail Mary'),
+      ]),
+    );
+  });
+
+  it('prefers MiniMax synthesis over OpenAI for showtime lookups when both are configured', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-openai-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'true');
+    vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-brave-key');
+    vi.stubEnv('MINIMAX_ENABLED', 'true');
+    vi.stubEnv('MINIMAX_API_KEY', 'test-minimax-key');
+    vi.stubEnv('MINIMAX_ANTHROPIC_BASE_URL', 'https://minimax.test/anthropic');
+    const fetchMock = vi.fn(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'openai.test') {
+        throw new Error('OpenAI should not be first for showtime lookups');
+      }
+      if (url.pathname.endsWith('/web/search')) {
+        return new Response(
+          JSON.stringify({
+            web: {
+              results: [
+                {
+                  title: 'AMC Highland Village 12 Showtimes',
+                  url: 'https://www.amctheatres.com/movie-theatres/dallas-ft-worth/amc-highland-village-12/showtimes',
+                  description: 'AMC Highland Village 12 public showtimes page.',
+                },
+              ],
+            },
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          content: [
+            {
+              type: 'text',
+              text: [
+                'Summary: I checked live search snippets and did not see proof of a qualifying after-10 PM Project Hail Mary showing.',
+                'Findings:',
+                '- AMC Highland Village 12 has a public showtimes page.',
+                '- The snippets alone do not prove an after-10 PM listing.',
+                'Recommendation: Verify on the theater page before driving over.',
+                'Follow-ups:',
+                '- Want me to check another theater?',
+              ].join('\n'),
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const result = await runResearchOrchestrator({
+      query:
+        'Are there any Project Hail Mary showtimes after 10 PM tonight near Highland Village?',
+      channel: 'telegram',
+      groupFolder: 'main',
+      now: new Date('2026-07-04T18:00:00.000Z'),
+    });
+
+    expect(result.providerUsed).toBe('brave_search_plus_minimax');
+    expect(result.summaryText).toContain('live search snippets');
+    expect(
+      fetchMock.mock.calls.some((call) =>
+        String(call[0]).includes('openai.test'),
+      ),
+    ).toBe(false);
   });
 
   it('plans saved-material prompts onto the knowledge-library route', () => {

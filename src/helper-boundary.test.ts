@@ -212,4 +212,18 @@ describe('helper boundary wiring', () => {
     expect(sharedCapabilityIndex).toBeGreaterThan(-1);
     expect(sharedCompletionIndex).toBeLessThan(sharedCapabilityIndex);
   });
+
+  it('checks shared assistant capabilities before the AGI runtime fallback', () => {
+    const source = readRepoFile('src/index.ts');
+    const sharedCapabilityIndex = source.indexOf(
+      'if (await tryHandleSharedAssistantCapability()) {',
+    );
+    const agiRuntimeIndex = source.indexOf(
+      'if (await tryHandleAgiRuntimeTurn()) {',
+    );
+
+    expect(sharedCapabilityIndex).toBeGreaterThan(-1);
+    expect(agiRuntimeIndex).toBeGreaterThan(-1);
+    expect(sharedCapabilityIndex).toBeLessThan(agiRuntimeIndex);
+  });
 });

@@ -519,6 +519,19 @@ describe('response feedback helpers', () => {
     expect(
       getResponseFeedbackRouteRegressionCoverage(
         buildRecord({
+          routeKey: 'agi_runtime',
+          capabilityId: null,
+          responseSource: 'agi_runtime',
+          originalUserText:
+            "Tell me if there's any showings a project runway project Hail Mary after 10 PM tonight in Highland Village, Texas",
+        }),
+      ),
+    ).toMatchObject({
+      coverageKey: 'research.showtime.live_lookup_routing',
+    });
+    expect(
+      getResponseFeedbackRouteRegressionCoverage(
+        buildRecord({
           routeKey: 'direct_assistant',
           capabilityId: null,
           responseSource: 'container_agent',

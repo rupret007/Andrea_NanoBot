@@ -30,6 +30,7 @@ import {
 import {
   buildGracefulDegradedReply,
   isLiveLookupConversationalPrompt,
+  isMovieShowtimeLookupPrompt,
   isResearchEligibleConversationalPrompt,
 } from './conversational-core.js';
 import {
@@ -182,6 +183,103 @@ const SAVED_COMBINE_RE =
 
 function normalizeQuery(value: string): string {
   return normalizeVoicePrompt(value).replace(/\s+/g, ' ').trim();
+}
+
+function cleanSearchPart(value: string | undefined): string {
+  return (value || '')
+    .replace(/[?!]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractMovieShowtimeTitle(query: string): string {
+  if (/\bproject\s+hail\s+mary\b/i.test(query)) {
+    return 'Project Hail Mary';
+  }
+
+  const cleaned = query
+    .replace(
+      /^(?:are there any|is there any|tell me if(?: there(?:'s| is) any)?|find|look up|can you check|what are|what's|whats)\s+/i,
+      '',
+    )
+    .trim();
+  const beforeShowtime =
+    cleaned.match(
+      /^(.+?)\s+(?:show\s*times?|showtimes?|showings?|screenings?|movie times?)\b/i,
+    )?.[1] ||
+    cleaned.match(
+      /\b(?:for|of|to see|watch)\s+(.+?)(?=\s+\b(?:after|before|tonight|today|tomorrow|near|around|in|at|show\s*times?|showtimes?|showings?|screenings?)\b|[?.!]|$)/i,
+    )?.[1];
+  return cleanSearchPart(beforeShowtime);
+}
+
+function extractMovieShowtimeLocation(query: string): string {
+  const matches = [
+    ...query.matchAll(
+      /\b(?:near|around|in|at)\s+([a-z0-9][a-z0-9\s,.'-]*?)(?=\s+\b(?:after|before|tonight|today|tomorrow|this weekend|weekend)\b|[?.!]|$)/gi,
+    ),
+  ];
+  return cleanSearchPart(matches.at(-1)?.[1]);
+}
+
+function extractMovieShowtimeTimeConstraint(query: string): string {
+  return cleanSearchPart(
+    query.match(
+      /\b(?:after|before|around|at)\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)?\b/i,
+    )?.[0],
+  );
+}
+
+function extractMovieShowtimeDayConstraint(query: string): string {
+  return cleanSearchPart(
+    query.match(
+      /\b(?:tonight|today|tomorrow|this weekend|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
+    )?.[0],
+  );
+}
+
+function resolveRelativeSearchDate(
+  query: string,
+  now: Date | undefined,
+): string {
+  if (!now || !/\b(today|tonight|tomorrow)\b/i.test(query)) {
+    return '';
+  }
+  const date = new Date(now);
+  if (/\btomorrow\b/i.test(query)) {
+    date.setDate(date.getDate() + 1);
+  }
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: TIMEZONE,
+  }).format(date);
+}
+
+export function buildOutsideResearchSearchQuery(request: {
+  query: string;
+  now?: Date;
+}): string {
+  const query = normalizeQuery(request.query);
+  if (!isMovieShowtimeLookupPrompt(query)) {
+    return query;
+  }
+
+  const title = extractMovieShowtimeTitle(query);
+  const location = extractMovieShowtimeLocation(query);
+  const timeConstraint = extractMovieShowtimeTimeConstraint(query);
+  const dayConstraint = extractMovieShowtimeDayConstraint(query);
+  const dateConstraint = resolveRelativeSearchDate(query, request.now);
+  const parts = [
+    title || query,
+    'movie showtimes',
+    timeConstraint,
+    dayConstraint,
+    dateConstraint,
+    location,
+  ].filter(Boolean);
+  return Array.from(new Set(parts)).join(' ');
 }
 
 function normalizeResearchTaskPrompt(prompt: string): string {
@@ -474,15 +572,17 @@ function selectResearchModelTier(
 async function collectOutsideResearchContext(
   request: ResearchRequest,
 ): Promise<OutsideResearchContext | null> {
+  const searchQuery = buildOutsideResearchSearchQuery(request);
   const braveStatus = getBraveSearchStatus();
   if (!braveStatus.configured) {
     return {
       provider: 'brave_search',
-      query: normalizeQuery(request.query),
+      query: searchQuery,
       contextBlock: '',
       supportingSources: [],
       debugPath: [
         'brave_search.blocked=true',
+        `brave_search.query=${searchQuery}`,
         `brave_search.missing=${braveStatus.missing.join(',') || 'unknown'}`,
       ],
       failure: describeBraveConfigBlocker(braveStatus.missing),
@@ -490,7 +590,7 @@ async function collectOutsideResearchContext(
   }
 
   try {
-    const result = await searchBraveWeb(normalizeQuery(request.query));
+    const result = await searchBraveWeb(searchQuery);
     if (!result) {
       return null;
     }
@@ -498,11 +598,12 @@ async function collectOutsideResearchContext(
       const failure = result as BraveSearchFailure;
       return {
         provider: 'brave_search',
-        query: normalizeQuery(request.query),
+        query: searchQuery,
         contextBlock: '',
         supportingSources: [],
         debugPath: [
           'brave_search.failed=true',
+          `brave_search.query=${searchQuery}`,
           `provider_failure=${failure.providerFailure}`,
           failure.status ? `status=${failure.status}` : 'status=unknown',
           failure.requestId
@@ -535,6 +636,7 @@ async function collectOutsideResearchContext(
       supportingSources,
       debugPath: [
         'brave_search.used=true',
+        `brave_search.query=${result.query}`,
         `brave_search.results=${supportingSources.length}`,
         result.requestId
           ? `request_id=${result.requestId}`
@@ -545,10 +647,14 @@ async function collectOutsideResearchContext(
     logger.warn({ err }, 'Research orchestrator Brave Search request errored');
     return {
       provider: 'brave_search',
-      query: normalizeQuery(request.query),
+      query: searchQuery,
       contextBlock: '',
       supportingSources: [],
-      debugPath: ['brave_search.failed=true', 'request_exception=true'],
+      debugPath: [
+        'brave_search.failed=true',
+        `brave_search.query=${searchQuery}`,
+        'request_exception=true',
+      ],
       failure:
         'Brave Search errored before Andrea could ground this live lookup.',
     };
@@ -1995,6 +2101,19 @@ export async function runResearchOrchestrator(
   }
 
   if (plan.primarySource === 'openai_responses') {
+    if (isMovieShowtimeLookupPrompt(normalizedRequest.query)) {
+      const miniMaxResult = await runMiniMaxResearch(
+        normalizedRequest,
+        plan,
+        context,
+        null,
+        outsideContext,
+      );
+      if (miniMaxResult && !('providerFailure' in miniMaxResult)) {
+        return miniMaxResult;
+      }
+    }
+
     const openAiStatus = getOpenAiProviderStatus();
     if (!openAiStatus.configured) {
       const blocker = describeOpenAiConfigBlocker(openAiStatus.missing);

@@ -32,6 +32,19 @@ export function getResponseFeedbackRouteRegressionCoverage(
 ): ResponseFeedbackRouteRegressionCoverage | null {
   const routeText = normalizedRouteText(record);
   if (
+    /\b(show\s*times?|showtimes?|showings?|screenings?|movie times?|amc|fandango|regal|cinemark)\b/.test(
+      routeText,
+    )
+  ) {
+    return {
+      coverageKey: 'research.showtime.live_lookup_routing',
+      summary:
+        'Movie showtime asks are covered by live-lookup classification, shared research routing, Brave query enrichment, and MiniMax synthesis regression tests.',
+      evidenceCommand:
+        'npm run test -- src/conversational-core.test.ts src/assistant-capability-router.test.ts src/research-orchestrator.test.ts src/assistant-capabilities.test.ts src/helper-boundary.test.ts',
+    };
+  }
+  if (
     routeText.includes('calendar_local_fast_path') ||
     routeText.includes('calendar.local_lookup') ||
     /\b(?:agenda|calendar)\b/.test(routeText)

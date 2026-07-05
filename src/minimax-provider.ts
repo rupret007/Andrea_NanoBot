@@ -62,6 +62,12 @@ const MINIMAX_BLOCKED_QUOTA_STATES = new Set([
   'externally_blocked',
 ]);
 
+export const DEFAULT_MINIMAX_ANTHROPIC_BASE_URL =
+  'https://api.minimax.io/anthropic';
+export const DEFAULT_MINIMAX_OPENAI_BASE_URL = 'https://api.minimax.io/v1';
+export const DEFAULT_MINIMAX_MODEL_COMPLEX = 'MiniMax-M3';
+export const DEFAULT_MINIMAX_MODEL_FAST = 'MiniMax-M2.7-highspeed';
+
 function readConfigValue(key: keyof typeof envConfig | string): string {
   if (Object.prototype.hasOwnProperty.call(process.env, key)) {
     return process.env[key] || '';
@@ -107,15 +113,16 @@ export function resolveMiniMaxProviderConfig(): MiniMaxProviderConfig | null {
     apiKey,
     anthropicBaseUrl: normalizeBaseUrl(
       readConfigValue('MINIMAX_ANTHROPIC_BASE_URL'),
-      'https://api.minimax.io/anthropic',
+      DEFAULT_MINIMAX_ANTHROPIC_BASE_URL,
     ),
     openAiBaseUrl: normalizeBaseUrl(
       readConfigValue('MINIMAX_OPENAI_BASE_URL'),
-      'https://api.minimax.io/v1',
+      DEFAULT_MINIMAX_OPENAI_BASE_URL,
     ),
-    complexModel: readConfigValue('MINIMAX_MODEL_COMPLEX') || 'MiniMax-M2.7',
+    complexModel:
+      readConfigValue('MINIMAX_MODEL_COMPLEX') || DEFAULT_MINIMAX_MODEL_COMPLEX,
     fastModel:
-      readConfigValue('MINIMAX_MODEL_FAST') || 'MiniMax-M2.7-highspeed',
+      readConfigValue('MINIMAX_MODEL_FAST') || DEFAULT_MINIMAX_MODEL_FAST,
   };
 }
 
@@ -136,15 +143,16 @@ export function getMiniMaxProviderStatus(): MiniMaxProviderStatus {
     quotaState: resolveMiniMaxQuotaState(),
     anthropicBaseUrl: normalizeBaseUrl(
       readConfigValue('MINIMAX_ANTHROPIC_BASE_URL'),
-      'https://api.minimax.io/anthropic',
+      DEFAULT_MINIMAX_ANTHROPIC_BASE_URL,
     ),
     openAiBaseUrl: normalizeBaseUrl(
       readConfigValue('MINIMAX_OPENAI_BASE_URL'),
-      'https://api.minimax.io/v1',
+      DEFAULT_MINIMAX_OPENAI_BASE_URL,
     ),
-    complexModel: readConfigValue('MINIMAX_MODEL_COMPLEX') || 'MiniMax-M2.7',
+    complexModel:
+      readConfigValue('MINIMAX_MODEL_COMPLEX') || DEFAULT_MINIMAX_MODEL_COMPLEX,
     fastModel:
-      readConfigValue('MINIMAX_MODEL_FAST') || 'MiniMax-M2.7-highspeed',
+      readConfigValue('MINIMAX_MODEL_FAST') || DEFAULT_MINIMAX_MODEL_FAST,
   };
 }
 

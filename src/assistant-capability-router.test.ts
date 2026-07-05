@@ -146,11 +146,18 @@ describe('assistant capability router', () => {
       'Will it rain in Dallas tonight?',
       "What's the temperature in Dallas right now?",
       "What's the weather in Austin this weekend?",
+      "Tell me if there's any showings a project runway project Hail Mary after 10 PM tonight in Highland Village, Texas",
+      'Are there any Project Hail Mary showtimes after 10 PM tonight near Highland Village?',
+      'What movie times are there for Project Hail Mary tonight near Highland Village?',
     ]) {
       expect(matchAssistantCapabilityRequest(prompt)).toMatchObject({
         capabilityId: 'research.topic',
       });
     }
+    const eveningPrompt = matchAssistantCapabilityRequest(
+      'What should I do tonight?',
+    );
+    expect(eveningPrompt?.capabilityId?.startsWith('research.')).not.toBe(true);
     expect(
       matchAssistantCapabilityRequest("What's on my schedule for Saturday?"),
     ).toBeNull();

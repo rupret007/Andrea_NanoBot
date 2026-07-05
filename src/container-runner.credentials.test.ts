@@ -14,11 +14,13 @@ function isLocalGatewayStatePath(candidatePath: unknown): boolean {
     .endsWith('/nanoclaw-test-runtime/openai-gateway-state.json');
 }
 
-const { spawnMock, applyContainerConfigMock } = vi.hoisted(() => ({
-  spawnMock: vi.fn(),
-  applyContainerConfigMock: vi.fn(),
-}));
-let mockEnvValues: Record<string, string> = {};
+const { spawnMock, applyContainerConfigMock, mockEnvStore } = vi.hoisted(
+  () => ({
+    spawnMock: vi.fn(),
+    applyContainerConfigMock: vi.fn(),
+    mockEnvStore: { values: {} as Record<string, string> },
+  }),
+);
 
 // Mock config
 vi.mock('./config.js', () => ({
@@ -57,7 +59,7 @@ vi.mock('./env.js', () => ({
   readEnvFile: vi.fn((keys: string[]) => {
     const result: Record<string, string> = {};
     for (const key of keys) {
-      const value = mockEnvValues[key];
+      const value = mockEnvStore.values[key];
       if (value) result[key] = value;
     }
     return result;
@@ -181,7 +183,7 @@ async function waitForSpawnCall(): Promise<void> {
 
 describe('container-runner credential env wiring', () => {
   beforeEach(() => {
-    mockEnvValues = {};
+    mockEnvStore.values = {};
     fakeProc = createFakeProcess();
     spawnMock.mockReset();
     spawnMock.mockImplementation(() => fakeProc);
@@ -193,7 +195,7 @@ describe('container-runner credential env wiring', () => {
   });
 
   it('passes ANTHROPIC_BASE_URL into container args when OneCLI is active', async () => {
-    mockEnvValues = {
+    mockEnvStore.values = {
       ANTHROPIC_BASE_URL: 'https://compat.example.com',
     };
 
@@ -213,8 +215,51 @@ describe('container-runner credential env wiring', () => {
     );
   });
 
+  it('maps requested MiniMax runtime to Anthropic-compatible MiniMax env', async () => {
+    mockEnvStore.values = {
+      MINIMAX_ENABLED: 'true',
+      MINIMAX_API_KEY: 'sk-minimax-123',
+      MINIMAX_ANTHROPIC_BASE_URL: 'https://api.minimax.io/anthropic',
+      MINIMAX_OPENAI_BASE_URL: 'https://api.minimax.io/v1',
+      MINIMAX_MODEL_COMPLEX: 'MiniMax-M3',
+      ANTHROPIC_API_KEY: 'sk-ant-should-not-be-used',
+      OPENAI_API_KEY: 'sk-openai-should-not-be-used',
+    };
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      {
+        ...testInput,
+        preferredRuntime: 'minimax_cloud' as const,
+      },
+      () => {},
+    );
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await resultPromise;
+
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '-e',
+        'ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic',
+        '-e',
+        'OPENAI_BASE_URL=https://api.minimax.io/v1',
+        '-e',
+        'NANOCLAW_RUNTIME_PROVIDER=minimax',
+        '-e',
+        'NANOCLAW_AGENT_MODEL=MiniMax-M3',
+        '-e',
+        'ANTHROPIC_AUTH_TOKEN=sk-minimax-123',
+      ]),
+    );
+    expect(args).not.toContain('ANTHROPIC_AUTH_TOKEN=onecli-placeholder');
+    expect(args).not.toContain('ANTHROPIC_API_KEY=sk-ant-should-not-be-used');
+    expect(args).not.toContain('OPENAI_API_KEY=sk-openai-should-not-be-used');
+  });
+
   it('rewrites localhost Anthropic endpoint to runtime host alias when OneCLI is active', async () => {
-    mockEnvValues = {
+    mockEnvStore.values = {
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:20128/v1',
     };
 
@@ -237,7 +282,7 @@ describe('container-runner credential env wiring', () => {
   });
 
   it('keeps explicit model override even when endpoint matches 9router', async () => {
-    mockEnvValues = {
+    mockEnvStore.values = {
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:20128/v1',
       NANOCLAW_AGENT_MODEL: 'cu/gpt-5',
     };
@@ -255,7 +300,7 @@ describe('container-runner credential env wiring', () => {
   });
 
   it('defaults model override when remote cursor gateway is explicitly hinted', async () => {
-    mockEnvValues = {
+    mockEnvStore.values = {
       ANTHROPIC_BASE_URL: 'https://cursor-bridge.example.com/v1',
       CURSOR_GATEWAY_HINT: '9router',
     };
@@ -272,7 +317,7 @@ describe('container-runner credential env wiring', () => {
   });
 
   it('maps OPENAI_BASE_URL to ANTHROPIC_BASE_URL when OneCLI is active', async () => {
-    mockEnvValues = {
+    mockEnvStore.values = {
       OPENAI_BASE_URL: 'https://openai-compat.example.com',
     };
 
@@ -296,7 +341,7 @@ describe('container-runner credential env wiring', () => {
 
   it('bridges OPENAI_API_KEY to ANTHROPIC_AUTH_TOKEN in fallback mode', async () => {
     applyContainerConfigMock.mockResolvedValue(false);
-    mockEnvValues = {
+    mockEnvStore.values = {
       ANTHROPIC_BASE_URL: 'https://compat.example.com',
       OPENAI_API_KEY: 'sk-openai-123',
     };
@@ -321,7 +366,7 @@ describe('container-runner credential env wiring', () => {
 
   it('keeps explicit ANTHROPIC_AUTH_TOKEN without overriding it from OPENAI_API_KEY', async () => {
     applyContainerConfigMock.mockResolvedValue(false);
-    mockEnvValues = {
+    mockEnvStore.values = {
       ANTHROPIC_BASE_URL: 'https://compat.example.com',
       OPENAI_API_KEY: 'sk-openai-123',
       ANTHROPIC_AUTH_TOKEN: 'token-explicit',
@@ -341,7 +386,7 @@ describe('container-runner credential env wiring', () => {
 
   it('bridges OPENAI_BASE_URL + OPENAI_API_KEY in fallback mode', async () => {
     applyContainerConfigMock.mockResolvedValue(false);
-    mockEnvValues = {
+    mockEnvStore.values = {
       OPENAI_BASE_URL: 'https://openai-compat.example.com',
       OPENAI_API_KEY: 'sk-openai-123',
     };
@@ -368,7 +413,7 @@ describe('container-runner credential env wiring', () => {
 
   it('redacts fallback secrets from error log output', async () => {
     applyContainerConfigMock.mockResolvedValue(false);
-    mockEnvValues = {
+    mockEnvStore.values = {
       ANTHROPIC_BASE_URL: 'https://compat.example.com',
       OPENAI_API_KEY: 'sk-openai-123',
     };
@@ -396,7 +441,7 @@ describe('container-runner credential env wiring', () => {
 
   it('rewrites local host endpoint to local gateway container binding when state exists', async () => {
     applyContainerConfigMock.mockResolvedValue(false);
-    mockEnvValues = {
+    mockEnvStore.values = {
       ANTHROPIC_BASE_URL: 'http://host.containers.internal:4000',
       OPENAI_API_KEY: 'sk-openai-123',
     };
@@ -432,7 +477,7 @@ describe('container-runner credential env wiring', () => {
 
   it('preserves explicit local custom endpoint port instead of forcing local gateway binding', async () => {
     applyContainerConfigMock.mockResolvedValue(false);
-    mockEnvValues = {
+    mockEnvStore.values = {
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:20128/v1',
       OPENAI_API_KEY: 'sk-openai-123',
     };
@@ -468,7 +513,7 @@ describe('container-runner credential env wiring', () => {
 
   it('does not force local gateway when Anthropic direct credentials are configured without endpoint override', async () => {
     applyContainerConfigMock.mockResolvedValue(false);
-    mockEnvValues = {
+    mockEnvStore.values = {
       ANTHROPIC_API_KEY: 'sk-ant-123',
       OPENAI_API_KEY: 'sk-openai-123',
     };

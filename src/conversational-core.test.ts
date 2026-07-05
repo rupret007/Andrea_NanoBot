@@ -6,6 +6,8 @@ import {
   buildCalendarCompanionReminderReply,
   buildGracefulDegradedReply,
   classifyConversationalTurn,
+  isLiveLookupConversationalPrompt,
+  isMovieShowtimeLookupPrompt,
   isResearchEligibleConversationalPrompt,
 } from './conversational-core.js';
 
@@ -85,6 +87,16 @@ describe('conversational core classifier', () => {
     expect(classifyConversationalTurn('Will it rain in Dallas tonight?')).toBe(
       'source_grounded_question',
     );
+    expect(
+      classifyConversationalTurn(
+        "Tell me if there's any showings a project runway project Hail Mary after 10 PM tonight in Highland Village, Texas",
+      ),
+    ).toBe('source_grounded_question');
+    expect(
+      classifyConversationalTurn(
+        'Are there any Project Hail Mary showtimes after 10 PM tonight near Highland Village?',
+      ),
+    ).toBe('source_grounded_question');
   });
 
   it('keeps work and operator asks out of the ordinary conversational lane', () => {
@@ -96,6 +108,34 @@ describe('conversational core classifier', () => {
         'Show me the runtime logs for that cursor job',
       ),
     ).toBe('work_or_operator');
+  });
+});
+
+describe('movie showtime live lookup classifier', () => {
+  it('recognizes showtime prompts as live source-grounded lookups', () => {
+    const failedPrompt =
+      "Tell me if there's any showings a project runway project Hail Mary after 10 PM tonight in Highland Village, Texas";
+    expect(isMovieShowtimeLookupPrompt(failedPrompt)).toBe(true);
+    expect(isLiveLookupConversationalPrompt(failedPrompt)).toBe(true);
+    expect(isResearchEligibleConversationalPrompt(failedPrompt)).toBe(true);
+
+    expect(
+      isLiveLookupConversationalPrompt(
+        'What movie times are there for Project Hail Mary tonight near Highland Village?',
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps unrelated evening guidance prompts out of live lookup research', () => {
+    expect(isMovieShowtimeLookupPrompt('What should I do tonight?')).toBe(
+      false,
+    );
+    expect(isLiveLookupConversationalPrompt('What should I do tonight?')).toBe(
+      false,
+    );
+    expect(classifyConversationalTurn('What should I do tonight?')).toBe(
+      'lightweight_companion',
+    );
   });
 });
 

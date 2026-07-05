@@ -107,6 +107,36 @@ function isWeatherLookupPrompt(normalized: string): boolean {
   );
 }
 
+export function isMovieShowtimeLookupPrompt(text: string): boolean {
+  const normalized = normalizeText(text);
+  if (!normalized) {
+    return false;
+  }
+
+  const hasShowtimeKeyword =
+    /\b(show\s*times?|showtimes?|showings?|screenings?|movie times?)\b/.test(
+      normalized,
+    );
+  const hasMovieVenueKeyword =
+    /\b(?:movie\s+)?(?:theaters?|theatres?|cinemas?)\b/.test(normalized) ||
+    /\b(amc|fandango|regal|cinemark|imax|drafthouse)\b/.test(normalized);
+  const hasTicketMovieContext =
+    /\btickets?\b/.test(normalized) &&
+    /\b(movie|film|showtimes?|showings?|screenings?|theaters?|theatres?|cinemas?|amc|fandango|regal|cinemark)\b/.test(
+      normalized,
+    );
+  const hasLiveConstraint =
+    /\b(tonight|today|tomorrow|this weekend|weekend|after|before|near|around|in|at|highland village|texas|tx)\b/.test(
+      normalized,
+    ) ||
+    /\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b/.test(normalized);
+
+  return (
+    (hasShowtimeKeyword || hasMovieVenueKeyword || hasTicketMovieContext) &&
+    (hasLiveConstraint || /\b(amc|fandango|regal|cinemark)\b/.test(normalized))
+  );
+}
+
 export function isLiveLookupConversationalPrompt(text: string): boolean {
   const normalized = normalizeText(text);
   if (!normalized) {
@@ -115,6 +145,7 @@ export function isLiveLookupConversationalPrompt(text: string): boolean {
 
   return (
     isWeatherLookupPrompt(normalized) ||
+    isMovieShowtimeLookupPrompt(normalized) ||
     /\b(news|headlines|latest news|news today|today'?s news)\b/.test(normalized)
   );
 }

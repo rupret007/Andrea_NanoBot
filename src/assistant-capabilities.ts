@@ -328,6 +328,7 @@ export interface AssistantCapabilityTrace {
     | 'knowledge_library'
     | 'research_local'
     | 'research_openai'
+    | 'research_minimax'
     | 'research_handoff'
     | 'media_openai'
     | 'media_handoff'
@@ -1629,6 +1630,28 @@ function inferKnowledgeRequestedSourceIds(
   return undefined;
 }
 
+function resolveResearchTraceSource(
+  result: ResearchResult,
+  context: AssistantCapabilityContext,
+): AssistantCapabilityTrace['responseSource'] {
+  if (
+    result.providerUsed === 'openai_responses' ||
+    result.providerUsed === 'brave_search_plus_openai' ||
+    result.providerUsed === 'hybrid'
+  ) {
+    return result.handoffOption && context.channel === 'alexa'
+      ? 'research_handoff'
+      : 'research_openai';
+  }
+  if (
+    result.providerUsed === 'brave_search_plus_minimax' ||
+    result.providerUsed === 'minimax_anthropic'
+  ) {
+    return 'research_minimax';
+  }
+  return 'research_local';
+}
+
 async function runResearchCapability(
   descriptor: AssistantCapabilityDescriptor,
   context: AssistantCapabilityContext,
@@ -1740,12 +1763,7 @@ async function runResearchCapability(
     trace: buildCapabilityTrace(
       descriptor,
       context,
-      result.providerUsed === 'openai_responses' ||
-        result.providerUsed === 'hybrid'
-        ? result.handoffOption && context.channel === 'alexa'
-          ? 'research_handoff'
-          : 'research_openai'
-        : 'research_local',
+      resolveResearchTraceSource(result, context),
       result.plan.reason,
       result.sourceNotes,
     ),
