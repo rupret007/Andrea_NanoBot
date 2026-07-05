@@ -9,6 +9,8 @@ import { redactCouncilText } from './council-safety.js';
 import {
   isDatabaseInitialized,
   listCandidatePatchPlans,
+  upsertCandidatePatchPlan,
+  upsertImprovementHypothesis,
   upsertPatchAttempt,
   upsertPatchReview,
   upsertPatchWorkspace,
@@ -145,6 +147,25 @@ export interface DetachedRepairExecutionInput {
   approved?: boolean;
   keepWorkspace?: boolean;
   policy?: Partial<DetachedRepairExecutorPolicy>;
+}
+
+export interface DetachedRepairOperatorExecutionInput extends DetachedRepairExecutionInput {
+  persist?: boolean;
+  now?: Date;
+  operatorLabel?: string;
+}
+
+export interface DetachedRepairOperatorExecutionReport {
+  generatedAt: string;
+  persisted: boolean;
+  result: DetachedRepairExecutionResult;
+  hypothesis: ImprovementHypothesis;
+  patchPlan: CandidatePatchPlan;
+  workspace: PatchWorkspace;
+  attempt: PatchAttempt;
+  review: PatchReview;
+  nextAction: string;
+  privacy: typeof PRIVACY;
 }
 
 const SECRET_RE =
@@ -760,6 +781,17 @@ export function executeDetachedRepairCandidate(
       reason: 'No diff was provided.',
     });
   }
+  if (!/^codex\/(?:improvement|repair)\//.test(branchName)) {
+    return blockedDetachedRepairResult({
+      branchName,
+      baseRef,
+      workspacePath,
+      filesChanged,
+      changedLines,
+      reason:
+        'Detached repair execution only creates candidate branches under codex/improvement/* or codex/repair/*.',
+    });
+  }
   if (filesChanged.length > policy.maxFilesChanged) {
     return blockedDetachedRepairResult({
       branchName,
@@ -973,6 +1005,220 @@ export function executeDetachedRepairCandidate(
       reason: compactError(error),
     };
   }
+}
+
+function buildDetachedRepairOperatorRecords(params: {
+  input: DetachedRepairOperatorExecutionInput;
+  result: DetachedRepairExecutionResult;
+  generatedAt: string;
+}): {
+  hypothesis: ImprovementHypothesis;
+  patchPlan: CandidatePatchPlan;
+  workspace: PatchWorkspace;
+  attempt: PatchAttempt;
+  review: PatchReview;
+} {
+  const label = params.input.operatorLabel || 'Approved detached repair';
+  const result = params.result;
+  const sourceId = `${params.input.branchName}|${params.input.baseRef || 'HEAD'}|${params.input.diffText}`;
+  const hypothesisId = hashId('improve:detached-repair', sourceId);
+  const patchPlanId = hashId('patchplan:detached-repair', sourceId);
+  const workspaceId = hashId(
+    'patch-workspace:detached-repair',
+    `${hypothesisId}|${result.branchName}|${result.baseRef}`,
+  );
+  const attemptId = hashId(
+    'patch-attempt:detached-repair',
+    `${workspaceId}|${result.status}|${result.commitHash || result.reason}`,
+  );
+  const testsRun = result.verificationResults.map((verification) => ({
+    label: verification.label,
+    command: verification.command,
+    ok: verification.ok,
+  }));
+  const failures = result.verificationResults
+    .filter((verification) => !verification.ok)
+    .map((verification) => ({
+      label: verification.label,
+      command: verification.command,
+    }));
+  const status: PatchAttempt['status'] =
+    result.status === 'committed'
+      ? 'tests_passing'
+      : result.status === 'rolled_back'
+        ? 'reverted'
+        : 'blocked';
+  const workspaceStatus: PatchWorkspace['status'] =
+    result.status === 'committed'
+      ? 'tests_passing'
+      : result.status === 'rolled_back'
+        ? 'reverted'
+        : 'rejected';
+  const safetyResult: PatchAttempt['safetyResult'] =
+    result.status === 'committed'
+      ? 'pass'
+      : result.status === 'rolled_back'
+        ? 'fail'
+        : 'warn';
+  const recommendation: PatchReview['recommendation'] =
+    result.status === 'committed' ? 'keep_branch' : 'reject';
+  const mergeReadiness: PatchReview['mergeReadiness'] =
+    result.status === 'committed' ? 'ready_after_approval' : 'blocked';
+  const nextAction =
+    result.status === 'committed'
+      ? 'Review the isolated candidate branch; merge, push, and service restart still require explicit approval.'
+      : result.status === 'rolled_back'
+        ? 'Inspect the failed verification result, revise the diff, and rerun only after approval.'
+        : 'Resolve the policy blocker before attempting detached repair execution again.';
+
+  const hypothesis: ImprovementHypothesis = {
+    hypothesisId,
+    createdAt: params.generatedAt,
+    updatedAt: params.generatedAt,
+    title: safeText(label, 180) || 'Approved detached repair',
+    sourceSignalKind: 'repair_attempt',
+    sourceSignalIdsJson: safeJson(
+      [`detached-repair:${result.branchName}`],
+      900,
+    ),
+    affectedCapability: 'debug:improvement',
+    expectedBenefit:
+      'Evaluate an approved repo-side repair diff in an isolated candidate worktree.',
+    riskLevel: 'low',
+    confidence: result.status === 'committed' ? 0.75 : 0.45,
+    priorityScore: 0.66,
+    proposedTest: safeJson(testsRun, 900),
+    status: result.status === 'committed' ? 'validated' : 'blocked',
+    fixClass: 'docs_or_test',
+    externalBlocker: false,
+    safetyNotes:
+      'Detached repair executor only creates a local candidate branch; it does not merge, push, restart services, send messages, write calendars, or change credentials.',
+    nextAction,
+    privacyJson: privacyJson(),
+  };
+
+  const patchPlan: CandidatePatchPlan = {
+    patchPlanId,
+    hypothesisId,
+    createdAt: params.generatedAt,
+    updatedAt: params.generatedAt,
+    filesLikelyAffectedJson: safeJson(result.filesChanged, 2400),
+    changeIntent:
+      'Apply an explicitly approved diff inside a detached worktree and keep any successful result on a candidate branch only.',
+    testPlanJson: safeJson(testsRun, 2400),
+    rollbackPlan:
+      'Failed verification removes the worktree and candidate branch; successful candidates remain local until separately reviewed.',
+    approvalRequirement: 'explicit_approval',
+    riskLevel: 'low',
+    status: result.status === 'committed' ? 'implemented' : 'rejected',
+    privacyJson: privacyJson(),
+  };
+
+  const workspace: PatchWorkspace = {
+    workspaceId,
+    hypothesisId,
+    patchPlanId,
+    branchName: result.branchName,
+    baseCommit: result.baseRef,
+    status: workspaceStatus,
+    createdAt: params.generatedAt,
+    updatedAt: params.generatedAt,
+    riskLevel: 'low',
+    allowedFilesJson: safeJson(defaultAllowedFiles(), 2400),
+    disallowedFilesJson: safeJson(defaultDisallowedFiles(), 2400),
+    workspacePath: result.rollbackApplied ? null : result.workspacePath,
+    policyJson: safeJson(
+      {
+        ...PATCH_WORKBENCH_POLICY,
+        executor: 'detached-repair',
+        killSwitch: DEFAULT_DETACHED_REPAIR_EXECUTOR_POLICY.killSwitchEnvVar,
+      },
+      2400,
+    ),
+    privacyJson: privacyJson(),
+  };
+
+  const attempt: PatchAttempt = {
+    attemptId,
+    workspaceId,
+    patchPlanId,
+    createdAt: params.generatedAt,
+    updatedAt: params.generatedAt,
+    filesChangedJson: safeJson(result.filesChanged, 2400),
+    diffSummary: safeText(
+      `${result.status}: ${result.reason}${
+        result.commitHash ? ` commit=${result.commitHash}` : ''
+      }`,
+      1200,
+    ),
+    testsRunJson: safeJson(testsRun, 2400),
+    beforeScore: 0,
+    afterScore: result.status === 'committed' ? 1 : 0,
+    regressionsJson: safeJson(failures, 1200),
+    safetyResult,
+    status,
+    privacyJson: privacyJson(),
+  };
+
+  const review: PatchReview = {
+    reviewId: hashId('patch-review:detached-repair', attemptId),
+    attemptId,
+    createdAt: params.generatedAt,
+    recommendation,
+    approvalRequired: true,
+    rollbackPlan:
+      result.status === 'committed'
+        ? `Delete local branch ${result.branchName} if review rejects the candidate.`
+        : 'Rollback was already applied or execution was blocked before mutation.',
+    mergeReadiness,
+    reviewerNotes: safeText(
+      `${result.reason} No merge, push, service restart, live message send, calendar write, credential change, or approval-gate change is authorized by this executor.`,
+      1200,
+    ),
+    privacyJson: privacyJson(),
+  };
+
+  return {
+    hypothesis,
+    patchPlan,
+    workspace,
+    attempt,
+    review,
+  };
+}
+
+export function executeApprovedDetachedRepairCandidate(
+  input: DetachedRepairOperatorExecutionInput,
+): DetachedRepairOperatorExecutionReport {
+  const generatedAt = nowIso(input.now);
+  const result = executeDetachedRepairCandidate(input);
+  const records = buildDetachedRepairOperatorRecords({
+    input,
+    result,
+    generatedAt,
+  });
+  const persisted = input.persist !== false && isDatabaseInitialized();
+  if (persisted) {
+    upsertImprovementHypothesis(records.hypothesis);
+    upsertCandidatePatchPlan(records.patchPlan);
+    upsertPatchWorkspace(records.workspace);
+    upsertPatchAttempt(records.attempt);
+    upsertPatchReview(records.review);
+  }
+  const nextAction =
+    result.status === 'committed'
+      ? 'Review the isolated candidate branch; merge, push, and service restart still require explicit approval.'
+      : result.status === 'rolled_back'
+        ? 'Inspect the failed verification result, revise the diff, and rerun only after approval.'
+        : 'Resolve the policy blocker before attempting detached repair execution again.';
+  return {
+    generatedAt,
+    persisted,
+    result,
+    ...records,
+    nextAction,
+    privacy: PRIVACY,
+  };
 }
 
 export function applyProofDebtReportClarityRecipe(params: {

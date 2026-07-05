@@ -171,6 +171,7 @@
     "improvement:patch-plan": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-patch-workbench.ts --dry-run",
     "improvement:patch-dry-run": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-patch-workbench.ts --dry-run",
     "improvement:patch-review": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-patch-workbench.ts",
+    "improvement:execute-approved-diff": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-patch-workbench.ts --execute-approved-diff",
     "debug:credentials": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-providers.ts credentials",
     "debug:alerts": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-providers.ts alerts",
     "integrations:status": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/integrations.ts status",

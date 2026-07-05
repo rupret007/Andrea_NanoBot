@@ -18,6 +18,7 @@ import {
   buildPatchWorkbenchReport,
   createTempPatchRecipeWorkspace,
   evaluatePatchPlanSafety,
+  executeApprovedDetachedRepairCandidate,
   executeDetachedRepairCandidate,
 } from '../src/patch-workbench.js';
 import type {
@@ -393,6 +394,64 @@ try {
   assert.match(blocked.reason, /sensitive paths|dangerous-change/i);
 } finally {
   cleanupRepairExecutorRepo(blockedRepo.repoRoot);
+}
+
+const persistedRepo = createRepairExecutorRepo('repair-executor-persisted');
+try {
+  const persistedBranch = 'codex/improvement/test-detached-persisted';
+  const persisted = executeApprovedDetachedRepairCandidate({
+    repoRoot: persistedRepo.repoRoot,
+    branchName: persistedBranch,
+    diffText: persistedRepo.diffText,
+    verificationCommands: [
+      {
+        command: process.execPath,
+        args: ['check.js'],
+      },
+    ],
+    commitMessage: 'Apply persisted detached repair candidate',
+    approved: true,
+    operatorLabel: 'Persisted detached repair test',
+    policy: {
+      allowedVerificationCommands: [
+        {
+          command: process.execPath,
+          args: ['check.js'],
+        },
+      ],
+    },
+  });
+
+  assert.equal(persisted.result.status, 'committed', persisted.result.reason);
+  assert.equal(persisted.persisted, true);
+  assert.equal(persisted.review.approvalRequired, true);
+  assert.equal(persisted.review.mergeReadiness, 'ready_after_approval');
+  assert.equal(branchExists(persistedRepo.repoRoot, persistedBranch), true);
+  assert.equal(
+    listPatchWorkspaces({
+      hypothesisId: persisted.hypothesis.hypothesisId,
+      limit: 5,
+    }).some(
+      (workspace) => workspace.workspaceId === persisted.workspace.workspaceId,
+    ),
+    true,
+  );
+  assert.equal(
+    listPatchAttempts({
+      workspaceId: persisted.workspace.workspaceId,
+      limit: 5,
+    }).some((attempt) => attempt.attemptId === persisted.attempt.attemptId),
+    true,
+  );
+  assert.equal(
+    listPatchReviews({
+      attemptId: persisted.attempt.attemptId,
+      limit: 5,
+    }).some((review) => review.reviewId === persisted.review.reviewId),
+    true,
+  );
+} finally {
+  cleanupRepairExecutorRepo(persistedRepo.repoRoot);
 }
 
 console.log('patch workbench tests passed');
