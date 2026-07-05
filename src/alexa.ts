@@ -1,5 +1,6 @@
 import fs from 'fs';
 import http, { type IncomingHttpHeaders, type Server } from 'http';
+import path from 'path';
 
 import {
   getIntentName,
@@ -298,7 +299,29 @@ type AlexaBarrierResponse = {
 const ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX = process.env.VITEST_WORKER_ID
   ? `-${process.env.VITEST_WORKER_ID}`
   : '';
-const ALEXA_LAST_SIGNED_REQUEST_STATE_PATH = `${RUNTIME_STATE_DIR}\\alexa-last-signed-request${ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX}.json`;
+
+function getAlexaSignedRequestStateFilename(): string {
+  return `alexa-last-signed-request${ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX}.json`;
+}
+
+function getAlexaRuntimeStateDir(): string {
+  return process.env.ANDREA_TEST_RUNTIME_STATE_DIR || RUNTIME_STATE_DIR;
+}
+
+function getAlexaLastSignedRequestStatePath(): string {
+  return path.join(
+    getAlexaRuntimeStateDir(),
+    getAlexaSignedRequestStateFilename(),
+  );
+}
+
+function getLegacyAlexaBackslashStatePath(): string {
+  const runtimeStateDir = getAlexaRuntimeStateDir();
+  return path.join(
+    path.dirname(runtimeStateDir),
+    `runtime\\${getAlexaSignedRequestStateFilename()}`,
+  );
+}
 
 function readAlexaLastSignedRequestState():
   | AlexaSignedRequestState
@@ -352,49 +375,107 @@ function normalizeAlexaSignedRequestState(
   };
 }
 
+function parseAlexaStateTime(
+  state: AlexaSignedRequestState | undefined,
+): number {
+  if (!state) return Number.NEGATIVE_INFINITY;
+  const parsed = new Date(state.updatedAt).getTime();
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+function latestAlexaState(
+  left: AlexaSignedRequestState | undefined,
+  right: AlexaSignedRequestState | undefined,
+): AlexaSignedRequestState | undefined {
+  if (!left) return right;
+  if (!right) return left;
+  return parseAlexaStateTime(right) > parseAlexaStateTime(left) ? right : left;
+}
+
+function hasAlexaProofState(state: AlexaSignedRequestProofState): boolean {
+  return Boolean(state.lastSignedRequest || state.lastHandledProofIntent);
+}
+
+function mergeAlexaProofStates(
+  primary: AlexaSignedRequestProofState,
+  legacy: AlexaSignedRequestProofState,
+): AlexaSignedRequestProofState {
+  const lastSignedRequest = latestAlexaState(
+    primary.lastSignedRequest ?? undefined,
+    legacy.lastSignedRequest ?? undefined,
+  );
+  const lastHandledProofIntent = latestAlexaState(
+    primary.lastHandledProofIntent ?? undefined,
+    legacy.lastHandledProofIntent ?? undefined,
+  );
+  return {
+    lastSignedRequest,
+    lastHandledProofIntent:
+      (isQualifyingHandledAlexaProofState(lastHandledProofIntent)
+        ? lastHandledProofIntent
+        : undefined) ||
+      (isQualifyingHandledAlexaProofState(lastSignedRequest)
+        ? lastSignedRequest
+        : undefined),
+  };
+}
+
 function readAlexaSignedRequestProofState(): AlexaSignedRequestProofState {
   try {
-    if (!fs.existsSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH)) {
-      return {};
+    const currentPath = getAlexaLastSignedRequestStatePath();
+    const current = readAlexaSignedRequestProofStateFile(currentPath);
+    const legacyPath = getLegacyAlexaBackslashStatePath();
+    if (path.resolve(legacyPath) === path.resolve(currentPath)) {
+      return current;
     }
-    const raw = fs
-      .readFileSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH, 'utf8')
-      .trim();
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as AlexaSignedRequestProofState;
-    const lastSignedRequest = normalizeAlexaSignedRequestState(
-      'lastSignedRequest' in parsed
-        ? parsed.lastSignedRequest
-        : (parsed as unknown),
-    );
-    const explicitHandledProof = normalizeAlexaSignedRequestState(
-      parsed.lastHandledProofIntent,
-    );
-    return {
-      lastSignedRequest,
-      lastHandledProofIntent:
-        (isQualifyingHandledAlexaProofState(explicitHandledProof)
-          ? explicitHandledProof
-          : undefined) ||
-        (isQualifyingHandledAlexaProofState(lastSignedRequest)
-          ? lastSignedRequest
-          : undefined),
-    };
+    const legacy = readAlexaSignedRequestProofStateFile(legacyPath);
+    if (!hasAlexaProofState(legacy)) return current;
+    const merged = mergeAlexaProofStates(current, legacy);
+    if (hasAlexaProofState(merged)) {
+      writeAlexaSignedRequestProofState(merged);
+    }
+    return merged;
   } catch {
     return {};
   }
+}
+
+function readAlexaSignedRequestProofStateFile(
+  filePath: string,
+): AlexaSignedRequestProofState {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+  const raw = fs.readFileSync(filePath, 'utf8').trim();
+  if (!raw) return {};
+  const parsed = JSON.parse(raw) as AlexaSignedRequestProofState;
+  const lastSignedRequest = normalizeAlexaSignedRequestState(
+    'lastSignedRequest' in parsed
+      ? parsed.lastSignedRequest
+      : (parsed as unknown),
+  );
+  const explicitHandledProof = normalizeAlexaSignedRequestState(
+    parsed.lastHandledProofIntent,
+  );
+  return {
+    lastSignedRequest,
+    lastHandledProofIntent:
+      (isQualifyingHandledAlexaProofState(explicitHandledProof)
+        ? explicitHandledProof
+        : undefined) ||
+      (isQualifyingHandledAlexaProofState(lastSignedRequest)
+        ? lastSignedRequest
+        : undefined),
+  };
 }
 
 function writeAlexaSignedRequestProofState(
   state: AlexaSignedRequestProofState,
 ): void {
   try {
-    fs.mkdirSync(RUNTIME_STATE_DIR, { recursive: true });
-    fs.writeFileSync(
-      ALEXA_LAST_SIGNED_REQUEST_STATE_PATH,
-      `${JSON.stringify(state, null, 2)}\n`,
-      'utf8',
-    );
+    const statePath = getAlexaLastSignedRequestStatePath();
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
   } catch (err) {
     logger.warn({ err }, 'Failed to persist Alexa signed-request state');
   }

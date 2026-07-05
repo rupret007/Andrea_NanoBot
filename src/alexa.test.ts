@@ -1,4 +1,6 @@
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type RequestEnvelope, type ResponseEnvelope } from 'ask-sdk-model';
@@ -29,6 +31,10 @@ import {
   getAlexaPrincipalKey,
   seedConfiguredAlexaLinkedAccount,
 } from './alexa-identity.js';
+import {
+  getAlexaLastSignedRequestStatePath,
+  readAlexaSignedRequestProofState,
+} from './host-control.js';
 import {
   createGoogleCalendarEvent,
   listGoogleCalendarEvents,
@@ -95,7 +101,32 @@ const mockedUpdateGoogleCalendarEvent = vi.mocked(updateGoogleCalendarEvent);
 const ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX = process.env.VITEST_WORKER_ID
   ? `-${process.env.VITEST_WORKER_ID}`
   : '';
-const ALEXA_LAST_SIGNED_REQUEST_STATE_PATH = `C:/Users/rupret/Desktop/Andrea_NanoBot/data/runtime/alexa-last-signed-request${ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX}.json`;
+const ALEXA_LAST_SIGNED_REQUEST_STATE_FILENAME = `alexa-last-signed-request${ALEXA_LAST_SIGNED_REQUEST_STATE_SUFFIX}.json`;
+let alexaProofStateTempRoot = '';
+
+function setupAlexaProofStateTempRoot(): string {
+  alexaProofStateTempRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'andrea-alexa-proof-'),
+  );
+  const runtimeStateDir = path.join(alexaProofStateTempRoot, 'data', 'runtime');
+  fs.mkdirSync(runtimeStateDir, { recursive: true });
+  vi.stubEnv('ANDREA_TEST_RUNTIME_STATE_DIR', runtimeStateDir);
+  return runtimeStateDir;
+}
+
+function getAlexaTestSignedRequestStatePath(): string {
+  return path.join(
+    process.env.ANDREA_TEST_RUNTIME_STATE_DIR || '',
+    ALEXA_LAST_SIGNED_REQUEST_STATE_FILENAME,
+  );
+}
+
+function cleanupAlexaProofStateTempRoot(): void {
+  if (alexaProofStateTempRoot) {
+    fs.rmSync(alexaProofStateTempRoot, { recursive: true, force: true });
+    alexaProofStateTempRoot = '';
+  }
+}
 
 function buildBaseEnvelope(): RequestEnvelope {
   return {
@@ -435,11 +466,7 @@ describe('Alexa speech shaping', () => {
 
 describe('createAlexaSkill', () => {
   beforeEach(() => {
-    try {
-      fs.unlinkSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH);
-    } catch {
-      // Test cleanup only: the proof file may not exist.
-    }
+    setupAlexaProofStateTempRoot();
     _initTestDatabase();
     mockedRunAlexaAssistantTurn.mockReset();
     mockedBuildDailyCompanionResponse.mockReset();
@@ -462,6 +489,11 @@ describe('createAlexaSkill', () => {
       isMain: true,
     });
     seedLinkedAccount('main');
+  });
+
+  afterEach(() => {
+    cleanupAlexaProofStateTempRoot();
+    vi.unstubAllEnvs();
   });
 
   it('responds to launch requests with the bounded personal-assistant welcome', async () => {
@@ -525,6 +557,32 @@ describe('createAlexaSkill', () => {
     );
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
     expect(extractSpeechText(response)).toContain('Today is light');
+  });
+
+  it('writes Alexa proof where host-control reads it', async () => {
+    mockedBuildDailyCompanionResponse.mockResolvedValue(
+      buildCompanionResponse('The most likely thing is the calendar.'),
+    );
+
+    const skill = createAlexaSkill(buildConfig());
+    await skill.invoke(buildIntentEnvelope('WhatAmIForgettingIntent'));
+
+    const writerPath = getAlexaTestSignedRequestStatePath();
+    const readerPath = getAlexaLastSignedRequestStatePath(
+      alexaProofStateTempRoot,
+    );
+    expect(writerPath).toBe(readerPath);
+    expect(fs.existsSync(readerPath)).toBe(true);
+
+    const proofState = readAlexaSignedRequestProofState(
+      alexaProofStateTempRoot,
+    );
+    expect(proofState.lastSignedRequest?.intentName).toBe(
+      'WhatAmIForgettingIntent',
+    );
+    expect(proofState.lastHandledProofIntent?.responseSource).toBe(
+      'local_companion',
+    );
   });
 
   it('answers explicit Alexa review asks from the outcome review layer and carries follow-up control', async () => {
@@ -2507,6 +2565,7 @@ describe('startAlexaServer', () => {
   let runtime: Awaited<ReturnType<typeof startAlexaServer>> = null;
 
   beforeEach(() => {
+    setupAlexaProofStateTempRoot();
     _initTestDatabase();
     vi.stubEnv('ALEXA_OAUTH_CLIENT_ID', 'test-alexa-client');
     vi.stubEnv('ALEXA_OAUTH_CLIENT_SECRET', 'test-alexa-secret');
@@ -2535,10 +2594,11 @@ describe('startAlexaServer', () => {
       runtime = null;
     }
     try {
-      fs.unlinkSync(ALEXA_LAST_SIGNED_REQUEST_STATE_PATH);
+      fs.unlinkSync(getAlexaTestSignedRequestStatePath());
     } catch {
       // Test cleanup only: the proof file may not exist.
     }
+    cleanupAlexaProofStateTempRoot();
     vi.unstubAllEnvs();
   });
 

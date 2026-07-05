@@ -486,12 +486,25 @@ export function getRuntimeAuditStatePath(projectRoot = process.cwd()): string {
 export function getAlexaLastSignedRequestStatePath(
   projectRoot = process.cwd(),
 ): string {
+  return path.join(
+    resolveHostControlPaths(projectRoot).runtimeStateDir,
+    getAlexaLastSignedRequestStateFilename(),
+  );
+}
+
+function getAlexaLastSignedRequestStateFilename(): string {
   const suffix = process.env.VITEST_WORKER_ID
     ? `-${process.env.VITEST_WORKER_ID}`
     : '';
+  return `alexa-last-signed-request${suffix}.json`;
+}
+
+function getLegacyAlexaBackslashStatePath(projectRoot = process.cwd()): string {
+  const paths = resolveHostControlPaths(projectRoot);
   return path.join(
-    resolveHostControlPaths(projectRoot).runtimeStateDir,
-    `alexa-last-signed-request${suffix}.json`,
+    paths.projectRoot,
+    'data',
+    `runtime\\${getAlexaLastSignedRequestStateFilename()}`,
   );
 }
 
@@ -845,6 +858,73 @@ function normalizeAlexaSignedRequestProofState(
   };
 }
 
+function parseAlexaStateTime(value: AlexaSignedRequestState | null): number {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const parsed = new Date(value.updatedAt).getTime();
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+function latestAlexaState(
+  left: AlexaSignedRequestState | null,
+  right: AlexaSignedRequestState | null,
+): AlexaSignedRequestState | null {
+  if (!left) return right;
+  if (!right) return left;
+  return parseAlexaStateTime(right) > parseAlexaStateTime(left) ? right : left;
+}
+
+function hasAlexaProofState(state: AlexaSignedRequestProofState): boolean {
+  return Boolean(state.lastSignedRequest || state.lastHandledProofIntent);
+}
+
+function mergeAlexaProofStates(
+  primary: AlexaSignedRequestProofState,
+  legacy: AlexaSignedRequestProofState,
+): AlexaSignedRequestProofState {
+  const lastSignedRequest = latestAlexaState(
+    primary.lastSignedRequest,
+    legacy.lastSignedRequest,
+  );
+  const lastHandledProofIntent = latestAlexaState(
+    primary.lastHandledProofIntent,
+    legacy.lastHandledProofIntent,
+  );
+  return {
+    lastSignedRequest,
+    lastHandledProofIntent:
+      (isQualifyingHandledAlexaLiveProofIntent(lastHandledProofIntent)
+        ? lastHandledProofIntent
+        : null) ||
+      (isQualifyingHandledAlexaLiveProofIntent(lastSignedRequest)
+        ? lastSignedRequest
+        : null),
+  };
+}
+
+function readAlexaSignedRequestProofStateFromDisk(
+  projectRoot = process.cwd(),
+): AlexaSignedRequestProofState {
+  const currentPath = getAlexaLastSignedRequestStatePath(projectRoot);
+  const current = normalizeAlexaSignedRequestProofState(
+    readJsonFile<unknown>(currentPath),
+  );
+  const legacyPath = getLegacyAlexaBackslashStatePath(projectRoot);
+  if (path.resolve(legacyPath) === path.resolve(currentPath)) {
+    return current;
+  }
+
+  const legacy = normalizeAlexaSignedRequestProofState(
+    readJsonFile<unknown>(legacyPath),
+  );
+  if (!hasAlexaProofState(legacy)) return current;
+
+  const merged = mergeAlexaProofStates(current, legacy);
+  if (hasAlexaProofState(merged)) {
+    writeJsonFile(currentPath, merged);
+  }
+  return merged;
+}
+
 function normalizeHostState(
   value: unknown,
   projectRoot = process.cwd(),
@@ -914,17 +994,14 @@ export function readRuntimeAuditState(
 export function readAlexaLastSignedRequestState(
   projectRoot = process.cwd(),
 ): AlexaSignedRequestState | null {
-  return normalizeAlexaSignedRequestProofState(
-    readJsonFile<unknown>(getAlexaLastSignedRequestStatePath(projectRoot)),
-  ).lastSignedRequest;
+  return readAlexaSignedRequestProofStateFromDisk(projectRoot)
+    .lastSignedRequest;
 }
 
 export function readAlexaSignedRequestProofState(
   projectRoot = process.cwd(),
 ): AlexaSignedRequestProofState {
-  return normalizeAlexaSignedRequestProofState(
-    readJsonFile<unknown>(getAlexaLastSignedRequestStatePath(projectRoot)),
-  );
+  return readAlexaSignedRequestProofStateFromDisk(projectRoot);
 }
 
 export function readAlexaLastHandledProofIntentState(

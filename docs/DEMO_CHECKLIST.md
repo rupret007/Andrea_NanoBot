@@ -28,8 +28,8 @@ update the proof before demoing that lane.
 | Knowledge library                            | `near_live_only` / proof-stale | no fresh save plus grounded answer                          | operator/live turn | Re-run one save and one library-grounded answer                                       |
 | Action bundles / delegation / outcome review | `near_live_only` / proof-stale | no fresh approve/partial/review chain                       | operator/live turn | Re-run one action-bundle review chain                                                 |
 | Follow-through review                        | `not_intended_for_trial`       | retired as a standalone launch proof surface                | none               | Use daily command center and action-bundle review proofs instead                      |
-| Research mode                                | command-derived                | provider credential/proof may be stale on a new host        | external/config    | Run `npm run agi:readiness -- --write --no-live-probe` before claiming live proof     |
-| Image generation                             | command-derived                | provider credential/proof may be stale on a new host        | external/config    | Run `npm run agi:readiness -- --write --no-live-probe` before claiming live proof     |
+| Research mode                                | `live_proven`                  | none                                                        | none               | Keep the proof fresh if it will be demoed                                             |
+| Image generation                             | `live_proven`                  | none                                                        | none               | Keep the proof fresh if it will be demoed                                             |
 | Startup / host-control / watchdog / health   | `live_proven`                  | none for core host                                          | none               | Keep `services:status`, `setup verify`, and `debug:status` aligned after each restart |
 
 ## Operator Preflight

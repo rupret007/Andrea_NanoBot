@@ -14,6 +14,12 @@ const envConfig = readEnvFile([
   'MINIMAX_QUOTA_STATE',
 ]);
 
+export const DEFAULT_MINIMAX_ANTHROPIC_BASE_URL =
+  'https://api.minimax.io/anthropic';
+export const DEFAULT_MINIMAX_OPENAI_BASE_URL = 'https://api.minimax.io/v1';
+export const DEFAULT_MINIMAX_MODEL_COMPLEX = 'MiniMax-M3';
+export const DEFAULT_MINIMAX_MODEL_FAST = 'MiniMax-M2.7-highspeed';
+
 export interface MiniMaxProviderConfig {
   enabled: boolean;
   apiKey: string;
@@ -61,12 +67,6 @@ const MINIMAX_BLOCKED_QUOTA_STATES = new Set([
   'insufficient_balance',
   'externally_blocked',
 ]);
-
-export const DEFAULT_MINIMAX_ANTHROPIC_BASE_URL =
-  'https://api.minimax.io/anthropic';
-export const DEFAULT_MINIMAX_OPENAI_BASE_URL = 'https://api.minimax.io/v1';
-export const DEFAULT_MINIMAX_MODEL_COMPLEX = 'MiniMax-M3';
-export const DEFAULT_MINIMAX_MODEL_FAST = 'MiniMax-M2.7-highspeed';
 
 function readConfigValue(key: keyof typeof envConfig | string): string {
   if (Object.prototype.hasOwnProperty.call(process.env, key)) {

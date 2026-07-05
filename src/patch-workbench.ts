@@ -101,8 +101,96 @@ export interface PatchWorkbenchReport {
   privacy: typeof PRIVACY;
 }
 
+export interface DetachedRepairVerificationCommand {
+  command: string;
+  args: string[];
+  label?: string;
+}
+
+export interface DetachedRepairExecutorPolicy {
+  killSwitchEnvVar: string;
+  maxFilesChanged: number;
+  maxChangedLines: number;
+  commandTimeoutMs: number;
+  sensitivePathPatterns: string[];
+  dangerousDiffPatterns: string[];
+  allowedVerificationCommands: DetachedRepairVerificationCommand[];
+}
+
+export interface DetachedRepairExecutionResult {
+  status: 'committed' | 'rolled_back' | 'blocked';
+  branchName: string;
+  baseRef: string;
+  workspacePath: string;
+  commitHash: string | null;
+  filesChanged: string[];
+  changedLines: number;
+  verificationResults: Array<{
+    label: string;
+    command: string;
+    ok: boolean;
+    detail: string;
+  }>;
+  rollbackApplied: boolean;
+  reason: string;
+}
+
+export interface DetachedRepairExecutionInput {
+  repoRoot: string;
+  branchName: string;
+  diffText: string;
+  verificationCommands: DetachedRepairVerificationCommand[];
+  commitMessage: string;
+  baseRef?: string;
+  approved?: boolean;
+  keepWorkspace?: boolean;
+  policy?: Partial<DetachedRepairExecutorPolicy>;
+}
+
 const SECRET_RE =
   /\bsk-(?:proj-|api-|ant-api03-)?[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{20,}|BSA-[A-Za-z0-9_-]{10,}|gh[pousr]_[A-Za-z0-9_]{16,}|crsr_[A-Za-z0-9_]{16,}|\b\d{7,}:[A-Za-z0-9_-]{20,}|password[:=]|secret[:=]|raw private body|hidden reasoning|chain[- ]of[- ]thought|provider debate|raw tool output/i;
+
+const DEFAULT_DETACHED_REPAIR_EXECUTOR_POLICY: DetachedRepairExecutorPolicy = {
+  killSwitchEnvVar: 'ANDREA_REPAIR_EXECUTOR_DISABLED',
+  maxFilesChanged: 8,
+  maxChangedLines: 300,
+  commandTimeoutMs: 60_000,
+  sensitivePathPatterns: [
+    '.env',
+    '.env.*',
+    'repo-tokens/**',
+    'data/**',
+    'store/**',
+    'src/channels/**',
+    'src/google-calendar*.ts',
+    'src/message-actions.ts',
+    'src/integration-healer.ts',
+    'scripts/nanoclaw-host.ps1',
+    'scripts/andrea-startup.ps1',
+    'package-lock.json',
+  ],
+  dangerousDiffPatterns: [
+    '\\b(?:sendMessage|sendTelegramMessage|sendBlueBubblesMessage)\\b',
+    '\\b(?:createGoogleCalendarEvent|updateGoogleCalendarEvent|deleteGoogleCalendarEvent|moveGoogleCalendarEvent)\\b',
+    '\\b(?:process\\.env\\.[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY)|password\\s*[:=]|secret\\s*[:=])',
+    '\\b(?:execSync|execFileSync|spawnSync)\\b[\\s\\S]{0,120}\\b(?:rm\\s+-rf|git\\s+reset|git\\s+push|launchctl|powershell|curl)\\b',
+    '\\b(?:approvalRequired\\s*:\\s*false|autoSendsMessages\\s*:\\s*true|autoWritesCalendars\\s*:\\s*true)\\b',
+  ],
+  allowedVerificationCommands: [
+    {
+      command: 'npm',
+      args: ['run', 'test:patch-workbench'],
+    },
+    {
+      command: 'npm',
+      args: ['run', 'test:shadow-improvement'],
+    },
+    {
+      command: 'npm',
+      args: ['run', 'test:synthetic-gauntlet'],
+    },
+  ],
+};
 
 function nowIso(now?: Date): string {
   return (now || new Date()).toISOString();
@@ -171,6 +259,143 @@ function git(repoRoot: string, args: string[]): string {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
+}
+
+function gitWithInput(repoRoot: string, args: string[], input: string): string {
+  return execFileSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    input,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function commandKey(command: DetachedRepairVerificationCommand): string {
+  return [command.command, ...command.args].join('\0');
+}
+
+function mergeDetachedRepairPolicy(
+  policy: Partial<DetachedRepairExecutorPolicy> = {},
+): DetachedRepairExecutorPolicy {
+  return {
+    ...DEFAULT_DETACHED_REPAIR_EXECUTOR_POLICY,
+    ...policy,
+    sensitivePathPatterns:
+      policy.sensitivePathPatterns ||
+      DEFAULT_DETACHED_REPAIR_EXECUTOR_POLICY.sensitivePathPatterns,
+    dangerousDiffPatterns:
+      policy.dangerousDiffPatterns ||
+      DEFAULT_DETACHED_REPAIR_EXECUTOR_POLICY.dangerousDiffPatterns,
+    allowedVerificationCommands:
+      policy.allowedVerificationCommands ||
+      DEFAULT_DETACHED_REPAIR_EXECUTOR_POLICY.allowedVerificationCommands,
+  };
+}
+
+function envFlagEnabled(name: string): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(
+    String(process.env[name] || '')
+      .trim()
+      .toLowerCase(),
+  );
+}
+
+function policyPatternMatches(pathname: string, pattern: string): boolean {
+  if (pattern.endsWith('/**')) {
+    return pathname.startsWith(pattern.slice(0, -2));
+  }
+  if (pattern.endsWith('*')) {
+    return pathname.startsWith(pattern.slice(0, -1));
+  }
+  return pathname === pattern;
+}
+
+function parseDiffFiles(diffText: string): string[] {
+  const files = new Set<string>();
+  for (const line of diffText.split(/\r?\n/)) {
+    const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (match) {
+      files.add(match[1]);
+      files.add(match[2]);
+      continue;
+    }
+    const pathMatch = /^(?:---|\+\+\+) (?:a|b)\/(.+)$/.exec(line);
+    if (pathMatch) files.add(pathMatch[1]);
+  }
+  return [...files].filter((file) => file !== '/dev/null').sort();
+}
+
+function countDiffChangedLines(diffText: string): number {
+  return diffText
+    .split(/\r?\n/)
+    .filter(
+      (line) =>
+        /^[+-]/.test(line) &&
+        !line.startsWith('+++') &&
+        !line.startsWith('---'),
+    ).length;
+}
+
+function compactError(error: unknown): string {
+  if (error instanceof Error) return safeText(error.message, 600);
+  return safeText(String(error), 600);
+}
+
+function blockedDetachedRepairResult(params: {
+  branchName: string;
+  baseRef: string;
+  workspacePath: string;
+  reason: string;
+  filesChanged?: string[];
+  changedLines?: number;
+}): DetachedRepairExecutionResult {
+  return {
+    status: 'blocked',
+    branchName: params.branchName,
+    baseRef: params.baseRef,
+    workspacePath: params.workspacePath,
+    commitHash: null,
+    filesChanged: params.filesChanged || [],
+    changedLines: params.changedLines || 0,
+    verificationResults: [],
+    rollbackApplied: false,
+    reason: params.reason,
+  };
+}
+
+function removeRepairWorktree(params: {
+  repoRoot: string;
+  workspacePath: string;
+  branchName: string;
+  deleteBranch: boolean;
+}): boolean {
+  let removed = false;
+  try {
+    if (fs.existsSync(params.workspacePath)) {
+      execFileSync(
+        'git',
+        ['worktree', 'remove', '--force', params.workspacePath],
+        {
+          cwd: params.repoRoot,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+    }
+    removed = true;
+  } catch {
+    removed = false;
+  }
+  if (params.deleteBranch) {
+    try {
+      execFileSync('git', ['branch', '-D', params.branchName], {
+        cwd: params.repoRoot,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch {
+      // Best-effort cleanup only; the result still reports whether the worktree was removed.
+    }
+  }
+  return removed;
 }
 
 export function evaluateGitSafety(
@@ -490,6 +715,264 @@ function prepareWorktree(params: {
     );
   }
   return workspacePath;
+}
+
+export function executeDetachedRepairCandidate(
+  input: DetachedRepairExecutionInput,
+): DetachedRepairExecutionResult {
+  const policy = mergeDetachedRepairPolicy(input.policy);
+  const repoRoot = path.resolve(input.repoRoot);
+  const baseRef = input.baseRef || 'HEAD';
+  const branchName = input.branchName;
+  const workspaceId = hashId(
+    'repair-exec',
+    `${repoRoot}|${branchName}|${baseRef}|${input.diffText}`,
+  ).replace(/[^A-Za-z0-9_-]+/g, '_');
+  const workspacePath = path.join(worktreeRoot(repoRoot), workspaceId);
+  const filesChanged = parseDiffFiles(input.diffText);
+  const changedLines = countDiffChangedLines(input.diffText);
+
+  if (!input.approved) {
+    return blockedDetachedRepairResult({
+      branchName,
+      baseRef,
+      workspacePath,
+      filesChanged,
+      changedLines,
+      reason: 'Detached repair execution requires explicit approval.',
+    });
+  }
+  if (envFlagEnabled(policy.killSwitchEnvVar)) {
+    return blockedDetachedRepairResult({
+      branchName,
+      baseRef,
+      workspacePath,
+      filesChanged,
+      changedLines,
+      reason: `Kill switch ${policy.killSwitchEnvVar} is enabled.`,
+    });
+  }
+  if (!input.diffText.trim()) {
+    return blockedDetachedRepairResult({
+      branchName,
+      baseRef,
+      workspacePath,
+      reason: 'No diff was provided.',
+    });
+  }
+  if (filesChanged.length > policy.maxFilesChanged) {
+    return blockedDetachedRepairResult({
+      branchName,
+      baseRef,
+      workspacePath,
+      filesChanged,
+      changedLines,
+      reason: `Diff changes ${filesChanged.length} files, over the limit of ${policy.maxFilesChanged}.`,
+    });
+  }
+  if (changedLines > policy.maxChangedLines) {
+    return blockedDetachedRepairResult({
+      branchName,
+      baseRef,
+      workspacePath,
+      filesChanged,
+      changedLines,
+      reason: `Diff changes ${changedLines} lines, over the limit of ${policy.maxChangedLines}.`,
+    });
+  }
+  const sensitiveFiles = filesChanged.filter((file) =>
+    policy.sensitivePathPatterns.some((pattern) =>
+      policyPatternMatches(file, pattern),
+    ),
+  );
+  if (sensitiveFiles.length) {
+    return blockedDetachedRepairResult({
+      branchName,
+      baseRef,
+      workspacePath,
+      filesChanged,
+      changedLines,
+      reason: `Diff touches sensitive paths: ${sensitiveFiles.slice(0, 5).join(', ')}.`,
+    });
+  }
+  const dangerousPattern = policy.dangerousDiffPatterns.find((pattern) =>
+    new RegExp(pattern, 'i').test(input.diffText),
+  );
+  if (dangerousPattern) {
+    return blockedDetachedRepairResult({
+      branchName,
+      baseRef,
+      workspacePath,
+      filesChanged,
+      changedLines,
+      reason: `Diff matched a dangerous-change policy: ${dangerousPattern}.`,
+    });
+  }
+
+  const allowedCommandKeys = new Set(
+    policy.allowedVerificationCommands.map(commandKey),
+  );
+  const disallowedCommand = input.verificationCommands.find(
+    (command) => !allowedCommandKeys.has(commandKey(command)),
+  );
+  if (disallowedCommand) {
+    return blockedDetachedRepairResult({
+      branchName,
+      baseRef,
+      workspacePath,
+      filesChanged,
+      changedLines,
+      reason: `Verification command is not allowlisted: ${[
+        disallowedCommand.command,
+        ...disallowedCommand.args,
+      ].join(' ')}`,
+    });
+  }
+
+  try {
+    const rootStatus = git(repoRoot, ['status', '--porcelain']);
+    if (rootStatus) {
+      return blockedDetachedRepairResult({
+        branchName,
+        baseRef,
+        workspacePath,
+        filesChanged,
+        changedLines,
+        reason:
+          'Base repository must be clean before detached repair execution.',
+      });
+    }
+    fs.mkdirSync(path.dirname(workspacePath), { recursive: true });
+    execFileSync(
+      'git',
+      ['worktree', 'add', '-b', branchName, workspacePath, baseRef],
+      {
+        cwd: repoRoot,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+  } catch (error) {
+    return blockedDetachedRepairResult({
+      branchName,
+      baseRef,
+      workspacePath,
+      filesChanged,
+      changedLines,
+      reason: `Could not prepare detached worktree: ${compactError(error)}`,
+    });
+  }
+
+  const verificationResults: DetachedRepairExecutionResult['verificationResults'] =
+    [];
+  try {
+    try {
+      gitWithInput(workspacePath, ['apply', '--index', '-'], input.diffText);
+    } catch {
+      gitWithInput(
+        workspacePath,
+        ['apply', '--3way', '--index', '-'],
+        input.diffText,
+      );
+    }
+
+    const stagedFiles = git(workspacePath, ['diff', '--cached', '--name-only'])
+      .split(/\r?\n/)
+      .map((file) => file.trim())
+      .filter(Boolean);
+    const unexpectedFiles = stagedFiles.filter(
+      (file) => !filesChanged.includes(file),
+    );
+    if (unexpectedFiles.length) {
+      throw new Error(
+        `Applied diff touched unexpected files: ${unexpectedFiles.join(', ')}`,
+      );
+    }
+
+    for (const command of input.verificationCommands) {
+      const label =
+        command.label || [command.command, ...command.args].join(' ');
+      try {
+        execFileSync(command.command, command.args, {
+          cwd: workspacePath,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: policy.commandTimeoutMs,
+        });
+        verificationResults.push({
+          label,
+          command: [command.command, ...command.args].join(' '),
+          ok: true,
+          detail: 'passed',
+        });
+      } catch (error) {
+        verificationResults.push({
+          label,
+          command: [command.command, ...command.args].join(' '),
+          ok: false,
+          detail: compactError(error),
+        });
+        throw new Error(`Verification failed: ${label}`, { cause: error });
+      }
+    }
+
+    const preCommitStatus = git(workspacePath, ['status', '--porcelain']);
+    const unsafeStatus = preCommitStatus
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .some((line) => line.startsWith('??') || line[1] !== ' ');
+    if (unsafeStatus) {
+      throw new Error(
+        `Verification left unstaged or untracked workspace changes: ${preCommitStatus}`,
+      );
+    }
+
+    git(workspacePath, ['commit', '-m', input.commitMessage]);
+    const finalStatus = git(workspacePath, ['status', '--porcelain']);
+    if (finalStatus) {
+      throw new Error(`Workspace is dirty after commit: ${finalStatus}`);
+    }
+    const commitHash = git(workspacePath, ['rev-parse', 'HEAD']);
+    if (!input.keepWorkspace) {
+      removeRepairWorktree({
+        repoRoot,
+        workspacePath,
+        branchName,
+        deleteBranch: false,
+      });
+    }
+    return {
+      status: 'committed',
+      branchName,
+      baseRef,
+      workspacePath,
+      commitHash,
+      filesChanged,
+      changedLines,
+      verificationResults,
+      rollbackApplied: false,
+      reason:
+        'Detached repair candidate committed on its isolated branch; no merge or push was performed.',
+    };
+  } catch (error) {
+    const removed = removeRepairWorktree({
+      repoRoot,
+      workspacePath,
+      branchName,
+      deleteBranch: true,
+    });
+    return {
+      status: 'rolled_back',
+      branchName,
+      baseRef,
+      workspacePath,
+      commitHash: null,
+      filesChanged,
+      changedLines,
+      verificationResults,
+      rollbackApplied: removed,
+      reason: compactError(error),
+    };
+  }
 }
 
 export function applyProofDebtReportClarityRecipe(params: {

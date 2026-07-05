@@ -222,8 +222,8 @@ describe('container-runner credential env wiring', () => {
       MINIMAX_ANTHROPIC_BASE_URL: 'https://api.minimax.io/anthropic',
       MINIMAX_OPENAI_BASE_URL: 'https://api.minimax.io/v1',
       MINIMAX_MODEL_COMPLEX: 'MiniMax-M3',
-      ANTHROPIC_API_KEY: 'sk-ant-should-not-be-used',
-      OPENAI_API_KEY: 'sk-openai-should-not-be-used',
+      ANTHROPIC_API_KEY: 'dummy-anthropic-key-should-not-be-used',
+      OPENAI_API_KEY: 'dummy-openai-key-should-not-be-used',
     };
 
     const resultPromise = runContainerAgent(
@@ -254,8 +254,12 @@ describe('container-runner credential env wiring', () => {
       ]),
     );
     expect(args).not.toContain('ANTHROPIC_AUTH_TOKEN=onecli-placeholder');
-    expect(args).not.toContain('ANTHROPIC_API_KEY=sk-ant-should-not-be-used');
-    expect(args).not.toContain('OPENAI_API_KEY=sk-openai-should-not-be-used');
+    expect(args).not.toContain(
+      'ANTHROPIC_API_KEY=dummy-anthropic-key-should-not-be-used',
+    );
+    expect(args).not.toContain(
+      'OPENAI_API_KEY=dummy-openai-key-should-not-be-used',
+    );
   });
 
   it('rewrites localhost Anthropic endpoint to runtime host alias when OneCLI is active', async () => {
