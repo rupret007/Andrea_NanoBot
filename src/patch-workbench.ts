@@ -175,7 +175,7 @@ const DEFAULT_DETACHED_REPAIR_EXECUTOR_POLICY: DetachedRepairExecutorPolicy = {
   killSwitchEnvVar: 'ANDREA_REPAIR_EXECUTOR_DISABLED',
   maxFilesChanged: 8,
   maxChangedLines: 300,
-  commandTimeoutMs: 60_000,
+  commandTimeoutMs: 600_000,
   sensitivePathPatterns: [
     '.env',
     '.env.*',
@@ -711,6 +711,32 @@ function worktreeRoot(repoRoot: string): string {
   );
 }
 
+/**
+ * Fresh worktrees share the base repo's git history but not its untracked
+ * dependency install, so npm-based verification commands would fail on a
+ * missing ./node_modules. Link the base repo's install into the worktree for
+ * the duration of verification only: a `node_modules/` gitignore pattern does
+ * not match a symlink, so the link must be gone before clean-status checks.
+ */
+function linkNodeModulesIntoWorktree(
+  repoRoot: string,
+  workspacePath: string,
+): void {
+  const source = path.join(repoRoot, 'node_modules');
+  const target = path.join(workspacePath, 'node_modules');
+  if (!fs.existsSync(source) || fs.existsSync(target)) return;
+  fs.symlinkSync(source, target, 'dir');
+}
+
+function unlinkNodeModulesFromWorktree(workspacePath: string): void {
+  const target = path.join(workspacePath, 'node_modules');
+  try {
+    if (fs.lstatSync(target).isSymbolicLink()) fs.unlinkSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
 function prepareWorktree(params: {
   repoRoot: string;
   workspace: PatchWorkspace;
@@ -920,31 +946,36 @@ export function executeDetachedRepairCandidate(
       );
     }
 
-    for (const command of input.verificationCommands) {
-      const label =
-        command.label || [command.command, ...command.args].join(' ');
-      try {
-        execFileSync(command.command, command.args, {
-          cwd: workspacePath,
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: policy.commandTimeoutMs,
-        });
-        verificationResults.push({
-          label,
-          command: [command.command, ...command.args].join(' '),
-          ok: true,
-          detail: 'passed',
-        });
-      } catch (error) {
-        verificationResults.push({
-          label,
-          command: [command.command, ...command.args].join(' '),
-          ok: false,
-          detail: compactError(error),
-        });
-        throw new Error(`Verification failed: ${label}`, { cause: error });
+    linkNodeModulesIntoWorktree(repoRoot, workspacePath);
+    try {
+      for (const command of input.verificationCommands) {
+        const label =
+          command.label || [command.command, ...command.args].join(' ');
+        try {
+          execFileSync(command.command, command.args, {
+            cwd: workspacePath,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeout: policy.commandTimeoutMs,
+          });
+          verificationResults.push({
+            label,
+            command: [command.command, ...command.args].join(' '),
+            ok: true,
+            detail: 'passed',
+          });
+        } catch (error) {
+          verificationResults.push({
+            label,
+            command: [command.command, ...command.args].join(' '),
+            ok: false,
+            detail: compactError(error),
+          });
+          throw new Error(`Verification failed: ${label}`, { cause: error });
+        }
       }
+    } finally {
+      unlinkNodeModulesFromWorktree(workspacePath);
     }
 
     const preCommitStatus = git(workspacePath, ['status', '--porcelain']);

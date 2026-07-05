@@ -78,8 +78,35 @@ function createRepairExecutorRepo(label: string): {
     'process.exit(1);\n',
     'utf8',
   );
-  git(repoRoot, ['add', 'file.txt', 'check.js', 'fail.js']);
+  fs.writeFileSync(
+    path.join(repoRoot, '.gitignore'),
+    'node_modules/\n',
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(repoRoot, 'require-probe.js'),
+    // Resolves only when the base repo's node_modules is reachable from the
+    // verification cwd (the detached worktree links it in).
+    "require('dep-probe');\n",
+    'utf8',
+  );
+  git(repoRoot, [
+    'add',
+    'file.txt',
+    'check.js',
+    'fail.js',
+    '.gitignore',
+    'require-probe.js',
+  ]);
   git(repoRoot, ['commit', '-m', 'initial']);
+  fs.mkdirSync(path.join(repoRoot, 'node_modules', 'dep-probe'), {
+    recursive: true,
+  });
+  fs.writeFileSync(
+    path.join(repoRoot, 'node_modules', 'dep-probe', 'index.js'),
+    'module.exports = true;\n',
+    'utf8',
+  );
 
   fs.writeFileSync(
     path.join(repoRoot, 'file.txt'),
@@ -305,6 +332,11 @@ try {
         command: process.execPath,
         args: ['check.js'],
       },
+      {
+        command: process.execPath,
+        args: ['require-probe.js'],
+        label: 'dependency resolution inside detached worktree',
+      },
     ],
     commitMessage: 'Apply detached repair candidate',
     approved: true,
@@ -314,6 +346,10 @@ try {
           command: process.execPath,
           args: ['check.js'],
         },
+        {
+          command: process.execPath,
+          args: ['require-probe.js'],
+        },
       ],
     },
   });
@@ -321,6 +357,11 @@ try {
   assert.equal(success.status, 'committed', success.reason);
   assert.ok(success.commitHash);
   assert.equal(success.verificationResults[0]?.ok, true);
+  assert.equal(
+    success.verificationResults[1]?.ok,
+    true,
+    `node_modules must be reachable from the detached worktree: ${success.verificationResults[1]?.detail}`,
+  );
   assert.ok(branchExists(successRepo.repoRoot, successBranch));
   assert.equal(fs.existsSync(success.workspacePath), false);
   const successFile = git(successRepo.repoRoot, [
