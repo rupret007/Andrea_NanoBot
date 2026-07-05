@@ -304,6 +304,40 @@ export function resolveOrdinaryChatPilotJourney(
   return null;
 }
 
+export function recordOrdinaryChatQuickReplyPilotProof(params: {
+  text: string;
+  replyText: string;
+  channel: PilotJourneyEventRecord['channel'];
+  groupFolder: string;
+  chatJid?: string | null;
+  threadId?: string | null;
+  now?: Date;
+}): PilotJourneyEventRecord | null {
+  const seed = resolveOrdinaryChatPilotJourney(params.text);
+  if (!seed) return null;
+
+  const occurredAt = (params.now || new Date()).toISOString();
+  const started = startPilotJourney({
+    ...seed,
+    channel: params.channel,
+    groupFolder: params.groupFolder,
+    chatJid: params.chatJid || null,
+    threadId: params.threadId || null,
+    startedAt: occurredAt,
+  });
+  if (!started) return null;
+
+  completePilotJourney({
+    eventId: started.eventId,
+    outcome: 'success',
+    blockerOwner: 'none',
+    summaryText: params.replyText,
+    completedAt: occurredAt,
+  });
+
+  return getPilotJourneyEvent(started.eventId) || started;
+}
+
 export function resolveCrossChannelPilotJourney(
   text: string,
 ): PilotJourneySeed | null {

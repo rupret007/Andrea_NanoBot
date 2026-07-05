@@ -14,6 +14,7 @@ import {
   classifyPilotIssueKind,
   completePilotJourney,
   isPilotIssueCaptureRequest,
+  recordOrdinaryChatQuickReplyPilotProof,
   resolveCrossChannelPilotJourney,
   resolveOrdinaryChatPilotJourney,
   resolvePilotJourneyFromCapability,
@@ -110,6 +111,26 @@ describe('pilot mode', () => {
     expect(events[0]?.summaryText).toBe(
       'Planned tonight and picked the next step.',
     );
+  });
+
+  it('records ordinary-chat quick replies as live pilot proof', () => {
+    const recorded = recordOrdinaryChatQuickReplyPilotProof({
+      text: 'hi',
+      replyText: "Hi. Give me one thing and I'll keep it simple.",
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      threadId: 'thread-hi',
+      now: new Date('2026-04-07T18:30:00.000Z'),
+    });
+
+    expect(recorded?.journeyId).toBe('ordinary_chat');
+    expect(recorded?.outcome).toBe('success');
+    expect(recorded?.completedAt).toBe('2026-04-07T18:30:00.000Z');
+
+    const digest = buildPilotReviewDigest(new Date('2026-04-07T18:31:00.000Z'));
+    expect(digest.journeyDigests.ordinary_chat.proofFreshness).toBe('fresh');
+    expect(digest.journeyDigests.ordinary_chat.usage24h).toBe(1);
   });
 
   it('links a pilot issue to the recent flagship journey in the same chat', () => {

@@ -141,6 +141,7 @@ import {
   capturePilotIssue,
   completePilotJourney,
   type PilotJourneyCompleteParams,
+  recordOrdinaryChatQuickReplyPilotProof,
   resolveCrossChannelPilotJourney,
   resolveOrdinaryChatPilotJourney,
   resolvePilotJourneyFromCapability,
@@ -9365,6 +9366,20 @@ async function startMessageLoop(): Promise<void> {
                 chatJid,
                 mainChatRoutingDecision.replyText,
               );
+              recordOrdinaryChatQuickReplyPilotProof({
+                text: groupMessages[groupMessages.length - 1]?.content || '',
+                replyText: mainChatRoutingDecision.replyText,
+                channel:
+                  String(channel.name) === 'bluebubbles'
+                    ? 'bluebubbles'
+                    : String(channel.name) === 'alexa'
+                      ? 'alexa'
+                      : 'telegram',
+                groupFolder: group.folder,
+                chatJid,
+                threadId:
+                  groupMessages[groupMessages.length - 1]?.thread_id || null,
+              });
               lastAgentTimestamp[chatJid] =
                 groupMessages[groupMessages.length - 1].timestamp;
               saveState();
