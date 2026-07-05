@@ -143,6 +143,7 @@ import {
   type PilotJourneyCompleteParams,
   recordOrdinaryChatQuickReplyPilotProof,
   resolveCrossChannelPilotJourney,
+  resolveGoalPlannerPilotJourney,
   resolveOrdinaryChatPilotJourney,
   resolvePilotJourneyFromCapability,
   resolveWorkCockpitPilotJourney,
@@ -8206,14 +8207,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     if (isGoalPlannerNaturalRequest(lastContent)) {
+      const reply = formatGoalPlannerNaturalResponse(lastContent);
+      const pilotRecord = startConversationPilotProof(
+        resolveGoalPlannerPilotJourney(lastContent),
+      );
       await sendAssistantReplyWithFeedback({
-        text: formatGoalPlannerNaturalResponse(lastContent),
+        text: reply,
         routeKey: 'goal_planner.status',
         capabilityId: 'cognition.status',
         handlerKind: 'local_goal_planner',
         responseSource: 'local_companion',
         traceReason:
           'answered goal-directed planning request from metadata-only planner',
+      });
+      completeConversationPilotProof(pilotRecord, {
+        outcome: 'success',
+        blockerOwner: 'none',
+        summaryText: reply,
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;

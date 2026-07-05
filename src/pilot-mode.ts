@@ -285,6 +285,25 @@ export function resolvePilotJourneyFromCapability(params: {
   return null;
 }
 
+export function resolveGoalPlannerPilotJourney(
+  text: string,
+): PilotJourneySeed | null {
+  const normalized = normalizeText(text);
+  if (
+    /\b(help me plan|plan tonight|what(?:'s| is) the next step|what(?:'s| is) blocking this|what should i do next|safest next step|mission|goal|blocking|blocked)\b/i.test(
+      normalized,
+    )
+  ) {
+    return {
+      journeyId: 'mission_planning',
+      systemsInvolved: ['missions', 'chief_of_staff', 'goal_planner'],
+      summaryText: 'Goal-directed mission planning',
+      routeKey: 'goal_planner.status',
+    };
+  }
+  return null;
+}
+
 export function resolveOrdinaryChatPilotJourney(
   text: string,
 ): PilotJourneySeed | null {

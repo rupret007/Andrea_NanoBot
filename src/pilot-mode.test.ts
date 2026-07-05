@@ -16,6 +16,7 @@ import {
   isPilotIssueCaptureRequest,
   recordOrdinaryChatQuickReplyPilotProof,
   resolveCrossChannelPilotJourney,
+  resolveGoalPlannerPilotJourney,
   resolveOrdinaryChatPilotJourney,
   resolvePilotJourneyFromCapability,
   sanitizePilotSummary,
@@ -78,6 +79,23 @@ describe('pilot mode', () => {
         text: 'What is Jar Jar Binks species?',
         canonicalText: 'what is jar jar binks species',
       }),
+    ).toBeNull();
+  });
+
+  it('classifies goal-planner proof prompts as mission planning only when they ask for planning', () => {
+    expect(
+      resolveGoalPlannerPilotJourney('help me plan tonight'),
+    ).toMatchObject({
+      journeyId: 'mission_planning',
+      routeKey: 'goal_planner.status',
+    });
+    expect(
+      resolveGoalPlannerPilotJourney("what's blocking this"),
+    ).toMatchObject({
+      journeyId: 'mission_planning',
+    });
+    expect(
+      resolveGoalPlannerPilotJourney('what is your current focus'),
     ).toBeNull();
   });
 
