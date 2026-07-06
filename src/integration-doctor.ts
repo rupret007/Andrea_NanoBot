@@ -229,16 +229,17 @@ function normalizeBlueBubbles(
   const transportState = transportStateFromBlueBubbles(truth);
   const transportHealthy = transportState === 'healthy';
   const proofNeedsDecision =
-    truth.bluebubbles.messageActionProofState !== 'fresh' ||
-    truth.bluebubbles.proofState !== 'live_proven';
+    truth.bluebubbles.messageActionProofState !== 'fresh';
   const directChatGate =
     truth.bluebubbles.lastIgnoredReason &&
     truth.bluebubbles.lastIgnoredReason !== 'none' &&
     truth.bluebubbles.lastIgnoredChatJid;
-  const safeActions = [
-    'Run npm run debug:bluebubbles -- --live.',
-    'In the canonical self-thread, ask @Andrea start bluebubbles proof, then reply send it later tonight.',
-  ];
+  const safeActions = ['Run npm run debug:bluebubbles -- --live.'];
+  if (proofNeedsDecision) {
+    safeActions.push(
+      'In the canonical self-thread, ask @Andrea start bluebubbles proof, then reply send it later tonight.',
+    );
+  }
   if (directChatGate) {
     safeActions.push(
       'For the ignored direct 1:1 thread, send @Andrea once in that same thread to reactivate fresh context.',
@@ -253,7 +254,12 @@ function normalizeBlueBubbles(
     overrideState:
       transportHealthy && proofNeedsDecision ? 'needs_proof' : undefined,
     overrideProofState: proofNeedsDecision ? 'needs_proof' : undefined,
-    repairability: transportHealthy ? 'proof_drill' : 'guided_manual',
+    repairability:
+      transportHealthy && proofNeedsDecision
+        ? 'proof_drill'
+        : transportHealthy
+          ? 'status_only'
+          : 'guided_manual',
     safeActions,
     detail: [
       truth.bluebubbles.detail,
