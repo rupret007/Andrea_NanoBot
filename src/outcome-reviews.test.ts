@@ -746,6 +746,18 @@ describe('outcome reviews', () => {
       personName: 'Candace',
     });
     expect(
+      matchOutcomeReviewPrompt("@andrea what's still open with Candace"),
+    ).toEqual({
+      kind: 'still_open_person',
+      personName: 'Candace',
+    });
+    expect(
+      matchOutcomeReviewPrompt("@andrea what's still open with Candace?"),
+    ).toEqual({
+      kind: 'still_open_person',
+      personName: 'Candace',
+    });
+    expect(
       matchOutcomeReviewPrompt('what should I remember tonight'),
     ).toBeNull();
     expect(interpretOutcomeReviewControl("that's done")).toEqual({

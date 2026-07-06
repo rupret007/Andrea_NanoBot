@@ -210,6 +210,13 @@ describe('assistant capability router', () => {
       capabilityId: 'communication.draft_reply',
     });
     expect(
+      matchAssistantCapabilityRequest(
+        'Candace said: can you let me know if dinner still works tonight? what should I say back?',
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+    });
+    expect(
       matchAssistantCapabilityRequest('Make that less stiff'),
     ).toMatchObject({
       capabilityId: 'communication.draft_reply',

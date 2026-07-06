@@ -485,6 +485,43 @@ describe('TelegramChannel.sendMessage', () => {
     expect(replyMarkup.inline_keyboard[1]).toHaveLength(1);
   });
 
+  it('drops oversized callback buttons instead of failing the whole send', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 655 });
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+
+    (
+      channel as unknown as {
+        bot: { api: { sendMessage: typeof sendMessage } };
+      }
+    ).bot = {
+      api: { sendMessage },
+    };
+
+    await channel.sendMessage('tg:123', 'Follow-through review', {
+      inlineActionRows: [
+        [
+          { label: 'Open', actionId: '/review-open ok' },
+          {
+            label: 'Too long',
+            actionId: `/review-open ${'x'.repeat(80)}`,
+          },
+        ],
+      ],
+    });
+
+    const replyMarkup = sendMessage.mock.calls[0][2].reply_markup;
+    expect(replyMarkup.inline_keyboard).toHaveLength(1);
+    expect(replyMarkup.inline_keyboard[0]).toHaveLength(1);
+    expect(replyMarkup.inline_keyboard[0][0]).toMatchObject({
+      text: 'Open',
+      callback_data: '/review-open ok',
+    });
+  });
+
   it('escapes markdown-sensitive underscores before sending', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 777 });
     const channel = new TelegramChannel('test-token', {

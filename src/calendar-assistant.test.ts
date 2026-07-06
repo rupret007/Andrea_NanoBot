@@ -4,6 +4,7 @@ import {
   buildAppleCalendarJxaScript,
   buildCalendarAssistantResponse,
   buildCalendarAssistantReply,
+  lookupCalendarAssistantEvents,
   planCalendarAssistantLookup,
 } from './calendar-assistant.js';
 
@@ -1590,6 +1591,43 @@ END:VCALENDAR</c:calendar-data>
       "I couldn't confirm every configured calendar right now.",
     );
     expect(reply).not.toContain('You look free');
+  });
+
+  it('marks a stalled configured provider incomplete instead of hanging', async () => {
+    const fetchImpl = vi.fn(
+      () => new Promise<Response>(() => {}),
+    ) as unknown as typeof fetch;
+    const now = new Date('2026-03-31T23:55:00-05:00');
+    const plan = planCalendarAssistantLookup(
+      "What's on my calendar tomorrow?",
+      now,
+      'America/Chicago',
+      null,
+    );
+
+    expect(plan).not.toBeNull();
+    if (!plan) {
+      throw new Error('expected calendar plan');
+    }
+
+    const result = await lookupCalendarAssistantEvents(plan, {
+      platform: 'win32',
+      env: {
+        GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
+        CALENDAR_PROVIDER_LOOKUP_TIMEOUT_MS: '5',
+      },
+      fetchImpl,
+    });
+
+    const googleStatus = result.statuses.find(
+      (status) => status.id === 'google_calendar',
+    );
+    expect(googleStatus).toMatchObject({
+      state: 'error',
+      configured: true,
+      complete: false,
+    });
+    expect(googleStatus?.detail).toContain('timed out after 5 ms');
   });
 
   it('fails clearly on malformed Google payloads', async () => {

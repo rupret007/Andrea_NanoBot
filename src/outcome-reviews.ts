@@ -160,7 +160,11 @@ type ReminderLikeTask = Pick<
 const REVIEW_SUPPRESSION_DAYS = 30;
 
 function normalizeText(value: string | null | undefined): string {
-  return (value || '').replace(/\s+/g, ' ').trim();
+  return (value || '')
+    .replace(/(^|[\s([{-])@andrea\b[,:;!?-]*/gi, '$1')
+    .replace(/\s+/g, ' ')
+    .replace(/[?.!]+$/g, '')
+    .trim();
 }
 
 function redactReviewText(value: string): string {

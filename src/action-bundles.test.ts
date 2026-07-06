@@ -168,6 +168,37 @@ describe('action bundles', () => {
     expect(voiceSummary.speech).toContain('remind me later');
   });
 
+  it('does not create follow-through bundles for empty saved-material answers', () => {
+    const bundle = createOrRefreshActionBundle({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      capabilityId: 'knowledge.summarize_saved',
+      continuationCandidate: {
+        capabilityId: 'knowledge.summarize_saved',
+        voiceSummary: 'I do not have saved material on that yet.',
+        handoffPayload: {
+          kind: 'message',
+          title: 'Summarize Saved Material',
+          text: [
+            'Research Summary',
+            'I do not have saved material on that yet.',
+          ].join('\n'),
+          followupSuggestions: ['save this to my library'],
+        },
+        completionText: 'I do not have saved material on that yet.',
+        knowledgeSourceIds: [],
+        followupSuggestions: ['save this to my library'],
+      },
+      summaryText: 'I do not have saved material on that yet.',
+      utterance:
+        'use only my saved material for the Candace dinner planning answer',
+      now: new Date('2026-04-08T10:15:00.000Z'),
+    });
+
+    expect(bundle).toBeNull();
+  });
+
   it('renders bundle cards and interprets conversational follow-ups', () => {
     const snapshot = createOrRefreshActionBundle({
       groupFolder: 'main',

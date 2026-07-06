@@ -271,6 +271,32 @@ function isRedundantCommunicationSupportLine(input: {
   );
 }
 
+function isUsefulCommunicationSupportLine(value: string): boolean {
+  const normalized = normalizeText(value);
+  if (!normalized) return false;
+  if (
+    /\b(?:agent os|daily-agent|first useful daily-agent wins)\b/i.test(
+      normalized,
+    ) ||
+    /^use this setup\b/i.test(normalized)
+  ) {
+    return false;
+  }
+  if (
+    looksLikeMalformedCommunicationSummary(normalized) ||
+    looksGenericCommandOnlyCommunicationSummary(normalized) ||
+    looksLikeNonCommunicationCompanionPrompt(normalized)
+  ) {
+    return false;
+  }
+  return (
+    looksLikeCommunicationContextText(normalized) ||
+    /\b(?:reply|text|message|follow[- ]?up|confirm|schedule|reschedule|dinner|pickup|rehearsal|tonight|tomorrow|works|call)\b/i.test(
+      normalized,
+    )
+  );
+}
+
 function slugifyName(value: string): string {
   return value
     .toLowerCase()
@@ -294,6 +320,22 @@ function stripCommandPrefix(raw: string): string {
   return raw
     .replace(
       /^(?:summarize this(?: message)?|what did they mean|what still needs a reply here|what should i say back(?: to [a-z][a-z' -]+)?|what should i send back(?: to [a-z][a-z' -]+)?|draft a response(?: to [a-z][a-z' -]+)?|draft a reply(?: to [a-z][a-z' -]+)?|give me a short reply|make (?:it|that)(?: a little)? warmer|warmer|make (?:it|that) more direct|more direct|make (?:it|that) less stiff|less stiff|make (?:it|that) more blunt|more blunt|make it sound like me|save this conversation under [^:]+|remind me to reply later|don't surface this automatically|dont surface this automatically|stop tracking that|forget this conversation thread|mark that handled)[:,-]?\s*/i,
+      '',
+    )
+    .trim();
+}
+
+function stripAssistantAddressing(raw: string): string {
+  return raw
+    .replace(/(^|[\s([{-])@andrea\b[,:;!?-]*/gi, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripTrailingDraftCommand(raw: string): string {
+  return raw
+    .replace(
+      /\s*(?:[?.!]\s*)?(?:what should i (?:say|send) back(?:\s+to [a-z][a-z' -]+)?|draft a (?:response|reply)(?:\s+to [a-z][a-z' -]+)?|give me a short reply)[?.! ]*$/i,
       '',
     )
     .trim();
@@ -352,11 +394,16 @@ function looksLikeCommunicationMessageBody(value: string): boolean {
 }
 
 function cleanMessageBody(value: string): string {
-  return stripCommandPrefix(
-    value
-      .replace(/^\s*(?:from|message from|text from)\s+[A-Z][^:]{0,40}:\s*/i, '')
-      .replace(/^\s*>+\s*/gm, '')
-      .trim(),
+  return stripTrailingDraftCommand(
+    stripCommandPrefix(
+      stripAssistantAddressing(value)
+        .replace(
+          /^\s*(?:from|message from|text from)\s+[A-Z][^:]{0,40}:\s*/i,
+          '',
+        )
+        .replace(/^\s*>+\s*/gm, '')
+        .trim(),
+    ),
   );
 }
 
@@ -1320,6 +1367,7 @@ function buildRelationshipAwareDraft(input: {
     normalizeCommunicationSupportLine(rawSupportLine);
   const supportLine =
     (normalizedSupportLine &&
+    isUsefulCommunicationSupportLine(normalizedSupportLine) &&
     !isRedundantCommunicationSupportLine({
       supportLine: normalizedSupportLine,
       summaryText: input.summaryText,
@@ -1808,6 +1856,11 @@ export async function draftCommunicationReplyWithChannelFluidity(
     });
   }
 
+  const linkedLifeThreadSummary = normalizeCommunicationSupportLine(
+    analysis.linkedLifeThreads[0]?.nextAction ||
+      analysis.linkedLifeThreads[0]?.summary ||
+      '',
+  );
   const modelDraft = await draftBlueBubblesCommunicationReply({
     messageText:
       analysis.messageText ||
@@ -1819,10 +1872,11 @@ export async function draftCommunicationReplyWithChannelFluidity(
     personName: analysis.linkedSubjects[0]?.displayName,
     threadTitle: analysis.thread?.title,
     toneHints: analysis.thread?.toneStyleHints || [],
-    linkedLifeThreadSummary:
-      analysis.linkedLifeThreads[0]?.nextAction ||
-      analysis.linkedLifeThreads[0]?.summary ||
-      null,
+    linkedLifeThreadSummary: isUsefulCommunicationSupportLine(
+      linkedLifeThreadSummary,
+    )
+      ? linkedLifeThreadSummary
+      : null,
   });
 
   return finalizeCommunicationDraftResult({

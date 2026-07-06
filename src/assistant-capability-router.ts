@@ -911,9 +911,13 @@ function matchCommunicationPrompt(
   }
   if (
     /^what should i say back\b/.test(lower) ||
+    /\bwhat should i say back\b/.test(lower) ||
     /^what should i send back\b/.test(lower) ||
+    /\bwhat should i send back\b/.test(lower) ||
     /^draft a response\b/.test(lower) ||
+    /\bdraft a response\b/.test(lower) ||
     /^draft a reply\b/.test(lower) ||
+    /\bdraft a reply\b/.test(lower) ||
     /^draft a reply to\b/.test(lower) ||
     /^give me a short reply\b/.test(lower) ||
     /^make (?:it|that)(?: a little)? warmer\b/.test(lower) ||

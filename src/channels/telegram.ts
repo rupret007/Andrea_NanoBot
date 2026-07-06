@@ -456,21 +456,44 @@ function buildInlineKeyboard(
   if (rows.length === 0) return null;
 
   const keyboard = new InlineKeyboard();
-  rows.forEach((row, rowIndex) => {
-    row.forEach((action) => {
+  let hasButtons = false;
+  rows.forEach((row) => {
+    const validActions = row.filter((action) => {
       const text = action.label.trim();
-      if (!text) return;
+      if (!text) return false;
+      if (action.url) {
+        return true;
+      }
+      if (!action.actionId) return false;
+      const actionBytes = Buffer.byteLength(action.actionId, 'utf8');
+      if (actionBytes > 64) {
+        logger.warn(
+          {
+            component: 'telegram',
+            label: text,
+            actionBytes,
+          },
+          'Dropped Telegram inline action with invalid callback data',
+        );
+        return false;
+      }
+      return true;
+    });
+    if (validActions.length === 0) return;
+    if (hasButtons) {
+      keyboard.row();
+    }
+    for (const action of validActions) {
+      const text = action.label.trim();
       if (action.url) {
         keyboard.url(text, action.url);
       } else if (action.actionId) {
         keyboard.text(text, action.actionId);
       }
-    });
-    if (rowIndex < rows.length - 1) {
-      keyboard.row();
     }
+    hasButtons = true;
   });
-  return keyboard.inline_keyboard.length > 0 ? keyboard : null;
+  return hasButtons ? keyboard : null;
 }
 
 export function extractTelegramReplyRef(

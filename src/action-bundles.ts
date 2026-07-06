@@ -545,11 +545,34 @@ function synthesizeMissionActions(params: {
   return actions;
 }
 
+function isEmptySavedMaterialResult(params: {
+  capabilityId?: string;
+  candidate: CompanionContinuationCandidate;
+  sourceContext: ActionBundleSourceContext;
+}): boolean {
+  if (!params.capabilityId?.startsWith('knowledge.')) return false;
+  if (params.candidate.knowledgeSourceIds?.length) return false;
+  const evidenceText = normalizeText(
+    [
+      params.sourceContext.summaryText,
+      params.candidate.voiceSummary,
+      params.candidate.completionText,
+      params.candidate.handoffPayload?.text,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  );
+  return /\b(?:do not have|don't have|could not find|couldn't find|no)\s+(?:any\s+)?(?:saved material|saved sources?|saved notes?|saved matches?)\b/i.test(
+    evidenceText,
+  );
+}
+
 function synthesizeActions(params: {
   originKind: ActionBundleOriginKind;
   candidate: CompanionContinuationCandidate;
   sourceContext: ActionBundleSourceContext;
   presentationChannel: ActionBundlePresentationChannel;
+  capabilityId?: string;
   now: string;
 }): SynthesizedAction[] {
   if (params.originKind === 'mission') {
@@ -654,6 +677,15 @@ function synthesizeActions(params: {
     params.originKind === 'research' ||
     params.originKind === 'handoff'
   ) {
+    if (
+      isEmptySavedMaterialResult({
+        capabilityId: params.capabilityId,
+        candidate: params.candidate,
+        sourceContext: params.sourceContext,
+      })
+    ) {
+      return [];
+    }
     if (
       params.presentationChannel !== 'telegram' &&
       params.candidate.handoffPayload
@@ -772,6 +804,7 @@ export function createOrRefreshActionBundle(
       candidate,
       sourceContext,
       presentationChannel: params.presentationChannel,
+      capabilityId: params.capabilityId,
       now: nowIso,
     }),
   }).slice(0, MAX_ACTIONS_PER_BUNDLE);

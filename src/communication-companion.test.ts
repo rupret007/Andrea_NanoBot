@@ -227,6 +227,63 @@ describe('communication companion', () => {
     expect(result.draftText).not.toContain('circle back');
   });
 
+  it('uses context-first message text before trailing reply-help asks', () => {
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: '@andrea Candace said: can you let me know if dinner still works tonight? what should I say back?',
+      now: new Date('2026-04-14T12:51:36.900Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toMatch(/dinner still works tonight/i);
+    expect(result.draftText).not.toContain('what should I say back');
+  });
+
+  it('does not append generic setup thread actions to direct reply drafts', () => {
+    seedCandace();
+    upsertLifeThread({
+      id: 'thread-setup-first-outcomes',
+      groupFolder: 'main',
+      title: 'First outcomes',
+      category: 'routine',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: ['subject-candace'],
+      contextTags: ['setup'],
+      summary:
+        'Help me reply to important texts, keep family logistics from slipping, and prepare for each day.',
+      nextAction:
+        'Use this setup to prioritize the first useful daily-agent wins.',
+      nextFollowupAt: null,
+      sourceKind: 'inferred',
+      confidenceKind: 'medium',
+      userConfirmed: true,
+      sensitivity: 'normal',
+      surfaceMode: 'default',
+      mergedIntoThreadId: null,
+      createdAt: '2026-04-14T11:45:00.000Z',
+      lastUpdatedAt: '2026-04-14T11:45:00.000Z',
+      lastUsedAt: '2026-04-14T11:45:00.000Z',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: '@andrea Candace said: can you let me know if dinner still works tonight? what should I say back?',
+      now: new Date('2026-04-14T12:51:36.900Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toMatch(/dinner still works tonight/i);
+    expect(result.draftText).not.toContain('Use this setup');
+    expect(result.draftText).not.toContain('daily-agent');
+  });
+
   it('reuses the best open communication thread when Telegram main chat only has control prompts', () => {
     seedCandace();
     analyzeCommunicationMessage({

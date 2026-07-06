@@ -758,7 +758,7 @@ describe('turn agent harness', () => {
     });
 
     expect(evaluation.rewrittenText).toContain(
-      'I only have partial support for that.',
+      'From the signals I can verify right now',
     );
     expect(evaluation.rewrittenText).not.toMatch(
       /Council check|Hold or block/i,
@@ -1106,6 +1106,29 @@ describe('turn agent harness', () => {
     expect(evaluation.evaluatorFlags).toContain(
       'logic:platform_proof_debt_suppressed',
     );
+  });
+
+  it('strips Agent OS proof debt caveats from user-facing local replies', async () => {
+    const { evaluateTurnReply } = await import('./turn-agent-harness.js');
+
+    const evaluation = evaluateTurnReply({
+      context: null,
+      text: [
+        'Research Summary',
+        'I do not have saved material on that yet.',
+        '',
+        'Before I treat that as certain: No Agent OS episode is available yet. Run a task drill or a real task turn first.',
+      ].join('\n'),
+      routeKey: 'knowledge.summarize_saved',
+      capabilityId: 'knowledge.summarize_saved',
+      handlerKind: 'assistant_capability',
+      responseSource: 'local_companion',
+    });
+
+    expect(evaluation.rewrittenText).toContain('Research Summary');
+    expect(evaluation.rewrittenText).not.toContain('Agent OS episode');
+    expect(evaluation.rewrittenText).not.toContain('task drill');
+    expect(evaluation.evaluatorFlags).toContain('operator_leakage_repaired');
   });
 
   it('filters high-risk active skills from hot-path directives but exposes low-risk directives', async () => {

@@ -679,6 +679,13 @@ function rewriteFor(input: {
   nextAction: string;
   status: TruthCalibrationVerdict['status'];
 } {
+  const addSoftEvidenceCaveat = (text: string): string => {
+    const trimmed = text.trim();
+    if (/^\*/.test(trimmed) || /\n/.test(trimmed)) {
+      return `From the signals I can verify right now...\n\n${text}`;
+    }
+    return `From the signals I can verify right now, ${text}`;
+  };
   const claimRiskFlags = input.claims.flatMap((claim) =>
     parseJsonArray(claim.riskFlagsJson),
   );
@@ -764,7 +771,7 @@ function rewriteFor(input: {
     return {
       text: question
         ? `${input.text}\n\nBefore I treat that as certain: ${question}`
-        : `I only have partial support for that. ${input.text}`,
+        : addSoftEvidenceCaveat(input.text),
       directive: question ? 'clarify' : 'caveat',
       reason: 'At least one answer claim lacks a matching evidence ID.',
       nextAction:

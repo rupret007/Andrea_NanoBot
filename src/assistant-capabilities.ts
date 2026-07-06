@@ -3858,13 +3858,15 @@ async function runCommunicationOpenLoopsCapability(
     openLoops,
   );
   const firstItem = openLoops.items[0];
-  const continuationCandidate = buildCommunicationContinuationCandidate({
-    descriptor,
-    summaryText: openLoops.summaryText,
-    detailText: formatCommunicationOpenLoopsReply('telegram', openLoops),
-    communicationThreadId: firstItem?.threadId,
-    threadTitle: firstItem?.title,
-  });
+  const continuationCandidate = firstItem
+    ? buildCommunicationContinuationCandidate({
+        descriptor,
+        summaryText: openLoops.summaryText,
+        detailText: formatCommunicationOpenLoopsReply('telegram', openLoops),
+        communicationThreadId: firstItem.threadId,
+        threadTitle: firstItem.title,
+      })
+    : undefined;
   const supportedFollowups = extendCompanionFollowups(
     descriptor.followupActions,
     continuationCandidate,
@@ -3895,7 +3897,7 @@ async function runCommunicationOpenLoopsCapability(
       openLoops.items.map((item) => item.title),
     ),
     followupActions: supportedFollowups,
-    handoffPayload: continuationCandidate.handoffPayload,
+    handoffPayload: continuationCandidate?.handoffPayload,
     continuationCandidate,
   };
 }

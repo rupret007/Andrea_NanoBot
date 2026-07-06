@@ -817,13 +817,25 @@ function summarizeGoalResponse(result: {
       ? `Next move: ${primaryStep.actionSummary}`
       : `Next move: ${result.goal.nextAction}`,
   ];
-  if (result.opportunity) {
+  if (
+    result.opportunity &&
+    isUserFacingPlannerOpportunity(result.opportunity)
+  ) {
     lines.push(`Suggestion: ${result.opportunity.suggestedAction}`);
   }
   if (result.run.approvalRequired) {
     lines.push('Approval: required before any send/write/operator action.');
   }
   return lines.join('\n');
+}
+
+function isUserFacingPlannerOpportunity(
+  opportunity: ProactiveOpportunity,
+): boolean {
+  if (opportunity.approvalRequirement === 'manual_external') return false;
+  return !/\b(?:alexa developer console|real device|authenticated simulator|services:status|manual proof)\b/i.test(
+    opportunity.suggestedAction,
+  );
 }
 
 export function planGoalDirectedRequest(

@@ -1609,6 +1609,26 @@ describe('assistant capabilities', () => {
     expect(openLoops.replyText).toContain('needs attention');
   }, 15_000);
 
+  it('does not create follow-through candidates for empty communication open loops', async () => {
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: {
+        text: "what's still open with Candace?",
+        canonicalText: "what's still open with Candace?",
+      },
+    });
+
+    expect(openLoops.handled).toBe(true);
+    expect(openLoops.replyText).toContain('Nothing important');
+    expect(openLoops.continuationCandidate).toBeUndefined();
+    expect(openLoops.handoffPayload).toBeUndefined();
+  });
+
   it('keeps explicit person-and-topic draft asks grounded after an open-loops turn', async () => {
     const understand = await executeAssistantCapability({
       capabilityId: 'communication.understand_message',

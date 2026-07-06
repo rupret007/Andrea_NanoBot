@@ -197,6 +197,7 @@ import {
   evaluateTurnReply,
   isSafeReadOnlyCalendarLookupAsk,
   reflectTurnAgentOutcome,
+  type PreSendEvaluation,
   type TurnAgentHarnessContext,
 } from './turn-agent-harness.js';
 import {
@@ -3909,16 +3910,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     blockerOwner?: PilotBlockerOwner;
     linkedRefs?: ResponseFeedbackRecord['linkedRefs'];
     allowFeedback?: boolean;
+    preserveStructuredText?: boolean;
   }) => {
-    const turnEvaluation = evaluateTurnReply({
-      context: turnAgentHarness,
-      text: params.text,
-      routeKey: params.routeKey || requestPolicy.route,
-      capabilityId: params.capabilityId,
-      handlerKind: params.handlerKind,
-      responseSource: params.responseSource,
-      blockerClass: params.blockerClass,
-    });
+    const turnEvaluation: PreSendEvaluation = params.preserveStructuredText
+      ? {
+          status: 'pass',
+          evidenceLevel: 'unknown',
+          evidenceGap: 'none',
+          evaluatorFlags: ['structured_presentation_preserved'],
+          safeRewriteApplied: false,
+          rewrittenText: params.text,
+          approvalCorrectness: 'correct',
+          memoryEffect: 'unknown',
+          summary:
+            'Structured approval presentation preserved after local safety staging.',
+          truthVerdict: null,
+        }
+      : evaluateTurnReply({
+          context: turnAgentHarness,
+          text: params.text,
+          routeKey: params.routeKey || requestPolicy.route,
+          capabilityId: params.capabilityId,
+          handlerKind: params.handlerKind,
+          responseSource: params.responseSource,
+          blockerClass: params.blockerClass,
+        });
     const replyText = turnEvaluation.rewrittenText.trim();
     const shouldAttachFeedback =
       params.allowFeedback !== false &&
@@ -4482,6 +4498,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const tryHandleOutcomeReview = async (): Promise<boolean> => {
     const reviewPrompt = matchOutcomeReviewPrompt(lastContent);
     if (reviewPrompt) {
+      if (
+        conversationChannel === 'telegram' &&
+        reviewPrompt.kind === 'still_open_person'
+      ) {
+        return false;
+      }
       const presentation = buildOutcomeReviewResponse({
         groupFolder: group.folder,
         match: reviewPrompt,
@@ -6950,6 +6972,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               linkedRefs: {
                 messageActionId: draftResult.messageAction.messageActionId,
               },
+              preserveStructuredText: true,
             });
             updateMessageAction(draftResult.messageAction.messageActionId, {
               presentationMessageId: sent.platformMessageId || null,
@@ -7430,6 +7453,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               linkedRefs: {
                 messageActionId: result.messageAction.messageActionId,
               },
+              preserveStructuredText: true,
             });
             updateMessageAction(result.messageAction.messageActionId, {
               presentationMessageId: sent.platformMessageId || null,
@@ -7461,18 +7485,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         });
       }
 
-      const actionBundle = createOrRefreshActionBundle({
-        groupFolder: group.folder,
-        presentationChannel: conversationChannel,
-        presentationChatJid: chatJid,
-        presentationThreadId: missedMessages.at(-1)?.thread_id || null,
-        capabilityId: result.capabilityId,
-        continuationCandidate: result.continuationCandidate,
-        summaryText: result.conversationSeed?.summaryText || result.replyText,
-        replyText: result.replyText,
-        utterance: lastContent,
-        now,
-      });
+      const actionBundle = result.messageAction
+        ? null
+        : createOrRefreshActionBundle({
+            groupFolder: group.folder,
+            presentationChannel: conversationChannel,
+            presentationChatJid: chatJid,
+            presentationThreadId: missedMessages.at(-1)?.thread_id || null,
+            capabilityId: result.capabilityId,
+            continuationCandidate: result.continuationCandidate,
+            summaryText:
+              result.conversationSeed?.summaryText || result.replyText,
+            replyText: result.replyText,
+            utterance: lastContent,
+            now,
+          });
       if (actionBundle) {
         if (result.conversationSeed) {
           result.conversationSeed.subjectData = {

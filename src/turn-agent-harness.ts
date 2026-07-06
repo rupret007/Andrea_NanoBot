@@ -1011,13 +1011,17 @@ export function buildTurnEvidenceCards(
 }
 
 function hasInternalLeakage(text: string): boolean {
-  return /\b(codex_local|openai_cloud|anthropic_cloud|minimax_cloud|gemini_cloud|claude_legacy|task_ledger|progress_ledger|trace_grade|platform coordinator|worker_id|selected_policy_id|selected policy|route_calibration|manual_sync_only|repo_side|provider_council)\b/i.test(
+  return /\b(codex_local|openai_cloud|anthropic_cloud|minimax_cloud|gemini_cloud|claude_legacy|task_ledger|progress_ledger|trace_grade|platform coordinator|worker_id|selected_policy_id|selected policy|route_calibration|manual_sync_only|repo_side|provider_council|agent os episode|task drill)\b/i.test(
     text,
   );
 }
 
 function stripInternalLeakage(text: string): string {
   return text
+    .replace(
+      /\n?\s*(?:Before I treat that as certain:\s*)?No Agent OS episode is available yet\.?\s*Run a task drill or a real task turn first\.?/gi,
+      '',
+    )
     .replace(
       /\b(?:codex_local|openai_cloud|anthropic_cloud|minimax_cloud|gemini_cloud|claude_legacy)\b/gi,
       'the best available worker',
@@ -1394,6 +1398,11 @@ export function evaluateTurnReply(
         `truth_directive:${truthVerdict.rewriteDirectives[0]?.directive || 'rewrite'}`,
       );
     }
+  }
+  if (hasInternalLeakage(rewritten)) {
+    rewritten = stripInternalLeakage(rewritten);
+    flags.push('operator_leakage_repaired');
+    safeRewriteApplied = true;
   }
 
   const actualEvidence = evidence[0]?.actualLevel || 'unknown';

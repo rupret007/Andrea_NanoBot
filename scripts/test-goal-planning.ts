@@ -52,6 +52,33 @@ assert.ok(andrea.steps.some((step) => step.requiredTool === 'improvement_lab'));
 assert.ok(andrea.run.approvalRequired);
 assert.match(andrea.response, /Approval: required/);
 
+const manualAlexaOpportunity: ProactiveOpportunity = {
+  opportunityId: 'opportunity_manual_alexa_proof',
+  createdAt: '2026-06-09T12:05:30.000Z',
+  updatedAt: '2026-06-09T12:05:30.000Z',
+  groupFolder: null,
+  triggerSource: 'proof:alexa_manual',
+  relatedGoalId: null,
+  opportunitySummary: 'Alexa proof requires a real device turn.',
+  reason: 'Manual proof debt should not become household planning advice.',
+  urgency: 'normal',
+  confidence: 0.8,
+  suggestedAction:
+    'Use a real device or authenticated Alexa Developer Console simulator.',
+  approvalRequirement: 'manual_external',
+  status: 'proposed',
+  snoozedUntil: null,
+  evidenceRefsJson: JSON.stringify(['proof:alexa']),
+  privacyJson: JSON.stringify({ metadataOnly: true }),
+};
+upsertProactiveOpportunity(manualAlexaOpportunity);
+const tonight = planGoalDirectedRequest({
+  text: 'help me plan tonight',
+  channel: 'telegram',
+  now: '2026-06-09T12:06:00.000Z',
+});
+assert.doesNotMatch(tonight.response, /Alexa Developer Console|real device/);
+
 const staleBraveOpportunity: ProactiveOpportunity = {
   opportunityId: 'opportunity_stale_brave_blocker',
   createdAt: '2026-06-09T12:06:00.000Z',

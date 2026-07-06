@@ -21,6 +21,7 @@ const CALENDAR_ENV_KEYS = [
   'GOOGLE_CALENDAR_CLIENT_ID',
   'GOOGLE_CALENDAR_CLIENT_SECRET',
   'GOOGLE_CALENDAR_IDS',
+  'CALENDAR_PROVIDER_LOOKUP_TIMEOUT_MS',
   'OUTLOOK_CALENDAR_ACCESS_TOKEN',
   'OUTLOOK_CALENDAR_REFRESH_TOKEN',
   'OUTLOOK_CALENDAR_CLIENT_ID',
@@ -28,6 +29,8 @@ const CALENDAR_ENV_KEYS = [
   'OUTLOOK_CALENDAR_TENANT_ID',
   'OUTLOOK_CALENDAR_USER_ID',
 ] as const;
+
+const DEFAULT_CALENDAR_PROVIDER_LOOKUP_TIMEOUT_MS = 5_000;
 
 const WEEKDAY_INDEX: Record<string, number> = {
   sunday: 0,
@@ -183,6 +186,7 @@ interface CalendarAssistantConfig {
   googleClientId: string | null;
   googleClientSecret: string | null;
   googleCalendarIds: string[];
+  providerLookupTimeoutMs: number;
   outlookAccessToken: string | null;
   outlookRefreshToken: string | null;
   outlookClientId: string | null;
@@ -205,6 +209,67 @@ interface CalendarAssistantDeps {
 interface CalendarProviderResult {
   events: CalendarEvent[];
   status: CalendarProviderStatus;
+}
+
+type CalendarProviderStatusBase = Pick<CalendarProviderStatus, 'id' | 'label'>;
+
+function buildProviderTimeoutResult(
+  statusBase: CalendarProviderStatusBase,
+  timeoutMs: number,
+): CalendarProviderResult {
+  return {
+    events: [],
+    status: {
+      ...statusBase,
+      state: 'error',
+      detail: `${statusBase.label} timed out after ${timeoutMs} ms.`,
+      configured: true,
+      complete: false,
+    },
+  };
+}
+
+async function withCalendarProviderTimeout(
+  lookup: Promise<CalendarProviderResult>,
+  statusBase: CalendarProviderStatusBase,
+  timeoutMs: number,
+): Promise<CalendarProviderResult> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutResult = new Promise<CalendarProviderResult>((resolve) => {
+    timeout = setTimeout(
+      () => resolve(buildProviderTimeoutResult(statusBase, timeoutMs)),
+      timeoutMs,
+    );
+    timeout.unref?.();
+  });
+
+  try {
+    return await Promise.race([lookup, timeoutResult]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function createCalendarFetchWithTimeout(
+  fetchImpl: FetchLike,
+  timeoutMs: number,
+): FetchLike {
+  return (async (input, init) => {
+    if (init?.signal) {
+      return await fetchImpl(input, init);
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    timeout.unref?.();
+    try {
+      return await fetchImpl(input, {
+        ...init,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }) as FetchLike;
 }
 
 interface ParsedIcsDate {
@@ -937,6 +1002,23 @@ function resolveCsvList(
     .filter(Boolean);
 }
 
+function resolveCalendarProviderLookupTimeoutMs(
+  envFile: Record<string, string>,
+  env?: Record<string, string | undefined>,
+): number {
+  const rawValue = resolveConfigValue(
+    'CALENDAR_PROVIDER_LOOKUP_TIMEOUT_MS',
+    envFile,
+    env,
+  );
+  if (!rawValue) return DEFAULT_CALENDAR_PROVIDER_LOOKUP_TIMEOUT_MS;
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_CALENDAR_PROVIDER_LOOKUP_TIMEOUT_MS;
+  }
+  return Math.floor(parsed);
+}
+
 function resolveCalendarConfig(
   env?: Record<string, string | undefined>,
 ): CalendarAssistantConfig {
@@ -970,6 +1052,10 @@ function resolveCalendarConfig(
     googleClientId: googleConfig.clientId,
     googleClientSecret: googleConfig.clientSecret,
     googleCalendarIds: googleConfig.calendarIds,
+    providerLookupTimeoutMs: resolveCalendarProviderLookupTimeoutMs(
+      envFile,
+      env,
+    ),
     outlookAccessToken:
       resolveConfigValue('OUTLOOK_CALENDAR_ACCESS_TOKEN', envFile, env) || null,
     outlookRefreshToken:
@@ -1379,6 +1465,7 @@ async function applyScopeFilter(
 async function defaultAppleCalendarScriptRunner(
   startIso: string,
   endIso: string,
+  timeoutMs = DEFAULT_CALENDAR_PROVIDER_LOOKUP_TIMEOUT_MS,
 ): Promise<string> {
   const script = buildAppleCalendarJxaScript();
 
@@ -1393,21 +1480,39 @@ async function defaultAppleCalendarScriptRunner(
 
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      proc.kill('SIGTERM');
+      reject(
+        new Error(`Apple Calendar lookup timed out after ${timeoutMs} ms.`),
+      );
+    }, timeoutMs);
+    timeout.unref?.();
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      fn();
+    };
     proc.stdout.on('data', (chunk) => {
       stdout += chunk.toString();
     });
     proc.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
-    proc.on('error', reject);
+    proc.on('error', (error) => finish(() => reject(error)));
     proc.on('close', (code) => {
-      if (code === 0) {
-        resolve(stdout.trim());
-      } else {
-        reject(
-          new Error(stderr.trim() || `osascript exited with code ${code}`),
-        );
-      }
+      finish(() => {
+        if (code === 0) {
+          resolve(stdout.trim());
+        } else {
+          reject(
+            new Error(stderr.trim() || `osascript exited with code ${code}`),
+          );
+        }
+      });
     });
   });
 }
@@ -1479,7 +1584,13 @@ async function loadAppleLocalEvents(
 
   try {
     const runner =
-      deps.runAppleCalendarScript || defaultAppleCalendarScriptRunner;
+      deps.runAppleCalendarScript ||
+      ((startIso: string, endIso: string) =>
+        defaultAppleCalendarScriptRunner(
+          startIso,
+          endIso,
+          config.providerLookupTimeoutMs,
+        ));
     const raw = await runner(plan.start.toISOString(), plan.end.toISOString());
     const parsed = JSON.parse(raw) as Array<{
       id?: string;
@@ -1949,11 +2060,35 @@ export async function lookupCalendarAssistantEvents(
     platform,
   };
 
+  const providerTimeoutMs = config.providerLookupTimeoutMs;
+  const timedDeps = {
+    ...resolvedDeps,
+    fetchImpl: createCalendarFetchWithTimeout(
+      resolvedDeps.fetchImpl || globalThis.fetch,
+      providerTimeoutMs,
+    ),
+  };
   const providerResults = await Promise.all([
-    loadAppleLocalEvents(plan, config, resolvedDeps),
-    loadAppleCalDavEvents(plan, config, resolvedDeps),
-    loadGoogleCalendarEvents(plan, config, resolvedDeps),
-    loadOutlookEvents(plan, config, resolvedDeps),
+    withCalendarProviderTimeout(
+      loadAppleLocalEvents(plan, config, timedDeps),
+      { id: 'apple_local', label: 'Apple Calendar on this Mac' },
+      providerTimeoutMs,
+    ),
+    withCalendarProviderTimeout(
+      loadAppleCalDavEvents(plan, config, timedDeps),
+      { id: 'apple_caldav', label: 'Apple/iCloud CalDAV' },
+      providerTimeoutMs,
+    ),
+    withCalendarProviderTimeout(
+      loadGoogleCalendarEvents(plan, config, timedDeps),
+      { id: 'google_calendar', label: 'Google Calendar' },
+      providerTimeoutMs,
+    ),
+    withCalendarProviderTimeout(
+      loadOutlookEvents(plan, config, timedDeps),
+      { id: 'outlook', label: 'Outlook Calendar' },
+      providerTimeoutMs,
+    ),
   ]);
 
   const statuses = providerResults.map((result) => result.status);
@@ -1965,7 +2100,7 @@ export async function lookupCalendarAssistantEvents(
     filteredEvents,
     statuses,
     plan,
-    resolvedDeps,
+    timedDeps,
   );
 
   return {
