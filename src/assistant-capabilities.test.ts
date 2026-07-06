@@ -1330,7 +1330,7 @@ describe('assistant capabilities', () => {
     });
 
     expect(telegram.replyText).toContain('*Research Summary*');
-    expect(telegram.replyText).toContain('*Why this route*');
+    expect(telegram.replyText).not.toContain('*Why this route*');
     expect(alexa.replyText).toContain('Want');
     expect(alexa.researchResult?.routeExplanation).toContain('local context');
     expect(alexa.followupActions).toEqual(

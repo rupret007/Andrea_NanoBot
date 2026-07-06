@@ -257,7 +257,7 @@ export function isEpisodeNaturalRequest(text: string): boolean {
   );
 }
 
-export function formatEpisodeNaturalResponse(text: string): string {
+export function formatEpisodeNaturalResponse(_text: string): string {
   const report = buildEpisodeMemoryReport();
   if (!report.totalRecent) {
     return 'I have no recorded episodes yet, so nothing learned to report. As we work together I will keep compact, redacted summaries of what worked and what you corrected.';

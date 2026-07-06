@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -16,6 +18,7 @@ import {
   buildPatchWorkbenchReport,
   createTempPatchRecipeWorkspace,
   evaluatePatchPlanSafety,
+  executeDetachedRepairCandidate,
 } from '../src/patch-workbench.js';
 import type {
   CandidatePatchPlan,
@@ -27,6 +30,98 @@ import type {
 _initTestDatabase();
 
 const now = '2026-06-09T12:00:00.000Z';
+
+function git(repoRoot: string, args: string[]): string {
+  return execFileSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function createRepairExecutorRepo(label: string): {
+  repoRoot: string;
+  diffText: string;
+} {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), `andrea-${label}-`));
+  const baseLines = Array.from(
+    { length: 20 },
+    (_, index) => `line-${String(index + 1).padStart(2, '0')}`,
+  );
+  baseLines[4] = 'beta';
+  baseLines[19] = 'omega';
+  const patchedLines = [...baseLines];
+  patchedLines[4] = 'BETA';
+  const driftedLines = [...baseLines];
+  driftedLines[19] = 'GAMMA';
+  git(repoRoot, ['init', '-b', 'main']);
+  git(repoRoot, ['config', 'user.email', 'andrea-test@example.com']);
+  git(repoRoot, ['config', 'user.name', 'Andrea Test']);
+  fs.writeFileSync(
+    path.join(repoRoot, 'file.txt'),
+    `${baseLines.join('\n')}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(repoRoot, 'check.js'),
+    [
+      "const fs = require('fs');",
+      "const text = fs.readFileSync('file.txt', 'utf8');",
+      "if (!text.includes('BETA') || !text.includes('GAMMA')) process.exit(1);",
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(repoRoot, 'fail.js'),
+    'process.exit(1);\n',
+    'utf8',
+  );
+  git(repoRoot, ['add', 'file.txt', 'check.js', 'fail.js']);
+  git(repoRoot, ['commit', '-m', 'initial']);
+
+  fs.writeFileSync(
+    path.join(repoRoot, 'file.txt'),
+    `${patchedLines.join('\n')}\n`,
+    'utf8',
+  );
+  const diffText = `${git(repoRoot, ['diff', 'HEAD', '--', 'file.txt'])}\n`;
+  fs.writeFileSync(
+    path.join(repoRoot, 'file.txt'),
+    `${baseLines.join('\n')}\n`,
+    'utf8',
+  );
+  assert.equal(git(repoRoot, ['status', '--porcelain']), '');
+
+  fs.writeFileSync(
+    path.join(repoRoot, 'file.txt'),
+    `${driftedLines.join('\n')}\n`,
+    'utf8',
+  );
+  git(repoRoot, ['add', 'file.txt']);
+  git(repoRoot, ['commit', '-m', 'change context']);
+  return { repoRoot, diffText };
+}
+
+function branchExists(repoRoot: string, branchName: string): boolean {
+  try {
+    git(repoRoot, ['rev-parse', '--verify', branchName]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cleanupRepairExecutorRepo(repoRoot: string): void {
+  fs.rmSync(repoRoot, { recursive: true, force: true });
+  fs.rmSync(
+    path.join(
+      path.dirname(repoRoot),
+      `${path.basename(repoRoot)}-improvement-worktrees`,
+    ),
+    { recursive: true, force: true },
+  );
+}
 
 function repair(
   attemptId: string,
@@ -148,7 +243,10 @@ const docsPlan: CandidatePatchPlan = {
   status: 'planned',
   privacyJson: JSON.stringify({ metadataOnly: true }),
 };
-assert.equal(evaluatePatchPlanSafety(docsPlan, lowRiskHypothesis).allowed, true);
+assert.equal(
+  evaluatePatchPlanSafety(docsPlan, lowRiskHypothesis).allowed,
+  true,
+);
 
 const runtimePlan: CandidatePatchPlan = {
   ...docsPlan,
@@ -193,6 +291,109 @@ assert.doesNotMatch(
   JSON.stringify(report),
   /sk-proj-|raw private body|hidden reasoning|provider debate|raw tool output/i,
 );
+
+const successRepo = createRepairExecutorRepo('repair-executor-success');
+try {
+  const successBranch = 'codex/improvement/test-detached-success';
+  const success = executeDetachedRepairCandidate({
+    repoRoot: successRepo.repoRoot,
+    branchName: successBranch,
+    diffText: successRepo.diffText,
+    verificationCommands: [
+      {
+        command: process.execPath,
+        args: ['check.js'],
+      },
+    ],
+    commitMessage: 'Apply detached repair candidate',
+    approved: true,
+    policy: {
+      allowedVerificationCommands: [
+        {
+          command: process.execPath,
+          args: ['check.js'],
+        },
+      ],
+    },
+  });
+
+  assert.equal(success.status, 'committed', success.reason);
+  assert.ok(success.commitHash);
+  assert.equal(success.verificationResults[0]?.ok, true);
+  assert.ok(branchExists(successRepo.repoRoot, successBranch));
+  assert.equal(fs.existsSync(success.workspacePath), false);
+  const successFile = git(successRepo.repoRoot, [
+    'show',
+    `${successBranch}:file.txt`,
+  ]);
+  assert.match(successFile, /\bBETA\b/);
+  assert.match(successFile, /\bGAMMA\b/);
+  assert.equal(git(successRepo.repoRoot, ['status', '--porcelain']), '');
+} finally {
+  cleanupRepairExecutorRepo(successRepo.repoRoot);
+}
+
+const failingRepo = createRepairExecutorRepo('repair-executor-failing');
+try {
+  const failingBranch = 'codex/improvement/test-detached-failing';
+  const failure = executeDetachedRepairCandidate({
+    repoRoot: failingRepo.repoRoot,
+    branchName: failingBranch,
+    diffText: failingRepo.diffText,
+    verificationCommands: [
+      {
+        command: process.execPath,
+        args: ['fail.js'],
+      },
+    ],
+    commitMessage: 'Apply failing detached repair candidate',
+    approved: true,
+    policy: {
+      allowedVerificationCommands: [
+        {
+          command: process.execPath,
+          args: ['fail.js'],
+        },
+      ],
+    },
+  });
+
+  assert.equal(failure.status, 'rolled_back');
+  assert.equal(failure.commitHash, null);
+  assert.equal(failure.verificationResults[0]?.ok, false);
+  assert.equal(failure.rollbackApplied, true);
+  assert.equal(branchExists(failingRepo.repoRoot, failingBranch), false);
+  assert.equal(fs.existsSync(failure.workspacePath), false);
+  const failingHeadFile = git(failingRepo.repoRoot, ['show', 'HEAD:file.txt']);
+  assert.match(failingHeadFile, /\bbeta\b/);
+  assert.match(failingHeadFile, /\bGAMMA\b/);
+  assert.equal(git(failingRepo.repoRoot, ['status', '--porcelain']), '');
+} finally {
+  cleanupRepairExecutorRepo(failingRepo.repoRoot);
+}
+
+const blockedRepo = createRepairExecutorRepo('repair-executor-blocked');
+try {
+  const blocked = executeDetachedRepairCandidate({
+    repoRoot: blockedRepo.repoRoot,
+    branchName: 'codex/improvement/test-detached-blocked',
+    diffText: [
+      'diff --git a/.env b/.env',
+      '--- a/.env',
+      '+++ b/.env',
+      '@@ -0,0 +1 @@',
+      '+SECRET=not-allowed',
+      '',
+    ].join('\n'),
+    verificationCommands: [],
+    commitMessage: 'Blocked candidate',
+    approved: true,
+  });
+  assert.equal(blocked.status, 'blocked');
+  assert.match(blocked.reason, /sensitive paths|dangerous-change/i);
+} finally {
+  cleanupRepairExecutorRepo(blockedRepo.repoRoot);
+}
 
 console.log('patch workbench tests passed');
 

@@ -95,7 +95,7 @@ Important boundary:
 | Surface     | Truth                                                                | Best for                                                                                                                                               | Important boundary                                                                                                                      |
 | ----------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Telegram    | `live_proven`                                                        | Richest companion use for schedule, reminders, grouped household views, planning, review, research, messaging review, and operator work                | Public-safe commands stay small; deeper control lives in the main control chat                                                          |
-| Alexa       | `live_proven` proof on this host, with model sync tracked separately | Short voice help for calendar, reminders, groceries, bills this week, tonight or weekend orientation, and quick reply help                             | Real proof must come from the Andrea custom skill, and latest model changes should be confirmed with `setup -- --step alexa-model-sync` |
+| Alexa       | `manual_action_required` until a fresh signed handled custom-skill turn lands | Short voice help for calendar, reminders, groceries, bills this week, tonight or weekend orientation, and quick reply help                             | Real proof must come from the Andrea custom skill, and latest model changes should be confirmed with `setup -- --step alexa-model-sync` |
 | BlueBubbles | `live_proven` optional Messages bridge on this host                  | Optional best-effort Messages bridge in the active thread plus bounded capture/readout for lists and short household slices when the bridge is healthy | Mention-required and messaging-first; Telegram remains the dependable main path for richer completion and control                       |
 
 ## Natural-Language Discovery Surfaces
@@ -122,7 +122,8 @@ These are discoverable by normal language rather than slash commands.
 Host note:
 
 - `Planning and next steps` is held at `near_live_only` on this host because daily guidance still needs one fresh Telegram proof turn, not because the repo-side planning path is broken.
-- `Compare, explain, and saved context` is currently `degraded_but_usable` because provider-backed research is externally blocked, while local and saved-context answers still work.
+- `Compare, explain, and saved context` should follow current provider health; local and saved-context answers still work if a provider later reports an external blocker.
+- On BlueBubbles, `@Andrea` wakes the Andrea companion path and `@OpenClaw` selects the OpenClaw/helper lane when the default trigger is in use.
 
 ## Operator-Only Telegram Slash Families
 
@@ -177,7 +178,7 @@ These are real product surface, but they should not show up in public slash help
 | Family                     | Truth           | What it backs                                                                                                       |
 | -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `/cursor-ui *`             | `operator_only` | Work-cockpit buttons and tiles such as status, jobs, current work, runtime, wizard, follow-up, and terminal actions |
-| `/bundle-*`                | `bounded`       | Action bundle buttons such as run, skip, show, pick, and defer                                                      |
+| `/bundle-*`                | `bounded`       | Legacy follow-through review buttons such as run, skip, show, pick, and defer                                      |
 | `/runtime-*` card actions  | `operator_only` | Runtime card buttons inside the work cockpit                                                                        |
 | Review controls            | `bounded`       | `send`, `send later`, `remind later`, `save under thread`, `keep as draft`                                          |
 | Telegram feedback controls | `operator_only` | Main-control-chat `Not helpful`, `Start fix`, `Why`, and `Not now` feedback/remediation actions                     |

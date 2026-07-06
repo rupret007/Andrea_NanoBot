@@ -66,6 +66,9 @@ function proofEntry(
 function proofReport(
   entries: LiveProofGauntletEntry[],
 ): LiveProofGauntletReport {
+  const dailyCoreEntries = entries.filter(
+    (entry) => !/Alexa signed IntentRequest/i.test(entry.proofName),
+  );
   return {
     generatedAt,
     entries,
@@ -73,6 +76,17 @@ function proofReport(
       .length,
     proofDebtCount: entries.filter((entry) => entry.status !== 'live_proven')
       .length,
+    dailyCoreLiveProvenCount: dailyCoreEntries.filter(
+      (entry) => entry.status === 'live_proven',
+    ).length,
+    dailyCoreProofDebtCount: dailyCoreEntries.filter(
+      (entry) => entry.status !== 'live_proven',
+    ).length,
+    optionalProofDebtCount: entries.filter(
+      (entry) =>
+        /Alexa signed IntentRequest/i.test(entry.proofName) &&
+        entry.status !== 'live_proven',
+    ).length,
     repoWorkRequiredCount: entries.filter((entry) => entry.repoWorkRequired)
       .length,
     nextAction: 'next proof action',
@@ -320,7 +334,7 @@ describe('integration recovery', () => {
       statuses: [
         integrationStatus('telegram', 'Telegram', 'externally_blocked', {
           detail:
-            'TELEGRAM_USER_API_HASH=supersecretvalue token=8755969867:AAFUMkQogpCP-aC344HSI5cnQjWLK8-UDZY',
+            'TELEGRAM_USER_API_HASH=supersecretvalue token=8755969867:AA-redaction-fixture',
           nextAction: 'Set TELEGRAM_USER_API_HASH=supersecretvalue.',
         }),
       ],
@@ -335,7 +349,7 @@ describe('integration recovery', () => {
     expect(text).toContain('TELEGRAM_USER_API_HASH=***');
     expect(text).toContain('token=***');
     expect(text).not.toContain('supersecretvalue');
-    expect(text).not.toContain('AAFUM');
+    expect(text).not.toContain('redaction-fixture');
   });
 
   it('keeps recovery output free of unrelated internal decision jargon', () => {

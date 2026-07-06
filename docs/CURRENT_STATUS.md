@@ -1,6 +1,6 @@
 # Andrea Current Status
 
-Generated from local operator checks on 2026-06-12.
+Generated from local operator checks on 2026-07-06.
 
 ## Recovery Context
 
@@ -12,48 +12,47 @@ Generated from local operator checks on 2026-06-12.
 
 ## Repo And Runtime
 
-- Git branch: `main`
-- Remote state at recovery: `main` matched `origin/main`
-- Workspace HEAD: `6542100a532dca70b7c3236b22d01037c595ec4f`
-- Serving commit: `6542100a532dca70b7c3236b22d01037c595ec4f`
+- Git branch during release hardening: `codex/agi-improvement-loop`
+- Remote state before push: release branch tracked `origin/codex/agi-improvement-loop`; final release should be verified against `origin/main`
+- Workspace HEAD before the release commit: `adf2c7bb`
+- Serving commit before the release commit: `adf2c7bb`
 - Runtime state: `running_ready`
 - Serving commit aligned with workspace HEAD: yes
-- Open pilot issues: 0
+- Open pilot issues: check `npm run debug:pilot`
 
 ## Live Proof Truth
 
-- Launch status: `externally_blocked`
-- Core status: `blocked`
-- Live proof gauntlet: `2/7`
-- Proof debt: 5
+- Launch status: release-candidate with manual Alexa proof debt
+- Core status: running
+- Live proof gauntlet: use `npm run services:status` and `npm run integrations:status -- --json`
+- Proof debt: Alexa manual proof plus any flagship journey freshness that has aged out
 - Repo work required: 0
 
 Current live-proven surfaces:
 
 - Host health
-- Research/provider proof
-- Image generation proof
+- Telegram user-session roundtrip
+- BlueBubbles canonical same-thread message-action proof in `bb:iMessage;-;+14695405551`
+- Google Calendar
+- OpenAI, Anthropic, Gemini, MiniMax, Brave Search, research, and image generation
 
 Current blocked or proof-stale surfaces:
 
-- Telegram user-session proof: `missing_config`
-- Telegram bot proof: `near_live_only`
-- Google Calendar live write proof: `externally_blocked` because token refresh returns `invalid_grant`
-- Alexa signed IntentRequest proof: `externally_blocked` until a fresh signed handled turn reaches this host
-- BlueBubbles same-thread message-action proof: `near_live_only`; transport is ready, but the message-action proof leg is not fresh
+- Alexa signed IntentRequest proof: `manual_action_required` until a fresh signed handled turn reaches this host
+- Work cockpit execution: may report `externally_blocked` when the Andrea OpenAI backend lane is disabled
+- Flagship journey proofs: may be proof-stale independently of integration health
 
 ## Next Proof Actions
 
-1. Refresh Telegram proof.
-   - Send `hi` or `what's up` in Telegram on this host.
-   - If user-session automation matters, set `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`, then run `npm run telegram:user:smoke`.
+1. Keep Telegram proof fresh.
+   - Run `npm run telegram:user:smoke`.
+   - Send `hi` or `what's up` in Telegram on this host before demos.
 
-2. Reauthorize Google Calendar.
-   - Run `npm run setup -- --step google-calendar auth --client-secret-json "<client-secret.json>"`.
-   - Complete browser consent for the current repo.
-   - Then run `npm run debug:google-calendar` and `npm run services:status`.
+2. Keep Google Calendar proof fresh.
+   - Run `npm run debug:google-calendar` and `npm run services:status`.
+   - If the host later reports `invalid_grant`, rerun the current-repo OAuth flow.
 
-3. Close BlueBubbles same-thread proof.
+3. Keep BlueBubbles same-thread proof fresh.
    - In canonical self-thread `bb:iMessage;-;+14695405551`, ask what to say back or send back.
    - Use `send it later tonight` to prove the message-action leg without loosening send safety.
    - Confirm with `npm run debug:bluebubbles -- --live`.
@@ -68,4 +67,4 @@ Current blocked or proof-stale surfaces:
 
 ## Guardrail
 
-Do not start new repo repair work for the current proof gaps unless a fresh operator surface reports `repo_work=yes`. The current blockers are live proof, credentials, OAuth, and manual/same-host validation debt, not known code defects.
+Do not start new repo repair work for current proof gaps unless a fresh operator surface reports `repo_work=yes`. Manual Alexa proof, proof freshness, disabled backend lanes, credentials, OAuth, and provider account limits should stay classified as external/operator state, not assumed repo defects.

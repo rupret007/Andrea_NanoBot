@@ -1355,7 +1355,6 @@ function formatResearchTelegramReply(result: ResearchResult): string {
       );
     }
   }
-  lines.push('', '*Why this route*', result.routeExplanation);
   if (result.followupSuggestions.length) {
     lines.push('', '*Next if useful*');
     for (const suggestion of result.followupSuggestions.slice(0, 2)) {

@@ -130,8 +130,10 @@ function dailyCoreRatio(report: CapabilitySelfModelReport): number {
 }
 
 function proofLiveRatio(report: LiveProofGauntletReport): number {
-  return report.entries.length > 0
-    ? report.liveProvenCount / report.entries.length
+  const dailyCoreTotal =
+    report.dailyCoreLiveProvenCount + report.dailyCoreProofDebtCount;
+  return dailyCoreTotal > 0
+    ? report.dailyCoreLiveProvenCount / dailyCoreTotal
     : 1;
 }
 

@@ -98,13 +98,23 @@ const report = buildRealityGroundingReport({
   generatedAt: '2026-06-09T13:00:00.000Z',
   proofReport,
   reliabilityReport: reliability,
+  providerHealthSnapshots: [],
   persist: false,
 });
 
 assert.ok(
-  report.contradictions.some(
+  !report.contradictions.some(
     (item) => item.contradictionKind === 'transport_vs_proof',
   ),
+  'ready BlueBubbles transport plus stale same-thread proof should stay proof debt, not contradiction',
+);
+assert.ok(
+  report.verificationNeeds.some(
+    (need) =>
+      /BlueBubbles/.test(need.question) &&
+      /same-thread message-action proof/i.test(need.nextAction),
+  ),
+  'stale BlueBubbles same-thread proof should remain a verification need',
 );
 assert.ok(
   report.contradictions.some(

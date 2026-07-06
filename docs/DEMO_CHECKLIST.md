@@ -13,15 +13,15 @@ Use this as the demo and dogfood checklist for the current operator host. Comman
 
 | Surface                                      | Current truth                  | Exact blocker                                               | Owner              | Smallest next action                                                                  |
 | -------------------------------------------- | ------------------------------ | ----------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------- |
-| Telegram user-session proof                  | `externally_blocked`           | missing `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH` | external/config    | Set the credentials, then run `npm run telegram:user:smoke`                           |
-| Alexa companion                              | `near_live_only`               | no fresh signed handled `IntentRequest` recorded            | external/live turn | Use a real simulator/device turn, then run `npm run services:status`                  |
-| BlueBubbles companion                        | `degraded_but_usable`          | missing fresh same-thread message-action proof              | live turn          | Run one same-chat draft -> `send it` or `send it later tonight` proof                 |
-| Google Calendar                              | `externally_blocked`           | token refresh returns `invalid_grant`                       | external/OAuth     | Reauthorize with the current repo, then run `npm run debug:google-calendar`           |
-| Work cockpit                                 | `near_live_only` / proof-stale | no fresh flagship work-cockpit turn                         | operator/live turn | Re-run one `/cursor` sanity flow                                                      |
+| Telegram user-session proof                  | `live_proven`                  | none                                                        | none               | Run `npm run telegram:user:smoke` again before a formal demo                          |
+| Alexa companion                              | `manual_action_required`       | no fresh signed handled `IntentRequest` recorded            | external/live turn | Use a real simulator/device turn, then run `npm run services:status`                  |
+| BlueBubbles companion                        | `live_proven`                  | none                                                        | none               | Keep proof fresh with `npm run debug:bluebubbles -- --live`                           |
+| Google Calendar                              | `live_proven`                  | none                                                        | none               | Keep proof fresh with `npm run debug:google-calendar` when calendar writes are demoed |
+| Work cockpit                                 | `near_live_only` / proof-stale | backend lane may be disabled or no fresh work-cockpit turn  | operator/live turn | Re-run one `/cursor` sanity flow after enabling the intended backend lane             |
 | Life threads / communication                 | `near_live_only` / proof-stale | no fresh Candace/communication chain                        | operator/live turn | Re-run one Candace follow-through chain                                               |
 | Chief-of-staff / missions                    | `near_live_only` / proof-stale | no fresh planning journey                                   | operator/live turn | Re-run one nightly-planning or mission chain                                          |
 | Knowledge library                            | `near_live_only` / proof-stale | no fresh save plus grounded answer                          | operator/live turn | Re-run one save and one library-grounded answer                                       |
-| Action bundles / delegation / outcome review | `near_live_only` / proof-stale | no fresh approve/partial/review chain                       | operator/live turn | Re-run one action-bundle review chain                                                 |
+| Follow-through review / delegation / outcome review | `not_intended_for_trial` | retired as a standalone launch proof surface                 | none               | Use daily command center and follow-through review proofs instead                      |
 | Research mode                                | `live_proven`                  | none                                                        | none               | Keep the proof fresh if it will be demoed                                             |
 | Image generation                             | `live_proven`                  | none                                                        | none               | Keep the proof fresh if it will be demoed                                             |
 | Startup / host-control / watchdog / health   | `live_proven`                  | none for core host                                          | none               | Keep `services:status`, `setup verify`, and `debug:status` aligned after each restart |
@@ -49,23 +49,20 @@ Important truth:
 
 - `setup verify` can prove assistant execution while still failing launch readiness because external proof/config gates are open.
 - `ASSISTANT_EXECUTION_PROBE: ok` means the assistant answered; a final failed launch status should be read with the listed blockers, not as an ambiguous runtime failure.
-- Telegram is blocked by missing user-session API credentials until `npm run telegram:user:smoke` succeeds.
+- Telegram is live-proven after the current same-host user-session smoke; rerun `npm run telegram:user:smoke` before a formal demo if the proof ages out.
 - Alexa is not `live_proven` until a fresh signed handled `IntentRequest` is recorded.
-- BlueBubbles is usable, but not fully live-proven until a fresh same-thread message-action proof is recorded.
-- Google Calendar is currently blocked by a stale or revoked OAuth grant; reauthorize before claiming calendar launch readiness.
-- Research and image generation are currently live-proven advanced lanes, not core launch blockers.
+- BlueBubbles is live-proven while the canonical same-thread message-action proof remains fresh.
+- Google Calendar is currently healthy; if it later reports `invalid_grant`, reauthorize before claiming calendar launch readiness.
+- Research, image generation, and provider checks are currently live-proven advanced lanes, not core launch blockers.
 
 ## Proof Recovery Checklist
 
 Close proof debt in this order:
 
 1. Telegram
-   - Set `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`.
    - Run `npm run telegram:user:smoke`.
-   - Success shape: no missing-credential blocker, user-session smoke records a request/response proof, and `debug:status` no longer reports Telegram as `externally_blocked`.
+   - Success shape: no missing-credential blocker, user-session smoke records a request/response proof, and `debug:status` keeps Telegram out of `externally_blocked`.
 2. Google Calendar
-   - Run `npm run setup -- --step google-calendar auth --client-secret-json "<client-secret.json>"`.
-   - Complete browser consent for the current repo.
    - Run `npm run debug:google-calendar` and `npm run services:status`.
    - Success shape: token refresh succeeds, provider discovery works, and a disposable live-write proof is current.
 3. BlueBubbles
@@ -77,7 +74,7 @@ Close proof debt in this order:
    - Run `npm run services:status` and `npm run debug:pilot`.
    - Success shape: latest signed request is a handled `IntentRequest`, the proof is inside the freshness window, and Alexa reports `live_proven`.
 5. Flagship journeys
-   - Re-run ordinary chat, daily guidance, Candace follow-through, mission planning, work cockpit, cross-channel handoff, knowledge library, and action-bundle review.
+   - Re-run ordinary chat, daily guidance, Candace follow-through, mission planning, work cockpit, cross-channel handoff, knowledge library, and follow-through review.
    - Run `npm run debug:pilot`.
    - Success shape: flagship proof freshness improves without any stale `live_proven` claims.
 

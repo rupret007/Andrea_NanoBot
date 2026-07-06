@@ -135,10 +135,18 @@ assert.ok(
   'missing Telegram user-session config should be externally blocked reality',
 );
 assert.ok(
-  report.contradictions.some(
+  !report.contradictions.some(
     (item) => item.contradictionKind === 'transport_vs_proof',
   ),
-  'ready BlueBubbles transport plus stale proof should create contradiction',
+  'ready BlueBubbles transport plus stale proof should be proof debt, not a contradiction',
+);
+assert.ok(
+  report.verificationNeeds.some(
+    (need) =>
+      /BlueBubbles/.test(need.question) &&
+      /same-thread message-action proof/i.test(need.nextAction),
+  ),
+  'BlueBubbles same-thread proof gap should remain visible as a verification need',
 );
 assert.ok(
   report.contradictions.some(
@@ -190,6 +198,51 @@ assert.ok(
       item.contradictionKind === 'provider_vs_route',
   ),
   'fresh healthy Brave provider truth should not report stale provider contradiction',
+);
+
+const optionalAlexaOnlyTruth = {
+  ...fakeTruth,
+  telegram: surface('live_proven', 'none', 'No action needed.'),
+  journeys: {
+    ordinary_chat: surface('live_proven', 'none', 'No action needed.'),
+  },
+  bluebubbles: {
+    ...surface('live_proven', 'none', 'No action needed.'),
+    messageActionProofState: 'fresh',
+    messageActionProofAt: '2026-06-09T13:01:00.000Z',
+    messageActionProofChatJid: 'proof:bluebubbles',
+  },
+};
+const optionalAlexaOnlyProof = buildLiveProofGauntletReport({
+  now: new Date('2026-06-09T13:03:00.000Z'),
+  env: {
+    TELEGRAM_USER_API_ID: 'configured',
+    TELEGRAM_USER_API_HASH: 'configured',
+  },
+  truth: optionalAlexaOnlyTruth,
+});
+const optionalAlexaOnlyReport = buildRealityGroundingReport({
+  generatedAt: '2026-06-09T13:03:00.000Z',
+  proofReport: optionalAlexaOnlyProof,
+  reliabilityReport: {
+    ...fakeReliability,
+    rollups: [],
+    nextAction: 'No action needed.',
+  },
+  providerHealthSnapshots: [],
+  requestText: 'what is true right now?',
+  persist: false,
+});
+assert.notEqual(
+  optionalAlexaOnlyReport.snapshot.status,
+  'externally_blocked',
+  'optional Alexa proof debt should not make daily-core reality externally blocked',
+);
+assert.ok(
+  optionalAlexaOnlyReport.verificationNeeds.some((need) =>
+    /Alexa signed IntentRequest proof/.test(need.question),
+  ),
+  'optional Alexa proof debt should remain visible as a verification need',
 );
 
 const blockedCalendarTruth = {

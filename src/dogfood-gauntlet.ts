@@ -189,19 +189,6 @@ function parseEvidenceIds(entry: LiveProofGauntletEntry | null): string[] {
   }
 }
 
-function statusFromProof(
-  entry: LiveProofGauntletEntry | null,
-): DogfoodGauntletStatus {
-  if (!entry) return 'failed';
-  if (entry.status === 'externally_blocked') return 'externally_blocked';
-  if (entry.status === 'missing_config') return 'missing_config';
-  if (entry.status === 'failed')
-    return entry.repoWorkRequired ? 'repo_bug' : 'failed';
-  if (entry.status === 'stale') return 'manual_proof_needed';
-  if (entry.status === 'near_live_only') return 'manual_proof_needed';
-  return entry.status;
-}
-
 function outcomeForStatus(status: DogfoodGauntletStatus): PilotJourneyOutcome {
   if (status === 'repo_bug' || status === 'failed') return 'internal_failure';
   if (status === 'externally_blocked' || status === 'missing_config') {

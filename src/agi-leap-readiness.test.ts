@@ -14,6 +14,7 @@ import {
   buildCouncilGovernedDeepWorkBlueprint,
   makeAndreaSkillManifest,
 } from './agi-leap-readiness.js';
+import { applyFollowThroughActivation } from './follow-through-activation.js';
 import {
   exportRedactedOnboardingProfilePack,
   importRedactedOnboardingProfilePack,
@@ -262,6 +263,48 @@ describe('AGI leap readiness', () => {
     );
     expect(serialized).not.toContain('+14695550123');
     expect(serialized).not.toContain('bb:iMessage');
+  });
+
+  it('raises durable autonomy only after a verified local follow-through chain exists', async () => {
+    seedSyntheticLife('activation-loop', { activeReminder: false });
+
+    const before = buildAgiLeapReadinessReport({
+      groupFolder: 'activation-loop',
+      now: new Date(now),
+    });
+    expect(before.contextGraph.coverage.reminders).toBe(0);
+
+    const activation = await applyFollowThroughActivation({
+      groupFolder: 'activation-loop',
+      candidate: 'safest',
+      timing: 'tonight',
+      chatJid: 'local:followthrough:activation-loop',
+      now: new Date(now),
+    });
+    const after = buildAgiLeapReadinessReport({
+      groupFolder: 'activation-loop',
+      now: new Date(now),
+    });
+
+    expect(activation.applied).toBe(true);
+    expect(activation.mutationSummary).toMatchObject({
+      localReminderMetadata: true,
+      outcomeRecord: true,
+      agentOSEpisode: true,
+      liveMessageSent: false,
+      calendarWritten: false,
+    });
+    expect(after.contextGraph.coverage.reminders).toBe(1);
+    expect(after.durableAutonomyScore).toBeGreaterThan(
+      before.durableAutonomyScore,
+    );
+    expect(after.contextGraph.rankedInsights).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          riskFlags: expect.arrayContaining(['followthrough_approved']),
+        }),
+      ]),
+    );
   });
 
   it('surfaces skill safety and council-governed deep-work readiness', () => {

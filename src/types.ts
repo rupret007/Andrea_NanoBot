@@ -5536,6 +5536,9 @@ export interface LiveProofGauntletReport {
   entries: LiveProofGauntletEntry[];
   liveProvenCount: number;
   proofDebtCount: number;
+  dailyCoreLiveProvenCount: number;
+  dailyCoreProofDebtCount: number;
+  optionalProofDebtCount: number;
   repoWorkRequiredCount: number;
   nextAction: string;
   privacyJson: string;
@@ -6312,6 +6315,10 @@ export interface PilotIssueLinkedRefs {
   repairTestsPassed?: string;
   repairFinalHealthState?: string;
   verificationEvidenceIds?: string[];
+  feedbackRouteCoverageKey?: string;
+  feedbackRouteCoverageSummary?: string;
+  feedbackRouteCoverageCommand?: string;
+  feedbackRouteCoverageResolvedAt?: string;
   deploymentAttemptId?: string;
   repoHeadAtStart?: string;
   repoDirtyPathsAtStart?: string[];

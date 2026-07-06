@@ -142,16 +142,16 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/m
 npm run debug:missions
 ```
 
-For Action Bundle and approval-flow changes, add:
+For follow-through review and approval-flow changes, add:
 
 ```bash
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts src/assistant-capabilities.test.ts
 npm run telegram:user:smoke
 ```
 
-Treat that bundle suite as the fast proof that Andrea can:
+Treat that review suite as the fast proof that Andrea can:
 
-- synthesize a compact bundle
+- synthesize compact approval items
 - approve all or a subset
 - execute through existing reminder/draft/thread/library/handoff systems
 - report partial success or failure calmly
@@ -641,7 +641,7 @@ Hierarchical Goal Planning sits above Reality Grounding and Cognitive Executive:
 - `debug:planner` runs one request through the goal-directed planner
 - `debug:opportunities` shows reply-coupled opportunities and suppression state
 - `test:goal-planning`, `test:causal-planner`, and `test:proactive-opportunities` are the focused v30 gate
-- goals do not replace missions, reminders, skills, action bundles, communication companion, or improvement lab; they orchestrate those existing systems
+- goals do not replace missions, reminders, skills, follow-through reviews, communication companion, or improvement lab; they orchestrate those existing systems
 - sends, calendar writes, restarts, commits, pushes, purchases, deletes, and credentials remain approval-gated
 
 Never treat proactive opportunities as background autonomy. They are normal-reply suggestions only.
@@ -846,12 +846,12 @@ If any of those are missing, record Alexa as **code-ready but setup-blocked** in
 Current truthful closeout note:
 
 - Telegram is the live-proven release-candidate surface on this host for this pass
-- Alexa listener, OAuth, public ingress, and pinned Node 22 are healthy; Alexa proof is currently `live_proven` on this host while the handled custom-skill proof stays fresh
+- Alexa listener, OAuth, public ingress, and pinned Node 22 can be healthy while Alexa proof is still `manual_action_required`; do not claim Alexa `live_proven` until a fresh handled custom-skill proof lands
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
 - if the repo Alexa model changed, the remaining release-candidate step is to import `docs/alexa/interaction-model.en-US.json`, run `Build Model`, and then run `npm run setup -- --step alexa-model-sync mark-synced`
 - if `npm run services:status` later shows `alexa_live_proof=near_live_only`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run
-- BlueBubbles is currently a `live_proven` optional Messages bridge on this host because transport, webhook registration, the recent-activity shadow poll, and the canonical same-thread `message_action` proof chain are all healthy on this machine as of April 14, 2026
-- outward-facing research and Telegram image generation are currently optional provider-blocked lanes on this host
+- BlueBubbles is currently a `live_proven` optional Messages bridge on this host because transport, webhook registration, the recent-activity shadow poll, and the canonical same-thread `message_action` proof chain are all healthy on this machine as of July 6, 2026
+- outward-facing research and Telegram image generation are currently healthy when the provider status checks remain green
 - if the Anthropic-compatible LiteLLM gateway degrades later, report that separately as the core-runtime compatibility lane rather than as a direct OpenAI billing problem
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
 - interaction-model changes require a fresh import of `docs/alexa/interaction-model.en-US.json` plus `Build Model` in the Alexa Developer Console before live utterance failures count against the repo

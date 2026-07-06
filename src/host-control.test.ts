@@ -19,11 +19,13 @@ import {
   determineWindowsHostServiceState,
   getAssistantHealthStatePath,
   getHostStatePath,
+  getAlexaLastSignedRequestStatePath,
   getReadyStatePath,
   getRuntimeAuditStatePath,
   getTelegramTransportStatePath,
   persistNanoclawHostState,
   readAssistantHealthState,
+  readAlexaSignedRequestProofState,
   readHostControlSnapshot,
   readRuntimeAuditState,
   readTelegramTransportState,
@@ -123,6 +125,62 @@ describe('host control state', () => {
     const snapshot = readHostControlSnapshot();
     expect(snapshot.hostState?.phase).toBe('running_ready');
     expect(snapshot.readyState?.bootId).toBe('boot-456');
+  });
+
+  it('reads Alexa proof from the canonical runtime marker path', () => {
+    const proofPath = getAlexaLastSignedRequestStatePath(tempDir);
+    fs.writeFileSync(
+      proofPath,
+      JSON.stringify({
+        lastSignedRequest: {
+          updatedAt: '2026-04-07T17:55:00.000Z',
+          requestId: 'req-canonical',
+          requestType: 'IntentRequest',
+          intentName: 'WhatAmIForgettingIntent',
+          applicationIdVerified: true,
+          linkingResolved: true,
+          groupFolder: 'main',
+          responseSource: 'local_companion',
+        },
+      }),
+    );
+
+    const proof = readAlexaSignedRequestProofState(tempDir);
+    expect(proof.lastSignedRequest?.requestId).toBe('req-canonical');
+    expect(proof.lastHandledProofIntent?.intentName).toBe(
+      'WhatAmIForgettingIntent',
+    );
+  });
+
+  it('promotes a legacy backslash Alexa proof marker to the canonical path', () => {
+    const canonicalPath = getAlexaLastSignedRequestStatePath(tempDir);
+    const legacyPath = path.join(
+      tempDir,
+      'data',
+      `runtime\\${path.basename(canonicalPath)}`,
+    );
+    fs.writeFileSync(
+      legacyPath,
+      JSON.stringify({
+        lastSignedRequest: {
+          updatedAt: '2026-04-07T17:55:00.000Z',
+          requestId: 'req-legacy',
+          requestType: 'IntentRequest',
+          intentName: 'WhatAmIForgettingIntent',
+          applicationIdVerified: true,
+          linkingResolved: true,
+          groupFolder: 'main',
+          responseSource: 'local_companion',
+        },
+      }),
+    );
+
+    const proof = readAlexaSignedRequestProofState(tempDir);
+    expect(proof.lastSignedRequest?.requestId).toBe('req-legacy');
+    expect(proof.lastHandledProofIntent?.responseSource).toBe(
+      'local_companion',
+    );
+    expect(fs.existsSync(canonicalPath)).toBe(true);
   });
 
   it('writes host state into the active cwd runtime directory', () => {

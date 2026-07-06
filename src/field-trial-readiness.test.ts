@@ -53,6 +53,22 @@ describe('field-trial readiness', () => {
     vi.useRealTimers();
   });
 
+  it('retires action bundles as a user-facing launch surface', () => {
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+    });
+
+    expect(truth.actionBundlesDelegationOutcomeReview.proofState).toBe(
+      'not_intended_for_trial',
+    );
+    expect(truth.launchReadiness.proofFreshnessGaps.join('\n')).not.toMatch(
+      /action bundle/i,
+    );
+    expect(truth.launchReadiness.coreBlockers.join('\n')).not.toMatch(
+      /action bundle/i,
+    );
+  });
+
   it('marks Telegram live-proven when transport and roundtrip are healthy', () => {
     const snapshot: HostControlSnapshot = {
       paths: resolveHostControlPaths(tempDir),
@@ -389,6 +405,15 @@ describe('field-trial readiness', () => {
     );
     expect(truth.alexa.nextAction).toContain('What am I forgetting?');
     expect(truth.alexa.confirmCommand).toBe('npm run services:status');
+    expect(truth.launchReadiness.coreBlockers.join(' | ')).not.toContain(
+      'alexa',
+    );
+    expect(
+      truth.launchReadiness.optionalManualSurfaceBlockers.join(' | '),
+    ).toContain('alexa');
+    expect(truth.launchReadiness.proofFreshnessGaps.join(' | ')).not.toContain(
+      'alexa_orientation',
+    );
   });
 
   it('folds the pending Alexa model sync step into the exact next action when no signed turn is recorded', () => {

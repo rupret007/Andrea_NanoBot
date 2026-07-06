@@ -550,6 +550,12 @@ export function formatDebugStatus(): string {
           `- Manual sync steps: ${fieldTrialTruth.launchReadiness.manualSyncSteps.join(' | ')}`,
         ]
       : []),
+    ...(fieldTrialTruth.launchReadiness.optionalManualSurfaceBlockers.length > 0
+      ? [
+          `- Optional manual surface blockers: ${fieldTrialTruth.launchReadiness.optionalManualSurfaceBlockers.join(' | ')}`,
+          `- Optional manual surface next steps: ${fieldTrialTruth.launchReadiness.optionalManualSurfaceNextActions.join(' | ')}`,
+        ]
+      : []),
     ...(fieldTrialTruth.launchReadiness.optionalProviderBlockers.length > 0
       ? [
           `- Optional provider blockers: ${fieldTrialTruth.launchReadiness.optionalProviderBlockers.join(' | ')}`,
@@ -695,18 +701,6 @@ export function formatDebugStatus(): string {
     `- Missions detail: ${fieldTrialTruth.chiefOfStaffMissions.detail}`,
     `- Knowledge proof: ${fieldTrialTruth.knowledgeLibrary.proofState}`,
     `- Knowledge detail: ${fieldTrialTruth.knowledgeLibrary.detail}`,
-    `- Action bundles / delegation / outcome review: ${fieldTrialTruth.actionBundlesDelegationOutcomeReview.proofState}`,
-    `- Action bundle detail: ${fieldTrialTruth.actionBundlesDelegationOutcomeReview.detail}`,
-    ...(fieldTrialTruth.actionBundlesDelegationOutcomeReview.blocker
-      ? [
-          `- Action bundle blocker: ${fieldTrialTruth.actionBundlesDelegationOutcomeReview.blocker}`,
-        ]
-      : []),
-    ...(fieldTrialTruth.actionBundlesDelegationOutcomeReview.nextAction
-      ? [
-          `- Action bundle next step: ${fieldTrialTruth.actionBundlesDelegationOutcomeReview.nextAction}`,
-        ]
-      : []),
     `- Pilot logging enabled: ${fieldTrialTruth.pilotIssues.loggingEnabled ? 'yes' : 'no'}`,
     `- Open pilot issues: ${fieldTrialTruth.pilotIssues.openCount}`,
     ...(fieldTrialTruth.pilotIssues.latestSummary

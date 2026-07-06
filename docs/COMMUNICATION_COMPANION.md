@@ -68,7 +68,7 @@ Out of scope in v1:
 - automatic message sending
 - autonomous follow-up spam
 
-BlueBubbles V1 can now work across synced chats, but Andrea should still wake only on explicit `@Andrea` mentions and should not behave like a passive inbox triage bot.
+BlueBubbles V1 can now work across synced chats, but Andrea should still wake only on explicit `@Andrea` mentions or the default `@OpenClaw` helper alias and should not behave like a passive inbox triage bot.
 
 ## What Andrea Can Do
 

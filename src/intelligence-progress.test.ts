@@ -139,6 +139,9 @@ function input(
       ],
       liveProvenCount: 2,
       proofDebtCount: 1,
+      dailyCoreLiveProvenCount: 2,
+      dailyCoreProofDebtCount: 0,
+      optionalProofDebtCount: 1,
       repoWorkRequiredCount: 0,
       nextAction: 'Alexa signed IntentRequest proof: manual device proof.',
       privacyJson: '{}',
@@ -292,7 +295,7 @@ describe('intelligence progress gate', () => {
     const report = buildIntelligenceProgressReport(input(), baselineFrom());
 
     expect(report.criticalRegressions.join(' ')).not.toMatch(/Alexa/);
-    expect(report.dimensionScores.tool_truth_proof_honesty).toBeLessThan(1);
+    expect(report.dimensionScores.tool_truth_proof_honesty).toBe(1);
     expect(report.sourceScores.capabilityDailyCoreRatio).toBe(1);
   });
 
@@ -362,12 +365,89 @@ describe('intelligence progress gate', () => {
     );
   });
 
+  it('rewards verified local follow-through activation without changing proof freshness', () => {
+    const proposedOnly = input({
+      dailyAgentReport: {
+        ...input().dailyAgentReport,
+        durableAutonomyScore: 0.62,
+        contextGraph: {
+          ...input().dailyAgentReport.contextGraph,
+          coverage: {
+            ...input().dailyAgentReport.contextGraph.coverage,
+            reminders: 0,
+            followthroughCandidates: 4,
+          },
+          rankedInsights: [
+            {
+              insightId: 'candidate-1',
+              kind: 'prepare',
+              title: 'Candidate to review',
+              reason: 'A proposed item is visible.',
+              priorityScore: 0.58,
+              relatedNodeIds: [],
+              nextAction: 'Review before approval.',
+              riskFlags: ['proposed_only', 'approval_required'],
+            },
+          ],
+        },
+      },
+    });
+    const activated = input({
+      dailyAgentReport: {
+        ...input().dailyAgentReport,
+        durableAutonomyScore: 0.86,
+        overallScore: 0.9,
+        contextGraph: {
+          ...input().dailyAgentReport.contextGraph,
+          coverage: {
+            ...input().dailyAgentReport.contextGraph.coverage,
+            reminders: 1,
+            followthroughCandidates: 4,
+          },
+          rankedInsights: [
+            {
+              insightId: 'approved-1',
+              kind: 'prepare',
+              title: 'Approved follow-through',
+              reason:
+                'A paused local reminder, outcome, and episode are linked.',
+              priorityScore: 0.78,
+              relatedNodeIds: [],
+              nextAction:
+                'Keep this approval-gated local reminder visible in daily planning.',
+              riskFlags: ['followthrough_approved'],
+            },
+          ],
+        },
+      },
+    });
+
+    const before = buildIntelligenceProgressReport(proposedOnly);
+    const after = buildIntelligenceProgressReport(activated);
+
+    expect(after.dimensionScores.followthrough_learning).toBeGreaterThan(
+      before.dimensionScores.followthrough_learning,
+    );
+    expect(after.sourceScores.liveDailyAgentReadiness).toBeGreaterThan(
+      before.sourceScores.liveDailyAgentReadiness,
+    );
+    expect(after.sourceScores.proofLiveRatio).toBe(
+      before.sourceScores.proofLiveRatio,
+    );
+    expect(after.dimensionScores.tool_truth_proof_honesty).toBe(
+      before.dimensionScores.tool_truth_proof_honesty,
+    );
+  });
+
   it('blocks repo-side proof issues as critical truth regressions', () => {
     const repoProof = {
       ...input().proofReport,
       entries: [proof('Message send proof', 'failed', true)],
       liveProvenCount: 0,
       proofDebtCount: 1,
+      dailyCoreLiveProvenCount: 0,
+      dailyCoreProofDebtCount: 1,
+      optionalProofDebtCount: 0,
       repoWorkRequiredCount: 1,
     };
     const report = buildIntelligenceProgressReport(
@@ -382,7 +462,7 @@ describe('intelligence progress gate', () => {
   it('redacts secret-like values, identifiers, and internal provider labels', () => {
     expect(
       sanitizeIntelligenceProgressText(
-        'call +14695550123 via bb:iMessage;-;+14695550123 using openai_cloud and sk-proj-abcdefghijklmnopqrstuvwxyz',
+        'call +14695550123 via bb:iMessage;-;+14695550123 using openai_cloud and sk-proj-redaction-fixture',
       ),
     ).not.toMatch(/\+1469|bb:iMessage|openai_cloud|sk-proj-/);
 

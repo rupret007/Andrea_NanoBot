@@ -1768,9 +1768,9 @@ export const INTERNAL_BUTTON_COMMAND_SURFACES: readonly CommandSurfaceEntry[] =
       channelScope: ['telegram', 'cross_channel', 'operator'],
       discoverability: ['operator_docs', 'internal_only'],
       truthClass: 'bounded',
-      summary: 'Backs action-bundle and review buttons.',
+      summary: 'Backs follow-through review and approval buttons.',
       description:
-        'Internal button family for bundle selection, run, skip, show, and defer controls.',
+        'Internal legacy button family for follow-through selection, run, skip, show, and defer controls.',
     },
     {
       id: 'runtime_card_actions',
@@ -1807,8 +1807,7 @@ export const INTERNAL_BUTTON_COMMAND_SURFACES: readonly CommandSurfaceEntry[] =
       truthClass: 'bounded',
       summary:
         'Inline action language for send, remind, save, defer, and keep-as-draft.',
-      description:
-        'Used across messaging, action bundles, and follow-through review.',
+      description: 'Used across messaging and follow-through review.',
     },
   ];
 

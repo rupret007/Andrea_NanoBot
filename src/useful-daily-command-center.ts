@@ -26,7 +26,7 @@ function sanitizeLine(value: string): string {
     .trim();
 }
 
-function firstReadyFollowthrough(
+function safestFollowthrough(
   items: FollowThroughReviewItem[],
 ): FollowThroughReviewItem | null {
   return (
@@ -37,8 +37,21 @@ function firstReadyFollowthrough(
         !item.riskFlags.includes('group_chat_confirm_audience'),
     ) ||
     items.find((item) => item.approvalReadiness === 'ready') ||
+    items.find((item) => item.approvalReadiness === 'confirm_first') ||
+    items.find((item) => item.approvalReadiness === 'watch_only') ||
     null
   );
+}
+
+function followthroughDecisionLine(item: FollowThroughReviewItem): string {
+  const title = sanitizeLine(item.title);
+  if (item.approvalReadiness === 'ready') {
+    return `${title}: approve local tracking with \`approve the safest one ${item.suggestedTiming}\`. Safe fallback: \`why this one\` or \`defer it\`.`;
+  }
+  if (item.approvalReadiness === 'confirm_first') {
+    return `${title}: confirm the exact thread or audience before tracking. Try \`why this one\` first.`;
+  }
+  return `${title}: worth watching, but not ready to activate. Try \`why this one\` or \`dismiss it\`.`;
 }
 
 function formatInsight(insight: PersonalContextGraphInsight): string {
@@ -74,7 +87,7 @@ export function buildUsefulDailyCommandCenter(params: {
     groupFolder: params.groupFolder,
     now: params.now,
   });
-  const selected = firstReadyFollowthrough(followthrough.items);
+  const selected = safestFollowthrough(followthrough.items);
   const needsReply = graph.rankedInsights.filter(
     (insight) => insight.kind === 'needs_reply',
   );
@@ -93,9 +106,7 @@ export function buildUsefulDailyCommandCenter(params: {
   const doFirstLines = uniqueLines(
     [
       activeFollowthrough ? formatInsight(activeFollowthrough) : '',
-      selected
-        ? `${selected.title}: approve local tracking with \`approve the safest one ${selected.suggestedTiming}\`.`
-        : '',
+      selected ? followthroughDecisionLine(selected) : '',
       ...slipping.map(formatInsight),
       ...needsReply.map(formatInsight),
     ],
@@ -116,20 +127,17 @@ export function buildUsefulDailyCommandCenter(params: {
     }),
     1,
   );
-  const followthroughLines = uniqueLines(
-    followthrough.items
-      .filter((item) => item.approvalReadiness === 'ready')
-      .map(
-        (item) =>
-          `#${item.rank} ${item.title}: ${item.safeNextAction} Try \`remind me about #${item.rank} ${item.suggestedTiming}\`.`,
-      ),
-    2,
-  );
+  const followthroughLines = selected
+    ? uniqueLines(
+        [`#${selected.rank} ${followthroughDecisionLine(selected)}`],
+        1,
+      )
+    : [];
   const canWaitLines = uniqueLines(canWait.map(formatInsight), 1);
 
   const systemTruth = [
     `Context graph: ${Math.round(graph.readinessScore * 100)}% ready.`,
-    `Follow-through: ${followthroughLines.length} safe approval candidate${followthroughLines.length === 1 ? '' : 's'} visible.`,
+    `Follow-through: ${selected ? 'one safest candidate visible' : 'no safe approval candidate visible'}.`,
     'Safety: I will not send messages or change calendars from this review.',
   ].join(' ');
 

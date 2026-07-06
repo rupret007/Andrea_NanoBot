@@ -74,7 +74,7 @@ function normalizeText(value: string): string {
 }
 
 function hasAndreaMention(normalized: string): boolean {
-  return /(?:^|[\s([{-])@andrea\b/.test(normalized);
+  return /(?:^|[\s([{-])@(andrea|openclaw)\b/.test(normalized);
 }
 
 function resolveBlueBubblesCompanionConversationKind(
@@ -97,7 +97,7 @@ export function hasBlueBubblesAndreaMention(text: string): boolean {
 
 export function stripBlueBubblesAndreaMention(text: string): string {
   return text
-    .replace(/(^|[\s([{-])@andrea\b[,:;!?-]*/gi, '$1')
+    .replace(/(^|[\s([{-])@(andrea|openclaw)\b[,:;!?-]*/gi, '$1')
     .replace(/\s+/g, ' ')
     .trim();
 }

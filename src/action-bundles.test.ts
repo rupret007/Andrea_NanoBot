@@ -189,7 +189,7 @@ describe('action bundles', () => {
 
     expect(snapshot).toBeTruthy();
     const presentation = buildActionBundlePresentation(snapshot!);
-    expect(presentation.text).toContain('*Action bundle*');
+    expect(presentation.text).toContain('*Follow-through review*');
     expect(presentation.text).toContain('1. [ready]');
     expect(presentation.inlineActionRows[0]?.[0]?.label).toContain(
       'Approve all',

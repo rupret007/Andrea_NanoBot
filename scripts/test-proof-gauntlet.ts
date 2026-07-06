@@ -102,6 +102,9 @@ assert.equal(
   'externally_blocked',
 );
 assert.ok(report.proofDebtCount >= 4);
+assert.equal(report.optionalProofDebtCount, 1);
+assert.equal(report.dailyCoreLiveProvenCount, 2);
+assert.equal(report.dailyCoreProofDebtCount, 4);
 assert.equal(report.repoWorkRequiredCount, 0);
 assert.match(report.nextAction, /Telegram user-session/);
 

@@ -3778,6 +3778,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant') &&
     isSafeReadOnlyCalendarLookupAsk(lastContent);
+  const shouldDeferPlatformHoldForLocalUsefulCapability =
+    (requestPolicy.route === 'direct_assistant' ||
+      requestPolicy.route === 'protected_assistant') &&
+    Boolean(
+      quickReply ||
+      matchAssistantCapabilityRequest(lastContent) ||
+      shouldDeferPlatformHoldForLocalCalendarLookup,
+    );
   const sendAssistantReplyWithFeedback = async (params: {
     text: string;
     sendOptions?: SendMessageOptions;
@@ -3945,7 +3953,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
   if (
     turnAgentHarness?.platformHoldReply &&
-    !shouldDeferPlatformHoldForLocalCalendarLookup &&
+    !shouldDeferPlatformHoldForLocalUsefulCapability &&
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant')
   ) {
@@ -15897,7 +15905,7 @@ async function main(): Promise<void> {
           operation: bundleCommand.operation,
           now: new Date(),
         }).catch((err) =>
-          logger.error({ err, chatJid }, 'Action bundle command error'),
+          logger.error({ err, chatJid }, 'Follow-through review command error'),
         );
         return;
       }

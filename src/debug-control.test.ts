@@ -104,6 +104,8 @@ describe('debug control', () => {
     const status = formatDebugStatus();
     expect(status).toContain('Assistant execution probe: failed');
     expect(status).toContain('Host state:');
+    expect(status).not.toContain('Action bundle');
+    expect(status).not.toContain('Action bundles');
     expect(getAssistantExecutionProbeState().reason).toBe(
       'initial_output_timeout',
     );

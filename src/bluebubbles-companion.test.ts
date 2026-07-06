@@ -55,6 +55,7 @@ describe('bluebubbles companion helpers', () => {
 
   it('requires an @Andrea mention before BlueBubbles wakes up', () => {
     expect(isBlueBubblesExplicitAsk('@Andrea hi')).toBe(true);
+    expect(isBlueBubblesExplicitAsk('@openclaw hi')).toBe(true);
     expect(isBlueBubblesExplicitAsk('@Andrea what am I forgetting')).toBe(true);
     expect(isBlueBubblesExplicitAsk('@Andrea summarize this')).toBe(true);
     expect(
@@ -327,6 +328,9 @@ describe('bluebubbles companion helpers', () => {
   it('strips @Andrea mentions before shared capability routing', () => {
     expect(stripBlueBubblesAndreaMention('@Andrea what am I forgetting')).toBe(
       'what am I forgetting',
+    );
+    expect(stripBlueBubblesAndreaMention('@openclaw search skills')).toBe(
+      'search skills',
     );
     expect(stripBlueBubblesAndreaMention('hey @Andrea, summarize this')).toBe(
       'hey summarize this',

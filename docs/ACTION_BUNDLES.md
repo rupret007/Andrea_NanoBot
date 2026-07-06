@@ -1,12 +1,12 @@
-# Action Bundles
+# Follow-Through Reviews
 
-Andrea's Action Bundles are the bounded approval layer that sits between advice and execution.
+Andrea's follow-through reviews are the bounded approval layer that sits between advice and execution.
 
 They exist so Andrea can say, "here are the best next steps," let you approve the ones you want, and then run them through the systems Andrea already has.
 
-## What Bundles Are
+## What Reviews Are
 
-An Action Bundle is a small proposed set of next steps, usually two to four actions, that Andrea synthesizes from an answer you just got.
+A follow-through review is a small proposed set of next steps, usually two to four approval items, that Andrea synthesizes from an answer you just got.
 
 Examples:
 
@@ -23,9 +23,9 @@ Examples:
   - save the result to the library
   - remind me to revisit it
 
-## What Bundles Are Not
+## What Reviews Are Not
 
-Bundles are intentionally not:
+Follow-through reviews are intentionally not:
 
 - a second planner
 - a replacement for missions
@@ -36,11 +36,11 @@ Bundles are intentionally not:
 Missions still hold the plan.
 Life threads still hold the ongoing matter.
 Reminders still hold the concrete nudge.
-Bundles only hold explicit user-approved next actions.
+Follow-through reviews only hold explicit user-approved next actions.
 
-## Supported V1 Action Types
+## Supported V1 Approval Types
 
-The first bundle layer only wraps existing Andrea actions:
+The first follow-through layer only wraps existing Andrea actions:
 
 - create reminder
 - draft follow-up
@@ -51,9 +51,9 @@ The first bundle layer only wraps existing Andrea actions:
 - send fuller version to Telegram
 - keep current work in view for a mission
 
-If Andrea cannot express the next step through one of those bounded actions, it should not invent a bundle action for it.
+If Andrea cannot express the next step through one of those bounded actions, it should not invent a new approval item for it.
 
-## Where Bundles Show Up
+## Where Reviews Show Up
 
 ### Telegram
 
@@ -61,7 +61,7 @@ Telegram is the rich approval surface.
 
 Andrea sends a compact card with:
 
-- a short bundle title
+- a short review title
 - one why line
 - a numbered list of actions
 - inline buttons:
@@ -74,7 +74,7 @@ Selection mode then lets you:
 - toggle individual actions
 - run only the selected actions
 - skip only the selected actions
-- show the full bundle again
+- show the full review again
 
 Conversational follow-ups still work for common phrases like:
 
@@ -89,7 +89,7 @@ For example, a reminder or save action may already arrive approved because Andre
 
 ### Alexa
 
-Alexa keeps bundles short and orienting.
+Alexa keeps follow-through reviews short and orienting.
 
 Andrea does not read a full checklist by voice unless it is small enough to stay usable.
 Instead, Alexa says that a few next steps are ready and supports simple follow-ups like:
@@ -100,60 +100,60 @@ Instead, Alexa says that a few next steps are ready and supports simple follow-u
 - `show me the actions again`
 - `send the details to Telegram`
 
-When the full approval surface would be too detailed for voice, Andrea should hand the bundle to Telegram.
+When the full approval surface would be too detailed for voice, Andrea should hand the review to Telegram.
 
 ### BlueBubbles
 
 BlueBubbles stays bounded.
 
-Andrea can mention that next steps are ready, but rich bundle approval stays Telegram-first.
-If you want the full bundle from BlueBubbles, the intended path is an explicit Telegram handoff.
+Andrea can mention that next steps are ready, but rich follow-through approval stays Telegram-first.
+If you want the full review from BlueBubbles, the intended path is an explicit Telegram handoff.
 
 ## Approval And Execution Rules
 
 - Durable actions require explicit approval before execution.
 - Saved delegation rules can pre-approve or auto-apply only the action families explicitly marked safe by the rule engine.
-- A bundle never claims an action ran unless Andrea persisted that result.
-- Executed actions do not rerun just because the same bundle card is tapped again.
-- Skipped, failed, and deferred actions stay visible in bundle state.
+- A review never claims an action ran unless Andrea persisted that result.
+- Executed actions do not rerun just because the same review card is tapped again.
+- Skipped, failed, and deferred actions stay visible in review state.
 - Partial execution is normal and must be reported honestly.
 - Guarded actions such as calendar-event creation or external sends still require fresh approval even if a related rule exists.
-- When a bundle includes a live message step, the draft/send/defer state is tracked in the messaging layer rather than disappearing as plain text.
+- When a review includes a live message step, the draft/send/defer state is tracked in the messaging layer rather than disappearing as plain text.
 
 ## Partial Success And Failure
 
-Andrea should sound calm and plainspoken when bundle execution is mixed.
+Andrea should sound calm and plainspoken when review execution is mixed.
 
 Target style:
 
 - `Andrea: Done - I set the reminder and saved the thread.`
 - `Andrea: I handled the reminder, but the draft still needs attention.`
-- `Andrea: Okay - I left that bundle for later.`
+- `Andrea: Okay - I left that review for later.`
 
 Normal companion replies should stay human and useful.
-Technical detail belongs in logs and operator diagnostics, not in the bundle reply itself.
+Technical detail belongs in logs and operator diagnostics, not in the review reply itself.
 
-## How Bundles Differ From Other Systems
+## How Reviews Differ From Other Systems
 
 - Missions: the plan layer
 - Life threads: the ongoing-matter layer
 - Communication companion: the people/reply layer
 - Rituals: the timing and proactive layer
 - Reminders: the concrete nudge layer
-- Action Bundles: the explicit approval-and-execution layer across those systems
+- Follow-through reviews: the explicit approval-and-execution layer across those systems
 
 Keeping those boundaries clear is part of the design.
 
 ## Persistence Model
 
-Bundles are stored in Andrea's existing SQLite DB as compact records:
+Reviews are stored in Andrea's existing SQLite DB as compact records:
 
-- one bundle record
+- one review record
 - one row per action
 
 Andrea tracks:
 
-- bundle title and source
+- review title and source
 - presentation channel
 - approval state
 - per-action status
@@ -164,7 +164,7 @@ The goal is inspectable execution state, not a new task database.
 
 ## What Happens After Execution
 
-Bundles do not own closure forever.
+Follow-through reviews do not own closure forever.
 
 Once actions are approved and run, Andrea's outcome-tracking layer takes over the follow-through story:
 
@@ -175,7 +175,7 @@ Once actions are approved and run, Andrea's outcome-tracking layer takes over th
 
 That handoff is intentional:
 
-- bundles = approval and execution
+- follow-through reviews = approval and execution
 - delegation rules = remembered safe defaults for repeated actions
 - message actions = draft / approve / send / defer delivery state
 - outcomes and reviews = closure and carryover
@@ -195,9 +195,9 @@ npm run test
 npm run telegram:user:smoke
 ```
 
-For a rule-aware bundle proof, use a flow like:
+For a rule-aware follow-through proof, use a flow like:
 
-1. trigger a bundle-producing flow such as `what's still open with Candace`
+1. trigger a follow-through review flow such as `what's still open with Candace`
 2. say `do this automatically next time` or `remember this as my default`
 3. confirm Andrea previews the rule before saving it
 4. trigger the same kind of flow again
@@ -206,7 +206,7 @@ For a rule-aware bundle proof, use a flow like:
 For a practical Telegram proof, use a flow that naturally produces multiple next steps, such as:
 
 1. `what's still open with Candace`
-2. confirm Andrea sends a bundle in Telegram
+2. confirm Andrea sends a follow-through review in Telegram
 3. tap `Pick actions`
 4. run one action
 5. skip or defer another
@@ -214,17 +214,17 @@ For a practical Telegram proof, use a flow that naturally produces multiple next
 
 For Alexa, use:
 
-1. ask for a flow that produces a bundle
+1. ask for a flow that produces a follow-through review
 2. say `do that`
 3. or say `send the details to Telegram`
 
 ## Intentionally Out Of Scope
 
-V1 Action Bundles do not include:
+V1 follow-through reviews do not include:
 
 - uncontrolled autonomous execution
 - recurring workflows
-- nested bundles
+- nested reviews
 - media-heavy approval UX
 - operator/admin execution controls
 - a second task or project database

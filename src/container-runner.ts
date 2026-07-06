@@ -45,6 +45,11 @@ import { OPENCLAW_MARKET_MANIFEST_FILENAME } from './openclaw-market.js';
 import { AgentRuntimeName, RegisteredGroup, RuntimeRoute } from './types.js';
 import type { AssistantRequestPolicy } from './assistant-routing.js';
 import {
+  DEFAULT_MINIMAX_ANTHROPIC_BASE_URL,
+  DEFAULT_MINIMAX_MODEL_COMPLEX,
+  DEFAULT_MINIMAX_OPENAI_BASE_URL,
+} from './minimax-provider.js';
+import {
   CONTAINER_CLOSE_GRACE_PERIOD_MS,
   resolveEffectiveIdleTimeout,
 } from './runtime-timeout.js';
@@ -121,6 +126,13 @@ const RUNTIME_ENDPOINT_ENV_KEYS = [
   'ANTHROPIC_BASE_URL',
   'OPENAI_BASE_URL',
 ] as const;
+const MINIMAX_RUNTIME_ENV_KEYS = [
+  'MINIMAX_ENABLED',
+  'MINIMAX_API_KEY',
+  'MINIMAX_ANTHROPIC_BASE_URL',
+  'MINIMAX_OPENAI_BASE_URL',
+  'MINIMAX_MODEL_COMPLEX',
+] as const;
 const MODEL_OVERRIDE_ENV_KEYS = [
   'CURSOR_GATEWAY_HINT',
   'NANOCLAW_AGENT_MODEL',
@@ -168,6 +180,7 @@ const LOG_SAFE_ENV_KEYS = new Set([
   'CODEX_LOCAL_ENABLED',
   'CODEX_LOCAL_MODEL',
   'OPENAI_MODEL_FALLBACK',
+  'NANOCLAW_RUNTIME_PROVIDER',
   'NANOCLAW_CONTAINER_RUNTIME',
   'ANTHROPIC_BASE_URL',
   'OPENAI_BASE_URL',
@@ -237,9 +250,61 @@ function collectRuntimeEndpointEnv(): Record<string, string> {
   return env;
 }
 
+interface MiniMaxRuntimeEnv {
+  enabled: boolean;
+  configured: boolean;
+  apiKey: string;
+  anthropicBaseUrl: string;
+  openAiBaseUrl: string;
+  model: string;
+}
+
+function normalizeBaseUrl(value: string, fallback: string): string {
+  return (value || fallback).replace(/\/+$/g, '');
+}
+
+function collectMiniMaxRuntimeEnv(): MiniMaxRuntimeEnv {
+  const fromEnvFile = readEnvFile([...MINIMAX_RUNTIME_ENV_KEYS]);
+  const read = (key: (typeof MINIMAX_RUNTIME_ENV_KEYS)[number]) =>
+    process.env[key] || fromEnvFile[key] || '';
+  const apiKey = read('MINIMAX_API_KEY').trim();
+  const enabledValue = read('MINIMAX_ENABLED').trim().toLowerCase();
+  const enabled =
+    enabledValue === '' ? Boolean(apiKey) : enabledValue !== 'false';
+
+  return {
+    enabled,
+    configured: enabled && Boolean(apiKey),
+    apiKey,
+    anthropicBaseUrl: normalizeBaseUrl(
+      read('MINIMAX_ANTHROPIC_BASE_URL'),
+      DEFAULT_MINIMAX_ANTHROPIC_BASE_URL,
+    ),
+    openAiBaseUrl: normalizeBaseUrl(
+      read('MINIMAX_OPENAI_BASE_URL'),
+      DEFAULT_MINIMAX_OPENAI_BASE_URL,
+    ),
+    model: read('MINIMAX_MODEL_COMPLEX') || DEFAULT_MINIMAX_MODEL_COMPLEX,
+  };
+}
+
+function wantsMiniMaxRuntime(runtime?: AgentRuntimeName | null): boolean {
+  return runtime === 'minimax_cloud';
+}
+
 function collectFallbackCredentialEnv(
   endpointEnv: Record<string, string>,
+  runtimePreference?: AgentRuntimeName | null,
 ): Record<string, string> {
+  if (wantsMiniMaxRuntime(runtimePreference)) {
+    const miniMax = collectMiniMaxRuntimeEnv();
+    return miniMax.configured
+      ? {
+          ANTHROPIC_AUTH_TOKEN: miniMax.apiKey,
+        }
+      : {};
+  }
+
   const fromEnvFile = readEnvFile([...FALLBACK_CREDENTIAL_KEYS]);
   const env: Record<string, string> = {};
 
@@ -359,6 +424,8 @@ function hasCursorGatewayHint(configured: Record<string, string>): boolean {
 
 function resolveModelOverridesForRuntime(
   runtimeEndpointEnv: Record<string, string>,
+  runtimePreference?: AgentRuntimeName | null,
+  miniMax?: MiniMaxRuntimeEnv | null,
 ): Record<string, string> {
   const configured = collectModelOverrideEnv();
   if (
@@ -367,6 +434,14 @@ function resolveModelOverridesForRuntime(
     configured.CLAUDE_MODEL
   ) {
     return configured;
+  }
+
+  if (wantsMiniMaxRuntime(runtimePreference)) {
+    return {
+      ...configured,
+      NANOCLAW_RUNTIME_PROVIDER: 'minimax',
+      NANOCLAW_AGENT_MODEL: miniMax?.model || DEFAULT_MINIMAX_MODEL_COMPLEX,
+    };
   }
 
   const endpoint =
@@ -938,12 +1013,26 @@ async function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   agentIdentifier?: string,
+  runtimePreference?: AgentRuntimeName | null,
 ): Promise<{ args: string[]; metadata: ContainerLaunchMetadata }> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
   const runtimeEndpointEnv = collectRuntimeEndpointEnv();
-  const localOpenAiGatewayBinding =
-    resolveLocalOpenAiGatewayBinding(runtimeEndpointEnv);
+  const effectiveRuntimePreference = runtimePreference || AGENT_RUNTIME_DEFAULT;
+  const useMiniMaxRuntime = wantsMiniMaxRuntime(effectiveRuntimePreference);
+  const miniMaxRuntime = useMiniMaxRuntime ? collectMiniMaxRuntimeEnv() : null;
   let endpointMode: string | null = null;
+
+  if (miniMaxRuntime) {
+    runtimeEndpointEnv.ANTHROPIC_BASE_URL = miniMaxRuntime.anthropicBaseUrl;
+    runtimeEndpointEnv.OPENAI_BASE_URL = miniMaxRuntime.openAiBaseUrl;
+    endpointMode = miniMaxRuntime.configured
+      ? 'minimax_direct'
+      : 'minimax_missing_credentials';
+  }
+
+  const localOpenAiGatewayBinding = useMiniMaxRuntime
+    ? null
+    : resolveLocalOpenAiGatewayBinding(runtimeEndpointEnv);
 
   if (localOpenAiGatewayBinding) {
     runtimeEndpointEnv.ANTHROPIC_BASE_URL = localOpenAiGatewayBinding.endpoint;
@@ -973,7 +1062,15 @@ async function buildContainerArgs(
     rewriteRuntimeEndpointEnvForContainer(runtimeEndpointEnv);
   const modelOverrides = resolveModelOverridesForRuntime(
     runtimeEndpointEnvForContainer,
+    effectiveRuntimePreference,
+    miniMaxRuntime,
   );
+  const runtimeCredentials = useMiniMaxRuntime
+    ? collectFallbackCredentialEnv(
+        runtimeEndpointEnvForContainer,
+        effectiveRuntimePreference,
+      )
+    : {};
   const selectedModel =
     modelOverrides.NANOCLAW_AGENT_MODEL ||
     modelOverrides.CLAUDE_CODE_MODEL ||
@@ -1009,6 +1106,9 @@ async function buildContainerArgs(
     for (const [key, value] of Object.entries(modelOverrides)) {
       args.push('-e', `${key}=${value}`);
     }
+    for (const [key, value] of Object.entries(runtimeCredentials)) {
+      args.push('-e', `${key}=${value}`);
+    }
     if (
       runtimeEndpointEnvForContainer.ANTHROPIC_BASE_URL &&
       !hasAnthropicAuthEnvArg(args)
@@ -1031,6 +1131,7 @@ async function buildContainerArgs(
   } else {
     const fallbackCredentials = collectFallbackCredentialEnv(
       runtimeEndpointEnvForContainer,
+      effectiveRuntimePreference,
     );
     const passthroughEnv = {
       ...runtimeEndpointEnvForContainer,
@@ -1161,7 +1262,12 @@ export async function runContainerAgent(
     ? undefined
     : group.folder.toLowerCase().replace(/_/g, '-');
   const { args: containerArgs, metadata: launchMetadata } =
-    await buildContainerArgs(mounts, containerName, agentIdentifier);
+    await buildContainerArgs(
+      mounts,
+      containerName,
+      agentIdentifier,
+      input.preferredRuntime,
+    );
   const containerArgsForLogs = sanitizeContainerArgsForLogs(containerArgs);
 
   logger.debug(

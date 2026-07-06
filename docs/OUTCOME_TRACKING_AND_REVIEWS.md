@@ -184,9 +184,9 @@ These controls update the safest underlying source state when possible, then syn
 
 Review suppression hides an item from review without deleting the underlying source.
 
-## How This Differs From Action Bundles
+## How This Differs From Follow-Through Reviews
 
-Action Bundles help Andrea move from advice to explicit approved actions.
+Follow-through reviews help Andrea move from advice to explicit approved actions.
 
 Outcome tracking starts after that.
 

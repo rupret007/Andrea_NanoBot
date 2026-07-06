@@ -86,25 +86,54 @@ function isBareCommunicationDraftFollowup(value: string): boolean {
 
 function isReviewItemFollowup(value: string): boolean {
   const trimmed = value.trim();
+  const pronounTarget =
+    '(?:it|this|this one|that|that one|the first one|first one)';
   return (
+    new RegExp(
+      `^(?:draft|reply to|respond to|rewrite)\\s+${pronounTarget}(?:\\s+for me)?\\b`,
+      'i',
+    ).test(trimmed) ||
+    new RegExp(
+      `^(?:make|rewrite)\\s+${pronounTarget}\\s+(?:warmer|shorter|more direct|less stiff|more blunt)\\b`,
+      'i',
+    ).test(trimmed) ||
+    /^(?:warmer|shorter|more direct|less stiff|more blunt)$/i.test(trimmed) ||
     /^(?:(?:draft|reply to|respond to|make|rewrite|warm(?:er)?|more direct|shorter)\s*(?:item\s*)?)?(?:#|number\s*)?\d+\b/i.test(
       trimmed,
     ) ||
+    new RegExp(
+      `^remind me(?:\\s+(?:about|to review|to reply to|on|for))?\\s+${pronounTarget}(?:\\s+.+)?$`,
+      'i',
+    ).test(trimmed) ||
     /^remind me(?:\s+(?:about|to review|to reply to|on|for))?\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
       trimmed,
     ) ||
+    new RegExp(
+      `^(?:save|remember|track|keep track of)\\s+${pronounTarget}\\b`,
+      'i',
+    ).test(trimmed) ||
     /^(?:save|remember|track|keep track of)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
+      trimmed,
+    ) ||
+    new RegExp(`^(?:skip|dismiss|ignore)\\s+${pronounTarget}\\b`, 'i').test(
       trimmed,
     ) ||
     /^(?:skip|dismiss|ignore)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
       trimmed,
     ) ||
+    new RegExp(
+      `^mark\\s+${pronounTarget}\\s+(?:as\\s*)?(?:handled|done|resolved)\\b`,
+      'i',
+    ).test(trimmed) ||
+    /^(?:mark\s*)?(?:handled|done|resolved)$/i.test(trimmed) ||
     /^(?:mark\s*)?(?:item\s*)?(?:#|number\s*)?\d+\s*(?:as\s*)?(?:handled|done|resolved)\b/i.test(
       trimmed,
     ) ||
     /^(?:handled|done|resolved)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
       trimmed,
     ) ||
+    new RegExp(`^(?:why|explain)\\s+${pronounTarget}\\b`, 'i').test(trimmed) ||
+    /^(?:why|explain)$/i.test(trimmed) ||
     /^(?:why|explain)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(trimmed)
   );
 }
@@ -115,6 +144,14 @@ function isFollowThroughItemFollowup(value: string): boolean {
     /^approve\s+(?:the\s+)?(?:(?:first\s+)?safe(?:st)?)(?:\s+one)?(?:\s+.+)?$/i.test(
       trimmed,
     ) ||
+    /^(?:why|explain)\s+(?:it|this|this one|that|that one)$/i.test(trimmed) ||
+    /^(?:defer|snooze|dismiss|skip|ignore)\s+(?:it|this|this one|that|that one)$/i.test(
+      trimmed,
+    ) ||
+    /^mark\s+(?:it|this|this one|that|that one)\s+(?:as\s*)?(?:handled|done|resolved)\b/i.test(
+      trimmed,
+    ) ||
+    /^(?:mark\s*)?(?:handled|done|resolved)$/i.test(trimmed) ||
     /^(?:approve|defer|dismiss|skip|ignore|why|explain)\s*(?:item\s*)?(?:#|number\s*)?\d+\b/i.test(
       trimmed,
     ) ||
@@ -488,7 +525,10 @@ function matchDailyPrompt(normalized: string): AssistantCapabilityMatch | null {
     lower === 'what should i do next' ||
     lower === "what's next" ||
     lower === 'what is next' ||
-    lower === 'what should i do now'
+    lower === 'what should i do now' ||
+    lower === "what's the next step" ||
+    lower === 'what is the next step' ||
+    lower === 'what should the next step be'
   ) {
     return {
       capabilityId: 'daily.whats_next',
@@ -1544,6 +1584,28 @@ export function continueAssistantCapabilityFromPriorSubjectData(
     !subjectData.activeCapabilityId?.startsWith('capture.') &&
     isSharedAssistantCompletionFollowup(normalized.toLowerCase())
   ) {
+    if (subjectData.recentTextReviewJson && isReviewItemFollowup(normalized)) {
+      return {
+        capabilityId: 'communication.draft_reply',
+        normalizedText: normalized,
+        canonicalText: normalized,
+        reason: 'continuing the recent text review with a selected item',
+        continuation: true,
+      };
+    }
+    if (
+      (subjectData.followthroughReviewJson ||
+        subjectData.activeCapabilityId === 'rituals.followthrough') &&
+      isFollowThroughItemFollowup(normalized)
+    ) {
+      return {
+        capabilityId: 'rituals.followthrough',
+        normalizedText: normalized,
+        canonicalText: normalized,
+        reason: 'continuing the follow-through review with a selected item',
+        continuation: true,
+      };
+    }
     return null;
   }
   if (subjectData.recentTextReviewJson && isReviewItemFollowup(normalized)) {

@@ -81,7 +81,7 @@ A personal Claude assistant accessible via messaging, with minimal custom code.
 ### Message Routing
 - A router listens to connected channels and routes messages based on configuration
 - Only messages from registered groups are processed
-- Trigger: `@Andrea` prefix (case insensitive), configurable via `ASSISTANT_NAME` env var
+- Trigger: `@Andrea` prefix (case insensitive), configurable via `ASSISTANT_NAME` env var; when the default trigger is in use, `@OpenClaw` is also accepted as the OpenClaw/helper alias
 - Unregistered groups are ignored completely
 
 ### Memory System
@@ -177,7 +177,7 @@ A personal Claude assistant accessible via messaging, with minimal custom code.
 
 These are the creator's settings, stored here for reference:
 
-- **Trigger**: `@Andrea` (case insensitive)
+- **Trigger**: `@Andrea` (case insensitive), plus `@OpenClaw` for the OpenClaw/helper lane on the default configuration
 - **Response prefix**: `Andrea:`
 - **Persona**: Default Claude (no custom personality)
 - **Main channel**: Self-chat (messaging yourself in WhatsApp)

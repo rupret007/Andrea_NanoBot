@@ -140,6 +140,28 @@ describe('assistant request routing', () => {
     expect(policy.mcpTools).toContain('mcp__nanoclaw__enable_openclaw_skill');
   });
 
+  it('routes explicit @openclaw addressing to advanced helper handling', () => {
+    const policy = classifyAssistantRequest([
+      {
+        content: '@openclaw find a calendar skill',
+      },
+    ]);
+
+    expect(policy.route).toBe('advanced_helper');
+    expect(policy.reason).toBe('matched explicit OpenClaw address');
+    expect(policy.mcpTools).toContain('mcp__nanoclaw__search_openclaw_skills');
+  });
+
+  it('lets @openclaw choose the helper lane even for otherwise protected wording', () => {
+    const policy = classifyAssistantRequest([
+      {
+        content: '@openclaw what is on my calendar tomorrow?',
+      },
+    ]);
+
+    expect(policy.route).toBe('advanced_helper');
+  });
+
   it('routes explicit engineering requests to code plane handling', () => {
     const policy = classifyAssistantRequest([
       {

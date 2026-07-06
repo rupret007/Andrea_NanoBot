@@ -97,7 +97,7 @@ Default product shape:
 - Alexa gives short voice help for schedule, reminders, planning, review, and quick reply help
 - Alexa is also a good first stop for pill reminders, open bills, grocery capture, and quick tonight planning
 - Telegram is the richer execution and follow-through surface, including setup, grouped list views, and edits
-- BlueBubbles stays calm and text-first across synced chats, only replies when a message explicitly mentions `@Andrea`, and escalates explicitly to Telegram when the fuller answer is better there
+- BlueBubbles stays calm and text-first across synced chats, only replies when a message explicitly mentions `@Andrea` or the default `@OpenClaw` helper alias, and escalates explicitly to Telegram when the fuller answer is better there
 
 ## Status Terms
 
@@ -144,7 +144,7 @@ For bounded live read/write proof on the operator host, run:
 npm run debug:google-calendar
 ```
 
-On this Windows host, Google Calendar read/write is now live-proven through that proof harness and a real assistant-style Telegram create flow.
+On this Mac mini host, Google Calendar read/write is live-proven through that proof harness and real assistant-style scheduling flows.
 
 ## What This Package Includes
 
@@ -167,7 +167,7 @@ On this Windows host, Google Calendar read/write is now live-proven through that
 - A bounded rituals and follow-through layer for morning, midday, evening, and carryover guidance.
 - A bounded Alexa-to-Telegram cross-channel handoff layer for richer continuations and voice-triggered action completion.
 - A small bounded personality layer plus request-driven Andrea Pulse.
-- A real bounded BlueBubbles companion channel across synced personal and group chats, gated to explicit `@Andrea` mentions only.
+- A real bounded BlueBubbles companion channel across synced personal and group chats, gated to explicit `@Andrea` mentions or the default `@OpenClaw` helper alias only.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
 The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
@@ -259,9 +259,9 @@ Current media truth:
 Current operator truth on this host:
 
 - the core companion is healthy
-- outward research and Telegram image generation are currently blocked by provider quota/billing
+- outward research and Telegram image generation are healthy when their provider checks stay green
 - the local Anthropic-compatible LiteLLM lane is a degraded compatibility path, not the same thing as total host failure
-- BlueBubbles is usable but still wants one fresh same-thread `message_action` proof leg
+- BlueBubbles is live-proven while its same-thread `message_action` proof stays fresh
 
 Research output shape now differs intentionally by channel:
 
@@ -505,7 +505,7 @@ BlueBubbles is now a live V1 companion channel through the same adapter architec
 Current implementation truth:
 
 - all synced BlueBubbles chats can share the same Andrea companion folder, defaulting to `main`, when `BLUEBUBBLES_CHAT_SCOPE=all_synced`
-- Andrea accepts inbound BlueBubbles webhook messages, normalizes them into shared `bb:` identities, and replies back only when the message explicitly mentions `@Andrea`
+- Andrea accepts inbound BlueBubbles webhook messages, normalizes them into shared `bb:` identities, and replies back only when the message explicitly mentions `@Andrea` or the default `@OpenClaw` helper alias
 - outbound is intentionally text-only in V1
 - BlueBubbles stays companion-safe and does not become a main control chat
 - richer detail and artifacts still hand off explicitly to Telegram
@@ -1050,6 +1050,14 @@ Windows service lifecycle helpers:
 - `npm run services:restart` runs stop then start through the same host-controlled path.
 - `npm run services:ensure` runs one explicit health-enforcement pass through the same host launcher.
 - `npm run services:status` reports the active repo root, git branch and commit, pinned Node runtime, installed login-start mechanism, active `.env` and DB paths, the local Alexa listener and OAuth health when Alexa is configured, the current `assistant_health` view, `telegram_roundtrip_health`, the public assistant name/source, the registered main Telegram chat, whether the watchdog is running, and the last startup error if one occurred.
+
+macOS service lifecycle helpers:
+
+- On the Mac mini, launchd owns the local runtime.
+- The canonical launchd runner is `scripts/mac-mini-service-runner.sh`.
+- The canonical runtime root is `/Users/jeffstory/Andrea_NanoBot`.
+- The local service should not be run from `/Users/jeffstory/Andrea_NanoBot_AGI` in parallel.
+- After code changes, run `npm run build`, reload or restart the launchd service, then confirm `npm run services:status` reports `Host state: running_ready` and the active root is the canonical path.
 
 Startup behavior:
 

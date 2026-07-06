@@ -103,6 +103,9 @@ const proofReport: LiveProofGauntletReport = {
   ],
   liveProvenCount: 3,
   proofDebtCount: 4,
+  dailyCoreLiveProvenCount: 3,
+  dailyCoreProofDebtCount: 3,
+  optionalProofDebtCount: 1,
   repoWorkRequiredCount: 0,
   nextAction:
     'Telegram user-session proof: Set TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH, then run npm run telegram:user:smoke.',
@@ -111,23 +114,22 @@ const proofReport: LiveProofGauntletReport = {
 
 const realityReport = {
   generatedAt,
-  ok: false,
+  ok: true,
   snapshot: {
     snapshotId: 'snapshot:test',
     createdAt: generatedAt,
     updatedAt: generatedAt,
-    status: 'conflicted',
+    status: 'needs_verification',
     confidence: 0.46,
     observationIdsJson: '[]',
     beliefIdsJson: '[]',
     contradictionIdsJson: '[]',
-    verificationNeedIdsJson: '[]',
+    verificationNeedIdsJson: JSON.stringify(['need:bluebubbles_same_thread']),
     recommendedProbeIdsJson: '[]',
     trueNowSummary:
       'Google Calendar, Research/provider, Image generation, and provider:brave_search are healthy.',
     staleSummary: '4 proof item(s) need closure; repo work required=0.',
-    contradictionSummary:
-      'BlueBubbles transport appears available, but same-thread message-action proof is not fresh.',
+    contradictionSummary: 'No open contradictions detected.',
     missingProofSummary: 'proof debt=4',
     degradedToolsSummary: 'integration:alexa externally blocked',
     confidenceSummary: 'medium-low confidence because proof debt remains.',
@@ -155,24 +157,26 @@ const realityReport = {
       privacyJson: '{}',
     },
   ],
-  contradictions: [
+  contradictions: [],
+  verificationNeeds: [
     {
-      contradictionId: 'contradiction:bluebubbles',
+      needId: 'need:bluebubbles_same_thread',
       snapshotId: 'snapshot:test',
       createdAt: generatedAt,
-      subject: 'integration:bluebubbles',
-      contradictionKind: 'transport_vs_proof',
-      severity: 'medium',
-      status: 'open',
-      observationIdsJson: '[]',
-      beliefIdsJson: '[]',
-      summary:
-        'BlueBubbles transport appears available, but same-thread message-action proof is not fresh.',
+      updatedAt: generatedAt,
+      question: 'What proof is needed for BlueBubbles same-thread message-action proof?',
+      reason:
+        'Transport is ready, but same-thread message-action proof is not fresh.',
+      neededBeforeAction: true,
+      possibleSourceTool: 'manual proof',
+      riskIfSkipped: 'high',
+      urgency: 'normal',
+      status: 'manual_proof',
+      evidenceIdsJson: JSON.stringify(['proof:bluebubbles_same_thread']),
       nextAction: proofReport.entries[3].nextStep,
       privacyJson: '{}',
     },
   ],
-  verificationNeeds: [],
   perceptionPlan: {
     planId: 'perception:test',
     snapshotId: 'snapshot:test',
