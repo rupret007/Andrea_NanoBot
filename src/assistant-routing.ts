@@ -253,14 +253,51 @@ function dedupe(items: readonly string[]): string[] {
   return [...new Set(items)];
 }
 
-function buildGuidance(route: AssistantRequestRoute): string {
-  const shared = [
-    'Andrea is the only public assistant identity in this chat.',
-    'OpenClaw, helper tools, and internal orchestration are implementation details. Never present them as a second public bot or public persona.',
-    'Do not leak internal routes, helper chatter, hidden planning, or tool plumbing in user-facing replies.',
-    'Andrea should remain the final response formatter even when internal helper capability is used.',
-    'Every handled user turn must end with a user-facing reply. Never finish with an empty final response.',
-  ];
+function wasExplicitlyAddressedToOpenClaw(reason: string): boolean {
+  return /explicit OpenClaw address/i.test(reason);
+}
+
+export function maybeBuildOpenClawPresenceReply(
+  messages: Pick<NewMessage, 'content'>[],
+): string | null {
+  const raw = messages.at(-1)?.content?.trim() || '';
+  if (!/(?:^|[\s([{-])@openclaw\b/i.test(raw)) {
+    return null;
+  }
+  const normalized = raw
+    .replace(/(^|[\s([{-])@openclaw\b[,:;!?-]*/i, '$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  if (
+    !normalized ||
+    /^(?:are you there(?: too)?|you there|are you online|online|status|hi|hello|hey|what'?s up|who are you|what are you)\b/.test(
+      normalized,
+    )
+  ) {
+    return 'OpenClaw here, online and ready. I am the helper lane for deeper orchestration and skill work. Use @andrea for Andrea, and @openclaw when you want me.';
+  }
+  return null;
+}
+
+function buildGuidance(route: AssistantRequestRoute, reason: string): string {
+  const explicitOpenClaw =
+    route === 'advanced_helper' && wasExplicitlyAddressedToOpenClaw(reason);
+  const shared = explicitOpenClaw
+    ? [
+        'The user explicitly addressed @openclaw, so the public reply should speak as OpenClaw, not Andrea.',
+        'OpenClaw is the public helper/tool lane for deeper orchestration, skill work, and advanced helper requests.',
+        'Do not say OpenClaw is not separate or that Andrea is the only public identity for this turn.',
+        'Do not leak internal routes, hidden planning, or tool plumbing in user-facing replies.',
+        'Every handled user turn must end with a user-facing reply. Never finish with an empty final response.',
+      ]
+    : [
+        'Andrea is the only public assistant identity in this chat unless the user explicitly addresses @openclaw.',
+        'OpenClaw, helper tools, and internal orchestration are implementation details on non-@openclaw turns. Never present them as a second public bot or public persona unless the user explicitly addresses @openclaw.',
+        'Do not leak internal routes, helper chatter, hidden planning, or tool plumbing in user-facing replies.',
+        'Andrea should remain the final response formatter even when internal helper capability is used.',
+        'Every handled user turn must end with a user-facing reply. Never finish with an empty final response.',
+      ];
 
   const routeSpecific: Record<AssistantRequestRoute, string[]> = {
     direct_assistant: [
@@ -282,7 +319,9 @@ function buildGuidance(route: AssistantRequestRoute): string {
     ],
     advanced_helper: [
       'Treat this as an advanced helper request where internal orchestration is allowed.',
-      'If the user explicitly addressed @openclaw, treat that as selection of the OpenClaw helper/tool lane.',
+      explicitOpenClaw
+        ? 'The user explicitly addressed @openclaw, so keep the answer in the OpenClaw helper/tool lane.'
+        : 'If the user explicitly addressed @openclaw, treat that as selection of the OpenClaw helper/tool lane.',
       'Use helper capabilities intentionally, but keep the public reply outcome-focused and free of internal implementation chatter.',
     ],
     code_plane: [
@@ -333,7 +372,7 @@ function createPolicy(
         reason,
         builtinTools: dedupe(DIRECT_ASSISTANT_TOOLS),
         mcpTools: [],
-        guidance: buildGuidance(route),
+        guidance: buildGuidance(route, reason),
       };
     case 'protected_assistant':
       return {
@@ -341,7 +380,7 @@ function createPolicy(
         reason,
         builtinTools: dedupe(STANDARD_ASSISTANT_TOOLS),
         mcpTools: dedupe(PROTECTED_TASK_MCP_TOOLS),
-        guidance: buildGuidance(route),
+        guidance: buildGuidance(route, reason),
       };
     case 'control_plane':
       return {
@@ -358,7 +397,7 @@ function createPolicy(
           'NotebookEdit',
         ]),
         mcpTools: dedupe(CONTROL_PLANE_MCP_TOOLS),
-        guidance: buildGuidance(route),
+        guidance: buildGuidance(route, reason),
       };
     case 'advanced_helper':
       return {
@@ -369,7 +408,7 @@ function createPolicy(
           ...ADVANCED_EXECUTION_TOOLS,
         ]),
         mcpTools: dedupe(ADVANCED_HELPER_MCP_TOOLS),
-        guidance: buildGuidance(route),
+        guidance: buildGuidance(route, reason),
       };
     case 'code_plane':
       return {
@@ -380,7 +419,7 @@ function createPolicy(
           ...ADVANCED_EXECUTION_TOOLS,
         ]),
         mcpTools: dedupe(CODE_PLANE_MCP_TOOLS),
-        guidance: buildGuidance(route),
+        guidance: buildGuidance(route, reason),
       };
   }
 }
@@ -400,7 +439,7 @@ export function createCompatibilityRequestPolicy(): AssistantRequestPolicy {
       ...ADVANCED_EXECUTION_TOOLS,
     ]),
     mcpTools: dedupe(ALL_INTERNAL_MCP_TOOLS),
-    guidance: buildGuidance('code_plane'),
+    guidance: buildGuidance('code_plane', 'explicit development mode'),
   };
 }
 

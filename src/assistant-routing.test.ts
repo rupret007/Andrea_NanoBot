@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyAssistantRequest,
   classifyScheduledTaskRequest,
+  maybeBuildOpenClawPresenceReply,
 } from './assistant-routing.js';
 
 describe('assistant request routing', () => {
@@ -150,6 +151,8 @@ describe('assistant request routing', () => {
     expect(policy.route).toBe('advanced_helper');
     expect(policy.reason).toBe('matched explicit OpenClaw address');
     expect(policy.mcpTools).toContain('mcp__nanoclaw__search_openclaw_skills');
+    expect(policy.guidance).toContain('speak as OpenClaw');
+    expect(policy.guidance).not.toContain('Never present them as a second');
   });
 
   it('lets @openclaw choose the helper lane even for otherwise protected wording', () => {
@@ -160,6 +163,16 @@ describe('assistant request routing', () => {
     ]);
 
     expect(policy.route).toBe('advanced_helper');
+  });
+
+  it('answers simple @openclaw presence checks locally as OpenClaw', () => {
+    const reply = maybeBuildOpenClawPresenceReply([
+      { content: '@openclaw are you there too?' },
+    ]);
+
+    expect(reply).toContain('OpenClaw here');
+    expect(reply).toContain('@andrea');
+    expect(reply).not.toContain('no separate');
   });
 
   it('routes explicit engineering requests to code plane handling', () => {

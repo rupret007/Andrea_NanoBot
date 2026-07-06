@@ -97,7 +97,8 @@ Default product shape:
 - Alexa gives short voice help for schedule, reminders, planning, review, and quick reply help
 - Alexa is also a good first stop for pill reminders, open bills, grocery capture, and quick tonight planning
 - Telegram is the richer execution and follow-through surface, including setup, grouped list views, and edits
-- BlueBubbles stays calm and text-first across synced chats, only replies when a message explicitly mentions `@Andrea` or the default `@OpenClaw` helper alias, and escalates explicitly to Telegram when the fuller answer is better there
+- BlueBubbles stays calm and text-first across synced chats, only replies when a message explicitly mentions `@Andrea` or `@OpenClaw`, and escalates explicitly to Telegram when the fuller answer is better there
+- `@Andrea` is Andrea; `@OpenClaw` is the OpenClaw helper lane for deeper orchestration, skill work, and advanced helper requests
 
 ## Status Terms
 
@@ -167,7 +168,7 @@ On this Mac mini host, Google Calendar read/write is live-proven through that pr
 - A bounded rituals and follow-through layer for morning, midday, evening, and carryover guidance.
 - A bounded Alexa-to-Telegram cross-channel handoff layer for richer continuations and voice-triggered action completion.
 - A small bounded personality layer plus request-driven Andrea Pulse.
-- A real bounded BlueBubbles companion channel across synced personal and group chats, gated to explicit `@Andrea` mentions or the default `@OpenClaw` helper alias only.
+- A real bounded BlueBubbles companion channel across synced personal and group chats, gated to explicit `@Andrea` or `@OpenClaw` mentions only.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
 The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
@@ -505,11 +506,12 @@ BlueBubbles is now a live V1 companion channel through the same adapter architec
 Current implementation truth:
 
 - all synced BlueBubbles chats can share the same Andrea companion folder, defaulting to `main`, when `BLUEBUBBLES_CHAT_SCOPE=all_synced`
-- Andrea accepts inbound BlueBubbles webhook messages, normalizes them into shared `bb:` identities, and replies back only when the message explicitly mentions `@Andrea` or the default `@OpenClaw` helper alias
+- Andrea accepts inbound BlueBubbles webhook messages, normalizes them into shared `bb:` identities, and replies back only when the message explicitly mentions `@Andrea` or `@OpenClaw`
 - outbound is intentionally text-only in V1
 - BlueBubbles stays companion-safe and does not become a main control chat
 - richer detail and artifacts still hand off explicitly to Telegram
 - `summarize this` now uses the current BlueBubbles chat's recent context and can prime recent history from the live server when local context is thin
+- broad Telegram asks such as `use BlueBubbles and summarize my texts from the past 48 hours` summarize all synced BlueBubbles chats in that time window, using safe chat labels instead of raw identifiers
 
 See [BLUEBUBBLES_CHANNEL_PREP.md](BLUEBUBBLES_CHANNEL_PREP.md) for the exact config, webhook/send model, and current limits.
 

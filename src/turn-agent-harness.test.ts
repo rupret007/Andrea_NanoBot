@@ -1002,6 +1002,112 @@ describe('turn agent harness', () => {
     expect(evaluation.evaluatorFlags).toContain('operator_leakage_repaired');
   });
 
+  it('does not append platform proof debt to handled local communication summaries', async () => {
+    const { evaluateTurnReply } = await import('./turn-agent-harness.js');
+    const now = '2026-07-06T12:00:00.000Z';
+
+    const evaluation = evaluateTurnReply({
+      context: {
+        turnId: 'turn-comm-summary-no-episode',
+        channel: 'telegram',
+        groupFolder: 'main',
+        requestRoute: 'direct_assistant',
+        taskFamily: 'communication',
+        meaningful: true,
+        selectedSkill: {
+          skillId: 'bluebubbles.continuity',
+          taskFamily: 'communication',
+          purpose: 'communication',
+          inputs: [],
+          outputs: [],
+          evidenceLevel: 'partial',
+          sideEffectRisk: 'high',
+          approvalNeed: 'explicit',
+          failureModes: [],
+          examples: [],
+        },
+        contextCompile: {
+          readPlan: {
+            taskFamily: 'communication',
+            readTiers: ['working'],
+            hotPath: true,
+            safeWriteClasses: ['episode_record'],
+            reason: 'communication',
+            sources: [],
+          },
+          selectedSkill: {
+            skillId: 'bluebubbles.continuity',
+            taskFamily: 'communication',
+            purpose: 'communication',
+            inputs: [],
+            outputs: [],
+            evidenceLevel: 'partial',
+            sideEffectRisk: 'high',
+            approvalNeed: 'explicit',
+            failureModes: [],
+            examples: [],
+          },
+          memoryTiers: ['working'],
+          metadata: {},
+          effectiveDirectives: [],
+        },
+        deliberation: { selectedRoute: 'local_capability' },
+        logicRun: {
+          report: {
+            generatedAt: now,
+            ok: true,
+            subject: 'communication summary',
+            beliefState: null,
+            claims: [],
+            evidenceLinks: [],
+            contradictions: [],
+            hypotheses: [],
+            missingPremises: [
+              {
+                premiseId: 'premise-missing-episode',
+                subject: 'communication summary',
+                episodeId: null,
+                createdAt: now,
+                updatedAt: now,
+                status: 'open',
+                question:
+                  'No Agent OS episode is available yet. Run a task drill or a real task turn first.',
+                blockerClass: 'missing_episode',
+                requiredEvidenceJson: '["agent_os_episode"]',
+                nextAction:
+                  'Run npm run debug:agent-os -- --task-drill --json.',
+                privacyJson: '{}',
+              },
+            ],
+            usefulnessScores: [],
+            decision: null,
+            confidence: 0.58,
+            selectedNextAction: 'Answer with the local capability result.',
+            summary: 'No Agent OS episode exists yet.',
+            privacy: {} as never,
+          },
+          beliefState: null,
+          decision: null,
+        } as never,
+        platformHoldReply: null,
+      },
+      text: 'I did not find any synced Messages activity across your chats over the last 48 hours.',
+      routeKey: 'communication.review_recent_texts',
+      capabilityId: 'communication.review_recent_texts',
+      handlerKind: 'assistant_capability',
+      responseSource: 'local_companion',
+    });
+
+    expect(evaluation.rewrittenText).toBe(
+      'I did not find any synced Messages activity across your chats over the last 48 hours.',
+    );
+    expect(evaluation.rewrittenText).not.toContain('Agent OS episode');
+    expect(evaluation.rewrittenText).not.toContain('task drill');
+    expect(evaluation.evaluatorFlags).toContain(
+      'logic:platform_proof_debt_suppressed',
+    );
+  });
+
   it('filters high-risk active skills from hot-path directives but exposes low-risk directives', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');

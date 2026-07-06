@@ -2832,14 +2832,14 @@ function buildAllSyncedMessagesSummaryReply(params: {
     });
 
   if (threads.length === 0) {
-    return `I didn't find any synced Messages activity across your chats over ${params.window.label}.`;
+    return `I did not find any synced Messages activity across your chats over ${params.window.label}.`;
   }
 
   const totalMessages = threads.reduce(
     (sum, entry) => sum + entry.messages.length,
     0,
   );
-  const lead = `I found ${totalMessages} synced Messages turn${totalMessages === 1 ? '' : 's'} across ${threads.length} chat${threads.length === 1 ? '' : 's'} over ${params.window.label}.`;
+  const lead = `I found ${totalMessages} synced Messages message${totalMessages === 1 ? '' : 's'} across ${threads.length} chat${threads.length === 1 ? '' : 's'} over ${params.window.label}.`;
   const rows = threads
     .slice(0, params.channel === 'bluebubbles' ? 3 : 6)
     .map((entry) => {
@@ -2850,7 +2850,7 @@ function buildAllSyncedMessagesSummaryReply(params: {
       });
       const latest = entry.messages[entry.messages.length - 1];
       const latestText = clipText(latest?.content || '', 120);
-      return `- ${label}: ${entry.messages.length} turn${entry.messages.length === 1 ? '' : 's'}${latestText ? `. Latest: "${latestText}"` : ''}`;
+      return `- ${label}: ${entry.messages.length} message${entry.messages.length === 1 ? '' : 's'}${latestText ? `. Latest: "${latestText}"` : ''}`;
     });
   const hiddenCount = Math.max(0, threads.length - rows.length);
   const tail =

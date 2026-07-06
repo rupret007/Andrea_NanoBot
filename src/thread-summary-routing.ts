@@ -2,6 +2,7 @@ import type {
   CompanionRouteArguments,
   CompanionRouteTimeWindowKind,
 } from './types.js';
+import { normalizeVoicePrompt } from './voice-ready.js';
 
 export interface ThreadSummaryIntent {
   canonicalText: string;
@@ -20,8 +21,10 @@ const GENERIC_THREAD_NAME_TOKENS = new Set([
   'message',
   'messages',
   'my',
+  'past',
   'please',
   'pls',
+  'previous',
   'recent',
   'text',
   'texts',
@@ -42,15 +45,19 @@ function normalizeText(value: string): string {
     .trim();
 }
 
-function stripAndreaAddressing(value: string): string {
+const TEXT_MESSAGE_RE = /\b(?:text(?: message)?s?|messages?|texts)\b/i;
+const SUMMARY_RE = /\b(?:summari[sz]e|summerize|sumarize|summary)\b/i;
+const BLUEBUBBLES_RE = /\b(?:blue\s*bubbles|bluebubbles|synced messages)\b/i;
+
+function stripAssistantAddressing(value: string): string {
   return value
-    .replace(/(^|[\s([{-])@andrea\b[,:;!?-]*/gi, '$1')
+    .replace(/(^|[\s([{-])@(andrea|openclaw)\b[,:;!?-]*/gi, '$1')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 function normalizeForMatch(value: string): string {
-  return stripAndreaAddressing(normalizeText(value));
+  return stripAssistantAddressing(normalizeVoicePrompt(normalizeText(value)));
 }
 
 function parseWindow(text: string): {
@@ -66,12 +73,12 @@ function parseWindow(text: string): {
     parseValue?(match: RegExpMatchArray): number | null;
   }> = [
     {
-      pattern: /\blast\s+(\d+)\s+hours?\b/i,
+      pattern: /\b(?:last|past|previous)\s+(\d+)\s+hours?\b/i,
       kind: 'last_hours',
       parseValue: (match) => Number.parseInt(match[1] || '', 10) || null,
     },
     {
-      pattern: /\blast\s+(\d+)\s+days?\b/i,
+      pattern: /\b(?:last|past|previous)\s+(\d+)\s+days?\b/i,
       kind: 'last_days',
       parseValue: (match) => Number.parseInt(match[1] || '', 10) || null,
     },
@@ -142,10 +149,7 @@ function isSpecificChatName(value: string): boolean {
 
 function looksLikeThreadSummaryPrompt(value: string): boolean {
   const lower = value.toLowerCase();
-  if (
-    !/\b(?:summari[sz]e|summerize|sumarize)\b/.test(lower) &&
-    !/\bsummary of\b/.test(lower)
-  ) {
+  if (!SUMMARY_RE.test(lower) && !/\bsummary of\b/.test(lower)) {
     return false;
   }
   if (/\b(news|article|website|page|video|podcast)\b/.test(lower)) {
@@ -159,7 +163,14 @@ function looksLikeThreadSummaryPrompt(value: string): boolean {
   ) {
     return false;
   }
-  return /\b(?:text(?: message)?s?|messages|texts|thread|chat|conversation)\b/.test(
+  return (
+    TEXT_MESSAGE_RE.test(lower) ||
+    /\b(?:thread|chat|conversation)\b/.test(lower)
+  );
+}
+
+function referencesSpecificChatForBroadSummary(lower: string): boolean {
+  return /\b(?:in|from|with)\s+(?!(?:today\b|yesterday\b|this week\b|the\s+(?:last|past|previous)\b|(?:last|past|previous)\s+\d+\b|all\b|my\b|recent\b|latest\b))[a-z0-9]/i.test(
     lower,
   );
 }
@@ -248,13 +259,22 @@ export function parseAllSyncedMessagesSummaryIntent(
   if (!normalized) return null;
   const lower = normalized.toLowerCase();
   if (
-    !/^(?:(?:yeah|yes|yep|sure|ok(?:ay)?)\s+)?(?:all\s+)?(?:my\s+)?(?:text(?: message)?s?|messages|texts)\b/.test(
+    /\b(?:news|article|website|page|video|podcast|email|mail)\b/.test(lower)
+  ) {
+    return null;
+  }
+  const missesBroadTextLead =
+    !/^(?:(?:yeah|yes|yep|sure|ok(?:ay)?)\s+)?(?:all\s+)?(?:my\s+)?(?:(?:recent|latest|today'?s|todays)\s+)?(?:text(?: message)?s?|messages|texts)\b/.test(
       lower,
     ) &&
-    !/^(?:what are|show me|give me|list)\s+(?:all\s+)?(?:my\s+)?(?:text(?: message)?s?|messages|texts)\b/.test(
+    !/^(?:what are|show me|give me|list)\s+(?:all\s+)?(?:my\s+)?(?:(?:recent|latest|today'?s|todays)\s+)?(?:text(?: message)?s?|messages|texts)\b/.test(
       lower,
-    )
-  ) {
+    );
+  const broadSummaryAsk =
+    SUMMARY_RE.test(lower) &&
+    TEXT_MESSAGE_RE.test(lower) &&
+    (/\b(?:my|all|synced)\b/.test(lower) || BLUEBUBBLES_RE.test(lower));
+  if (missesBroadTextLead && !broadSummaryAsk) {
     return null;
   }
   if (
@@ -263,12 +283,7 @@ export function parseAllSyncedMessagesSummaryIntent(
   ) {
     return null;
   }
-  if (
-    /\b(?:in|from)\s+(?!today\b|yesterday\b|this week\b|the last\b|last\s+\d+\b)[a-z0-9]/.test(
-      lower,
-    ) &&
-    !/\ball\b/.test(lower)
-  ) {
+  if (referencesSpecificChatForBroadSummary(lower) && !/\ball\b/.test(lower)) {
     return null;
   }
   const { kind, value } = parseWindow(normalized);

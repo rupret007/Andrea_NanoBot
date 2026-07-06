@@ -308,8 +308,10 @@ Andrea Pulse is a separate request-driven personality feature. It is not a healt
 BlueBubbles is now Andrea's optional bounded Messages bridge, not a core requirement for day-to-day use.
 
 - BlueBubbles V1 now supports all synced personal and group chats, not one pinned linked thread
-- Andrea replies only when a message explicitly mentions `@Andrea` or the default alias `@OpenClaw`, so ordinary social chatter does not trigger assistant replies
+- `@Andrea` addresses Andrea, while `@OpenClaw` selects the OpenClaw helper lane for deeper orchestration and skill work
+- Andrea replies only when a message explicitly mentions one of those aliases, so ordinary social chatter does not trigger assistant replies
 - current-chat asks like `summarize this` now use recent `bb:` chat context and can prime recent history from the live BlueBubbles server when local context is thin
+- broad asks from Telegram such as `use BlueBubbles and summarize my texts from the past 48 hours` summarize activity across all synced BlueBubbles chats in that time window without exposing raw phone numbers
 - BlueBubbles keeps companion-safe capabilities like daily guidance, communication help, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls

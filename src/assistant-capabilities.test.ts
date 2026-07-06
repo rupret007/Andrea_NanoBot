@@ -425,11 +425,57 @@ describe('assistant capabilities', () => {
     });
 
     expect(result.handled).toBe(true);
-    expect(result.replyText).toContain('I found 2 synced Messages turns');
+    expect(result.replyText).toContain('I found 2 synced Messages messages');
     expect(result.replyText).toContain('Pops of Punk');
     expect(result.replyText).toContain('Messages chat');
     expect(result.replyText).not.toContain('+14695550123');
     expect(result.trace?.notes).toContain('window:today');
+  });
+
+  it('summarizes all synced BlueBubbles texts for the exact 48-hour phrasing', async () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:50:00.000Z',
+      '+14695550123',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'msg-all-48h-1',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: '+14695550123',
+      content: 'Can you send me the dinner address?',
+      timestamp: '2026-04-15T16:46:28.314Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        text: 'Ok Andrea can you use blue bubbles and provide a summary of my texts for the past 48 hours',
+        canonicalText:
+          'summarize all synced text messages from the last 48 hours',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        targetChatName: 'all synced Messages',
+        timeWindowKind: 'last_hours',
+        timeWindowValue: 48,
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('I found 1 synced Messages message');
+    expect(result.replyText).toContain('over the last 48 hours');
+    expect(result.replyText).not.toContain("couldn't match");
+    expect(result.replyText).not.toContain('Agent OS episode');
+    expect(result.replyText).not.toContain('+14695550123');
+    expect(result.trace?.notes).toContain('window:the last 48 hours');
   });
 
   it('reviews recent texts without creating message actions until a selected draft follow-up', async () => {

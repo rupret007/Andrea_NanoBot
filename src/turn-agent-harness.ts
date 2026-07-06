@@ -45,7 +45,12 @@ import {
   type AgentRuntimeSpineResult,
 } from './agent-runtime-spine.js';
 import { runTruthEngine } from './truth-engine.js';
-import type { CouncilOutcomeSignalKind, TruthVerdict } from './types.js';
+import type {
+  CouncilOutcomeSignalKind,
+  LogicKernelReport,
+  LogicMissingPremise,
+  TruthVerdict,
+} from './types.js';
 
 export type TurnAgentChannel = 'telegram' | 'bluebubbles' | 'alexa' | 'system';
 
@@ -199,6 +204,52 @@ export interface EvaluateTurnReplyInput {
   handlerKind?: string | null;
   responseSource?: string | null;
   blockerClass?: string | null;
+}
+
+function isPlatformProofOnlyMissingPremise(
+  premise: LogicMissingPremise,
+): boolean {
+  return (
+    premise.blockerClass === 'missing_episode' ||
+    /No Agent OS episode is available yet/i.test(premise.question)
+  );
+}
+
+function shouldSuppressPlatformProofDebtForLocalReply(
+  input: EvaluateTurnReplyInput,
+): boolean {
+  if (input.blockerClass || input.responseSource !== 'local_companion') {
+    return false;
+  }
+  const routeShape = [
+    input.routeKey,
+    input.capabilityId,
+    input.handlerKind,
+    input.context?.deliberation?.selectedRoute,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return !/\b(fallback|failure|blocked|unavailable|hold)\b/i.test(routeShape);
+}
+
+function logicReportForUserFacingReply(input: EvaluateTurnReplyInput): {
+  report: LogicKernelReport | null;
+  suppressedPlatformProofDebt: boolean;
+} {
+  const report = input.context?.logicRun?.report || null;
+  if (!report || !shouldSuppressPlatformProofDebtForLocalReply(input)) {
+    return { report, suppressedPlatformProofDebt: false };
+  }
+  const missingPremises = report.missingPremises.filter(
+    (premise) => !isPlatformProofOnlyMissingPremise(premise),
+  );
+  if (missingPremises.length === report.missingPremises.length) {
+    return { report, suppressedPlatformProofDebt: false };
+  }
+  return {
+    report: { ...report, missingPremises },
+    suppressedPlatformProofDebt: true,
+  };
 }
 
 const SIMPLE_TURN_PATTERN =
@@ -1269,8 +1320,12 @@ export function evaluateTurnReply(
     flags.push('directive:strip_internal_leakage_active');
   }
 
+  const userFacingLogic = logicReportForUserFacingReply(input);
+  if (userFacingLogic.suppressedPlatformProofDebt) {
+    flags.push('logic:platform_proof_debt_suppressed');
+  }
   const logicEvaluation = evaluateLogicAnswerSupport({
-    report: input.context?.logicRun?.report,
+    report: userFacingLogic.report,
     text: rewritten,
   });
   if (logicEvaluation.status !== 'pass') {
@@ -1280,12 +1335,12 @@ export function evaluateTurnReply(
       safeRewriteApplied = true;
     } else if (
       logicEvaluation.flags.includes('missing_premise_not_disclosed') &&
-      input.context?.logicRun?.report.missingPremises[0]?.question
+      userFacingLogic.report?.missingPremises[0]?.question
     ) {
       rewritten = [
         rewritten,
         '',
-        input.context.logicRun.report.missingPremises[0].question,
+        userFacingLogic.report.missingPremises[0].question,
       ].join('\n');
       safeRewriteApplied = true;
     } else if (
@@ -1310,7 +1365,7 @@ export function evaluateTurnReply(
     handlerKind: input.handlerKind,
     responseSource: input.responseSource,
     blockerClass: input.blockerClass,
-    logicReport: input.context?.logicRun?.report || null,
+    logicReport: userFacingLogic.report,
     providerCouncil: input.context?.providerCouncil || null,
   });
   recordAgentRuntimeTruthAudit({

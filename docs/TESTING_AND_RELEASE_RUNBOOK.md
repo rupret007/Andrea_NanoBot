@@ -31,6 +31,22 @@ npm run test
 npm run build
 ```
 
+### Build Artifact Reality
+
+The root project currently builds a cross-platform Node runtime artifact at
+`dist/index.js`; it does not define Electron, Tauri, `pkg`, `nexe`, or other
+native desktop packaging scripts. Treat `npm run build` as the release build
+for macOS and Windows service/runtime deployment.
+
+Platform-specific release proof means:
+
+- macOS: build from the canonical checkout, restart launchd, and verify the
+  Mac mini service reports the serving commit from `/Users/jeffstory/Andrea_NanoBot`
+- Windows: build and verify through `scripts/nanoclaw-host.ps1` on a Windows
+  host
+- native macOS arm64/x64 or Windows installer artifacts require a future
+  packaging project before they can be claimed as produced
+
 For the shared assistant core specifically, add these focused checks when Alexa, Telegram, or research orchestration changes:
 
 ```bash

@@ -4,6 +4,7 @@ import {
   ALL_SYNCED_MESSAGES_TARGET,
   parseAllSyncedMessagesSummaryIntent,
   parseRecentTextReviewIntent,
+  parseThreadSummaryIntent,
 } from './thread-summary-routing.js';
 
 describe('thread summary routing', () => {
@@ -13,6 +14,45 @@ describe('thread summary routing', () => {
     ).toMatchObject({
       arguments: {
         targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+    expect(
+      parseAllSyncedMessagesSummaryIntent(
+        'Ok Andrea can you use blue bubbles and provide a summary of my texts for the past 48 hours',
+      ),
+    ).toMatchObject({
+      canonicalText:
+        'summarize all synced text messages from the last 48 hours',
+      arguments: {
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'last_hours',
+        timeWindowValue: 48,
+      },
+    });
+    expect(
+      parseAllSyncedMessagesSummaryIntent(
+        'Summarize my text messages for today',
+      ),
+    ).toMatchObject({
+      canonicalText: 'summarize all synced text messages from today',
+      arguments: {
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+    expect(
+      parseAllSyncedMessagesSummaryIntent(
+        'Summarize my text messages in Pops of Punk from today',
+      ),
+    ).toBeNull();
+    expect(
+      parseThreadSummaryIntent(
+        'Summarize my text messages in Pops of Punk from today',
+      ),
+    ).toMatchObject({
+      arguments: {
+        targetChatName: 'Pops of Punk',
         timeWindowKind: 'today',
       },
     });

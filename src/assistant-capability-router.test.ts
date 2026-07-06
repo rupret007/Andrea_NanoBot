@@ -320,13 +320,36 @@ describe('assistant capability router', () => {
       matchAssistantCapabilityRequest('Summarize my text messages for today'),
     ).toMatchObject({
       capabilityId: 'communication.summarize_thread',
-      canonicalText: 'Summarize my text messages for today',
+      canonicalText: 'summarize all synced text messages from today',
+      arguments: expect.objectContaining({
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      }),
     });
     expect(
       matchAssistantCapabilityRequest('What are my recent text messages?'),
     ).toMatchObject({
       capabilityId: 'communication.summarize_thread',
-      canonicalText: 'What are my recent text messages',
+      canonicalText:
+        'summarize all synced text messages from the last 24 hours',
+      arguments: expect.objectContaining({
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'default_24h',
+      }),
+    });
+    expect(
+      matchAssistantCapabilityRequest(
+        'Ok Andrea can you use blue bubbles and provide a summary of my texts for the past 48 hours',
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.summarize_thread',
+      canonicalText:
+        'summarize all synced text messages from the last 48 hours',
+      arguments: expect.objectContaining({
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'last_hours',
+        timeWindowValue: 48,
+      }),
     });
     expect(
       matchAssistantCapabilityRequest('yeah all text messages for today'),

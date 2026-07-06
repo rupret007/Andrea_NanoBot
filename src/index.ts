@@ -545,7 +545,10 @@ import {
   enableOpenClawSkill,
   installOpenClawSkill,
 } from './openclaw-market.js';
-import { classifyAssistantRequest } from './assistant-routing.js';
+import {
+  classifyAssistantRequest,
+  maybeBuildOpenClawPresenceReply,
+} from './assistant-routing.js';
 import {
   analyzeAgentError,
   buildRepeatedAgentErrorMessage,
@@ -4058,6 +4061,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
     return sent;
   };
+
+  const openClawPresenceReply = maybeBuildOpenClawPresenceReply(missedMessages);
+  if (openClawPresenceReply) {
+    try {
+      await sendAssistantReplyWithFeedback({
+        text: openClawPresenceReply,
+        routeKey: 'advanced_helper.openclaw_identity',
+        capabilityId: 'openclaw.identity',
+        handlerKind: 'openclaw_identity_fast_path',
+        responseSource: 'local_companion',
+        traceReason:
+          'answered explicit OpenClaw presence check through local fast path',
+      });
+      logger.info(
+        { group: group.name },
+        'Handled OpenClaw presence request via local assistant fast path',
+      );
+      return true;
+    } catch (err) {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn(
+        { group: group.name, err },
+        'OpenClaw presence fast path failed, rolled back cursor for retry',
+      );
+      return false;
+    }
+  }
 
   async function tryHandleAgiRuntimeTurn(): Promise<boolean> {
     if (!ANDREA_USE_AGI || !channel || !group || channel.name !== 'telegram') {
