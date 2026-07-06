@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   _closeDatabase,
@@ -18,6 +21,11 @@ import type {
   RepairAttemptRecord,
   ToolReliabilityRollup,
 } from '../src/types.js';
+
+// Run from an isolated temp directory so live host truth markers (for example
+// data/runtime/telegram-roundtrip-health.json) cannot leak into the integration
+// doctor report and hide the seeded blocked-Telegram hypothesis.
+process.chdir(mkdtempSync(path.join(os.tmpdir(), 'shadow-improvement-test-')));
 
 _initTestDatabase();
 
