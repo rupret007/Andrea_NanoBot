@@ -139,6 +139,36 @@ describe('integration doctor', () => {
     expect(bluebubbles?.safeActions.join(' ')).toContain('@Andrea once');
   });
 
+  it('keeps BlueBubbles degraded-but-usable when message-action proof is fresh', () => {
+    const report = buildIntegrationDoctorReport({
+      now: new Date('2026-05-04T12:00:00.000Z'),
+      truth: truth({
+        bluebubbles: {
+          ...truth().bluebubbles,
+          proofState: 'degraded_but_usable',
+          messageActionProofState: 'fresh',
+          detail:
+            'Webhook side missed the latest inbound, but transport and deferred send proof are fresh.',
+          nextAction: 'Check the Mac-side webhook target.',
+        },
+      }),
+      providers: [],
+      recentFeedback: [],
+    });
+
+    const bluebubbles = report.statuses.find(
+      (status) => status.integrationId === 'bluebubbles',
+    );
+    expect(bluebubbles?.state).toBe('degraded_but_usable');
+    expect(bluebubbles?.proofState).toBe('degraded_but_usable');
+    expect(bluebubbles?.transportState).toBe('healthy');
+    expect(bluebubbles?.detail).toContain('Same-thread proof is fresh');
+    expect(bluebubbles?.nextAction).toContain('webhook target');
+    expect(bluebubbles?.safeActions.join(' ')).not.toContain(
+      'send it later tonight',
+    );
+  });
+
   it('surfaces stale repair plans as repo-fix-available cleanup work', () => {
     const report = buildIntegrationDoctorReport({
       now: new Date('2026-05-04T12:00:00.000Z'),
