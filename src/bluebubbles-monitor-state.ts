@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 
 import { resolveHostControlPaths } from './host-control.js';
 
@@ -67,6 +68,17 @@ export interface BlueBubblesMonitorState {
 }
 
 function getMonitorStatePath(projectRoot = process.cwd()): string {
+  return path.join(
+    resolveHostControlPaths(projectRoot).runtimeStateDir,
+    'bluebubbles-monitor-state.json',
+  );
+}
+
+// Older builds joined this path with a literal backslash. On Windows that is a
+// valid separator, but on macOS/Linux it produced a file literally named
+// "runtime\bluebubbles-monitor-state.json" inside data/. Keep reading (and
+// cleaning up) that legacy location so existing monitor state survives the fix.
+function getLegacyMonitorStatePath(projectRoot = process.cwd()): string {
   return `${resolveHostControlPaths(projectRoot).runtimeStateDir}\\bluebubbles-monitor-state.json`;
 }
 
@@ -367,11 +379,17 @@ export function readBlueBubblesMonitorState(
   projectRoot = process.cwd(),
 ): BlueBubblesMonitorState {
   const statePath = getMonitorStatePath(projectRoot);
-  if (!fs.existsSync(statePath)) {
+  const legacyPath = getLegacyMonitorStatePath(projectRoot);
+  const sourcePath = fs.existsSync(statePath)
+    ? statePath
+    : legacyPath !== statePath && fs.existsSync(legacyPath)
+      ? legacyPath
+      : null;
+  if (!sourcePath) {
     return createDefaultBlueBubblesMonitorState();
   }
   try {
-    const raw = fs.readFileSync(statePath, 'utf8').replace(/^\uFEFF/, '');
+    const raw = fs.readFileSync(sourcePath, 'utf8').replace(/^\uFEFF/, '');
     return (
       normalizeState(JSON.parse(raw)) || createDefaultBlueBubblesMonitorState()
     );
@@ -395,15 +413,28 @@ export function writeBlueBubblesMonitorState(
     recursive: true,
   });
   fs.writeFileSync(statePath, `${JSON.stringify(next, null, 2)}\n`);
+  const legacyPath = getLegacyMonitorStatePath(projectRoot);
+  if (legacyPath !== statePath) {
+    try {
+      fs.rmSync(legacyPath, { force: true });
+    } catch {
+      // best effort
+    }
+  }
   return next;
 }
 
 export function clearBlueBubblesMonitorState(
   projectRoot = process.cwd(),
 ): void {
-  try {
-    fs.rmSync(getMonitorStatePath(projectRoot), { force: true });
-  } catch {
-    // best effort
+  for (const statePath of [
+    getMonitorStatePath(projectRoot),
+    getLegacyMonitorStatePath(projectRoot),
+  ]) {
+    try {
+      fs.rmSync(statePath, { force: true });
+    } catch {
+      // best effort
+    }
   }
 }

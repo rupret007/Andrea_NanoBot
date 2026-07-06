@@ -1,8 +1,14 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   createDefaultBlueBubblesMonitorState,
+  readBlueBubblesMonitorState,
   reconcileBlueBubblesWebhookCatchUp,
+  writeBlueBubblesMonitorState,
 } from './bluebubbles-monitor-state.js';
 
 describe('BlueBubbles monitor state', () => {
@@ -30,5 +36,70 @@ describe('BlueBubbles monitor state', () => {
     expect(reconciled.detectionState).toBe('healthy');
     expect(reconciled.detectionDetail).toBeNull();
     expect(reconciled.recentEvidence).toEqual([]);
+  });
+
+  it('persists state under data/runtime with a POSIX-safe path', () => {
+    const projectRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'bb-monitor-state-'),
+    );
+    try {
+      writeBlueBubblesMonitorState(
+        {
+          ...createDefaultBlueBubblesMonitorState('2026-04-08T12:00:00.000Z'),
+          activeBaseUrl: 'http://127.0.0.1:1234',
+        },
+        projectRoot,
+      );
+
+      const expectedPath = path.join(
+        projectRoot,
+        'data',
+        'runtime',
+        'bluebubbles-monitor-state.json',
+      );
+      expect(fs.existsSync(expectedPath)).toBe(true);
+      expect(readBlueBubblesMonitorState(projectRoot).activeBaseUrl).toBe(
+        'http://127.0.0.1:1234',
+      );
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates legacy backslash-named state files on read and write', () => {
+    if (process.platform === 'win32') {
+      // On Windows the legacy path and the fixed path resolve to the same file.
+      return;
+    }
+    const projectRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'bb-monitor-legacy-'),
+    );
+    try {
+      const runtimeStateDir = path.join(projectRoot, 'data', 'runtime');
+      fs.mkdirSync(runtimeStateDir, { recursive: true });
+      // Pre-fix builds wrote to a file literally named
+      // "runtime\bluebubbles-monitor-state.json" inside data/.
+      const legacyPath = `${runtimeStateDir}\\bluebubbles-monitor-state.json`;
+      fs.writeFileSync(
+        legacyPath,
+        JSON.stringify({
+          ...createDefaultBlueBubblesMonitorState('2026-04-08T12:00:00.000Z'),
+          activeBaseUrl: 'http://127.0.0.1:1234',
+        }),
+      );
+
+      const migrated = readBlueBubblesMonitorState(projectRoot);
+      expect(migrated.activeBaseUrl).toBe('http://127.0.0.1:1234');
+
+      writeBlueBubblesMonitorState(migrated, projectRoot);
+      expect(
+        fs.existsSync(
+          path.join(runtimeStateDir, 'bluebubbles-monitor-state.json'),
+        ),
+      ).toBe(true);
+      expect(fs.existsSync(legacyPath)).toBe(false);
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 });
