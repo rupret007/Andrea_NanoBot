@@ -32,6 +32,7 @@
     "test:watch": "node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs",
     "test:major": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-major-iteration.ts",
     "test:major:ci": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-major-iteration.ts --skip-live-verify",
+    "test:deterministic:sweep": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-deterministic-sweep.ts",
     "test:intelligence": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-intelligence-regression.ts",
     "test:intelligence:baseline": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-intelligence-regression.ts --baseline",
     "test:intelligence-progress": "node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/intelligence-progress.test.ts",

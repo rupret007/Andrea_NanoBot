@@ -305,6 +305,14 @@ For live environments where credential/runtime probes should be exercised each r
 npm run test:stability:live
 ```
 
+For a long deterministic script inventory after the standard gate:
+
+```bash
+npm run test:deterministic:sweep
+```
+
+This continues through independent `test:*` scripts, reports all failures at the end, and intentionally excludes interactive, aggregate, live, baseline-writing, and cloud-provider council tiers.
+
 ## 4. CI-Safe Suite
 
 ```bash
