@@ -276,7 +276,11 @@ describe('command surface docs', () => {
 
     expect(bluebubblesGuide).toContain('externally_blocked');
     expect(bluebubblesGuide).toContain('transport_unreachable');
-    expect(docsIndex).toContain('core_ready_with_manual_surface_sync');
+    expect(docsIndex).toContain('canonical Mac mini runtime');
+    expect(docsIndex).toContain('manual live proof still pending');
+    expect(docsIndex).toContain(
+      'BlueBubbles optional Messages bridge with a fresh canonical same-thread `message_action` proof',
+    );
     expect(docsIndex).toContain(
       'Telegram stays the dependable main messaging surface',
     );

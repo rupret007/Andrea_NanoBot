@@ -462,7 +462,7 @@ describe('intelligence progress gate', () => {
   it('redacts secret-like values, identifiers, and internal provider labels', () => {
     expect(
       sanitizeIntelligenceProgressText(
-        'call +14695550123 via bb:iMessage;-;+14695550123 using openai_cloud and sk-proj-abcdefghijklmnopqrstuvwxyz',
+        'call +14695550123 via bb:iMessage;-;+14695550123 using openai_cloud and sk-proj-shortfixture',
       ),
     ).not.toMatch(/\+1469|bb:iMessage|openai_cloud|sk-proj-/);
 

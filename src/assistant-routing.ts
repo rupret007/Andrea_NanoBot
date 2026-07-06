@@ -163,6 +163,13 @@ const EXPLICIT_PROTECTED_ASSISTANT_SIGNALS: RouteSignal[] = [
   },
 ];
 
+const EXPLICIT_ADVANCED_HELPER_SIGNALS: RouteSignal[] = [
+  {
+    pattern: /(?:^|[\s([{-])@openclaw\b/i,
+    reason: 'matched explicit OpenClaw address',
+  },
+];
+
 const DIRECT_ASSISTANT_SIGNALS: RouteSignal[] = [
   {
     pattern:
@@ -275,6 +282,7 @@ function buildGuidance(route: AssistantRequestRoute): string {
     ],
     advanced_helper: [
       'Treat this as an advanced helper request where internal orchestration is allowed.',
+      'If the user explicitly addressed @openclaw, treat that as selection of the OpenClaw helper/tool lane.',
       'Use helper capabilities intentionally, but keep the public reply outcome-focused and free of internal implementation chatter.',
     ],
     code_plane: [
@@ -413,6 +421,14 @@ export function classifyAssistantRequest(
       ? [combinedContent]
       : []),
   ]).filter(Boolean);
+
+  const explicitHelperReason = evaluateSignals(
+    lastOnly,
+    EXPLICIT_ADVANCED_HELPER_SIGNALS,
+  );
+  if (explicitHelperReason) {
+    return createPolicy('advanced_helper', explicitHelperReason);
+  }
 
   const explicitControlReason = evaluateSignals(
     lastOnly,

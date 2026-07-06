@@ -179,6 +179,18 @@ describe('getTriggerPattern', () => {
     expect(pattern.test(`@${ASSISTANT_NAME} hello`)).toBe(true);
   });
 
+  it('accepts @openclaw as an alias for the default Andrea trigger', () => {
+    const pattern = getTriggerPattern(undefined);
+
+    expect(pattern.test('@openclaw search skills')).toBe(true);
+  });
+
+  it('does not add @openclaw to custom per-group triggers', () => {
+    const pattern = getTriggerPattern('@Claw');
+
+    expect(pattern.test('@openclaw search skills')).toBe(false);
+  });
+
   it('treats regex characters in custom triggers literally', () => {
     const pattern = getTriggerPattern('@C.L.A.U.D.E');
 
@@ -274,6 +286,11 @@ describe('trigger gating (requiresTrigger interaction)', () => {
 
   it('non-main group with requiresTrigger=true processes when trigger present', () => {
     const msgs = [makeMsg({ content: `@${ASSISTANT_NAME} do something` })];
+    expect(shouldProcess(false, true, undefined, msgs)).toBe(true);
+  });
+
+  it('non-main group with the default trigger processes @openclaw as OpenClaw addressing', () => {
+    const msgs = [makeMsg({ content: '@openclaw search skills' })];
     expect(shouldProcess(false, true, undefined, msgs)).toBe(true);
   });
 

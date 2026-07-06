@@ -228,7 +228,14 @@ function escapeRegex(str: string): string {
 }
 
 export function buildTriggerPattern(trigger: string): RegExp {
-  return new RegExp(`^${escapeRegex(trigger.trim())}\\b`, 'i');
+  const normalized = trigger.trim();
+  if (normalized.toLowerCase() === '@andrea') {
+    return new RegExp(
+      `^(?:${escapeRegex(normalized)}|${escapeRegex('@openclaw')})\\b`,
+      'i',
+    );
+  }
+  return new RegExp(`^${escapeRegex(normalized)}\\b`, 'i');
 }
 
 export const DEFAULT_TRIGGER = `@${ASSISTANT_NAME}`;

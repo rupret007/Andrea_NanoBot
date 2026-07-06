@@ -17,27 +17,24 @@ Start with exactly one document based on your role:
 
 Use this shorthand when you need the current host story fast:
 
-- **launch-candidate overlay on this Windows host**
-  - `core_ready_with_manual_surface_sync`
-- **core live-proven**
-  - Telegram companion surface
-  - Alexa companion while the fresh handled proof remains current
+- **canonical Mac mini runtime**
+  - `/Users/jeffstory/Andrea_NanoBot` is the runtime root
+  - `/Users/jeffstory/Documents/Andrea_NanoBot` is a convenience symlink
+  - `/Users/jeffstory/Andrea_NanoBot_AGI` should stay stopped unless an operator intentionally starts an isolated comparison run
+- **core live-proven as of July 6, 2026**
+  - host-control / watchdog / health
+  - Telegram companion surface and user-session roundtrip
+  - BlueBubbles optional Messages bridge with a fresh canonical same-thread `message_action` proof
   - Google Calendar scheduling
-  - unified work cockpit with Codex/OpenAI runtime
-  - life-thread, communication-companion, mission, chief-of-staff, knowledge-library, follow-through review, and outcome-review flows
-  - startup / host-control / watchdog / health
-- **manual surface sync still pending**
-  - Alexa's latest repo interaction-model hash has not been marked as synced locally yet
-  - after the Developer Console import/build, run `npm run setup -- --step alexa-model-sync mark-synced`
-- **optional Messages bridge**
-  - BlueBubbles on this PC is currently `degraded_but_usable`: transport and webhook registration are healthy, but the fresh same-thread `message_action` proof leg is still missing in current live truth
-  - Telegram stays the dependable main messaging surface, while BlueBubbles remains an optional bridge that now also exposes an authenticated LAN control API plus a thin MCP adapter
-- **externally blocked but optional**
-  - outward research
-  - Telegram image generation
-  - the local Anthropic-compatible LiteLLM compatibility lane
+  - provider checks for OpenAI, Anthropic, Gemini, MiniMax, Brave Search, research, and image generation
+- **manual live proof still pending**
+  - Alexa requires one real device or authenticated simulator turn before claiming a fresh signed handled `IntentRequest`
+  - after any Alexa interaction-model change, import/build in the Developer Console and run `npm run setup -- --step alexa-model-sync mark-synced`
 - **fresh-proof gaps, not host failure**
-  - daily guidance still needs one fresh same-host proof turn
+  - flagship journey proofs such as daily guidance, work cockpit, life threads, communication companion, missions, and knowledge-library flows may age out separately from integration health
+- **optional or intentionally disabled lanes**
+  - the Andrea OpenAI backend/work cockpit lane can be externally blocked when that backend is disabled on this host
+  - Telegram stays the dependable main messaging surface even while BlueBubbles is healthy
 
 When operator surfaces disagree, the release truth should come from:
 
@@ -89,7 +86,7 @@ Andrea's current flagship journeys are:
 - source-grounded research -> richer detail -> save to library
 - Messages bridge help when available -> summarize -> draft -> send or queue send-later -> optional Telegram escalation
 
-OpenBubbles remains a future/provider-feasibility track on this PC, not a live Andrea runtime provider. The official docs support the Mac-offline goal after activation or renewal, but Andrea still does not have a supported Windows-native observation/reply surface to bind to there.
+OpenBubbles remains a future/provider-feasibility track, not a live Andrea runtime provider. BlueBubbles is the active Messages bridge on this Mac mini.
 
 Use these docs as the architecture behind those journeys, not as separate product silos.
 For repo-side proof, run `npm run debug:signature-flows`.
@@ -136,12 +133,12 @@ For the default live demo, stay on Telegram conversation + direct replies + remi
 Current host-proof rule:
 
 - `Andrea_NanoBot` is the only canonical repo now; the older `ANDREA/nanoclaw` checkout is non-authoritative reference only
-- Telegram ordinary chat and the main flagship follow-through journeys were live-proven on this host on April 7, 2026
-- Alexa is status-led on this host: it is currently `live_proven` while the handled proof stays fresh, and the latest repo model is tracked separately through the local Alexa model-sync marker
+- Telegram ordinary chat and the main flagship follow-through journeys are status-led and should be refreshed with `npm run debug:pilot` before demos
+- Alexa is status-led on this host: it is currently manual-action proof debt until a fresh signed handled custom-skill turn is recorded
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
-- BlueBubbles is status-led on this host: it is currently `degraded_but_usable` with transport ready, and it returns to `live_proven` after a fresh same-thread `message_action` proof in `bb:iMessage;-;+14695405551`
-- outward-facing research and Telegram image generation are currently optional provider-blocked lanes on this host
-- the local Anthropic-compatible LiteLLM gateway remains a separate compatibility/runtime lane and should be reported separately if it degrades later
+- BlueBubbles is status-led on this host: it is currently `live_proven` after the fresh same-thread `message_action` proof in `bb:iMessage;-;+14695405551`
+- outward-facing research and Telegram image generation are currently healthy when provider status remains green
+- local compatibility/runtime lanes should be reported separately from direct provider health if they degrade later
 
 ## Pilot Review Loop
 

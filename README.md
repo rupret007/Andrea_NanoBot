@@ -89,11 +89,11 @@ Current host truth from the local operator commands:
 - `Host state: running_ready` is the canonical runtime health signal for this machine.
 - Active repo and serving commit should match before any live proof is trusted.
 - Dated recovery snapshot: [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md).
-- `live_proven`: host health, research, and image generation.
-- `degraded_but_usable`: BlueBubbles transport is ready and the private webhook is registered, but the same-thread message-action proof needs a fresh run.
-- `near_live_only`: Telegram bot proof needs one fresh same-host Telegram turn, and Alexa model sync is marked synced but there is no fresh signed handled `IntentRequest`.
-- `externally_blocked`: Google Calendar token refresh is currently failing with `invalid_grant`; Telegram user-session proof is missing `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`.
-- Work cockpit, life threads, communication companion, missions, knowledge library, and action bundles are repo-ready but proof-stale until refreshed on this host.
+- As of July 6, 2026, the canonical runtime root is `/Users/jeffstory/Andrea_NanoBot`; `/Users/jeffstory/Documents/Andrea_NanoBot` is a convenience symlink, and `/Users/jeffstory/Andrea_NanoBot_AGI` should not serve in parallel.
+- `live_proven`: host health, Telegram user-session roundtrip, BlueBubbles canonical same-thread message-action proof, Google Calendar, research, image generation, and provider checks for OpenAI, Anthropic, Gemini, MiniMax, and Brave Search.
+- `manual_action_required`: Alexa proof remains a real device or authenticated simulator step because it needs a fresh signed handled `IntentRequest`.
+- `near_live_only`: some flagship journey proofs can still age out independently of core integration health; refresh them with `npm run debug:pilot` before demos.
+- `externally_blocked`: work cockpit execution can be blocked when the Andrea OpenAI backend lane is intentionally disabled; report that separately from host health.
 - `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on the same proof/config blocker story
 - `npm run debug:pilot` is the proof-freshness and dogfooding surface for flagship journeys, degraded-but-usable fallback, and exact next steps
 
@@ -308,13 +308,13 @@ Andrea Pulse is a separate request-driven personality feature. It is not a healt
 BlueBubbles is now Andrea's optional bounded Messages bridge, not a core requirement for day-to-day use.
 
 - BlueBubbles V1 now supports all synced personal and group chats, not one pinned linked thread
-- Andrea replies only when a message explicitly mentions `@Andrea`, so ordinary social chatter does not trigger assistant replies
+- Andrea replies only when a message explicitly mentions `@Andrea` or the default alias `@OpenClaw`, so ordinary social chatter does not trigger assistant replies
 - current-chat asks like `summarize this` now use recent `bb:` chat context and can prime recent history from the live BlueBubbles server when local context is thin
 - BlueBubbles keeps companion-safe capabilities like daily guidance, communication help, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this Mac mini, the Messages bridge is local-first: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the local endpoint is reachable at `127.0.0.1:1234`, the webhook is registered, and the Cloudflare BlueBubbles URL is fallback/diagnostic only. Telegram remains Andrea's dependable main messaging surface; BlueBubbles becomes `live_proven` only after a fresh same-thread inbound, outbound, and `message_action` proof chain lands on this host.
+On this Mac mini, the Messages bridge is local-first: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the local endpoint is reachable at `127.0.0.1:1234`, the webhook is registered, and the Cloudflare BlueBubbles URL is fallback/diagnostic only. Telegram remains Andrea's dependable main messaging surface; BlueBubbles is `live_proven` when the fresh same-thread inbound, outbound, and `message_action` proof chain is current on this host.
 
 OpenBubbles is still not an active Andrea provider for this Mac mini BlueBubbles bridge.
 
@@ -568,7 +568,7 @@ Notes:
 - if the browser reaches the Google callback but `auth` still times out, finish the same current-repo OAuth run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
 - reminder phrasing still creates reminders, not Google Calendar events
 - a host is only live-proven for Google Calendar writes after `auth`, `discover`, `validate`, and one disposable create-event proof all succeed on that host
-- on this host, Google Calendar is currently `externally_blocked` by `invalid_grant`; rerun the current-repo OAuth setup and validation before claiming calendar launch readiness
+- on this host, Google Calendar is currently healthy and live-proven; if it later reports `invalid_grant`, rerun the current-repo OAuth setup and validation before claiming calendar launch readiness
 
 ## What Andrea Can Do
 

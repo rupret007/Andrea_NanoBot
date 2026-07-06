@@ -13,9 +13,9 @@ Current host reality for the Mac mini operator machine:
 - the BlueBubbles desktop app is installed and connected to the local Mac mini server
 - Andrea now has live `BLUEBUBBLES_*` config loaded on this host
 - Andrea reaches BlueBubbles locally at `http://127.0.0.1:1234`; the Cloudflare BlueBubbles URL is fallback/diagnostic only
-- BlueBubbles is below `live_proven` until the fresh same-thread inbound, outbound, and `message_action` proof leg lands on this host
+- BlueBubbles is `live_proven` while the fresh same-thread inbound, outbound, and `message_action` proof chain remains current on this host
 - the canonical proof thread is `bb:iMessage;-;+14695405551`, and alias support remains enabled for `bb:iMessage;-;jeffstory007@gmail.com`
-- Telegram remains Andrea's dependable main messaging surface, while BlueBubbles stays an optional bridge that still needs one fresh same-thread proof completion
+- Telegram remains Andrea's dependable main messaging surface, while BlueBubbles stays an optional bridge with its own proof freshness clock
 
 Use these operator truth surfaces:
 
@@ -64,7 +64,7 @@ BlueBubbles V1 is intentionally narrower than Telegram, but it is no longer pinn
 Andrea now supports:
 
 - all synced personal and group chats when `BLUEBUBBLES_CHAT_SCOPE=all_synced`
-- `@Andrea` mention required
+- `@Andrea` mention required, with `@OpenClaw` accepted as the default OpenClaw/helper alias
 - ordinary chat when it is clearly directed at Andrea
 - daily guidance
 - communication-companion help like:
@@ -115,13 +115,14 @@ If a BlueBubbles chat tries to use operator-only controls, Andrea should answer 
 
 Andrea does **not** auto-reply to ordinary social chatter on BlueBubbles.
 
-Andrea replies only when the message explicitly mentions `@Andrea`, for example:
+Andrea replies only when the message explicitly mentions `@Andrea` or `@OpenClaw`, for example:
 
 - `@Andrea hi`
 - `@Andrea what am I forgetting`
 - `@Andrea summarize this`
 - `@Andrea what should I say back`
 - `@Andrea help me plan tonight`
+- `@OpenClaw search for a skill`
 
 Messages that are just normal conversation without an Andrea ask are ignored.
 
@@ -199,7 +200,7 @@ Inbound:
 - if `BLUEBUBBLES_WEBHOOK_SECRET` is set, append it as `?secret=...`
 - Andrea accepts supported new-message webhook events only
 - messages from chats outside the configured scope are ignored
-- messages from the user that do not explicitly mention `@Andrea` are stored but do not wake Andrea
+- messages from the user that do not explicitly mention `@Andrea` or `@OpenClaw` are stored but do not wake Andrea
 
 Outbound:
 
@@ -223,7 +224,7 @@ BlueBubbles is `live_proven` only after all of these happen on this host:
 
 If config is present and the server, webhook, and recent-activity shadow poll are ready but the fresh same-thread proof chain is still incomplete, BlueBubbles stays below `live_proven` and should read as `degraded_but_usable` on that host. If this host cannot reach the configured endpoint at all, the bridge should read as `externally_blocked` with `transport_unreachable`, and Telegram should be treated as the dependable main path.
 
-On this host, that proof bar was satisfied on April 14, 2026 in `bb:iMessage;-;+14695405551` with a real same-thread ask, a fresh drafted message action, and a same-thread `send it` continuation.
+On this host, that proof bar was refreshed on July 6, 2026 in `bb:iMessage;-;+14695405551` with a real same-thread ask, a fresh drafted message action, and a same-thread `send it later tonight` continuation.
 
 ## Operator Proof Steps
 
@@ -234,6 +235,7 @@ Use this exact proof sequence:
    - `webhook_registration: registered`
 2. Send a real BlueBubbles message in any synced chat:
    - `@Andrea hi`
+   - or `@OpenClaw search for a skill` when proving the OpenClaw/helper alias
 3. Confirm Andrea replies in that same Messages thread.
 4. Send a same-thread follow-up:
    - `@Andrea what am I forgetting`

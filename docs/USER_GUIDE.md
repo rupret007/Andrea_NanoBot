@@ -37,6 +37,8 @@ Good first messages:
 - `Summarize my tasks for today`
 - `Research the best standing desks for a small office`
 
+In BlueBubbles/Messages, start assistant-directed messages with `@Andrea`. If you specifically want the OpenClaw helper/tool lane, use `@OpenClaw`.
+
 ## Public-Safe Commands
 
 These are the commands normal users should rely on:

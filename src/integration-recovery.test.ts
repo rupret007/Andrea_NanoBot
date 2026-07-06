@@ -334,7 +334,7 @@ describe('integration recovery', () => {
       statuses: [
         integrationStatus('telegram', 'Telegram', 'externally_blocked', {
           detail:
-            'TELEGRAM_USER_API_HASH=supersecretvalue token=8755969867:AAFUMkQogpCP-aC344HSI5cnQjWLK8-UDZY',
+            'TELEGRAM_USER_API_HASH=supersecretvalue token=8755969867:AA-fixture',
           nextAction: 'Set TELEGRAM_USER_API_HASH=supersecretvalue.',
         }),
       ],
@@ -349,7 +349,7 @@ describe('integration recovery', () => {
     expect(text).toContain('TELEGRAM_USER_API_HASH=***');
     expect(text).toContain('token=***');
     expect(text).not.toContain('supersecretvalue');
-    expect(text).not.toContain('AAFUM');
+    expect(text).not.toContain('redaction-fixture');
   });
 
   it('keeps recovery output free of unrelated internal decision jargon', () => {
