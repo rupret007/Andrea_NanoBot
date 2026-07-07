@@ -210,9 +210,7 @@ describe('OpenClaw connector', () => {
       parseOpenClawDelegationRequest('@openclaw search skills for calendars'),
     ).toBeNull();
     expect(
-      parseOpenClawDelegationRequest(
-        'hey @openclaw can you help mid-sentence',
-      ),
+      parseOpenClawDelegationRequest('hey @openclaw can you help mid-sentence'),
     ).toBeNull();
   });
 
@@ -223,9 +221,9 @@ describe('OpenClaw connector', () => {
     expect(buildOpenClawChatSessionKey('', 'main')).toBe(
       'agent:main:andrea-chat:default',
     );
-    expect(
-      buildOpenClawChatSessionKey('123@g.us/weird chars!!', 'main'),
-    ).toBe('agent:main:andrea-chat:123-g.us-weird-chars');
+    expect(buildOpenClawChatSessionKey('123@g.us/weird chars!!', 'main')).toBe(
+      'agent:main:andrea-chat:123-g.us-weird-chars',
+    );
   });
 
   it('delegates through openclaw agent without direct delivery', async () => {

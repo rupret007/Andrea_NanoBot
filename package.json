@@ -24,7 +24,7 @@
     "format:check": "node scripts/run-with-pinned-node.mjs ./node_modules/prettier/bin/prettier.cjs --check \"src/**/*.ts\"",
     "prepare": "husky",
     "setup": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs setup/index.ts",
-    "auth": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/whatsapp-auth.ts",
+    "auth": "node -e \"console.error('WhatsApp is an optional skill and is not installed. Run /add-whatsapp (merges the whatsapp/main skill branch, which provides src/whatsapp-auth.ts) and rebuild first. See CLAUDE.md Troubleshooting.'); process.exit(1)\"",
     "build:openclaw-market": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/build-openclaw-market.ts",
     "lint": "node scripts/run-with-pinned-node.mjs ./node_modules/eslint/bin/eslint.js src/",
     "lint:fix": "node scripts/run-with-pinned-node.mjs ./node_modules/eslint/bin/eslint.js src/ --fix",

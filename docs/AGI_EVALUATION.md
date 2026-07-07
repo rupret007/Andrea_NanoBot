@@ -19,7 +19,7 @@ Live in `tests/`. Run on every PR via the existing vitest harness. They check th
 
 ### Tier 2 — Capability benchmarks
 
-Run weekly via `npm run eval:bench`. Replays standardized benchmarks against the routed primary model:
+Run weekly via the `agi:bench:*` scripts (`npm run agi:bench:external`, or a specific suite: `agi:bench:gaia`, `agi:bench:bfcl`, `agi:bench:swe-lite`, `agi:bench:tau`). Replays standardized benchmarks against the routed primary model:
 
 | Suite | What it measures | Target |
 |---|---|---|
@@ -44,10 +44,10 @@ This is the eval that catches reflection-loop drift: if the system's prompts evo
 When in doubt about whether a code change improves the system, run:
 
 ```bash
-npm run eval:strategy -- --baseline main --candidate HEAD --suite jeff-replay
+npm run test:strategy-evals
 ```
 
-This replays the personal task suite under both branches and reports per-task winners with effect sizes. It is **expensive** (one council run per task per branch) so use it on architectural changes, not typo fixes.
+This scores the deterministic strategy-eval scenario suite (`src/strategy-evals.ts`) and persists per-run scores, so you can compare a candidate branch against `main` by running it on each. For a live head-to-head on real model output, use the AGI gauntlet (`npm run test:agi-gauntlet`) on both branches — that path is **expensive**, so use it on architectural changes, not typo fixes.
 
 ## Things this eval does NOT measure
 

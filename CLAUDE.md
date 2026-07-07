@@ -73,7 +73,7 @@ systemctl --user restart nanoclaw
 
 ## Troubleshooting
 
-**WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
+**WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp`, which merges the `whatsapp/main` skill branch (see `.claude/skills/add-whatsapp/SKILL.md`) and then `npm run build`. Existing auth credentials and groups are preserved.
 
 ## Container Build Cache
 
