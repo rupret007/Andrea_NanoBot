@@ -593,8 +593,10 @@ import {
 import { routeCompanionTurnWithOpenAiBackend } from './openai-guided-routing.js';
 import { recordOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
 import {
+  buildOpenClawChatSessionKey,
   delegateToOpenClawAgent,
   formatOpenClawDelegationResponse,
+  isOpenClawDelegationEnabled,
   parseOpenClawDelegationRequest,
 } from './openclaw-connector.js';
 import { buildDirectAssistantContinuationPrompt } from './direct-assistant-continuation.js';
@@ -12064,7 +12066,10 @@ async function main(): Promise<void> {
       return;
     }
 
-    const result = await delegateToOpenClawAgent({ message: prompt });
+    const result = await delegateToOpenClawAgent({
+      message: prompt,
+      sessionKey: buildOpenClawChatSessionKey(chatJid),
+    });
     await sendCursorMessage(
       chatJid,
       formatOpenClawDelegationResponse(result),
@@ -16232,7 +16237,13 @@ async function main(): Promise<void> {
       const openClawDelegationRequest =
         parseOpenClawDelegationRequest(rawTrimmed);
       if (openClawDelegationRequest) {
-        if (!mainControlChat) {
+        const mentionFallsThrough =
+          openClawDelegationRequest.command === 'mention' &&
+          (!mainControlChat || !isOpenClawDelegationEnabled());
+        if (mentionFallsThrough) {
+          // @openclaw mentions keep their existing advanced-helper lane when
+          // delegation is unavailable or the chat is not the main control chat.
+        } else if (!mainControlChat) {
           const channel = findChannel(channels, chatJid);
           channel
             ?.sendMessage(
@@ -16247,15 +16258,16 @@ async function main(): Promise<void> {
               ),
             );
           return;
+        } else {
+          handleOpenClawDelegation(
+            chatJid,
+            openClawDelegationRequest.prompt,
+            msg,
+          ).catch((err) =>
+            logger.error({ err, chatJid }, 'OpenClaw delegation command error'),
+          );
+          return;
         }
-        handleOpenClawDelegation(
-          chatJid,
-          openClawDelegationRequest.prompt,
-          msg,
-        ).catch((err) =>
-          logger.error({ err, chatJid }, 'OpenClaw delegation command error'),
-        );
-        return;
       }
 
       const bundleCommand = parseBundleCommand(rawTrimmed);

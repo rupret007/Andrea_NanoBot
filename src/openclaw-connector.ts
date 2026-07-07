@@ -112,6 +112,13 @@ export function resolveOpenClawConfig(
   };
 }
 
+export function isOpenClawDelegationEnabled(
+  overrides: Partial<OpenClawConnectorConfig> = {},
+): boolean {
+  const config = resolveOpenClawConfig(overrides);
+  return config.enabled && config.delegationEnabled;
+}
+
 export function parseOpenClawJsonOutput(rawOutput: string): unknown {
   const raw = String(rawOutput || '');
   const start = raw.indexOf('{');
@@ -478,9 +485,15 @@ export function formatOpenClawDebugStatusLines(
   ];
 }
 
+const OPENCLAW_PRESENCE_QUERY_PATTERN =
+  /^(?:are you there(?: too)?|you there|are you online|online|status|hi|hello|hey|what'?s up|who are you|what are you)\b/;
+
+const OPENCLAW_SKILL_CATALOG_PATTERN =
+  /\b(clawhub|clawskills|community skill|skill catalog|enable skill|disable skill|install skill|search skills|list (?:my |the )?(?:enabled )?skills)\b/i;
+
 export function parseOpenClawDelegationRequest(
   rawMessage: string,
-): { prompt: string; command: 'slash' | 'natural' } | null {
+): { prompt: string; command: 'slash' | 'natural' | 'mention' } | null {
   const trimmed = String(rawMessage || '').trim();
   if (!trimmed) return null;
 
@@ -496,7 +509,35 @@ export function parseOpenClawDelegationRequest(
     return { prompt: natural[1].trim(), command: 'natural' };
   }
 
+  const mention = trimmed.match(/^@openclaw\b[,:;!?-]*\s*([\s\S]*)$/i);
+  if (mention) {
+    const prompt = mention[1].trim();
+    // Presence pings keep their local canned reply, and skill-catalog work
+    // stays in Andrea's advanced-helper container lane; everything else
+    // addressed to @openclaw delegates to the OpenClaw gateway.
+    if (!prompt || OPENCLAW_PRESENCE_QUERY_PATTERN.test(prompt.toLowerCase())) {
+      return null;
+    }
+    if (OPENCLAW_SKILL_CATALOG_PATTERN.test(prompt)) {
+      return null;
+    }
+    return { prompt, command: 'mention' };
+  }
+
   return null;
+}
+
+export function buildOpenClawChatSessionKey(
+  chatJid: string,
+  agentId?: string,
+): string {
+  const resolvedAgentId = agentId || resolveOpenClawConfig({}).agentId;
+  const sanitizedChat =
+    String(chatJid || '')
+      .replace(/[^A-Za-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64) || 'default';
+  return `agent:${resolvedAgentId}:andrea-chat:${sanitizedChat}`;
 }
 
 function extractOpenClawAgentReply(value: unknown): string {
@@ -546,6 +587,7 @@ export async function delegateToOpenClawAgent(params: {
   config?: Partial<OpenClawConnectorConfig>;
   runner?: OpenClawAsyncRunner;
   timeoutMs?: number;
+  sessionKey?: string;
 }): Promise<OpenClawDelegationResult> {
   const config = resolveOpenClawConfig(params.config || {});
   const runner = params.runner || defaultAsyncRunner;
@@ -588,7 +630,7 @@ export async function delegateToOpenClawAgent(params: {
         '--agent',
         config.agentId,
         '--session-key',
-        `agent:${config.agentId}:andrea-bridge`,
+        params.sessionKey?.trim() || `agent:${config.agentId}:andrea-bridge`,
         '--message-file',
         messageFile,
       ],

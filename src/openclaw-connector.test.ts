@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildOpenClawChatSessionKey,
   delegateToOpenClawAgent,
   formatOpenClawDebugStatusLines,
   getOpenClawStatusSummary,
@@ -179,6 +180,54 @@ describe('OpenClaw connector', () => {
     expect(parseOpenClawDelegationRequest('ordinary Andrea turn')).toBeNull();
   });
 
+  it('treats substantive @openclaw mentions as delegation requests', () => {
+    expect(
+      parseOpenClawDelegationRequest(
+        '@openclaw research the best flight prices for Friday',
+      ),
+    ).toEqual({
+      prompt: 'research the best flight prices for Friday',
+      command: 'mention',
+    });
+    expect(
+      parseOpenClawDelegationRequest('@openclaw, summarize my open work'),
+    ).toEqual({
+      prompt: 'summarize my open work',
+      command: 'mention',
+    });
+  });
+
+  it('leaves presence pings and skill-catalog mentions to existing lanes', () => {
+    expect(parseOpenClawDelegationRequest('@openclaw')).toBeNull();
+    expect(
+      parseOpenClawDelegationRequest('@openclaw are you there?'),
+    ).toBeNull();
+    expect(parseOpenClawDelegationRequest('@openclaw hello')).toBeNull();
+    expect(
+      parseOpenClawDelegationRequest('@openclaw enable skill weather-pro'),
+    ).toBeNull();
+    expect(
+      parseOpenClawDelegationRequest('@openclaw search skills for calendars'),
+    ).toBeNull();
+    expect(
+      parseOpenClawDelegationRequest(
+        'hey @openclaw can you help mid-sentence',
+      ),
+    ).toBeNull();
+  });
+
+  it('builds sanitized per-chat session keys', () => {
+    expect(buildOpenClawChatSessionKey('tg:8004355504', 'main')).toBe(
+      'agent:main:andrea-chat:tg-8004355504',
+    );
+    expect(buildOpenClawChatSessionKey('', 'main')).toBe(
+      'agent:main:andrea-chat:default',
+    );
+    expect(
+      buildOpenClawChatSessionKey('123@g.us/weird chars!!', 'main'),
+    ).toBe('agent:main:andrea-chat:123-g.us-weird-chars');
+  });
+
   it('delegates through openclaw agent without direct delivery', async () => {
     const capturedCalls: {
       file: string;
@@ -219,6 +268,29 @@ describe('OpenClaw connector', () => {
     ]);
     expect(captured.args).not.toContain('--deliver');
     expect(captured.options.timeout).toBe(1234);
+  });
+
+  it('uses the provided per-chat session key when delegating', async () => {
+    const capturedArgs: string[][] = [];
+    const runner: OpenClawAsyncRunner = async (_file, args) => {
+      capturedArgs.push([...args]);
+      return '{"reply":"OpenClaw reply"}';
+    };
+
+    const result = await delegateToOpenClawAgent({
+      message: 'per-chat session check',
+      config: { ...baseConfig, delegationEnabled: true },
+      runner,
+      sessionKey: buildOpenClawChatSessionKey('tg:8004355504', 'main'),
+    });
+
+    expect(result.ok).toBe(true);
+    const args = capturedArgs[0];
+    if (!args) throw new Error('Expected OpenClaw runner to be called.');
+    const sessionKeyIndex = args.indexOf('--session-key');
+    expect(args[sessionKeyIndex + 1]).toBe(
+      'agent:main:andrea-chat:tg-8004355504',
+    );
   });
 
   it('captures OpenClaw agent payload replies', async () => {
