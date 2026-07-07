@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -181,8 +181,32 @@ async function waitForSpawnCall(): Promise<void> {
   throw new Error('spawn was not called');
 }
 
+// container-runner prefers process.env over the mocked env file, so ambient
+// host credentials (e.g. ANTHROPIC_BASE_URL exported by an IDE or agent
+// harness) must be cleared for these tests to stay hermetic.
+const AMBIENT_CREDENTIAL_ENV_KEYS = [
+  'ANTHROPIC_BASE_URL',
+  'OPENAI_BASE_URL',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'OPENAI_API_KEY',
+  'MINIMAX_ENABLED',
+  'MINIMAX_API_KEY',
+  'MINIMAX_ANTHROPIC_BASE_URL',
+  'MINIMAX_OPENAI_BASE_URL',
+  'MINIMAX_MODEL_COMPLEX',
+  'CURSOR_GATEWAY_HINT',
+  'NANOCLAW_AGENT_MODEL',
+  'CLAUDE_CODE_MODEL',
+  'CLAUDE_MODEL',
+] as const;
+
 describe('container-runner credential env wiring', () => {
   beforeEach(() => {
+    for (const key of AMBIENT_CREDENTIAL_ENV_KEYS) {
+      vi.stubEnv(key, undefined);
+    }
     mockEnvStore.values = {};
     fakeProc = createFakeProcess();
     spawnMock.mockReset();
@@ -192,6 +216,10 @@ describe('container-runner credential env wiring', () => {
     vi.mocked(fs.writeFileSync).mockClear();
     vi.mocked(fs.existsSync).mockImplementation(() => false);
     vi.mocked(fs.readFileSync).mockImplementation(() => '');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('passes ANTHROPIC_BASE_URL into container args when OneCLI is active', async () => {

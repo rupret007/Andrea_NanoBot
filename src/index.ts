@@ -12523,18 +12523,36 @@ async function main(): Promise<void> {
         agentId: selectedJobId,
       });
     }
-    const jobs = await runtimeLane.listJobs({
-      groupFolder: group.folder,
-      chatJid,
-      limit: 50,
-    });
-    const selected = selectedJobId
-      ? await runtimeLane.getJob({
-          handle: { laneId: 'andrea_runtime', jobId: selectedJobId },
-          groupFolder: group.folder,
-          chatJid,
-        })
-      : null;
+    let jobs: BackendJobSummary[];
+    let selected: BackendJobDetails | null;
+    try {
+      jobs = await runtimeLane.listJobs({
+        groupFolder: group.folder,
+        chatJid,
+        limit: 50,
+      });
+      selected = selectedJobId
+        ? await runtimeLane.getJob({
+            handle: { laneId: 'andrea_runtime', jobId: selectedJobId },
+            groupFolder: group.folder,
+            chatJid,
+          })
+        : null;
+    } catch (err) {
+      if (
+        err instanceof AndreaOpenAiRuntimeError &&
+        (err.kind === 'not_enabled' ||
+          err.kind === 'unavailable' ||
+          err.kind === 'not_ready')
+      ) {
+        logger.debug(
+          { chatJid, kind: err.kind },
+          'Runtime lane unavailable for work cockpit; continuing without runtime jobs',
+        );
+        return null;
+      }
+      throw err;
+    }
     if (
       shouldClearStaleWorkCockpitSelection({
         selectedJobId,
