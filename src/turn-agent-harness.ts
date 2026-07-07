@@ -1146,6 +1146,7 @@ function visibleBlockerText(blocker: string): string {
 export function applyCouncilGuidanceToReply(
   context: TurnAgentHarnessContext | null,
   text: string,
+  options?: { groundedLocalReply?: boolean },
 ): CouncilGuidedReply {
   const guidance = context?.providerCouncil?.answerGuidance;
   if (!guidance || !guidance.visibleVerdict.trim()) {
@@ -1168,6 +1169,16 @@ export function applyCouncilGuidanceToReply(
     };
   }
   if (guidance.status === 'clarify' && !/\?\s*$/.test(text.trim())) {
+    if (options?.groundedLocalReply) {
+      // A deterministic local capability already produced a grounded answer;
+      // replacing it with a council clarifying question would discard real
+      // data the user asked for. Deliver the answer and record the skip.
+      return {
+        text,
+        applied: false,
+        flags: ['provider_council_clarify_skipped_for_grounded_reply'],
+      };
+    }
     const question =
       guidance.clarifyingQuestion ||
       (guidance.answerDirection &&
@@ -1199,11 +1210,15 @@ export function evaluateTurnReply(
     input.context?.contextCompile.effectiveDirectives || [],
   );
 
-  const councilGuided = applyCouncilGuidanceToReply(input.context, rewritten);
+  const councilGuided = applyCouncilGuidanceToReply(input.context, rewritten, {
+    groundedLocalReply: input.responseSource === 'local_companion',
+  });
   if (councilGuided.applied) {
     rewritten = councilGuided.text;
     flags.push(...councilGuided.flags);
     safeRewriteApplied = true;
+  } else if (councilGuided.flags.length > 0) {
+    flags.push(...councilGuided.flags);
   }
 
   if (

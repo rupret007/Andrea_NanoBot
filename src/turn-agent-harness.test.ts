@@ -847,6 +847,93 @@ describe('turn agent harness', () => {
     expect(evaluation.evaluatorFlags).toContain('provider_council_clarify');
   });
 
+  it('keeps a grounded local capability reply instead of replacing it with a council clarify question', async () => {
+    const { evaluateTurnReply } = await import('./turn-agent-harness.js');
+
+    const groundedSummary =
+      'I found 12 synced Messages messages across 3 chats over the last 3 days.';
+    const evaluation = evaluateTurnReply({
+      context: {
+        turnId: 'turn-clarify-grounded-local-reply',
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        requestRoute: 'direct_assistant',
+        taskFamily: 'communication',
+        meaningful: true,
+        selectedSkill: {
+          skillId: 'communication.summarize_thread',
+          taskFamily: 'communication',
+          purpose: 'summary',
+          inputs: [],
+          outputs: [],
+          evidenceLevel: 'partial',
+          sideEffectRisk: 'none',
+          approvalNeed: 'none',
+          failureModes: [],
+          examples: [],
+        },
+        contextCompile: {
+          readPlan: {
+            taskFamily: 'communication',
+            readTiers: ['working'],
+            hotPath: true,
+            safeWriteClasses: [],
+            reason: 'summary',
+            sources: [],
+          },
+          selectedSkill: {
+            skillId: 'communication.summarize_thread',
+            taskFamily: 'communication',
+            purpose: 'summary',
+            inputs: [],
+            outputs: [],
+            evidenceLevel: 'partial',
+            sideEffectRisk: 'none',
+            approvalNeed: 'none',
+            failureModes: [],
+            examples: [],
+          },
+          memoryTiers: ['working'],
+          metadata: {},
+          effectiveDirectives: [],
+        },
+        deliberation: {
+          selectedRoute: 'local_capability',
+          expectedEvidence: 'partial',
+        },
+        platformHoldReply: null,
+        providerCouncil: {
+          councilRunId: 'council-clarify-grounded',
+          mode: 'dual_review',
+          finalRoute: 'dual_review',
+          approvalRequired: false,
+          answerGuidance: {
+            status: 'clarify',
+            visibleVerdict:
+              'Ask one clarifying question before acting. Ask what context the user wants checked.',
+            answerDirection: 'Ask what context the user wants checked.',
+            confidence: 0.45,
+            uncertainty: 'missing context',
+            sourceMemberIds: ['openai_cloud'],
+          },
+        },
+      },
+      text: groundedSummary,
+      routeKey: 'communication.summarize_thread',
+      capabilityId: 'communication.summarize_thread',
+      handlerKind: 'local',
+      responseSource: 'local_companion',
+    });
+
+    expect(evaluation.rewrittenText).toContain(groundedSummary);
+    expect(evaluation.rewrittenText).not.toMatch(
+      /Ask what context the user wants checked/i,
+    );
+    expect(evaluation.evaluatorFlags).toContain(
+      'provider_council_clarify_skipped_for_grounded_reply',
+    );
+  });
+
   it('keeps approval-first message sending even when council guidance sounds permissive', async () => {
     const { evaluateTurnReply } = await import('./turn-agent-harness.js');
 

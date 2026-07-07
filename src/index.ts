@@ -783,6 +783,10 @@ let sessions: Record<string, string> = {};
 let agentThreads: Record<string, AgentThreadState> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+// Chats with a turn currently being processed, mapped to the cursor value
+// from before that turn advanced it. Shutdown rolls these back so an
+// in-flight turn is re-fetched after restart instead of dropped silently.
+const inFlightCursorRollbacks = new Map<string, string>();
 let messageLoopRunning = false;
 const NON_RETRIABLE_ERROR_NOTIFY_COOLDOWN_MS = 15 * 60 * 1000;
 const lastNonRetriableErrorNotice: Record<
@@ -3834,6 +3838,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const previousCursor = lastAgentTimestamp[chatJid] || '';
   lastAgentTimestamp[chatJid] =
     missedMessages[missedMessages.length - 1].timestamp;
+  inFlightCursorRollbacks.set(chatJid, previousCursor);
   saveState();
 
   logger.info(
@@ -10205,6 +10210,20 @@ async function main(): Promise<void> {
     stopAssistantHealthLoop();
     clearAssistantReadyState();
     await queue.shutdown(10000);
+    // Detached containers cannot deliver replies once this process exits, so
+    // rewind the cursor for every turn still in flight; the next process
+    // re-fetches those messages and retries instead of dropping them.
+    if (inFlightCursorRollbacks.size > 0) {
+      for (const [chatJid, previousCursor] of inFlightCursorRollbacks) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        logger.info(
+          { component: 'assistant', chatJid },
+          'Rolled back message cursor for in-flight turn; it will retry after restart',
+        );
+      }
+      inFlightCursorRollbacks.clear();
+      saveState();
+    }
     if (alexaRuntime) {
       await alexaRuntime
         .close()
@@ -17612,7 +17631,13 @@ async function main(): Promise<void> {
   for (const group of Object.values(registeredGroups)) {
     writeCursorAgentsSnapshot(group.folder, group.isMain === true, cursorRows);
   }
-  queue.setProcessMessagesFn(processGroupMessages);
+  queue.setProcessMessagesFn(async (groupJid: string) => {
+    try {
+      return await processGroupMessages(groupJid);
+    } finally {
+      inFlightCursorRollbacks.delete(groupJid);
+    }
+  });
   writeAssistantReadyState(appVersion);
   writeCurrentAssistantHealth();
   assistantHealthInterval = setInterval(() => {
