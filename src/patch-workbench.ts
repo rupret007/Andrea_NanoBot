@@ -179,6 +179,10 @@ const DEFAULT_DETACHED_REPAIR_EXECUTOR_POLICY: DetachedRepairExecutorPolicy = {
   sensitivePathPatterns: [
     '.env',
     '.env.*',
+    'package.json',
+    'scripts/test-*',
+    'scripts/run-with-pinned-node.mjs',
+    'node_modules/**',
     'repo-tokens/**',
     'data/**',
     'store/**',

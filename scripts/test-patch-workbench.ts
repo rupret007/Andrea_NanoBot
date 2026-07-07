@@ -437,6 +437,49 @@ try {
   cleanupRepairExecutorRepo(blockedRepo.repoRoot);
 }
 
+const verifyIntegrityRepo = createRepairExecutorRepo(
+  'repair-executor-verify-integrity',
+);
+try {
+  const verifyIntegrityBlocked = executeDetachedRepairCandidate({
+    repoRoot: verifyIntegrityRepo.repoRoot,
+    branchName: 'codex/improvement/test-verify-integrity-blocked',
+    diffText: [
+      'diff --git a/package.json b/package.json',
+      '--- a/package.json',
+      '+++ b/package.json',
+      '@@ -0,0 +1 @@',
+      '+{ "scripts": { "test:patch-workbench": "true" } }',
+      '',
+    ].join('\n'),
+    verificationCommands: [],
+    commitMessage: 'Blocked verification-integrity candidate',
+    approved: true,
+  });
+  assert.equal(verifyIntegrityBlocked.status, 'blocked');
+  assert.match(verifyIntegrityBlocked.reason, /sensitive paths/i);
+
+  const verifyChainBlocked = executeDetachedRepairCandidate({
+    repoRoot: verifyIntegrityRepo.repoRoot,
+    branchName: 'codex/improvement/test-verify-chain-blocked',
+    diffText: [
+      'diff --git a/scripts/test-patch-workbench.ts b/scripts/test-patch-workbench.ts',
+      '--- a/scripts/test-patch-workbench.ts',
+      '+++ b/scripts/test-patch-workbench.ts',
+      '@@ -0,0 +1 @@',
+      '+// weakened verification',
+      '',
+    ].join('\n'),
+    verificationCommands: [],
+    commitMessage: 'Blocked verify-chain candidate',
+    approved: true,
+  });
+  assert.equal(verifyChainBlocked.status, 'blocked');
+  assert.match(verifyChainBlocked.reason, /sensitive paths/i);
+} finally {
+  cleanupRepairExecutorRepo(verifyIntegrityRepo.repoRoot);
+}
+
 const persistedRepo = createRepairExecutorRepo('repair-executor-persisted');
 try {
   const persistedBranch = 'codex/improvement/test-detached-persisted';
