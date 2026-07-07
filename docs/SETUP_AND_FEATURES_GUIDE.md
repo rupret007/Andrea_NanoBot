@@ -578,9 +578,9 @@ Only one runtime must be healthy.
 
 Default resolution when `CONTAINER_RUNTIME` is not set:
 
-- Windows: Docker, then Podman
-- macOS: Apple Container, then Docker
-- Linux: Docker, then Podman
+- Windows: Podman, then Docker
+- macOS: Podman, then Apple Container, then Docker
+- Linux: Podman, then Docker
 
 Force a runtime in `.env`:
 
@@ -590,7 +590,7 @@ CONTAINER_RUNTIME=docker
 # or apple-container
 ```
 
-If Docker is installed and running on Windows, Docker is selected by default.
+If Podman is installed and running, it is selected by default on every platform; Docker (or Apple Container on macOS) is used only when Podman is unavailable.
 
 ## 4) Model Credentials (Anthropic And OpenAI-Compatible)
 

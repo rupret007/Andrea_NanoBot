@@ -17,7 +17,7 @@
 - `src/reflection/reflector.ts` — nightly distill / critique / propose loop
 - `src/agi-runtime.ts` — composition root
 - `src/agi-bootstrap.ts` — env-driven setup
-- `docs/AGI_ROADMAP.md`, `ARCHITECTURE.md`, `INTEGRATION_GUIDE.md`, `SECURITY.md`, `EVALUATION.md`
+- `docs/AGI_ROADMAP.md`, `docs/AGI_ARCHITECTURE.md`, `docs/AGI_INTEGRATION_GUIDE.md`, `docs/AGI_SECURITY.md`, `docs/AGI_EVALUATION.md`
 - `tests/agi-*.test.ts` — unit tests for new subsystems
 - `.github/workflows/agi-ci.yml` — typecheck / lint / test / security-scan
 

@@ -304,7 +304,7 @@ It includes:
 
 Implementation note:
 
-- `test:major` and `test:major:ci` already run with Node 22 through `npx -p node@22`
+- `test:major` and `test:major:ci` already run with Node 22 through the `.nvmrc`-pinned `scripts/run-with-pinned-node.mjs` wrapper (invoked by the `pretest` hook)
 - if the host default `node` is not 22, do not use that runtime for DB-backed Alexa checks; unsupported runtimes can fail `better-sqlite3` with ABI mismatch errors that are not Alexa feature failures
 
 ## 3. Stability Gate
@@ -368,7 +368,7 @@ npm run debug:google-calendar
 Confirm:
 
 - `SERVICE: running_ready`
-- `ACTIVE_REPO_ROOT` matches `C:\Users\rupret\Desktop\Andrea_NanoBot`
+- `ACTIVE_REPO_ROOT` matches `/Users/jeffstory/Andrea_NanoBot`
 - `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` after the final restart into the release-candidate commit
 - `HOST_INSTALL_MODE` and `HOST_ACTIVE_LAUNCH_MODE` are both truthful and understandable
 - `CONFIGURED_CHANNELS: telegram`
