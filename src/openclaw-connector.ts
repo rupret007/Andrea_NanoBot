@@ -47,6 +47,25 @@ export interface OpenClawDelegationResult {
   agentId: string;
 }
 
+export type OpenClawDelegationCommand = 'slash' | 'natural' | 'mention';
+
+export type OpenClawDelegationResponseStyle = 'mention' | 'operator';
+
+export type OpenClawDelegationRoute =
+  | { action: 'none' }
+  | {
+      action: 'fallthrough';
+      request: { prompt: string; command: OpenClawDelegationCommand };
+    }
+  | {
+      action: 'restrict';
+      request: { prompt: string; command: OpenClawDelegationCommand };
+    }
+  | {
+      action: 'delegate';
+      request: { prompt: string; command: OpenClawDelegationCommand };
+    };
+
 export type OpenClawSyncRunner = (
   file: string,
   args: string[],
@@ -527,6 +546,31 @@ export function parseOpenClawDelegationRequest(
   return null;
 }
 
+export function resolveOpenClawDelegationRoute(params: {
+  rawMessage: string;
+  mainControlChat: boolean;
+  delegationEnabled: boolean;
+}): OpenClawDelegationRoute {
+  const request = parseOpenClawDelegationRequest(params.rawMessage);
+  if (!request) {
+    return { action: 'none' };
+  }
+
+  const mentionFallsThrough =
+    request.command === 'mention' &&
+    (!params.mainControlChat || !params.delegationEnabled);
+
+  if (mentionFallsThrough) {
+    return { action: 'fallthrough', request };
+  }
+
+  if (!params.mainControlChat) {
+    return { action: 'restrict', request };
+  }
+
+  return { action: 'delegate', request };
+}
+
 export function buildOpenClawChatSessionKey(
   chatJid: string,
   agentId?: string,
@@ -582,12 +626,32 @@ function extractOpenClawAgentReply(value: unknown): string {
   return '';
 }
 
+function formatOpenClawDelegationErrorDetail(detail: string): string {
+  const redacted = redactOpenClawText(detail);
+  if (/CLI not found/i.test(detail)) {
+    return `${redacted} Set OPENCLAW_CLI to your openclaw binary path (try \`which openclaw\`).`;
+  }
+  if (
+    /gateway is not reachable|gateway health check failed|ECONNREFUSED/i.test(
+      detail,
+    )
+  ) {
+    return `${redacted} Run \`openclaw health\` to diagnose the gateway.`;
+  }
+  if (/timed out|ETIMEDOUT|timeout/i.test(detail)) {
+    return 'OpenClaw took too long; try a shorter question or retry.';
+  }
+  return redacted;
+}
+
 export async function delegateToOpenClawAgent(params: {
   message: string;
   config?: Partial<OpenClawConnectorConfig>;
   runner?: OpenClawAsyncRunner;
+  statusRunner?: OpenClawSyncRunner;
   timeoutMs?: number;
   sessionKey?: string;
+  skipPreflight?: boolean;
 }): Promise<OpenClawDelegationResult> {
   const config = resolveOpenClawConfig(params.config || {});
   const runner = params.runner || defaultAsyncRunner;
@@ -616,6 +680,26 @@ export async function delegateToOpenClawAgent(params: {
       detail: 'OpenClaw needs a message to delegate.',
       agentId: config.agentId,
     };
+  }
+
+  if (!params.skipPreflight) {
+    const summary = getOpenClawStatusSummary(
+      config,
+      params.statusRunner || defaultSyncRunner,
+    );
+    if (summary.gatewayState !== 'live') {
+      const detail =
+        summary.gatewayState === 'offline'
+          ? 'OpenClaw gateway is not reachable; run openclaw health.'
+          : summary.detail ||
+            `OpenClaw gateway is not ready (${summary.gatewayState}).`;
+      return {
+        ok: false,
+        reply: '',
+        detail,
+        agentId: config.agentId,
+      };
+    }
   }
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'andrea-openclaw-'));
@@ -672,9 +756,13 @@ export async function delegateToOpenClawAgent(params: {
 
 export function formatOpenClawDelegationResponse(
   result: OpenClawDelegationResult,
+  style: OpenClawDelegationResponseStyle = 'operator',
 ): string {
   if (!result.ok) {
-    return `OpenClaw delegation is unavailable: ${redactOpenClawText(result.detail)}`;
+    return `OpenClaw delegation is unavailable: ${formatOpenClawDelegationErrorDetail(result.detail)}`;
+  }
+  if (style === 'mention') {
+    return result.reply.trim();
   }
   return ['OpenClaw answered through Andrea:', '', result.reply.trim()].join(
     '\n',

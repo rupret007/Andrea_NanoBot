@@ -113,6 +113,7 @@
     "openclaw:bridge:status": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/openclaw-andrea-bridge.ts status",
     "openclaw:bridge:install": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/openclaw-andrea-bridge.ts install",
     "openclaw:bridge:probe": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/openclaw-andrea-bridge.ts probe",
+    "test:openclaw-delegation:live": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-openclaw-delegation-live.ts",
     "telegram:user:auth": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts auth",
     "telegram:user:send": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts send",
     "telegram:user:tap": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/telegram-user-session.ts tap",

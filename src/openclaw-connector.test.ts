@@ -5,11 +5,13 @@ import { describe, expect, it } from 'vitest';
 import {
   buildOpenClawChatSessionKey,
   delegateToOpenClawAgent,
+  formatOpenClawDelegationResponse,
   formatOpenClawDebugStatusLines,
   getOpenClawStatusSummary,
   parseOpenClawDelegationRequest,
   parseOpenClawJsonOutput,
   redactOpenClawText,
+  resolveOpenClawDelegationRoute,
   type OpenClawAsyncRunner,
   type OpenClawConnectorConfig,
   type OpenClawSyncRunner,
@@ -247,6 +249,7 @@ describe('OpenClaw connector', () => {
       config: { ...baseConfig, delegationEnabled: true },
       runner,
       timeoutMs: 1234,
+      skipPreflight: true,
     });
 
     expect(result.ok).toBe(true);
@@ -280,6 +283,7 @@ describe('OpenClaw connector', () => {
       config: { ...baseConfig, delegationEnabled: true },
       runner,
       sessionKey: buildOpenClawChatSessionKey('tg:8004355504', 'main'),
+      skipPreflight: true,
     });
 
     expect(result.ok).toBe(true);
@@ -308,6 +312,7 @@ describe('OpenClaw connector', () => {
       message: 'prompt',
       config: { ...baseConfig, delegationEnabled: true },
       runner,
+      skipPreflight: true,
     });
 
     expect(result.ok).toBe(true);
@@ -330,5 +335,154 @@ describe('OpenClaw connector', () => {
     expect(result.ok).toBe(false);
     expect(result.detail).toContain('delegation is disabled');
     expect(called).toBe(false);
+  });
+
+  it('formats mention-style replies without the Andrea wrapper', () => {
+    expect(
+      formatOpenClawDelegationResponse(
+        {
+          ok: true,
+          reply: 'Tokyo is 9 hours ahead of UTC.',
+          detail: '',
+          agentId: 'main',
+        },
+        'mention',
+      ),
+    ).toBe('Tokyo is 9 hours ahead of UTC.');
+  });
+
+  it('formats operator-style replies with the Andrea wrapper', () => {
+    const text = formatOpenClawDelegationResponse({
+      ok: true,
+      reply: 'Gateway is live.',
+      detail: '',
+      agentId: 'main',
+    });
+    expect(text).toContain('OpenClaw answered through Andrea:');
+    expect(text).toContain('Gateway is live.');
+  });
+
+  it('maps delegation errors to actionable hints', () => {
+    const cliMissing = formatOpenClawDelegationResponse({
+      ok: false,
+      reply: '',
+      detail: 'OpenClaw CLI not found: openclaw',
+      agentId: 'main',
+    });
+    expect(cliMissing).toContain('OPENCLAW_CLI');
+    expect(cliMissing).toContain('which openclaw');
+
+    const gatewayDown = formatOpenClawDelegationResponse({
+      ok: false,
+      reply: '',
+      detail: 'OpenClaw gateway is not reachable; run openclaw health.',
+      agentId: 'main',
+    });
+    expect(gatewayDown).toContain('openclaw health');
+
+    const timeout = formatOpenClawDelegationResponse({
+      ok: false,
+      reply: '',
+      detail: 'spawn openclaw ETIMEDOUT',
+      agentId: 'main',
+    });
+    expect(timeout).toContain('took too long');
+  });
+
+  it('resolves delegation routes for main chat and fallthrough cases', () => {
+    expect(
+      resolveOpenClawDelegationRoute({
+        rawMessage: '@openclaw research flights',
+        mainControlChat: true,
+        delegationEnabled: true,
+      }),
+    ).toEqual({
+      action: 'delegate',
+      request: {
+        prompt: 'research flights',
+        command: 'mention',
+      },
+    });
+
+    expect(
+      resolveOpenClawDelegationRoute({
+        rawMessage: '@openclaw research flights',
+        mainControlChat: true,
+        delegationEnabled: false,
+      }),
+    ).toEqual({
+      action: 'fallthrough',
+      request: {
+        prompt: 'research flights',
+        command: 'mention',
+      },
+    });
+
+    expect(
+      resolveOpenClawDelegationRoute({
+        rawMessage: '@openclaw are you there?',
+        mainControlChat: true,
+        delegationEnabled: true,
+      }),
+    ).toEqual({ action: 'none' });
+
+    expect(
+      resolveOpenClawDelegationRoute({
+        rawMessage: '/openclaw status',
+        mainControlChat: false,
+        delegationEnabled: true,
+      }),
+    ).toEqual({
+      action: 'restrict',
+      request: { prompt: 'status', command: 'slash' },
+    });
+
+    expect(
+      resolveOpenClawDelegationRoute({
+        rawMessage: 'ask OpenClaw: summarize my week',
+        mainControlChat: true,
+        delegationEnabled: true,
+      }),
+    ).toEqual({
+      action: 'delegate',
+      request: { prompt: 'summarize my week', command: 'natural' },
+    });
+  });
+
+  it('fails fast when the gateway preflight is not live', async () => {
+    const statusRunner: OpenClawSyncRunner = () => {
+      throw new Error('connect ECONNREFUSED 127.0.0.1:18789');
+    };
+    let agentCalled = false;
+    const runner: OpenClawAsyncRunner = async () => {
+      agentCalled = true;
+      return '{"reply":"unexpected"}';
+    };
+
+    const result = await delegateToOpenClawAgent({
+      message: 'preflight check',
+      config: { ...baseConfig, delegationEnabled: true },
+      runner,
+      statusRunner,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('not reachable');
+    expect(agentCalled).toBe(false);
+  });
+
+  it('reports empty agent replies as delegation failures', async () => {
+    const runner: OpenClawAsyncRunner = async () =>
+      '{"status":"ok","result":{}}';
+
+    const result = await delegateToOpenClawAgent({
+      message: 'no reply body',
+      config: { ...baseConfig, delegationEnabled: true },
+      runner,
+      skipPreflight: true,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('did not include reply text');
   });
 });
