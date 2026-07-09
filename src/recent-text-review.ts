@@ -51,6 +51,11 @@ export type RecentTextReviewSection =
 
 export type RecentTextReviewContextConfidence = 'high' | 'medium' | 'low';
 
+export interface RecentTextReviewSuggestedReply {
+  label: string;
+  text: string;
+}
+
 export type RecentTextReviewOutcome =
   | 'reviewed'
   | 'suggested'
@@ -128,6 +133,7 @@ export interface RecentTextReviewItem {
   whyText: string;
   recommendedAction: string;
   suggestedReply?: string | null;
+  suggestedReplies?: RecentTextReviewSuggestedReply[] | null;
   evidenceSnippets: string[];
   linkedSubjectIds: string[];
   linkedLifeThreadIds: string[];
@@ -288,6 +294,12 @@ function messageContent(message: NewMessage | undefined): string {
   return sanitizeSnippet(message?.content || '', 180);
 }
 
+function isAssistantControlMessage(message: NewMessage): boolean {
+  const text = normalizeText(message.content || '');
+  if (!text) return false;
+  return /^\s*(?:hey\s+)?@(?:andrea|openclaw)\b/i.test(text);
+}
+
 function latestMessage(messages: NewMessage[]): NewMessage | undefined {
   return messages[messages.length - 1];
 }
@@ -382,6 +394,75 @@ function substantiveMessage(text: string): boolean {
     return false;
   }
   return normalized.length >= 8;
+}
+
+function extractReplyTopic(text: string): string | null {
+  const normalized = normalizeText(text)
+    .replace(/^can you\b/i, '')
+    .replace(/^could you\b/i, '')
+    .replace(/^would you\b/i, '')
+    .replace(/^will you\b/i, '')
+    .replace(/^please\b/i, '')
+    .replace(/\?+$/g, '')
+    .trim();
+  const patterns = [
+    /\bconfirm\s+(?:if|whether)?\s*(.+?)\s+still works\b/i,
+    /\bconfirm\s+(?:the\s+)?(.+?)(?:\s+before|\s+by|\s+tonight|\s+today|$)/i,
+    /\bsend(?: me)?\s+(?:the\s+)?(.+?)(?:\s+tonight|\s+today|\s+soon|$)/i,
+    /\bcheck\s+(?:the\s+)?(.+?)(?:\s+before|\s+by|\s+tonight|\s+today|$)/i,
+    /\babout\s+(.+?)(?:\s+tonight|\s+today|$)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const candidate = sanitizeSnippet(match?.[1] || '', 56)
+      .replace(/\b(?:for me|for us|please)\b/gi, '')
+      .trim();
+    if (candidate && candidate.length >= 3) return candidate;
+  }
+  const fallback = sanitizeSnippet(
+    normalized
+      .replace(
+        /\b(?:let me know|lmk|do you want|should we|are we|what|when|where|who|how|why)\b/gi,
+        '',
+      )
+      .trim(),
+    56,
+  );
+  return fallback.length >= 8 ? fallback : null;
+}
+
+function buildConversationRecap(input: {
+  chatLabel: string;
+  messages: NewMessage[];
+  latestInbound: NewMessage | undefined;
+  latestOutbound: NewMessage | undefined;
+  section: RecentTextReviewSection;
+  reasons: string[];
+}): string {
+  const turns = input.messages
+    .filter((message) => substantiveMessage(message.content || ''))
+    .slice(-4)
+    .map((message) => {
+      const speaker = message.is_from_me ? 'You' : 'They';
+      return `${speaker}: "${sanitizeSnippet(message.content, 120)}"`;
+    });
+  const flow =
+    turns.length > 0
+      ? turns.join(' ')
+      : input.latestInbound
+        ? `They: "${messageContent(input.latestInbound)}"`
+        : 'There was recent synced Messages activity.';
+  const state =
+    input.section === 'needs_reply'
+      ? input.latestInbound
+        ? `Current state: their latest open turn is "${messageContent(input.latestInbound)}".`
+        : 'Current state: there may be an open reply owed.'
+      : input.section === 'worth_watching'
+        ? `Current state: worth watching because ${input.reasons[0] || 'there was recent activity'}.`
+        : input.latestOutbound
+          ? `Current state: your latest reply appears to have closed this for now.`
+          : 'Current state: no obvious reply is needed from the recent exchange.';
+  return `${input.chatLabel}: ${flow} ${state}`;
 }
 
 function includesName(value: string, name: string): boolean {
@@ -675,7 +756,7 @@ function buildLearnedContextHints(input: {
   };
 }
 
-function buildSuggestedReply(input: {
+function buildSuggestedReplyOptions(input: {
   latestInbound: NewMessage | undefined;
   directQuestion: boolean;
   sensitive: boolean;
@@ -685,36 +766,130 @@ function buildSuggestedReply(input: {
   contextConfidence: RecentTextReviewContextConfidence;
   riskFlags: string[];
   toneStyleHints: string[];
-}): string | null {
-  if (!input.latestInbound) return null;
+}): RecentTextReviewSuggestedReply[] {
+  if (!input.latestInbound) return [];
   const text = normalizeText(input.latestInbound.content);
-  if (!substantiveMessage(text)) return null;
+  if (!substantiveMessage(text)) return [];
+  const topic = extractReplyTopic(text);
+  const topicTail = topic ? ` about ${topic}` : '';
   if (input.isGroup) {
-    return 'I saw this. Let me check the details before I answer the group.';
+    return [
+      {
+        label: 'careful',
+        text: `I saw this${topicTail}. Let me check the details before I answer the group.`,
+      },
+      {
+        label: 'direct',
+        text: `I am checking${topicTail} and will send the group a clear answer once I confirm.`,
+      },
+      {
+        label: 'brief',
+        text: `Checking${topicTail} now. I will confirm shortly.`,
+      },
+    ];
   }
   if (
     input.contextConfidence === 'low' ||
     input.riskFlags.includes('ambiguous_identity')
   ) {
-    return "I saw this. Let me make sure I'm matching the right context before I answer.";
+    return [
+      {
+        label: 'careful',
+        text: `I saw this${topicTail}. Let me make sure I have the right context before I answer.`,
+      },
+      {
+        label: 'direct',
+        text: `I am checking the context${topicTail} before I give you an answer.`,
+      },
+    ];
   }
   if (input.sensitive) {
-    return "I hear you. I don't want to answer too quickly, but I do want to understand this and respond thoughtfully.";
+    return [
+      {
+        label: 'warm',
+        text: `I hear you. I do not want to answer too quickly, but I do want to understand this and respond thoughtfully.`,
+      },
+      {
+        label: 'direct',
+        text: `I saw this and I am thinking it through before I answer.`,
+      },
+      {
+        label: 'brief',
+        text: `I hear you. Let me think this through and answer carefully.`,
+      },
+    ];
   }
   const tone = input.toneStyleHints.join(' ').toLowerCase();
   if (/\bwarm|careful|avoid_overcommitment/.test(tone)) {
-    return 'I saw this, and I want to be thoughtful. I am checking the details before I answer.';
+    return [
+      {
+        label: 'warm',
+        text: `I saw this${topicTail}, and I want to be thoughtful. I am checking the details before I answer.`,
+      },
+      {
+        label: 'direct',
+        text: `I am checking the details${topicTail} and will confirm shortly.`,
+      },
+      {
+        label: 'brief',
+        text: `I saw this${topicTail}. Checking the details now.`,
+      },
+    ];
   }
   if (/\bconcise|direct/.test(tone)) {
-    return 'I saw this. I am checking before I answer.';
+    return [
+      {
+        label: 'direct',
+        text: `I saw this${topicTail}. I am checking before I answer.`,
+      },
+      {
+        label: 'brief',
+        text: `Checking${topicTail} now. I will confirm shortly.`,
+      },
+    ];
   }
   if (input.deadline) {
-    return "I saw this. Let me check what I can commit to and I'll confirm shortly.";
+    return [
+      {
+        label: 'warm',
+        text: `I saw this${topicTail}. Let me check what I can commit to and I will confirm shortly.`,
+      },
+      {
+        label: 'direct',
+        text: `I am checking${topicTail} now and will confirm shortly.`,
+      },
+      {
+        label: 'brief',
+        text: `Checking${topicTail} now. I will confirm soon.`,
+      },
+    ];
   }
   if (input.directQuestion) {
-    return "I saw this. Let me check and I'll get back to you shortly.";
+    return [
+      {
+        label: 'warm',
+        text: `I saw this${topicTail}. Let me check and I will get back to you shortly.`,
+      },
+      {
+        label: 'direct',
+        text: `I am checking${topicTail} and will confirm shortly.`,
+      },
+      {
+        label: 'brief',
+        text: `Checking${topicTail} now. I will get back to you shortly.`,
+      },
+    ];
   }
-  return 'Thanks for the heads-up. I saw this and will take a look.';
+  return [
+    {
+      label: 'warm',
+      text: `Thanks for the heads-up${topicTail}. I saw this and will take a look.`,
+    },
+    {
+      label: 'brief',
+      text: `Got it${topicTail}. I will take a look.`,
+    },
+  ];
 }
 
 function classifyThread(input: {
@@ -724,7 +899,10 @@ function classifyThread(input: {
   context: LocalReviewContext;
 }): CandidateAnalysis | null {
   const messages = input.messages.filter(
-    (message) => !message.is_bot_message && normalizeText(message.content),
+    (message) =>
+      !message.is_bot_message &&
+      !isAssistantControlMessage(message) &&
+      normalizeText(message.content),
   );
   if (messages.length === 0) return null;
   const latest = latestMessage(messages);
@@ -827,12 +1005,14 @@ function classifyThread(input: {
       : score >= 26
         ? 'worth_watching'
         : 'no_reply_needed';
-  const summaryText =
-    section === 'needs_reply'
-      ? `${chatLabel}: ${latestInbound ? `they said "${messageContent(latestInbound)}"` : 'there is a recent inbound message'}.`
-      : section === 'worth_watching'
-        ? `${chatLabel}: worth watching because ${reasons[0] || 'there was recent activity'}.`
-        : `${chatLabel}: no obvious reply needed from the recent exchange.`;
+  const summaryText = buildConversationRecap({
+    chatLabel,
+    messages,
+    latestInbound,
+    latestOutbound,
+    section,
+    reasons,
+  });
   const recommendedAction =
     section === 'needs_reply'
       ? input.chat.is_group
@@ -846,6 +1026,20 @@ function classifyThread(input: {
     chatJid: input.chat.jid,
     messages,
   });
+  const suggestedReplies =
+    section === 'needs_reply'
+      ? buildSuggestedReplyOptions({
+          latestInbound,
+          directQuestion,
+          sensitive,
+          deadline,
+          chatLabel,
+          isGroup: Boolean(input.chat.is_group),
+          contextConfidence: learned.confidence,
+          riskFlags,
+          toneStyleHints: learned.toneStyleHints,
+        })
+      : [];
   const item: RecentTextReviewItem = {
     itemId,
     rank: 0,
@@ -865,20 +1059,8 @@ function classifyThread(input: {
         ? reasons.slice(0, 3).join('; ')
         : 'recent synced Messages activity',
     recommendedAction,
-    suggestedReply:
-      section === 'needs_reply'
-        ? buildSuggestedReply({
-            latestInbound,
-            directQuestion,
-            sensitive,
-            deadline,
-            chatLabel,
-            isGroup: Boolean(input.chat.is_group),
-            contextConfidence: learned.confidence,
-            riskFlags,
-            toneStyleHints: learned.toneStyleHints,
-          })
-        : null,
+    suggestedReply: suggestedReplies[0]?.text || null,
+    suggestedReplies,
     evidenceSnippets: messages
       .slice(-3)
       .map((message) => {
@@ -1022,6 +1204,36 @@ function safeJsonParse<T>(value: string, fallback: T): T {
   }
 }
 
+function normalizeSuggestedReplies(
+  value: unknown,
+): RecentTextReviewSuggestedReply[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item, index) => {
+      if (typeof item === 'string') {
+        const text = sanitizeSnippet(item, 220);
+        return text
+          ? {
+              label: index === 0 ? 'suggested' : `option ${index + 1}`,
+              text,
+            }
+          : null;
+      }
+      if (!item || typeof item !== 'object') return null;
+      const record = item as Record<string, unknown>;
+      const text = sanitizeSnippet(String(record.text || ''), 220);
+      if (!text) return null;
+      return {
+        label:
+          sanitizeSnippet(String(record.label || ''), 32) ||
+          `option ${index + 1}`,
+        text,
+      };
+    })
+    .filter((item): item is RecentTextReviewSuggestedReply => Boolean(item))
+    .slice(0, 3);
+}
+
 export function buildRecentTextReviewProviderPrompt(input: {
   windowLabel: string;
   items: RecentTextReviewItem[];
@@ -1038,6 +1250,10 @@ export function buildRecentTextReviewProviderPrompt(input: {
       whyText: sanitizeSnippet(item.whyText, 180),
       recommendedAction: sanitizeSnippet(item.recommendedAction, 160),
       suggestedReply: sanitizeSnippet(item.suggestedReply || '', 180),
+      suggestedReplies: (item.suggestedReplies || []).map((reply) => ({
+        label: sanitizeSnippet(reply.label, 32),
+        text: sanitizeSnippet(reply.text, 180),
+      })),
       contextConfidence: item.contextLink.confidence,
       riskFlags: item.riskFlags.map((flag) => sanitizeSnippet(flag, 64)),
       evidenceSnippets: item.evidenceSnippets
@@ -1049,8 +1265,10 @@ export function buildRecentTextReviewProviderPrompt(input: {
     'Return JSON only with key items.',
     'Do not include phone numbers, JIDs, raw identifiers, secrets, or private transcript bodies beyond the sanitized snippets provided.',
     'Stay grounded in the provided snippets and learned context summaries; do not invent commitments or availability.',
-    'Each item may include summaryText, whyText, recommendedAction, suggestedReply, and section.',
-    'Suggested replies must be safe suggestions only, not sendable actions.',
+    'Each item may include summaryText, whyText, recommendedAction, suggestedReply, suggestedReplies, and section.',
+    'summaryText should be a fuller recap of the recent exchange and current state, not just one activity stat.',
+    'suggestedReplies should contain 2-3 grounded options with labels like warm, direct, brief, or careful.',
+    'Suggested replies must be safe suggestions only, not sendable actions, and must not imply the user approved sending.',
     `Window: ${sanitizeSnippet(input.windowLabel, 80)}`,
     `Learned context summaries: ${JSON.stringify(input.learnedContext.map((line) => sanitizeSnippet(line, 180)).slice(0, 10))}`,
     `Review items: ${JSON.stringify(sanitizedItems)}`,
@@ -1150,6 +1368,7 @@ async function enhanceWithProvider(input: {
         whyText?: string;
         recommendedAction?: string;
         suggestedReply?: string;
+        suggestedReplies?: unknown;
       }>;
     }>(rawOutput, {});
     if (!Array.isArray(parsed.items)) continue;
@@ -1179,6 +1398,23 @@ async function enhanceWithProvider(input: {
       }
       if (patch.suggestedReply) {
         existing.suggestedReply = sanitizeSnippet(patch.suggestedReply, 220);
+      }
+      const suggestedReplies = normalizeSuggestedReplies(
+        patch.suggestedReplies,
+      );
+      if (suggestedReplies.length > 0) {
+        existing.suggestedReplies = suggestedReplies;
+        existing.suggestedReply = suggestedReplies[0]?.text || null;
+      } else if (
+        patch.suggestedReply &&
+        (!existing.suggestedReplies || existing.suggestedReplies.length === 0)
+      ) {
+        existing.suggestedReplies = [
+          {
+            label: 'suggested',
+            text: sanitizeSnippet(patch.suggestedReply, 220),
+          },
+        ];
       }
     }
     recordOpenAiUsageState({
@@ -1349,16 +1585,35 @@ export async function reviewRecentTexts(
   });
 }
 
-function formatItemLine(item: RecentTextReviewItem): string {
-  const reply = item.suggestedReply
-    ? `\n   Suggested: "${sanitizeSnippet(item.suggestedReply, 220)}"`
-    : '';
+function formatItemLine(
+  item: RecentTextReviewItem,
+  channel: 'telegram' | 'bluebubbles',
+): string {
+  const replyOptions =
+    item.suggestedReplies && item.suggestedReplies.length > 0
+      ? item.suggestedReplies
+      : item.suggestedReply
+        ? [{ label: 'suggested', text: item.suggestedReply }]
+        : [];
+  const reply =
+    replyOptions.length > 0
+      ? [
+          '\n   Suggested replies:',
+          ...replyOptions
+            .slice(0, channel === 'bluebubbles' ? 3 : 2)
+            .map(
+              (option) =>
+                `   - ${sanitizeSnippet(option.label, 32)}: "${sanitizeSnippet(option.text, 220)}"`,
+            ),
+        ].join('\n')
+      : '';
   const caution = item.riskFlags.includes('group_chat_confirm_audience')
     ? '\n   Caution: group chat - draft only until you review it.'
     : item.riskFlags.includes('low_context_confidence')
       ? '\n   Caution: low context confidence - confirm before drafting.'
       : '';
-  return `${item.rank}. ${item.chatLabel}: ${sanitizeSnippet(item.summaryText, 220)}\n   Why: ${sanitizeSnippet(item.whyText, 180)}\n   Next: ${sanitizeSnippet(item.recommendedAction, 180)}${caution}${reply}`;
+  const summaryLimit = channel === 'bluebubbles' ? 360 : 260;
+  return `${item.rank}. ${item.chatLabel}: ${sanitizeSnippet(item.summaryText, summaryLimit)}\n   Why: ${sanitizeSnippet(item.whyText, 180)}\n   Next: ${sanitizeSnippet(item.recommendedAction, 180)}${caution}${reply}`;
 }
 
 export function formatRecentTextReviewReply(input: {
@@ -1370,16 +1625,21 @@ export function formatRecentTextReviewReply(input: {
     return `I didn't find any recent synced Messages that need attention over ${result.window.label}.`;
   }
   const topLimit = input.channel === 'bluebubbles' ? 3 : 6;
-  const needs = result.needsReply.slice(0, topLimit).map(formatItemLine);
+  const needs = result.needsReply
+    .slice(0, topLimit)
+    .map((item) => formatItemLine(item, input.channel));
   const watching = result.worthWatching
     .slice(0, Math.max(0, topLimit - needs.length))
-    .map(formatItemLine);
+    .map((item) => formatItemLine(item, input.channel));
   const noReply =
     input.channel === 'telegram'
-      ? result.noReplyNeeded.slice(0, 3).map(formatItemLine)
+      ? result.noReplyNeeded
+          .slice(0, 3)
+          .map((item) => formatItemLine(item, input.channel))
       : [];
   const sections = [
     result.summaryText,
+    result.providerNote,
     needs.length > 0 ? ['Needs reply', ...needs].join('\n') : null,
     watching.length > 0 ? ['Worth watching', ...watching].join('\n') : null,
     noReply.length > 0 ? ['No reply needed', ...noReply].join('\n') : null,
@@ -1421,6 +1681,12 @@ export function buildRecentTextReviewSeedJson(
       summaryText: item.summaryText,
       whyText: item.whyText,
       suggestedReply: item.suggestedReply || null,
+      suggestedReplies: (item.suggestedReplies || [])
+        .slice(0, 3)
+        .map((reply) => ({
+          label: reply.label,
+          text: reply.text,
+        })),
       recommendedAction: item.recommendedAction,
       outcomeState: 'reviewed' satisfies RecentTextReviewOutcome,
     })),
@@ -1452,6 +1718,7 @@ export function parseRecentTextReviewSeedJson(
     summaryText: string;
     whyText?: string;
     suggestedReply?: string | null;
+    suggestedReplies?: RecentTextReviewSuggestedReply[];
     recommendedAction?: string;
   }>;
 } | null {
@@ -1597,7 +1864,9 @@ export function parseRecentTextReviewSeedJson(
         suggestedReply:
           typeof item!.suggestedReply === 'string'
             ? sanitizeSnippet(item!.suggestedReply, 220)
-            : null,
+            : normalizeSuggestedReplies(item!.suggestedReplies)[0]?.text ||
+              null,
+        suggestedReplies: normalizeSuggestedReplies(item!.suggestedReplies),
         recommendedAction: sanitizeSnippet(
           String(item!.recommendedAction || ''),
           200,
@@ -1624,6 +1893,7 @@ export interface RecentTextReviewItemFollowup {
   item: ParsedRecentTextReviewSeed['items'][number];
   style?: 'shorter' | 'warmer' | 'more_direct' | null;
   timingHint?: string | null;
+  suggestedReply?: RecentTextReviewSuggestedReply | null;
 }
 
 function findReviewSeedItemByRank(
@@ -1655,6 +1925,34 @@ function inferReviewDraftStyle(
   return null;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function inferSuggestedReplySelection(
+  normalized: string,
+  item: ParsedRecentTextReviewSeed['items'][number],
+): RecentTextReviewSuggestedReply | null {
+  const options = item.suggestedReplies || [];
+  if (options.length === 0) {
+    return item.suggestedReply
+      ? { label: 'suggested', text: item.suggestedReply }
+      : null;
+  }
+  const optionNumber = normalized.match(/\b(?:option|reply)\s*(\d+)\b/i);
+  if (optionNumber) {
+    const index = Number.parseInt(optionNumber[1] || '', 10) - 1;
+    return options[index] || null;
+  }
+  const labelMatch = options.find((option) => {
+    const label = normalizeText(option.label).toLowerCase();
+    return (
+      label && new RegExp(`\\b${escapeRegex(label)}\\b`, 'i').test(normalized)
+    );
+  });
+  return labelMatch || options[0] || null;
+}
+
 export function parseRecentTextReviewItemFollowup(input: {
   seedJson?: string | null;
   userText: string;
@@ -1682,13 +1980,20 @@ export function parseRecentTextReviewItemFollowup(input: {
       kind: 'draft',
       item: currentItem,
       style: inferReviewDraftStyle(normalized),
+      suggestedReply: inferSuggestedReplySelection(normalized, currentItem),
     };
   }
 
   const draftMatch =
     normalized.match(
       /(?:draft|reply to|respond to|make|rewrite|warm(?:er)?|more direct|shorter)\s*(?:item\s*)?(?:#|number\s*)?(\d+)/i,
-    ) || normalized.match(/^(?:#|number\s*)?(\d+)\b/i);
+    ) ||
+    (/\b(?:draft|reply|respond|make|rewrite|warm(?:er)?|direct|shorter|option)\b/i.test(
+      normalized,
+    )
+      ? normalized.match(/(?:#|number\s*)(\d+)\b/i)
+      : null) ||
+    normalized.match(/^(?:#|number\s*)?(\d+)\b/i);
   if (draftMatch) {
     const item = findReviewSeedItemByRank(seed, draftMatch[1]);
     if (!item) return null;
@@ -1696,6 +2001,7 @@ export function parseRecentTextReviewItemFollowup(input: {
       kind: 'draft',
       item,
       style: inferReviewDraftStyle(normalized),
+      suggestedReply: inferSuggestedReplySelection(normalized, item),
     };
   }
 
@@ -2118,8 +2424,17 @@ export function buildReviewDraftPrompt(input: {
         : followup.style === 'shorter'
           ? 'Make it shorter.'
           : 'Draft a reply.';
-  const suggested = followup.item.suggestedReply
-    ? ` Starting suggestion: "${followup.item.suggestedReply}".`
+  const selectedSuggestion =
+    followup.suggestedReply ||
+    (followup.item.suggestedReply
+      ? { label: 'suggested', text: followup.item.suggestedReply }
+      : null);
+  const suggested = selectedSuggestion
+    ? ` Starting ${
+        normalizeText(selectedSuggestion.label).toLowerCase() === 'suggested'
+          ? 'suggestion'
+          : `${selectedSuggestion.label} suggestion`
+      }: "${selectedSuggestion.text}".`
     : '';
   return {
     item: followup.item,

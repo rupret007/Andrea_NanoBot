@@ -99,13 +99,34 @@ npm run debug:cross-channel-handoffs
 For BlueBubbles channel changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/bluebubbles-self-thread.test.ts src/channels/bluebubbles.test.ts src/messages-fluidity.test.ts src/bluebubbles-control-server.test.ts src/bluebubbles-monitor-state.test.ts src/message-actions.test.ts src/field-trial-readiness.test.ts src/companion-conversation-binding.test.ts src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/bluebubbles-self-thread.test.ts src/channels/bluebubbles.test.ts src/messages-fluidity.test.ts src/recent-text-review.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/bluebubbles-control-server.test.ts src/bluebubbles-monitor-state.test.ts src/message-actions.test.ts src/field-trial-readiness.test.ts src/companion-conversation-binding.test.ts src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts
 npm run debug:bluebubbles
 npm run debug:bluebubbles -- --live
 npm run openclaw:bridge:status -- --json
 ```
 
 On the Mac mini, prefer local `127.0.0.1:1234` first and keep the Cloudflare BlueBubbles URL as fallback/diagnostic only. If Andrea cannot reach the local endpoint, `debug:bluebubbles -- --live` should read as `transport_unreachable`, not a generic healthy/degraded blur.
+
+For BlueBubbles communication-summary or suggested-reply changes, verify:
+
+- current-thread and named-thread summaries produce a fuller recap, not only
+  activity counts
+- wake/control text such as `@Andrea summarize this` is excluded from the
+  summarized conversation body
+- recent-text review shows two or three suggested replies when useful
+- `draft #1`, `draft #1 option 2`, `make #2 warmer`, `send it`, and
+  `send it later` remain same-thread and approval-first
+- group, low-confidence, and sensitive threads stay draft/caution-first
+
+Restart the macOS service before judging live messaging proof after repo-side
+messaging changes:
+
+```bash
+npm run build
+npm run mac:services:restart
+npm run services:status
+npm run integrations:status -- --json
+```
 
 Optional Mac-offline feasibility check only:
 
@@ -156,6 +177,7 @@ For missions and multi-step execution changes, add:
 
 ```bash
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/missions.test.ts src/assistant-capability-router.test.ts src/assistant-capabilities.test.ts src/cross-channel-handoffs.test.ts
+npm run debug:missions -- --dry-run
 npm run debug:missions
 ```
 
@@ -385,7 +407,7 @@ Important truth for this host:
 - when hostname resolution is brittle, prefer `BLUEBUBBLES_BASE_URL_CANDIDATES` with `127.0.0.1` first on the Mac mini and the Cloudflare URL as fallback/diagnostic only
 - after repo-side messaging changes, restart the local services before judging live proof so `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` reflects the current candidate
 - if `SERVICE: running_ready` and the blocker is external, treat that as an exact release-candidate caveat rather than a host failure
-- for Google Calendar specifically, `FAILURE_KIND: missing_config` means the current repo lacks usable credentials, and `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked and you should rerun the current repo auth flow
+- for Google Calendar specifically, `FAILURE_KIND: missing_config` means the current repo lacks usable credentials, and `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked; if the Google OAuth app is still in Testing, Calendar refresh tokens can expire after 7 days, so publish/verify it in Google Cloud Console before rerunning the current repo auth flow once
 - if the browser reaches the OAuth callback but `auth` still times out, finish the same run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
 - on this host, `npm run debug:google-calendar` is now the canonical live read/write proof surface and should report `PROOF_STATE: live_proven` when Google Calendar is healthy
 - if you changed `docs/alexa/interaction-model.en-US.json`, finish the console import/build and then run `npm run setup -- --step alexa-model-sync mark-synced`
@@ -683,6 +705,7 @@ The v32 General Intelligence Control Plane sits above all of it:
 
 - focused v32 gate: `test:autonomy`, `test:action-lifecycle`, `test:action-preflight`, `test:blackboard`, `test:episodes`, `test:capabilities`, `test:strategy-evals`, and `test:agi-gauntlet`
 - `debug:agi-readiness` runs the ten-scenario whole-assistant gauntlet against an isolated synthetic database by default; its score is a bounded-readiness signal, never an AGI claim
+- `debug:agi-lab` combines proof freshness, integration health, intelligence regression stability, council quality, cognitive trajectory, pilot feedback, and improvement-pipeline readiness into one metadata-only promotion gate
 - every action intent carries an autonomy level (0–7); levels 5+ always require explicit approval, level 6 adds operator context, level 7 is never executed
 - the action preflight composes critic review, autonomy policy, reality/truth state, and tool reliability into one verdict; the strictest signal always wins and nothing in v32 executes side effects itself
 

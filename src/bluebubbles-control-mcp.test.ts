@@ -41,6 +41,10 @@ async function startControlStub(): Promise<{
       res.end(JSON.stringify({ sent: true }));
       return;
     }
+    if ((req.url || '').startsWith('/v1/bluebubbles/media/')) {
+      res.end(JSON.stringify({ handled: true, attachment: { kind: 'image' } }));
+      return;
+    }
     if ((req.url || '').startsWith('/v1/bluebubbles/message-actions/')) {
       res.end(JSON.stringify({ handled: true }));
       return;
@@ -111,6 +115,13 @@ describe('BlueBubbles MCP bridge helpers', () => {
     await handlers.bluebubbles_start_proof_drill({
       chatJid: 'bb:iMessage;-;+14695405551',
     });
+    await handlers.bluebubbles_get_media_metadata({
+      attachmentId: 'media-1',
+    });
+    await handlers.bluebubbles_analyze_media({
+      attachmentId: 'media-1',
+      prompt: 'What is in this?',
+    });
 
     expect(stub.requests).toEqual(
       expect.arrayContaining([
@@ -126,10 +137,19 @@ describe('BlueBubbles MCP bridge helpers', () => {
           method: 'POST',
           url: '/v1/bluebubbles/proof-drill/start',
         }),
+        expect.objectContaining({
+          method: 'GET',
+          url: '/v1/bluebubbles/media/media-1/metadata',
+        }),
+        expect.objectContaining({
+          method: 'POST',
+          url: '/v1/bluebubbles/media/media-1/analyze',
+        }),
       ]),
     );
     expect(stub.requests[0]?.body).toContain('Hello there');
     expect(stub.requests[1]?.body).toContain('later tonight');
     expect(stub.requests[2]?.body).toContain('+14695405551');
+    expect(stub.requests[4]?.body).toContain('What is in this?');
   });
 });

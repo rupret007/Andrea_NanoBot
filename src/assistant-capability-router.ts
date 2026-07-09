@@ -101,6 +101,9 @@ function isReviewItemFollowup(value: string): boolean {
     /^(?:(?:draft|reply to|respond to|make|rewrite|warm(?:er)?|more direct|shorter)\s*(?:item\s*)?)?(?:#|number\s*)?\d+\b/i.test(
       trimmed,
     ) ||
+    /\b(?:draft|reply|respond|make|rewrite|warm(?:er)?|direct|shorter|option)\b.+(?:#|number\s*)\d+\b/i.test(
+      trimmed,
+    ) ||
     new RegExp(
       `^remind me(?:\\s+(?:about|to review|to reply to|on|for))?\\s+${pronounTarget}(?:\\s+.+)?$`,
       'i',
@@ -1252,6 +1255,21 @@ function matchKnowledgePrompt(
 
 function matchMediaPrompt(normalized: string): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
+  if (
+    /\b(?:analy[sz]e|look at|describe|what'?s in|what is in|read|inspect)\b/.test(
+      lower,
+    ) &&
+    /\b(?:image|photo|picture|screenshot|video|attachment|media|this)\b/.test(
+      lower,
+    )
+  ) {
+    return {
+      capabilityId: 'media.analyze',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched inbound media analysis phrasing',
+    };
+  }
   const match = lower.match(
     /^(?:generate|create|make) (?:an |a )?image of (.+)$|^draw (.+)$|^illustrate (.+)$/i,
   );

@@ -15,6 +15,11 @@ import {
 } from '../host-control.js';
 import { logger } from '../logger.js';
 import {
+  buildMediaAttachmentId,
+  cacheInboundMediaBytes,
+  inferMediaKindFromMime,
+} from '../media-cache.js';
+import {
   buildForgetHelpText,
   buildLearningStatusText,
   buildMemoryStatusText,
@@ -44,6 +49,7 @@ import {
   Channel,
   ChannelHealthSnapshot,
   ChannelInlineAction,
+  MessageMediaAttachment,
   OnChatMetadata,
   OnInboundMessage,
   ReplyMessageRef,
@@ -371,7 +377,11 @@ async function sendTelegramMessage(
 }
 
 async function sendTelegramArtifact(
-  api: { sendPhoto: Api['sendPhoto'] },
+  api: {
+    sendPhoto: Api['sendPhoto'];
+    sendVideo: Api['sendVideo'];
+    sendDocument: Api['sendDocument'];
+  },
   chatId: string | number,
   artifact: ChannelArtifact,
   options: {
@@ -380,25 +390,25 @@ async function sendTelegramArtifact(
     caption?: string;
   } = {},
 ): Promise<SendMessageResult> {
-  if (artifact.kind !== 'image') {
-    throw new Error(`Unsupported Telegram artifact kind: ${artifact.kind}`);
-  }
-  const sent = await api.sendPhoto(
-    chatId,
-    new InputFile(
-      Buffer.from(artifact.bytesBase64, 'base64'),
-      artifact.filename,
-    ),
-    {
-      ...(options.message_thread_id
-        ? { message_thread_id: options.message_thread_id }
-        : {}),
-      ...(options.reply_to_message_id
-        ? { reply_to_message_id: options.reply_to_message_id }
-        : {}),
-      ...(options.caption ? { caption: options.caption.slice(0, 1024) } : {}),
-    },
+  const file = new InputFile(
+    Buffer.from(artifact.bytesBase64, 'base64'),
+    artifact.filename,
   );
+  const baseOptions = {
+    ...(options.message_thread_id
+      ? { message_thread_id: options.message_thread_id }
+      : {}),
+    ...(options.reply_to_message_id
+      ? { reply_to_message_id: options.reply_to_message_id }
+      : {}),
+    ...(options.caption ? { caption: options.caption.slice(0, 1024) } : {}),
+  };
+  const sent =
+    artifact.kind === 'image'
+      ? await api.sendPhoto(chatId, file, baseOptions)
+      : artifact.kind === 'video'
+        ? await api.sendVideo(chatId, file, baseOptions)
+        : await api.sendDocument(chatId, file, baseOptions);
   return { platformMessageId: sent.message_id.toString() };
 }
 
@@ -564,6 +574,59 @@ export class TelegramChannel implements Channel {
       lastError: null,
       detail: 'Telegram polling has not started yet.',
     };
+  }
+
+  private async cacheTelegramFile(input: {
+    fileId: string;
+    attachment: MessageMediaAttachment;
+  }): Promise<MessageMediaAttachment> {
+    if (!this.bot) return input.attachment;
+    try {
+      const file = await this.bot.api.getFile(input.fileId);
+      if (!file.file_path) {
+        return input.attachment;
+      }
+      const response = await fetch(
+        `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`,
+      );
+      if (!response.ok) {
+        throw new Error(
+          `Telegram file download failed with ${response.status}`,
+        );
+      }
+      const bytes = Buffer.from(await response.arrayBuffer());
+      const mimeType =
+        response.headers.get('content-type') ||
+        input.attachment.mimeType ||
+        'application/octet-stream';
+      const cached = cacheInboundMediaBytes({
+        bytes,
+        mimeType,
+        filename: input.attachment.filename,
+      });
+      return {
+        ...input.attachment,
+        mimeType,
+        sizeBytes: cached.sizeBytes,
+        localPath: cached.localPath,
+        contentHash: cached.contentHash,
+        fetchStatus: 'cached',
+        updatedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      logger.warn({ err }, 'Telegram inbound media cache failed');
+      return {
+        ...input.attachment,
+        fetchStatus: 'download_failed',
+        metadataJson: JSON.stringify({
+          ...(input.attachment.metadataJson
+            ? { raw: input.attachment.metadataJson }
+            : {}),
+          downloadError: err instanceof Error ? err.message : String(err),
+        }).slice(0, 4000),
+        updatedAt: new Date().toISOString(),
+      };
+    }
   }
 
   private updateHealth(
@@ -1258,7 +1321,7 @@ export class TelegramChannel implements Channel {
       );
     });
 
-    const storeNonText = (
+    const storeNonText = async (
       ctx: {
         chat: { id: number | string; type: string };
         from?: { id?: number | string; first_name?: string; username?: string };
@@ -1268,11 +1331,45 @@ export class TelegramChannel implements Channel {
           message_thread_id?: number;
           reply_to_message?: { message_id: number };
           caption?: string;
-          document?: { file_name?: string };
+          photo?: Array<{
+            file_id: string;
+            file_unique_id?: string;
+            width?: number;
+            height?: number;
+            file_size?: number;
+          }>;
+          video?: {
+            file_id: string;
+            file_unique_id?: string;
+            file_name?: string;
+            mime_type?: string;
+            duration?: number;
+            width?: number;
+            height?: number;
+            file_size?: number;
+          };
+          document?: {
+            file_id?: string;
+            file_unique_id?: string;
+            file_name?: string;
+            mime_type?: string;
+            file_size?: number;
+          };
           sticker?: { emoji?: string };
         };
       },
       placeholder: string,
+      attachmentInput?: {
+        kindHint: 'image' | 'video' | 'file';
+        fileId?: string;
+        sourceId?: string;
+        filename?: string | null;
+        mimeType?: string | null;
+        sizeBytes?: number | null;
+        width?: number | null;
+        height?: number | null;
+        durationMs?: number | null;
+      },
     ) => {
       const chatJid = `tg:${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
@@ -1285,6 +1382,48 @@ export class TelegramChannel implements Channel {
         ctx.from?.id?.toString() ||
         'Unknown';
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const messageId = ctx.message.message_id.toString();
+      let attachments: MessageMediaAttachment[] = [];
+      if (attachmentInput?.fileId) {
+        const now = new Date().toISOString();
+        const attachment: MessageMediaAttachment = {
+          attachmentId: buildMediaAttachmentId({
+            sourceChannel: 'telegram',
+            chatJid,
+            messageId,
+            sourceId: attachmentInput.sourceId || attachmentInput.fileId,
+            filename: attachmentInput.filename,
+          }),
+          chatJid,
+          messageId,
+          sourceChannel: 'telegram',
+          kind:
+            attachmentInput.kindHint === 'file'
+              ? inferMediaKindFromMime(
+                  attachmentInput.mimeType,
+                  attachmentInput.filename,
+                )
+              : attachmentInput.kindHint,
+          mimeType: attachmentInput.mimeType || null,
+          filename: attachmentInput.filename || null,
+          sizeBytes: attachmentInput.sizeBytes ?? null,
+          sourceId: attachmentInput.sourceId || attachmentInput.fileId,
+          width: attachmentInput.width ?? null,
+          height: attachmentInput.height ?? null,
+          durationMs: attachmentInput.durationMs ?? null,
+          fetchStatus: 'metadata_only',
+          analysisStatus: 'not_requested',
+          metadataJson: JSON.stringify(attachmentInput).slice(0, 4000),
+          createdAt: now,
+          updatedAt: now,
+        };
+        attachments = [
+          await this.cacheTelegramFile({
+            fileId: attachmentInput.fileId,
+            attachment,
+          }),
+        ];
+      }
 
       const isGroup =
         ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
@@ -1297,7 +1436,7 @@ export class TelegramChannel implements Channel {
       );
       this.rememberInbound(chatJid, timestamp);
       this.opts.onMessage(chatJid, {
-        id: ctx.message.message_id.toString(),
+        id: messageId,
         chat_jid: chatJid,
         sender: ctx.from?.id?.toString() || '',
         sender_name: senderName,
@@ -1307,23 +1446,84 @@ export class TelegramChannel implements Channel {
         thread_id: ctx.message.message_thread_id?.toString(),
         reply_to_id: ctx.message.reply_to_message?.message_id?.toString(),
         reply_to: extractTelegramReplyRef(ctx.message),
+        attachments,
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
-    this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
-    this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
+    this.bot.on('message:photo', (ctx) => {
+      const photo = [...(ctx.message.photo || [])].sort(
+        (left, right) => (right.file_size || 0) - (left.file_size || 0),
+      )[0];
+      storeNonText(ctx, '[Photo]', {
+        kindHint: 'image',
+        fileId: photo?.file_id,
+        sourceId: photo?.file_unique_id || photo?.file_id,
+        mimeType: 'image/jpeg',
+        filename: photo ? `telegram-photo-${ctx.message.message_id}.jpg` : null,
+        sizeBytes: photo?.file_size ?? null,
+        width: photo?.width ?? null,
+        height: photo?.height ?? null,
+      }).catch((err) =>
+        logger.error({ err }, 'Telegram photo ingestion failed'),
+      );
+    });
+    this.bot.on('message:video', (ctx) => {
+      const video = ctx.message.video;
+      storeNonText(ctx, '[Video]', {
+        kindHint: 'video',
+        fileId: video?.file_id,
+        sourceId: video?.file_unique_id || video?.file_id,
+        mimeType: video?.mime_type || 'video/mp4',
+        filename:
+          video?.file_name || `telegram-video-${ctx.message.message_id}.mp4`,
+        sizeBytes: video?.file_size ?? null,
+        width: video?.width ?? null,
+        height: video?.height ?? null,
+        durationMs: video?.duration ? video.duration * 1000 : null,
+      }).catch((err) =>
+        logger.error({ err }, 'Telegram video ingestion failed'),
+      );
+    });
+    this.bot.on('message:voice', (ctx) =>
+      storeNonText(ctx, '[Voice message]').catch((err) =>
+        logger.error({ err }, 'Telegram voice ingestion failed'),
+      ),
+    );
+    this.bot.on('message:audio', (ctx) =>
+      storeNonText(ctx, '[Audio]').catch((err) =>
+        logger.error({ err }, 'Telegram audio ingestion failed'),
+      ),
+    );
     this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
+      const document = ctx.message.document;
+      const name = document?.file_name || 'file';
+      storeNonText(ctx, `[Document: ${name}]`, {
+        kindHint: 'file',
+        fileId: document?.file_id,
+        sourceId: document?.file_unique_id || document?.file_id,
+        mimeType: document?.mime_type || null,
+        filename: name,
+        sizeBytes: document?.file_size ?? null,
+      }).catch((err) =>
+        logger.error({ err }, 'Telegram document ingestion failed'),
+      );
     });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
-      storeNonText(ctx, `[Sticker ${emoji}]`);
+      storeNonText(ctx, `[Sticker ${emoji}]`).catch((err) =>
+        logger.error({ err }, 'Telegram sticker ingestion failed'),
+      );
     });
-    this.bot.on('message:location', (ctx) => storeNonText(ctx, '[Location]'));
-    this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
+    this.bot.on('message:location', (ctx) =>
+      storeNonText(ctx, '[Location]').catch((err) =>
+        logger.error({ err }, 'Telegram location ingestion failed'),
+      ),
+    );
+    this.bot.on('message:contact', (ctx) =>
+      storeNonText(ctx, '[Contact]').catch((err) =>
+        logger.error({ err }, 'Telegram contact ingestion failed'),
+      ),
+    );
 
     this.bot.on('callback_query:data', async (ctx) => {
       const callbackMessage = ctx.callbackQuery.message;

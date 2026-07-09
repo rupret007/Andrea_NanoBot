@@ -23,6 +23,13 @@ scripts/mac-mini-service.sh install
 scripts/mac-mini-service.sh status
 ```
 
+The same launchd path is also exposed through package scripts:
+
+```bash
+npm run mac:services:install
+npm run mac:services:status
+```
+
 The service uses the current checkout path as its working directory. If the
 repo moves, run `scripts/mac-mini-service.sh install` again so the rendered
 plist points to the new path.
@@ -36,8 +43,40 @@ scripts/mac-mini-service.sh logs
 scripts/agi-doctor.sh
 ```
 
+Equivalent npm wrappers:
+
+```bash
+npm run mac:services:status
+npm run mac:services:restart
+npm run mac:services:logs
+npm run mac:doctor
+```
+
 The service label defaults to `com.nanoclaw.mac-mini`. Override it with
 `NANOCLAW_LAUNCHD_LABEL` before install if this Mac needs multiple checkouts.
+
+## Post-change verification
+
+After repo-side runtime, messaging, or BlueBubbles changes:
+
+```bash
+npm run build
+npm run mac:services:restart
+npm run mac:services:status
+npm run services:status
+npm run setup -- --step verify
+npm run debug:status
+```
+
+Confirm the active root is the intended checkout, host state is
+`running_ready`, and the serving commit matches workspace `HEAD`. For
+BlueBubbles changes, add the focused test suite and live proof only when live
+Messages side effects are acceptable:
+
+```bash
+npm test -- src/recent-text-review.test.ts src/messages-fluidity.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/channels/bluebubbles.test.ts
+npm run debug:bluebubbles -- --live
+```
 
 ## Backups
 

@@ -23,6 +23,11 @@ const THREAD_SUMMARY_FALLBACK_NOTE =
 const THREAD_SUMMARY_OPENAI_TIMEOUT_MS = 12_000;
 const BLUEBUBBLES_COUNCIL_SNIPPET_LIMIT = 900;
 
+export interface BlueBubblesSuggestedReply {
+  label: string;
+  text: string;
+}
+
 function normalizeText(value: string | undefined): string {
   return (value || '')
     .replace(/[\u201c\u201d]/g, '"')
@@ -145,6 +150,7 @@ function buildThreadSummaryFallbackResult(): {
   lead: null;
   digest: null;
   bullets: [];
+  suggestedReplies: [];
   source: 'fallback';
   fallbackNote: string;
 } {
@@ -152,6 +158,7 @@ function buildThreadSummaryFallbackResult(): {
     lead: null,
     digest: null,
     bullets: [],
+    suggestedReplies: [],
     source: 'fallback',
     fallbackNote: THREAD_SUMMARY_FALLBACK_NOTE,
   };
@@ -212,6 +219,36 @@ function normalizeStringArray(value: unknown, maxItems: number): string[] {
     .slice(0, maxItems);
 }
 
+function normalizeSuggestedReplies(
+  value: unknown,
+  maxItems = 3,
+): BlueBubblesSuggestedReply[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item, index) => {
+      if (typeof item === 'string') {
+        const text = normalizeText(item);
+        return text
+          ? {
+              label: index === 0 ? 'suggested' : `option ${index + 1}`,
+              text,
+            }
+          : null;
+      }
+      if (!item || typeof item !== 'object') return null;
+      const record = item as Record<string, unknown>;
+      const text = normalizeText(String(record.text || ''));
+      if (!text) return null;
+      return {
+        label:
+          normalizeText(String(record.label || '')) || `option ${index + 1}`,
+        text,
+      };
+    })
+    .filter((item): item is BlueBubblesSuggestedReply => Boolean(item))
+    .slice(0, maxItems);
+}
+
 export async function summarizeBlueBubblesThreadDigest(input: {
   chatName: string;
   windowLabel: string;
@@ -223,6 +260,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
   lead: string | null;
   digest: string | null;
   bullets: string[];
+  suggestedReplies: BlueBubblesSuggestedReply[];
   source: 'openai' | 'fallback';
   fallbackNote?: string;
 }> {
@@ -249,7 +287,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
 
   const prompt = [
     'You are Andrea summarizing a synced Messages thread.',
-    'Return JSON only with keys lead, digest, bullets.',
+    'Return JSON only with keys lead, digest, bullets, suggestedReplies.',
     'Stay strictly grounded in the provided transcript.',
     'Do not invent details, relationships, or decisions that are not in the transcript.',
     'Never include raw phone numbers, raw identifiers, or JIDs.',
@@ -258,6 +296,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
     'lead: 1-2 sentences that orient what the conversation was mostly about.',
     'digest: a detailed paragraph or two as one string covering the substantive flow, disagreements, decisions, and ending state.',
     'bullets: 3 to 6 concise bullets for notable points, shifts, decisions, or clear follow-up needs.',
+    'suggestedReplies: 2-3 safe reply options when the user likely owes a reply, each with label and text. Use an empty array if no reply is likely owed.',
     `Context JSON: ${JSON.stringify(input)}`,
   ].join('\n');
   const providerMode = detectOpenAiProviderMode(openAi.baseUrl);
@@ -337,10 +376,14 @@ export async function summarizeBlueBubblesThreadDigest(input: {
         lead?: string;
         digest?: string;
         bullets?: unknown;
+        suggestedReplies?: unknown;
       }>(rawOutput, {});
       const lead = normalizeText(parsed.lead);
       const digest = normalizeText(parsed.digest);
       const bullets = normalizeStringArray(parsed.bullets, 6);
+      const suggestedReplies = normalizeSuggestedReplies(
+        parsed.suggestedReplies,
+      );
       if (!lead && !digest && bullets.length === 0) {
         continue;
       }
@@ -357,6 +400,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
         lead: lead || null,
         digest: digest || null,
         bullets,
+        suggestedReplies,
         source: 'openai',
       };
     }

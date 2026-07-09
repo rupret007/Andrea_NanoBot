@@ -120,7 +120,9 @@ describe('integration doctor', () => {
     );
     expect(calendar?.state).toBe('needs_auth');
     expect(calendar?.credentialState).toBe('invalid');
-    expect(calendar?.nextAction).toContain('Reauthorize Google Calendar');
+    expect(calendar?.nextAction).toContain(
+      'publish/verify the app in Google Cloud Console',
+    );
   });
 
   it('classifies BlueBubbles as proof-needed while transport is healthy', () => {

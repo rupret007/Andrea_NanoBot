@@ -501,6 +501,7 @@ export async function buildCurrentIntelligenceProgressReport(
     groupFolder?: string;
     baseline?: IntelligenceProgressBaseline | null;
     now?: Date;
+    fullRegression?: boolean;
   } = {},
 ): Promise<IntelligenceProgressReport> {
   const now = params.now || new Date();
@@ -518,11 +519,15 @@ export async function buildCurrentIntelligenceProgressReport(
     now: generatedAt,
     persist: false,
   });
-  const intelligenceRegressionReport = await runIntelligenceRegressionHarness({
-    runId: `intel-progress-${now.getTime().toString(36)}`,
-    recordToPlatform: false,
-    reflectTurns: false,
-  });
+  const intelligenceRegressionReport =
+    params.fullRegression === false
+      ? summarizeAgiSafetyAsRegressionReport(agiReport)
+      : await runIntelligenceRegressionHarness({
+          runId: `intel-progress-${now.getTime().toString(36)}`,
+          recordToPlatform: false,
+          reflectTurns: false,
+          scenarioTimeoutMs: 15_000,
+        });
   const cognition = buildCognitiveDoctorReport();
   const cognitionTraceHealth =
     cognition.privacy.rawPrivateBodiesStored ||
@@ -542,4 +547,36 @@ export async function buildCurrentIntelligenceProgressReport(
     },
     params.baseline || null,
   );
+}
+
+export function summarizeAgiSafetyAsRegressionReport(
+  agiReport: ReturnType<typeof runAgiGauntlet>,
+): IntelligenceRegressionHarnessReport {
+  const safetyScenarioIds = new Set([
+    'ambiguous_action',
+    'broken_tool',
+    'recovery_problem',
+    'safety_problem',
+    'optional_surface_boundary',
+  ]);
+  const safetyScenarios = agiReport.results.filter((result) =>
+    safetyScenarioIds.has(result.scenarioId),
+  );
+  const failed = safetyScenarios.filter(
+    (result) => !result.passed || result.safetyRiskFlags.length > 0,
+  );
+  const criticalScore =
+    safetyScenarios.length === 0
+      ? 1
+      : (safetyScenarios.length - failed.length) / safetyScenarios.length;
+  return {
+    runId: `intel-progress-local-${agiReport.runId}`,
+    mode: 'regression',
+    status: failed.length > 0 ? 'fail' : 'pass',
+    totalScore: agiReport.totalScore,
+    criticalScore,
+    scenarioCount: agiReport.results.length,
+    criticalFailureCount: failed.length,
+    scenarios: [],
+  };
 }

@@ -202,6 +202,31 @@ export function isGoogleCalendarAuthFailureKind(
   );
 }
 
+export function getGoogleCalendarFailureNextAction(
+  kind: GoogleCalendarFailureKind,
+): string {
+  switch (kind) {
+    case 'missing_config':
+      return 'Run `npm run setup -- --step google-calendar auth --client-secret-json "<client-secret.json>"`, then `npm run setup -- --step google-calendar discover --select all`, then `npm run setup -- --step google-calendar validate`.';
+    case 'invalid_refresh_token':
+      return 'If your Google OAuth app is in Testing, Calendar refresh tokens expire after 7 days; publish/verify the app in Google Cloud Console, then re-run Google Calendar auth once and validate again.';
+    case 'token_refresh_failed':
+      return 'Re-run the current-repo Google Calendar auth flow, then validate again. If refresh keeps failing, check the Google OAuth app client id/secret and publishing status.';
+    case 'calendar_access_denied':
+      return 'Confirm the Google OAuth app is allowed to request the configured Calendar scopes and that the Google account granted them, then re-run auth and validate.';
+    case 'calendar_not_found':
+      return 'Run `npm run setup -- --step google-calendar discover --select all` or select the intended explicit calendar ids, then validate again.';
+    case 'temporary_unavailable':
+      return 'Retry validation after the network or Google Calendar API recovers.';
+    case 'calendar_conflict':
+    case 'calendar_write_failed':
+      return 'Inspect the calendar write target and retry the calendar action after confirming the event details.';
+    case 'unknown':
+    default:
+      return 'Inspect the Google Calendar setup error, then re-run auth, discover, and validate on this host if credentials changed.';
+  }
+}
+
 function extractJsonErrorDetail(
   rawText: string,
   fallbackPrefix: string,

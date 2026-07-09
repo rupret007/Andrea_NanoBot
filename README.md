@@ -310,7 +310,9 @@ BlueBubbles is now Andrea's optional bounded Messages bridge, not a core require
 - BlueBubbles V1 now supports all synced personal and group chats, not one pinned linked thread
 - `@Andrea` addresses Andrea, while `@OpenClaw` selects the OpenClaw helper lane for deeper orchestration and skill work
 - Andrea replies only when a message explicitly mentions one of those aliases, so ordinary social chatter does not trigger assistant replies
-- current-chat asks like `summarize this` now use recent `bb:` chat context and can prime recent history from the live BlueBubbles server when local context is thin
+- current-chat asks like `summarize this` now use recent `bb:` chat context, exclude the wake command itself, and can prime recent history from the live BlueBubbles server when local context is thin
+- communication asks now favor fuller conversation recaps plus grounded suggested replies; choosing a suggestion creates one approval-gated draft/action, not an automatic send
+- incoming BlueBubbles and Telegram images/videos are cached as message attachments so Andrea can answer asks like `analyze this photo` or `what is in this video` when OpenAI vision is configured
 - broad asks from Telegram such as `use BlueBubbles and summarize my texts from the past 48 hours` summarize activity across all synced BlueBubbles chats in that time window without exposing raw phone numbers
 - BlueBubbles keeps companion-safe capabilities like daily guidance, communication help, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
 - richer details still hand off explicitly to Telegram when that is the better surface
@@ -320,7 +322,7 @@ On this Mac mini, the Messages bridge is local-first: Andrea has the live `BLUEB
 
 OpenBubbles is still not an active Andrea provider for this Mac mini BlueBubbles bridge.
 
-See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, and exact current limits.
+See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, media analysis behavior, summary/suggested-reply behavior, and exact current limits. See [docs/MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](docs/MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md) for the approval-first send boundary.
 
 ## Relationship-Centered Communication Companion
 
@@ -562,11 +564,12 @@ npm run setup -- --step google-calendar validate
 
 Notes:
 
-- while the Google OAuth app stays in Testing, the Google account must be listed as a test user
+- while the Google OAuth app stays in Testing, the Google account must be listed as a test user, and Google can expire Calendar refresh tokens after 7 days
+- for durable Calendar auth, publish/verify the OAuth app in Google Cloud Console, then rerun `auth`, `discover`, and `validate` once
 - `GOOGLE_CALENDAR_IDS` should stay explicit so Andrea only reads the calendars you selected
 - `npm run setup -- --step google-calendar validate` is the operator truth surface for calendar access on the current host
   - `FAILURE_KIND: missing_config` means the current repo does not have usable Google Calendar credentials yet
-  - `FAILURE_KIND: invalid_refresh_token` usually means an older refresh token went stale and you should rerun `auth` in the current repo instead of copying legacy tokens forward
+  - `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked; if the OAuth app is still in Testing, publish/verify it first, then rerun `auth` in the current repo instead of copying legacy tokens forward
 - if the browser reaches the Google callback but `auth` still times out, finish the same current-repo OAuth run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
 - reminder phrasing still creates reminders, not Google Calendar events
 - a host is only live-proven for Google Calendar writes after `auth`, `discover`, `validate`, and one disposable create-event proof all succeed on that host

@@ -34,6 +34,26 @@ Data is primarily stored on the machine where Andrea is deployed, including:
 - per-chat group folders
 - local logs
 
+BlueBubbles/Messages data is local-first in normal operation: Andrea reads the
+local BlueBubbles endpoint, stores normalized `bb:` chat/message context, and
+keeps runtime state on the host. A Cloudflare BlueBubbles URL may be configured
+as a fallback or diagnostic route for this host, but it should not replace the
+local endpoint as the primary path.
+
+## Local And Cloud Processing
+
+Some communication features can use configured OpenAI-compatible provider
+refinement to improve BlueBubbles conversation summaries and suggested replies.
+When enabled, Andrea should send only bounded context needed for the request,
+prefer sanitized snippets/summaries, and preserve a deterministic local fallback
+when the provider is unavailable.
+
+Recent-text review and provider prompt paths redact phone numbers, JIDs, email
+addresses, and token-like secrets before sending context to providers or writing
+operator proof timelines. Provider usage state should remain metadata-focused
+where possible, such as surface, model tier, outcome, and blocker, rather than
+raw private message bodies, secrets, or hidden reasoning.
+
 ## External Services
 
 Andrea may send request content to external AI or integration providers when those services are configured by the operator.

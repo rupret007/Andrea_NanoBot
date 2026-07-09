@@ -56,6 +56,8 @@ export interface IntelligenceRegressionHarnessOptions {
   reflectTurns?: boolean;
   failOnCriticalRegression?: boolean;
   scenarioIds?: string[];
+  scenarioTimeoutMs?: number;
+  onProgress?: (event: IntelligenceRegressionProgressEvent) => void;
 }
 
 export interface IntelligenceRegressionHarnessReport {
@@ -68,6 +70,17 @@ export interface IntelligenceRegressionHarnessReport {
   criticalFailureCount: number;
   platformReportId?: string;
   scenarios: AndreaPlatformIntelligenceScenarioResult[];
+}
+
+export interface IntelligenceRegressionProgressEvent {
+  runId: string;
+  scenarioId: string;
+  scenarioTitle: string;
+  index: number;
+  total: number;
+  phase: 'start' | 'finish' | 'timeout';
+  status?: 'pass' | 'warn' | 'fail';
+  score?: number;
 }
 
 const FORBIDDEN_LEAKAGE_TERMS = [
@@ -563,6 +576,93 @@ async function runScenario(
   };
 }
 
+function timedOutScenarioResult(
+  scenario: IntelligenceScenarioFixture,
+  timeoutMs: number,
+): AndreaPlatformIntelligenceScenarioResult {
+  const criticalGates =
+    scenario.expected.criticalGates || DEFAULT_CRITICAL_GATES;
+  return {
+    scenarioId: scenario.scenarioId,
+    scenarioTitle: scenario.title,
+    taskFamily: scenario.expected.taskFamily || 'simple',
+    critical: true,
+    passed: false,
+    score: 0,
+    gates: [
+      gate(
+        'trace_completeness',
+        false,
+        `Scenario exceeded ${timeoutMs}ms before producing a trace.`,
+        criticalGates,
+      ),
+      gate(
+        'visible_clarity',
+        false,
+        `Scenario exceeded ${timeoutMs}ms before producing a visible answer.`,
+        criticalGates,
+      ),
+    ],
+    expected: expectedMetadata(scenario),
+    actual: {
+      meaningful: 'false',
+      task_family: 'timeout',
+      approval_need: '',
+      evidence_level: 'unknown',
+      self_check_status: 'timeout',
+      safe_rewrite_applied: 'false',
+      platform_hold_reply: 'false',
+      deliberation_id: '',
+      task_ledger_id: '',
+      trace_grade_id: '',
+      cognitive_run_id: '',
+      logic_decision_id: '',
+      runtime_run_id: '',
+      council_id: '',
+      council_mode: 'none',
+      council_member_count: '0',
+      council_blocked_member_count: '0',
+      council_skipped_member_count: '0',
+      platform_verifier_present: 'false',
+      output_shape: '0_words',
+    },
+    traceIds: [],
+    metadata: {
+      harness_version: 'v14',
+      synthetic_fixture: 'true',
+      raw_content_policy: 'metadata_only',
+      timeout_ms: String(timeoutMs),
+    },
+  };
+}
+
+async function runScenarioWithOptionalTimeout(
+  scenario: IntelligenceScenarioFixture,
+  options: Required<
+    Pick<IntelligenceRegressionHarnessOptions, 'reflectTurns'>
+  > &
+    Pick<IntelligenceRegressionHarnessOptions, 'scenarioTimeoutMs'>,
+): Promise<AndreaPlatformIntelligenceScenarioResult> {
+  const timeoutMs = options.scenarioTimeoutMs || 0;
+  if (timeoutMs <= 0) {
+    return await runScenario(scenario, { reflectTurns: options.reflectTurns });
+  }
+  let timeout: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      runScenario(scenario, { reflectTurns: options.reflectTurns }),
+      new Promise<AndreaPlatformIntelligenceScenarioResult>((resolve) => {
+        timeout = setTimeout(
+          () => resolve(timedOutScenarioResult(scenario, timeoutMs)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 export async function runIntelligenceRegressionHarness(
   options: IntelligenceRegressionHarnessOptions = {},
 ): Promise<IntelligenceRegressionHarnessReport> {
@@ -578,8 +678,31 @@ export async function runIntelligenceRegressionHarness(
           requestedScenarioIds.has(scenario.scenarioId),
         )
       : SCENARIOS;
-  for (const scenario of selectedScenarios) {
-    scenarios.push(await runScenario(scenario, { reflectTurns }));
+  for (const [index, scenario] of selectedScenarios.entries()) {
+    options.onProgress?.({
+      runId,
+      scenarioId: scenario.scenarioId,
+      scenarioTitle: scenario.title,
+      index: index + 1,
+      total: selectedScenarios.length,
+      phase: 'start',
+    });
+    const result = await runScenarioWithOptionalTimeout(scenario, {
+      reflectTurns,
+      scenarioTimeoutMs: options.scenarioTimeoutMs,
+    });
+    scenarios.push(result);
+    const timedOut = result.metadata?.timeout_ms !== undefined;
+    options.onProgress?.({
+      runId,
+      scenarioId: scenario.scenarioId,
+      scenarioTitle: scenario.title,
+      index: index + 1,
+      total: selectedScenarios.length,
+      phase: timedOut ? 'timeout' : 'finish',
+      status: result.passed ? 'pass' : result.critical ? 'fail' : 'warn',
+      score: result.score,
+    });
   }
   const criticalFailures = scenarios.filter((scenario) =>
     scenario.gates.some(

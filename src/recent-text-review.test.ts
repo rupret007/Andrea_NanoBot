@@ -82,9 +82,63 @@ describe('recent text review', () => {
     });
     expect(result.providerUsed).toBe('local');
     expect(result.needsReply[0]?.whyText).toContain('asks for an answer');
+    expect(result.needsReply[0]?.summaryText).toContain('Current state');
+    expect(result.needsReply[0]?.suggestedReplies).toHaveLength(3);
+    expect(result.needsReply[0]?.suggestedReplies?.[0]?.label).toBe('warm');
+    expect(result.needsReply[0]?.suggestedReply).toBe(
+      result.needsReply[0]?.suggestedReplies?.[0]?.text,
+    );
+    expect(
+      formatRecentTextReviewReply({ result, channel: 'bluebubbles' }),
+    ).toContain('Suggested replies');
+    expect(
+      formatRecentTextReviewReply({ result, channel: 'bluebubbles' }),
+    ).toContain('direct');
     expect(
       result.noReplyNeeded.some((item) => item.chatLabel === 'Game Chat'),
     ).toBe(true);
+  });
+
+  it('filters BlueBubbles assistant wake commands out of recent text recaps', async () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:20:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'wake-filter-1',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Can you confirm if dinner still works tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'wake-filter-2',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'me',
+      sender_name: 'Jeff',
+      content: '@Andrea summarize this',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: true,
+    });
+
+    const result = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+
+    expect(result.needsReply[0]?.chatLabel).toBe('Candace');
+    expect(result.needsReply[0]?.summaryText).toContain('dinner still works');
+    expect(result.needsReply[0]?.summaryText).not.toContain('@Andrea');
+    expect(result.needsReply[0]?.evidenceSnippets.join(' ')).not.toContain(
+      '@Andrea',
+    );
   });
 
   it('raises priority for known people and active life threads', async () => {
@@ -365,6 +419,16 @@ describe('recent text review', () => {
           whyText: 'phone +14695550123 and jid bb:iMessage;-;+14695550123',
           recommendedAction: 'draft later',
           suggestedReply: 'I will call +14695550123.',
+          suggestedReplies: [
+            {
+              label: 'direct',
+              text: 'I will email jeff@example.com and call +14695550123.',
+            },
+            {
+              label: 'secret',
+              text: 'Use OPENAI_API_KEY=sk-secret before texting back.',
+            },
+          ],
           evidenceSnippets: ['Them: call me at +14695550123'],
           linkedSubjectIds: [],
           linkedLifeThreadIds: [],
@@ -383,6 +447,8 @@ describe('recent text review', () => {
     expect(prompt).not.toContain('bb:iMessage');
     expect(prompt).not.toContain('jeff@example.com');
     expect(prompt).not.toContain('sk-secret');
+    expect(prompt).toContain('[redacted email]');
+    expect(prompt).toContain('OPENAI_API_KEY=***');
     expect(redactRecentTextReviewText('Reach me at +14695550123')).toContain(
       '[redacted number]',
     );
@@ -423,6 +489,13 @@ describe('recent text review', () => {
     const seed = parseRecentTextReviewSeedJson(seedJson);
     expect(seed?.items[0]?.communicationThreadId).toBeTruthy();
     expect(seed?.items[0]?.chatJid).toBeUndefined();
+    expect(seed?.items[0]?.suggestedReplies?.length).toBeGreaterThanOrEqual(2);
+    expect(seed?.items[0]?.suggestedReplies?.[0]?.text).not.toContain(
+      '+14695550123',
+    );
+    expect(seed?.items[0]?.suggestedReplies?.[0]?.text).not.toContain(
+      'jeff@example.com',
+    );
     expect(seed?.items[0]?.freshnessSnapshot?.snapshotHash).toBeTruthy();
     const target = resolveRecentTextReviewFollowupTarget(seed!.items[0]!);
     expect(target).toMatchObject({
@@ -552,6 +625,16 @@ describe('recent text review', () => {
           whyText: 'latest message from them after your last reply',
           recommendedAction: 'Draft a warmer reply.',
           suggestedReply: 'I saw this and will send it shortly.',
+          suggestedReplies: [
+            {
+              label: 'warm',
+              text: 'I saw this and will send it shortly.',
+            },
+            {
+              label: 'direct',
+              text: 'I am checking the set list and will send it shortly.',
+            },
+          ],
         },
         {
           itemId: 'review-3',
@@ -618,6 +701,15 @@ describe('recent text review', () => {
     expect(
       buildReviewDraftPrompt({ seedJson, userText: 'make #2 warmer' })?.text,
     ).toContain('Make it warmer');
+    expect(
+      buildReviewDraftPrompt({ seedJson, userText: 'draft #2 option 2' })?.text,
+    ).toContain('I am checking the set list');
+    expect(
+      buildReviewDraftPrompt({
+        seedJson,
+        userText: 'draft the direct option for #2',
+      })?.text,
+    ).toContain('I am checking the set list');
     expect(
       buildReviewDraftPrompt({ seedJson, userText: 'save #2' }),
     ).toBeNull();

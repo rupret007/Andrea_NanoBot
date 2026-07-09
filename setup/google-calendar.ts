@@ -7,6 +7,7 @@ import { spawn } from 'child_process';
 
 import {
   classifyGoogleCalendarFailureDetail,
+  getGoogleCalendarFailureNextAction,
   listGoogleCalendars,
   resolveGoogleCalendarConfig,
   validateGoogleCalendarConfig,
@@ -60,6 +61,7 @@ function emitGoogleCalendarFailureStatus(
   extra: Record<string, string | number | boolean> = {},
 ): void {
   const detail = toErrorDetail(error);
+  const failureKind = classifyGoogleCalendarFailureDetail(detail);
   writeProviderProofSurface(
     'googleCalendar',
     buildGoogleCalendarBlockedProofSurface(
@@ -72,8 +74,9 @@ function emitGoogleCalendarFailureStatus(
   emitStatus('GOOGLE_CALENDAR', {
     ACTION: action || 'unknown',
     STATUS: 'failed',
-    FAILURE_KIND: classifyGoogleCalendarFailureDetail(detail),
+    FAILURE_KIND: failureKind,
     ERROR: detail,
+    NEXT_ACTION: getGoogleCalendarFailureNextAction(failureKind),
     ...extra,
   });
 }
@@ -675,13 +678,18 @@ async function runValidate(): Promise<void> {
       }
     }
 
+    const failureKind =
+      result.failures.length > 0
+        ? classifyGoogleCalendarFailureDetail(result.failures[0])
+        : 'unknown';
+
     emitStatus('GOOGLE_CALENDAR', {
       ACTION: 'validate',
       STATUS: result.complete ? 'success' : 'failed',
-      FAILURE_KIND:
-        result.failures.length > 0
-          ? classifyGoogleCalendarFailureDetail(result.failures[0])
-          : 'unknown',
+      FAILURE_KIND: failureKind,
+      NEXT_ACTION: result.complete
+        ? 'none'
+        : getGoogleCalendarFailureNextAction(failureKind),
       VALIDATED_CALENDARS: result.validatedCalendars.length,
       DISCOVERED_CALENDARS: result.discoveredCalendars.length,
       FAILURES:

@@ -33,6 +33,11 @@ import {
   isBlueBubblesAndreaBotEcho,
   resolveBlueBubblesReplyGateMode,
 } from '../messages-fluidity.js';
+import {
+  buildMediaAttachmentId,
+  cacheInboundMediaBytes,
+  inferMediaKindFromMime,
+} from '../media-cache.js';
 import type {
   BlueBubblesChannelControlSnapshot,
   BlueBubblesReplyGateMode,
@@ -41,9 +46,12 @@ import type {
   BlueBubblesConfig,
   BlueBubblesContactRef,
   BlueBubblesWebhookEvent,
+  ChannelArtifact,
   Channel,
   ChannelHealthSnapshot,
+  MessageMediaAttachment,
   NewMessage,
+  SendArtifactOptions,
   SendMessageOptions,
   SendMessageResult,
 } from '../types.js';
@@ -515,6 +523,19 @@ function firstBoolean(...values: unknown[]): boolean | null {
   return null;
 }
 
+function firstNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number.parseFloat(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object'
     ? (value as Record<string, unknown>)
@@ -567,6 +588,85 @@ async function fetchBlueBubblesWithTimeout(
   }
 }
 
+async function hydrateBlueBubblesAttachmentCache(
+  config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+  attachments: MessageMediaAttachment[],
+): Promise<MessageMediaAttachment[]> {
+  if (!config.baseUrl || !config.password || attachments.length === 0) {
+    return attachments;
+  }
+
+  const hydrated: MessageMediaAttachment[] = [];
+  for (const attachment of attachments) {
+    if (!attachment.sourceId) {
+      hydrated.push(attachment);
+      continue;
+    }
+
+    const buildUrl = (force: boolean): URL => {
+      const url = new URL(
+        `/api/v1/attachment/${encodeURIComponent(attachment.sourceId!)}/download`,
+        config.baseUrl!,
+      );
+      for (const [key, value] of buildAuthSearchParams(
+        config.password!,
+      ).entries()) {
+        url.searchParams.set(key, value);
+      }
+      if (force) {
+        url.searchParams.set('force', 'true');
+      }
+      return url;
+    };
+
+    try {
+      let response = await fetchBlueBubblesWithTimeout(buildUrl(false));
+      if (!response.ok) {
+        response = await fetchBlueBubblesWithTimeout(buildUrl(true));
+      }
+      if (!response.ok) {
+        throw new Error(
+          extractBlueBubblesErrorText(response.status, await response.text()),
+        );
+      }
+      const bytes = Buffer.from(await response.arrayBuffer());
+      const mimeType =
+        response.headers.get('content-type') ||
+        attachment.mimeType ||
+        'application/octet-stream';
+      const cached = cacheInboundMediaBytes({
+        bytes,
+        mimeType,
+        filename: attachment.filename,
+      });
+      hydrated.push({
+        ...attachment,
+        mimeType,
+        sizeBytes: cached.sizeBytes,
+        localPath: cached.localPath,
+        contentHash: cached.contentHash,
+        fetchStatus: 'cached',
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error
+          ? error.message
+          : 'BlueBubbles media fetch failed';
+      hydrated.push({
+        ...attachment,
+        fetchStatus: 'download_failed',
+        metadataJson: JSON.stringify({
+          ...(attachment.metadataJson ? { raw: attachment.metadataJson } : {}),
+          downloadError: detail,
+        }).slice(0, 4000),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }
+  return hydrated;
+}
+
 function extractBlueBubblesErrorText(status: number, body: string): string {
   const trimmed = body.trim();
   if (!trimmed) {
@@ -608,6 +708,107 @@ function extractBlueBubblesReceiptId(payload: unknown): string | null {
       messages[0]?.messageGuid,
       messages[0]?.id,
     ) || null
+  );
+}
+
+function normalizeBlueBubblesAttachmentRecords(payload: unknown): unknown[] {
+  const root = asRecord(payload);
+  const data = asRecord(root.data);
+  const message = asRecord(data.message);
+  const candidates = [
+    message.attachments,
+    message.files,
+    data.attachments,
+    data.files,
+    root.attachments,
+    root.files,
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+  return [];
+}
+
+function describeBlueBubblesAttachments(
+  attachments: MessageMediaAttachment[],
+): string {
+  if (attachments.length === 0) return '';
+  const counts = attachments.reduce<Record<string, number>>(
+    (acc, attachment) => {
+      acc[attachment.kind] = (acc[attachment.kind] || 0) + 1;
+      return acc;
+    },
+    {},
+  );
+  const parts = Object.entries(counts).map(([kind, count]) =>
+    count === 1 ? kind : `${count} ${kind}s`,
+  );
+  return `[${parts.join(', ')}]`;
+}
+
+function normalizeBlueBubblesAttachments(input: {
+  payload: unknown;
+  chatJid: string;
+  messageId: string;
+  now: Date;
+}): MessageMediaAttachment[] {
+  return normalizeBlueBubblesAttachmentRecords(input.payload).map(
+    (entry, index) => {
+      const record = asRecord(entry);
+      const mimeType = firstString(
+        record.mimeType,
+        record.mime_type,
+        record.type,
+        record.contentType,
+      );
+      const filename = firstString(
+        record.transferName,
+        record.filename,
+        record.fileName,
+        record.name,
+        record.originalFilename,
+      );
+      const sourceId = firstString(
+        record.guid,
+        record.attachmentGuid,
+        record.id,
+        record.rowid,
+        record.ROWID,
+        record.originalROWID,
+      );
+      const kind = inferMediaKindFromMime(mimeType, filename);
+      const createdAt = input.now.toISOString();
+      return {
+        attachmentId: buildMediaAttachmentId({
+          sourceChannel: 'bluebubbles',
+          chatJid: input.chatJid,
+          messageId: input.messageId,
+          sourceId,
+          filename,
+          index,
+        }),
+        chatJid: input.chatJid,
+        messageId: input.messageId,
+        sourceChannel: 'bluebubbles',
+        kind,
+        mimeType,
+        filename,
+        sizeBytes: firstNumber(
+          record.totalBytes,
+          record.bytes,
+          record.size,
+          record.fileSize,
+        ),
+        sourceId,
+        fetchStatus: sourceId ? 'metadata_only' : 'metadata_missing',
+        analysisStatus: 'not_requested',
+        createdAt,
+        updatedAt: createdAt,
+        metadataJson: JSON.stringify(record).slice(0, 4000),
+      } satisfies MessageMediaAttachment;
+    },
   );
 }
 
@@ -806,24 +1007,31 @@ export function normalizeBlueBubblesIncomingMessage(
     root.body,
     root.text,
   );
-  if (!text) return null;
-
   const chat = normalizeBlueBubblesChatRef(payload);
   const contact = normalizeBlueBubblesContactRef(payload);
   const messageGuid =
     event.messageGuid ||
     `${chat.chatGuid}:${normalizeTimestamp(message.date, now)}`;
+  const messageId = `bb:${messageGuid}`;
+  const chatJid = `bb:${chat.chatGuid}`;
+  const attachments = normalizeBlueBubblesAttachments({
+    payload,
+    chatJid,
+    messageId,
+    now,
+  });
+  if (!text && attachments.length === 0) return null;
 
   return {
-    chatJid: `bb:${chat.chatGuid}`,
+    chatJid,
     chat,
     contact,
     message: {
-      id: `bb:${messageGuid}`,
-      chat_jid: `bb:${chat.chatGuid}`,
+      id: messageId,
+      chat_jid: chatJid,
       sender: `bb:${contact.handle}`,
       sender_name: contact.displayName || contact.handle,
-      content: text,
+      content: text || describeBlueBubblesAttachments(attachments),
       timestamp: normalizeTimestamp(
         message.dateCreated ||
           message.date ||
@@ -846,6 +1054,7 @@ export function normalizeBlueBubblesIncomingMessage(
           root.associatedMessageGuid,
         ),
       ),
+      attachments,
     },
   };
 }
@@ -1015,6 +1224,11 @@ function normalizeBlueBubblesHistoryPayload(
       message: {
         guid: firstString(message.guid, message.messageGuid, message.id),
         text: firstString(message.text, message.body, message.message),
+        attachments: Array.isArray(message.attachments)
+          ? message.attachments
+          : Array.isArray(message.files)
+            ? message.files
+            : [],
         senderName: firstString(
           message.senderName,
           handle.displayName,
@@ -1312,7 +1526,9 @@ async function fetchNormalizedBlueBubblesHistoryRows(
     throw new Error(extractBlueBubblesErrorText(response.status, responseText));
   }
 
-  return normalizeBlueBubblesHistoryRows(parseBlueBubblesJson(responseText))
+  const rows = normalizeBlueBubblesHistoryRows(
+    parseBlueBubblesJson(responseText),
+  )
     .map((row) =>
       normalizeBlueBubblesIncomingMessage(
         normalizeBlueBubblesHistoryPayload(chatGuid, row),
@@ -1327,10 +1543,16 @@ async function fetchNormalizedBlueBubblesHistoryRows(
         chat: BlueBubblesChatRef;
         contact: BlueBubblesContactRef;
       } => row !== null,
-    )
-    .sort((left, right) =>
-      left.message.timestamp.localeCompare(right.message.timestamp),
     );
+  for (const row of rows) {
+    row.message.attachments = await hydrateBlueBubblesAttachmentCache(
+      config,
+      row.message.attachments || [],
+    );
+  }
+  return rows.sort((left, right) =>
+    left.message.timestamp.localeCompare(right.message.timestamp),
+  );
 }
 
 async function fetchNormalizedBlueBubblesRecentMessages(
@@ -1368,29 +1590,38 @@ async function fetchNormalizedBlueBubblesRecentMessages(
     );
   }
 
-  return normalizeBlueBubblesHistoryRows(parseBlueBubblesJson(responseText))
-    .map((row) => {
-      const rowRecord = asRecord(row);
-      const chats = Array.isArray(rowRecord.chats)
-        ? rowRecord.chats.map((item) => asRecord(item))
-        : [];
-      const chat = chats[0] || {};
-      const chatGuid =
-        firstString(
-          rowRecord.chatGuid,
-          chat.guid,
-          chat.chatGuid,
-          rowRecord.guid,
-        ) || null;
-      if (!chatGuid) return null;
-      return normalizeBlueBubblesIncomingMessage(
-        normalizeBlueBubblesHistoryPayload(chatGuid, rowRecord),
-      );
-    })
-    .filter((row): row is NormalizedBlueBubblesHistoryRow => row !== null)
-    .sort((left, right) =>
-      left.message.timestamp.localeCompare(right.message.timestamp),
+  const rows = normalizeBlueBubblesHistoryRows(
+    parseBlueBubblesJson(responseText),
+  ).map((row) => {
+    const rowRecord = asRecord(row);
+    const chats = Array.isArray(rowRecord.chats)
+      ? rowRecord.chats.map((item) => asRecord(item))
+      : [];
+    const chat = chats[0] || {};
+    const chatGuid =
+      firstString(
+        rowRecord.chatGuid,
+        chat.guid,
+        chat.chatGuid,
+        rowRecord.guid,
+      ) || null;
+    if (!chatGuid) return null;
+    return normalizeBlueBubblesIncomingMessage(
+      normalizeBlueBubblesHistoryPayload(chatGuid, rowRecord),
     );
+  });
+  const filtered = rows.filter(
+    (row): row is NormalizedBlueBubblesHistoryRow => row !== null,
+  );
+  for (const row of filtered) {
+    row.message.attachments = await hydrateBlueBubblesAttachmentCache(
+      config,
+      row.message.attachments || [],
+    );
+  }
+  return filtered.sort((left, right) =>
+    left.message.timestamp.localeCompare(right.message.timestamp),
+  );
 }
 
 async function fetchNormalizedBlueBubblesRecentMessagesFromRecentChats(
@@ -1485,6 +1716,7 @@ export async function primeBlueBubblesChatHistory(
       is_from_me: Boolean(row.message.is_from_me),
       is_bot_message: row.message.is_bot_message,
       reply_to_id: row.message.reply_to_id || undefined,
+      attachments: row.message.attachments || [],
     });
     storedCount += 1;
   }
@@ -2846,6 +3078,13 @@ export class BlueBubblesChannel implements Channel {
       return;
     }
 
+    normalized.message.attachments = await hydrateBlueBubblesAttachmentCache(
+      this.buildConfigForBaseUrl(
+        this.getActiveBaseUrl() || this.config.baseUrl,
+      ),
+      normalized.message.attachments || [],
+    );
+
     this.rememberObservedChatMetadata({
       chatJid: normalized.chatJid,
       chat: normalized.chat,
@@ -2907,6 +3146,72 @@ export class BlueBubblesChannel implements Channel {
         sendMethod: this.sendMethod,
       },
     );
+  }
+
+  private async postBlueBubblesAttachment(
+    chatGuid: string,
+    artifact: ChannelArtifact,
+    options?: SendMessageOptions & { caption?: string },
+  ): Promise<SendMessageResult> {
+    const activeBaseUrl = await this.ensureActiveBaseUrl({
+      recheck: true,
+      refreshReadiness: true,
+    });
+    if (!activeBaseUrl || !this.config.password || !chatGuid) {
+      throw new Error(
+        this.transportProbeDetail ||
+          'BlueBubbles transport is missing a reachable endpoint, password, or chat target',
+      );
+    }
+
+    const url = new URL('/api/v1/message/attachment', activeBaseUrl);
+    for (const [key, value] of buildAuthSearchParams(
+      this.config.password,
+    ).entries()) {
+      url.searchParams.set(key, value);
+    }
+
+    const replyToGuid = options?.replyToMessageId?.startsWith('bb:')
+      ? options.replyToMessageId.slice(3)
+      : undefined;
+    const form = new FormData();
+    form.set('chatGuid', chatGuid);
+    form.set('tempGuid', randomUUID());
+    form.set('method', this.sendMethod);
+    if (replyToGuid) {
+      form.set('selectedMessageGuid', replyToGuid);
+    }
+    if (options?.caption) {
+      form.set('caption', options.caption);
+      form.set('message', options.caption);
+    }
+    form.set(
+      'file',
+      new Blob([Buffer.from(artifact.bytesBase64, 'base64')], {
+        type: artifact.mimeType || 'application/octet-stream',
+      }),
+      artifact.filename,
+    );
+
+    const response = await fetch(url, {
+      method: 'POST',
+      body: form,
+    });
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new Error(
+        extractBlueBubblesErrorText(response.status, responseText),
+      );
+    }
+    const receiptId = extractBlueBubblesReceiptId(
+      parseBlueBubblesJson(responseText),
+    );
+    if (!receiptId) {
+      throw new Error('BlueBubbles did not return an attachment receipt.');
+    }
+    return {
+      platformMessageId: `bb:${receiptId}`,
+    };
   }
 
   private async sendBlueBubblesReply(
@@ -3146,6 +3451,50 @@ export class BlueBubblesChannel implements Channel {
       this.emitHealth({ state: 'degraded' });
       throw error;
     }
+  }
+
+  async sendArtifact(
+    jid: string,
+    artifact: ChannelArtifact,
+    options: SendArtifactOptions = {},
+  ): Promise<SendMessageResult> {
+    if (!this.connected) {
+      throw new Error('BlueBubbles channel is not connected.');
+    }
+    if (!this.config.sendEnabled) {
+      throw new Error('BlueBubbles outbound send is disabled.');
+    }
+    const chatGuid = extractBlueBubblesChatGuid(jid);
+    if (!chatGuid) {
+      throw new Error('BlueBubbles target chat is not valid.');
+    }
+    if (!isBlueBubblesChatEligible(this.config, chatGuid)) {
+      throw new Error(
+        'BlueBubbles can only send media inside the configured chat scope.',
+      );
+    }
+
+    const result = await this.postBlueBubblesAttachment(chatGuid, artifact, {
+      ...options,
+      caption: options.caption,
+    });
+    const sentAt = new Date().toISOString();
+    this.rememberLastOutboundObservation(jid, sentAt);
+    storeChatMetadata(jid, sentAt, undefined, 'bluebubbles');
+    storeMessageDirect({
+      id: result.platformMessageId || `bb:outbound-media:${chatGuid}:${sentAt}`,
+      chat_jid: jid,
+      sender: 'Andrea',
+      sender_name: 'Andrea',
+      content: options.caption || `[${artifact.kind}: ${artifact.filename}]`,
+      timestamp: sentAt,
+      is_from_me: true,
+      is_bot_message: true,
+      reply_to_id: options.replyToMessageId || undefined,
+    });
+    this.persistMonitorState();
+    this.emitHealth();
+    return result;
   }
 
   isConnected(): boolean {

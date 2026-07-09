@@ -21,6 +21,8 @@ export const ANDREA_BLUEBUBBLES_MCP_INCLUDED_TOOLS = [
   'bluebubbles_doctor',
   'bluebubbles_list_chats',
   'bluebubbles_get_messages',
+  'bluebubbles_get_media_metadata',
+  'bluebubbles_analyze_media',
   'bluebubbles_open_message_actions',
   'bluebubbles_refresh',
   'bluebubbles_start_proof_drill',

@@ -4,6 +4,7 @@ import {
   classifyGoogleCalendarFailureDetail,
   createGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
+  getGoogleCalendarFailureNextAction,
   isGoogleCalendarAuthFailureKind,
   listGoogleCalendars,
   moveGoogleCalendarEvent,
@@ -35,6 +36,12 @@ describe('classifyGoogleCalendarFailureDetail', () => {
 
     expect(kind).toBe('invalid_refresh_token');
     expect(isGoogleCalendarAuthFailureKind(kind)).toBe(true);
+  });
+
+  it('explains the Testing-mode seven-day refresh token trap', () => {
+    expect(getGoogleCalendarFailureNextAction('invalid_refresh_token')).toBe(
+      'If your Google OAuth app is in Testing, Calendar refresh tokens expire after 7 days; publish/verify the app in Google Cloud Console, then re-run Google Calendar auth once and validate again.',
+    );
   });
 
   it('classifies calendar write failures distinctly', () => {

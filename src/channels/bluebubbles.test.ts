@@ -289,6 +289,47 @@ describe('BlueBubbles channel', () => {
     expect(normalized?.message.reply_to_id).toBe('bb:msg-0');
   });
 
+  it('normalizes image-only BlueBubbles messages with attachment metadata', () => {
+    const normalized = normalizeBlueBubblesIncomingMessage({
+      type: 'new-message',
+      data: {
+        guid: 'msg-image-1',
+        chatGuid: 'chat-1',
+        chat: {
+          guid: 'chat-1',
+          displayName: 'Candace',
+          participants: [{ address: '+15551234567' }],
+        },
+        message: {
+          guid: 'msg-image-1',
+          senderName: 'Candace',
+          handle: {
+            address: '+15551234567',
+            displayName: 'Candace',
+          },
+          attachments: [
+            {
+              guid: 'attach-1',
+              transferName: 'photo.jpg',
+              mimeType: 'image/jpeg',
+              totalBytes: 1234,
+            },
+          ],
+          dateCreated: '2026-04-05T12:00:00.000Z',
+        },
+      },
+    });
+
+    expect(normalized?.message.content).toBe('[image]');
+    expect(normalized?.message.attachments?.[0]).toMatchObject({
+      sourceChannel: 'bluebubbles',
+      kind: 'image',
+      filename: 'photo.jpg',
+      sourceId: 'attach-1',
+      fetchStatus: 'metadata_only',
+    });
+  });
+
   it('normalizes the live BlueBubbles webhook payload shape with chats and handle fields', () => {
     const normalized = normalizeBlueBubblesIncomingMessage({
       type: 'new-message',
@@ -2723,6 +2764,82 @@ describe('BlueBubbles channel', () => {
             content: 'I can send it now.',
           }),
         ]),
+      );
+    } finally {
+      await apiStub.close();
+    }
+  });
+
+  it('primes media-only BlueBubbles history and hydrates cached attachments', async () => {
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/chat/')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                guid: 'hist-media-1',
+                senderName: 'Candace',
+                handle: { address: '+15551234567', displayName: 'Candace' },
+                dateCreated: '2026-04-07T20:00:00.000Z',
+                isFromMe: false,
+                attachments: [
+                  {
+                    guid: 'attach-hist-1',
+                    transferName: 'photo.jpg',
+                    mimeType: 'image/jpeg',
+                    totalBytes: 4,
+                  },
+                ],
+                chats: [
+                  {
+                    guid: 'iMessage;+;chat-media',
+                    displayName: 'Candace',
+                    isGroup: false,
+                    participants: [{ address: '+15551234567' }],
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/attachment/attach-hist-1')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.end(Buffer.from([1, 2, 3, 4]));
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+
+    try {
+      const primed = await primeBlueBubblesChatHistory(
+        buildConfig({ baseUrl: apiStub.baseUrl }),
+        'bb:iMessage;+;chat-media',
+        8,
+      );
+      const [message] = listRecentMessagesForChat(
+        'bb:iMessage;+;chat-media',
+        4,
+      );
+
+      expect(primed).toEqual({ storedCount: 1, totalCount: 1 });
+      expect(message).toMatchObject({
+        id: 'bb:hist-media-1',
+        content: '[image]',
+      });
+      expect(message?.attachments?.[0]).toMatchObject({
+        kind: 'image',
+        filename: 'photo.jpg',
+        fetchStatus: 'cached',
+        sizeBytes: 4,
+      });
+      expect(message?.attachments?.[0]?.localPath).toContain(
+        'data/media-cache/inbound',
       );
     } finally {
       await apiStub.close();

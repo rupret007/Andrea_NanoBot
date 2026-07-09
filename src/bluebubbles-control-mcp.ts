@@ -120,6 +120,26 @@ export class BlueBubblesControlClient {
     );
   }
 
+  async getMediaMetadata(attachmentId: string): Promise<unknown> {
+    return this.request(
+      'GET',
+      `/v1/bluebubbles/media/${encodeURIComponent(attachmentId)}/metadata`,
+    );
+  }
+
+  async analyzeMedia(
+    attachmentId: string,
+    prompt?: string | null,
+  ): Promise<unknown> {
+    return this.request(
+      'POST',
+      `/v1/bluebubbles/media/${encodeURIComponent(attachmentId)}/analyze`,
+      {
+        prompt: toNullableString(prompt),
+      },
+    );
+  }
+
   async openMessageActions(chatJid?: string | null): Promise<unknown> {
     const query = toNullableString(chatJid)
       ? `?chatJid=${encodeURIComponent(chatJid!.trim())}`
@@ -174,6 +194,13 @@ export function createBlueBubblesMcpToolHandlers(
       client.getMessages(
         String(args.chatJid || ''),
         typeof args.limit === 'number' ? args.limit : undefined,
+      ),
+    bluebubbles_get_media_metadata: async (args) =>
+      client.getMediaMetadata(String(args.attachmentId || '')),
+    bluebubbles_analyze_media: async (args) =>
+      client.analyzeMedia(
+        String(args.attachmentId || ''),
+        typeof args.prompt === 'string' ? args.prompt : null,
       ),
     bluebubbles_open_message_actions: async (args) =>
       client.openMessageActions(
@@ -257,12 +284,33 @@ export async function startBlueBubblesControlMcpServer(): Promise<void> {
 
   server.tool(
     'bluebubbles_get_messages',
-    'List recent messages for one BlueBubbles chat.',
+    'List recent messages for one BlueBubbles chat, including safe attachment metadata when present.',
     {
       chatJid: z.string(),
       limit: z.number().int().min(1).max(100).optional(),
     },
     async (args) => toTextResult(await handlers.bluebubbles_get_messages(args)),
+  );
+
+  server.tool(
+    'bluebubbles_get_media_metadata',
+    'Return safe metadata for one BlueBubbles media attachment without exposing raw bytes or local paths.',
+    {
+      attachmentId: z.string(),
+    },
+    async (args) =>
+      toTextResult(await handlers.bluebubbles_get_media_metadata(args)),
+  );
+
+  server.tool(
+    'bluebubbles_analyze_media',
+    'Analyze one BlueBubbles image or video attachment through Andrea media analysis.',
+    {
+      attachmentId: z.string(),
+      prompt: z.string().optional(),
+    },
+    async (args) =>
+      toTextResult(await handlers.bluebubbles_analyze_media(args)),
   );
 
   server.tool(

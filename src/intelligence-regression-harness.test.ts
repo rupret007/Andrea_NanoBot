@@ -265,4 +265,47 @@ describe('intelligence regression harness', () => {
     expect(report.scenarios[0]?.scenarioId).toBe('council.max_iq_roles');
     expect(report.scenarios[0]?.actual.council_id).toBe('council-filtered');
   });
+
+  it('emits progress and fails a scenario cleanly on timeout', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          await new Promise<Response>(() => {
+            // Intentionally unresolved so the harness timeout path wins.
+          }),
+      ) as unknown as typeof fetch,
+    );
+
+    const events: Array<{ phase: string; scenarioId: string }> = [];
+    const { runIntelligenceRegressionHarness } =
+      await import('./intelligence-regression-harness.js');
+    const report = await runIntelligenceRegressionHarness({
+      runId: 'intel-timeout-run',
+      scenarioIds: ['council.max_iq_roles'],
+      recordToPlatform: false,
+      reflectTurns: false,
+      scenarioTimeoutMs: 1,
+      onProgress: (event) =>
+        events.push({ phase: event.phase, scenarioId: event.scenarioId }),
+    });
+
+    expect(report).toMatchObject({
+      runId: 'intel-timeout-run',
+      status: 'fail',
+      scenarioCount: 1,
+      criticalFailureCount: 1,
+    });
+    expect(events).toEqual([
+      { phase: 'start', scenarioId: 'council.max_iq_roles' },
+      { phase: 'timeout', scenarioId: 'council.max_iq_roles' },
+    ]);
+    expect(report.scenarios[0]?.metadata?.timeout_ms).toBe('1');
+    expect(report.scenarios[0]?.gates.map((gate) => gate.gateId)).toContain(
+      'trace_completeness',
+    );
+  });
 });

@@ -223,6 +223,7 @@ import {
   WorldFactRecord,
   MissionRecord,
   MissionStepRecord,
+  MessageMediaAttachment,
   MessageActionRecord,
   NewMessage,
   OutcomeRecord,
@@ -330,6 +331,34 @@ function createSchema(database: Database.Database): void {
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+
+    CREATE TABLE IF NOT EXISTS message_media_attachments (
+      attachment_id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      source_channel TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      mime_type TEXT,
+      filename TEXT,
+      size_bytes INTEGER,
+      source_id TEXT,
+      local_path TEXT,
+      thumbnail_path TEXT,
+      content_hash TEXT,
+      width INTEGER,
+      height INTEGER,
+      duration_ms INTEGER,
+      fetch_status TEXT NOT NULL DEFAULT 'metadata_only',
+      analysis_status TEXT DEFAULT 'not_requested',
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (message_id, chat_jid) REFERENCES messages(id, chat_jid) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_message_media_chat_message
+      ON message_media_attachments(chat_jid, message_id);
+    CREATE INDEX IF NOT EXISTS idx_message_media_source
+      ON message_media_attachments(source_channel, source_id);
 
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id TEXT PRIMARY KEY,
@@ -5215,6 +5244,213 @@ export function setLastGroupSync(): void {
   ).run(now);
 }
 
+type MessageMediaAttachmentRow = {
+  attachment_id: string;
+  chat_jid: string;
+  message_id: string;
+  source_channel: MessageMediaAttachment['sourceChannel'];
+  kind: MessageMediaAttachment['kind'];
+  mime_type: string | null;
+  filename: string | null;
+  size_bytes: number | null;
+  source_id: string | null;
+  local_path: string | null;
+  thumbnail_path: string | null;
+  content_hash: string | null;
+  width: number | null;
+  height: number | null;
+  duration_ms: number | null;
+  fetch_status: MessageMediaAttachment['fetchStatus'];
+  analysis_status: NonNullable<MessageMediaAttachment['analysisStatus']>;
+  metadata_json: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapMessageMediaAttachmentRow(
+  row: MessageMediaAttachmentRow,
+): MessageMediaAttachment {
+  return {
+    attachmentId: row.attachment_id,
+    chatJid: row.chat_jid,
+    messageId: row.message_id,
+    sourceChannel: row.source_channel,
+    kind: row.kind,
+    mimeType: row.mime_type,
+    filename: row.filename,
+    sizeBytes: row.size_bytes,
+    sourceId: row.source_id,
+    localPath: row.local_path,
+    thumbnailPath: row.thumbnail_path,
+    contentHash: row.content_hash,
+    width: row.width,
+    height: row.height,
+    durationMs: row.duration_ms,
+    fetchStatus: row.fetch_status,
+    analysisStatus: row.analysis_status,
+    metadataJson: row.metadata_json,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function upsertMessageMediaAttachment(
+  record: MessageMediaAttachment,
+): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `
+      INSERT INTO message_media_attachments (
+        attachment_id, chat_jid, message_id, source_channel, kind, mime_type,
+        filename, size_bytes, source_id, local_path, thumbnail_path,
+        content_hash, width, height, duration_ms, fetch_status,
+        analysis_status, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(attachment_id) DO UPDATE SET
+        chat_jid = excluded.chat_jid,
+        message_id = excluded.message_id,
+        source_channel = excluded.source_channel,
+        kind = excluded.kind,
+        mime_type = excluded.mime_type,
+        filename = excluded.filename,
+        size_bytes = excluded.size_bytes,
+        source_id = excluded.source_id,
+        local_path = COALESCE(excluded.local_path, message_media_attachments.local_path),
+        thumbnail_path = COALESCE(excluded.thumbnail_path, message_media_attachments.thumbnail_path),
+        content_hash = COALESCE(excluded.content_hash, message_media_attachments.content_hash),
+        width = COALESCE(excluded.width, message_media_attachments.width),
+        height = COALESCE(excluded.height, message_media_attachments.height),
+        duration_ms = COALESCE(excluded.duration_ms, message_media_attachments.duration_ms),
+        fetch_status = excluded.fetch_status,
+        analysis_status = excluded.analysis_status,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.attachmentId,
+    record.chatJid,
+    record.messageId,
+    record.sourceChannel,
+    record.kind,
+    record.mimeType || null,
+    record.filename || null,
+    record.sizeBytes ?? null,
+    record.sourceId || null,
+    record.localPath || null,
+    record.thumbnailPath || null,
+    record.contentHash || null,
+    record.width ?? null,
+    record.height ?? null,
+    record.durationMs ?? null,
+    record.fetchStatus,
+    record.analysisStatus || 'not_requested',
+    record.metadataJson || null,
+    record.createdAt || now,
+    now,
+  );
+}
+
+export function upsertMessageMediaAttachments(
+  records: MessageMediaAttachment[],
+): void {
+  if (records.length === 0) return;
+  const tx = db.transaction((items: MessageMediaAttachment[]) => {
+    for (const record of items) {
+      upsertMessageMediaAttachment(record);
+    }
+  });
+  tx(records);
+}
+
+export function getMessageMediaAttachment(
+  attachmentId: string,
+): MessageMediaAttachment | null {
+  const row = db
+    .prepare(
+      `
+        SELECT *
+        FROM message_media_attachments
+        WHERE attachment_id = ?
+        LIMIT 1
+      `,
+    )
+    .get(attachmentId) as MessageMediaAttachmentRow | undefined;
+  return row ? mapMessageMediaAttachmentRow(row) : null;
+}
+
+export function listMessageMediaAttachments(
+  params: {
+    chatJid?: string;
+    messageId?: string;
+    attachmentIds?: string[];
+    limit?: number;
+  } = {},
+): MessageMediaAttachment[] {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+  if (params.chatJid) {
+    clauses.push('chat_jid = ?');
+    args.push(params.chatJid);
+  }
+  if (params.messageId) {
+    clauses.push('message_id = ?');
+    args.push(params.messageId);
+  }
+  if (params.attachmentIds && params.attachmentIds.length > 0) {
+    clauses.push(
+      `attachment_id IN (${params.attachmentIds.map(() => '?').join(',')})`,
+    );
+    args.push(...params.attachmentIds);
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM message_media_attachments
+        ${where}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(
+      ...args,
+      Math.max(1, params.limit ?? 100),
+    ) as MessageMediaAttachmentRow[];
+  return rows.map(mapMessageMediaAttachmentRow);
+}
+
+function hydrateMessagesWithMedia(messages: NewMessage[]): NewMessage[] {
+  if (messages.length === 0) return messages;
+  const conditions = messages.map(() => '(chat_jid = ? AND message_id = ?)');
+  const args = messages.flatMap((message) => [message.chat_jid, message.id]);
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM message_media_attachments
+        WHERE ${conditions.join(' OR ')}
+        ORDER BY created_at ASC
+      `,
+    )
+    .all(...args) as MessageMediaAttachmentRow[];
+  if (rows.length === 0) return messages;
+  const byMessage = new Map<string, MessageMediaAttachment[]>();
+  for (const row of rows) {
+    const key = `${row.chat_jid}\u0000${row.message_id}`;
+    const list = byMessage.get(key) || [];
+    list.push(mapMessageMediaAttachmentRow(row));
+    byMessage.set(key, list);
+  }
+  return messages.map((message) => ({
+    ...message,
+    attachments:
+      byMessage.get(`${message.chat_jid}\u0000${message.id}`) ||
+      message.attachments ||
+      [],
+  }));
+}
+
 /**
  * Store a message with full content.
  * Only call this for registered groups where message history is needed.
@@ -5234,6 +5470,15 @@ export function storeMessage(msg: NewMessage): void {
     msg.thread_id || null,
     msg.reply_to_id || null,
   );
+  if (msg.attachments?.length) {
+    upsertMessageMediaAttachments(
+      msg.attachments.map((attachment) => ({
+        ...attachment,
+        chatJid: msg.chat_jid,
+        messageId: msg.id,
+      })),
+    );
+  }
 }
 
 export function hasStoredMessage(chatJid: string, messageId: string): boolean {
@@ -5264,6 +5509,7 @@ export function storeMessageDirect(msg: {
   is_bot_message?: boolean;
   thread_id?: string;
   reply_to_id?: string;
+  attachments?: MessageMediaAttachment[];
 }): void {
   db.prepare(
     `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -5279,6 +5525,15 @@ export function storeMessageDirect(msg: {
     msg.thread_id || null,
     msg.reply_to_id || null,
   );
+  if (msg.attachments?.length) {
+    upsertMessageMediaAttachments(
+      msg.attachments.map((attachment) => ({
+        ...attachment,
+        chatJid: msg.chat_jid,
+        messageId: msg.id,
+      })),
+    );
+  }
 }
 
 export function getNewMessages(
@@ -5308,13 +5563,14 @@ export function getNewMessages(
   const rows = db
     .prepare(sql)
     .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as NewMessage[];
+  const hydratedRows = hydrateMessagesWithMedia(rows);
 
   let newTimestamp = lastTimestamp;
-  for (const row of rows) {
+  for (const row of hydratedRows) {
     if (row.timestamp > newTimestamp) newTimestamp = row.timestamp;
   }
 
-  return { messages: rows, newTimestamp };
+  return { messages: hydratedRows, newTimestamp };
 }
 
 export function getMessagesSince(
@@ -5337,16 +5593,17 @@ export function getMessagesSince(
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  return db
+  const rows = db
     .prepare(sql)
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+  return hydrateMessagesWithMedia(rows);
 }
 
 export function listRecentMessagesForChat(
   chatJid: string,
   limit: number = 20,
 ): NewMessage[] {
-  return db
+  const rows = db
     .prepare(
       `
         SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id
@@ -5358,6 +5615,7 @@ export function listRecentMessagesForChat(
       `,
     )
     .all(chatJid, Math.max(1, limit)) as NewMessage[];
+  return hydrateMessagesWithMedia(rows);
 }
 
 export function listMessagesForChatWindow(params: {
@@ -5366,7 +5624,7 @@ export function listMessagesForChatWindow(params: {
   endTimestamp?: string | null;
   limit?: number;
 }): NewMessage[] {
-  return db
+  const rows = db
     .prepare(
       `
         SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id
@@ -5386,6 +5644,7 @@ export function listMessagesForChatWindow(params: {
       params.endTimestamp || null,
       Math.max(1, params.limit ?? 400),
     ) as NewMessage[];
+  return hydrateMessagesWithMedia(rows);
 }
 
 export function getLastBotMessageTimestamp(

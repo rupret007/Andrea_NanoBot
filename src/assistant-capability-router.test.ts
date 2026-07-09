@@ -630,6 +630,19 @@ describe('assistant capability router', () => {
     });
   });
 
+  it('matches inbound media analysis separately from image generation', () => {
+    expect(matchAssistantCapabilityRequest('Analyze this photo')).toMatchObject(
+      {
+        capabilityId: 'media.analyze',
+      },
+    );
+    expect(
+      matchAssistantCapabilityRequest('What is in this video?'),
+    ).toMatchObject({
+      capabilityId: 'media.analyze',
+    });
+  });
+
   it('matches explicit pilot issue capture prompts without widening the router', () => {
     expect(matchAssistantCapabilityRequest('this felt weird')).toMatchObject({
       capabilityId: 'pilot.capture_issue',
@@ -1155,6 +1168,8 @@ describe('assistant capability router', () => {
       'skip #1',
       'mark #1 handled',
       'why #1',
+      'draft #2 option 2',
+      'draft the direct option for #2',
       'draft it',
       'make that warmer',
       'remind me about that tonight',

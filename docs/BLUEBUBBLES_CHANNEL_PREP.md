@@ -43,7 +43,7 @@ npm run openclaw:bridge:status -- --json
 npm run openclaw:bridge:probe -- --json
 ```
 
-The installer registers the local stdio command and then applies OpenClaw's native tool filter. It exposes read/status tools plus `bluebubbles_execute_message_action`; it intentionally excludes `bluebubbles_send`, so send-like work must still go through Andrea's same-thread message-action gates.
+The installer registers the local stdio command and then applies OpenClaw's native tool filter. It exposes read/status tools, media metadata/analysis tools, and `bluebubbles_execute_message_action`; it intentionally excludes `bluebubbles_send`, so send-like work must still go through Andrea's same-thread message-action gates.
 
 OpenClaw keeps its own auth store. Andrea does not copy OpenClaw secrets, and the OpenClaw MCP config does not store `BLUEBUBBLES_CONTROL_TOKEN`; the MCP process reads Andrea's local `.env` from this checkout.
 
@@ -129,6 +129,8 @@ Messages that are just normal conversation without an Andrea ask are ignored.
 ## Current-Chat Summaries
 
 `summarize this` on BlueBubbles should use the current chat's recent context.
+Telegram-origin broad asks such as `summarize my texts from the past 48 hours`
+summarize across all synced BlueBubbles chats in that requested window.
 
 Behavior:
 
@@ -136,9 +138,54 @@ Behavior:
 - ignore the `summarize this` ask itself when looking for the actual text to summarize
 - if local context is thin, Andrea now primes recent current-chat history from the live BlueBubbles server on demand
 - stay bounded to the current chat only
-- suggest useful next actions like draft, remind-later, or Telegram escalation
+- produce a fuller recap of the conversation flow and current state, not just activity counts
+- suggest useful next actions like draft, revise, remind-later, send-later, save, or Telegram escalation
 
 This keeps BlueBubbles useful for real text-message help without turning it into passive inbox surveillance.
+
+## Media Attachments
+
+Incoming BlueBubbles and Telegram image/video attachments are stored as safe
+message metadata plus a local cache file when the provider allows download.
+Media-only messages are valid conversation turns; Andrea should treat them as
+`[image]`, `[video]`, or `[file]` instead of dropping them for having no text.
+
+Expected behavior:
+
+- `@Andrea analyze this photo`, `@Andrea what is in this video`, and similar
+  asks use the most recent current-chat image/video attachments
+- images are sent to the OpenAI vision path directly from the local cache
+- videos are summarized by sampling frames with the bundled `ffmpeg-static` and
+  `ffprobe-static` binaries before sending those frames to vision
+- analysis fails closed with a clear blocker when the attachment is missing,
+  not cached, unsupported, or no OpenAI provider is configured
+- OpenClaw can inspect attachment metadata with
+  `bluebubbles_get_media_metadata` and request analysis with
+  `bluebubbles_analyze_media`
+- OpenClaw still cannot bypass Andrea's send gates; direct BlueBubbles media
+  sending remains excluded from the OpenClaw bridge
+
+## Suggested Replies
+
+BlueBubbles communication asks such as `@Andrea what should I say back`,
+`@Andrea summarize this`, and recent-text review follow-ups should show grounded
+reply options when a reply appears useful.
+
+Expected behavior:
+
+- show two or three options when enough context exists, usually labeled `warm`,
+  `direct`, `brief`, or `careful`
+- keep suggestions separate from sending; suggestions are not approvals
+- let the user choose follow-ups such as `draft #1`, `draft #1 option 2`,
+  `make #2 warmer`, `shorter`, or `more direct`
+- create one approval-gated draft/message action from the selected option
+- keep group chats, low-confidence identity matches, sensitive messages, and
+  ambiguous threads draft-first with explicit caution
+
+Andrea can use configured provider-backed refinement for fuller recaps and
+suggestions. The fallback path remains local and deterministic. Provider prompts
+must use bounded, sanitized context and must redact phone numbers, JIDs, emails,
+and token-like secrets.
 
 ## Cross-Channel Handoffs
 
@@ -239,17 +286,23 @@ Use this exact proof sequence:
 3. Confirm Andrea replies in that same Messages thread.
 4. Send a same-thread follow-up:
    - `@Andrea what am I forgetting`
-5. Send:
+5. Prove the summary/suggested-reply leg:
+   - `@Andrea summarize this`
+   - then `@Andrea what should I say back`
+   - or, after a recent-text review, `@Andrea draft #1 option 2`
+6. Confirm Andrea shows a fuller recap plus suggested replies and does not
+   treat the `@Andrea` wake text as part of the conversation.
+7. Send:
    - `@Andrea what should I say back`
-6. Make one same-thread message-action decision:
+8. Make one same-thread message-action decision:
    - `@Andrea send it later tonight`
    - or `@Andrea remind me later`
    - or `@Andrea save that under the thread`
-7. Optionally send:
+9. Optionally send:
    - `send me the fuller version on Telegram`
-8. Run:
+10. Run:
    - `npm run debug:bluebubbles -- --live`
-9. Then run:
+11. Then run:
    - `npm run services:status`
 
 Success should show:
@@ -279,6 +332,11 @@ Focused coverage:
 
 - `src/channels/bluebubbles.test.ts`
 - `src/bluebubbles-companion.test.ts`
+- `src/messages-fluidity.test.ts`
+- `src/recent-text-review.test.ts`
+- `src/assistant-capabilities.test.ts`
+- `src/assistant-capability-router.test.ts`
+- `src/media-analysis.test.ts`
 - `src/companion-conversation-binding.test.ts`
 - `src/communication-companion.test.ts`
 - `src/cross-channel-handoffs.test.ts`

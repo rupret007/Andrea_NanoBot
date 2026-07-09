@@ -54,6 +54,43 @@ export interface NewMessage {
   thread_id?: string;
   reply_to_id?: string;
   reply_to?: ReplyMessageRef;
+  attachments?: MessageMediaAttachment[];
+}
+
+export type MessageMediaKind = 'image' | 'video' | 'audio' | 'file';
+
+export type MessageMediaFetchStatus =
+  | 'metadata_only'
+  | 'cached'
+  | 'download_failed'
+  | 'metadata_missing';
+
+export type MessageMediaAnalysisStatus =
+  | 'not_requested'
+  | 'analyzed'
+  | 'failed';
+
+export interface MessageMediaAttachment {
+  attachmentId: string;
+  chatJid: string;
+  messageId: string;
+  sourceChannel: 'bluebubbles' | 'telegram';
+  kind: MessageMediaKind;
+  mimeType?: string | null;
+  filename?: string | null;
+  sizeBytes?: number | null;
+  sourceId?: string | null;
+  localPath?: string | null;
+  thumbnailPath?: string | null;
+  contentHash?: string | null;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
+  fetchStatus: MessageMediaFetchStatus;
+  analysisStatus?: MessageMediaAnalysisStatus | null;
+  createdAt?: string;
+  updatedAt?: string;
+  metadataJson?: string | null;
 }
 
 export interface ScheduledTask {
@@ -644,6 +681,15 @@ export interface BlueBubblesMessageView {
   isFromMe: boolean;
   preview: string;
   replyToMessageId?: string;
+  attachments?: Array<{
+    attachmentId: string;
+    kind: MessageMediaKind;
+    mimeType?: string | null;
+    filename?: string | null;
+    sizeBytes?: number | null;
+    fetchStatus: MessageMediaFetchStatus;
+    analysisStatus?: MessageMediaAnalysisStatus | null;
+  }>;
 }
 
 export type BlueBubblesMessageActionOperationKind =
@@ -6444,11 +6490,12 @@ export interface KnowledgeRetrievalHit {
 }
 
 export interface ChannelArtifact {
-  kind: 'image';
+  kind: 'image' | 'video' | 'file';
   filename: string;
   mimeType: string;
   bytesBase64: string;
   altText?: string;
+  sizeBytes?: number;
 }
 
 export interface MediaGenerationRequest {

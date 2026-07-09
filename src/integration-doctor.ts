@@ -6,6 +6,7 @@ import {
   type FieldTrialSurfaceTruth,
 } from './field-trial-readiness.js';
 import { readEnvFile } from './env.js';
+import { getGoogleCalendarFailureNextAction } from './google-calendar.js';
 import {
   collectProviderHealthSnapshots,
   type ProviderHealthSnapshot,
@@ -218,7 +219,7 @@ function normalizeGoogleCalendar(
       'Then run npm run debug:google-calendar and npm run services:status.',
     ],
     nextAction: needsAuth
-      ? 'Reauthorize Google Calendar; the refresh token is invalid_grant, so code cannot repair it without a fresh OAuth grant.'
+      ? getGoogleCalendarFailureNextAction('invalid_refresh_token')
       : truth.googleCalendar.nextAction,
   });
 }

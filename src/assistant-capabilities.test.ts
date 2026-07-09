@@ -232,6 +232,16 @@ describe('assistant capabilities', () => {
               'A clear disagreement emerged over whether an adaptation should mirror the source closely or tell a looser continuation story.',
               'The latest turn landed on liking the Fallout story while still feeling less familiar with the wider world behind it.',
             ],
+            suggestedReplies: [
+              {
+                label: 'warm',
+                text: 'I like that framing. I think Fallout works best when it keeps the world intact without just replaying the same plot.',
+              },
+              {
+                label: 'brief',
+                text: 'Yeah, that is why Fallout works for me: same world, new story.',
+              },
+            ],
           }),
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -286,6 +296,8 @@ describe('assistant capabilities', () => {
     expect(result.replyText).toContain('Pops of Punk');
     expect(result.replyText).toContain('adaptation choices');
     expect(result.replyText).toContain('The thread compared how faithfully');
+    expect(result.replyText).toContain('Suggested replies');
+    expect(result.replyText).toContain('same world, new story');
     expect(result.trace?.responseSource).toBe('local_companion');
     expect(result.conversationSeed?.subjectData?.threadTitle).toBe(
       'Pops of Punk',
@@ -347,6 +359,15 @@ describe('assistant capabilities', () => {
       timestamp: '2026-04-15T18:51:51.947Z',
       is_from_me: false,
     });
+    storeMessage({
+      id: 'msg-pops-command',
+      chat_jid: 'bb:iMessage;+;chat-pops-clean',
+      sender: 'me',
+      sender_name: 'Jeff',
+      content: '@Andrea summarize this',
+      timestamp: '2026-04-15T18:55:51.947Z',
+      is_from_me: true,
+    });
 
     const result = await executeAssistantCapability({
       capabilityId: 'communication.summarize_thread',
@@ -370,6 +391,7 @@ describe('assistant capabilities', () => {
     );
     expect(result.replyText).not.toContain('+14697852580');
     expect(result.replyText).not.toContain('+13373027596');
+    expect(result.replyText).not.toContain('@Andrea');
     expect(result.replyText).not.toContain(
       'Yesterday everyone was still just figuring out',
     );

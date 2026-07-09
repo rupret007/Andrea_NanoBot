@@ -3,6 +3,7 @@ import {
   classifyGoogleCalendarFailureDetail,
   createGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
+  getGoogleCalendarFailureNextAction,
   listGoogleCalendarEvents,
   listGoogleCalendars,
   resolveGoogleCalendarConfig,
@@ -99,8 +100,7 @@ export function buildGoogleCalendarBlockedProofSurface(
         detail:
           compact ||
           'Google rejected the stored refresh token with invalid_grant.',
-        nextAction:
-          'Re-run `npm run setup -- --step google-calendar auth --client-secret-json "<client-secret.json>"` and complete browser consent for the current repo.',
+        nextAction: getGoogleCalendarFailureNextAction(kind),
         checkedAt,
         source,
       };

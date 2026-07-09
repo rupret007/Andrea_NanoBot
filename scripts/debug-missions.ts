@@ -12,11 +12,28 @@ function printBlock(title: string, lines: string[]): void {
   process.stdout.write('\n');
 }
 
+const args = process.argv.slice(2);
+const dryRun = args.includes('--dry-run') || args.includes('--status');
+
 async function main(): Promise<void> {
-  _initTestDatabase();
   const groupFolder = 'missions-debug';
   const chatJid = 'tg:missions-debug';
   const now = new Date('2026-04-06T17:00:00.000Z');
+
+  if (dryRun) {
+    printBlock('MISSION DEBUG DRY RUN', [
+      'mutates_persistent_state: false',
+      'live_actions_executed: false',
+      `group_folder: ${groupFolder}`,
+      `chat_jid: ${chatJid}`,
+      'would_seed: one synthetic BlueBubbles conversation clue and one synthetic life-thread note',
+      'would_run: missions.propose, missions.execute(remind me), and a Telegram handoff stub',
+      'normal_mode_database: isolated in-memory test database',
+    ]);
+    return;
+  }
+
+  _initTestDatabase();
 
   analyzeCommunicationMessage({
     channel: 'bluebubbles',

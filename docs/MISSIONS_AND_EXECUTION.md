@@ -150,6 +150,7 @@ Focused validation for this layer:
 
 ```bash
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/missions.test.ts src/assistant-capability-router.test.ts src/assistant-capabilities.test.ts src/cross-channel-handoffs.test.ts
+npm run debug:missions -- --dry-run
 npm run debug:missions
 npm run typecheck
 npm run build

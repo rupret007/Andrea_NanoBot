@@ -134,7 +134,7 @@ npm run setup -- --step google-calendar auth-complete --callback-url "http://127
 Use `validate` as the source of truth for live calendar state on this host:
 
 - `FAILURE_KIND: missing_config` means the current repo does not have usable Google Calendar credentials yet
-- `FAILURE_KIND: invalid_refresh_token` means the refresh token is stale or revoked and the current repo needs a fresh OAuth consent
+- `FAILURE_KIND: invalid_refresh_token` means the refresh token is stale or revoked; if the Google OAuth app is still in Testing, Calendar refresh tokens can expire after 7 days, so publish/verify the app in Google Cloud Console before reauthing once
 - `FAILURE_KIND: token_refresh_failed` means refresh is failing for another OAuth reason
 
 Do not copy an older refresh token into a newer merged repo and assume writes are recovered. Re-run the current repo auth flow instead.
@@ -283,10 +283,12 @@ Helpful operator smoke paths:
 - `npm run debug:alexa-conversation`
 - `npm run debug:shared-capabilities`
 - `npm run debug:research-mode`
+- `npm run debug:agi-lab`
 - `npm run debug:knowledge-library`
 - `npm run debug:rituals`
 - `npm run debug:cross-channel-handoffs`
 - `npm run debug:missions`
+- `npm run debug:missions -- --dry-run`
 - `npm run debug:signature-flows`
 
 For the full architecture and the license-safe external patterns behind it, see [ASSISTANT_CAPABILITY_GRAPH.md](ASSISTANT_CAPABILITY_GRAPH.md).

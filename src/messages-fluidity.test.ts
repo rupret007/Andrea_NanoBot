@@ -104,6 +104,16 @@ describe('messages fluidity', () => {
               'Another pushed against simple retellings.',
               'The latest turn landed on liking the story but not knowing the wider world as well.',
             ],
+            suggestedReplies: [
+              {
+                label: 'warm',
+                text: 'I like that framing. I think Fallout works best when it keeps the world intact without just replaying the same plot.',
+              },
+              {
+                label: 'brief',
+                text: 'Yeah, that is why Fallout works for me: same world, new story.',
+              },
+            ],
           }),
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -122,6 +132,16 @@ describe('messages fluidity', () => {
     expect(result.lead).toContain('adaptation');
     expect(result.digest).toContain('Fallout and Invincible');
     expect(result.bullets).toHaveLength(3);
+    expect(result.suggestedReplies).toEqual([
+      {
+        label: 'warm',
+        text: 'I like that framing. I think Fallout works best when it keeps the world intact without just replaying the same plot.',
+      },
+      {
+        label: 'brief',
+        text: 'Yeah, that is why Fallout works for me: same world, new story.',
+      },
+    ]);
   });
 
   it('falls back promptly when synced thread digest synthesis times out', async () => {

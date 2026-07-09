@@ -3,6 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'http';
 import {
   getAllChats,
   getMessageAction,
+  getMessageMediaAttachment,
   listRecentMessagesForChat,
   updateMessageAction,
 } from './db.js';
@@ -23,6 +24,7 @@ import {
   type MessageActionOperation,
 } from './message-actions.js';
 import { resolveBlueBubblesReplyGateMode } from './messages-fluidity.js';
+import { analyzeMessageMedia } from './media-analysis.js';
 import {
   type BlueBubblesChannel,
   resolveBlueBubblesConfig,
@@ -40,6 +42,7 @@ import type {
   BlueBubblesMessageView,
   BlueBubblesOpenMessageAction,
   BlueBubblesProofReport,
+  MessageMediaAttachment,
   SendMessageOptions,
 } from './types.js';
 
@@ -130,6 +133,18 @@ function clipPreview(value: string | null | undefined, max = 180): string {
   return normalized.length <= max
     ? normalized
     : `${normalized.slice(0, max - 3).trimEnd()}...`;
+}
+
+function safeAttachmentView(attachment: MessageMediaAttachment) {
+  return {
+    attachmentId: attachment.attachmentId,
+    kind: attachment.kind,
+    mimeType: attachment.mimeType || null,
+    filename: attachment.filename || null,
+    sizeBytes: attachment.sizeBytes ?? null,
+    fetchStatus: attachment.fetchStatus,
+    analysisStatus: attachment.analysisStatus || 'not_requested',
+  };
 }
 
 function buildProofDrillFields(now = new Date()): {
@@ -438,6 +453,7 @@ function listMessages(
     isFromMe: Boolean(message.is_from_me),
     preview: clipPreview(message.content, 220),
     replyToMessageId: message.reply_to_id || undefined,
+    attachments: (message.attachments || []).map(safeAttachmentView),
   }));
 }
 
@@ -926,6 +942,63 @@ export class BlueBubblesControlServer {
             chatJid,
             toLimit(url.searchParams.get('limit'), 20, 100),
           ),
+        });
+        return;
+      }
+
+      if (
+        method === 'GET' &&
+        segments[0] === 'v1' &&
+        segments[1] === 'bluebubbles' &&
+        segments[2] === 'media' &&
+        segments[3] &&
+        segments[4] === 'metadata'
+      ) {
+        const attachmentId = decodeURIComponent(segments[3]!);
+        const attachment = getMessageMediaAttachment(attachmentId);
+        if (!attachment) {
+          writeJson(res, 404, { error: 'media_attachment_not_found' });
+          return;
+        }
+        writeJson(res, 200, {
+          attachment: safeAttachmentView(attachment),
+          message: {
+            chatJid: attachment.chatJid,
+            messageId: attachment.messageId,
+          },
+        });
+        return;
+      }
+
+      if (
+        method === 'POST' &&
+        segments[0] === 'v1' &&
+        segments[1] === 'bluebubbles' &&
+        segments[2] === 'media' &&
+        segments[3] &&
+        segments[4] === 'analyze'
+      ) {
+        const attachmentId = decodeURIComponent(segments[3]!);
+        const attachment = getMessageMediaAttachment(attachmentId);
+        if (!attachment) {
+          writeJson(res, 404, { error: 'media_attachment_not_found' });
+          return;
+        }
+        const body = await readJsonBody(req);
+        const result = await analyzeMessageMedia({
+          attachmentIds: [attachmentId],
+          prompt:
+            typeof body.prompt === 'string' && body.prompt.trim()
+              ? body.prompt.trim()
+              : undefined,
+          requester: 'control_api',
+        });
+        writeJson(res, 200, {
+          handled: result.handled,
+          summaryText: result.summaryText || null,
+          blocker: result.blocker || null,
+          debugPath: result.debugPath,
+          attachments: result.attachments.map(safeAttachmentView),
         });
         return;
       }

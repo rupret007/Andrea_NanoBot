@@ -19,6 +19,7 @@ import {
   getAllChats,
   getAllTasks,
   getMessageActionBySource,
+  listMessageMediaAttachments,
   listMessagesForChatWindow,
   listProfileFactsForGroup,
 } from './db.js';
@@ -40,6 +41,7 @@ import {
   type ResearchResult,
 } from './research-orchestrator.js';
 import { runImageGeneration } from './media-generation.js';
+import { analyzeMessageMedia } from './media-analysis.js';
 import {
   deleteKnowledgeSourceById,
   extractKnowledgeTopicQuery,
@@ -62,7 +64,10 @@ import {
   formatCommunicationOpenLoopsReply,
   manageCommunicationTracking,
 } from './communication-companion.js';
-import { summarizeBlueBubblesThreadDigest } from './messages-fluidity.js';
+import {
+  summarizeBlueBubblesThreadDigest,
+  type BlueBubblesSuggestedReply,
+} from './messages-fluidity.js';
 import {
   applyMessageActionOperation,
   createOrRefreshMessageActionFromDraft,
@@ -185,6 +190,7 @@ export type AssistantCapabilityId =
   | 'work.current_summary'
   | 'work.current_output'
   | 'work.current_logs'
+  | 'media.analyze'
   | 'media.image_generate'
   | 'media.image_edit'
   | 'media.video_generate'
@@ -2654,6 +2660,43 @@ function buildThreadSummaryTranscript(params: {
     .join('\n');
 }
 
+function isBlueBubblesAssistantControlMessage(message: NewMessage): boolean {
+  const text = normalizeText(message.content || '');
+  return /^\s*(?:hey\s+)?@(?:andrea|openclaw)\b/i.test(text);
+}
+
+function buildLocalThreadSummarySuggestedReplies(
+  messages: NewMessage[],
+): BlueBubblesSuggestedReply[] {
+  const latestInbound = [...messages]
+    .reverse()
+    .find((message) => !message.is_from_me && !message.is_bot_message);
+  if (!latestInbound) return [];
+  const content = normalizeText(latestInbound.content || '');
+  if (
+    !/\?$/.test(content.toLowerCase()) &&
+    !/\b(?:can you|could you|would you|will you|let me know|should we|are we|do you want|confirm|send me)\b/i.test(
+      content,
+    )
+  ) {
+    return [];
+  }
+  return [
+    {
+      label: 'warm',
+      text: 'I saw this. Let me check the details and I will get back to you shortly.',
+    },
+    {
+      label: 'direct',
+      text: 'I am checking this now and will confirm shortly.',
+    },
+    {
+      label: 'brief',
+      text: 'Checking now. I will confirm shortly.',
+    },
+  ];
+}
+
 function pickRepresentativeThreadMessages(
   messages: NewMessage[],
 ): NewMessage[] {
@@ -2746,9 +2789,27 @@ function buildFallbackThreadSummaryReply(params: {
   if (replyNeed) {
     bullets.push(replyNeed);
   }
+  const suggestedReplies = buildLocalThreadSummarySuggestedReplies(
+    params.messages,
+  );
+  const suggestedReplyLines =
+    suggestedReplies.length > 0
+      ? [
+          'Suggested replies',
+          ...suggestedReplies.map(
+            (reply) =>
+              `- ${clipText(reply.label, 32)}: "${clipText(reply.text, 180)}"`,
+          ),
+        ]
+      : [];
 
   if (params.channel === 'bluebubbles') {
-    return [lead, digestSentences.slice(0, 2).join(' '), ...bullets.slice(0, 2)]
+    return [
+      lead,
+      digestSentences.slice(0, 2).join(' '),
+      ...bullets.slice(0, 2),
+      suggestedReplyLines.length > 0 ? suggestedReplyLines.join('\n') : null,
+    ]
       .filter(Boolean)
       .join('\n');
   }
@@ -2759,6 +2820,8 @@ function buildFallbackThreadSummaryReply(params: {
     digestSentences.join(' '),
     '',
     ...bullets.map((line) => `- ${line}`),
+    suggestedReplyLines.length > 0 ? '' : null,
+    suggestedReplyLines.length > 0 ? suggestedReplyLines.join('\n') : null,
   ]
     .filter(Boolean)
     .join('\n');
@@ -2768,13 +2831,28 @@ function formatThreadSummaryReply(params: {
   lead: string | null;
   digest: string | null;
   bullets: string[];
+  suggestedReplies?: BlueBubblesSuggestedReply[];
   channel: AssistantCapabilityContext['channel'];
 }): string {
+  const suggestedReplies = params.suggestedReplies || [];
+  const suggestedReplyLines =
+    suggestedReplies.length > 0
+      ? [
+          'Suggested replies',
+          ...suggestedReplies
+            .slice(0, 3)
+            .map(
+              (reply) =>
+                `- ${clipText(reply.label, 32)}: "${clipText(reply.text, 180)}"`,
+            ),
+        ]
+      : [];
   if (params.channel === 'bluebubbles') {
     return [
       params.lead,
-      params.digest ? clipText(params.digest, 320) : null,
+      params.digest ? clipText(params.digest, 520) : null,
       ...params.bullets.slice(0, 2).map((line) => `- ${clipText(line, 180)}`),
+      suggestedReplyLines.length > 0 ? suggestedReplyLines.join('\n') : null,
     ]
       .filter(Boolean)
       .join('\n');
@@ -2786,6 +2864,8 @@ function formatThreadSummaryReply(params: {
     params.digest,
     '',
     ...params.bullets.slice(0, 6).map((line) => `- ${line}`),
+    suggestedReplyLines.length > 0 ? '' : null,
+    suggestedReplyLines.length > 0 ? suggestedReplyLines.join('\n') : null,
   ]
     .filter(Boolean)
     .join('\n');
@@ -2819,7 +2899,11 @@ function buildAllSyncedMessagesSummaryReply(params: {
         startTimestamp: params.window.startTimestamp,
         endTimestamp: params.window.endTimestamp,
         limit: 80,
-      }).filter((message) => !message.is_bot_message);
+      }).filter(
+        (message) =>
+          !message.is_bot_message &&
+          !isBlueBubblesAssistantControlMessage(message),
+      );
       return { chat, messages };
     })
     .filter((entry) => entry.messages.length > 0)
@@ -2965,7 +3049,10 @@ async function runCommunicationThreadSummaryCapability(
     startTimestamp: window.startTimestamp,
     endTimestamp: window.endTimestamp,
     limit: 400,
-  }).filter((message) => !message.is_bot_message);
+  }).filter(
+    (message) =>
+      !message.is_bot_message && !isBlueBubblesAssistantControlMessage(message),
+  );
 
   if (messages.length === 0) {
     return {
@@ -3007,6 +3094,7 @@ async function runCommunicationThreadSummaryCapability(
             `Here’s the gist from ${resolution.target.displayName} ${window.label === 'today' ? 'today' : `over ${window.label}`}.`,
           digest: synthesizedDigest.digest,
           bullets: synthesizedDigest.bullets,
+          suggestedReplies: synthesizedDigest.suggestedReplies,
           channel: context.channel,
         })
       : buildFallbackThreadSummaryReply({
@@ -3062,7 +3150,7 @@ async function runRecentTextReviewCapability(
     channel: context.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
     timeWindowKind: input.timeWindowKind || 'default_24h',
     timeWindowValue: input.timeWindowValue || 24,
-    cloudAnalysisMode: 'disabled',
+    cloudAnalysisMode: 'auto',
   });
   const replyText = formatRecentTextReviewReply({
     result,
@@ -4469,6 +4557,51 @@ async function runMediaCapability(
 ): Promise<AssistantCapabilityResult> {
   const prompt = input.canonicalText || input.text || '';
   if (!prompt.trim()) return { handled: false };
+
+  if (descriptor.id === 'media.analyze') {
+    const recentAttachments = context.chatJid
+      ? listMessageMediaAttachments({
+          chatJid: context.chatJid,
+          limit: 50,
+        })
+          .filter(
+            (attachment) =>
+              attachment.kind === 'image' || attachment.kind === 'video',
+          )
+          .sort(
+            (left, right) =>
+              Date.parse(right.updatedAt || right.createdAt || '') -
+              Date.parse(left.updatedAt || left.createdAt || ''),
+          )
+          .slice(0, 4)
+      : [];
+    const analysis = await analyzeMessageMedia({
+      attachmentIds: recentAttachments.map(
+        (attachment) => attachment.attachmentId,
+      ),
+      prompt,
+      requester: 'andrea',
+    });
+    const replyText =
+      analysis.summaryText ||
+      analysis.blocker ||
+      'I could not analyze any recent image or video yet.';
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        analysis.handled ? 'media_openai' : 'unavailable',
+        analysis.handled
+          ? 'analyzed recent inbound media with the shared media analysis path'
+          : analysis.blocker || 'media analysis unavailable',
+        analysis.debugPath,
+      ),
+    };
+  }
 
   if (descriptor.id !== 'media.image_generate') {
     return {
@@ -6608,6 +6741,34 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
       runUsefulDailyCommandCenterCapability(
         CAPABILITY_DESCRIPTORS[63]!,
         cloneContext(context),
+      ),
+  },
+  {
+    id: 'media.analyze',
+    label: 'Analyze Media',
+    category: 'media',
+    requiredInputs: ['media'],
+    optionalInputs: ['prompt'],
+    requiresLinkedAccount: false,
+    requiresConfirmation: false,
+    safeForAlexa: false,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'chat_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'say_more'],
+    handlerKind: 'edge_only',
+    availabilityNote:
+      'Analyzes recent inbound image/video attachments when OpenAI vision is configured',
+    execute: (context, input) =>
+      runMediaCapability(
+        CAPABILITY_DESCRIPTORS[64]!,
+        cloneContext(context),
+        input,
       ),
   },
 ];

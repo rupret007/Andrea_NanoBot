@@ -48,6 +48,17 @@ Andrea uses these messaging levels:
 
 ## What Can And Cannot Be Sent
 
+The default BlueBubbles flow is:
+
+1. summarize or review the conversation
+2. offer one or more suggested replies
+3. turn one selected suggestion into a single draft/action record
+4. wait for explicit user approval to send now, send later, remind later, save,
+   or keep as draft
+
+`send it` and `send it later` apply only to the current same-thread draft/action.
+They do not approve unrelated suggestions or older stale reviews.
+
 ### Supported in V1
 
 - BlueBubbles same-thread replies after explicit approval
@@ -60,6 +71,9 @@ Andrea uses these messaging levels:
 - all external sends require approval by default
 - delegated auto-send is only allowed for narrow low-risk BlueBubbles same-thread 1:1 replies
 - high-risk emotional, calendar, money, medical, or commitment-changing messages stay draft/approval-first
+- group, first-contact, long, ambiguous, or low-confidence messages remain draft-only until reviewed
+- `send later` is one-off, same-thread, existing-thread only, and revalidated at send time
+- failed, stale, unsent, and scheduled sends stay visible in review/outcome surfaces
 
 ### Out of scope
 

@@ -88,17 +88,7 @@ describe('OpenClaw Andrea BlueBubbles bridge', () => {
       './node_modules/tsx/dist/cli.mjs',
       'src/bluebubbles-control-mcp.ts',
     ]);
-    expect(config.include).toEqual([
-      'bluebubbles_status',
-      'bluebubbles_proof',
-      'bluebubbles_doctor',
-      'bluebubbles_list_chats',
-      'bluebubbles_get_messages',
-      'bluebubbles_open_message_actions',
-      'bluebubbles_refresh',
-      'bluebubbles_start_proof_drill',
-      'bluebubbles_execute_message_action',
-    ]);
+    expect(config.include).toEqual([...ANDREA_BLUEBUBBLES_MCP_INCLUDED_TOOLS]);
     expect(config.exclude).toEqual(['bluebubbles_send']);
   });
 
