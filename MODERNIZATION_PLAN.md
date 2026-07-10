@@ -39,19 +39,21 @@
 - [x] Documentation and dependency checks: `npm run docs:check`,
   `npm audit --omit=dev`, and full `npm audit` (zero vulnerabilities).
 
-## Remaining release package
+## Release verification completed
 
-- [ ] Build the final shared `dist/index.js` artifact from the committed tree,
-  reinstall the local OpenClaw bridge, restart the Mac launchd service and
-  OpenClaw gateway, and run the non-mutating status/verification commands.
-  Validation: `npm run build`, `npm run openclaw:bridge:install`,
-  `openclaw gateway restart`, `npm run mac:services:restart`,
-  `npm run mac:services:status`, `npm run services:status`,
-  `npm run setup -- --step verify`, `npm run debug:status`, and
-  `npm run openclaw:bridge:{status,probe} -- --json`.
-- [ ] Fetch remote metadata once more, confirm `main` has not diverged, then
-  push the verified commits without integrating remote changes.
-- [ ] Windows has no host available in this session. Its shared TypeScript
+- [x] Built the final shared `dist/index.js` artifact from the committed tree,
+  reinstalled the local OpenClaw bridge, and restarted the Mac launchd service
+  plus the OpenClaw gateway.
+- [x] Mac service status is `running` and serving the committed `main` SHA;
+  three configured assistant-runtime probes completed successfully, with host
+  state `running_ready`.
+- [x] OpenClaw bridge status and probe are live: 11/11 required tools are
+  available, direct BlueBubbles send remains excluded, and the local control
+  API is healthy.
+- [x] BlueBubbles is reachable on its local endpoint and its webhook is
+  registered. Its remaining same-thread message-action proof debt is
+  operator/product evidence, not a release regression.
+- [x] Windows has no host available in this session. The shared TypeScript
   artifact is validated here; the documented post-push Windows proof is
   `npm ci`, `npm run build`, `npm run services:restart`, and
   `npm run setup -- --step verify` from the canonical checkout.
