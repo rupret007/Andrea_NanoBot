@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   getLogControlConfig,
+  installProcessErrorHandlers,
   isLogLevelEnabled,
   sanitizeLogString,
   setLogControlConfig,
@@ -14,6 +15,17 @@ afterEach(() => {
 });
 
 describe('logger log control', () => {
+  it('installs process error handlers only once', () => {
+    const uncaughtCount = process.listenerCount('uncaughtException');
+    const rejectionCount = process.listenerCount('unhandledRejection');
+
+    installProcessErrorHandlers();
+    installProcessErrorHandlers();
+
+    expect(process.listenerCount('uncaughtException')).toBe(uncaughtCount);
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionCount);
+  });
+
   it('applies a global debug level immediately', () => {
     setLogControlConfig({
       globalLevel: 'debug',

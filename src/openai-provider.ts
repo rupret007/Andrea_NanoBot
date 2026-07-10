@@ -55,6 +55,9 @@ export interface OpenAiProviderFailure {
 }
 
 function readOpenAiEnv(): Record<string, string> {
+  if (process.env.ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE === '1') {
+    return {};
+  }
   return readEnvFile([
     'OPENAI_API_KEY',
     'OPENAI_BASE_URL',

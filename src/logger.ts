@@ -364,11 +364,27 @@ export const logger = {
     log('fatal', dataOrMsg, msg),
 };
 
-process.on('uncaughtException', (err) => {
-  logger.fatal({ err, component: 'assistant' }, 'Uncaught exception');
-  process.exit(1);
-});
+const PROCESS_ERROR_HANDLERS_INSTALLED = Symbol.for(
+  'andrea.logger.process-error-handlers-installed',
+);
 
-process.on('unhandledRejection', (reason) => {
-  logger.error({ err: reason, component: 'assistant' }, 'Unhandled rejection');
-});
+export function installProcessErrorHandlers(): void {
+  const state = globalThis as typeof globalThis &
+    Record<symbol, boolean | undefined>;
+  if (state[PROCESS_ERROR_HANDLERS_INSTALLED]) return;
+  state[PROCESS_ERROR_HANDLERS_INSTALLED] = true;
+
+  process.on('uncaughtException', (err) => {
+    logger.fatal({ err, component: 'assistant' }, 'Uncaught exception');
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    logger.error(
+      { err: reason, component: 'assistant' },
+      'Unhandled rejection',
+    );
+  });
+}
+
+installProcessErrorHandlers();

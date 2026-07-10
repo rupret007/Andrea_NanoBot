@@ -1,4 +1,16 @@
 import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
+
+const TEST_NETWORK_GUARD_PATH = fileURLToPath(
+  new URL('./test-network-guard.mjs', import.meta.url),
+);
+
+function withTestNetworkGuard(nodeOptions = ''): string {
+  const preload = `--import=${TEST_NETWORK_GUARD_PATH}`;
+  return nodeOptions.includes(preload)
+    ? nodeOptions
+    : [nodeOptions, preload].filter(Boolean).join(' ');
+}
 
 type Step = {
   name: string;
@@ -14,7 +26,11 @@ function runStep(step: Step): void {
   const startedAt = Date.now();
   const result = spawnSync(step.command, step.args, {
     stdio: 'inherit',
-    env: process.env,
+    env: {
+      ...process.env,
+      ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE: '1',
+      NODE_OPTIONS: withTestNetworkGuard(process.env.NODE_OPTIONS),
+    },
     shell: process.platform === 'win32',
   });
   const durationSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);

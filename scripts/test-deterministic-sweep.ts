@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 
@@ -32,6 +32,7 @@ const packageJsonPath = fileURLToPath(
   new URL('../package.json', import.meta.url),
 );
 const repoRoot = dirname(packageJsonPath);
+const networkGuardPath = resolve(repoRoot, 'scripts/test-network-guard.mjs');
 const packageJson = JSON.parse(
   readFileSync(packageJsonPath, 'utf8'),
 ) as PackageJson;
@@ -107,7 +108,17 @@ for (const script of selected) {
   const result = spawnSync('npm', ['run', script.name], {
     cwd: repoRoot,
     encoding: 'utf8',
-    env: { ...process.env, CI: process.env.CI || '1' },
+    env: {
+      ...process.env,
+      CI: process.env.CI || '1',
+      ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE: '1',
+      NODE_OPTIONS: [
+        process.env.NODE_OPTIONS,
+        `--import=${networkGuardPath}`,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    },
     maxBuffer: 30 * 1024 * 1024,
   });
   const durationSeconds = (performance.now() - scriptStarted) / 1000;
