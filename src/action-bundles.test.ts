@@ -18,6 +18,7 @@ import {
   upsertDelegationRule,
 } from './db.js';
 import type { DelegationRuleRecord } from './types.js';
+import { recordRoutineEvidence } from './routine-promotion.js';
 
 function seedDelegationRule(
   overrides: Partial<DelegationRuleRecord> = {},
@@ -366,6 +367,16 @@ describe('action bundles', () => {
 
   it('marks rule-driven actions in a bundle and records overrides when skipped', async () => {
     const rule = seedDelegationRule();
+    recordRoutineEvidence({
+      ruleId: rule.ruleId,
+      kind: 'deterministic_fixture_passed',
+      summary: 'Fixture passed.',
+    });
+    recordRoutineEvidence({
+      ruleId: rule.ruleId,
+      kind: 'canary_verified',
+      summary: 'Approved canary verified.',
+    });
     const snapshot = createOrRefreshActionBundle({
       groupFolder: 'main',
       presentationChannel: 'telegram',

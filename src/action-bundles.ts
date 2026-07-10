@@ -34,6 +34,7 @@ import {
   createOrRefreshMessageActionFromDraft,
 } from './message-actions.js';
 import { handleRitualCommand } from './rituals.js';
+import { recordAssistantMetric } from './personal-assistant-metrics.js';
 import type {
   ActionBundleActionRecord,
   ActionBundleActionType,
@@ -1537,6 +1538,17 @@ async function executeActions(
   const detailTexts: string[] = [];
   for (const action of actions) {
     if (['executed', 'skipped', 'deferred'].includes(action.status)) continue;
+    recordAssistantMetric({
+      groupFolder: snapshot.bundle.groupFolder,
+      kind: 'recommendation_accepted',
+      now: currentTime,
+    });
+    recordAssistantMetric({
+      groupFolder: snapshot.bundle.groupFolder,
+      kind: 'tool_attempt',
+      metadata: { actionType: action.actionType },
+      now: currentTime,
+    });
     updateActionBundleAction(action.actionId, {
       status: 'approved',
       lastUpdatedAt: currentTime.toISOString(),
@@ -1558,9 +1570,22 @@ async function executeActions(
           ruleId: action.delegationRuleId,
           autoApplied: action.delegationMode === 'auto_apply_when_safe',
           outcomeStatus: 'completed',
+          explicitlyApproved: action.delegationMode !== 'auto_apply_when_safe',
           now: currentTime,
         });
       }
+      recordAssistantMetric({
+        groupFolder: snapshot.bundle.groupFolder,
+        kind: 'tool_success',
+        metadata: { actionType: action.actionType },
+        now: currentTime,
+      });
+      recordAssistantMetric({
+        groupFolder: snapshot.bundle.groupFolder,
+        kind: 'completion_verified',
+        metadata: { actionType: action.actionType },
+        now: currentTime,
+      });
       executed.push(result.label);
       if (result.detailText) detailTexts.push(result.detailText);
     } else {
@@ -1574,6 +1599,7 @@ async function executeActions(
           ruleId: action.delegationRuleId,
           autoApplied: action.delegationMode === 'auto_apply_when_safe',
           outcomeStatus: 'failed',
+          explicitlyApproved: action.delegationMode !== 'auto_apply_when_safe',
           now: currentTime,
         });
       }
@@ -1706,6 +1732,12 @@ export async function applyActionBundleOperation(
   if (operation.kind === 'skip_selected') {
     const selected = selectedActions(snapshot);
     for (const action of selected) {
+      recordAssistantMetric({
+        groupFolder: snapshot.bundle.groupFolder,
+        kind: 'recommendation_rejected',
+        metadata: { actionType: action.actionType },
+        now,
+      });
       if (action.delegationRuleId) {
         recordDelegationRuleOverride(action.delegationRuleId, now);
       }
@@ -1742,6 +1774,12 @@ export async function applyActionBundleOperation(
       (action) => action.actionType === operation.actionType,
     );
     for (const action of target) {
+      recordAssistantMetric({
+        groupFolder: snapshot.bundle.groupFolder,
+        kind: 'recommendation_rejected',
+        metadata: { actionType: action.actionType },
+        now,
+      });
       if (action.delegationRuleId) {
         recordDelegationRuleOverride(action.delegationRuleId, now);
       }

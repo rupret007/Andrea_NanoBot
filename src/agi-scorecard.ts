@@ -9,6 +9,12 @@ import {
   isDatabaseInitialized,
 } from './db.js';
 import { runDogfoodGauntlet } from './dogfood-gauntlet.js';
+import {
+  assertEvaluationCostWithinBudget,
+  loopbackOnlyFetch,
+  resolveEvaluationExecutionPolicy,
+  withProcessFetch,
+} from './evaluation-execution.js';
 import { runIntelligenceRegressionHarness } from './intelligence-regression-harness.js';
 import { runSyntheticUserGauntlet } from './shadow-improvement-runner.js';
 import { runStrategyEvals } from './strategy-evals.js';
@@ -62,6 +68,7 @@ export interface AgiScorecardResult {
   pendingActions: string[];
   latencyMs: number;
   estimatedCostUsd: number;
+  costCapUsd?: number;
   regressions: string[];
   weaknesses: string[];
   recommendations: string[];
@@ -72,6 +79,7 @@ export interface RunAgiScorecardOptions {
   generatedAt?: string;
   mode?: AgiScorecardMode;
   includeDogfood?: boolean;
+  maxCostUsd?: number;
 }
 
 export interface AgiScorecardArtifacts {
@@ -263,12 +271,20 @@ function recommendationsFor(
 export async function runAgiScorecard(
   opts: RunAgiScorecardOptions = {},
 ): Promise<AgiScorecardResult> {
+  const policy = resolveEvaluationExecutionPolicy({
+    mode: opts.mode,
+    maxCostUsd: opts.maxCostUsd,
+  });
   const openedTestDatabase = !isDatabaseInitialized();
   if (openedTestDatabase) _initTestDatabase();
   try {
-    return await runAgiScorecardWithDatabase(opts, {
-      persistSyntheticState: openedTestDatabase,
-    });
+    const operation = () =>
+      runAgiScorecardWithDatabase(opts, {
+        persistSyntheticState: openedTestDatabase,
+      });
+    return policy.mode === 'deterministic'
+      ? await withProcessFetch(loopbackOnlyFetch(globalThis.fetch), operation)
+      : await operation();
   } finally {
     if (openedTestDatabase) _closeDatabase();
   }
@@ -331,7 +347,9 @@ async function runAgiScorecardWithDatabase(
     runId: `${runId}-intelligence`,
     mode: 'regression',
     recordToPlatform: false,
-    reflectTurns: false,
+    reflectTurns: true,
+    executionMode: mode,
+    maxCostUsd: opts.maxCostUsd,
   });
   for (const scenario of intelligence.scenarios) {
     scenarioResults.push({
@@ -348,6 +366,28 @@ async function runAgiScorecardWithDatabase(
           .join('; ') || 'All gates passed.',
       traceIds: scenario.traceIds,
     });
+    for (const gateResult of scenario.gates.filter((gate) =>
+      ['personal_context_citations', 'verified_deep_work_outcome'].includes(
+        gate.gateId,
+      ),
+    )) {
+      scenarioResults.push({
+        suite: 'verified-agency',
+        scenarioId: `${scenario.scenarioId}.${gateResult.gateId}`,
+        title:
+          gateResult.gateId === 'personal_context_citations'
+            ? 'Personal context is cited and privacy bounded'
+            : 'Deep work records a verified or honest blocked outcome',
+        dimension:
+          gateResult.gateId === 'personal_context_citations'
+            ? 'memory'
+            : 'taskCompletion',
+        passed: gateResult.passed,
+        score: roundScore(gateResult.score),
+        detail: gateResult.summary,
+        traceIds: scenario.traceIds,
+      });
+    }
   }
 
   const synthetic = runSyntheticUserGauntlet({
@@ -409,6 +449,13 @@ async function runAgiScorecardWithDatabase(
     .filter((result) => !result.passed)
     .map((result) => `${result.suite}:${result.scenarioId}`);
 
+  const estimatedCostUsd = intelligence.execution.estimatedCostUsd;
+  const executionPolicy = resolveEvaluationExecutionPolicy({
+    mode,
+    maxCostUsd: opts.maxCostUsd,
+  });
+  assertEvaluationCostWithinBudget(executionPolicy, estimatedCostUsd);
+
   return {
     runId,
     generatedAt,
@@ -422,7 +469,8 @@ async function runAgiScorecardWithDatabase(
     toolsUsed: suiteNames,
     pendingActions: [],
     latencyMs: Date.now() - startedAt,
-    estimatedCostUsd: 0,
+    estimatedCostUsd,
+    costCapUsd: executionPolicy.maxCostUsd,
     regressions,
     weaknesses,
     recommendations: recommendationsFor(scenarioResults, dimensionScores, mode),
@@ -439,6 +487,7 @@ export function formatAgiScorecardMarkdown(result: AgiScorecardResult): string {
     `Overall: ${(result.overallScore * 100).toFixed(1)}% (${result.grade})`,
     `Latency: ${result.latencyMs}ms`,
     `Estimated cost: $${result.estimatedCostUsd.toFixed(4)}`,
+    `Cost cap: $${(result.costCapUsd || 0).toFixed(4)}`,
     '',
     '## Dimensions',
   ];

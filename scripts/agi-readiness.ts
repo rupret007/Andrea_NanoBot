@@ -29,6 +29,7 @@ function readValue(name: string): string | undefined {
 async function main(): Promise<void> {
   const generatedAt = new Date().toISOString();
   const mode = hasFlag('--live') ? 'live' : 'deterministic';
+  const maxCostUsd = Number(readValue('--max-cost-usd') ?? '0');
   const json = hasFlag('--json');
   const noLiveProbe = hasFlag('--no-live-probe');
   const write = hasFlag('--write');
@@ -36,13 +37,15 @@ async function main(): Promise<void> {
 
   const scorecard = await runAgiScorecard({
     mode,
+    maxCostUsd,
     includeDogfood: !hasFlag('--no-dogfood'),
   });
   initDatabase();
   const doctor = await runAgiDoctor();
-  const providers = noLiveProbe
-    ? collectProviderHealthSnapshots(generatedAt)
-    : await collectProviderHealthSnapshotsWithLiveProbe(generatedAt);
+  const providers =
+    mode === 'deterministic' || noLiveProbe
+      ? collectProviderHealthSnapshots(generatedAt)
+      : await collectProviderHealthSnapshotsWithLiveProbe(generatedAt);
   const integrations = buildIntegrationDoctorReport({
     now: new Date(generatedAt),
     providers,
@@ -85,7 +88,10 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

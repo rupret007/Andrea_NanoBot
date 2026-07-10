@@ -78,6 +78,8 @@ The repo supports:
 Important rule:
 
 - secrets should not be echoed back to users, stored in normal chat history, or mounted into general agent workspaces
+- container fallbacks pass secret values through the spawned runtime process environment and use bare `-e KEY` container arguments; secret values must never appear in command arguments, process listings, or diagnostics
+- if a credential was previously observed in a process listing, rotate it before further live provider verification
 
 ### 6. Route-Aware Tool Narrowing
 

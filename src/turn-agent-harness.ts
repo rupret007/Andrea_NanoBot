@@ -27,6 +27,8 @@ import {
 } from './thinking-controls.js';
 import { planCalendarAssistantLookup } from './calendar-assistant.js';
 import { recordCouncilOutcomeSignal } from './council-quality.js';
+import { isDatabaseInitialized } from './db.js';
+import { buildPersonalContextPacket } from './personal-context-packet.js';
 import { classifyCouncilLearningCandidate } from './council-learning-classifier.js';
 import {
   beginCognitiveKernelRun,
@@ -45,11 +47,17 @@ import {
   type AgentRuntimeSpineResult,
 } from './agent-runtime-spine.js';
 import { runTruthEngine } from './truth-engine.js';
+import {
+  beginVerifiedDeepWorkForTurn,
+  finalizeVerifiedDeepWorkForTurn,
+} from './verified-deep-work.js';
 import type {
   CouncilOutcomeSignalKind,
   LogicKernelReport,
   LogicMissingPremise,
   TruthVerdict,
+  PersonalContextPacket,
+  VerifiedDeepWorkPacket,
 } from './types.js';
 
 export type TurnAgentChannel = 'telegram' | 'bluebubbles' | 'alexa' | 'system';
@@ -183,6 +191,8 @@ export interface TurnAgentHarnessContext {
   runtimeSpine?: AgentRuntimeSpineResult | null;
   platformHoldReply?: string | null;
   actorId?: string | null;
+  personalContextPacket?: PersonalContextPacket | null;
+  verifiedDeepWorkPacket?: VerifiedDeepWorkPacket | null;
 }
 
 export interface BeginTurnAgentHarnessInput {
@@ -802,6 +812,26 @@ export async function beginTurnAgentHarness(
     }),
     taskFamily,
   );
+  const personalContextPacket =
+    input.groupFolder && isDatabaseInitialized()
+      ? await buildPersonalContextPacket({
+          groupFolder: input.groupFolder,
+          query: input.text,
+          limit: 12,
+        })
+      : null;
+  if (personalContextPacket) {
+    contextCompile.metadata.personal_context_item_count = String(
+      personalContextPacket.items.length,
+    );
+    contextCompile.metadata.personal_context_citation_count = String(
+      personalContextPacket.citations.length,
+    );
+    contextCompile.metadata.personal_context_conflict_count = String(
+      personalContextPacket.conflicts.length,
+    );
+    contextCompile.metadata.personal_context_raw_messages_stored = 'false';
+  }
   const approvalPosture =
     contextCompile.selectedSkill.approvalNeed === 'explicit'
       ? 'approval_required'
@@ -893,6 +923,23 @@ export async function beginTurnAgentHarness(
     logicRun,
     providerCouncil,
   });
+  const verifiedDeepWorkPacket =
+    input.groupFolder && isDatabaseInitialized()
+      ? beginVerifiedDeepWorkForTurn({
+          groupFolder: input.groupFolder,
+          turnId: input.turnId,
+          taskFamily,
+          objective: buildSanitizedGoal(input, taskFamily),
+          approvalRequired:
+            contextCompile.selectedSkill.approvalNeed === 'explicit',
+          sourceRefs: [
+            ...(personalContextPacket?.citations || []),
+            deliberation?.taskLedgerId || '',
+            providerCouncil?.councilRunId || '',
+          ].filter(Boolean),
+          resumePendingApproval: input.requestRoute === 'repair_approval',
+        })
+      : null;
   return {
     turnId: input.turnId,
     channel: input.channel,
@@ -910,6 +957,8 @@ export async function beginTurnAgentHarness(
     platformHoldReply:
       councilHoldReply || buildPlatformHoldReply(deliberation, contextCompile),
     actorId: input.actorId,
+    personalContextPacket,
+    verifiedDeepWorkPacket,
   };
 }
 
@@ -1556,6 +1605,27 @@ export async function reflectTurnAgentOutcome(input: {
     answerClass: input.answerClass || 'unknown',
     blockerClass: input.blockerClass,
   });
+  if (context?.verifiedDeepWorkPacket && isDatabaseInitialized()) {
+    context.verifiedDeepWorkPacket = finalizeVerifiedDeepWorkForTurn({
+      packetId: context.verifiedDeepWorkPacket.packetId,
+      outcomeSummary: input.evaluation.summary,
+      evidencePassed:
+        input.evaluation.status !== 'block' &&
+        input.evaluation.evidenceGap !== 'blocked',
+      evidenceRef:
+        input.evaluation.truthVerdict?.audit.auditId ||
+        context.deliberation?.traceGradeId ||
+        null,
+      blocker: input.blockerClass || null,
+      toolId: input.routeUsed,
+      toolReliability: input.evaluation.evidenceGap === 'major' ? 0.7 : 1,
+      artifactRefs: [
+        context.providerCouncil?.councilRunId || '',
+        context.cognitiveRun?.run.runId || '',
+        context.runtimeSpine?.run.runtimeRunId || '',
+      ].filter(Boolean),
+    });
+  }
   if (!context?.deliberation?.taskLedgerId) {
     return {
       routeUsed: input.routeUsed,

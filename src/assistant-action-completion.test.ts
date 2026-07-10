@@ -10,6 +10,7 @@ import {
   upsertDelegationRule,
 } from './db.js';
 import type { DelegationRuleRecord } from './types.js';
+import { recordRoutineEvidence } from './routine-promotion.js';
 
 function seedDelegationRule(
   overrides: Partial<DelegationRuleRecord> = {},
@@ -255,7 +256,7 @@ describe('assistant action completion', () => {
   });
 
   it('uses a saved save-for-later rule to auto-create the usual reminder', async () => {
-    seedDelegationRule({
+    const rule = seedDelegationRule({
       ruleId: 'rule-save-later',
       title: 'Save-for-later reminder default',
       conditionsJson: JSON.stringify({
@@ -263,6 +264,16 @@ describe('assistant action completion', () => {
         originKind: 'daily_guidance',
         promptPattern: 'save_that',
       }),
+    });
+    recordRoutineEvidence({
+      ruleId: rule.ruleId,
+      kind: 'deterministic_fixture_passed',
+      summary: 'Fixture passed.',
+    });
+    recordRoutineEvidence({
+      ruleId: rule.ruleId,
+      kind: 'canary_verified',
+      summary: 'Approved canary verified.',
     });
 
     const result = await completeAssistantActionFromAlexa(

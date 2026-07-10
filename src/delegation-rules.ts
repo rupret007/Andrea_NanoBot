@@ -6,6 +6,13 @@ import {
   updateDelegationRule,
   upsertDelegationRule,
 } from './db.js';
+import {
+  assessRoutinePromotion,
+  isDelegatableRoutineAction,
+  recordRoutineEvidence,
+  runDeterministicRoutineFixture,
+} from './routine-promotion.js';
+import { recordAssistantMetric } from './personal-assistant-metrics.js';
 import type {
   ActionBundleActionRecord,
   ActionBundleActionStatus,
@@ -217,19 +224,9 @@ function parseRuleChannels(
 export function classifyDelegationSafety(
   actionType: ActionBundleActionType,
 ): DelegationSafetyLevel {
-  switch (actionType) {
-    case 'save_to_thread':
-    case 'save_to_library':
-    case 'pin_to_ritual':
-    case 'reference_current_work':
-    case 'send_to_telegram':
-    case 'draft_follow_up':
-    case 'create_reminder':
-    case 'send_message':
-      return 'safe_to_auto_after_delegation';
-    default:
-      return 'always_requires_fresh_approval';
-  }
+  return isDelegatableRoutineAction(actionType)
+    ? 'safe_to_auto_after_delegation'
+    : 'always_requires_fresh_approval';
 }
 
 function approvalModeSafetyRank(mode: DelegationApprovalMode): number {
@@ -407,7 +404,15 @@ export function findMatchingDelegationRule(
     };
   }
   const safetyLevel = classifyDelegationSafety(context.actionType);
-  const effectiveApprovalMode = effectiveApprovalModeForRule(rule, safetyLevel);
+  const requestedEffectiveMode = effectiveApprovalModeForRule(
+    rule,
+    safetyLevel,
+  );
+  const promotion = assessRoutinePromotion(rule.ruleId);
+  const effectiveApprovalMode =
+    requestedEffectiveMode === 'auto_apply_when_safe' && !promotion.eligible
+      ? 'always_ask'
+      : requestedEffectiveMode;
   const delegatedAction =
     parseRuleActions(rule).find(
       (action) => action.actionType === context.actionType,
@@ -417,11 +422,10 @@ export function findMatchingDelegationRule(
     delegatedAction,
     effectiveApprovalMode,
     safetyLevel,
-    explanation: explanationForMatch(
-      rule,
-      effectiveApprovalMode,
-      context.actionType,
-    ),
+    explanation:
+      requestedEffectiveMode === 'auto_apply_when_safe' && !promotion.eligible
+        ? `${explanationForMatch(rule, effectiveApprovalMode, context.actionType)} Promotion is pending: ${promotion.reason}.`
+        : explanationForMatch(rule, effectiveApprovalMode, context.actionType),
     autoApplied: effectiveApprovalMode === 'auto_apply_when_safe',
   };
 }
@@ -504,6 +508,8 @@ export function recordDelegationRuleUsage(params: {
   ruleId: string;
   autoApplied?: boolean;
   outcomeStatus?: OutcomeStatus | null;
+  explicitlyApproved?: boolean;
+  honestlyBlocked?: boolean;
   now?: Date;
 }): void {
   const rule = getDelegationRule(params.ruleId);
@@ -517,6 +523,39 @@ export function recordDelegationRuleUsage(params: {
         ? params.outcomeStatus
         : rule.lastOutcomeStatus,
   });
+  if (params.explicitlyApproved) {
+    const promotion = assessRoutinePromotion(rule.ruleId, params.now);
+    if (!promotion.approvedCanaryCompleted) {
+      if (
+        params.outcomeStatus === 'completed' ||
+        params.outcomeStatus === 'partial'
+      ) {
+        recordRoutineEvidence({
+          ruleId: rule.ruleId,
+          kind: 'canary_verified',
+          summary:
+            'Explicitly approved routine canary reached a verified outcome.',
+          now: params.now,
+        });
+      } else if (params.honestlyBlocked) {
+        recordRoutineEvidence({
+          ruleId: rule.ruleId,
+          kind: 'canary_honestly_blocked',
+          summary:
+            'Explicitly approved routine canary recorded an honest external blocker.',
+          now: params.now,
+        });
+      }
+    }
+  }
+  if (params.outcomeStatus === 'failed' || params.outcomeStatus === 'skipped') {
+    recordRoutineEvidence({
+      ruleId: rule.ruleId,
+      kind: 'failure',
+      summary: `Routine outcome recorded as ${params.outcomeStatus}.`,
+      now: params.now,
+    });
+  }
 }
 
 export function recordDelegationRuleOverride(
@@ -528,6 +567,17 @@ export function recordDelegationRuleOverride(
   updateDelegationRule(rule.ruleId, {
     timesOverridden: rule.timesOverridden + 1,
     lastUsedAt: now.toISOString(),
+  });
+  recordRoutineEvidence({
+    ruleId: rule.ruleId,
+    kind: 'override',
+    summary: 'User overrode the delegated routine.',
+    now,
+  });
+  recordAssistantMetric({
+    groupFolder: rule.groupFolder,
+    kind: 'override',
+    now,
   });
 }
 
@@ -789,6 +839,7 @@ export function saveDelegationRuleFromPreview(
     safetyLevel: preview.safetyLevel,
   };
   upsertDelegationRule(record);
+  runDeterministicRoutineFixture(record.ruleId, now);
   return record;
 }
 

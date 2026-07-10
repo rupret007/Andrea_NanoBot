@@ -46,6 +46,7 @@ import {
   type ProviderHealthSnapshot,
 } from './provider-health.js';
 import { listCognitiveProviderCooldowns } from './db.js';
+import type { CouncilRunOrigin } from './types.js';
 
 type CouncilRole =
   | 'planner'
@@ -75,6 +76,7 @@ export interface ObservableProviderCouncilInput {
   allowedSideEffects?: 'none' | 'read_only' | 'approval_required';
   rawContentPolicy?: 'metadata_only' | 'local_only' | 'sanitized_snippets';
   metadata?: Record<string, string>;
+  runOrigin?: CouncilRunOrigin;
 }
 
 export interface ProviderCouncilRunnerDeps {
@@ -1755,6 +1757,11 @@ export async function runObservableProviderCouncil(
 
   recordCouncilRunLedger({
     councilRunId,
+    runOrigin:
+      input.runOrigin ||
+      (process.env.ANDREA_EVALUATION_ORIGIN === 'synthetic'
+        ? 'synthetic'
+        : 'live'),
     groupFolder: input.groupFolder,
     taskFamily: input.taskFamily,
     channel: input.channel,

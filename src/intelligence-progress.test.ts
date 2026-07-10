@@ -103,6 +103,13 @@ function input(
       scenarioCount: 10,
       criticalFailureCount: 0,
       scenarios: [],
+      execution: {
+        mode: 'deterministic',
+        maxCostUsd: 0,
+        estimatedCostUsd: 0,
+        latencyMs: 0,
+        outcome: 'pass',
+      },
     },
     capabilityReport: {
       generatedAt,

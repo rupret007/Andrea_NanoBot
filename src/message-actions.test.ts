@@ -773,7 +773,7 @@ describe('message actions', () => {
     ).toBe(true);
   });
 
-  it('marks narrow safe bluebubbles replies as approved when a saved send rule matches', () => {
+  it('keeps bluebubbles replies approval-gated even when a saved send rule matches', () => {
     const thread = seedCommunicationThread();
     seedSendRule();
 
@@ -792,9 +792,9 @@ describe('message actions', () => {
       now: new Date('2026-04-08T19:05:00.000Z'),
     });
 
-    expect(action.sendStatus).toBe('approved');
-    expect(action.requiresApproval).toBe(false);
-    expect(action.trustLevel).toBe('delegated_safe_send');
+    expect(action.sendStatus).toBe('drafted');
+    expect(action.requiresApproval).toBe(true);
+    expect(action.trustLevel).toBe('approve_before_send');
   });
 
   it('sends a bluebubbles reply without the Andrea companion label and marks it sent', async () => {

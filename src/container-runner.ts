@@ -198,6 +198,23 @@ function shouldRedactEnvKey(key: string): boolean {
   );
 }
 
+function appendContainerEnv(
+  args: string[],
+  launchEnv: Record<string, string>,
+  key: string,
+  value: string,
+): void {
+  if (shouldRedactEnvKey(key)) {
+    // Docker/Podman inherit a bare `-e KEY` from their own process
+    // environment. This keeps the value out of argv, process listings, and
+    // command diagnostics while preserving the existing container contract.
+    launchEnv[key] = value;
+    args.push('-e', key);
+    return;
+  }
+  args.push('-e', `${key}=${value}`);
+}
+
 export function sanitizeContainerArgsForLogs(args: string[]): string[] {
   const sanitized = [...args];
   for (let i = 0; i < sanitized.length - 1; i++) {
@@ -216,7 +233,7 @@ export function sanitizeContainerArgsForLogs(args: string[]): string[] {
 function hasContainerEnvArg(args: string[], key: string): boolean {
   for (let i = 0; i < args.length - 1; i++) {
     if (args[i] !== '-e') continue;
-    if (args[i + 1]?.startsWith(`${key}=`)) {
+    if (args[i + 1] === key || args[i + 1]?.startsWith(`${key}=`)) {
       return true;
     }
   }
@@ -1014,8 +1031,13 @@ async function buildContainerArgs(
   containerName: string,
   agentIdentifier?: string,
   runtimePreference?: AgentRuntimeName | null,
-): Promise<{ args: string[]; metadata: ContainerLaunchMetadata }> {
+): Promise<{
+  args: string[];
+  metadata: ContainerLaunchMetadata;
+  launchEnv: Record<string, string>;
+}> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+  const launchEnv: Record<string, string> = {};
   const runtimeEndpointEnv = collectRuntimeEndpointEnv();
   const effectiveRuntimePreference = runtimePreference || AGENT_RUNTIME_DEFAULT;
   const useMiniMaxRuntime = wantsMiniMaxRuntime(effectiveRuntimePreference);
@@ -1101,13 +1123,13 @@ async function buildContainerArgs(
   if (onecliApplied) {
     endpointMode = endpointMode ? `${endpointMode}+onecli` : 'onecli_gateway';
     for (const [key, value] of Object.entries(runtimeEndpointEnvForContainer)) {
-      args.push('-e', `${key}=${value}`);
+      appendContainerEnv(args, launchEnv, key, value);
     }
     for (const [key, value] of Object.entries(modelOverrides)) {
-      args.push('-e', `${key}=${value}`);
+      appendContainerEnv(args, launchEnv, key, value);
     }
     for (const [key, value] of Object.entries(runtimeCredentials)) {
-      args.push('-e', `${key}=${value}`);
+      appendContainerEnv(args, launchEnv, key, value);
     }
     if (
       runtimeEndpointEnvForContainer.ANTHROPIC_BASE_URL &&
@@ -1116,7 +1138,12 @@ async function buildContainerArgs(
       // Claude SDK expects an auth token env var to be present. When OneCLI
       // handles real credential injection, this placeholder is replaced at the
       // gateway layer and the real secret never enters the container.
-      args.push('-e', `ANTHROPIC_AUTH_TOKEN=${ONECLI_AUTH_PLACEHOLDER}`);
+      appendContainerEnv(
+        args,
+        launchEnv,
+        'ANTHROPIC_AUTH_TOKEN',
+        ONECLI_AUTH_PLACEHOLDER,
+      );
     }
     if (modelOverrides.NANOCLAW_AGENT_MODEL === 'cu/default') {
       logger.info(
@@ -1144,7 +1171,7 @@ async function buildContainerArgs(
         : 'no_runtime_env';
 
     for (const [key, value] of Object.entries(passthroughEnv)) {
-      args.push('-e', `${key}=${value}`);
+      appendContainerEnv(args, launchEnv, key, value);
     }
 
     if (Object.keys(passthroughEnv).length > 0) {
@@ -1191,6 +1218,7 @@ async function buildContainerArgs(
 
   return {
     args: normalizeRuntimeArgs(args),
+    launchEnv,
     metadata: {
       selectedModel,
       endpointMode,
@@ -1261,13 +1289,16 @@ export async function runContainerAgent(
   const agentIdentifier = input.isMain
     ? undefined
     : group.folder.toLowerCase().replace(/_/g, '-');
-  const { args: containerArgs, metadata: launchMetadata } =
-    await buildContainerArgs(
-      mounts,
-      containerName,
-      agentIdentifier,
-      input.preferredRuntime,
-    );
+  const {
+    args: containerArgs,
+    metadata: launchMetadata,
+    launchEnv,
+  } = await buildContainerArgs(
+    mounts,
+    containerName,
+    agentIdentifier,
+    input.preferredRuntime,
+  );
   const containerArgsForLogs = sanitizeContainerArgsForLogs(containerArgs);
 
   logger.debug(
@@ -1317,6 +1348,10 @@ export async function runContainerAgent(
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        ...launchEnv,
+      },
     });
 
     onProcess(container, containerName);
@@ -1755,6 +1790,37 @@ export async function runContainerAgent(
         { ...logContext, logFile, verbose: isVerbose },
         'Container log written',
       );
+
+      if (
+        code !== 0 &&
+        onOutput &&
+        hadUserVisibleAssistantResult &&
+        !terminalDirectAssistantErrorOutput
+      ) {
+        logger.info(
+          {
+            ...logContext,
+            group: group.name,
+            code,
+            duration,
+            logFile,
+            route: input.requestPolicy?.route || null,
+            recoveryAttempted,
+            firstResultSubtype,
+          },
+          'Container exited non-zero after user-visible output (post-output cleanup)',
+        );
+        outputChain.then(() => {
+          resolve({
+            status: 'success',
+            result: null,
+            newSessionId,
+            recoveryAttempted: recoveryAttempted || undefined,
+            firstResultSubtype,
+          });
+        });
+        return;
+      }
 
       if (code !== 0) {
         logger.error(

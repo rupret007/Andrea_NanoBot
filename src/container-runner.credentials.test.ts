@@ -173,6 +173,12 @@ function emitSuccessfulExit(proc: ReturnType<typeof createFakeProcess>): void {
   proc.emit('close', 0);
 }
 
+function spawnedEnvironment(): NodeJS.ProcessEnv {
+  return (
+    (spawnMock.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv })?.env || {}
+  );
+}
+
 async function waitForSpawnCall(): Promise<void> {
   for (let i = 0; i < 20; i++) {
     if (spawnMock.mock.calls.length > 0) return;
@@ -238,8 +244,11 @@ describe('container-runner credential env wiring', () => {
         '-e',
         'ANTHROPIC_BASE_URL=https://compat.example.com',
         '-e',
-        'ANTHROPIC_AUTH_TOKEN=onecli-placeholder',
+        'ANTHROPIC_AUTH_TOKEN',
       ]),
+    );
+    expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe(
+      'onecli-placeholder',
     );
   });
 
@@ -278,9 +287,10 @@ describe('container-runner credential env wiring', () => {
         '-e',
         'NANOCLAW_AGENT_MODEL=MiniMax-M3',
         '-e',
-        'ANTHROPIC_AUTH_TOKEN=sk-minimax-123',
+        'ANTHROPIC_AUTH_TOKEN',
       ]),
     );
+    expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe('sk-minimax-123');
     expect(args).not.toContain('ANTHROPIC_AUTH_TOKEN=onecli-placeholder');
     expect(args).not.toContain(
       'ANTHROPIC_API_KEY=dummy-anthropic-key-should-not-be-used',
@@ -308,8 +318,11 @@ describe('container-runner credential env wiring', () => {
         '-e',
         'NANOCLAW_AGENT_MODEL=cu/default',
         '-e',
-        'ANTHROPIC_AUTH_TOKEN=onecli-placeholder',
+        'ANTHROPIC_AUTH_TOKEN',
       ]),
+    );
+    expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe(
+      'onecli-placeholder',
     );
   });
 
@@ -366,8 +379,11 @@ describe('container-runner credential env wiring', () => {
         '-e',
         'ANTHROPIC_BASE_URL=https://openai-compat.example.com',
         '-e',
-        'ANTHROPIC_AUTH_TOKEN=onecli-placeholder',
+        'ANTHROPIC_AUTH_TOKEN',
       ]),
+    );
+    expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe(
+      'onecli-placeholder',
     );
   });
 
@@ -389,11 +405,13 @@ describe('container-runner credential env wiring', () => {
         '-e',
         'ANTHROPIC_BASE_URL=https://compat.example.com',
         '-e',
-        'OPENAI_API_KEY=sk-openai-123',
+        'OPENAI_API_KEY',
         '-e',
-        'ANTHROPIC_AUTH_TOKEN=sk-openai-123',
+        'ANTHROPIC_AUTH_TOKEN',
       ]),
     );
+    expect(spawnedEnvironment().OPENAI_API_KEY).toBe('sk-openai-123');
+    expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe('sk-openai-123');
   });
 
   it('keeps explicit ANTHROPIC_AUTH_TOKEN without overriding it from OPENAI_API_KEY', async () => {
@@ -411,8 +429,9 @@ describe('container-runner credential env wiring', () => {
 
     const args = spawnMock.mock.calls[0]?.[1] as string[];
     expect(args).toEqual(
-      expect.arrayContaining(['-e', 'ANTHROPIC_AUTH_TOKEN=token-explicit']),
+      expect.arrayContaining(['-e', 'ANTHROPIC_AUTH_TOKEN']),
     );
+    expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe('token-explicit');
     expect(args).not.toContain('ANTHROPIC_AUTH_TOKEN=sk-openai-123');
   });
 
@@ -436,11 +455,13 @@ describe('container-runner credential env wiring', () => {
         '-e',
         'ANTHROPIC_BASE_URL=https://openai-compat.example.com',
         '-e',
-        'OPENAI_API_KEY=sk-openai-123',
+        'OPENAI_API_KEY',
         '-e',
-        'ANTHROPIC_AUTH_TOKEN=sk-openai-123',
+        'ANTHROPIC_AUTH_TOKEN',
       ]),
     );
+    expect(spawnedEnvironment().OPENAI_API_KEY).toBe('sk-openai-123');
+    expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe('sk-openai-123');
   });
 
   it('redacts fallback secrets from error log output', async () => {
@@ -466,9 +487,9 @@ describe('container-runner credential env wiring', () => {
     expect(writes.some((content) => content.includes('sk-openai-123'))).toBe(
       false,
     );
-    expect(
-      writes.some((content) => content.includes('OPENAI_API_KEY=***')),
-    ).toBe(true);
+    expect(writes.some((content) => content.includes('OPENAI_API_KEY'))).toBe(
+      true,
+    );
   });
 
   it('rewrites local host endpoint to local gateway container binding when state exists', async () => {

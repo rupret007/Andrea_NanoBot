@@ -578,5 +578,12 @@ export function summarizeAgiSafetyAsRegressionReport(
     scenarioCount: agiReport.results.length,
     criticalFailureCount: failed.length,
     scenarios: [],
+    execution: {
+      mode: 'deterministic',
+      maxCostUsd: 0,
+      estimatedCostUsd: 0,
+      latencyMs: 0,
+      outcome: failed.length > 0 ? 'fail' : 'pass',
+    },
   };
 }

@@ -12,6 +12,18 @@ import {
   type AndreaPlatformIntelligenceScenarioResult,
   type PlatformTaskFamily,
 } from './andrea-platform-bridge.js';
+import {
+  loopbackOnlyFetch,
+  resolveEvaluationExecutionPolicy,
+  withProcessFetch,
+  type EvaluationExecutionMode,
+  type EvaluationExecutionPolicy,
+} from './evaluation-execution.js';
+import {
+  _closeDatabase,
+  _initTestDatabase,
+  isDatabaseInitialized,
+} from './db.js';
 
 type ScenarioGateId =
   | 'meaningful_path'
@@ -24,6 +36,8 @@ type ScenarioGateId =
   | 'safe_rewrite'
   | 'no_internal_leakage'
   | 'trace_completeness'
+  | 'personal_context_citations'
+  | 'verified_deep_work_outcome'
   | 'visible_clarity';
 
 interface IntelligenceScenarioExpected {
@@ -34,6 +48,8 @@ interface IntelligenceScenarioExpected {
   approvalNeed?: 'none' | 'conditional' | 'explicit';
   safeRewriteApplied?: boolean;
   platformHold?: boolean;
+  personalContextCited?: boolean;
+  verifiedDeepWorkOutcome?: 'completed' | 'blocked';
   criticalGates?: ScenarioGateId[];
 }
 
@@ -57,6 +73,9 @@ export interface IntelligenceRegressionHarnessOptions {
   failOnCriticalRegression?: boolean;
   scenarioIds?: string[];
   scenarioTimeoutMs?: number;
+  executionMode?: EvaluationExecutionMode;
+  maxCostUsd?: number;
+  fetchImpl?: typeof fetch;
   onProgress?: (event: IntelligenceRegressionProgressEvent) => void;
 }
 
@@ -70,6 +89,13 @@ export interface IntelligenceRegressionHarnessReport {
   criticalFailureCount: number;
   platformReportId?: string;
   scenarios: AndreaPlatformIntelligenceScenarioResult[];
+  execution: {
+    mode: EvaluationExecutionMode;
+    maxCostUsd: number;
+    estimatedCostUsd: number;
+    latencyMs: number;
+    outcome: 'pass' | 'warn' | 'fail';
+  };
 }
 
 export interface IntelligenceRegressionProgressEvent {
@@ -109,6 +135,8 @@ const DEFAULT_CRITICAL_GATES: ScenarioGateId[] = [
   'approval_correctness',
   'blocker_honesty',
   'memory_safety',
+  'personal_context_citations',
+  'verified_deep_work_outcome',
   'no_internal_leakage',
   'trace_completeness',
   'visible_clarity',
@@ -141,6 +169,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
       councilMode: 'none',
       evidenceLevel: 'partial',
       approvalNeed: 'none',
+      personalContextCited: true,
     },
   },
   {
@@ -173,6 +202,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
       evidenceLevel: 'weak',
       approvalNeed: 'none',
       safeRewriteApplied: true,
+      verifiedDeepWorkOutcome: 'blocked',
     },
   },
   {
@@ -270,6 +300,150 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
   },
 ];
 
+function deterministicPlatformFetch(): typeof fetch {
+  let callCount = 0;
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    callCount += 1;
+    const url = String(input instanceof Request ? input.url : input);
+    const body = JSON.parse(String(init?.body || '{}')) as Record<
+      string,
+      unknown
+    >;
+    if (url.endsWith('/skill-evolution-report')) {
+      return new Response(JSON.stringify({ active_skills: [] }), {
+        status: 200,
+      });
+    }
+    if (url.endsWith('/council-run')) {
+      const mode = String(body.requestedMode || 'dual_review');
+      const members =
+        mode === 'max_iq_council'
+          ? ['openai_cloud', 'minimax_cloud', 'brave_search', 'verifier']
+          : ['primary', 'verifier'];
+      return new Response(
+        JSON.stringify({
+          council: {
+            council_run_id: `synthetic-council-${callCount}`,
+            request_id: `synthetic-request-${callCount}`,
+            mode,
+            status: 'completed',
+            trace_id: body.correlationId || `synthetic-trace-${callCount}`,
+            members: members.map((member_id) => ({
+              member_id,
+              status: 'completed',
+            })),
+          },
+          verdict: {
+            verdict_id: `synthetic-verdict-${callCount}`,
+            final_route: mode,
+            answer_strategy: 'verified_synthesis',
+            confidence: 0.86,
+            approval_required: mode === 'repair_council',
+          },
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.endsWith('/reflect')) {
+      return new Response(
+        JSON.stringify({
+          reflection: { reflection_id: `synthetic-reflection-${callCount}` },
+          evaluation: { evaluation_id: `synthetic-evaluation-${callCount}` },
+          learning: { learning_id: `synthetic-learning-${callCount}` },
+          trace_grade: {
+            grade_id: `synthetic-grade-${callCount}`,
+            status: 'pass',
+          },
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.endsWith('/skill-candidate')) {
+      return new Response(
+        JSON.stringify({
+          candidate: { candidate_id: `synthetic-candidate-${callCount}` },
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.endsWith('/intelligence-regression')) {
+      return new Response(
+        JSON.stringify({
+          report: {
+            report_id: `synthetic-report-${callCount}`,
+            status: body.status,
+            mode: body.mode,
+            total_score: body.totalScore,
+            critical_score: body.criticalScore,
+            scenario_count: Array.isArray(body.scenarioResults)
+              ? body.scenarioResults.length
+              : 0,
+            critical_failure_count: body.criticalFailureCount || 0,
+          },
+        }),
+        { status: 200 },
+      );
+    }
+    const category = String(body.category || 'assistant');
+    const route =
+      category === 'calendar' || category === 'research'
+        ? 'direct_integration'
+        : category === 'operator'
+          ? 'runtime_conductor'
+          : 'local_capability';
+    return new Response(
+      JSON.stringify({
+        task: { task_ledger_id: `synthetic-task-${callCount}` },
+        progress: { progress_ledger_id: `synthetic-progress-${callCount}` },
+        plan: { plan_id: `synthetic-plan-${callCount}`, route },
+        decision: {
+          decision_id: `synthetic-decision-${callCount}`,
+          selected_route: route,
+          execution_posture: 'execute_now',
+          answer_strategy: 'narrow_claim',
+          selected_policy_id: route,
+          expected_evidence: category === 'research' ? 'strong' : 'partial',
+        },
+        trace_grade: {
+          grade_id: `synthetic-grade-${callCount}`,
+          status: 'pass',
+        },
+      }),
+      { status: 200 },
+    );
+  }) as typeof fetch;
+}
+
+async function withDeterministicHarnessEnvironment<T>(
+  fetchImpl: typeof fetch,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const keys = [
+    'ANDREA_PLATFORM_COORDINATOR_ENABLED',
+    'ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME',
+    'ANDREA_PLATFORM_COORDINATOR_URL',
+    'ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE',
+    'ANDREA_EVALUATION_ORIGIN',
+  ] as const;
+  const previous = Object.fromEntries(
+    keys.map((key) => [key, process.env[key]]),
+  );
+  process.env.ANDREA_PLATFORM_COORDINATOR_ENABLED = 'true';
+  process.env.ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME = 'false';
+  process.env.ANDREA_PLATFORM_COORDINATOR_URL = 'http://127.0.0.1:4400';
+  process.env.ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE = '1';
+  process.env.ANDREA_EVALUATION_ORIGIN = 'synthetic';
+  try {
+    return await withProcessFetch(loopbackOnlyFetch(fetchImpl), operation);
+  } finally {
+    for (const key of keys) {
+      const value = previous[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 function newRunId(): string {
   return `intel-v14-${Date.now().toString(36)}`;
 }
@@ -313,6 +487,10 @@ function expectedMetadata(
     approval_need: scenario.expected.approvalNeed || '',
     safe_rewrite: String(scenario.expected.safeRewriteApplied ?? false),
     raw_content_policy: 'synthetic_fixture_only',
+    personal_context_cited: String(
+      scenario.expected.personalContextCited ?? false,
+    ),
+    verified_deep_work_outcome: scenario.expected.verifiedDeepWorkOutcome || '',
   };
 }
 
@@ -359,6 +537,21 @@ function actualMetadata(input: {
         (input.context.providerCouncil.memberCount || 0) >= 3,
       ),
     ),
+    personal_context_packet_id:
+      input.context?.personalContextPacket?.packetId || '',
+    personal_context_item_count: String(
+      input.context?.personalContextPacket?.items.length || 0,
+    ),
+    personal_context_citation_count: String(
+      input.context?.personalContextPacket?.citations.length || 0,
+    ),
+    personal_context_conflict_count: String(
+      input.context?.personalContextPacket?.conflicts.length || 0,
+    ),
+    verified_deep_work_packet_id:
+      input.context?.verifiedDeepWorkPacket?.packetId || '',
+    verified_deep_work_status:
+      input.context?.verifiedDeepWorkPacket?.status || '',
     output_shape: `${input.evaluationText.split(/\s+/).filter(Boolean).length}_words`,
   };
 }
@@ -497,6 +690,29 @@ async function runScenario(
       criticalGates,
     ),
   );
+  if (scenario.expected.personalContextCited) {
+    gates.push(
+      gate(
+        'personal_context_citations',
+        Boolean(context?.personalContextPacket?.items.length) &&
+          Boolean(context?.personalContextPacket?.citations.length) &&
+          context?.personalContextPacket?.privacy.rawMessagesStored === false,
+        `Personal context items=${actual.personal_context_item_count || '0'} citations=${actual.personal_context_citation_count || '0'}.`,
+        criticalGates,
+      ),
+    );
+  }
+  if (scenario.expected.verifiedDeepWorkOutcome) {
+    gates.push(
+      gate(
+        'verified_deep_work_outcome',
+        context?.verifiedDeepWorkPacket?.status ===
+          scenario.expected.verifiedDeepWorkOutcome,
+        `Expected deep-work outcome ${scenario.expected.verifiedDeepWorkOutcome}, got ${actual.verified_deep_work_status || 'none'}.`,
+        criticalGates,
+      ),
+    );
+  }
   if (scenario.expected.safeRewriteApplied !== undefined) {
     const rewriteOrSafeHold =
       evaluation.safeRewriteApplied === scenario.expected.safeRewriteApplied ||
@@ -663,8 +879,10 @@ async function runScenarioWithOptionalTimeout(
   }
 }
 
-export async function runIntelligenceRegressionHarness(
-  options: IntelligenceRegressionHarnessOptions = {},
+async function runIntelligenceRegressionHarnessInternal(
+  options: IntelligenceRegressionHarnessOptions,
+  policy: EvaluationExecutionPolicy,
+  startedAt: number,
 ): Promise<IntelligenceRegressionHarnessReport> {
   const runId = options.runId || newRunId();
   const mode = options.mode || 'regression';
@@ -753,7 +971,38 @@ export async function runIntelligenceRegressionHarness(
     criticalFailureCount: criticalFailures.length,
     platformReportId: platformResult?.reportId,
     scenarios,
+    execution: {
+      mode: policy.mode,
+      maxCostUsd: policy.maxCostUsd,
+      estimatedCostUsd: 0,
+      latencyMs: Date.now() - startedAt,
+      outcome: status,
+    },
   };
+}
+
+export async function runIntelligenceRegressionHarness(
+  options: IntelligenceRegressionHarnessOptions = {},
+): Promise<IntelligenceRegressionHarnessReport> {
+  const policy = resolveEvaluationExecutionPolicy({
+    mode: options.executionMode,
+    maxCostUsd: options.maxCostUsd,
+  });
+  const startedAt = Date.now();
+  const openedTestDatabase =
+    policy.mode === 'deterministic' && !isDatabaseInitialized();
+  if (openedTestDatabase) _initTestDatabase();
+  const operation = () =>
+    runIntelligenceRegressionHarnessInternal(options, policy, startedAt);
+  try {
+    if (policy.mode === 'live') return await operation();
+    return await withDeterministicHarnessEnvironment(
+      options.fetchImpl || deterministicPlatformFetch(),
+      operation,
+    );
+  } finally {
+    if (openedTestDatabase) _closeDatabase();
+  }
 }
 
 export function formatIntelligenceRegressionReport(

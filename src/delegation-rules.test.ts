@@ -17,6 +17,24 @@ import {
   saveDelegationRuleFromPreview,
 } from './delegation-rules.js';
 import type { DelegationRuleRecord } from './types.js';
+import {
+  assessRoutinePromotion,
+  recordRoutineEvidence,
+  runDeterministicRoutineFixture,
+} from './routine-promotion.js';
+
+function recordPromotionProof(ruleId: string): void {
+  recordRoutineEvidence({
+    ruleId,
+    kind: 'deterministic_fixture_passed',
+    summary: 'Fixture passed.',
+  });
+  recordRoutineEvidence({
+    ruleId,
+    kind: 'canary_verified',
+    summary: 'Approved canary verified.',
+  });
+}
 
 function seedRule(
   overrides: Partial<DelegationRuleRecord> = {},
@@ -98,6 +116,11 @@ describe('delegation rules', () => {
 
     expect(list).toHaveLength(1);
     expect(saved.title).toContain('reminder');
+    expect(assessRoutinePromotion(saved.ruleId)).toMatchObject({
+      deterministicFixturePassed: true,
+      approvedCanaryCompleted: false,
+      eligible: false,
+    });
     expect(presentation.text).toContain('*Delegation rules*');
     expect(presentation.inlineActionRows[0]?.[0]?.label).toContain('Pause');
     expect(buildDelegationRuleWhyText(saved)).toContain(saved.title);
@@ -185,8 +208,13 @@ describe('delegation rules', () => {
     recordDelegationRuleUsage({
       ruleId: 'rule-remember',
       outcomeStatus: 'completed',
+      explicitlyApproved: true,
       now: new Date('2026-04-08T12:00:00.000Z'),
     });
+    runDeterministicRoutineFixture(
+      'rule-remember',
+      new Date('2026-04-08T11:59:00.000Z'),
+    );
 
     const afterUse = findMatchingDelegationRule({
       groupFolder: 'main',
@@ -215,6 +243,7 @@ describe('delegation rules', () => {
         },
       ]),
     });
+    recordPromotionProof('rule-plan');
 
     const [action] = applyDelegationRulesToActionPlans({
       groupFolder: 'main',

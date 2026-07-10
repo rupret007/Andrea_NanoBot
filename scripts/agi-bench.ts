@@ -1,9 +1,7 @@
 import { pathToFileURL } from 'node:url';
 
-import {
-  runAndreaBench,
-  type AndreaBenchSuite,
-} from '../src/andrea-bench.js';
+import { runAndreaBench, type AndreaBenchSuite } from '../src/andrea-bench.js';
+import { resolveEvaluationExecutionPolicy } from '../src/evaluation-execution.js';
 
 function hasFlag(name: string): boolean {
   return process.argv.slice(2).includes(name);
@@ -22,7 +20,9 @@ function suiteFromArgs(): AndreaBenchSuite | 'external' {
     readValue('--suite') ||
     process.argv
       .slice(2)
-      .find((arg) => ['gaia', 'bfcl', 'swe-lite', 'tau', 'external'].includes(arg));
+      .find((arg) =>
+        ['gaia', 'bfcl', 'swe-lite', 'tau', 'external'].includes(arg),
+      );
   if (raw === 'gaia' || raw === 'bfcl' || raw === 'swe-lite' || raw === 'tau') {
     return raw;
   }
@@ -51,9 +51,14 @@ function printMarkdown(report: ReturnType<typeof runAndreaBench>): void {
 }
 
 async function main(): Promise<void> {
+  const live = hasFlag('--live');
+  resolveEvaluationExecutionPolicy({
+    mode: live ? 'live' : 'deterministic',
+    maxCostUsd: Number(readValue('--max-cost-usd') ?? '0'),
+  });
   const report = runAndreaBench({
     suite: suiteFromArgs(),
-    dryRun: !hasFlag('--live'),
+    dryRun: !live,
   });
   if (hasFlag('--json')) {
     console.log(JSON.stringify({ result: report }, null, 2));
@@ -69,7 +74,10 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

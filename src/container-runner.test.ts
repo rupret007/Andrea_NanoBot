@@ -284,6 +284,62 @@ describe('container-runner timeout behavior', () => {
     expect(result.newSessionId).toBe('session-456');
   });
 
+  it('nonzero post-output cleanup preserves a streamed assistant success', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Assistant execution completed.',
+      newSessionId: 'session-post-output-cleanup',
+      firstResultSubtype: 'success',
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result).toMatchObject({
+      status: 'success',
+      newSessionId: 'session-post-output-cleanup',
+      firstResultSubtype: 'success',
+    });
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ result: 'Assistant execution completed.' }),
+    );
+  });
+
+  it('nonzero cleanup after lifecycle-only output remains a failure', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      newSessionId: 'session-lifecycle-failure',
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+    expect(result.failureKind).toBe('runtime_bootstrap_failed');
+    expect(result.sawLifecycleOnlyOutput).toBe(true);
+  });
+
   it('tracks lifecycle-only output without treating it as a user-visible result', async () => {
     const onOutput = vi.fn(async () => {});
     const resultPromise = runContainerAgent(

@@ -146,6 +146,13 @@ import {
   LifeThreadSignal,
   CouncilOutcomeSignal,
   CouncilRunLedgerRecord,
+  PersonalMemoryFactRecord,
+  PersonalMemoryPolicyRecord,
+  RoutineEvidenceRecord,
+  VerifiedDeepWorkPacket,
+  AssistantMetricEventRecord,
+  AssistantMetricSnapshot,
+  RedactedRegressionFixture,
   CognitiveAutonomyBudgetRecord,
   CognitiveBenchmarkAttemptRecord,
   CognitiveBlackboardEntryRecord,
@@ -958,6 +965,16 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_delegation_rules_group_status
       ON delegation_rules(group_folder, status, last_used_at DESC, created_at DESC);
+    CREATE TABLE IF NOT EXISTS routine_evidence_events (
+      evidence_id TEXT PRIMARY KEY,
+      rule_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (rule_id) REFERENCES delegation_rules(rule_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_routine_evidence_rule_created
+      ON routine_evidence_events(rule_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS message_actions (
       message_action_id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -1240,6 +1257,7 @@ function createSchema(database: Database.Database): void {
       council_run_id TEXT PRIMARY KEY,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      run_origin TEXT NOT NULL DEFAULT 'replay',
       group_folder TEXT,
       task_family TEXT NOT NULL,
       channel TEXT,
@@ -4727,6 +4745,75 @@ function createSchema(database: Database.Database): void {
       ON purchase_requests(chat_jid, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_purchase_requests_status
       ON purchase_requests(status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS personal_memory_policies (
+      group_folder TEXT NOT NULL,
+      source TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      allow_derived_facts INTEGER NOT NULL DEFAULT 0,
+      retention_days INTEGER NOT NULL DEFAULT 90,
+      consented_at TEXT,
+      revoked_at TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (group_folder, source)
+    );
+    CREATE TABLE IF NOT EXISTS personal_memory_facts (
+      fact_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      value_summary TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      status TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      citations_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_personal_memory_facts_group_status
+      ON personal_memory_facts(group_folder, status, expires_at, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_personal_memory_facts_source
+      ON personal_memory_facts(group_folder, source, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS verified_deep_work_packets (
+      packet_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      status TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      packet_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_verified_deep_work_group_updated
+      ON verified_deep_work_packets(group_folder, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS assistant_metric_events (
+      event_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      value REAL NOT NULL,
+      metadata_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_assistant_metrics_group_created
+      ON assistant_metric_events(group_folder, created_at DESC);
+    CREATE TABLE IF NOT EXISTS assistant_metric_baselines (
+      snapshot_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      generated_at TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_assistant_baselines_group_generated
+      ON assistant_metric_baselines(group_folder, generated_at DESC);
+    CREATE TABLE IF NOT EXISTS redacted_regression_fixtures (
+      fixture_id TEXT PRIMARY KEY,
+      source_feedback_id TEXT NOT NULL UNIQUE,
+      classification TEXT NOT NULL,
+      route_key TEXT,
+      capability_id TEXT,
+      expected_behavior TEXT NOT NULL,
+      remediation_status TEXT NOT NULL,
+      contains_raw_user_text INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -5040,6 +5127,24 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Legacy council rows predate origin tracking. Treat them as replay data so
+  // degraded compatibility history cannot influence live provider promotion.
+  try {
+    database.exec(
+      `ALTER TABLE council_run_ledger ADD COLUMN run_origin TEXT NOT NULL DEFAULT 'replay'`,
+    );
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !/duplicate column name:\s*run_origin/i.test(error.message)
+    ) {
+      throw error;
+    }
+  }
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_council_run_ledger_origin_updated ON council_run_ledger(run_origin, updated_at DESC)`,
+  );
 }
 
 export function initDatabase(): void {
@@ -5114,6 +5219,13 @@ export function _initTestDatabase(): void {
     cutoffIso: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
     retainLimit: 1000,
   });
+}
+
+/** @internal - for migration tests only. Opens a disposable database path. */
+export function _initTestDatabaseAtPath(dbPath: string): void {
+  db = new Database(dbPath);
+  db.pragma('foreign_keys = ON');
+  createSchema(db);
 }
 
 /** @internal - for tests only. */
@@ -7779,6 +7891,50 @@ export function updateDelegationRule(
       updates.channelApplicabilityJson ?? existing.channelApplicabilityJson,
     safetyLevel: updates.safetyLevel ?? existing.safetyLevel,
   });
+}
+
+export function insertRoutineEvidence(record: RoutineEvidenceRecord): void {
+  db.prepare(
+    `INSERT INTO routine_evidence_events (evidence_id, rule_id, kind, summary, created_at) VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    record.evidenceId,
+    record.ruleId,
+    record.kind,
+    record.summary,
+    record.createdAt,
+  );
+}
+
+export function listRoutineEvidence(params: {
+  ruleId: string;
+  since?: string;
+  limit?: number;
+}): RoutineEvidenceRecord[] {
+  const clauses = ['rule_id = ?'];
+  const args: Array<string | number> = [params.ruleId];
+  if (params.since) {
+    clauses.push('created_at >= ?');
+    args.push(params.since);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 1000)));
+  const rows = db
+    .prepare(
+      `SELECT * FROM routine_evidence_events WHERE ${clauses.join(' AND ')} ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(...args) as Array<{
+    evidence_id: string;
+    rule_id: string;
+    kind: RoutineEvidenceRecord['kind'];
+    summary: string;
+    created_at: string;
+  }>;
+  return rows.map((row) => ({
+    evidenceId: row.evidence_id,
+    ruleId: row.rule_id,
+    kind: row.kind,
+    summary: row.summary,
+    createdAt: row.created_at,
+  }));
 }
 
 export function upsertMessageAction(record: MessageActionRecord): void {
@@ -10619,6 +10775,7 @@ function mapCouncilRunLedgerRow(row: {
   council_run_id: string;
   created_at: string;
   updated_at: string;
+  run_origin: CouncilRunLedgerRecord['runOrigin'];
   group_folder: string | null;
   task_family: string;
   channel: string | null;
@@ -10649,6 +10806,7 @@ function mapCouncilRunLedgerRow(row: {
     councilRunId: row.council_run_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    runOrigin: row.run_origin || 'replay',
     groupFolder:
       row.group_folder && isValidGroupFolder(row.group_folder)
         ? row.group_folder
@@ -10688,6 +10846,7 @@ export function upsertCouncilRunLedger(record: CouncilRunLedgerRecord): void {
         council_run_id,
         created_at,
         updated_at,
+        run_origin,
         group_folder,
         task_family,
         channel,
@@ -10713,9 +10872,10 @@ export function upsertCouncilRunLedger(record: CouncilRunLedgerRecord): void {
         outcome_signal_count,
         latest_outcome_at,
         outcome_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(council_run_id) DO UPDATE SET
         updated_at = excluded.updated_at,
+        run_origin = excluded.run_origin,
         group_folder = excluded.group_folder,
         task_family = excluded.task_family,
         channel = excluded.channel,
@@ -10746,6 +10906,7 @@ export function upsertCouncilRunLedger(record: CouncilRunLedgerRecord): void {
     record.councilRunId,
     record.createdAt,
     record.updatedAt,
+    record.runOrigin,
     record.groupFolder || null,
     record.taskFamily,
     record.channel || null,
@@ -10793,13 +10954,23 @@ export function getCouncilRunLedger(
 }
 
 export function listCouncilRunLedger(
-  params: { taskFamily?: string; limit?: number } = {},
+  params: {
+    taskFamily?: string;
+    runOrigins?: CouncilRunLedgerRecord['runOrigin'][];
+    limit?: number;
+  } = {},
 ): CouncilRunLedgerRecord[] {
   const clauses: string[] = [];
   const args: Array<string | number> = [];
   if (params.taskFamily) {
     clauses.push('task_family = ?');
     args.push(params.taskFamily);
+  }
+  if (params.runOrigins?.length) {
+    clauses.push(
+      `run_origin IN (${params.runOrigins.map(() => '?').join(', ')})`,
+    );
+    args.push(...params.runOrigins);
   }
   args.push(Math.max(1, Math.min(params.limit || 100, 1000)));
   const rows = db
@@ -10814,6 +10985,411 @@ export function listCouncilRunLedger(
     )
     .all(...args) as Array<Parameters<typeof mapCouncilRunLedgerRow>[0]>;
   return rows.map((row) => mapCouncilRunLedgerRow(row));
+}
+
+export function upsertPersonalMemoryPolicy(
+  record: PersonalMemoryPolicyRecord,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO personal_memory_policies (
+        group_folder, source, enabled, allow_derived_facts, retention_days,
+        consented_at, revoked_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(group_folder, source) DO UPDATE SET
+        enabled = excluded.enabled,
+        allow_derived_facts = excluded.allow_derived_facts,
+        retention_days = excluded.retention_days,
+        consented_at = excluded.consented_at,
+        revoked_at = excluded.revoked_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.groupFolder,
+    record.source,
+    record.enabled ? 1 : 0,
+    record.allowDerivedFacts ? 1 : 0,
+    record.retentionDays,
+    record.consentedAt || null,
+    record.revokedAt || null,
+    record.updatedAt,
+  );
+}
+
+export function listPersonalMemoryPolicies(
+  groupFolder: string,
+): PersonalMemoryPolicyRecord[] {
+  assertValidGroupFolder(groupFolder);
+  const rows = db
+    .prepare(
+      `SELECT * FROM personal_memory_policies WHERE group_folder = ? ORDER BY source`,
+    )
+    .all(groupFolder) as Array<{
+    group_folder: string;
+    source: PersonalMemoryPolicyRecord['source'];
+    enabled: number;
+    allow_derived_facts: number;
+    retention_days: number;
+    consented_at: string | null;
+    revoked_at: string | null;
+    updated_at: string;
+  }>;
+  return rows.map((row) => ({
+    groupFolder: row.group_folder,
+    source: row.source,
+    enabled: row.enabled === 1,
+    allowDerivedFacts: row.allow_derived_facts === 1,
+    retentionDays: row.retention_days,
+    consentedAt: row.consented_at,
+    revokedAt: row.revoked_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export function upsertPersonalMemoryFact(
+  record: PersonalMemoryFactRecord,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO personal_memory_facts (
+        fact_id, group_folder, source, source_ref, subject_key, value_summary,
+        confidence, status, observed_at, expires_at, citations_json,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(fact_id) DO UPDATE SET
+        source_ref = excluded.source_ref,
+        subject_key = excluded.subject_key,
+        value_summary = excluded.value_summary,
+        confidence = excluded.confidence,
+        status = excluded.status,
+        observed_at = excluded.observed_at,
+        expires_at = excluded.expires_at,
+        citations_json = excluded.citations_json,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    record.factId,
+    record.groupFolder,
+    record.source,
+    record.sourceRef,
+    record.subjectKey,
+    record.valueSummary,
+    record.confidence,
+    record.status,
+    record.observedAt,
+    record.expiresAt,
+    record.citationsJson,
+    record.createdAt,
+    record.updatedAt,
+  );
+}
+
+export function listPersonalMemoryFacts(params: {
+  groupFolder: string;
+  source?: PersonalMemoryFactRecord['source'];
+  statuses?: PersonalMemoryFactRecord['status'][];
+  limit?: number;
+}): PersonalMemoryFactRecord[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: Array<string | number> = [params.groupFolder];
+  if (params.source) {
+    clauses.push('source = ?');
+    args.push(params.source);
+  }
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 1000)));
+  const rows = db
+    .prepare(
+      `SELECT * FROM personal_memory_facts WHERE ${clauses.join(
+        ' AND ',
+      )} ORDER BY updated_at DESC LIMIT ?`,
+    )
+    .all(...args) as Array<{
+    fact_id: string;
+    group_folder: string;
+    source: PersonalMemoryFactRecord['source'];
+    source_ref: string;
+    subject_key: string;
+    value_summary: string;
+    confidence: number;
+    status: PersonalMemoryFactRecord['status'];
+    observed_at: string;
+    expires_at: string;
+    citations_json: string;
+    created_at: string;
+    updated_at: string;
+  }>;
+  return rows.map((row) => ({
+    factId: row.fact_id,
+    groupFolder: row.group_folder,
+    source: row.source,
+    sourceRef: row.source_ref,
+    subjectKey: row.subject_key,
+    valueSummary: row.value_summary,
+    confidence: row.confidence,
+    status: row.status,
+    observedAt: row.observed_at,
+    expiresAt: row.expires_at,
+    citationsJson: row.citations_json,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export function updatePersonalMemoryFactsForSource(params: {
+  groupFolder: string;
+  source: PersonalMemoryFactRecord['source'];
+  status: PersonalMemoryFactRecord['status'];
+  updatedAt: string;
+}): number {
+  assertValidGroupFolder(params.groupFolder);
+  return db
+    .prepare(
+      `UPDATE personal_memory_facts SET status = ?, updated_at = ? WHERE group_folder = ? AND source = ?`,
+    )
+    .run(params.status, params.updatedAt, params.groupFolder, params.source)
+    .changes;
+}
+
+export function deletePersonalMemoryFact(factId: string): boolean {
+  return (
+    db
+      .prepare(`DELETE FROM personal_memory_facts WHERE fact_id = ?`)
+      .run(factId).changes > 0
+  );
+}
+
+export function upsertVerifiedDeepWorkPacket(
+  packet: VerifiedDeepWorkPacket,
+): void {
+  assertValidGroupFolder(packet.groupFolder);
+  db.prepare(
+    `
+      INSERT INTO verified_deep_work_packets (
+        packet_id, group_folder, task_family, status, updated_at, packet_json
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(packet_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        task_family = excluded.task_family,
+        status = excluded.status,
+        updated_at = excluded.updated_at,
+        packet_json = excluded.packet_json
+    `,
+  ).run(
+    packet.packetId,
+    packet.groupFolder,
+    packet.taskFamily,
+    packet.status,
+    packet.updatedAt,
+    JSON.stringify(packet),
+  );
+}
+
+export function getVerifiedDeepWorkPacket(
+  packetId: string,
+): VerifiedDeepWorkPacket | undefined {
+  const row = db
+    .prepare(
+      `SELECT packet_json FROM verified_deep_work_packets WHERE packet_id = ? LIMIT 1`,
+    )
+    .get(packetId) as { packet_json: string } | undefined;
+  if (!row) return undefined;
+  try {
+    return JSON.parse(row.packet_json) as VerifiedDeepWorkPacket;
+  } catch {
+    return undefined;
+  }
+}
+
+export function listVerifiedDeepWorkPackets(params: {
+  groupFolder: string;
+  statuses?: VerifiedDeepWorkPacket['status'][];
+  limit?: number;
+}): VerifiedDeepWorkPacket[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: Array<string | number> = [params.groupFolder];
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 50, 500)));
+  const rows = db
+    .prepare(
+      `SELECT packet_json FROM verified_deep_work_packets WHERE ${clauses.join(
+        ' AND ',
+      )} ORDER BY updated_at DESC LIMIT ?`,
+    )
+    .all(...args) as Array<{ packet_json: string }>;
+  return rows.flatMap((row) => {
+    try {
+      return [JSON.parse(row.packet_json) as VerifiedDeepWorkPacket];
+    } catch (error) {
+      if (error instanceof SyntaxError) return [];
+      throw error;
+    }
+  });
+}
+
+export function insertAssistantMetricEvent(
+  record: AssistantMetricEventRecord,
+): void {
+  assertValidGroupFolder(record.groupFolder);
+  db.prepare(
+    `INSERT INTO assistant_metric_events (event_id, group_folder, kind, value, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    record.eventId,
+    record.groupFolder,
+    record.kind,
+    record.value,
+    record.metadataJson,
+    record.createdAt,
+  );
+}
+
+export function listAssistantMetricEvents(params: {
+  groupFolder: string;
+  since?: string;
+  limit?: number;
+}): AssistantMetricEventRecord[] {
+  assertValidGroupFolder(params.groupFolder);
+  const clauses = ['group_folder = ?'];
+  const args: Array<string | number> = [params.groupFolder];
+  if (params.since) {
+    clauses.push('created_at >= ?');
+    args.push(params.since);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 5000, 10_000)));
+  const rows = db
+    .prepare(
+      `SELECT * FROM assistant_metric_events WHERE ${clauses.join(' AND ')} ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(...args) as Array<{
+    event_id: string;
+    group_folder: string;
+    kind: AssistantMetricEventRecord['kind'];
+    value: number;
+    metadata_json: string;
+    created_at: string;
+  }>;
+  return rows.map((row) => ({
+    eventId: row.event_id,
+    groupFolder: row.group_folder,
+    kind: row.kind,
+    value: row.value,
+    metadataJson: row.metadata_json,
+    createdAt: row.created_at,
+  }));
+}
+
+export function insertAssistantMetricBaseline(
+  snapshot: AssistantMetricSnapshot,
+): void {
+  assertValidGroupFolder(snapshot.groupFolder);
+  db.prepare(
+    `INSERT INTO assistant_metric_baselines (snapshot_id, group_folder, generated_at, snapshot_json) VALUES (?, ?, ?, ?)`,
+  ).run(
+    snapshot.snapshotId,
+    snapshot.groupFolder,
+    snapshot.generatedAt,
+    JSON.stringify(snapshot),
+  );
+}
+
+export function getLatestAssistantMetricBaseline(
+  groupFolder: string,
+): AssistantMetricSnapshot | undefined {
+  assertValidGroupFolder(groupFolder);
+  const row = db
+    .prepare(
+      `SELECT snapshot_json FROM assistant_metric_baselines WHERE group_folder = ? ORDER BY generated_at DESC LIMIT 1`,
+    )
+    .get(groupFolder) as { snapshot_json: string } | undefined;
+  if (!row) return undefined;
+  try {
+    return JSON.parse(row.snapshot_json) as AssistantMetricSnapshot;
+  } catch {
+    return undefined;
+  }
+}
+
+export function upsertRedactedRegressionFixture(
+  fixture: RedactedRegressionFixture,
+): void {
+  db.prepare(
+    `
+      INSERT INTO redacted_regression_fixtures (
+        fixture_id, source_feedback_id, classification, route_key,
+        capability_id, expected_behavior, remediation_status,
+        contains_raw_user_text, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+      ON CONFLICT(source_feedback_id) DO UPDATE SET
+        classification = excluded.classification,
+        route_key = excluded.route_key,
+        capability_id = excluded.capability_id,
+        expected_behavior = excluded.expected_behavior,
+        remediation_status = excluded.remediation_status
+    `,
+  ).run(
+    fixture.fixtureId,
+    fixture.sourceFeedbackId,
+    fixture.classification,
+    fixture.routeKey || null,
+    fixture.capabilityId || null,
+    fixture.expectedBehavior,
+    fixture.remediationStatus,
+    fixture.createdAt,
+  );
+}
+
+export function listRedactedRegressionFixtures(
+  params: {
+    remediationStatuses?: RedactedRegressionFixture['remediationStatus'][];
+    limit?: number;
+  } = {},
+): RedactedRegressionFixture[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.remediationStatuses?.length) {
+    clauses.push(
+      `remediation_status IN (${params.remediationStatuses.map(() => '?').join(', ')})`,
+    );
+    args.push(...params.remediationStatuses);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 1000)));
+  const rows = db
+    .prepare(
+      `SELECT * FROM redacted_regression_fixtures ${
+        clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+      } ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(...args) as Array<{
+    fixture_id: string;
+    source_feedback_id: string;
+    classification: string;
+    route_key: string | null;
+    capability_id: string | null;
+    expected_behavior: string;
+    remediation_status: RedactedRegressionFixture['remediationStatus'];
+    created_at: string;
+  }>;
+  return rows.map((row) => ({
+    fixtureId: row.fixture_id,
+    sourceFeedbackId: row.source_feedback_id,
+    classification: row.classification,
+    routeKey: row.route_key,
+    capabilityId: row.capability_id,
+    expectedBehavior: row.expected_behavior,
+    remediationStatus: row.remediation_status,
+    containsRawUserText: false,
+    createdAt: row.created_at,
+  }));
 }
 
 function mapCouncilOutcomeSignalRow(row: {

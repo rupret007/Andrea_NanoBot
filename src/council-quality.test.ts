@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   buildCouncilReplayReport,
@@ -12,8 +16,10 @@ import {
 import {
   _closeDatabase,
   _initTestDatabase,
+  _initTestDatabaseAtPath,
   getCouncilRunLedger,
   listCouncilOutcomeSignals,
+  listCouncilRunLedger,
 } from './db.js';
 import type { AndreaPlatformProviderCouncilResult } from './andrea-platform-bridge.js';
 import type { ProviderHealthSnapshot } from './provider-health.js';
@@ -197,6 +203,81 @@ describe('council quality ledger', () => {
       outcomeStatus: 'answer_sent',
       latestOutcomeAt: '2026-06-04T10:01:00.000Z',
     });
+  });
+
+  it('excludes replay and synthetic runs from live promotion signals', () => {
+    for (const runOrigin of ['replay', 'synthetic'] as const) {
+      recordCouncilRunLedger({
+        councilRunId: `council-${runOrigin}`,
+        runOrigin,
+        taskFamily: 'assistant',
+        requestedMode: 'dual_review',
+        chosenMode: 'dual_review',
+        calibration: calibrateCouncilMode({
+          taskFamily: 'assistant',
+          requestedMode: 'dual_review',
+        }),
+        structuredVerdict: verdict({ confidence: 0.1, status: 'block' }),
+      });
+    }
+
+    const calibration = calibrateCouncilMode({
+      taskFamily: 'assistant',
+      requestedMode: 'dual_review',
+    });
+    const doctor = buildCouncilDoctorReport('2026-06-04T10:02:00.000Z', {
+      providerHealth: healthyCoreProviders,
+    });
+
+    expect(calibration).toMatchObject({
+      recentRuns: 0,
+      chosenMode: 'dual_review',
+      reason: 'no_history_default_route',
+    });
+    expect(doctor.recent).toMatchObject({
+      totalRuns: 0,
+      liveRuns: 0,
+      replayRuns: 1,
+      syntheticRuns: 1,
+    });
+  });
+
+  it('migrates legacy council rows as replay provenance', () => {
+    _closeDatabase();
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'andrea-council-migration-'),
+    );
+    const dbPath = path.join(dir, 'legacy.sqlite');
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE council_run_ledger (
+        council_run_id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL, group_folder TEXT, task_family TEXT NOT NULL,
+        channel TEXT, requested_mode TEXT, chosen_mode TEXT NOT NULL,
+        calibration_reason TEXT NOT NULL, calibration_changed INTEGER NOT NULL,
+        protected_mode INTEGER NOT NULL, status TEXT NOT NULL,
+        final_status TEXT NOT NULL, recommended_action TEXT NOT NULL,
+        confidence REAL NOT NULL, evidence_grade TEXT NOT NULL,
+        approval_need TEXT NOT NULL, member_statuses_json TEXT NOT NULL,
+        provider_failures_json TEXT NOT NULL, schema_status_json TEXT NOT NULL,
+        evidence_scorecard_json TEXT NOT NULL, confidence_math_json TEXT NOT NULL,
+        budget_json TEXT NOT NULL, replay_summary TEXT NOT NULL,
+        risk_flags_json TEXT NOT NULL, outcome_signal_count INTEGER NOT NULL,
+        latest_outcome_at TEXT, outcome_status TEXT
+      );
+      INSERT INTO council_run_ledger VALUES (
+        'legacy-run', '2026-01-01', '2026-01-01', NULL, 'assistant', NULL,
+        'dual_review', 'dual_review', 'legacy', 0, 0, 'completed', 'warn',
+        'answer', 0.5, 'weak', 'none', '[]', '[]', '{}', '{}', '{}', '{}',
+        'legacy replay', '[]', 0, NULL, NULL
+      );
+    `);
+    legacy.close();
+    _initTestDatabaseAtPath(dbPath);
+    expect(listCouncilRunLedger({ limit: 1 })[0]?.runOrigin).toBe('replay');
+    _closeDatabase();
+    fs.rmSync(dir, { recursive: true, force: true });
+    _initTestDatabase();
   });
 
   it('promotes weak histories but protects explicit deep routes from downshift', () => {

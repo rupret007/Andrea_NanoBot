@@ -172,6 +172,16 @@ function regressionGate(
 }
 
 function councilGate(report: CouncilDoctorReport): AgiLabReadinessGate {
+  if (report.recent.totalRuns === 0) {
+    return {
+      gateId: 'council_quality',
+      label: 'Council quality',
+      status: 'warn',
+      score: 0.55,
+      summary: `No live council quality runs are available; ${report.recent.replayRuns} replay and ${report.recent.syntheticRuns} synthetic run(s) are excluded from promotion signals.`,
+      nextAction: report.nextAction,
+    };
+  }
   const confidenceScore = report.recent.averageConfidence;
   const lowConfidencePenalty = report.recent.totalRuns
     ? report.recent.lowConfidenceRuns / report.recent.totalRuns

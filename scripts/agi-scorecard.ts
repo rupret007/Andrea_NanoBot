@@ -1,10 +1,10 @@
-import { pathToFileURL } from "node:url";
+import { pathToFileURL } from 'node:url';
 
 import {
   formatAgiScorecardMarkdown,
   runAgiScorecard,
   writeAgiScorecardArtifacts,
-} from "../src/agi-scorecard.js";
+} from '../src/agi-scorecard.js';
 
 function hasFlag(name: string): boolean {
   return process.argv.slice(2).includes(name);
@@ -19,20 +19,22 @@ function readValue(name: string): string | undefined {
 }
 
 async function main(): Promise<void> {
-  const mode = hasFlag("--live") ? "live" : "deterministic";
-  const minScore = Number(readValue("--min-score") ?? "0.8");
-  const failOnAnyFailure = hasFlag("--fail-on-any-failure");
+  const mode = hasFlag('--live') ? 'live' : 'deterministic';
+  const maxCostUsd = Number(readValue('--max-cost-usd') ?? '0');
+  const minScore = Number(readValue('--min-score') ?? '0.8');
+  const failOnAnyFailure = hasFlag('--fail-on-any-failure');
   const result = await runAgiScorecard({
     mode,
-    includeDogfood: !hasFlag("--no-dogfood"),
+    maxCostUsd,
+    includeDogfood: !hasFlag('--no-dogfood'),
   });
-  const artifacts = hasFlag("--no-write")
+  const artifacts = hasFlag('--no-write')
     ? undefined
     : await writeAgiScorecardArtifacts(result, {
-        stateDir: readValue("--state-dir"),
+        stateDir: readValue('--state-dir'),
       });
 
-  if (hasFlag("--json")) {
+  if (hasFlag('--json')) {
     console.log(JSON.stringify({ result, artifacts }, null, 2));
   } else {
     console.log(formatAgiScorecardMarkdown(result));
@@ -53,7 +55,10 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

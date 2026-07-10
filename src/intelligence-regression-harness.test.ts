@@ -145,6 +145,7 @@ describe('intelligence regression harness', () => {
     const report = await runIntelligenceRegressionHarness({
       runId: 'intel-test-run',
       mode: 'regression',
+      fetchImpl: globalThis.fetch,
     });
 
     expect(report).toMatchObject({
@@ -259,6 +260,7 @@ describe('intelligence regression harness', () => {
     const report = await runIntelligenceRegressionHarness({
       runId: 'intel-filtered-run',
       scenarioIds: ['council.max_iq_roles'],
+      fetchImpl: globalThis.fetch,
     });
 
     expect(report.scenarioCount).toBe(1);
@@ -289,6 +291,7 @@ describe('intelligence regression harness', () => {
       recordToPlatform: false,
       reflectTurns: false,
       scenarioTimeoutMs: 1,
+      fetchImpl: globalThis.fetch,
       onProgress: (event) =>
         events.push({ phase: event.phase, scenarioId: event.scenarioId }),
     });

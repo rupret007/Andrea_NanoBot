@@ -27,6 +27,14 @@ Andrea is designed to be practically useful every day: schedule help, reminders,
 </p>
 
 <p align="center">
+  Andrea's personal-intelligence loop now compiles cited opt-in context, promotes only canary-verified reversible routines, verifies deep-work postconditions, and learns from redacted outcome metrics.
+</p>
+
+The loop is wired into real assistant turns: daily and deep-work planning share
+one local context packet, approval turns resume pending verified work, and the
+operator can inspect outcome quality with `npm run debug:assistant-intelligence`.
+
+<p align="center">
   <a href="docs/USER_GUIDE.md">User Guide</a>&nbsp; | &nbsp;
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;
   <a href="docs/ANDREA_OPENAI_BACKEND.md">OpenAI Backend</a>&nbsp; | &nbsp;
@@ -35,6 +43,7 @@ Andrea is designed to be practically useful every day: schedule help, reminders,
   <a href="docs/COMMUNICATION_COMPANION.md">Communication Companion</a>&nbsp; | &nbsp;
   <a href="docs/ACTION_BUNDLES.md">Action Bundles</a>&nbsp; | &nbsp;
   <a href="docs/DELEGATION_RULES_AND_SAFE_AUTOMATION.md">Delegation Rules</a>&nbsp; | &nbsp;
+  <a href="docs/PERSONAL_INTELLIGENCE_AND_VERIFIED_AGENCY.md">Verified Agency</a>&nbsp; | &nbsp;
   <a href="docs/MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md">Messaging Trust Ladder</a>&nbsp; | &nbsp;
   <a href="docs/OUTCOME_TRACKING_AND_REVIEWS.md">Reviews</a>&nbsp; | &nbsp;
   <a href="docs/CHIEF_OF_STAFF_MODE.md">Chief-of-Staff Mode</a>&nbsp; | &nbsp;

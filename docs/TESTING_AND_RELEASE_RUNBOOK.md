@@ -216,6 +216,17 @@ Treat that delegation suite as the fast proof that Andrea can:
 - explain when a usual rule fired
 - keep rule-driven actions visible in outcome review
 
+For the personal-intelligence production loop, also run:
+
+```bash
+npm test -- --run src/personal-context-packet.test.ts src/verified-deep-work.test.ts src/routine-promotion.test.ts src/personal-assistant-metrics.test.ts src/intelligence-regression-harness.test.ts
+npm run test:intelligence -- --no-record --quiet
+npm run debug:assistant-intelligence
+```
+
+The intelligence harness must prove cited local context and a verified or
+honestly blocked deep-work outcome without public network access.
+
 For messaging trust-ladder and live-delivery changes, add:
 
 ```bash

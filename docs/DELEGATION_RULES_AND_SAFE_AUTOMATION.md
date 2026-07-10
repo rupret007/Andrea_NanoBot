@@ -208,6 +208,13 @@ For a practical near-live proof, use:
 6. say `always ask before doing that`
 7. confirm the next flow stops auto-applying that default
 
+Before step 4 can auto-apply, the rule must also have a passing deterministic
+fixture and one explicitly approved canary with a verified or honestly blocked
+outcome. Two overrides or failures inside 30 days pause the rule. External
+message sends, calendar writes, purchases, admin actions, deploys, deletions,
+and other irreversible actions remain fresh-approval-only regardless of rule
+history.
+
 ## Intentionally Out Of Scope
 
 V1 does not include:

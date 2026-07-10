@@ -1,4 +1,5 @@
 import { spawnSync } from 'child_process';
+import { buildHermeticTestEnv } from '../src/hermetic-test-env.js';
 
 type Step = {
   name: string;
@@ -13,7 +14,7 @@ function runStep(step: Step): void {
   const startedAt = Date.now();
   const result = spawnSync(step.command, step.args, {
     stdio: 'inherit',
-    env: process.env,
+    env: buildHermeticTestEnv(),
     shell: process.platform === 'win32',
   });
   const durationSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);

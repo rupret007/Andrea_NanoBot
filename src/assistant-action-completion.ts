@@ -771,6 +771,7 @@ export async function completeAssistantActionFromAlexa(
           ruleId: reminderRule.rule.ruleId,
           autoApplied: true,
           outcomeStatus: 'completed',
+          explicitlyApproved: !reminderRule.autoApplied,
           now: params.now,
         });
         return {
@@ -820,6 +821,7 @@ export async function completeAssistantActionFromAlexa(
         ruleId: threadRule.rule.ruleId,
         autoApplied: true,
         outcomeStatus: result.handled ? 'completed' : 'failed',
+        explicitlyApproved: !threadRule.autoApplied,
         now: params.now,
       });
       return {
@@ -880,6 +882,7 @@ export async function completeAssistantActionFromAlexa(
           !extractTrackThreadTitle(params.utterance, candidate),
         ),
         outcomeStatus: result.handled ? 'completed' : 'failed',
+        explicitlyApproved: !threadRule.autoApplied,
         now: params.now,
       });
     }
@@ -996,6 +999,7 @@ export async function completeAssistantActionFromAlexa(
           reminderRule.autoApplied && !extractReminderTiming(params.utterance),
         ),
         outcomeStatus: 'completed',
+        explicitlyApproved: !reminderRule.autoApplied,
         now: params.now,
       });
     }

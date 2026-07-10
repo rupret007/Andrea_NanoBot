@@ -1184,6 +1184,30 @@ export interface DelegationRuleRecord {
   safetyLevel: DelegationSafetyLevel;
 }
 
+export type RoutineEvidenceKind =
+  | 'deterministic_fixture_passed'
+  | 'canary_verified'
+  | 'canary_honestly_blocked'
+  | 'override'
+  | 'failure';
+
+export interface RoutineEvidenceRecord {
+  evidenceId: string;
+  ruleId: string;
+  kind: RoutineEvidenceKind;
+  summary: string;
+  createdAt: string;
+}
+
+export interface RoutinePromotionAssessment {
+  ruleId: string;
+  eligible: boolean;
+  deterministicFixturePassed: boolean;
+  approvedCanaryCompleted: boolean;
+  negativeEventsIn30Days: number;
+  reason: string;
+}
+
 export type OutcomeSourceType =
   | 'mission'
   | 'action_bundle'
@@ -1262,10 +1286,13 @@ export type CouncilOutcomeSignalKind =
   | 'feedback_negative'
   | 'repair_linked';
 
+export type CouncilRunOrigin = 'synthetic' | 'replay' | 'live';
+
 export interface CouncilRunLedgerRecord {
   councilRunId: string;
   createdAt: string;
   updatedAt: string;
+  runOrigin: CouncilRunOrigin;
   groupFolder?: string | null;
   taskFamily: string;
   channel?: string | null;
@@ -1351,6 +1378,9 @@ export interface CouncilDoctorReport {
   } | null;
   recent: {
     totalRuns: number;
+    liveRuns: number;
+    replayRuns: number;
+    syntheticRuns: number;
     degradedRuns: number;
     averageConfidence: number;
     schemaInvalidRuns: number;
@@ -1390,6 +1420,164 @@ export interface CouncilDoctorReport {
     rawPromptsStored: boolean;
     rawPrivateBodiesStored: boolean;
   };
+}
+
+export type PersonalMemorySource =
+  | 'telegram'
+  | 'bluebubbles'
+  | 'calendar'
+  | 'saved_material';
+
+export interface PersonalMemoryPolicyRecord {
+  groupFolder: string;
+  source: PersonalMemorySource;
+  enabled: boolean;
+  allowDerivedFacts: boolean;
+  retentionDays: number;
+  consentedAt?: string | null;
+  revokedAt?: string | null;
+  updatedAt: string;
+}
+
+export type PersonalMemoryFactStatus =
+  | 'candidate'
+  | 'accepted'
+  | 'revoked'
+  | 'expired';
+
+export interface PersonalMemoryFactRecord {
+  factId: string;
+  groupFolder: string;
+  source: PersonalMemorySource;
+  sourceRef: string;
+  subjectKey: string;
+  valueSummary: string;
+  confidence: number;
+  status: PersonalMemoryFactStatus;
+  observedAt: string;
+  expiresAt: string;
+  citationsJson: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PersonalContextPacketItem {
+  itemId: string;
+  source: string;
+  summary: string;
+  confidence: number;
+  freshness: 'fresh' | 'aging' | 'stale';
+  citation: string;
+  subjectKey?: string | null;
+  expiresAt?: string | null;
+  score?: number;
+}
+
+export interface PersonalContextPacket {
+  packetId: string;
+  generatedAt: string;
+  groupFolder: string;
+  query?: string | null;
+  items: PersonalContextPacketItem[];
+  conflicts: Array<{
+    subjectKey: string;
+    itemIds: string[];
+    requiresReview: true;
+  }>;
+  citations: string[];
+  sourcePolicies: PersonalMemoryPolicyRecord[];
+  privacy: {
+    localFirst: true;
+    rawMessagesStored: false;
+    derivedFactsOnly: true;
+    boundedItems: number;
+  };
+}
+
+export type VerifiedDeepWorkStage =
+  | 'plan'
+  | 'inspect'
+  | 'approval'
+  | 'execute'
+  | 'verify'
+  | 'record_outcome';
+
+export interface VerifiedDeepWorkPacket {
+  packetId: string;
+  groupFolder: string;
+  taskFamily: 'research' | 'coding' | 'operator' | 'planning';
+  objective: string;
+  status: 'active' | 'blocked' | 'completed';
+  currentStage: VerifiedDeepWorkStage;
+  stagesCompleted: VerifiedDeepWorkStage[];
+  checkpointVersion: number;
+  approvalRequired: boolean;
+  approvalRef?: string | null;
+  sources: string[];
+  artifacts: string[];
+  checks: Array<{ name: string; passed: boolean; evidenceRef: string }>;
+  toolSnapshots: Array<{
+    toolId: string;
+    checkedAt: string;
+    reliability: number;
+  }>;
+  unresolvedRisks: string[];
+  outcomeSummary?: string | null;
+  nextDecision: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AssistantMetricEventKind =
+  | 'recommendation_accepted'
+  | 'recommendation_rejected'
+  | 'completion_verified'
+  | 'correction'
+  | 'override'
+  | 'proactive_false_positive'
+  | 'memory_retrieval'
+  | 'memory_retrieval_correct'
+  | 'retrieval_with_citation'
+  | 'tool_attempt'
+  | 'tool_success'
+  | 'latency_sample'
+  | 'live_eval_cost';
+
+export interface AssistantMetricEventRecord {
+  eventId: string;
+  groupFolder: string;
+  kind: AssistantMetricEventKind;
+  value: number;
+  metadataJson: string;
+  createdAt: string;
+}
+
+export interface AssistantMetricSnapshot {
+  snapshotId: string;
+  groupFolder: string;
+  generatedAt: string;
+  acceptedRecommendationRate: number;
+  verifiedCompletionRate: number;
+  correctionOverrideRate: number;
+  falseProactiveSuggestionRate: number;
+  memoryPrecision: number;
+  retrievalCitationCoverage: number;
+  toolReliability: number;
+  averageLatencyMs: number;
+  liveEvalCostUsd: number;
+  sampleCount: number;
+}
+
+export interface RedactedRegressionFixture {
+  fixtureId: string;
+  sourceFeedbackId: string;
+  classification: string;
+  routeKey?: string | null;
+  capabilityId?: string | null;
+  expectedBehavior: string;
+  remediationStatus: 'open' | 'fixed' | 'verified';
+  containsRawUserText: false;
+  createdAt: string;
 }
 
 export interface BlueBubblesProofTimelineEntry {
@@ -4823,6 +5011,7 @@ export interface CognitiveWorldSnapshotItem {
     | 'integration'
     | 'message_action'
     | 'world_fact'
+    | 'personal_context'
     | 'skill_playbook'
     | 'learning_candidate';
   sourceId: string;
@@ -6344,6 +6533,9 @@ export interface PilotIssueLinkedRefs {
   repairApprovalId?: string;
   approvalUtteranceMessageId?: string;
   approvalBoundFeedbackId?: string;
+  personalContextPacketId?: string;
+  personalContextCitations?: string[];
+  verifiedDeepWorkPacketId?: string;
   absorbedFeedbackIds?: string[];
   repairBindingState?: string;
   repairExecutionState?: string;

@@ -20,6 +20,7 @@ import type {
   CouncilOutcomeSignalKind,
   CouncilProviderReliabilitySnapshot,
   CouncilRunLedgerRecord,
+  CouncilRunOrigin,
 } from './types.js';
 import {
   collectProviderHealthSnapshots,
@@ -76,6 +77,7 @@ export interface CouncilCalibrationInput {
 
 export interface RecordCouncilRunLedgerInput {
   councilRunId: string;
+  runOrigin?: CouncilRunOrigin;
   groupFolder?: string | null;
   taskFamily: PlatformTaskFamily;
   channel?: string | null;
@@ -110,6 +112,7 @@ export function calibrateCouncilMode(
   const requestedMode = input.requestedMode || 'dual_review';
   const recentRuns = safeListCouncilRunLedger({
     taskFamily: input.taskFamily,
+    runOrigins: ['live'],
     limit: CALIBRATION_LOOKBACK,
   });
   const providerReliability = buildCouncilProviderReliability(recentRuns);
@@ -226,6 +229,7 @@ export function recordCouncilRunLedger(
     councilRunId: input.councilRunId,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
+    runOrigin: input.runOrigin || existing?.runOrigin || 'live',
     groupFolder: input.groupFolder || null,
     taskFamily: input.taskFamily,
     channel: input.channel || null,
@@ -308,6 +312,7 @@ function safeGetCouncilRunLedger(
 
 function safeListCouncilRunLedger(params: {
   taskFamily?: string;
+  runOrigins?: CouncilRunOrigin[];
   limit?: number;
 }): CouncilRunLedgerRecord[] {
   try {
@@ -321,7 +326,8 @@ export function buildCouncilDoctorReport(
   now = new Date().toISOString(),
   options: { providerHealth?: ProviderHealthSnapshot[] } = {},
 ): CouncilDoctorReport {
-  const runs = listCouncilRunLedger({ limit: DOCTOR_LOOKBACK });
+  const allRuns = listCouncilRunLedger({ limit: DOCTOR_LOOKBACK });
+  const runs = allRuns.filter((run) => run.runOrigin === 'live');
   const signals = listCouncilOutcomeSignals({ limit: DOCTOR_LOOKBACK });
   const taskEase = buildCouncilTaskEaseReport({ now: new Date(now) });
   const currentProviderHealth =
@@ -383,8 +389,8 @@ export function buildCouncilDoctorReport(
     ok,
     summary:
       runs.length === 0
-        ? 'Council quality ledger has no recorded runs yet.'
-        : `${runs.length} recent council run(s); ${degradedRuns} degraded; average confidence ${averageConfidence.toFixed(2)}.`,
+        ? 'Council quality ledger has no recorded live runs yet; replay and synthetic runs are excluded from promotion signals.'
+        : `${runs.length} recent live council run(s); ${degradedRuns} degraded; average confidence ${averageConfidence.toFixed(2)}.`,
     lastRun: lastRun
       ? {
           councilRunId: lastRun.councilRunId,
@@ -398,6 +404,10 @@ export function buildCouncilDoctorReport(
       : null,
     recent: {
       totalRuns: runs.length,
+      liveRuns: runs.length,
+      replayRuns: allRuns.filter((run) => run.runOrigin === 'replay').length,
+      syntheticRuns: allRuns.filter((run) => run.runOrigin === 'synthetic')
+        .length,
       degradedRuns,
       averageConfidence,
       schemaInvalidRuns,

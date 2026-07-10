@@ -61,6 +61,7 @@ import type {
   CognitiveWorldSnapshot,
   CognitiveWorldSnapshotItem,
   NewMessage,
+  PersonalContextPacket,
 } from './types.js';
 
 export interface BeginCognitiveExecutiveInput {
@@ -80,6 +81,7 @@ export interface BeginCognitiveExecutiveInput {
   capabilityMatchOverride?: AssistantCapabilityMatch | null;
   now?: Date;
   persist?: boolean;
+  personalContextPacket?: PersonalContextPacket | null;
 }
 
 export interface CognitiveExecutiveContext {
@@ -94,6 +96,7 @@ export interface CognitiveExecutiveContext {
   explanation: CognitiveExplanation;
   capabilityMatch?: AssistantCapabilityMatch | null;
   metacognition?: MetacognitiveTurnAnalysis | null;
+  personalContextPacket?: PersonalContextPacket | null;
 }
 
 export interface FinalizeCognitiveExecutiveInput {
@@ -515,6 +518,7 @@ export function buildCognitiveWorldSnapshot(input: {
   integrationReport?: IntegrationDoctorReport;
   now?: Date;
   persist?: boolean;
+  personalContextPacket?: PersonalContextPacket | null;
 }): { snapshot: CognitiveWorldSnapshot; items: CognitiveWorldSnapshotItem[] } {
   const createdAt = nowIso(input.now);
   const snapshotId = hashId(
@@ -524,6 +528,39 @@ export function buildCognitiveWorldSnapshot(input: {
   const integrationReport =
     input.integrationReport || buildIntegrationDoctorReport({ now: input.now });
   const items: CognitiveWorldSnapshotItem[] = [];
+
+  const conflictedItemIds = new Set(
+    (input.personalContextPacket?.conflicts || []).flatMap(
+      (conflict) => conflict.itemIds,
+    ),
+  );
+  for (const contextItem of input.personalContextPacket?.items || []) {
+    const conflicted = conflictedItemIds.has(contextItem.itemId);
+    items.push(
+      makeItem({
+        snapshotId,
+        itemKind: 'personal_context',
+        sourceId: contextItem.citation,
+        sourceIds: [contextItem.itemId, contextItem.citation],
+        summary: contextItem.summary,
+        freshness:
+          contextItem.freshness === 'fresh'
+            ? 'fresh'
+            : contextItem.freshness === 'stale'
+              ? 'stale'
+              : 'unknown',
+        confidence: conflicted
+          ? Math.min(contextItem.confidence, 0.45)
+          : contextItem.confidence,
+        priority: conflicted
+          ? Math.min(contextItem.score || 0.5, 0.45)
+          : contextItem.score || 0.62,
+        reasonUsed: conflicted
+          ? 'personal context conflict requires clarification before reliance'
+          : 'cited personal context is relevant to this turn',
+      }),
+    );
+  }
 
   const safeList = <T>(fn: () => T[], fallback: T[] = []): T[] => {
     try {
@@ -1304,6 +1341,7 @@ export function beginCognitiveExecutiveTurn(
     integrationReport,
     now: input.now,
     persist: input.persist,
+    personalContextPacket: input.personalContextPacket,
   });
   const capabilityMatch = selectCapability({
     request,
@@ -1371,6 +1409,7 @@ export function beginCognitiveExecutiveTurn(
     explanation,
     capabilityMatch,
     metacognition,
+    personalContextPacket: input.personalContextPacket,
   };
   if (input.persist !== false && isDatabaseInitialized()) {
     upsertCognitiveExecutiveRun(run);

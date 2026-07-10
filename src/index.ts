@@ -769,6 +769,10 @@ import {
   shouldCancelPendingContinuationForFeedback,
 } from './response-feedback.js';
 import {
+  createRegressionFixtureFromFeedback,
+  recordAssistantMetric,
+} from './personal-assistant-metrics.js';
+import {
   auditRegisteredMainChat,
   type RegisteredMainChatRecord,
 } from './main-chat-audit.js';
@@ -3873,6 +3877,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
     : rawLastContent;
   const now = new Date();
+  const turnStartedAt = Date.now();
   const turnAgentHarness: TurnAgentHarnessContext | null =
     await beginTurnAgentHarness({
       turnId:
@@ -3970,6 +3975,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         params.handlerKind?.includes('fallback') ||
         params.responseSource === 'local_companion',
     });
+    recordAssistantMetric({
+      groupFolder: group.folder,
+      kind: 'latency_sample',
+      value: Date.now() - turnStartedAt,
+      metadata: {
+        routeKey: params.routeKey || requestPolicy.route,
+        channel: conversationChannel,
+      },
+      now: new Date(),
+    });
     if (channel.name === 'bluebubbles') {
       ensureBlueBubblesSelfThreadMessageActionForReplyText({
         groupFolder: group.folder,
@@ -4032,6 +4047,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         providerCouncilMode: turnAgentHarness?.providerCouncil?.mode,
         providerCouncilStatus:
           turnAgentHarness?.providerCouncil?.answerGuidance?.status,
+        personalContextPacketId:
+          turnAgentHarness?.personalContextPacket?.packetId,
+        personalContextCitations:
+          turnAgentHarness?.personalContextPacket?.citations.slice(0, 12),
+        verifiedDeepWorkPacketId:
+          turnAgentHarness?.verifiedDeepWorkPacket?.packetId,
       },
       issueId: null,
       remediationLaneId: null,
@@ -6852,6 +6873,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       priorSubjectData: sharedSeed.subjectData as Record<string, unknown>,
       replyTo: missedMessages.at(-1)?.reply_to || null,
       now,
+      personalContextPacket: turnAgentHarness?.personalContextPacket || null,
     });
     const pilotRecord = startConversationPilotProof(
       resolveCrossChannelPilotJourney(lastContent),
@@ -7214,6 +7236,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           replyTo: missedMessages.at(-1)?.reply_to || null,
           capabilityMatchOverride: capabilityMatch,
           now,
+          personalContextPacket:
+            turnAgentHarness?.personalContextPacket || null,
         })
       : null;
     if (executiveContext?.capabilityMatch) {
@@ -11372,6 +11396,7 @@ async function main(): Promise<void> {
     msg: NewMessage,
     action: NonNullable<ReturnType<typeof parseResponseFeedbackAction>>,
   ): Promise<boolean> {
+    const feedbackNow = new Date();
     const channel = findChannel(channels, chatJid);
     const group = registeredGroups[chatJid];
     if (!channel || !group || !isMainControlChat(group)) {
@@ -11480,6 +11505,16 @@ async function main(): Promise<void> {
         ],
         summary:
           'User captured negative response feedback for a council-linked answer.',
+      });
+      createRegressionFixtureFromFeedback(captured, feedbackNow);
+      recordAssistantMetric({
+        groupFolder: captured.groupFolder,
+        kind: 'correction',
+        metadata: {
+          classification: captured.classification,
+          routeKey: captured.routeKey || '',
+        },
+        now: feedbackNow,
       });
       await channel.sendMessage(
         chatJid,
