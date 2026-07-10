@@ -150,6 +150,11 @@ message metadata plus a local cache file when the provider allows download.
 Media-only messages are valid conversation turns; Andrea should treat them as
 `[image]`, `[video]`, or `[file]` instead of dropping them for having no text.
 
+The default cache is privacy-bounded: each downloaded file is capped at 20 MiB,
+vision input is capped at 24 MiB per request, cached inbound and derived files
+expire after 7 days, and the combined cache is capped at 1 GiB. Operators can
+override those defaults with the `ANDREA_MEDIA_*` settings in `.env`.
+
 Expected behavior:
 
 - `@Andrea analyze this photo`, `@Andrea what is in this video`, and similar
@@ -158,7 +163,7 @@ Expected behavior:
 - videos are summarized by sampling frames with the bundled `ffmpeg-static` and
   `ffprobe-static` binaries before sending those frames to vision
 - analysis fails closed with a clear blocker when the attachment is missing,
-  not cached, unsupported, or no OpenAI provider is configured
+  not cached, oversized, unsupported, or no OpenAI provider is configured
 - OpenClaw can inspect attachment metadata with
   `bluebubbles_get_media_metadata` and request analysis with
   `bluebubbles_analyze_media`

@@ -62,6 +62,7 @@ export type MessageMediaKind = 'image' | 'video' | 'audio' | 'file';
 export type MessageMediaFetchStatus =
   | 'metadata_only'
   | 'cached'
+  | 'skipped_too_large'
   | 'download_failed'
   | 'metadata_missing';
 

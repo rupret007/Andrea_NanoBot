@@ -312,7 +312,7 @@ BlueBubbles is now Andrea's optional bounded Messages bridge, not a core require
 - Andrea replies only when a message explicitly mentions one of those aliases, so ordinary social chatter does not trigger assistant replies
 - current-chat asks like `summarize this` now use recent `bb:` chat context, exclude the wake command itself, and can prime recent history from the live BlueBubbles server when local context is thin
 - communication asks now favor fuller conversation recaps plus grounded suggested replies; choosing a suggestion creates one approval-gated draft/action, not an automatic send
-- incoming BlueBubbles and Telegram images/videos are cached as message attachments so Andrea can answer asks like `analyze this photo` or `what is in this video` when OpenAI vision is configured
+- incoming BlueBubbles and Telegram images/videos are cached as bounded local message attachments (20 MiB per file, 7-day / 1 GiB retention by default) so Andrea can answer asks like `analyze this photo` or `what is in this video` when OpenAI vision is configured
 - broad asks from Telegram such as `use BlueBubbles and summarize my texts from the past 48 hours` summarize activity across all synced BlueBubbles chats in that time window without exposing raw phone numbers
 - BlueBubbles keeps companion-safe capabilities like daily guidance, communication help, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
 - richer details still hand off explicitly to Telegram when that is the better surface
@@ -684,6 +684,7 @@ Useful local validation commands:
 
 ```bash
 npm run test:major:ci
+npm run docs:check
 npm run test:major
 npm run test:stability
 npm run services:restart

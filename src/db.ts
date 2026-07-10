@@ -6,6 +6,7 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { redactCouncilText } from './council-safety.js';
 import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import { pruneMediaCache } from './media-cache.js';
 import type {
   ListRuntimeJobsRequest,
   RuntimeOrchestrationJob,
@@ -5048,6 +5049,7 @@ export function initDatabase(): void {
   db = new Database(dbPath);
   db.pragma('foreign_keys = ON');
   createSchema(db);
+  pruneMediaCache();
   prunePilotLoopData(
     new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
   );

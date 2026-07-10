@@ -4,8 +4,14 @@ import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { _initTestDatabase, storeChatMetadata, storeMessage } from './db.js';
+import {
+  _initTestDatabase,
+  getMessageMediaAttachment,
+  storeChatMetadata,
+  storeMessage,
+} from './db.js';
 import { analyzeMessageMedia } from './media-analysis.js';
+import { cacheInboundMediaBytes } from './media-cache.js';
 
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalBaseUrl = process.env.OPENAI_BASE_URL;
@@ -31,8 +37,11 @@ describe('media analysis', () => {
   });
 
   it('sends cached image bytes as an OpenAI vision input', async () => {
-    const imagePath = path.join(tempDir, 'photo.jpg');
-    fs.writeFileSync(imagePath, Buffer.from([1, 2, 3, 4]));
+    const imagePath = cacheInboundMediaBytes({
+      bytes: Buffer.from([1, 2, 3, 4]),
+      filename: `photo-${path.basename(tempDir)}.jpg`,
+      mimeType: 'image/jpeg',
+    }).localPath;
     storeChatMetadata('bb:chat-1', '2026-07-08T12:00:00.000Z', 'Candace');
     storeMessage({
       id: 'bb:msg-1',
@@ -96,5 +105,95 @@ describe('media analysis', () => {
     expect(result.handled).toBe(true);
     expect(result.summaryText).toBe('It shows a photo.');
     expect(result.debugPath).toContain('request_id:req-media-test');
+  });
+
+  it('returns a bounded blocker and records failure for an unreadable provider response', async () => {
+    const imagePath = cacheInboundMediaBytes({
+      bytes: Buffer.from([1, 2, 3, 4]),
+      filename: `broken-${path.basename(tempDir)}.jpg`,
+      mimeType: 'image/jpeg',
+    }).localPath;
+    storeChatMetadata('bb:chat-2', '2026-07-08T12:00:00.000Z', 'Candace');
+    storeMessage({
+      id: 'bb:msg-2',
+      chat_jid: 'bb:chat-2',
+      sender: 'bb:+15551234567',
+      sender_name: 'Candace',
+      content: '[image]',
+      timestamp: '2026-07-08T12:00:00.000Z',
+      is_from_me: false,
+      attachments: [
+        {
+          attachmentId: 'media:bad-provider-response',
+          chatJid: 'bb:chat-2',
+          messageId: 'bb:msg-2',
+          sourceChannel: 'bluebubbles',
+          kind: 'image',
+          mimeType: 'image/jpeg',
+          filename: 'broken.jpg',
+          localPath: imagePath,
+          fetchStatus: 'cached',
+          analysisStatus: 'not_requested',
+        },
+      ],
+    });
+
+    const result = await analyzeMessageMedia({
+      attachmentIds: ['media:bad-provider-response'],
+      fetchImpl: vi.fn(async () => new Response('not json', { status: 200 })),
+    });
+
+    expect(result.handled).toBe(false);
+    expect(result.blocker).toContain('unreadable response');
+    expect(result.debugPath).toContain(
+      'media.analysis:invalid_provider_response',
+    );
+    expect(
+      getMessageMediaAttachment('media:bad-provider-response')?.analysisStatus,
+    ).toBe('failed');
+  });
+
+  it('returns a bounded blocker when the provider transport fails', async () => {
+    const imagePath = cacheInboundMediaBytes({
+      bytes: Buffer.from([1, 2, 3, 4]),
+      filename: `transport-${path.basename(tempDir)}.jpg`,
+      mimeType: 'image/jpeg',
+    }).localPath;
+    storeChatMetadata('bb:chat-3', '2026-07-08T12:00:00.000Z', 'Candace');
+    storeMessage({
+      id: 'bb:msg-3',
+      chat_jid: 'bb:chat-3',
+      sender: 'bb:+15551234567',
+      sender_name: 'Candace',
+      content: '[image]',
+      timestamp: '2026-07-08T12:00:00.000Z',
+      is_from_me: false,
+      attachments: [
+        {
+          attachmentId: 'media:transport-failure',
+          chatJid: 'bb:chat-3',
+          messageId: 'bb:msg-3',
+          sourceChannel: 'bluebubbles',
+          kind: 'image',
+          mimeType: 'image/jpeg',
+          filename: 'transport.jpg',
+          localPath: imagePath,
+          fetchStatus: 'cached',
+          analysisStatus: 'not_requested',
+        },
+      ],
+    });
+    const result = await analyzeMessageMedia({
+      attachmentIds: ['media:transport-failure'],
+      fetchImpl: vi.fn(async () => {
+        throw new Error('network unavailable');
+      }),
+    });
+
+    expect(result.handled).toBe(false);
+    expect(result.blocker).toContain('unavailable right now');
+    expect(result.debugPath).toContain(
+      'media.analysis:provider_transport_failed',
+    );
   });
 });

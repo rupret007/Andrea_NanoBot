@@ -22,6 +22,10 @@ const envConfig = readEnvFile([
   'ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME',
   'ANDREA_PLATFORM_SHELL_GATEWAY_URL',
   'ANDREA_RUNTIME_EXECUTION_ENABLED',
+  'ANDREA_MEDIA_CACHE_MAX_FILE_BYTES',
+  'ANDREA_MEDIA_ANALYSIS_MAX_INPUT_BYTES',
+  'ANDREA_MEDIA_CACHE_MAX_TOTAL_BYTES',
+  'ANDREA_MEDIA_CACHE_RETENTION_DAYS',
   'CODEX_LOCAL_ENABLED',
   'CODEX_LOCAL_MODEL',
   'CONTAINER_RUNTIME',
@@ -199,6 +203,46 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
   10,
 ); // 10MB default
+
+function boundedPositiveInteger(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = Number.parseInt(value || '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+export const ANDREA_MEDIA_CACHE_MAX_FILE_BYTES = boundedPositiveInteger(
+  process.env.ANDREA_MEDIA_CACHE_MAX_FILE_BYTES ||
+    envConfig.ANDREA_MEDIA_CACHE_MAX_FILE_BYTES,
+  20 * 1024 * 1024,
+  1 * 1024 * 1024,
+  100 * 1024 * 1024,
+);
+export const ANDREA_MEDIA_ANALYSIS_MAX_INPUT_BYTES = boundedPositiveInteger(
+  process.env.ANDREA_MEDIA_ANALYSIS_MAX_INPUT_BYTES ||
+    envConfig.ANDREA_MEDIA_ANALYSIS_MAX_INPUT_BYTES,
+  24 * 1024 * 1024,
+  1 * 1024 * 1024,
+  100 * 1024 * 1024,
+);
+export const ANDREA_MEDIA_CACHE_MAX_TOTAL_BYTES = boundedPositiveInteger(
+  process.env.ANDREA_MEDIA_CACHE_MAX_TOTAL_BYTES ||
+    envConfig.ANDREA_MEDIA_CACHE_MAX_TOTAL_BYTES,
+  1024 * 1024 * 1024,
+  64 * 1024 * 1024,
+  100 * 1024 * 1024 * 1024,
+);
+export const ANDREA_MEDIA_CACHE_RETENTION_DAYS = boundedPositiveInteger(
+  process.env.ANDREA_MEDIA_CACHE_RETENTION_DAYS ||
+    envConfig.ANDREA_MEDIA_CACHE_RETENTION_DAYS,
+  7,
+  1,
+  365,
+);
 export const ONECLI_URL =
   process.env.ONECLI_URL || envConfig.ONECLI_URL || 'http://localhost:10254';
 export const OPENAI_MODEL_SIMPLE =

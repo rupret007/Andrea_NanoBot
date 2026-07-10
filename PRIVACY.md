@@ -8,6 +8,8 @@ Depending on which channels and features are enabled, Andrea may store:
 
 - chat identifiers and basic chat metadata
 - message content needed for assistant responses
+- safe metadata for incoming attachments and, when available, a bounded local
+  cache of image, video, or file bytes
 - task and reminder definitions
 - enabled skill state per chat
 - local runtime logs and operational state
@@ -34,6 +36,12 @@ Data is primarily stored on the machine where Andrea is deployed, including:
 - per-chat group folders
 - local logs
 
+By default, Andrea limits cached attachment files to 20 MiB each, retains them
+for up to 7 days, and keeps the inbound plus derived-media cache within 1 GiB.
+Operators can tighten or expand those bounded limits with the documented media
+cache settings in `.env`. Cache expiry removes local bytes; the message record
+may remain as normal chat history metadata.
+
 BlueBubbles/Messages data is local-first in normal operation: Andrea reads the
 local BlueBubbles endpoint, stores normalized `bb:` chat/message context, and
 keeps runtime state on the host. A Cloudflare BlueBubbles URL may be configured
@@ -47,6 +55,12 @@ refinement to improve BlueBubbles conversation summaries and suggested replies.
 When enabled, Andrea should send only bounded context needed for the request,
 prefer sanitized snippets/summaries, and preserve a deterministic local fallback
 when the provider is unavailable.
+
+When someone explicitly asks Andrea to analyze a cached image or video, Andrea
+sends the selected image bytes or sampled video frames to the configured OpenAI
+vision-compatible provider. It does not send media merely because it arrived,
+and it fails closed when a cache file is unavailable, oversized, or the
+provider is not configured.
 
 Recent-text review and provider prompt paths redact phone numbers, JIDs, email
 addresses, and token-like secrets before sending context to providers or writing
@@ -86,6 +100,8 @@ The person deploying Andrea is responsible for:
 - choosing which model and integration providers to use
 - securing the host machine and credentials
 - deciding retention practices for logs, database content, and working files
+- reviewing or removing cached media locally when a shorter retention period is
+  needed
 - reviewing which community skills are enabled
 
 ## Contact

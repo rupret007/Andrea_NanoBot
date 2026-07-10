@@ -8,7 +8,12 @@ import {
   listMessageMediaAttachments,
   upsertMessageMediaAttachment,
 } from './db.js';
-import { buildDerivedMediaDir } from './media-cache.js';
+import { ANDREA_MEDIA_ANALYSIS_MAX_INPUT_BYTES } from './config.js';
+import {
+  buildDerivedMediaDir,
+  getUsableCachedMediaFile,
+  pruneMediaCache,
+} from './media-cache.js';
 import {
   resolveOpenAiProviderConfig,
   type OpenAiProviderStatus,
@@ -111,7 +116,8 @@ function probeVideoDurationMs(localPath: string): number | null {
 function sampleVideoFrames(
   attachment: MessageMediaAttachment,
 ): Array<{ localPath: string; mimeType: string; filename: string }> {
-  if (!attachment.localPath) return [];
+  const source = getUsableCachedMediaFile(attachment.localPath);
+  if (!source) return [];
   const ffmpeg = resolveOptionalStaticPath('ffmpeg-static');
   if (!ffmpeg) return [];
   const hash =
@@ -126,7 +132,7 @@ function sampleVideoFrames(
       [
         '-y',
         '-i',
-        attachment.localPath,
+        source.localPath,
         '-vf',
         'fps=1/2,scale=1024:-1',
         '-frames:v',
@@ -138,40 +144,81 @@ function sampleVideoFrames(
   } catch {
     return [];
   }
+  pruneMediaCache();
   return fs
     .readdirSync(dir)
     .filter((name) => /^frame-\d+\.jpg$/i.test(name))
     .sort()
     .slice(0, 8)
-    .map((name) => ({
-      localPath: path.join(dir, name),
-      mimeType: 'image/jpeg',
-      filename: name,
-    }));
+    .flatMap((name) => {
+      const cached = getUsableCachedMediaFile(path.join(dir, name));
+      return cached
+        ? [
+            {
+              localPath: cached.localPath,
+              mimeType: 'image/jpeg',
+              filename: name,
+            },
+          ]
+        : [];
+    });
 }
 
-function localImageInputs(
-  attachments: MessageMediaAttachment[],
-): Array<{ localPath: string; mimeType: string; filename: string }> {
-  const inputs: Array<{
-    localPath: string;
-    mimeType: string;
-    filename: string;
-  }> = [];
+type LocalImageInput = {
+  localPath: string;
+  mimeType: string;
+  filename: string;
+  sizeBytes: number;
+};
+
+function localImageInputs(attachments: MessageMediaAttachment[]): {
+  inputs: LocalImageInput[];
+  skippedTooLarge: boolean;
+  skippedUnavailable: boolean;
+} {
+  const candidates: LocalImageInput[] = [];
+  let skippedTooLarge = false;
+  let skippedUnavailable = false;
   for (const attachment of attachments) {
-    if (attachment.kind === 'image' && attachment.localPath) {
-      inputs.push({
-        localPath: attachment.localPath,
+    if (attachment.kind === 'image') {
+      const cached = getUsableCachedMediaFile(attachment.localPath);
+      if (!cached) {
+        skippedUnavailable = true;
+        continue;
+      }
+      candidates.push({
+        localPath: cached.localPath,
         mimeType: attachment.mimeType || 'image/jpeg',
         filename: attachment.filename || `${attachment.attachmentId}.jpg`,
+        sizeBytes: cached.sizeBytes,
       });
       continue;
     }
     if (attachment.kind === 'video') {
-      inputs.push(...sampleVideoFrames(attachment));
+      const source = getUsableCachedMediaFile(attachment.localPath);
+      if (!source) {
+        skippedUnavailable = true;
+        continue;
+      }
+      const frames = sampleVideoFrames({
+        ...attachment,
+        localPath: source.localPath,
+      });
+      if (frames.length === 0) skippedUnavailable = true;
+      for (const frame of frames) {
+        const cached = getUsableCachedMediaFile(frame.localPath);
+        if (!cached) {
+          skippedUnavailable = true;
+          continue;
+        }
+        candidates.push({
+          ...frame,
+          localPath: cached.localPath,
+          sizeBytes: cached.sizeBytes,
+        });
+      }
       const durationMs =
-        attachment.durationMs ||
-        probeVideoDurationMs(attachment.localPath || '');
+        attachment.durationMs || probeVideoDurationMs(source.localPath);
       if (durationMs && durationMs !== attachment.durationMs) {
         upsertMessageMediaAttachment({
           ...attachment,
@@ -181,7 +228,35 @@ function localImageInputs(
       }
     }
   }
-  return inputs.slice(0, 12);
+
+  const inputs: LocalImageInput[] = [];
+  let totalBytes = 0;
+  for (const candidate of candidates.slice(0, 12)) {
+    if (
+      totalBytes + candidate.sizeBytes >
+      ANDREA_MEDIA_ANALYSIS_MAX_INPUT_BYTES
+    ) {
+      skippedTooLarge = true;
+      continue;
+    }
+    inputs.push(candidate);
+    totalBytes += candidate.sizeBytes;
+  }
+  return { inputs, skippedTooLarge, skippedUnavailable };
+}
+
+function markAnalysisStatus(
+  attachments: MessageMediaAttachment[],
+  analysisStatus: 'analyzed' | 'failed',
+): void {
+  const updatedAt = new Date().toISOString();
+  for (const attachment of attachments) {
+    upsertMessageMediaAttachment({
+      ...attachment,
+      analysisStatus,
+      updatedAt,
+    });
+  }
 }
 
 function selectAttachments(
@@ -233,14 +308,23 @@ export async function analyzeMessageMedia(
     };
   }
 
-  const imageInputs = localImageInputs(attachments);
-  if (imageInputs.length === 0) {
+  const localInputs = localImageInputs(attachments);
+  if (localInputs.inputs.length === 0) {
     return {
       handled: false,
       providerStatus: status,
-      blocker:
-        'The media metadata is present, but no cached image bytes or video frames are available for analysis yet.',
-      debugPath: [...debugPath, 'media.analysis:no_cached_frames'],
+      blocker: localInputs.skippedTooLarge
+        ? `The selected media exceeds Andrea's ${ANDREA_MEDIA_ANALYSIS_MAX_INPUT_BYTES}-byte analysis limit.`
+        : 'The media metadata is present, but no cached image bytes or video frames are available for analysis yet.',
+      debugPath: [
+        ...debugPath,
+        localInputs.skippedTooLarge
+          ? 'media.analysis:input_too_large'
+          : 'media.analysis:no_cached_frames',
+        ...(localInputs.skippedUnavailable
+          ? ['media.analysis:cache_unavailable']
+          : []),
+      ],
       attachments,
     };
   }
@@ -268,17 +352,28 @@ export async function analyzeMessageMedia(
       ].join('\n'),
     },
   ];
-  for (const image of imageInputs) {
-    const data = fs.readFileSync(image.localPath).toString('base64');
-    content.push({
-      type: 'input_image',
-      image_url: `data:${image.mimeType};base64,${data}`,
-    });
+  try {
+    for (const image of localInputs.inputs) {
+      const data = fs.readFileSync(image.localPath).toString('base64');
+      content.push({
+        type: 'input_image',
+        image_url: `data:${image.mimeType};base64,${data}`,
+      });
+    }
+  } catch {
+    return {
+      handled: false,
+      providerStatus: status,
+      blocker:
+        "The selected media is no longer available in Andrea's local cache.",
+      debugPath: [...debugPath, 'media.analysis:cache_read_failed'],
+      attachments,
+    };
   }
 
-  const response = await (input.fetchImpl || fetch)(
-    `${config.baseUrl}/responses`,
-    {
+  let response: Response;
+  try {
+    response = await (input.fetchImpl || fetch)(`${config.baseUrl}/responses`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
@@ -295,15 +390,26 @@ export async function analyzeMessageMedia(
         max_output_tokens: 700,
       }),
       signal: providerRequestSignal(),
-    },
-  );
-  const requestId = response.headers.get('x-request-id') || undefined;
-  const payloadText = await response.text();
-  if (!response.ok) {
+    });
+  } catch {
+    markAnalysisStatus(attachments, 'failed');
     return {
       handled: false,
       providerStatus: status,
-      blocker: `OpenAI media analysis failed with ${response.status}: ${payloadText.replace(/\s+/g, ' ').slice(0, 240)}`,
+      blocker:
+        'OpenAI media analysis is unavailable right now. Please try again later.',
+      debugPath: [...debugPath, 'media.analysis:provider_transport_failed'],
+      attachments,
+    };
+  }
+  const requestId = response.headers.get('x-request-id') || undefined;
+  const payloadText = await response.text();
+  if (!response.ok) {
+    markAnalysisStatus(attachments, 'failed');
+    return {
+      handled: false,
+      providerStatus: status,
+      blocker: `OpenAI media analysis is unavailable right now (HTTP ${response.status}).`,
       debugPath: [
         ...debugPath,
         `media.analysis:provider_error:${response.status}`,
@@ -312,8 +418,22 @@ export async function analyzeMessageMedia(
       attachments,
     };
   }
-  const summaryText = extractResponseOutputText(JSON.parse(payloadText));
+  let payload: unknown;
+  try {
+    payload = JSON.parse(payloadText);
+  } catch {
+    markAnalysisStatus(attachments, 'failed');
+    return {
+      handled: false,
+      providerStatus: status,
+      blocker: 'OpenAI media analysis returned an unreadable response.',
+      debugPath: [...debugPath, 'media.analysis:invalid_provider_response'],
+      attachments,
+    };
+  }
+  const summaryText = extractResponseOutputText(payload);
   if (!summaryText) {
+    markAnalysisStatus(attachments, 'failed');
     return {
       handled: false,
       providerStatus: status,
@@ -322,14 +442,7 @@ export async function analyzeMessageMedia(
       attachments,
     };
   }
-  const analyzedAt = new Date().toISOString();
-  for (const attachment of attachments) {
-    upsertMessageMediaAttachment({
-      ...attachment,
-      analysisStatus: 'analyzed',
-      updatedAt: analyzedAt,
-    });
-  }
+  markAnalysisStatus(attachments, 'analyzed');
   return {
     handled: true,
     providerStatus: status,

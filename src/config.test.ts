@@ -64,4 +64,20 @@ describe('config assistant identity', () => {
     expect(config.ASSISTANT_NAME_SOURCE).toBe('env');
     expect(config.DEFAULT_TRIGGER).toBe('@OperatorAndrea');
   });
+
+  it('bounds media cache settings to safe operator limits', async () => {
+    process.env.ANDREA_MEDIA_CACHE_MAX_FILE_BYTES = '0';
+    process.env.ANDREA_MEDIA_ANALYSIS_MAX_INPUT_BYTES = '209715200';
+    process.env.ANDREA_MEDIA_CACHE_MAX_TOTAL_BYTES = '1';
+    process.env.ANDREA_MEDIA_CACHE_RETENTION_DAYS = '999';
+
+    const config = await import('./config.js');
+
+    expect(config.ANDREA_MEDIA_CACHE_MAX_FILE_BYTES).toBe(1024 * 1024);
+    expect(config.ANDREA_MEDIA_ANALYSIS_MAX_INPUT_BYTES).toBe(
+      100 * 1024 * 1024,
+    );
+    expect(config.ANDREA_MEDIA_CACHE_MAX_TOTAL_BYTES).toBe(64 * 1024 * 1024);
+    expect(config.ANDREA_MEDIA_CACHE_RETENTION_DAYS).toBe(365);
+  });
 });

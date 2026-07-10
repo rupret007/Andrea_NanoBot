@@ -17,7 +17,10 @@ import { logger } from '../logger.js';
 import {
   buildMediaAttachmentId,
   cacheInboundMediaBytes,
+  getMediaCachePolicy,
   inferMediaKindFromMime,
+  MediaCacheLimitError,
+  readMediaResponseBytes,
 } from '../media-cache.js';
 import {
   buildForgetHelpText,
@@ -581,6 +584,20 @@ export class TelegramChannel implements Channel {
     attachment: MessageMediaAttachment;
   }): Promise<MessageMediaAttachment> {
     if (!this.bot) return input.attachment;
+    const maxFileBytes = getMediaCachePolicy().maxFileBytes;
+    if ((input.attachment.sizeBytes || 0) > maxFileBytes) {
+      return {
+        ...input.attachment,
+        fetchStatus: 'skipped_too_large',
+        metadataJson: JSON.stringify({
+          ...(input.attachment.metadataJson
+            ? { raw: input.attachment.metadataJson }
+            : {}),
+          cacheError: `Attachment exceeds the ${maxFileBytes}-byte cache limit.`,
+        }).slice(0, 4000),
+        updatedAt: new Date().toISOString(),
+      };
+    }
     try {
       const file = await this.bot.api.getFile(input.fileId);
       if (!file.file_path) {
@@ -594,7 +611,7 @@ export class TelegramChannel implements Channel {
           `Telegram file download failed with ${response.status}`,
         );
       }
-      const bytes = Buffer.from(await response.arrayBuffer());
+      const bytes = await readMediaResponseBytes(response, maxFileBytes);
       const mimeType =
         response.headers.get('content-type') ||
         input.attachment.mimeType ||
@@ -617,7 +634,10 @@ export class TelegramChannel implements Channel {
       logger.warn({ err }, 'Telegram inbound media cache failed');
       return {
         ...input.attachment,
-        fetchStatus: 'download_failed',
+        fetchStatus:
+          err instanceof MediaCacheLimitError
+            ? 'skipped_too_large'
+            : 'download_failed',
         metadataJson: JSON.stringify({
           ...(input.attachment.metadataJson
             ? { raw: input.attachment.metadataJson }

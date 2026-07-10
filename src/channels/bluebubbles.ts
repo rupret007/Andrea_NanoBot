@@ -14,6 +14,7 @@ import {
 } from '../bluebubbles-monitor-state.js';
 import {
   getAllChats,
+  getMessageMediaAttachment,
   hasStoredMessage,
   listRecentMessagesForChat,
   storeChatMetadata,
@@ -36,7 +37,11 @@ import {
 import {
   buildMediaAttachmentId,
   cacheInboundMediaBytes,
+  getMediaCachePolicy,
+  getUsableCachedMediaFile,
   inferMediaKindFromMime,
+  MediaCacheLimitError,
+  readMediaResponseBytes,
 } from '../media-cache.js';
 import type {
   BlueBubblesChannelControlSnapshot,
@@ -598,6 +603,37 @@ async function hydrateBlueBubblesAttachmentCache(
 
   const hydrated: MessageMediaAttachment[] = [];
   for (const attachment of attachments) {
+    const maxFileBytes = getMediaCachePolicy().maxFileBytes;
+    if ((attachment.sizeBytes || 0) > maxFileBytes) {
+      hydrated.push({
+        ...attachment,
+        fetchStatus: 'skipped_too_large',
+        metadataJson: JSON.stringify({
+          ...(attachment.metadataJson ? { raw: attachment.metadataJson } : {}),
+          cacheError: `Attachment exceeds the ${maxFileBytes}-byte cache limit.`,
+        }).slice(0, 4000),
+        updatedAt: new Date().toISOString(),
+      });
+      continue;
+    }
+
+    const existing = getMessageMediaAttachment(attachment.attachmentId);
+    const reusable = getUsableCachedMediaFile(existing?.localPath);
+    if (existing && reusable) {
+      hydrated.push({
+        ...attachment,
+        mimeType: existing.mimeType || attachment.mimeType,
+        sizeBytes: reusable.sizeBytes,
+        localPath: reusable.localPath,
+        contentHash: existing.contentHash,
+        durationMs: existing.durationMs || attachment.durationMs,
+        fetchStatus: 'cached',
+        analysisStatus: existing.analysisStatus || attachment.analysisStatus,
+        updatedAt: new Date().toISOString(),
+      });
+      continue;
+    }
+
     if (!attachment.sourceId) {
       hydrated.push(attachment);
       continue;
@@ -629,7 +665,7 @@ async function hydrateBlueBubblesAttachmentCache(
           extractBlueBubblesErrorText(response.status, await response.text()),
         );
       }
-      const bytes = Buffer.from(await response.arrayBuffer());
+      const bytes = await readMediaResponseBytes(response, maxFileBytes);
       const mimeType =
         response.headers.get('content-type') ||
         attachment.mimeType ||
@@ -655,7 +691,10 @@ async function hydrateBlueBubblesAttachmentCache(
           : 'BlueBubbles media fetch failed';
       hydrated.push({
         ...attachment,
-        fetchStatus: 'download_failed',
+        fetchStatus:
+          error instanceof MediaCacheLimitError
+            ? 'skipped_too_large'
+            : 'download_failed',
         metadataJson: JSON.stringify({
           ...(attachment.metadataJson ? { raw: attachment.metadataJson } : {}),
           downloadError: detail,

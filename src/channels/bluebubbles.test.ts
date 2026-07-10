@@ -2771,6 +2771,7 @@ describe('BlueBubbles channel', () => {
   });
 
   it('primes media-only BlueBubbles history and hydrates cached attachments', async () => {
+    let attachmentDownloads = 0;
     const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
       if ((req.url || '').startsWith('/api/v1/chat/')) {
         res.statusCode = 200;
@@ -2807,6 +2808,7 @@ describe('BlueBubbles channel', () => {
         return;
       }
       if ((req.url || '').startsWith('/api/v1/attachment/attach-hist-1')) {
+        attachmentDownloads += 1;
         res.statusCode = 200;
         res.setHeader('Content-Type', 'image/jpeg');
         res.end(Buffer.from([1, 2, 3, 4]));
@@ -2826,8 +2828,15 @@ describe('BlueBubbles channel', () => {
         'bb:iMessage;+;chat-media',
         4,
       );
+      const repeated = await primeBlueBubblesChatHistory(
+        buildConfig({ baseUrl: apiStub.baseUrl }),
+        'bb:iMessage;+;chat-media',
+        8,
+      );
 
       expect(primed).toEqual({ storedCount: 1, totalCount: 1 });
+      expect(repeated).toEqual({ storedCount: 0, totalCount: 1 });
+      expect(attachmentDownloads).toBe(1);
       expect(message).toMatchObject({
         id: 'bb:hist-media-1',
         content: '[image]',
@@ -2838,9 +2847,7 @@ describe('BlueBubbles channel', () => {
         fetchStatus: 'cached',
         sizeBytes: 4,
       });
-      expect(message?.attachments?.[0]?.localPath).toContain(
-        'data/media-cache/inbound',
-      );
+      expect(message?.attachments?.[0]?.localPath).toContain('media-cache');
     } finally {
       await apiStub.close();
     }
