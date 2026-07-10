@@ -27,6 +27,7 @@ Do not treat optional integration checks as baseline unless that integration is 
 npm run format:check
 npm run typecheck
 npm run lint
+npm run docs:check
 npm run test
 npm run build
 ```
@@ -46,6 +47,10 @@ Platform-specific release proof means:
   host
 - native macOS arm64/x64 or Windows installer artifacts require a future
   packaging project before they can be claimed as produced
+
+`npm ci` on each deployment host installs platform-specific runtime
+dependencies, including the bundled ffmpeg helpers used for media analysis.
+The TypeScript build itself remains shared across macOS and Windows.
 
 For the shared assistant core specifically, add these focused checks when Alexa, Telegram, or research orchestration changes:
 
