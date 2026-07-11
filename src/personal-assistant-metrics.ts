@@ -29,6 +29,32 @@ function count(
     .reduce((sum, event) => sum + event.value, 0);
 }
 
+function reviewedOutcomeCount(events: AssistantMetricEventRecord[]): number {
+  const reviewed = events.filter((event) =>
+    ['recommendation_accepted', 'recommendation_rejected'].includes(event.kind),
+  );
+  return new Set(
+    reviewed.map((event) => {
+      try {
+        const metadata = JSON.parse(event.metadataJson) as Record<
+          string,
+          unknown
+        >;
+        const identity =
+          metadata.packetId ||
+          metadata.bundleId ||
+          metadata.ruleId ||
+          metadata.outcomeId;
+        return typeof identity === 'string' && identity
+          ? `${event.groupFolder}:${identity}`
+          : event.eventId;
+      } catch {
+        return event.eventId;
+      }
+    }),
+  ).size;
+}
+
 export function recordAssistantMetric(params: {
   groupFolder: string;
   kind: AssistantMetricEventKind;
@@ -93,6 +119,7 @@ export function buildAssistantMetricSnapshot(params: {
         : 0,
     liveEvalCostUsd: Number(count(events, 'live_eval_cost').toFixed(4)),
     sampleCount: events.length,
+    reviewedOutcomeCount: reviewedOutcomeCount(events),
   };
 }
 
@@ -100,6 +127,20 @@ export function saveAssistantMetricBaseline(
   snapshot: AssistantMetricSnapshot,
 ): void {
   insertAssistantMetricBaseline(snapshot);
+}
+
+export const MIN_REVIEWED_BASELINE_SAMPLES = 5;
+
+export function saveReviewedAssistantMetricBaseline(
+  snapshot: AssistantMetricSnapshot,
+  minimumSamples = MIN_REVIEWED_BASELINE_SAMPLES,
+): void {
+  if (snapshot.reviewedOutcomeCount < minimumSamples) {
+    throw new Error(
+      `Assistant metric baseline requires at least ${minimumSamples} reviewed outcomes; found ${snapshot.reviewedOutcomeCount}.`,
+    );
+  }
+  saveAssistantMetricBaseline(snapshot);
 }
 
 export function compareAssistantMetricsToBaseline(

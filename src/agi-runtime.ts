@@ -26,7 +26,11 @@ import {
   type Integration,
 } from './integrations/index.js';
 import { MemoryFacade, type EmbeddingClient } from './memory/index.js';
-import { ModelRouter, type ProviderAdapter } from './models/index.js';
+import {
+  ModelRouter,
+  type ModelSpec,
+  type ProviderAdapter,
+} from './models/index.js';
 import {
   AuditLog,
   BudgetMeter,
@@ -78,6 +82,7 @@ let _runtimeInstantiated = false;
 export interface AgiRuntimeOptions {
   embed: EmbeddingClient;
   providers: ProviderAdapter[];
+  modelCatalog?: ModelSpec[];
   integrations: Integration[];
   primaryModelId: string;
   smallModelId: string;
@@ -228,6 +233,7 @@ export class AgiRuntime {
     );
 
     this.router = new ModelRouter({
+      catalog: opts.modelCatalog,
       onSpend: (usd, modelId) => {
         this.budget.charge(usd, modelId);
         void this.safeAudit({

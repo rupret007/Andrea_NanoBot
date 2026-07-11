@@ -6,6 +6,7 @@ import {
   compareAssistantMetricsToBaseline,
   createRegressionFixtureFromFeedback,
   recordAssistantMetric,
+  saveReviewedAssistantMetricBaseline,
   saveAssistantMetricBaseline,
 } from './personal-assistant-metrics.js';
 import type { ResponseFeedbackRecord } from './types.js';
@@ -78,5 +79,45 @@ describe('personal assistant metrics', () => {
       metadataOnly: true,
       rawConversationTextIncluded: false,
     });
+  });
+
+  it('refuses to save an empty or premature reviewed baseline', () => {
+    const snapshot = buildAssistantMetricSnapshot({ groupFolder: 'main' });
+    expect(() => saveReviewedAssistantMetricBaseline(snapshot)).toThrow(
+      'requires at least 5 reviewed outcomes',
+    );
+  });
+
+  it('does not mistake live evaluation telemetry for reviewed outcomes', () => {
+    for (let index = 0; index < 8; index += 1) {
+      recordAssistantMetric({
+        groupFolder: 'main',
+        kind: 'latency_sample',
+        value: 100 + index,
+      });
+    }
+    const snapshot = buildAssistantMetricSnapshot({ groupFolder: 'main' });
+    expect(snapshot.sampleCount).toBe(8);
+    expect(snapshot.reviewedOutcomeCount).toBe(0);
+    expect(() => saveReviewedAssistantMetricBaseline(snapshot)).toThrow(
+      'reviewed outcomes; found 0',
+    );
+  });
+
+  it('counts repeated review telemetry for one packet as one baseline outcome', () => {
+    for (let index = 0; index < 6; index += 1) {
+      recordAssistantMetric({
+        groupFolder: 'main',
+        kind:
+          index % 2 === 0
+            ? 'recommendation_accepted'
+            : 'recommendation_rejected',
+        metadata: { packetId: 'same-packet' },
+      });
+    }
+    expect(
+      buildAssistantMetricSnapshot({ groupFolder: 'main' })
+        .reviewedOutcomeCount,
+    ).toBe(1);
   });
 });

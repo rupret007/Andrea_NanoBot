@@ -31,6 +31,7 @@ import {
   WebResearchIntegration,
 } from './integrations/index.js';
 import { AgiRuntime } from './agi-runtime.js';
+import { buildConfiguredModelCatalog } from './model-capability-registry.js';
 import { SkillsSubsystem } from './skills/index.js';
 
 const AGI_ENV_KEYS = [
@@ -125,14 +126,13 @@ export async function bootstrapAgi(
     : new HashEmbedder(256);
 
   // ---- Model providers ----------------------------------------------------
+  const modelCatalog = buildConfiguredModelCatalog(DEFAULT_CATALOG, env);
   const providers = [];
   if (env.ANTHROPIC_API_KEY) {
-    providers.push(
-      new AnthropicAdapter(env.ANTHROPIC_API_KEY, DEFAULT_CATALOG),
-    );
+    providers.push(new AnthropicAdapter(env.ANTHROPIC_API_KEY, modelCatalog));
   }
   if (env.OPENAI_API_KEY) {
-    providers.push(new OpenAIAdapter(env.OPENAI_API_KEY, DEFAULT_CATALOG));
+    providers.push(new OpenAIAdapter(env.OPENAI_API_KEY, modelCatalog));
   }
   const ollamaBaseUrl = env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
   const ollamaModels = await discoverOllamaModels(ollamaBaseUrl).catch(
@@ -201,6 +201,7 @@ export async function bootstrapAgi(
   const rt = await AgiRuntime.create({
     embed,
     providers,
+    modelCatalog,
     integrations,
     primaryModelId: env.ANDREA_PRIMARY_MODEL ?? 'claude-sonnet-4-6',
     smallModelId: env.ANDREA_SMALL_MODEL ?? 'claude-haiku-4-5-20251001',

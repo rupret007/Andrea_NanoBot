@@ -5,7 +5,7 @@ import {
   formatAssistantIntelligenceReport,
 } from '../src/assistant-intelligence-report.js';
 import { initDatabase } from '../src/db.js';
-import { saveAssistantMetricBaseline } from '../src/personal-assistant-metrics.js';
+import { saveReviewedAssistantMetricBaseline } from '../src/personal-assistant-metrics.js';
 
 function readValue(name: string): string | undefined {
   const prefix = `${name}=`;
@@ -20,7 +20,7 @@ async function main(): Promise<void> {
     groupFolder: readValue('--group') || 'main',
   });
   if (process.argv.includes('--save-baseline')) {
-    saveAssistantMetricBaseline(report.metrics);
+    saveReviewedAssistantMetricBaseline(report.metrics);
   }
   if (process.argv.includes('--json')) {
     console.log(JSON.stringify(report, null, 2));

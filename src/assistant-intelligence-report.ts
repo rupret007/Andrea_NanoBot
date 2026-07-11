@@ -65,8 +65,8 @@ export function buildAssistantIntelligenceReport(params: {
       ? 'Verify or remediate the oldest open redacted regression fixture.'
       : pendingCanary > 0
         ? 'Run one explicitly approved reversible canary for a fixture-passing routine.'
-        : metrics.sampleCount === 0
-          ? 'Use one daily recommendation and record its verified outcome to establish a baseline.'
+        : metrics.reviewedOutcomeCount < 5
+          ? `Record ${5 - metrics.reviewedOutcomeCount} more owner-reviewed recommendation outcome${5 - metrics.reviewedOutcomeCount === 1 ? '' : 's'} before saving a baseline.`
           : 'Keep verified completion and citation coverage non-regressing.';
   return {
     generatedAt: now.toISOString(),
@@ -103,6 +103,7 @@ export function formatAssistantIntelligenceReport(
   return [
     'Andrea Assistant Intelligence',
     `Metrics samples: ${report.metrics.sampleCount}`,
+    `Owner-reviewed outcomes: ${report.metrics.reviewedOutcomeCount}/5 required for baseline`,
     `Accepted recommendations: ${(report.metrics.acceptedRecommendationRate * 100).toFixed(1)}%`,
     `Verified completion: ${(report.metrics.verifiedCompletionRate * 100).toFixed(1)}%`,
     `Memory citation coverage: ${(report.metrics.retrievalCitationCoverage * 100).toFixed(1)}%`,

@@ -1486,12 +1486,33 @@ export interface PersonalContextPacket {
   }>;
   citations: string[];
   sourcePolicies: PersonalMemoryPolicyRecord[];
+  perception?: ActivePerceptionAssessment;
   privacy: {
     localFirst: true;
     rawMessagesStored: false;
     derivedFactsOnly: true;
     boundedItems: number;
   };
+}
+
+export type ActivePerceptionSignal =
+  | 'calendar'
+  | 'open_loops'
+  | 'goals'
+  | 'messages'
+  | 'repository'
+  | 'tools';
+
+export interface ActivePerceptionAssessment {
+  assessedAt: string;
+  requiredSignals: ActivePerceptionSignal[];
+  freshSignals: ActivePerceptionSignal[];
+  agingSignals: ActivePerceptionSignal[];
+  staleSignals: ActivePerceptionSignal[];
+  missingSignals: ActivePerceptionSignal[];
+  conflictedSignals: ActivePerceptionSignal[];
+  refreshRequests: ActivePerceptionSignal[];
+  bounded: true;
 }
 
 export type VerifiedDeepWorkStage =
@@ -1524,8 +1545,62 @@ export interface VerifiedDeepWorkPacket {
   unresolvedRisks: string[];
   outcomeSummary?: string | null;
   nextDecision: string;
+  missionId?: string | null;
+  goalId?: string | null;
+  episodeId?: string | null;
+  approvalPacketId?: string | null;
+  outcomeId?: string | null;
+  skillCandidateId?: string | null;
+  trajectoryEvalId?: string | null;
+  skillProposalId?: string | null;
+  deterministicReplayPassed?: boolean;
+  modelRoute?: {
+    provider: string;
+    model: string;
+    latencyMs: number;
+    costUsd: number;
+    evaluatedAt: string;
+  } | null;
+  repository?: {
+    root: string;
+    branch: string;
+    headSha: string;
+    dirtyPaths: string[];
+    capturedAt: string;
+  } | null;
+  review?: DeepWorkMissionReview | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type DeepWorkMissionReviewVerdict =
+  | 'verified'
+  | 'partial'
+  | 'blocked'
+  | 'corrected'
+  | 'rejected';
+
+export interface DeepWorkMissionReview {
+  verdict: DeepWorkMissionReviewVerdict;
+  ownerAccepted: boolean;
+  summary: string;
+  reviewedAt: string;
+}
+
+export interface DeepWorkMissionSnapshot {
+  version: 1;
+  packet: VerifiedDeepWorkPacket;
+  evidenceComplete: boolean;
+  staleRepository: boolean;
+  promotion: {
+    skillId: string;
+    state: 'insufficient_evidence' | 'candidate' | 'promoted' | 'blocked';
+    reviewedMissions: number;
+    verifiedMissions: number;
+    acceptanceRate: number;
+    negativeOutcomes: number;
+    nextThreshold: number;
+  };
 }
 
 export type AssistantMetricEventKind =
@@ -1566,6 +1641,7 @@ export interface AssistantMetricSnapshot {
   averageLatencyMs: number;
   liveEvalCostUsd: number;
   sampleCount: number;
+  reviewedOutcomeCount: number;
 }
 
 export interface RedactedRegressionFixture {

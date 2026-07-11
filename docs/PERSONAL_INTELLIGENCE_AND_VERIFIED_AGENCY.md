@@ -27,6 +27,12 @@ harness and Cognitive Executive. Remote deliberation receives counts, conflict
 state, and citation coverage only. Local planning receives the bounded cited
 summaries; conflicting items are confidence-capped and clarification-only.
 
+Before daily guidance, planning, or coding work, bounded active perception
+classifies the required calendar, open-loop, goal, message, repository, and tool
+signals as fresh, aging, stale, missing, or conflicted. It requests at most three
+targeted refreshes and records the gap metadata; it does not create another
+memory store or expand channel consent.
+
 ## Delegated routines
 
 Only reversible actions such as local saves, drafts, references, and reminders
@@ -71,6 +77,58 @@ citation coverage, tool reliability, latency, and live-evaluation cost.
 
 Use `npm run debug:assistant-intelligence` for the metadata-only operator view.
 Add `-- --save-baseline` only when the current sample is the reviewed baseline.
+The command refuses to save fewer than five accepted/rejected owner-reviewed
+outcomes. Provider latency, tool, and cost telemetry never satisfy this gate.
+
+## Verified deep-work apprenticeship
+
+Repository and coding work can now carry one reviewable packet that links the
+mission, goal, cognitive episode, approval packet, outcome, and captured
+repository state. The owner cockpit shows the latest mission, artifacts, checks,
+risks, next decision, and promotion progress. The same review surface is
+available through mission chat requests such as `show today's mission evidence`,
+`mark this mission verified`, `mark this mission partial`, `mark this mission
+blocked`, or `mark this mission needs correction`.
+
+Andrea creates a candidate coding skill after three owner-reviewed verified
+missions. Promotion requires five verified missions, at least 80% acceptance,
+and fewer than two corrected or rejected outcomes. Verified promotion evidence
+also requires artifacts, passing checks, resolved risks, approval evidence when
+needed, and a deterministic test/replay signal. The review is bridged into one
+Agent OS trajectory evaluation, stable skill proposal, cognitive skill card, and
+runtime manifest. Two negative outcomes block promotion and quarantine every
+linked representation. Promotion never expands authority:
+commit, push, deploy, migration, dependency changes, deletion, and other
+irreversible actions continue to require fresh approval.
+
+Debug workflows must declare whether they are read-only, isolated-write, or
+live-write. The mission debugger is explicitly isolated-write and uses the
+in-memory test database; its realistic fixture output does not create live
+missions or skill evidence.
+
+The cockpit tracks the ten-working-day dogfood target, unreviewed missions,
+model/provider route, latency, cost, and skill evidence. Real working-day and
+owner-review evidence is never backfilled from synthetic fixtures.
+
+## Empirical model routing
+
+The AGI bootstrap compiles its model catalog from pinned defaults plus configured
+OpenAI, Anthropic, Gemini, and local model identifiers. Adapter discovery still
+determines actual availability; configuration alone is not a health claim.
+
+`npm run debug:grounded-agency` prints the metadata-only capability registry and
+twelve redacted routing cases without provider calls. Live comparison is opt-in:
+
+```bash
+npm run debug:grounded-agency -- --live --max-cost-usd=25
+```
+
+The live runner fails closed without a positive cap, stops before exceeding the
+cap, rotates across configured providers, stores only provider/model/latency/cost
+and structural outcome metadata, and never stores raw provider output or user
+conversation text. A structural pass proves response-contract compliance, not
+owner-verified task success. These results inform routing but do not promote a
+skill or count toward the dogfood baseline.
 
 ## Validation
 

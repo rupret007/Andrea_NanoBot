@@ -6,10 +6,17 @@ import {
   listHierarchicalGoals,
   listLifeThreadsForGroup,
   listOutcomesForGroup,
+  listVerifiedDeepWorkPackets,
   updateHierarchicalGoalStatus,
   updateLifeThread,
   upsertCognitiveApprovalPacket,
 } from './db.js';
+import {
+  assessDeepWorkSkillPromotion,
+  buildDeepWorkDogfoodReport,
+  isDeepWorkEvidenceComplete,
+  reviewDeepWorkMission,
+} from './deep-work-apprenticeship.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import type { CognitiveApprovalPacket } from './types.js';
@@ -228,6 +235,14 @@ export class OwnerCockpitServer {
       includeSuppressed: true,
       limit: 6,
     });
+    const deepWorkPackets = listVerifiedDeepWorkPackets({
+      groupFolder: this.config.groupFolder,
+      limit: 20,
+    });
+    const currentMission =
+      deepWorkPackets.find((packet) => packet.status === 'active') ||
+      deepWorkPackets[0] ||
+      null;
     const activeThread = threads.find(
       (item) => item.status === 'active' && item.nextAction,
     );
@@ -295,6 +310,37 @@ export class OwnerCockpitServer {
         status: item.status,
         updatedAt: item.updatedAt,
       })),
+      deepWork: {
+        current: currentMission
+          ? {
+              packetId: currentMission.packetId,
+              objective: safeText(
+                currentMission.objective,
+                'Deep-work mission',
+              ),
+              status: currentMission.status,
+              stage: currentMission.currentStage,
+              nextDecision: safeText(
+                currentMission.nextDecision,
+                'Review the mission evidence.',
+              ),
+              artifacts: currentMission.artifacts.length,
+              checksPassed: currentMission.checks.filter(
+                (check) => check.passed,
+              ).length,
+              checksTotal: currentMission.checks.length,
+              risks: currentMission.unresolvedRisks.slice(0, 3),
+              review: currentMission.review || null,
+              modelRoute: currentMission.modelRoute || null,
+              evidenceComplete: isDeepWorkEvidenceComplete(currentMission),
+            }
+          : null,
+        promotion: assessDeepWorkSkillPromotion(this.config.groupFolder),
+        dogfood: buildDeepWorkDogfoodReport(
+          this.config.groupFolder,
+          this.now(),
+        ),
+      },
     };
   }
 
@@ -405,6 +451,34 @@ export class OwnerCockpitServer {
     const approvalMatch = url.pathname.match(
       /^\/api\/v1\/approvals\/([^/]+)\/confirm$/,
     );
+    const missionReviewMatch = url.pathname.match(
+      /^\/api\/v1\/deep-work\/([^/]+)\/review$/,
+    );
+    if (req.method === 'POST' && missionReviewMatch) {
+      if (!this.requireMutationAuth(req, res)) return;
+      const body = JSON.parse(await readBody(req)) as Record<string, string>;
+      const verdicts = [
+        'verified',
+        'partial',
+        'blocked',
+        'corrected',
+        'rejected',
+      ] as const;
+      if (!verdicts.includes(body.verdict as (typeof verdicts)[number])) {
+        return json(res, 400, { error: 'Unknown mission review verdict.' });
+      }
+      const snapshot = reviewDeepWorkMission({
+        packetId: decodeURIComponent(missionReviewMatch[1]!),
+        verdict: body.verdict as (typeof verdicts)[number],
+        summary: body.summary || `Owner marked mission ${body.verdict}.`,
+        now: this.now(),
+      });
+      return json(res, 200, {
+        ok: true,
+        verdict: snapshot.packet.review?.verdict,
+        promotion: snapshot.promotion,
+      });
+    }
     if (req.method === 'POST' && approvalMatch) {
       if (!this.requireMutationAuth(req, res)) return;
       const body = JSON.parse(await readBody(req)) as Record<string, string>;

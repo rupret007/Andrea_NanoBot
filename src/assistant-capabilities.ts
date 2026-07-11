@@ -101,6 +101,7 @@ import {
   pickMissionActionFromUtterance,
   updateMissionAfterExecution,
 } from './missions.js';
+import { handleDeepWorkApprenticeshipCommand } from './deep-work-apprenticeship.js';
 import {
   buildSignatureFlowPayload,
   buildSignaturePostActionConfirmation,
@@ -4169,6 +4170,27 @@ async function runMissionCapability(
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
   const text = input.canonicalText || input.text || '';
+
+  const apprenticeshipReply = handleDeepWorkApprenticeshipCommand({
+    groupFolder: context.groupFolder,
+    text,
+    now: context.now,
+  });
+  if (apprenticeshipReply) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: apprenticeshipReply,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'handled owner-reviewed deep-work apprenticeship command',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
 
   const carryMissionIntoResult = (params: {
     summaryText: string;

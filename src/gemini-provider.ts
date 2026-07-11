@@ -43,6 +43,8 @@ export interface GeminiTextResult {
   text: string;
   model: string;
   requestId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 export interface GeminiProviderFailure {
@@ -251,9 +253,25 @@ export async function runGeminiOpenAiText(
       requestId,
     };
   }
+  const usage =
+    payload && typeof payload === 'object'
+      ? (payload as Record<string, unknown>).usage
+      : null;
+  const usageRecord =
+    usage && typeof usage === 'object'
+      ? (usage as Record<string, unknown>)
+      : null;
   return {
     text,
     model,
     requestId,
+    inputTokens:
+      typeof usageRecord?.prompt_tokens === 'number'
+        ? usageRecord.prompt_tokens
+        : undefined,
+    outputTokens:
+      typeof usageRecord?.completion_tokens === 'number'
+        ? usageRecord.completion_tokens
+        : undefined,
   };
 }

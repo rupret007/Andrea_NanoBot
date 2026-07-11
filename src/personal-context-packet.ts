@@ -13,6 +13,7 @@ import {
   redactPersonalContextText,
 } from './personal-context-graph.js';
 import { recordAssistantMetric } from './personal-assistant-metrics.js';
+import { assessActivePerception } from './active-perception.js';
 import type {
   PersonalContextPacket,
   PersonalContextPacketItem,
@@ -339,7 +340,7 @@ export async function buildPersonalContextPacket(params: {
       });
     }
   }
-  return {
+  const packet: PersonalContextPacket = {
     packetId: randomUUID(),
     generatedAt: now.toISOString(),
     groupFolder: params.groupFolder,
@@ -355,4 +356,6 @@ export async function buildPersonalContextPacket(params: {
       boundedItems: bounded.length,
     },
   };
+  packet.perception = assessActivePerception({ packet, now });
+  return packet;
 }

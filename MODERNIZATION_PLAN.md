@@ -1,5 +1,49 @@
 # Modernization Plan
 
+## Grounded agency flywheel — 2026-07-11
+
+### Implemented
+
+- [x] Bridge owner-reviewed coding missions into one Agent OS episode,
+      trajectory evaluation, stable skill proposal, cognitive skill card, and
+      runtime manifest.
+- [x] Require complete artifacts, passing checks, resolved risks, approval
+      evidence, deterministic replay/test evidence, and owner review before a
+      mission can contribute to promotion.
+- [x] Add a configured-model capability registry, task-specific ranking, twelve
+      redacted routing cases, metadata-only results, and a fail-closed live cost
+      ledger capped by the operator-provided value.
+- [x] Add bounded active-perception assessment for calendar, open loops, goals,
+      messages, repository state, and tools without creating a new memory store.
+- [x] Show the ten-working-day dogfood target, owner-review progress, model route,
+      latency, cost, evidence readiness, and promotion state in the cockpit.
+
+### Release and real-world proof
+
+- [x] Run focused and full primary/AGI/deterministic/build/docs/audit gates on the
+      combined tree; review the diff and secret boundaries.
+- [ ] Commit and push only if `main` remains non-diverged, then rebuild/restart
+      the canonical Mac runtime and verify the serving SHA and OpenClaw tools.
+- [ ] Complete one real coding mission on each of ten working days. Save a metric
+      baseline only after five genuine reviewed outcomes; do not synthesize or
+      backfill operator evidence.
+- [x] Run the redacted live routing comparison within the approved cumulative
+      $25 cap. Incomplete or provider-blocked cases cannot promote a route.
+
+Validation result: 2,100/2,100 primary tests, the production build, 279/279 AGI
+tests, 90/90 deterministic commands, documentation checks, dependency audit,
+signature flows, formatting, and typecheck pass. The deterministic scorecard is
+98.1% A+ with zero regressions and $0 cost. The 12-case redacted live comparison
+completed across OpenAI, Anthropic, and Gemini with a conservative estimated
+cost of $0.30416; structural passes are explicitly not owner-verified outcomes
+and do not satisfy the five-outcome baseline gate.
+
+### Deferred intentionally
+
+- Computer use, realtime voice, persistent sub-agents, autonomous
+  self-modification, automatic deployment, passive personal archives, and new
+  integrations remain outside this round.
+
 ## Deep owner UI/UX round — 2026-07-10
 
 ### Implemented
@@ -53,6 +97,49 @@ owner secret and the existing Serve map must be inspected before mutation.
   framework migration, or direct cockpit external-action executor.
 
 ## Production intelligence loop — 2026-07-10
+
+## Verified deep-work apprenticeship — 2026-07-11
+
+### Completed in this round
+
+- [x] Link coding deep-work packets to missions, goals, cognitive episodes,
+      approvals, outcomes, and captured repository state without adding a
+      duplicate workflow engine or schema migration.
+- [x] Add owner review outcomes, evidence completeness, stale-repository
+      detection, and outcome-led assistant metrics.
+- [x] Add a daily cockpit mission card and authenticated/CSRF-protected review
+      endpoint, plus mission chat status and review commands.
+- [x] Create coding-skill candidates after three verified missions, promote only
+      after five verified missions with at least 80% acceptance and fewer than
+      two negative outcomes, and quarantine after two corrections/rejections.
+- [x] Preserve fresh approval requirements for commit, push, deploy, migration,
+      dependency changes, and deletion; learned skill records cannot expand
+      authority.
+- [x] Classify the mission debug harness as isolated-write and prove it uses no
+      live storage or external effects. No accidental live records existed to
+      remove.
+- [x] Make live scorecard runs emit explicit start, timeout, success/failure,
+      cost-cap, and terminal metadata.
+- [x] Refuse to save an assistant metric baseline until at least five reviewed
+      outcome samples exist.
+
+### Validation and operator proof
+
+- [x] Focused typecheck and apprenticeship, metric, debug-policy, and cockpit
+      tests pass.
+- [x] Run format, full primary tests/build, AGI tests, deterministic scorecard,
+      docs checks, dependency audit, and final diff review on the complete tree.
+- [ ] Dogfood one coding/repository mission per working day for two weeks. This
+      is real-world operator evidence and must not be fabricated from fixtures.
+- [ ] Review promotion after mission 3 and mission 5. Keep the candidate blocked
+      if acceptance, negative-outcome, evidence, or fresh-approval gates fail.
+
+### Intentionally unchanged
+
+- Existing missions, verified deep-work packets, cognitive skill cards, approval
+  gates, and assistant metrics remain the systems of record.
+- No autonomous commit/push/deploy behavior, broad workflow rewrite, passive
+  archive, provider churn, or synthetic-to-live learning was introduced.
 
 ### Implemented
 

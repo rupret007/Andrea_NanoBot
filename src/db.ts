@@ -11288,6 +11288,15 @@ export function listAssistantMetricEvents(params: {
   }));
 }
 
+export function updateAssistantMetricEventMetadata(
+  eventId: string,
+  metadataJson: string,
+): void {
+  db.prepare(
+    `UPDATE assistant_metric_events SET metadata_json = ? WHERE event_id = ?`,
+  ).run(redactStoredCognitiveMetadata(metadataJson, 2400), eventId);
+}
+
 export function insertAssistantMetricBaseline(
   snapshot: AssistantMetricSnapshot,
 ): void {

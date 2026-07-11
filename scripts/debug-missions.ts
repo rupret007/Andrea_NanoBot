@@ -3,6 +3,14 @@ import { analyzeCommunicationMessage } from '../src/communication-companion.js';
 import { _initTestDatabase, getMission } from '../src/db.js';
 import { handleLifeThreadCommand } from '../src/life-threads.js';
 import { deliverCompanionHandoff } from '../src/cross-channel-handoffs.js';
+import { formatDebugExecutionPolicy } from '../src/debug-execution-policy.js';
+
+const EXECUTION_POLICY = {
+  command: 'debug:missions',
+  mode: 'isolated_write',
+  storage: 'isolated',
+  externalEffects: false,
+} as const;
 
 function printBlock(title: string, lines: string[]): void {
   process.stdout.write(`${title}\n`);
@@ -22,6 +30,7 @@ async function main(): Promise<void> {
 
   if (dryRun) {
     printBlock('MISSION DEBUG DRY RUN', [
+      ...formatDebugExecutionPolicy(EXECUTION_POLICY),
       'mutates_persistent_state: false',
       'live_actions_executed: false',
       `group_folder: ${groupFolder}`,
@@ -34,6 +43,11 @@ async function main(): Promise<void> {
   }
 
   _initTestDatabase();
+
+  printBlock(
+    'MISSION DEBUG POLICY',
+    formatDebugExecutionPolicy(EXECUTION_POLICY),
+  );
 
   analyzeCommunicationMessage({
     channel: 'bluebubbles',

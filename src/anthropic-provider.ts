@@ -56,6 +56,8 @@ export interface AnthropicTextResult {
   text: string;
   model: string;
   requestId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
   thinkingTrace?: CouncilUltrathinkTrace;
 }
 
@@ -384,10 +386,26 @@ export async function runAnthropicText(
       requestId,
     };
   }
+  const usage =
+    payload && typeof payload === 'object'
+      ? (payload as Record<string, unknown>).usage
+      : null;
+  const usageRecord =
+    usage && typeof usage === 'object'
+      ? (usage as Record<string, unknown>)
+      : null;
   return {
     text,
     model,
     requestId,
+    inputTokens:
+      typeof usageRecord?.input_tokens === 'number'
+        ? usageRecord.input_tokens
+        : undefined,
+    outputTokens:
+      typeof usageRecord?.output_tokens === 'number'
+        ? usageRecord.output_tokens
+        : undefined,
     thinkingTrace: thinkingRequest.trace,
   };
 }

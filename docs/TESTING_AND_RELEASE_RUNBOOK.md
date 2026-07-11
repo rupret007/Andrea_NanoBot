@@ -222,10 +222,14 @@ For the personal-intelligence production loop, also run:
 npm test -- --run src/personal-context-packet.test.ts src/verified-deep-work.test.ts src/routine-promotion.test.ts src/personal-assistant-metrics.test.ts src/intelligence-regression-harness.test.ts
 npm run test:intelligence -- --no-record --quiet
 npm run debug:assistant-intelligence
+npm run debug:grounded-agency
 ```
 
 The intelligence harness must prove cited local context and a verified or
 honestly blocked deep-work outcome without public network access.
+The grounded-agency command must report twelve redacted cases and zero cost in
+deterministic mode. Live mode requires an explicit positive cost cap and remains
+outside CI.
 
 For messaging trust-ladder and live-delivery changes, add:
 

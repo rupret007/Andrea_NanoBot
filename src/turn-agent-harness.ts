@@ -831,6 +831,11 @@ export async function beginTurnAgentHarness(
       personalContextPacket.conflicts.length,
     );
     contextCompile.metadata.personal_context_raw_messages_stored = 'false';
+    contextCompile.metadata.active_perception_refresh_count = String(
+      personalContextPacket.perception?.refreshRequests.length || 0,
+    );
+    contextCompile.metadata.active_perception_refresh_signals =
+      personalContextPacket.perception?.refreshRequests.join(',') || 'none';
   }
   const approvalPosture =
     contextCompile.selectedSkill.approvalNeed === 'explicit'
