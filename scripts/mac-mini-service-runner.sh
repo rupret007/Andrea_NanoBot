@@ -53,7 +53,11 @@ if [[ ! -f dist/index.js ]]; then
   npm run build
 fi
 
-node scripts/run-with-pinned-node.mjs --verify-only
+PINNED_NODE_PATH="$(node scripts/run-with-pinned-node.mjs --print-node-path)"
+if [[ -z "$PINNED_NODE_PATH" || ! -x "$PINNED_NODE_PATH" ]]; then
+  echo "verified pinned Node executable is unavailable" >&2
+  exit 1
+fi
 
 echo "$$" > data/run/mac-mini-service.pid
-exec node scripts/run-with-pinned-node.mjs dist/index.js
+exec "$PINNED_NODE_PATH" dist/index.js
