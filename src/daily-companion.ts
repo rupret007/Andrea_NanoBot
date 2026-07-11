@@ -46,6 +46,7 @@ import type {
   RitualTriggerStyle,
   RitualType,
 } from './types.js';
+import type { AssistantPresentation } from './assistant-presentation.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
 
 export type DailyCompanionMode =
@@ -116,6 +117,7 @@ export interface DailyCompanionResponse {
   recommendationKind: DailyCompanionRecommendationKind;
   context: DailyCompanionContext;
   grounded: GroundedDaySnapshot | null;
+  structured?: AssistantPresentation;
 }
 
 export interface DailyCompanionDeps extends DailyCommandCenterDeps {
@@ -1480,16 +1482,19 @@ function finalizeDraft(
     signalsUsed: draft.signalsUsed,
     subjectData: draft.subjectData,
   });
+  const groundedWhyLine = grounded
+    ? `${journeyWhyLine} ${grounded.calendar.unavailableReply ? 'Calendar was unavailable, so this is a partial view.' : 'Calendar checked for this view.'}`
+    : journeyWhyLine;
   const flagshipTextReply = buildSignatureFlowText({
     lead: draft.lead,
     detailLines: draft.detailLines,
     nextAction: draft.recommendationText,
-    whyLine: journeyWhyLine,
+    whyLine: groundedWhyLine,
   });
   const usePracticalDailyReply =
     channel !== 'alexa' &&
     (draft.mode === 'midday_reground' || draft.mode === 'open_guidance');
-  const reply =
+  const baseReply =
     channel === 'alexa'
       ? formatAlexaReply(
           draft.lead,
@@ -1503,7 +1508,7 @@ function finalizeDraft(
             lead: draft.lead,
             detailLines: draft.detailLines,
             recommendation: draft.recommendationText,
-            whyLine: journeyWhyLine,
+            whyLine: groundedWhyLine,
           })
         : shouldUseSignatureJourneyEnvelope(channel, draft.mode)
           ? flagshipTextReply
@@ -1514,6 +1519,7 @@ function finalizeDraft(
               ) as string[],
               personalityLine,
             );
+  const reply = baseReply;
 
   const shortText =
     channel === 'alexa'
@@ -1592,6 +1598,30 @@ function finalizeDraft(
     recommendationKind: draft.recommendationKind,
     context,
     grounded,
+    structured: {
+      kind: `daily_${draft.mode}`,
+      title: 'Today',
+      lead: draft.lead,
+      facts: draft.detailLines.slice(0, 3),
+      state: grounded?.calendar.unavailableReply ? 'partial' : 'ready',
+      sources: grounded
+        ? [
+            {
+              label: grounded.calendar.unavailableReply
+                ? 'Calendar unavailable'
+                : 'Calendar checked',
+              checkedAt: now.toISOString(),
+              freshness: grounded.calendar.unavailableReply
+                ? 'unknown'
+                : 'fresh',
+            },
+          ]
+        : [],
+      nextAction: draft.recommendationText,
+      details: [groundedWhyLine, ...draft.extraDetails].filter(
+        (item): item is string => Boolean(item),
+      ),
+    },
   };
 }
 

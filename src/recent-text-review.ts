@@ -1622,7 +1622,7 @@ export function formatRecentTextReviewReply(input: {
 }): string {
   const { result } = input;
   if (result.items.length === 0) {
-    return `I didn't find any recent synced Messages that need attention over ${result.window.label}.`;
+    return `I checked synced Messages for ${result.window.label} and didn't find any conversations that need attention.\n\nSource: Messages sync checked at ${result.reviewedAt}.`;
   }
   const topLimit = input.channel === 'bluebubbles' ? 3 : 6;
   const needs = result.needsReply
@@ -1639,6 +1639,7 @@ export function formatRecentTextReviewReply(input: {
       : [];
   const sections = [
     result.summaryText,
+    `Source: Messages sync checked for ${result.window.label}; ${result.items.length} ${result.items.length === 1 ? 'conversation' : 'conversations'} reviewed.`,
     result.providerNote,
     needs.length > 0 ? ['Needs reply', ...needs].join('\n') : null,
     watching.length > 0 ? ['Worth watching', ...watching].join('\n') : null,

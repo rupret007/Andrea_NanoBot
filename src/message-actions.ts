@@ -55,6 +55,7 @@ import type {
   SendMessageOptions,
   SendMessageResult,
 } from './types.js';
+import type { AssistantPresentation } from './assistant-presentation.js';
 
 type PresentationChannel = 'telegram' | 'bluebubbles' | 'alexa';
 
@@ -124,6 +125,7 @@ export interface MessageActionPresentation {
   inlineActionRows: ChannelInlineAction[][];
   focusMessageActionIds: string[];
   primaryMessageActionId: string;
+  structured: AssistantPresentation;
 }
 
 export interface ParsedMessageActionPresentation {
@@ -1840,6 +1842,31 @@ export function buildMessageActionPresentation(
     inlineActionRows: channel === 'telegram' ? buildInlineRows(record) : [],
     focusMessageActionIds: [record.messageActionId],
     primaryMessageActionId: record.messageActionId,
+    structured: {
+      kind: 'message_draft',
+      title: 'Message draft',
+      lead: buildActionLead(record),
+      facts: [buildTargetLine(record), buildStatusLine(record)],
+      state:
+        record.sendStatus === 'failed'
+          ? 'failed'
+          : record.sendStatus === 'sent'
+            ? 'verified'
+            : 'ready',
+      nextAction: nextStepLine(record),
+      actions:
+        channel === 'telegram'
+          ? buildInlineRows(record)
+              .flat()
+              .slice(0, 3)
+              .map((action, index) => ({
+                label: action.label,
+                actionId: action.actionId || action.url || '',
+                kind: index === 0 ? 'primary' : 'secondary',
+                externalEffect: /send/i.test(action.label),
+              }))
+          : [],
+    },
   };
 }
 

@@ -50,6 +50,7 @@ import type {
   CompanionContinuationCandidate,
   MissionSuggestedAction,
 } from './types.js';
+import type { AssistantPresentation } from './assistant-presentation.js';
 
 const ACTION_BUNDLE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ACTIONS_PER_BUNDLE = 4;
@@ -150,6 +151,7 @@ export interface ActionBundlePresentation {
   text: string;
   inlineActionRows: ChannelInlineAction[][];
   mode: ActionBundlePresentationMode;
+  structured: AssistantPresentation;
 }
 
 export interface ActionBundleVoiceSummary {
@@ -1009,6 +1011,30 @@ export function buildActionBundlePresentation(
     text: lines.join('\n'),
     inlineActionRows: rows,
     mode,
+    structured: {
+      kind: 'follow_through_review',
+      title: snapshot.bundle.title,
+      lead:
+        sourceContext.whyLine ||
+        `${pendingActions(snapshot).length} follow-through ${pendingActions(snapshot).length === 1 ? 'step is' : 'steps are'} ready for review.`,
+      facts: snapshot.actions.slice(0, 3).map((action) => action.summary),
+      state: snapshot.actions.some((action) => action.status === 'failed')
+        ? 'failed'
+        : pendingActions(snapshot).length > 0
+          ? 'ready'
+          : 'verified',
+      nextAction: selectionMode
+        ? 'Choose the steps to run.'
+        : 'Approve all, pick specific actions, or leave this for later.',
+      actions: rows
+        .flat()
+        .slice(0, 3)
+        .map((action, index) => ({
+          label: action.label,
+          actionId: action.actionId || action.url || '',
+          kind: index === 0 ? 'primary' : 'secondary',
+        })),
+    },
   };
 }
 

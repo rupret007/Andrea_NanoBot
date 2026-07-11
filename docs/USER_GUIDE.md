@@ -1,5 +1,18 @@
 # Andrea User Guide
 
+## Everyday experience
+
+Ask Andrea in ordinary language. Everyday responses lead with the answer, show
+the few facts that affect the decision, and end with one useful next move.
+Provenance and deeper diagnostics remain available by asking “why?” or for more
+detail. Calendar answers say whether the calendar was checked, and recent-text
+reviews state their time window and coverage.
+
+An administrator may enable the private owner cockpit for a visual view of
+today, open loops, goals, approvals, and outcomes. It is an optional companion
+to chat, not a separate memory or automation system. See
+[OWNER_COCKPIT.md](OWNER_COCKPIT.md) for its security and setup boundaries.
+
 This guide is for people who talk to Andrea in chat.
 It explains the normal user experience, the small safe command set, and what to expect.
 

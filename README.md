@@ -34,6 +34,12 @@ The loop is wired into real assistant turns: daily and deep-work planning share
 one local context packet, approval turns resume pending verified work, and the
 operator can inspect outcome quality with `npm run debug:assistant-intelligence`.
 
+Andrea also includes an opt-in private owner cockpit: a calm, responsive view of
+today's focus, open loops, goals, staged approvals, and verified outcomes. It
+reuses the same database and approval lifecycle as chat, binds only to loopback,
+and is intended to be exposed remotely only through a protected Tailscale Serve
+route. See [the owner cockpit runbook](docs/OWNER_COCKPIT.md).
+
 <p align="center">
   <a href="docs/USER_GUIDE.md">User Guide</a>&nbsp; | &nbsp;
   <a href="docs/ADMIN_GUIDE.md">Admin Guide</a>&nbsp; | &nbsp;

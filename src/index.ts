@@ -107,6 +107,7 @@ import {
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
 import { startBlueBubblesControlServer } from './bluebubbles-control-server.js';
+import { startOwnerCockpitServer } from './owner-cockpit-server.js';
 import { planSimpleReminder } from './local-reminder.js';
 import {
   buildCalendarAssistantResponse,
@@ -10227,6 +10228,7 @@ async function main(): Promise<void> {
   let blueBubblesControlServer: ReturnType<
     typeof startBlueBubblesControlServer
   > = null;
+  let ownerCockpitServer: ReturnType<typeof startOwnerCockpitServer> = null;
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
@@ -10261,6 +10263,11 @@ async function main(): Promise<void> {
       ).catch((err) =>
         logger.warn({ err }, 'BlueBubbles control API shutdown failed'),
       );
+    }
+    if (ownerCockpitServer) {
+      await new Promise<void>((resolve) =>
+        ownerCockpitServer?.close(() => resolve()),
+      ).catch((err) => logger.warn({ err }, 'Owner cockpit shutdown failed'));
     }
     if (agiRuntime) {
       await agiRuntime
@@ -17465,6 +17472,7 @@ async function main(): Promise<void> {
           channel instanceof BlueBubblesChannel,
       ) || null,
   });
+  ownerCockpitServer = startOwnerCockpitServer();
   resolveTelegramMainChatForAlexa = (groupFolder: string) => {
     const telegramEntries = Object.entries(registeredGroups).filter(([jid]) => {
       const channel = findChannel(channels, jid);

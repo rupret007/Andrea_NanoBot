@@ -1,5 +1,57 @@
 # Modernization Plan
 
+## Deep owner UI/UX round — 2026-07-10
+
+### Implemented
+
+- [x] Add a bounded channel-neutral presentation contract with tailored compact
+      renderers and control limits.
+- [x] Attach structured presentations to daily guidance, message drafts, and
+      follow-through bundles without removing their compatible text surfaces.
+- [x] Make calendar guidance and recent Messages reviews visibly state source,
+      requested period, freshness, and coverage where available.
+- [x] Add a responsive, accessible personal command center for current focus,
+      open loops, goals, staged approvals, and recent outcomes.
+- [x] Reuse existing database records and approval packets; add no parallel
+      memory, action store, or workflow engine.
+- [x] Limit cockpit mutations to reversible thread/goal state changes and exact,
+      unexpired approval confirmation. External effects still require normal
+      executor revalidation.
+- [x] Enforce loopback binding, POST-only secret login, constant-time secret
+      checks, short-lived HttpOnly sessions, CSRF/same-origin checks, rate
+      limiting, restrictive browser headers, and fail-closed configuration.
+- [x] Document local setup, Tailscale Serve boundaries, recovery, and the revised
+      everyday response model.
+
+### Validation required before release
+
+- [x] Run focused presentation, daily companion, recent-text, action bundle,
+      message action, and cockpit security tests.
+- [x] Run format, typecheck, lint, full primary tests, production build, AGI
+      typecheck/tests, deterministic gates, docs checks, and final diff review.
+- [x] Start the cockpit on loopback with a temporary test secret and verify
+      login, snapshot, CSRF rejection, reversible controls, and health.
+- [ ] Inspect existing Tailscale Serve state before adding a route; do not
+      overwrite unrelated handlers. Remote proof remains operator-dependent if
+      the local Tailscale CLI cannot read host preferences.
+
+Validation results: 90 focused presentation and security tests pass, including
+the calendar and recent-text journeys. The full primary suite, production
+typecheck/build, 279 AGI tests, and 90-command deterministic sweep pass. Format,
+docs, dependency audit, and final whitespace checks are green; lint has the
+existing warning backlog and no errors. Browser review covered authenticated
+desktop and 390px mobile layouts, semantic landmarks, responsive overflow,
+control sizing, empty/populated states, and console errors. Remote Tailscale
+publication was intentionally not changed because the feature has no configured
+owner secret and the existing Serve map must be inspected before mutation.
+
+### Intentionally unchanged
+
+- Existing chat commands, memory stores, approval policies, action executors,
+  and channel ownership remain authoritative.
+- There is no raw-message dashboard, multi-user administration layer, frontend
+  framework migration, or direct cockpit external-action executor.
+
 ## Production intelligence loop — 2026-07-10
 
 ### Implemented
