@@ -21,8 +21,11 @@
       2,280/2,280, AGI passes 282/282, formatting, typechecks, build, docs,
       lint (zero errors; 647 existing warnings), both dependency audits, and
       diff checks pass. Brave's live probe is healthy with zero pending alerts.
-- [ ] Commit the repair, push `main`, rebuild from the clean commit, restart
-      services, and reconfirm the served SHA and Brave health.
+- [x] Committed and pushed the repair, rebuilt from the clean commit, and
+      restarted the Mac host and OpenClaw gateway. Runtime provenance matched
+      the pushed commit; Brave was live-proven healthy with zero pending alerts,
+      and the integration report remained 12/14 healthy with Alexa as the only
+      manual-action proof debt.
 
 ## Combined-candidate release-readiness audit — 2026-07-12
 
