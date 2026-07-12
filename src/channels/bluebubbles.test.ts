@@ -2038,6 +2038,72 @@ describe('BlueBubbles channel', () => {
     }
   });
 
+  it('republishes recovered health after a completed shadow monitor pass', async () => {
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/message')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+
+    const onHealthUpdate = vi.fn();
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate,
+      },
+    );
+
+    try {
+      await channel.connect();
+      const staleState = readBlueBubblesMonitorState();
+      (channel as any).monitorState = {
+        ...staleState,
+        detectionState: 'transport_unreachable',
+        detectionDetail:
+          'Andrea could not reach the BlueBubbles server during startup.',
+        detectionNextAction: 'Retry after startup.',
+      };
+      onHealthUpdate.mockClear();
+
+      await (channel as any).runShadowMonitorOnce();
+
+      expect(onHealthUpdate).toHaveBeenCalledTimes(1);
+      const recoveredHealth = onHealthUpdate.mock.calls[0]?.[0];
+      expect(recoveredHealth?.detail).toContain('detection healthy');
+      expect(recoveredHealth?.detail).not.toContain(
+        'detection transport_unreachable',
+      );
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
   it('marks BlueBubbles transport as unreachable instead of healthy when the server cannot be polled', async () => {
     const channel = new BlueBubblesChannel(
       buildConfig({

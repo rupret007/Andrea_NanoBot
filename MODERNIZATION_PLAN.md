@@ -1,5 +1,27 @@
 # Modernization Plan
 
+## BlueBubbles post-restart health recovery — 2026-07-12
+
+### Implemented
+
+- [x] Republish the BlueBubbles channel-health snapshot after every completed
+      shadow-monitor pass. The monitor already persisted recovery from a
+      startup transport failure, but the host health snapshot retained the
+      earlier failure until unrelated channel activity caused another publish.
+- [x] Preserve the fail-closed classifications: a failed poll still records its
+      transport or mixed-degradation evidence; a successful poll now makes the
+      recovered state visible to service status, field-trial readiness, and the
+      integration doctor without requiring a message or another restart.
+
+### Validation
+
+- [x] A regression test starts from a persisted transport-unreachable state,
+      completes a healthy shadow pass, and proves that the newly published
+      channel detail says `detection healthy` rather than retaining the stale
+      failure. The focused BlueBubbles, field-trial, and monitor-state suite
+      passes 85/85 tests with typecheck, quiet lint, formatting, and diff
+      hygiene.
+
 ## Metadata-resolved group audiences — 2026-07-12
 
 ### Implemented

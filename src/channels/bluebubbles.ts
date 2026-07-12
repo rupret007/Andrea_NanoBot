@@ -2886,6 +2886,7 @@ export class BlueBubblesChannel implements Channel {
       }
       this.persistMonitorState();
     }
+    this.emitHealth();
   }
 
   private startShadowMonitor(): void {
