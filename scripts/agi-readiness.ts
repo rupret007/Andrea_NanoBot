@@ -11,7 +11,10 @@ import { initDatabase } from '../src/db.js';
 import { buildIntegrationDoctorReport } from '../src/integration-doctor.js';
 import { buildLiveProofGauntletReport } from '../src/live-proof-gauntlet.js';
 import { collectProviderHealthSnapshots } from '../src/provider-health.js';
-import { collectProviderHealthSnapshotsWithLiveProbe } from '../src/provider-live-probe.js';
+import {
+  collectProviderHealthSnapshotsWithLiveProbe,
+  collectProviderHealthSnapshotsWithRecentLiveEvidence,
+} from '../src/provider-live-probe.js';
 import { runAgiDoctor } from './agi-doctor.js';
 
 function hasFlag(name: string): boolean {
@@ -32,6 +35,7 @@ async function main(): Promise<void> {
   const maxCostUsd = Number(readValue('--max-cost-usd') ?? '0');
   const json = hasFlag('--json');
   const noLiveProbe = hasFlag('--no-live-probe');
+  const configOnly = hasFlag('--config-only');
   const write = hasFlag('--write');
   const stateDir = readValue('--state-dir');
 
@@ -43,9 +47,11 @@ async function main(): Promise<void> {
   initDatabase();
   const doctor = await runAgiDoctor();
   const providers =
-    mode === 'deterministic' || noLiveProbe
-      ? collectProviderHealthSnapshots(generatedAt)
-      : await collectProviderHealthSnapshotsWithLiveProbe(generatedAt);
+    mode === 'live' && !noLiveProbe
+      ? await collectProviderHealthSnapshotsWithLiveProbe(generatedAt)
+      : configOnly
+        ? collectProviderHealthSnapshots(generatedAt)
+        : collectProviderHealthSnapshotsWithRecentLiveEvidence(generatedAt);
   const integrations = buildIntegrationDoctorReport({
     now: new Date(generatedAt),
     providers,

@@ -180,6 +180,18 @@ Provider snapshots now carry an explicit `configuration_only` or `live_probe`
 evidence class. The capability registry and model self-description keep a
 configured-only provider at `unknown`; an unavailable local model is blocked,
 and only an injected or successful live observation becomes healthy.
+Live probes also write a bounded owner-only health record for 30 minutes so
+subsequent operator reality and readiness checks can reuse recent evidence
+without another network call. Cached entries are labeled `cached_live_probe`
+and contain only provider ID, state, timestamp, failure class, quota class,
+model name, and a bounded repair action. They never contain prompts, responses,
+credentials, request IDs, or raw provider errors. Current explicit quota/config
+blocks override the cache, expired observations fail back to `unknown`, and
+strict configuration-only reporting remains available with
+`npm run agi:readiness -- --config-only`.
+The council doctor reads the same recent evidence for current provider status
+while preserving the recorded participation, failures, and quality of each
+historical council run.
 
 `npm run debug:grounded-agency` prints the metadata-only capability registry and
 twelve redacted routing cases without provider calls. Live comparison is opt-in:

@@ -18,6 +18,7 @@ export type AgiReadinessBlockerCategory =
   | 'repo_fix_required'
   | 'external_config_required'
   | 'manual_live_proof_required'
+  | 'optional_capability_unverified'
   | 'optional_capability_blocked'
   | 'publish_blocked';
 
@@ -230,6 +231,7 @@ function dedupeBlockers(
     manual_live_proof_required: 2,
     publish_blocked: 3,
     optional_capability_blocked: 4,
+    optional_capability_unverified: 5,
   };
   const byKey = new Map<string, AgiReadinessBlocker>();
   for (const blocker of blockers) {
@@ -323,16 +325,22 @@ function doctorBlockers(
       continue;
     }
     if (check.name === 'telegram_canary') {
+      const activationDisabled = /ANDREA_USE_AGI is disabled/i.test(detail);
       blockers.push({
-        category: 'external_config_required',
-        severity: check.status === 'fail' ? 'critical' : 'high',
+        category: activationDisabled
+          ? 'manual_live_proof_required'
+          : 'external_config_required',
+        severity: check.status === 'fail' ? 'critical' : 'medium',
         source: 'agi_doctor',
         id: check.name,
-        label: 'Telegram AGI canary not live-ready',
+        label: activationDisabled
+          ? 'Telegram AGI canary is intentionally disabled'
+          : 'Telegram AGI canary not live-ready',
         status: check.status,
-        owner: 'external',
-        action:
-          'Set ANDREA_USE_AGI=1 and configure TELEGRAM_BOT_TOKEN when ready to canary AGI through Telegram.',
+        owner: activationDisabled ? 'manual' : 'external',
+        action: activationDisabled
+          ? 'Enable ANDREA_USE_AGI=1 only when intentionally starting the Telegram AGI canary; credential and transport health are assessed separately.'
+          : 'Configure TELEGRAM_BOT_TOKEN for the enabled Telegram AGI canary.',
         detail,
         blocksLaunch: true,
         blocksPublish: false,
@@ -399,6 +407,14 @@ function integrationCategory(
     return 'repo_fix_required';
   }
   if (isOptionalIntegration(status.integrationId)) {
+    if (
+      status.state === 'near_live_only' &&
+      status.credentialState === 'configured' &&
+      status.transportState === 'unknown' &&
+      !status.lastFailure
+    ) {
+      return 'optional_capability_unverified';
+    }
     return 'optional_capability_blocked';
   }
   if (
@@ -431,9 +447,15 @@ function integrationBlockers(
 ): AgiReadinessBlocker[] {
   const blockers: AgiReadinessBlocker[] = [];
   for (const status of integrations.statuses) {
+    // This is an aggregate pseudo-integration. The readiness report already
+    // receives the exact live-proof entries, so including both would duplicate
+    // one proof gap as a generic blocker and an actionable blocker.
+    if (status.integrationId === 'feature_proofs') continue;
     const category = integrationCategory(status);
     if (!category) continue;
-    const coreLaunch = category !== 'optional_capability_blocked';
+    const coreLaunch =
+      category !== 'optional_capability_blocked' &&
+      category !== 'optional_capability_unverified';
     blockers.push({
       category,
       severity:
@@ -505,7 +527,9 @@ function liveProofBlockers(
       owner: entry.blockerOwner,
       action: redactReadinessText(entry.nextStep),
       detail: redactReadinessText(entry.detail),
-      blocksLaunch: category !== 'optional_capability_blocked',
+      blocksLaunch:
+        category !== 'optional_capability_blocked' &&
+        category !== 'optional_capability_unverified',
       blocksPublish: category === 'repo_fix_required',
     });
   }
@@ -623,6 +647,9 @@ function recommendationsFor(params: {
   const optional = params.blockers.find(
     (blocker) => blocker.category === 'optional_capability_blocked',
   );
+  const optionalUnverified = params.blockers.find(
+    (blocker) => blocker.category === 'optional_capability_unverified',
+  );
   const publish = params.blockers.find(
     (blocker) => blocker.category === 'publish_blocked',
   );
@@ -639,15 +666,18 @@ function recommendationsFor(params: {
     );
   }
   if (telegram) {
-    recs.push(
-      'Close Telegram canary setup first: enable ANDREA_USE_AGI and configure the bot/user proof credentials required by the live proof report.',
-    );
+    recs.push(`Telegram canary: ${telegram.action}`);
   }
   if (manual)
     recs.push(`Complete live proof: ${manual.label} - ${manual.action}`);
   if (optional) {
     recs.push(
       `Keep optional lane honest: ${optional.label} is blocked, so do not demo it as live-proven until refreshed.`,
+    );
+  }
+  if (optionalUnverified) {
+    recs.push(
+      `Optional lane not recently observed: ${optionalUnverified.label}. ${optionalUnverified.action}`,
     );
   }
   if (publish) recs.push(`Publish remains blocked: ${publish.action}`);
@@ -880,7 +910,10 @@ export function collectPublishStatus(
     ? runOptional('gh', ['auth', 'status'], cwd)
     : ghVersion;
   const blockers: string[] = [];
-  if (branch === 'main' || branch === 'master') {
+  if (
+    (branch === 'main' || branch === 'master') &&
+    (aheadBy > 0 || trackedChanges.length > 0 || unexpectedUntracked.length > 0)
+  ) {
     blockers.push('Create or switch to a codex/* branch before publishing.');
   }
   if (trackedChanges.length || unexpectedUntracked.length) {

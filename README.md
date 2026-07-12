@@ -111,8 +111,10 @@ Current host truth from the local operator commands:
 - `near_live_only`: some flagship journey proofs can still age out independently of core integration health; refresh them with `npm run debug:pilot` before demos.
 - Integration status keeps configuration, transport health, and proof freshness separate. For example, an overdue Telegram `/ping` may be `near_live_only` while the configured long-polling transport remains healthy; the stale success timestamp is proof debt, not a transport failure.
 - Model-provider configuration is not promoted to live health. Config-only model inventory remains `unknown` until a real probe or capped evaluation observes the provider; failed observations remain degraded or blocked instead of being hidden by configured credentials.
+- Successful or failed live provider probes persist only bounded health metadata (provider, state, failure class, model, and timestamp) in an owner-only local file for 30 minutes. Operator reality/readiness reports and the council doctor may reuse that explicitly labeled cached observation without another paid/network call; recorded council-run quality is unchanged by later provider recovery, and `npm run agi:readiness -- --config-only` ignores the cache for a strict configuration-only view. Prompts, outputs, credentials, request IDs, and raw provider errors are never cached.
 - `externally_blocked`: work cockpit execution can be blocked when the Andrea OpenAI backend lane is intentionally disabled; report that separately from host health.
 - `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on the same proof/config blocker story
+- `npm run debug:metacognition` recomputes a current, non-persisted operator assessment; add `-- --latest` only when inspecting the last persisted turn frame rather than current reality
 - `npm run debug:pilot` is the proof-freshness and dogfooding surface for flagship journeys, degraded-but-usable fallback, and exact next steps
 
 For the current demo/field-trial script, use [docs/DEMO_CHECKLIST.md](docs/DEMO_CHECKLIST.md).

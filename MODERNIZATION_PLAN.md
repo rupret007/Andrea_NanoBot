@@ -1,5 +1,59 @@
 # Modernization Plan
 
+## Shared live-evidence freshness — 2026-07-12
+
+### Implemented
+
+- [x] Persist a bounded, owner-only cache after explicit live provider probes.
+      It contains provider/state/timestamp/failure/quota/model metadata only;
+      prompts, outputs, credentials, request IDs, and raw provider errors are
+      excluded.
+- [x] Reuse fresh observations for at most 30 minutes in operator reality and
+      AGI-readiness reports and the council doctor without another network
+      call. Expired evidence returns to `unknown`, and current config/quota
+      blocks override a cached success. Council run quality remains grounded in
+      the recorded run and is never rewritten by later provider recovery.
+- [x] Keep strict configuration-only reporting available and keep deterministic
+      scorecards/network-denied tests independent of the live cache.
+- [x] Distinguish configured-but-unobserved optional providers from blocked
+      providers, and distinguish an intentionally disabled Telegram AGI canary
+      from missing Telegram credentials.
+- [x] Make the metacognition debug command recompute current evidence by
+      default; `--latest` remains available for the last persisted turn frame.
+- [x] Stop a clean, synchronized `main` checkout from being called publish
+      blocked when there is nothing pending, and suppress the aggregate
+      feature-proof blocker when exact proof entries already explain the debt.
+
+### Validation
+
+- [x] Focused cache, provider, integration, AGI-readiness, reality-grounding,
+      metacognition, truth-maintenance, tool-reliability, and intelligence tests
+      pass.
+- [x] A bounded live probe observed OpenAI, MiniMax, Gemini, Anthropic, and
+      Brave healthy and wrote an owner-only `0600` cache. The following
+      network-free readiness report reused those observations, removed five
+      false provider blockers, and raised honest live readiness from 89.7% to
+      92.4% without changing the 99.1% deterministic scorecard.
+- [x] The council doctor now reuses the same fresh observation without changing
+      recorded run quality. Current provider truth is five healthy providers;
+      both historically degraded live runs remain degraded. Honest intelligence
+      progress rose from 89% to 91%, with council quality rising from 74% to 89%.
+- [x] Complete primary validation passes 199 files and 2,221 tests plus
+      formatting, typecheck, lint with no errors, and the production build.
+      AGI typecheck and 282/282 tests pass. All 90 deterministic commands pass,
+      including the 176.3-second three-round stability/network-denial gate.
+      The deterministic scorecard remains 99.1% A+ with no merge-blocking
+      regressions and $0 cost; full intelligence regression remains 10/10.
+      Signature flows, 57-file documentation validation, the full
+      zero-vulnerability 443-dependency audit, and diff hygiene pass.
+
+### Remaining evidence debt
+
+- Alexa still requires a fresh signed device/simulator turn.
+- Relationship-aware context still requires explicit owner confirmation or
+  dismissal for ten recent communication threads; no identity is inferred.
+- The first learning baseline still requires five genuine reviewed outcomes.
+
 ## Grounded agency flywheel — 2026-07-11
 
 ### Implemented
@@ -176,8 +230,8 @@
 - [x] Add conservative natural-language owner verdicts in the registered
       Telegram owner chat and configured Messages self-thread. Explicit fresh
       standalone feedback binds only to the immediately latest unreviewed
-      response, records button/tapback/natural provenance, and lets `that
-      worked` contribute verified completion. Questions, vague sentiment,
+      response, records button/tapback/natural provenance, and lets explicit
+      success feedback contribute verified completion. Questions, vague sentiment,
       stale or previously reviewed rows, and mixed action/approval language are
       refused, so learning feedback cannot expand side-effect authority.
 - [x] Extend reviewed outcomes to real message-action decisions without adding

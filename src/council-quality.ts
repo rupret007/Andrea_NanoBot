@@ -23,10 +23,8 @@ import type {
   CouncilRunLedgerRecord,
   CouncilRunOrigin,
 } from './types.js';
-import {
-  collectProviderHealthSnapshots,
-  type ProviderHealthSnapshot,
-} from './provider-health.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
+import { collectProviderHealthSnapshotsWithRecentLiveEvidence } from './provider-live-probe.js';
 
 const LOW_CONFIDENCE_THRESHOLD = 0.55;
 const CALIBRATION_LOOKBACK = 40;
@@ -362,6 +360,7 @@ export function buildCouncilDoctorReport(
   options: {
     providerHealth?: ProviderHealthSnapshot[];
     integrationHealth?: Array<{ integrationId: string; state: string }>;
+    projectRoot?: string;
   } = {},
 ): CouncilDoctorReport {
   const allRuns = safeListCouncilRunLedger({ limit: DOCTOR_LOOKBACK });
@@ -369,7 +368,8 @@ export function buildCouncilDoctorReport(
   const signals = listCouncilOutcomeSignals({ limit: DOCTOR_LOOKBACK });
   const taskEase = buildCouncilTaskEaseReport({ now: new Date(now) });
   const currentProviderHealth =
-    options.providerHealth || safeCollectProviderHealth(now);
+    options.providerHealth ||
+    safeCollectProviderHealth(now, options.projectRoot);
   const currentHealthyProviderIds = new Set(
     currentProviderHealth
       .filter((provider) => provider.state === 'healthy')
@@ -1115,9 +1115,14 @@ function parseJsonObject(value: string): Record<string, unknown> {
   }
 }
 
-function safeCollectProviderHealth(now: string): ProviderHealthSnapshot[] {
+function safeCollectProviderHealth(
+  now: string,
+  projectRoot?: string,
+): ProviderHealthSnapshot[] {
   try {
-    return collectProviderHealthSnapshots(now);
+    return collectProviderHealthSnapshotsWithRecentLiveEvidence(now, {
+      projectRoot,
+    });
   } catch {
     return [];
   }

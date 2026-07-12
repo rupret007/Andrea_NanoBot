@@ -24,6 +24,7 @@ import {
 } from './db.js';
 import type { AndreaPlatformProviderCouncilResult } from './andrea-platform-bridge.js';
 import type { ProviderHealthSnapshot } from './provider-health.js';
+import { writeProviderLiveHealthState } from './provider-live-health-state.js';
 
 function providerHealth(
   providerId: string,
@@ -771,5 +772,104 @@ describe('council quality ledger', () => {
     expect(formatted).toContain('Provider participation: degraded');
     expect(formatted).toContain('verifier:gemini_cloud->openai_cloud');
     expect(JSON.stringify(report)).not.toContain('sk-proj-');
+  });
+
+  it('uses recent live provider evidence without rewriting degraded run history', () => {
+    const projectRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'council-provider-health-'),
+    );
+    const previousOpenAiKey = process.env.OPENAI_API_KEY;
+    const previousDisableEnv =
+      process.env.ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE;
+    process.env.OPENAI_API_KEY = 'test-openai-key';
+    process.env.ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE = '1';
+
+    try {
+      writeProviderLiveHealthState(
+        [
+          {
+            ...providerHealth('openai_cloud'),
+            metadata: {
+              healthEvidence: 'live_probe',
+              liveProbe: 'ok',
+              liveModel: 'gpt-test',
+            },
+          },
+        ],
+        '2026-07-12T08:00:00.000Z',
+        projectRoot,
+      );
+      recordCouncilRunLedger({
+        councilRunId: 'council-cached-provider-health',
+        taskFamily: 'operator',
+        requestedMode: 'dual_review',
+        chosenMode: 'dual_review',
+        calibration: calibrateCouncilMode({
+          taskFamily: 'operator',
+          requestedMode: 'dual_review',
+        }),
+        structuredVerdict: verdict({
+          replayArtifact: {
+            replaySummary: 'Verdict=warn with degraded participation.',
+            memberStatuses: [
+              {
+                memberId: 'openai_cloud',
+                providerId: 'openai_cloud',
+                role: 'planner',
+                status: 'completed',
+                verdict: 'warn',
+                confidence: 0.7,
+                schemaStatus: 'valid',
+                schemaIssues: [],
+                evidenceIds: ['intent:test'],
+                riskFlags: [],
+              },
+              {
+                memberId: 'gemini_cloud',
+                providerId: 'gemini_cloud',
+                role: 'verifier',
+                status: 'blocked',
+                verdict: 'inconclusive',
+                confidence: 0,
+                schemaStatus: 'invalid_fallback',
+                schemaIssues: ['provider unavailable'],
+                evidenceIds: ['intent:test'],
+                riskFlags: ['gemini_cloud_unavailable'],
+              },
+            ],
+          },
+        }),
+        providerFailures: ['gemini_cloud_unavailable'],
+        now: '2026-07-12T08:01:00.000Z',
+      });
+
+      const report = buildCouncilDoctorReport('2026-07-12T08:05:00.000Z', {
+        projectRoot,
+      });
+
+      expect(report.currentProviderHealth).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            providerId: 'openai_cloud',
+            state: 'healthy',
+            failureClass: 'none',
+          }),
+        ]),
+      );
+      expect(report.providerParticipation).toMatchObject({
+        status: 'degraded',
+        skippedProviderIds: ['gemini_cloud'],
+      });
+      expect(report.recent.degradedRuns).toBe(1);
+    } finally {
+      if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousOpenAiKey;
+      if (previousDisableEnv === undefined) {
+        delete process.env.ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE;
+      } else {
+        process.env.ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE = previousDisableEnv;
+      }
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 });

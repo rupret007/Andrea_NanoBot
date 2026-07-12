@@ -20,10 +20,8 @@ import {
   buildLiveProofGauntletReport,
   formatLiveProofGauntletReport,
 } from './live-proof-gauntlet.js';
-import {
-  collectProviderHealthSnapshots,
-  type ProviderHealthSnapshot,
-} from './provider-health.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
+import { collectProviderHealthSnapshotsWithRecentLiveEvidence } from './provider-live-probe.js';
 import { buildToolReliabilityDoctorReport } from './tool-reliability.js';
 import {
   buildWorldModelReport,
@@ -939,7 +937,7 @@ export function buildRealityGroundingReport(
     input.reliabilityReport || buildToolReliabilityDoctorReport();
   const providerHealthSnapshots =
     input.providerHealthSnapshots ||
-    collectProviderHealthSnapshots(generatedAt);
+    collectProviderHealthSnapshotsWithRecentLiveEvidence(generatedAt);
   const worldInput: BuildWorldModelInput = {
     generatedAt,
     persist: false,

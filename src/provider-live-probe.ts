@@ -8,6 +8,10 @@ import {
   type ProviderFailureClass,
   type ProviderHealthSnapshot,
 } from './provider-health.js';
+import {
+  applyRecentProviderLiveHealth,
+  writeProviderLiveHealthState,
+} from './provider-live-health-state.js';
 
 export interface ProviderLiveProbeStatus {
   liveOk: boolean;
@@ -249,6 +253,10 @@ export async function probeProviderLive(
 
 export async function collectProviderHealthSnapshotsWithLiveProbe(
   checkedAt: string,
+  options: {
+    persist?: boolean;
+    projectRoot?: string;
+  } = {},
 ): Promise<ProviderHealthSnapshot[]> {
   const providers = collectProviderHealthSnapshots(checkedAt);
   const probes = await Promise.all(
@@ -260,7 +268,29 @@ export async function collectProviderHealthSnapshotsWithLiveProbe(
           : { liveOk: false, liveFailure: '' },
     })),
   );
-  return probes.map(({ provider, probe }) =>
+  const snapshots = probes.map(({ provider, probe }) =>
     applyProviderLiveProbe(provider, probe, checkedAt),
+  );
+  if (options.persist !== false) {
+    writeProviderLiveHealthState(
+      snapshots,
+      checkedAt,
+      options.projectRoot || process.cwd(),
+    );
+  }
+  return snapshots;
+}
+
+export function collectProviderHealthSnapshotsWithRecentLiveEvidence(
+  checkedAt: string,
+  options: {
+    projectRoot?: string;
+    maxAgeMs?: number;
+  } = {},
+): ProviderHealthSnapshot[] {
+  return applyRecentProviderLiveHealth(
+    collectProviderHealthSnapshots(checkedAt),
+    checkedAt,
+    options,
   );
 }

@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -7,6 +8,7 @@ import {
   type AgiPublishStatus,
   type AgiReadinessDoctorReport,
   buildAgiReadinessReport,
+  collectPublishStatus,
   formatAgiReadinessMarkdown,
   writeAgiReadinessArtifacts,
 } from '../src/agi-readiness.js';
@@ -24,7 +26,7 @@ import type {
 } from '../src/types.js';
 
 describe('AGI readiness', () => {
-  it('marks missing model providers and disabled Telegram as external launch blockers', () => {
+  it('separates missing model credentials from an intentionally disabled Telegram canary', () => {
     const report = buildAgiReadinessReport({
       generatedAt: '2026-06-29T12:00:00.000Z',
       scorecard: scorecard(),
@@ -49,6 +51,17 @@ describe('AGI readiness', () => {
       'external_config_required',
     );
     expect(report.repoWork).toEqual([]);
+    expect(
+      report.blockers.find((blocker) => blocker.id === 'telegram_canary'),
+    ).toMatchObject({
+      category: 'manual_live_proof_required',
+      owner: 'manual',
+      blocksLaunch: true,
+    });
+    expect(
+      report.blockers.find((blocker) => blocker.id === 'telegram_canary')
+        ?.action,
+    ).not.toMatch(/configure TELEGRAM_BOT_TOKEN/i);
     expect(report.overallReadinessScore).toBeLessThan(
       report.deterministicScorecard.overallScore,
     );
@@ -84,6 +97,39 @@ describe('AGI readiness', () => {
     ).toBe(true);
   });
 
+  it('distinguishes a configured but unobserved optional provider from a blocked provider', () => {
+    const report = buildAgiReadinessReport({
+      generatedAt: '2026-06-29T12:00:00.000Z',
+      scorecard: scorecard(),
+      doctor: doctor(),
+      integrations: integrations([
+        status('openai_cloud', 'OpenAI', 'near_live_only', {
+          credentialState: 'configured',
+          transportState: 'unknown',
+          proofState: 'near_live_only',
+          lastFailure: '',
+          nextAction: 'Run one live provider probe.',
+        }),
+      ]),
+      liveProof: liveProof([]),
+      publishStatus: publish({ ghAuthenticated: true, blockers: [] }),
+    });
+
+    expect(report.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'openai_cloud',
+          category: 'optional_capability_unverified',
+          blocksLaunch: false,
+          status: 'near_live_only',
+        }),
+      ]),
+    );
+    expect(formatAgiReadinessMarkdown(report)).not.toContain(
+      'OpenAI is blocked',
+    );
+  });
+
   it('separates missing config from manual live proof debt', () => {
     const report = buildAgiReadinessReport({
       generatedAt: '2026-06-29T12:00:00.000Z',
@@ -112,6 +158,32 @@ describe('AGI readiness', () => {
         (blocker) => blocker.category === 'manual_live_proof_required',
       ),
     ).toBe(true);
+  });
+
+  it('does not duplicate exact live-proof debt through the aggregate feature status', () => {
+    const report = buildAgiReadinessReport({
+      generatedAt: '2026-06-29T12:00:00.000Z',
+      scorecard: scorecard(),
+      doctor: doctor(),
+      integrations: integrations([
+        status('feature_proofs', 'Feature proof gaps', 'near_live_only', {
+          nextAction: 'Run the exact proof step.',
+        }),
+      ]),
+      liveProof: liveProof([
+        proof('Alexa signed IntentRequest proof', 'stale', {
+          nextStep: 'Run the exact proof step.',
+        }),
+      ]),
+      publishStatus: publish({ ghAuthenticated: true, blockers: [] }),
+    });
+
+    expect(
+      report.blockers.filter((blocker) => blocker.source === 'integrations'),
+    ).toEqual([]);
+    expect(
+      report.blockers.filter((blocker) => blocker.source === 'live_proof'),
+    ).toHaveLength(1);
   });
 
   it('reports GitHub auth as a publish-only blocker', () => {
@@ -190,6 +262,32 @@ describe('AGI readiness', () => {
       expect(artifacts.dir).toContain(stateDir);
     } finally {
       await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not call a clean synchronized main checkout publish-blocked', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'agi-readiness-main-'));
+    try {
+      execFileSync('git', ['init', '-b', 'main'], { cwd: repo });
+      execFileSync('git', ['config', 'user.name', 'Readiness Test'], {
+        cwd: repo,
+      });
+      execFileSync('git', ['config', 'user.email', 'test@example.invalid'], {
+        cwd: repo,
+      });
+      await writeFile(join(repo, 'README.md'), 'ready\n', 'utf8');
+      execFileSync('git', ['add', 'README.md'], { cwd: repo });
+      execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo });
+
+      const status = collectPublishStatus({ cwd: repo });
+
+      expect(status.branch).toBe('main');
+      expect(status.aheadBy).toBe(0);
+      expect(status.blockers).not.toContain(
+        'Create or switch to a codex/* branch before publishing.',
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true });
     }
   });
 });
