@@ -21,6 +21,7 @@ import {
   selectResponseFeedbackLane,
   selectResponseFeedbackRetryLane,
   shouldCancelPendingContinuationForFeedback,
+  shouldPreferLocalResponseFeedbackReview,
 } from './response-feedback.js';
 import {
   _initTestDatabase,
@@ -188,6 +189,33 @@ describe('response feedback helpers', () => {
     ]) {
       expect(isResponseFeedbackReviewQueueRequest(text)).toBe(false);
     }
+  });
+
+  it('keeps review inbox asks ahead of platform holds only on assistant routes', () => {
+    expect(
+      shouldPreferLocalResponseFeedbackReview({
+        text: 'review recent answers',
+        requestRoute: 'direct_assistant',
+      }),
+    ).toBe(true);
+    expect(
+      shouldPreferLocalResponseFeedbackReview({
+        text: 'review recent answers',
+        requestRoute: 'protected_assistant',
+      }),
+    ).toBe(true);
+    expect(
+      shouldPreferLocalResponseFeedbackReview({
+        text: 'review recent answers',
+        requestRoute: 'control_plane',
+      }),
+    ).toBe(false);
+    expect(
+      shouldPreferLocalResponseFeedbackReview({
+        text: 'review this document',
+        requestRoute: 'direct_assistant',
+      }),
+    ).toBe(false);
   });
 
   it('presents one recent Telegram answer without recording or leaking sensitive text', () => {

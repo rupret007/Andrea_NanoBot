@@ -37,6 +37,21 @@
       and diff hygiene. Real learning evidence remains 0/5 until the owner
       explicitly reviews genuine answers through normal use.
 
+### Post-release correction
+
+- [x] A live Telegram canary found that the Cognitive Executive platform hold
+      could preempt the local review handler even though routing correctly
+      classified the request as direct-assistant work. Add the review inbox to
+      the existing local-useful-capability hold exemption; approval, privacy,
+      and provider boundaries remain unchanged.
+- [x] Focused routing/feedback coverage passes 81/81. The complete gate passes
+      2,287/2,287 primary and 282/282 AGI tests, both typechecks, build,
+      formatting, 57-file docs validation, warning-only lint with zero errors,
+      both zero-vulnerability audits, and diff hygiene.
+- [ ] Publish the narrow follow-up commit, rebuild/restart, and prove the live
+      Telegram response exposes Helpful and Not helpful without recording
+      either verdict.
+
 ## Provider alert transition consistency — 2026-07-12
 
 ### Implemented

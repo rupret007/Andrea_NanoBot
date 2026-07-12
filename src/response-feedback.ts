@@ -629,6 +629,17 @@ export function isResponseFeedbackReviewQueueRequest(
   );
 }
 
+export function shouldPreferLocalResponseFeedbackReview(params: {
+  text: string | null | undefined;
+  requestRoute: string;
+}): boolean {
+  return (
+    (params.requestRoute === 'direct_assistant' ||
+      params.requestRoute === 'protected_assistant') &&
+    isResponseFeedbackReviewQueueRequest(params.text)
+  );
+}
+
 function isUnreviewedResponseFeedback(record: ResponseFeedbackRecord): boolean {
   return (
     REVIEWABLE_RESPONSE_FEEDBACK_STATUSES.has(record.status) &&

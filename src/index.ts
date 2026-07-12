@@ -799,6 +799,7 @@ import {
   type ResponseFeedbackLaneSelection,
   selectResponseFeedbackRetryLane,
   shouldCancelPendingContinuationForFeedback,
+  shouldPreferLocalResponseFeedbackReview,
 } from './response-feedback.js';
 import {
   buildReviewedOutcomeProgress,
@@ -4010,6 +4011,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         }),
       ),
     });
+  const shouldDeferPlatformHoldForLocalOutcomeReview =
+    shouldPreferLocalResponseFeedbackReview({
+      requestRoute: requestPolicy.route,
+      text: rawLastContent || lastContent,
+    });
   const shouldDeferPlatformHoldForLocalUsefulCapability =
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant') &&
@@ -4017,7 +4023,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       quickReply ||
       currentMessageCapabilityMatch ||
       shouldDeferPlatformHoldForLocalCalendarLookup ||
-      shouldDeferPlatformHoldForLocalMessageAction,
+      shouldDeferPlatformHoldForLocalMessageAction ||
+      shouldDeferPlatformHoldForLocalOutcomeReview,
     );
   const sendAssistantReplyWithFeedback = async (params: {
     text: string;
