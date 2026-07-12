@@ -1,5 +1,217 @@
 # Modernization Plan
 
+## Canonical reviewed-outcome metrics — 2026-07-12
+
+### Implemented
+
+- [x] Use one canonical owner-reviewed outcome identity across response
+      feedback and deep-work mission review. Helpful/Not helpful feedback linked
+      to a deep-work packet now carries that packet ID, so one task cannot
+      advance the five-sample baseline twice through two review surfaces.
+- [x] Make the latest explicit decision authoritative for acceptance metrics.
+      A later mission verdict supersedes earlier response sentiment for the
+      same packet instead of averaging conflicting observations as separate
+      outcomes.
+- [x] Deduplicate correction, override, completion, and false-proactive signals
+      by canonical outcome identity. The raw append-only telemetry remains
+      auditable, while readiness and quality rates cannot be inflated by
+      repeated delivery or review controls.
+
+### Validation
+
+- [x] Focused assistant-metric and apprenticeship coverage passes 28/28 tests
+      with formatting, typecheck, lint, and diff hygiene. Tests prove linked
+      feedback plus a later rejected mission remains one sample, the later
+      verdict controls acceptance, and repeated correction/override telemetry
+      cannot exceed one outcome's weight.
+- [x] Complete release validation passes 202 primary test files with 2,254
+      tests, AGI typecheck and 282/282 tests, all ten intelligence scenarios,
+      the 99.1% A+ zero-cost scorecard, the production build, formatting,
+      typecheck, warning-only lint, 57-file documentation validation,
+      signature flows, both zero-vulnerability dependency audits, and diff
+      hygiene. All 90 offline deterministic commands pass in 233.0 seconds,
+      including the 151.5-second stability and network-denial gate.
+
+## Private evidence-first chat review — 2026-07-12
+
+### Implemented
+
+- [x] Use the same deterministic review-candidate policy in Telegram,
+      BlueBubbles, and the cockpit. An older unreviewed completed result can no
+      longer be hidden by a newer active status packet, and invalid timestamps
+      fail safely without destabilizing selection.
+- [x] Fail closed on owner-learning mutations. Mission status remains scoped to
+      the registered group, but verified, partial, blocked, corrected, and
+      rejected verdicts are accepted only from the main private Telegram
+      surface, the BlueBubbles self thread, or the authenticated cockpit.
+- [x] Replace incomplete-verification exceptions with actionable chat guidance.
+      Andrea now names the missing artifacts, checks, failed postconditions,
+      unresolved risks, or approval evidence and leaves the packet unreviewed
+      until the owner supplies an honest verdict.
+- [x] Show bounded evidence in chat: task family, artifact count, up to four
+      named check results, verification gaps, deterministic replay state,
+      current verdict, next decision, promotion progress, and the full verdict
+      vocabulary. Raw evidence bodies, prompts, private content, and hidden
+      reasoning remain absent.
+- [x] Use the existing response-feedback link as a quiet review invitation.
+      After an acknowledged Helpful action on an unreviewed deep-work response,
+      Andrea now explains that response satisfaction and verified mission
+      completion are separate and offers the exact next review phrase. It never
+      auto-verifies, never records a second verdict, stays silent for native
+      BlueBubbles reactions, and suppresses the invitation once the mission is
+      reviewed.
+
+### Validation
+
+- [x] Focused deep-work, cockpit, assistant-capability, and turn-harness
+      coverage passes 76/76 tests with typecheck, quiet lint, and formatting.
+      Tests prove private-surface enforcement, no mutation on denial or missing
+      evidence, shared candidate selection, exact non-duplicated gap arrays,
+      and evidence-rich status output.
+- [x] Focused deep-work, response-feedback, and cockpit coverage passes 52/52
+      tests. Coverage proves incomplete and complete invitations, suppression
+      after review, and no owner-verdict mutation from constructing or showing
+      an invitation.
+- [x] Final combined validation passes 202 primary test files with 2,252 tests,
+      AGI typecheck and 282/282 tests, all ten intelligence scenarios, the
+      99.1% A+ zero-cost scorecard, the production build, formatting,
+      typecheck, quiet lint, 57-file documentation validation, and the
+      zero-vulnerability dependency audit. All 90 offline deterministic
+      commands pass in 259.1 seconds, including the three-round stability and
+      network-denial gate.
+- [x] Complete regression validation passes 202 primary test files with 2,251
+      tests, AGI typecheck and 282/282 tests, all ten intelligence scenarios,
+      the 99.1% A+ zero-cost scorecard, the production build, formatting,
+      typecheck, quiet lint, 57-file documentation validation, and the
+      zero-vulnerability dependency audit. All 90 offline deterministic
+      commands pass in 234.8 seconds, including the three-round stability and
+      network-denial gate.
+
+## Evidence-first owner review cockpit — 2026-07-12
+
+### Implemented
+
+- [x] Prioritize the mission that most needs an owner decision instead of
+      blindly showing the newest active packet. Unreviewed completed or blocked
+      work now outranks already-reviewed history, with coding evidence favored
+      when otherwise comparable, so a newer operational status packet cannot
+      hide a reviewable repository outcome.
+- [x] Replace the opaque evidence count with a bounded review contract: task
+      family, artifacts, named pass/fail checks, unresolved risks, missing
+      verification requirements, deterministic replay state, route/cost,
+      dogfood progress, promotion progress, and the existing owner verdict are
+      visible without exposing raw prompts, artifacts, or evidence bodies.
+- [x] Expose the complete honest verdict set—verified, partial, honestly
+      blocked, needs correction, and rejected. Verification stays disabled with
+      a visible and screen-reader-linked explanation until artifacts, checks,
+      risks, and required approval evidence are complete.
+- [x] Preserve the cockpit's loopback, session, CSRF, no-cache, and fresh
+      approval boundaries. Review controls change learning evidence only and do
+      not grant execution authority.
+
+### Validation
+
+- [x] Focused cockpit, apprenticeship, verified-deep-work, and turn-harness
+      coverage passes 44/44 tests with typecheck, quiet lint, and formatting.
+      Tests prove review priority, bounded gap/replay data, the full verdict
+      set, executable browser JavaScript, and preservation of coding-evidence
+      source isolation.
+- [x] In-app browser QA confirms the authenticated cockpit's review surface has
+      a complete semantic tree, visible evidence hierarchy, readable desktop
+      layout, correct 390px responsive geometry with no horizontal overflow,
+      grouped verdict controls, and an explicit owner-review state.
+- [x] Complete regression validation passes 202 primary test files with 2,249
+      tests, AGI typecheck and 282/282 tests, all ten intelligence scenarios,
+      the 99.1% A+ zero-cost scorecard, the production build, formatting,
+      typecheck, quiet lint, 57-file documentation validation, and the
+      zero-vulnerability dependency audit. All 90 offline deterministic
+      commands pass in 423.0 seconds, including the three-round stability and
+      network-denial gate.
+
+## Production coding evidence routing — 2026-07-12
+
+### Implemented
+
+- [x] Restore the missing live route into the repository apprenticeship. The
+      turn classifier declared a `code` family but never selected it, and the
+      deep-work mapper converted any explicit `code` turn to `planning`.
+      Repository implementation, refactoring, test, typecheck, and bounded
+      technical-fix requests now classify as code and persist as coding
+      packets, while runtime status, restart, deploy, commit, and push work
+      remains operator-classified.
+- [x] Keep skill evidence source-specific. Research, planning, and general
+      operator reviews still update their originating cognitive trajectory,
+      but no longer create a falsely labeled coding Agent OS episode or
+      repository-skill trajectory evaluation.
+- [x] Keep service lifecycle and release actions operator-classified even when
+      their request also mentions the repository. Restart, service health,
+      deploy, commit, and push intent now wins before generic code/repository
+      tokens, while implementation and test changes remain coding work.
+- [x] Preserve all promotion and authority boundaries: only new genuine coding
+      missions can enter the repository dogfood ledger, no historical packets
+      are relabeled, and commit, push, deploy, migration, dependency, and
+      deletion actions still require fresh approval.
+
+### Validation and live evidence
+
+- [x] Focused classifier, production packet, apprenticeship, and cognitive
+      coverage passes 51/51 tests with typecheck, quiet lint, formatting, and
+      diff hygiene. Tests distinguish code changes from runtime operations,
+      prove live code packets enter the coding ledger with their cognitive run
+      link, and prove a research review creates no coding Agent OS evidence.
+- [x] Complete regression validation passes 202 primary test files with 2,246
+      tests, AGI typecheck and 282/282 tests, all ten intelligence scenarios,
+      the 99.1% A+ zero-cost scorecard, the production build, formatting,
+      typecheck, quiet lint, 57-file documentation validation, the
+      zero-vulnerability dependency audit, signature flows, and diff hygiene.
+      All 90 deterministic commands pass in 236.9 seconds, including the
+      three-round stability and network-denial gate.
+- [ ] The live ledger remains intentionally empty until the clean candidate is
+      released and Andrea handles a genuine repository mission. Do not relabel
+      or backfill older operator/cognitive records to manufacture dogfood
+      progress.
+
+## Canonical deep-work owner learning — 2026-07-12
+
+### Implemented
+
+- [x] Persist the originating live cognitive run ID on every production
+      deep-work packet. Owner mission verdicts now update the same cognitive
+      trajectory that planned the work instead of stopping at assistant
+      metrics, Agent OS evaluation, skill proposal, and runtime manifest.
+- [x] Add a neutral `user_review` cognitive signal for `partial` and honestly
+      `blocked` verdicts. These verdicts count as genuine reviewed evidence but
+      cannot be miscounted as accepted promotion outcomes or negative
+      correction/rejection outcomes.
+- [x] Keep verified, corrected, and rejected verdicts idempotently linked by a
+      stable packet review ID. Re-reviewing the same mission updates one
+      cognitive owner signal rather than manufacturing additional samples.
+- [x] Preserve existing authority and privacy boundaries: only live runs can
+      receive owner-learning signals, stored summaries remain metadata-only,
+      deterministic replay and trajectory gates still control promotion, and
+      no review can grant commit, push, deploy, send, migration, dependency, or
+      deletion authority.
+
+### Validation and remaining real evidence
+
+- [x] Focused deep-work, cognitive-kernel, turn-harness, cockpit, and verified
+      deep-work coverage passes 53/53 tests with typecheck, quiet lint,
+      formatting, and diff hygiene. Coverage proves the run link survives a
+      blocked packet, a partial mission is reviewed without increasing accepted
+      or negative counts, the cognitive doctor sees the review, and a later
+      verified re-review updates the same signal to acceptance.
+- [x] Complete repository validation passes formatting, typecheck, quiet lint,
+      202 primary test files with 2,243 tests, the production build, AGI
+      typecheck and 282/282 tests, all ten intelligence regressions, the 99.1%
+      A+ zero-cost scorecard, signature flows, 57-file documentation
+      validation, the zero-vulnerability dependency audit, and diff hygiene.
+      All 90 deterministic commands pass in 236.1 seconds, including the
+      three-round stability and network-denial gate.
+- [ ] The live database still has zero deep-work packets and zero owner-reviewed
+      cognitive outcomes. Do not fabricate or backfill them. The first count
+      must come from a genuine Andrea deep-work mission followed by an explicit
+      owner verdict in chat or the authenticated cockpit.
+
 ## BlueBubbles post-restart health recovery — 2026-07-12
 
 ### Implemented

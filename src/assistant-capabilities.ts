@@ -255,6 +255,7 @@ export interface AssistantCapabilityContext {
   channel: 'alexa' | 'telegram' | 'bluebubbles';
   groupFolder?: string;
   chatJid?: string;
+  ownerReviewAllowed?: boolean;
   currentMessageId?: string;
   currentAttachmentIds?: string[];
   now?: Date;
@@ -4244,6 +4245,7 @@ async function runMissionCapability(
   const apprenticeshipReply = handleDeepWorkApprenticeshipCommand({
     groupFolder: context.groupFolder,
     text,
+    ownerReviewAllowed: context.ownerReviewAllowed,
     now: context.now,
   });
   if (apprenticeshipReply) {

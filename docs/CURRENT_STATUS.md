@@ -25,7 +25,23 @@ Generated from local operator checks on 2026-07-12.
 - Open pilot issues: check `npm run debug:pilot`
 - Learning evidence: 56 metric samples, zero owner-reviewed outcomes, and no
   saved personal baseline. Fresh standalone owner verdicts are now wired but
-  must not be backfilled from prior conversation history.
+  must not be backfilled from prior conversation history. Future live
+  deep-work packets retain their originating cognitive run, so a mission
+  verdict in chat or the authenticated cockpit contributes to the same
+  trajectory; partial and honestly blocked reviews remain neutral rather than
+  inflating promotion acceptance. New repository implementation and test work
+  is routed into the coding apprenticeship ledger; runtime operations remain
+  separate and non-coding reviews cannot create repository-skill evidence. The
+  owner cockpit now prioritizes unreviewed outcomes and exposes the exact
+  evidence gaps, replay state, and full honest verdict set needed to create the
+  first genuine reviewed sample. Telegram and the BlueBubbles self thread use
+  the same selection and gap contract; other chat surfaces cannot write owner
+  verdicts, and incomplete verification requests fail with actionable guidance
+  rather than a runtime exception. Helpful feedback on a linked mission now
+  invites a separate explicit review without auto-verifying it or creating a
+  duplicate learning sample. Response sentiment and the later mission verdict
+  share one canonical packet identity; the latest explicit verdict controls
+  acceptance metrics, while the underlying events remain auditable.
 
 ## Live Proof Truth
 

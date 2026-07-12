@@ -43,29 +43,63 @@ function metricMetadata(
   }
 }
 
-function reviewedOutcomeCount(events: AssistantMetricEventRecord[]): number {
-  const reviewed = events.filter((event) =>
-    ['recommendation_accepted', 'recommendation_rejected'].includes(event.kind),
-  );
+function reviewedOutcomeIdentity(event: AssistantMetricEventRecord): string {
+  const metadata = metricMetadata(event);
+  const identity =
+    metadata.packetId ||
+    metadata.bundleId ||
+    metadata.ruleId ||
+    metadata.outcomeId;
+  return typeof identity === 'string' && identity
+    ? `${event.groupFolder}:${identity}`
+    : `${event.groupFolder}:event:${event.eventId}`;
+}
+
+function decisionIsNewer(
+  candidate: AssistantMetricEventRecord,
+  current: AssistantMetricEventRecord,
+): boolean {
+  const timestampOrder = candidate.createdAt.localeCompare(current.createdAt);
+  if (timestampOrder !== 0) return timestampOrder > 0;
+  const candidateHasMissionVerdict =
+    typeof metricMetadata(candidate).verdict === 'string';
+  const currentHasMissionVerdict =
+    typeof metricMetadata(current).verdict === 'string';
+  if (candidateHasMissionVerdict !== currentHasMissionVerdict) {
+    return candidateHasMissionVerdict;
+  }
+  return candidate.eventId.localeCompare(current.eventId) > 0;
+}
+
+function latestReviewedDecisionEvents(
+  events: AssistantMetricEventRecord[],
+): AssistantMetricEventRecord[] {
+  const latestByOutcome = new Map<string, AssistantMetricEventRecord>();
+  for (const event of events) {
+    if (
+      event.kind !== 'recommendation_accepted' &&
+      event.kind !== 'recommendation_rejected'
+    ) {
+      continue;
+    }
+    const identity = reviewedOutcomeIdentity(event);
+    const current = latestByOutcome.get(identity);
+    if (!current || decisionIsNewer(event, current)) {
+      latestByOutcome.set(identity, event);
+    }
+  }
+  return [...latestByOutcome.values()];
+}
+
+function distinctReviewedSignalCount(
+  events: AssistantMetricEventRecord[],
+  kinds: AssistantMetricEventKind[],
+): number {
+  const acceptedKinds = new Set(kinds);
   return new Set(
-    reviewed.map((event) => {
-      try {
-        const metadata = JSON.parse(event.metadataJson) as Record<
-          string,
-          unknown
-        >;
-        const identity =
-          metadata.packetId ||
-          metadata.bundleId ||
-          metadata.ruleId ||
-          metadata.outcomeId;
-        return typeof identity === 'string' && identity
-          ? `${event.groupFolder}:${identity}`
-          : event.eventId;
-      } catch {
-        return event.eventId;
-      }
-    }),
+    events
+      .filter((event) => acceptedKinds.has(event.kind))
+      .map(reviewedOutcomeIdentity),
   ).size;
 }
 
@@ -192,12 +226,23 @@ export function buildAssistantMetricSnapshot(params: {
   const ownerReviewEvents = events.filter(
     (event) => metricMetadata(event).metricClass === 'owner_review',
   );
-  const accepted = count(ownerReviewEvents, 'recommendation_accepted');
-  const rejected = count(ownerReviewEvents, 'recommendation_rejected');
-  const verified = count(ownerReviewEvents, 'completion_verified');
-  const corrections = count(ownerReviewEvents, 'correction');
-  const overrides = count(ownerReviewEvents, 'override');
-  const falseProactive = count(ownerReviewEvents, 'proactive_false_positive');
+  const reviewedDecisions = latestReviewedDecisionEvents(ownerReviewEvents);
+  const accepted = reviewedDecisions.filter(
+    (event) => event.kind === 'recommendation_accepted',
+  ).length;
+  const rejected = reviewedDecisions.filter(
+    (event) => event.kind === 'recommendation_rejected',
+  ).length;
+  const verified = distinctReviewedSignalCount(ownerReviewEvents, [
+    'completion_verified',
+  ]);
+  const correctionOverrides = distinctReviewedSignalCount(ownerReviewEvents, [
+    'correction',
+    'override',
+  ]);
+  const falseProactive = distinctReviewedSignalCount(ownerReviewEvents, [
+    'proactive_false_positive',
+  ]);
   const comparableInteractionEvents = events.filter(
     (event) => metricMetadata(event).metricClass === 'assistant_interaction',
   );
@@ -238,7 +283,7 @@ export function buildAssistantMetricSnapshot(params: {
     generatedAt: now.toISOString(),
     acceptedRecommendationRate: ratio(accepted, accepted + rejected),
     verifiedCompletionRate: ratio(verified, accepted),
-    correctionOverrideRate: ratio(corrections + overrides, accepted + rejected),
+    correctionOverrideRate: ratio(correctionOverrides, accepted + rejected),
     falseProactiveSuggestionRate: ratio(falseProactive, accepted + rejected),
     memoryPrecision: ratio(correctMemory, memoryJudgments.length),
     memoryPrecisionSampleCount: memoryJudgments.length,
@@ -260,7 +305,7 @@ export function buildAssistantMetricSnapshot(params: {
     interactionLatencySampleCount: latency.length,
     liveEvalCostUsd: Number(count(events, 'live_eval_cost').toFixed(4)),
     sampleCount: events.length,
-    reviewedOutcomeCount: reviewedOutcomeCount(ownerReviewEvents),
+    reviewedOutcomeCount: reviewedDecisions.length,
   };
 }
 

@@ -26,6 +26,7 @@ export function createVerifiedDeepWorkPacket(params: {
   taskFamily: VerifiedDeepWorkPacket['taskFamily'];
   objective: string;
   approvalRequired?: boolean;
+  cognitiveRunId?: string | null;
   now?: Date;
 }): VerifiedDeepWorkPacket {
   const now = (params.now || new Date()).toISOString();
@@ -40,6 +41,10 @@ export function createVerifiedDeepWorkPacket(params: {
     checkpointVersion: 1,
     approvalRequired: params.approvalRequired === true,
     approvalRef: null,
+    cognitiveRunId: params.cognitiveRunId
+      ? clean(params.cognitiveRunId, 160)
+      : null,
+    cognitiveOwnerReviewSignalId: null,
     sources: [],
     artifacts: [],
     checks: [],
@@ -56,6 +61,7 @@ function deepWorkTaskFamily(
   taskFamily: PlatformTaskFamily,
 ): VerifiedDeepWorkPacket['taskFamily'] {
   if (taskFamily === 'research') return 'research';
+  if (taskFamily === 'code') return 'coding';
   if (taskFamily === 'operator') return 'operator';
   return 'planning';
 }
@@ -66,6 +72,7 @@ export function beginVerifiedDeepWorkForTurn(params: {
   taskFamily: PlatformTaskFamily;
   objective: string;
   approvalRequired: boolean;
+  cognitiveRunId?: string | null;
   sourceRefs?: string[];
   knownBlockers?: string[];
   resumePendingApproval?: boolean;
@@ -101,6 +108,7 @@ export function beginVerifiedDeepWorkForTurn(params: {
     taskFamily: deepWorkTaskFamily(params.taskFamily),
     objective: params.objective,
     approvalRequired: params.approvalRequired,
+    cognitiveRunId: params.cognitiveRunId,
     now: params.now,
   });
   packet = advanceVerifiedDeepWorkPacket({

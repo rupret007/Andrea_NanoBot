@@ -1,11 +1,16 @@
 import type { AddressInfo } from 'net';
+import { Script } from 'node:vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  buildOwnerCockpitMissionView,
   createOwnerCockpitHttpServer,
   resolveOwnerCockpitConfig,
+  selectOwnerCockpitMission,
   type OwnerCockpitConfig,
 } from './owner-cockpit-server.js';
+import { OWNER_COCKPIT_JS } from './owner-cockpit-ui.js';
+import type { VerifiedDeepWorkPacket } from './types.js';
 
 const config: OwnerCockpitConfig = {
   enabled: true,
@@ -17,6 +22,34 @@ const config: OwnerCockpitConfig = {
 };
 
 const servers: ReturnType<typeof createOwnerCockpitHttpServer>[] = [];
+
+function missionPacket(
+  id: string,
+  overrides: Partial<VerifiedDeepWorkPacket> = {},
+): VerifiedDeepWorkPacket {
+  return {
+    packetId: id,
+    groupFolder: 'main',
+    taskFamily: 'planning',
+    objective: `Mission ${id}`,
+    status: 'active',
+    currentStage: 'plan',
+    stagesCompleted: [],
+    checkpointVersion: 1,
+    approvalRequired: false,
+    approvalRef: null,
+    sources: [],
+    artifacts: [],
+    checks: [],
+    toolSnapshots: [],
+    unresolvedRisks: [],
+    outcomeSummary: null,
+    nextDecision: 'Review the evidence.',
+    createdAt: '2026-07-12T10:00:00.000Z',
+    updatedAt: '2026-07-12T10:00:00.000Z',
+    ...overrides,
+  };
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -97,5 +130,97 @@ describe('owner cockpit security', () => {
     );
     expect(response.status).toBe(303);
     expect(response.headers.get('location')).toBe('/login');
+  });
+});
+
+describe('owner cockpit deep-work review', () => {
+  it('prioritizes an unreviewed completed coding mission over newer activity', () => {
+    const reviewed = missionPacket('reviewed', {
+      taskFamily: 'coding',
+      status: 'completed',
+      updatedAt: '2026-07-12T13:00:00.000Z',
+      review: {
+        verdict: 'verified',
+        ownerAccepted: true,
+        summary: 'Already reviewed.',
+        reviewedAt: '2026-07-12T13:00:00.000Z',
+      },
+    });
+    const activeOperator = missionPacket('operator', {
+      taskFamily: 'operator',
+      updatedAt: '2026-07-12T12:00:00.000Z',
+    });
+    const codingAwaitingReview = missionPacket('coding', {
+      taskFamily: 'coding',
+      status: 'completed',
+      updatedAt: '2026-07-12T11:00:00.000Z',
+    });
+
+    expect(
+      selectOwnerCockpitMission([
+        reviewed,
+        activeOperator,
+        codingAwaitingReview,
+      ])?.packetId,
+    ).toBe('coding');
+  });
+
+  it('provides bounded, actionable verification and replay evidence', () => {
+    const incomplete = buildOwnerCockpitMissionView(
+      missionPacket('incomplete', {
+        approvalRequired: true,
+        checks: [{ name: 'build', passed: false, evidenceRef: 'build:1' }],
+        unresolvedRisks: ['postcondition_failed'],
+      }),
+    );
+    expect(incomplete).toMatchObject({
+      evidenceComplete: false,
+      deterministicReplayPassed: false,
+      reviewPending: true,
+      evidenceGaps: [
+        'artifact_missing',
+        'check_failed',
+        'risk_unresolved',
+        'approval_evidence_missing',
+      ],
+      checks: [{ name: 'build', passed: false }],
+    });
+    expect(incomplete.evidenceGaps).toEqual([
+      'artifact_missing',
+      'check_failed',
+      'risk_unresolved',
+      'approval_evidence_missing',
+    ]);
+
+    const complete = buildOwnerCockpitMissionView(
+      missionPacket('complete', {
+        taskFamily: 'coding',
+        artifacts: ['patch:bounded'],
+        checks: [
+          {
+            name: 'deterministic test suite',
+            passed: true,
+            evidenceRef: 'test:1',
+          },
+        ],
+      }),
+    );
+    expect(complete).toMatchObject({
+      evidenceComplete: true,
+      deterministicReplayPassed: true,
+      evidenceGaps: [],
+      artifactCount: 1,
+      checksPassed: 1,
+    });
+  });
+
+  it('exposes the full accessible owner verdict set with verification context', () => {
+    expect(() => new Script(OWNER_COCKPIT_JS)).not.toThrow();
+    expect(OWNER_COCKPIT_JS).toContain('aria-label="Review this mission"');
+    expect(OWNER_COCKPIT_JS).toContain('aria-describedby="mission-evidence"');
+    expect(OWNER_COCKPIT_JS).toContain('data-verdict="blocked"');
+    expect(OWNER_COCKPIT_JS).toContain('data-verdict="rejected"');
+    expect(OWNER_COCKPIT_JS).toContain('Verification still needs:');
+    expect(OWNER_COCKPIT_JS).toContain('Deterministic replay:');
   });
 });

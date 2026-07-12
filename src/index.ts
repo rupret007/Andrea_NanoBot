@@ -68,6 +68,7 @@ import {
   getResponseFeedback,
   getResponseFeedbackByMessage,
   getResponseFeedbackByRemediationJob,
+  getVerifiedDeepWorkPacket,
   listAllCursorAgents,
   listCalendarAutomationsForChat,
   getAllRegisteredGroups,
@@ -101,6 +102,7 @@ import {
   upsertRuntimeBackendChatSelection,
   upsertResponseFeedback,
 } from './db.js';
+import { buildDeepWorkReviewInvitation } from './deep-work-apprenticeship.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -7575,6 +7577,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           channel: conversationChannel,
           groupFolder: group.folder,
           chatJid,
+          ownerReviewAllowed:
+            isMainGroup &&
+            (conversationChannel === 'telegram' ||
+              isBlueBubblesSelfThreadAliasJid(chatJid)),
           currentMessageId: latestUserMessage?.id,
           currentAttachmentIds,
           now,
@@ -11875,10 +11881,19 @@ async function main(): Promise<void> {
           routeKey: updated.routeKey || '',
           cognitiveRunId: linkedRefs.cognitiveRunId || '',
           reviewSource,
+          ...(linkedRefs.verifiedDeepWorkPacketId
+            ? { packetId: linkedRefs.verifiedDeepWorkPacketId }
+            : {}),
         },
         now: feedbackNow,
       });
       if (acknowledge) {
+        const linkedMission = linkedRefs.verifiedDeepWorkPacketId
+          ? getVerifiedDeepWorkPacket(linkedRefs.verifiedDeepWorkPacketId)
+          : undefined;
+        const missionInvitation = linkedMission
+          ? buildDeepWorkReviewInvitation(linkedMission)
+          : null;
         const progressText = formatReviewedOutcomeProgress(
           buildReviewedOutcomeProgress({
             groupFolder: updated.groupFolder,
@@ -11896,7 +11911,7 @@ async function main(): Promise<void> {
               : 'Thanks — I recorded that as helpful.';
         await channel.sendMessage(
           chatJid,
-          `${acknowledgement}\n${progressText}`,
+          `${acknowledgement}\n${progressText}${missionInvitation ? `\n${missionInvitation}` : ''}`,
           buildOperatorSendOptions(msg),
         );
       }
@@ -12008,6 +12023,9 @@ async function main(): Promise<void> {
           routeKey: captured.routeKey || '',
           cognitiveRunId: linkedRefs.cognitiveRunId || '',
           reviewSource,
+          ...(linkedRefs.verifiedDeepWorkPacketId
+            ? { packetId: linkedRefs.verifiedDeepWorkPacketId }
+            : {}),
         },
         now: feedbackNow,
       });

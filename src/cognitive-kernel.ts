@@ -5315,6 +5315,7 @@ export function assessCognitiveSkillPromotion(
       signal.skillId === skill.skillId &&
       liveRunIds.has(signal.runId) &&
       (signal.signalKind === 'user_acceptance' ||
+        signal.signalKind === 'user_review' ||
         signal.signalKind === 'user_correction'),
   );
   const latestReviewByRun = new Map<string, CognitiveRewardSignalRecord>();
@@ -5441,7 +5442,7 @@ export function assessCognitiveSkillPromotion(
 export function recordCognitiveOwnerReview(input: {
   runId: string | null | undefined;
   feedbackId: string;
-  verdict: 'accepted' | 'rejected' | 'corrected';
+  verdict: 'accepted' | 'partial' | 'blocked' | 'rejected' | 'corrected';
   reviewedAt?: string;
 }): CognitiveOwnerReviewResult {
   if (!input.runId) {
@@ -5471,25 +5472,47 @@ export function recordCognitiveOwnerReview(input: {
 
   const reviewedAt = input.reviewedAt || nowIso();
   const accepted = input.verdict === 'accepted';
-  const score = accepted ? 0.96 : input.verdict === 'corrected' ? 0.08 : 0.12;
+  const neutralReview =
+    input.verdict === 'partial' || input.verdict === 'blocked';
+  const score = accepted
+    ? 0.96
+    : input.verdict === 'partial'
+      ? 0.66
+      : input.verdict === 'blocked'
+        ? 0.78
+        : input.verdict === 'corrected'
+          ? 0.08
+          : 0.12;
   const signalId = sanitizeId(
     `cogreward:${run.runId}:owner-review:${input.feedbackId}`,
   );
   const ownerFlag = accepted
     ? 'owner_accepted'
-    : input.verdict === 'corrected'
-      ? 'owner_corrected'
-      : 'owner_rejected';
+    : input.verdict === 'partial'
+      ? 'owner_partial'
+      : input.verdict === 'blocked'
+        ? 'owner_blocked'
+        : input.verdict === 'corrected'
+          ? 'owner_corrected'
+          : 'owner_rejected';
   insertCognitiveRewardSignal({
     signalId,
     createdAt: reviewedAt,
     runId: run.runId,
     skillId: run.linkedSkillCardId || null,
-    signalKind: accepted ? 'user_acceptance' : 'user_correction',
+    signalKind: accepted
+      ? 'user_acceptance'
+      : neutralReview
+        ? 'user_review'
+        : 'user_correction',
     score,
     summary: accepted
       ? 'Owner accepted this assistant outcome; private response content omitted.'
-      : 'Owner rejected or corrected this assistant outcome; private response content omitted.',
+      : input.verdict === 'partial'
+        ? 'Owner marked this assistant outcome partial; private response content omitted.'
+        : input.verdict === 'blocked'
+          ? 'Owner confirmed this assistant outcome was honestly blocked; private response content omitted.'
+          : 'Owner rejected or corrected this assistant outcome; private response content omitted.',
     flagsJson: safeJson(
       ['reviewed_outcome', ownerFlag, `feedback:${input.feedbackId}`],
       1200,
@@ -5502,7 +5525,11 @@ export function recordCognitiveOwnerReview(input: {
     outcomeScore: score,
     nextAction: accepted
       ? 'Keep this route eligible, but require repeated independent reviewed outcomes before promotion.'
-      : 'Inspect this route and its evidence before reuse; do not promote from this outcome.',
+      : input.verdict === 'partial'
+        ? 'Keep the partial result as reviewed evidence and repair the missing postcondition before reuse.'
+        : input.verdict === 'blocked'
+          ? 'Keep the honest blocker as reviewed evidence and retry only after its prerequisite changes.'
+          : 'Inspect this route and its evidence before reuse; do not promote from this outcome.',
   };
   upsertCognitiveRun(updatedRun);
 
@@ -6062,6 +6089,8 @@ export function assessCognitiveRunQuality(
   const positiveReview = /owner_(verified|accepted)|user_accepted/.test(
     flagText,
   );
+  const partialReview = /owner_partial/.test(flagText);
+  const blockedReview = /owner_blocked/.test(flagText);
   const negativeReview =
     /owner_(corrected|rejected)|user_(corrected|rejected)/.test(flagText);
   const reviewedOutcome =
@@ -6096,6 +6125,12 @@ export function assessCognitiveRunQuality(
   } else if (positiveReview) {
     score = run.status === 'blocked' ? 0.78 : 0.96;
     reasons.push('owner_accepted_outcome');
+  } else if (partialReview) {
+    score = 0.66;
+    reasons.push('owner_confirmed_partial_outcome');
+  } else if (blockedReview) {
+    score = run.status === 'blocked' ? 0.82 : 0.68;
+    reasons.push('owner_confirmed_blocked_outcome');
   } else if (operationalFailure) {
     reasons.push('missing_final_outcome_signal');
   } else if (safeApproval) {
@@ -6134,6 +6169,8 @@ export function assessCognitiveRunQuality(
     decisionAppropriate:
       !negativeReview &&
       (positiveReview ||
+        partialReview ||
+        blockedReview ||
         safeApproval ||
         appropriatelyBlocked ||
         (run.status === 'answered' && finalized)),
@@ -6162,9 +6199,11 @@ function summarizeRecentRuns(
     const current = signalByRun.get(signal.runId);
     const signalIsOwnerReview =
       signal.signalKind === 'user_acceptance' ||
+      signal.signalKind === 'user_review' ||
       signal.signalKind === 'user_correction';
     const currentIsOwnerReview =
       current?.signalKind === 'user_acceptance' ||
+      current?.signalKind === 'user_review' ||
       current?.signalKind === 'user_correction';
     if (
       !current ||

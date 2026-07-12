@@ -7,6 +7,29 @@ describe('turn agent harness', () => {
     vi.resetModules();
   });
 
+  it('distinguishes repository changes from runtime operator work', async () => {
+    const { classifyTurnTaskFamily } = await import('./turn-agent-harness.js');
+
+    expect(
+      classifyTurnTaskFamily({
+        text: 'Implement the repository test fix and run typecheck.',
+        requestRoute: 'direct_assistant',
+      }),
+    ).toBe('code');
+    expect(
+      classifyTurnTaskFamily({
+        text: 'Restart the service and check runtime status.',
+        requestRoute: 'direct_assistant',
+      }),
+    ).toBe('operator');
+    expect(
+      classifyTurnTaskFamily({
+        text: 'Push this repository to main, restart all services, and check health.',
+        requestRoute: 'direct_assistant',
+      }),
+    ).toBe('operator');
+  });
+
   it('skips simple greetings instead of deliberating every turn', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');

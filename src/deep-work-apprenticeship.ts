@@ -14,6 +14,7 @@ import {
   upsertVerifiedDeepWorkPacket,
 } from './db.js';
 import { recordAssistantMetric } from './personal-assistant-metrics.js';
+import { recordCognitiveOwnerReview } from './cognitive-kernel.js';
 import type {
   AgentOSEpisode,
   AgentOSSkillProposal,
@@ -133,6 +134,7 @@ export function recordDeepWorkModelRoute(params: {
 export function handleDeepWorkApprenticeshipCommand(params: {
   groupFolder: string;
   text: string;
+  ownerReviewAllowed?: boolean;
   now?: Date;
 }): string | null {
   const text = params.text.trim().toLowerCase();
@@ -152,11 +154,20 @@ export function handleDeepWorkApprenticeshipCommand(params: {
             ? 'rejected'
             : null;
   if (!isStatus && !verdict) return null;
-  const packet = listVerifiedDeepWorkPackets({
-    groupFolder: params.groupFolder,
-    limit: 1,
-  })[0];
+  const packet = selectDeepWorkReviewCandidate(
+    listVerifiedDeepWorkPackets({
+      groupFolder: params.groupFolder,
+      limit: 20,
+    }),
+  );
   if (!packet) return 'There is no deep-work mission to review yet.';
+  if (verdict && params.ownerReviewAllowed !== true) {
+    return 'I can show mission evidence here, but only the private owner chat or authenticated cockpit can record an owner verdict.';
+  }
+  const evidenceGaps = listDeepWorkEvidenceGaps(packet);
+  if (verdict === 'verified' && evidenceGaps.length > 0) {
+    return `I cannot mark this mission verified yet. Verification still needs ${evidenceGaps.map(deepWorkEvidenceGapLabel).join(', ')}. Current evidence: ${packet.artifacts.length} artifact${packet.artifacts.length === 1 ? '' : 's'} and ${packet.checks.filter((check) => check.passed).length}/${packet.checks.length} passing checks. Next: ${clean(packet.nextDecision, 240) || 'complete the missing evidence, then review it again'}.`;
+  }
   const snapshot = verdict
     ? reviewDeepWorkMission({
         packetId: packet.packetId,
@@ -167,13 +178,38 @@ export function handleDeepWorkApprenticeshipCommand(params: {
     : buildDeepWorkMissionSnapshot(packet.packetId);
   const current = snapshot.packet;
   const checks = current.checks.filter((check) => check.passed).length;
+  const checkDetails = current.checks.length
+    ? ` Checks: ${current.checks
+        .slice(0, 4)
+        .map(
+          (check) =>
+            `${clean(check.name, 80)} ${check.passed ? 'passed' : 'failed'}`,
+        )
+        .join('; ')}.`
+    : ' Checks: none recorded.';
+  const currentEvidenceGaps = listDeepWorkEvidenceGaps(current);
+  const evidenceDetail = currentEvidenceGaps.length
+    ? ` Verification still needs ${currentEvidenceGaps.map(deepWorkEvidenceGapLabel).join(', ')}.`
+    : ' Verification evidence is complete.';
+  const replayDetail = hasDeepWorkDeterministicReplayEvidence(current)
+    ? ' Deterministic replay evidence: passed.'
+    : ' Deterministic replay evidence: still needed for promotion.';
   const review = current.review
     ? ` Owner review: ${current.review.verdict}.`
     : '';
   const next = current.nextDecision
     ? ` Next decision: ${clean(current.nextDecision, 240)}.`
     : '';
-  return `${clean(current.objective, 300)} Status: ${current.status}; ${checks}/${current.checks.length} checks passed; evidence ${snapshot.evidenceComplete ? 'complete' : 'incomplete'}.${review}${next} Skill evidence: ${snapshot.promotion.verifiedMissions}/${snapshot.promotion.nextThreshold} verified missions (${snapshot.promotion.state}).`;
+  return `${clean(current.objective, 300)} Task family: ${current.taskFamily}. Status: ${current.status}; ${current.artifacts.length} artifact${current.artifacts.length === 1 ? '' : 's'}; ${checks}/${current.checks.length} checks passed.${checkDetails}${evidenceDetail}${replayDetail}${review}${next} Skill evidence: ${snapshot.promotion.verifiedMissions}/${snapshot.promotion.nextThreshold} verified missions (${snapshot.promotion.state}). Review options: verified, partial, honestly blocked, needs correction, or rejected.`;
+}
+
+export function buildDeepWorkReviewInvitation(
+  packet: VerifiedDeepWorkPacket,
+): string | null {
+  if (packet.review) return null;
+  return listDeepWorkEvidenceGaps(packet).length === 0
+    ? 'Mission completion is still a separate owner decision. Reply with one of: “mark this mission verified”; “mark this mission partial”; “mark this mission honestly blocked”; “mark this mission needs correction”; or “mark this mission rejected”.'
+    : 'Mission completion is still unreviewed. Reply “show today’s mission evidence” to see what is missing before choosing an honest verdict.';
 }
 
 function clean(value: string, limit = 600): string {
@@ -188,6 +224,31 @@ function ratio(numerator: number, denominator: number): number {
   return denominator > 0 ? Number((numerator / denominator).toFixed(3)) : 0;
 }
 
+function reviewPriority(packet: VerifiedDeepWorkPacket): number {
+  const awaitingReview = packet.review ? 0 : 100;
+  const reviewReady = ['completed', 'blocked'].includes(packet.status) ? 50 : 0;
+  const codingEvidence = packet.taskFamily === 'coding' ? 25 : 0;
+  const active = packet.status === 'active' ? 10 : 0;
+  return awaitingReview + reviewReady + codingEvidence + active;
+}
+
+export function selectDeepWorkReviewCandidate(
+  packets: VerifiedDeepWorkPacket[],
+): VerifiedDeepWorkPacket | null {
+  return (
+    [...packets].sort((left, right) => {
+      const priority = reviewPriority(right) - reviewPriority(left);
+      if (priority !== 0) return priority;
+      const rightUpdatedAt = new Date(right.updatedAt).getTime();
+      const leftUpdatedAt = new Date(left.updatedAt).getTime();
+      return (
+        (Number.isFinite(rightUpdatedAt) ? rightUpdatedAt : 0) -
+        (Number.isFinite(leftUpdatedAt) ? leftUpdatedAt : 0)
+      );
+    })[0] || null
+  );
+}
+
 function reviewedRepoPackets(groupFolder: string): VerifiedDeepWorkPacket[] {
   return listVerifiedDeepWorkPackets({ groupFolder, limit: 500 }).filter(
     (packet) => packet.taskFamily === 'coding' && packet.review,
@@ -197,17 +258,52 @@ function reviewedRepoPackets(groupFolder: string): VerifiedDeepWorkPacket[] {
 export function isDeepWorkEvidenceComplete(
   packet: VerifiedDeepWorkPacket,
 ): boolean {
-  return (
-    packet.artifacts.length > 0 &&
-    packet.checks.length > 0 &&
-    packet.checks.every((check) => check.passed) &&
-    packet.unresolvedRisks.length === 0 &&
-    (!packet.approvalRequired ||
-      Boolean(packet.approvalPacketId || packet.approvalRef))
-  );
+  return listDeepWorkEvidenceGaps(packet).length === 0;
 }
 
-function packetReplayPassed(packet: VerifiedDeepWorkPacket): boolean {
+export type DeepWorkEvidenceGap =
+  | 'artifact_missing'
+  | 'check_missing'
+  | 'check_failed'
+  | 'risk_unresolved'
+  | 'approval_evidence_missing';
+
+export function deepWorkEvidenceGapLabel(gap: DeepWorkEvidenceGap): string {
+  switch (gap) {
+    case 'artifact_missing':
+      return 'an artifact';
+    case 'check_missing':
+      return 'a recorded check';
+    case 'check_failed':
+      return 'all checks to pass';
+    case 'risk_unresolved':
+      return 'unresolved risks to be cleared';
+    case 'approval_evidence_missing':
+      return 'fresh approval evidence';
+  }
+}
+
+export function listDeepWorkEvidenceGaps(
+  packet: VerifiedDeepWorkPacket,
+): DeepWorkEvidenceGap[] {
+  const gaps: DeepWorkEvidenceGap[] = [];
+  if (packet.artifacts.length === 0) gaps.push('artifact_missing');
+  if (packet.checks.length === 0) gaps.push('check_missing');
+  if (packet.checks.some((check) => !check.passed)) gaps.push('check_failed');
+  if (packet.unresolvedRisks.length > 0) gaps.push('risk_unresolved');
+  if (
+    packet.approvalRequired &&
+    !packet.approvalPacketId &&
+    !packet.approvalRef
+  ) {
+    gaps.push('approval_evidence_missing');
+  }
+  return gaps;
+}
+
+export function hasDeepWorkDeterministicReplayEvidence(
+  packet: VerifiedDeepWorkPacket,
+): boolean {
   return (
     packet.deterministicReplayPassed === true ||
     packet.checks.some(
@@ -222,7 +318,7 @@ function promotionEligiblePacket(packet: VerifiedDeepWorkPacket): boolean {
   return (
     packet.review?.verdict === 'verified' &&
     isDeepWorkEvidenceComplete(packet) &&
-    packetReplayPassed(packet)
+    hasDeepWorkDeterministicReplayEvidence(packet)
   );
 }
 
@@ -282,7 +378,7 @@ function syncAgentOSSkillEvidence(
   const episodeId = packet.episodeId || `deep-work:${packet.packetId}`;
   const evalId = `deep-work-eval:${packet.packetId}`;
   const complete = isDeepWorkEvidenceComplete(packet);
-  const replayPassed = packetReplayPassed(packet);
+  const replayPassed = hasDeepWorkDeterministicReplayEvidence(packet);
   const approvalSafe =
     !packet.approvalRequired ||
     Boolean(packet.approvalPacketId || packet.approvalRef);
@@ -594,6 +690,13 @@ export function reviewDeepWorkMission(params: {
     updatedAt: now.toISOString(),
   };
   upsertVerifiedDeepWorkPacket(updated);
+  const cognitiveReview = recordCognitiveOwnerReview({
+    runId: packet.cognitiveRunId,
+    feedbackId: `deep-work-${packet.packetId}`,
+    verdict: params.verdict === 'verified' ? 'accepted' : params.verdict,
+    reviewedAt: now.toISOString(),
+  });
+  updated.cognitiveOwnerReviewSignalId = cognitiveReview.signalId || null;
   recordAssistantMetric({
     groupFolder: packet.groupFolder,
     kind: ownerAccepted ? 'recommendation_accepted' : 'recommendation_rejected',
@@ -635,12 +738,14 @@ export function reviewDeepWorkMission(params: {
       now,
     });
   }
-  const skill = upsertApprenticeshipSkill(packet.groupFolder, now);
-  const agentEvidence = syncAgentOSSkillEvidence(updated, now);
-  updated.trajectoryEvalId = agentEvidence.trajectoryEvalId;
-  updated.skillProposalId = agentEvidence.skillProposalId || null;
-  if (skill) {
-    updated.skillCandidateId = skill.skillId;
+  if (packet.taskFamily === 'coding') {
+    const skill = upsertApprenticeshipSkill(packet.groupFolder, now);
+    const agentEvidence = syncAgentOSSkillEvidence(updated, now);
+    updated.trajectoryEvalId = agentEvidence.trajectoryEvalId;
+    updated.skillProposalId = agentEvidence.skillProposalId || null;
+    if (skill) {
+      updated.skillCandidateId = skill.skillId;
+    }
   }
   upsertVerifiedDeepWorkPacket(updated);
   return buildDeepWorkMissionSnapshot(updated.packetId);

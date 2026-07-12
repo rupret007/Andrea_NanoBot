@@ -460,6 +460,74 @@ describe('personal assistant metrics', () => {
     ).toBe(1);
   });
 
+  it('counts linked response feedback and the mission verdict as one canonical outcome', () => {
+    recordReviewedRecommendationOutcome({
+      feedbackId: 'feedback-linked',
+      groupFolder: 'main',
+      verdict: 'accepted',
+      metadata: { packetId: 'packet-linked' },
+      now: new Date('2026-05-02T04:12:00.000Z'),
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'recommendation_rejected',
+      metadata: {
+        metricClass: 'owner_review',
+        packetId: 'packet-linked',
+        verdict: 'rejected',
+      },
+      now: new Date('2026-05-02T04:13:00.000Z'),
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'override',
+      metadata: {
+        metricClass: 'owner_review',
+        packetId: 'packet-linked',
+      },
+      now: new Date('2026-05-02T04:13:00.000Z'),
+    });
+
+    expect(
+      buildAssistantMetricSnapshot({
+        groupFolder: 'main',
+        now: new Date('2026-05-02T04:14:00.000Z'),
+      }),
+    ).toMatchObject({
+      reviewedOutcomeCount: 1,
+      acceptedRecommendationRate: 0,
+      correctionOverrideRate: 1,
+    });
+  });
+
+  it('does not double-weight repeated correction and override signals for one outcome', () => {
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'recommendation_rejected',
+      metadata: {
+        metricClass: 'owner_review',
+        packetId: 'packet-corrected',
+      },
+    });
+    for (const kind of ['correction', 'override', 'correction'] as const) {
+      recordAssistantMetric({
+        groupFolder: 'main',
+        kind,
+        metadata: {
+          metricClass: 'owner_review',
+          packetId: 'packet-corrected',
+        },
+      });
+    }
+
+    expect(buildAssistantMetricSnapshot({ groupFolder: 'main' })).toMatchObject(
+      {
+        reviewedOutcomeCount: 1,
+        correctionOverrideRate: 1,
+      },
+    );
+  });
+
   it('upserts a stable review event instead of counting repeated button delivery twice', () => {
     for (let index = 0; index < 2; index += 1) {
       recordAssistantMetric({

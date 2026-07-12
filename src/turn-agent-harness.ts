@@ -427,6 +427,28 @@ export function classifyTurnTaskFamily(input: {
   if (/\b(image|picture|generate art|media)\b/.test(haystack)) {
     return 'media';
   }
+  const repositoryOperatorAction = /\b(commit|push|deploy|merge|rebase)\b/.test(
+    haystack,
+  );
+  const serviceLifecycleAction =
+    /\b(restart|start|stop|status|health|logs?|rebuild)\b/.test(haystack) &&
+    /\b(service|services|runtime|host|gateway|process|openclaw)\b/.test(
+      haystack,
+    );
+  if (repositoryOperatorAction || serviceLifecycleAction) {
+    return 'operator';
+  }
+  const directCodeTask =
+    /\b(code|coding|codebase|repository|repo|refactor|unit tests?|test suite|typecheck|lint|compile|compiler|typescript|javascript|python)\b/.test(
+      haystack,
+    );
+  const technicalChangeTask =
+    /\b(implement|patch|debug|fix|repair)\b.*\b(app|api|backend|frontend|database|build|bug|test|function|module)\b/.test(
+      haystack,
+    );
+  if (directCodeTask || technicalChangeTask) {
+    return 'code';
+  }
   if (
     /\b(runtime|cursor|codex|repo|debug|diagnose|repair|deploy|service|commit|push)\b/.test(
       haystack,
@@ -961,6 +983,7 @@ export async function beginTurnAgentHarness(
           objective: buildSanitizedGoal(input, taskFamily),
           approvalRequired:
             contextCompile.selectedSkill.approvalNeed === 'explicit',
+          cognitiveRunId: cognitiveRun?.run.runId || null,
           sourceRefs: [
             ...(personalContextPacket?.citations || []),
             deliberation?.taskLedgerId || '',

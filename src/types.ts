@@ -1578,6 +1578,8 @@ export interface VerifiedDeepWorkPacket {
   missionId?: string | null;
   goalId?: string | null;
   episodeId?: string | null;
+  cognitiveRunId?: string | null;
+  cognitiveOwnerReviewSignalId?: string | null;
   approvalPacketId?: string | null;
   outcomeId?: string | null;
   skillCandidateId?: string | null;
@@ -2030,6 +2032,7 @@ export interface CognitiveRewardSignalRecord {
     | 'skill_promoted'
     | 'skill_demoted'
     | 'user_acceptance'
+    | 'user_review'
     | 'user_correction';
   score: number;
   summary: string;

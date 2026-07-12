@@ -14,12 +14,17 @@ import {
 import {
   assessDeepWorkSkillPromotion,
   buildDeepWorkDogfoodReport,
-  isDeepWorkEvidenceComplete,
+  hasDeepWorkDeterministicReplayEvidence,
+  listDeepWorkEvidenceGaps,
   reviewDeepWorkMission,
+  selectDeepWorkReviewCandidate,
 } from './deep-work-apprenticeship.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
-import type { CognitiveApprovalPacket } from './types.js';
+import type {
+  CognitiveApprovalPacket,
+  VerifiedDeepWorkPacket,
+} from './types.js';
 import {
   OWNER_COCKPIT_CSS,
   OWNER_COCKPIT_HTML,
@@ -165,6 +170,41 @@ function safeText(
   return (normalized || fallback).slice(0, max);
 }
 
+export function selectOwnerCockpitMission(
+  packets: VerifiedDeepWorkPacket[],
+): VerifiedDeepWorkPacket | null {
+  return selectDeepWorkReviewCandidate(packets);
+}
+
+export function buildOwnerCockpitMissionView(packet: VerifiedDeepWorkPacket) {
+  const evidenceGaps = listDeepWorkEvidenceGaps(packet);
+  return {
+    packetId: packet.packetId,
+    objective: safeText(packet.objective, 'Deep-work mission'),
+    taskFamily: packet.taskFamily,
+    status: packet.status,
+    stage: packet.currentStage,
+    nextDecision: safeText(packet.nextDecision, 'Review the mission evidence.'),
+    sourceCount: packet.sources.length,
+    artifactCount: packet.artifacts.length,
+    checks: packet.checks.slice(0, 8).map((check) => ({
+      name: safeText(check.name, 'Recorded check', 120),
+      passed: check.passed,
+    })),
+    checksPassed: packet.checks.filter((check) => check.passed).length,
+    checksTotal: packet.checks.length,
+    risks: packet.unresolvedRisks
+      .slice(0, 5)
+      .map((risk) => safeText(risk, 'Unresolved risk', 160)),
+    review: packet.review || null,
+    reviewPending: !packet.review,
+    modelRoute: packet.modelRoute || null,
+    evidenceComplete: evidenceGaps.length === 0,
+    evidenceGaps,
+    deterministicReplayPassed: hasDeepWorkDeterministicReplayEvidence(packet),
+  };
+}
+
 export class OwnerCockpitServer {
   private readonly sessions = new Map<string, Session>();
   private readonly loginAttempts = new Map<string, number[]>();
@@ -239,10 +279,7 @@ export class OwnerCockpitServer {
       groupFolder: this.config.groupFolder,
       limit: 20,
     });
-    const currentMission =
-      deepWorkPackets.find((packet) => packet.status === 'active') ||
-      deepWorkPackets[0] ||
-      null;
+    const currentMission = selectOwnerCockpitMission(deepWorkPackets);
     const activeThread = threads.find(
       (item) => item.status === 'active' && item.nextAction,
     );
@@ -312,28 +349,7 @@ export class OwnerCockpitServer {
       })),
       deepWork: {
         current: currentMission
-          ? {
-              packetId: currentMission.packetId,
-              objective: safeText(
-                currentMission.objective,
-                'Deep-work mission',
-              ),
-              status: currentMission.status,
-              stage: currentMission.currentStage,
-              nextDecision: safeText(
-                currentMission.nextDecision,
-                'Review the mission evidence.',
-              ),
-              artifacts: currentMission.artifacts.length,
-              checksPassed: currentMission.checks.filter(
-                (check) => check.passed,
-              ).length,
-              checksTotal: currentMission.checks.length,
-              risks: currentMission.unresolvedRisks.slice(0, 3),
-              review: currentMission.review || null,
-              modelRoute: currentMission.modelRoute || null,
-              evidenceComplete: isDeepWorkEvidenceComplete(currentMission),
-            }
+          ? buildOwnerCockpitMissionView(currentMission)
           : null,
         promotion: assessDeepWorkSkillPromotion(this.config.groupFolder),
         dogfood: buildDeepWorkDogfoodReport(

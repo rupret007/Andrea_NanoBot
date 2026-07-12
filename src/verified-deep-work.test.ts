@@ -140,6 +140,7 @@ describe('verified deep work', () => {
       taskFamily: 'research',
       objective: 'Research the latest provider change.',
       approvalRequired: false,
+      cognitiveRunId: 'cog:turn-provider-blocked',
       sourceRefs: ['provider-health:current'],
       knownBlockers: ['provider_quota'],
       now: new Date('2026-07-11T12:00:00.000Z'),
@@ -151,6 +152,24 @@ describe('verified deep work', () => {
       outcomeSummary:
         'Execution did not start because preflight found a known blocker.',
       unresolvedRisks: expect.arrayContaining(['provider_quota']),
+      cognitiveRunId: 'cog:turn-provider-blocked',
+    });
+  });
+
+  it('routes production code turns into the coding evidence ledger', () => {
+    const packet = beginVerifiedDeepWorkForTurn({
+      groupFolder: 'main',
+      turnId: 'turn-code-mission',
+      taskFamily: 'code',
+      objective: 'Implement the repository test fix.',
+      approvalRequired: false,
+      cognitiveRunId: 'cog:turn-code-mission',
+      now: new Date('2026-07-12T15:00:00.000Z'),
+    });
+
+    expect(packet).toMatchObject({
+      taskFamily: 'coding',
+      cognitiveRunId: 'cog:turn-code-mission',
     });
   });
 

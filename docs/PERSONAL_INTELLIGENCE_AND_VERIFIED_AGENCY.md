@@ -91,6 +91,11 @@ provenance. Multiple actions decided in one bundle retain action-level metrics
 but share one bundle identity, so a single owner interaction cannot masquerade
 as several reviewed outcomes. Evaluation, internal reward, routine-canary, and
 legacy unclassified events remain auditable but cannot advance the gate.
+Response feedback linked to a deep-work packet uses that packet as the same
+canonical outcome identity. A later explicit mission verdict supersedes the
+earlier Helpful/Not helpful disposition for quality rates, and repeated
+completion, correction, or override signals retain their audit rows without
+giving one task more than one outcome's weight.
 Memory precision is not inferred from retrieval activity or generic
 helpfulness. It requires an explicit packet-linked phrase such as `that memory
 was correct` or `that memory was incorrect`; a later correction replaces the
@@ -166,6 +171,46 @@ runtime manifest. Two negative outcomes block promotion and quarantine every
 linked representation. Promotion never expands authority:
 commit, push, deploy, migration, dependency changes, deletion, and other
 irreversible actions continue to require fresh approval.
+
+The packet also retains the originating live cognitive-run ID. A mission
+verdict therefore updates the same cognitive trajectory instead of creating a
+parallel learning record. `verified` is accepted evidence; `corrected` and
+`rejected` are negative evidence; `partial` and honestly `blocked` use a neutral
+review signal. Neutral reviews count as reviewed outcomes but never inflate the
+accepted-run total required for skill promotion. Re-reviewing one packet
+updates its stable signal rather than creating duplicate samples.
+
+Live repository work must enter this loop through the platform `code` task
+family. Repository implementation, refactoring, tests, typechecks, and bounded
+technical fixes persist as `coding` packets; runtime status and service-control
+work remains `operator`. Only coding packets contribute to the repository
+apprenticeship and its Agent OS proposal. Other reviewed deep-work packets can
+still improve their originating cognitive trajectory, but are never relabeled
+as coding evidence.
+
+The owner cockpit selects the most decision-relevant deep-work packet rather
+than merely the newest active one. It favors unreviewed completed or honestly
+blocked outcomes and shows a bounded evidence checklist: artifact and source
+counts, named check results, unresolved risks, missing verification inputs,
+deterministic replay, route/cost, and promotion progress. Raw prompts,
+artifacts, private evidence bodies, and hidden reasoning remain absent. The
+verified control stays unavailable until the exact missing evidence is cleared;
+partial, honestly blocked, corrected, and rejected remain available so the
+owner never has to overstate success.
+
+Telegram and BlueBubbles use that same candidate policy and evidence
+vocabulary. Chat can show bounded mission status in its registered context, but
+only the main private Telegram surface or BlueBubbles self thread may record an
+owner verdict; other surfaces receive a calm refusal and create no learning
+signal. Asking to mark incomplete work verified returns the exact missing
+evidence instead of throwing or silently recording an optimistic outcome.
+
+Response feedback remains deliberately narrower than mission review. Marking a
+reply Helpful can improve its cognitive route, but cannot verify the underlying
+mission. When that response links to an unreviewed deep-work packet, Andrea's
+acknowledgement offers the exact evidence or verdict phrase needed next. Native
+BlueBubbles reactions remain silent, and reviewed missions produce no further
+invitation.
 
 Debug workflows must declare whether they are read-only, isolated-write, or
 live-write. The mission debugger is explicitly isolated-write and uses the
