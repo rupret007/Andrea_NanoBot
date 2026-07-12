@@ -19,6 +19,7 @@ import {
   collectProviderHealthSnapshots,
   formatProviderHealthAlertMessage,
   resolveSystemAlertConfig,
+  shouldEmitProviderAlertSnapshot,
 } from './provider-health.js';
 import { applyProviderLiveProbe } from './provider-live-probe.js';
 
@@ -466,5 +467,34 @@ describe('provider expansion', () => {
     expect(message).toContain('Andrea system alert');
     expect(message).toContain('MINIMAX_API_KEY');
     expect(message).not.toContain('test-minimax-key');
+  });
+
+  it('does not turn configuration-only Brave evidence into a contradictory down alert', () => {
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'true');
+    vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-brave-key');
+    const provider = collectProviderHealthSnapshots(
+      '2026-05-01T12:00:00.000Z',
+    ).find((snapshot) => snapshot.providerId === 'brave_search');
+
+    expect(provider).toMatchObject({
+      state: 'unknown',
+      failureClass: 'none',
+      credentialState: 'configured',
+      metadata: expect.objectContaining({
+        healthEvidence: 'configuration_only',
+      }),
+    });
+    expect(shouldEmitProviderAlertSnapshot(provider!)).toBe(false);
+
+    const defensiveMessage = formatProviderHealthAlertMessage({
+      provider: provider!,
+      transition: 'down',
+      severity: 'warning',
+    });
+    expect(defensiveMessage).toContain(
+      'Likely cause: Current health evidence is unavailable or stale.',
+    );
+    expect(defensiveMessage).not.toContain('Health probe recovered.');
+    expect(defensiveMessage).not.toContain('test-brave-key');
   });
 });

@@ -237,6 +237,7 @@ import {
   collectProviderHealthSnapshots,
   formatProviderHealthAlertMessage,
   resolveSystemAlertConfig,
+  shouldEmitProviderAlertSnapshot,
   type AlertEventSnapshot,
   type ProviderHealthSnapshot,
   type ProviderHealthState,
@@ -10400,6 +10401,13 @@ async function main(): Promise<void> {
   ): Promise<void> => {
     const key = `provider:${provider.providerId}`;
     const previousState = systemAlertLastStateByKey.get(key);
+
+    if (
+      provider.state !== 'healthy' &&
+      !shouldEmitProviderAlertSnapshot(provider)
+    ) {
+      return;
+    }
     systemAlertLastStateByKey.set(key, provider.state);
 
     if (provider.state === 'healthy') {

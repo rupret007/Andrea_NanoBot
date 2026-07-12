@@ -1,5 +1,29 @@
 # Modernization Plan
 
+## Provider alert transition consistency — 2026-07-12
+
+### Implemented
+
+- [x] Stop configuration-only provider snapshots from generating live `down`
+      alerts. Configured credentials without a fresh probe remain unknown
+      evidence, not an outage transition.
+- [x] Make alert formatting fail coherent: a non-recovered snapshot with
+      `failureClass=none` now says health evidence is unavailable or stale,
+      never `Health probe recovered` beneath a `down` transition.
+- [x] Confirm Brave live probe succeeds with the configured credential and no
+      provider alert remains pending. The newly supplied credential was not
+      echoed or unnecessarily written because the existing configured key is
+      already healthy.
+
+### Validation and release
+
+- [x] Focused provider coverage passes 16/16; the full primary suite passes
+      2,280/2,280, AGI passes 282/282, formatting, typechecks, build, docs,
+      lint (zero errors; 647 existing warnings), both dependency audits, and
+      diff checks pass. Brave's live probe is healthy with zero pending alerts.
+- [ ] Commit the repair, push `main`, rebuild from the clean commit, restart
+      services, and reconfirm the served SHA and Brave health.
+
 ## Combined-candidate release-readiness audit — 2026-07-12
 
 ### Verified

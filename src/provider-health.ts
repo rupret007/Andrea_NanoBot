@@ -352,34 +352,35 @@ export function buildProviderAlertEvents(
   checkedAt = nowIso(),
 ): AlertEventSnapshot[] {
   const cooldown = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-  return providers
-    .filter(
-      (provider) =>
-        provider.state !== 'healthy' &&
-        !(
-          provider.state === 'unknown' &&
-          provider.credentialState === 'configured' &&
-          provider.metadata.healthEvidence === 'configuration_only'
-        ),
-    )
-    .map((provider) => ({
-      alertId: `alert-${provider.providerId}-${provider.failureClass}-${checkedAt}`,
-      providerId: provider.providerId,
-      severity:
-        provider.state === 'externally_blocked' || provider.state === 'degraded'
-          ? 'warning'
-          : 'info',
-      transition:
-        provider.state === 'degraded' || provider.state === 'externally_blocked'
-          ? 'degraded'
-          : 'down',
-      summary: provider.blocker || `${provider.providerId} is not healthy.`,
-      nextAction: provider.nextAction,
-      channelsAttempted: ['telegram', 'bluebubbles'],
-      dedupeKey: `${provider.providerId}:${provider.failureClass}`,
-      cooldownUntil: cooldown,
-      ackState: 'unacked',
-    }));
+  return providers.filter(shouldEmitProviderAlertSnapshot).map((provider) => ({
+    alertId: `alert-${provider.providerId}-${provider.failureClass}-${checkedAt}`,
+    providerId: provider.providerId,
+    severity:
+      provider.state === 'externally_blocked' || provider.state === 'degraded'
+        ? 'warning'
+        : 'info',
+    transition:
+      provider.state === 'degraded' || provider.state === 'externally_blocked'
+        ? 'degraded'
+        : 'down',
+    summary: provider.blocker || `${provider.providerId} is not healthy.`,
+    nextAction: provider.nextAction,
+    channelsAttempted: ['telegram', 'bluebubbles'],
+    dedupeKey: `${provider.providerId}:${provider.failureClass}`,
+    cooldownUntil: cooldown,
+    ackState: 'unacked',
+  }));
+}
+
+export function shouldEmitProviderAlertSnapshot(
+  provider: ProviderHealthSnapshot,
+): boolean {
+  if (provider.state === 'healthy') return false;
+  return !(
+    provider.state === 'unknown' &&
+    provider.credentialState === 'configured' &&
+    provider.metadata.healthEvidence === 'configuration_only'
+  );
 }
 
 export function formatProviderHealthAlertMessage(params: {
@@ -394,7 +395,9 @@ export function formatProviderHealthAlertMessage(params: {
       : provider.blocker || `${provider.providerId} is not healthy.`;
   const likelyCause =
     provider.failureClass === 'none'
-      ? 'Health probe recovered.'
+      ? transition === 'recovered'
+        ? 'Health probe recovered.'
+        : 'Current health evidence is unavailable or stale.'
       : provider.failureClass.replace(/_/g, ' ');
   const nextAction =
     transition === 'recovered'
