@@ -18,7 +18,7 @@ update the proof before demoing that lane.
 
 | Surface                                      | Current truth                  | Exact blocker                                               | Owner              | Smallest next action                                                                  |
 | -------------------------------------------- | ------------------------------ | ----------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------- |
-| Telegram user-session proof                  | `live_proven`                  | none                                                        | none               | Run `npm run telegram:user:smoke` again before a formal demo                          |
+| Telegram user-session proof                  | `near_live_only`               | last successful roundtrip is outside the freshness window   | operator/live turn | Run `npm run telegram:user:smoke` before a formal demo                                |
 | Alexa companion                              | `manual_action_required`       | no fresh signed handled `IntentRequest` recorded            | external/live turn | Use a real simulator/device turn, then run `npm run services:status`                  |
 | BlueBubbles companion                        | `live_proven`                  | none                                                        | none               | Keep proof fresh with `npm run debug:bluebubbles -- --live`                           |
 | Google Calendar                              | `live_proven`                  | none                                                        | none               | Keep proof fresh with `npm run debug:google-calendar` when calendar writes are demoed |
@@ -55,7 +55,7 @@ Important truth:
 
 - `setup verify` can prove assistant execution while still failing launch readiness because external proof/config gates are open.
 - `ASSISTANT_EXECUTION_PROBE: ok` means the assistant answered; a final failed launch status should be read with the listed blockers, not as an ambiguous runtime failure.
-- Telegram is live-proven after the current same-host user-session smoke; rerun `npm run telegram:user:smoke` before a formal demo if the proof ages out.
+- Telegram transport is healthy, but the same-host user-session proof is currently overdue; run `npm run telegram:user:smoke` before a formal demo.
 - Alexa is not `live_proven` until a fresh signed handled `IntentRequest` is recorded.
 - BlueBubbles is live-proven while the canonical same-thread message-action proof remains fresh.
 - Google Calendar is currently healthy; if it later reports `invalid_grant`, reauthorize before claiming calendar launch readiness.

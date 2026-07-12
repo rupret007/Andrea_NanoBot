@@ -1,5 +1,26 @@
 # Modernization Plan
 
+## Release-truth documentation audit — 2026-07-12
+
+### Implemented and validated
+
+- [x] Reconcile current-sounding README, status, demo, command-surface, and
+      release-runbook claims with operator truth. Telegram is now described as
+      configured and transport-healthy with overdue roundtrip proof; BlueBubbles,
+      Calendar, provider, research, and image proofs remain live-proven; Alexa
+      and life-thread proof debt remain explicit.
+- [x] Remove stale claims that current disk pressure is degraded and avoid
+      turning a point-in-time free-space value into a durable product promise.
+      Exact capacity remains owned by `npm run debug:status`.
+- [x] Preserve historical validation records and capability descriptions where
+      they remain accurate; only current runtime/readiness claims changed.
+- [x] Complete the release candidate gate: 203 primary test files with 2,258
+      tests, AGI typecheck and 282/282 tests, all ten intelligence scenarios,
+      the 99.1% A+ zero-cost scorecard, three standalone stability rounds,
+      signature flows, 57-file documentation validation, both zero-vulnerability
+      dependency audits, and diff hygiene. All 90 offline deterministic commands
+      pass in 347.5 seconds under the network-denial guard.
+
 ## Fresh provider truth in route reliability — 2026-07-12
 
 ### Implemented
@@ -59,10 +80,10 @@
       validation, both zero-vulnerability dependency audits, and diff hygiene.
       All 90 offline deterministic commands pass in 250.5 seconds, including
       the 158.3-second stability and network-denial gate.
-- [x] This increment passed the repository-controlled release gate and is
-      included in the next combined `main` release. Rebuild, restart, running
-      commit proof, and integration health remain delivery-time evidence rather
-      than repository fixtures.
+- [x] This increment passed the repository-controlled release gate, shipped to
+      `main` as `3509049a`, and was rebuilt and served from that clean commit.
+      Runtime and integration health remain delivery-time evidence rather than
+      repository fixtures.
 
 ## Canonical reviewed-outcome metrics — 2026-07-12
 

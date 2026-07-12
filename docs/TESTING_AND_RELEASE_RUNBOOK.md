@@ -914,7 +914,9 @@ If any of those are missing, record Alexa as **code-ready but setup-blocked** in
 
 Current truthful closeout note:
 
-- Telegram is the live-proven release-candidate surface on this host for this pass
+- Telegram is configured and transport-healthy on this host, but its current
+  user-session proof is overdue; rerun `npm run telegram:user:smoke` before
+  claiming it as live-proven for a release or demo
 - Alexa listener, OAuth, public ingress, and pinned Node 22 can be healthy while Alexa proof is still `manual_action_required`; do not claim Alexa `live_proven` until a fresh handled custom-skill proof lands
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
 - if the repo Alexa model changed, the remaining release-candidate step is to import `docs/alexa/interaction-model.en-US.json`, run `Build Model`, and then run `npm run setup -- --step alexa-model-sync mark-synced`

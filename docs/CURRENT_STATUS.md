@@ -16,11 +16,12 @@ Generated from local operator checks on 2026-07-12.
 - Remote state: `main` matches `origin/main` with zero ahead/behind divergence
 - Workspace and serving identity: use `npm run debug:status` for the exact
   current SHA; every release must report `Serving commit aligned: yes`
-- Modernization work: combined release validated for direct `main` publication
+- Modernization work: provider-truth reconciliation released to `main`;
+  operator documentation reconciled in this release
 - Process/runtime state: `running_ready`
-- Host resource state: healthy with about 43 GiB free after the
-  owner-authorized regenerable-cache cleanup; the prior ENOSPC condition and
-  warning threshold are both cleared
+- Host resource state: healthy and above the warning threshold at the latest
+  check after the owner-authorized regenerable-cache cleanup; use
+  `npm run debug:status` for exact current capacity
 - Serving commit aligned with workspace HEAD: yes
 - Open pilot issues: check `npm run debug:pilot`
 - Learning evidence: 56 metric samples, zero owner-reviewed outcomes, and no
@@ -45,32 +46,35 @@ Generated from local operator checks on 2026-07-12.
 
 ## Live Proof Truth
 
-- Launch status: `near_live_only` while one life-thread proof gap remains
+- Launch status: `near_live_only` while Telegram roundtrip and life-thread proof
+  gaps remain
 - Core status: usable with healthy persistence headroom
 - Live proof gauntlet: use `npm run services:status` and `npm run integrations:status -- --json`
-- Proof debt: one life-thread control turn plus a fresh signed Alexa turn
-- Operator action required: complete the explicit life-thread and Alexa proof
+- Proof debt: a fresh Telegram user-session roundtrip, one life-thread control
+  turn, and a fresh signed Alexa turn
+- Operator action required: complete the explicit Telegram, life-thread, and Alexa proof
   turns; no disk cleanup is currently required
 - Repo work required for disk detection: complete
 
 Current live-proven surfaces:
 
-- Telegram user-session roundtrip
 - BlueBubbles canonical same-thread message-action proof in `bb:iMessage;-;+14695405551`
 - Google Calendar
 - OpenAI, Anthropic, Gemini, MiniMax, Brave Search, research, and image generation
 
 Current blocked or proof-stale surfaces:
 
+- Telegram user-session proof: `near_live_only`; configured transport is
+  healthy, but the last successful roundtrip is outside the freshness window
 - Alexa signed IntentRequest proof: `manual_action_required` until a fresh signed handled turn reaches this host
 - Life-thread proof: `near_live_only` until one genuine save/thread-control turn occurs
 
 ## Next Proof Actions
 
 1. Preserve persistence headroom.
-   - Host disk pressure is currently healthy with about 43 GiB available; keep
-     the existing health monitor active and avoid automatic deletion of Docker
-     images, containers, evaluation evidence, or user files.
+   - Host disk pressure is currently healthy and above the warning threshold;
+     keep the existing health monitor active and avoid automatic deletion of
+     Docker images, containers, evaluation evidence, or user files.
 
 2. Ground communication identities explicitly.
    - Run `review communication identities` in the registered main Telegram chat or configured Messages self-thread.

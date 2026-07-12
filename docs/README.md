@@ -21,9 +21,8 @@ Use this shorthand when you need the current host story fast:
   - `/Users/jeffstory/Andrea_NanoBot` is the runtime root
   - `/Users/jeffstory/Documents/Andrea_NanoBot` is a convenience symlink
   - `/Users/jeffstory/Andrea_NanoBot_AGI` should stay stopped unless an operator intentionally starts an isolated comparison run
-- **core live-proven as of July 6, 2026**
+- **core live-proven as of July 12, 2026**
   - host-control / watchdog / health
-  - Telegram companion surface and user-session roundtrip
   - BlueBubbles optional Messages bridge with a fresh canonical same-thread `message_action` proof
   - Google Calendar scheduling
   - provider checks for OpenAI, Anthropic, Gemini, MiniMax, Brave Search, research, and image generation
@@ -31,6 +30,7 @@ Use this shorthand when you need the current host story fast:
   - Alexa requires one real device or authenticated simulator turn before claiming a fresh signed handled `IntentRequest`
   - after any Alexa interaction-model change, import/build in the Developer Console and run `npm run setup -- --step alexa-model-sync mark-synced`
 - **fresh-proof gaps, not host failure**
+  - Telegram is configured and transport-healthy, but its user-session roundtrip proof is overdue
   - flagship journey proofs such as daily guidance, work cockpit, life threads, communication companion, missions, and knowledge-library flows may age out separately from integration health
 - **optional or intentionally disabled lanes**
   - the Andrea OpenAI backend/work cockpit lane can be externally blocked when that backend is disabled on this host
