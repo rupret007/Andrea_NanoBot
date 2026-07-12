@@ -3958,27 +3958,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     isBlueBubblesProofDrillAction(preHarnessMessageAction)
       ? 'replay'
       : 'live';
+  const shouldHandleOutcomeReviewLocally =
+    shouldPreferLocalResponseFeedbackReview({
+      requestRoute: requestPolicy.route,
+      text: rawLastContent || lastContent,
+    });
   const turnStartedAt = Date.now();
   const turnAgentHarness: TurnAgentHarnessContext | null =
-    await beginTurnAgentHarness({
-      turnId:
-        latestUserMessage?.id ||
-        `${conversationChannel}:${chatJid}:${now.toISOString()}`,
-      channel:
-        String(channel.name) === 'bluebubbles'
-          ? 'bluebubbles'
-          : String(channel.name) === 'alexa'
-            ? 'alexa'
-            : 'telegram',
-      groupFolder: group.folder,
-      text: lastContent,
-      requestRoute: requestPolicy.route,
-      runOrigin: turnRunOrigin,
-      // v13 B4 caller-side completion: pass the per-message sender (group
-      // chats) or fall back to chatJid (1-on-1) so the platform's user-belief
-      // state actually accumulates per actor instead of staying empty.
-      actorId: latestUserMessage?.sender || chatJid,
-    });
+    shouldHandleOutcomeReviewLocally
+      ? null
+      : await beginTurnAgentHarness({
+          turnId:
+            latestUserMessage?.id ||
+            `${conversationChannel}:${chatJid}:${now.toISOString()}`,
+          channel:
+            String(channel.name) === 'bluebubbles'
+              ? 'bluebubbles'
+              : String(channel.name) === 'alexa'
+                ? 'alexa'
+                : 'telegram',
+          groupFolder: group.folder,
+          text: lastContent,
+          requestRoute: requestPolicy.route,
+          runOrigin: turnRunOrigin,
+          // v13 B4 caller-side completion: pass the per-message sender (group
+          // chats) or fall back to chatJid (1-on-1) so the platform's user-belief
+          // state actually accumulates per actor instead of staying empty.
+          actorId: latestUserMessage?.sender || chatJid,
+        });
   const shouldDeferPlatformHoldForLocalCalendarLookup =
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant') &&
@@ -4012,10 +4019,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       ),
     });
   const shouldDeferPlatformHoldForLocalOutcomeReview =
-    shouldPreferLocalResponseFeedbackReview({
-      requestRoute: requestPolicy.route,
-      text: rawLastContent || lastContent,
-    });
+    shouldHandleOutcomeReviewLocally;
   const shouldDeferPlatformHoldForLocalUsefulCapability =
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant') &&

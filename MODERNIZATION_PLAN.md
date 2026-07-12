@@ -48,9 +48,14 @@
       2,287/2,287 primary and 282/282 AGI tests, both typechecks, build,
       formatting, 57-file docs validation, warning-only lint with zero errors,
       both zero-vulnerability audits, and diff hygiene.
-- [ ] Publish the narrow follow-up commit, rebuild/restart, and prove the live
+- [x] Publish the narrow follow-up commit, rebuild/restart, and prove the live
       Telegram response exposes Helpful and Not helpful without recording
-      either verdict.
+      either verdict. The first successful response exposed both controls and
+      preserved the 0/5 baseline, but also revealed that this local-only
+      command waited for the deep-work turn harness (about 38 seconds).
+- [x] Bypass the turn harness only for an exact, assistant-routed owner review
+      inbox request. The inbox remains private, read-only until an explicit
+      verdict, and subject to the same source/chat/freshness boundaries.
 
 ## Provider alert transition consistency — 2026-07-12
 
