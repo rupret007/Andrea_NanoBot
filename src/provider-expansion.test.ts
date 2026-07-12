@@ -20,6 +20,7 @@ import {
   formatProviderHealthAlertMessage,
   resolveSystemAlertConfig,
 } from './provider-health.js';
+import { applyProviderLiveProbe } from './provider-live-probe.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -304,10 +305,65 @@ describe('provider expansion', () => {
     expect(
       providers.some((provider) => provider.providerId === 'brave_search'),
     ).toBe(true);
+    expect(
+      providers.every(
+        (provider) =>
+          provider.metadata.healthEvidence === 'configuration_only' &&
+          provider.metadata.liveProbe === 'not_run',
+      ),
+    ).toBe(true);
+    expect(
+      providers
+        .filter((provider) => provider.credentialState === 'configured')
+        .every(
+          (provider) =>
+            provider.state === 'unknown' && provider.lastHealthyAt === null,
+        ),
+    ).toBe(true);
     expect(serialized).not.toContain('test-minimax-key');
     expect(serialized).not.toContain('test-gemini-key');
     expect(serialized).not.toContain('test-anthropic-key');
     expect(serialized).not.toContain('test-brave-key');
+  });
+
+  it('marks health as live-verified only after an actual probe result', () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-openai-key');
+    const configured = collectProviderHealthSnapshots(
+      '2026-05-01T12:00:00.000Z',
+    ).find((snapshot) => snapshot.providerId === 'openai_cloud')!;
+
+    const healthy = applyProviderLiveProbe(
+      configured,
+      {
+        liveOk: true,
+        liveFailure: '',
+        liveModel: 'gpt-test',
+        liveRequestId: 'request-test',
+      },
+      '2026-05-01T12:01:00.000Z',
+    );
+    const failed = applyProviderLiveProbe(
+      configured,
+      {
+        liveOk: false,
+        liveFailure: 'Provider transport timeout.',
+      },
+      '2026-05-01T12:02:00.000Z',
+    );
+
+    expect(healthy.metadata).toMatchObject({
+      healthEvidence: 'live_probe',
+      liveProbe: 'ok',
+      liveModel: 'gpt-test',
+    });
+    expect(failed).toMatchObject({
+      state: 'degraded',
+      failureClass: 'transport_error',
+      metadata: {
+        healthEvidence: 'live_probe',
+        liveProbe: 'failed',
+      },
+    });
   });
 
   it('surfaces MiniMax configuration state separately from OpenAI', () => {

@@ -64,6 +64,7 @@ export function mapMessageReactionToFeedbackAction(
 export interface NaturalResponseFeedbackVerdict {
   action: 'accept' | 'capture';
   completionVerified: boolean;
+  memoryCorrectness?: boolean;
 }
 
 export type NaturalResponseFeedbackResolution =
@@ -80,6 +81,7 @@ export type NaturalResponseFeedbackResolution =
       record: ResponseFeedbackRecord;
       ageMs: number;
       completionVerified: boolean;
+      memoryCorrectness?: boolean;
     };
 
 const NATURAL_VERDICT_ACTION_RE =
@@ -122,6 +124,30 @@ export function parseNaturalResponseFeedbackVerdict(
   }
   const normalized = normalizeNaturalVerdictText(raw);
   if (!normalized) return null;
+
+  if (
+    /^(?:(?:that|the) memory was (?:wrong|incorrect|inaccurate)|you remembered (?:that|it) (?:wrong|incorrectly))$/i.test(
+      normalized,
+    )
+  ) {
+    return {
+      action: 'capture',
+      completionVerified: false,
+      memoryCorrectness: false,
+    };
+  }
+
+  if (
+    /^(?:(?:that|the) memory was (?:right|correct|accurate)|you remembered (?:that|it) (?:right|correctly))$/i.test(
+      normalized,
+    )
+  ) {
+    return {
+      action: 'accept',
+      completionVerified: false,
+      memoryCorrectness: true,
+    };
+  }
 
   if (
     /^(?:(?:that|this|it) (?:did not|didn't|does not|doesn't) work|(?:that|this|it) was not helpful|not helpful|(?:that|this|it|you) (?:was |were |got )?(?:wrong|incorrect)|(?:that|this) (?:did not|didn't) answer (?:my question|it)|(?:that|this) missed (?:the point|what i asked))$/i.test(
@@ -205,6 +231,7 @@ export function resolveNaturalResponseFeedbackVerdict(
     record: selected,
     ageMs,
     completionVerified: verdict.completionVerified,
+    memoryCorrectness: verdict.memoryCorrectness,
     action: {
       feedbackId: selected.feedbackId,
       operation: verdict.action,

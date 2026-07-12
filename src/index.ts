@@ -205,6 +205,12 @@ import {
   type TurnAgentHarnessContext,
 } from './turn-agent-harness.js';
 import {
+  buildPendingPostDeliveryReflectionRefs,
+  drainPostDeliveryReflections,
+  reconcileInterruptedPostDeliveryReflections,
+  schedulePostDeliveryReflection,
+} from './post-delivery-reflection.js';
+import {
   listCompanionConversationChatJids,
   resolveCompanionConversationBinding,
 } from './companion-conversation-binding.js';
@@ -784,8 +790,11 @@ import {
   shouldCancelPendingContinuationForFeedback,
 } from './response-feedback.js';
 import {
+  buildReviewedOutcomeProgress,
   createRegressionFixtureFromFeedback,
+  formatReviewedOutcomeProgress,
   recordAssistantMetric,
+  recordMemoryRetrievalJudgment,
   recordReviewedRecommendationOutcome,
 } from './personal-assistant-metrics.js';
 import {
@@ -4043,29 +4052,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         ? appendResponseFeedbackInlineRow(params.sendOptions || {}, feedbackId)
         : params.sendOptions || {};
     const sent = await channel.sendMessage(chatJid, replyText, sendOptions);
-    const platformReflection = await reflectTurnAgentOutcome({
-      context: turnAgentHarness,
-      evaluation: turnEvaluation,
-      routeUsed: params.routeKey || requestPolicy.route,
-      answerClass: params.blockerClass
-        ? 'blocked'
-        : params.responseSource === 'container_agent'
-          ? 'handled'
-          : params.handlerKind?.includes('fallback')
-            ? 'fallback'
-            : 'handled',
-      blockerClass: params.blockerClass,
-      fallbackUsed:
-        params.handlerKind?.includes('fallback') ||
-        params.responseSource === 'local_companion',
-    });
     recordAssistantMetric({
       groupFolder: group.folder,
       kind: 'latency_sample',
       value: Date.now() - turnStartedAt,
       metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: turnRunOrigin,
         routeKey: params.routeKey || requestPolicy.route,
         channel: conversationChannel,
+        responseSource: params.responseSource || 'unknown',
       },
       now: new Date(),
     });
@@ -4081,85 +4077,107 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         now,
       });
     }
-    if (!feedbackId) {
+    const feedbackClassification = feedbackId
+      ? classifyResponseFeedbackCandidate({
+          originalUserText: rawLastContent || lastContent,
+          assistantReplyText: replyText,
+          routeKey: params.routeKey,
+          capabilityId: params.capabilityId,
+          responseSource: params.responseSource,
+          traceReason: params.traceReason,
+          blockerClass: params.blockerClass,
+        })
+      : null;
+    if (feedbackId && feedbackClassification) {
+      upsertResponseFeedback({
+        feedbackId,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        status: feedbackClassification.status,
+        classification: feedbackClassification.classification,
+        channel: conversationChannel,
+        groupFolder: group.folder,
+        chatJid,
+        threadId: sent.threadId || latestUserMessage?.thread_id || null,
+        platformMessageId: sent.platformMessageId || null,
+        userMessageId: latestUserMessage?.id || null,
+        routeKey: params.routeKey || requestPolicy.route,
+        capabilityId: params.capabilityId || null,
+        handlerKind: params.handlerKind || null,
+        responseSource: params.responseSource || null,
+        traceReason: params.traceReason || null,
+        traceNotes: params.traceNotes || [],
+        blockerClass: params.blockerClass || null,
+        blockerOwner:
+          params.blockerOwner || feedbackClassification.blockerOwner,
+        originalUserText:
+          conversationChannel === 'bluebubbles'
+            ? '[private BlueBubbles request omitted]'
+            : rawLastContent || lastContent,
+        assistantReplyText:
+          conversationChannel === 'bluebubbles'
+            ? '[private BlueBubbles response omitted]'
+            : replyText,
+        linkedRefs: {
+          ...(params.linkedRefs || {}),
+          platformTaskLedgerId: turnAgentHarness?.deliberation?.taskLedgerId,
+          platformProgressLedgerId:
+            turnAgentHarness?.deliberation?.progressLedgerId,
+          platformEvaluationId: turnAgentHarness?.deliberation?.evaluationId,
+          platformTraceGradeId: turnAgentHarness?.deliberation?.traceGradeId,
+          providerCouncilRunId: turnAgentHarness?.providerCouncil?.councilRunId,
+          providerCouncilMode: turnAgentHarness?.providerCouncil?.mode,
+          providerCouncilStatus:
+            turnAgentHarness?.providerCouncil?.answerGuidance?.status,
+          personalContextPacketId:
+            turnAgentHarness?.personalContextPacket?.packetId,
+          personalContextCitations:
+            turnAgentHarness?.personalContextPacket?.citations.slice(0, 12),
+          verifiedDeepWorkPacketId:
+            turnAgentHarness?.verifiedDeepWorkPacket?.packetId,
+          cognitiveRunId: turnAgentHarness?.cognitiveRun?.run.runId,
+          cognitiveSkillId:
+            turnAgentHarness?.cognitiveRun?.run.linkedSkillCardId || undefined,
+          cognitiveTrajectoryId:
+            turnAgentHarness?.cognitiveRun?.trajectoryScore.trajectoryId,
+          agentRuntimeRunId: turnAgentHarness?.runtimeSpine?.run.runtimeRunId,
+          ...buildPendingPostDeliveryReflectionRefs(now),
+        },
+        issueId: null,
+        remediationLaneId: null,
+        remediationJobId: null,
+        remediationRuntimePreference: null,
+        remediationPrompt: null,
+        operatorNote: feedbackClassification.explanation,
+      });
+    }
+    void schedulePostDeliveryReflection({
+      groupFolder: group.folder,
+      routeKey: params.routeKey || requestPolicy.route,
+      runOrigin: turnRunOrigin,
+      feedbackId,
+      reflect: () =>
+        reflectTurnAgentOutcome({
+          context: turnAgentHarness,
+          evaluation: turnEvaluation,
+          routeUsed: params.routeKey || requestPolicy.route,
+          answerClass: params.blockerClass
+            ? 'blocked'
+            : params.responseSource === 'container_agent'
+              ? 'handled'
+              : params.handlerKind?.includes('fallback')
+                ? 'fallback'
+                : 'handled',
+          blockerClass: params.blockerClass,
+          fallbackUsed:
+            params.handlerKind?.includes('fallback') ||
+            params.responseSource === 'local_companion',
+        }),
+    });
+    if (!feedbackId || !feedbackClassification) {
       return sent;
     }
-    const classification = classifyResponseFeedbackCandidate({
-      originalUserText: rawLastContent || lastContent,
-      assistantReplyText: replyText,
-      routeKey: params.routeKey,
-      capabilityId: params.capabilityId,
-      responseSource: params.responseSource,
-      traceReason: params.traceReason,
-      blockerClass: params.blockerClass,
-    });
-    upsertResponseFeedback({
-      feedbackId,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      status: classification.status,
-      classification: classification.classification,
-      channel: conversationChannel,
-      groupFolder: group.folder,
-      chatJid,
-      threadId: sent.threadId || latestUserMessage?.thread_id || null,
-      platformMessageId: sent.platformMessageId || null,
-      userMessageId: latestUserMessage?.id || null,
-      routeKey: params.routeKey || requestPolicy.route,
-      capabilityId: params.capabilityId || null,
-      handlerKind: params.handlerKind || null,
-      responseSource: params.responseSource || null,
-      traceReason: params.traceReason || null,
-      traceNotes: params.traceNotes || [],
-      blockerClass: params.blockerClass || null,
-      blockerOwner: params.blockerOwner || classification.blockerOwner,
-      originalUserText:
-        conversationChannel === 'bluebubbles'
-          ? '[private BlueBubbles request omitted]'
-          : rawLastContent || lastContent,
-      assistantReplyText:
-        conversationChannel === 'bluebubbles'
-          ? '[private BlueBubbles response omitted]'
-          : replyText,
-      linkedRefs: {
-        ...(params.linkedRefs || {}),
-        platformTaskLedgerId:
-          platformReflection.reflection?.taskLedgerId ||
-          turnAgentHarness?.deliberation?.taskLedgerId,
-        platformProgressLedgerId:
-          platformReflection.reflection?.progressLedgerId ||
-          turnAgentHarness?.deliberation?.progressLedgerId,
-        platformReflectionId: platformReflection.reflection?.reflectionId,
-        platformEvaluationId:
-          platformReflection.reflection?.evaluationId ||
-          turnAgentHarness?.deliberation?.evaluationId,
-        platformTraceGradeId:
-          platformReflection.reflection?.traceGradeId ||
-          turnAgentHarness?.deliberation?.traceGradeId,
-        providerCouncilRunId: turnAgentHarness?.providerCouncil?.councilRunId,
-        providerCouncilMode: turnAgentHarness?.providerCouncil?.mode,
-        providerCouncilStatus:
-          turnAgentHarness?.providerCouncil?.answerGuidance?.status,
-        personalContextPacketId:
-          turnAgentHarness?.personalContextPacket?.packetId,
-        personalContextCitations:
-          turnAgentHarness?.personalContextPacket?.citations.slice(0, 12),
-        verifiedDeepWorkPacketId:
-          turnAgentHarness?.verifiedDeepWorkPacket?.packetId,
-        cognitiveRunId: turnAgentHarness?.cognitiveRun?.run.runId,
-        cognitiveSkillId:
-          turnAgentHarness?.cognitiveRun?.run.linkedSkillCardId || undefined,
-        cognitiveTrajectoryId:
-          turnAgentHarness?.cognitiveRun?.trajectoryScore.trajectoryId,
-        agentRuntimeRunId: turnAgentHarness?.runtimeSpine?.run.runtimeRunId,
-      },
-      issueId: null,
-      remediationLaneId: null,
-      remediationJobId: null,
-      remediationRuntimePreference: null,
-      remediationPrompt: null,
-      operatorNote: classification.explanation,
-    });
+    const classification = feedbackClassification;
     if (conversationChannel === 'bluebubbles') {
       pruneUnreviewedBlueBubblesFeedbackLinks({ now });
     }
@@ -4481,6 +4499,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       now,
     );
     const priorDailyContext = getDailyCompanionContext(chatJid, now);
+    const routingResult = await maybeGetOpenAiGuidedRoute();
     blueBubblesDirectTurnEnvelope = await interpretBlueBubblesDirectTurn({
       groupFolder: group.folder,
       chatJid,
@@ -4493,6 +4512,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       priorThreadTitle: priorAssistantCapabilitySeed?.subjectData?.threadTitle,
       priorLastAnswerSummary:
         priorAssistantCapabilitySeed?.subjectData?.lastAnswerSummary,
+      routingResult,
       now,
     });
     if (
@@ -8401,7 +8421,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     if (
-      !/\b(what do you remember about me|what skills have you learned|show me what you learned this week|what did you learn|learned skills|learning status)\b/i.test(
+      !/\b(what do you remember about me|what skills have you learned|show me what you learned this week|what did you learn|learned skills|learning status|how are you learning|how is your learning|how much have you learned)\b/i.test(
         lastContent,
       )
     ) {
@@ -8410,7 +8430,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     const text = /\b(skill|skills)\b/i.test(lastContent)
       ? formatSkillLibraryReport()
-      : formatLearningDistillationReport();
+      : `${formatLearningDistillationReport()}\n\n${formatReviewedOutcomeProgress(
+          buildReviewedOutcomeProgress({
+            groupFolder: group.folder,
+            now,
+          }),
+        )}`;
     await sendAssistantReplyWithFeedback({
       text,
       routeKey: 'learning.status',
@@ -10476,6 +10501,18 @@ async function main(): Promise<void> {
   clearTelegramTransportState();
   ensureContainerSystemRunning();
   initDatabase();
+  const interruptedReflectionRecovery =
+    reconcileInterruptedPostDeliveryReflections();
+  if (interruptedReflectionRecovery.reconciled > 0) {
+    logger.warn(
+      {
+        component: 'post_delivery_reflection',
+        reconciled: interruptedReflectionRecovery.reconciled,
+        inspected: interruptedReflectionRecovery.inspected,
+      },
+      'Reconciled post-delivery reflections interrupted by a prior process.',
+    );
+  }
   loadLogControlFromPersistence();
   startLogControlAutoRefresh();
   logger.info({ component: 'assistant' }, 'Database initialized');
@@ -10506,6 +10543,18 @@ async function main(): Promise<void> {
     stopAssistantHealthLoop();
     clearAssistantReadyState();
     await queue.shutdown(10000);
+    const reflectionDrain = await drainPostDeliveryReflections(5_000);
+    if (reflectionDrain.attempted > 0) {
+      logger.info(
+        {
+          component: 'post_delivery_reflection',
+          ...reflectionDrain,
+        },
+        reflectionDrain.timedOut
+          ? 'Shutdown reflection drain reached its bounded timeout; startup will reconcile remaining work.'
+          : 'Shutdown drained active post-delivery reflections.',
+      );
+    }
     // Detached containers cannot deliver replies once this process exits, so
     // rewind the cursor for every turn still in flight; the next process
     // re-fetches those messages and retries instead of dropping them.
@@ -11675,6 +11724,7 @@ async function main(): Promise<void> {
     options: {
       acknowledge?: boolean;
       completionVerified?: boolean;
+      memoryCorrectness?: boolean;
       reviewSource?: 'inline_action' | 'native_reaction' | 'natural_language';
     } = {},
   ): Promise<boolean> {
@@ -11708,6 +11758,7 @@ async function main(): Promise<void> {
       return true;
     }
     existing = await refreshRunningResponseFeedbackRecord(existing);
+    const feedbackGroupFolder = existing.groupFolder;
 
     let linkedRefs: ResponseFeedbackRecord['linkedRefs'] = {
       ...(existing.linkedRefs || {}),
@@ -11721,8 +11772,21 @@ async function main(): Promise<void> {
         existing.userMessageId ||
         undefined,
     };
+    const recordLinkedMemoryJudgment = (): boolean =>
+      options.memoryCorrectness !== undefined &&
+      Boolean(
+        linkedRefs.personalContextPacketId &&
+        recordMemoryRetrievalJudgment({
+          groupFolder: feedbackGroupFolder,
+          packetId: linkedRefs.personalContextPacketId,
+          correct: options.memoryCorrectness,
+          reviewSource: 'natural_language',
+          now: feedbackNow,
+        }),
+      );
 
     if (action.operation === 'accept') {
+      const memoryJudgmentRecorded = recordLinkedMemoryJudgment();
       const cognitiveReview = recordCognitiveOwnerReview({
         runId: linkedRefs.cognitiveRunId,
         feedbackId: existing.feedbackId,
@@ -11755,15 +11819,24 @@ async function main(): Promise<void> {
         now: feedbackNow,
       });
       if (acknowledge) {
-        await channel.sendMessage(
-          chatJid,
-          options.completionVerified
+        const progressText = formatReviewedOutcomeProgress(
+          buildReviewedOutcomeProgress({
+            groupFolder: updated.groupFolder,
+            now: feedbackNow,
+          }),
+        );
+        const acknowledgement = memoryJudgmentRecorded
+          ? 'Thanks — I recorded that the retrieved memory was correct and linked it to the exact context packet.'
+          : options.completionVerified
             ? cognitiveReview.recorded
               ? 'Thanks — I recorded that it worked and linked the verified outcome to the exact reasoning route.'
               : 'Thanks — I recorded that it worked.'
             : cognitiveReview.recorded
               ? 'Thanks — I linked that helpful outcome to the exact reasoning route so repeated success can improve future choices.'
-              : 'Thanks — I recorded that as helpful.',
+              : 'Thanks — I recorded that as helpful.';
+        await channel.sendMessage(
+          chatJid,
+          `${acknowledgement}\n${progressText}`,
           buildOperatorSendOptions(msg),
         );
       }
@@ -11806,6 +11879,7 @@ async function main(): Promise<void> {
     };
 
     if (action.operation === 'capture') {
+      const memoryJudgmentRecorded = recordLinkedMemoryJudgment();
       if (shouldCancelPendingContinuationForFeedback(existing)) {
         clearPendingGoogleCalendarCreateState(chatJid);
         clearGoogleCalendarSchedulingContext(chatJid);
@@ -11878,12 +11952,18 @@ async function main(): Promise<void> {
         now: feedbackNow,
       });
       if (acknowledge) {
+        const progressText = formatReviewedOutcomeProgress(
+          buildReviewedOutcomeProgress({
+            groupFolder: captured.groupFolder,
+            now: feedbackNow,
+          }),
+        );
         await channel.sendMessage(
           chatJid,
-          buildResponseFeedbackCaptureReply(
+          `${memoryJudgmentRecorded ? 'I recorded that the retrieved memory was incorrect.\n\n' : ''}${buildResponseFeedbackCaptureReply(
             captured,
             captured.operatorNote || 'I saved the issue for review.',
-          ),
+          )}\n\n${progressText}`,
           buildOperatorSendOptions(msg, {
             inlineActionRows: buildResponseFeedbackActionRows(captured),
           }),
@@ -16791,6 +16871,7 @@ async function main(): Promise<void> {
         if (naturalVerdict.state === 'ready') {
           handleResponseFeedbackAction(chatJid, msg, naturalVerdict.action, {
             completionVerified: naturalVerdict.completionVerified,
+            memoryCorrectness: naturalVerdict.memoryCorrectness,
             reviewSource: 'natural_language',
           }).catch((err) =>
             logger.error(

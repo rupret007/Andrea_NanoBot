@@ -229,11 +229,13 @@ describe('message actions', () => {
         (signal) => signal.signalKind === 'user_acceptance',
       ),
     ).toHaveLength(1);
-    expect(
-      listAssistantMetricEvents({ groupFolder: 'main' }).filter(
-        (event) => event.kind === 'recommendation_accepted',
-      ),
-    ).toHaveLength(1);
+    const ownerReviewEvents = listAssistantMetricEvents({
+      groupFolder: 'main',
+    }).filter((event) => event.kind === 'recommendation_accepted');
+    expect(ownerReviewEvents).toHaveLength(1);
+    expect(ownerReviewEvents[0]?.metadataJson).toContain(
+      '"metricClass":"owner_review"',
+    );
     expect(
       JSON.parse(
         getMessageAction(action.messageActionId)?.linkedRefsJson || '{}',

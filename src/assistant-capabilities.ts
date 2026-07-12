@@ -3255,6 +3255,9 @@ async function runCommunicationIdentityReviewCapability(
     handled: true,
     capabilityId: descriptor.id,
     replyText: response.replyText,
+    sendOptions: response.inlineActionRows?.length
+      ? { inlineActionRows: response.inlineActionRows }
+      : undefined,
     outputShape: descriptor.preferredOutputShape[context.channel],
     trace: buildCapabilityTrace(
       descriptor,

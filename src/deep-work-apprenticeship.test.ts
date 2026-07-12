@@ -181,8 +181,18 @@ describe('deep-work apprenticeship', () => {
     });
     expect(listAssistantMetricEvents({ groupFolder: 'main' })).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ kind: 'latency_sample', value: 1250 }),
+        expect.objectContaining({
+          kind: 'latency_sample',
+          value: 1250,
+          metadataJson: expect.stringContaining(
+            '"latencyClass":"deep_work_route"',
+          ),
+        }),
         expect.objectContaining({ kind: 'live_eval_cost', value: 0.02 }),
+        expect.objectContaining({
+          kind: 'recommendation_accepted',
+          metadataJson: expect.stringContaining('"metricClass":"owner_review"'),
+        }),
       ]),
     );
   });

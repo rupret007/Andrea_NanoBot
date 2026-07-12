@@ -138,6 +138,74 @@ describe('cognitive kernel', () => {
     expect(trace.replayPacket.executionSteps.length).toBeGreaterThan(0);
   });
 
+  it('keeps local-only work available when provider configuration has not been live-probed', () => {
+    const kernel = beginCognitiveKernelRun({
+      turnId: 'cog-provider-health-unknown',
+      channel: 'telegram',
+      taskFamily: 'assistant',
+      goal: 'Give me one grounded next step.',
+      requestRoute: 'direct_assistant',
+      selectedSkillId: 'assistant.daily_guidance',
+      selectedSkillPurpose: 'Offer one grounded next step.',
+      selectedSkillApprovalNeed: 'none',
+      selectedSkillSideEffectRisk: 'none',
+      selectedSkillEvidenceLevel: 'strong',
+      providerHealthSnapshots: [
+        {
+          providerId: 'openai',
+          kind: 'llm',
+          state: 'unknown',
+          lastHealthyAt: null,
+          lastCheckedAt: '2026-07-12T01:00:00.000Z',
+          failureClass: 'none',
+          quotaState: 'unknown',
+          credentialState: 'configured',
+          knownExpiresAt: null,
+          rotationDueAt: null,
+          blocker: '',
+          nextAction: 'Run an explicit live probe before model routing.',
+          metadata: {
+            healthEvidence: 'configuration_only',
+            liveProbe: 'not_run',
+          },
+        },
+      ],
+    });
+
+    expect(
+      kernel.toolResults.find((result) => result.toolId === 'provider_health'),
+    ).toMatchObject({
+      status: 'degraded',
+      failureClass: 'no_live_health_evidence',
+    });
+    expect(kernel.trajectoryScore.status).not.toBe('fail');
+    expect(kernel.run.status).not.toBe('blocked');
+  });
+
+  it('blocks provider-health evidence only when snapshot collection is unavailable', () => {
+    const kernel = beginCognitiveKernelRun({
+      turnId: 'cog-provider-health-unavailable',
+      channel: 'telegram',
+      taskFamily: 'assistant',
+      goal: 'Give me one grounded next step.',
+      requestRoute: 'direct_assistant',
+      selectedSkillId: 'assistant.daily_guidance',
+      selectedSkillPurpose: 'Offer one grounded next step.',
+      selectedSkillApprovalNeed: 'none',
+      selectedSkillSideEffectRisk: 'none',
+      selectedSkillEvidenceLevel: 'strong',
+      providerHealthSnapshots: [],
+    });
+
+    expect(
+      kernel.toolResults.find((result) => result.toolId === 'provider_health'),
+    ).toMatchObject({
+      status: 'blocked',
+      failureClass: 'provider_probe_unavailable',
+    });
+    expect(kernel.run.status).not.toBe('answered');
+  });
+
   it('forces ultrathink into council-verified mode without storing raw private content', () => {
     const kernel = beginCognitiveKernelRun({
       turnId: 'cog-ultra',

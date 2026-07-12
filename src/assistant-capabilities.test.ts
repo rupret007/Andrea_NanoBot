@@ -21,6 +21,7 @@ import {
   _initTestDatabase,
   upsertCommunicationThread,
   upsertDelegationRule,
+  upsertProfileSubject,
 } from './db.js';
 import { planSimpleReminder } from './local-reminder.js';
 import { cacheInboundMediaBytes } from './media-cache.js';
@@ -219,6 +220,37 @@ describe('assistant capabilities', () => {
     expect(
       getAssistantCapability('media.image_generate')?.availabilityNote,
     ).toContain('Telegram image generation is wired');
+  });
+
+  it('carries private identity-review controls through the Telegram capability result', async () => {
+    upsertProfileSubject({
+      id: 'person-candace',
+      groupFolder: 'main',
+      kind: 'person',
+      canonicalName: 'candace',
+      displayName: 'Candace',
+      createdAt: '2026-07-12T03:00:00.000Z',
+      updatedAt: '2026-07-12T03:00:00.000Z',
+      disabledAt: null,
+    });
+    seedCommunicationThread({
+      id: 'communication:opaque-owner-review',
+      title: '+1 (469) 555-0199',
+      channelChatJid: 'bb:iMessage;-;+14695550199',
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.manage_identity_links',
+      context: { channel: 'telegram', groupFolder: 'main' },
+      input: { canonicalText: 'review communication identities' },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.sendOptions?.inlineActionRows?.flat()).toEqual([
+      expect.objectContaining({ label: 'Link Candace' }),
+      expect.objectContaining({ label: 'Leave unlinked' }),
+    ]);
+    expect(JSON.stringify(result.sendOptions)).not.toContain('+1 (469)');
   });
 
   it('analyzes only media attached to the current turn', async () => {

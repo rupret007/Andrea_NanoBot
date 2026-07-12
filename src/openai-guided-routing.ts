@@ -31,6 +31,12 @@ function mapCapabilityDecisionToRouteFamily(
   return 'help';
 }
 
+export interface CompanionBackendRoutingResult {
+  decision: CompanionRouteDecision | null;
+  source: 'openai_router' | 'deterministic_fallback';
+  fallbackReason?: string | null;
+}
+
 export async function routeCompanionTurnWithOpenAiBackend(input: {
   channel: 'telegram' | 'bluebubbles';
   text: string;
@@ -40,11 +46,7 @@ export async function routeCompanionTurnWithOpenAiBackend(input: {
   priorPersonName?: string | null;
   priorThreadTitle?: string | null;
   priorLastAnswerSummary?: string | null;
-}): Promise<{
-  decision: CompanionRouteDecision | null;
-  source: 'openai_router' | 'deterministic_fallback';
-  fallbackReason?: string | null;
-}> {
+}): Promise<CompanionBackendRoutingResult> {
   try {
     const decision = await routeAndreaOpenAiCompanionPrompt(input);
     return {
@@ -73,6 +75,7 @@ export async function interpretBlueBubblesDirectTurnWithBackend(input: {
   priorPersonName?: string;
   priorThreadTitle?: string;
   priorLastAnswerSummary?: string;
+  routingResult?: CompanionBackendRoutingResult | null;
 }): Promise<MessagesDirectTurnEnvelope> {
   const normalizedText = normalizeText(input.text);
   if (!normalizedText) {
@@ -86,16 +89,23 @@ export async function interpretBlueBubblesDirectTurnWithBackend(input: {
     };
   }
 
-  const routed = await routeCompanionTurnWithOpenAiBackend({
-    channel: 'bluebubbles',
-    text: normalizedText,
-    requestRoute: 'direct_assistant',
-    conversationSummary: input.conversationSummary || null,
-    replyText: input.replyText || null,
-    priorPersonName: input.priorPersonName || null,
-    priorThreadTitle: input.priorThreadTitle || null,
-    priorLastAnswerSummary: input.priorLastAnswerSummary || null,
-  });
+  const routed =
+    input.routingResult === undefined
+      ? await routeCompanionTurnWithOpenAiBackend({
+          channel: 'bluebubbles',
+          text: normalizedText,
+          requestRoute: 'direct_assistant',
+          conversationSummary: input.conversationSummary || null,
+          replyText: input.replyText || null,
+          priorPersonName: input.priorPersonName || null,
+          priorThreadTitle: input.priorThreadTitle || null,
+          priorLastAnswerSummary: input.priorLastAnswerSummary || null,
+        })
+      : input.routingResult || {
+          decision: null,
+          source: 'deterministic_fallback',
+          fallbackReason: 'The shared routing attempt was unavailable.',
+        };
 
   if (!routed.decision) {
     return {

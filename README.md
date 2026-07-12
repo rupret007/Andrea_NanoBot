@@ -109,6 +109,8 @@ Current host truth from the local operator commands:
 - `degraded_but_usable`: host process/watchdog are live, but critical disk pressure currently limits persistence safety. Andrea reports exact capacity and safe owner guidance without deleting Docker or user data.
 - `manual_action_required`: Alexa proof remains a real device or authenticated simulator step because it needs a fresh signed handled `IntentRequest`.
 - `near_live_only`: some flagship journey proofs can still age out independently of core integration health; refresh them with `npm run debug:pilot` before demos.
+- Integration status keeps configuration, transport health, and proof freshness separate. For example, an overdue Telegram `/ping` may be `near_live_only` while the configured long-polling transport remains healthy; the stale success timestamp is proof debt, not a transport failure.
+- Model-provider configuration is not promoted to live health. Config-only model inventory remains `unknown` until a real probe or capped evaluation observes the provider; failed observations remain degraded or blocked instead of being hidden by configured credentials.
 - `externally_blocked`: work cockpit execution can be blocked when the Andrea OpenAI backend lane is intentionally disabled; report that separately from host health.
 - `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on the same proof/config blocker story
 - `npm run debug:pilot` is the proof-freshness and dogfooding surface for flagship journeys, degraded-but-usable fallback, and exact next steps
@@ -129,6 +131,11 @@ Andrea now has a bounded pilot and dogfooding loop on this host:
   - `mark this flow as awkward`
 - in the registered main Telegram control chat, substantive Andrea replies show `Helpful` and `Not helpful`
   - tapping either records one idempotent owner-reviewed outcome; `Not helpful` also saves a private `downvoted_response` pilot issue
+  - each accepted/rejected acknowledgement shows truthful progress toward the five-outcome baseline gate; reaching five makes the baseline reviewable but never saves it automatically
+  - responsiveness metrics stop at actual live reply delivery and exclude replay drills, provider evaluations, deep-work routing, and post-send reflection
+  - memory, citation, and tool-reliability metrics count only provenance-tagged real assistant interactions; live evaluations and unclassified legacy telemetry remain auditable but cannot inflate production evidence
+  - the five-outcome baseline gate counts only explicit owner-review events, and several actions accepted or rejected in one bundle remain one reviewed decision
+  - personal-context queries fail closed for content-free prompts and combine lexical matches with an offline concept fallback; empty lookups do not count as citation failures, and `that memory was correct/incorrect` records a packet-linked correctness judgment
   - a fresh standalone `that worked`, `that was helpful`, `that didn't work`, or `not helpful` can review the immediately preceding response without a button
   - questions, vague sentiment, stale replies, and mixed feedback/action text such as `that worked, send it` never count as a verdict or approval
   - Andrea can then prepare one queued self-fix job, preferring Codex local, then Codex cloud, then Cursor Cloud
@@ -335,7 +342,7 @@ BlueBubbles is now Andrea's optional bounded Messages bridge, not a core require
 - BlueBubbles keeps companion-safe capabilities like daily guidance, communication help, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
 - in the configured self-thread, native Like/Love/Dislike tapbacks provide privacy-safe accepted/rejected outcome signals; ambiguous reactions and removals never train Andrea
 - the same narrow natural verdict phrases work in the configured self-thread; they retain route/run provenance only and never expand Messages authority
-- `review communication identities` starts a private, explicit identity-link review in the registered main Telegram chat or configured Messages self-thread; exact profile-name matches may be proposed, while phone numbers, raw identifiers, generic language, and message bodies are never used to guess a person
+- `review communication identities` starts a private, explicit identity-link review in the registered main Telegram chat or configured Messages self-thread; Telegram presents one unresolved conversation at a time with bounded Link/Leave Unlinked controls, while both channels use stable opaque review keys instead of requiring raw phone/JID labels and may propose only unique exact-name matches—never message-body, identifier, generic-self, collective-category, or similarity inference
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 

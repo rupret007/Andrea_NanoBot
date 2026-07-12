@@ -14,6 +14,7 @@ import type { ProviderHealthSnapshot } from './provider-health.js';
 function health(
   providerId: string,
   state: ProviderHealthSnapshot['state'] = 'healthy',
+  evidence: 'injected' | 'configuration_only' = 'injected',
 ): ProviderHealthSnapshot {
   return {
     providerId,
@@ -28,7 +29,10 @@ function health(
     rotationDueAt: null,
     blocker: '',
     nextAction: '',
-    metadata: {},
+    metadata:
+      evidence === 'configuration_only'
+        ? { healthEvidence: 'configuration_only', liveProbe: 'not_run' }
+        : {},
   };
 }
 
@@ -141,6 +145,26 @@ describe('runtime model self-knowledge', () => {
         (provider) => provider.providerId === 'gemini_cloud',
       ),
     ).toBe(false);
+  });
+
+  it('labels configured-only health as unverified instead of claiming a live provider', () => {
+    const inventory = buildRuntimeModelInventory({
+      statuses: configuredStatuses(),
+      health: [
+        health('openai_cloud', 'healthy', 'configuration_only'),
+        health('anthropic_cloud', 'healthy', 'configuration_only'),
+        health('gemini_cloud', 'healthy', 'configuration_only'),
+        health('minimax_cloud', 'healthy', 'configuration_only'),
+      ],
+      defaultModel: 'minimax-test-deep',
+    });
+
+    expect(
+      inventory.providers.every((provider) => provider.state === 'unknown'),
+    ).toBe(true);
+    expect(formatRuntimeModelInventoryReply(inventory)).toContain(
+      'configured; live health not recently checked',
+    );
   });
 
   it('answers the Chinese-provider question directly', () => {

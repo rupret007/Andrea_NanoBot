@@ -255,6 +255,43 @@ describe('telegram roundtrip health', () => {
     expect(assessment.due).toBe(false);
   });
 
+  it('describes an overdue success as stale proof instead of repeating a success sentence', () => {
+    const hostState = seedRunningHost('2026-04-04T12:00:00.000Z');
+    const readyState = writeAssistantReadyState('1.2.42');
+    const assistantHealthState = writeAssistantHealthState({
+      appVersion: '1.2.42',
+      channelHealth: [
+        {
+          name: 'telegram',
+          configured: true,
+          state: 'ready',
+          updatedAt: '2026-04-04T12:10:00.000Z',
+          lastReadyAt: '2026-04-04T12:10:00.000Z',
+          detail: 'Telegram polling connected.',
+        },
+      ],
+    });
+    const roundtrip = recordTelegramProbeSuccess({
+      source: 'live_smoke',
+      target: 'tg:123',
+      observedAt: '2026-04-04T12:10:00.000Z',
+    });
+
+    const assessment = assessTelegramRoundtripState({
+      assistantHealthState,
+      telegramRoundtripState: roundtrip,
+      hostState,
+      readyState,
+      now: new Date('2026-04-04T15:00:00.000Z'),
+    });
+
+    expect(assessment.status).toBe('degraded');
+    expect(assessment.due).toBe(true);
+    expect(assessment.detail).toContain('live proof is overdue');
+    expect(assessment.detail).toContain('2026-04-04T12:10:00.000Z');
+    expect(assessment.detail).not.toBe(roundtrip.detail);
+  });
+
   it('degrades a healthy user-session probe when the local bot token is blocked', () => {
     const hostState = seedRunningHost('2026-04-04T12:00:00.000Z');
     const readyState = writeAssistantReadyState('1.2.42');

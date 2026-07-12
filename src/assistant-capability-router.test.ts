@@ -233,6 +233,11 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'communication.manage_identity_links',
     });
+    expect(
+      matchAssistantCapabilityRequest('link identity R-12AB34CD to "Candace"'),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_identity_links',
+    });
     expect(matchAssistantCapabilityRequest('More blunt')).toMatchObject({
       capabilityId: 'communication.draft_reply',
     });

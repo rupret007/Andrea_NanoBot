@@ -280,6 +280,38 @@
       and never uses message bodies, phone numbers, raw identifiers, or generic
       language. Replacing an assistant-inferred link removes its stale derived
       context, while clearing a review removes only the link that review owns.
+- [x] Make unresolved identity review usable without returning or retyping raw
+      identifiers. Stable opaque review keys support confirm, dismiss, and
+      clear operations; the private view lists eligible individual profile
+      people while excluding generic-self labels, phone-shaped subjects, and
+      collective categories incorrectly typed as people. This remains an
+      explicit owner-choice workflow, not fuzzy identity inference.
+- [x] Add bounded one-at-a-time Telegram controls to the same identity-review
+      path. Link, leave-unlinked, and group choices are opaque-key commands fed
+      through the existing parser; each completed choice advances to the next
+      unresolved item. Ambiguous duplicate profile names are withheld rather
+      than presenting a button the resolver must refuse. Messages remains
+      text-only and gains no new authority.
+- [x] Make genuine learning progress visible in ordinary use. Helpful/not-helpful
+      acknowledgements and conversational learning status now report the
+      deduplicated owner-reviewed-outcome count, remaining five-sample gate,
+      and saved-baseline state. Telemetry cannot advance the count, and reaching
+      five never auto-saves or promotes a baseline.
+- [x] Correct personal-assistant latency semantics. The comparable UX metric now
+      stops when a live reply is delivered and excludes provider evaluation,
+      deep-work routing, replay/synthetic drills, and post-delivery reflection.
+      BlueBubbles also reuses the shared backend-routing result rather than
+      making the same route request twice on the fluid fallback path. Local
+      message-action and feedback state is persisted immediately after delivery,
+      before slower reflection is scheduled, so quick owner follow-ups cannot
+      race missing state or wait behind verification. The tracked task preserves
+      concurrent owner changes, records duration and pending/completed/failed
+      state, links evidence afterward, and stores only a redacted error class.
+      Graceful shutdown drains these tasks for up to five seconds, and startup
+      reconciles only pending records owned by a prior process generation as
+      interrupted; it never fabricates or replays missing private turn context.
+      Pending/completed/failed counts are visible in the assistant-intelligence
+      report instead of requiring a direct database query.
 - [x] Add deterministic host disk/inode pressure sensing with explicit healthy,
       warning, critical, and unknown states. Process/watchdog readiness no
       longer hides a capacity condition that can break SQLite, health markers,
@@ -327,6 +359,160 @@ The 12-case redacted live comparison
 completed across OpenAI, Anthropic, and Gemini with a conservative estimated
 cost of $0.30416; structural passes are explicitly not owner-verified outcomes
 and do not satisfy the five-outcome baseline gate.
+
+Latest guided identity-review validation (2026-07-12): the private review now
+uses stable opaque references, suppresses raw identifier-shaped labels, lists
+only eligible individual profile people, and supports reversible confirm,
+dismiss, and clear operations without fuzzy inference. Focused identity and
+readiness coverage passes 24/24 tests, and the expanded identity, routing, and
+capability slice passes 91/91. The full primary gate passes 198 files and 2,199
+tests plus formatting, typecheck, lint, and the production build. AGI
+typecheck and all 279 AGI tests pass, and the deterministic scorecard remains
+99.1% A+ with zero merge-blocking regressions and $0 cost. A read-only preview
+against production metadata exposed no raw phone/JID labels and performed no
+production writes. This increment is validated but remains unreleased until a
+future explicitly authorized commit, push, rebuild, and restart.
+
+Latest learning-evidence UX validation (2026-07-12): 42 focused metric and
+feedback tests prove deduplication, telemetry exclusion, honest remaining-count
+reporting, ready-but-unsaved behavior, and saved-baseline reporting. The live
+metadata-only ledger still truthfully reports 56 metric samples, zero genuine
+owner-reviewed outcomes, no baseline, and $0.3042 cumulative live-evaluation
+cost. No historical outcome was inferred or backfilled.
+
+Latest responsiveness validation (2026-07-12): production ledger analysis
+showed that the prior 15.8-second aggregate mixed twelve live-evaluation samples
+with two BlueBubbles turns; the largest apparent 126-second user sample closed
+at post-delivery reflection rather than reply delivery, and the other long turn
+was an explicit replay drill. Twenty-eight focused routing/metrics tests and 49
+focused feedback/BlueBubbles/latency tests pass. The corrected report now says
+there are no comparable post-delivery-boundary samples yet instead of claiming
+zero or conflating unlike work; the next deployed live turn will establish the
+first honest delivery measurement.
+
+Post-delivery scheduling validation (2026-07-12): 55 focused tests prove that
+reflection yields before starting, completes and links evidence, preserves a
+concurrent accepted owner review, records redacted failure state without
+rejecting the detached task, and remains non-rejecting when storage closes
+during shutdown, drains current tasks within the graceful bound, and reconciles
+only prior-process pending work on startup. The exact final primary gate passes
+198 files and 2,199 tests
+plus build, format, typecheck, and lint.
+
+Latest metric-provenance correction (2026-07-12): tool reliability from the
+12-case provider comparison and unclassified legacy memory/citation events no
+longer inflate real-assistant evidence. New production events explicitly use
+`assistant_interaction` or `live_evaluation`; absent comparable evidence is
+reported as absent rather than as 100%, and does not create a false baseline
+regression. Historical telemetry remains intact and auditable. Validation
+passes: 28 focused tests, all 2,201 primary tests across 198 files, the
+production build, AGI typecheck, all 279 AGI tests, all 90 deterministic
+commands including the three-round stability gate, signature flows,
+documentation checks, dependency audit, formatting, typecheck, lint, and diff
+checks. The deterministic scorecard remains 99.1% A+ with no merge-blocking
+regressions and $0 cost. The production metadata-only report now correctly says
+there are no comparable assistant-interaction samples instead of presenting
+evaluation-only tool data or unclassified legacy retrieval data as 100%.
+
+Latest owner-review integrity correction (2026-07-12): recommendation,
+completion, correction, override, and baseline metrics now require explicit
+`owner_review` provenance. Feedback, message-action, deep-work, and action-bundle
+decision producers carry that contract end to end. All actions decided in one
+bundle share one outcome identity, preventing one multi-action interaction from
+satisfying several of the five genuine-review samples. Evaluation, internal,
+routine-canary, and legacy unclassified telemetry remains auditable but cannot
+advance the gate or distort owner rates. Seventy-one focused tests cover the
+producer contracts, fail-closed aggregation, bundle deduplication, and baseline
+refusal. The combined tree passes all 2,202 primary tests across 198 files, the
+production build, AGI typecheck, all 279 AGI tests, all 90 deterministic
+commands including the three-round stability gate, documentation checks,
+formatting, typecheck, lint, and diff checks. The deterministic scorecard
+remains 99.1% A+ with no merge-blocking regressions and $0 cost, and the live
+metadata-only report remains truthfully at zero genuine owner-reviewed
+outcomes.
+
+Latest personal-context relevance and memory-measurement correction
+(2026-07-12): query packets now exclude items with zero lexical and semantic
+relevance instead of allowing confidence/freshness alone to inject unrelated
+personal facts. Local lexical fallback ignores common stopwords, conflicts are
+included only when a conflicting item is actually relevant, and every retrieval
+event carries its opaque packet ID and result count. Empty results no longer
+count as citation failures. Intentionally broad daily-guidance queries retain a
+bounded cross-source view. Memory precision now requires an explicit
+packet-linked `that memory was correct/incorrect` judgment; unreviewed retrievals
+remain unknown, and changing the verdict updates one stable sample. Focused
+tests cover irrelevant queries, empty results, citations, packet links,
+unreviewed precision, correct/incorrect replacement, and conservative natural
+feedback parsing. The first full gate caught that the strict relevance filter
+also removed the intentionally broad context used by daily guidance. That
+regression is corrected with an explicit bounded broad-guidance classification,
+and the production intelligence harness is back to 10/10. The final focused
+slice passes 55/55 tests. The complete primary gate passes 198 files and 2,206
+tests plus formatting, typecheck, lint with no errors, and the production build.
+AGI typecheck and all 279 AGI tests pass; all 90 deterministic commands pass,
+including the 222.8-second three-round stability/network-denial gate. The
+deterministic scorecard remains 99.1% A+ with no merge-blocking regressions and
+$0 cost. Documentation checks, signature workflows, the production dependency
+audit, secret-pattern review, formatting, and diff hygiene are green. The live
+metadata-only report remains intentionally unpromoted: 56 telemetry events,
+zero genuine owner-reviewed outcomes, no saved baseline, and no comparable
+memory, citation, tool, or delivery sample. This combined working tree remains
+uncommitted and unreleased pending explicit release authorization.
+
+Latest fail-closed context-ranking correction (2026-07-12): content-free
+topical prompts such as `who are you?` no longer receive a default positive
+lexical score or inject unrelated personal context. Production retrieval now
+combines exact lexical matches with a bounded deterministic local concept
+fallback for assistant domains such as agenda/calendar, texts/messages,
+goals/priorities, and reminders/tasks; an injected semantic scorer can add
+coverage but is not required and cannot reduce the local match. Explicit broad
+daily-guidance and personal-memory review requests remain bounded and cited.
+Retrieval metrics record the ranking mode without raw query text. Focused
+context, metric, feedback, and intelligence coverage passes 58/58 tests. The
+complete primary gate passes all 2,209 tests across 198 files plus formatting,
+typecheck, lint with no errors, and the production build. The intelligence
+harness remains 10/10; AGI typecheck and all 279 AGI tests pass; and all 90
+deterministic commands pass, including the 165.9-second three-round
+stability/network-denial gate. The deterministic scorecard remains 99.1% A+
+with no merge-blocking regressions and $0 cost. No provider call, new memory
+store, consent expansion, raw-message archive, or authority expansion was
+introduced.
+
+Latest integration and model-health truth correction (2026-07-12): Telegram
+configuration, transport state, and live-proof freshness are now independent
+signals. An overdue roundtrip no longer relabels a ready long-polling transport
+as degraded or copies an old success sentence into `lastFailure`; the operator
+report retains the exact last-success timestamp and requests only a proof
+refresh. Provider snapshots now distinguish `configuration_only` from
+`live_probe` evidence. Configured credentials remain unknown in model inventory
+and the capability registry until a real observation occurs, while unavailable
+local models fail closed as blocked. The capped live routing evaluator derives
+its final registry from the calls already inside the budget and marks any
+provider with an observed failure degraded; it makes no extra unbudgeted health
+requests. Eighty-four focused Telegram, field-trial, integration, provider,
+model-registry, and self-knowledge tests pass. A final truth audit corrected the
+provider snapshot root as well: configuration-only providers now report
+`unknown` with no fabricated `lastHealthyAt`, and do not emit false outage
+alerts. The provider-health lookup itself succeeds with degraded evidence when
+it accurately reads unknown snapshots, so local-only assistant work remains
+available; only a missing snapshot collection blocks the lookup, while
+model-dependent routes still require live evidence. Focused tests cover both
+contracts and the five-outcome promotion path. The final complete primary suite
+and production build pass with 2,217 tests across 198 files; formatting,
+typecheck, and lint have no errors. The intelligence harness remains 10/10, all
+279 AGI tests pass, all 90 deterministic commands pass including the
+197.5-second three-round stability/network-denial gate, and the deterministic
+scorecard remains 99.1% A+ with no merge-blocking regressions and $0 cost.
+Documentation checks pass for 57 files, signature flows pass, the full audit
+reports zero vulnerabilities across 443 dependencies, and diff hygiene is
+clean. The production readiness view is now an intentionally more honest 87%
+rather than crediting configured providers as live: daily usefulness 89%,
+memory 100%, context graph 76%, text reply intelligence 66%, follow-through
+85%, tool/proof honesty 89%, council quality 73%, autonomy safety 100%, privacy
+100%, and stability 100%. A source-level operator check reports Telegram as
+configured, transport healthy, proof `near_live_only`, and last success
+`2026-07-12T04:15:38.773Z`; refreshing that proof remains external live proof
+debt rather than a repository defect.
 
 Latest intelligence-loop validation (2026-07-11): the reviewed-outcome
 promotion gate, legacy trust classification, downstream playbook suppression,

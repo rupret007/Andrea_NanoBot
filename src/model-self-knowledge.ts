@@ -57,7 +57,15 @@ function statusState(
 ): ProviderHealthSnapshot['state'] {
   if (!configured) return 'not_configured';
   const observed = health.find((item) => item.providerId === providerId);
-  if (observed) return observed.state;
+  if (observed) {
+    if (
+      observed.state === 'healthy' &&
+      observed.metadata.healthEvidence === 'configuration_only'
+    ) {
+      return 'unknown';
+    }
+    return observed.state;
+  }
   return 'unknown';
 }
 
@@ -167,7 +175,12 @@ export function buildRuntimeModelInventory(
 }
 
 function formatProvider(provider: RuntimeModelProviderSummary): string {
-  const health = provider.state === 'healthy' ? '' : ` (${provider.state})`;
+  const health =
+    provider.state === 'healthy'
+      ? ''
+      : provider.state === 'unknown'
+        ? ' (configured; live health not recently checked)'
+        : ` (${provider.state})`;
   return `${provider.label}${health}: ${provider.models.join(', ')}`;
 }
 

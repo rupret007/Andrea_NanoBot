@@ -137,6 +137,20 @@ describe('response feedback helpers', () => {
       action: 'capture',
       completionVerified: false,
     });
+    expect(
+      parseNaturalResponseFeedbackVerdict('That memory was correct.'),
+    ).toEqual({
+      action: 'accept',
+      completionVerified: false,
+      memoryCorrectness: true,
+    });
+    expect(
+      parseNaturalResponseFeedbackVerdict('You remembered that incorrectly.'),
+    ).toEqual({
+      action: 'capture',
+      completionVerified: false,
+      memoryCorrectness: false,
+    });
   });
 
   it('refuses ambiguous questions, sentiment, mixed feedback, and action language', () => {
@@ -176,6 +190,28 @@ describe('response feedback helpers', () => {
       action: {
         feedbackId: '33333333-2222-3333-4444-555555555555',
         operation: 'accept',
+      },
+    });
+  });
+
+  it('carries a memory-specific judgment only onto the latest response', () => {
+    const record = buildRecord({
+      feedbackId: '44444444-2222-3333-4444-555555555555',
+      createdAt: '2026-05-02T04:10:00.000Z',
+      updatedAt: '2026-05-02T04:10:00.000Z',
+    });
+    expect(
+      resolveNaturalResponseFeedbackVerdict(
+        'that memory was inaccurate',
+        [record],
+        { now: new Date('2026-05-02T04:12:00.000Z') },
+      ),
+    ).toMatchObject({
+      state: 'ready',
+      memoryCorrectness: false,
+      action: {
+        feedbackId: '44444444-2222-3333-4444-555555555555',
+        operation: 'capture',
       },
     });
   });

@@ -224,9 +224,16 @@ conversation—not feedback and never send approval.
 The configured BlueBubbles self-thread can run the same explicit relationship
 grounding review as Telegram with `review communication identities`. Andrea may
 propose a person only when the safe chat label exactly matches one existing
-profile person. Confirm with `confirm identity "Chat label" is "Person"`, mark a
-single-person link not applicable with `dismiss identity "Chat label"`, or
-reverse a decision with `clear identity review "Chat label"`.
+eligible individual profile person. The private review returns a stable opaque
+key such as `R-12AB34CD`; use `link identity R-12AB34CD to "Person"`, mark a
+single-person link not applicable with `dismiss identity R-12AB34CD`, or
+reverse a decision with `clear identity review R-12AB34CD`. Phone/JID-shaped
+labels are rendered as unlabeled conversations, and generic-self or collective
+category records are not offered as people.
+
+Telegram adds one-at-a-time Link/Leave Unlinked buttons for this same workflow.
+Messages remains text-only so BlueBubbles does not gain a callback or control
+surface beyond the configured self-thread and the existing command parser.
 
 This surface is denied in every other Messages chat so it cannot expose private
 profile names to another person or group. It uses chat metadata and existing

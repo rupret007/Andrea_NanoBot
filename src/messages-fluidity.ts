@@ -1,6 +1,9 @@
 import { isBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
 import { clipCouncilText } from './council-safety.js';
-import { interpretBlueBubblesDirectTurnWithBackend } from './openai-guided-routing.js';
+import {
+  interpretBlueBubblesDirectTurnWithBackend,
+  type CompanionBackendRoutingResult,
+} from './openai-guided-routing.js';
 import {
   describeOpenAiProviderFailure,
   resolveOpenAiProviderConfig,
@@ -204,6 +207,7 @@ export async function interpretBlueBubblesDirectTurn(input: {
   priorPersonName?: string;
   priorThreadTitle?: string;
   priorLastAnswerSummary?: string;
+  routingResult?: CompanionBackendRoutingResult | null;
   now?: Date;
 }): Promise<MessagesDirectTurnEnvelope> {
   return interpretBlueBubblesDirectTurnWithBackend(input);

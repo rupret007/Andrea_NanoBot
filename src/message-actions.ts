@@ -966,6 +966,7 @@ function recordMessageActionOwnerDecision(params: {
         ? 'recommendation_accepted'
         : 'recommendation_rejected',
     metadata: {
+      metricClass: 'owner_review',
       outcomeId: action.messageActionId,
       decisionKind: params.decisionKind,
       cognitiveRunId: linkedRefs.cognitiveRunId || '',
@@ -979,6 +980,7 @@ function recordMessageActionOwnerDecision(params: {
       groupFolder: action.groupFolder,
       kind: 'completion_verified',
       metadata: {
+        metricClass: 'owner_review',
         outcomeId: action.messageActionId,
         decisionKind: params.decisionKind,
         cognitiveRunId: linkedRefs.cognitiveRunId || '',

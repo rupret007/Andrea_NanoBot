@@ -18,7 +18,7 @@ import { getResponseFeedbackRouteRegressionCoverage } from './response-feedback-
 
 function ratio(numerator: number, denominator: number): number {
   if (denominator <= 0) return 0;
-  return Number((numerator / denominator).toFixed(3));
+  return Number(Math.max(0, Math.min(1, numerator / denominator)).toFixed(3));
 }
 
 function count(
@@ -28,6 +28,19 @@ function count(
   return events
     .filter((event) => event.kind === kind)
     .reduce((sum, event) => sum + event.value, 0);
+}
+
+function metricMetadata(
+  event: AssistantMetricEventRecord,
+): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(event.metadataJson) as unknown;
+    return parsed && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function reviewedOutcomeCount(events: AssistantMetricEventRecord[]): number {
@@ -87,8 +100,9 @@ export function recordReviewedRecommendationOutcome(params: {
 }): AssistantMetricEventRecord[] {
   const now = params.now || new Date();
   const metadata = {
-    outcomeId: params.feedbackId,
     ...(params.metadata || {}),
+    outcomeId: params.feedbackId,
+    metricClass: 'owner_review',
   };
   const events = [
     recordAssistantMetric({
@@ -127,6 +141,41 @@ export function recordReviewedRecommendationOutcome(params: {
   return events;
 }
 
+export function recordMemoryRetrievalJudgment(params: {
+  groupFolder: string;
+  packetId: string;
+  correct: boolean;
+  reviewSource: 'natural_language' | 'operator';
+  now?: Date;
+}): AssistantMetricEventRecord | undefined {
+  const packetId = params.packetId.trim();
+  if (!packetId) return undefined;
+  const matchingRetrieval = listAssistantMetricEvents({
+    groupFolder: params.groupFolder,
+    limit: 10_000,
+  }).find((event) => {
+    if (event.kind !== 'memory_retrieval') return false;
+    const metadata = metricMetadata(event);
+    return (
+      metadata.metricClass === 'assistant_interaction' &&
+      metadata.packetId === packetId
+    );
+  });
+  if (!matchingRetrieval) return undefined;
+  return recordAssistantMetric({
+    eventId: `memory:${packetId}:owner-judgment`,
+    groupFolder: params.groupFolder,
+    kind: 'memory_retrieval_reviewed',
+    value: params.correct ? 1 : 0,
+    metadata: {
+      metricClass: 'assistant_interaction',
+      packetId,
+      reviewSource: params.reviewSource,
+    },
+    now: params.now,
+  });
+}
+
 export function buildAssistantMetricSnapshot(params: {
   groupFolder: string;
   now?: Date;
@@ -140,18 +189,49 @@ export function buildAssistantMetricSnapshot(params: {
     groupFolder: params.groupFolder,
     since,
   });
-  const accepted = count(events, 'recommendation_accepted');
-  const rejected = count(events, 'recommendation_rejected');
-  const verified = count(events, 'completion_verified');
-  const corrections = count(events, 'correction');
-  const overrides = count(events, 'override');
-  const falseProactive = count(events, 'proactive_false_positive');
-  const memoryRetrievals = count(events, 'memory_retrieval');
-  const correctMemory = count(events, 'memory_retrieval_correct');
-  const citedRetrievals = count(events, 'retrieval_with_citation');
-  const toolAttempts = count(events, 'tool_attempt');
-  const toolSuccesses = count(events, 'tool_success');
-  const latency = events.filter((event) => event.kind === 'latency_sample');
+  const ownerReviewEvents = events.filter(
+    (event) => metricMetadata(event).metricClass === 'owner_review',
+  );
+  const accepted = count(ownerReviewEvents, 'recommendation_accepted');
+  const rejected = count(ownerReviewEvents, 'recommendation_rejected');
+  const verified = count(ownerReviewEvents, 'completion_verified');
+  const corrections = count(ownerReviewEvents, 'correction');
+  const overrides = count(ownerReviewEvents, 'override');
+  const falseProactive = count(ownerReviewEvents, 'proactive_false_positive');
+  const comparableInteractionEvents = events.filter(
+    (event) => metricMetadata(event).metricClass === 'assistant_interaction',
+  );
+  const memoryRetrievals = count(
+    comparableInteractionEvents,
+    'memory_retrieval',
+  );
+  const memoryJudgments = comparableInteractionEvents.filter(
+    (event) => event.kind === 'memory_retrieval_reviewed',
+  );
+  const correctMemory = memoryJudgments.reduce(
+    (sum, event) => sum + event.value,
+    0,
+  );
+  const citationEligibleRetrievals = comparableInteractionEvents.filter(
+    (event) =>
+      event.kind === 'memory_retrieval' &&
+      Number(metricMetadata(event).resultCount) > 0,
+  );
+  const citedRetrievals = count(
+    comparableInteractionEvents,
+    'retrieval_with_citation',
+  );
+  const toolAttempts = count(comparableInteractionEvents, 'tool_attempt');
+  const toolSuccesses = count(comparableInteractionEvents, 'tool_success');
+  const latency = events.filter((event) => {
+    if (event.kind !== 'latency_sample') return false;
+    const metadata = metricMetadata(event);
+    return (
+      metadata.latencyClass === 'interaction_delivery' &&
+      metadata.runOrigin !== 'replay' &&
+      metadata.runOrigin !== 'synthetic'
+    );
+  });
   return {
     snapshotId: randomUUID(),
     groupFolder: params.groupFolder,
@@ -160,9 +240,16 @@ export function buildAssistantMetricSnapshot(params: {
     verifiedCompletionRate: ratio(verified, accepted),
     correctionOverrideRate: ratio(corrections + overrides, accepted + rejected),
     falseProactiveSuggestionRate: ratio(falseProactive, accepted + rejected),
-    memoryPrecision: ratio(correctMemory, memoryRetrievals),
-    retrievalCitationCoverage: ratio(citedRetrievals, memoryRetrievals),
+    memoryPrecision: ratio(correctMemory, memoryJudgments.length),
+    memoryPrecisionSampleCount: memoryJudgments.length,
+    retrievalCitationCoverage: ratio(
+      citedRetrievals,
+      citationEligibleRetrievals.length,
+    ),
+    retrievalCitationSampleCount: citationEligibleRetrievals.length,
+    memoryRetrievalSampleCount: memoryRetrievals,
     toolReliability: ratio(toolSuccesses, toolAttempts),
+    toolReliabilitySampleCount: toolAttempts,
     averageLatencyMs:
       latency.length > 0
         ? Math.round(
@@ -170,9 +257,10 @@ export function buildAssistantMetricSnapshot(params: {
               latency.length,
           )
         : 0,
+    interactionLatencySampleCount: latency.length,
     liveEvalCostUsd: Number(count(events, 'live_eval_cost').toFixed(4)),
     sampleCount: events.length,
-    reviewedOutcomeCount: reviewedOutcomeCount(events),
+    reviewedOutcomeCount: reviewedOutcomeCount(ownerReviewEvents),
   };
 }
 
@@ -183,6 +271,53 @@ export function saveAssistantMetricBaseline(
 }
 
 export const MIN_REVIEWED_BASELINE_SAMPLES = 5;
+
+export interface ReviewedOutcomeProgress {
+  reviewedOutcomeCount: number;
+  requiredOutcomeCount: number;
+  remainingOutcomeCount: number;
+  baselineReady: boolean;
+  baselineSaved: boolean;
+}
+
+export function buildReviewedOutcomeProgress(params: {
+  groupFolder: string;
+  now?: Date;
+  minimumSamples?: number;
+}): ReviewedOutcomeProgress {
+  const requiredOutcomeCount = Math.max(
+    1,
+    params.minimumSamples || MIN_REVIEWED_BASELINE_SAMPLES,
+  );
+  const snapshot = buildAssistantMetricSnapshot({
+    groupFolder: params.groupFolder,
+    now: params.now,
+  });
+  return {
+    reviewedOutcomeCount: snapshot.reviewedOutcomeCount,
+    requiredOutcomeCount,
+    remainingOutcomeCount: Math.max(
+      0,
+      requiredOutcomeCount - snapshot.reviewedOutcomeCount,
+    ),
+    baselineReady: snapshot.reviewedOutcomeCount >= requiredOutcomeCount,
+    baselineSaved: Boolean(
+      getLatestAssistantMetricBaseline(params.groupFolder),
+    ),
+  };
+}
+
+export function formatReviewedOutcomeProgress(
+  progress: ReviewedOutcomeProgress,
+): string {
+  if (progress.baselineSaved) {
+    return `Learning evidence: ${progress.reviewedOutcomeCount} genuine owner-reviewed outcome${progress.reviewedOutcomeCount === 1 ? '' : 's'} in the current window; an operator-reviewed baseline is already saved.`;
+  }
+  if (progress.baselineReady) {
+    return `Learning evidence: ${progress.reviewedOutcomeCount}/${progress.requiredOutcomeCount} genuine owner-reviewed outcomes. The first baseline is ready for operator review, but I will not save it automatically.`;
+  }
+  return `Learning evidence: ${progress.reviewedOutcomeCount}/${progress.requiredOutcomeCount} genuine owner-reviewed outcomes; ${progress.remainingOutcomeCount} more needed before the first baseline can be reviewed.`;
+}
 
 export function saveReviewedAssistantMetricBaseline(
   snapshot: AssistantMetricSnapshot,
@@ -210,18 +345,31 @@ export function compareAssistantMetricsToBaseline(
     'toolReliability',
   ];
   for (const key of higherIsBetter) {
+    const hasComparableSamples =
+      key === 'memoryPrecision'
+        ? current.memoryPrecisionSampleCount > 0
+        : key === 'retrievalCitationCoverage'
+          ? current.retrievalCitationSampleCount > 0
+          : key === 'toolReliability'
+            ? current.toolReliabilitySampleCount > 0
+            : current.reviewedOutcomeCount > 0;
+    if (!hasComparableSamples) continue;
     if (Number(current[key]) + 0.02 < Number(baseline[key])) {
       regressions.push(
         `${key} regressed from ${baseline[key]} to ${current[key]}`,
       );
     }
   }
-  if (current.correctionOverrideRate > baseline.correctionOverrideRate + 0.02) {
+  if (
+    current.reviewedOutcomeCount > 0 &&
+    current.correctionOverrideRate > baseline.correctionOverrideRate + 0.02
+  ) {
     regressions.push('correctionOverrideRate increased');
   }
   if (
+    current.reviewedOutcomeCount > 0 &&
     current.falseProactiveSuggestionRate >
-    baseline.falseProactiveSuggestionRate + 0.02
+      baseline.falseProactiveSuggestionRate + 0.02
   ) {
     regressions.push('falseProactiveSuggestionRate increased');
   }

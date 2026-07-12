@@ -85,6 +85,7 @@ export function applyProviderLiveProbe(
       nextAction: '',
       metadata: {
         ...provider.metadata,
+        healthEvidence: 'live_probe',
         liveProbe: 'ok',
         liveModel: probe.liveModel || '',
         liveRequestId: probe.liveRequestId || '',
@@ -96,6 +97,7 @@ export function applyProviderLiveProbe(
       ...provider,
       metadata: {
         ...provider.metadata,
+        healthEvidence: 'configuration_only',
         liveProbe: 'not_run',
       },
     };
@@ -120,6 +122,7 @@ export function applyProviderLiveProbe(
     ),
     metadata: {
       ...provider.metadata,
+      healthEvidence: 'live_probe',
       liveProbe: 'failed',
       liveFailureClass: failureClass,
     },

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _closeDatabase,
   _initTestDatabase,
+  listAssistantMetricEvents,
   listPersonalMemoryFacts,
 } from './db.js';
 import {
@@ -12,6 +13,7 @@ import {
   setPersonalMemoryPolicy,
   stagePersonalMemoryFact,
 } from './personal-context-packet.js';
+import { buildAssistantMetricSnapshot } from './personal-assistant-metrics.js';
 import { buildCognitiveWorldSnapshot } from './cognitive-executive.js';
 
 describe('personal context packet', () => {
@@ -129,6 +131,25 @@ describe('personal context packet', () => {
       packet.citations.some((citation) => citation.startsWith('calendar:')),
     ).toBe(true);
     expect(packet.privacy.rawMessagesStored).toBe(false);
+    const retrievalMetrics = listAssistantMetricEvents({
+      groupFolder: 'main',
+    }).filter((event) =>
+      ['memory_retrieval', 'retrieval_with_citation'].includes(event.kind),
+    );
+    expect(retrievalMetrics).toHaveLength(2);
+    expect(
+      retrievalMetrics.every((event) => {
+        const metadata = JSON.parse(event.metadataJson) as Record<
+          string,
+          unknown
+        >;
+        return (
+          metadata.metricClass === 'assistant_interaction' &&
+          metadata.packetId === packet.packetId &&
+          Number(metadata.resultCount) > 0
+        );
+      }),
+    ).toBe(true);
     const world = buildCognitiveWorldSnapshot({
       groupFolder: 'main',
       personalContextPacket: packet,
@@ -162,5 +183,175 @@ describe('personal context packet', () => {
         decision: 'forget',
       }),
     ).toBe(true);
+  });
+
+  it('records an empty lookup without claiming an uncited result', async () => {
+    const packet = await buildPersonalContextPacket({
+      groupFolder: 'main',
+      query: 'a detail that is not stored',
+      now: new Date('2026-07-10T12:00:00.000Z'),
+    });
+    expect(packet.items).toHaveLength(0);
+    const events = listAssistantMetricEvents({ groupFolder: 'main' });
+    const retrieval = events.find((event) => event.kind === 'memory_retrieval');
+    expect(retrieval).toBeDefined();
+    expect(JSON.parse(retrieval?.metadataJson || '{}')).toMatchObject({
+      metricClass: 'assistant_interaction',
+      packetId: packet.packetId,
+      resultCount: 0,
+    });
+    expect(
+      events.some((event) => event.kind === 'retrieval_with_citation'),
+    ).toBe(false);
+    expect(buildAssistantMetricSnapshot({ groupFolder: 'main' })).toMatchObject(
+      {
+        memoryRetrievalSampleCount: 1,
+        retrievalCitationCoverage: 0,
+        retrievalCitationSampleCount: 0,
+      },
+    );
+  });
+
+  it('fails closed for stopword-only topical queries instead of injecting personal context', async () => {
+    const now = new Date('2026-07-10T12:00:00.000Z');
+    setPersonalMemoryPolicy({
+      groupFolder: 'main',
+      source: 'telegram',
+      enabled: true,
+      now,
+    });
+    const fact = stagePersonalMemoryFact({
+      groupFolder: 'main',
+      source: 'telegram',
+      sourceRef: 'message:private-context',
+      subjectKey: 'preference:quiet-time',
+      valueSummary: 'Prefers quiet time after dinner.',
+      confidence: 0.9,
+      observedAt: now,
+    });
+    reviewPersonalMemoryFact({
+      groupFolder: 'main',
+      factId: fact.factId,
+      decision: 'accept',
+      now,
+    });
+
+    const packet = await buildPersonalContextPacket({
+      groupFolder: 'main',
+      query: 'who are you?',
+      now,
+    });
+
+    expect(packet.items).toHaveLength(0);
+    expect(packet.citations).toHaveLength(0);
+    const retrieval = listAssistantMetricEvents({ groupFolder: 'main' }).find(
+      (event) => event.kind === 'memory_retrieval',
+    );
+    expect(JSON.parse(retrieval?.metadataJson || '{}')).toMatchObject({
+      packetId: packet.packetId,
+      resultCount: 0,
+      rankingMode: 'hybrid_lexical_and_local_concept',
+    });
+  });
+
+  it('uses deterministic local concepts for natural synonym retrieval without a provider call', async () => {
+    const now = new Date('2026-07-10T12:00:00.000Z');
+    setPersonalMemoryPolicy({
+      groupFolder: 'main',
+      source: 'calendar',
+      enabled: true,
+      now,
+    });
+    const fact = stagePersonalMemoryFact({
+      groupFolder: 'main',
+      source: 'calendar',
+      sourceRef: 'event:dentist',
+      subjectKey: 'appointment:dentist',
+      valueSummary: 'Dentist appointment at 3 PM.',
+      confidence: 0.9,
+      observedAt: now,
+    });
+    reviewPersonalMemoryFact({
+      groupFolder: 'main',
+      factId: fact.factId,
+      decision: 'accept',
+      now,
+    });
+
+    const packet = await buildPersonalContextPacket({
+      groupFolder: 'main',
+      query: 'what is on my agenda?',
+      now,
+    });
+
+    expect(packet.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          itemId: `derived:${fact.factId}`,
+          summary: 'Dentist appointment at 3 PM.',
+        }),
+      ]),
+    );
+    expect(packet.citations).toContain(fact.sourceRef);
+    const retrieval = listAssistantMetricEvents({ groupFolder: 'main' }).find(
+      (event) => event.kind === 'memory_retrieval',
+    );
+    expect(JSON.parse(retrieval?.metadataJson || '{}')).toMatchObject({
+      packetId: packet.packetId,
+      rankingMode: 'hybrid_lexical_and_local_concept',
+    });
+  });
+
+  it('keeps explicit broad personal-memory review bounded and cited', async () => {
+    const now = new Date('2026-07-10T12:00:00.000Z');
+    setPersonalMemoryPolicy({
+      groupFolder: 'main',
+      source: 'saved_material',
+      enabled: true,
+      now,
+    });
+    const fact = stagePersonalMemoryFact({
+      groupFolder: 'main',
+      source: 'saved_material',
+      sourceRef: 'saved:owner-note',
+      subjectKey: 'preference:planning',
+      valueSummary: 'Prefers a short written plan before deep work.',
+      confidence: 0.85,
+      observedAt: now,
+    });
+    reviewPersonalMemoryFact({
+      groupFolder: 'main',
+      factId: fact.factId,
+      decision: 'accept',
+      now,
+    });
+
+    const packet = await buildPersonalContextPacket({
+      groupFolder: 'main',
+      query: 'what do you know about me?',
+      limit: 5,
+      now,
+    });
+
+    expect(packet.items.length).toBeGreaterThan(0);
+    expect(packet.items.length).toBeLessThanOrEqual(5);
+    expect(packet.citations).toContain(fact.sourceRef);
+  });
+
+  it('keeps bounded context for intentionally broad daily-guidance queries', async () => {
+    const packet = await buildPersonalContextPacket({
+      groupFolder: 'main',
+      query: 'what am I forgetting tonight',
+      now: new Date('2026-07-10T12:00:00.000Z'),
+    });
+    expect(packet.items.length).toBeGreaterThan(0);
+    expect(packet.citations.length).toBeGreaterThan(0);
+    const retrieval = listAssistantMetricEvents({
+      groupFolder: 'main',
+    }).find((event) => event.kind === 'memory_retrieval');
+    expect(JSON.parse(retrieval?.metadataJson || '{}')).toMatchObject({
+      packetId: packet.packetId,
+      resultCount: packet.items.length,
+    });
   });
 });

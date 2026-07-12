@@ -4,6 +4,7 @@ import {
   type FieldTrialOperatorTruth,
   type FieldTrialProofState,
   type FieldTrialSurfaceTruth,
+  type FieldTrialTelegramTruth,
 } from './field-trial-readiness.js';
 import { readEnvFile } from './env.js';
 import { getGoogleCalendarFailureNextAction } from './google-calendar.js';
@@ -139,6 +140,39 @@ function transportStateFromBlueBubbles(
   if (transportState.includes('blocked') || transportState.includes('failed'))
     return 'blocked';
   return 'degraded';
+}
+
+function transportStateFromTelegram(
+  truth: FieldTrialTelegramTruth,
+): IntegrationTransportState {
+  if (truth.transportState === 'ready') return 'healthy';
+  if (truth.transportState === 'blocked') return 'blocked';
+  if (truth.transportState === 'unconfigured') return 'not_configured';
+  if (
+    truth.transportState === 'degraded' ||
+    truth.transportState === 'stopped'
+  ) {
+    return 'degraded';
+  }
+  return 'unknown';
+}
+
+function normalizeTelegram(truth: FieldTrialOperatorTruth): IntegrationStatus {
+  return surfaceStatus({
+    integrationId: 'telegram',
+    label: 'Telegram',
+    truth: truth.telegram,
+    credentialState:
+      truth.telegram.configured || truth.telegram.proofState === 'live_proven'
+        ? 'configured'
+        : 'unknown',
+    transportState: transportStateFromTelegram(truth.telegram),
+    lastHealthyAt: truth.telegram.lastSuccessfulRoundtripAt || null,
+    repairability: 'status_only',
+    safeActions: [
+      'Run npm run telegram:user:smoke if Telegram ever looks stale.',
+    ],
+  });
 }
 
 function surfaceStatus(params: {
@@ -322,15 +356,20 @@ function normalizeAlexa(truth: FieldTrialOperatorTruth): IntegrationStatus {
 function normalizeProvider(
   provider: ProviderHealthSnapshot,
 ): IntegrationStatus {
+  const configurationOnly =
+    provider.credentialState === 'configured' &&
+    provider.metadata.healthEvidence === 'configuration_only';
   const state: IntegrationDoctorState =
     provider.state === 'healthy'
       ? 'healthy'
-      : provider.credentialState === 'missing' ||
-          provider.credentialState === 'invalid'
-        ? 'needs_auth'
-        : provider.state === 'externally_blocked'
-          ? 'externally_blocked'
-          : 'degraded_but_usable';
+      : configurationOnly
+        ? 'near_live_only'
+        : provider.credentialState === 'missing' ||
+            provider.credentialState === 'invalid'
+          ? 'needs_auth'
+          : provider.state === 'externally_blocked'
+            ? 'externally_blocked'
+            : 'degraded_but_usable';
   return {
     integrationId: provider.providerId,
     label: provider.providerId.replace(/_/g, ' '),
@@ -339,10 +378,15 @@ function normalizeProvider(
       provider.credentialState === 'configured'
         ? 'configured'
         : provider.credentialState,
-    transportState: provider.state === 'healthy' ? 'healthy' : 'degraded',
+    transportState:
+      provider.state === 'healthy'
+        ? 'healthy'
+        : configurationOnly
+          ? 'unknown'
+          : 'degraded',
     proofState: state,
     lastHealthyAt: provider.lastHealthyAt,
-    lastFailure: cleanText(provider.blocker),
+    lastFailure: configurationOnly ? '' : cleanText(provider.blocker),
     blockerOwner:
       provider.failureClass === 'missing_credentials' ||
       provider.failureClass === 'quota_or_rate_limit' ||
@@ -351,16 +395,24 @@ function normalizeProvider(
         : provider.failureClass === 'none'
           ? 'none'
           : 'mixed',
-    nextAction: cleanText(provider.nextAction),
+    nextAction: configurationOnly
+      ? `Run npm run debug:providers to establish current live health for ${provider.providerId}.`
+      : cleanText(provider.nextAction),
     repairability:
-      provider.state === 'healthy' ? 'status_only' : 'guided_manual',
+      provider.state === 'healthy' || configurationOnly
+        ? 'status_only'
+        : 'guided_manual',
     safeActions: [
-      provider.nextAction ||
-        `Run npm run debug:providers to refresh ${provider.providerId}.`,
+      configurationOnly
+        ? `Run npm run debug:providers to establish current live health for ${provider.providerId}.`
+        : provider.nextAction ||
+          `Run npm run debug:providers to refresh ${provider.providerId}.`,
     ].map(cleanText),
     detail: cleanText(
-      provider.blocker ||
-        `${provider.providerId} provider health is ${provider.state}.`,
+      configurationOnly
+        ? `${provider.providerId} is configured, but live health was not checked in this report.`
+        : provider.blocker ||
+            `${provider.providerId} provider health is ${provider.state}.`,
     ),
   };
 }
@@ -516,19 +568,7 @@ export function buildIntegrationDoctorReport(
     options.recentFeedback || listRecentResponseFeedback({ limit: 20 });
 
   const statuses = [
-    surfaceStatus({
-      integrationId: 'telegram',
-      label: 'Telegram',
-      truth: truth.telegram,
-      credentialState:
-        truth.telegram.proofState === 'live_proven' ? 'configured' : 'unknown',
-      transportState:
-        truth.telegram.proofState === 'live_proven' ? 'healthy' : 'degraded',
-      repairability: 'status_only',
-      safeActions: [
-        'Run npm run telegram:user:smoke if Telegram ever looks stale.',
-      ],
-    }),
+    normalizeTelegram(truth),
     normalizeGoogleCalendar(truth),
     normalizeBlueBubbles(truth),
     normalizeAlexa(truth),

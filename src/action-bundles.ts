@@ -1567,12 +1567,21 @@ async function executeActions(
     recordAssistantMetric({
       groupFolder: snapshot.bundle.groupFolder,
       kind: 'recommendation_accepted',
+      metadata: {
+        metricClass: 'owner_review',
+        bundleId: snapshot.bundle.bundleId,
+        actionId: action.actionId,
+        actionType: action.actionType,
+      },
       now: currentTime,
     });
     recordAssistantMetric({
       groupFolder: snapshot.bundle.groupFolder,
       kind: 'tool_attempt',
-      metadata: { actionType: action.actionType },
+      metadata: {
+        metricClass: 'assistant_interaction',
+        actionType: action.actionType,
+      },
       now: currentTime,
     });
     updateActionBundleAction(action.actionId, {
@@ -1603,13 +1612,21 @@ async function executeActions(
       recordAssistantMetric({
         groupFolder: snapshot.bundle.groupFolder,
         kind: 'tool_success',
-        metadata: { actionType: action.actionType },
+        metadata: {
+          metricClass: 'assistant_interaction',
+          actionType: action.actionType,
+        },
         now: currentTime,
       });
       recordAssistantMetric({
         groupFolder: snapshot.bundle.groupFolder,
         kind: 'completion_verified',
-        metadata: { actionType: action.actionType },
+        metadata: {
+          metricClass: 'owner_review',
+          bundleId: snapshot.bundle.bundleId,
+          actionId: action.actionId,
+          actionType: action.actionType,
+        },
         now: currentTime,
       });
       executed.push(result.label);
@@ -1761,7 +1778,12 @@ export async function applyActionBundleOperation(
       recordAssistantMetric({
         groupFolder: snapshot.bundle.groupFolder,
         kind: 'recommendation_rejected',
-        metadata: { actionType: action.actionType },
+        metadata: {
+          metricClass: 'owner_review',
+          bundleId: snapshot.bundle.bundleId,
+          actionId: action.actionId,
+          actionType: action.actionType,
+        },
         now,
       });
       if (action.delegationRuleId) {
@@ -1803,7 +1825,12 @@ export async function applyActionBundleOperation(
       recordAssistantMetric({
         groupFolder: snapshot.bundle.groupFolder,
         kind: 'recommendation_rejected',
-        metadata: { actionType: action.actionType },
+        metadata: {
+          metricClass: 'owner_review',
+          bundleId: snapshot.bundle.bundleId,
+          actionId: action.actionId,
+          actionType: action.actionType,
+        },
         now,
       });
       if (action.delegationRuleId) {

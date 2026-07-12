@@ -159,8 +159,8 @@ export function collectProviderHealthSnapshots(
     {
       providerId: 'openai_cloud',
       kind: 'llm',
-      state: openAi.configured ? 'healthy' : 'not_configured',
-      lastHealthyAt: openAi.configured ? checkedAt : null,
+      state: openAi.configured ? 'unknown' : 'not_configured',
+      lastHealthyAt: null,
       lastCheckedAt: checkedAt,
       failureClass: openAi.configured ? 'none' : 'missing_credentials',
       quotaState: 'unknown',
@@ -174,6 +174,8 @@ export function collectProviderHealthSnapshots(
         ? ''
         : 'Set a valid OpenAI API key in local environment config, then rerun provider checks.',
       metadata: {
+        healthEvidence: 'configuration_only',
+        liveProbe: 'not_run',
         baseUrl: openAi.baseUrl,
         fallbackModel: openAi.researchModel,
       },
@@ -184,12 +186,11 @@ export function collectProviderHealthSnapshots(
       state: miniMaxQuotaBlocked
         ? 'externally_blocked'
         : miniMax.configured
-          ? 'healthy'
+          ? 'unknown'
           : miniMax.enabled
             ? 'degraded'
             : 'not_configured',
-      lastHealthyAt:
-        miniMax.configured && !miniMaxQuotaBlocked ? checkedAt : null,
+      lastHealthyAt: null,
       lastCheckedAt: checkedAt,
       failureClass: miniMaxQuotaBlocked
         ? 'quota_or_rate_limit'
@@ -211,6 +212,8 @@ export function collectProviderHealthSnapshots(
           ? ''
           : 'Set MINIMAX_API_KEY in local environment config, then rerun provider checks.',
       metadata: {
+        healthEvidence: 'configuration_only',
+        liveProbe: 'not_run',
         anthropicBaseUrl: miniMax.anthropicBaseUrl,
         openAiBaseUrl: miniMax.openAiBaseUrl,
         complexModel: miniMax.complexModel,
@@ -223,12 +226,11 @@ export function collectProviderHealthSnapshots(
       state: geminiQuotaBlocked
         ? 'externally_blocked'
         : gemini.configured
-          ? 'healthy'
+          ? 'unknown'
           : gemini.enabled
             ? 'degraded'
             : 'not_configured',
-      lastHealthyAt:
-        gemini.configured && !geminiQuotaBlocked ? checkedAt : null,
+      lastHealthyAt: null,
       lastCheckedAt: checkedAt,
       failureClass: geminiQuotaBlocked
         ? 'quota_or_rate_limit'
@@ -250,6 +252,8 @@ export function collectProviderHealthSnapshots(
           ? ''
           : 'Set GEMINI_API_KEY in local environment config, then rerun provider checks.',
       metadata: {
+        healthEvidence: 'configuration_only',
+        liveProbe: 'not_run',
         openAiBaseUrl: gemini.openAiBaseUrl,
         criticModel: gemini.criticModel,
         fastModel: gemini.fastModel,
@@ -262,12 +266,11 @@ export function collectProviderHealthSnapshots(
       state: anthropicQuotaBlocked
         ? 'externally_blocked'
         : anthropic.configured
-          ? 'healthy'
+          ? 'unknown'
           : anthropic.enabled
             ? 'degraded'
             : 'not_configured',
-      lastHealthyAt:
-        anthropic.configured && !anthropicQuotaBlocked ? checkedAt : null,
+      lastHealthyAt: null,
       lastCheckedAt: checkedAt,
       failureClass: anthropicQuotaBlocked
         ? 'quota_or_rate_limit'
@@ -289,6 +292,8 @@ export function collectProviderHealthSnapshots(
           ? ''
           : 'Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN in local environment config, then rerun provider checks.',
       metadata: {
+        healthEvidence: 'configuration_only',
+        liveProbe: 'not_run',
         baseUrl: anthropic.baseUrl,
         complexModel: anthropic.complexModel,
         fastModel: anthropic.fastModel,
@@ -299,8 +304,8 @@ export function collectProviderHealthSnapshots(
     {
       providerId: 'brave_search',
       kind: 'search',
-      state: brave.configured ? 'healthy' : 'not_configured',
-      lastHealthyAt: brave.configured ? checkedAt : null,
+      state: brave.configured ? 'unknown' : 'not_configured',
+      lastHealthyAt: null,
       lastCheckedAt: checkedAt,
       failureClass: brave.configured ? 'none' : 'missing_credentials',
       quotaState: 'unknown',
@@ -314,6 +319,8 @@ export function collectProviderHealthSnapshots(
         ? ''
         : 'Set BRAVE_SEARCH_API_KEY or BRACE_SEARCH_API_KEY in local environment config, then rerun provider checks.',
       metadata: {
+        healthEvidence: 'configuration_only',
+        liveProbe: 'not_run',
         baseUrl: brave.baseUrl,
         count: String(brave.count),
         aliasUsed: brave.aliasUsed || '',
@@ -346,7 +353,15 @@ export function buildProviderAlertEvents(
 ): AlertEventSnapshot[] {
   const cooldown = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   return providers
-    .filter((provider) => provider.state !== 'healthy')
+    .filter(
+      (provider) =>
+        provider.state !== 'healthy' &&
+        !(
+          provider.state === 'unknown' &&
+          provider.credentialState === 'configured' &&
+          provider.metadata.healthEvidence === 'configuration_only'
+        ),
+    )
     .map((provider) => ({
       alertId: `alert-${provider.providerId}-${provider.failureClass}-${checkedAt}`,
       providerId: provider.providerId,

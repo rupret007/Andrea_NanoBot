@@ -13,6 +13,7 @@ import type {
   FieldTrialSurfaceTruth,
 } from './field-trial-readiness.js';
 import type { ResponseFeedbackRecord } from './types.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
 
 function surface(
   proofState: FieldTrialSurfaceTruth['proofState'],
@@ -101,6 +102,86 @@ function feedback(
 }
 
 describe('integration doctor', () => {
+  it('keeps Telegram transport healthy when only live-proof freshness is stale', () => {
+    const lastSuccess = '2026-05-04T10:00:00.000Z';
+    const report = buildIntegrationDoctorReport({
+      now: new Date('2026-05-04T12:00:00.000Z'),
+      truth: truth({
+        telegram: {
+          ...surface('near_live_only', {
+            blocker:
+              'Telegram live proof is overdue; refresh the roundtrip marker.',
+            detail:
+              'Telegram long polling is ready, but live proof needs a fresh roundtrip.',
+            nextAction: 'Rerun npm run telegram:user:smoke.',
+          }),
+          configured: true,
+          transportState: 'ready',
+          transportDetail: 'Telegram long polling is ready.',
+          lastSuccessfulRoundtripAt: lastSuccess,
+          roundtripDue: true,
+        },
+      }),
+      providers: [],
+      recentFeedback: [],
+    });
+
+    const telegram = report.statuses.find(
+      (status) => status.integrationId === 'telegram',
+    );
+    expect(telegram).toMatchObject({
+      state: 'near_live_only',
+      proofState: 'near_live_only',
+      credentialState: 'configured',
+      transportState: 'healthy',
+      lastHealthyAt: lastSuccess,
+      lastFailure:
+        'Telegram live proof is overdue; refresh the roundtrip marker.',
+    });
+  });
+
+  it('reports configured-only providers as needing proof rather than healthy or failed', () => {
+    const configuredOnlyProvider: ProviderHealthSnapshot = {
+      providerId: 'openai_cloud',
+      kind: 'llm',
+      state: 'unknown',
+      lastHealthyAt: null,
+      lastCheckedAt: '2026-05-04T12:00:00.000Z',
+      failureClass: 'none',
+      quotaState: 'unknown',
+      credentialState: 'configured',
+      knownExpiresAt: null,
+      rotationDueAt: null,
+      blocker: '',
+      nextAction: '',
+      metadata: {
+        healthEvidence: 'configuration_only',
+        liveProbe: 'not_run',
+      },
+    };
+    const report = buildIntegrationDoctorReport({
+      now: new Date('2026-05-04T12:00:00.000Z'),
+      truth: truth(),
+      providers: [configuredOnlyProvider],
+      recentFeedback: [],
+    });
+
+    const provider = report.statuses.find(
+      (status) => status.integrationId === 'openai_cloud',
+    );
+    expect(provider).toMatchObject({
+      state: 'near_live_only',
+      proofState: 'near_live_only',
+      credentialState: 'configured',
+      transportState: 'unknown',
+      lastHealthyAt: null,
+      lastFailure: '',
+      repairability: 'status_only',
+    });
+    expect(provider?.nextAction).toContain('debug:providers');
+    expect(provider?.detail).toContain('live health was not checked');
+  });
+
   it('reports critical disk pressure as guided manual degradation, never auto-repair', () => {
     const report = buildIntegrationDoctorReport({
       now: new Date('2026-05-04T12:00:00.000Z'),

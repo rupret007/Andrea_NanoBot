@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  buildCommunicationIdentityReviewActionRows,
   buildCommunicationIdentityReviewSnapshot,
   handleCommunicationIdentityReview,
   parseCommunicationIdentityReviewCommand,
@@ -143,6 +144,174 @@ describe('communication identity review', () => {
     expect(
       snapshot.items.find((item) => item.threadId === 'communication:group'),
     ).toMatchObject({ isGroup: true, candidate: null });
+  });
+
+  it('uses stable opaque review keys and never returns raw identifier labels', () => {
+    seedPerson('person-candace', 'Candace');
+    seedPerson('person-self-word', 'You');
+    seedPerson('person-identifier', '+1 (469) 555-0188');
+    seedPerson('person-family-category', 'close family');
+    seedPerson('person-school-category', 'school contacts');
+    seedPerson('person-riley-one', 'Riley', 'riley-one');
+    seedPerson('person-riley-two', 'Riley', 'riley-two');
+    seedThread({
+      id: 'communication:number',
+      title: '+1 (469) 555-0199',
+      channelChatJid: 'bb:iMessage;-;+14695550199',
+    });
+    const first = buildCommunicationIdentityReviewSnapshot({
+      groupFolder: 'main',
+    });
+    const second = buildCommunicationIdentityReviewSnapshot({
+      groupFolder: 'main',
+    });
+    const item = first.items.find(
+      (candidate) => candidate.threadId === 'communication:number',
+    )!;
+    expect(item.reviewKey).toMatch(/^R-[A-F0-9]{8}$/);
+    expect(
+      second.items.find(
+        (candidate) => candidate.threadId === 'communication:number',
+      )?.reviewKey,
+    ).toBe(item.reviewKey);
+    expect(first.availablePeopleNames).toEqual(['Candace']);
+
+    const response = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'review communication identities',
+    });
+    expect(response.replyText).toContain(`[${item.reviewKey}]`);
+    expect(response.replyText).toContain('Unlabeled direct conversation');
+    expect(response.replyText).toContain('Existing profile people');
+    expect(response.replyText).toContain('Candace');
+    expect(response.replyText).not.toContain('+1 (469) 555-0199');
+    expect(response.replyText).not.toContain('+1 (469) 555-0188');
+    expect(response.replyText).not.toMatch(/\bYou\b/);
+  });
+
+  it('offers bounded Telegram owner choices for only the first unresolved item', () => {
+    seedPerson('person-candace', 'Candace');
+    seedPerson('person-travis', 'Travis');
+    seedThread({
+      id: 'communication:number-one',
+      title: '+1 (469) 555-0199',
+      channelChatJid: 'bb:iMessage;-;+14695550199',
+    });
+    seedThread({
+      id: 'communication:number-two',
+      title: '+1 (469) 555-0187',
+      channelChatJid: 'bb:iMessage;-;+14695550187',
+    });
+
+    const response = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'review communication identities',
+    });
+    const firstKey = response.snapshot!.items.find(
+      (item) => !item.review,
+    )!.reviewKey;
+    const actions = response.inlineActionRows!.flat();
+    expect(actions.map((action) => action.label)).toEqual([
+      'Link Candace',
+      'Link Travis',
+      'Leave unlinked',
+    ]);
+    expect(actions.every((action) => action.actionId?.includes(firstKey))).toBe(
+      true,
+    );
+    expect(
+      actions.every(
+        (action) => Buffer.byteLength(action.actionId || '', 'utf8') <= 64,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(actions)).not.toContain('+1 (469)');
+
+    const changed = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: actions[0]!.actionId!,
+    });
+    const nextKey = changed.snapshot!.items.find(
+      (item) => !item.review,
+    )!.reviewKey;
+    expect(changed).toMatchObject({ changed: true });
+    expect(changed.replyText).toContain(`Next: [${nextKey}]`);
+    expect(changed.replyText).not.toContain('+1 (469)');
+    expect(
+      changed
+        .inlineActionRows!.flat()
+        .every((action) => action.actionId?.includes(nextKey)),
+    ).toBe(true);
+  });
+
+  it('offers only a group dismissal control for a group conversation', () => {
+    seedPerson('person-candace', 'Candace');
+    seedThread({
+      id: 'communication:group-only',
+      title: 'Family thread',
+      channelChatJid: 'bb:iMessage;+;chat-family',
+    });
+    const snapshot = buildCommunicationIdentityReviewSnapshot({
+      groupFolder: 'main',
+    });
+    expect(buildCommunicationIdentityReviewActionRows(snapshot)).toEqual([
+      [
+        {
+          label: 'Mark as group',
+          actionId: `dismiss identity ${snapshot.items[0]!.reviewKey}`,
+        },
+      ],
+    ]);
+  });
+
+  it('confirms, dismisses, and clears by opaque review key', () => {
+    seedPerson('person-candace', 'Candace');
+    seedThread({
+      id: 'communication:number',
+      title: '+1 (469) 555-0199',
+      channelChatJid: 'bb:iMessage;-;+14695550199',
+    });
+    const key = buildCommunicationIdentityReviewSnapshot({
+      groupFolder: 'main',
+    }).items[0]!.reviewKey;
+    const confirmed = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: `link identity ${key} to "Candace"`,
+    });
+    expect(confirmed).toMatchObject({ changed: true });
+    expect(confirmed.replyText).not.toContain('+1 (469) 555-0199');
+    expect(
+      getCommunicationThread('communication:number')?.linkedSubjectIds,
+    ).toEqual(['person-candace']);
+
+    expect(
+      handleCommunicationIdentityReview({
+        groupFolder: 'main',
+        channel: 'telegram',
+        text: `clear identity review ${key}`,
+      }),
+    ).toMatchObject({ changed: true });
+    expect(
+      handleCommunicationIdentityReview({
+        groupFolder: 'main',
+        channel: 'telegram',
+        text: `dismiss identity ${key}`,
+      }),
+    ).toMatchObject({ changed: true });
+  });
+
+  it('does not echo an unknown review reference back to the owner', () => {
+    seedThread();
+    const response = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'link identity "private-secret-reference" to "Candace"',
+    });
+    expect(response).toMatchObject({ changed: false });
+    expect(response.replyText).not.toContain('private-secret-reference');
   });
 
   it('confirms an existing person idempotently with separate provenance', () => {

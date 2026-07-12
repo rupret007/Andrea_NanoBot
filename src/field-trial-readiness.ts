@@ -47,6 +47,7 @@ import {
   type HostControlSnapshot,
   type AlexaLiveProofFreshness,
   type AlexaLiveProofKind,
+  type TelegramTransportStatus,
   type WindowsHostReconciliation,
 } from './host-control.js';
 import { getMediaProviderStatus } from './media-generation.js';
@@ -83,6 +84,14 @@ export interface FieldTrialSurfaceTruth {
   blockerOwner: FieldTrialBlockerOwner;
   nextAction: string;
   detail: string;
+}
+
+export interface FieldTrialTelegramTruth extends FieldTrialSurfaceTruth {
+  configured?: boolean;
+  transportState?: TelegramTransportStatus | 'unknown';
+  transportDetail?: string;
+  lastSuccessfulRoundtripAt?: string;
+  roundtripDue?: boolean;
 }
 
 export type FieldTrialLaunchCandidateStatus =
@@ -676,7 +685,7 @@ export interface FieldTrialPilotIssueTruth {
 }
 
 export interface FieldTrialOperatorTruth {
-  telegram: FieldTrialSurfaceTruth;
+  telegram: FieldTrialTelegramTruth;
   alexa: FieldTrialAlexaTruth;
   bluebubbles: FieldTrialBlueBubblesTruth;
   googleCalendar: FieldTrialSurfaceTruth;
@@ -1289,7 +1298,7 @@ function buildHostHealthTruth(
 function buildTelegramTruth(
   hostSnapshot: HostControlSnapshot,
   windowsHost: WindowsHostReconciliation | null,
-): FieldTrialSurfaceTruth {
+): FieldTrialTelegramTruth {
   const assistantHealth = assessAssistantHealthState({
     assistantHealthState: hostSnapshot.assistantHealthState,
     hostState: hostSnapshot.hostState,
@@ -1305,6 +1314,28 @@ function buildTelegramTruth(
     readyState: hostSnapshot.readyState,
   });
   const transport = hostSnapshot.telegramTransportState;
+  const telegramChannel = hostSnapshot.assistantHealthState?.channels.find(
+    (channel) => channel.name === 'telegram',
+  );
+  const transportState: FieldTrialTelegramTruth['transportState'] =
+    transport?.status ||
+    (telegramChannel?.state === 'ready'
+      ? 'ready'
+      : telegramChannel?.configured
+        ? 'degraded'
+        : 'unconfigured');
+  const telegramTruth = (
+    truth: Partial<FieldTrialSurfaceTruth> &
+      Pick<FieldTrialSurfaceTruth, 'proofState'>,
+  ): FieldTrialTelegramTruth => ({
+    ...buildTruth(truth),
+    configured: Boolean(telegramChannel?.configured),
+    transportState,
+    transportDetail:
+      transport?.detail || telegramChannel?.detail || assistantHealth.detail,
+    lastSuccessfulRoundtripAt: roundtrip.lastOkAt || '',
+    roundtripDue: roundtrip.due,
+  });
   const hostBootId =
     hostSnapshot.hostState?.bootId || hostSnapshot.readyState?.bootId || null;
   const roundtripBootId = hostSnapshot.telegramRoundtripState?.bootId || null;
@@ -1319,7 +1350,7 @@ function buildTelegramTruth(
       DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS * 2;
 
   if (transport?.status === 'ready' && roundtrip.status === 'healthy') {
-    return buildTruth({
+    return telegramTruth({
       proofState: 'live_proven',
       detail:
         roundtrip.detail ||
@@ -1328,7 +1359,7 @@ function buildTelegramTruth(
   }
 
   if (transport?.status === 'blocked') {
-    return buildTruth({
+    return telegramTruth({
       proofState: 'externally_blocked',
       blocker:
         transport.detail ||
@@ -1343,7 +1374,7 @@ function buildTelegramTruth(
   }
 
   if (roundtrip.status === 'unconfigured') {
-    return buildTruth({
+    return telegramTruth({
       proofState: 'externally_blocked',
       blocker: roundtrip.detail,
       blockerOwner: 'external',
@@ -1360,7 +1391,7 @@ function buildTelegramTruth(
     sameBootRoundtrip &&
     recentlyConfirmed
   ) {
-    return buildTruth({
+    return telegramTruth({
       proofState: 'live_proven',
       detail:
         roundtrip.detail ||
@@ -1371,7 +1402,7 @@ function buildTelegramTruth(
   }
 
   if (roundtrip.status === 'pending') {
-    return buildTruth({
+    return telegramTruth({
       proofState: 'near_live_only',
       blocker: roundtrip.detail,
       blockerOwner: 'none',
@@ -1382,7 +1413,7 @@ function buildTelegramTruth(
     });
   }
 
-  return buildTruth({
+  return telegramTruth({
     proofState:
       assistantHealth.status === 'healthy'
         ? 'near_live_only'

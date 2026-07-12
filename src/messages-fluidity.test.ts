@@ -85,6 +85,42 @@ describe('messages fluidity', () => {
     expect(result.fallbackText).toContain("I'm here");
   });
 
+  it('reuses a completed routing attempt instead of calling the backend twice', async () => {
+    vi.stubEnv('ANDREA_OPENAI_BACKEND_ENABLED', 'true');
+    vi.resetModules();
+    const { interpretBlueBubblesDirectTurn } =
+      await import('./messages-fluidity.js');
+    const fetchSpy = vi.fn(async () => {
+      throw new Error('duplicate backend request');
+    });
+    globalThis.fetch = fetchSpy as typeof fetch;
+
+    const result = await interpretBlueBubblesDirectTurn({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;+14695405551',
+      text: 'can you make that a little warmer?',
+      routingResult: {
+        decision: {
+          routeKind: 'assistant_capability',
+          capabilityId: 'communication.manage_tracking',
+          canonicalText: 'make it warmer',
+          arguments: { replyStyle: 'warmer' },
+          confidence: 'high',
+          clarificationPrompt: null,
+          reason: 'matched draft rewrite follow-up',
+        },
+        source: 'openai_router',
+      },
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      source: 'openai',
+      routeFamily: 'message_action_followup',
+      assistantPrompt: 'make it warmer',
+    });
+  });
+
   it('uses the standard tier for synced thread digest synthesis', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
     vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');

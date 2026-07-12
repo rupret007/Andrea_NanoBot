@@ -1,4 +1,5 @@
 import type { ModelSpec } from './models/router.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
 import { recordAssistantMetric } from './personal-assistant-metrics.js';
 import {
   listAssistantMetricEvents,
@@ -40,6 +41,53 @@ const CONFIGURED_MODELS: Array<{
   { key: 'GEMINI_MODEL_CRITIC', provider: 'google' },
   { key: 'OLLAMA_MODEL', provider: 'local' },
 ];
+
+const MODEL_PROVIDER_HEALTH_IDS: Partial<
+  Record<ModelSpec['provider'], string>
+> = {
+  openai: 'openai_cloud',
+  anthropic: 'anthropic_cloud',
+  google: 'gemini_cloud',
+};
+
+function modelHealthFromProviderSnapshot(
+  snapshot: ProviderHealthSnapshot | undefined,
+): ModelCapabilityRecord['health'] {
+  if (!snapshot) return 'unknown';
+  if (
+    snapshot.state === 'externally_blocked' ||
+    snapshot.state === 'not_configured'
+  ) {
+    return 'blocked';
+  }
+  if (snapshot.state === 'degraded') return 'degraded';
+  if (snapshot.state !== 'healthy') return 'unknown';
+  return snapshot.metadata.healthEvidence === 'configuration_only'
+    ? 'unknown'
+    : 'healthy';
+}
+
+export function buildModelHealthFromProviderSnapshots(
+  catalog: ModelSpec[],
+  snapshots: ProviderHealthSnapshot[],
+): Record<string, ModelCapabilityRecord['health']> {
+  const byProviderId = new Map(
+    snapshots.map((snapshot) => [snapshot.providerId, snapshot]),
+  );
+  return Object.fromEntries(
+    catalog.map((model) => {
+      const providerId = MODEL_PROVIDER_HEALTH_IDS[model.provider];
+      return [
+        model.id,
+        providerId
+          ? modelHealthFromProviderSnapshot(byProviderId.get(providerId))
+          : model.available
+            ? 'unknown'
+            : 'blocked',
+      ];
+    }),
+  );
+}
 
 function cloneForId(
   id: string,
@@ -233,6 +281,8 @@ export function recordLiveRoutingEvaluation(params: {
   }
   params.budget.reserve(params.costUsd);
   const metadata = {
+    metricClass: 'live_evaluation',
+    latencyClass: 'live_evaluation',
     caseId: params.caseId,
     provider: params.provider,
     model: params.model,

@@ -9,6 +9,7 @@ import {
 import {
   buildConfiguredModelCatalog,
   buildModelCapabilityRegistry,
+  buildModelHealthFromProviderSnapshots,
   GROUNDED_AGENCY_EVALUATION_CASES,
   LiveRoutingEvaluationBudget,
   recordLiveRoutingEvaluation,
@@ -16,6 +17,32 @@ import {
   rankModelsForTask,
 } from './model-capability-registry.js';
 import { DEFAULT_CATALOG } from './models/router.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
+
+function providerHealth(
+  providerId: string,
+  state: ProviderHealthSnapshot['state'],
+  healthEvidence: 'configuration_only' | 'live_probe',
+): ProviderHealthSnapshot {
+  return {
+    providerId,
+    kind: 'llm',
+    state,
+    lastHealthyAt: state === 'healthy' ? '2026-07-12T12:00:00.000Z' : null,
+    lastCheckedAt: '2026-07-12T12:00:00.000Z',
+    failureClass: state === 'healthy' ? 'none' : 'unknown',
+    quotaState: 'unknown',
+    credentialState: state === 'not_configured' ? 'missing' : 'configured',
+    knownExpiresAt: null,
+    rotationDueAt: null,
+    blocker: '',
+    nextAction: '',
+    metadata: {
+      healthEvidence,
+      liveProbe: healthEvidence === 'live_probe' ? 'ok' : 'not_run',
+    },
+  };
+}
 
 describe('model capability registry', () => {
   beforeEach(() => _initTestDatabase());
@@ -47,6 +74,24 @@ describe('model capability registry', () => {
     expect(rankModelsForTask(registry, 'deep_work')[0]?.capabilities).toContain(
       'code',
     );
+  });
+
+  it('maps configuration and live-probe evidence to model health without inflating readiness', () => {
+    const catalog = buildConfiguredModelCatalog(DEFAULT_CATALOG, {
+      OPENAI_MODEL_COMPLEX: 'gpt-configured-current',
+      GEMINI_MODEL_CRITIC: 'gemini-configured-current',
+    });
+    const health = buildModelHealthFromProviderSnapshots(catalog, [
+      providerHealth('openai_cloud', 'healthy', 'configuration_only'),
+      providerHealth('anthropic_cloud', 'healthy', 'live_probe'),
+      providerHealth('gemini_cloud', 'degraded', 'live_probe'),
+    ]);
+
+    expect(health['gpt-5']).toBe('unknown');
+    expect(health['gpt-configured-current']).toBe('unknown');
+    expect(health['claude-sonnet-4-6']).toBe('healthy');
+    expect(health['gemini-configured-current']).toBe('degraded');
+    expect(health['llama3.3:70b']).toBe('blocked');
   });
 
   it('defines twelve redacted cases and fails closed at the live cost cap', () => {
@@ -87,6 +132,14 @@ describe('model capability registry', () => {
     );
     expect(
       events.every((event) => !event.metadataJson.includes('prompt')),
+    ).toBe(true);
+    expect(
+      events.find((event) => event.kind === 'latency_sample')?.metadataJson,
+    ).toContain('"latencyClass":"live_evaluation"');
+    expect(
+      events.every((event) =>
+        event.metadataJson.includes('"metricClass":"live_evaluation"'),
+      ),
     ).toBe(true);
   });
 

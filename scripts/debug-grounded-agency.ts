@@ -11,12 +11,15 @@ import {
 } from '../src/gemini-provider.js';
 import {
   buildModelCapabilityRegistry,
+  buildConfiguredModelCatalog,
+  buildModelHealthFromProviderSnapshots,
   GROUNDED_AGENCY_EVALUATION_CASES,
   LiveRoutingEvaluationBudget,
   recordLiveRoutingEvaluation,
   repairGroundedAgencyOutcomeLabels,
 } from '../src/model-capability-registry.js';
 import { DEFAULT_CATALOG } from '../src/models/router.js';
+import { collectProviderHealthSnapshots } from '../src/provider-health.js';
 import {
   getOpenAiProviderStatus,
   runOpenAiChatText,
@@ -64,22 +67,6 @@ async function main(): Promise<void> {
     anthropic: getAnthropicProviderStatus(),
     google: getGeminiProviderStatus(),
   };
-  const health: Record<string, 'healthy' | 'unknown' | 'blocked'> = {};
-  for (const model of DEFAULT_CATALOG) {
-    const status =
-      model.provider === 'openai'
-        ? statuses.openai
-        : model.provider === 'anthropic'
-          ? statuses.anthropic
-          : model.provider === 'google'
-            ? statuses.google
-            : null;
-    health[model.id] = status
-      ? status.configured
-        ? 'unknown'
-        : 'blocked'
-      : 'unknown';
-  }
   const configuredEnv = {
     ...process.env,
     OPENAI_MODEL_SIMPLE: statuses.openai.simpleModel,
@@ -91,6 +78,14 @@ async function main(): Promise<void> {
     GEMINI_MODEL_FAST: statuses.google.fastModel,
     GEMINI_MODEL_CRITIC: statuses.google.criticModel,
   };
+  const configuredCatalog = buildConfiguredModelCatalog(
+    DEFAULT_CATALOG,
+    configuredEnv,
+  );
+  const health = buildModelHealthFromProviderSnapshots(
+    configuredCatalog,
+    collectProviderHealthSnapshots(),
+  );
   const registry = buildModelCapabilityRegistry({
     catalog: DEFAULT_CATALOG,
     env: configuredEnv,
@@ -118,6 +113,10 @@ async function main(): Promise<void> {
     );
     return;
   }
+  const observedProviderHealth = new Map<
+    'openai' | 'anthropic' | 'google',
+    { successes: number; failures: number }
+  >();
 
   initDatabase();
   repairGroundedAgencyOutcomeLabels(groupFolder);
@@ -180,6 +179,16 @@ async function main(): Promise<void> {
     const failed =
       !response ||
       ('providerFailure' in response && Boolean(response.providerFailure));
+    const priorHealth = observedProviderHealth.get(provider) || {
+      successes: 0,
+      failures: 0,
+    };
+    observedProviderHealth.set(
+      provider,
+      failed
+        ? { ...priorHealth, failures: priorHealth.failures + 1 }
+        : { ...priorHealth, successes: priorHealth.successes + 1 },
+    );
     const text = !failed && response && 'text' in response ? response.text : '';
     const inputTokens =
       !failed && response && 'inputTokens' in response
@@ -224,6 +233,21 @@ async function main(): Promise<void> {
       outputTokens,
     });
   }
+  const observedModelHealth = { ...health };
+  for (const model of configuredCatalog) {
+    const observed = observedProviderHealth.get(
+      model.provider as 'openai' | 'anthropic' | 'google',
+    );
+    if (observed) {
+      observedModelHealth[model.id] =
+        observed.failures > 0 ? 'degraded' : 'healthy';
+    }
+  }
+  const observedRegistry = buildModelCapabilityRegistry({
+    catalog: DEFAULT_CATALOG,
+    env: configuredEnv,
+    health: observedModelHealth,
+  });
   console.log(
     JSON.stringify(
       {
@@ -234,6 +258,13 @@ async function main(): Promise<void> {
         spentUsd: budget.spent,
         maxCostUsd,
         complete: results.length === GROUNDED_AGENCY_EVALUATION_CASES.length,
+        registry: observedRegistry.map((model) => ({
+          id: model.id,
+          provider: model.provider,
+          source: model.source,
+          health: model.health,
+          capabilities: model.capabilities,
+        })),
         results,
         privacy: { rawUserTextIncluded: false, rawProviderOutputStored: false },
       },

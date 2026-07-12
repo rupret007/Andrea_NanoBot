@@ -1797,8 +1797,10 @@ export function assessTelegramRoundtripState(input: {
   return {
     status: 'degraded',
     detail:
-      roundtrip.detail ||
-      'Telegram roundtrip has not succeeded recently enough to trust Telegram responsiveness.',
+      roundtrip.status === 'healthy' && lastSuccessAtMs != null
+        ? `Telegram transport may still be available, but live proof is overdue: the last successful roundtrip was ${roundtrip.lastSuccessAt}.`
+        : roundtrip.detail ||
+          'Telegram roundtrip has not succeeded recently enough to trust Telegram responsiveness.',
     updatedAt: roundtrip.updatedAt,
     lastOkAt: roundtrip.lastSuccessAt,
     lastProbeAt: roundtrip.lastProbeAt,

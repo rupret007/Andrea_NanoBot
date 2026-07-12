@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { isBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
 import {
   decideCommunicationThreadIdentity,
@@ -8,6 +10,7 @@ import {
   listProfileSubjectsForGroup,
 } from './db.js';
 import type {
+  ChannelInlineAction,
   CommunicationIdentityReviewRecord,
   CommunicationThreadRecord,
   ProfileSubject,
@@ -27,6 +30,7 @@ export interface CommunicationIdentityCandidate {
 
 export interface CommunicationIdentityReviewItem {
   threadId: string;
+  reviewKey: string;
   threadTitle: string;
   isGroup: boolean;
   review: CommunicationIdentityReviewRecord | null;
@@ -38,6 +42,7 @@ export interface CommunicationIdentityReviewSnapshot {
   totalThreads: number;
   resolvedThreads: number;
   unreviewedThreads: number;
+  availablePeopleNames: string[];
   items: CommunicationIdentityReviewItem[];
 }
 
@@ -46,6 +51,7 @@ export interface CommunicationIdentityReviewResponse {
   changed: boolean;
   replyText: string;
   snapshot?: CommunicationIdentityReviewSnapshot;
+  inlineActionRows?: ChannelInlineAction[][];
 }
 
 function normalizeName(value: string | null | undefined): string {
@@ -123,6 +129,48 @@ function hasIdentifierShape(value: string): boolean {
   );
 }
 
+function isGenericSelfName(value: string): boolean {
+  return /^(?:i|me|myself|self|you|owner|user)$/i.test(normalizeName(value));
+}
+
+function hasCollectiveIdentityShape(value: string): boolean {
+  return /\b(?:family|contacts?|friends?|coworkers?|colleagues?|team|group|band|household|school|parents?|children|kids|neighbors?)\b/i.test(
+    normalizeName(value),
+  );
+}
+
+function eligibleProfilePeople(people: ProfileSubject[]): ProfileSubject[] {
+  return people.filter(
+    (subject) =>
+      subject.kind === 'person' &&
+      !isGenericSelfName(subject.displayName) &&
+      !isGenericSelfName(subject.canonicalName) &&
+      !hasCollectiveIdentityShape(subject.displayName) &&
+      !hasCollectiveIdentityShape(subject.canonicalName) &&
+      !hasIdentifierShape(subject.displayName),
+  );
+}
+
+function reviewKeyFor(groupFolder: string, threadId: string): string {
+  return `R-${createHash('sha256')
+    .update(`${groupFolder}\u0000${threadId}`)
+    .digest('hex')
+    .slice(0, 8)
+    .toUpperCase()}`;
+}
+
+function uniquelyResolvablePeopleNames(people: ProfileSubject[]): string[] {
+  const seen = new Set<string>();
+  return people
+    .map((person) => person.displayName)
+    .filter((displayName) => {
+      const normalized = normalizeName(displayName);
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return resolvePerson(people, displayName).state === 'found';
+    });
+}
+
 function exactPersonCandidate(
   thread: CommunicationThreadRecord,
   people: ProfileSubject[],
@@ -151,8 +199,8 @@ export function buildCommunicationIdentityReviewSnapshot(params: {
     groupFolder: params.groupFolder,
     limit: 80,
   });
-  const people = listProfileSubjectsForGroup(params.groupFolder).filter(
-    (subject) => subject.kind === 'person',
+  const people = eligibleProfilePeople(
+    listProfileSubjectsForGroup(params.groupFolder),
   );
   const reviews = new Map(
     listCommunicationIdentityReviewsForGroup(params.groupFolder).map(
@@ -166,6 +214,7 @@ export function buildCommunicationIdentityReviewSnapshot(params: {
     );
     return {
       threadId: thread.id,
+      reviewKey: reviewKeyFor(params.groupFolder, thread.id),
       threadTitle: thread.title,
       isGroup,
       review: reviews.get(thread.id) || null,
@@ -180,6 +229,7 @@ export function buildCommunicationIdentityReviewSnapshot(params: {
     totalThreads: items.length,
     resolvedThreads,
     unreviewedThreads: Math.max(0, items.length - resolvedThreads),
+    availablePeopleNames: uniquelyResolvablePeopleNames(people),
     items,
   };
 }
@@ -192,8 +242,14 @@ function resolveThread(
   | { state: 'missing' }
   | { state: 'ambiguous'; titles: string[] } {
   const target = normalizeName(title);
+  const reviewReference = target
+    .replace(/^#/, '')
+    .replace(/^\[|\]$/g, '')
+    .toUpperCase();
   const matches = snapshot.items.filter(
-    (item) => normalizeName(item.threadTitle) === target,
+    (item) =>
+      normalizeName(item.threadTitle) === target ||
+      item.reviewKey.toUpperCase() === reviewReference,
   );
   if (matches.length === 1) return { state: 'found', item: matches[0]! };
   if (matches.length > 1) {
@@ -232,6 +288,93 @@ function quote(value: string): string {
   return `"${value.replace(/"/g, '')}"`;
 }
 
+function safeThreadLabel(item: CommunicationIdentityReviewItem): string {
+  if (!hasIdentifierShape(item.threadTitle)) return item.threadTitle;
+  return item.isGroup
+    ? 'Unlabeled group conversation'
+    : 'Unlabeled direct conversation';
+}
+
+function firstUnreviewedItem(
+  snapshot: CommunicationIdentityReviewSnapshot,
+): CommunicationIdentityReviewItem | null {
+  return snapshot.items.find((item) => !item.review) || null;
+}
+
+function actionFitsTelegram(actionId: string): boolean {
+  return Buffer.byteLength(actionId, 'utf8') <= 64;
+}
+
+export function buildCommunicationIdentityReviewActionRows(
+  snapshot: CommunicationIdentityReviewSnapshot,
+): ChannelInlineAction[][] {
+  const item = firstUnreviewedItem(snapshot);
+  if (!item) return [];
+
+  const rows: ChannelInlineAction[][] = [];
+  if (!item.isGroup) {
+    const candidateNames = [
+      ...(item.candidate ? [item.candidate.displayName] : []),
+      ...snapshot.availablePeopleNames,
+    ].filter(
+      (name, index, all) =>
+        all.findIndex(
+          (candidate) => normalizeName(candidate) === normalizeName(name),
+        ) === index,
+    );
+    for (const personName of candidateNames.slice(0, 5)) {
+      const actionId = `link identity ${item.reviewKey} to ${quote(personName)}`;
+      if (!actionFitsTelegram(actionId)) continue;
+      rows.push([
+        {
+          label: `${item.candidate?.displayName === personName ? 'Confirm' : 'Link'} ${personName}`,
+          actionId,
+        },
+      ]);
+    }
+  }
+  rows.push([
+    {
+      label: item.isGroup ? 'Mark as group' : 'Leave unlinked',
+      actionId: `dismiss identity ${item.reviewKey}`,
+    },
+  ]);
+  return rows;
+}
+
+export function formatNextCommunicationIdentityReview(
+  snapshot: CommunicationIdentityReviewSnapshot,
+): string {
+  const item = firstUnreviewedItem(snapshot);
+  if (!item) {
+    return `Identity review is complete for all ${snapshot.totalThreads} active thread${snapshot.totalThreads === 1 ? '' : 's'}.`;
+  }
+  const label = safeThreadLabel(item);
+  if (item.isGroup) {
+    return `Next: [${item.reviewKey}] ${label} is a group conversation. Mark it as a group below, or leave it unresolved.`;
+  }
+  if (item.candidate) {
+    return `Next: [${item.reviewKey}] ${label} exactly matches ${item.candidate.displayName}. Confirm that person below, choose another listed person, or leave it unresolved.`;
+  }
+  return `Next: [${item.reviewKey}] ${label} has no safe automatic match. Choose an existing person below, leave it unresolved, or type the opaque-key command for another eligible profile person.`;
+}
+
+function buildReviewContinuation(params: {
+  groupFolder: string;
+  channel: 'alexa' | 'telegram' | 'bluebubbles';
+}): Pick<CommunicationIdentityReviewResponse, 'snapshot' | 'inlineActionRows'> {
+  const snapshot = buildCommunicationIdentityReviewSnapshot({
+    groupFolder: params.groupFolder,
+  });
+  return {
+    snapshot,
+    inlineActionRows:
+      params.channel === 'telegram'
+        ? buildCommunicationIdentityReviewActionRows(snapshot)
+        : undefined,
+  };
+}
+
 export function formatCommunicationIdentityReviewSnapshot(
   snapshot: CommunicationIdentityReviewSnapshot,
 ): string {
@@ -242,21 +385,28 @@ export function formatCommunicationIdentityReviewSnapshot(
     return `Communication identity review is complete for all ${snapshot.totalThreads} active thread${snapshot.totalThreads === 1 ? '' : 's'}. I only use confirmed person links for relationship-aware guidance.`;
   }
   const lines = unreviewed.map((item, index) => {
+    const reference = item.reviewKey;
+    const label = safeThreadLabel(item);
     if (item.isGroup) {
-      return `${index + 1}. ${item.threadTitle} — group conversation; no single-person link proposed. Use \`dismiss identity ${quote(item.threadTitle)}\` if that is correct.`;
+      return `${index + 1}. [${reference}] ${label} — group conversation; no single-person link proposed. Use \`dismiss identity ${reference}\` if that is correct.`;
     }
     if (item.candidate) {
-      return `${index + 1}. ${item.threadTitle} — exact match to existing profile person ${item.candidate.displayName}. Use \`confirm identity ${quote(item.threadTitle)} is ${quote(item.candidate.displayName)}\` or \`dismiss identity ${quote(item.threadTitle)}\`.`;
+      return `${index + 1}. [${reference}] ${label} — exact match to existing profile person ${item.candidate.displayName}. Use \`confirm identity ${reference} is ${quote(item.candidate.displayName)}\` or \`dismiss identity ${reference}\`.`;
     }
-    return `${index + 1}. ${item.threadTitle} — no safe candidate. Use \`link identity ${quote(item.threadTitle)} to ${quote('existing person name')}\` or \`dismiss identity ${quote(item.threadTitle)}\`.`;
+    return `${index + 1}. [${reference}] ${label} — no safe candidate. Choose explicitly with \`link identity ${reference} to ${quote('existing person name')}\` or use \`dismiss identity ${reference}\`.`;
   });
   const remaining = Math.max(0, snapshot.unreviewedThreads - unreviewed.length);
+  const visiblePeople = snapshot.availablePeopleNames.slice(0, 8);
+  const peopleLine = visiblePeople.length
+    ? `Existing profile people you may choose: ${visiblePeople.join(', ')}${snapshot.availablePeopleNames.length > visiblePeople.length ? `, plus ${snapshot.availablePeopleNames.length - visiblePeople.length} more` : ''}.`
+    : 'No eligible profile people are configured yet; add a person through profile setup before linking.';
   return [
     `Communication identity review: ${snapshot.unreviewedThreads} unreviewed of ${snapshot.totalThreads}.`,
     ...lines,
     remaining > 0
       ? `${remaining} more will appear after these are reviewed.`
       : '',
+    peopleLine,
     'Candidates use only exact existing profile names and chat metadata—never message bodies, phone numbers, or generic language.',
   ]
     .filter(Boolean)
@@ -312,6 +462,10 @@ export function handleCommunicationIdentityReview(params: {
       changed: false,
       replyText: formatCommunicationIdentityReviewSnapshot(snapshot),
       snapshot,
+      inlineActionRows:
+        params.channel === 'telegram'
+          ? buildCommunicationIdentityReviewActionRows(snapshot)
+          : undefined,
     };
   }
 
@@ -320,7 +474,8 @@ export function handleCommunicationIdentityReview(params: {
     return {
       handled: true,
       changed: false,
-      replyText: `I could not find an active communication thread named ${quote(command.threadTitle)}. Ask me to \`review communication identities\` for the exact metadata-only labels.`,
+      replyText:
+        'I could not find that active communication review reference. Ask me to `review communication identities` for the current opaque review keys.',
     };
   }
   if (resolvedThread.state === 'ambiguous') {
@@ -331,6 +486,7 @@ export function handleCommunicationIdentityReview(params: {
     };
   }
   const item = resolvedThread.item;
+  const itemLabel = safeThreadLabel(item);
   const sourceChannel = params.channel;
   const now = (params.now || new Date()).toISOString();
 
@@ -339,18 +495,19 @@ export function handleCommunicationIdentityReview(params: {
       return {
         handled: true,
         changed: false,
-        replyText: `${item.threadTitle} is a group conversation, so I will not treat it as one person. Use \`dismiss identity ${quote(item.threadTitle)}\` to mark the single-person link not applicable.`,
+        replyText: `${itemLabel} is a group conversation, so I will not treat it as one person. Use \`dismiss identity ${item.reviewKey}\` to mark the single-person link not applicable.`,
       };
     }
-    const people = listProfileSubjectsForGroup(params.groupFolder).filter(
-      (subject) => subject.kind === 'person',
+    const people = eligibleProfilePeople(
+      listProfileSubjectsForGroup(params.groupFolder),
     );
     const resolvedPerson = resolvePerson(people, command.personName);
     if (resolvedPerson.state === 'missing') {
       return {
         handled: true,
         changed: false,
-        replyText: `I do not have exactly one existing profile person named ${quote(command.personName)}, so I did not create or guess an identity. Add the person through profile setup first.`,
+        replyText:
+          'I do not have exactly one eligible existing profile person with that name, so I did not create or guess an identity. Add the person through profile setup first.',
       };
     }
     if (resolvedPerson.state === 'ambiguous') {
@@ -376,10 +533,12 @@ export function handleCommunicationIdentityReview(params: {
           'The identity decision could not be applied safely, so nothing changed.',
       };
     }
+    const continuation = buildReviewContinuation(params);
     return {
       handled: true,
       changed: true,
-      replyText: `Confirmed: ${item.threadTitle} is linked to ${resolvedPerson.person.displayName}. I can now use that reviewed relationship context, and you can reverse it with \`clear identity review ${quote(item.threadTitle)}\`.`,
+      replyText: `Confirmed: ${itemLabel} is linked to ${resolvedPerson.person.displayName}. I can now use that reviewed relationship context, and you can reverse it with \`clear identity review ${item.reviewKey}\`.\n\n${formatNextCommunicationIdentityReview(continuation.snapshot!)}`,
+      ...continuation,
     };
   }
 
@@ -401,10 +560,12 @@ export function handleCommunicationIdentityReview(params: {
             : 'The identity decision could not be applied safely, so nothing changed.',
       };
     }
+    const continuation = buildReviewContinuation(params);
     return {
       handled: true,
       changed: true,
-      replyText: `Dismissed: ${item.threadTitle} will not be treated as a single known person. The conversation remains available without relationship inference.`,
+      replyText: `Dismissed: ${itemLabel} will not be treated as a single known person. The conversation remains available without relationship inference.\n\n${formatNextCommunicationIdentityReview(continuation.snapshot!)}`,
+      ...continuation,
     };
   }
 
@@ -419,12 +580,14 @@ export function handleCommunicationIdentityReview(params: {
     return {
       handled: true,
       changed: false,
-      replyText: `There is no explicit identity review to clear for ${item.threadTitle}.`,
+      replyText: `There is no explicit identity review to clear for ${itemLabel}.`,
     };
   }
+  const continuation = buildReviewContinuation(params);
   return {
     handled: true,
     changed: true,
-    replyText: `Cleared the identity review for ${item.threadTitle}. I will treat it as unresolved again and will not guess.`,
+    replyText: `Cleared the identity review for ${itemLabel}. I will treat it as unresolved again and will not guess.\n\n${formatNextCommunicationIdentityReview(continuation.snapshot!)}`,
+    ...continuation,
   };
 }

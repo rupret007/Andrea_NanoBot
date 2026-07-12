@@ -97,10 +97,18 @@ Current communication capabilities:
   - mark that handled
 - `communication.manage_identity_links`
   - list unresolved conversation identities with `review communication identities`
-  - propose a person only when the chat label exactly matches one existing profile person
-  - confirm with `confirm identity "Chat label" is "Existing person"`
-  - mark group/unknown conversations not applicable with `dismiss identity "Chat label"`
-  - reverse a decision with `clear identity review "Chat label"`
+  - use the returned opaque key without exposing a raw identifier, for example
+    `link identity R-12AB34CD to "Existing person"`
+  - in Telegram, choose from bounded buttons for the first unresolved
+    conversation; each explicit choice returns the next item without granting a
+    new authority path
+  - propose a person only when the safe label exactly matches one eligible
+    existing individual profile person
+  - mark group/unknown conversations not applicable with `dismiss identity R-12AB34CD`
+  - reverse a decision with `clear identity review R-12AB34CD`
+  - exclude generic self labels and collective categories from one-person choices
+  - withhold ambiguous duplicate profile names until the profile itself is
+    disambiguated, so every displayed choice is actionable
 
 Identity review is private to the registered main Telegram chat and the
 configured BlueBubbles self-thread.

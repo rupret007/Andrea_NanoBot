@@ -13,6 +13,7 @@ import {
   getActionBundleSnapshot,
   getAllTasks,
   getDelegationRule,
+  listAssistantMetricEvents,
   listKnowledgeSourcesForGroup,
   listLifeThreadsForGroup,
   upsertDelegationRule,
@@ -363,6 +364,33 @@ describe('action bundles', () => {
     expect(result.replyText).toContain('reminder');
     expect(getAllTasks()).toHaveLength(1);
     expect(listLifeThreadsForGroup('main', ['active'])).toHaveLength(0);
+    const toolMetrics = listAssistantMetricEvents({
+      groupFolder: 'main',
+    }).filter((event) => ['tool_attempt', 'tool_success'].includes(event.kind));
+    expect(toolMetrics).toHaveLength(2);
+    expect(
+      toolMetrics.every((event) =>
+        event.metadataJson.includes('"metricClass":"assistant_interaction"'),
+      ),
+    ).toBe(true);
+    const ownerMetrics = listAssistantMetricEvents({
+      groupFolder: 'main',
+    }).filter((event) =>
+      ['recommendation_accepted', 'completion_verified'].includes(event.kind),
+    );
+    expect(ownerMetrics).toHaveLength(2);
+    expect(
+      ownerMetrics.every((event) => {
+        const metadata = JSON.parse(event.metadataJson) as Record<
+          string,
+          unknown
+        >;
+        return (
+          metadata.metricClass === 'owner_review' &&
+          metadata.bundleId === snapshot?.bundle.bundleId
+        );
+      }),
+    ).toBe(true);
   });
 
   it('marks rule-driven actions in a bundle and records overrides when skipped', async () => {

@@ -577,6 +577,10 @@ export function recordDelegationRuleOverride(
   recordAssistantMetric({
     groupFolder: rule.groupFolder,
     kind: 'override',
+    metadata: {
+      metricClass: 'owner_review',
+      ruleId: rule.ruleId,
+    },
     now,
   });
 }

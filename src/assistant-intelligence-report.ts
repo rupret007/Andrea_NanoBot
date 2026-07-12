@@ -1,5 +1,6 @@
 import {
   listDelegationRulesForGroup,
+  listRecentResponseFeedback,
   listRedactedRegressionFixtures,
 } from './db.js';
 import {
@@ -24,6 +25,11 @@ export interface AssistantIntelligenceReport {
     open: number;
     fixed: number;
     verified: number;
+  };
+  postDeliveryReflection: {
+    pending: number;
+    completed: number;
+    failed: number;
   };
   topNextImprovement: string;
   privacy: {
@@ -50,6 +56,9 @@ export function buildAssistantIntelligenceReport(params: {
     assessRoutinePromotion(rule.ruleId, now),
   );
   const fixtures = listRedactedRegressionFixtures({ limit: 1000 });
+  const reflectionFeedback = listRecentResponseFeedback({
+    limit: 1_000,
+  }).filter((record) => record.groupFolder === params.groupFolder);
   const promoted = assessments.filter(
     (assessment) => assessment.eligible,
   ).length;
@@ -89,6 +98,18 @@ export function buildAssistantIntelligenceReport(params: {
         (fixture) => fixture.remediationStatus === 'verified',
       ).length,
     },
+    postDeliveryReflection: {
+      pending: reflectionFeedback.filter(
+        (record) => record.linkedRefs.postDeliveryReflectionState === 'pending',
+      ).length,
+      completed: reflectionFeedback.filter(
+        (record) =>
+          record.linkedRefs.postDeliveryReflectionState === 'completed',
+      ).length,
+      failed: reflectionFeedback.filter(
+        (record) => record.linkedRefs.postDeliveryReflectionState === 'failed',
+      ).length,
+    },
     topNextImprovement,
     privacy: {
       metadataOnly: true,
@@ -106,10 +127,13 @@ export function formatAssistantIntelligenceReport(
     `Owner-reviewed outcomes: ${report.metrics.reviewedOutcomeCount}/5 required for baseline`,
     `Accepted recommendations: ${(report.metrics.acceptedRecommendationRate * 100).toFixed(1)}%`,
     `Verified completion: ${(report.metrics.verifiedCompletionRate * 100).toFixed(1)}%`,
-    `Memory citation coverage: ${(report.metrics.retrievalCitationCoverage * 100).toFixed(1)}%`,
-    `Tool reliability: ${(report.metrics.toolReliability * 100).toFixed(1)}%`,
+    `Memory precision: ${report.metrics.memoryPrecisionSampleCount > 0 ? `${(report.metrics.memoryPrecision * 100).toFixed(1)}% across ${report.metrics.memoryPrecisionSampleCount} reviewed judgment${report.metrics.memoryPrecisionSampleCount === 1 ? '' : 's'}` : 'no explicit correctness judgments yet'}`,
+    `Memory citation coverage: ${report.metrics.retrievalCitationSampleCount > 0 ? `${(report.metrics.retrievalCitationCoverage * 100).toFixed(1)}% across ${report.metrics.retrievalCitationSampleCount} citation-eligible retrieval${report.metrics.retrievalCitationSampleCount === 1 ? '' : 's'}` : 'no citation-eligible assistant retrievals yet'}`,
+    `Tool reliability: ${report.metrics.toolReliabilitySampleCount > 0 ? `${(report.metrics.toolReliability * 100).toFixed(1)}% across ${report.metrics.toolReliabilitySampleCount} comparable attempt${report.metrics.toolReliabilitySampleCount === 1 ? '' : 's'}` : 'no comparable assistant-interaction samples yet'}`,
+    `Interaction delivery latency: ${report.metrics.interactionLatencySampleCount > 0 ? `${report.metrics.averageLatencyMs} ms across ${report.metrics.interactionLatencySampleCount} comparable sample${report.metrics.interactionLatencySampleCount === 1 ? '' : 's'}` : 'no comparable post-delivery-boundary samples yet'}`,
     `Routines: ${report.routines.promoted}/${report.routines.total} promoted; ${report.routines.pendingCanary} pending canary; ${report.routines.paused} paused`,
     `Feedback fixtures: ${report.feedbackFixtures.open} open; ${report.feedbackFixtures.fixed} fixed; ${report.feedbackFixtures.verified} verified`,
+    `Post-delivery reflection: ${report.postDeliveryReflection.pending} pending; ${report.postDeliveryReflection.completed} completed; ${report.postDeliveryReflection.failed} failed`,
     `Regressions: ${report.regressions.length ? report.regressions.join('; ') : 'none'}`,
     `Next: ${report.topNextImprovement}`,
     'Privacy: metadata-only; no raw conversation text.',

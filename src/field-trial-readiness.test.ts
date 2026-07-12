@@ -164,6 +164,11 @@ describe('field-trial readiness', () => {
 
     expect(truth.telegram.proofState).toBe('live_proven');
     expect(truth.telegram.blocker).toBe('');
+    expect(truth.telegram.configured).toBe(true);
+    expect(truth.telegram.transportState).toBe('ready');
+    expect(truth.telegram.lastSuccessfulRoundtripAt).toBe(
+      '2099-04-07T16:00:12.000Z',
+    );
   });
 
   it('degrades an otherwise running host when disk pressure threatens persistence', () => {

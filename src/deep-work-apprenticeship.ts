@@ -107,6 +107,7 @@ export function recordDeepWorkModelRoute(params: {
     kind: 'latency_sample',
     value: updated.modelRoute!.latencyMs,
     metadata: {
+      latencyClass: 'deep_work_route',
       packetId: packet.packetId,
       provider: updated.modelRoute!.provider,
       model: updated.modelRoute!.model,
@@ -596,28 +597,41 @@ export function reviewDeepWorkMission(params: {
   recordAssistantMetric({
     groupFolder: packet.groupFolder,
     kind: ownerAccepted ? 'recommendation_accepted' : 'recommendation_rejected',
-    metadata: { packetId: packet.packetId, verdict: params.verdict },
+    metadata: {
+      metricClass: 'owner_review',
+      packetId: packet.packetId,
+      verdict: params.verdict,
+    },
     now,
   });
   if (params.verdict === 'verified') {
     recordAssistantMetric({
       groupFolder: packet.groupFolder,
       kind: 'completion_verified',
-      metadata: { packetId: packet.packetId },
+      metadata: {
+        metricClass: 'owner_review',
+        packetId: packet.packetId,
+      },
       now,
     });
   } else if (params.verdict === 'corrected') {
     recordAssistantMetric({
       groupFolder: packet.groupFolder,
       kind: 'correction',
-      metadata: { packetId: packet.packetId },
+      metadata: {
+        metricClass: 'owner_review',
+        packetId: packet.packetId,
+      },
       now,
     });
   } else if (params.verdict === 'rejected') {
     recordAssistantMetric({
       groupFolder: packet.groupFolder,
       kind: 'override',
-      metadata: { packetId: packet.packetId },
+      metadata: {
+        metricClass: 'owner_review',
+        packetId: packet.packetId,
+      },
       now,
     });
   }

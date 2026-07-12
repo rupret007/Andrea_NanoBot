@@ -17,10 +17,13 @@ messages. Facts carry an opaque source citation, confidence, observation and
 expiry timestamps, review status, and a subject key used to surface conflicts.
 
 Disabling a source immediately revokes its derived facts. A user can accept,
-revoke, forget, or allow a fact to expire. Retrieval uses local lexical scoring
-and can combine an injected semantic scorer; every returned item retains a
-citation. Profile memory, the Knowledge Library, and episodic/context-graph
-state remain separate stores even though the packet presents one bounded view.
+revoke, forget, or allow a fact to expire. Retrieval combines exact lexical
+matches with a deterministic local concept scorer and can additionally combine
+an injected semantic scorer; every returned item retains a citation. The local
+fallback recognizes bounded assistant concepts such as agenda/calendar,
+texts/messages, goals/priorities, and reminders/tasks without a provider call.
+Profile memory, the Knowledge Library, and episodic/context-graph state remain
+separate stores even though the packet presents one bounded view.
 
 Meaningful production turns now compile one packet and reuse it across the turn
 harness and Cognitive Executive. Remote deliberation receives counts, conflict
@@ -74,6 +77,50 @@ converted to a traceable regression fixture without raw user or assistant text.
 Outcome metrics cover recommendation acceptance, verified completion,
 corrections and overrides, false proactive suggestions, memory precision,
 citation coverage, tool reliability, latency, and live-evaluation cost.
+Memory, citation, and tool-reliability rates count only events explicitly tagged
+as real `assistant_interaction` work. Provider evaluation events are tagged
+`live_evaluation`, and legacy events without provenance fail closed as
+unclassified telemetry. Both remain auditable in the event ledger, but neither
+can be presented as real-assistant reliability evidence or trigger a baseline
+regression when there is no comparable current sample.
+Recommendation acceptance, verified completion, corrections, overrides, and
+the five-sample baseline gate similarly require explicit `owner_review`
+provenance. Feedback controls, conservative natural verdicts, message-action
+decisions, deep-work reviews, and explicit action-bundle decisions emit that
+provenance. Multiple actions decided in one bundle retain action-level metrics
+but share one bundle identity, so a single owner interaction cannot masquerade
+as several reviewed outcomes. Evaluation, internal reward, routine-canary, and
+legacy unclassified events remain auditable but cannot advance the gate.
+Memory precision is not inferred from retrieval activity or generic
+helpfulness. It requires an explicit packet-linked phrase such as `that memory
+was correct` or `that memory was incorrect`; a later correction replaces the
+prior judgment instead of adding a second sample. Citation coverage includes
+only retrievals that returned at least one relevant result, so an honest
+no-match cannot depress the score. Query packets use stopword-safe lexical
+matching plus deterministic local concepts and the optional injected semantic
+scorer. Items with none of those signals are excluded, preventing confidence or
+freshness alone from injecting unrelated personal context. A content-free
+topical query such as `who are you?` therefore returns no personal items instead
+of failing open. Contradictions are surfaced only when at least one conflicting
+item is relevant to the packet.
+Intentionally broad daily-guidance requests such as `what am I forgetting`
+and explicit memory-review requests such as `what do you know about me?` retain
+a bounded cross-source context view; topical queries use the stricter relevance
+filter.
+Interaction latency means live reply delivery only. Provider evaluations,
+deep-work route timing, replay drills, synthetic turns, and post-delivery
+reflection are labeled separately and cannot distort the personal UX metric.
+Feedback and same-thread message-action state is persisted at that delivery
+boundary; slower reflection may enrich its evidence links afterward, but cannot
+delay creation of the owner-facing control record or hold the conversation
+queue. The detached task persists pending/completed/failed state, records its
+own duration, merges around concurrent owner review, and stores only a redacted
+error class if reflection fails.
+Each task carries a process-generation identifier. Graceful shutdown drains
+active work for up to five seconds; the next canonical process marks any prior-
+generation pending task as interrupted rather than leaving false in-progress
+evidence or trying to reconstruct private turn context. The assistant-
+intelligence report exposes pending/completed/failed counts directly.
 
 In the registered Telegram owner chat and configured BlueBubbles self-thread,
 fresh standalone phrases such as `that worked`, `that was helpful`, `that
@@ -90,6 +137,9 @@ Use `npm run debug:assistant-intelligence` for the metadata-only operator view.
 Add `-- --save-baseline` only when the current sample is the reviewed baseline.
 The command refuses to save fewer than five accepted/rejected owner-reviewed
 outcomes. Provider latency, tool, and cost telemetry never satisfy this gate.
+Andrea also reports this count after each genuine feedback verdict and in the
+conversational `learning status` answer. Reaching five reports that a baseline
+is ready for operator review; it never auto-saves or silently promotes one.
 
 ## Verified deep-work apprenticeship
 
@@ -126,6 +176,10 @@ owner-review evidence is never backfilled from synthetic fixtures.
 The AGI bootstrap compiles its model catalog from pinned defaults plus configured
 OpenAI, Anthropic, Gemini, and local model identifiers. Adapter discovery still
 determines actual availability; configuration alone is not a health claim.
+Provider snapshots now carry an explicit `configuration_only` or `live_probe`
+evidence class. The capability registry and model self-description keep a
+configured-only provider at `unknown`; an unavailable local model is blocked,
+and only an injected or successful live observation becomes healthy.
 
 `npm run debug:grounded-agency` prints the metadata-only capability registry and
 twelve redacted routing cases without provider calls. Live comparison is opt-in:
@@ -137,9 +191,18 @@ npm run debug:grounded-agency -- --live --max-cost-usd=25
 The live runner fails closed without a positive cap, stops before exceeding the
 cap, rotates across configured providers, stores only provider/model/latency/cost
 and structural outcome metadata, and never stores raw provider output or user
-conversation text. A structural pass proves response-contract compliance, not
-owner-verified task success. These results inform routing but do not promote a
-skill or count toward the dogfood baseline.
+conversation text. Its final registry is derived from those same capped calls:
+any observed failure leaves that provider degraded, while an all-successful
+observed provider is healthy. It does not make extra unbudgeted health calls. A
+structural pass proves response-contract compliance, not owner-verified task
+success. These results inform routing but do not promote a skill or count toward
+the dogfood baseline.
+
+Integration health uses the same evidence discipline. Configuration, transport
+state, and proof freshness remain separate. A ready Telegram transport can stay
+healthy while an old roundtrip marker becomes `near_live_only`; the report gives
+the last successful timestamp and asks for a fresh proof instead of relabeling
+the transport as failed or copying a success sentence into `lastFailure`.
 
 ## Validation
 

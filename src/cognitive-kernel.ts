@@ -894,6 +894,7 @@ function providerUsability(providers = collectProviderHealthSnapshots()): {
   healthy: number;
   degraded: number;
   blocked: number;
+  unknown: number;
   degradedProviderIds: string[];
   snapshots: Array<Record<string, unknown>>;
 } {
@@ -910,6 +911,8 @@ function providerUsability(providers = collectProviderHealthSnapshots()): {
         provider.state === 'externally_blocked' ||
         provider.state === 'not_configured',
     ).length,
+    unknown: providers.filter((provider) => provider.state === 'unknown')
+      .length,
     degradedProviderIds,
     snapshots: providers.map((provider) => ({
       providerId: provider.providerId,
@@ -2567,12 +2570,14 @@ function executeReadOnlyAdapter(input: {
         runId: input.run.runId,
         toolId: input.plan.toolId,
         status:
-          input.provider.healthy > 0
-            ? input.provider.blocked > 0 || input.provider.degraded > 0
+          input.provider.snapshots.length === 0
+            ? 'blocked'
+            : input.provider.degraded > 0 ||
+                input.provider.blocked > 0 ||
+                input.provider.unknown > 0
               ? 'degraded'
-              : 'succeeded'
-            : 'blocked',
-        summary: `${input.provider.healthy} provider(s) healthy; ${input.provider.degraded + input.provider.blocked} degraded or blocked.`,
+              : 'succeeded',
+        summary: `${input.provider.healthy} provider(s) healthy; ${input.provider.degraded} degraded; ${input.provider.blocked} blocked; ${input.provider.unknown} unknown.`,
         evidenceRefs: input.provider.snapshots.map(
           (snapshot) => `provider:${String(snapshot.providerId)}`,
         ),
@@ -2580,13 +2585,21 @@ function executeReadOnlyAdapter(input: {
           healthy: input.provider.healthy,
           degraded: input.provider.degraded,
           blocked: input.provider.blocked,
+          unknown: input.provider.unknown,
           degradedProviderIds: input.provider.degradedProviderIds,
         },
-        failureClass: input.provider.healthy > 0 ? null : 'no_usable_provider',
+        failureClass:
+          input.provider.snapshots.length === 0
+            ? 'provider_probe_unavailable'
+            : input.provider.healthy > 0
+              ? null
+              : 'no_live_health_evidence',
         nextAction:
-          input.provider.healthy > 0
-            ? 'Assign optional model roles only to usable providers.'
-            : 'Answer with provider blocker named and skip model-dependent routes.',
+          input.provider.snapshots.length === 0
+            ? 'Repair provider health collection before assigning model-dependent work.'
+            : input.provider.healthy > 0
+              ? 'Assign optional model roles only to usable providers.'
+              : 'Keep local-only work available, but skip model-dependent routes until a live probe succeeds.',
         now: input.now,
       });
     case 'integrations_status': {
@@ -4002,7 +4015,8 @@ function buildVerification(
       input.providerCouncil?.status ||
       null,
     providerUsableCount: usability.healthy,
-    providerDegradedCount: usability.degraded + usability.blocked,
+    providerDegradedCount:
+      usability.degraded + usability.blocked + usability.unknown,
     nextAction,
   };
 }
@@ -4016,7 +4030,7 @@ function buildWorldBeliefs(
     {
       beliefId: `belief:provider:${input.turnId}`,
       source: 'provider_health',
-      summary: `${usability.healthy} providers healthy; ${usability.degraded + usability.blocked} degraded or blocked.`,
+      summary: `${usability.healthy} providers healthy; ${usability.degraded} degraded; ${usability.blocked} blocked; ${usability.unknown} unknown.`,
       confidence: usability.healthy > 0 ? 0.8 : 0.35,
       freshness: 'fresh',
     },

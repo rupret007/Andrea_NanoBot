@@ -1642,6 +1642,7 @@ export type AssistantMetricEventKind =
   | 'proactive_false_positive'
   | 'memory_retrieval'
   | 'memory_retrieval_correct'
+  | 'memory_retrieval_reviewed'
   | 'retrieval_with_citation'
   | 'tool_attempt'
   | 'tool_success'
@@ -1666,9 +1667,14 @@ export interface AssistantMetricSnapshot {
   correctionOverrideRate: number;
   falseProactiveSuggestionRate: number;
   memoryPrecision: number;
+  memoryPrecisionSampleCount: number;
   retrievalCitationCoverage: number;
+  retrievalCitationSampleCount: number;
+  memoryRetrievalSampleCount: number;
   toolReliability: number;
+  toolReliabilitySampleCount: number;
   averageLatencyMs: number;
+  interactionLatencySampleCount: number;
   liveEvalCostUsd: number;
   sampleCount: number;
   reviewedOutcomeCount: number;
@@ -6677,6 +6683,11 @@ export interface PilotIssueLinkedRefs {
   cognitiveTrajectoryId?: string;
   agentRuntimeRunId?: string;
   cognitiveOwnerReviewSignalId?: string;
+  postDeliveryReflectionState?: 'pending' | 'completed' | 'failed';
+  postDeliveryReflectionOwnerId?: string;
+  postDeliveryReflectionStartedAt?: string;
+  postDeliveryReflectionAt?: string;
+  postDeliveryReflectionErrorClass?: string;
   absorbedFeedbackIds?: string[];
   repairBindingState?: string;
   repairExecutionState?: string;
