@@ -11203,6 +11203,7 @@ export function getResponseFeedbackByRemediationJob(params: {
 export function listRecentResponseFeedback(
   params: {
     chatJid?: string;
+    groupFolder?: string;
     status?: ResponseFeedbackRecord['status'];
     limit?: number;
   } = {},
@@ -11212,6 +11213,10 @@ export function listRecentResponseFeedback(
   if (params.chatJid) {
     clauses.push('chat_jid = ?');
     values.push(params.chatJid);
+  }
+  if (params.groupFolder) {
+    clauses.push('group_folder = ?');
+    values.push(params.groupFolder);
   }
   if (params.status) {
     clauses.push('status = ?');

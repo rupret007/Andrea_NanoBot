@@ -7,8 +7,10 @@ import {
   buildResponseFeedbackActionRows,
   buildResponseFeedbackCaptureReply,
   buildResponseFeedbackRemediationPrompt,
+  buildResponseFeedbackReviewQueue,
   classifyResponseFeedbackCandidate,
   getResponseFeedbackRouteRegressionCoverage,
+  isResponseFeedbackReviewQueueRequest,
   mapMessageReactionToFeedbackAction,
   parseNaturalResponseFeedbackVerdict,
   parseResponseFeedbackAction,
@@ -24,6 +26,7 @@ import {
   _initTestDatabase,
   getResponseFeedback,
   getResponseFeedbackByMessage,
+  listRecentResponseFeedback,
   listRedactedRegressionFixtures,
   pruneUnreviewedBlueBubblesFeedbackLinks,
   upsertResponseFeedback,
@@ -168,6 +171,134 @@ describe('response feedback helpers', () => {
     }
   });
 
+  it('recognizes only explicit private outcome-review queue asks', () => {
+    for (const text of [
+      'review recent answers',
+      'review my assistant responses',
+      'please review latest Andrea outcomes',
+      'open review recommendations',
+    ]) {
+      expect(isResponseFeedbackReviewQueueRequest(text)).toBe(true);
+    }
+    for (const text of [
+      'review communication identities',
+      'review this document',
+      'what did you learn?',
+      'that was helpful',
+    ]) {
+      expect(isResponseFeedbackReviewQueueRequest(text)).toBe(false);
+    }
+  });
+
+  it('presents one recent Telegram answer without recording or leaking sensitive text', () => {
+    const older = buildRecord({
+      feedbackId: '22222222-2222-3333-4444-555555555555',
+      createdAt: '2026-05-02T04:00:00.000Z',
+      groupFolder: 'main',
+      assistantReplyText: 'Older useful answer.',
+    });
+    const newest = buildRecord({
+      feedbackId: '33333333-2222-3333-4444-555555555555',
+      createdAt: '2026-05-02T04:10:00.000Z',
+      groupFolder: 'main',
+      assistantReplyText:
+        'Use API_KEY=test-review-secret-123456789 for this answer.',
+    });
+    const queue = buildResponseFeedbackReviewQueue({
+      records: [
+        older,
+        newest,
+        buildRecord({
+          feedbackId: '44444444-2222-3333-4444-555555555555',
+          groupFolder: 'other',
+          createdAt: '2026-05-02T04:11:00.000Z',
+        }),
+        buildRecord({
+          feedbackId: '77777777-2222-3333-4444-555555555555',
+          chatJid: 'tg:other-private-chat',
+          createdAt: '2026-05-02T04:11:30.000Z',
+        }),
+        buildRecord({
+          feedbackId: '55555555-2222-3333-4444-555555555555',
+          status: 'accepted',
+          createdAt: '2026-05-02T04:11:00.000Z',
+        }),
+        buildRecord({
+          feedbackId: '66666666-2222-3333-4444-555555555555',
+          issueId: 'already-reviewed-negative',
+          createdAt: '2026-05-02T04:11:00.000Z',
+        }),
+      ],
+      groupFolder: 'main',
+      channel: 'telegram',
+      allowedChatJids: ['tg:main'],
+      now: new Date('2026-05-02T04:12:00.000Z'),
+    });
+
+    expect(queue.candidate?.feedbackId).toBe(
+      '33333333-2222-3333-4444-555555555555',
+    );
+    expect(queue.eligibleCount).toBe(2);
+    expect(queue.text).toContain('[REDACTED_SECRET]');
+    expect(queue.text).not.toContain('test-review-secret');
+    expect(queue.text).toContain('Opening this review records nothing');
+    expect(queue.inlineActionRows).toEqual([
+      [
+        {
+          label: 'Helpful',
+          actionId: 'feedback:33333333-2222-3333-4444-555555555555:accept',
+        },
+        {
+          label: 'Not helpful',
+          actionId: 'feedback:33333333-2222-3333-4444-555555555555:capture',
+        },
+      ],
+    ]);
+  });
+
+  it('keeps Messages review fresh, private, and verdict-free until the owner replies', () => {
+    const queue = buildResponseFeedbackReviewQueue({
+      records: [
+        buildRecord({
+          channel: 'bluebubbles',
+          createdAt: '2026-05-02T04:10:00.000Z',
+          originalUserText: '[private BlueBubbles request omitted]',
+          assistantReplyText: '[private BlueBubbles response omitted]',
+        }),
+        buildRecord({
+          feedbackId: '22222222-2222-3333-4444-555555555555',
+          channel: 'bluebubbles',
+          createdAt: '2026-05-02T03:00:00.000Z',
+        }),
+      ],
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      now: new Date('2026-05-02T04:12:00.000Z'),
+    });
+
+    expect(queue.eligibleCount).toBe(1);
+    expect(queue.text).toContain('latest private Messages answer');
+    expect(queue.text).toContain('Reply `that worked`');
+    expect(queue.text).not.toContain('private BlueBubbles response omitted');
+    expect(queue.inlineActionRows).toBeUndefined();
+  });
+
+  it('returns an honest empty review state instead of backfilling stale outcomes', () => {
+    const queue = buildResponseFeedbackReviewQueue({
+      records: [
+        buildRecord({
+          createdAt: '2026-04-01T00:00:00.000Z',
+        }),
+      ],
+      groupFolder: 'main',
+      channel: 'telegram',
+      now: new Date('2026-05-02T04:12:00.000Z'),
+    });
+    expect(queue.candidate).toBeNull();
+    expect(queue.eligibleCount).toBe(0);
+    expect(queue.text).toContain('did not infer or backfill any outcome');
+  });
+
   it('binds a natural verdict only to the latest fresh unreviewed response', () => {
     const older = buildRecord({
       feedbackId: '22222222-2222-3333-4444-555555555555',
@@ -309,6 +440,27 @@ describe('response feedback helpers', () => {
       originalUserText: '[private BlueBubbles request omitted]',
       assistantReplyText: '[private BlueBubbles response omitted]',
     });
+  });
+
+  it('scopes response-feedback reads by group folder in SQL', () => {
+    upsertResponseFeedback(buildRecord({ groupFolder: 'main' }));
+    upsertResponseFeedback(
+      buildRecord({
+        feedbackId: '22222222-2222-3333-4444-555555555555',
+        groupFolder: 'other',
+      }),
+    );
+
+    expect(
+      listRecentResponseFeedback({ groupFolder: 'main', limit: 10 }).map(
+        (record) => record.groupFolder,
+      ),
+    ).toEqual(['main']);
+    expect(
+      listRecentResponseFeedback({ groupFolder: 'other', limit: 10 }).map(
+        (record) => record.groupFolder,
+      ),
+    ).toEqual(['other']);
   });
 
   it('bounds untouched BlueBubbles links while preserving reviewed outcomes', () => {

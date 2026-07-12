@@ -1,5 +1,42 @@
 # Modernization Plan
 
+## Private owner outcome-review inbox — 2026-07-12
+
+### Implemented
+
+- [x] Add `review recent answers` as a private, bounded learning workflow in the
+      registered main Telegram chat and configured Messages self-thread. It
+      presents one attributable recent answer at a time instead of requiring an
+      immediate reaction to every response.
+- [x] Keep evidence honest: opening the inbox records no verdict, old Messages
+      answers expire from natural-language attribution after 30 minutes, and
+      no outcome is inferred, backfilled, baseline-saved, or promoted.
+- [x] Enforce source isolation in both SQL and presentation. Candidates must
+      match the operating group, exact private Telegram chat or configured
+      Messages self-thread aliases, supported channel, freshness window, and
+      unreviewed state. Other chats and owner surfaces cannot inspect the queue.
+- [x] Redact answer previews and reuse the existing Helpful/Not helpful,
+      tapback, natural-verdict, cognitive-review, regression-fixture, and metric
+      pathways. A review can never authorize a send, calendar write, purchase,
+      code landing, or other side effect.
+- [x] Lock all documented review phrases to the local direct-assistant route so
+      the queue cannot fall through to a provider or tool lane. After a positive
+      verdict, present the next eligible answer and controls in the same private
+      acknowledgement; each answer still requires its own explicit verdict.
+
+### Validation and evidence boundary
+
+- [x] Focused response-feedback, routing, and command-surface coverage passes
+      80/80 with typecheck, documentation validation, and diff hygiene. A metadata-only
+      production read finds 31 eligible recent Telegram answers without
+      loading a private preview or writing a verdict.
+- [x] Complete validation after the routing and next-item wiring passes 204
+      primary files with 2,286/2,286 tests, 282/282 AGI tests, both typechecks,
+      production build, formatting, 57-file docs validation, warning-only lint
+      with zero errors (647 existing warnings), both zero-vulnerability audits,
+      and diff hygiene. Real learning evidence remains 0/5 until the owner
+      explicitly reviews genuine answers through normal use.
+
 ## Provider alert transition consistency — 2026-07-12
 
 ### Implemented

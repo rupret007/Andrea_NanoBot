@@ -9,6 +9,7 @@ import {
   updateResponseFeedback,
 } from './db.js';
 import { createRegressionFixtureFromFeedback } from './personal-assistant-metrics.js';
+import { clipCouncilText } from './council-safety.js';
 import {
   ANDREA_OPENAI_BACKEND_ID,
   AndreaOpenAiBackendClient,
@@ -606,6 +607,156 @@ export function buildResponseFeedbackActionId(
   operation: ResponseFeedbackActionKind,
 ): string {
   return `${RESPONSE_FEEDBACK_ACTION_PREFIX}:${feedbackId}:${operation}`;
+}
+
+const REVIEWABLE_RESPONSE_FEEDBACK_STATUSES = new Set<
+  ResponseFeedbackRecord['status']
+>(['awaiting_confirmation', 'blocked_external', 'manual_sync_only']);
+
+export interface ResponseFeedbackReviewQueue {
+  candidate: ResponseFeedbackRecord | null;
+  eligibleCount: number;
+  text: string;
+  inlineActionRows?: ChannelInlineAction[][];
+}
+
+export function isResponseFeedbackReviewQueueRequest(
+  text: string | null | undefined,
+): boolean {
+  const normalized = normalizeText(text).toLowerCase();
+  return /^(?:please\s+)?(?:(?:show|start|open)\s+)?review\s+(?:(?:my|the)\s+)?(?:(?:recent|latest)\s+)?(?:andrea(?:'s)?|assistant)?\s*(?:answers?|responses?|recommendations?|outcomes?)$/i.test(
+    normalized,
+  );
+}
+
+function isUnreviewedResponseFeedback(record: ResponseFeedbackRecord): boolean {
+  return (
+    REVIEWABLE_RESPONSE_FEEDBACK_STATUSES.has(record.status) &&
+    !record.issueId &&
+    !parseNaturalResponseFeedbackVerdict(record.originalUserText) &&
+    !record.routeKey?.startsWith('learning.outcome_review')
+  );
+}
+
+function responseFeedbackReviewPreview(record: ResponseFeedbackRecord): string {
+  const omitted = /^\[private .* omitted\]$/i.test(
+    normalizeText(record.assistantReplyText),
+  );
+  if (omitted) {
+    return record.channel === 'bluebubbles'
+      ? 'the latest private Messages answer'
+      : 'the latest private answer';
+  }
+  return `“${clipCouncilText(record.assistantReplyText, 180)}”`;
+}
+
+/**
+ * Presents one explicitly attributable answer at a time. Merely opening this
+ * queue never records a verdict; only the existing feedback actions do that.
+ */
+export function buildResponseFeedbackReviewQueue(params: {
+  records: ResponseFeedbackRecord[];
+  groupFolder: string;
+  channel: 'telegram' | 'bluebubbles';
+  allowedChatJids?: string[];
+  now?: Date;
+  maxAgeMs?: number;
+}): ResponseFeedbackReviewQueue {
+  const now = params.now || new Date();
+  const maxAgeMs = Math.max(
+    1,
+    params.maxAgeMs ??
+      (params.channel === 'bluebubbles'
+        ? 30 * 60 * 1000
+        : 7 * 24 * 60 * 60 * 1000),
+  );
+  const candidates = params.records
+    .filter(
+      (record) =>
+        record.groupFolder === params.groupFolder &&
+        record.channel === params.channel &&
+        (!params.allowedChatJids ||
+          params.allowedChatJids.includes(record.chatJid)) &&
+        isUnreviewedResponseFeedback(record),
+    )
+    .map((record) => ({
+      record,
+      createdAtMs: responseFeedbackCreatedAtMs(record),
+    }))
+    .filter(
+      ({ createdAtMs }) =>
+        createdAtMs > 0 &&
+        now.getTime() >= createdAtMs &&
+        now.getTime() - createdAtMs <= maxAgeMs,
+    )
+    .sort((left, right) => right.createdAtMs - left.createdAtMs)
+    .map(({ record }) => record);
+  const candidate = candidates[0] || null;
+  if (!candidate) {
+    const windowText =
+      params.channel === 'bluebubbles'
+        ? 'the last 30 minutes'
+        : 'the last week';
+    return {
+      candidate: null,
+      eligibleCount: 0,
+      text: `There is no recent unreviewed Andrea answer on this private surface from ${windowText}. I did not infer or backfill any outcome.`,
+    };
+  }
+
+  const preview = responseFeedbackReviewPreview(candidate);
+  const remaining = candidates.length - 1;
+  const privacyLine =
+    'Opening this review records nothing. Only your explicit verdict becomes learning evidence, and it cannot approve sends, calendar changes, purchases, code landing, or any other action.';
+  if (params.channel === 'bluebubbles') {
+    return {
+      candidate,
+      eligibleCount: candidates.length,
+      text: [
+        `Review this fresh answer: ${preview}`,
+        'Reply `that worked` or `that was helpful` for a positive review, or `not helpful` for a correction. You can also tap back on the original answer.',
+        remaining > 0
+          ? `${remaining} other recent answer${remaining === 1 ? ' is' : 's are'} waiting after this one.`
+          : '',
+        privacyLine,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    };
+  }
+
+  return {
+    candidate,
+    eligibleCount: candidates.length,
+    text: [
+      `Review this recent answer: ${preview}`,
+      'Was this genuinely helpful?',
+      remaining > 0
+        ? `${remaining} other recent answer${remaining === 1 ? ' is' : 's are'} waiting after this one.`
+        : '',
+      privacyLine,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    inlineActionRows: [
+      [
+        {
+          label: 'Helpful',
+          actionId: buildResponseFeedbackActionId(
+            candidate.feedbackId,
+            'accept',
+          ),
+        },
+        {
+          label: 'Not helpful',
+          actionId: buildResponseFeedbackActionId(
+            candidate.feedbackId,
+            'capture',
+          ),
+        },
+      ],
+    ],
+  };
 }
 
 export function parseResponseFeedbackAction(

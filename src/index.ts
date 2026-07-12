@@ -784,12 +784,14 @@ import {
 import {
   appendResponseFeedbackActionRows,
   appendResponseFeedbackInlineRow,
+  buildResponseFeedbackReviewQueue,
   buildResponseFeedbackActionRows,
   buildResponseFeedbackCaptureReply,
   buildResponseFeedbackRemediationPrompt,
   buildResponseFeedbackWhyText,
   classifyResponseFeedbackCandidate,
   mapMessageReactionToFeedbackAction,
+  isResponseFeedbackReviewQueueRequest,
   parseResponseFeedbackAction,
   refreshRecentResponseFeedbackTruth,
   resolveNaturalResponseFeedbackVerdict,
@@ -8351,6 +8353,56 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
 
   const tryHandleLearningStatus = async (): Promise<boolean> => {
+    if (isResponseFeedbackReviewQueueRequest(lastContent)) {
+      const privateReviewSurface =
+        (channel.name === 'telegram' && isMainControlChat(group)) ||
+        (channel.name === 'bluebubbles' &&
+          isBlueBubblesSelfThreadAliasJid(chatJid));
+      if (!privateReviewSurface) {
+        await sendAssistantReplyWithFeedback({
+          text: 'Outcome review is private to your registered main Telegram chat or configured Messages self-thread. I did not load or record any review candidate here.',
+          routeKey: 'learning.outcome_review.restricted',
+          capabilityId: 'memory.status',
+          handlerKind: 'local_outcome_review_restriction',
+          responseSource: 'local_companion',
+          traceReason:
+            'refused to expose review candidates outside owner-only surfaces',
+          allowFeedback: false,
+        });
+        clearSharedAssistantCapabilitySeed(chatJid);
+        return true;
+      }
+      const reviewChannel =
+        channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram';
+      const reviewQueue = buildResponseFeedbackReviewQueue({
+        records: listRecentResponseFeedback({
+          groupFolder: group.folder,
+          limit: 100,
+        }),
+        groupFolder: group.folder,
+        channel: reviewChannel,
+        allowedChatJids:
+          reviewChannel === 'bluebubbles'
+            ? expandBlueBubblesLogicalSelfThreadJids(chatJid)
+            : [chatJid],
+        now,
+      });
+      await sendAssistantReplyWithFeedback({
+        text: reviewQueue.text,
+        sendOptions: reviewQueue.inlineActionRows
+          ? { inlineActionRows: reviewQueue.inlineActionRows }
+          : undefined,
+        routeKey: 'learning.outcome_review',
+        capabilityId: 'memory.status',
+        handlerKind: 'local_outcome_review_queue',
+        responseSource: 'local_companion',
+        traceReason:
+          'presented one recent unreviewed answer without recording a verdict',
+        allowFeedback: false,
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
     const defaultRequest = parseLearningDefaultRequest(lastContent);
     if (defaultRequest) {
       await sendAssistantReplyWithFeedback({
@@ -11858,6 +11910,25 @@ async function main(): Promise<void> {
           now: feedbackNow,
         }),
       );
+    const buildNextReviewQueue = (record: ResponseFeedbackRecord) => {
+      if (record.channel !== 'telegram' && record.channel !== 'bluebubbles') {
+        return null;
+      }
+      const queue = buildResponseFeedbackReviewQueue({
+        records: listRecentResponseFeedback({
+          groupFolder: feedbackGroupFolder,
+          limit: 100,
+        }),
+        groupFolder: feedbackGroupFolder,
+        channel: record.channel,
+        allowedChatJids:
+          record.channel === 'bluebubbles'
+            ? expandBlueBubblesLogicalSelfThreadJids(chatJid)
+            : [chatJid],
+        now: feedbackNow,
+      });
+      return queue.candidate ? queue : null;
+    };
 
     if (action.operation === 'accept') {
       const memoryJudgmentRecorded = recordLinkedMemoryJudgment();
@@ -11917,10 +11988,16 @@ async function main(): Promise<void> {
             : cognitiveReview.recorded
               ? 'Thanks — I linked that helpful outcome to the exact reasoning route so repeated success can improve future choices.'
               : 'Thanks — I recorded that as helpful.';
+        const nextReviewQueue = buildNextReviewQueue(updated);
         await channel.sendMessage(
           chatJid,
-          `${acknowledgement}\n${progressText}${missionInvitation ? `\n${missionInvitation}` : ''}`,
-          buildOperatorSendOptions(msg),
+          `${acknowledgement}\n${progressText}${missionInvitation ? `\n${missionInvitation}` : ''}${nextReviewQueue ? `\n\n${nextReviewQueue.text}` : ''}`,
+          buildOperatorSendOptions(
+            msg,
+            nextReviewQueue?.inlineActionRows
+              ? { inlineActionRows: nextReviewQueue.inlineActionRows }
+              : undefined,
+          ),
         );
       }
       return true;

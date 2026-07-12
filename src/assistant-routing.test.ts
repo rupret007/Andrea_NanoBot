@@ -25,6 +25,20 @@ describe('assistant request routing', () => {
     );
   });
 
+  it('keeps private outcome-review inbox asks on the local direct route', () => {
+    for (const content of [
+      'review recent answers',
+      'review my assistant responses',
+      'please review latest Andrea outcomes',
+      'open review recommendations',
+    ]) {
+      const policy = classifyAssistantRequest([{ content }]);
+      expect(policy.route).toBe('direct_assistant');
+      expect(policy.mcpTools).toEqual([]);
+      expect(policy.builtinTools).toEqual(['Read']);
+    }
+  });
+
   it('keeps playful meaning-of-life asks on the direct assistant route', () => {
     const policy = classifyAssistantRequest([
       { content: "what's the meaning of life?" },
