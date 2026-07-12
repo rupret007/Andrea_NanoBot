@@ -17,10 +17,8 @@ import {
   listBlackboardSnapshots,
   upsertBlackboardSnapshot,
 } from './db.js';
-import {
-  collectProviderHealthSnapshots,
-  type ProviderHealthSnapshot,
-} from './provider-health.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
+import { collectProviderHealthSnapshotsWithRecentLiveEvidence } from './provider-live-probe.js';
 import {
   buildIntegrationDoctorReport,
   type IntegrationDoctorReport,
@@ -78,6 +76,7 @@ export interface BuildBlackboardInput {
   persist?: boolean;
   providerHealthSnapshots?: ProviderHealthSnapshot[];
   integrationReport?: IntegrationDoctorReport;
+  projectRoot?: string;
 }
 
 function providerHealthAsRollupHealth(
@@ -492,7 +491,10 @@ export function buildCognitiveBlackboard(
 
   const rollups = dbReady ? listToolReliabilityRollups({ limit: 100 }) : [];
   const providerHealth =
-    input.providerHealthSnapshots ?? collectProviderHealthSnapshots(createdAt);
+    input.providerHealthSnapshots ??
+    collectProviderHealthSnapshotsWithRecentLiveEvidence(createdAt, {
+      projectRoot: input.projectRoot,
+    });
   const integrationReport =
     input.integrationReport ||
     buildIntegrationDoctorReport({ now: new Date(createdAt) });

@@ -115,6 +115,20 @@ filter.
 Interaction latency means live reply delivery only. Provider evaluations,
 deep-work route timing, replay drills, synthetic turns, and post-delivery
 reflection are labeled separately and cannot distort the personal UX metric.
+Fresh provider probes are reconciled into route reliability through the
+existing redacted live-health cache. The cache is owner-only, stores no raw
+credential or provider response, expires after 30 minutes, and cannot override
+a current missing-configuration or quota blocker. Provider health satisfies
+only the dependency edge; cited verified task usage remains the stronger
+evidence required for end-to-end route learning. A cached probe also cannot
+overwrite newer verified-use evidence, whether that newer request succeeded or
+failed.
+The capability self-model, cognitive blackboard, tool-reliability doctor, and
+live cognitive kernel compile that same bounded observation. Explicit injected
+snapshots still control deterministic and config-only evaluation. When a
+dependency changes an effective route state, the explanation updates health,
+score, confidence cap, and next action together; a surface cannot claim a route
+is healthy while displaying its obsolete unknown-state cap.
 Feedback and same-thread message-action state is persisted at that delivery
 boundary; slower reflection may enrich its evidence links afterward, but cannot
 delay creation of the owner-facing control record or hold the conversation

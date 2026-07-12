@@ -1,5 +1,69 @@
 # Modernization Plan
 
+## Fresh provider truth in route reliability — 2026-07-12
+
+### Implemented
+
+- [x] Reconcile the existing redacted provider live-probe cache into the
+      periodic tool-reliability refresh. A successful OpenAI, Anthropic,
+      Gemini, MiniMax, or Brave probe no longer remains separately healthy in
+      integration status while the routing ledger still labels that provider
+      unknown and caps confidence at 0.50.
+- [x] Preserve fail-closed freshness and configuration boundaries. Only the
+      owner-only atomic cache's bounded provider ID, state, failure class,
+      model, and timestamp are reused; current missing-config or quota blockers
+      still win, failed probes remain degraded/blocked, and evidence older than
+      30 minutes returns to unknown.
+- [x] Preserve evidence ordering across the two truth sources. An older cached
+      live probe cannot overwrite a newer verified-use success or failure;
+      only newer probe evidence or a current configuration blocker can change
+      that result.
+- [x] Keep provider readiness distinct from end-to-end task success. A healthy
+      provider can satisfy its dependency edge, while research-route promotion
+      still requires cited verified usage and authority remains unchanged.
+- [x] Compile the same fresh provider truth into the capability self-model,
+      cognitive blackboard, and live cognitive-kernel turns. These surfaces no
+      longer manufacture degraded provider-health tool results or contradict
+      the route ledger immediately after a successful probe; explicitly
+      injected deterministic/config-only snapshots still take precedence.
+- [x] Close a capability fail-open edge discovered by the expiry test.
+      Provider-backed capabilities now consult provider state even if no
+      reliability rollup exists, and capabilities with only an any-of credential
+      requirement are no longer mislabeled as pure internal capabilities.
+- [x] Normalize dependency-derived rollups as a complete explanation record.
+      Effective health, reliability score, confidence cap, and next action now
+      move together, so reality grounding no longer says research is healthy
+      while retaining an obsolete 0.50 route cap.
+
+### Validation and live evidence
+
+- [x] Focused provider-state, provider-expansion, tool-reliability, cognitive
+      kernel, and cross-consumer coverage passes 28/28 tests with formatting,
+      typecheck, quiet lint, and diff hygiene. Tests prove shared fresh truth,
+      30-minute expiry, provider-without-rollup handling, any-of configuration
+      safety, newest-evidence ordering, and complete cap/health normalization.
+      The deterministic
+      tool-reliability, blackboard, cognition, reality-grounding, and capability
+      self-model scripts also pass.
+- [x] A metadata-only live refresh reduced false degraded/unknown subjects from
+      eight to the genuine manual Alexa blocker. The five freshly probed
+      providers now carry healthy current state and 0.95 confidence caps; no
+      raw credential or provider response was persisted. Live capability truth
+      reports web research ready, and reality grounding now reports its route
+      cap as 0.95. Separately, Telegram send/user-session proof has aged into an
+      honest manual refresh requirement; this is not hidden or auto-satisfied.
+- [x] Complete candidate validation passes 203 primary test files with 2,258
+      tests, AGI typecheck and 282/282 tests, all ten intelligence scenarios,
+      the 99.1% A+ zero-cost scorecard, the production build, formatting,
+      typecheck, warning-only lint, signature flows, 57-file documentation
+      validation, both zero-vulnerability dependency audits, and diff hygiene.
+      All 90 offline deterministic commands pass in 250.5 seconds, including
+      the 158.3-second stability and network-denial gate.
+- [x] This increment passed the repository-controlled release gate and is
+      included in the next combined `main` release. Rebuild, restart, running
+      commit proof, and integration health remain delivery-time evidence rather
+      than repository fixtures.
+
 ## Canonical reviewed-outcome metrics — 2026-07-12
 
 ### Implemented

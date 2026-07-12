@@ -22,10 +22,8 @@ import {
   type IntegrationDoctorReport,
   type IntegrationStatus,
 } from './integration-doctor.js';
-import {
-  collectProviderHealthSnapshots,
-  type ProviderHealthSnapshot,
-} from './provider-health.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
+import { collectProviderHealthSnapshotsWithRecentLiveEvidence } from './provider-live-probe.js';
 import type {
   CognitiveExecutiveChannel,
   ReliabilityObservation,
@@ -456,6 +454,28 @@ function isFreshVerifiedUsage(
   );
 }
 
+function cachedProbePredatesVerifiedUsage(
+  provider: ProviderHealthSnapshot,
+  latest: ReliabilityObservation | undefined,
+): boolean {
+  if (
+    !latest ||
+    latest.sourceKind !== 'verified_usage' ||
+    provider.metadata.healthEvidence !== 'cached_live_probe'
+  ) {
+    return false;
+  }
+  const liveCheckedAt =
+    provider.metadata.liveCheckedAt || provider.lastCheckedAt;
+  const liveCheckedMs = Date.parse(liveCheckedAt);
+  const usageMs = Date.parse(latest.observedAt);
+  return (
+    Number.isFinite(liveCheckedMs) &&
+    Number.isFinite(usageMs) &&
+    usageMs > liveCheckedMs
+  );
+}
+
 export function recordVerifiedUsageReliability(params: {
   subjectIds: string[];
   observedAt?: string;
@@ -687,6 +707,7 @@ export async function refreshToolReliabilityFromCurrentTruth(
     now?: Date;
     providers?: ProviderHealthSnapshot[];
     integrationReport?: IntegrationDoctorReport;
+    projectRoot?: string;
   } = {},
 ): Promise<ToolReliabilityDoctorReport> {
   if (!isDatabaseInitialized()) {
@@ -695,7 +716,10 @@ export async function refreshToolReliabilityFromCurrentTruth(
   seedToolReliabilityRegistry();
   const observedAt = nowIso(params.now);
   const providers =
-    params.providers || collectProviderHealthSnapshots(observedAt);
+    params.providers ||
+    collectProviderHealthSnapshotsWithRecentLiveEvidence(observedAt, {
+      projectRoot: params.projectRoot,
+    });
   const integrationReport =
     params.integrationReport ||
     buildIntegrationDoctorReport({ now: params.now });
@@ -703,7 +727,10 @@ export async function refreshToolReliabilityFromCurrentTruth(
     const subjectId = `provider:${provider.providerId}`;
     const outcome = providerOutcome(provider);
     const latest = listReliabilityObservations({ subjectId, limit: 1 })[0];
-    if (!(outcome === 'unknown' && isFreshVerifiedUsage(latest, observedAt))) {
+    const preserveVerifiedUsage =
+      (outcome === 'unknown' && isFreshVerifiedUsage(latest, observedAt)) ||
+      cachedProbePredatesVerifiedUsage(provider, latest);
+    if (!preserveVerifiedUsage) {
       upsertCurrentTruthObservation(
         observation({
           subjectId,
@@ -951,10 +978,9 @@ export function buildToolReliabilityDoctorReport(
     storedRollups.map((rollup) => [rollup.subjectId, rollup]),
   );
   const tasks = getAllTasks();
-  const rollups = storedRollups.map((rollup) => ({
-    ...rollup,
-    currentHealth: effectiveDoctorRollupHealth(rollup, rollupBySubject, tasks),
-  }));
+  const rollups = storedRollups.map((rollup) =>
+    effectiveDoctorRollup(rollup, rollupBySubject, tasks),
+  );
   const routeRollups = listRouteConfidenceRollups({ limit: 100 });
   const topDegraded = rollups
     .filter((rollup) => rollup.currentHealth !== 'healthy')
@@ -990,6 +1016,38 @@ function dependencyRollupHealth(
   rollups: Map<string, ToolReliabilityRollup>,
 ): ToolReliabilityRollup['currentHealth'] | null {
   return rollups.get(subjectId)?.currentHealth ?? null;
+}
+
+function effectiveHealthConfidenceCap(
+  health: ToolReliabilityRollup['currentHealth'],
+): number {
+  if (health === 'healthy') return 0.95;
+  if (health === 'degraded') return 0.58;
+  if (health === 'blocked') return 0.22;
+  return 0.5;
+}
+
+function effectiveDoctorRollup(
+  rollup: ToolReliabilityRollup,
+  rollups: Map<string, ToolReliabilityRollup>,
+  tasks: ScheduledTask[],
+): ToolReliabilityRollup {
+  const currentHealth = effectiveDoctorRollupHealth(rollup, rollups, tasks);
+  if (currentHealth === rollup.currentHealth) return rollup;
+  const confidenceCap = effectiveHealthConfidenceCap(currentHealth);
+  return {
+    ...rollup,
+    currentHealth,
+    confidenceCap,
+    reliabilityScore:
+      currentHealth === 'healthy'
+        ? Math.max(rollup.reliabilityScore, 0.9)
+        : Math.min(rollup.reliabilityScore, confidenceCap),
+    nextAction:
+      currentHealth === 'healthy'
+        ? ''
+        : rollup.nextAction || 'Collect one fresh status observation.',
+  };
 }
 
 function effectiveDoctorRollupHealth(

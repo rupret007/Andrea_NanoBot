@@ -64,10 +64,8 @@ import {
 } from './db.js';
 import { getBraveSearchStatus } from './brave-search.js';
 import { buildIntegrationDoctorReport } from './integration-doctor.js';
-import {
-  collectProviderHealthSnapshots,
-  type ProviderHealthSnapshot,
-} from './provider-health.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
+import { collectProviderHealthSnapshotsWithRecentLiveEvidence } from './provider-live-probe.js';
 import type {
   CognitiveAutonomyLevel,
   CognitiveAutonomyBudgetRecord,
@@ -227,6 +225,7 @@ export interface BeginCognitiveKernelInput {
   selectedSkillEvidenceLevel: string;
   providerCouncil?: AndreaPlatformProviderCouncilResult | null;
   providerHealthSnapshots?: ProviderHealthSnapshot[];
+  projectRoot?: string;
   knownBlockers?: string[];
   thinkingPreference?: string | null;
   thinkingTrigger?: string | null;
@@ -890,7 +889,11 @@ function summarizeGoal(
   return redactCouncilText(goal, 480);
 }
 
-function providerUsability(providers = collectProviderHealthSnapshots()): {
+function providerUsability(
+  providers = collectProviderHealthSnapshotsWithRecentLiveEvidence(
+    new Date().toISOString(),
+  ),
+): {
   healthy: number;
   degraded: number;
   blocked: number;
@@ -4304,7 +4307,10 @@ export function beginCognitiveKernelRun(
   const startedAt = nowIso();
   const registry = ensureCognitiveToolRegistry(startedAt);
   const providerSnapshots =
-    input.providerHealthSnapshots || collectProviderHealthSnapshots(startedAt);
+    input.providerHealthSnapshots ||
+    collectProviderHealthSnapshotsWithRecentLiveEvidence(startedAt, {
+      projectRoot: input.projectRoot,
+    });
   const framePolicy = selectCognitiveMode(input);
   const selectedSkill = selectSkillCard(input);
   const frame: CognitiveFrame = {

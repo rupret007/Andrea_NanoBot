@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _closeDatabase,
@@ -8,6 +12,8 @@ import {
   upsertReliabilityObservation,
 } from './db.js';
 import type { IntegrationDoctorReport } from './integration-doctor.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
+import { writeProviderLiveHealthState } from './provider-live-health-state.js';
 import {
   rebuildToolReliabilityRollups,
   recordVerifiedUsageReliability,
@@ -24,6 +30,14 @@ const PRIVACY = JSON.stringify({
   hiddenReasoningStored: false,
   secretsRedacted: true,
 });
+
+const tempRoots: string[] = [];
+
+function tempRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), 'tool-reliability-provider-'));
+  tempRoots.push(root);
+  return root;
+}
 
 function reliabilityObservation(
   overrides: Partial<ReliabilityObservation>,
@@ -90,7 +104,13 @@ function healthyIntegrationReport(
 
 describe('tool reliability truth refresh', () => {
   beforeEach(() => _initTestDatabase());
-  afterEach(() => _closeDatabase());
+  afterEach(() => {
+    _closeDatabase();
+    vi.unstubAllEnvs();
+    for (const root of tempRoots.splice(0)) {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it('uses insertion order to resolve equal-timestamp observations deterministically', () => {
     const observedAt = '2026-07-12T09:30:00.000Z';
@@ -241,6 +261,121 @@ describe('tool reliability truth refresh', () => {
         (rollup) => rollup.subjectId === 'provider:openai_cloud',
       ),
     ).toMatchObject({ currentHealth: 'unknown', confidenceCap: 0.5 });
+  });
+
+  it('reconciles a recent redacted live probe into the default provider reliability refresh', async () => {
+    const root = tempRoot();
+    const probedAt = '2026-07-12T09:30:00.000Z';
+    vi.stubEnv('OPENAI_API_KEY', 'test-openai-key');
+    writeProviderLiveHealthState(
+      [
+        {
+          providerId: 'openai_cloud',
+          kind: 'llm',
+          state: 'healthy',
+          lastHealthyAt: probedAt,
+          lastCheckedAt: probedAt,
+          failureClass: 'none',
+          quotaState: 'unknown',
+          credentialState: 'configured',
+          knownExpiresAt: null,
+          rotationDueAt: null,
+          blocker: '',
+          nextAction: '',
+          metadata: {
+            healthEvidence: 'live_probe',
+            liveProbe: 'ok',
+            liveModel: 'gpt-test',
+          },
+        } satisfies ProviderHealthSnapshot,
+      ],
+      probedAt,
+      root,
+    );
+
+    await refreshToolReliabilityFromCurrentTruth({
+      now: new Date('2026-07-12T09:35:00.000Z'),
+      integrationReport: healthyIntegrationReport('2026-07-12T09:35:00.000Z'),
+      projectRoot: root,
+    });
+
+    expect(
+      listReliabilityObservations({
+        subjectId: 'provider:openai_cloud',
+        limit: 1,
+      })[0],
+    ).toMatchObject({
+      sourceKind: 'provider_health',
+      outcome: 'success',
+      failureClass: 'none',
+    });
+    expect(
+      listToolReliabilityRollups({ limit: 100 }).find(
+        (rollup) => rollup.subjectId === 'provider:openai_cloud',
+      ),
+    ).toMatchObject({ currentHealth: 'healthy', confidenceCap: 0.95 });
+  });
+
+  it('does not let an older cached healthy probe overwrite newer verified failure evidence', async () => {
+    const root = tempRoot();
+    const probedAt = '2026-07-12T09:30:00.000Z';
+    vi.stubEnv('OPENAI_API_KEY', 'test-openai-key');
+    writeProviderLiveHealthState(
+      [
+        {
+          providerId: 'openai_cloud',
+          kind: 'llm',
+          state: 'healthy',
+          lastHealthyAt: probedAt,
+          lastCheckedAt: probedAt,
+          failureClass: 'none',
+          quotaState: 'unknown',
+          credentialState: 'configured',
+          knownExpiresAt: null,
+          rotationDueAt: null,
+          blocker: '',
+          nextAction: '',
+          metadata: {
+            healthEvidence: 'live_probe',
+            liveProbe: 'ok',
+            liveModel: 'gpt-test',
+          },
+        } satisfies ProviderHealthSnapshot,
+      ],
+      probedAt,
+      root,
+    );
+    recordVerifiedUsageReliability({
+      subjectIds: ['provider:openai_cloud'],
+      observedAt: '2026-07-12T09:32:00.000Z',
+      outcome: 'failed',
+      failureClass: 'provider_request_failed',
+      summary: 'A newer real provider request failed.',
+      nextAction: 'Use a healthy fallback and re-probe before recovery.',
+      evidenceRef: 'openai_usage:newer_failure',
+    });
+
+    await refreshToolReliabilityFromCurrentTruth({
+      now: new Date('2026-07-12T09:35:00.000Z'),
+      integrationReport: healthyIntegrationReport('2026-07-12T09:35:00.000Z'),
+      projectRoot: root,
+    });
+
+    expect(
+      listReliabilityObservations({
+        subjectId: 'provider:openai_cloud',
+        limit: 1,
+      })[0],
+    ).toMatchObject({
+      sourceKind: 'verified_usage',
+      outcome: 'failed',
+      observedAt: '2026-07-12T09:32:00.000Z',
+    });
+    expect(
+      listToolReliabilityRollups({ limit: 100 }).find(
+        (rollup) => rollup.subjectId === 'provider:openai_cloud',
+      ),
+    ).toMatchObject({ currentHealth: 'blocked', confidenceCap: 0.22 });
   });
 
   it('lets fresh cited research evidence prove the route without pretending it lasts forever', () => {

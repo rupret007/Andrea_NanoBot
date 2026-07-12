@@ -9,10 +9,8 @@ import {
   upsertCapabilityState,
 } from './db.js';
 import { readEnvFile } from './env.js';
-import {
-  collectProviderHealthSnapshots,
-  type ProviderHealthSnapshot,
-} from './provider-health.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
+import { collectProviderHealthSnapshotsWithRecentLiveEvidence } from './provider-live-probe.js';
 import {
   buildIntegrationDoctorReport,
   type IntegrationDoctorReport,
@@ -336,6 +334,7 @@ export function buildCapabilitySelfModel(
     envFileValues?: Record<string, string | undefined>;
     providerHealthSnapshots?: ProviderHealthSnapshot[];
     integrationReport?: IntegrationDoctorReport;
+    projectRoot?: string;
   } = {},
 ): CapabilitySelfModelReport {
   const generatedAt = nowIso(params.now);
@@ -356,7 +355,9 @@ export function buildCapabilitySelfModel(
     params.envFileValues ?? readEnvFile(requiredConfigNames);
   const providerHealth =
     params.providerHealthSnapshots ??
-    collectProviderHealthSnapshots(generatedAt);
+    collectProviderHealthSnapshotsWithRecentLiveEvidence(generatedAt, {
+      projectRoot: params.projectRoot,
+    });
   const integrationReport =
     params.integrationReport ||
     buildIntegrationDoctorReport({ now: new Date(generatedAt) });
@@ -436,6 +437,17 @@ export function buildCapabilitySelfModel(
           proofStatus = 'unproven';
           currentBlocker = proofStep.exactNextStep;
       }
+    } else if (provider) {
+      proofStatus =
+        provider.state === 'healthy'
+          ? 'live_proven'
+          : provider.state === 'externally_blocked' ||
+              provider.state === 'not_configured'
+            ? 'externally_blocked'
+            : 'stale';
+      if (provider.state !== 'healthy') {
+        currentBlocker = provider.nextAction || provider.blocker || null;
+      }
     } else if (
       rollup &&
       !(
@@ -443,29 +455,19 @@ export function buildCapabilitySelfModel(
         rollup.currentHealth === 'unknown'
       )
     ) {
-      if (provider) {
-        proofStatus =
-          provider.state === 'healthy'
-            ? 'live_proven'
-            : provider.state === 'externally_blocked' ||
-                provider.state === 'not_configured'
-              ? 'externally_blocked'
-              : 'stale';
-        if (provider.state !== 'healthy') {
-          currentBlocker = provider.nextAction || provider.blocker || null;
-        }
-      } else {
-        proofStatus =
-          rollup.currentHealth === 'healthy'
-            ? 'live_proven'
-            : rollup.currentHealth === 'blocked'
-              ? 'externally_blocked'
-              : 'stale';
-        if (rollup.currentHealth !== 'healthy') {
-          currentBlocker = rollup.nextAction;
-        }
+      proofStatus =
+        rollup.currentHealth === 'healthy'
+          ? 'live_proven'
+          : rollup.currentHealth === 'blocked'
+            ? 'externally_blocked'
+            : 'stale';
+      if (rollup.currentHealth !== 'healthy') {
+        currentBlocker = rollup.nextAction;
       }
-    } else if (!definition.requiredConfig.length) {
+    } else if (
+      !definition.requiredConfig.length &&
+      !(definition.requiredConfigAnyOf?.length ?? 0)
+    ) {
       // Pure-internal capabilities are proven by construction.
       proofStatus = 'live_proven';
     }
