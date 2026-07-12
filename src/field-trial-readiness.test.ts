@@ -26,6 +26,7 @@ import {
   type HostControlSnapshot,
   type WindowsHostReconciliation,
 } from './host-control.js';
+import { classifyHostDiskHealth } from './host-resource-health.js';
 import { completePilotJourney, startPilotJourney } from './pilot-mode.js';
 import { writeProviderProofState } from './provider-proof-state.js';
 
@@ -163,6 +164,59 @@ describe('field-trial readiness', () => {
 
     expect(truth.telegram.proofState).toBe('live_proven');
     expect(truth.telegram.blocker).toBe('');
+  });
+
+  it('degrades an otherwise running host when disk pressure threatens persistence', () => {
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: {
+        bootId: 'boot-disk-pressure',
+        phase: 'running_ready',
+        pid: process.pid,
+        installMode: 'manual_host_control',
+        nodePath: process.execPath,
+        nodeVersion: process.version,
+        startedAt: '2026-04-08T11:00:00.000Z',
+        readyAt: '2026-04-08T11:00:05.000Z',
+        lastError: '',
+        dependencyState: 'ok',
+        dependencyError: '',
+        stdoutLogPath: path.join(tempDir, 'stdout.log'),
+        stderrLogPath: path.join(tempDir, 'stderr.log'),
+        hostLogPath: path.join(tempDir, 'host.log'),
+      },
+      readyState: {
+        bootId: 'boot-disk-pressure',
+        pid: process.pid,
+        readyAt: '2026-04-08T11:00:05.000Z',
+        appVersion: 'test',
+      },
+      assistantHealthState: null,
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+      hostDiskHealth: classifyHostDiskHealth({
+        totalBytes: 200 * 1024 ** 3,
+        availableBytes: 742 * 1024 ** 2,
+        checkedAt: '2026-04-08T12:00:00.000Z',
+      }),
+    });
+
+    expect(truth.hostHealth).toMatchObject({
+      proofState: 'degraded_but_usable',
+      blockerOwner: 'external',
+    });
+    expect(truth.hostHealth.blocker).toContain('disk pressure is critical');
+    expect(truth.hostHealth.nextAction).toContain('do not delete Docker');
+    expect(truth.launchReadiness.coreBlockers.join(' ')).toContain(
+      'host health',
+    );
   });
 
   it('does not let operator-safe dogfood events become live proof blockers', () => {

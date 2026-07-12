@@ -9,6 +9,7 @@ import {
 } from './db.js';
 import { redactCouncilText } from './council-safety.js';
 import { buildCouncilTaskEaseReport } from './council-task-drills.js';
+import { buildIntegrationDoctorReport } from './integration-doctor.js';
 import type {
   AndreaPlatformCouncilMode,
   AndreaPlatformProviderCouncilResult,
@@ -30,6 +31,21 @@ import {
 const LOW_CONFIDENCE_THRESHOLD = 0.55;
 const CALIBRATION_LOOKBACK = 40;
 const DOCTOR_LOOKBACK = 50;
+
+function normalizedRunOrigin(
+  run: Pick<CouncilRunLedgerRecord, 'councilRunId' | 'runOrigin'>,
+): CouncilRunOrigin {
+  return /^(?:local-council:)?council-challenge-/i.test(run.councilRunId)
+    ? 'synthetic'
+    : run.runOrigin;
+}
+
+function normalizeRunOrigin(
+  run: CouncilRunLedgerRecord,
+): CouncilRunLedgerRecord {
+  const runOrigin = normalizedRunOrigin(run);
+  return runOrigin === run.runOrigin ? run : { ...run, runOrigin };
+}
 
 interface CouncilMemberStatusForQuality {
   memberId?: string;
@@ -119,22 +135,27 @@ export function calibrateCouncilMode(
   const degradedProviderIds = providerReliability
     .filter((provider) => provider.degraded)
     .map((provider) => provider.providerId);
-  const lowConfidenceRuns = recentRuns.filter(
-    (run) => run.confidence < LOW_CONFIDENCE_THRESHOLD,
+  const qualityAssessments = recentRuns.map(assessCouncilRunQuality);
+  const lowConfidenceRuns = qualityAssessments.filter(
+    (assessment) => !assessment.confidenceCalibrated,
+  ).length;
+  const lowQualityRuns = qualityAssessments.filter(
+    (assessment) => assessment.score < 0.7,
   ).length;
   const schemaInvalidRuns = recentRuns.filter((run) =>
     hasSchemaInvalidFallback(run),
   ).length;
-  const verifierBlockRuns = recentRuns.filter((run) =>
-    hasVerifierBlock(run),
+  const verifierBlockRuns = recentRuns.filter(
+    (run, index) =>
+      hasVerifierBlock(run) &&
+      !qualityAssessments[index]?.appropriatelyCautious,
   ).length;
   const negativeFeedbackRuns = recentRuns.filter((run) =>
-    /feedback_negative|repair_linked|answer_blocked/i.test(
-      run.outcomeStatus || '',
-    ),
+    /feedback_negative|repair_linked/i.test(run.outcomeStatus || ''),
   ).length;
   const protectedMode = isProtectedCouncilRoute(input);
   const degradationScore =
+    lowQualityRuns +
     lowConfidenceRuns +
     schemaInvalidRuns * 2 +
     verifierBlockRuns * 2 +
@@ -229,7 +250,11 @@ export function recordCouncilRunLedger(
     councilRunId: input.councilRunId,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
-    runOrigin: input.runOrigin || existing?.runOrigin || 'live',
+    runOrigin: /^(?:local-council:)?council-challenge-/i.test(
+      input.councilRunId,
+    )
+      ? 'synthetic'
+      : input.runOrigin || existing?.runOrigin || 'live',
     groupFolder: input.groupFolder || null,
     taskFamily: input.taskFamily,
     channel: input.channel || null,
@@ -316,7 +341,17 @@ function safeListCouncilRunLedger(params: {
   limit?: number;
 }): CouncilRunLedgerRecord[] {
   try {
-    return listCouncilRunLedger(params);
+    return listCouncilRunLedger({
+      taskFamily: params.taskFamily,
+      limit: Math.max(params.limit || 100, 1000),
+    })
+      .map(normalizeRunOrigin)
+      .filter(
+        (run) =>
+          !params.runOrigins?.length ||
+          params.runOrigins.includes(run.runOrigin),
+      )
+      .slice(0, params.limit || 100);
   } catch {
     return [];
   }
@@ -324,9 +359,12 @@ function safeListCouncilRunLedger(params: {
 
 export function buildCouncilDoctorReport(
   now = new Date().toISOString(),
-  options: { providerHealth?: ProviderHealthSnapshot[] } = {},
+  options: {
+    providerHealth?: ProviderHealthSnapshot[];
+    integrationHealth?: Array<{ integrationId: string; state: string }>;
+  } = {},
 ): CouncilDoctorReport {
-  const allRuns = listCouncilRunLedger({ limit: DOCTOR_LOOKBACK });
+  const allRuns = safeListCouncilRunLedger({ limit: DOCTOR_LOOKBACK });
   const runs = allRuns.filter((run) => run.runOrigin === 'live');
   const signals = listCouncilOutcomeSignals({ limit: DOCTOR_LOOKBACK });
   const taskEase = buildCouncilTaskEaseReport({ now: new Date(now) });
@@ -342,6 +380,20 @@ export function buildCouncilDoctorReport(
     runs,
     currentHealthyProviderIds,
   );
+  const qualityAssessments = runs.map(assessCouncilRunQuality);
+  const qualityScore = recencyWeightedCouncilQuality(qualityAssessments);
+  const decisionAppropriateRuns = qualityAssessments.filter(
+    (assessment) => assessment.decisionAppropriate,
+  ).length;
+  const appropriatelyCautiousRuns = qualityAssessments.filter(
+    (assessment) => assessment.appropriatelyCautious,
+  ).length;
+  const operationallyDegradedRuns = qualityAssessments.filter(
+    (assessment) => assessment.operationallyDegraded,
+  ).length;
+  const uncalibratedRuns = qualityAssessments.filter(
+    (assessment) => !assessment.confidenceCalibrated,
+  ).length;
   const lowConfidenceRuns = runs.filter(
     (run) => run.confidence < LOW_CONFIDENCE_THRESHOLD,
   ).length;
@@ -349,6 +401,24 @@ export function buildCouncilDoctorReport(
     hasSchemaInvalidFallback(run),
   ).length;
   const degradedRuns = runs.filter((run) => isDegradedRun(run)).length;
+  const blockedRuns = runs.filter(
+    (run) =>
+      run.recommendedAction === 'block' ||
+      run.finalStatus === 'block' ||
+      run.finalStatus === 'inconclusive',
+  ).length;
+  const clarifiedRuns = runs.filter(
+    (run) =>
+      run.recommendedAction === 'ask_clarifying_question' &&
+      run.finalStatus !== 'block' &&
+      run.finalStatus !== 'inconclusive',
+  ).length;
+  const answerableRuns = runs.filter(
+    (run) =>
+      run.recommendedAction === 'answer' &&
+      run.finalStatus !== 'block' &&
+      run.finalStatus !== 'inconclusive',
+  ).length;
   const averageConfidence =
     runs.length > 0
       ? Number(
@@ -357,11 +427,29 @@ export function buildCouncilDoctorReport(
           ).toFixed(3),
         )
       : 0;
+  const lastRun = runs[0];
   const degradedReasons = collectDegradedReasons(runs);
-  const evidenceGaps = collectEvidenceGaps(runs);
+  const latestRunEvidenceGaps = lastRun ? collectEvidenceGaps([lastRun]) : [];
+  const historicalRunEvidenceGaps = collectEvidenceGaps(runs.slice(1)).filter(
+    (gap) => !latestRunEvidenceGaps.includes(gap),
+  );
+  const integrationHealth =
+    options.integrationHealth || safeCollectIntegrationHealth();
+  const resolvedEvidenceGaps = [
+    ...latestRunEvidenceGaps,
+    ...historicalRunEvidenceGaps,
+  ].filter((gap) => evidenceGapIsResolved(gap, integrationHealth));
+  const evidenceGaps = latestRunEvidenceGaps.filter(
+    (gap) => !resolvedEvidenceGaps.includes(gap),
+  );
+  const historicalEvidenceGaps = historicalRunEvidenceGaps.filter(
+    (gap) => !resolvedEvidenceGaps.includes(gap),
+  );
   const ok =
     runs.length > 0 &&
-    lowConfidenceRuns === 0 &&
+    qualityScore >= 0.85 &&
+    uncalibratedRuns === 0 &&
+    qualityAssessments[0]?.operationallyDegraded === false &&
     schemaInvalidRuns === 0 &&
     providerReliability.every((provider) => !provider.degraded);
   const hasHistoricallyDegradedProviders = providerReliability.some(
@@ -382,15 +470,13 @@ export function buildCouncilDoctorReport(
         : currentCoreProvidersHealthy && hasHistoricallyDegradedProviders
           ? 'Providers are currently healthy; run npm run test:council:medium and one live `ultrathink` proof to retire stale degradation history.'
           : 'Run npm run test:council:medium and one live `ultrathink` proof, then inspect degraded provider/replay reasons.';
-  const lastRun = runs[0];
-
   return {
     generatedAt: now,
     ok,
     summary:
       runs.length === 0
         ? 'Council quality ledger has no recorded live runs yet; replay and synthetic runs are excluded from promotion signals.'
-        : `${runs.length} recent live council run(s); ${degradedRuns} degraded; average confidence ${averageConfidence.toFixed(2)}.`,
+        : `${runs.length} recent live council run(s); quality ${qualityScore.toFixed(2)}; ${operationallyDegradedRuns} operationally degraded; ${appropriatelyCautiousRuns} appropriately cautious.`,
     lastRun: lastRun
       ? {
           councilRunId: lastRun.councilRunId,
@@ -409,9 +495,17 @@ export function buildCouncilDoctorReport(
       syntheticRuns: allRuns.filter((run) => run.runOrigin === 'synthetic')
         .length,
       degradedRuns,
+      answerableRuns,
+      clarifiedRuns,
+      blockedRuns,
       averageConfidence,
       schemaInvalidRuns,
       lowConfidenceRuns,
+      qualityScore,
+      decisionAppropriateRuns,
+      appropriatelyCautiousRuns,
+      operationallyDegradedRuns,
+      uncalibratedRuns,
       outcomeSignals: signals.length,
     },
     providerReliability,
@@ -425,6 +519,8 @@ export function buildCouncilDoctorReport(
     providerParticipation,
     degradedReasons,
     evidenceGaps,
+    historicalEvidenceGaps,
+    resolvedEvidenceGaps,
     taskEase: {
       status: taskEase.status,
       score: taskEase.score,
@@ -478,13 +574,26 @@ export function formatCouncilDoctorReport(report: CouncilDoctorReport): string {
     `Outcome signals: ${report.recent.outcomeSignals}`,
     `Schema invalid runs: ${report.recent.schemaInvalidRuns}`,
     `Low-confidence runs: ${report.recent.lowConfidenceRuns}`,
+    `Outcome-led quality: ${(report.recent.qualityScore ?? 0).toFixed(2)} appropriate=${report.recent.decisionAppropriateRuns ?? 0}/${report.recent.totalRuns} cautious=${report.recent.appropriatelyCautiousRuns ?? 0} uncalibrated=${report.recent.uncalibratedRuns ?? 0}`,
+    `Operationally degraded runs: ${report.recent.operationallyDegradedRuns ?? report.recent.degradedRuns}`,
+    `Live outcomes: answerable=${report.recent.answerableRuns || 0} clarify=${report.recent.clarifiedRuns || 0} blocked=${report.recent.blockedRuns || 0}`,
     `Current providers: ${currentProviders.join(', ') || 'unknown'}`,
     `Historical degraded providers: ${degradedProviders.join(', ') || 'none'}`,
     report.providerParticipation
       ? `Provider participation: ${report.providerParticipation.status} skipped=${report.providerParticipation.skippedProviderIds.join(', ') || 'none'} substituted=${report.providerParticipation.substitutedRoles.join(', ') || 'none'}`
       : 'Provider participation: none recorded',
     ...replayLines,
-    `Evidence gaps: ${report.evidenceGaps.slice(0, 4).join(', ') || 'none'}`,
+    `Current evidence gaps: ${report.evidenceGaps.slice(0, 4).join(', ') || 'none'}`,
+    ...(report.historicalEvidenceGaps?.length
+      ? [
+          `Historical evidence gaps: ${report.historicalEvidenceGaps.slice(0, 4).join(', ')}`,
+        ]
+      : []),
+    ...(report.resolvedEvidenceGaps?.length
+      ? [
+          `Resolved recorded gaps: ${report.resolvedEvidenceGaps.slice(0, 4).join(', ')}`,
+        ]
+      : []),
     report.taskEase
       ? `Task-ease: ${report.taskEase.status} score=${report.taskEase.score.toFixed(2)} source_patterns=${report.taskEase.sourcePatternCoverage} quality_gates=${report.taskEase.qualityGateCoverage} outcome_signals=${report.taskEase.outcomeSignalCount}`
       : 'Task-ease: unavailable',
@@ -742,11 +851,155 @@ function hasVerifierBlock(run: CouncilRunLedgerRecord): boolean {
   );
 }
 
+export interface CouncilRunQualityAssessment {
+  score: number;
+  decisionAppropriate: boolean;
+  appropriatelyCautious: boolean;
+  confidenceCalibrated: boolean;
+  operationallyDegraded: boolean;
+  schemaValid: boolean;
+  citationCoverage: number;
+}
+
+const EVIDENCE_GRADE_RANK: Record<string, number> = {
+  unknown: 0,
+  weak: 1,
+  partial: 2,
+  strong: 3,
+};
+
+export function assessCouncilRunQuality(
+  run: CouncilRunLedgerRecord,
+): CouncilRunQualityAssessment {
+  const scorecard = parseJsonObject(run.evidenceScorecardJson);
+  const requiredRank =
+    EVIDENCE_GRADE_RANK[String(scorecard.requiredGrade || 'unknown')] || 0;
+  const availableRank =
+    EVIDENCE_GRADE_RANK[String(scorecard.availableGrade || 'unknown')] || 0;
+  const evidenceShortfall = requiredRank > 0 && availableRank < requiredRank;
+  const gapCount = Number(scorecard.gapCount || 0);
+  const providerFailures = parseJsonArray(run.providerFailuresJson);
+  const riskFlags = parseJsonArray(run.riskFlagsJson).map(String);
+  const members = parseMemberStatuses(run.memberStatusesJson);
+  const verifier = members.find((member) => member.role === 'verifier');
+  const ambiguityOrMissingEvidence =
+    evidenceShortfall ||
+    gapCount > 0 ||
+    riskFlags.some((flag) =>
+      /(?:missing|ambiguous|incomplete|evidence_gap|no_saved|unclear|stale)/i.test(
+        flag,
+      ),
+    );
+  const action = run.recommendedAction;
+  const decisionAppropriate =
+    action === 'answer'
+      ? verifier?.verdict !== 'block' &&
+        !evidenceShortfall &&
+        run.confidence >= LOW_CONFIDENCE_THRESHOLD
+      : action === 'ask_clarifying_question'
+        ? ambiguityOrMissingEvidence ||
+          providerFailures.length > 0 ||
+          verifier?.verdict === 'clarify'
+        : action === 'block'
+          ? providerFailures.length > 0 ||
+            hasVerifierBlock(run) ||
+            evidenceShortfall ||
+            run.approvalNeed === 'explicit'
+          : action === 'hold' || action === 'draft_only'
+            ? ambiguityOrMissingEvidence ||
+              providerFailures.length > 0 ||
+              run.approvalNeed !== 'none'
+            : false;
+  const uncertaintyDriven =
+    ambiguityOrMissingEvidence || providerFailures.length > 0;
+  const confidenceCalibrated =
+    run.confidence >= 0.1 &&
+    (uncertaintyDriven
+      ? run.confidence <= 0.75
+      : run.confidence >= LOW_CONFIDENCE_THRESHOLD);
+  const budget = parseJsonObject(run.budgetJson);
+  const budgetStatus = String(budget.status || 'within_budget');
+  const blockedMembers = members.filter(
+    (member) => member.status === 'blocked',
+  ).length;
+  const operationallyDegraded =
+    providerFailures.length > 0 ||
+    budgetStatus !== 'within_budget' ||
+    blockedMembers > 0;
+  const operationalScore =
+    budgetStatus === 'exceeded'
+      ? 0
+      : providerFailures.length > 0 || blockedMembers > 0
+        ? 0.25
+        : budgetStatus === 'degraded'
+          ? 0.75
+          : 1;
+  const schemaValid = !hasSchemaInvalidFallback(run);
+  const citationCoverageRecord =
+    scorecard.citationCoverage &&
+    typeof scorecard.citationCoverage === 'object' &&
+    !Array.isArray(scorecard.citationCoverage)
+      ? (scorecard.citationCoverage as Record<string, unknown>)
+      : {};
+  const citationTotal = Number(citationCoverageRecord.total || 0);
+  const citationCount = Number(citationCoverageRecord.cited || 0);
+  const citationCoverage =
+    citationTotal > 0
+      ? Math.max(0, Math.min(1, citationCount / citationTotal))
+      : 0.5;
+  const negativeOutcome = /feedback_negative|repair_linked/i.test(
+    run.outcomeStatus || '',
+  );
+  const positiveOutcome =
+    /guidance_applied|answer_sent|answer_clarified|safe_rewrite/i.test(
+      run.outcomeStatus || '',
+    );
+  const baseScore =
+    (decisionAppropriate ? 1 : 0) * 0.35 +
+    (confidenceCalibrated ? 1 : 0) * 0.2 +
+    operationalScore * 0.2 +
+    (schemaValid ? 1 : 0) * 0.15 +
+    citationCoverage * 0.1;
+  const outcomeAdjustment = negativeOutcome
+    ? -0.25
+    : positiveOutcome
+      ? 0.05
+      : 0;
+  const score = Number(
+    Math.max(0, Math.min(1, baseScore + outcomeAdjustment)).toFixed(3),
+  );
+  return {
+    score,
+    decisionAppropriate,
+    appropriatelyCautious:
+      decisionAppropriate &&
+      ['ask_clarifying_question', 'block', 'hold', 'draft_only'].includes(
+        action,
+      ),
+    confidenceCalibrated,
+    operationallyDegraded,
+    schemaValid,
+    citationCoverage: Number(citationCoverage.toFixed(3)),
+  };
+}
+
+function recencyWeightedCouncilQuality(
+  assessments: CouncilRunQualityAssessment[],
+): number {
+  if (!assessments.length) return 0;
+  let weightedScore = 0;
+  let totalWeight = 0;
+  assessments.forEach((assessment, index) => {
+    const weight = 0.7 ** index;
+    weightedScore += assessment.score * weight;
+    totalWeight += weight;
+  });
+  return Number((weightedScore / totalWeight).toFixed(3));
+}
+
 function isDegradedRun(run: CouncilRunLedgerRecord): boolean {
   return (
-    run.finalStatus === 'block' ||
     run.finalStatus === 'inconclusive' ||
-    run.confidence < LOW_CONFIDENCE_THRESHOLD ||
     hasSchemaInvalidFallback(run) ||
     parseJsonArray(run.providerFailuresJson).length > 0 ||
     /degraded|exceeded/i.test(run.budgetJson)
@@ -756,8 +1009,12 @@ function isDegradedRun(run: CouncilRunLedgerRecord): boolean {
 function collectDegradedReasons(records: CouncilRunLedgerRecord[]): string[] {
   const reasons = new Set<string>();
   for (const run of records.slice(0, DOCTOR_LOOKBACK)) {
-    if (run.confidence < LOW_CONFIDENCE_THRESHOLD) {
-      reasons.add(`low_confidence:${run.taskFamily}`);
+    const assessment = assessCouncilRunQuality(run);
+    if (!assessment.confidenceCalibrated) {
+      reasons.add(`uncalibrated_confidence:${run.taskFamily}`);
+    }
+    if (!assessment.decisionAppropriate) {
+      reasons.add(`decision_not_supported:${run.taskFamily}`);
     }
     if (hasSchemaInvalidFallback(run)) reasons.add('schema_invalid_fallback');
     for (const failure of parseJsonArray(run.providerFailuresJson).slice(
@@ -787,6 +1044,31 @@ function collectEvidenceGaps(records: CouncilRunLedgerRecord[]): string[] {
     }
   }
   return Array.from(gaps).slice(0, 10);
+}
+
+function safeCollectIntegrationHealth(): Array<{
+  integrationId: string;
+  state: string;
+}> {
+  try {
+    return buildIntegrationDoctorReport().statuses.map((status) => ({
+      integrationId: status.integrationId,
+      state: status.state,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function evidenceGapIsResolved(
+  gap: string,
+  integrationHealth: Array<{ integrationId: string; state: string }>,
+): boolean {
+  return integrationHealth.some(
+    (status) =>
+      status.state === 'healthy' &&
+      gap.startsWith(`integration_${status.integrationId}_`),
+  );
 }
 
 function parseMemberStatuses(value: string): CouncilMemberStatusForQuality[] {

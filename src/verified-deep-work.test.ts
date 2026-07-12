@@ -133,6 +133,27 @@ describe('verified deep work', () => {
     );
   });
 
+  it('records known preflight blockers before execution can start', () => {
+    const packet = beginVerifiedDeepWorkForTurn({
+      groupFolder: 'main',
+      turnId: 'turn-provider-blocked',
+      taskFamily: 'research',
+      objective: 'Research the latest provider change.',
+      approvalRequired: false,
+      sourceRefs: ['provider-health:current'],
+      knownBlockers: ['provider_quota'],
+      now: new Date('2026-07-11T12:00:00.000Z'),
+    });
+
+    expect(packet).toMatchObject({
+      status: 'blocked',
+      currentStage: 'execute',
+      outcomeSummary:
+        'Execution did not start because preflight found a known blocker.',
+      unresolvedRisks: expect.arrayContaining(['provider_quota']),
+    });
+  });
+
   it('binds a later approval turn and closes a verified production turn', () => {
     const pending = beginVerifiedDeepWorkForTurn({
       groupFolder: 'main',

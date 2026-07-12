@@ -26,6 +26,17 @@ export function buildCouncilEvidencePack(
   input: BuildCouncilEvidencePackInput,
 ): CouncilEvidencePack {
   const groupFolder = input.groupFolder || 'main';
+  const includePersonalContext = [
+    'assistant',
+    'calendar',
+    'communication',
+  ].includes(input.taskFamily);
+  const includeIntegrationStatus =
+    input.taskFamily === 'operator' ||
+    input.taskFamily === 'code' ||
+    /\b(integration|service|runtime|gateway|bridge|bluebubbles|telegram|alexa|openclaw)\b/i.test(
+      input.goal,
+    );
   const cards: CouncilEvidenceCard[] = [
     {
       evidenceId: `intent:${input.correlationId || 'local'}`,
@@ -63,49 +74,51 @@ export function buildCouncilEvidencePack(
     });
   }
 
-  try {
-    const profileFacts = listProfileFactsForGroup(groupFolder, ['accepted'])
-      .slice(0, 3)
-      .map((fact) => ({
-        evidenceId: `profile_fact:${fact.id}`,
-        sourceClass: 'local_memory' as const,
-        evidenceGrade: 'partial' as const,
-        freshness: 'unknown' as const,
-        sensitivity: 'private' as const,
-        summary: redactCouncilText(
-          `${fact.subjectDisplayName} ${fact.category}/${fact.factKey}: ${fact.sourceSummary || fact.valueJson}`,
-          320,
-        ),
-      }));
-    cards.push(...profileFacts);
-    if (profileFacts.length === 0) gaps.push('no_profile_facts');
-  } catch {
-    gaps.push('profile_facts_unavailable');
-  }
+  if (includePersonalContext) {
+    try {
+      const profileFacts = listProfileFactsForGroup(groupFolder, ['accepted'])
+        .slice(0, 3)
+        .map((fact) => ({
+          evidenceId: `profile_fact:${fact.id}`,
+          sourceClass: 'local_memory' as const,
+          evidenceGrade: 'partial' as const,
+          freshness: 'unknown' as const,
+          sensitivity: 'private' as const,
+          summary: redactCouncilText(
+            `${fact.subjectDisplayName} ${fact.category}/${fact.factKey}: ${fact.sourceSummary || fact.valueJson}`,
+            320,
+          ),
+        }));
+      cards.push(...profileFacts);
+      if (profileFacts.length === 0) gaps.push('no_profile_facts');
+    } catch {
+      gaps.push('profile_facts_unavailable');
+    }
 
-  try {
-    const lifeThreads = listLifeThreadsForGroup(groupFolder, ['active'])
-      .slice(0, 3)
-      .map((thread) => ({
-        evidenceId: `life_thread:${thread.id}`,
-        sourceClass: 'local_memory' as const,
-        evidenceGrade: 'partial' as const,
-        freshness: thread.lastUpdatedAt
-          ? ('fresh' as const)
-          : ('unknown' as const),
-        sensitivity:
-          thread.sensitivity === 'sensitive'
-            ? ('sensitive' as const)
-            : ('private' as const),
-        summary: redactCouncilText(
-          `${thread.title}: ${thread.summary || thread.nextAction || 'active thread'}`,
-          320,
-        ),
-      }));
-    cards.push(...lifeThreads);
-    if (lifeThreads.length === 0) gaps.push('no_active_life_threads');
-  } catch {
-    gaps.push('life_threads_unavailable');
+    try {
+      const lifeThreads = listLifeThreadsForGroup(groupFolder, ['active'])
+        .slice(0, 3)
+        .map((thread) => ({
+          evidenceId: `life_thread:${thread.id}`,
+          sourceClass: 'local_memory' as const,
+          evidenceGrade: 'partial' as const,
+          freshness: thread.lastUpdatedAt
+            ? ('fresh' as const)
+            : ('unknown' as const),
+          sensitivity:
+            thread.sensitivity === 'sensitive'
+              ? ('sensitive' as const)
+              : ('private' as const),
+          summary: redactCouncilText(
+            `${thread.title}: ${thread.summary || thread.nextAction || 'active thread'}`,
+            320,
+          ),
+        }));
+      cards.push(...lifeThreads);
+      if (lifeThreads.length === 0) gaps.push('no_active_life_threads');
+    } catch {
+      gaps.push('life_threads_unavailable');
+    }
   }
 
   try {
@@ -163,39 +176,41 @@ export function buildCouncilEvidencePack(
     gaps.push('provider_health_unavailable');
   }
 
-  try {
-    const report = buildIntegrationDoctorReport();
-    const troubled = report.statuses.filter(
-      (status) => status.state !== 'healthy',
-    );
-    cards.push({
-      evidenceId: `integration_status:${input.correlationId || 'local'}`,
-      sourceClass: 'runtime',
-      evidenceGrade: troubled.length === 0 ? 'partial' : 'weak',
-      freshness: 'fresh',
-      sensitivity: 'normal',
-      summary: redactCouncilText(
-        `Integration summary: healthy=${report.summary.healthy}/${report.summary.total}, action_needed=${report.summary.actionNeeded}, needs_proof=${report.summary.needsProof}, external=${report.summary.manualOrExternal}. Troubled: ${
-          troubled
-            .slice(0, 5)
-            .map((status) => `${status.integrationId}:${status.state}`)
-            .join(', ') || 'none'
-        }`,
-        420,
-      ),
-      gap: troubled.length > 0 ? 'integration_status_not_all_healthy' : null,
-    });
-    if (troubled.length > 0) {
-      gaps.push(
-        ...troubled
-          .slice(0, 5)
-          .map(
-            (status) => `integration_${status.integrationId}_${status.state}`,
-          ),
+  if (includeIntegrationStatus) {
+    try {
+      const report = buildIntegrationDoctorReport();
+      const troubled = report.statuses.filter(
+        (status) => status.state !== 'healthy',
       );
+      cards.push({
+        evidenceId: `integration_status:${input.correlationId || 'local'}`,
+        sourceClass: 'runtime',
+        evidenceGrade: troubled.length === 0 ? 'partial' : 'weak',
+        freshness: 'fresh',
+        sensitivity: 'normal',
+        summary: redactCouncilText(
+          `Integration summary: healthy=${report.summary.healthy}/${report.summary.total}, action_needed=${report.summary.actionNeeded}, needs_proof=${report.summary.needsProof}, external=${report.summary.manualOrExternal}. Troubled: ${
+            troubled
+              .slice(0, 5)
+              .map((status) => `${status.integrationId}:${status.state}`)
+              .join(', ') || 'none'
+          }`,
+          420,
+        ),
+        gap: troubled.length > 0 ? 'integration_status_not_all_healthy' : null,
+      });
+      if (troubled.length > 0) {
+        gaps.push(
+          ...troubled
+            .slice(0, 5)
+            .map(
+              (status) => `integration_${status.integrationId}_${status.state}`,
+            ),
+        );
+      }
+    } catch {
+      gaps.push('integration_status_unavailable');
     }
-  } catch {
-    gaps.push('integration_status_unavailable');
   }
 
   const requiredEvidence = input.requiredEvidence || 'unknown';
@@ -241,9 +256,19 @@ export function refreshCouncilEvidencePackScorecard(
 export function summarizeCouncilEvidencePack(
   pack: CouncilEvidencePack,
 ): string {
+  const availableCards = pack.cards.filter(
+    (card) => card.availableToCouncil !== false,
+  );
+  const mandatoryCards = availableCards.filter(
+    (card) =>
+      card.sourceClass === 'user_input' || card.sourceClass === 'policy',
+  );
+  const rankedCards = availableCards
+    .filter((card) => !mandatoryCards.includes(card))
+    .sort((a, b) => (b.sourcePriority || 0) - (a.sourcePriority || 0));
   const lines = [
     `Evidence pack ${pack.packId}: overall=${pack.overallGrade}, required=${pack.requiredEvidence}, policy=${pack.rawContentPolicy}.`,
-    ...pack.cards
+    ...[...mandatoryCards, ...rankedCards]
       .slice(0, 8)
       .map(
         (card) =>

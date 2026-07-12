@@ -32,6 +32,47 @@ export function getResponseFeedbackRouteRegressionCoverage(
 ): ResponseFeedbackRouteRegressionCoverage | null {
   const routeText = normalizedRouteText(record);
   if (
+    /\b(?:what|which)\s+(?:llms?|language models?|ai models?|models?)\s+(?:do you (?:have|use|have access to)|can you use|are (?:available|configured))\b|\bwhat model(?:s)? (?:are you using|do you run|powers? you)\b|\bwhat are you running on\b|\b(?:what|which) (?:is )?(?:the )?(?:chinese|china-based) (?:llm|model)\b/.test(
+      routeText,
+    )
+  ) {
+    return {
+      coverageKey: 'assistant.model_inventory.runtime_truth',
+      summary:
+        'Model-identity asks are covered by deterministic runtime inventory, provider-health, default-versus-council wording, and main-chat quick-route regression tests.',
+      evidenceCommand:
+        'npm run test -- src/model-self-knowledge.test.ts src/direct-quick-reply.test.ts src/main-chat-routing.test.ts',
+    };
+  }
+  if (
+    routeText.includes('media.analyze') ||
+    /\[(?:photo|video)\]|\b(?:image|photo|picture|screenshot|video) (?:attached|attachment|i sent)\b/.test(
+      routeText,
+    )
+  ) {
+    return {
+      coverageKey: 'media.inbound.current_attachment_analysis',
+      summary:
+        'Inbound image/video turns are covered by current-turn attachment routing, exact attachment selection, cached-byte vision inputs, bounded OpenClaw media grounding, and honest provider/cache blockers.',
+      evidenceCommand:
+        'npm run test -- src/assistant-capability-router.test.ts src/assistant-capabilities.test.ts src/media-analysis.test.ts src/channels/telegram.test.ts src/openclaw-connector.test.ts',
+    };
+  }
+  if (
+    routeText.includes('communication.summarize_thread') &&
+    /\b(?:blue ?bubbles|texts?|messages?)\b.*\b(?:48 hours|past 48|last 48|today)\b/.test(
+      routeText,
+    )
+  ) {
+    return {
+      coverageKey: 'communication.all_synced_messages.bounded_history',
+      summary:
+        'Broad BlueBubbles text-review asks are covered by exact 48-hour routing, bounded all-synced history hydration, current-window filtering, and honest empty-history behavior.',
+      evidenceCommand:
+        'npm run test -- src/thread-summary-routing.test.ts src/assistant-capabilities.test.ts src/channels/bluebubbles.test.ts src/recent-text-review.test.ts src/helper-boundary.test.ts',
+    };
+  }
+  if (
     /\b(show\s*times?|showtimes?|showings?|screenings?|movie times?|amc|fandango|regal|cinemark)\b/.test(
       routeText,
     )

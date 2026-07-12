@@ -5,6 +5,7 @@ import {
   getOutcomeBySource,
   getTasksForGroup,
   listOutcomesForGroup,
+  listCommunicationIdentityReviewsForGroup,
   listCommunicationThreadsForGroup,
   listEverydayListGroups,
   listLifeThreadsForGroup,
@@ -68,6 +69,8 @@ export interface PersonalContextGraphCoverage {
   followthroughCandidates: number;
   listGroups: number;
   linkedCommunicationThreads: number;
+  identityReviewedCommunicationThreads: number;
+  resolvedCommunicationThreads: number;
   linkedLifeThreads: number;
 }
 
@@ -386,6 +389,7 @@ function addCommunicationNodes(params: {
   communicationThreads: CommunicationThreadRecord[];
   subjectNodeIds: Map<string, string>;
   lifeThreadNodeIds: Map<string, string>;
+  confirmedIdentityLinks: Set<string>;
 }): void {
   for (const thread of params.communicationThreads) {
     const id = graphId('communication_thread', thread.id);
@@ -410,8 +414,14 @@ function addCommunicationNodes(params: {
         fromNodeId: id,
         toNodeId: subjectNodeId,
         edgeKind: 'message_about',
-        confidence: thread.inferenceState === 'user_confirmed' ? 0.86 : 0.58,
-        reason: 'Communication thread is linked to this subject.',
+        confidence:
+          thread.inferenceState === 'user_confirmed' ||
+          params.confirmedIdentityLinks.has(`${thread.id}|${subjectId}`)
+            ? 0.86
+            : 0.58,
+        reason: params.confirmedIdentityLinks.has(`${thread.id}|${subjectId}`)
+          ? 'Owner explicitly confirmed this communication identity link.'
+          : 'Communication thread is linked to this subject.',
       });
     }
     for (const lifeThreadId of thread.linkedLifeThreadIds) {
@@ -730,26 +740,31 @@ function addListGroupNodes(params: {
 }
 
 function scoreCoverage(coverage: PersonalContextGraphCoverage): number {
-  const parts = [
-    coverage.activeProfile ? 0.18 : 0,
-    Math.min(coverage.people, 5) * 0.035,
-    Math.min(coverage.memoryFacts, 8) * 0.035,
-    Math.min(coverage.lifeThreads, 5) * 0.05,
-    Math.min(coverage.communicationThreads, 5) * 0.045,
-    Math.min(coverage.reminders, 3) * 0.03,
-    coverage.reminders === 0
-      ? Math.min(coverage.followthroughCandidates, 3) * 0.015
-      : 0,
-    Math.min(coverage.listGroups, 5) * 0.025,
+  const communicationLinkRatio =
     coverage.communicationThreads > 0
       ? Math.min(
-          coverage.linkedCommunicationThreads / coverage.communicationThreads,
+          coverage.resolvedCommunicationThreads / coverage.communicationThreads,
           1,
-        ) * 0.12
-      : 0,
+        )
+      : 0;
+  const lifeThreadLinkRatio =
     coverage.lifeThreads > 0
-      ? Math.min(coverage.linkedLifeThreads / coverage.lifeThreads, 1) * 0.1
-      : 0,
+      ? Math.min(coverage.linkedLifeThreads / coverage.lifeThreads, 1)
+      : 0;
+  const followthroughScore =
+    coverage.reminders > 0
+      ? Math.min(coverage.reminders / 3, 1)
+      : Math.min(coverage.followthroughCandidates / 3, 1) * 0.5;
+  const parts = [
+    coverage.activeProfile ? 0.12 : 0,
+    Math.min(coverage.people / 5, 1) * 0.1,
+    Math.min(coverage.memoryFacts / 8, 1) * 0.18,
+    Math.min(coverage.lifeThreads / 3, 1) * 0.12,
+    Math.min(coverage.communicationThreads / 5, 1) * 0.1,
+    followthroughScore * 0.1,
+    Math.min(coverage.listGroups / 5, 1) * 0.05,
+    communicationLinkRatio * 0.13,
+    lifeThreadLinkRatio * 0.1,
   ];
   return Number(
     Math.min(
@@ -773,12 +788,17 @@ function buildGaps(coverage: PersonalContextGraphCoverage): string[] {
     gaps.push(
       'Create at least one life thread for an outcome Andrea should track.',
     );
-  if (
-    coverage.communicationThreads > 0 &&
-    coverage.linkedCommunicationThreads === 0
-  ) {
+  const communicationLinkRatio =
+    coverage.communicationThreads > 0
+      ? coverage.resolvedCommunicationThreads / coverage.communicationThreads
+      : 1;
+  if (coverage.communicationThreads > 0 && communicationLinkRatio < 0.5) {
+    const unlinked = Math.max(
+      0,
+      coverage.communicationThreads - coverage.resolvedCommunicationThreads,
+    );
     gaps.push(
-      'Link recent text threads to people or life threads before trusting reply recommendations.',
+      `Confirm or dismiss identity links for ${unlinked} recent communication thread${unlinked === 1 ? '' : 's'} before trusting relationship-aware reply recommendations; use \`review communication identities\` and do not infer identities from phone numbers or generic language.`,
     );
   }
   if (coverage.reminders === 0) {
@@ -1066,6 +1086,27 @@ export function buildPersonalContextGraph(params: {
     groupFolder: params.groupFolder,
     limit: 80,
   });
+  const identityReviews = listCommunicationIdentityReviewsForGroup(
+    params.groupFolder,
+  );
+  const activeCommunicationThreadIds = new Set(
+    communicationThreads.map((thread) => thread.id),
+  );
+  const identityReviewedThreadIds = new Set(
+    identityReviews
+      .filter((review) => activeCommunicationThreadIds.has(review.threadId))
+      .map((review) => review.threadId),
+  );
+  const confirmedIdentityLinks = new Set(
+    identityReviews
+      .filter(
+        (review) =>
+          activeCommunicationThreadIds.has(review.threadId) &&
+          review.decision === 'confirmed' &&
+          review.linkedSubjectId,
+      )
+      .map((review) => `${review.threadId}|${review.linkedSubjectId}`),
+  );
   const tasks = getTasksForGroup(params.groupFolder).filter(
     (task) => task.status !== 'completed',
   );
@@ -1099,6 +1140,7 @@ export function buildPersonalContextGraph(params: {
     communicationThreads,
     subjectNodeIds,
     lifeThreadNodeIds,
+    confirmedIdentityLinks,
   });
   addReminderNodes({ nodes, edges, tasks, profileNodeId });
   addFollowthroughCandidateNodes({
@@ -1124,6 +1166,24 @@ export function buildPersonalContextGraph(params: {
     }
   }
 
+  const linkedCommunicationThreadIds = new Set(
+    communicationThreads
+      .filter(
+        (thread) =>
+          thread.linkedSubjectIds.length > 0 ||
+          thread.linkedLifeThreadIds.length > 0,
+      )
+      .map((thread) => thread.id),
+  );
+  const identityLinkedCommunicationThreadIds = new Set(
+    communicationThreads
+      .filter((thread) => thread.linkedSubjectIds.length > 0)
+      .map((thread) => thread.id),
+  );
+  const resolvedCommunicationThreadIds = new Set([
+    ...identityLinkedCommunicationThreadIds,
+    ...identityReviewedThreadIds,
+  ]);
   const coverage: PersonalContextGraphCoverage = {
     activeProfile: Boolean(activeProfile),
     people: subjects.filter((subject) => subject.kind === 'person').length,
@@ -1133,11 +1193,9 @@ export function buildPersonalContextGraph(params: {
     reminders: tasks.length,
     followthroughCandidates: followthroughCandidates.length,
     listGroups: groups.length,
-    linkedCommunicationThreads: communicationThreads.filter(
-      (thread) =>
-        thread.linkedSubjectIds.length > 0 ||
-        thread.linkedLifeThreadIds.length > 0,
-    ).length,
+    linkedCommunicationThreads: linkedCommunicationThreadIds.size,
+    identityReviewedCommunicationThreads: identityReviewedThreadIds.size,
+    resolvedCommunicationThreads: resolvedCommunicationThreadIds.size,
     linkedLifeThreads: lifeThreads.filter(
       (thread) => thread.relatedSubjectIds.length > 0,
     ).length,
@@ -1209,7 +1267,7 @@ export function formatPersonalContextGraphHealth(
     .map((node) => node.label);
   const unlinkedConversations =
     report.coverage.communicationThreads -
-    report.coverage.linkedCommunicationThreads;
+    report.coverage.resolvedCommunicationThreads;
   return [
     'Personal Context Graph Health',
     '',

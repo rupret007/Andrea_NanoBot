@@ -9,10 +9,14 @@ import {
 } from '../src/cognitive-kernel.js';
 import { buildAgencyConvergenceStatusText } from '../src/agency-convergence-loop.js';
 import { buildCognitiveWorkspaceStatusText } from '../src/cognitive-workspace.js';
-import { initDatabase, listCognitiveTrajectoryScores } from '../src/db.js';
+import {
+  _closeDatabase,
+  _initTestDatabase,
+  initDatabase,
+  insertCognitiveBenchmarkAttempt,
+  listCognitiveTrajectoryScores,
+} from '../src/db.js';
 import { collectProviderHealthSnapshotsWithLiveProbe } from '../src/provider-live-probe.js';
-
-initDatabase();
 
 const args = process.argv.slice(2);
 const json = args.includes('--json');
@@ -94,13 +98,39 @@ const drillConfig: Record<
 
 async function main(): Promise<void> {
   if (runBenchmarks) {
-    const report = runCognitiveBenchmarkSuite();
-    console.log(JSON.stringify(report, null, 2));
+    _initTestDatabase();
+    let report: ReturnType<typeof runCognitiveBenchmarkSuite>;
+    try {
+      report = runCognitiveBenchmarkSuite({ persist: false });
+    } finally {
+      _closeDatabase();
+    }
+    initDatabase();
+    const persistedAttempts = report.attempts.map((attempt) => {
+      const persistedAttempt = {
+        ...attempt,
+        runId: null,
+        detailJson: JSON.stringify({
+          ...JSON.parse(attempt.detailJson),
+          isolatedStorage: true,
+          runOrigin: 'replay',
+        }),
+      };
+      insertCognitiveBenchmarkAttempt(persistedAttempt);
+      return persistedAttempt;
+    });
+    const persistedReport = { ...report, attempts: persistedAttempts };
+    console.log(JSON.stringify(persistedReport, null, 2));
     process.exit(report.status === 'fail' ? 1 : 0);
   }
 
+  initDatabase();
+
   if (trajectory) {
-    const scores = listCognitiveTrajectoryScores({ limit: 20 });
+    const scores = listCognitiveTrajectoryScores({
+      runOrigin: 'live',
+      limit: 20,
+    });
     const latest = scores[0] || null;
     const report = {
       generatedAt: new Date().toISOString(),

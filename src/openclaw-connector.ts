@@ -66,6 +66,29 @@ export type OpenClawDelegationRoute =
       request: { prompt: string; command: OpenClawDelegationCommand };
     };
 
+export function buildOpenClawMediaGroundedPrompt(params: {
+  prompt: string;
+  mediaSummary?: string | null;
+  mediaBlocker?: string | null;
+}): string {
+  const prompt = params.prompt.trim();
+  const summary = String(params.mediaSummary || '').trim();
+  const blocker = String(params.mediaBlocker || '').trim();
+  if (!summary && !blocker) return prompt;
+  const evidence = summary
+    ? [
+        'Verified attachment context prepared by Andrea:',
+        summary,
+        'Use this bounded visual summary as evidence. Do not claim direct access to image bytes.',
+      ]
+    : [
+        'Attachment inspection status:',
+        blocker,
+        'Be explicit that the attachment could not be inspected; do not infer its contents.',
+      ];
+  return [prompt, '', ...evidence].join('\n');
+}
+
 export type OpenClawSyncRunner = (
   file: string,
   args: string[],

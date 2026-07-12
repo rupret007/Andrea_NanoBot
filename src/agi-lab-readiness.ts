@@ -182,51 +182,51 @@ function councilGate(report: CouncilDoctorReport): AgiLabReadinessGate {
       nextAction: report.nextAction,
     };
   }
-  const confidenceScore = report.recent.averageConfidence;
-  const lowConfidencePenalty = report.recent.totalRuns
-    ? report.recent.lowConfidenceRuns / report.recent.totalRuns
-    : 0;
-  const degradedPenalty = report.recent.totalRuns
-    ? report.recent.degradedRuns / report.recent.totalRuns
-    : 0;
   const score = round3(
-    confidenceScore * 0.55 +
-      (1 - lowConfidencePenalty) * 0.25 +
-      (1 - degradedPenalty) * 0.2,
+    report.recent.qualityScore ??
+      report.recent.averageConfidence * 0.55 +
+        (1 - report.recent.lowConfidenceRuns / report.recent.totalRuns) * 0.25 +
+        (1 - report.recent.degradedRuns / report.recent.totalRuns) * 0.2,
   );
   const status: AgiLabGateStatus = report.ok
     ? 'pass'
-    : statusForScore(score, 0.55);
+    : score >= 0.8
+      ? 'warn'
+      : statusForScore(score, 0.55);
   return {
     gateId: 'council_quality',
     label: 'Council quality',
     status,
     score,
-    summary: `${report.recent.totalRuns} recent council run(s); ${report.recent.degradedRuns} degraded; avg confidence ${report.recent.averageConfidence.toFixed(2)}; low-confidence ${report.recent.lowConfidenceRuns}.`,
+    summary: `${report.recent.totalRuns} recent council run(s); outcome-led quality ${score.toFixed(2)}; ${report.recent.operationallyDegradedRuns ?? report.recent.degradedRuns} operationally degraded; ${report.recent.appropriatelyCautiousRuns ?? 0} appropriately cautious; avg confidence ${report.recent.averageConfidence.toFixed(2)}.`,
     nextAction: report.nextAction,
   };
 }
 
 function cognitionGate(report: CognitiveDoctorReport): AgiLabReadinessGate {
+  const totalRuns = Math.max(1, report.recent.totalRuns);
   const score = round3(
-    report.recent.averageOutcomeScore * 0.55 +
-      (report.recent.totalRuns > 0
-        ? (1 - report.recent.blockedRuns / report.recent.totalRuns) * 0.25
-        : 0.25) +
+    report.recent.qualityScore * 0.65 +
+      (report.recent.finalizedRuns / totalRuns) * 0.15 +
+      (report.recent.decisionAppropriateRuns / totalRuns) * 0.1 +
       (report.skills.total > 0
-        ? (report.skills.promoted / report.skills.total) * 0.2
+        ? (report.skills.trustedPromoted / report.skills.total) * 0.1
         : 0),
   );
-  const status: AgiLabGateStatus = report.ok
-    ? statusForScore(score, 0.55)
-    : 'fail';
+  const status: AgiLabGateStatus =
+    report.ok && report.recent.reviewedOutcomeRuns >= 5
+      ? statusForScore(score, 0.55)
+      : score >= 0.55
+        ? 'warn'
+        : 'fail';
   return {
     gateId: 'cognitive_trajectory',
     label: 'Cognitive trajectory',
     status,
     score,
-    summary: `${report.recent.totalRuns} recent cognitive run(s); average outcome ${report.recent.averageOutcomeScore.toFixed(2)}; ${report.skills.promoted} promoted skill(s); ${report.recent.approvalRuns} approval-waiting run(s).`,
+    summary: `${report.recent.totalRuns} recent live cognitive run(s), with ${report.recent.replayRuns} replay and ${report.recent.syntheticRuns} synthetic run(s) excluded; outcome-led quality ${report.recent.qualityScore.toFixed(2)}; ${report.recent.safeApprovalRuns} safe approval wait(s); ${report.recent.appropriatelyBlockedRuns} appropriate verifier stop(s); ${report.recent.operationalFailureRuns} incomplete run(s); ${report.recent.reviewedOutcomeRuns} reviewed outcome(s); ${report.skills.trustedPromoted} trusted and ${report.skills.unverifiedPromoted} legacy/unverified promoted skill(s).`,
     nextAction:
+      report.nextAction ||
       report.activeRun?.nextAction ||
       report.checkpoints.latestNextAction ||
       'Run one verified cognitive trajectory and record outcome confirmation.',

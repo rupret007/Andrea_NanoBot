@@ -9,6 +9,12 @@ import {
 } from './assistant-profile-pack.js';
 import { getPracticalDiscoverySpotlights } from './command-surface-registry.js';
 import { buildAndreaPingPresenceReply } from './ping-presence.js';
+import {
+  buildRuntimeModelInventory,
+  formatChineseModelInventoryReply,
+  formatRuntimeModelInventoryReply,
+  type RuntimeModelInventory,
+} from './model-self-knowledge.js';
 
 const MAX_ABS_MATH_RESULT = 1_000_000_000_000;
 
@@ -212,6 +218,7 @@ function buildQuickDateReply(message: string, now: Date): string | null {
 export function maybeBuildDirectQuickReply(
   messages: Pick<NewMessage, 'content'>[],
   now = new Date(),
+  modelInventory?: RuntimeModelInventory,
 ): string | null {
   const lastContent = messages.at(-1)?.content?.trim();
   if (!lastContent) return null;
@@ -231,6 +238,20 @@ export function maybeBuildDirectQuickReply(
     isStandalonePrompt(normalized, /^what are you (?:best|good) at[?.! ]*$/, 6)
   ) {
     return `Schedule help, reminders, meeting prep, reply drafting, repo check-ins, life threads, idea capture, and keeping follow-through like pills, bills, and open loops clean. Give me one concrete ask and I will keep it moving.`;
+  }
+
+  if (
+    isStandalonePrompt(
+      normalized,
+      /^(?:(?:what|which) (?:llms?|language models?|ai models?|models?) (?:do you (?:have|use|have access to)|can you use|are (?:available|configured))|what model(?:s)? (?:are you using|do you run|power(?:s)? you)|what are you running on|(?:what|which) (?:is )?(?:the )?(?:chinese|china-based) (?:llm|model)(?: you (?:have|use|are integrated with|have (?:an )?integration with))?)[?.! ]*$/,
+      12,
+    )
+  ) {
+    const inventory = modelInventory || buildRuntimeModelInventory();
+    if (/\b(?:chinese|china-based)\b/.test(normalized)) {
+      return formatChineseModelInventoryReply(inventory);
+    }
+    return formatRuntimeModelInventoryReply(inventory);
   }
 
   if (

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { redactCouncilText } from './council-safety.js';
+import { assessCognitiveSkillPromotion } from './cognitive-kernel.js';
 import { reviewAgentAction } from './critic-agent.js';
 import {
   isDatabaseInitialized,
@@ -191,6 +192,17 @@ function playbookFromCognitiveCard(
   card: CognitiveSkillCardRecord,
   now: string,
 ): SkillPlaybookRecord {
+  const trustedPromotion =
+    card.promotionState === 'promoted' &&
+    assessCognitiveSkillPromotion(card, now).eligible;
+  const status: SkillPlaybookRecord['status'] =
+    card.promotionState === 'quarantined'
+      ? 'paused'
+      : card.promotionState === 'retired'
+        ? 'retired'
+        : trustedPromotion
+          ? 'active'
+          : 'suggested';
   return {
     skillId: `playbook:${card.skillId}`.replace(/[^A-Za-z0-9:_.-]/g, '_'),
     createdAt: card.createdAt,
@@ -214,12 +226,18 @@ function playbookFromCognitiveCard(
     usageCount: 0,
     lastOutcome: null,
     reliabilityScore: card.latestOutcomeScore,
-    status: card.promotionState === 'promoted' ? 'active' : 'suggested',
+    status,
     sourceDistillationId: null,
     nextAction:
-      card.promotionState === 'promoted'
-        ? 'Candidate is active because repeated cognitive runs succeeded.'
-        : 'Keep reviewing before active use.',
+      status === 'paused'
+        ? 'Cognitive skill is quarantined after independent negative outcomes; review before reuse.'
+        : status === 'retired'
+          ? 'Cognitive skill is retired and cannot run.'
+          : trustedPromotion
+            ? 'Skill is active after reviewed outcomes and fresh deterministic replay passed.'
+            : card.promotionState === 'promoted'
+              ? 'Legacy promotion is preserved but inactive until reviewed outcomes and fresh replay pass.'
+              : 'Keep reviewing before active use.',
     privacyJson: privacyJson(),
   };
 }
@@ -248,7 +266,6 @@ export function syncSkillPlaybooksFromLearning(
     groupFolder: params.groupFolder,
     limit: 100,
   })) {
-    if (card.promotionState === 'quarantined') continue;
     const playbook = playbookFromCognitiveCard(card, now);
     upsertSkillPlaybook(playbook);
     records.push(playbook);

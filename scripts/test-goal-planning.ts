@@ -13,6 +13,7 @@ import {
   isGoalPlannerNaturalRequest,
   planGoalDirectedRequest,
 } from '../src/goal-planner.js';
+import { buildRealityGroundingReport } from '../src/reality-grounding.js';
 import type { ProactiveOpportunity } from '../src/types.js';
 
 _initTestDatabase();
@@ -28,7 +29,9 @@ assert.equal(weekend.goal?.scope, 'household');
 assert.equal(weekend.milestones.length, 3);
 assert.ok(weekend.steps.length >= 2);
 assert.ok(
-  weekend.steps.some((step) => step.approvalRequirement === 'approval_required'),
+  weekend.steps.some(
+    (step) => step.approvalRequirement === 'approval_required',
+  ),
 );
 assert.match(weekend.response, /Proposed goal: Prepare for the weekend/);
 
@@ -38,7 +41,10 @@ const storedMilestones = listGoalMilestones({
   goalId: weekend.goal?.goalId,
   limit: 10,
 });
-const storedSteps = listGoalPlanSteps({ goalId: weekend.goal?.goalId, limit: 10 });
+const storedSteps = listGoalPlanSteps({
+  goalId: weekend.goal?.goalId,
+  limit: 10,
+});
 assert.equal(storedMilestones.length, 3);
 assert.ok(storedSteps.length >= 2);
 
@@ -51,6 +57,68 @@ assert.equal(andrea.goal?.scope, 'andrea_project');
 assert.ok(andrea.steps.some((step) => step.requiredTool === 'improvement_lab'));
 assert.ok(andrea.run.approvalRequired);
 assert.match(andrea.response, /Approval: required/);
+
+const oldReality = buildRealityGroundingReport({
+  requestText: 'old planner proof state',
+  channel: 'operator',
+  persist: false,
+  now: new Date('2026-06-09T12:04:00.000Z'),
+});
+oldReality.snapshot.snapshotId = 'reality-old-telegram-gap';
+oldReality.verificationNeeds = [
+  {
+    needId: 'need-old-telegram-gap',
+    snapshotId: oldReality.snapshot.snapshotId,
+    createdAt: oldReality.generatedAt,
+    updatedAt: oldReality.generatedAt,
+    question: 'Is Telegram user-session proof configured?',
+    reason: 'Historical test-only proof gap.',
+    neededBeforeAction: false,
+    possibleSourceTool: 'telegram_user_session',
+    riskIfSkipped: 'low',
+    urgency: 'low',
+    status: 'manual_proof',
+    evidenceIdsJson: '[]',
+    nextAction:
+      'Set TELEGRAM_USER_API_ID and TELEGRAM_USER_API_HASH, then rerun the proof.',
+    privacyJson: JSON.stringify({ metadataOnly: true }),
+  },
+];
+planGoalDirectedRequest({
+  text: 'help me get Andrea closer to done',
+  channel: 'operator',
+  now: '2026-06-09T12:04:30.000Z',
+  reality: oldReality,
+  persist: true,
+});
+
+const currentReality = structuredClone(oldReality);
+currentReality.snapshot.snapshotId = 'reality-current-alexa-gap';
+currentReality.verificationNeeds = currentReality.verificationNeeds.map(
+  (need) => ({
+    ...need,
+    needId: 'need-current-alexa-gap',
+    snapshotId: currentReality.snapshot.snapshotId,
+    question: 'Is Alexa device proof fresh?',
+    nextAction: 'Refresh the Alexa signed device proof.',
+  }),
+);
+const reconciledReport = buildHierarchicalPlannerReport({
+  requestText: 'help me get Andrea closer to done',
+  now: '2026-06-09T12:05:00.000Z',
+  persist: false,
+  reality: currentReality,
+});
+assert.ok(reconciledReport.stalePlanStepsSuppressed > 0);
+assert.ok(
+  reconciledReport.planSteps.some((step) =>
+    /Alexa signed device proof/i.test(step.nextAction),
+  ),
+);
+assert.doesNotMatch(
+  formatGoalPlannerReport(reconciledReport),
+  /TELEGRAM_USER_API_ID/,
+);
 
 const manualAlexaOpportunity: ProactiveOpportunity = {
   opportunityId: 'opportunity_manual_alexa_proof',

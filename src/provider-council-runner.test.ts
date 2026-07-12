@@ -26,6 +26,93 @@ function providerSnapshot(
 }
 
 describe('provider council runner', () => {
+  it('keeps public web evidence out of local operator councils when explicitly scoped', async () => {
+    const members: Array<Record<string, unknown>> = [];
+    const searchBrave = vi.fn(async () => ({
+      query: 'irrelevant',
+      results: [
+        {
+          title: 'Unrelated public result',
+          url: 'https://example.com/unrelated',
+          description: 'This should never enter the local evidence packet.',
+        },
+      ],
+    }));
+    const providerArtifact = JSON.stringify({
+      verdict: 'pass',
+      confidence: 0.86,
+      evidence_grade: 'partial',
+      recommended_action: 'answer',
+      answer_direction: 'Use the cited local runtime evidence.',
+      uncertainty: 'No external evidence was requested.',
+      risk_flags: [],
+      evidence_ids: ['intent:local-operator-proof'],
+      approval_need: 'none',
+    });
+    const runAnthropic = vi.fn(async () => ({
+      text: providerArtifact,
+      model: 'claude-test',
+    }));
+    const runOpenAi = vi.fn(async () => ({
+      text: providerArtifact,
+      model: 'gpt-test',
+    }));
+
+    const result = await runObservableProviderCouncil(
+      {
+        goal: 'Assess local Andrea runtime health without external evidence.',
+        taskFamily: 'operator',
+        channel: 'system',
+        correlationId: 'local-operator-proof',
+        requestedMode: 'max_iq_council',
+        requiredEvidence: 'partial',
+        allowedSideEffects: 'none',
+        publicEvidenceRequired: false,
+      },
+      {
+        emitProviderCouncil: vi.fn(async () => ({
+          councilRunId: 'local-operator-proof',
+          mode: 'max_iq_council' as const,
+          traceId: 'local-operator-proof',
+        })),
+        emitCouncilEvent: vi.fn(async () => ({})),
+        emitMemberResult: vi.fn(async (member) => {
+          members.push(member as unknown as Record<string, unknown>);
+          return {};
+        }),
+        finalizeCouncil: vi.fn(async () => ({})),
+        searchBrave,
+        runOpenAi,
+        runAnthropic,
+        runMiniMax: vi.fn(async () => ({
+          text: providerArtifact,
+          model: 'minimax-test',
+        })),
+        runGemini: vi.fn(async () => ({
+          text: providerArtifact,
+          model: 'gemini-test',
+        })),
+      },
+    );
+
+    expect(searchBrave).not.toHaveBeenCalled();
+    expect(runAnthropic).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 44_500 }),
+    );
+    expect(runOpenAi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining('health means system/runtime health'),
+      }),
+    );
+    expect(members.map((member) => member.memberId)).not.toContain(
+      'brave_search',
+    );
+    expect(result?.structuredVerdict).toMatchObject({
+      status: 'pass',
+      recommendedAction: 'answer',
+    });
+  });
+
   it('runs bounded planner critic verifier evidence sequence and finalizes platform arbitration', async () => {
     const events: Array<Record<string, unknown>> = [];
     const members: Array<Record<string, unknown>> = [];

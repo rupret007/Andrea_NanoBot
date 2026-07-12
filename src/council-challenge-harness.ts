@@ -834,6 +834,8 @@ export async function runCouncilChallengeHarness(
         requiredEvidence: scenario.requiredEvidence,
         allowedSideEffects: scenario.sideEffectPolicy,
         rawContentPolicy: 'sanitized_snippets',
+        publicEvidenceRequired: scenario.requiredRoles.includes('brave_search'),
+        runOrigin: 'synthetic',
         metadata: {
           challenge_run_id: runId,
           challenge_scenario_id: scenario.scenarioId,

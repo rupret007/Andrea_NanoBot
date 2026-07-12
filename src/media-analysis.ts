@@ -19,6 +19,11 @@ import {
   type OpenAiProviderStatus,
   getOpenAiProviderStatus,
 } from './openai-provider.js';
+import {
+  getGeminiProviderStatus,
+  resolveGeminiProviderConfig,
+  type GeminiProviderStatus,
+} from './gemini-provider.js';
 import { providerRequestSignal } from './provider-http.js';
 import type { MessageMediaAttachment } from './types.js';
 
@@ -37,7 +42,11 @@ export interface MediaAnalysisInput {
 export interface MediaAnalysisResult {
   handled: boolean;
   providerStatus: OpenAiProviderStatus;
-  providerUsed?: 'openai_vision';
+  providerStatuses?: {
+    openai: OpenAiProviderStatus;
+    gemini: GeminiProviderStatus;
+  };
+  providerUsed?: 'openai_vision' | 'gemini_vision';
   summaryText?: string;
   blocker?: string;
   debugPath: string[];
@@ -72,6 +81,25 @@ function extractResponseOutputText(payload: unknown): string {
     }
   }
   return parts.join('\n').trim();
+}
+
+function extractOpenAiCompatibleChatText(payload: unknown): string {
+  const record =
+    payload && typeof payload === 'object'
+      ? (payload as Record<string, unknown>)
+      : {};
+  const choices = Array.isArray(record.choices) ? record.choices : [];
+  return choices
+    .map((choice) => {
+      if (!choice || typeof choice !== 'object') return '';
+      const message = (choice as Record<string, unknown>).message;
+      if (!message || typeof message !== 'object') return '';
+      const content = (message as Record<string, unknown>).content;
+      return typeof content === 'string' ? content.trim() : '';
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim();
 }
 
 function resolveOptionalStaticPath(packageName: string): string | null {
@@ -282,6 +310,9 @@ export async function analyzeMessageMedia(
 ): Promise<MediaAnalysisResult> {
   const status = getOpenAiProviderStatus();
   const config = resolveOpenAiProviderConfig();
+  const geminiStatus = getGeminiProviderStatus();
+  const geminiConfig = resolveGeminiProviderConfig();
+  const providerStatuses = { openai: status, gemini: geminiStatus };
   const attachments = selectAttachments(input).filter((attachment) =>
     ['image', 'video'].includes(attachment.kind),
   );
@@ -293,16 +324,19 @@ export async function analyzeMessageMedia(
     return {
       handled: false,
       providerStatus: status,
+      providerStatuses,
       blocker: 'No image or video attachments were available to analyze.',
       debugPath,
       attachments: [],
     };
   }
-  if (!config) {
+  if (!config && !geminiConfig) {
     return {
       handled: false,
       providerStatus: status,
-      blocker: `Media analysis needs ${status.missing.join(', ') || 'OpenAI credentials'} configured on this host.`,
+      providerStatuses,
+      blocker:
+        'Media analysis needs a configured OpenAI or Gemini vision provider on this host.',
       debugPath: [...debugPath, 'media.analysis:provider_missing'],
       attachments,
     };
@@ -313,6 +347,7 @@ export async function analyzeMessageMedia(
     return {
       handled: false,
       providerStatus: status,
+      providerStatuses,
       blocker: localInputs.skippedTooLarge
         ? `The selected media exceeds Andrea's ${ANDREA_MEDIA_ANALYSIS_MAX_INPUT_BYTES}-byte analysis limit.`
         : 'The media metadata is present, but no cached image bytes or video frames are available for analysis yet.',
@@ -364,6 +399,7 @@ export async function analyzeMessageMedia(
     return {
       handled: false,
       providerStatus: status,
+      providerStatuses,
       blocker:
         "The selected media is no longer available in Andrea's local cache.",
       debugPath: [...debugPath, 'media.analysis:cache_read_failed'],
@@ -371,88 +407,191 @@ export async function analyzeMessageMedia(
     };
   }
 
-  let response: Response;
-  try {
-    response = await (input.fetchImpl || fetch)(`${config.baseUrl}/responses`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: config.standardModel,
-        input: [
-          {
-            role: 'user',
-            content,
-          },
-        ],
-        max_output_tokens: 700,
-      }),
-      signal: providerRequestSignal(),
-    });
-  } catch {
-    markAnalysisStatus(attachments, 'failed');
-    return {
-      handled: false,
-      providerStatus: status,
-      blocker:
+  const fetchImpl = input.fetchImpl || fetch;
+  const providerDebug: string[] = [];
+  const providerBlockers: string[] = [];
+
+  if (config) {
+    try {
+      const response = await fetchImpl(`${config.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: config.standardModel,
+          input: [
+            {
+              role: 'user',
+              content,
+            },
+          ],
+          max_output_tokens: 700,
+        }),
+        signal: providerRequestSignal(),
+      });
+      const requestId = response.headers.get('x-request-id') || undefined;
+      const payloadText = await response.text();
+      if (!response.ok) {
+        providerDebug.push(
+          `media.analysis:provider_error:${response.status}`,
+          requestId ? `request_id:${requestId}` : 'request_id:missing',
+        );
+        providerBlockers.push(
+          `OpenAI media analysis is unavailable right now (HTTP ${response.status}).`,
+        );
+      } else {
+        let payload: unknown;
+        try {
+          payload = JSON.parse(payloadText);
+        } catch {
+          providerDebug.push('media.analysis:invalid_provider_response');
+          providerBlockers.push(
+            'OpenAI media analysis returned an unreadable response.',
+          );
+        }
+        const summaryText = payload ? extractResponseOutputText(payload) : '';
+        if (summaryText) {
+          markAnalysisStatus(attachments, 'analyzed');
+          return {
+            handled: true,
+            providerStatus: status,
+            providerStatuses,
+            providerUsed: 'openai_vision',
+            summaryText,
+            debugPath: [
+              ...debugPath,
+              'media.analysis:provider=openai_vision',
+              requestId ? `request_id:${requestId}` : 'request_id:missing',
+            ],
+            attachments,
+          };
+        }
+        if (payload && !summaryText) {
+          providerDebug.push('media.analysis:empty_response');
+          providerBlockers.push(
+            'OpenAI media analysis returned an empty response.',
+          );
+        }
+      }
+    } catch {
+      providerDebug.push('media.analysis:provider_transport_failed');
+      providerBlockers.push(
         'OpenAI media analysis is unavailable right now. Please try again later.',
-      debugPath: [...debugPath, 'media.analysis:provider_transport_failed'],
-      attachments,
-    };
+      );
+    }
+  } else {
+    providerDebug.push('media.analysis:openai_not_configured');
   }
-  const requestId = response.headers.get('x-request-id') || undefined;
-  const payloadText = await response.text();
-  if (!response.ok) {
-    markAnalysisStatus(attachments, 'failed');
-    return {
-      handled: false,
-      providerStatus: status,
-      blocker: `OpenAI media analysis is unavailable right now (HTTP ${response.status}).`,
-      debugPath: [
-        ...debugPath,
-        `media.analysis:provider_error:${response.status}`,
-        requestId ? `request_id:${requestId}` : 'request_id:missing',
-      ],
-      attachments,
-    };
+
+  if (geminiConfig && geminiStatus.quotaState !== 'blocked') {
+    const geminiContent = content.map((item) =>
+      item.type === 'input_image'
+        ? {
+            type: 'image_url',
+            image_url: { url: item.image_url },
+          }
+        : {
+            type: 'text',
+            text: item.text,
+          },
+    );
+    try {
+      const response = await fetchImpl(
+        `${geminiConfig.openAiBaseUrl}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${geminiConfig.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: geminiConfig.fastModel,
+            messages: [{ role: 'user', content: geminiContent }],
+            max_tokens: 700,
+          }),
+          signal: providerRequestSignal(),
+        },
+      );
+      const requestId =
+        response.headers.get('x-request-id') ||
+        response.headers.get('x-goog-request-id') ||
+        undefined;
+      const payloadText = await response.text();
+      if (!response.ok) {
+        providerDebug.push(
+          `media.analysis:gemini_provider_error:${response.status}`,
+          requestId
+            ? `gemini_request_id:${requestId}`
+            : 'gemini_request_id:missing',
+        );
+        providerBlockers.push(
+          `Gemini media analysis is unavailable right now (HTTP ${response.status}).`,
+        );
+      } else {
+        let payload: unknown;
+        try {
+          payload = JSON.parse(payloadText);
+        } catch {
+          providerDebug.push('media.analysis:gemini_invalid_provider_response');
+          providerBlockers.push(
+            'Gemini media analysis returned an unreadable response.',
+          );
+        }
+        const summaryText = payload
+          ? extractOpenAiCompatibleChatText(payload)
+          : '';
+        if (summaryText) {
+          markAnalysisStatus(attachments, 'analyzed');
+          return {
+            handled: true,
+            providerStatus: status,
+            providerStatuses,
+            providerUsed: 'gemini_vision',
+            summaryText,
+            debugPath: [
+              ...debugPath,
+              ...providerDebug,
+              'media.analysis:provider=gemini_vision',
+              requestId
+                ? `gemini_request_id:${requestId}`
+                : 'gemini_request_id:missing',
+            ],
+            attachments,
+          };
+        }
+        if (payload && !summaryText) {
+          providerDebug.push('media.analysis:gemini_empty_response');
+          providerBlockers.push(
+            'Gemini media analysis returned an empty response.',
+          );
+        }
+      }
+    } catch {
+      providerDebug.push('media.analysis:gemini_provider_transport_failed');
+      providerBlockers.push(
+        'Gemini media analysis is unavailable right now. Please try again later.',
+      );
+    }
+  } else if (geminiStatus.quotaState === 'blocked') {
+    providerDebug.push('media.analysis:gemini_quota_blocked');
+    providerBlockers.push(
+      'Gemini media analysis is blocked by its current quota state.',
+    );
+  } else {
+    providerDebug.push('media.analysis:gemini_not_configured');
   }
-  let payload: unknown;
-  try {
-    payload = JSON.parse(payloadText);
-  } catch {
-    markAnalysisStatus(attachments, 'failed');
-    return {
-      handled: false,
-      providerStatus: status,
-      blocker: 'OpenAI media analysis returned an unreadable response.',
-      debugPath: [...debugPath, 'media.analysis:invalid_provider_response'],
-      attachments,
-    };
-  }
-  const summaryText = extractResponseOutputText(payload);
-  if (!summaryText) {
-    markAnalysisStatus(attachments, 'failed');
-    return {
-      handled: false,
-      providerStatus: status,
-      blocker: 'OpenAI media analysis returned an empty response.',
-      debugPath: [...debugPath, 'media.analysis:empty_response'],
-      attachments,
-    };
-  }
-  markAnalysisStatus(attachments, 'analyzed');
+
+  markAnalysisStatus(attachments, 'failed');
   return {
-    handled: true,
+    handled: false,
     providerStatus: status,
-    providerUsed: 'openai_vision',
-    summaryText,
-    debugPath: [
-      ...debugPath,
-      'media.analysis:provider=openai_vision',
-      requestId ? `request_id:${requestId}` : 'request_id:missing',
-    ],
+    providerStatuses,
+    blocker:
+      providerBlockers.join(' ') ||
+      'Media analysis is unavailable right now. Please try again later.',
+    debugPath: [...debugPath, ...providerDebug],
     attachments,
   };
 }

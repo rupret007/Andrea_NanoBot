@@ -45,7 +45,7 @@ export function resolveCouncilRunBudget(mode: string): CouncilRunBudget {
     return {
       mode,
       maxRoles: 5,
-      roleTimeoutMs: 25_000,
+      roleTimeoutMs: 45_000,
       maxRetries: 1,
       maxConcurrency: 2,
       fallbackAllowed: true,

@@ -23,6 +23,7 @@ import {
   upsertDelegationRule,
 } from './db.js';
 import { planSimpleReminder } from './local-reminder.js';
+import { cacheInboundMediaBytes } from './media-cache.js';
 import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
 import type {
   CommunicationThreadRecord,
@@ -194,6 +195,15 @@ describe('assistant capabilities', () => {
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
+    expect(
+      getAssistantCapability('communication.manage_identity_links'),
+    ).toMatchObject({
+      category: 'communication',
+      requiresConfirmation: false,
+      safeForAlexa: false,
+      safeForTelegram: true,
+      safeForBlueBubbles: true,
+    });
     expect(getAssistantCapability('staff.prioritize')).toMatchObject({
       category: 'staff',
       safeForAlexa: true,
@@ -209,6 +219,99 @@ describe('assistant capabilities', () => {
     expect(
       getAssistantCapability('media.image_generate')?.availabilityNote,
     ).toContain('Telegram image generation is wired');
+  });
+
+  it('analyzes only media attached to the current turn', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://example.test/v1');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-vision-test');
+    const olderBytes = Buffer.from([1, 2, 3]);
+    const currentBytes = Buffer.from([9, 8, 7, 6]);
+    const older = cacheInboundMediaBytes({
+      bytes: olderBytes,
+      filename: 'older-photo.jpg',
+      mimeType: 'image/jpeg',
+    });
+    const current = cacheInboundMediaBytes({
+      bytes: currentBytes,
+      filename: 'current-photo.jpg',
+      mimeType: 'image/jpeg',
+    });
+    storeChatMetadata('tg:media-current', '2026-07-11T12:00:00.000Z');
+    storeMessage({
+      id: 'media-message-older',
+      chat_jid: 'tg:media-current',
+      sender: 'owner',
+      sender_name: 'Owner',
+      content: '[Photo] older',
+      timestamp: '2026-07-11T11:59:00.000Z',
+      is_from_me: false,
+      attachments: [
+        {
+          attachmentId: 'media:older-turn',
+          chatJid: 'tg:media-current',
+          messageId: 'media-message-older',
+          sourceChannel: 'telegram',
+          kind: 'image',
+          mimeType: 'image/jpeg',
+          filename: 'older-photo.jpg',
+          localPath: older.localPath,
+          fetchStatus: 'cached',
+          analysisStatus: 'not_requested',
+        },
+      ],
+    });
+    storeMessage({
+      id: 'media-message-current',
+      chat_jid: 'tg:media-current',
+      sender: 'owner',
+      sender_name: 'Owner',
+      content: '[Photo] This is my meal plan',
+      timestamp: '2026-07-11T12:00:00.000Z',
+      is_from_me: false,
+      attachments: [
+        {
+          attachmentId: 'media:current-turn',
+          chatJid: 'tg:media-current',
+          messageId: 'media-message-current',
+          sourceChannel: 'telegram',
+          kind: 'image',
+          mimeType: 'image/jpeg',
+          filename: 'current-photo.jpg',
+          localPath: current.localPath,
+          fetchStatus: 'cached',
+          analysisStatus: 'not_requested',
+        },
+      ],
+    });
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      const body = JSON.parse(String(init?.body || '{}')) as {
+        input?: Array<{ content?: Array<Record<string, string>> }>;
+      };
+      const imageUrls = (body.input?.[0]?.content || [])
+        .filter((item) => item.type === 'input_image')
+        .map((item) => item.image_url || '');
+      expect(imageUrls).toHaveLength(1);
+      expect(imageUrls[0]).toContain(currentBytes.toString('base64'));
+      expect(imageUrls[0]).not.toContain(olderBytes.toString('base64'));
+      return new Response(JSON.stringify({ output_text: 'Meal plan read.' }), {
+        status: 200,
+      });
+    }) as typeof fetch;
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'media.analyze',
+      context: {
+        channel: 'telegram',
+        chatJid: 'tg:media-current',
+        currentMessageId: 'media-message-current',
+        currentAttachmentIds: ['media:current-turn'],
+      },
+      input: { text: '[Photo] This is my meal plan' },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toBe('Meal plan read.');
   });
 
   it('summarizes a synced BlueBubbles thread by name without creating side effects', async () => {
@@ -1558,8 +1661,40 @@ describe('assistant capabilities', () => {
 
     expect(telegram.replyText).toContain('*Supporting Sources*');
     expect(telegram.replyText).toContain('Candace');
+    expect(telegram.replyText).toMatch(/updated \d{4}-\d{2}-\d{2}, fresh/);
     expect(alexa.replyText).toContain('saved material');
     expect(alexa.researchResult?.supportingSources?.[0]?.title).toBeTruthy();
+
+    const providerAttempt = vi.fn(async () => {
+      throw new Error('saved-only continuation attempted network access');
+    });
+    globalThis.fetch = providerAttempt as typeof fetch;
+    const referenced = await executeAssistantCapability({
+      capabilityId: 'knowledge.summarize_saved',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+        priorSubjectData: {
+          knowledgeSourceIds:
+            telegram.conversationSeed?.subjectData?.knowledgeSourceIds,
+          knowledgeSourceTitles:
+            telegram.conversationSeed?.subjectData?.knowledgeSourceTitles,
+          knowledgeSourceMatches:
+            telegram.conversationSeed?.subjectData?.knowledgeSourceMatches,
+        },
+      },
+      input: {
+        canonicalText: 'Research this using what we already saved.',
+      },
+    });
+
+    expect(referenced.handled).toBe(true);
+    expect(referenced.researchResult?.providerUsed).toBe('knowledge_library');
+    expect(referenced.researchResult?.supportingSources?.[0]?.sourceId).toBe(
+      telegram.researchResult?.supportingSources?.[0]?.sourceId,
+    );
+    expect(providerAttempt).not.toHaveBeenCalled();
   });
 
   it('runs shared communication capabilities with continuation context across channels', async () => {

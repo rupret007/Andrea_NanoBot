@@ -27,6 +27,44 @@ describe('turn agent harness', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('keeps proof/replay turns out of live deliberation, council, runtime, and learning', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    const fetchImpl = vi.fn();
+    vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
+    const { _initTestDatabase, _closeDatabase, listCognitiveRuns } =
+      await import('./db.js');
+    _initTestDatabase();
+    try {
+      const { beginTurnAgentHarness } = await import('./turn-agent-harness.js');
+      const context = await beginTurnAgentHarness({
+        turnId: 'proof-drill-deferred-decision',
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        text: 'send it later tonight',
+        requestRoute: 'direct_assistant',
+        runOrigin: 'replay',
+      });
+
+      expect(context).toMatchObject({
+        runOrigin: 'replay',
+        deliberation: null,
+        providerCouncil: null,
+        logicRun: null,
+        runtimeSpine: null,
+        personalContextPacket: null,
+        verifiedDeepWorkPacket: null,
+      });
+      expect(context?.cognitiveRun?.run.runOrigin).toBe('replay');
+      expect(context?.cognitiveRun?.run.linkedSkillCardId).toBeNull();
+      expect(listCognitiveRuns({ runOrigin: 'live' })).toEqual([]);
+      expect(listCognitiveRuns({ runOrigin: 'replay' })).toHaveLength(1);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      _closeDatabase();
+    }
+  });
+
   it('compiles memory and skill metadata before platform deliberation', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');

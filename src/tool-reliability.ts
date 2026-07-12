@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import {
   getAllTasks,
   isDatabaseInitialized,
+  listRecentPilotJourneyEvents,
   listCognitiveExecutiveToolChoices,
   listCognitiveReflectionSignals,
   listReliabilityObservations,
@@ -34,6 +35,7 @@ import type {
   ToolReliabilityRollup,
   ToolReliabilitySubject,
   ScheduledTask,
+  PilotJourneyEventRecord,
 } from './types.js';
 
 const PRIVACY = {
@@ -370,6 +372,16 @@ function confidenceForOutcome(
   return 0.35;
 }
 
+function pilotJourneyOutcome(
+  event: PilotJourneyEventRecord,
+): ReliabilityObservation['outcome'] {
+  if (event.outcome === 'success') return 'success';
+  if (event.outcome === 'degraded_usable') return 'degraded';
+  if (event.outcome === 'externally_blocked') return 'blocked';
+  if (event.outcome === 'internal_failure') return 'failed';
+  return 'unknown';
+}
+
 function observation(params: {
   subjectId: string;
   observedAt: string;
@@ -651,6 +663,34 @@ export async function refreshToolReliabilityFromCurrentTruth(
         summary: `Executive tool choice ${choice.toolId}: ${choice.status}.`,
         nextAction: choice.reason,
         evidenceIds: [choice.choiceId],
+      }),
+    );
+  }
+  const latestCompletedWorkCockpitJourney = listRecentPilotJourneyEvents({
+    journeyId: 'work_cockpit',
+    limit: 20,
+  }).find((event) => Boolean(event.completedAt));
+  if (latestCompletedWorkCockpitJourney) {
+    const outcome = pilotJourneyOutcome(latestCompletedWorkCockpitJourney);
+    upsertReliabilityObservation(
+      observation({
+        subjectId: 'tool:work_cockpit',
+        observedAt:
+          latestCompletedWorkCockpitJourney.completedAt ||
+          latestCompletedWorkCockpitJourney.startedAt,
+        sourceKind: 'pilot_journey',
+        outcome,
+        failureClass:
+          latestCompletedWorkCockpitJourney.blockerClass ||
+          (outcome === 'success'
+            ? 'none'
+            : latestCompletedWorkCockpitJourney.outcome),
+        summary: `Work cockpit pilot journey completed with outcome ${latestCompletedWorkCockpitJourney.outcome}.`,
+        nextAction:
+          outcome === 'success'
+            ? ''
+            : 'Run one fresh work-cockpit turn and verify the selected work state.',
+        evidenceIds: [latestCompletedWorkCockpitJourney.eventId],
       }),
     );
   }

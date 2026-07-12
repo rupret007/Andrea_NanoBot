@@ -851,6 +851,7 @@ describe('cognitive kernel persistence', () => {
       channel: 'telegram',
       taskFamily: 'assistant',
       turnId: runId,
+      runOrigin: 'live',
       goalSummary: 'metadata-only test goal',
       selectedSkillId: 'assistant.daily_guidance',
       status: 'planned',

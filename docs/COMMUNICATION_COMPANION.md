@@ -95,6 +95,19 @@ Current communication capabilities:
   - don't surface this automatically
   - stop tracking that
   - mark that handled
+- `communication.manage_identity_links`
+  - list unresolved conversation identities with `review communication identities`
+  - propose a person only when the chat label exactly matches one existing profile person
+  - confirm with `confirm identity "Chat label" is "Existing person"`
+  - mark group/unknown conversations not applicable with `dismiss identity "Chat label"`
+  - reverse a decision with `clear identity review "Chat label"`
+
+Identity review is private to the registered main Telegram chat and the
+configured BlueBubbles self-thread.
+It stores a metadata-only owner decision separately from inferred urgency,
+summaries, and follow-through state. It never creates a person, matches a phone
+number or raw identifier, reads message bodies to infer identity, or treats a
+group chat as one person.
 
 ## Calendar vs Reminder vs Save
 
@@ -148,6 +161,7 @@ For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AN
 - `Save this conversation under the Candace thread.`
 - `Keep that as a draft for now.`
 - `Don't surface this automatically.`
+- `Review communication identities.`
 
 ## Testing
 

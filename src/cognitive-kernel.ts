@@ -26,7 +26,9 @@ import {
   listCognitiveSkillCards,
   listCognitiveSubgoalsForRun,
   listCognitiveToolRegistry,
+  listCognitiveTrajectoryScores,
   listCognitiveWorldBeliefs,
+  isIsolatedTestDatabase,
   pruneCognitiveKernelData,
   replaceCognitiveSubgoalsForRun,
   resolveCognitiveCheckpoint,
@@ -94,6 +96,7 @@ import type {
   CognitiveRewardSignalRecord,
   CognitiveRunRecord,
   CognitiveRunEvent,
+  CognitiveRunOrigin,
   CognitiveRunStatus,
   CognitiveSkillCardRecord,
   CognitiveStepVerification,
@@ -216,6 +219,7 @@ export interface BeginCognitiveKernelInput {
   taskFamily: PlatformTaskFamily;
   goal: string;
   requestRoute?: string | null;
+  runOrigin?: CognitiveRunOrigin;
   selectedSkillId: string;
   selectedSkillPurpose: string;
   selectedSkillApprovalNeed: string;
@@ -288,16 +292,29 @@ export interface CognitiveDoctorReport {
     subgoalCount: number;
   } | null;
   recent: {
+    observedRuns: number;
     totalRuns: number;
+    replayRuns: number;
+    syntheticRuns: number;
     blockedRuns: number;
     approvalRuns: number;
     averageOutcomeScore: number;
+    qualityScore: number;
+    decisionAppropriateRuns: number;
+    safeApprovalRuns: number;
+    appropriatelyBlockedRuns: number;
+    operationalFailureRuns: number;
+    finalizedRuns: number;
+    reviewedOutcomeRuns: number;
     rewardSignals: number;
     reflections: number;
   };
   skills: {
     total: number;
     promoted: number;
+    trustedPromoted: number;
+    unverifiedPromoted: number;
+    reviewEligibleCandidates: number;
     candidates: number;
     quarantined: number;
     latestSkillId?: string | null;
@@ -3403,6 +3420,7 @@ function buildAutonomyBudget(input: {
   mode: CognitiveMode;
   taskFamily: PlatformTaskFamily;
   approvalRequired: boolean;
+  hasAttachedCouncil: boolean;
   now: string;
 }): CognitiveAutonomyBudgetRecord {
   const readOnly =
@@ -3425,9 +3443,12 @@ function buildAutonomyBudget(input: {
       input.mode === 'council_verified'
         ? 8
         : input.mode === 'approval_staged'
-          ? 6
-          : 4,
-    maxCouncilCalls: input.mode === 'council_verified' ? 1 : 0,
+          ? 8
+          : input.mode === 'read_only_react'
+            ? 5
+            : 4,
+    maxCouncilCalls:
+      input.mode === 'council_verified' || input.hasAttachedCouncil ? 1 : 0,
     maxReadOnlyCalls: readOnly ? 3 : 1,
     mutatingAllowed: false,
     approvalRequired: approval,
@@ -4035,6 +4056,7 @@ function buildRunRecord(input: {
   now: string;
   groupFolder?: string | null;
   turnId: string;
+  runOrigin: CognitiveRunOrigin;
   providerCouncil?: AndreaPlatformProviderCouncilResult | null;
 }): CognitiveRunRecord {
   return {
@@ -4045,6 +4067,7 @@ function buildRunRecord(input: {
     channel: input.frame.channel,
     taskFamily: input.frame.taskFamily,
     turnId: input.turnId,
+    runOrigin: input.runOrigin,
     goalSummary: input.frame.goal,
     selectedSkillId: input.frame.selectedSkillId,
     status:
@@ -4296,6 +4319,7 @@ export function beginCognitiveKernelRun(
     approvalRequired:
       framePolicy.cognitiveMode === 'approval_staged' ||
       input.selectedSkillApprovalNeed === 'explicit',
+    hasAttachedCouncil: Boolean(input.providerCouncil?.councilRunId),
     now: startedAt,
   });
   const budgetPolicy = validateAutonomyBudget({
@@ -4333,6 +4357,7 @@ export function beginCognitiveKernelRun(
     now: startedAt,
     groupFolder: input.groupFolder,
     turnId: input.turnId,
+    runOrigin: input.runOrigin || 'live',
     providerCouncil: input.providerCouncil,
   });
   const execution = executeCognitiveToolPlan({
@@ -4910,14 +4935,14 @@ function signalKind(
 function reflectionKind(
   input: FinalizeCognitiveKernelOutcomeInput,
 ): CognitiveReflectionRecord['reflectionKind'] {
-  if (input.blockerClass || input.answerClass === 'blocked') return 'failure';
-  if (input.evaluationStatus === 'block') return 'verifier_block';
   if (
     input.evaluatorFlags.some((flag) => /approval|send|mutating/i.test(flag)) ||
     input.cognitiveRun?.run.cognitiveMode === 'approval_staged'
   ) {
     return 'approval_blocked';
   }
+  if (input.blockerClass || input.answerClass === 'blocked') return 'failure';
+  if (input.evaluationStatus === 'block') return 'verifier_block';
   if (input.evaluatorFlags.some((flag) => /provider/i.test(flag))) {
     return 'provider_degraded';
   }
@@ -4926,17 +4951,10 @@ function reflectionKind(
 
 function skillStateAfterOutcome(input: {
   existing?: CognitiveSkillCardRecord | null;
-  score: number;
-  blocked: boolean;
 }): CognitiveSkillCardRecord['promotionState'] {
-  if (input.blocked) return 'quarantined';
-  if (input.existing?.promotionState === 'promoted' && input.score >= 0.55) {
-    return 'promoted';
-  }
-  if (input.existing?.promotionState === 'candidate' && input.score >= 0.82) {
-    return 'promoted';
-  }
-  if (input.score >= 0.7) return 'candidate';
+  // Internal verification is useful evidence, but it is not an owner verdict.
+  // Preserve existing state and let reviewed outcomes plus deterministic replay
+  // make promotion/quarantine decisions in recordCognitiveOwnerReview().
   return input.existing?.promotionState || 'candidate';
 }
 
@@ -4964,8 +4982,6 @@ function upsertSkillFromOutcome(input: {
   );
   const state = skillStateAfterOutcome({
     existing,
-    score: input.score,
-    blocked: input.status === 'blocked',
   });
   const record: CognitiveSkillCardRecord = {
     skillId,
@@ -5129,26 +5145,32 @@ export function finalizeCognitiveKernelOutcome(
       ? 'Name the blocker and collect the missing read-only evidence or user clarification.'
       : status === 'awaiting_approval'
         ? 'Wait for explicit same-channel approval before any mutating action.'
-        : 'Use this outcome to reinforce the reusable skill candidate.';
+        : baseRun.runOrigin === 'live'
+          ? 'Use this outcome to reinforce the reusable skill candidate.'
+          : 'Record replay evidence without changing live learning state.';
+  const isLiveRun = baseRun.runOrigin === 'live';
   const updated: CognitiveRunRecord = {
     ...baseRun,
     updatedAt: endedAt,
     status,
     outcomeScore: score,
     nextAction,
+    linkedSkillCardId: isLiveRun ? baseRun.linkedSkillCardId || null : null,
   };
   const flags = input.evaluatorFlags.map((flag) =>
     redactCouncilText(flag, 120),
   );
-  const skill = upsertSkillFromOutcome({
-    run: updated,
-    score,
-    status,
-    routeUsed: input.routeUsed,
-    flags,
-    now: endedAt,
-  });
-  updated.linkedSkillCardId = skill.skillId;
+  const skill = isLiveRun
+    ? upsertSkillFromOutcome({
+        run: updated,
+        score,
+        status,
+        routeUsed: input.routeUsed,
+        flags,
+        now: endedAt,
+      })
+    : null;
+  updated.linkedSkillCardId = skill?.skillId || null;
   safeDb(undefined, () => {
     upsertCognitiveRun(updated);
     persistFinalCheckpoint({
@@ -5183,7 +5205,8 @@ export function finalizeCognitiveKernelOutcome(
           evidenceGap: input.evidenceGap,
           blockerClass: input.blockerClass || '',
           evaluatorFlags: flags,
-          linkedSkillCardId: skill.skillId,
+          linkedSkillCardId: skill?.skillId || null,
+          runOrigin: updated.runOrigin,
         },
         now: endedAt,
       }),
@@ -5192,7 +5215,7 @@ export function finalizeCognitiveKernelOutcome(
       signalId: `cogreward:${updated.runId}:${endedAt}`,
       createdAt: endedAt,
       runId: updated.runId,
-      skillId: skill.skillId,
+      skillId: skill?.skillId || null,
       signalKind: signalKind(input),
       score,
       summary: redactCouncilText(
@@ -5206,7 +5229,7 @@ export function finalizeCognitiveKernelOutcome(
       createdAt: endedAt,
       groupFolder: updated.groupFolder || null,
       runId: updated.runId,
-      skillId: skill.skillId,
+      skillId: skill?.skillId || null,
       taskFamily: updated.taskFamily,
       reflectionKind: reflectionKind(input),
       summary: redactCouncilText(
@@ -5222,6 +5245,345 @@ export function finalizeCognitiveKernelOutcome(
     return undefined;
   });
   kernel.run = updated;
+}
+
+export interface CognitiveOwnerReviewResult {
+  recorded: boolean;
+  reason: string;
+  signalId?: string;
+  runId?: string;
+  skillId?: string | null;
+  promotionState?: CognitiveSkillCardRecord['promotionState'] | null;
+  promotionAssessment?: CognitiveSkillPromotionAssessment | null;
+}
+
+const COGNITIVE_PROMOTION_MIN_REVIEWED_RUNS = 5;
+const COGNITIVE_PROMOTION_MIN_ACCEPTANCE_RATE = 0.8;
+const COGNITIVE_PROMOTION_MAX_NEGATIVE_RUNS = 1;
+const COGNITIVE_PROMOTION_REPLAY_FRESH_DAYS = 30;
+
+const COGNITIVE_BENCHMARK_TASK_BY_FAMILY: Partial<
+  Record<PlatformTaskFamily, string>
+> = {
+  assistant: 'quick-guidance',
+  research: 'read-only-research',
+  communication: 'approval-draft',
+  operator: 'ultrathink-operator',
+};
+
+export interface CognitiveSkillPromotionAssessment {
+  skillId: string;
+  reviewedRuns: number;
+  acceptedRuns: number;
+  negativeRuns: number;
+  acceptanceRate: number;
+  trajectoryEvidenceComplete: boolean;
+  freshReplayPass: boolean;
+  replayAttemptId: string | null;
+  eligible: boolean;
+  recommendedState: CognitiveSkillCardRecord['promotionState'];
+  reason: string;
+}
+
+export function assessCognitiveSkillPromotion(
+  skill: CognitiveSkillCardRecord,
+  referenceIso = nowIso(),
+): CognitiveSkillPromotionAssessment {
+  const liveRunIds = new Set(
+    safeDb<CognitiveRunRecord[]>([], () =>
+      listCognitiveRuns({ runOrigin: 'live', limit: 1000 }),
+    ).map((run) => run.runId),
+  );
+  const ownerSignals = safeDb<CognitiveRewardSignalRecord[]>([], () =>
+    listCognitiveRewardSignals({ skillId: skill.skillId, limit: 200 }),
+  ).filter(
+    (signal) =>
+      signal.skillId === skill.skillId &&
+      liveRunIds.has(signal.runId) &&
+      (signal.signalKind === 'user_acceptance' ||
+        signal.signalKind === 'user_correction'),
+  );
+  const latestReviewByRun = new Map<string, CognitiveRewardSignalRecord>();
+  for (const signal of ownerSignals) {
+    const current = latestReviewByRun.get(signal.runId);
+    if (!current || signal.createdAt > current.createdAt) {
+      latestReviewByRun.set(signal.runId, signal);
+    }
+  }
+  const reviews = [...latestReviewByRun.values()];
+  const acceptedRunIds = reviews
+    .filter((signal) => signal.signalKind === 'user_acceptance')
+    .map((signal) => signal.runId);
+  const negativeRuns = reviews.filter(
+    (signal) => signal.signalKind === 'user_correction',
+  ).length;
+  const reviewedRuns = reviews.length;
+  const acceptedRuns = acceptedRunIds.length;
+  const acceptanceRate = reviewedRuns > 0 ? acceptedRuns / reviewedRuns : 0;
+
+  const acceptedRunSet = new Set(acceptedRunIds);
+  const trajectories = safeDb<CognitiveTrajectoryScore[]>([], () =>
+    listCognitiveTrajectoryScores({
+      taskFamily: skill.taskFamily,
+      limit: 500,
+    }),
+  ).filter((trajectory) => acceptedRunSet.has(trajectory.runId));
+  const trajectoryByRun = new Map(
+    trajectories.map((trajectory) => [trajectory.runId, trajectory]),
+  );
+  const trajectoryEvidenceComplete =
+    acceptedRuns >= COGNITIVE_PROMOTION_MIN_REVIEWED_RUNS &&
+    acceptedRunIds.every((runId) => {
+      const trajectory = trajectoryByRun.get(runId);
+      return Boolean(
+        trajectory &&
+        trajectory.status !== 'fail' &&
+        trajectory.overallScore >= 0.62 &&
+        trajectory.verifierSatisfaction >= 0.68 &&
+        trajectory.privacySafety >= 1,
+      );
+    });
+
+  const benchmarkTaskId =
+    COGNITIVE_BENCHMARK_TASK_BY_FAMILY[skill.taskFamily as PlatformTaskFamily];
+  const referenceMs = Date.parse(referenceIso);
+  const replayCutoffMs =
+    referenceMs - COGNITIVE_PROMOTION_REPLAY_FRESH_DAYS * 24 * 60 * 60 * 1000;
+  const replay = benchmarkTaskId
+    ? safeDb<CognitiveBenchmarkAttemptRecord[]>([], () =>
+        listCognitiveBenchmarkAttempts({
+          taskId: benchmarkTaskId,
+          status: 'pass',
+          limit: 20,
+        }),
+      ).find((attempt) => {
+        const attemptMs = Date.parse(attempt.createdAt);
+        return (
+          Number.isFinite(referenceMs) &&
+          Number.isFinite(attemptMs) &&
+          attemptMs <= referenceMs &&
+          attemptMs >= replayCutoffMs &&
+          attempt.score >= 0.98 &&
+          attempt.toolPolicyPass &&
+          attempt.approvalGatePass &&
+          attempt.privacyPass &&
+          attempt.outcomeCaptured
+        );
+      }) || null
+    : null;
+  const freshReplayPass = Boolean(replay);
+  const eligible =
+    reviewedRuns >= COGNITIVE_PROMOTION_MIN_REVIEWED_RUNS &&
+    acceptedRuns >= COGNITIVE_PROMOTION_MIN_REVIEWED_RUNS &&
+    acceptanceRate >= COGNITIVE_PROMOTION_MIN_ACCEPTANCE_RATE &&
+    negativeRuns <= COGNITIVE_PROMOTION_MAX_NEGATIVE_RUNS &&
+    trajectoryEvidenceComplete &&
+    freshReplayPass;
+  const recommendedState: CognitiveSkillCardRecord['promotionState'] =
+    skill.promotionState === 'retired'
+      ? 'retired'
+      : negativeRuns > COGNITIVE_PROMOTION_MAX_NEGATIVE_RUNS
+        ? 'quarantined'
+        : eligible
+          ? 'promoted'
+          : 'candidate';
+
+  let reason = 'Collect distinct owner-reviewed outcomes before promotion.';
+  if (recommendedState === 'retired') {
+    reason = 'Retired skills cannot be re-promoted by outcome feedback.';
+  } else if (recommendedState === 'quarantined') {
+    reason = 'Two independent negative owner outcomes require quarantine.';
+  } else if (acceptedRuns < COGNITIVE_PROMOTION_MIN_REVIEWED_RUNS) {
+    reason = `Need ${COGNITIVE_PROMOTION_MIN_REVIEWED_RUNS - acceptedRuns} more distinct accepted owner outcome(s).`;
+  } else if (acceptanceRate < COGNITIVE_PROMOTION_MIN_ACCEPTANCE_RATE) {
+    reason = 'Owner acceptance is below the 80% promotion threshold.';
+  } else if (!trajectoryEvidenceComplete) {
+    reason =
+      'Reviewed runs do not yet have complete passing trajectory evidence.';
+  } else if (!freshReplayPass) {
+    reason = benchmarkTaskId
+      ? 'A passing deterministic family replay newer than 30 days is required.'
+      : 'This task family does not yet have a deterministic promotion replay.';
+  } else if (eligible) {
+    reason =
+      'Reviewed outcomes, trajectory evidence, and fresh replay satisfy promotion policy.';
+  }
+
+  return {
+    skillId: skill.skillId,
+    reviewedRuns,
+    acceptedRuns,
+    negativeRuns,
+    acceptanceRate: Number(acceptanceRate.toFixed(3)),
+    trajectoryEvidenceComplete,
+    freshReplayPass,
+    replayAttemptId: replay?.attemptId || null,
+    eligible,
+    recommendedState,
+    reason,
+  };
+}
+
+export function recordCognitiveOwnerReview(input: {
+  runId: string | null | undefined;
+  feedbackId: string;
+  verdict: 'accepted' | 'rejected' | 'corrected';
+  reviewedAt?: string;
+}): CognitiveOwnerReviewResult {
+  if (!input.runId) {
+    return { recorded: false, reason: 'No cognitive run was linked.' };
+  }
+  const run = safeDb<CognitiveRunRecord | undefined>(undefined, () =>
+    getCognitiveRun(input.runId || ''),
+  );
+  if (!run) {
+    return {
+      recorded: false,
+      reason: 'The linked cognitive run is no longer available.',
+      runId: input.runId,
+    };
+  }
+  if (run.runOrigin !== 'live') {
+    return {
+      recorded: false,
+      reason:
+        'Replay and synthetic cognitive runs cannot receive owner-learning signals.',
+      runId: run.runId,
+      skillId: run.linkedSkillCardId || null,
+      promotionState: null,
+      promotionAssessment: null,
+    };
+  }
+
+  const reviewedAt = input.reviewedAt || nowIso();
+  const accepted = input.verdict === 'accepted';
+  const score = accepted ? 0.96 : input.verdict === 'corrected' ? 0.08 : 0.12;
+  const signalId = sanitizeId(
+    `cogreward:${run.runId}:owner-review:${input.feedbackId}`,
+  );
+  const ownerFlag = accepted
+    ? 'owner_accepted'
+    : input.verdict === 'corrected'
+      ? 'owner_corrected'
+      : 'owner_rejected';
+  insertCognitiveRewardSignal({
+    signalId,
+    createdAt: reviewedAt,
+    runId: run.runId,
+    skillId: run.linkedSkillCardId || null,
+    signalKind: accepted ? 'user_acceptance' : 'user_correction',
+    score,
+    summary: accepted
+      ? 'Owner accepted this assistant outcome; private response content omitted.'
+      : 'Owner rejected or corrected this assistant outcome; private response content omitted.',
+    flagsJson: safeJson(
+      ['reviewed_outcome', ownerFlag, `feedback:${input.feedbackId}`],
+      1200,
+    ),
+  });
+
+  const updatedRun: CognitiveRunRecord = {
+    ...run,
+    updatedAt: reviewedAt,
+    outcomeScore: score,
+    nextAction: accepted
+      ? 'Keep this route eligible, but require repeated independent reviewed outcomes before promotion.'
+      : 'Inspect this route and its evidence before reuse; do not promote from this outcome.',
+  };
+  upsertCognitiveRun(updatedRun);
+
+  let promotionState: CognitiveSkillCardRecord['promotionState'] | null = null;
+  let promotionAssessment: CognitiveSkillPromotionAssessment | null = null;
+  if (run.linkedSkillCardId) {
+    const skill = safeDb<CognitiveSkillCardRecord | null>(
+      null,
+      () =>
+        listCognitiveSkillCards({ limit: 100 }).find(
+          (card) => card.skillId === run.linkedSkillCardId,
+        ) || null,
+    );
+    if (skill) {
+      promotionAssessment = assessCognitiveSkillPromotion(skill, reviewedAt);
+      promotionState = promotionAssessment.recommendedState;
+      upsertCognitiveSkillCard({
+        ...skill,
+        updatedAt: reviewedAt,
+        latestOutcomeScore: score,
+        promotionState,
+        failureModesJson: accepted
+          ? skill.failureModesJson
+          : safeJson(
+              Array.from(
+                new Set([
+                  ...parseJsonSafe<string[]>(skill.failureModesJson, []),
+                  ownerFlag,
+                ]),
+              ),
+              1800,
+            ),
+      });
+      if (promotionState !== skill.promotionState) {
+        insertCognitiveRewardSignal({
+          signalId: sanitizeId(
+            `cogreward:${run.runId}:skill-state:${input.feedbackId}`,
+          ),
+          createdAt: reviewedAt,
+          runId: run.runId,
+          skillId: skill.skillId,
+          signalKind:
+            promotionState === 'promoted' ? 'skill_promoted' : 'skill_demoted',
+          score: promotionState === 'promoted' ? 1 : 0,
+          summary:
+            promotionState === 'promoted'
+              ? 'Skill met reviewed-outcome and deterministic replay promotion gates.'
+              : 'Skill trust was reduced by reviewed-outcome promotion policy.',
+          flagsJson: safeJson(
+            [
+              `state:${skill.promotionState}->${promotionState}`,
+              `reviewed_runs:${promotionAssessment.reviewedRuns}`,
+              `accepted_runs:${promotionAssessment.acceptedRuns}`,
+              `negative_runs:${promotionAssessment.negativeRuns}`,
+              `fresh_replay:${promotionAssessment.freshReplayPass}`,
+              'authority_expanded:false',
+            ],
+            1200,
+          ),
+        });
+      }
+    }
+  }
+
+  insertCognitiveReflection({
+    reflectionId: sanitizeId(
+      `cogreflection:${run.runId}:owner-review:${input.feedbackId}`,
+    ),
+    createdAt: reviewedAt,
+    groupFolder: run.groupFolder || null,
+    runId: run.runId,
+    skillId: run.linkedSkillCardId || null,
+    taskFamily: run.taskFamily,
+    reflectionKind: accepted ? 'success' : 'user_correction',
+    summary: accepted
+      ? 'Owner accepted the response outcome; raw conversation content was not stored.'
+      : 'Owner rejected or corrected the response outcome; raw conversation content was not stored.',
+    routeKey: run.selectedSkillId,
+    providerStateJson: run.providerUsabilityJson,
+    nextRule: updatedRun.nextAction,
+    confidence: 1,
+    privacyJson: run.privacyJson,
+  });
+
+  return {
+    recorded: true,
+    reason: accepted
+      ? 'Owner acceptance linked to the cognitive run.'
+      : 'Owner negative review linked to the cognitive run.',
+    signalId,
+    runId: run.runId,
+    skillId: run.linkedSkillCardId || null,
+    promotionState,
+    promotionAssessment,
+  };
 }
 
 function pruneOldCognitiveData(referenceIso: string): void {
@@ -5431,6 +5793,11 @@ export function runCognitiveBenchmarkSuite(
     generatedAt?: string;
   } = {},
 ): CognitiveBenchmarkReport {
+  if (!isIsolatedTestDatabase()) {
+    throw new Error(
+      'Deterministic cognition benchmarks require isolated test storage; persist only redacted benchmark attempts after the isolated run completes.',
+    );
+  }
   const generatedAt = params.generatedAt || nowIso();
   const attempts: CognitiveBenchmarkAttemptRecord[] = [];
   for (const scenario of benchmarkScenarios()) {
@@ -5441,6 +5808,7 @@ export function runCognitiveBenchmarkSuite(
       taskFamily: scenario.taskFamily,
       goal: scenario.goal,
       requestRoute: 'cognition.benchmark',
+      runOrigin: 'replay',
       selectedSkillId: scenario.selectedSkillId,
       selectedSkillPurpose: scenario.selectedSkillPurpose,
       selectedSkillApprovalNeed: scenario.selectedSkillApprovalNeed,
@@ -5655,6 +6023,114 @@ export function runCognitiveBenchmarkSuite(
   };
 }
 
+export interface CognitiveRunQualityAssessment {
+  runId: string;
+  score: number;
+  finalized: boolean;
+  decisionAppropriate: boolean;
+  safeApproval: boolean;
+  appropriatelyBlocked: boolean;
+  operationalFailure: boolean;
+  reviewedOutcome: boolean;
+  reasons: string[];
+}
+
+export function assessCognitiveRunQuality(
+  run: CognitiveRunRecord,
+  signal: CognitiveRewardSignalRecord | null = null,
+): CognitiveRunQualityAssessment {
+  const flags = signal
+    ? parseJsonSafe<string[]>(signal.flagsJson, []).map((flag) =>
+        String(flag).toLowerCase(),
+      )
+    : [];
+  const flagText = flags.join(' ');
+  const positiveReview = /owner_(verified|accepted)|user_accepted/.test(
+    flagText,
+  );
+  const negativeReview =
+    /owner_(corrected|rejected)|user_(corrected|rejected)/.test(flagText);
+  const reviewedOutcome =
+    /owner_(verified|accepted|partial|blocked|corrected|rejected)|reviewed_outcome|user_(accepted|corrected|rejected)/.test(
+      flagText,
+    );
+  const finalized = Boolean(signal);
+  const operationalFailure =
+    !finalized &&
+    (run.status === 'blocked' ||
+      run.status === 'answered' ||
+      run.status === 'awaiting_approval');
+  const safeApproval = run.status === 'awaiting_approval' && finalized;
+  const blockerWasSafetyDecision =
+    run.status === 'blocked' &&
+    signal?.signalKind === 'task_blocked' &&
+    /approval_action_claim|provider_council_block|truth_directive:(clarify|stage_approval)|approval|required|missing/.test(
+      flagText,
+    );
+  const appropriatelyBlocked = Boolean(blockerWasSafetyDecision);
+  const cautiousAnswer =
+    run.status === 'answered' &&
+    /truth_directive:(clarify|caveat)|no_source_coverage|missing_premise/.test(
+      flagText,
+    );
+
+  let score = 0.1;
+  const reasons: string[] = [];
+  if (negativeReview) {
+    score = 0.28;
+    reasons.push('owner_rejected_or_corrected_outcome');
+  } else if (positiveReview) {
+    score = run.status === 'blocked' ? 0.78 : 0.96;
+    reasons.push('owner_accepted_outcome');
+  } else if (operationalFailure) {
+    reasons.push('missing_final_outcome_signal');
+  } else if (safeApproval) {
+    score = 0.88;
+    reasons.push('approval_boundary_preserved');
+  } else if (appropriatelyBlocked) {
+    score = 0.76;
+    reasons.push('unsafe_or_unsupported_action_blocked');
+  } else if (run.status === 'blocked') {
+    score = 0.38;
+    reasons.push('blocked_without_clear_safety_evidence');
+  } else if (run.status === 'answered' && signal) {
+    if (signal.score >= 0.82) {
+      score = 0.9;
+      reasons.push('handled_with_strong_internal_verification');
+    } else if (cautiousAnswer) {
+      score = 0.76;
+      reasons.push('evidence_gap_disclosed_or_clarified');
+    } else if (signal.score >= 0.6) {
+      score = 0.8;
+      reasons.push('handled_with_bounded_fallback');
+    } else {
+      score = Math.max(0.5, Math.min(0.72, signal.score));
+      reasons.push('handled_with_weak_internal_evidence');
+    }
+  } else if (signal) {
+    score = Math.max(0.35, Math.min(0.72, signal.score));
+    reasons.push('finalized_without_handled_outcome');
+  }
+  if (reviewedOutcome) reasons.push('reviewed_outcome_present');
+
+  return {
+    runId: run.runId,
+    score: Number(score.toFixed(3)),
+    finalized,
+    decisionAppropriate:
+      !negativeReview &&
+      (positiveReview ||
+        safeApproval ||
+        appropriatelyBlocked ||
+        (run.status === 'answered' && finalized)),
+    safeApproval,
+    appropriatelyBlocked,
+    operationalFailure,
+    reviewedOutcome,
+    reasons,
+  };
+}
+
 function summarizeRecentRuns(
   runs: CognitiveRunRecord[],
 ): CognitiveDoctorReport['recent'] {
@@ -5663,29 +6139,101 @@ function summarizeRecentRuns(
     total > 0
       ? runs.reduce((sum, run) => sum + (run.outcomeScore || 0), 0) / total
       : 0;
-  const rewardSignals = safeDb([], () =>
+  const runIds = new Set(runs.map((run) => run.runId));
+  const signals = safeDb([], () =>
     listCognitiveRewardSignals({ limit: 200 }),
-  ).length;
+  ).filter((signal) => runIds.has(signal.runId));
+  const signalByRun = new Map<string, CognitiveRewardSignalRecord>();
+  for (const signal of signals) {
+    const current = signalByRun.get(signal.runId);
+    const signalIsOwnerReview =
+      signal.signalKind === 'user_acceptance' ||
+      signal.signalKind === 'user_correction';
+    const currentIsOwnerReview =
+      current?.signalKind === 'user_acceptance' ||
+      current?.signalKind === 'user_correction';
+    if (
+      !current ||
+      (signalIsOwnerReview && !currentIsOwnerReview) ||
+      (signalIsOwnerReview === currentIsOwnerReview &&
+        signal.createdAt > current.createdAt)
+    ) {
+      signalByRun.set(signal.runId, signal);
+    }
+  }
+  const assessments = runs.map((run) =>
+    assessCognitiveRunQuality(run, signalByRun.get(run.runId) || null),
+  );
+  let weightedQuality = 0;
+  let qualityWeight = 0;
+  assessments.forEach((assessment, index) => {
+    const weight = 0.94 ** index;
+    weightedQuality += assessment.score * weight;
+    qualityWeight += weight;
+  });
   const reflections = safeDb([], () =>
     listCognitiveReflections({ limit: 200 }),
+  ).filter(
+    (reflection) => reflection.runId && runIds.has(reflection.runId),
   ).length;
   return {
+    observedRuns: total,
     totalRuns: total,
+    replayRuns: 0,
+    syntheticRuns: 0,
     blockedRuns: runs.filter((run) => run.status === 'blocked').length,
     approvalRuns: runs.filter((run) => run.status === 'awaiting_approval')
       .length,
     averageOutcomeScore: Number(average.toFixed(3)),
-    rewardSignals,
+    qualityScore: Number(
+      (qualityWeight > 0 ? weightedQuality / qualityWeight : 0).toFixed(3),
+    ),
+    decisionAppropriateRuns: assessments.filter(
+      (assessment) => assessment.decisionAppropriate,
+    ).length,
+    safeApprovalRuns: assessments.filter(
+      (assessment) => assessment.safeApproval,
+    ).length,
+    appropriatelyBlockedRuns: assessments.filter(
+      (assessment) => assessment.appropriatelyBlocked,
+    ).length,
+    operationalFailureRuns: assessments.filter(
+      (assessment) => assessment.operationalFailure,
+    ).length,
+    finalizedRuns: assessments.filter((assessment) => assessment.finalized)
+      .length,
+    reviewedOutcomeRuns: assessments.filter(
+      (assessment) => assessment.reviewedOutcome,
+    ).length,
+    rewardSignals: signals.length,
     reflections,
   };
 }
 
 function summarizeSkillLibrary(
   cards: CognitiveSkillCardRecord[],
+  referenceIso: string,
 ): CognitiveDoctorReport['skills'] {
+  const assessments = cards.map((card) => ({
+    card,
+    assessment: assessCognitiveSkillPromotion(card, referenceIso),
+  }));
+  const promoted = cards.filter(
+    (card) => card.promotionState === 'promoted',
+  ).length;
+  const trustedPromoted = assessments.filter(
+    ({ card, assessment }) =>
+      card.promotionState === 'promoted' && assessment.eligible,
+  ).length;
   return {
     total: cards.length,
-    promoted: cards.filter((card) => card.promotionState === 'promoted').length,
+    promoted,
+    trustedPromoted,
+    unverifiedPromoted: promoted - trustedPromoted,
+    reviewEligibleCandidates: assessments.filter(
+      ({ card, assessment }) =>
+        card.promotionState === 'candidate' && assessment.eligible,
+    ).length,
     candidates: cards.filter((card) => card.promotionState === 'candidate')
       .length,
     quarantined: cards.filter((card) => card.promotionState === 'quarantined')
@@ -5700,7 +6248,14 @@ export function buildCognitiveDoctorReport(
 ): CognitiveDoctorReport {
   const registry = ensureCognitiveToolRegistry(generatedAt);
   const governancePolicy = ensureCognitiveGovernancePolicy(generatedAt);
-  const runs = safeDb([], () => listCognitiveRuns({ limit: 50 }));
+  const allRuns = safeDb([], () => listCognitiveRuns({ limit: 1000 }));
+  const observedRuns = allRuns.slice(0, 100);
+  const liveRunIds = new Set(
+    allRuns.filter((run) => run.runOrigin === 'live').map((run) => run.runId),
+  );
+  const runs = observedRuns
+    .filter((run) => run.runOrigin === 'live')
+    .slice(0, 50);
   const latest = runs[0];
   const subgoals = latest
     ? safeDb([], () => listCognitiveSubgoalsForRun(latest.runId))
@@ -5711,11 +6266,24 @@ export function buildCognitiveDoctorReport(
       )
     : safeDb([], () => listCognitiveCheckpoints({ status: 'open', limit: 50 }));
   const cards = safeDb([], () => listCognitiveSkillCards({ limit: 100 }));
-  const beliefs = safeDb([], () => listCognitiveWorldBeliefs({ limit: 100 }));
-  const goals = safeDb([], () => listCognitiveGoals({ limit: 100 }));
+  const beliefs = safeDb([], () =>
+    listCognitiveWorldBeliefs({ limit: 100 }),
+  ).filter((belief) => !belief.runId || liveRunIds.has(belief.runId));
+  const goals = safeDb([], () => listCognitiveGoals({ limit: 100 })).filter(
+    (goal) => {
+      const linkedRunIds = parseJsonSafe<string[]>(goal.linkedRunIdsJson, []);
+      const sourceRunIds = [goal.rootRunId || '', ...linkedRunIds].filter(
+        Boolean,
+      );
+      return (
+        sourceRunIds.length === 0 ||
+        sourceRunIds.some((runId) => liveRunIds.has(runId))
+      );
+    },
+  );
   const blackboardEntries = safeDb([], () =>
     listCognitiveBlackboardEntries({ limit: 100 }),
-  );
+  ).filter((entry) => !entry.runId || liveRunIds.has(entry.runId));
   const autonomyBudgets = safeDb([], () =>
     listCognitiveAutonomyBudgets({ limit: 100 }),
   );
@@ -5785,8 +6353,14 @@ export function buildCognitiveDoctorReport(
     replayPacket.providerCooldowns.length > 0
       ? replayPacket.providerCooldowns
       : activeProviderCooldowns(generatedAt);
-  const recent = summarizeRecentRuns(runs);
-  const skills = summarizeSkillLibrary(cards);
+  const recent = {
+    ...summarizeRecentRuns(runs),
+    observedRuns: observedRuns.length,
+    replayRuns: observedRuns.filter((run) => run.runOrigin === 'replay').length,
+    syntheticRuns: observedRuns.filter((run) => run.runOrigin === 'synthetic')
+      .length,
+  };
+  const skills = summarizeSkillLibrary(cards, generatedAt);
   const evidenceGaps = latest
     ? parseJsonSafe<CognitiveVerificationResult>(latest.verificationJson, {
         status: 'pending',
@@ -5803,12 +6377,23 @@ export function buildCognitiveDoctorReport(
     .slice(0, 5)
     .map((run) => `${run.taskFamily}:${run.selectedSkillId}`);
   const ok =
-    runs.length > 0 && recent.blockedRuns < Math.max(3, runs.length / 2);
+    runs.length > 0 &&
+    recent.operationalFailureRuns < Math.max(3, runs.length / 4);
   let nextAction =
     'Keep the task ladder fresh with quick, ultrathink, read-only, and approval-gated proof turns.';
   if (!latest) {
     nextAction =
       'Run one normal ask, one ultrathink ask, and one approval-required draft to seed cognition proof.';
+  } else if (
+    assessCognitiveRunQuality(
+      latest,
+      safeDb<CognitiveRewardSignalRecord[]>([], () =>
+        listCognitiveRewardSignals({ runId: latest.runId, limit: 1 }),
+      )?.[0] || null,
+    ).operationalFailure
+  ) {
+    nextAction =
+      'Repair or finalize the latest incomplete cognitive run; do not treat a missing outcome signal as a successful or safely blocked trajectory.';
   } else if (
     replayPacket.governanceDecisions.some(
       (decision) => decision.status === 'block',
@@ -5826,9 +6411,9 @@ export function buildCognitiveDoctorReport(
   } else if (goals.some((goal) => goal.status === 'blocked')) {
     nextAction =
       'Inspect the latest blocked cognitive goal and add missing evidence or clarification.';
-  } else if (skills.promoted === 0) {
+  } else if (skills.trustedPromoted === 0) {
     nextAction =
-      'Let a verified successful run promote at least one cognitive skill card.';
+      'Collect five distinct owner-accepted outcomes and a fresh deterministic family replay before trusting a cognitive skill.';
   } else if (recent.blockedRuns > 0) {
     nextAction =
       'Inspect the latest blocked run, gather missing evidence, then rerun the task.';
@@ -5837,7 +6422,7 @@ export function buildCognitiveDoctorReport(
     generatedAt,
     ok,
     summary: latest
-      ? `Cognitive kernel has ${runs.length} recent runs, ${skills.promoted} promoted skills, average score ${recent.averageOutcomeScore.toFixed(2)}.`
+      ? `Cognitive kernel has ${runs.length} recent live runs (${recent.replayRuns} replay and ${recent.syntheticRuns} synthetic excluded), ${skills.trustedPromoted} trusted promoted skill(s), ${skills.unverifiedPromoted} legacy/unverified promoted skill(s), outcome-led quality ${recent.qualityScore.toFixed(2)}, and ${recent.reviewedOutcomeRuns} reviewed outcome(s).`
       : 'Cognitive kernel is installed but has no recorded runs yet.',
     activeRun: latest
       ? {
@@ -6184,15 +6769,26 @@ export function formatCognitiveDoctorReport(
     'Cognition Status',
     '',
     `Summary: ${report.summary}`,
-    `Recent runs: ${report.recent.totalRuns}`,
-    `Average score: ${report.recent.averageOutcomeScore.toFixed(2)}`,
+    `Recent live runs: ${report.recent.totalRuns}`,
+    `Replay runs excluded: ${report.recent.replayRuns}`,
+    `Synthetic runs excluded: ${report.recent.syntheticRuns}`,
+    `Legacy average score: ${report.recent.averageOutcomeScore.toFixed(2)}`,
+    `Outcome-led quality: ${report.recent.qualityScore.toFixed(2)}`,
+    `Decision appropriate: ${report.recent.decisionAppropriateRuns}`,
+    `Safe approval waits: ${report.recent.safeApprovalRuns}`,
+    `Appropriate verifier stops: ${report.recent.appropriatelyBlockedRuns}`,
+    `Incomplete runs: ${report.recent.operationalFailureRuns}`,
+    `Reviewed outcomes: ${report.recent.reviewedOutcomeRuns}`,
     `Blocked: ${report.recent.blockedRuns}`,
     `Awaiting approval: ${report.recent.approvalRuns}`,
     `Reward signals: ${report.recent.rewardSignals}`,
     `Reflections: ${report.recent.reflections}`,
     '',
     'Skill Library',
-    `Promoted: ${report.skills.promoted}`,
+    `Promoted state: ${report.skills.promoted}`,
+    `Trusted promoted: ${report.skills.trustedPromoted}`,
+    `Legacy/unverified promoted: ${report.skills.unverifiedPromoted}`,
+    `Review-eligible candidates: ${report.skills.reviewEligibleCandidates}`,
     `Candidates: ${report.skills.candidates}`,
     `Quarantined: ${report.skills.quarantined}`,
     `Latest skill: ${report.skills.latestSkillId || 'none'}`,

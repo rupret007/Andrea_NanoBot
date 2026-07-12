@@ -114,6 +114,32 @@ function privacyJson(): string {
   return safeJson(PRIVACY, 1200);
 }
 
+export interface LearningDefaultRequest {
+  reference: 'this' | 'that';
+  topic: string;
+  objectClear: false;
+  clarificationQuestion: string;
+}
+
+export function parseLearningDefaultRequest(
+  text: string | null | undefined,
+): LearningDefaultRequest | null {
+  const normalized = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const match = normalized.match(
+    /\bmake (this|that) my default for (.+?)(?:[.!?]+)?$/i,
+  );
+  const topic = safeText(match?.[2], 160);
+  if (!match?.[1] || !topic || topic.startsWith('[redacted')) return null;
+  return {
+    reference: match[1].toLowerCase() as 'this' | 'that',
+    topic,
+    objectClear: false,
+    clarificationQuestion: `What exact behavior should become your default for ${topic}? I will keep it proposed for review before activation.`,
+  };
+}
+
 function distillationRecord(input: {
   groupFolder?: string | null;
   outputKind: LearningDistillationRecord['outputKind'];

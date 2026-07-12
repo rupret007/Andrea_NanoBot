@@ -53,6 +53,7 @@ import {
 } from './verified-deep-work.js';
 import type {
   CouncilOutcomeSignalKind,
+  CognitiveRunOrigin,
   LogicKernelReport,
   LogicMissingPremise,
   TruthVerdict,
@@ -180,6 +181,7 @@ export interface TurnAgentHarnessContext {
   channel: TurnAgentChannel;
   groupFolder?: string | null;
   requestRoute?: string | null;
+  runOrigin?: CognitiveRunOrigin;
   taskFamily: PlatformTaskFamily;
   meaningful: boolean;
   selectedSkill: SkillAffordanceCard;
@@ -201,6 +203,7 @@ export interface BeginTurnAgentHarnessInput {
   groupFolder?: string | null;
   text: string;
   requestRoute?: string | null;
+  runOrigin?: CognitiveRunOrigin;
   capabilityId?: string | null;
   knownBlockers?: string[];
   actorId?: string | null;
@@ -798,22 +801,24 @@ export async function beginTurnAgentHarness(
   input: BeginTurnAgentHarnessInput,
 ): Promise<TurnAgentHarnessContext | null> {
   if (isSimpleTurn(input.text)) return null;
+  const runOrigin = input.runOrigin || 'live';
   const taskFamily = classifyTurnTaskFamily(input);
-  const contextCompile = await attachActiveSkillCandidates(
-    compileTurnContext({
-      taskFamily,
-      channel: input.channel,
-      text: input.text,
-      capabilityId: input.capabilityId,
-      stateChanging:
-        /\b(send|create|move|cancel|delete|forget|remember|repair|deploy|push)\b/i.test(
-          input.text,
-        ),
-    }),
+  const baseContextCompile = compileTurnContext({
     taskFamily,
-  );
+    channel: input.channel,
+    text: input.text,
+    capabilityId: input.capabilityId,
+    stateChanging:
+      /\b(send|create|move|cancel|delete|forget|remember|repair|deploy|push)\b/i.test(
+        input.text,
+      ),
+  });
+  const contextCompile =
+    runOrigin === 'live'
+      ? await attachActiveSkillCandidates(baseContextCompile, taskFamily)
+      : baseContextCompile;
   const personalContextPacket =
-    input.groupFolder && isDatabaseInitialized()
+    runOrigin === 'live' && input.groupFolder && isDatabaseInitialized()
       ? await buildPersonalContextPacket({
           groupFolder: input.groupFolder,
           query: input.text,
@@ -843,57 +848,69 @@ export async function beginTurnAgentHarness(
       : contextCompile.selectedSkill.approvalNeed === 'conditional'
         ? 'approval_aware'
         : 'low_risk_auto';
-  const deliberation = await emitAndreaPlatformDeliberation({
-    goal: buildSanitizedGoal(input, taskFamily),
-    taskFamily,
-    channel: input.channel,
-    groupFolder: input.groupFolder,
-    correlationId: input.turnId,
-    approvalPosture,
-    routeCandidates: routeCandidatesForSkill(contextCompile.selectedSkill),
-    memoryMetadata: contextCompile.metadata,
-    knownBlockers: input.knownBlockers,
-    actorId: input.actorId,
-    metadata: {
-      request_route: input.requestRoute || '',
-      capability_id: input.capabilityId || '',
-      turn_agent_harness: 'v10',
-      text_shape: sanitizeMetadataValue(describeTextShape(input.text)),
-    },
-  });
-  const providerCouncil = shouldRunProviderCouncil({
-    text: input.text,
-    taskFamily,
-    selectedSkill: contextCompile.selectedSkill,
-    deliberation,
-  })
-    ? await runObservableProviderCouncil({
-        goal: buildSanitizedGoal(input, taskFamily),
-        taskFamily,
-        channel: input.channel,
-        groupFolder: input.groupFolder,
-        correlationId: input.turnId,
-        requestedMode: selectProviderCouncilMode({
-          text: input.text,
+  const deliberation =
+    runOrigin === 'live'
+      ? await emitAndreaPlatformDeliberation({
+          goal: buildSanitizedGoal(input, taskFamily),
           taskFamily,
-          selectedSkill: contextCompile.selectedSkill,
-        }),
-        riskLevel: riskLevelForCouncil(contextCompile.selectedSkill),
-        requiredEvidence: contextCompile.selectedSkill.evidenceLevel,
-        allowedSideEffects: sideEffectsForCouncil(contextCompile.selectedSkill),
-        rawContentPolicy: 'sanitized_snippets',
-        metadata: {
-          request_route: input.requestRoute || '',
-          capability_id: input.capabilityId || '',
-          turn_agent_harness: 'v15_multi_llm_answer_guidance',
-          skill_id: contextCompile.selectedSkill.skillId,
-          selected_policy_id: deliberation?.selectedPolicyId || '',
-          raw_content_policy: 'sanitized_snippets',
-          thinking_control: detectThinkingControlPreference(input.text),
-          thinking_trigger: detectThinkingControlTrigger(input.text),
-        },
-      })
-    : null;
+          channel: input.channel,
+          groupFolder: input.groupFolder,
+          correlationId: input.turnId,
+          approvalPosture,
+          routeCandidates: routeCandidatesForSkill(
+            contextCompile.selectedSkill,
+          ),
+          memoryMetadata: contextCompile.metadata,
+          knownBlockers: input.knownBlockers,
+          actorId: input.actorId,
+          metadata: {
+            request_route: input.requestRoute || '',
+            capability_id: input.capabilityId || '',
+            turn_agent_harness: 'v10',
+            run_origin: runOrigin,
+            text_shape: sanitizeMetadataValue(describeTextShape(input.text)),
+          },
+        })
+      : null;
+  const providerCouncil =
+    runOrigin === 'live' &&
+    shouldRunProviderCouncil({
+      text: input.text,
+      taskFamily,
+      selectedSkill: contextCompile.selectedSkill,
+      deliberation,
+    })
+      ? await runObservableProviderCouncil({
+          goal: buildSanitizedGoal(input, taskFamily),
+          taskFamily,
+          channel: input.channel,
+          groupFolder: input.groupFolder,
+          correlationId: input.turnId,
+          requestedMode: selectProviderCouncilMode({
+            text: input.text,
+            taskFamily,
+            selectedSkill: contextCompile.selectedSkill,
+          }),
+          riskLevel: riskLevelForCouncil(contextCompile.selectedSkill),
+          requiredEvidence: contextCompile.selectedSkill.evidenceLevel,
+          allowedSideEffects: sideEffectsForCouncil(
+            contextCompile.selectedSkill,
+          ),
+          rawContentPolicy: 'sanitized_snippets',
+          runOrigin: 'live',
+          publicEvidenceRequired: taskFamily === 'research',
+          metadata: {
+            request_route: input.requestRoute || '',
+            capability_id: input.capabilityId || '',
+            turn_agent_harness: 'v15_multi_llm_answer_guidance',
+            skill_id: contextCompile.selectedSkill.skillId,
+            selected_policy_id: deliberation?.selectedPolicyId || '',
+            raw_content_policy: 'sanitized_snippets',
+            thinking_control: detectThinkingControlPreference(input.text),
+            thinking_trigger: detectThinkingControlTrigger(input.text),
+          },
+        })
+      : null;
   const councilHoldReply = buildCouncilDirectiveHoldReply(providerCouncil);
   const cognitiveRun = beginCognitiveKernelRun({
     turnId: input.turnId,
@@ -902,6 +919,7 @@ export async function beginTurnAgentHarness(
     taskFamily,
     goal: buildSanitizedGoal(input, taskFamily),
     requestRoute: input.requestRoute,
+    runOrigin,
     selectedSkillId: contextCompile.selectedSkill.skillId,
     selectedSkillPurpose: contextCompile.selectedSkill.purpose,
     selectedSkillApprovalNeed: contextCompile.selectedSkill.approvalNeed,
@@ -912,24 +930,30 @@ export async function beginTurnAgentHarness(
     thinkingPreference: detectThinkingControlPreference(input.text),
     thinkingTrigger: detectThinkingControlTrigger(input.text),
   });
-  const logicRun = beginLogicKernelRun({
-    subject: buildSanitizedGoal(input, taskFamily),
-    cognitiveRun,
-    generatedAt: new Date().toISOString(),
-  });
-  const runtimeSpine = beginAgentRuntimeSpineRun({
-    turnId: input.turnId,
-    channel: input.channel,
-    groupFolder: input.groupFolder,
-    requestRoute: input.requestRoute,
-    taskFamily,
-    goal: buildSanitizedGoal(input, taskFamily),
-    cognitiveRun,
-    logicRun,
-    providerCouncil,
-  });
+  const logicRun =
+    runOrigin === 'live'
+      ? beginLogicKernelRun({
+          subject: buildSanitizedGoal(input, taskFamily),
+          cognitiveRun,
+          generatedAt: new Date().toISOString(),
+        })
+      : null;
+  const runtimeSpine =
+    runOrigin === 'live'
+      ? beginAgentRuntimeSpineRun({
+          turnId: input.turnId,
+          channel: input.channel,
+          groupFolder: input.groupFolder,
+          requestRoute: input.requestRoute,
+          taskFamily,
+          goal: buildSanitizedGoal(input, taskFamily),
+          cognitiveRun,
+          logicRun,
+          providerCouncil,
+        })
+      : null;
   const verifiedDeepWorkPacket =
-    input.groupFolder && isDatabaseInitialized()
+    runOrigin === 'live' && input.groupFolder && isDatabaseInitialized()
       ? beginVerifiedDeepWorkForTurn({
           groupFolder: input.groupFolder,
           turnId: input.turnId,
@@ -942,6 +966,7 @@ export async function beginTurnAgentHarness(
             deliberation?.taskLedgerId || '',
             providerCouncil?.councilRunId || '',
           ].filter(Boolean),
+          knownBlockers: input.knownBlockers,
           resumePendingApproval: input.requestRoute === 'repair_approval',
         })
       : null;
@@ -950,6 +975,7 @@ export async function beginTurnAgentHarness(
     channel: input.channel,
     groupFolder: input.groupFolder,
     requestRoute: input.requestRoute,
+    runOrigin,
     taskFamily,
     meaningful: true,
     selectedSkill: contextCompile.selectedSkill,

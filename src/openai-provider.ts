@@ -40,6 +40,7 @@ export interface OpenAiTextRequest {
   modelTier?: 'simple' | 'standard' | 'complex';
   maxTokens?: number;
   temperature?: number;
+  timeoutMs?: number;
 }
 
 export interface OpenAiTextResult {
@@ -250,7 +251,7 @@ export async function runOpenAiChatText(
           { role: 'user', content: request.prompt },
         ],
       }),
-      signal: providerRequestSignal(),
+      signal: providerRequestSignal(request.timeoutMs),
     });
   } catch (err) {
     return {

@@ -66,7 +66,7 @@ export function buildAssistantIntelligenceReport(params: {
       : pendingCanary > 0
         ? 'Run one explicitly approved reversible canary for a fixture-passing routine.'
         : metrics.reviewedOutcomeCount < 5
-          ? `Record ${5 - metrics.reviewedOutcomeCount} more owner-reviewed recommendation outcome${5 - metrics.reviewedOutcomeCount === 1 ? '' : 's'} before saving a baseline.`
+          ? `Record ${5 - metrics.reviewedOutcomeCount} more owner-reviewed recommendation outcome${5 - metrics.reviewedOutcomeCount === 1 ? '' : 's'} before saving a baseline. Use Helpful/Not helpful, a Messages tapback, or a fresh standalone “that worked”/“that didn't work” reply.`
           : 'Keep verified completion and citation coverage non-regressing.';
   return {
     generatedAt: now.toISOString(),

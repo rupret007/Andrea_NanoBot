@@ -4,6 +4,293 @@
 
 ### Implemented
 
+- [x] Correct the BlueBubbles same-thread continuation ordering so a fresh,
+      policy-allowed local message action is handled before a general platform
+      deliberation hold. Unrelated holds and all send approval gates remain
+      unchanged.
+- [x] Persist the BlueBubbles proof-trigger cursor after successful direct
+      handling and keep crash/restart recovery on the same deterministic proof
+      path, preventing an old trigger from replaying as generic chat.
+- [x] Accept ordinary sentence-ending punctuation on deterministic message
+      actions so natural replies such as `send it later tonight.` do not fall
+      through to generic chat.
+- [x] Hash private channel identifiers before adding them to proof evidence
+      references; operator intelligence reports no longer fail their own
+      privacy gate because of a raw BlueBubbles chat identifier.
+- [x] Stop the autonomous improvement lab from treating neutral
+      `route_chosen: unknown` transitions as failures. Route-tuning hypotheses
+      now require an actual failure, warning, correction, ignored outcome, or
+      used fallback.
+- [x] Remove superseded executive-reflection hypotheses from the active lab and
+      shadow-selection view so historical false positives cannot keep driving
+      candidate patches after the signal semantics are corrected.
+- [x] Hydrate a bounded recent BlueBubbles history slice on explicit text-review
+      or summary requests before local analysis. This fixes false “no activity”
+      replies without creating a passive archive or weakening chat-scope rules.
+- [x] Classify council challenge scenarios as synthetic at the call site and
+      compatibility-read legacy challenge IDs as synthetic so offline/dogfood
+      scenarios cannot inflate or depress live promotion signals.
+- [x] Scope council evidence by task: operator/code councils no longer receive
+      unrelated personal-memory cards, and production public search is explicit
+      for research rather than automatic for every max-IQ operator turn.
+- [x] Preserve the bounded local evidence packet when public evidence is added,
+      keep intent/privacy-policy cards in every bounded summary, and separate
+      current evidence gaps from historical proof debt in the council doctor.
+- [x] Align max-IQ role and provider HTTP deadlines (45s/44.5s) so complex-model
+      calls have a realistic budget and abort before the council deadline rather
+      than continuing invisibly after a timeout.
+- [x] Add task-domain disambiguation so operator “health” means runtime/system
+      health and cannot silently introduce unrelated medical or regulatory risk
+      domains.
+- [x] Route model-identity questions through a deterministic runtime inventory
+      instead of allowing the active worker model to describe the whole system.
+      The answer now distinguishes the default conversational model from
+      configured OpenAI, Anthropic, Gemini, and MiniMax lanes, includes current
+      health classification, deduplicates tier aliases, and never exposes
+      credentials or endpoints.
+- [x] Close the two owner-reported model-identity failures through the existing
+      redacted feedback loop. Both prompts now have route-coverage evidence,
+      verified privacy-safe regression fixtures, and successful exact-message
+      Telegram canaries; no raw user text is stored in the fixtures.
+- [x] Repair inbound media understanding end to end. Telegram and BlueBubbles
+      image/video bytes from the current processing turn now route directly to
+      exact-attachment analysis; OpenClaw receives a bounded verified visual
+      summary instead of pretending to see raw bytes; Gemini vision is a
+      tested fallback when OpenAI vision is unavailable. Five matching owner
+      feedback rows now have privacy-safe fixed regression fixtures pending a
+      fresh user-supplied live canary.
+- [x] Reconcile completed work-cockpit journey proof into tool reliability so
+      a live-proven cockpit no longer remains indefinitely classified as an
+      unknown tool. The refreshed production reliability report now shows no
+      degraded tools; only stale Alexa device proof remains blocked.
+- [x] Clear the container fallback dependency advisories discovered by the
+      final audit. The lock now resolves MCP SDK 1.29.0 and patched Hono,
+      request-routing, validation, and rate-limit transitive versions; root and
+      container audits report zero vulnerabilities, the runner builds, and the
+      local `nanoclaw-agent:latest` image was rebuilt and inspected with the
+      patched package versions installed.
+- [x] Fix the critical full-harness autonomy regression hidden by the compact
+      status view. Known provider/tool blockers now close the verified
+      deep-work preflight as honestly blocked before execution rather than
+      leaving the packet falsely active. The full ten-scenario intelligence
+      harness is back to 1.000 with zero critical failures.
+- [x] Replace the hard-coded 78% council readiness value with an empirical,
+      provenance-aware score derived only from live outcomes, confidence,
+      schema validity, current provider health, role participation, current
+      evidence gaps, task-ease, and sample depth. Current council quality is
+      79%, with the live ledger transparently showing one answer, two honest
+      clarifications, and one block across four recent live runs.
+- [x] Register the exact all-synced BlueBubbles 48-hour summary regression
+      coverage and reconcile three matching owner-feedback records to fixed,
+      privacy-safe fixtures. The linked pilot issue remains open until a fresh
+      owner-visible canary verifies usefulness rather than merely test coverage.
+- [x] Make improvement-lab generations atomic and concurrency-safe. A transient
+      SQLite writer lock now produces an explicit retry-safe deferred status
+      with a usable in-memory report; unexpected persistence failures still
+      propagate, and partial generations cannot become promotion evidence.
+- [x] Reconcile hierarchical plan steps against the current reality snapshot.
+      Operator reports now suppress and count stale stored steps instead of
+      recommending obsolete setup work after an integration has recovered.
+- [x] Stop the learning loop from treating successful configured deterministic
+      routing as user-visible fallback friction, and keep locally resolved,
+      landed, cancelled, or already-running feedback out of new patch
+      hypotheses. Real failures, corrections, ignored outcomes, and unresolved
+      owner feedback remain actionable.
+- [x] Separate dogfood execution-proof freshness from task-completion quality.
+      Safe clarification and honest blocking now receive credit only through
+      inspectable route, safety, evidence, missing-premise/blocker, confidence,
+      and next-step checks; low confidence is rewarded when a premise is
+      genuinely missing rather than misclassified as poor calibration.
+- [x] Fix two production route collisions exposed by executable evaluation:
+      household open-loop questions no longer fall into broad web research,
+      and explicit saved-only research stays on the cited Knowledge Library
+      path.
+- [x] Convert all ten synthetic route contracts from hypothetical route labels
+      into executable production checks. The suite now calls the real capability
+      matcher, action preflight/critic, Cognitive Executive clarification,
+      Alexa intent mapper, integration-doctor classifier, and learning-default
+      parser; any route mismatch is a test failure rather than a cosmetic score.
+- [x] Replace synthetic quality constants and unearned candidate-plan lift with
+      scores derived from the actual deterministic artifact produced by each
+      production surface. Router-only checks no longer claim an unexecuted reply
+      was useful or that fallback ran; empty, unsafe, leaked, overlong, and
+      ungrounded artifacts lose the corresponding credit. An unchanged
+      plan-only candidate now remains neutral until behavior actually changes.
+- [x] Add a hermetic executed-response lane for four safe local capabilities:
+      chief-of-staff prioritization, message-draft clarification, household open
+      loops, and Alexa loose ends. It uses injected synthetic calendar/thread
+      grounding, refuses non-isolated databases, blocks host-calendar/network
+      fallback, stores metadata rather than response bodies, and separately
+      scores the complete production reply. This exposed and fixed a real
+      route/handler mismatch where “still open around the house” routed to the
+      household capability but the daily companion returned unhandled.
+- [x] Extend executed evaluation to saved-only research using an indexed,
+      cited synthetic source while every provider/network call is denied. A
+      fail-closed planning invariant now prevents `savedMaterialMode=only`
+      from enabling OpenAI, Brave, or web search; natural “research this using
+      what we already saved” turns bind to active source IDs; citations include
+      match reason, update date, and freshness; stale sources remain usable but
+      are explicitly labeled potentially outdated. Empty, stale, uncited, and
+      contradictory saved-only requests have regression coverage.
+- [x] Make council measurement and future mode calibration outcome-led. The
+      system now scores whether the final answer/clarification/block was
+      supported by evidence, whether confidence matched uncertainty, citation
+      coverage, schema validity, provider/budget reliability, recency, and
+      reviewed outcomes. Correct low-confidence clarification or blocking no
+      longer masquerades as failed reasoning or automatically escalates future
+      councils; unsupported answers still lose credit. Operational fallback is
+      reported separately and keeps council health at warning until a clean
+      live run succeeds. Current decision quality is 0.92 (4/4 supported, three
+      appropriately cautious, zero uncalibrated) while 4/4 operationally
+      degraded runs remain visible.
+- [x] Add natural degraded-integration recognition so “BlueBubbles seems down”
+      reaches canonical fix guidance, and keep ambiguous “make this my default”
+      requests clarification-only until the exact behavior is named. Neither
+      path silently repairs, activates a skill, or expands authority.
+- [x] Repair the approval-staged cognitive budget exposed by the fresh
+      BlueBubbles proof. A communication turn may legitimately use three local
+      evidence steps, one attached council result, BlueBubbles status, a draft,
+      and the approval gate; all seven now fit inside an eight-step bounded
+      budget without permitting mutation. Attached council evidence gets one
+      bounded slot, while sends remain staged and fresh-approval-only.
+- [x] Make cognitive trajectory health outcome-led. Safe approval waits and
+      explicit verifier stops are measured as appropriate decisions instead of
+      failures; missing final outcome signals remain operational failures, and
+      owner-reviewed outcomes are counted separately so internal checks cannot
+      masquerade as real-world success. Current live history is 0.76 quality:
+      46/50 appropriate decisions, 12 safe approval waits, three appropriate
+      verifier stops, four incomplete historical runs, and zero reviewed
+      outcomes.
+- [x] Route BlueBubbles message-action presentations through the same post-turn
+      reflection path as ordinary replies. Structured drafts still bypass text
+      rewriting and duplicate rehydration, but now persist cognitive/runtime
+      outcomes, latency, and deep-work evidence instead of succeeding for the
+      user while leaving the learning ledger incomplete.
+- [x] Close the owner-feedback learning loop for Telegram replies. Feedback
+      cards now offer both `Helpful` and `Not helpful`, link the review to the
+      exact cognitive run, skill, trajectory, runtime run, council, and
+      deep-work packet, and record one idempotent reviewed outcome. Acceptance
+      cannot expand authority; negative reviews reduce the acceptance rate and
+      two independent negatives quarantine the skill. Raw conversation content
+      is excluded from cognitive reward/reflection records.
+- [x] Add conservative natural-language owner verdicts in the registered
+      Telegram owner chat and configured Messages self-thread. Explicit fresh
+      standalone feedback binds only to the immediately latest unreviewed
+      response, records button/tapback/natural provenance, and lets `that
+      worked` contribute verified completion. Questions, vague sentiment,
+      stale or previously reviewed rows, and mixed action/approval language are
+      refused, so learning feedback cannot expand side-effect authority.
+- [x] Extend reviewed outcomes to real message-action decisions without adding
+      a raw-message archive. Message actions now retain only cognitive/runtime
+      provenance IDs; send, defer, remind, save, and keep-draft choices record
+      one idempotent accepted outcome, while skip/cancel records rejection.
+      Verified sends also record completion. The synthetic BlueBubbles proof
+      drill is explicitly excluded from learning and baseline metrics.
+- [x] Replace self-scored cognitive skill promotion with an outcome-led trust
+      gate. Internal passes may create or retain a candidate but cannot promote
+      it, and a single safe approval/verifier stop cannot quarantine it.
+      Promotion now requires five distinct owner-accepted runs, at least 80%
+      acceptance, fewer than two independent negative outcomes, complete
+      non-failing trajectory evidence for every accepted run, and a passing
+      task-family deterministic replay no older than 30 days. The promotion
+      signal records `authority_expanded:false`; external sends, calendar
+      writes, deploys, commits, pushes, purchases, migrations, and deletion
+      remain fresh-approval-only.
+- [x] Make downstream skill activation use the same trust decision. Legacy
+      promoted cognitive cards are preserved and reported as unverified rather
+      than deleted, but they sync as suggestion-only until the reviewed outcome
+      and replay gates pass. Quarantined cards now actively pause any previously
+      synced playbook instead of being skipped and accidentally remaining live.
+      The AGI readiness score counts only trusted promotions.
+- [x] Make the production SQLite connection safe for concurrent operator
+      diagnostics and the long-running assistant. File-backed connections now
+      use WAL mode plus a bounded 15-second busy timeout and `NORMAL` sync;
+      foreign-key enforcement remains enabled. This fixes a reproduced
+      `debug:cognition` initialization failure during a live writer overlap.
+      Three simultaneous cognition doctor processes now complete successfully,
+      and the production database reports `journal_mode=wal`.
+- [x] Prefer a real owner acceptance/correction over later internal reward or
+      skill-state signals when computing run quality. Timestamp ordering can no
+      longer hide a reviewed outcome and let synthetic/internal evidence replace
+      the user's verdict.
+- [x] Add explicit `live`, `replay`, and `synthetic` provenance to cognitive
+      runs and backfill legacy `cog-bench-*` rows as replay. Live readiness,
+      latest-run selection, world evidence, trajectory status, goals,
+      blackboard entries, beliefs, and continuity-graph nodes now exclude
+      replay/synthetic runs while reporting their excluded counts separately.
+      Owner feedback is refused for non-live runs, and promotion assessment
+      accepts owner signals only from live trajectories.
+- [x] Make the cognition benchmark fail closed unless it is running against an
+      isolated test database. The production debug command now executes the
+      full persistence drill in memory, closes that database, and stores only
+      four redacted benchmark-attempt records with `run_id=null`,
+      `isolatedStorage=true`, and `runOrigin=replay`. A before/after production
+      proof kept cognitive run count unchanged at 112 while attempt count rose
+      from 16 to 20. Replay finalization cannot create/update skill cards or
+      attach learning signals, and benchmark nodes cannot enter the live
+      continuity graph.
+- [x] Propagate provenance through the real BlueBubbles proof-drill follow-up
+      path. When the resolved message action is the canonical proof drill, the
+      turn is `replay`: it skips personal-context retrieval, external platform
+      deliberation, multi-provider council, logic learning, Agent Runtime Spine,
+      and deep-work apprenticeship. Its bounded cognitive trace remains
+      inspectable but cannot update skills or receive owner-learning signals.
+      Normal BlueBubbles actions remain live.
+- [x] Backfill legacy proof decisions without reading or copying arbitrary
+      conversation text: the migration correlates the canonical proof action,
+      same presentation chat, bounded action lifetime, stored inbound message
+      ID, and exact deferred-proof phrase. Linked councils are reclassified as
+      replay, and default runtime/session-graph reports exclude runtime runs
+      whose cognitive source is non-live. Production proof reclassified the
+      formerly latest blocked drill and its council; cognitive outcome-led
+      quality rose truthfully from 0.76 to 0.80, while council decision quality
+      is now 0.94 across the two remaining live councils. No historical rows
+      were deleted or rewritten beyond provenance.
+- [x] Add a low-friction, outcome-led learning bridge for the primary
+      BlueBubbles self-thread. Native Like/Love tapbacks record acceptance and
+      Dislike records rejection against the exact live cognitive run; Laugh,
+      Emphasize, Question, reaction removals, non-self-thread reactions, and
+      reactions without an exact assistant-message receipt never train the
+      system. Reaction events are consumed before chat routing, acknowledgements
+      stay silent, self-thread aliases resolve to one logical proof lane, and
+      private request/response bodies are replaced by fixed privacy placeholders.
+      Untouched metadata links expire after 30 days and are capped at 500 while
+      reviewed outcomes remain in the canonical ledger.
+- [x] Fix the migration-test temporary-directory leak exposed by the three-round
+      stability gate. Disposable SQLite/WAL directories are removed in `finally`
+      paths, preventing an `ENOSPC` host failure from masquerading as a code
+      regression; the repeated gate leaves zero repository-owned leaked test
+      directories.
+- [x] Remove false recent-text identity links caused by matching the profile's
+      self subject (for example, generic “you”) as a person. Production
+      assistant-inferred BlueBubbles rows were reconciled without altering
+      message bodies, summaries, or timestamps; user-confirmed links remain
+      untouched.
+- [x] Make BlueBubbles `;+;` group GUIDs authoritative even when stale payload
+      metadata says direct. Existing chat metadata is reconciled idempotently so
+      audience-confirmation safety cannot be downgraded by an old false flag.
+- [x] Normalize personal-context readiness weights and require grounded
+      communication resolution. Abundant unrelated data can no longer hide
+      missing identity links; the resulting score decrease is an intentional
+      truth-calibration correction, not a regression to game away.
+- [x] Add a private, reversible communication-identity review in the registered
+      main Telegram chat and configured Messages self-thread. It proposes only unique exact
+      existing-profile-name matches, refuses group/ambiguous/unknown identities,
+      records confirmation or dismissal separately from inferred thread state,
+      and never uses message bodies, phone numbers, raw identifiers, or generic
+      language. Replacing an assistant-inferred link removes its stale derived
+      context, while clearing a review removes only the link that review owns.
+- [x] Add deterministic host disk/inode pressure sensing with explicit healthy,
+      warning, critical, and unknown states. Process/watchdog readiness no
+      longer hides a capacity condition that can break SQLite, health markers,
+      evaluations, or containers.
+- [x] Flow disk pressure into field-trial truth, launch readiness, the
+      integration doctor, platform health, setup verification, and debug status.
+      Remediation is guided-manual and explicitly forbids autonomous deletion
+      of Docker state, evidence, caches, or user files.
+- [x] Make small host-control JSON state writes atomic so ENOSPC during a refresh
+      preserves the last known-good health marker instead of truncating it.
+
 - [x] Bridge owner-reviewed coding missions into one Agent OS episode,
       trajectory evaluation, stable skill proposal, cognitive skill card, and
       runtime manifest.
@@ -22,21 +309,143 @@
 
 - [x] Run focused and full primary/AGI/deterministic/build/docs/audit gates on the
       combined tree; review the diff and secret boundaries.
-- [ ] Commit and push only if `main` remains non-diverged, then rebuild/restart
-      the canonical Mac runtime and verify the serving SHA and OpenClaw tools.
+- [x] Publish the validated combined tree directly to `main` only after a fresh
+      non-divergence and secret-boundary audit, then rebuild/restart the
+      canonical Mac runtime and verify the serving SHA and OpenClaw tools.
 - [ ] Complete one real coding mission on each of ten working days. Save a metric
       baseline only after five genuine reviewed outcomes; do not synthesize or
       backfill operator evidence.
 - [x] Run the redacted live routing comparison within the approved cumulative
       $25 cap. Incomplete or provider-blocked cases cannot promote a route.
 
-Validation result: 2,100/2,100 primary tests, the production build, 279/279 AGI
+Validation result: 2,184/2,184 primary tests, the production build, 279/279 AGI
 tests, 90/90 deterministic commands, documentation checks, dependency audit,
 signature flows, formatting, and typecheck pass. The deterministic scorecard is
-98.1% A+ with zero regressions and $0 cost. The 12-case redacted live comparison
+99.1% A+ with zero regressions and $0 cost. Its route-only synthetic suite is an
+honest 90.0%, while the separate executed-response suite passes 5/5 at 100.0%.
+The 12-case redacted live comparison
 completed across OpenAI, Anthropic, and Gemini with a conservative estimated
 cost of $0.30416; structural passes are explicitly not owner-verified outcomes
 and do not satisfy the five-outcome baseline gate.
+
+Latest intelligence-loop validation (2026-07-11): the reviewed-outcome
+promotion gate, legacy trust classification, downstream playbook suppression,
+owner-signal precedence, and SQLite concurrency changes pass focused coverage,
+the full 194-file/2,152-test primary gate, 279 AGI tests, all 90 deterministic
+commands including the 147-second three-round stability test, build, format,
+typecheck, docs (57 files), signature flows, both zero-vulnerability audits, and
+`git diff --check`. The deterministic scorecard remains 99.1% A+, with zero
+merge-blocking regressions and $0 cost. The rebuilt Mac service is
+`running_ready`; OpenClaw was restarted and is reachable on a new PID; all 11
+required BlueBubbles bridge tools are present and direct send remains excluded.
+Setup's three assistant execution probes produced real answers; their
+post-output idle cleanup timeouts remain classified non-fatal. Repository-free
+proof debt remains Telegram marker freshness, one natural life-thread control
+turn, and a fresh signed Alexa device/simulator turn.
+The native BlueBubbles reaction-learning increment also passed 141 focused
+channel/feedback/database/cognition/bridge tests, the complete 2,152-test
+primary gate, 279 AGI tests, all 90 deterministic commands including the
+149-second stability gate, documentation checks, signature flows, both
+zero-vulnerability production audits, and the 99.1% deterministic scorecard at
+zero cost. It intentionally creates no reviewed outcome until the owner reacts
+to a real post-restart Andrea reply; no historical interaction was backfilled.
+The validated shared artifact was then restarted under launchd (PID 56323).
+Setup's exact, summary, and refinement execution probes all produced real
+assistant answers at `2026-07-12T02:18:16.722Z`; host state is `running_ready`,
+BlueBubbles is `live_proven` with a registered webhook and healthy loopback
+transport, and OpenClaw is live with 11/11 required bridge tools. The reaction
+handler itself remains awaiting its first natural owner tapback canary, which is
+real-world evidence rather than a repository defect or synthetic test target.
+The four-family production cognition replay was also refreshed offline at
+`2026-07-12T01:15:54.435Z`: assistant, research, communication, and operator
+attempts each scored 1.0 with tool policy, approval gate, privacy, and outcome
+capture passing. This is replay evidence only; reviewed owner outcomes remain
+zero and no skill was promoted.
+
+Grounded-identity validation (2026-07-12): the self-subject repair,
+BlueBubbles group-GUID invariant, calibrated context-graph coverage, and private
+identity-review workflow pass 148 focused tests and the final 195-file,
+2,168-test primary gate. AGI typecheck and all 279 AGI tests pass; the final
+90-command deterministic sweep passes, including a 148-second three-round
+stability run. The deterministic scorecard remains 99.1% A+ with zero
+merge-blocking regressions and $0 cost; formatting, typecheck, production build,
+docs, signature flows, root/container audits, and diff hygiene are green. The
+production store has 11 active communication threads: one grounded and ten
+awaiting explicit owner review, including three group conversations and zero
+safe exact-name candidates. No identity was guessed, synthesized, or backfilled.
+The new review table was created idempotently and remains empty until the owner
+uses `review communication identities` in the registered main Telegram chat or
+configured Messages self-thread.
+
+The validated artifact was restarted under launchd (PID 95814), and OpenClaw
+was restarted with 11/11 required bridge tools and direct send still excluded.
+Fresh exact, summary, and refinement probes each produced a real answer; their
+post-output idle cleanup timeouts remain correctly non-fatal. BlueBubbles is
+`live_proven` with its loopback transport and webhook registered, and a fresh
+Telegram `/ping` roundtrip raised integration health to 12/14. Remaining proof
+debt is one real life-thread control interaction and a fresh signed Alexa
+device/simulator turn. The host has only about 742 MiB free; this is an explicit
+operational risk, and no Docker image/container or user data was deleted without
+owner authorization.
+
+Host-capacity truth validation (2026-07-12): the new disk/inode classifier,
+manual-remediation policy, field-trial and integration-health propagation, and
+atomic health-marker writes pass 101 focused tests. The final primary gate now
+passes 197 files and 2,178 tests with a successful production build; AGI
+typecheck and all 279 AGI tests pass; and the deterministic sweep passes all
+90 commands, including its 143-second three-round stability run. The
+deterministic scorecard remains 99.1% A+ with zero merge-blocking regressions
+and $0 cost. Signature flows, documentation checks, both production dependency
+audits, formatting, typecheck, and diff hygiene are green. Live source-level
+status honestly classifies the host disk as critical (about 749 MiB / 0.32%
+available at validation time), keeps the process state distinct as
+`running_ready`, and requires owner-controlled cleanup toward roughly 11 GiB
+free. Automatic deletion remains forbidden.
+
+Natural owner-verdict validation (2026-07-12): 98 focused feedback, metrics,
+cognitive-learning, message-action, and deep-work tests pass; typecheck, quiet
+lint, formatting, documentation checks, and diff hygiene are green. Tests cover
+completion-versus-helpfulness, negative correction, fresh/latest binding,
+deduplication, stale and already-reviewed refusal, question/ambiguity refusal,
+and mixed feedback/action denial. After explicit owner authorization, only the
+listed regenerable npm, Playwright, Homebrew, pip, updater, pnpm, node-gyp,
+Electron, and ffmpeg caches were removed; Docker/Colima state, Andrea evidence,
+databases, credentials, source, and personal files were untouched. Free space
+rose from about 170 MiB critical to 4.8 GiB warning. The final release gates
+then pass 197 files and 2,184 primary tests with a successful production build,
+279/279 AGI tests, all 90 deterministic commands including a 146-second
+three-round stability run, the 99.1% A+ zero-cost scorecard, signature flows,
+documentation, both zero-vulnerability production audits, formatting,
+typecheck, lint without errors, and diff hygiene. Andrea and OpenClaw were
+restarted from the rebuilt artifact; the new verdict path is present in the
+served bundle. No prior outcome was backfilled, so the live ledger correctly
+remains at zero reviewed outcomes until a genuine owner interaction occurs.
+
+OpenClaw's supported doctor repair also backed up its external config, enabled
+and installed the Codex plugin required by the configured OpenAI fallback,
+refreshed bundled-provider discovery, and restarted the gateway successfully.
+The bridge still exposes 11/11 required tools with direct send excluded. Two
+external security/migration warnings remain intentionally unresolved: one
+legacy config-health row conflicts with the canonical shared SQLite state, and
+OpenClaw reports seven plaintext credential locations (the gateway token, one
+stored OpenAI profile, and five `.env` keys). Migrating those to SecretRefs
+requires selecting and provisioning a secure secret backend; do not rewrite or
+delete working credentials automatically. The doctor backup is
+`~/.openclaw/openclaw.json.bak`.
+
+Council recovery proof: the pre-fix live read-only proof exposed irrelevant web
+evidence, an Anthropic timeout, and a blocked 0.42 verdict. The bounded post-fix
+proof used no public search, completed Anthropic adaptive thinking without a
+provider failure, preserved no hidden reasoning, and returned an answerable
+warning at 0.74 confidence. Gemini required its bounded fast fallback, so this
+is recorded as a degraded recovery rather than a fully healthy promotion. The
+focused council/evidence/turn suite passes. Final release reruns then passed the 2,128-test primary
+gate and all 90 deterministic commands, including three hermetic stability
+rounds. Telegram's configured live user-session smoke proof also passed after
+restart, raising integration health to 12/14 and daily-core live proof coverage
+to 6/6. Alexa's stale signed-device proof and aggregate optional feature
+freshness remain explicit operator proof debt; no repository repair is pending
+for either.
 
 ### Deferred intentionally
 
@@ -291,8 +700,9 @@ disabled after it was found retrying against the canonical runtime's ports.
       available, direct BlueBubbles send remains excluded, and the local control
       API is healthy.
 - [x] BlueBubbles is reachable on its local endpoint and its webhook is
-      registered. Its remaining same-thread message-action proof debt is
-      operator/product evidence, not a release regression.
+      registered. A live bare same-thread decision exposed and motivated the
+      platform-hold ordering correction; a fresh post-restart user canary is
+      still required to close the proof debt.
 - [x] Windows has no host available in this session. The shared TypeScript
       artifact is validated here; the documented post-push Windows proof is
       `npm ci`, `npm run build`, `npm run services:restart`, and

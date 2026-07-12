@@ -7,6 +7,8 @@ import {
   getMessageAction,
   getOutcomeBySource,
   getTaskById,
+  listAssistantMetricEvents,
+  listCognitiveRewardSignals,
   storeChatMetadata,
   storeMessageDirect,
   updateMessageAction,
@@ -25,6 +27,7 @@ import {
   isBlueBubblesProofDrillAction,
   isBlueBubblesExplicitSendAlias,
   interpretMessageActionFollowup,
+  linkMessageActionCognitiveContext,
   listBlueBubblesMessageActionContinuitySnapshots,
   parseExplicitBlueBubblesThreadSendIntent,
   reconcileBlueBubblesMessageActionContinuity,
@@ -35,6 +38,10 @@ import {
   runScheduledMessageActionByTaskId,
   startBlueBubblesProofDrill,
 } from './message-actions.js';
+import {
+  beginCognitiveKernelRun,
+  finalizeCognitiveKernelOutcome,
+} from './cognitive-kernel.js';
 import type {
   CommunicationThreadRecord,
   DelegationRuleRecord,
@@ -156,6 +163,85 @@ describe('message actions', () => {
       getOutcomeBySource('main', 'message_action', action.messageActionId)
         ?.status,
     ).toBe('partial');
+  });
+
+  it('turns a linked BlueBubbles message decision into one reviewed cognitive outcome', async () => {
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: `${thread.id}:reviewed`,
+      sourceSummary: 'A bounded draft is ready for review.',
+      draftText: 'Dinner still works for me tonight.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:00:00.000Z'),
+    });
+    const kernel = beginCognitiveKernelRun({
+      turnId: 'message-action-owner-review',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      taskFamily: 'communication',
+      goal: 'Draft a reply and keep the send approval-gated.',
+      requestRoute: 'bluebubbles.direct',
+      selectedSkillId: 'communication.reply_help',
+      selectedSkillPurpose: 'Draft a safe reply.',
+      selectedSkillApprovalNeed: 'explicit',
+      selectedSkillSideEffectRisk: 'high',
+      selectedSkillEvidenceLevel: 'strong',
+    });
+    finalizeCognitiveKernelOutcome({
+      cognitiveRun: kernel,
+      evaluationStatus: 'pass',
+      evidenceGap: 'none',
+      evaluatorFlags: ['approval_required'],
+      routeUsed: 'communication.reply_help',
+      answerClass: 'handled',
+    });
+    linkMessageActionCognitiveContext({
+      messageActionId: action.messageActionId,
+      cognitiveRunId: kernel.run.runId,
+      cognitiveSkillId: kernel.run.linkedSkillCardId,
+      cognitiveTrajectoryId: kernel.trajectoryScore.trajectoryId,
+      now: new Date('2026-04-08T19:01:00.000Z'),
+    });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await applyMessageActionOperation(
+        action.messageActionId,
+        { kind: 'keep_draft' },
+        {
+          groupFolder: 'main',
+          channel: 'bluebubbles',
+          chatJid: 'bb:chat-1',
+          currentTime: new Date('2026-04-08T19:02:00.000Z'),
+          sendToTarget: vi.fn(),
+        },
+      );
+    }
+
+    expect(
+      listCognitiveRewardSignals({ runId: kernel.run.runId }).filter(
+        (signal) => signal.signalKind === 'user_acceptance',
+      ),
+    ).toHaveLength(1);
+    expect(
+      listAssistantMetricEvents({ groupFolder: 'main' }).filter(
+        (event) => event.kind === 'recommendation_accepted',
+      ),
+    ).toHaveLength(1);
+    expect(
+      JSON.parse(
+        getMessageAction(action.messageActionId)?.linkedRefsJson || '{}',
+      ),
+    ).toMatchObject({
+      cognitiveRunId: kernel.run.runId,
+      cognitiveOwnerReviewSignalId: expect.any(String),
+    });
   });
 
   it('finds the latest self-thread message action across BlueBubbles self-thread aliases', () => {
@@ -470,6 +556,11 @@ describe('message actions', () => {
     expect(deferred.action?.sendStatus).toBe('deferred');
     expect(deferred.action?.lastActionKind).toBe('remind_instead');
     expect(sendToTarget).not.toHaveBeenCalled();
+    expect(
+      listAssistantMetricEvents({ groupFolder: 'main' }).filter(
+        (event) => event.kind === 'recommendation_accepted',
+      ),
+    ).toHaveLength(0);
     expect(
       resolveBlueBubblesProofDrillSnapshot({
         groupFolder: 'main',
@@ -1444,6 +1535,16 @@ describe('message actions', () => {
     expect(
       isBlueBubblesExplicitSendAlias('@Andrea send that using blue bubbles'),
     ).toBe(true);
+    expect(interpretMessageActionFollowup('send it later tonight.')).toEqual({
+      kind: 'defer',
+      timingHint: 'today tonight',
+    });
+    expect(interpretMessageActionFollowup('show it again!')).toEqual({
+      kind: 'show_draft',
+    });
+    expect(interpretMessageActionFollowup('not now?')).toEqual({
+      kind: 'skip',
+    });
   });
 
   it('treats natural rewrite aliases as message-action followups', () => {

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  assessCouncilRunQuality,
   buildCouncilReplayReport,
   buildCouncilDoctorReport,
   calibrateCouncilMode,
@@ -205,6 +206,143 @@ describe('council quality ledger', () => {
     });
   });
 
+  it('treats evidence-backed clarification as calibrated caution, not failed reasoning', () => {
+    const baseScorecard = verdict().evidenceScorecard!;
+    recordCouncilRunLedger({
+      councilRunId: 'council-calibrated-clarification',
+      runOrigin: 'live',
+      taskFamily: 'assistant',
+      chosenMode: 'dual_review',
+      calibration: calibrateCouncilMode({
+        taskFamily: 'assistant',
+        requestedMode: 'dual_review',
+      }),
+      structuredVerdict: verdict({
+        status: 'clarify',
+        recommendedAction: 'ask_clarifying_question',
+        confidence: 0.42,
+        evidenceScorecard: {
+          ...baseScorecard,
+          gapCount: 1,
+          gapIds: ['missing_message_context'],
+        },
+      }),
+      riskFlags: ['missing_message_context'],
+      now: '2026-06-04T10:00:00.000Z',
+    });
+
+    const run = getCouncilRunLedger('council-calibrated-clarification')!;
+    const assessment = assessCouncilRunQuality(run);
+    const doctor = buildCouncilDoctorReport('2026-06-04T10:01:00.000Z', {
+      providerHealth: healthyCoreProviders,
+    });
+
+    expect(assessment).toMatchObject({
+      decisionAppropriate: true,
+      appropriatelyCautious: true,
+      confidenceCalibrated: true,
+      operationallyDegraded: false,
+    });
+    expect(assessment.score).toBeGreaterThanOrEqual(0.9);
+    expect(doctor.recent.degradedRuns).toBe(0);
+    expect(doctor.recent.appropriatelyCautiousRuns).toBe(1);
+    expect(doctor.recent.uncalibratedRuns).toBe(0);
+  });
+
+  it('penalizes unsupported low-confidence answers', () => {
+    recordCouncilRunLedger({
+      councilRunId: 'council-unsupported-answer',
+      runOrigin: 'live',
+      taskFamily: 'assistant',
+      chosenMode: 'dual_review',
+      calibration: calibrateCouncilMode({
+        taskFamily: 'assistant',
+        requestedMode: 'dual_review',
+      }),
+      structuredVerdict: verdict({
+        status: 'warn',
+        recommendedAction: 'answer',
+        confidence: 0.32,
+      }),
+      now: '2026-06-04T10:00:00.000Z',
+    });
+
+    const assessment = assessCouncilRunQuality(
+      getCouncilRunLedger('council-unsupported-answer')!,
+    );
+    expect(assessment.decisionAppropriate).toBe(false);
+    expect(assessment.confidenceCalibrated).toBe(false);
+    expect(assessment.score).toBeLessThan(0.6);
+  });
+
+  it('does not escalate mode merely because repeated clarifications are appropriately cautious', () => {
+    const baseScorecard = verdict().evidenceScorecard!;
+    for (const id of ['a', 'b']) {
+      recordCouncilRunLedger({
+        councilRunId: `council-cautious-${id}`,
+        runOrigin: 'live',
+        taskFamily: 'assistant',
+        chosenMode: 'dual_review',
+        calibration: calibrateCouncilMode({
+          taskFamily: 'assistant',
+          requestedMode: 'dual_review',
+        }),
+        structuredVerdict: verdict({
+          status: 'clarify',
+          recommendedAction: 'ask_clarifying_question',
+          confidence: 0.4,
+          evidenceScorecard: {
+            ...baseScorecard,
+            gapCount: 1,
+            gapIds: ['missing_message_context'],
+          },
+        }),
+        riskFlags: ['missing_message_context'],
+      });
+    }
+
+    expect(
+      calibrateCouncilMode({
+        taskFamily: 'assistant',
+        requestedMode: 'dual_review',
+      }),
+    ).toMatchObject({
+      chosenMode: 'dual_review',
+      changedMode: false,
+      lowConfidenceRuns: 0,
+      verifierBlockRuns: 0,
+    });
+  });
+
+  it('separates correct blocking from operational provider degradation', () => {
+    recordCouncilRunLedger({
+      councilRunId: 'council-provider-block',
+      runOrigin: 'live',
+      taskFamily: 'operator',
+      chosenMode: 'max_iq_council',
+      calibration: calibrateCouncilMode({
+        taskFamily: 'operator',
+        requestedMode: 'max_iq_council',
+      }),
+      structuredVerdict: verdict({
+        status: 'block',
+        recommendedAction: 'block',
+        confidence: 0.4,
+      }),
+      providerFailures: ['anthropic_cloud_transport_error'],
+      now: '2026-06-04T10:00:00.000Z',
+    });
+
+    const assessment = assessCouncilRunQuality(
+      getCouncilRunLedger('council-provider-block')!,
+    );
+    expect(assessment.decisionAppropriate).toBe(true);
+    expect(assessment.appropriatelyCautious).toBe(true);
+    expect(assessment.confidenceCalibrated).toBe(true);
+    expect(assessment.operationallyDegraded).toBe(true);
+    expect(assessment.score).toBeGreaterThan(0.7);
+  });
+
   it('excludes replay and synthetic runs from live promotion signals', () => {
     for (const runOrigin of ['replay', 'synthetic'] as const) {
       recordCouncilRunLedger({
@@ -242,14 +380,90 @@ describe('council quality ledger', () => {
     });
   });
 
+  it('treats legacy challenge run ids as synthetic even when mislabeled live', () => {
+    recordCouncilRunLedger({
+      councilRunId:
+        'local-council:council-challenge-medium-legacy:scenario-one',
+      runOrigin: 'live',
+      taskFamily: 'operator',
+      requestedMode: 'dual_review',
+      chosenMode: 'dual_review',
+      calibration: calibrateCouncilMode({
+        taskFamily: 'operator',
+        requestedMode: 'dual_review',
+      }),
+      structuredVerdict: verdict({ confidence: 0.1, status: 'block' }),
+    });
+
+    const calibration = calibrateCouncilMode({
+      taskFamily: 'operator',
+      requestedMode: 'dual_review',
+    });
+    const doctor = buildCouncilDoctorReport('2026-06-04T10:02:00.000Z', {
+      providerHealth: healthyCoreProviders,
+    });
+
+    expect(calibration.recentRuns).toBe(0);
+    expect(doctor.recent).toMatchObject({
+      liveRuns: 0,
+      syntheticRuns: 1,
+    });
+  });
+
+  it('separates current evidence gaps from historical proof debt', () => {
+    const baseEvidenceScorecard = verdict().evidenceScorecard;
+    expect(baseEvidenceScorecard).toBeDefined();
+    for (const [index, gap] of [
+      'integration_bluebubbles_needs_proof',
+      'integration_alexa_manual_action_required',
+    ].entries()) {
+      recordCouncilRunLedger({
+        councilRunId: `council-gap-${index}`,
+        runOrigin: 'live',
+        taskFamily: 'operator',
+        requestedMode: 'dual_review',
+        chosenMode: 'dual_review',
+        calibration: calibrateCouncilMode({
+          taskFamily: 'operator',
+          requestedMode: 'dual_review',
+        }),
+        structuredVerdict: verdict({
+          evidenceScorecard: {
+            ...baseEvidenceScorecard!,
+            gapCount: 1,
+            gapIds: [gap],
+          },
+        }),
+        now: `2026-06-04T10:0${index}:00.000Z`,
+      });
+    }
+
+    const report = buildCouncilDoctorReport('2026-06-04T10:02:00.000Z', {
+      providerHealth: healthyCoreProviders,
+      integrationHealth: [
+        { integrationId: 'bluebubbles', state: 'healthy' },
+        { integrationId: 'alexa', state: 'manual_action_required' },
+      ],
+    });
+
+    expect(report.evidenceGaps).toEqual([
+      'integration_alexa_manual_action_required',
+    ]);
+    expect(report.historicalEvidenceGaps).toEqual([]);
+    expect(report.resolvedEvidenceGaps).toEqual([
+      'integration_bluebubbles_needs_proof',
+    ]);
+  });
+
   it('migrates legacy council rows as replay provenance', () => {
     _closeDatabase();
     const dir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'andrea-council-migration-'),
     );
-    const dbPath = path.join(dir, 'legacy.sqlite');
-    const legacy = new Database(dbPath);
-    legacy.exec(`
+    try {
+      const dbPath = path.join(dir, 'legacy.sqlite');
+      const legacy = new Database(dbPath);
+      legacy.exec(`
       CREATE TABLE council_run_ledger (
         council_run_id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL, group_folder TEXT, task_family TEXT NOT NULL,
@@ -271,13 +485,19 @@ describe('council quality ledger', () => {
         'answer', 0.5, 'weak', 'none', '[]', '[]', '{}', '{}', '{}', '{}',
         'legacy replay', '[]', 0, NULL, NULL
       );
-    `);
-    legacy.close();
-    _initTestDatabaseAtPath(dbPath);
-    expect(listCouncilRunLedger({ limit: 1 })[0]?.runOrigin).toBe('replay');
-    _closeDatabase();
-    fs.rmSync(dir, { recursive: true, force: true });
-    _initTestDatabase();
+      `);
+      legacy.close();
+      _initTestDatabaseAtPath(dbPath);
+      expect(listCouncilRunLedger({ limit: 1 })[0]?.runOrigin).toBe('replay');
+    } finally {
+      try {
+        _closeDatabase();
+      } catch {
+        // The migration may fail before the disposable database opens.
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+      _initTestDatabase();
+    }
   });
 
   it('promotes weak histories but protects explicit deep routes from downshift', () => {

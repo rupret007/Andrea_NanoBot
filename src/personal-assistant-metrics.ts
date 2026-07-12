@@ -14,6 +14,7 @@ import type {
   RedactedRegressionFixture,
   ResponseFeedbackRecord,
 } from './types.js';
+import { getResponseFeedbackRouteRegressionCoverage } from './response-feedback-route-coverage.js';
 
 function ratio(numerator: number, denominator: number): number {
   if (denominator <= 0) return 0;
@@ -56,6 +57,7 @@ function reviewedOutcomeCount(events: AssistantMetricEventRecord[]): number {
 }
 
 export function recordAssistantMetric(params: {
+  eventId?: string;
   groupFolder: string;
   kind: AssistantMetricEventKind;
   value?: number;
@@ -63,7 +65,7 @@ export function recordAssistantMetric(params: {
   now?: Date;
 }): AssistantMetricEventRecord {
   const record: AssistantMetricEventRecord = {
-    eventId: randomUUID(),
+    eventId: params.eventId || randomUUID(),
     groupFolder: params.groupFolder,
     kind: params.kind,
     value: Number.isFinite(params.value) ? Number(params.value) : 1,
@@ -72,6 +74,57 @@ export function recordAssistantMetric(params: {
   };
   insertAssistantMetricEvent(record);
   return record;
+}
+
+export function recordReviewedRecommendationOutcome(params: {
+  feedbackId: string;
+  groupFolder: string;
+  verdict: 'accepted' | 'rejected';
+  completionVerified?: boolean;
+  correction?: boolean;
+  metadata?: Record<string, string | number | boolean>;
+  now?: Date;
+}): AssistantMetricEventRecord[] {
+  const now = params.now || new Date();
+  const metadata = {
+    outcomeId: params.feedbackId,
+    ...(params.metadata || {}),
+  };
+  const events = [
+    recordAssistantMetric({
+      eventId: `feedback:${params.feedbackId}:review`,
+      groupFolder: params.groupFolder,
+      kind:
+        params.verdict === 'accepted'
+          ? 'recommendation_accepted'
+          : 'recommendation_rejected',
+      metadata,
+      now,
+    }),
+  ];
+  if (params.verdict === 'accepted' && params.completionVerified) {
+    events.push(
+      recordAssistantMetric({
+        eventId: `feedback:${params.feedbackId}:completion`,
+        groupFolder: params.groupFolder,
+        kind: 'completion_verified',
+        metadata,
+        now,
+      }),
+    );
+  }
+  if (params.verdict === 'rejected' && params.correction) {
+    events.push(
+      recordAssistantMetric({
+        eventId: `feedback:${params.feedbackId}:correction`,
+        groupFolder: params.groupFolder,
+        kind: 'correction',
+        metadata,
+        now,
+      }),
+    );
+  }
+  return events;
 }
 
 export function buildAssistantMetricSnapshot(params: {
@@ -179,8 +232,10 @@ export function createRegressionFixtureFromFeedback(
   feedback: ResponseFeedbackRecord,
   now = new Date(),
 ): RedactedRegressionFixture {
+  const routeCoverage = getResponseFeedbackRouteRegressionCoverage(feedback);
   const expectedBehavior = [
-    `Avoid feedback class ${feedback.classification}.`,
+    routeCoverage?.summary ||
+      `Avoid feedback class ${feedback.classification}.`,
     feedback.blockerClass
       ? `Handle blocker class ${feedback.blockerClass} honestly.`
       : 'Preserve approval, privacy, and evidence gates.',
@@ -192,7 +247,8 @@ export function createRegressionFixtureFromFeedback(
     routeKey: feedback.routeKey,
     capabilityId: feedback.capabilityId,
     expectedBehavior,
-    remediationStatus: 'open',
+    remediationStatus:
+      feedback.status === 'resolved_locally' ? 'fixed' : 'open',
     containsRawUserText: false,
     createdAt: now.toISOString(),
   };

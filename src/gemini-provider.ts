@@ -37,6 +37,7 @@ export interface GeminiTextRequest {
   modelTier?: 'fast' | 'critic';
   maxTokens?: number;
   temperature?: number;
+  timeoutMs?: number;
 }
 
 export interface GeminiTextResult {
@@ -226,7 +227,7 @@ export async function runGeminiOpenAiText(
           { role: 'user', content: request.prompt },
         ],
       }),
-      signal: providerRequestSignal(),
+      signal: providerRequestSignal(request.timeoutMs),
     });
   } catch (err) {
     return {

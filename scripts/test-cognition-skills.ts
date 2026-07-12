@@ -56,8 +56,8 @@ const learned = cards.find((card) =>
 assert.ok(learned, 'successful research runs should create a skill card');
 assert.equal(
   learned?.promotionState,
-  'promoted',
-  'second verified success should promote the candidate skill',
+  'candidate',
+  'internal verification alone must not promote a candidate skill',
 );
 assert.ok((learned?.latestOutcomeScore || 0) >= 0.8);
 
@@ -91,10 +91,14 @@ const communicationCards = listCognitiveSkillCards({
   taskFamily: 'communication',
   limit: 20,
 });
-const quarantined = communicationCards.find((card) =>
+const approvalCandidate = communicationCards.find((card) =>
   card.skillId.includes('communication.reply_help'),
 );
-assert.equal(quarantined?.promotionState, 'quarantined');
+assert.equal(
+  approvalCandidate?.promotionState,
+  'candidate',
+  'one safe approval stop must not quarantine a candidate skill',
+);
 
 const rewards = listCognitiveRewardSignals({ limit: 20 });
 const reflections = listCognitiveReflections({ limit: 20 });
@@ -121,10 +125,10 @@ console.log(
   JSON.stringify(
     {
       status: 'pass',
-      promotedSkillId: learned?.skillId,
-      promotedState: learned?.promotionState,
-      quarantinedSkillId: quarantined?.skillId,
-      quarantinedState: quarantined?.promotionState,
+      candidateSkillId: learned?.skillId,
+      candidateState: learned?.promotionState,
+      approvalCandidateSkillId: approvalCandidate?.skillId,
+      approvalCandidateState: approvalCandidate?.promotionState,
       rewardSignals: rewards.length,
       reflections: reflections.length,
       privacy: {

@@ -538,8 +538,18 @@ function buildLearnedContextHints(input: {
     ...(existingThread?.toneStyleHints || []),
     ...input.messages.slice(-6).map((message) => message.content),
   ].join(' ');
-  const linkedSubjectIds = new Set(existingThread?.linkedSubjectIds || []);
-  const matchedSubjects = input.context.subjects
+  const personSubjects = input.context.subjects.filter(
+    (subject) => subject.kind === 'person',
+  );
+  const personSubjectIdSet = new Set(
+    personSubjects.map((subject) => subject.id),
+  );
+  const linkedSubjectIds = new Set(
+    (existingThread?.linkedSubjectIds || []).filter((subjectId) =>
+      personSubjectIdSet.has(subjectId),
+    ),
+  );
+  const matchedSubjects = personSubjects
     .filter(
       (subject) =>
         linkedSubjectIds.has(subject.id) ||
@@ -549,8 +559,13 @@ function buildLearnedContextHints(input: {
     .slice(0, 4);
   const subjectIds = matchedSubjects.map((subject) => subject.id);
   const subjectNames = matchedSubjects.map((subject) => subject.displayName);
+  const canTrustExistingLifeThreadLinks =
+    linkedSubjectIds.size > 0 ||
+    existingThread?.inferenceState === 'user_confirmed';
   const linkedLifeThreadIds = new Set(
-    existingThread?.linkedLifeThreadIds || [],
+    canTrustExistingLifeThreadLinks
+      ? existingThread?.linkedLifeThreadIds || []
+      : [],
   );
   const matchedLifeThreads = input.context.lifeThreads
     .filter((thread) => {

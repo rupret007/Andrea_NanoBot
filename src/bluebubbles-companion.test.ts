@@ -15,6 +15,8 @@ import {
   normalizeBlueBubblesCompanionPrompt,
   resolveBlueBubblesPendingLocalContinuationKind,
   resolveMostRecentBlueBubblesCompanionChat,
+  shouldHandleBlueBubblesProofDrillLocally,
+  shouldPreferBlueBubblesLocalMessageActionFollowup,
   stripBlueBubblesAndreaMention,
 } from './bluebubbles-companion.js';
 import type { PilotJourneyEventRecord } from './types.js';
@@ -165,6 +167,70 @@ describe('bluebubbles companion helpers', () => {
       kind: 'pending_local_continuation',
       continuationKind: 'action_draft',
     });
+  });
+
+  it('prefers an applicable local message action over a platform hold', () => {
+    expect(
+      shouldPreferBlueBubblesLocalMessageActionFollowup({
+        conversationChannel: 'bluebubbles',
+        requestRoute: 'direct_assistant',
+        operationRecognized: true,
+        actionResolved: true,
+        policyAllows: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not bypass a platform hold for unrelated or disallowed turns', () => {
+    const base = {
+      conversationChannel: 'bluebubbles',
+      requestRoute: 'direct_assistant',
+      operationRecognized: true,
+      actionResolved: true,
+      policyAllows: true,
+    };
+    expect(
+      shouldPreferBlueBubblesLocalMessageActionFollowup({
+        ...base,
+        conversationChannel: 'telegram',
+      }),
+    ).toBe(false);
+    expect(
+      shouldPreferBlueBubblesLocalMessageActionFollowup({
+        ...base,
+        actionResolved: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldPreferBlueBubblesLocalMessageActionFollowup({
+        ...base,
+        policyAllows: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps proof-start recovery on the deterministic BlueBubbles path', () => {
+    expect(
+      shouldHandleBlueBubblesProofDrillLocally({
+        conversationChannel: 'bluebubbles',
+        requestRoute: 'direct_assistant',
+        text: '@Andrea start bluebubbles proof',
+      }),
+    ).toBe(true);
+    expect(
+      shouldHandleBlueBubblesProofDrillLocally({
+        conversationChannel: 'telegram',
+        requestRoute: 'direct_assistant',
+        text: '@Andrea start bluebubbles proof',
+      }),
+    ).toBe(false);
+    expect(
+      shouldHandleBlueBubblesProofDrillLocally({
+        conversationChannel: 'bluebubbles',
+        requestRoute: 'direct_assistant',
+        text: 'tell me about bluebubbles',
+      }),
+    ).toBe(false);
   });
 
   it('routes @Andrea-prefixed message-action follow-ups before generic asks', () => {

@@ -75,6 +75,17 @@ Outcome metrics cover recommendation acceptance, verified completion,
 corrections and overrides, false proactive suggestions, memory precision,
 citation coverage, tool reliability, latency, and live-evaluation cost.
 
+In the registered Telegram owner chat and configured BlueBubbles self-thread,
+fresh standalone phrases such as `that worked`, `that was helpful`, `that
+didn't work`, and `not helpful` bind to only the immediately latest unreviewed
+response. `That worked` and `that solved it` also record explicit owner-verified
+completion. The binder uses a 30-minute creation-time window, records the
+review source as provenance, and refuses questions, vague sentiment, stale
+records, already-reviewed records, and any phrase containing an action or
+approval request. Natural feedback therefore improves learning evidence but
+cannot authorize a send, calendar write, purchase, deployment, commit, push,
+deletion, or other side effect.
+
 Use `npm run debug:assistant-intelligence` for the metadata-only operator view.
 Add `-- --save-baseline` only when the current sample is the reviewed baseline.
 The command refuses to save fewer than five accepted/rejected owner-reviewed

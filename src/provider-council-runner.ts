@@ -75,6 +75,7 @@ export interface ObservableProviderCouncilInput {
   requiredEvidence?: 'strong' | 'partial' | 'weak' | 'unknown';
   allowedSideEffects?: 'none' | 'read_only' | 'approval_required';
   rawContentPolicy?: 'metadata_only' | 'local_only' | 'sanitized_snippets';
+  publicEvidenceRequired?: boolean;
   metadata?: Record<string, string>;
   runOrigin?: CouncilRunOrigin;
 }
@@ -118,6 +119,8 @@ function memberPrompt(input: {
     `Task family: ${input.taskFamily}.`,
     `Sanitized goal: ${input.goal}.`,
     `Evidence summary: ${input.evidenceSummary || 'No live evidence was gathered.'}`,
+    'Interpret ambiguous words within the stated task family. In operator or code tasks, health means system/runtime health unless the goal explicitly identifies a medical or personal-health topic.',
+    'Do not invent risk domains, stakeholders, or evidence requirements that are absent from the sanitized goal and cited evidence.',
     'Return visible notes only. Do not include hidden chain-of-thought, secrets, private memory, raw message bodies, or provider debate transcripts.',
     'Return ONLY JSON with: verdict ("pass"|"warn"|"clarify"|"block"), confidence (0-1), evidence_grade ("strong"|"partial"|"weak"|"unknown"), recommended_action ("answer"|"ask_clarifying_question"|"hold"|"draft_only"|"block"), answer_direction, uncertainty, risk_flags, evidence_ids, approval_need ("none"|"conditional"|"explicit"), blocker, clarifying_question.',
   ];
@@ -157,7 +160,11 @@ function memberPrompt(input: {
 function shouldUseEvidenceScout(
   mode: AndreaPlatformCouncilMode | undefined,
   taskFamily: PlatformTaskFamily,
+  publicEvidenceRequired?: boolean,
 ): boolean {
+  if (typeof publicEvidenceRequired === 'boolean') {
+    return publicEvidenceRequired;
+  }
   return (
     mode === 'max_iq_council' ||
     mode === 'repair_council' ||
@@ -811,6 +818,7 @@ export async function runObservableProviderCouncil(
     input.requestedMode ||
     'single_model';
   const budgetPolicy = resolveCouncilRunBudget(mode);
+  const providerTimeoutMs = Math.max(5_000, budgetPolicy.roleTimeoutMs - 500);
   const checkedAt = new Date().toISOString();
   const rawProviderHealthSnapshots =
     deps.providerHealthSnapshots || collectProviderHealthSnapshots(checkedAt);
@@ -821,7 +829,11 @@ export async function runObservableProviderCouncil(
         deps,
         checkedAt,
       );
-  const evidenceScoutEnabled = shouldUseEvidenceScout(mode, input.taskFamily);
+  const evidenceScoutEnabled = shouldUseEvidenceScout(
+    mode,
+    input.taskFamily,
+    input.publicEvidenceRequired,
+  );
   const reviewersEnabled = shouldUseReviewer(mode);
   const participationPlan = buildProviderParticipationPlan({
     mode,
@@ -1024,16 +1036,16 @@ export async function runObservableProviderCouncil(
       );
       const brave = result && typeof result === 'object' ? result : null;
       if (brave && 'results' in brave && Array.isArray(brave.results)) {
-        evidenceSummary = brave.results
+        const publicEvidenceSummary = brave.results
           .slice(0, 3)
           .map((item) => `${item.title}: ${item.description} (${item.url})`)
           .join('\n');
-        evidenceIds = brave.results
+        const publicEvidenceIds = brave.results
           .slice(0, 3)
           .map((item, index) => `brave:${index + 1}:${item.url.slice(0, 80)}`);
         brave.results.slice(0, 3).forEach((item, index) => {
           evidencePack.cards.push({
-            evidenceId: evidenceIds[index] || `brave:${index + 1}`,
+            evidenceId: publicEvidenceIds[index] || `brave:${index + 1}`,
             sourceClass: 'public_web',
             evidenceGrade: 'partial',
             freshness: 'fresh',
@@ -1045,6 +1057,8 @@ export async function runObservableProviderCouncil(
           });
         });
         refreshCouncilEvidencePackScorecard(evidencePack);
+        evidenceSummary = summarizeCouncilEvidencePack(evidencePack);
+        evidenceIds = evidencePack.cards.map((card) => card.evidenceId);
         await recordMember({
           councilRunId,
           correlationId,
@@ -1055,10 +1069,11 @@ export async function runObservableProviderCouncil(
           summary: `Brave returned ${brave.results.length} public evidence result(s).`,
           confidence: brave.results.length > 0 ? 0.82 : 0.35,
           visiblePrompt: prompt,
-          visibleResponse: evidenceSummary || 'No Brave results returned.',
-          evidenceIds,
+          visibleResponse:
+            publicEvidenceSummary || 'No Brave results returned.',
+          evidenceIds: publicEvidenceIds,
           latencyMs,
-          estimatedTokenCount: estimateTokens(prompt, evidenceSummary),
+          estimatedTokenCount: estimateTokens(prompt, publicEvidenceSummary),
           estimatedCostTier: 'low',
           metadata: {
             brave_request_id: brave.requestId || '',
@@ -1123,6 +1138,7 @@ export async function runObservableProviderCouncil(
                     : 'standard',
                 maxTokens: 700,
                 temperature: 0.2,
+                timeoutMs: providerTimeoutMs,
               }),
             ),
           now,
@@ -1152,6 +1168,7 @@ export async function runObservableProviderCouncil(
                 adaptiveThinking: mode === 'max_iq_council',
                 maxTokens: 700,
                 temperature: 0.2,
+                timeoutMs: providerTimeoutMs,
               }),
             ),
           now,
@@ -1312,6 +1329,7 @@ export async function runObservableProviderCouncil(
               modelTier: mode === 'max_iq_council' ? 'complex' : 'fast',
               maxTokens: 700,
               temperature: 0.25,
+              timeoutMs: providerTimeoutMs,
             }),
           ),
         now,
@@ -1344,6 +1362,7 @@ export async function runObservableProviderCouncil(
                 modelTier: 'fast',
                 maxTokens: 700,
                 temperature: 0.2,
+                timeoutMs: providerTimeoutMs,
               }),
             ),
           now,
@@ -1452,6 +1471,7 @@ export async function runObservableProviderCouncil(
                   : 'standard',
               maxTokens: 700,
               temperature: 0.15,
+              timeoutMs: providerTimeoutMs,
             }),
           ),
         now,
@@ -1516,6 +1536,7 @@ export async function runObservableProviderCouncil(
               modelTier: mode === 'max_iq_council' ? 'critic' : 'fast',
               maxTokens: 700,
               temperature: 0.2,
+              timeoutMs: providerTimeoutMs,
             }),
           ),
         now,
@@ -1552,6 +1573,7 @@ export async function runObservableProviderCouncil(
               modelTier: 'fast',
               maxTokens: 700,
               temperature: 0.15,
+              timeoutMs: providerTimeoutMs,
             }),
           ),
         now,

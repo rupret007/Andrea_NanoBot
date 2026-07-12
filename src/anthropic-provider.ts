@@ -50,6 +50,7 @@ export interface AnthropicTextRequest {
   adaptiveThinking?: boolean;
   maxTokens?: number;
   temperature?: number;
+  timeoutMs?: number;
 }
 
 export interface AnthropicTextResult {
@@ -358,7 +359,7 @@ export async function runAnthropicText(
           },
         ],
       }),
-      signal: providerRequestSignal(),
+      signal: providerRequestSignal(request.timeoutMs),
     });
   } catch (err) {
     return {

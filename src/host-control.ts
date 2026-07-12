@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { writeJsonFileAtomic } from './atomic-json-file.js';
 import { computeNextTelegramRoundtripDueAt } from './ping-presence.js';
 import {
   ANDREA_STARTUP_TASK_NAME,
@@ -391,8 +392,7 @@ function readJsonFile<T>(filePath: string): T | null {
 }
 
 function writeJsonFile(filePath: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+  writeJsonFileAtomic(filePath, value);
 }
 
 export function resolveHostControlPaths(

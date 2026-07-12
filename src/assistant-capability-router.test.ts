@@ -221,6 +221,18 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'communication.draft_reply',
     });
+    expect(
+      matchAssistantCapabilityRequest('Review communication identities'),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_identity_links',
+    });
+    expect(
+      matchAssistantCapabilityRequest(
+        'confirm identity "Candace" is "Candace"',
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_identity_links',
+    });
     expect(matchAssistantCapabilityRequest('More blunt')).toMatchObject({
       capabilityId: 'communication.draft_reply',
     });
@@ -263,6 +275,11 @@ describe('assistant capability router', () => {
       matchAssistantCapabilityRequest("What's still open with Candace?"),
     ).toMatchObject({
       capabilityId: 'communication.open_loops',
+    });
+    expect(
+      matchAssistantCapabilityRequest('What is still open around the house?'),
+    ).toMatchObject({
+      capabilityId: 'household.family_open_loops',
     });
     expect(
       matchAssistantCapabilityRequest('What should I talk to Candace about?'),
@@ -381,6 +398,16 @@ describe('assistant capability router', () => {
       matchAssistantCapabilityRequest('Summarize the latest news today'),
     ).toMatchObject({
       capabilityId: 'research.summarize',
+    });
+  });
+
+  it('keeps explicitly saved-only research on the knowledge-library route', () => {
+    expect(
+      matchAssistantCapabilityRequest(
+        'Research this using what we already saved',
+      ),
+    ).toMatchObject({
+      capabilityId: 'knowledge.summarize_saved',
     });
   });
 
@@ -641,6 +668,29 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'media.analyze',
     });
+  });
+
+  it('treats analyzable media on the current message as the primary turn input', () => {
+    expect(
+      matchAssistantCapabilityRequest('[Photo] This is my meal plan', {
+        currentAttachmentKinds: ['image'],
+      }),
+    ).toMatchObject({
+      capabilityId: 'media.analyze',
+      reason: 'current message contains analyzable inbound media',
+    });
+    expect(
+      matchAssistantCapabilityRequest('[Video]', {
+        currentAttachmentKinds: ['video'],
+      }),
+    ).toMatchObject({
+      capabilityId: 'media.analyze',
+    });
+    expect(
+      matchAssistantCapabilityRequest('[Document: plan.pdf]', {
+        currentAttachmentKinds: ['file'],
+      }),
+    ).toBeNull();
   });
 
   it('matches explicit pilot issue capture prompts without widening the router', () => {

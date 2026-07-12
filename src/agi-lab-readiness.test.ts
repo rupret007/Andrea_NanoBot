@@ -108,7 +108,10 @@ function councilReport(
     ok: true,
     summary: 'Council quality is healthy.',
     recent: {
+      observedRuns: 5,
       totalRuns: 5,
+      replayRuns: 0,
+      syntheticRuns: 0,
       degradedRuns: 0,
       averageConfidence: 0.95,
       schemaInvalidRuns: 0,
@@ -174,12 +177,22 @@ function cognitiveReport(
       blockedRuns: 0,
       approvalRuns: 0,
       averageOutcomeScore: 0.96,
+      qualityScore: 0.96,
+      decisionAppropriateRuns: 5,
+      safeApprovalRuns: 0,
+      appropriatelyBlockedRuns: 0,
+      operationalFailureRuns: 0,
+      finalizedRuns: 5,
+      reviewedOutcomeRuns: 5,
       rewardSignals: 5,
       reflections: 5,
     },
     skills: {
       total: 5,
       promoted: 5,
+      trustedPromoted: 5,
+      unverifiedPromoted: 0,
+      reviewEligibleCandidates: 0,
       candidates: 0,
       quarantined: 0,
       latestSkillId: 'skill-1',
@@ -351,6 +364,36 @@ describe('agi lab readiness', () => {
       report.gates.find((gate) => gate.gateId === 'regression_stability'),
     ).toMatchObject({
       status: 'pass',
+    });
+  });
+
+  it('scores correct cautious council decisions separately from operational degradation', async () => {
+    const report = await buildAgiLabReadinessReport(
+      sources({
+        councilReport: councilReport({
+          ok: false,
+          recent: {
+            ...councilReport().recent,
+            totalRuns: 4,
+            liveRuns: 4,
+            degradedRuns: 4,
+            lowConfidenceRuns: 3,
+            averageConfidence: 0.5,
+            qualityScore: 0.92,
+            decisionAppropriateRuns: 4,
+            appropriatelyCautiousRuns: 3,
+            operationallyDegradedRuns: 4,
+            uncalibratedRuns: 0,
+          },
+        }),
+      }),
+    );
+
+    expect(
+      report.gates.find((gate) => gate.gateId === 'council_quality'),
+    ).toMatchObject({
+      status: 'warn',
+      score: 0.92,
     });
   });
 

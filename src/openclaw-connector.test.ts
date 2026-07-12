@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildOpenClawChatSessionKey,
+  buildOpenClawMediaGroundedPrompt,
   delegateToOpenClawAgent,
   formatOpenClawDelegationResponse,
   formatOpenClawDebugStatusLines,
@@ -41,6 +42,27 @@ function buildRunner(
 }
 
 describe('OpenClaw connector', () => {
+  it('grounds delegated media turns in a bounded summary or an honest blocker', () => {
+    expect(
+      buildOpenClawMediaGroundedPrompt({
+        prompt: 'Can you see this meal plan?',
+        mediaSummary: 'The image shows a seven-day meal schedule.',
+      }),
+    ).toContain('Verified attachment context prepared by Andrea');
+    expect(
+      buildOpenClawMediaGroundedPrompt({
+        prompt: 'Can you see this meal plan?',
+        mediaSummary: 'The image shows a seven-day meal schedule.',
+      }),
+    ).toContain('Do not claim direct access to image bytes');
+    expect(
+      buildOpenClawMediaGroundedPrompt({
+        prompt: 'Can you see this?',
+        mediaBlocker: 'The media cache is unavailable.',
+      }),
+    ).toContain('do not infer its contents');
+  });
+
   it('summarizes a healthy gateway without leaking auth labels', () => {
     const calls: string[][] = [];
     const runner = buildRunner(

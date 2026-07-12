@@ -67,6 +67,7 @@ export function beginVerifiedDeepWorkForTurn(params: {
   objective: string;
   approvalRequired: boolean;
   sourceRefs?: string[];
+  knownBlockers?: string[];
   resumePendingApproval?: boolean;
   now?: Date;
 }): VerifiedDeepWorkPacket | null {
@@ -109,7 +110,7 @@ export function beginVerifiedDeepWorkForTurn(params: {
     nextDecision: 'Inspect the bounded plan and its evidence gaps.',
     now: params.now,
   });
-  return advanceVerifiedDeepWorkPacket({
+  packet = advanceVerifiedDeepWorkPacket({
     packetId: packet.packetId,
     stage: 'inspect',
     sources: params.sourceRefs,
@@ -118,6 +119,19 @@ export function beginVerifiedDeepWorkForTurn(params: {
       : 'Execute the bounded read-only step.',
     now: params.now,
   });
+  const knownBlockers = (params.knownBlockers || [])
+    .map((blocker) => clean(blocker, 160))
+    .filter(Boolean);
+  if (knownBlockers.length > 0) {
+    return recordBlockedVerifiedDeepWorkOutcome({
+      packetId: packet.packetId,
+      summary:
+        'Execution did not start because preflight found a known blocker.',
+      blocker: knownBlockers.join(', '),
+      now: params.now,
+    });
+  }
+  return packet;
 }
 
 export function recordBlockedVerifiedDeepWorkOutcome(params: {

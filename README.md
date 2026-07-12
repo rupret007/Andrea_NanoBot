@@ -101,11 +101,12 @@ Static docs are not the source of truth for launch readiness. Use this order whe
 
 Current host truth from the local operator commands:
 
-- `Host state: running_ready` is the canonical runtime health signal for this machine.
+- `Host state: running_ready` proves the process/watchdog state; it does not by itself prove writable capacity. `Host disk pressure` and `Host health proof` must also be healthy before claiming full runtime readiness.
 - Active repo and serving commit should match before any live proof is trusted.
 - Dated recovery snapshot: [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md).
 - As of July 6, 2026, the canonical runtime root is `/Users/jeffstory/Andrea_NanoBot`; `/Users/jeffstory/Documents/Andrea_NanoBot` is a convenience symlink, and `/Users/jeffstory/Andrea_NanoBot_AGI` should not serve in parallel.
-- `live_proven`: host health, Telegram user-session roundtrip, BlueBubbles canonical same-thread message-action proof, Google Calendar, research, image generation, and provider checks for OpenAI, Anthropic, Gemini, MiniMax, and Brave Search.
+- `live_proven`: Telegram user-session roundtrip, BlueBubbles canonical same-thread message-action proof, Google Calendar, research, image generation, and provider checks for OpenAI, Anthropic, Gemini, MiniMax, and Brave Search.
+- `degraded_but_usable`: host process/watchdog are live, but critical disk pressure currently limits persistence safety. Andrea reports exact capacity and safe owner guidance without deleting Docker or user data.
 - `manual_action_required`: Alexa proof remains a real device or authenticated simulator step because it needs a fresh signed handled `IntentRequest`.
 - `near_live_only`: some flagship journey proofs can still age out independently of core integration health; refresh them with `npm run debug:pilot` before demos.
 - `externally_blocked`: work cockpit execution can be blocked when the Andrea OpenAI backend lane is intentionally disabled; report that separately from host health.
@@ -126,8 +127,10 @@ Andrea now has a bounded pilot and dogfooding loop on this host:
   - `this shouldn't have happened`
   - `save this as a pilot issue`
   - `mark this flow as awkward`
-- in the registered main Telegram control chat, substantive Andrea replies can also show `Not helpful`
-  - tapping it saves a private `downvoted_response` pilot issue
+- in the registered main Telegram control chat, substantive Andrea replies show `Helpful` and `Not helpful`
+  - tapping either records one idempotent owner-reviewed outcome; `Not helpful` also saves a private `downvoted_response` pilot issue
+  - a fresh standalone `that worked`, `that was helpful`, `that didn't work`, or `not helpful` can review the immediately preceding response without a button
+  - questions, vague sentiment, stale replies, and mixed feedback/action text such as `that worked, send it` never count as a verdict or approval
   - Andrea can then prepare one queued self-fix job, preferring Codex local, then Codex cloud, then Cursor Cloud
   - external/manual blockers stay captured honestly instead of auto-starting a repo fix
   - local hotfixes may validate and restart on-host, but Andrea still asks before any commit or push
@@ -330,6 +333,9 @@ BlueBubbles is now Andrea's optional bounded Messages bridge, not a core require
 - incoming BlueBubbles and Telegram images/videos are cached as bounded local message attachments (20 MiB per file, 7-day / 1 GiB retention by default) so Andrea can answer asks like `analyze this photo` or `what is in this video` when OpenAI vision is configured
 - broad asks from Telegram such as `use BlueBubbles and summarize my texts from the past 48 hours` summarize activity across all synced BlueBubbles chats in that time window without exposing raw phone numbers
 - BlueBubbles keeps companion-safe capabilities like daily guidance, communication help, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
+- in the configured self-thread, native Like/Love/Dislike tapbacks provide privacy-safe accepted/rejected outcome signals; ambiguous reactions and removals never train Andrea
+- the same narrow natural verdict phrases work in the configured self-thread; they retain route/run provenance only and never expand Messages authority
+- `review communication identities` starts a private, explicit identity-link review in the registered main Telegram chat or configured Messages self-thread; exact profile-name matches may be proposed, while phone numbers, raw identifiers, generic language, and message bodies are never used to guess a person
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
@@ -348,6 +354,7 @@ Andrea now has a bounded communication-companion layer for real conversations an
 - Telegram and BlueBubbles are the richer communication surfaces
 - Alexa stays concise and can orient you around `what do I owe people`, `what's still open with Candace`, or `draft that for me`
 - open conversations can feed into daily guidance and evening carryover without creating passive inbox surveillance
+- relationship-aware guidance counts a conversation identity as resolved only after an existing person is explicitly linked or the owner dismisses the single-person link as not applicable; every decision is reversible
 
 Communication threads stay distinct from:
 

@@ -3,9 +3,12 @@ import { execFileSync } from 'child_process';
 import {
   getCursorAgentById,
   getRuntimeBackendJob,
+  listRedactedRegressionFixtures,
   listRecentResponseFeedback,
+  upsertRedactedRegressionFixture,
   updateResponseFeedback,
 } from './db.js';
+import { createRegressionFixtureFromFeedback } from './personal-assistant-metrics.js';
 import {
   ANDREA_OPENAI_BACKEND_ID,
   AndreaOpenAiBackendClient,
@@ -17,6 +20,7 @@ import {
 } from './response-feedback-route-coverage.js';
 import type {
   ChannelInlineAction,
+  MessageReactionRef,
   PilotBlockerOwner,
   ResponseFeedbackClassification,
   ResponseFeedbackRecord,
@@ -27,6 +31,7 @@ import type {
 export { getResponseFeedbackRouteRegressionCoverage } from './response-feedback-route-coverage.js';
 
 export type ResponseFeedbackActionKind =
+  | 'accept'
   | 'capture'
   | 'start'
   | 'approve_local'
@@ -40,6 +45,171 @@ export type ResponseFeedbackActionKind =
 export interface ParsedResponseFeedbackAction {
   feedbackId: string;
   operation: ResponseFeedbackActionKind;
+}
+
+/**
+ * Native reactions are intentionally conservative learning signals. A like or
+ * love is an explicit acceptance and a dislike is an explicit rejection.
+ * Ambiguous reactions and removals never train the assistant.
+ */
+export function mapMessageReactionToFeedbackAction(
+  reaction: MessageReactionRef | null | undefined,
+): 'accept' | 'capture' | null {
+  if (!reaction || reaction.removed) return null;
+  if (reaction.kind === 'like' || reaction.kind === 'love') return 'accept';
+  if (reaction.kind === 'dislike') return 'capture';
+  return null;
+}
+
+export interface NaturalResponseFeedbackVerdict {
+  action: 'accept' | 'capture';
+  completionVerified: boolean;
+}
+
+export type NaturalResponseFeedbackResolution =
+  | { state: 'not_verdict' }
+  | { state: 'not_found' }
+  | {
+      state: 'stale';
+      record: ResponseFeedbackRecord;
+      ageMs: number;
+    }
+  | {
+      state: 'ready';
+      action: ParsedResponseFeedbackAction;
+      record: ResponseFeedbackRecord;
+      ageMs: number;
+      completionVerified: boolean;
+    };
+
+const NATURAL_VERDICT_ACTION_RE =
+  /\b(?:approve|go ahead|do it|run it|ship it|send|schedule|calendar|buy|purchase|delete|remove|commit|push|deploy|publish|make the change)\b/i;
+
+function normalizeNaturalVerdictText(value: string | null | undefined): string {
+  let normalized = normalizeText(value)
+    .replace(/[’‘]/g, "'")
+    .replace(/^@?andrea\b[\s,:;!.-]*/i, '')
+    .toLowerCase();
+  normalized = normalized.replace(/[.!]+$/g, '').trim();
+  normalized = normalized
+    .replace(
+      /^(?:(?:ok(?:ay)?|great|perfect|thanks|thank you)[\s,:;!-]+)+/i,
+      '',
+    )
+    .replace(/[\s,:;!-]+(?:thanks|thank you|andrea)$/i, '')
+    .replace(/[.!]+$/g, '')
+    .trim();
+  return normalized;
+}
+
+/**
+ * Natural verdicts are intentionally narrower than ordinary sentiment. They
+ * must be explicit, standalone owner feedback and may never contain an action
+ * request or approval phrase.
+ */
+export function parseNaturalResponseFeedbackVerdict(
+  text: string | null | undefined,
+): NaturalResponseFeedbackVerdict | null {
+  const raw = normalizeText(text);
+  if (
+    !raw ||
+    raw.length > 160 ||
+    raw.includes('?') ||
+    /\b(?:but|however|although|except)\b/i.test(raw) ||
+    NATURAL_VERDICT_ACTION_RE.test(raw)
+  ) {
+    return null;
+  }
+  const normalized = normalizeNaturalVerdictText(raw);
+  if (!normalized) return null;
+
+  if (
+    /^(?:(?:that|this|it) (?:did not|didn't|does not|doesn't) work|(?:that|this|it) was not helpful|not helpful|(?:that|this|it|you) (?:was |were |got )?(?:wrong|incorrect)|(?:that|this) (?:did not|didn't) answer (?:my question|it)|(?:that|this) missed (?:the point|what i asked))$/i.test(
+      normalized,
+    )
+  ) {
+    return { action: 'capture', completionVerified: false };
+  }
+
+  if (
+    /^(?:(?:that|this|it) worked|(?:that|this|it) (?:solved|fixed) it|exactly what i needed)$/i.test(
+      normalized,
+    )
+  ) {
+    return { action: 'accept', completionVerified: true };
+  }
+
+  if (
+    /^(?:(?:that|this|it) was helpful|helpful|good answer|exactly right)$/i.test(
+      normalized,
+    )
+  ) {
+    return { action: 'accept', completionVerified: false };
+  }
+  return null;
+}
+
+function getResponseFeedbackResponseAgeMs(
+  record: Pick<ResponseFeedbackRecord, 'createdAt'>,
+  now: Date,
+): number {
+  const createdAt = responseFeedbackCreatedAtMs(record);
+  return Number.isFinite(createdAt)
+    ? Math.max(0, now.getTime() - createdAt)
+    : Number.POSITIVE_INFINITY;
+}
+
+function responseFeedbackCreatedAtMs(
+  record: Pick<ResponseFeedbackRecord, 'createdAt'>,
+): number {
+  const createdAt = Date.parse(record.createdAt || '');
+  return Number.isFinite(createdAt) ? createdAt : 0;
+}
+
+function canReceiveNaturalVerdict(record: ResponseFeedbackRecord): boolean {
+  return (
+    record.status === 'awaiting_confirmation' ||
+    record.status === 'blocked_external' ||
+    record.status === 'manual_sync_only'
+  );
+}
+
+export function resolveNaturalResponseFeedbackVerdict(
+  text: string | null | undefined,
+  records: ResponseFeedbackRecord[],
+  options: { now?: Date; maxAgeMs?: number } = {},
+): NaturalResponseFeedbackResolution {
+  const verdict = parseNaturalResponseFeedbackVerdict(text);
+  if (!verdict) return { state: 'not_verdict' };
+
+  const now = options.now || new Date();
+  const maxAgeMs = options.maxAgeMs ?? 30 * 60 * 1000;
+  const unique = new Map<string, ResponseFeedbackRecord>();
+  for (const record of records) unique.set(record.feedbackId, record);
+  const selected = [...unique.values()].sort(
+    (left, right) =>
+      responseFeedbackCreatedAtMs(right) - responseFeedbackCreatedAtMs(left),
+  )[0];
+  if (
+    !selected ||
+    !canReceiveNaturalVerdict(selected) ||
+    parseNaturalResponseFeedbackVerdict(selected.originalUserText)
+  ) {
+    return { state: 'not_found' };
+  }
+
+  const ageMs = getResponseFeedbackResponseAgeMs(selected, now);
+  if (ageMs > maxAgeMs) return { state: 'stale', record: selected, ageMs };
+  return {
+    state: 'ready',
+    record: selected,
+    ageMs,
+    completionVerified: verdict.completionVerified,
+    action: {
+      feedbackId: selected.feedbackId,
+      operation: verdict.action,
+    },
+  };
 }
 
 export type PendingRepairApprovalResolution =
@@ -159,6 +329,21 @@ export function resolveResponseFeedbackIfRouteRegressionCovered(
     operatorNote: `${coverage.summary} Metadata-only resolution; no live action was executed.`,
     updatedAt: resolvedAt,
   });
+  const fixtures = listRedactedRegressionFixtures({ limit: 1000 }).filter(
+    (fixture) => fixture.sourceFeedbackId === updated.feedbackId,
+  );
+  if (fixtures.length === 0) {
+    createRegressionFixtureFromFeedback(updated, new Date(resolvedAt));
+  } else {
+    for (const fixture of fixtures) {
+      if (fixture.remediationStatus !== 'verified') {
+        upsertRedactedRegressionFixture({
+          ...fixture,
+          remediationStatus: 'fixed',
+        });
+      }
+    }
+  }
   return {
     resolved: true,
     coverage,
@@ -401,7 +586,7 @@ export function parseResponseFeedbackAction(
 ): ParsedResponseFeedbackAction | null {
   const trimmed = normalizeText(text);
   const match = trimmed.match(
-    /^feedback:([a-f0-9-]{8,}):(capture|start|approve_local|why|not_now|keep_local|approve_landing|commit_only|commit_push)$/i,
+    /^feedback:([a-f0-9-]{8,}):(accept|capture|start|approve_local|why|not_now|keep_local|approve_landing|commit_only|commit_push)$/i,
   );
   if (!match) return null;
   return {
@@ -574,6 +759,10 @@ export function appendResponseFeedbackInlineRow(
 ): SendMessageOptions {
   const feedbackRow: ChannelInlineAction[] = [
     {
+      label: 'Helpful',
+      actionId: buildResponseFeedbackActionId(feedbackId, 'accept'),
+    },
+    {
       label: 'Not helpful',
       actionId: buildResponseFeedbackActionId(feedbackId, 'capture'),
     },
@@ -727,7 +916,7 @@ export function buildResponseFeedbackActionRows(
       ],
     ];
   }
-  if (record.status === 'landed') {
+  if (record.status === 'landed' || record.status === 'accepted') {
     return [
       [
         {

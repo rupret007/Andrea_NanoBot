@@ -380,9 +380,92 @@ describe('research orchestrator', () => {
     expect(result.providerUsed).toBe('knowledge_library');
     expect(result.routeExplanation).toContain('saved material');
     expect(result.supportingSources?.[0]?.title).toBe('Candace Dinner Note');
+    expect(result.supportingSources?.[0]?.sourceId).toBeTruthy();
+    expect(result.supportingSources?.[0]?.matchReason).toBeTruthy();
+    expect(result.supportingSources?.[0]?.updatedAt).toBe(
+      '2026-04-05T09:00:00.000Z',
+    );
+    expect(result.supportingSources?.[0]?.freshness).toBe('fresh');
     expect(result.structuredFindings[0]?.items[0]).toContain(
       'Candace Dinner Note',
     );
+  });
+
+  it('keeps empty saved-only research local and honestly reports no match', async () => {
+    const providerAttempt = vi.fn(async () => {
+      throw new Error('saved-only request attempted provider access');
+    });
+    globalThis.fetch = providerAttempt as typeof fetch;
+
+    const result = await runResearchOrchestrator({
+      query: 'Use only my saved material for an unknown topic.',
+      channel: 'telegram',
+      groupFolder: 'main',
+      savedMaterialMode: 'only',
+      now: new Date('2026-04-05T10:00:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.providerUsed).toBe('knowledge_library');
+    expect(result.summaryText).toContain('do not have saved material');
+    expect(result.supportingSources).toEqual([]);
+    expect(result.plan.sources.openAiResponses).toBe(false);
+    expect(result.plan.sources.braveSearch).toBe(false);
+    expect(result.plan.sources.webSearch).toBe(false);
+    expect(providerAttempt).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when contradictory options try to add web access to saved-only research', async () => {
+    const providerAttempt = vi.fn(async () => {
+      throw new Error('contradictory saved-only request reached a provider');
+    });
+    globalThis.fetch = providerAttempt as typeof fetch;
+
+    await expect(
+      runResearchOrchestrator({
+        query: 'Use only my saved material for the latest dinner options.',
+        channel: 'telegram',
+        groupFolder: 'main',
+        savedMaterialMode: 'only',
+        allowWebSearch: true,
+        now: new Date('2026-04-05T10:00:00.000Z'),
+      }),
+    ).rejects.toThrow(/saved-only research plan attempted/i);
+    expect(providerAttempt).not.toHaveBeenCalled();
+  });
+
+  it('cites and warns about stale saved evidence without calling a provider', async () => {
+    saveKnowledgeSource({
+      groupFolder: 'main',
+      title: 'Old Dinner Assumption',
+      content:
+        'The old dinner assumption says Saturday is always the easiest night for pickup timing.',
+      sourceType: 'manual_reference',
+      now: new Date('2024-01-02T09:00:00.000Z'),
+    });
+    const providerAttempt = vi.fn(async () => {
+      throw new Error('stale saved-only request attempted provider access');
+    });
+    globalThis.fetch = providerAttempt as typeof fetch;
+
+    const result = await runResearchOrchestrator({
+      query: 'Use only my saved material about the old dinner assumption.',
+      channel: 'telegram',
+      groupFolder: 'main',
+      savedMaterialMode: 'only',
+      now: new Date('2026-04-05T10:00:00.000Z'),
+    });
+
+    expect(result.providerUsed).toBe('knowledge_library');
+    expect(result.supportingSources?.[0]).toMatchObject({
+      title: 'Old Dinner Assumption',
+      updatedAt: '2024-01-02T09:00:00.000Z',
+      freshness: 'stale',
+    });
+    expect(result.summaryText).toContain('potentially outdated');
+    expect(result.summaryText).toContain('2024-01-02');
+    expect(result.sourceNotes.join(' ')).toContain('stale freshness');
+    expect(providerAttempt).not.toHaveBeenCalled();
   });
 
   it('dedupes saved-source provenance and keeps Alexa library summaries concise', async () => {

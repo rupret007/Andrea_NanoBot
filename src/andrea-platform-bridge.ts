@@ -1415,7 +1415,7 @@ export async function emitAndreaPlatformFeedbackReflection(input: {
   status: string;
   classification: string;
   taskFamily: PlatformTaskFamily;
-  channel: 'telegram';
+  channel: 'telegram' | 'bluebubbles';
   groupFolder: string;
   chatJid: string;
   threadId?: string | null;

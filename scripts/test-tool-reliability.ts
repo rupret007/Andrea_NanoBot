@@ -1,6 +1,11 @@
 import assert from 'assert/strict';
 
-import { _closeDatabase, _initTestDatabase, createTask } from '../src/db.js';
+import {
+  _closeDatabase,
+  _initTestDatabase,
+  createTask,
+  insertPilotJourneyEvent,
+} from '../src/db.js';
 import {
   buildToolReliabilityDoctorReport,
   refreshToolReliabilityFromCurrentTruth,
@@ -58,6 +63,27 @@ const integrationReport: IntegrationDoctorReport = {
 
 async function main(): Promise<void> {
   _initTestDatabase();
+  insertPilotJourneyEvent({
+    eventId: 'work-cockpit-live-proof',
+    journeyId: 'work_cockpit',
+    channel: 'telegram',
+    groupFolder: 'main',
+    chatJid: 'tg:main',
+    routeKey: 'dashboard_open',
+    systemsInvolved: ['work_cockpit'],
+    outcome: 'success',
+    blockerOwner: 'none',
+    handoffCreated: false,
+    missionCreated: false,
+    threadSaved: false,
+    reminderCreated: false,
+    librarySaved: false,
+    currentWorkRef: 'cursor:verified',
+    summaryText: 'Work cockpit opened with verified current work.',
+    startedAt: new Date(now.getTime() - 10_000).toISOString(),
+    completedAt: new Date(now.getTime() - 9_000).toISOString(),
+    durationMs: 1000,
+  });
   const report = await refreshToolReliabilityFromCurrentTruth({
     now,
     providers: [provider],
@@ -72,6 +98,11 @@ async function main(): Promise<void> {
     (item) => item.subjectId === 'provider:brave_search',
   );
   assert.equal(braveRollup?.currentHealth, 'blocked');
+  assert.equal(
+    doctor.rollups.find((item) => item.subjectId === 'tool:work_cockpit')
+      ?.currentHealth,
+    'healthy',
+  );
   const scored = scoreRouteCandidate({
     routeKey: 'cognitive_executive.research',
     baseConfidence: 0.9,

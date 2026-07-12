@@ -47,6 +47,28 @@ function seedReflection(turnId: string): void {
 seedReflection('self-improve-turn-1');
 seedReflection('self-improve-turn-2');
 
+function seedSuccessfulRoute(turnId: string, fallbackUsed = false): void {
+  const context = beginCognitiveExecutiveTurn({
+    rawAsk: 'what am I forgetting',
+    channel: 'telegram',
+    groupFolder: 'main',
+    turnId,
+    now: new Date(now),
+  });
+  assert.ok(context, 'successful executive context should be created');
+  finalizeCognitiveExecutiveTurn({
+    context,
+    status: 'handled',
+    resultSummary: 'Loose-ends route answered with grounded context.',
+    nextAction: 'Use the suggested next step if it still matters.',
+    fallbackUsed,
+    now: new Date(now),
+  });
+}
+
+seedSuccessfulRoute('self-improve-success-1', true);
+seedSuccessfulRoute('self-improve-success-2', true);
+
 const externalProvider: ToolReliabilityRollup = {
   subjectId: 'provider:test_blocked_cloud',
   updatedAt: now,
@@ -122,7 +144,7 @@ const feedback: ResponseFeedbackRecord = {
   feedbackId: 'self-improve-feedback-1',
   createdAt: now,
   updatedAt: now,
-  status: 'open',
+  status: 'captured',
   classification: 'repo_side_rough_edge',
   channel: 'telegram',
   groupFolder: 'main',
@@ -150,6 +172,12 @@ const feedback: ResponseFeedbackRecord = {
   operatorNote: null,
 };
 upsertResponseFeedback(feedback);
+upsertResponseFeedback({
+  ...feedback,
+  feedbackId: 'self-improve-feedback-resolved',
+  status: 'resolved_locally',
+  capabilityId: 'daily.resolved_fixture',
+});
 
 const report = buildAutonomousImprovementLabReport({
   now: new Date(now),
@@ -213,11 +241,27 @@ assert.ok(
   ),
   'repeated executive friction should become a hypothesis',
 );
+assert.equal(
+  report.hypotheses.some(
+    (item) =>
+      item.sourceSignalKind === 'executive_reflection' &&
+      item.affectedCapability === 'daily.loose_ends',
+  ),
+  false,
+  'successful deterministic fallback answers must not be mined as friction',
+);
 assert.ok(
   report.hypotheses.some(
     (item) => item.sourceSignalKind === 'response_feedback',
   ),
   'repo-side feedback should become a hypothesis',
+);
+assert.equal(
+  report.hypotheses.some(
+    (item) => item.affectedCapability === 'daily.resolved_fixture',
+  ),
+  false,
+  'resolved feedback must stay in validation/proof status instead of creating another patch hypothesis',
 );
 assert.doesNotMatch(
   JSON.stringify(report),

@@ -9,15 +9,25 @@ import {
   buildResponseFeedbackRemediationPrompt,
   classifyResponseFeedbackCandidate,
   getResponseFeedbackRouteRegressionCoverage,
+  mapMessageReactionToFeedbackAction,
+  parseNaturalResponseFeedbackVerdict,
   parseResponseFeedbackAction,
   refreshResponseFeedbackRecordTruth,
   resolveResponseFeedbackIfRouteRegressionCovered,
   resolvePendingResponseFeedbackApproval,
+  resolveNaturalResponseFeedbackVerdict,
   selectResponseFeedbackLane,
   selectResponseFeedbackRetryLane,
   shouldCancelPendingContinuationForFeedback,
 } from './response-feedback.js';
-import { _initTestDatabase, upsertResponseFeedback } from './db.js';
+import {
+  _initTestDatabase,
+  getResponseFeedback,
+  getResponseFeedbackByMessage,
+  listRedactedRegressionFixtures,
+  pruneUnreviewedBlueBubblesFeedbackLinks,
+  upsertResponseFeedback,
+} from './db.js';
 import type { ResponseFeedbackRecord } from './types.js';
 
 function buildRecord(
@@ -75,6 +85,14 @@ describe('response feedback helpers', () => {
     });
     expect(
       parseResponseFeedbackAction(
+        'feedback:11111111-2222-3333-4444-555555555555:accept',
+      ),
+    ).toEqual({
+      feedbackId: '11111111-2222-3333-4444-555555555555',
+      operation: 'accept',
+    });
+    expect(
+      parseResponseFeedbackAction(
         'feedback:11111111-2222-3333-4444-555555555555:commit_push',
       ),
     ).toEqual({
@@ -98,6 +116,223 @@ describe('response feedback helpers', () => {
       feedbackId: '11111111-2222-3333-4444-555555555555',
       operation: 'approve_landing',
     });
+  });
+
+  it('recognizes explicit natural verdicts and distinguishes completion proof', () => {
+    expect(parseNaturalResponseFeedbackVerdict('Great, that worked!')).toEqual({
+      action: 'accept',
+      completionVerified: true,
+    });
+    expect(
+      parseNaturalResponseFeedbackVerdict('@Andrea, that was helpful. Thanks'),
+    ).toEqual({
+      action: 'accept',
+      completionVerified: false,
+    });
+    expect(parseNaturalResponseFeedbackVerdict("That didn't work.")).toEqual({
+      action: 'capture',
+      completionVerified: false,
+    });
+    expect(parseNaturalResponseFeedbackVerdict('Not helpful')).toEqual({
+      action: 'capture',
+      completionVerified: false,
+    });
+  });
+
+  it('refuses ambiguous questions, sentiment, mixed feedback, and action language', () => {
+    for (const text of [
+      'did that work?',
+      'thanks',
+      'good',
+      'yes',
+      'that worked but change the reminder',
+      'that worked, send it',
+      'perfect, go ahead',
+      'that was helpful, push it',
+    ]) {
+      expect(parseNaturalResponseFeedbackVerdict(text)).toBeNull();
+    }
+  });
+
+  it('binds a natural verdict only to the latest fresh unreviewed response', () => {
+    const older = buildRecord({
+      feedbackId: '22222222-2222-3333-4444-555555555555',
+      createdAt: '2026-05-02T04:00:00.000Z',
+      updatedAt: '2026-05-02T04:00:00.000Z',
+    });
+    const newest = buildRecord({
+      feedbackId: '33333333-2222-3333-4444-555555555555',
+      createdAt: '2026-05-02T04:10:00.000Z',
+      updatedAt: '2026-05-02T04:10:00.000Z',
+    });
+
+    expect(
+      resolveNaturalResponseFeedbackVerdict('that worked', [older, newest], {
+        now: new Date('2026-05-02T04:12:00.000Z'),
+      }),
+    ).toMatchObject({
+      state: 'ready',
+      completionVerified: true,
+      action: {
+        feedbackId: '33333333-2222-3333-4444-555555555555',
+        operation: 'accept',
+      },
+    });
+  });
+
+  it('does not backfill natural feedback onto stale, reviewed, or verdict-shaped rows', () => {
+    expect(
+      resolveNaturalResponseFeedbackVerdict(
+        'that was helpful',
+        [
+          buildRecord({
+            createdAt: '2026-05-02T03:00:00.000Z',
+            updatedAt: '2026-05-02T04:11:00.000Z',
+          }),
+        ],
+        {
+          now: new Date('2026-05-02T04:12:00.000Z'),
+          maxAgeMs: 30 * 60 * 1000,
+        },
+      ).state,
+    ).toBe('stale');
+    expect(
+      resolveNaturalResponseFeedbackVerdict(
+        'that was helpful',
+        [buildRecord({ status: 'accepted' })],
+        { now: new Date('2026-04-14T00:02:00.000Z') },
+      ).state,
+    ).toBe('not_found');
+    expect(
+      resolveNaturalResponseFeedbackVerdict(
+        'that was helpful',
+        [buildRecord({ originalUserText: 'that worked' })],
+        { now: new Date('2026-04-14T00:02:00.000Z') },
+      ).state,
+    ).toBe('not_found');
+  });
+
+  it('maps only unambiguous native reactions into owner feedback', () => {
+    expect(
+      mapMessageReactionToFeedbackAction({
+        kind: 'like',
+        removed: false,
+        targetMessageId: 'bb:message-1',
+      }),
+    ).toBe('accept');
+    expect(
+      mapMessageReactionToFeedbackAction({
+        kind: 'love',
+        removed: false,
+        targetMessageId: 'bb:message-1',
+      }),
+    ).toBe('accept');
+    expect(
+      mapMessageReactionToFeedbackAction({
+        kind: 'dislike',
+        removed: false,
+        targetMessageId: 'bb:message-1',
+      }),
+    ).toBe('capture');
+    for (const kind of ['laugh', 'emphasize', 'question'] as const) {
+      expect(
+        mapMessageReactionToFeedbackAction({
+          kind,
+          removed: false,
+          targetMessageId: 'bb:message-1',
+        }),
+      ).toBeNull();
+    }
+    expect(
+      mapMessageReactionToFeedbackAction({
+        kind: 'like',
+        removed: true,
+        targetMessageId: 'bb:message-1',
+      }),
+    ).toBeNull();
+  });
+
+  it('persists privacy-safe BlueBubbles feedback links in the existing ledger', async () => {
+    const record = buildRecord({
+      channel: 'bluebubbles',
+      chatJid: 'bb:self-thread',
+      platformMessageId: 'bb:assistant-message-1',
+      originalUserText: '[private BlueBubbles request omitted]',
+      assistantReplyText: '[private BlueBubbles response omitted]',
+    });
+    upsertResponseFeedback(record);
+
+    const refreshed = getResponseFeedbackByMessage({
+      chatJid: 'bb:self-thread',
+      platformMessageId: 'bb:assistant-message-1',
+    });
+    expect(refreshed).toMatchObject({
+      channel: 'bluebubbles',
+      chatJid: 'bb:self-thread',
+      platformMessageId: 'bb:assistant-message-1',
+      originalUserText: '[private BlueBubbles request omitted]',
+      assistantReplyText: '[private BlueBubbles response omitted]',
+    });
+  });
+
+  it('bounds untouched BlueBubbles links while preserving reviewed outcomes', () => {
+    const records = [
+      buildRecord({
+        feedbackId: '10000000-0000-0000-0000-000000000001',
+        channel: 'bluebubbles',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      ...[2, 3, 4].map((suffix) =>
+        buildRecord({
+          feedbackId: `10000000-0000-0000-0000-00000000000${suffix}`,
+          channel: 'bluebubbles',
+          createdAt: `2026-04-0${suffix}T00:00:00.000Z`,
+          updatedAt: `2026-04-0${suffix}T00:00:00.000Z`,
+        }),
+      ),
+      buildRecord({
+        feedbackId: '10000000-0000-0000-0000-000000000005',
+        channel: 'bluebubbles',
+        status: 'accepted',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      buildRecord({
+        feedbackId: '10000000-0000-0000-0000-000000000006',
+        channel: 'bluebubbles',
+        issueId: 'issue-reviewed',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }),
+    ];
+    records.forEach(upsertResponseFeedback);
+
+    expect(
+      pruneUnreviewedBlueBubblesFeedbackLinks({
+        now: new Date('2026-04-10T00:00:00.000Z'),
+        maxAgeDays: 30,
+        keepRecent: 2,
+      }),
+    ).toBe(2);
+    expect(
+      getResponseFeedback('10000000-0000-0000-0000-000000000001'),
+    ).toBeUndefined();
+    expect(
+      getResponseFeedback('10000000-0000-0000-0000-000000000002'),
+    ).toBeUndefined();
+    expect(
+      getResponseFeedback('10000000-0000-0000-0000-000000000003'),
+    ).toBeDefined();
+    expect(
+      getResponseFeedback('10000000-0000-0000-0000-000000000004'),
+    ).toBeDefined();
+    expect(
+      getResponseFeedback('10000000-0000-0000-0000-000000000005'),
+    ).toBeDefined();
+    expect(
+      getResponseFeedback('10000000-0000-0000-0000-000000000006'),
+    ).toBeDefined();
   });
 
   it('binds natural-language approval to the freshest pending cloud repair', () => {
@@ -237,7 +472,7 @@ describe('response feedback helpers', () => {
     ).toBe('not_found');
   });
 
-  it('appends a not-helpful row without clobbering existing inline rows', () => {
+  it('appends helpful and not-helpful review actions without clobbering existing inline rows', () => {
     const options = appendResponseFeedbackInlineRow(
       {
         inlineActionRows: [[{ label: 'Keep', actionId: 'keep' }]],
@@ -248,6 +483,10 @@ describe('response feedback helpers', () => {
     expect(options.inlineActionRows).toEqual([
       [{ label: 'Keep', actionId: 'keep' }],
       [
+        {
+          label: 'Helpful',
+          actionId: 'feedback:11111111-2222-3333-4444-555555555555:accept',
+        },
         {
           label: 'Not helpful',
           actionId: 'feedback:11111111-2222-3333-4444-555555555555:capture',
@@ -495,6 +734,32 @@ describe('response feedback helpers', () => {
     expect(
       getResponseFeedbackRouteRegressionCoverage(
         buildRecord({
+          routeKey: 'direct_assistant',
+          capabilityId: null,
+          responseSource: 'container_agent',
+          originalUserText: 'What LLMs do you have?',
+        }),
+      ),
+    ).toMatchObject({
+      coverageKey: 'assistant.model_inventory.runtime_truth',
+      evidenceCommand: expect.stringContaining('model-self-knowledge.test.ts'),
+    });
+    expect(
+      getResponseFeedbackRouteRegressionCoverage(
+        buildRecord({
+          routeKey: 'research.topic',
+          capabilityId: 'research.topic',
+          responseSource: 'research_openai',
+          originalUserText:
+            'What is the Chinese LLM you have integration with?',
+        }),
+      ),
+    ).toMatchObject({
+      coverageKey: 'assistant.model_inventory.runtime_truth',
+    });
+    expect(
+      getResponseFeedbackRouteRegressionCoverage(
+        buildRecord({
           routeKey: 'calendar_local_fast_path',
           capabilityId: 'calendar.local_lookup',
           responseSource: 'local_companion',
@@ -535,6 +800,35 @@ describe('response feedback helpers', () => {
           routeKey: 'direct_assistant',
           capabilityId: null,
           responseSource: 'container_agent',
+          originalUserText: '[Photo] This is my meal plan',
+        }),
+      ),
+    ).toMatchObject({
+      coverageKey: 'media.inbound.current_attachment_analysis',
+      evidenceCommand: expect.stringContaining('media-analysis.test.ts'),
+    });
+    expect(
+      getResponseFeedbackRouteRegressionCoverage(
+        buildRecord({
+          routeKey: 'communication.summarize_thread',
+          capabilityId: 'communication.summarize_thread',
+          responseSource: 'local_companion',
+          originalUserText:
+            'Use BlueBubbles and summarize my texts for the past 48 hours',
+        }),
+      ),
+    ).toMatchObject({
+      coverageKey: 'communication.all_synced_messages.bounded_history',
+      evidenceCommand: expect.stringContaining(
+        'thread-summary-routing.test.ts',
+      ),
+    });
+    expect(
+      getResponseFeedbackRouteRegressionCoverage(
+        buildRecord({
+          routeKey: 'direct_assistant',
+          capabilityId: null,
+          responseSource: 'container_agent',
           originalUserText: 'hello',
         }),
       ),
@@ -564,6 +858,14 @@ describe('response feedback helpers', () => {
     expect(resolved.record.linkedRefs).toMatchObject({
       feedbackRouteCoverageKey: 'research.local.no_provider_boilerplate',
       feedbackRouteCoverageResolvedAt: '2026-06-29T18:00:00.000Z',
+    });
+    expect(
+      listRedactedRegressionFixtures({ limit: 10 }).find(
+        (fixture) => fixture.sourceFeedbackId === covered.feedbackId,
+      ),
+    ).toMatchObject({
+      remediationStatus: 'fixed',
+      containsRawUserText: false,
     });
 
     const uncovered = buildRecord({

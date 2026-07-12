@@ -16,7 +16,10 @@ import {
   withProcessFetch,
 } from './evaluation-execution.js';
 import { runIntelligenceRegressionHarness } from './intelligence-regression-harness.js';
-import { runSyntheticUserGauntlet } from './shadow-improvement-runner.js';
+import {
+  runExecutedSyntheticCapabilityGauntlet,
+  runSyntheticUserGauntlet,
+} from './shadow-improvement-runner.js';
 import { runStrategyEvals } from './strategy-evals.js';
 
 export const AGI_SCORECARD_DIMENSIONS = [
@@ -257,7 +260,7 @@ function recommendationsFor(
     .sort((a, b) => a.score - b.score)[0];
   if (dogfoodBottleneck) {
     recs.push(
-      `Close dogfood proof bottleneck ${dogfoodBottleneck.scenarioId}: ${dogfoodBottleneck.detail}`,
+      `Improve dogfood completion ${dogfoodBottleneck.scenarioId}: ${dogfoodBottleneck.detail}`,
     );
   }
   if (mode === 'deterministic') {
@@ -281,6 +284,7 @@ export async function runAgiScorecard(
     const operation = () =>
       runAgiScorecardWithDatabase(opts, {
         persistSyntheticState: openedTestDatabase,
+        isolatedStorage: openedTestDatabase,
       });
     return policy.mode === 'deterministic'
       ? await withProcessFetch(loopbackOnlyFetch(globalThis.fetch), operation)
@@ -292,7 +296,7 @@ export async function runAgiScorecard(
 
 async function runAgiScorecardWithDatabase(
   opts: RunAgiScorecardOptions = {},
-  state: { persistSyntheticState: boolean },
+  state: { persistSyntheticState: boolean; isolatedStorage: boolean },
 ): Promise<AgiScorecardResult> {
   const startedAt = Date.now();
   const generatedAt = opts.generatedAt ?? new Date().toISOString();
@@ -300,6 +304,7 @@ async function runAgiScorecardWithDatabase(
   const includeDogfood = opts.includeDogfood !== false;
   const runId = runIdFor(generatedAt, mode);
   const scenarioResults: AgiScorecardScenarioResult[] = [];
+  const pendingActions: string[] = [];
 
   const agi = runAgiGauntlet({
     now: generatedAt,
@@ -408,6 +413,28 @@ async function runAgiScorecardWithDatabase(
     });
   }
 
+  if (state.isolatedStorage) {
+    const executedSynthetic = await runExecutedSyntheticCapabilityGauntlet({
+      now: new Date(generatedAt),
+      isolatedStorage: true,
+    });
+    for (const result of executedSynthetic.results) {
+      scenarioResults.push({
+        suite: 'synthetic-executed',
+        scenarioId: result.scenarioId,
+        title: `${result.capabilityId} executed response`,
+        dimension: dimensionForSyntheticScenario(result.scenarioId),
+        passed: result.status === 'passed',
+        score: roundScore(result.totalScore),
+        detail: result.detail,
+      });
+    }
+  } else {
+    pendingActions.push(
+      'Executed synthetic capability evaluation skipped because isolated test storage was unavailable.',
+    );
+  }
+
   if (includeDogfood) {
     const dogfood = runDogfoodGauntlet({ now: generatedAt, persist: false });
     for (const result of dogfood.scenarios) {
@@ -419,8 +446,8 @@ async function runAgiScorecardWithDatabase(
         title: result.prompt,
         dimension: 'taskCompletion',
         passed: !blockingFailure,
-        score: roundScore(result.scorecard.overall),
-        detail: `${result.status}: ${result.nextAction}`,
+        score: roundScore(result.scorecard.taskCompletion),
+        detail: `${result.status}/${result.completionStatus}: ${result.nextAction}`,
         traceIds: result.evidenceIds,
       });
     }
@@ -467,7 +494,7 @@ async function runAgiScorecardWithDatabase(
     dimensionScores,
     tracePaths: [],
     toolsUsed: suiteNames,
-    pendingActions: [],
+    pendingActions,
     latencyMs: Date.now() - startedAt,
     estimatedCostUsd,
     costCapUsd: executionPolicy.maxCostUsd,

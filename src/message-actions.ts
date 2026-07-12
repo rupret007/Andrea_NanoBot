@@ -25,6 +25,8 @@ import {
 import { handleLifeThreadCommand } from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
 import { runActionPreflight } from './action-preflight.js';
+import { recordCognitiveOwnerReview } from './cognitive-kernel.js';
+import { recordAssistantMetric } from './personal-assistant-metrics.js';
 import {
   syncOutcomeFromMessageActionRecord,
   syncOutcomeFromReminderTask,
@@ -257,6 +259,7 @@ function normalizeMessageActionCommand(
 ): string {
   return normalizeText(value)
     .replace(/^@andrea\b[,:;!?-]*/i, '')
+    .replace(/[.!?]+$/, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -895,6 +898,95 @@ function parseTarget(record: MessageActionRecord): MessageTarget {
 
 function parseLinkedRefs(record: MessageActionRecord): MessageActionLinkedRefs {
   return parseJsonSafe<MessageActionLinkedRefs>(record.linkedRefsJson, {});
+}
+
+export function linkMessageActionCognitiveContext(params: {
+  messageActionId: string;
+  cognitiveRunId?: string | null;
+  cognitiveSkillId?: string | null;
+  cognitiveTrajectoryId?: string | null;
+  agentRuntimeRunId?: string | null;
+  now?: Date;
+}): MessageActionRecord | undefined {
+  const action = getMessageAction(params.messageActionId);
+  if (!action) return undefined;
+  const linkedRefs: MessageActionLinkedRefs = {
+    ...parseLinkedRefs(action),
+    ...(params.cognitiveRunId ? { cognitiveRunId: params.cognitiveRunId } : {}),
+    ...(params.cognitiveSkillId
+      ? { cognitiveSkillId: params.cognitiveSkillId }
+      : {}),
+    ...(params.cognitiveTrajectoryId
+      ? { cognitiveTrajectoryId: params.cognitiveTrajectoryId }
+      : {}),
+    ...(params.agentRuntimeRunId
+      ? { agentRuntimeRunId: params.agentRuntimeRunId }
+      : {}),
+  };
+  updateMessageAction(action.messageActionId, {
+    linkedRefsJson: JSON.stringify(linkedRefs),
+    lastUpdatedAt: (params.now || new Date()).toISOString(),
+  });
+  return getMessageAction(action.messageActionId) || action;
+}
+
+function recordMessageActionOwnerDecision(params: {
+  action: MessageActionRecord;
+  verdict: 'accepted' | 'rejected';
+  decisionKind: string;
+  now: Date;
+}): MessageActionRecord {
+  let action = params.action;
+  if (isBlueBubblesProofDrillAction(action)) {
+    return action;
+  }
+  const linkedRefs = parseLinkedRefs(action);
+  const review = recordCognitiveOwnerReview({
+    runId: linkedRefs.cognitiveRunId,
+    feedbackId: `message-action-${action.messageActionId}`,
+    verdict: params.verdict,
+    reviewedAt: params.now.toISOString(),
+  });
+  if (review.signalId) {
+    const nextLinkedRefs: MessageActionLinkedRefs = {
+      ...linkedRefs,
+      cognitiveOwnerReviewSignalId: review.signalId,
+    };
+    updateMessageAction(action.messageActionId, {
+      linkedRefsJson: JSON.stringify(nextLinkedRefs),
+      lastUpdatedAt: params.now.toISOString(),
+    });
+    action = getMessageAction(action.messageActionId) || action;
+  }
+  recordAssistantMetric({
+    eventId: `message-action:${action.messageActionId}:owner-review`,
+    groupFolder: action.groupFolder,
+    kind:
+      params.verdict === 'accepted'
+        ? 'recommendation_accepted'
+        : 'recommendation_rejected',
+    metadata: {
+      outcomeId: action.messageActionId,
+      decisionKind: params.decisionKind,
+      cognitiveRunId: linkedRefs.cognitiveRunId || '',
+      channel: action.targetChannel,
+    },
+    now: params.now,
+  });
+  if (params.verdict === 'accepted' && action.sendStatus === 'sent') {
+    recordAssistantMetric({
+      eventId: `message-action:${action.messageActionId}:completion`,
+      groupFolder: action.groupFolder,
+      kind: 'completion_verified',
+      metadata: {
+        outcomeId: action.messageActionId,
+        decisionKind: params.decisionKind,
+        cognitiveRunId: linkedRefs.cognitiveRunId || '',
+      },
+      now: params.now,
+    });
+  }
+  return action;
 }
 
 function parseLinkedRefsRecord(
@@ -2799,12 +2891,18 @@ export async function applyMessageActionOperation(
     });
     const updatedAction = getMessageAction(action.messageActionId) || action;
     syncOutcomeFromMessageActionRecord(updatedAction, now);
+    const reviewedAction = recordMessageActionOwnerDecision({
+      action: updatedAction,
+      verdict: 'rejected',
+      decisionKind: 'skip',
+      now,
+    });
     return {
       handled: true,
-      action: updatedAction,
+      action: reviewedAction,
       replyText: 'Andrea: Okay, I left that unsent.',
       presentation: buildMessageActionPresentation(
-        updatedAction,
+        reviewedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
       ),
     };
@@ -2812,12 +2910,18 @@ export async function applyMessageActionOperation(
 
   if (operation.kind === 'cancel_deferred') {
     const cancelled = cancelScheduledSend({ action, now });
+    const reviewedAction = recordMessageActionOwnerDecision({
+      action: cancelled.updatedAction,
+      verdict: 'rejected',
+      decisionKind: 'cancel_deferred',
+      now,
+    });
     return {
       handled: true,
-      action: cancelled.updatedAction,
+      action: reviewedAction,
       replyText: cancelled.replyText,
       presentation: buildMessageActionPresentation(
-        cancelled.updatedAction,
+        reviewedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
       ),
     };
@@ -2828,12 +2932,18 @@ export async function applyMessageActionOperation(
       action,
       now,
     });
+    const reviewedAction = recordMessageActionOwnerDecision({
+      action: kept.updatedAction,
+      verdict: 'accepted',
+      decisionKind: 'keep_draft',
+      now,
+    });
     return {
       handled: true,
-      action: kept.updatedAction,
+      action: reviewedAction,
       replyText: kept.replyText,
       presentation: buildMessageActionPresentation(
-        kept.updatedAction,
+        reviewedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
       ),
     };
@@ -2880,14 +2990,20 @@ export async function applyMessageActionOperation(
       mode: 'thread_saved',
     });
     syncOutcomeFromMessageActionRecord(updatedAction, now);
+    const reviewedAction = recordMessageActionOwnerDecision({
+      action: updatedAction,
+      verdict: 'accepted',
+      decisionKind: 'save_to_thread',
+      now,
+    });
     return {
       handled: Boolean(result.handled),
-      action: updatedAction,
+      action: reviewedAction,
       replyText:
         result.responseText ||
         'Andrea: I saved that under the thread. The message is still unsent.',
       presentation: buildMessageActionPresentation(
-        updatedAction,
+        reviewedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
       ),
     };
@@ -2902,13 +3018,19 @@ export async function applyMessageActionOperation(
         action,
         now,
       });
+      const reviewedAction = recordMessageActionOwnerDecision({
+        action: updatedAction,
+        verdict: 'accepted',
+        decisionKind: 'defer',
+        now,
+      });
       return {
         handled: true,
-        action: updatedAction,
+        action: reviewedAction,
         replyText:
           'Andrea: BlueBubbles proof drill deferred decision is recorded.',
         presentation: buildMessageActionPresentation(
-          updatedAction,
+          reviewedAction,
           deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
         ),
       };
@@ -2921,12 +3043,18 @@ export async function applyMessageActionOperation(
         deps,
         now,
       });
+      const reviewedAction = recordMessageActionOwnerDecision({
+        action: scheduled.updatedAction,
+        verdict: 'accepted',
+        decisionKind: 'defer',
+        now,
+      });
       return {
         handled: true,
-        action: scheduled.updatedAction,
+        action: reviewedAction,
         replyText: scheduled.replyText,
         presentation: buildMessageActionPresentation(
-          scheduled.updatedAction,
+          reviewedAction,
           deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
         ),
       };
@@ -2938,14 +3066,20 @@ export async function applyMessageActionOperation(
       now,
       reminderOnly: false,
     });
+    const reviewedAction = recordMessageActionOwnerDecision({
+      action: deferred.updatedAction,
+      verdict: 'accepted',
+      decisionKind: 'defer',
+      now,
+    });
     return {
       handled: true,
-      action: deferred.updatedAction,
+      action: reviewedAction,
       replyText: eligibility.reason
         ? `${deferred.replyText}\n\nAndrea: I kept this as a reminder because ${eligibility.reason.toLowerCase()}`
         : deferred.replyText,
       presentation: buildMessageActionPresentation(
-        deferred.updatedAction,
+        reviewedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
       ),
     };
@@ -2962,12 +3096,18 @@ export async function applyMessageActionOperation(
       now,
       reminderOnly: true,
     });
+    const reviewedAction = recordMessageActionOwnerDecision({
+      action: deferred.updatedAction,
+      verdict: 'accepted',
+      decisionKind: 'remind_instead',
+      now,
+    });
     return {
       handled: true,
-      action: deferred.updatedAction,
+      action: reviewedAction,
       replyText: deferred.replyText,
       presentation: buildMessageActionPresentation(
-        deferred.updatedAction,
+        reviewedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
       ),
     };
@@ -2988,12 +3128,18 @@ export async function applyMessageActionOperation(
       now,
       hasExplicitUserApproval: true,
     });
+    const reviewedAction = recordMessageActionOwnerDecision({
+      action: executed.action,
+      verdict: 'accepted',
+      decisionKind: operation.kind,
+      now,
+    });
     return {
       handled: true,
-      action: executed.action,
+      action: reviewedAction,
       replyText: executed.replyText,
       presentation: buildMessageActionPresentation(
-        executed.action,
+        reviewedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
       ),
     };

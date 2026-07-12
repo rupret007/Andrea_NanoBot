@@ -62,18 +62,21 @@ function privacyJson(): string {
 
 function evidenceJson(ids: string[]): string {
   return JSON.stringify(
-    Array.from(
-      new Set(
-        ids
-          .map((id) =>
-            String(id)
-              .replace(/[^A-Za-z0-9:_-]+/g, '_')
-              .slice(0, 180),
-          )
-          .filter(Boolean),
-      ),
-    ).slice(0, 40),
+    Array.from(new Set(ids.map(safeEvidenceId).filter(Boolean))).slice(0, 40),
   );
+}
+
+function safeEvidenceId(value: string): string {
+  const id = String(value || '').trim();
+  if (!id) return '';
+  if (
+    /(?:\bbb:|\b(?:iMessage|SMS);|\+\d[\d\s().-]{7,}\d|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b)/i.test(
+      id,
+    )
+  ) {
+    return hashId('evidence', id);
+  }
+  return id.replace(/[^A-Za-z0-9:_-]+/g, '_').slice(0, 180);
 }
 
 function envHas(key: string, env: Record<string, string | undefined>): boolean {

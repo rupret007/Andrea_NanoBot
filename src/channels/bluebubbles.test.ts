@@ -13,6 +13,7 @@ import {
 } from '../bluebubbles-monitor-state.js';
 import {
   _initTestDatabase,
+  getAllChats,
   listRecentMessagesForChat,
   storeChatMetadata,
   storeMessage,
@@ -289,6 +290,93 @@ describe('BlueBubbles channel', () => {
     expect(normalized?.message.reply_to_id).toBe('bb:msg-0');
   });
 
+  it('treats a BlueBubbles `;+;` GUID as a group even when stale metadata says direct', () => {
+    const chatJid = 'bb:iMessage;+;chat123456';
+    const normalized = normalizeBlueBubblesIncomingMessage({
+      type: 'new-message',
+      data: {
+        guid: 'group-message-1',
+        chats: [
+          {
+            guid: 'iMessage;+;chat123456',
+            displayName: 'Family chat',
+            isGroup: false,
+            participants: [{ address: '+15550001111' }],
+          },
+        ],
+        handle: { address: '+15550001111' },
+        text: 'Can everyone make it tonight?',
+        dateCreated: '2026-04-05T12:00:00.000Z',
+      },
+    });
+    expect(normalized?.chat.isGroup).toBe(true);
+
+    storeChatMetadata(
+      chatJid,
+      '2026-04-05T12:00:00.000Z',
+      'Family chat',
+      'bluebubbles',
+      false,
+    );
+    expect(getAllChats().find((chat) => chat.jid === chatJid)?.is_group).toBe(
+      1,
+    );
+  });
+
+  it('normalizes native tapbacks as structured control signals without copying the target text', () => {
+    const normalized = normalizeBlueBubblesIncomingMessage({
+      type: 'new-message',
+      data: {
+        guid: 'reaction-1',
+        chatGuid: 'chat-1',
+        chat: {
+          guid: 'chat-1',
+          participants: [{ address: '+15551234567' }],
+        },
+        message: {
+          guid: 'reaction-1',
+          associatedMessageGuid: 'bp:0/assistant-message-1',
+          associatedMessageType: 'like',
+          handle: { address: '+15551234567' },
+          dateCreated: '2026-04-05T12:00:00.000Z',
+        },
+      },
+    });
+
+    expect(normalized?.message.content).toBe('[BlueBubbles reaction: like]');
+    expect(normalized?.message.reaction).toEqual({
+      kind: 'like',
+      removed: false,
+      targetMessageId: 'bb:assistant-message-1',
+    });
+    expect(normalized?.message.content).not.toContain('assistant-message-1');
+  });
+
+  it('normalizes numeric tapback removals but leaves them ineligible for learning', () => {
+    const normalized = normalizeBlueBubblesIncomingMessage({
+      type: 'new-message',
+      data: {
+        guid: 'reaction-2',
+        associatedMessageGuid: 'p:0/assistant-message-2',
+        associatedMessageType: 3002,
+        handle: { address: '+15551234567' },
+        chats: [
+          {
+            guid: 'chat-1',
+            participants: [{ address: '+15551234567' }],
+          },
+        ],
+        dateCreated: '2026-04-05T12:00:00.000Z',
+      },
+    });
+
+    expect(normalized?.message.reaction).toEqual({
+      kind: 'dislike',
+      removed: true,
+      targetMessageId: 'bb:assistant-message-2',
+    });
+  });
+
   it('normalizes image-only BlueBubbles messages with attachment metadata', () => {
     const normalized = normalizeBlueBubblesIncomingMessage({
       type: 'new-message',
@@ -362,7 +450,7 @@ describe('BlueBubbles channel', () => {
         chat: expect.objectContaining({
           chatGuid: 'iMessage;+;chat463000721308415525',
           displayName: 'Candace',
-          isGroup: false,
+          isGroup: true,
           chatIdentifier: '+15551234567',
           lastAddressedHandle: 'candace@example.com',
           service: 'iMessage',
@@ -2766,6 +2854,120 @@ describe('BlueBubbles channel', () => {
         ]),
       );
     } finally {
+      await apiStub.close();
+    }
+  });
+
+  it('hydrates bounded recent history across synced chats on explicit review', async () => {
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: 1,
+                url: 'http://127.0.0.1:0/bluebubbles/webhook?secret=hook-secret',
+                events: ['new-message'],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/message')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                guid: 'recent-across-1',
+                text: 'Can you confirm dinner?',
+                senderName: 'Candace',
+                handle: { address: '+15551234567', displayName: 'Candace' },
+                dateCreated: '2026-07-11T18:00:00.000Z',
+                isFromMe: false,
+                chats: [
+                  {
+                    guid: 'iMessage;-;+15551234567',
+                    displayName: 'Candace',
+                    isGroup: false,
+                    participants: [{ address: '+15551234567' }],
+                  },
+                ],
+              },
+              {
+                guid: 'recent-across-2',
+                text: 'Practice moved to seven.',
+                senderName: 'Rad Dad',
+                handle: { address: '+15557654321', displayName: 'Rad Dad' },
+                dateCreated: '2026-07-11T18:05:00.000Z',
+                isFromMe: false,
+                chats: [
+                  {
+                    guid: 'iMessage;+;rad-dad',
+                    displayName: 'Rad Dad',
+                    isGroup: true,
+                    participants: [{ address: '+15557654321' }],
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      const first = await channel.primeRecentHistory({ limit: 50 });
+      const repeated = await channel.primeRecentHistory({ limit: 50 });
+
+      expect(first).toEqual({ storedCount: 2, totalCount: 2 });
+      expect(repeated).toEqual({ storedCount: 0, totalCount: 2 });
+      expect(
+        listRecentMessagesForChat('bb:iMessage;-;+15551234567', 4),
+      ).toContainEqual(
+        expect.objectContaining({
+          id: 'bb:recent-across-1',
+          content: 'Can you confirm dinner?',
+        }),
+      );
+      expect(
+        listRecentMessagesForChat('bb:iMessage;+;rad-dad', 4),
+      ).toContainEqual(
+        expect.objectContaining({
+          id: 'bb:recent-across-2',
+          content: 'Practice moved to seven.',
+        }),
+      );
+    } finally {
+      await channel.disconnect();
       await apiStub.close();
     }
   });

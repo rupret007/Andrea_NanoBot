@@ -1,8 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { buildCouncilEvidenceScorecard } from './council-evidence.js';
+import {
+  buildCouncilEvidencePack,
+  buildCouncilEvidenceScorecard,
+  summarizeCouncilEvidencePack,
+} from './council-evidence.js';
+import { _closeDatabase, _initTestDatabase } from './db.js';
 
 describe('council evidence scorecard', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  afterEach(() => {
+    _closeDatabase();
+  });
+
   it('summarizes evidence coverage and applies deterministic penalties', () => {
     const scorecard = buildCouncilEvidenceScorecard({
       requiredEvidence: 'strong',
@@ -60,5 +73,52 @@ describe('council evidence scorecard', () => {
       notApplicable: 1,
     });
     expect(scorecard.confidencePenalty).toBeGreaterThan(0);
+  });
+
+  it('does not inject personal-assistant memory into research evidence', () => {
+    const pack = buildCouncilEvidencePack({
+      goal: 'Compare public approaches to provider observability.',
+      taskFamily: 'research',
+      groupFolder: 'main',
+      requiredEvidence: 'partial',
+      rawContentPolicy: 'sanitized_snippets',
+      correlationId: 'research-scope-proof',
+    });
+
+    expect(pack.cards.some((card) => card.sourceClass === 'local_memory')).toBe(
+      false,
+    );
+    expect(pack.gaps).not.toContain('no_profile_facts');
+    expect(pack.gaps).not.toContain('no_active_life_threads');
+    expect(
+      pack.cards.some((card) =>
+        card.evidenceId.startsWith('integration_status:'),
+      ),
+    ).toBe(false);
+  });
+
+  it('keeps the intent and privacy policy in bounded evidence summaries', () => {
+    const pack = buildCouncilEvidencePack({
+      goal: 'Review local runtime status.',
+      taskFamily: 'operator',
+      groupFolder: 'main',
+      correlationId: 'bounded-summary-proof',
+    });
+    for (let index = 0; index < 10; index += 1) {
+      pack.cards.push({
+        evidenceId: `extra:${index}`,
+        sourceClass: 'runtime',
+        evidenceGrade: 'partial',
+        freshness: 'fresh',
+        sensitivity: 'normal',
+        summary: `Extra runtime evidence ${index}.`,
+        sourcePriority: 120,
+      });
+    }
+
+    const summary = summarizeCouncilEvidencePack(pack);
+
+    expect(summary).toContain('intent:bounded-summary-proof');
+    expect(summary).toContain('policy:sanitized_snippets');
   });
 });

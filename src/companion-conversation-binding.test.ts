@@ -130,7 +130,7 @@ describe('companion conversation binding', () => {
 
   it('can scope BlueBubbles to contacts-only when chat metadata says the chat is 1:1', () => {
     storeChatMetadata(
-      'bb:iMessage;+;chat-dm',
+      'bb:iMessage;-;+14695550123',
       '2026-04-07T18:00:00.000Z',
       'Candace',
       'bluebubbles',
@@ -146,7 +146,7 @@ describe('companion conversation binding', () => {
 
     expect(
       resolveCompanionConversationBinding(
-        'bb:iMessage;+;chat-dm',
+        'bb:iMessage;-;+14695550123',
         registeredGroups,
         {
           bluebubbles: {

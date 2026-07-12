@@ -101,6 +101,33 @@ function feedback(
 }
 
 describe('integration doctor', () => {
+  it('reports critical disk pressure as guided manual degradation, never auto-repair', () => {
+    const report = buildIntegrationDoctorReport({
+      now: new Date('2026-05-04T12:00:00.000Z'),
+      truth: truth({
+        hostHealth: surface('degraded_but_usable', {
+          blocker: 'Host disk pressure is critical: 742 MiB available.',
+          blockerOwner: 'external',
+          detail: 'Disk capacity is critical.',
+          nextAction:
+            'Review owner-controlled disk usage; do not delete Docker automatically.',
+        }),
+      }),
+      providers: [],
+      recentFeedback: [],
+    });
+
+    const runtime = report.statuses.find(
+      (status) => status.integrationId === 'runtime_backend',
+    );
+    expect(runtime).toMatchObject({
+      state: 'degraded_but_usable',
+      repairability: 'guided_manual',
+      blockerOwner: 'external',
+    });
+    expect(runtime?.safeActions.join(' ')).toContain('never delete Docker');
+  });
+
   it('classifies Google Calendar invalid_grant as needs_auth', () => {
     const report = buildIntegrationDoctorReport({
       now: new Date('2026-05-04T12:00:00.000Z'),
@@ -251,6 +278,12 @@ describe('integration doctor', () => {
     expect(parseIntegrationFixTarget('fix google calendar')).toBe(
       'google calendar',
     );
+    expect(
+      parseIntegrationFixTarget('BlueBubbles seems down, can you check?'),
+    ).toBe('bluebubbles');
+    expect(
+      isIntegrationDoctorRequest('BlueBubbles seems down, can you check?'),
+    ).toBe(true);
     expect(buildIntegrationFixGuidance('calendar')).toContain(
       'Google Calendar needs OAuth reauth',
     );

@@ -161,6 +161,36 @@ export type BlueBubblesCompanionIngressDecision =
     }
   | { kind: 'ignored_chatter' };
 
+export function shouldPreferBlueBubblesLocalMessageActionFollowup(input: {
+  conversationChannel: string;
+  requestRoute: string;
+  operationRecognized: boolean;
+  actionResolved: boolean;
+  policyAllows: boolean;
+}): boolean {
+  return (
+    input.conversationChannel === 'bluebubbles' &&
+    (input.requestRoute === 'direct_assistant' ||
+      input.requestRoute === 'protected_assistant') &&
+    input.operationRecognized &&
+    input.actionResolved &&
+    input.policyAllows
+  );
+}
+
+export function shouldHandleBlueBubblesProofDrillLocally(input: {
+  conversationChannel: string;
+  requestRoute: string;
+  text: string;
+}): boolean {
+  return (
+    input.conversationChannel === 'bluebubbles' &&
+    (input.requestRoute === 'direct_assistant' ||
+      input.requestRoute === 'protected_assistant') &&
+    isBlueBubblesProofDrillStartRequest(input.text)
+  );
+}
+
 function resolveBlueBubblesContinuationChatJids(chatJid: string): string[] {
   const candidates = expandBlueBubblesLogicalSelfThreadJids(chatJid);
   if (candidates.length === 0) {

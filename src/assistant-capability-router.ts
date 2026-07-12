@@ -38,6 +38,10 @@ export interface AssistantCapabilityMatch {
   continuation?: boolean;
 }
 
+export interface AssistantCapabilityRequestContext {
+  currentAttachmentKinds?: string[];
+}
+
 export interface AssistantCapabilityContinuationSubjectData {
   activeCapabilityId?: AssistantCapabilityId;
   activeTaskKind?: string;
@@ -621,7 +625,9 @@ function matchHouseholdPrompt(
     lower === 'anything for the family i am forgetting' ||
     lower === "anything for the family i'm forgetting" ||
     lower === 'what do i need to follow up on at home' ||
-    lower === 'what does the family have going on'
+    lower === 'what does the family have going on' ||
+    lower === 'what is still open around the house' ||
+    lower === "what's still open around the house"
   ) {
     return {
       capabilityId: 'household.family_open_loops',
@@ -859,6 +865,30 @@ function matchCommunicationPrompt(
   normalized: string,
 ): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
+  if (
+    /^(?:review|show|list|manage) (?:my )?(?:communication |conversation |message |chat )?identit(?:y|ies|y links)\b/.test(
+      lower,
+    ) ||
+    /^(?:who are my recent (?:message|chat|conversation) threads|which conversations need identity review)\b/.test(
+      lower,
+    ) ||
+    /^(?:confirm|link) (?:the )?(?:identity|conversation|thread|chat)(?: for)? .+ (?:is|to) .+/.test(
+      lower,
+    ) ||
+    /^(?:dismiss|skip) (?:the )?(?:identity|conversation identity|thread identity|chat identity)(?: for)? .+/.test(
+      lower,
+    ) ||
+    /^(?:clear|reset|forget) (?:the )?(?:identity review|identity link|conversation identity|thread identity)(?: for)? .+/.test(
+      lower,
+    )
+  ) {
+    return {
+      capabilityId: 'communication.manage_identity_links',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'matched explicit communication identity review phrasing',
+    };
+  }
   const recentTextReviewIntent = parseRecentTextReviewIntent(normalized);
   if (recentTextReviewIntent) {
     return {
@@ -1209,6 +1239,7 @@ function matchKnowledgePrompt(
     /^what do i already know about\b/.test(lower) ||
     /^use only my saved material\b/.test(lower) ||
     /^just use my saved material\b/.test(lower) ||
+    /^research this using what (?:we|i) already saved\b/.test(lower) ||
     /^combine my notes with outside research\b/.test(lower)
   ) {
     return {
@@ -1253,7 +1284,10 @@ function matchKnowledgePrompt(
   return null;
 }
 
-function matchMediaPrompt(normalized: string): AssistantCapabilityMatch | null {
+function matchMediaPrompt(
+  normalized: string,
+  context: AssistantCapabilityRequestContext = {},
+): AssistantCapabilityMatch | null {
   const lower = normalized.toLowerCase();
   if (
     /\b(?:analy[sz]e|look at|describe|what'?s in|what is in|read|inspect)\b/.test(
@@ -1274,20 +1308,42 @@ function matchMediaPrompt(normalized: string): AssistantCapabilityMatch | null {
     /^(?:generate|create|make) (?:an |a )?image of (.+)$|^draw (.+)$|^illustrate (.+)$/i,
   );
   const prompt = match?.[1] || match?.[2] || match?.[3];
-  if (!prompt) return null;
-  return {
-    capabilityId: 'media.image_generate',
-    normalizedText: normalized,
-    canonicalText: prompt.trim(),
-    reason: 'matched bounded image-generation phrasing',
-  };
+  if (prompt) {
+    return {
+      capabilityId: 'media.image_generate',
+      normalizedText: normalized,
+      canonicalText: prompt.trim(),
+      reason: 'matched bounded image-generation phrasing',
+    };
+  }
+  if (
+    (context.currentAttachmentKinds || []).some((kind) =>
+      ['image', 'video'].includes(kind),
+    )
+  ) {
+    return {
+      capabilityId: 'media.analyze',
+      normalizedText: normalized,
+      canonicalText: normalized,
+      reason: 'current message contains analyzable inbound media',
+    };
+  }
+  return null;
 }
 
 export function matchAssistantCapabilityRequest(
   text: string,
+  context: AssistantCapabilityRequestContext = {},
 ): AssistantCapabilityMatch | null {
   const normalized = normalizeText(text);
   if (!normalized) return null;
+  const currentMediaMatch = matchMediaPrompt(normalized, context);
+  if (
+    currentMediaMatch?.reason ===
+    'current message contains analyzable inbound media'
+  ) {
+    return currentMediaMatch;
+  }
   if (looksLikeCalendarLookupPrompt(normalized)) {
     return null;
   }
@@ -1314,7 +1370,7 @@ export function matchAssistantCapabilityRequest(
     matchPulsePrompt(normalized) ||
     matchRitualPrompt(normalized) ||
     matchKnowledgePrompt(normalized) ||
-    matchMediaPrompt(normalized) ||
+    currentMediaMatch ||
     (isSharedResearchRequest(normalized)
       ? {
           capabilityId: inferResearchCapabilityId(normalized),

@@ -46,6 +46,7 @@ export interface MiniMaxTextRequest {
   modelTier?: 'fast' | 'complex';
   maxTokens?: number;
   temperature?: number;
+  timeoutMs?: number;
 }
 
 export interface MiniMaxTextResult {
@@ -245,7 +246,7 @@ export async function runMiniMaxAnthropicText(
           },
         ],
       }),
-      signal: providerRequestSignal(),
+      signal: providerRequestSignal(request.timeoutMs),
     });
   } catch (err) {
     return {

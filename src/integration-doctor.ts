@@ -366,20 +366,28 @@ function normalizeProvider(
 }
 
 function normalizeRuntime(truth: FieldTrialOperatorTruth): IntegrationStatus {
+  const live = truth.hostHealth.proofState === 'live_proven';
+  const operatorResourcePressure =
+    truth.hostHealth.proofState === 'degraded_but_usable' &&
+    /disk|capacity|space|inode/i.test(
+      `${truth.hostHealth.blocker} ${truth.hostHealth.detail}`,
+    );
   return surfaceStatus({
     integrationId: 'runtime_backend',
     label: 'Runtime backend',
     truth: truth.hostHealth,
     credentialState: 'not_required',
-    transportState:
-      truth.hostHealth.proofState === 'live_proven' ? 'healthy' : 'degraded',
-    repairability:
-      truth.hostHealth.proofState === 'live_proven'
-        ? 'status_only'
+    transportState: live ? 'healthy' : 'degraded',
+    repairability: live
+      ? 'status_only'
+      : operatorResourcePressure
+        ? 'guided_manual'
         : 'repo_fix_available',
     safeActions: [
       'Run npm run services:status.',
-      'If degraded, run npm run services:restart and platform determinism-audit after tests pass.',
+      operatorResourcePressure
+        ? 'Review disk usage with the owner; never delete Docker or user data automatically.'
+        : 'If degraded, run npm run services:restart and platform determinism-audit after tests pass.',
     ],
   });
 }
@@ -721,6 +729,7 @@ export function buildIntegrationFixGuidance(id: string): string {
 export function isIntegrationDoctorRequest(message: string): boolean {
   const normalized = message.trim().toLowerCase();
   return (
+    parseIntegrationFixTarget(message) !== null ||
     /\b(?:what'?s|what is|whats)\s+(?:still\s+)?broken\b/.test(normalized) ||
     /\bintegration(?:s)?\s+(?:status|doctor|health)\b/.test(normalized) ||
     /\b(?:fix|repair)\s+integrations?\b/.test(normalized)
@@ -732,5 +741,9 @@ export function parseIntegrationFixTarget(message: string): string | null {
   const match = normalized.match(
     /\b(?:fix|repair|doctor)\s+(google calendar|calendar|bluebubbles|imessage|messages|alexa|self repair|repairs|repair|telegram|providers?|openai|minimax|brave)\b/,
   );
-  return match ? match[1] : null;
+  if (match) return match[1] || null;
+  const degraded = normalized.match(
+    /\b(google calendar|calendar|bluebubbles|imessage|messages|alexa|telegram|openai|minimax|brave)\s+(?:seems|looks|is)\s+(?:down|broken|offline|unhealthy|unavailable)\b/,
+  );
+  return degraded ? degraded[1] || null : null;
 }

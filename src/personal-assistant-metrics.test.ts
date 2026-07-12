@@ -6,6 +6,7 @@ import {
   compareAssistantMetricsToBaseline,
   createRegressionFixtureFromFeedback,
   recordAssistantMetric,
+  recordReviewedRecommendationOutcome,
   saveReviewedAssistantMetricBaseline,
   saveAssistantMetricBaseline,
 } from './personal-assistant-metrics.js';
@@ -81,6 +82,29 @@ describe('personal assistant metrics', () => {
     });
   });
 
+  it('uses route coverage and fixed status for locally resolved feedback', () => {
+    const fixture = createRegressionFixtureFromFeedback({
+      feedbackId: 'feedback-model-inventory',
+      status: 'resolved_locally',
+      classification: 'repo_side_rough_edge',
+      routeKey: 'direct_assistant',
+      capabilityId: null,
+      blockerClass: null,
+      originalUserText: 'What LLMs do you have?',
+      assistantReplyText: 'private old reply',
+    } as unknown as ResponseFeedbackRecord);
+
+    expect(fixture).toMatchObject({
+      sourceFeedbackId: 'feedback-model-inventory',
+      remediationStatus: 'fixed',
+      containsRawUserText: false,
+    });
+    expect(fixture.expectedBehavior).toContain(
+      'deterministic runtime inventory',
+    );
+    expect(JSON.stringify(fixture)).not.toContain('private old reply');
+  });
+
   it('refuses to save an empty or premature reviewed baseline', () => {
     const snapshot = buildAssistantMetricSnapshot({ groupFolder: 'main' });
     expect(() => saveReviewedAssistantMetricBaseline(snapshot)).toThrow(
@@ -119,5 +143,57 @@ describe('personal assistant metrics', () => {
       buildAssistantMetricSnapshot({ groupFolder: 'main' })
         .reviewedOutcomeCount,
     ).toBe(1);
+  });
+
+  it('upserts a stable review event instead of counting repeated button delivery twice', () => {
+    for (let index = 0; index < 2; index += 1) {
+      recordAssistantMetric({
+        eventId: 'feedback:feedback-1:review',
+        groupFolder: 'main',
+        kind: 'recommendation_accepted',
+        metadata: { outcomeId: 'feedback-1' },
+      });
+    }
+    const snapshot = buildAssistantMetricSnapshot({ groupFolder: 'main' });
+    expect(snapshot.sampleCount).toBe(1);
+    expect(snapshot.reviewedOutcomeCount).toBe(1);
+    expect(snapshot.acceptedRecommendationRate).toBe(1);
+  });
+
+  it('records explicit worked feedback as one reviewed outcome plus verified completion', () => {
+    recordReviewedRecommendationOutcome({
+      feedbackId: 'feedback-worked',
+      groupFolder: 'main',
+      verdict: 'accepted',
+      completionVerified: true,
+      metadata: { routeKey: 'assistant.daily' },
+      now: new Date('2026-05-02T04:12:00.000Z'),
+    });
+    const snapshot = buildAssistantMetricSnapshot({
+      groupFolder: 'main',
+      now: new Date('2026-05-02T04:13:00.000Z'),
+    });
+    expect(snapshot).toMatchObject({
+      sampleCount: 2,
+      reviewedOutcomeCount: 1,
+      acceptedRecommendationRate: 1,
+      verifiedCompletionRate: 1,
+    });
+  });
+
+  it('records rejected feedback and correction without inflating reviewed outcomes', () => {
+    recordReviewedRecommendationOutcome({
+      feedbackId: 'feedback-rejected',
+      groupFolder: 'main',
+      verdict: 'rejected',
+      correction: true,
+    });
+    const snapshot = buildAssistantMetricSnapshot({ groupFolder: 'main' });
+    expect(snapshot).toMatchObject({
+      sampleCount: 2,
+      reviewedOutcomeCount: 1,
+      acceptedRecommendationRate: 0,
+      correctionOverrideRate: 1,
+    });
   });
 });

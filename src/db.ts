@@ -127,6 +127,7 @@ import {
   WorldModelSnapshot,
   WorldModelVerificationNeed,
   CommunicationSignalRecord,
+  CommunicationIdentityReviewRecord,
   CommunicationThreadRecord,
   CompanionHandoffRecord,
   DelegationRuleRecord,
@@ -256,9 +257,33 @@ import {
 import type { CalendarAutomationRecordInput } from './calendar-automations.js';
 
 let db: Database.Database;
+let databaseMode: 'uninitialized' | 'production' | 'isolated_test' =
+  'uninitialized';
+
+const DATABASE_BUSY_TIMEOUT_MS = 15_000;
+
+function openDatabaseConnection(dbPath: string): Database.Database {
+  const database = new Database(dbPath, {
+    timeout: DATABASE_BUSY_TIMEOUT_MS,
+  });
+  database.pragma(`busy_timeout = ${DATABASE_BUSY_TIMEOUT_MS}`);
+  database.pragma('foreign_keys = ON');
+  if (dbPath !== ':memory:') {
+    // Operator diagnostics and the long-running assistant legitimately share
+    // this database. WAL lets readers proceed during writes; the bounded busy
+    // timeout makes short writer overlap retry instead of failing immediately.
+    database.pragma('journal_mode = WAL');
+    database.pragma('synchronous = NORMAL');
+  }
+  return database;
+}
 
 export function isDatabaseInitialized(): boolean {
   return Boolean(db && db.open);
+}
+
+export function isIsolatedTestDatabase(): boolean {
+  return isDatabaseInitialized() && databaseMode === 'isolated_test';
 }
 
 function redactStoredCognitiveMetadata(value: string, limit = 12000): string {
@@ -744,6 +769,24 @@ function createSchema(database: Database.Database): void {
       ON communication_threads(group_folder, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_communication_threads_group_followup
       ON communication_threads(group_folder, tracking_mode, followup_state, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS communication_identity_reviews (
+      thread_id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      decision TEXT NOT NULL CHECK(decision IN ('confirmed', 'dismissed')),
+      linked_subject_id TEXT,
+      source_channel TEXT NOT NULL CHECK(source_channel IN ('telegram', 'bluebubbles')),
+      source_summary TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      reviewed_at TEXT NOT NULL,
+      CHECK(
+        (decision = 'confirmed' AND linked_subject_id IS NOT NULL)
+        OR (decision = 'dismissed' AND linked_subject_id IS NULL)
+      ),
+      FOREIGN KEY (thread_id) REFERENCES communication_threads(id) ON DELETE CASCADE,
+      FOREIGN KEY (linked_subject_id) REFERENCES profile_subjects(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_communication_identity_reviews_group
+      ON communication_identity_reviews(group_folder, reviewed_at DESC);
     CREATE TABLE IF NOT EXISTS communication_signals (
       id TEXT PRIMARY KEY,
       communication_thread_id TEXT NOT NULL,
@@ -1318,6 +1361,7 @@ function createSchema(database: Database.Database): void {
       channel TEXT,
       task_family TEXT NOT NULL,
       turn_id TEXT,
+      run_origin TEXT NOT NULL DEFAULT 'live',
       goal_summary TEXT NOT NULL,
       selected_skill_id TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -5145,15 +5189,80 @@ function createSchema(database: Database.Database): void {
   database.exec(
     `CREATE INDEX IF NOT EXISTS idx_council_run_ledger_origin_updated ON council_run_ledger(run_origin, updated_at DESC)`,
   );
+  try {
+    database.exec(
+      `ALTER TABLE cognitive_runs ADD COLUMN run_origin TEXT NOT NULL DEFAULT 'live'`,
+    );
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !/duplicate column name:\s*run_origin/i.test(error.message)
+    ) {
+      throw error;
+    }
+  }
+  database.exec(`
+    UPDATE cognitive_runs
+    SET run_origin = 'replay'
+    WHERE run_origin = 'live'
+      AND (
+        turn_id LIKE 'cog-bench-%'
+        OR run_id LIKE 'cog:cog-bench-%'
+      )
+  `);
+  database.exec(`
+    UPDATE cognitive_runs
+    SET run_origin = 'replay'
+    WHERE run_origin = 'live'
+      AND run_id IN (
+        SELECT json_extract(linked_refs_json, '$.cognitiveRunId')
+        FROM message_actions
+        WHERE source_key LIKE 'bluebubbles-proof-drill:self-thread:%'
+          AND json_valid(linked_refs_json)
+          AND json_extract(linked_refs_json, '$.cognitiveRunId') IS NOT NULL
+      )
+  `);
+  database.exec(`
+    UPDATE cognitive_runs
+    SET run_origin = 'replay'
+    WHERE run_origin = 'live'
+      AND turn_id IN (
+        SELECT m.id
+        FROM messages m
+        JOIN message_actions ma
+          ON ma.presentation_chat_jid = m.chat_jid
+        WHERE ma.source_key LIKE 'bluebubbles-proof-drill:self-thread:%'
+          AND m.is_bot_message = 0
+          AND m.timestamp >= ma.created_at
+          AND m.timestamp <= ma.last_updated_at
+          AND lower(m.content) LIKE '%send it later tonight%'
+      )
+  `);
+  database.exec(`
+    UPDATE council_run_ledger
+    SET run_origin = 'replay'
+    WHERE run_origin = 'live'
+      AND council_run_id IN (
+        SELECT council_run_id
+        FROM cognitive_runs
+        WHERE run_origin = 'replay'
+          AND council_run_id IS NOT NULL
+      )
+  `);
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_cognitive_runs_origin_updated ON cognitive_runs(run_origin, updated_at DESC)`,
+  );
 }
 
 export function initDatabase(): void {
   const dbPath = path.join(STORE_DIR, 'messages.db');
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-  db = new Database(dbPath);
-  db.pragma('foreign_keys = ON');
+  db = openDatabaseConnection(dbPath);
+  databaseMode = 'production';
   createSchema(db);
+  reconcileRecentTextSelfSubjectLinks();
+  reconcileBlueBubblesGroupChatMetadata();
   pruneMediaCache();
   prunePilotLoopData(
     new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -5189,9 +5298,11 @@ export function initDatabase(): void {
 
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
-  db = new Database(':memory:');
-  db.pragma('foreign_keys = ON');
+  db = openDatabaseConnection(':memory:');
+  databaseMode = 'isolated_test';
   createSchema(db);
+  reconcileRecentTextSelfSubjectLinks();
+  reconcileBlueBubblesGroupChatMetadata();
   prunePilotLoopData(
     new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
   );
@@ -5223,14 +5334,17 @@ export function _initTestDatabase(): void {
 
 /** @internal - for migration tests only. Opens a disposable database path. */
 export function _initTestDatabaseAtPath(dbPath: string): void {
-  db = new Database(dbPath);
-  db.pragma('foreign_keys = ON');
+  db = openDatabaseConnection(dbPath);
+  databaseMode = 'isolated_test';
   createSchema(db);
+  reconcileRecentTextSelfSubjectLinks();
+  reconcileBlueBubblesGroupChatMetadata();
 }
 
 /** @internal - for tests only. */
 export function _closeDatabase(): void {
   db.close();
+  databaseMode = 'uninitialized';
 }
 
 /**
@@ -5264,7 +5378,15 @@ export function storeChatMetadata(
   isGroup?: boolean,
 ): void {
   const ch = channel ?? null;
-  const group = isGroup === undefined ? null : isGroup ? 1 : 0;
+  const blueBubblesGroupGuid =
+    chatJid.startsWith('bb:') && /^bb:[^;]+;\+;/.test(chatJid);
+  const group = blueBubblesGroupGuid
+    ? 1
+    : isGroup === undefined
+      ? null
+      : isGroup
+        ? 1
+        : 0;
   const normalizedName = normalizeChatNameCandidate(name);
   const safeName =
     normalizedName && !isPlaceholderChatName(chatJid, normalizedName)
@@ -5335,6 +5457,19 @@ export function getAllChats(): ChatInfo[] {
   `,
     )
     .all() as ChatInfo[];
+}
+
+/** Correct legacy BlueBubbles `;+;` group GUIDs without touching timestamps. */
+export function reconcileBlueBubblesGroupChatMetadata(): number {
+  if (!isDatabaseInitialized()) return 0;
+  return db
+    .prepare(
+      `UPDATE chats
+       SET is_group = 1
+       WHERE jid LIKE 'bb:%;+;%'
+         AND COALESCE(is_group, 0) <> 1`,
+    )
+    .run().changes;
 }
 
 /**
@@ -9683,6 +9818,79 @@ function mapCommunicationThreadRow(row: {
   };
 }
 
+/**
+ * A former recent-text matcher could treat the profile's self subject (for
+ * example, display name "you") as a person mentioned in ordinary message
+ * language. Repair assistant-inferred recent-text rows and BlueBubbles rows
+ * that actually contain a self-subject link; recent-text review may reuse an
+ * older UUID thread rather than create its deterministic ID. User-confirmed
+ * and unrelated communication records are never changed, and timestamps
+ * remain untouched.
+ */
+export function reconcileRecentTextSelfSubjectLinks(): number {
+  if (!isDatabaseInitialized()) return 0;
+  const selfIds = new Set(
+    (
+      db
+        .prepare(`SELECT id FROM profile_subjects WHERE kind = 'self'`)
+        .all() as Array<{ id: string }>
+    ).map((row) => row.id),
+  );
+  if (selfIds.size === 0) return 0;
+  const personIds = new Set(
+    (
+      db
+        .prepare(`SELECT id FROM profile_subjects WHERE kind = 'person'`)
+        .all() as Array<{ id: string }>
+    ).map((row) => row.id),
+  );
+  const rows = db
+    .prepare(
+      `SELECT id, linked_subject_ids_json, linked_life_thread_ids_json
+       FROM communication_threads
+       WHERE inference_state = 'assistant_inferred'
+         AND (
+           id LIKE 'communication_thread:recent_text:%'
+           OR channel = 'bluebubbles'
+         )`,
+    )
+    .all() as Array<{
+    id: string;
+    linked_subject_ids_json: string;
+    linked_life_thread_ids_json: string;
+  }>;
+  const update = db.prepare(
+    `UPDATE communication_threads
+     SET linked_subject_ids_json = ?, linked_life_thread_ids_json = ?
+     WHERE id = ?`,
+  );
+  const reconcile = db.transaction(() => {
+    let changed = 0;
+    for (const row of rows) {
+      const subjectIds = parseCommunicationStringArray(
+        row.linked_subject_ids_json,
+      );
+      if (!subjectIds.some((subjectId) => selfIds.has(subjectId))) continue;
+      const retainedSubjectIds = subjectIds.filter(
+        (subjectId) => !selfIds.has(subjectId),
+      );
+      const hasRetainedPerson = retainedSubjectIds.some((subjectId) =>
+        personIds.has(subjectId),
+      );
+      const retainedLifeThreadIds = hasRetainedPerson
+        ? parseCommunicationStringArray(row.linked_life_thread_ids_json)
+        : [];
+      changed += update.run(
+        JSON.stringify(retainedSubjectIds),
+        JSON.stringify(retainedLifeThreadIds),
+        row.id,
+      ).changes;
+    }
+    return changed;
+  });
+  return reconcile();
+}
+
 export function upsertCommunicationThread(
   record: CommunicationThreadRecord,
 ): void {
@@ -9901,7 +10109,237 @@ export function updateCommunicationThread(
   return true;
 }
 
+function mapCommunicationIdentityReviewRow(row: {
+  thread_id: string;
+  group_folder: string;
+  decision: CommunicationIdentityReviewRecord['decision'];
+  linked_subject_id: string | null;
+  source_channel: CommunicationIdentityReviewRecord['sourceChannel'];
+  source_summary: string;
+  created_at: string;
+  reviewed_at: string;
+}): CommunicationIdentityReviewRecord {
+  return {
+    threadId: row.thread_id,
+    groupFolder: row.group_folder,
+    decision: row.decision,
+    linkedSubjectId: row.linked_subject_id,
+    sourceChannel: row.source_channel,
+    sourceSummary: row.source_summary,
+    createdAt: row.created_at,
+    reviewedAt: row.reviewed_at,
+  };
+}
+
+export function getCommunicationIdentityReview(
+  threadId: string,
+): CommunicationIdentityReviewRecord | undefined {
+  const row = db
+    .prepare(
+      `SELECT *
+       FROM communication_identity_reviews
+       WHERE thread_id = ?
+       LIMIT 1`,
+    )
+    .get(threadId) as
+    | {
+        thread_id: string;
+        group_folder: string;
+        decision: CommunicationIdentityReviewRecord['decision'];
+        linked_subject_id: string | null;
+        source_channel: CommunicationIdentityReviewRecord['sourceChannel'];
+        source_summary: string;
+        created_at: string;
+        reviewed_at: string;
+      }
+    | undefined;
+  if (!row || !isValidGroupFolder(row.group_folder)) return undefined;
+  return mapCommunicationIdentityReviewRow(row);
+}
+
+export function listCommunicationIdentityReviewsForGroup(
+  groupFolder: string,
+): CommunicationIdentityReviewRecord[] {
+  assertValidGroupFolder(groupFolder);
+  const rows = db
+    .prepare(
+      `SELECT *
+       FROM communication_identity_reviews
+       WHERE group_folder = ?
+       ORDER BY reviewed_at DESC`,
+    )
+    .all(groupFolder) as Array<{
+    thread_id: string;
+    group_folder: string;
+    decision: CommunicationIdentityReviewRecord['decision'];
+    linked_subject_id: string | null;
+    source_channel: CommunicationIdentityReviewRecord['sourceChannel'];
+    source_summary: string;
+    created_at: string;
+    reviewed_at: string;
+  }>;
+  return rows.map(mapCommunicationIdentityReviewRow);
+}
+
+export type CommunicationIdentityDecisionResult =
+  | {
+      ok: true;
+      thread: CommunicationThreadRecord;
+      review: CommunicationIdentityReviewRecord | null;
+    }
+  | {
+      ok: false;
+      reason:
+        | 'thread_not_found'
+        | 'group_mismatch'
+        | 'person_not_found'
+        | 'person_required'
+        | 'review_not_found'
+        | 'existing_link_conflict';
+    };
+
+/**
+ * Atomically applies or clears a user identity decision. The review owns only
+ * the subject link it created, so clearing or replacing it cannot erase an
+ * independently learned/user-managed relationship link.
+ */
+export function decideCommunicationThreadIdentity(params: {
+  groupFolder: string;
+  threadId: string;
+  decision: 'confirmed' | 'dismissed' | 'clear';
+  subjectId?: string | null;
+  sourceChannel: CommunicationIdentityReviewRecord['sourceChannel'];
+  now?: string;
+}): CommunicationIdentityDecisionResult {
+  assertValidGroupFolder(params.groupFolder);
+  const transact = db.transaction((): CommunicationIdentityDecisionResult => {
+    const thread = getCommunicationThread(params.threadId);
+    if (!thread) return { ok: false, reason: 'thread_not_found' };
+    if (thread.groupFolder !== params.groupFolder) {
+      return { ok: false, reason: 'group_mismatch' };
+    }
+    const previous = getCommunicationIdentityReview(params.threadId);
+    if (params.decision === 'clear' && !previous) {
+      return { ok: false, reason: 'review_not_found' };
+    }
+
+    let subjectId: string | null = null;
+    if (params.decision === 'confirmed') {
+      if (!params.subjectId) return { ok: false, reason: 'person_required' };
+      const subject = getProfileSubject(params.subjectId);
+      if (
+        !subject ||
+        subject.groupFolder !== params.groupFolder ||
+        subject.kind !== 'person' ||
+        subject.disabledAt
+      ) {
+        return { ok: false, reason: 'person_not_found' };
+      }
+      subjectId = subject.id;
+    }
+
+    if (
+      params.decision === 'dismissed' &&
+      !previous &&
+      thread.inferenceState !== 'assistant_inferred' &&
+      thread.linkedSubjectIds.length > 0
+    ) {
+      return { ok: false, reason: 'existing_link_conflict' };
+    }
+    const replacingAssistantInference =
+      !previous &&
+      thread.inferenceState === 'assistant_inferred' &&
+      (params.decision === 'confirmed' || params.decision === 'dismissed');
+    const linkedSubjectIds = (
+      replacingAssistantInference ? [] : thread.linkedSubjectIds
+    ).filter((id) => id !== previous?.linkedSubjectId);
+    if (subjectId && !linkedSubjectIds.includes(subjectId)) {
+      linkedSubjectIds.push(subjectId);
+    }
+    const previousReviewSubjectChanged = Boolean(
+      previous?.linkedSubjectId && previous.linkedSubjectId !== subjectId,
+    );
+    const linkedLifeThreadIds =
+      replacingAssistantInference ||
+      ((params.decision === 'clear' || params.decision === 'dismissed') &&
+        linkedSubjectIds.length === 0) ||
+      (previousReviewSubjectChanged &&
+        thread.linkedSubjectIds.filter((id) => id !== previous?.linkedSubjectId)
+          .length === 0)
+        ? []
+        : thread.linkedLifeThreadIds;
+    const now = params.now || new Date().toISOString();
+    const threadChanged =
+      linkedSubjectIds.length !== thread.linkedSubjectIds.length ||
+      linkedSubjectIds.some(
+        (id, index) => id !== thread.linkedSubjectIds[index],
+      ) ||
+      linkedLifeThreadIds.length !== thread.linkedLifeThreadIds.length ||
+      linkedLifeThreadIds.some(
+        (id, index) => id !== thread.linkedLifeThreadIds[index],
+      );
+    if (threadChanged) {
+      upsertCommunicationThread({
+        ...thread,
+        linkedSubjectIds,
+        linkedLifeThreadIds,
+        inferenceState:
+          thread.inferenceState === 'user_confirmed'
+            ? 'user_confirmed'
+            : 'mixed',
+        updatedAt: now,
+      });
+    }
+
+    if (params.decision === 'clear') {
+      db.prepare(
+        `DELETE FROM communication_identity_reviews WHERE thread_id = ?`,
+      ).run(params.threadId);
+      return {
+        ok: true,
+        thread: getCommunicationThread(params.threadId)!,
+        review: null,
+      };
+    }
+
+    const createdAt = previous?.createdAt || now;
+    db.prepare(
+      `INSERT INTO communication_identity_reviews (
+         thread_id, group_folder, decision, linked_subject_id,
+         source_channel, source_summary, created_at, reviewed_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(thread_id) DO UPDATE SET
+         group_folder = excluded.group_folder,
+         decision = excluded.decision,
+         linked_subject_id = excluded.linked_subject_id,
+         source_channel = excluded.source_channel,
+         source_summary = excluded.source_summary,
+         reviewed_at = excluded.reviewed_at`,
+    ).run(
+      params.threadId,
+      params.groupFolder,
+      params.decision,
+      subjectId,
+      params.sourceChannel,
+      params.decision === 'confirmed'
+        ? 'Owner explicitly confirmed an existing profile-person link.'
+        : 'Owner explicitly dismissed a single-person identity link.',
+      createdAt,
+      now,
+    );
+    return {
+      ok: true,
+      thread: getCommunicationThread(params.threadId)!,
+      review: getCommunicationIdentityReview(params.threadId)!,
+    };
+  });
+  return transact();
+}
+
 export function deleteCommunicationThread(id: string): boolean {
+  db.prepare(
+    'DELETE FROM communication_identity_reviews WHERE thread_id = ?',
+  ).run(id);
   db.prepare(
     'DELETE FROM communication_signals WHERE communication_thread_id = ?',
   ).run(id);
@@ -10679,6 +11117,52 @@ export function getResponseFeedbackByMessage(params: {
   return mapResponseFeedbackRow(row);
 }
 
+/**
+ * BlueBubbles feedback links retain no private message bodies, but they are
+ * still bounded metadata. Preserve reviewed/issue-linked outcomes and prune
+ * only untouched reaction targets after their useful review window.
+ */
+export function pruneUnreviewedBlueBubblesFeedbackLinks(
+  params: {
+    now?: Date;
+    maxAgeDays?: number;
+    keepRecent?: number;
+  } = {},
+): number {
+  const now = params.now || new Date();
+  const maxAgeDays = Math.max(1, params.maxAgeDays || 30);
+  const keepRecent = Math.max(1, params.keepRecent || 500);
+  const cutoff = new Date(
+    now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const unreviewed = `
+    channel = 'bluebubbles'
+    AND issue_id IS NULL
+    AND status <> 'accepted'
+  `;
+  const remove = db.transaction(() => {
+    const expired = db
+      .prepare(
+        `DELETE FROM response_feedback WHERE ${unreviewed} AND created_at < ?`,
+      )
+      .run(cutoff).changes;
+    const overflow = db
+      .prepare(
+        `DELETE FROM response_feedback
+         WHERE feedback_id IN (
+           SELECT feedback_id
+           FROM response_feedback
+           WHERE ${unreviewed}
+           ORDER BY created_at DESC
+           LIMIT -1 OFFSET ?
+         )`,
+      )
+      .run(keepRecent).changes;
+    return expired + overflow;
+  });
+  return remove();
+}
+
 export function getResponseFeedbackByRemediationJob(params: {
   laneId: NonNullable<ResponseFeedbackRecord['remediationLaneId']>;
   jobId: string;
@@ -11242,7 +11726,14 @@ export function insertAssistantMetricEvent(
 ): void {
   assertValidGroupFolder(record.groupFolder);
   db.prepare(
-    `INSERT INTO assistant_metric_events (event_id, group_folder, kind, value, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO assistant_metric_events (event_id, group_folder, kind, value, metadata_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(event_id) DO UPDATE SET
+       group_folder = excluded.group_folder,
+       kind = excluded.kind,
+       value = excluded.value,
+       metadata_json = excluded.metadata_json,
+       created_at = excluded.created_at`,
   ).run(
     record.eventId,
     record.groupFolder,
@@ -11562,6 +12053,7 @@ function mapCognitiveRunRow(row: {
   channel: string | null;
   task_family: string;
   turn_id: string | null;
+  run_origin: CognitiveRunRecord['runOrigin'];
   goal_summary: string;
   selected_skill_id: string;
   status: CognitiveRunRecord['status'];
@@ -11588,6 +12080,7 @@ function mapCognitiveRunRow(row: {
     channel: row.channel,
     taskFamily: row.task_family,
     turnId: row.turn_id,
+    runOrigin: row.run_origin,
     goalSummary: row.goal_summary,
     selectedSkillId: row.selected_skill_id,
     status: row.status,
@@ -11617,6 +12110,7 @@ export function upsertCognitiveRun(record: CognitiveRunRecord): void {
         channel,
         task_family,
         turn_id,
+        run_origin,
         goal_summary,
         selected_skill_id,
         status,
@@ -11631,13 +12125,14 @@ export function upsertCognitiveRun(record: CognitiveRunRecord): void {
         next_action,
         privacy_json,
         linked_skill_card_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(run_id) DO UPDATE SET
         updated_at = excluded.updated_at,
         group_folder = excluded.group_folder,
         channel = excluded.channel,
         task_family = excluded.task_family,
         turn_id = excluded.turn_id,
+        run_origin = excluded.run_origin,
         goal_summary = excluded.goal_summary,
         selected_skill_id = excluded.selected_skill_id,
         status = excluded.status,
@@ -11661,6 +12156,7 @@ export function upsertCognitiveRun(record: CognitiveRunRecord): void {
     record.channel || null,
     record.taskFamily,
     record.turnId || null,
+    record.runOrigin,
     record.goalSummary,
     record.selectedSkillId,
     record.status,
@@ -11696,6 +12192,7 @@ export function listCognitiveRuns(
   params: {
     groupFolder?: string | null;
     taskFamily?: string;
+    runOrigin?: CognitiveRunRecord['runOrigin'];
     limit?: number;
   } = {},
 ): CognitiveRunRecord[] {
@@ -11709,6 +12206,10 @@ export function listCognitiveRuns(
   if (params.taskFamily) {
     clauses.push('task_family = ?');
     args.push(params.taskFamily);
+  }
+  if (params.runOrigin) {
+    clauses.push('run_origin = ?');
+    args.push(params.runOrigin);
   }
   args.push(Math.max(1, Math.min(params.limit || 50, 1000)));
   const rows = db
@@ -12145,13 +12646,17 @@ export function insertCognitiveRewardSignal(
 }
 
 export function listCognitiveRewardSignals(
-  params: { runId?: string; limit?: number } = {},
+  params: { runId?: string; skillId?: string; limit?: number } = {},
 ): CognitiveRewardSignalRecord[] {
   const clauses: string[] = [];
   const args: Array<string | number> = [];
   if (params.runId) {
     clauses.push('run_id = ?');
     args.push(params.runId);
+  }
+  if (params.skillId) {
+    clauses.push('skill_id = ?');
+    args.push(params.skillId);
   }
   args.push(Math.max(1, Math.min(params.limit || 50, 200)));
   const rows = db
@@ -14242,6 +14747,7 @@ export function listCognitiveTrajectoryScores(
   params: {
     runId?: string;
     taskFamily?: string;
+    runOrigin?: CognitiveRunRecord['runOrigin'];
     status?: CognitiveTrajectoryScore['status'];
     limit?: number;
   } = {},
@@ -14255,6 +14761,12 @@ export function listCognitiveTrajectoryScores(
   if (params.taskFamily) {
     clauses.push('task_family = ?');
     args.push(params.taskFamily);
+  }
+  if (params.runOrigin) {
+    clauses.push(
+      'EXISTS (SELECT 1 FROM cognitive_runs cr WHERE cr.run_id = cognitive_trajectory_scores.run_id AND cr.run_origin = ?)',
+    );
+    args.push(params.runOrigin);
   }
   if (params.status) {
     clauses.push('status = ?');
@@ -15388,7 +15900,7 @@ export function buildCognitiveReplayPacket(params: {
 }): CognitiveReplayPacket {
   const latestRun = params.runId
     ? getCognitiveRun(params.runId) || null
-    : listCognitiveRuns({ limit: 1 })[0] || null;
+    : listCognitiveRuns({ runOrigin: 'live', limit: 1 })[0] || null;
   const runId = params.runId || latestRun?.runId || null;
   return {
     generatedAt: params.generatedAt,
@@ -20049,6 +20561,7 @@ export function listAgentRuntimeRuns(
     turnId?: string;
     status?: AgentRuntimeRun['status'];
     mode?: AgentRuntimeRun['mode'];
+    cognitiveRunOrigin?: CognitiveRunRecord['runOrigin'];
     limit?: number;
   } = {},
 ): AgentRuntimeRun[] {
@@ -20065,6 +20578,18 @@ export function listAgentRuntimeRuns(
   if (params.mode) {
     clauses.push('mode = ?');
     args.push(params.mode);
+  }
+  if (params.cognitiveRunOrigin) {
+    clauses.push(`(
+      cognitive_run_id IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM cognitive_runs cr
+        WHERE cr.run_id = agent_runtime_runs.cognitive_run_id
+          AND cr.run_origin = ?
+      )
+    )`);
+    args.push(params.cognitiveRunOrigin);
   }
   args.push(runtimeLimit(params.limit));
   const rows = db
@@ -28297,6 +28822,36 @@ export function upsertImprovementOutcome(record: ImprovementOutcome): void {
     redactStoredCognitiveMetadata(record.learnedLesson, 900),
     redactStoredCognitiveMetadata(record.privacyJson),
   );
+}
+
+/**
+ * Persist one improvement-lab generation atomically. The lab derives these
+ * records from the same evidence snapshot, so exposing only part of a
+ * generation would make later operator reports and promotion decisions
+ * internally inconsistent.
+ */
+export function persistImprovementLabBatch(records: {
+  hypotheses: ImprovementHypothesis[];
+  experiments: ImprovementExperiment[];
+  patchPlans: CandidatePatchPlan[];
+  outcomes: ImprovementOutcome[];
+}): void {
+  if (!isDatabaseInitialized()) return;
+  const transaction = db.transaction(() => {
+    for (const record of records.hypotheses) {
+      upsertImprovementHypothesis(record);
+    }
+    for (const record of records.experiments) {
+      upsertImprovementExperiment(record);
+    }
+    for (const record of records.patchPlans) {
+      upsertCandidatePatchPlan(record);
+    }
+    for (const record of records.outcomes) {
+      upsertImprovementOutcome(record);
+    }
+  });
+  transaction.immediate();
 }
 
 export function listImprovementOutcomes(

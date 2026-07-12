@@ -18,6 +18,7 @@ import {
   reconcileWindowsHostState,
 } from './host-control.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
+import { probeHostDiskHealth } from './host-resource-health.js';
 import { buildRepairDoctorReport } from './integration-healer.js';
 import { readOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
 import { readOpenAiUsageState } from './openai-usage-state.js';
@@ -450,6 +451,9 @@ export function formatDebugStatus(): string {
     hostSnapshot,
     windowsHost,
   });
+  const hostDiskHealth = probeHostDiskHealth({
+    targetPath: commitTruth.activeRepoRoot || process.cwd(),
+  });
   const guidedRouting = readOpenAiGuidedRoutingState();
   const openAiUsage = readOpenAiUsageState();
   const openClawStatus = openClawStatusProvider();
@@ -493,6 +497,11 @@ export function formatDebugStatus(): string {
     `- Host dependency: ${windowsHost?.dependencyState || hostSnapshot.hostState?.dependencyState || 'unknown'}`,
     ...(hostDependencyError
       ? [`- Host dependency detail: ${hostDependencyError}`]
+      : []),
+    `- Host disk pressure: ${hostDiskHealth.state}`,
+    `- Host disk capacity: ${hostDiskHealth.summary}`,
+    ...(hostDiskHealth.nextAction
+      ? [`- Host disk next step: ${hostDiskHealth.nextAction}`]
       : []),
     `- Active repo root: ${commitTruth.activeRepoRoot}`,
     `- Workspace repo root: ${commitTruth.workspaceRepoRoot}`,

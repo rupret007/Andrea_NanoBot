@@ -50,6 +50,10 @@ import {
   type WindowsHostReconciliation,
 } from './host-control.js';
 import { getMediaProviderStatus } from './media-generation.js';
+import {
+  probeHostDiskHealth,
+  type HostDiskHealthReport,
+} from './host-resource-health.js';
 import { resolveBlueBubblesReplyGateMode } from './messages-fluidity.js';
 import {
   describeOpenAiConfigBlocker,
@@ -694,6 +698,7 @@ export interface BuildFieldTrialOperatorTruthOptions {
   projectRoot?: string;
   hostSnapshot?: HostControlSnapshot;
   windowsHost?: WindowsHostReconciliation | null;
+  hostDiskHealth?: HostDiskHealthReport;
   outwardResearchStatus?:
     | 'not_configured'
     | 'misconfigured_native_openai_endpoint'
@@ -944,7 +949,7 @@ function buildLaunchReadinessTruth(params: {
     );
 
   const coreBlockers = blockedCoreSurfaces
-    .concat(nearLiveCoreSurfaces)
+    .concat(nearLiveCoreSurfaces, degradedUsableCoreSurfaces)
     .map(([label, state]) => summarizeTruthLine(label, state));
 
   let coreStatus: FieldTrialCoreStatus = 'healthy';
@@ -956,16 +961,22 @@ function buildLaunchReadinessTruth(params: {
     status = 'externally_blocked';
     summary =
       'A core Andrea launch surface is currently blocked or degraded on this host.';
-  } else if (nearLiveCoreSurfaces.length > 0) {
+  } else if (
+    nearLiveCoreSurfaces.length > 0 ||
+    degradedUsableCoreSurfaces.length > 0
+  ) {
     coreStatus = 'fresh_proof_gap';
     status = 'near_live_only';
     const onlyAlexaNeedsFreshProof =
       nearLiveCoreSurfaces.length === 1 &&
       nearLiveCoreSurfaces[0]?.[0] === 'alexa' &&
       params.telegram.proofState === 'live_proven';
-    summary = onlyAlexaNeedsFreshProof
-      ? 'Andrea core companion is usable on this host. Telegram is already dependable, and Alexa still needs one fresh same-host proof turn.'
-      : 'Andrea core companion is close, but one core surface still needs a same-host fresh proof step.';
+    summary =
+      nearLiveCoreSurfaces.length === 0
+        ? 'Andrea core companion is usable, but a degraded host condition must be resolved before claiming full readiness.'
+        : onlyAlexaNeedsFreshProof
+          ? 'Andrea core companion is usable on this host. Telegram is already dependable, and Alexa still needs one fresh same-host proof turn.'
+          : 'Andrea core companion is close, but one core surface still needs a same-host fresh proof step.';
   } else if (manualSyncSteps.length > 0) {
     coreStatus = 'manual_sync_pending';
     status = 'core_ready_with_manual_surface_sync';
@@ -1219,6 +1230,7 @@ function buildJourneyTruthFromEvent(params: {
 function buildHostHealthTruth(
   hostSnapshot: HostControlSnapshot,
   windowsHost: WindowsHostReconciliation | null,
+  diskHealth: HostDiskHealthReport,
 ): FieldTrialSurfaceTruth {
   const serviceState =
     windowsHost?.serviceState || hostSnapshot.hostState?.phase || 'stopped';
@@ -1232,6 +1244,15 @@ function buildHostHealthTruth(
     '';
 
   if (serviceState === 'running_ready') {
+    if (diskHealth.state === 'critical' || diskHealth.state === 'warning') {
+      return buildTruth({
+        proofState: 'degraded_but_usable',
+        blocker: `Host disk pressure is ${diskHealth.state}: ${diskHealth.summary}. Persistence, evaluation artifacts, containers, and health markers may fail.`,
+        blockerOwner: 'external',
+        nextAction: diskHealth.nextAction,
+        detail: `Host-control and watchdog are running, but disk capacity is ${diskHealth.state}: ${diskHealth.summary}. No automatic cleanup is authorized.`,
+      });
+    }
     return buildTruth({
       proofState: 'live_proven',
       detail:
@@ -2844,7 +2865,23 @@ export function buildFieldTrialOperatorTruth(
     options.outwardResearchStatus,
   );
   const imageGeneration = buildImageGenerationTruth(projectRoot);
-  const hostHealth = buildHostHealthTruth(hostSnapshot, windowsHost);
+  const hostDiskHealth =
+    options.hostDiskHealth ||
+    (process.env.NODE_ENV === 'test'
+      ? probeHostDiskHealth({
+          targetPath: projectRoot,
+          statfs: () => {
+            throw Object.assign(new Error('test probe disabled'), {
+              code: 'TEST_INJECT_REQUIRED',
+            });
+          },
+        })
+      : probeHostDiskHealth({ targetPath: projectRoot, now: new Date() }));
+  const hostHealth = buildHostHealthTruth(
+    hostSnapshot,
+    windowsHost,
+    hostDiskHealth,
+  );
   const journeys = buildJourneyTruths(review, telegram, alexa);
 
   const workCockpit = buildSurfaceTruthFromPilotEvidence({

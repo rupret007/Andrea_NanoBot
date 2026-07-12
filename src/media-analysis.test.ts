@@ -16,6 +16,18 @@ import { cacheInboundMediaBytes } from './media-cache.js';
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalBaseUrl = process.env.OPENAI_BASE_URL;
 const originalModel = process.env.OPENAI_MODEL_STANDARD;
+const originalGeminiEnabled = process.env.GEMINI_ENABLED;
+const originalGeminiApiKey = process.env.GEMINI_API_KEY;
+const originalGeminiBaseUrl = process.env.GEMINI_OPENAI_BASE_URL;
+const originalGeminiModel = process.env.GEMINI_MODEL_FAST;
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}
 
 describe('media analysis', () => {
   let tempDir = '';
@@ -26,13 +38,18 @@ describe('media analysis', () => {
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.OPENAI_BASE_URL = 'https://example.test/v1';
     process.env.OPENAI_MODEL_STANDARD = 'gpt-vision-test';
+    process.env.GEMINI_ENABLED = 'false';
   });
 
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
-    process.env.OPENAI_API_KEY = originalApiKey;
-    process.env.OPENAI_BASE_URL = originalBaseUrl;
-    process.env.OPENAI_MODEL_STANDARD = originalModel;
+    restoreEnv('OPENAI_API_KEY', originalApiKey);
+    restoreEnv('OPENAI_BASE_URL', originalBaseUrl);
+    restoreEnv('OPENAI_MODEL_STANDARD', originalModel);
+    restoreEnv('GEMINI_ENABLED', originalGeminiEnabled);
+    restoreEnv('GEMINI_API_KEY', originalGeminiApiKey);
+    restoreEnv('GEMINI_OPENAI_BASE_URL', originalGeminiBaseUrl);
+    restoreEnv('GEMINI_MODEL_FAST', originalGeminiModel);
     vi.restoreAllMocks();
   });
 
@@ -151,6 +168,79 @@ describe('media analysis', () => {
     expect(
       getMessageMediaAttachment('media:bad-provider-response')?.analysisStatus,
     ).toBe('failed');
+  });
+
+  it('falls back to Gemini vision when OpenAI is unavailable', async () => {
+    process.env.GEMINI_ENABLED = 'true';
+    process.env.GEMINI_API_KEY = 'gemini-test-key';
+    process.env.GEMINI_OPENAI_BASE_URL =
+      'https://generativelanguage.example/v1beta/openai';
+    process.env.GEMINI_MODEL_FAST = 'gemini-vision-test';
+    const imagePath = cacheInboundMediaBytes({
+      bytes: Buffer.from([7, 7, 7, 7]),
+      filename: `fallback-${path.basename(tempDir)}.jpg`,
+      mimeType: 'image/jpeg',
+    }).localPath;
+    storeChatMetadata('tg:vision-fallback', '2026-07-08T12:00:00.000Z');
+    storeMessage({
+      id: 'tg:vision-fallback-message',
+      chat_jid: 'tg:vision-fallback',
+      sender: 'owner',
+      sender_name: 'Owner',
+      content: '[Photo] meal plan',
+      timestamp: '2026-07-08T12:00:00.000Z',
+      is_from_me: false,
+      attachments: [
+        {
+          attachmentId: 'media:gemini-fallback',
+          chatJid: 'tg:vision-fallback',
+          messageId: 'tg:vision-fallback-message',
+          sourceChannel: 'telegram',
+          kind: 'image',
+          mimeType: 'image/jpeg',
+          filename: 'fallback.jpg',
+          localPath: imagePath,
+          fetchStatus: 'cached',
+          analysisStatus: 'not_requested',
+        },
+      ],
+    });
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init) => {
+      if (String(url).endsWith('/responses')) {
+        return new Response('{"error":"quota"}', { status: 429 });
+      }
+      const body = JSON.parse(String(init?.body || '{}')) as {
+        model?: string;
+        messages?: Array<{ content?: Array<Record<string, unknown>> }>;
+      };
+      expect(body.model).toBe('gemini-vision-test');
+      expect(
+        body.messages?.[0]?.content?.some(
+          (item) =>
+            item.type === 'image_url' && typeof item.image_url === 'object',
+        ),
+      ).toBe(true);
+      return new Response(
+        JSON.stringify({
+          choices: [
+            { message: { content: 'Gemini read the meal plan image.' } },
+          ],
+        }),
+        { status: 200, headers: { 'x-goog-request-id': 'gemini-media-1' } },
+      );
+    });
+
+    const result = await analyzeMessageMedia({
+      attachmentIds: ['media:gemini-fallback'],
+      prompt: 'Read this meal plan.',
+      fetchImpl,
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.providerUsed).toBe('gemini_vision');
+    expect(result.summaryText).toBe('Gemini read the meal plan image.');
+    expect(result.debugPath).toContain('media.analysis:provider=gemini_vision');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it('returns a bounded blocker when the provider transport fails', async () => {

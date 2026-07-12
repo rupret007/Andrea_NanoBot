@@ -8,7 +8,11 @@ import {
   buildPersonalContextGraph,
   type PersonalContextGraphReport,
 } from './personal-context-graph.js';
-import type { AgentRuntimeSkillManifest } from './types.js';
+import { buildCouncilDoctorReport } from './council-quality.js';
+import type {
+  AgentRuntimeSkillManifest,
+  CouncilDoctorReport,
+} from './types.js';
 
 export type AndreaSkillSafetyClass =
   | 'read_only'
@@ -205,6 +209,64 @@ function scoreSkills(manifestCount: number): number {
   );
 }
 
+export function scoreCouncilHealth(report: CouncilDoctorReport): number {
+  const totalRuns = report.recent.liveRuns;
+  const blockedRuns = report.recent.blockedRuns ?? 0;
+  const clarifiedRuns = report.recent.clarifiedRuns ?? 0;
+  const answerableRuns =
+    report.recent.answerableRuns ??
+    Math.max(0, totalRuns - blockedRuns - clarifiedRuns);
+  const outcomeScore =
+    totalRuns > 0
+      ? clamp01(
+          (answerableRuns + clarifiedRuns * 0.75 + blockedRuns * 0.25) /
+            totalRuns,
+        )
+      : 0;
+  const schemaScore =
+    totalRuns > 0
+      ? clamp01(1 - report.recent.schemaInvalidRuns / totalRuns)
+      : 0;
+  const coreProviders = new Set([
+    'openai_cloud',
+    'anthropic_cloud',
+    'gemini_cloud',
+    'minimax_cloud',
+    'brave_search',
+  ]);
+  const currentProviders = (report.currentProviderHealth || []).filter(
+    (provider) => coreProviders.has(provider.providerId),
+  );
+  const providerScore =
+    currentProviders.length > 0
+      ? currentProviders.filter((provider) => provider.state === 'healthy')
+          .length / coreProviders.size
+      : 0.4;
+  const participationScore =
+    report.providerParticipation?.status === 'full'
+      ? 1
+      : report.providerParticipation?.status === 'degraded'
+        ? 0.7
+        : report.providerParticipation?.status === 'minimal'
+          ? 0.35
+          : 0.25;
+  const evidenceScore = clamp01(1 - report.evidenceGaps.length * 0.15);
+  const taskEaseScore = report.taskEase?.score ?? 0.5;
+  const liveSampleScore = clamp01(totalRuns / 5);
+  const outcomeLedQuality = report.recent.qualityScore;
+  return round3(
+    (outcomeLedQuality !== undefined
+      ? outcomeLedQuality * 0.4
+      : outcomeScore * 0.25 + report.recent.averageConfidence * 0.15) +
+      schemaScore * 0.1 +
+      providerScore * 0.15 +
+      participationScore * 0.1 +
+      evidenceScore * 0.1 +
+      taskEaseScore * 0.1 +
+      liveSampleScore * 0.05,
+  );
+}
+
 function scoreTextReview(
   contextGraphScore: number,
   report: PersonalContextGraphReport,
@@ -284,7 +346,8 @@ export function buildAgiLeapReadinessReport(params: {
   const contextGraphScore = contextGraph.readinessScore;
   const textReviewScore = scoreTextReview(contextGraphScore, contextGraph);
   const skillSystemScore = scoreSkills(installedSkillManifests);
-  const councilHealthScore = 0.78;
+  const councilReport = buildCouncilDoctorReport(generatedAt);
+  const councilHealthScore = scoreCouncilHealth(councilReport);
   const durableAutonomyScore = scoreDurableAutonomy(contextGraph);
   const overallScore = round3(
     setupCompletenessScore * 0.2 +
@@ -299,7 +362,9 @@ export function buildAgiLeapReadinessReport(params: {
     contextGraph.topGaps[0] ||
     (memoryQualityScore < 0.7
       ? 'Run the daily learning review and accept or reject proposed memory updates.'
-      : 'Promote the strongest repeated assistant workflow into a tested skill manifest.');
+      : councilHealthScore < 0.85
+        ? councilReport.nextAction
+        : 'Promote the strongest repeated assistant workflow into a tested skill manifest.');
 
   return {
     generatedAt,

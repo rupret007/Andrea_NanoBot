@@ -63,6 +63,8 @@ function input(
           linkedLifeThreads: 3,
           communicationThreads: 4,
           linkedCommunicationThreads: 4,
+          identityReviewedCommunicationThreads: 4,
+          resolvedCommunicationThreads: 4,
           reminders: 1,
           followthroughCandidates: 4,
           listGroups: 3,

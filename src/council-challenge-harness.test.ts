@@ -11,6 +11,27 @@ import {
 } from './agent-source-intelligence.js';
 
 describe('council challenge harness', () => {
+  it('classifies challenge scenarios as synthetic council evidence', async () => {
+    const runCouncil = vi.fn(async (_input: unknown) => null);
+
+    await runCouncilChallengeHarness(
+      {
+        tier: 'small',
+        runId: 'challenge-origin-proof',
+        createRepairPlans: false,
+      },
+      {
+        runCouncil,
+        emitChallenge: vi.fn(async () => null),
+      },
+    );
+
+    expect(runCouncil).toHaveBeenCalled();
+    for (const [input] of runCouncil.mock.calls) {
+      expect(input).toMatchObject({ runOrigin: 'synthetic' });
+    }
+  });
+
   function passingCouncil(extra: Record<string, unknown> = {}) {
     return {
       councilRunId: 'council-small',

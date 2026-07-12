@@ -14,10 +14,7 @@ import {
   listRepairAttempts,
   listSkillPlaybookRuns,
   listToolReliabilityRollups,
-  upsertCandidatePatchPlan,
-  upsertImprovementExperiment,
-  upsertImprovementHypothesis,
-  upsertImprovementOutcome,
+  persistImprovementLabBatch,
 } from './db.js';
 import {
   buildFieldTrialOperatorTruth,
@@ -62,6 +59,13 @@ export interface AutonomousImprovementLabReport {
     autoAppliesProductPatches: false;
     createsBranchesOrWorktrees: false;
     pushesWithoutValidation: false;
+  };
+  persistence: {
+    requested: boolean;
+    status: 'persisted' | 'disabled' | 'deferred_database_busy' | 'unavailable';
+    atomic: true;
+    retrySafe: true;
+    detail: string;
   };
   signalSummary: {
     pilotProofGaps: number;
@@ -505,11 +509,17 @@ function executiveReflectionHypotheses(
 ): ImprovementHypothesis[] {
   const groups = new Map<string, CognitiveReflectionSignal[]>();
   for (const signal of signals) {
+    if (!isExecutiveFrictionSignal(signal)) continue;
+    const explicitFriction = /^(?:none|unknown)$/i.test(
+      signal.frictionKey || '',
+    )
+      ? ''
+      : signal.frictionKey || '';
     const key =
-      signal.frictionKey ||
-      (signal.outcome === 'success'
-        ? ''
-        : `${signal.routeKey}:${signal.outcome}`);
+      explicitFriction ||
+      (signal.fallbackUsed
+        ? `${signal.routeKey}:fallback_used`
+        : `${signal.routeKey}:${signal.signalKind}:${signal.outcome}`);
     if (!key) continue;
     groups.set(key, [...(groups.get(key) || []), signal]);
   }
@@ -539,6 +549,32 @@ function executiveReflectionHypotheses(
           'Prepare a route-calibration or eval patch plan if the replay improves score.',
       }),
     );
+}
+
+function isExecutiveFrictionSignal(signal: CognitiveReflectionSignal): boolean {
+  if (signal.signalKind === 'route_chosen') return false;
+  if (
+    ['action_failed', 'fallback_used', 'user_corrected', 'ignored'].includes(
+      signal.signalKind,
+    )
+  ) {
+    return true;
+  }
+  if (signal.outcome === 'fail' || signal.outcome === 'warn') return true;
+  if (
+    signal.userResponse === 'corrected' ||
+    signal.userResponse === 'ignored'
+  ) {
+    return true;
+  }
+  // A deterministic or local fallback that completed successfully is a route
+  // provenance signal, not evidence of user-visible friction by itself. Keep
+  // failed/warned fallbacks actionable without teaching the lab to "repair"
+  // healthy configured local routing.
+  if (signal.fallbackUsed && signal.outcome !== 'success') return true;
+  return Boolean(
+    signal.frictionKey && !/^(?:none|unknown)$/i.test(signal.frictionKey),
+  );
 }
 
 function learningHypotheses(
@@ -651,7 +687,15 @@ function feedbackHypotheses(
   now: string,
 ): ImprovementHypothesis[] {
   return records
-    .filter((item) => item.status !== 'landed')
+    .filter((item) =>
+      [
+        'captured',
+        'awaiting_confirmation',
+        'failed',
+        'blocked_external',
+        'manual_sync_only',
+      ].includes(item.status),
+    )
     .slice(0, 20)
     .map((item) =>
       hypothesis({
@@ -976,6 +1020,8 @@ export function buildAutonomousImprovementLabReport(
     now?: Date;
     persist?: boolean;
     selectedLimit?: number;
+    /** @internal deterministic failure injection for persistence-boundary tests. */
+    persistenceWriter?: typeof persistImprovementLabBatch;
   } = {},
 ): AutonomousImprovementLabReport {
   const generatedAt = nowIso(params.now);
@@ -995,6 +1041,14 @@ export function buildAutonomousImprovementLabReport(
         createsBranchesOrWorktrees: false,
         pushesWithoutValidation: false,
       },
+      persistence: {
+        requested: params.persist !== false,
+        status: 'unavailable',
+        atomic: true,
+        retrySafe: true,
+        detail:
+          'Database is not initialized; no improvement records were written.',
+      },
       signalSummary: {
         pilotProofGaps: 0,
         repairAttempts: 0,
@@ -1011,11 +1065,6 @@ export function buildAutonomousImprovementLabReport(
   }
 
   const { hypotheses, signalSummary } = collectHypotheses(generatedAt);
-  if (params.persist !== false) {
-    for (const item of hypotheses.slice(0, 80)) {
-      upsertImprovementHypothesis(item);
-    }
-  }
   const selectedForExperiment = sortHypothesesForDailyAgent(hypotheses)
     .filter((item) => item.status !== 'rejected' && item.status !== 'archived')
     .slice(0, params.selectedLimit || 5);
@@ -1037,36 +1086,64 @@ export function buildAutonomousImprovementLabReport(
     return outcomeFor(item || hypotheses[0], experiment, generatedAt);
   });
 
+  const persistence = {
+    requested: params.persist !== false,
+    status: (params.persist === false ? 'disabled' : 'persisted') as
+      | 'persisted'
+      | 'disabled'
+      | 'deferred_database_busy',
+    atomic: true as const,
+    retrySafe: true as const,
+    detail:
+      params.persist === false
+        ? 'Persistence was disabled for this report.'
+        : 'One atomic improvement generation was persisted.',
+  };
   if (params.persist !== false) {
-    for (const experiment of experiments)
-      upsertImprovementExperiment(experiment);
-    for (const plan of patchPlans) upsertCandidatePatchPlan(plan);
-    for (const outcome of outcomes) upsertImprovementOutcome(outcome);
+    try {
+      (params.persistenceWriter || persistImprovementLabBatch)({
+        hypotheses: hypotheses.slice(0, 80),
+        experiments,
+        patchPlans,
+        outcomes,
+      });
+    } catch (error) {
+      if (!isDatabaseBusyError(error)) throw error;
+      persistence.status = 'deferred_database_busy';
+      persistence.detail =
+        'Another process held the SQLite writer lock; this generation remains usable in memory and a retry is safe.';
+    }
   }
 
-  const storedHypotheses =
-    params.persist === false
-      ? hypotheses
-      : listImprovementHypotheses({ limit: 80 });
-  const storedExperiments =
-    params.persist === false
-      ? experiments
-      : listImprovementExperiments({ limit: 40 });
-  const storedPatchPlans =
-    params.persist === false
-      ? patchPlans
-      : listCandidatePatchPlans({ limit: 40 });
-  const storedOutcomes =
-    params.persist === false
-      ? outcomes
-      : listImprovementOutcomes({ limit: 40 });
+  const persistenceSucceeded = persistence.status === 'persisted';
+  const storedHypotheses = persistenceSucceeded
+    ? listImprovementHypotheses({ limit: 80 })
+    : hypotheses;
+  const storedExperiments = persistenceSucceeded
+    ? listImprovementExperiments({ limit: 40 })
+    : experiments;
+  const storedPatchPlans = persistenceSucceeded
+    ? listCandidatePatchPlans({ limit: 40 })
+    : patchPlans;
+  const storedOutcomes = persistenceSucceeded
+    ? listImprovementOutcomes({ limit: 40 })
+    : outcomes;
   const providerHealth = collectProviderHealthSnapshots(generatedAt);
   const integrationReport = buildIntegrationDoctorReport({
     now: new Date(generatedAt),
     providers: providerHealth,
   });
+  const currentHypothesisIds = new Set(
+    hypotheses.map((item) => item.hypothesisId),
+  );
   const visibleHypotheses = sortHypothesesForDailyAgent(
     storedHypotheses.filter((item) => {
+      if (
+        item.sourceSignalKind === 'executive_reflection' &&
+        !currentHypothesisIds.has(item.hypothesisId)
+      ) {
+        return false;
+      }
       if (isHiddenByCurrentIntegrationHealth(item, integrationReport)) {
         return false;
       }
@@ -1118,6 +1195,7 @@ export function buildAutonomousImprovementLabReport(
       createsBranchesOrWorktrees: false,
       pushesWithoutValidation: false,
     },
+    persistence,
     signalSummary,
     nextAction:
       actionable?.nextAction ||
@@ -1138,6 +1216,8 @@ export function formatAutonomousImprovementLabReport(
     `Patch plans: ${report.patchPlans.length}`,
     `Outcomes: ${report.outcomes.length}`,
     `Policy: plans-only=${report.patchPlanPolicy.plansOnly ? 'yes' : 'no'} / auto-apply=${report.patchPlanPolicy.autoAppliesProductPatches ? 'yes' : 'no'} / auto-push=${report.patchPlanPolicy.pushesWithoutValidation ? 'yes' : 'no'}`,
+    `Persistence: ${report.persistence.status} / atomic=yes / retry-safe=yes`,
+    `Persistence detail: ${report.persistence.detail}`,
     '',
     '*Signal Summary*',
     `- proof_gaps=${report.signalSummary.pilotProofGaps} repair_attempts=${report.signalSummary.repairAttempts} reliability_rollups=${report.signalSummary.reliabilityRollups}`,
@@ -1180,4 +1260,15 @@ export function formatAutonomousImprovementLabReport(
     'Privacy: metadata-only; no raw prompts, private bodies, hidden reasoning, provider debates, raw tool output, or secrets are stored.',
   );
   return lines.join('\n');
+}
+
+function isDatabaseBusyError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  const code = String(candidate.code || '');
+  const message = String(candidate.message || '');
+  return (
+    /^SQLITE_BUSY(?:_|$)/i.test(code) ||
+    /database is (?:locked|busy)/i.test(message)
+  );
 }

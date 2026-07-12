@@ -5,7 +5,10 @@ import {
   formatDogfoodGauntletReport,
   runDogfoodGauntlet,
 } from '../src/dogfood-gauntlet.js';
-import type { LiveProofGauntletReport, RealityDoctorReport } from '../src/types.js';
+import type {
+  LiveProofGauntletReport,
+  RealityDoctorReport,
+} from '../src/types.js';
 
 _initTestDatabase();
 
@@ -164,7 +167,8 @@ const realityReport = {
       snapshotId: 'snapshot:test',
       createdAt: generatedAt,
       updatedAt: generatedAt,
-      question: 'What proof is needed for BlueBubbles same-thread message-action proof?',
+      question:
+        'What proof is needed for BlueBubbles same-thread message-action proof?',
       reason:
         'Transport is ready, but same-thread message-action proof is not fresh.',
       neededBeforeAction: true,
@@ -248,6 +252,23 @@ const calendar = report.scenarios.find(
   (scenario) => scenario.scenarioId === 'calendar_missing_time',
 );
 assert.match(calendar?.nextAction || '', /event time|referent|clarification/i);
+assert.equal(calendar?.completionStatus, 'clarification_required');
+assert.equal(calendar?.scorecard.taskCompletion, 1);
+assert.ok(
+  calendar?.completionChecks.find(
+    (check) => check.checkId === 'missing_premise_named',
+  )?.passed,
+);
+
+const selfRepair = report.scenarios.find(
+  (scenario) => scenario.scenarioId === 'fix_yourself',
+);
+assert.equal(selfRepair?.completionStatus, 'honestly_blocked');
+assert.ok(
+  selfRepair?.completionChecks.find(
+    (check) => check.checkId === 'blocker_explained',
+  )?.passed,
+);
 
 const formatted = formatDogfoodGauntletReport(report);
 assert.match(formatted, /Live Dogfood Gauntlet/);

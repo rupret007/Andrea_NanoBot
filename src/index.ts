@@ -66,6 +66,7 @@ import {
   getAgentThread,
   getRegisteredMainChat,
   getResponseFeedback,
+  getResponseFeedbackByMessage,
   getResponseFeedbackByRemediationJob,
   listAllCursorAgents,
   listCalendarAutomationsForChat,
@@ -74,6 +75,7 @@ import {
   getAllTasks,
   getLastBotMessageTimestamp,
   listCursorAgentArtifacts,
+  listRecentResponseFeedback,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -83,6 +85,7 @@ import {
   initDatabase,
   listAllEnabledCommunitySkills,
   pruneExpiredRuntimeBackendCardContexts,
+  pruneUnreviewedBlueBubblesFeedbackLinks,
   repairRegisteredMainChat,
   setRegisteredGroup,
   setAgentThread,
@@ -211,9 +214,12 @@ import {
   normalizeBlueBubblesCompanionPrompt,
   resolveBlueBubblesPendingLocalContinuationKind,
   resolveMostRecentBlueBubblesCompanionChat,
+  shouldHandleBlueBubblesProofDrillLocally,
+  shouldPreferBlueBubblesLocalMessageActionFollowup,
 } from './bluebubbles-companion.js';
 import {
   canonicalizeBlueBubblesSelfThreadJid,
+  expandBlueBubblesLogicalSelfThreadJids,
   isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
 import { interpretBlueBubblesDirectTurn } from './messages-fluidity.js';
@@ -265,7 +271,9 @@ import {
   reconcileBlueBubblesSelfThreadContinuity,
   findLatestChatMessageAction,
   isBlueBubblesExplicitSendAlias,
+  isBlueBubblesProofDrillAction,
   interpretMessageActionFollowup,
+  linkMessageActionCognitiveContext,
   parseExplicitBlueBubblesThreadSendIntent,
   resolveBlueBubblesThreadTargetByName,
   resolveMessageActionForFollowup,
@@ -429,6 +437,7 @@ import {
   buildCognitiveDoctorReport,
   formatCognitiveDoctorReport,
   isCognitionDoctorRequest,
+  recordCognitiveOwnerReview,
 } from './cognitive-kernel.js';
 import { buildAgentOSStatusText, isAgentOSNaturalRequest } from './agent-os.js';
 import { buildLogicStatusText, isLogicNaturalRequest } from './logic-kernel.js';
@@ -446,6 +455,7 @@ import {
   applyLearningControl,
   buildLearningDistillationReport,
   formatLearningDistillationReport,
+  parseLearningDefaultRequest,
 } from './memory-distillation.js';
 import {
   applySkillControl,
@@ -594,6 +604,7 @@ import {
 import { routeCompanionTurnWithOpenAiBackend } from './openai-guided-routing.js';
 import { recordOpenAiGuidedRoutingState } from './openai-guided-routing-state.js';
 import {
+  buildOpenClawMediaGroundedPrompt,
   buildOpenClawChatSessionKey,
   delegateToOpenClawAgent,
   formatOpenClawDelegationResponse,
@@ -601,6 +612,7 @@ import {
   resolveOpenClawDelegationRoute,
   type OpenClawDelegationCommand,
 } from './openclaw-connector.js';
+import { analyzeMessageMedia } from './media-analysis.js';
 import { buildDirectAssistantContinuationPrompt } from './direct-assistant-continuation.js';
 import {
   getAssistantSessionStorageKey,
@@ -762,8 +774,10 @@ import {
   buildResponseFeedbackRemediationPrompt,
   buildResponseFeedbackWhyText,
   classifyResponseFeedbackCandidate,
+  mapMessageReactionToFeedbackAction,
   parseResponseFeedbackAction,
   refreshRecentResponseFeedbackTruth,
+  resolveNaturalResponseFeedbackVerdict,
   resolvePendingResponseFeedbackApproval,
   type ResponseFeedbackLaneSelection,
   selectResponseFeedbackRetryLane,
@@ -772,6 +786,7 @@ import {
 import {
   createRegressionFixtureFromFeedback,
   recordAssistantMetric,
+  recordReviewedRecommendationOutcome,
 } from './personal-assistant-metrics.js';
 import {
   auditRegisteredMainChat,
@@ -3877,7 +3892,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let lastContent = chatJid.startsWith('bb:')
     ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
     : rawLastContent;
+  const currentTurnAttachments = missedMessages.flatMap(
+    (message) => message.attachments || [],
+  );
+  const currentAttachmentIds = currentTurnAttachments
+    .filter((attachment) => ['image', 'video'].includes(attachment.kind))
+    .map((attachment) => attachment.attachmentId);
+  const currentMessageCapabilityMatch = matchAssistantCapabilityRequest(
+    lastContent,
+    {
+      currentAttachmentKinds: currentTurnAttachments.map(
+        (attachment) => attachment.kind,
+      ),
+    },
+  );
+  const currentInboundMediaCapabilityMatch = currentAttachmentIds.length
+    ? currentMessageCapabilityMatch
+    : null;
   const now = new Date();
+  const preHarnessMessageActionOperation =
+    conversationChannel === 'bluebubbles'
+      ? interpretMessageActionFollowup(lastContent)
+      : null;
+  const preHarnessMessageAction = preHarnessMessageActionOperation
+    ? resolveMessageActionForFollowup({
+        groupFolder: group.folder,
+        chatJid,
+        rawText: lastContent,
+        now,
+      })
+    : null;
+  const turnRunOrigin =
+    preHarnessMessageAction &&
+    isBlueBubblesProofDrillAction(preHarnessMessageAction)
+      ? 'replay'
+      : 'live';
   const turnStartedAt = Date.now();
   const turnAgentHarness: TurnAgentHarnessContext | null =
     await beginTurnAgentHarness({
@@ -3893,6 +3942,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       groupFolder: group.folder,
       text: lastContent,
       requestRoute: requestPolicy.route,
+      runOrigin: turnRunOrigin,
       // v13 B4 caller-side completion: pass the per-message sender (group
       // chats) or fall back to chatJid (1-on-1) so the platform's user-belief
       // state actually accumulates per actor instead of staying empty.
@@ -3902,13 +3952,42 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant') &&
     isSafeReadOnlyCalendarLookupAsk(lastContent);
+  const localBlueBubblesMessageActionOperation =
+    preHarnessMessageActionOperation;
+  const localBlueBubblesMessageAction = preHarnessMessageAction;
+  const localBlueBubblesMessageActionContinuity =
+    localBlueBubblesMessageActionOperation && localBlueBubblesMessageAction
+      ? reconcileBlueBubblesMessageActionContinuity({
+          groupFolder: group.folder,
+          chatJid,
+          now,
+          allowRehydrate: true,
+        })
+      : null;
+  const shouldDeferPlatformHoldForLocalMessageAction =
+    shouldPreferBlueBubblesLocalMessageActionFollowup({
+      conversationChannel,
+      requestRoute: requestPolicy.route,
+      operationRecognized: Boolean(localBlueBubblesMessageActionOperation),
+      actionResolved: Boolean(localBlueBubblesMessageAction),
+      policyAllows: Boolean(
+        localBlueBubblesMessageActionOperation &&
+        localBlueBubblesMessageActionContinuity &&
+        canApplyBlueBubblesMessageActionFollowup({
+          rawText: rawLastContent,
+          operation: localBlueBubblesMessageActionOperation,
+          continuity: localBlueBubblesMessageActionContinuity,
+        }),
+      ),
+    });
   const shouldDeferPlatformHoldForLocalUsefulCapability =
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant') &&
     Boolean(
       quickReply ||
-      matchAssistantCapabilityRequest(lastContent) ||
-      shouldDeferPlatformHoldForLocalCalendarLookup,
+      currentMessageCapabilityMatch ||
+      shouldDeferPlatformHoldForLocalCalendarLookup ||
+      shouldDeferPlatformHoldForLocalMessageAction,
     );
   const sendAssistantReplyWithFeedback = async (params: {
     text: string;
@@ -3924,6 +4003,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     linkedRefs?: ResponseFeedbackRecord['linkedRefs'];
     allowFeedback?: boolean;
     preserveStructuredText?: boolean;
+    skipBlueBubblesActionRehydration?: boolean;
   }) => {
     const turnEvaluation: PreSendEvaluation = params.preserveStructuredText
       ? {
@@ -3949,14 +4029,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           blockerClass: params.blockerClass,
         });
     const replyText = turnEvaluation.rewrittenText.trim();
-    const shouldAttachFeedback =
+    const shouldRecordFeedback =
       params.allowFeedback !== false &&
-      channel.name === 'telegram' &&
-      isMainControlChat(group) &&
-      replyText.length > 0;
-    const feedbackId = shouldAttachFeedback ? randomUUID() : null;
+      replyText.length > 0 &&
+      ((channel.name === 'telegram' && isMainControlChat(group)) ||
+        (channel.name === 'bluebubbles' &&
+          isBlueBubblesSelfThreadAliasJid(chatJid)));
+    const shouldAttachFeedbackButtons =
+      shouldRecordFeedback && channel.name === 'telegram';
+    const feedbackId = shouldRecordFeedback ? randomUUID() : null;
     const sendOptions =
-      shouldAttachFeedback && feedbackId
+      shouldAttachFeedbackButtons && feedbackId
         ? appendResponseFeedbackInlineRow(params.sendOptions || {}, feedbackId)
         : params.sendOptions || {};
     const sent = await channel.sendMessage(chatJid, replyText, sendOptions);
@@ -3986,7 +4069,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       },
       now: new Date(),
     });
-    if (channel.name === 'bluebubbles') {
+    if (
+      channel.name === 'bluebubbles' &&
+      !params.skipBlueBubblesActionRehydration
+    ) {
       ensureBlueBubblesSelfThreadMessageActionForReplyText({
         groupFolder: group.folder,
         chatJid,
@@ -4013,7 +4099,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       updatedAt: now.toISOString(),
       status: classification.status,
       classification: classification.classification,
-      channel: 'telegram',
+      channel: conversationChannel,
       groupFolder: group.folder,
       chatJid,
       threadId: sent.threadId || latestUserMessage?.thread_id || null,
@@ -4027,8 +4113,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       traceNotes: params.traceNotes || [],
       blockerClass: params.blockerClass || null,
       blockerOwner: params.blockerOwner || classification.blockerOwner,
-      originalUserText: rawLastContent || lastContent,
-      assistantReplyText: replyText,
+      originalUserText:
+        conversationChannel === 'bluebubbles'
+          ? '[private BlueBubbles request omitted]'
+          : rawLastContent || lastContent,
+      assistantReplyText:
+        conversationChannel === 'bluebubbles'
+          ? '[private BlueBubbles response omitted]'
+          : replyText,
       linkedRefs: {
         ...(params.linkedRefs || {}),
         platformTaskLedgerId:
@@ -4054,6 +4146,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           turnAgentHarness?.personalContextPacket?.citations.slice(0, 12),
         verifiedDeepWorkPacketId:
           turnAgentHarness?.verifiedDeepWorkPacket?.packetId,
+        cognitiveRunId: turnAgentHarness?.cognitiveRun?.run.runId,
+        cognitiveSkillId:
+          turnAgentHarness?.cognitiveRun?.run.linkedSkillCardId || undefined,
+        cognitiveTrajectoryId:
+          turnAgentHarness?.cognitiveRun?.trajectoryScore.trajectoryId,
+        agentRuntimeRunId: turnAgentHarness?.runtimeSpine?.run.runtimeRunId,
       },
       issueId: null,
       remediationLaneId: null,
@@ -4062,23 +4160,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       remediationPrompt: null,
       operatorNote: classification.explanation,
     });
+    if (conversationChannel === 'bluebubbles') {
+      pruneUnreviewedBlueBubblesFeedbackLinks({ now });
+    }
     recordCouncilOutcomeSignal({
       councilRunId: turnAgentHarness?.providerCouncil?.councilRunId,
       signalKind: 'feedback_attached',
       groupFolder: group.folder,
-      channel: 'telegram',
+      channel: conversationChannel,
       routeKey: params.routeKey || requestPolicy.route,
       capabilityId: params.capabilityId,
       blockerClass: params.blockerClass,
       feedbackId,
-      flags: ['feedback_card_attached'],
+      flags: [
+        conversationChannel === 'telegram'
+          ? 'feedback_card_attached'
+          : 'reaction_feedback_linked',
+      ],
       summary:
-        'Telegram feedback affordance attached to a council-guided response.',
+        conversationChannel === 'telegram'
+          ? 'Telegram feedback affordance attached to a council-guided response.'
+          : 'BlueBubbles response linked to privacy-safe native reaction feedback.',
     });
     void emitAndreaPlatformTraceEvent({
       traceId: feedbackId,
       traceKind: 'feedback',
-      title: 'Response feedback affordance attached',
+      title:
+        conversationChannel === 'telegram'
+          ? 'Response feedback affordance attached'
+          : 'Native reaction feedback linked',
       summary: classification.explanation,
       refs: compactPlatformStrings({
         feedbackId,
@@ -4212,6 +4322,39 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return false;
     }
+  }
+
+  if (
+    shouldHandleBlueBubblesProofDrillLocally({
+      conversationChannel,
+      requestRoute: requestPolicy.route,
+      text: rawLastContent,
+    })
+  ) {
+    const started = startBlueBubblesProofDrill({
+      groupFolder: group.folder,
+      chatJid,
+      now,
+    });
+    const sent = await channel.sendMessage(
+      started.action.presentationChatJid || chatJid,
+      buildBlueBubblesProofDrillPresentationText(started.action),
+    );
+    updateMessageAction(started.action.messageActionId, {
+      presentationMessageId: sent.platformMessageId || null,
+      presentationChatJid: started.action.presentationChatJid || chatJid,
+      lastUpdatedAt: now.toISOString(),
+    });
+    logger.info(
+      {
+        component: 'assistant',
+        chatJid,
+        groupFolder: group.folder,
+        actionId: started.action.messageActionId,
+      },
+      'Recovered BlueBubbles proof drill through the local deterministic path',
+    );
+    return true;
   }
 
   if (
@@ -7004,13 +7147,52 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               },
               preserveStructuredText: true,
             });
+            linkMessageActionCognitiveContext({
+              messageActionId: draftResult.messageAction.messageActionId,
+              cognitiveRunId: turnAgentHarness?.cognitiveRun?.run.runId,
+              cognitiveSkillId:
+                turnAgentHarness?.cognitiveRun?.run.linkedSkillCardId,
+              cognitiveTrajectoryId:
+                turnAgentHarness?.cognitiveRun?.trajectoryScore.trajectoryId,
+              agentRuntimeRunId:
+                turnAgentHarness?.runtimeSpine?.run.runtimeRunId,
+              now,
+            });
             updateMessageAction(draftResult.messageAction.messageActionId, {
               presentationMessageId: sent.platformMessageId || null,
               presentationChatJid: chatJid,
               lastUpdatedAt: now.toISOString(),
             });
           } else {
-            const sent = await channel.sendMessage(chatJid, presentation.text);
+            const sent = await sendAssistantReplyWithFeedback({
+              text: presentation.text,
+              routeKey: 'assistant_completion.draft_reply',
+              capabilityId:
+                draftResult.capabilityId || 'communication.draft_reply',
+              handlerKind: 'assistant_completion_bridge',
+              responseSource:
+                draftResult.trace?.responseSource || 'local_companion',
+              traceReason:
+                draftResult.trace?.reason ||
+                'completed BlueBubbles follow-up through a message-action presentation',
+              traceNotes: draftResult.trace?.notes || [],
+              linkedRefs: {
+                messageActionId: draftResult.messageAction.messageActionId,
+              },
+              preserveStructuredText: true,
+              skipBlueBubblesActionRehydration: true,
+            });
+            linkMessageActionCognitiveContext({
+              messageActionId: draftResult.messageAction.messageActionId,
+              cognitiveRunId: turnAgentHarness?.cognitiveRun?.run.runId,
+              cognitiveSkillId:
+                turnAgentHarness?.cognitiveRun?.run.linkedSkillCardId,
+              cognitiveTrajectoryId:
+                turnAgentHarness?.cognitiveRun?.trajectoryScore.trajectoryId,
+              agentRuntimeRunId:
+                turnAgentHarness?.runtimeSpine?.run.runtimeRunId,
+              now,
+            });
             syncBlueBubblesMessageActionPresentation({
               groupFolder: group.folder,
               chatJid,
@@ -7141,10 +7323,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       chatJid,
       now,
     );
-    let capabilityMatch = continueAssistantCapabilityFromPriorSubjectData(
-      lastContent,
-      priorAssistantCapabilitySeed?.subjectData,
-    );
+    let capabilityMatch =
+      currentInboundMediaCapabilityMatch ||
+      continueAssistantCapabilityFromPriorSubjectData(
+        lastContent,
+        priorAssistantCapabilitySeed?.subjectData,
+      );
     let capabilityRouteSource:
       | 'local_fast_path'
       | 'openai_router'
@@ -7316,12 +7500,47 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
     let result: AssistantCapabilityResult;
     try {
+      if (
+        channel.primeRecentHistory &&
+        (capabilityMatch.capabilityId === 'communication.summarize_thread' ||
+          capabilityMatch.capabilityId === 'communication.review_recent_texts')
+      ) {
+        try {
+          const hydrated = await channel.primeRecentHistory({ limit: 500 });
+          logger.info(
+            {
+              component: 'assistant',
+              channel: conversationChannel,
+              capabilityId: capabilityMatch.capabilityId,
+              storedCount: hydrated.storedCount,
+              totalCount: hydrated.totalCount,
+            },
+            'Hydrated bounded recent channel history for an explicit review request',
+          );
+          // Explicit history hydration is an enrichment step. A transport
+          // failure must not discard already-stored local context or prevent
+          // an honest bounded summary from being returned.
+          // eslint-disable-next-line no-catch-all/no-catch-all
+        } catch (error) {
+          logger.warn(
+            {
+              component: 'assistant',
+              channel: conversationChannel,
+              capabilityId: capabilityMatch.capabilityId,
+              err: error,
+            },
+            'Recent channel history hydration failed; continuing with locally stored history',
+          );
+        }
+      }
       result = await executeAssistantCapability({
         capabilityId: capabilityMatch.capabilityId,
         context: {
           channel: conversationChannel,
           groupFolder: group.folder,
           chatJid,
+          currentMessageId: latestUserMessage?.id,
+          currentAttachmentIds,
           now,
           selectedWork,
           conversationSummary:
@@ -7487,13 +7706,50 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               },
               preserveStructuredText: true,
             });
+            linkMessageActionCognitiveContext({
+              messageActionId: result.messageAction.messageActionId,
+              cognitiveRunId: turnAgentHarness?.cognitiveRun?.run.runId,
+              cognitiveSkillId:
+                turnAgentHarness?.cognitiveRun?.run.linkedSkillCardId,
+              cognitiveTrajectoryId:
+                turnAgentHarness?.cognitiveRun?.trajectoryScore.trajectoryId,
+              agentRuntimeRunId:
+                turnAgentHarness?.runtimeSpine?.run.runtimeRunId,
+              now,
+            });
             updateMessageAction(result.messageAction.messageActionId, {
               presentationMessageId: sent.platformMessageId || null,
               presentationChatJid: chatJid,
               lastUpdatedAt: now.toISOString(),
             });
           } else {
-            const sent = await channel.sendMessage(chatJid, presentation.text);
+            const sent = await sendAssistantReplyWithFeedback({
+              text: presentation.text,
+              routeKey: capabilityMatch.capabilityId,
+              capabilityId: result.capabilityId || capabilityMatch.capabilityId,
+              handlerKind: result.trace?.handlerKind || 'assistant_capability',
+              responseSource: result.trace?.responseSource || 'local_companion',
+              traceReason:
+                result.trace?.reason ||
+                'handled BlueBubbles capability through a message-action presentation',
+              traceNotes: result.trace?.notes || [],
+              linkedRefs: {
+                messageActionId: result.messageAction.messageActionId,
+              },
+              preserveStructuredText: true,
+              skipBlueBubblesActionRehydration: true,
+            });
+            linkMessageActionCognitiveContext({
+              messageActionId: result.messageAction.messageActionId,
+              cognitiveRunId: turnAgentHarness?.cognitiveRun?.run.runId,
+              cognitiveSkillId:
+                turnAgentHarness?.cognitiveRun?.run.linkedSkillCardId,
+              cognitiveTrajectoryId:
+                turnAgentHarness?.cognitiveRun?.trajectoryScore.trajectoryId,
+              agentRuntimeRunId:
+                turnAgentHarness?.runtimeSpine?.run.runtimeRunId,
+              now,
+            });
             syncBlueBubblesMessageActionPresentation({
               groupFolder: group.folder,
               chatJid,
@@ -8052,6 +8308,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
 
   const tryHandleLearningStatus = async (): Promise<boolean> => {
+    const defaultRequest = parseLearningDefaultRequest(lastContent);
+    if (defaultRequest) {
+      await sendAssistantReplyWithFeedback({
+        text: defaultRequest.clarificationQuestion,
+        routeKey: 'learning.skill_review',
+        capabilityId: 'memory.status',
+        handlerKind: 'local_learning_control',
+        responseSource: 'local_companion',
+        traceReason:
+          'kept an unresolved default-learning request proposed until the behavior is explicit',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    }
     if (
       /\b(stop doing that|don'?t use that skill|do not use that skill|pause that skill)\b/i.test(
         lastContent,
@@ -11402,26 +11672,44 @@ async function main(): Promise<void> {
     chatJid: string,
     msg: NewMessage,
     action: NonNullable<ReturnType<typeof parseResponseFeedbackAction>>,
+    options: {
+      acknowledge?: boolean;
+      completionVerified?: boolean;
+      reviewSource?: 'inline_action' | 'native_reaction' | 'natural_language';
+    } = {},
   ): Promise<boolean> {
     const feedbackNow = new Date();
+    const acknowledge = options.acknowledge !== false;
+    const reviewSource = options.reviewSource || 'inline_action';
     const channel = findChannel(channels, chatJid);
-    const group = registeredGroups[chatJid];
-    if (!channel || !group || !isMainControlChat(group)) {
+    const group = resolveCompanionBinding(chatJid)?.group;
+    const authorizedFeedbackSurface =
+      Boolean(group && isMainControlChat(group)) ||
+      (channel?.name === 'bluebubbles' &&
+        isBlueBubblesSelfThreadAliasJid(chatJid));
+    if (!channel || !group || !authorizedFeedbackSurface) {
       return true;
     }
 
     let existing = getResponseFeedback(action.feedbackId);
-    if (!existing || existing.chatJid !== chatJid) {
-      await channel.sendMessage(
-        chatJid,
-        'That feedback card is no longer available here.',
-        buildOperatorSendOptions(msg),
-      );
+    const sameFeedbackChat =
+      existing?.chatJid === chatJid ||
+      (existing?.channel === 'bluebubbles' &&
+        isBlueBubblesSelfThreadAliasJid(existing.chatJid) &&
+        isBlueBubblesSelfThreadAliasJid(chatJid));
+    if (!existing || !sameFeedbackChat) {
+      if (acknowledge) {
+        await channel.sendMessage(
+          chatJid,
+          'That feedback card is no longer available here.',
+          buildOperatorSendOptions(msg),
+        );
+      }
       return true;
     }
     existing = await refreshRunningResponseFeedbackRecord(existing);
 
-    const linkedRefs: ResponseFeedbackRecord['linkedRefs'] = {
+    let linkedRefs: ResponseFeedbackRecord['linkedRefs'] = {
       ...(existing.linkedRefs || {}),
       responseFeedbackId: existing.feedbackId,
       platformMessageId:
@@ -11434,35 +11722,84 @@ async function main(): Promise<void> {
         undefined,
     };
 
+    if (action.operation === 'accept') {
+      const cognitiveReview = recordCognitiveOwnerReview({
+        runId: linkedRefs.cognitiveRunId,
+        feedbackId: existing.feedbackId,
+        verdict: 'accepted',
+        reviewedAt: feedbackNow.toISOString(),
+      });
+      linkedRefs = {
+        ...linkedRefs,
+        cognitiveOwnerReviewSignalId:
+          cognitiveReview.signalId || linkedRefs.cognitiveOwnerReviewSignalId,
+      };
+      const updated = updateResponseFeedback(existing.feedbackId, {
+        linkedRefs,
+        status: 'accepted',
+        operatorNote: cognitiveReview.recorded
+          ? `Owner marked the response helpful via ${reviewSource}; the review was linked to its cognitive run.`
+          : `Owner marked the response helpful via ${reviewSource}; no retained cognitive run was available to update.`,
+        updatedAt: feedbackNow.toISOString(),
+      });
+      recordReviewedRecommendationOutcome({
+        feedbackId: updated.feedbackId,
+        groupFolder: updated.groupFolder,
+        verdict: 'accepted',
+        completionVerified: options.completionVerified,
+        metadata: {
+          routeKey: updated.routeKey || '',
+          cognitiveRunId: linkedRefs.cognitiveRunId || '',
+          reviewSource,
+        },
+        now: feedbackNow,
+      });
+      if (acknowledge) {
+        await channel.sendMessage(
+          chatJid,
+          options.completionVerified
+            ? cognitiveReview.recorded
+              ? 'Thanks — I recorded that it worked and linked the verified outcome to the exact reasoning route.'
+              : 'Thanks — I recorded that it worked.'
+            : cognitiveReview.recorded
+              ? 'Thanks — I linked that helpful outcome to the exact reasoning route so repeated success can improve future choices.'
+              : 'Thanks — I recorded that as helpful.',
+          buildOperatorSendOptions(msg),
+        );
+      }
+      return true;
+    }
+
+    const issueSource = existing;
     const ensurePilotIssue = (): ResponseFeedbackRecord => {
-      if (existing.issueId) {
-        return updateResponseFeedback(existing.feedbackId, {
+      if (issueSource.issueId) {
+        return updateResponseFeedback(issueSource.feedbackId, {
           linkedRefs,
         });
       }
       const captured = capturePilotIssue({
-        channel: 'telegram',
-        groupFolder: existing.groupFolder,
-        chatJid: existing.chatJid,
-        threadId: existing.threadId || null,
+        channel: issueSource.channel,
+        groupFolder: issueSource.groupFolder,
+        chatJid: issueSource.chatJid,
+        threadId: issueSource.threadId || null,
         utterance: 'not helpful',
-        routeKey: existing.routeKey || 'response_feedback.capture',
-        assistantContextSummary: existing.assistantReplyText,
+        routeKey: issueSource.routeKey || 'response_feedback.capture',
+        assistantContextSummary: issueSource.assistantReplyText,
         linkedRefs,
         issueKindOverride: 'downvoted_response',
-        summaryTextOverride: buildResponseFeedbackIssueSummary(existing),
+        summaryTextOverride: buildResponseFeedbackIssueSummary(issueSource),
         blockerClassOverride: buildResponseFeedbackBlockerClass(
-          existing.classification,
+          issueSource.classification,
         ),
-        blockerOwnerOverride: existing.blockerOwner,
+        blockerOwnerOverride: issueSource.blockerOwner,
       });
-      return updateResponseFeedback(existing.feedbackId, {
+      return updateResponseFeedback(issueSource.feedbackId, {
         issueId: captured.record?.issueId || null,
         linkedRefs,
         status:
-          existing.classification === 'externally_blocked'
+          issueSource.classification === 'externally_blocked'
             ? 'blocked_external'
-            : existing.classification === 'manual_sync_only'
+            : issueSource.classification === 'manual_sync_only'
               ? 'manual_sync_only'
               : 'awaiting_confirmation',
       });
@@ -11472,6 +11809,19 @@ async function main(): Promise<void> {
       if (shouldCancelPendingContinuationForFeedback(existing)) {
         clearPendingGoogleCalendarCreateState(chatJid);
         clearGoogleCalendarSchedulingContext(chatJid);
+      }
+      const cognitiveReview = recordCognitiveOwnerReview({
+        runId: linkedRefs.cognitiveRunId,
+        feedbackId: existing.feedbackId,
+        verdict: 'rejected',
+        reviewedAt: feedbackNow.toISOString(),
+      });
+      if (cognitiveReview.signalId) {
+        linkedRefs = {
+          ...linkedRefs,
+          cognitiveOwnerReviewSignalId: cognitiveReview.signalId,
+        };
+        existing = updateResponseFeedback(existing.feedbackId, { linkedRefs });
       }
       let captured = await emitResponseFeedbackCognition(ensurePilotIssue());
       if (
@@ -11500,7 +11850,7 @@ async function main(): Promise<void> {
           ? 'repair_linked'
           : 'feedback_negative',
         groupFolder: captured.groupFolder,
-        channel: 'telegram',
+        channel: captured.channel,
         routeKey: captured.routeKey,
         capabilityId: captured.capabilityId,
         blockerClass: captured.blockerClass,
@@ -11514,25 +11864,31 @@ async function main(): Promise<void> {
           'User captured negative response feedback for a council-linked answer.',
       });
       createRegressionFixtureFromFeedback(captured, feedbackNow);
-      recordAssistantMetric({
+      recordReviewedRecommendationOutcome({
+        feedbackId: captured.feedbackId,
         groupFolder: captured.groupFolder,
-        kind: 'correction',
+        verdict: 'rejected',
+        correction: true,
         metadata: {
           classification: captured.classification,
           routeKey: captured.routeKey || '',
+          cognitiveRunId: linkedRefs.cognitiveRunId || '',
+          reviewSource,
         },
         now: feedbackNow,
       });
-      await channel.sendMessage(
-        chatJid,
-        buildResponseFeedbackCaptureReply(
-          captured,
-          captured.operatorNote || 'I saved the issue for review.',
-        ),
-        buildOperatorSendOptions(msg, {
-          inlineActionRows: buildResponseFeedbackActionRows(captured),
-        }),
-      );
+      if (acknowledge) {
+        await channel.sendMessage(
+          chatJid,
+          buildResponseFeedbackCaptureReply(
+            captured,
+            captured.operatorNote || 'I saved the issue for review.',
+          ),
+          buildOperatorSendOptions(msg, {
+            inlineActionRows: buildResponseFeedbackActionRows(captured),
+          }),
+        );
+      }
       return true;
     }
 
@@ -12151,8 +12507,36 @@ async function main(): Promise<void> {
         }
       }
 
+      const mediaAttachmentIds = (message?.attachments || [])
+        .filter((attachment) => ['image', 'video'].includes(attachment.kind))
+        .map((attachment) => attachment.attachmentId);
+      let delegatedPrompt = prompt;
+      if (mediaAttachmentIds.length > 0) {
+        const media = await analyzeMessageMedia({
+          attachmentIds: mediaAttachmentIds,
+          prompt:
+            'Describe the attached image or sampled video accurately for another assistant. Include visible text and uncertainty. Do not infer details that are not visible.',
+          requester: 'andrea',
+        });
+        delegatedPrompt = buildOpenClawMediaGroundedPrompt({
+          prompt,
+          mediaSummary: media.summaryText,
+          mediaBlocker: media.handled ? null : media.blocker,
+        });
+        logger.info(
+          {
+            chatJid,
+            attachmentCount: mediaAttachmentIds.length,
+            mediaHandled: media.handled,
+            mediaProvider: media.providerUsed || null,
+            mediaDebugPath: media.debugPath,
+          },
+          'Prepared bounded media evidence for OpenClaw delegation',
+        );
+      }
+
       const result = await delegateToOpenClawAgent({
-        message: prompt,
+        message: delegatedPrompt,
         sessionKey,
       });
       const responseStyle = command === 'mention' ? 'mention' : 'operator';
@@ -16226,6 +16610,56 @@ async function main(): Promise<void> {
         return;
       }
 
+      // Native BlueBubbles reactions are structured owner-review signals, not
+      // conversational turns. Consume them before command parsing or message
+      // storage so a tapback can never become an accidental assistant prompt.
+      if (msg.reaction) {
+        const reactionAction = mapMessageReactionToFeedbackAction(msg.reaction);
+        const feedback = reactionAction
+          ? expandBlueBubblesLogicalSelfThreadJids(chatJid)
+              .map((candidateChatJid) =>
+                getResponseFeedbackByMessage({
+                  chatJid: candidateChatJid,
+                  platformMessageId: msg.reaction?.targetMessageId || '',
+                }),
+              )
+              .find(Boolean)
+          : undefined;
+        if (
+          reactionAction &&
+          feedback &&
+          feedback.channel === 'bluebubbles' &&
+          isBlueBubblesSelfThreadAliasJid(feedback.chatJid) &&
+          isBlueBubblesSelfThreadAliasJid(chatJid)
+        ) {
+          handleResponseFeedbackAction(
+            chatJid,
+            msg,
+            {
+              feedbackId: feedback.feedbackId,
+              operation: reactionAction,
+            },
+            { acknowledge: false, reviewSource: 'native_reaction' },
+          ).catch((err) =>
+            logger.error(
+              { err, chatJid, reactionKind: msg.reaction?.kind },
+              'BlueBubbles native reaction feedback error',
+            ),
+          );
+        } else {
+          logger.debug(
+            {
+              chatJid,
+              reactionKind: msg.reaction.kind,
+              removed: msg.reaction.removed,
+              feedbackLinked: false,
+            },
+            'Ignored BlueBubbles reaction without an unambiguous feedback link',
+          );
+        }
+        return;
+      }
+
       const agiConfirmMatch = rawTrimmed.match(
         /^\/agi-(confirm|decline)\s+(\S+)/i,
       );
@@ -16328,6 +16762,42 @@ async function main(): Promise<void> {
                 'Natural response feedback stale approval notice error',
               ),
             );
+          return;
+        }
+      }
+
+      // Explicit standalone owner verdicts review only the immediately latest
+      // private-surface response. Mixed action language is rejected by the
+      // resolver, so feedback can never become send/deploy/purchase approval.
+      const naturalVerdictChannel = findChannel(channels, chatJid);
+      const naturalVerdictSurface =
+        mainControlChat ||
+        (naturalVerdictChannel?.name === 'bluebubbles' &&
+          isBlueBubblesSelfThreadAliasJid(chatJid));
+      if (naturalVerdictSurface) {
+        const candidateChatJids =
+          naturalVerdictChannel?.name === 'bluebubbles'
+            ? expandBlueBubblesLogicalSelfThreadJids(chatJid)
+            : [chatJid];
+        const naturalVerdict = resolveNaturalResponseFeedbackVerdict(
+          rawTrimmed,
+          candidateChatJids.flatMap((candidateChatJid) =>
+            listRecentResponseFeedback({
+              chatJid: candidateChatJid,
+              limit: 3,
+            }),
+          ),
+        );
+        if (naturalVerdict.state === 'ready') {
+          handleResponseFeedbackAction(chatJid, msg, naturalVerdict.action, {
+            completionVerified: naturalVerdict.completionVerified,
+            reviewSource: 'natural_language',
+          }).catch((err) =>
+            logger.error(
+              { err, chatJid },
+              'Natural response feedback verdict error',
+            ),
+          );
           return;
         }
       }
@@ -17328,6 +17798,8 @@ async function main(): Promise<void> {
               },
               'Started BlueBubbles same-thread proof drill from in-channel trigger',
             );
+            lastAgentTimestamp[chatJid] = msg.timestamp;
+            saveState();
           } catch (err) {
             logger.error(
               { err, chatJid },

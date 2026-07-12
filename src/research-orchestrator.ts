@@ -117,6 +117,8 @@ export interface ResearchSupportingSource {
   url?: string;
   retrievalScore?: number;
   matchReason?: string;
+  updatedAt?: string;
+  freshness?: 'fresh' | 'aging' | 'stale' | 'unknown';
 }
 
 export interface ResearchResult {
@@ -444,9 +446,27 @@ function buildKnowledgeSourceNotes(
   supportingSources: ResearchSupportingSource[],
 ): string[] {
   return supportingSources
-    .map((source) => source.title)
+    .map((source) => {
+      const updated = source.updatedAt?.slice(0, 10);
+      return updated
+        ? `${source.title} (updated ${updated}; ${source.freshness || 'unknown'} freshness)`
+        : source.title;
+    })
     .filter(Boolean)
     .slice(0, 4);
+}
+
+export function classifySavedSourceFreshness(
+  updatedAt: string | null | undefined,
+  now = new Date(),
+): NonNullable<ResearchSupportingSource['freshness']> {
+  const updatedMs = updatedAt ? new Date(updatedAt).getTime() : Number.NaN;
+  if (!Number.isFinite(updatedMs) || updatedMs > now.getTime())
+    return 'unknown';
+  const ageDays = (now.getTime() - updatedMs) / (24 * 60 * 60 * 1000);
+  if (ageDays <= 90) return 'fresh';
+  if (ageDays <= 365) return 'aging';
+  return 'stale';
 }
 
 function buildOutsideSourceNotes(
@@ -980,6 +1000,9 @@ function buildKnowledgeContextBlock(
   search: KnowledgeSearchResult,
 ): KnowledgeResearchContext {
   const seen = new Set<string>();
+  const sourcesById = new Map(
+    search.sources.map((source) => [source.sourceId, source]),
+  );
   const supportingSources: ResearchSupportingSource[] = [];
   for (const hit of search.hits) {
     const titleKey = hit.sourceTitle.trim().toLowerCase();
@@ -990,6 +1013,7 @@ function buildKnowledgeContextBlock(
         : hit.sourceId || `${hit.sourceTitle}:${hit.excerpt}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    const source = sourcesById.get(hit.sourceId);
     supportingSources.push({
       origin: 'knowledge_library',
       title: hit.sourceTitle,
@@ -999,6 +1023,7 @@ function buildKnowledgeContextBlock(
       excerpt: hit.excerpt,
       retrievalScore: hit.retrievalScore,
       matchReason: hit.matchReason,
+      updatedAt: source?.updatedAt,
     });
     if (supportingSources.length >= 5) {
       break;
@@ -1028,7 +1053,10 @@ function summarizeKnowledgeResearch(
     note?: string;
   } = {},
 ): ResearchResult {
-  const supportingSources = knowledge.supportingSources;
+  const supportingSources = knowledge.supportingSources.map((source) => ({
+    ...source,
+    freshness: classifySavedSourceFreshness(source.updatedAt, request.now),
+  }));
   if (supportingSources.length === 0) {
     const summaryText =
       request.channel === 'alexa'
@@ -1067,7 +1095,11 @@ function summarizeKnowledgeResearch(
         ? `From your saved material, the strongest signal points to ${top.title}.`
         : `From your saved material, the main takeaway starts with ${top.title}.`;
   const summaryTail = top.excerpt ? ` ${top.excerpt}` : '';
-  const summaryText = `${summaryLead}${summaryTail}`.trim();
+  const staleNote =
+    top.freshness === 'stale' && top.updatedAt
+      ? ` Treat this as potentially outdated; the source was last updated ${top.updatedAt.slice(0, 10)}.`
+      : '';
+  const summaryText = `${summaryLead}${summaryTail}${staleNote}`.trim();
   const spokenExcerpt = top.excerpt
     ? top.excerpt
         .replace(/\s+/g, ' ')
@@ -1893,6 +1925,21 @@ export async function runResearchOrchestrator(
   const normalized = normalizeQuery(request.query);
   const normalizedRequest = { ...request, query: normalized };
   const plan = planResearchRequest(normalizedRequest);
+  const savedMaterialMode = resolveSavedMaterialMode(
+    normalizedRequest,
+    normalized.toLowerCase(),
+  );
+  if (
+    savedMaterialMode === 'only' &&
+    (plan.primarySource !== 'knowledge_library' ||
+      plan.sources.openAiResponses ||
+      plan.sources.braveSearch ||
+      plan.sources.webSearch)
+  ) {
+    throw new Error(
+      'Saved-only research plan attempted to enable an external provider.',
+    );
+  }
 
   if (!normalized) {
     return {

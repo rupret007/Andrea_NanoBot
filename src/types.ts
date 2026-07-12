@@ -54,7 +54,27 @@ export interface NewMessage {
   thread_id?: string;
   reply_to_id?: string;
   reply_to?: ReplyMessageRef;
+  /**
+   * Structured reaction metadata supplied by channels that expose native
+   * message reactions. Reaction events are control signals, not chat prompts;
+   * callers should consume them before ordinary message persistence/routing.
+   */
+  reaction?: MessageReactionRef;
   attachments?: MessageMediaAttachment[];
+}
+
+export type MessageReactionKind =
+  | 'love'
+  | 'like'
+  | 'dislike'
+  | 'laugh'
+  | 'emphasize'
+  | 'question';
+
+export interface MessageReactionRef {
+  kind: MessageReactionKind;
+  removed: boolean;
+  targetMessageId: string;
 }
 
 export type MessageMediaKind = 'image' | 'video' | 'audio' | 'file';
@@ -1382,9 +1402,17 @@ export interface CouncilDoctorReport {
     replayRuns: number;
     syntheticRuns: number;
     degradedRuns: number;
+    answerableRuns?: number;
+    clarifiedRuns?: number;
+    blockedRuns?: number;
     averageConfidence: number;
     schemaInvalidRuns: number;
     lowConfidenceRuns: number;
+    qualityScore?: number;
+    decisionAppropriateRuns?: number;
+    appropriatelyCautiousRuns?: number;
+    operationallyDegradedRuns?: number;
+    uncalibratedRuns?: number;
     outcomeSignals: number;
   };
   providerReliability: CouncilProviderReliabilitySnapshot[];
@@ -1404,6 +1432,8 @@ export interface CouncilDoctorReport {
   };
   degradedReasons: string[];
   evidenceGaps: string[];
+  historicalEvidenceGaps?: string[];
+  resolvedEvidenceGaps?: string[];
   taskEase?: {
     status: 'pass' | 'warn' | 'fail';
     score: number;
@@ -1743,6 +1773,8 @@ export type CognitiveRunStatus =
   | 'blocked'
   | 'learned';
 
+export type CognitiveRunOrigin = 'live' | 'replay' | 'synthetic';
+
 export type CognitiveMode =
   | 'quick_path'
   | 'reactive_plan'
@@ -1763,6 +1795,7 @@ export interface CognitiveRunRecord {
   channel?: string | null;
   taskFamily: string;
   turnId?: string | null;
+  runOrigin: CognitiveRunOrigin;
   goalSummary: string;
   selectedSkillId: string;
   status: CognitiveRunStatus;
@@ -1990,6 +2023,7 @@ export interface CognitiveRewardSignalRecord {
     | 'approval_required'
     | 'skill_promoted'
     | 'skill_demoted'
+    | 'user_acceptance'
     | 'user_correction';
   score: number;
   summary: string;
@@ -5331,6 +5365,7 @@ export interface ReliabilityObservation {
     | 'response_feedback'
     | 'message_action'
     | 'repair'
+    | 'pilot_journey'
     | 'simulation';
   outcome:
     | 'success'
@@ -6149,6 +6184,11 @@ export interface MessageActionLinkedRefs {
   delegationRuleId?: string;
   delegationMode?: DelegationApprovalMode | null;
   delegationExplanation?: string | null;
+  cognitiveRunId?: string;
+  cognitiveSkillId?: string;
+  cognitiveTrajectoryId?: string;
+  agentRuntimeRunId?: string;
+  cognitiveOwnerReviewSignalId?: string;
 }
 
 export interface MessageActionExplanation {
@@ -6414,6 +6454,7 @@ export interface GoalPlannerDoctorReport {
   options: CounterfactualActionOption[];
   causalBeliefs: CausalBelief[];
   opportunities: ProactiveOpportunity[];
+  stalePlanStepsSuppressed: number;
   nextAction: string;
   privacy: CognitiveReplayPacket['privacy'];
 }
@@ -6502,6 +6543,25 @@ export interface CommunicationThreadRecord {
   createdAt: string;
   updatedAt: string;
   disabledAt?: string | null;
+}
+
+export type CommunicationIdentityReviewDecision = 'confirmed' | 'dismissed';
+
+/**
+ * An explicit owner decision about whether a communication thread represents
+ * a known person. This stays separate from CommunicationInferenceState so an
+ * identity decision cannot accidentally bless assistant-inferred urgency,
+ * summaries, or follow-through state.
+ */
+export interface CommunicationIdentityReviewRecord {
+  threadId: string;
+  groupFolder: string;
+  decision: CommunicationIdentityReviewDecision;
+  linkedSubjectId?: string | null;
+  sourceChannel: 'telegram' | 'bluebubbles';
+  sourceSummary: string;
+  createdAt: string;
+  reviewedAt: string;
 }
 
 export type CommunicationSignalDirection =
@@ -6612,6 +6672,11 @@ export interface PilotIssueLinkedRefs {
   personalContextPacketId?: string;
   personalContextCitations?: string[];
   verifiedDeepWorkPacketId?: string;
+  cognitiveRunId?: string;
+  cognitiveSkillId?: string;
+  cognitiveTrajectoryId?: string;
+  agentRuntimeRunId?: string;
+  cognitiveOwnerReviewSignalId?: string;
   absorbedFeedbackIds?: string[];
   repairBindingState?: string;
   repairExecutionState?: string;
@@ -6662,6 +6727,7 @@ export interface PilotIssueRecord {
 
 export type ResponseFeedbackStatus =
   | 'captured'
+  | 'accepted'
   | 'awaiting_confirmation'
   | 'running'
   | 'failed'
@@ -6689,7 +6755,7 @@ export interface ResponseFeedbackRecord {
   updatedAt: string;
   status: ResponseFeedbackStatus;
   classification: ResponseFeedbackClassification;
-  channel: 'telegram';
+  channel: 'telegram' | 'bluebubbles';
   groupFolder: string;
   chatJid: string;
   threadId?: string | null;
@@ -7316,6 +7382,11 @@ export interface Channel {
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
+  // Optional: hydrate a bounded slice of recent platform history on an
+  // explicit user request. This is not a passive archive or background sync.
+  primeRecentHistory?(options?: {
+    limit?: number;
+  }): Promise<{ storedCount: number; totalCount: number }>;
 }
 
 // Callback type that channels use to deliver inbound messages

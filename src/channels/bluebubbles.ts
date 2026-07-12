@@ -54,6 +54,7 @@ import type {
   ChannelArtifact,
   Channel,
   ChannelHealthSnapshot,
+  MessageReactionKind,
   MessageMediaAttachment,
   NewMessage,
   SendArtifactOptions,
@@ -168,6 +169,56 @@ function normalizeBlueBubblesReplyId(value: string | null): string | undefined {
   const normalized = value?.trim();
   if (!normalized) return undefined;
   return normalized.startsWith('bb:') ? normalized : `bb:${normalized}`;
+}
+
+const BLUEBUBBLES_REACTION_BY_NUMBER: Record<number, string> = {
+  2000: 'love',
+  2001: 'like',
+  2002: 'dislike',
+  2003: 'laugh',
+  2004: 'emphasize',
+  2005: 'question',
+  3000: '-love',
+  3001: '-like',
+  3002: '-dislike',
+  3003: '-laugh',
+  3004: '-emphasize',
+  3005: '-question',
+};
+
+function normalizeBlueBubblesReactionKind(value: unknown): {
+  kind: MessageReactionKind;
+  removed: boolean;
+} | null {
+  const raw =
+    typeof value === 'number'
+      ? BLUEBUBBLES_REACTION_BY_NUMBER[value]
+      : typeof value === 'string'
+        ? BLUEBUBBLES_REACTION_BY_NUMBER[Number(value)] || value
+        : '';
+  const normalized = raw.trim().toLowerCase();
+  const removed = normalized.startsWith('-');
+  const kind = (
+    removed ? normalized.slice(1) : normalized
+  ) as MessageReactionKind;
+  if (
+    !['love', 'like', 'dislike', 'laugh', 'emphasize', 'question'].includes(
+      kind,
+    )
+  ) {
+    return null;
+  }
+  return { kind, removed };
+}
+
+function normalizeBlueBubblesAssociatedMessageId(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().replace(/^bp:/i, '').replace(/^p:/i, '');
+  const guid = normalized.split('/').at(-1)?.trim();
+  if (!guid) return undefined;
+  return guid.startsWith('bb:') ? guid : `bb:${guid}`;
 }
 
 function formatBlueBubblesOutboundText(text: string): string {
@@ -336,12 +387,11 @@ function inferBlueBubblesGroupChat(
   chatGuid: string | null | undefined,
   explicitIsGroup?: boolean | null,
 ): boolean {
-  if (typeof explicitIsGroup === 'boolean') {
-    return explicitIsGroup;
-  }
   const normalized = chatGuid?.trim() || '';
   const match = normalized.match(/^[^;]+;([+-]);/);
+  if (explicitIsGroup === true) return true;
   if (match?.[1] === '+') return true;
+  if (explicitIsGroup === false) return false;
   if (match?.[1] === '-') return false;
   return /;\+;chat/i.test(normalized);
 }
@@ -992,15 +1042,22 @@ export function normalizeBlueBubblesChatRef(
         })
         .filter((value): value is string => Boolean(value))
     : [];
+  const chatGuid =
+    firstString(root.chatGuid, data.chatGuid, chat.guid, chat.chatGuid) ||
+    'unknown';
+  const explicitIsGroup = firstBoolean(
+    chat.isGroup,
+    data.isGroup,
+    root.isGroup,
+  );
 
   return {
-    chatGuid:
-      firstString(root.chatGuid, data.chatGuid, chat.guid, chat.chatGuid) ||
-      'unknown',
+    chatGuid,
     displayName: firstString(chat.displayName, chat.name),
-    isGroup:
-      firstBoolean(chat.isGroup, data.isGroup, root.isGroup) ??
-      participants.length > 1,
+    isGroup: inferBlueBubblesGroupChat(
+      chatGuid,
+      participants.length > 1 ? true : explicitIsGroup,
+    ),
     participants,
     chatIdentifier: firstString(
       chat.chatIdentifier,
@@ -1015,9 +1072,7 @@ export function normalizeBlueBubblesChatRef(
     ),
     service:
       firstString(chat.service, data.service, root.service) ||
-      extractBlueBubblesServiceFromChatGuid(
-        firstString(root.chatGuid, data.chatGuid, chat.guid, chat.chatGuid),
-      ),
+      extractBlueBubblesServiceFromChatGuid(chatGuid),
   };
 }
 
@@ -1059,7 +1114,26 @@ export function normalizeBlueBubblesIncomingMessage(
     messageId,
     now,
   });
-  if (!text && attachments.length === 0) return null;
+  const associatedMessageGuid =
+    message.associatedMessageGuid ??
+    data.associatedMessageGuid ??
+    root.associatedMessageGuid;
+  const reactionKind = normalizeBlueBubblesReactionKind(
+    message.associatedMessageType ??
+      data.associatedMessageType ??
+      root.associatedMessageType,
+  );
+  const reactionTargetMessageId = normalizeBlueBubblesAssociatedMessageId(
+    associatedMessageGuid,
+  );
+  const reaction =
+    reactionKind && reactionTargetMessageId
+      ? {
+          ...reactionKind,
+          targetMessageId: reactionTargetMessageId,
+        }
+      : undefined;
+  if (!text && attachments.length === 0 && !reaction) return null;
 
   return {
     chatJid,
@@ -1070,7 +1144,11 @@ export function normalizeBlueBubblesIncomingMessage(
       chat_jid: chatJid,
       sender: `bb:${contact.handle}`,
       sender_name: contact.displayName || contact.handle,
-      content: text || describeBlueBubblesAttachments(attachments),
+      content:
+        text ||
+        (reaction
+          ? `[BlueBubbles reaction: ${reaction.removed ? 'removed ' : ''}${reaction.kind}]`
+          : describeBlueBubblesAttachments(attachments)),
       timestamp: normalizeTimestamp(
         message.dateCreated ||
           message.date ||
@@ -1093,6 +1171,7 @@ export function normalizeBlueBubblesIncomingMessage(
           root.associatedMessageGuid,
         ),
       ),
+      reaction,
       attachments,
     },
   };
@@ -1242,10 +1321,14 @@ function normalizeBlueBubblesHistoryPayload(
       chat: {
         guid: firstString(chat.guid, chat.chatGuid, chatGuid) || chatGuid,
         displayName: firstString(chat.displayName, chat.name),
-        isGroup:
-          typeof chat.isGroup === 'boolean'
-            ? chat.isGroup
-            : Array.isArray(participants) && participants.length > 1,
+        isGroup: inferBlueBubblesGroupChat(
+          chatGuid,
+          Array.isArray(participants) && participants.length > 1
+            ? true
+            : typeof chat.isGroup === 'boolean'
+              ? chat.isGroup
+              : null,
+        ),
         chatIdentifier: firstString(
           chat.chatIdentifier,
           chat.identifier,
@@ -3538,6 +3621,69 @@ export class BlueBubblesChannel implements Channel {
 
   isConnected(): boolean {
     return this.connected;
+  }
+
+  async primeRecentHistory(
+    options: { limit?: number } = {},
+  ): Promise<{ storedCount: number; totalCount: number }> {
+    if (!this.connected) {
+      throw new Error('BlueBubbles channel is not connected.');
+    }
+    const activeBaseUrl = await this.ensureActiveBaseUrl({
+      recheck: true,
+      refreshReadiness: true,
+    });
+    if (!activeBaseUrl) {
+      throw new Error(
+        this.transportProbeDetail ||
+          'Andrea could not reach the configured BlueBubbles endpoint.',
+      );
+    }
+    const limit = Math.min(Math.max(1, options.limit || 200), 500);
+    const rows = await this.bridgeProvider.inspectRecentActivity(
+      this.buildConfigForBaseUrl(activeBaseUrl),
+      {
+        limit,
+        candidateChatJids: getAllChats()
+          .map((chat) => chat.jid)
+          .filter((jid) => jid.startsWith('bb:')),
+      },
+    );
+    const eligibleRows = rows.filter((row) =>
+      isBlueBubblesChatEligible(
+        this.config,
+        row.chat.chatGuid,
+        row.chat.isGroup,
+      ),
+    );
+    let storedCount = 0;
+    for (const row of eligibleRows) {
+      storeChatMetadata(
+        row.chatJid,
+        row.message.timestamp,
+        row.chat.displayName || row.chat.chatGuid,
+        'bluebubbles',
+        row.chat.isGroup,
+      );
+      if (hasStoredMessage(row.chatJid, row.message.id)) continue;
+      storeMessageDirect({
+        id: row.message.id,
+        chat_jid: row.chatJid,
+        sender: row.message.sender,
+        sender_name: row.message.sender_name,
+        content: row.message.content,
+        timestamp: row.message.timestamp,
+        is_from_me: Boolean(row.message.is_from_me),
+        is_bot_message: row.message.is_bot_message,
+        reply_to_id: row.message.reply_to_id || undefined,
+        attachments: row.message.attachments || [],
+      });
+      storedCount += 1;
+    }
+    this.lastMetadataHydrationSource = 'history';
+    this.monitorState.lastMetadataHydrationSource = 'history';
+    this.persistMonitorState();
+    return { storedCount, totalCount: eligibleRows.length };
   }
 
   ownsJid(jid: string): boolean {

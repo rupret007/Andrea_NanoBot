@@ -70,6 +70,16 @@ npm run debug:status
 
 Confirm the active root is the intended checkout, host state is
 `running_ready`, and the serving commit matches workspace `HEAD`. For
+full readiness, also confirm `Host disk pressure: healthy`. A running process
+with warning/critical disk pressure is `degraded_but_usable`, because SQLite,
+health markers, evaluation artifacts, and containers can still fail with
+`ENOSPC`. Andrea may report and guide recovery but must not delete Docker
+images, containers, evidence, caches, or user files automatically. Free the
+target reported by the doctor (the greater of 5 GiB or 5% of the volume) after
+owner review, then rerun `npm run integrations:doctor` and
+`npm run debug:status`.
+
+For
 BlueBubbles changes, add the focused test suite and live proof only when live
 Messages side effects are acceptable:
 

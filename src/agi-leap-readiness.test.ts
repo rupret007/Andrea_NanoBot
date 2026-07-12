@@ -13,6 +13,7 @@ import {
   buildAgiLeapReadinessReport,
   buildCouncilGovernedDeepWorkBlueprint,
   makeAndreaSkillManifest,
+  scoreCouncilHealth,
 } from './agi-leap-readiness.js';
 import { applyFollowThroughActivation } from './follow-through-activation.js';
 import {
@@ -23,7 +24,7 @@ import {
   buildPersonalContextGraph,
   formatPersonalContextGraphSummary,
 } from './personal-context-graph.js';
-import type { OperatingProfilePlan } from './types.js';
+import type { CouncilDoctorReport, OperatingProfilePlan } from './types.js';
 
 const now = '2026-06-18T12:00:00.000Z';
 
@@ -183,6 +184,104 @@ describe('AGI leap readiness', () => {
     _initTestDatabase();
   });
 
+  it('scores council health from live outcomes instead of a fixed constant', () => {
+    const base: CouncilDoctorReport = {
+      generatedAt: now,
+      ok: true,
+      summary: 'healthy council',
+      lastRun: null,
+      recent: {
+        totalRuns: 5,
+        liveRuns: 5,
+        replayRuns: 0,
+        syntheticRuns: 0,
+        degradedRuns: 0,
+        answerableRuns: 5,
+        clarifiedRuns: 0,
+        blockedRuns: 0,
+        averageConfidence: 0.9,
+        schemaInvalidRuns: 0,
+        lowConfidenceRuns: 0,
+        outcomeSignals: 5,
+      },
+      providerReliability: [],
+      currentProviderHealth: [
+        'openai_cloud',
+        'anthropic_cloud',
+        'gemini_cloud',
+        'minimax_cloud',
+        'brave_search',
+      ].map((providerId) => ({
+        providerId,
+        state: 'healthy',
+        failureClass: 'none',
+        quotaState: 'ok',
+        credentialState: 'configured',
+      })),
+      providerParticipation: {
+        status: 'full',
+        skippedProviderIds: [],
+        substitutedRoles: [],
+        riskFlags: [],
+        nextAction: 'keep proving quality',
+      },
+      degradedReasons: [],
+      evidenceGaps: [],
+      taskEase: {
+        status: 'pass',
+        score: 1,
+        lastAttemptId: 'attempt-1',
+        lastOutcome: 'pass',
+        outcomeSignalCount: 5,
+        sourcePatternCoverage: '26/26',
+        qualityGateCoverage: '7/7',
+        nextAction: 'continue',
+      },
+      nextAction: 'continue',
+      privacy: {
+        secretsRedacted: true,
+        rawPromptsStored: false,
+        rawPrivateBodiesStored: false,
+      },
+    };
+    const degraded: CouncilDoctorReport = {
+      ...base,
+      ok: false,
+      recent: {
+        ...base.recent,
+        totalRuns: 4,
+        liveRuns: 4,
+        degradedRuns: 4,
+        answerableRuns: 1,
+        clarifiedRuns: 2,
+        blockedRuns: 1,
+        averageConfidence: 0.5,
+        lowConfidenceRuns: 3,
+      },
+      evidenceGaps: ['integration_alexa', 'feature_proofs'],
+      taskEase: { ...base.taskEase!, status: 'warn', score: 0.83 },
+    };
+    const noLiveEvidence: CouncilDoctorReport = {
+      ...base,
+      ok: false,
+      recent: {
+        ...base.recent,
+        totalRuns: 0,
+        liveRuns: 0,
+        answerableRuns: 0,
+        averageConfidence: 0,
+      },
+      providerParticipation: {
+        ...base.providerParticipation!,
+        status: 'none',
+      },
+    };
+
+    expect(scoreCouncilHealth(base)).toBeGreaterThan(0.95);
+    expect(scoreCouncilHealth(degraded)).toBeCloseTo(0.79, 2);
+    expect(scoreCouncilHealth(noLiveEvidence)).toBeLessThan(0.5);
+  });
+
   it('exports and imports a redacted onboarding profile pack', () => {
     seedSyntheticLife();
 
@@ -226,13 +325,59 @@ describe('AGI leap readiness', () => {
     expect(graph.dailyIntelligenceQuestions).toContain('Who needs a reply?');
     expect(graph.rankedInsights[0]?.kind).toBe('needs_reply');
     expect(graph.rankedInsights[0]?.nextAction).toContain('draft');
-    expect(graph.readinessScore).toBeGreaterThan(0.5);
+    expect(graph.readinessScore).toBeGreaterThan(0.4);
+    expect(graph.readinessScore).toBeLessThan(0.8);
     expect(serialized).not.toContain('+14695550123');
     expect(serialized).not.toContain('bb:iMessage');
     expect(serialized).not.toContain('Riley asked whether the form is ready');
     expect(serialized).not.toMatch(/they said\s+"/i);
     expect(formatPersonalContextGraphSummary(graph)).toContain(
       'Personal context graph readiness',
+    );
+  });
+
+  it('does not let abundant unlinked conversations saturate context readiness', () => {
+    const groupFolder = 'link-gap';
+    seedSyntheticLife(groupFolder);
+    for (let index = 0; index < 4; index += 1) {
+      upsertCommunicationThread({
+        id: `unlinked-thread-${index}`,
+        groupFolder,
+        title: 'Messages chat',
+        linkedSubjectIds: [],
+        linkedLifeThreadIds: [],
+        channel: 'bluebubbles',
+        channelChatJid: `bb:iMessage;-;+1555000000${index}`,
+        lastInboundSummary: 'A metadata-only pending conversation.',
+        lastOutboundSummary: null,
+        followupState: 'reply_needed',
+        urgency: 'soon',
+        followupDueAt: null,
+        suggestedNextAction: 'draft_reply',
+        toneStyleHints: [],
+        lastContactAt: now,
+        lastMessageId: `message-${index}`,
+        linkedTaskId: null,
+        inferenceState: 'assistant_inferred',
+        trackingMode: 'default',
+        createdAt: now,
+        updatedAt: now,
+        disabledAt: null,
+      });
+    }
+
+    const graph = buildPersonalContextGraph({
+      groupFolder,
+      now: new Date(now),
+    });
+
+    expect(graph.coverage.communicationThreads).toBe(5);
+    expect(graph.coverage.linkedCommunicationThreads).toBe(1);
+    expect(graph.readinessScore).toBeLessThan(0.8);
+    expect(graph.topGaps).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Confirm or dismiss identity links for 4'),
+      ]),
     );
   });
 

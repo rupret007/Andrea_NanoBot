@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { beginAgentRuntimeSpineRun } from '../src/agent-runtime-spine.js';
+import { runCognitiveBenchmarkSuite } from '../src/cognitive-kernel.js';
 import {
   buildSessionGraphReport,
   formatSessionGraphReport,
@@ -31,6 +32,9 @@ const runtime = beginAgentRuntimeSpineRun({
 });
 
 assert.ok(runtime, 'runtime spine should seed session metadata');
+runCognitiveBenchmarkSuite({
+  generatedAt: '2026-06-06T23:59:10.500Z',
+});
 
 const report = buildSessionGraphReport({
   generatedAt: '2026-06-06T23:59:11.000Z',
@@ -41,6 +45,15 @@ assert.equal(report.ok, true);
 assert.ok(report.nodes.some((node) => node.nodeKind === 'runtime_run'));
 assert.ok(report.nodes.some((node) => node.nodeKind === 'supervisor_run'));
 assert.ok(report.nodes.some((node) => node.nodeKind === 'world_snapshot'));
+assert.equal(
+  report.nodes.some(
+    (node) =>
+      node.nodeKind.startsWith('cognitive_') &&
+      /cog-bench/i.test(node.sourceId),
+  ),
+  false,
+  'deterministic cognition replay must not enter the live continuity graph',
+);
 assert.ok(
   report.edges.some(
     (edge) =>
@@ -48,13 +61,28 @@ assert.ok(
   ),
   'graph should contain deterministic links',
 );
-assert.ok(report.clusters.length >= 1, 'graph should create continuity clusters');
-assert.ok(report.suggestions.length >= 1, 'graph should create safe suggestions');
+assert.ok(
+  report.clusters.length >= 1,
+  'graph should create continuity clusters',
+);
+assert.ok(
+  report.suggestions.length >= 1,
+  'graph should create safe suggestions',
+);
 assert.match(formatted, /Session Graph/);
 
-const storedNodes = listSessionGraphNodes({ snapshotId: report.snapshot.snapshotId, limit: 5000 });
-const storedEdges = listSessionGraphEdges({ snapshotId: report.snapshot.snapshotId, limit: 5000 });
-const storedClusters = listSessionClusters({ snapshotId: report.snapshot.snapshotId, limit: 5000 });
+const storedNodes = listSessionGraphNodes({
+  snapshotId: report.snapshot.snapshotId,
+  limit: 5000,
+});
+const storedEdges = listSessionGraphEdges({
+  snapshotId: report.snapshot.snapshotId,
+  limit: 5000,
+});
+const storedClusters = listSessionClusters({
+  snapshotId: report.snapshot.snapshotId,
+  limit: 5000,
+});
 const storedSuggestions = listSessionGraphSuggestions({
   snapshotId: report.snapshot.snapshotId,
   limit: 5000,

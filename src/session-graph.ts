@@ -491,7 +491,10 @@ function collectCoreNodes(
     );
   }
 
-  const runtimeRuns = listAgentRuntimeRuns({ limit });
+  const runtimeRuns = listAgentRuntimeRuns({
+    cognitiveRunOrigin: 'live',
+    limit,
+  });
   for (const run of runtimeRuns) {
     addUnique(
       nodes,
@@ -654,7 +657,9 @@ function collectAgentCognitionNodes(
   limit: number,
 ): NodeDraft[] {
   const nodes: NodeDraft[] = [];
-  for (const run of listCognitiveRuns({ limit })) {
+  const liveRuns = listCognitiveRuns({ runOrigin: 'live', limit: 1000 });
+  const liveRunIds = new Set(liveRuns.map((run) => run.runId));
+  for (const run of liveRuns.slice(0, limit)) {
     addUnique(
       nodes,
       node({
@@ -680,7 +685,9 @@ function collectAgentCognitionNodes(
     );
   }
 
-  for (const checkpoint of listCognitiveCheckpoints({ limit })) {
+  for (const checkpoint of listCognitiveCheckpoints({ limit: 200 })
+    .filter((item) => liveRunIds.has(item.runId))
+    .slice(0, limit)) {
     addUnique(
       nodes,
       node({
@@ -703,7 +710,9 @@ function collectAgentCognitionNodes(
     );
   }
 
-  for (const handoff of listCognitiveHandoffs({ limit })) {
+  for (const handoff of listCognitiveHandoffs({ limit: 200 })
+    .filter((item) => liveRunIds.has(item.runId))
+    .slice(0, limit)) {
     addUnique(
       nodes,
       node({
@@ -1841,7 +1850,10 @@ function groupFoldersFromSources(): string[] {
   for (const groupFolder of Object.keys(getAllAgentThreads())) {
     if (isValidGroupFolder(groupFolder)) folders.add(groupFolder);
   }
-  for (const run of listAgentRuntimeRuns({ limit: 100 })) {
+  for (const run of listAgentRuntimeRuns({
+    cognitiveRunOrigin: 'live',
+    limit: 100,
+  })) {
     if (run.groupFolder && isValidGroupFolder(run.groupFolder)) {
       folders.add(run.groupFolder);
     }

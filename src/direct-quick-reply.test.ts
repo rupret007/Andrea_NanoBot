@@ -6,8 +6,82 @@ import {
   maybeBuildDirectRescueReply,
 } from './direct-quick-reply.js';
 import { buildAndreaPingPresenceReply } from './ping-presence.js';
+import type { RuntimeModelInventory } from './model-self-knowledge.js';
 
 describe('direct quick reply', () => {
+  const modelInventory: RuntimeModelInventory = {
+    defaultModel: 'MiniMax-M3',
+    configuredModelCount: 4,
+    providers: [
+      {
+        providerId: 'minimax_cloud',
+        label: 'MiniMax',
+        state: 'healthy',
+        models: ['MiniMax-M3'],
+        role: 'default conversation',
+      },
+      {
+        providerId: 'openai_cloud',
+        label: 'OpenAI',
+        state: 'healthy',
+        models: ['gpt-5.4'],
+        role: 'planning',
+      },
+      {
+        providerId: 'anthropic_cloud',
+        label: 'Anthropic',
+        state: 'healthy',
+        models: ['claude-sonnet-4-6'],
+        role: 'reasoning',
+      },
+      {
+        providerId: 'gemini_cloud',
+        label: 'Google Gemini',
+        state: 'healthy',
+        models: ['gemini-2.5-pro'],
+        role: 'verification',
+      },
+    ],
+    privacy: { credentialsIncluded: false, endpointsIncluded: false },
+  };
+
+  it('answers model inventory asks from runtime truth instead of the current worker persona', () => {
+    const reply = maybeBuildDirectQuickReply(
+      [{ content: 'What LLMs do you have?' }],
+      new Date('2026-07-11T12:00:00.000Z'),
+      modelInventory,
+    );
+
+    expect(reply).toContain("I don't run on only one LLM");
+    expect(reply).toContain('MiniMax-M3');
+    expect(reply).toContain('gpt-5.4');
+    expect(reply).toContain('claude-sonnet-4-6');
+    expect(reply).toContain('gemini-2.5-pro');
+    expect(reply).toContain('ordinary reply');
+  });
+
+  it('does not hijack substantive model-routing questions', () => {
+    const reply = maybeBuildDirectQuickReply(
+      [{ content: 'What models do you use for calendar reasoning and why?' }],
+      new Date('2026-07-11T12:00:00.000Z'),
+      modelInventory,
+    );
+
+    expect(reply).toBeNull();
+  });
+
+  it('answers the configured Chinese-model question locally', () => {
+    const reply = maybeBuildDirectQuickReply(
+      [{ content: 'What is the Chinese LLM you have integration with?' }],
+      new Date('2026-07-11T12:00:00.000Z'),
+      modelInventory,
+    );
+
+    expect(reply).toBe(
+      'The Chinese-model integration is MiniMax. The configured MiniMax models are MiniMax-M3. MiniMax-M3 is also my current default conversational worker.',
+    );
+  });
+
   it('returns 42 for meaning-of-life asks', () => {
     const reply = maybeBuildDirectQuickReply([
       { content: "what's the meaning of life?" },

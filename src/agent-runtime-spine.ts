@@ -1215,7 +1215,7 @@ export function buildAgentRuntimeSpineReport(
   }
   const latestRun = params.runtimeRunId
     ? getAgentRuntimeRun(params.runtimeRunId) || null
-    : listAgentRuntimeRuns({ limit: 1 })[0] || null;
+    : listAgentRuntimeRuns({ cognitiveRunOrigin: 'live', limit: 1 })[0] || null;
   const runtimeRunId = latestRun?.runtimeRunId || null;
   const guardrails = runtimeRunId
     ? listAgentRuntimeGuardrailResults({ runtimeRunId, limit: 100 })

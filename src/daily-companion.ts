@@ -45,6 +45,7 @@ import type {
   RitualToneStyle,
   RitualTriggerStyle,
   RitualType,
+  LifeThreadSnapshot,
 } from './types.js';
 import type { AssistantPresentation } from './assistant-presentation.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
@@ -124,6 +125,8 @@ export interface DailyCompanionDeps extends DailyCommandCenterDeps {
   channel: DailyCompanionChannel;
   groupFolder?: string;
   priorContext?: DailyCompanionContext | null;
+  groundedSnapshot?: GroundedDaySnapshot;
+  lifeThreadSnapshot?: LifeThreadSnapshot;
 }
 
 interface CompanionPreferences {
@@ -276,6 +279,7 @@ function isHouseholdPrompt(normalized: string): boolean {
     /^what should i talk to [a-z][a-z' -]+ about\??$/.test(normalized) ||
     /^anything .*family.*forgetting\??$/.test(normalized) ||
     /^what do i need to follow up on at home\??$/.test(normalized) ||
+    /\b(?:around|at) (?:the )?(?:house|home)\b/.test(normalized) ||
     /^what do i need to follow up on with [a-z][a-z' -]+\??$/.test(
       normalized,
     ) ||
@@ -2742,11 +2746,13 @@ export async function buildDailyCompanionResponse(
     }
   }
 
-  const snapshot = await buildGroundedDaySnapshot({
-    ...deps,
-    now,
-    timeZone: deps.timeZone || TIMEZONE,
-  });
+  const snapshot =
+    deps.groundedSnapshot ||
+    (await buildGroundedDaySnapshot({
+      ...deps,
+      now,
+      timeZone: deps.timeZone || TIMEZONE,
+    }));
   const explicitHouseholdPerson =
     householdExplicit && deps.groupFolder
       ? extractExplicitHouseholdPerson(normalized)
@@ -2770,21 +2776,23 @@ export async function buildDailyCompanionResponse(
   const tomorrowSnapshot = needsTomorrowSnapshot
     ? await loadScopedSnapshot('what is on my calendar tomorrow', deps)
     : null;
-  const threadSnapshot = deps.groupFolder
-    ? buildLifeThreadSnapshot({
-        groupFolder: deps.groupFolder,
-        now,
-        selectedWorkTitle:
-          visibleSelectedWork(snapshot.selectedWork, prefs.workContextEnabled)
-            ?.title || null,
-      })
-    : {
-        activeThreads: [],
-        dueFollowups: [],
-        slippingThreads: [],
-        householdCarryover: null,
-        recommendedNextThread: null,
-      };
+  const threadSnapshot =
+    deps.lifeThreadSnapshot ||
+    (deps.groupFolder
+      ? buildLifeThreadSnapshot({
+          groupFolder: deps.groupFolder,
+          now,
+          selectedWorkTitle:
+            visibleSelectedWork(snapshot.selectedWork, prefs.workContextEnabled)
+              ?.title || null,
+        })
+      : {
+          activeThreads: [],
+          dueFollowups: [],
+          slippingThreads: [],
+          householdCarryover: null,
+          recommendedNextThread: null,
+        });
   const householdLines =
     prefs.familyContextEnabled || householdExplicit
       ? selectHouseholdLines({

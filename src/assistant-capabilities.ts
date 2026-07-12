@@ -11,6 +11,8 @@ import {
 import {
   formatClock,
   getUpcomingReminders,
+  type DailyCommandCenterDeps,
+  type GroundedDaySnapshot,
   type SelectedWorkContext,
 } from './daily-command-center.js';
 import { buildUsefulDailyCommandCenter } from './useful-daily-command-center.js';
@@ -64,6 +66,7 @@ import {
   formatCommunicationOpenLoopsReply,
   manageCommunicationTracking,
 } from './communication-companion.js';
+import { handleCommunicationIdentityReview } from './communication-identity-review.js';
 import {
   summarizeBlueBubblesThreadDigest,
   type BlueBubblesSuggestedReply,
@@ -121,6 +124,7 @@ import type {
   CompanionToneProfile,
   EverydayListScope,
   KnowledgeSourceRecord,
+  LifeThreadSnapshot,
   MediaGenerationResult,
   MessageActionLastActionKind,
   MessageActionRecord,
@@ -170,6 +174,7 @@ export type AssistantCapabilityId =
   | 'communication.understand_message'
   | 'communication.summarize_thread'
   | 'communication.review_recent_texts'
+  | 'communication.manage_identity_links'
   | 'communication.draft_reply'
   | 'communication.open_loops'
   | 'communication.manage_tracking'
@@ -250,10 +255,18 @@ export interface AssistantCapabilityContext {
   channel: 'alexa' | 'telegram' | 'bluebubbles';
   groupFolder?: string;
   chatJid?: string;
+  currentMessageId?: string;
+  currentAttachmentIds?: string[];
   now?: Date;
   selectedWork?: SelectedWorkContext | null;
   conversationSummary?: string;
   priorCompanionContext?: DailyCompanionContext | null;
+  groundedSnapshot?: GroundedDaySnapshot;
+  lifeThreadSnapshot?: LifeThreadSnapshot;
+  calendarDeps?: Pick<
+    DailyCommandCenterDeps,
+    'env' | 'fetchImpl' | 'platform' | 'runAppleCalendarScript' | 'timeZone'
+  >;
   replyText?: string;
   factIdHint?: string;
   threadHint?: string;
@@ -902,6 +915,9 @@ async function runDailyCapability(
       ),
       priorContext: context.priorCompanionContext || null,
       now: context.now,
+      groundedSnapshot: context.groundedSnapshot,
+      lifeThreadSnapshot: context.lifeThreadSnapshot,
+      ...(context.calendarDeps || {}),
     },
   );
   if (!response) return { handled: false };
@@ -1358,8 +1374,11 @@ function formatResearchTelegramReply(result: ResearchResult): string {
   if (result.supportingSources?.length) {
     lines.push('', '*Supporting Sources*');
     for (const source of result.supportingSources.slice(0, 4)) {
+      const freshness = source.updatedAt
+        ? `; updated ${source.updatedAt.slice(0, 10)}${source.freshness ? `, ${source.freshness}` : ''}`
+        : '';
       lines.push(
-        `- ${source.title}${source.matchReason ? ` (${source.matchReason})` : ''}`,
+        `- ${source.title}${source.matchReason ? ` (${source.matchReason}${freshness})` : freshness ? ` (${freshness.slice(2)})` : ''}`,
       );
     }
   }
@@ -1382,7 +1401,11 @@ function formatResearchBlueBubblesReply(result: ResearchResult): string {
     lines.push(
       `Sources: ${result.supportingSources
         .slice(0, 2)
-        .map((source) => source.title)
+        .map((source) =>
+          source.updatedAt
+            ? `${source.title} (${source.updatedAt.slice(0, 10)}${source.freshness ? `, ${source.freshness}` : ''})`
+            : source.title,
+        )
         .join(', ')}`,
     );
   }
@@ -1630,7 +1653,10 @@ function inferKnowledgeRequestedSourceIds(
     context.priorSubjectData?.knowledgeSourceIds?.length &&
     (/^(this|that|these) source/.test(normalized) ||
       /\bthese saved sources\b/.test(normalized) ||
-      /\bthat source\b/.test(normalized))
+      /\bthat source\b/.test(normalized) ||
+      /\b(?:this|that)\b.*\b(?:already saved|saved material|saved|library)\b/.test(
+        normalized,
+      ))
   ) {
     return context.priorSubjectData.knowledgeSourceIds;
   }
@@ -3211,6 +3237,42 @@ async function runRecentTextReviewCapability(
   };
 }
 
+async function runCommunicationIdentityReviewCapability(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult> {
+  if (!context.groupFolder) return { handled: false };
+  const response = handleCommunicationIdentityReview({
+    groupFolder: context.groupFolder,
+    channel: context.channel,
+    chatJid: context.chatJid,
+    text: input.text || input.canonicalText || '',
+    now: context.now,
+  });
+  if (!response.handled) return { handled: false };
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: response.replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'local_companion',
+      response.changed
+        ? 'applied an explicit metadata-only communication identity decision'
+        : 'reviewed metadata-only communication identity decisions without mutation',
+      [
+        'identity_source:explicit_owner_review',
+        'raw_message_bodies_used:no',
+        'identifier_inference_used:no',
+      ],
+    ),
+    followupActions: descriptor.followupActions,
+  };
+}
+
 async function runCommunicationUnderstandCapability(
   descriptor: AssistantCapabilityDescriptor,
   context: AssistantCapabilityContext,
@@ -4069,6 +4131,8 @@ async function runChiefOfStaffCapability(
     priorCommunicationSubjectIds:
       context.priorSubjectData?.communicationSubjectIds,
     priorKnowledgeSourceIds: context.priorSubjectData?.knowledgeSourceIds,
+    groundedSnapshot: context.groundedSnapshot,
+    lifeThreadSnapshot: context.lifeThreadSnapshot,
   });
   const continuationCandidate = buildChiefOfStaffContinuationCandidate({
     descriptor,
@@ -4581,22 +4645,34 @@ async function runMediaCapability(
   if (!prompt.trim()) return { handled: false };
 
   if (descriptor.id === 'media.analyze') {
-    const recentAttachments = context.chatJid
+    const selectedAttachments = context.currentAttachmentIds?.length
       ? listMessageMediaAttachments({
-          chatJid: context.chatJid,
-          limit: 50,
+          attachmentIds: context.currentAttachmentIds,
+          limit: Math.max(4, context.currentAttachmentIds.length),
         })
-          .filter(
-            (attachment) =>
-              attachment.kind === 'image' || attachment.kind === 'video',
-          )
-          .sort(
-            (left, right) =>
-              Date.parse(right.updatedAt || right.createdAt || '') -
-              Date.parse(left.updatedAt || left.createdAt || ''),
-          )
-          .slice(0, 4)
-      : [];
+      : context.chatJid && context.currentMessageId
+        ? listMessageMediaAttachments({
+            chatJid: context.chatJid,
+            messageId: context.currentMessageId,
+            limit: 20,
+          })
+        : context.chatJid
+          ? listMessageMediaAttachments({
+              chatJid: context.chatJid,
+              limit: 50,
+            })
+          : [];
+    const recentAttachments = selectedAttachments
+      .filter(
+        (attachment) =>
+          attachment.kind === 'image' || attachment.kind === 'video',
+      )
+      .sort(
+        (left, right) =>
+          Date.parse(right.updatedAt || right.createdAt || '') -
+          Date.parse(left.updatedAt || left.createdAt || ''),
+      )
+      .slice(0, 4);
     const analysis = await analyzeMessageMedia({
       attachmentIds: recentAttachments.map(
         (attachment) => attachment.attachmentId,
@@ -6789,6 +6865,34 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     execute: (context, input) =>
       runMediaCapability(
         CAPABILITY_DESCRIPTORS[64]!,
+        cloneContext(context),
+        input,
+      ),
+  },
+  {
+    id: 'communication.manage_identity_links',
+    label: 'Review Communication Identities',
+    category: 'communication',
+    requiredInputs: ['text'],
+    optionalInputs: [],
+    requiresLinkedAccount: true,
+    requiresConfirmation: false,
+    safeForAlexa: false,
+    safeForTelegram: true,
+    safeForBlueBubbles: true,
+    operatorOnly: false,
+    preferredOutputShape: {
+      alexa: 'chat_brief',
+      telegram: 'chat_rich',
+      bluebubbles: 'chat_brief',
+    },
+    followupActions: ['anything_else', 'memory_control'],
+    handlerKind: 'local',
+    execute: (context, input) =>
+      runCommunicationIdentityReviewCapability(
+        CAPABILITY_DESCRIPTORS.find(
+          (entry) => entry.id === 'communication.manage_identity_links',
+        )!,
         cloneContext(context),
         input,
       ),

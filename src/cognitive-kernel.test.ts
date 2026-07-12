@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  assessCognitiveRunQuality,
   beginCognitiveKernelRun,
   buildCognitiveDoctorReport,
   buildCognitiveResumePlan,
@@ -8,6 +9,7 @@ import {
   finalizeCognitiveKernelOutcome,
   formatCognitiveDoctorReport,
   isCognitionDoctorRequest,
+  recordCognitiveOwnerReview,
   runCognitiveBenchmarkSuite,
 } from './cognitive-kernel.js';
 import {
@@ -24,6 +26,7 @@ import {
   listCognitiveProviderCooldowns,
   listCognitiveReflections,
   listCognitiveRewardSignals,
+  listCognitiveRuns,
   listCognitiveSkillCards,
   listCognitiveSubgoalsForRun,
   listCognitiveToolResults,
@@ -31,7 +34,9 @@ import {
   listCognitiveTraceSpans,
   listCognitiveToolRegistry,
   listCognitiveWorldBeliefs,
+  upsertCognitiveSkillCard,
 } from './db.js';
+import { buildSkillLibraryReport } from './skill-library.js';
 
 describe('cognitive kernel', () => {
   beforeEach(() => _initTestDatabase());
@@ -172,7 +177,86 @@ describe('cognitive kernel', () => {
     });
   });
 
-  it('records outcome rewards and promotes repeated successful skills', () => {
+  it('keeps attached council evidence within an approval-staged BlueBubbles budget', () => {
+    const kernel = beginCognitiveKernelRun({
+      turnId: 'cog-bluebubbles-council-approval',
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      taskFamily: 'communication',
+      goal: 'Send it later tonight.',
+      requestRoute: 'bluebubbles.direct',
+      selectedSkillId: 'bluebubbles.continuity',
+      selectedSkillPurpose:
+        'Preserve same-thread context and stage any send for approval.',
+      selectedSkillApprovalNeed: 'explicit',
+      selectedSkillSideEffectRisk: 'high',
+      selectedSkillEvidenceLevel: 'partial',
+      providerCouncil: {
+        councilRunId: 'council-bluebubbles-approval',
+        mode: 'max_iq_council',
+        status: 'completed',
+        answerGuidance: {
+          status: 'pass',
+          visibleVerdict: 'Stage the deferred action.',
+          answerDirection: 'Keep the send approval-gated.',
+          confidence: 0.84,
+          uncertainty: 'No send is authorized yet.',
+          sourceMemberIds: ['planner', 'verifier'],
+        },
+      },
+    });
+
+    expect(kernel.run.cognitiveMode).toBe('approval_staged');
+    expect(kernel.run.status).toBe('awaiting_approval');
+    expect(kernel.autonomyBudget).toMatchObject({
+      maxToolSteps: 8,
+      maxCouncilCalls: 1,
+      mutatingAllowed: false,
+      approvalRequired: true,
+    });
+    expect(kernel.toolSimulations).toHaveLength(7);
+    expect(
+      kernel.toolSimulations.filter(
+        (simulation) => simulation.status === 'block',
+      ),
+    ).toEqual([]);
+    expect(
+      kernel.executionSteps.some(
+        (step) =>
+          step.toolId === 'approval_stage' && step.status === 'approval_staged',
+      ),
+    ).toBe(true);
+    expect(kernel.approvalPackets.length).toBeGreaterThanOrEqual(1);
+
+    const incomplete = assessCognitiveRunQuality(kernel.run);
+    expect(incomplete).toMatchObject({
+      operationalFailure: true,
+      finalized: false,
+    });
+
+    finalizeCognitiveKernelOutcome({
+      cognitiveRun: kernel,
+      evaluationStatus: 'pass',
+      evidenceGap: 'none',
+      evaluatorFlags: [
+        'provider_council_guidance_applied',
+        'approval_required',
+      ],
+      routeUsed: 'bluebubbles.continuity',
+      answerClass: 'handled',
+    });
+    const report = buildCognitiveDoctorReport();
+    expect(report.recent).toMatchObject({
+      totalRuns: 1,
+      safeApprovalRuns: 1,
+      operationalFailureRuns: 0,
+      finalizedRuns: 1,
+      reviewedOutcomeRuns: 0,
+    });
+    expect(report.recent.qualityScore).toBeGreaterThanOrEqual(0.85);
+  });
+
+  it('records internal outcome rewards without self-promoting repeated successes', () => {
     function runSuccess(turnId: string) {
       const kernel = beginCognitiveKernelRun({
         turnId,
@@ -206,7 +290,7 @@ describe('cognitive kernel', () => {
 
     expect(getCognitiveRun(first.run.runId)?.status).toBe('answered');
     expect(getCognitiveRun(second.run.runId)?.status).toBe('answered');
-    expect(skill?.promotionState).toBe('promoted');
+    expect(skill?.promotionState).toBe('candidate');
     expect(
       listCognitiveRewardSignals({ runId: second.run.runId })[0],
     ).toMatchObject({
@@ -214,7 +298,211 @@ describe('cognitive kernel', () => {
     });
   });
 
-  it('quarantines blocked approval-required skills and keeps reports redacted', () => {
+  it('promotes only after five distinct owner acceptances, complete trajectories, and fresh replay', () => {
+    const runs = Array.from({ length: 5 }, (_, index) => {
+      const kernel = beginCognitiveKernelRun({
+        turnId: `cog-reviewed-promotion-${index + 1}`,
+        channel: 'telegram',
+        groupFolder: 'main',
+        taskFamily: 'assistant',
+        goal: 'Give me one grounded next step.',
+        requestRoute: 'direct_assistant',
+        selectedSkillId: 'assistant.daily_guidance',
+        selectedSkillPurpose: 'Offer one grounded next step.',
+        selectedSkillApprovalNeed: 'none',
+        selectedSkillSideEffectRisk: 'none',
+        selectedSkillEvidenceLevel: 'strong',
+      });
+      finalizeCognitiveKernelOutcome({
+        cognitiveRun: kernel,
+        evaluationStatus: 'pass',
+        evidenceGap: 'none',
+        evaluatorFlags: ['none'],
+        routeUsed: 'assistant.daily_guidance',
+        answerClass: 'handled',
+      });
+      return kernel;
+    });
+
+    for (const [index, run] of runs.entries()) {
+      recordCognitiveOwnerReview({
+        runId: run.run.runId,
+        feedbackId: `promotion-accept-${index + 1}`,
+        verdict: 'accepted',
+        reviewedAt: `2026-07-12T02:0${index}:00.000Z`,
+      });
+    }
+    expect(
+      listCognitiveSkillCards({ taskFamily: 'assistant' }).find(
+        (skill) => skill.skillId === runs[0].run.linkedSkillCardId,
+      )?.promotionState,
+    ).toBe('candidate');
+
+    runCognitiveBenchmarkSuite({
+      generatedAt: '2026-07-12T02:10:00.000Z',
+    });
+    const promoted = recordCognitiveOwnerReview({
+      runId: runs[4].run.runId,
+      feedbackId: 'promotion-accept-5',
+      verdict: 'accepted',
+      reviewedAt: '2026-07-12T02:11:00.000Z',
+    });
+
+    expect(promoted.promotionState).toBe('promoted');
+    expect(promoted.promotionAssessment).toMatchObject({
+      reviewedRuns: 5,
+      acceptedRuns: 5,
+      negativeRuns: 0,
+      acceptanceRate: 1,
+      trajectoryEvidenceComplete: true,
+      freshReplayPass: true,
+      eligible: true,
+    });
+    expect(
+      listCognitiveRewardSignals({ limit: 200 }).find(
+        (signal) => signal.signalKind === 'skill_promoted',
+      )?.flagsJson,
+    ).toContain('authority_expanded:false');
+    expect(
+      listCognitiveRewardSignals({ runId: runs[4].run.runId }).filter(
+        (signal) => signal.signalKind === 'user_acceptance',
+      ),
+    ).toHaveLength(1);
+    expect(
+      buildSkillLibraryReport({
+        groupFolder: 'main',
+        now: new Date('2026-07-12T02:11:00.000Z'),
+      }).active.some((skill) => skill.skillId.includes('daily_guidance')),
+    ).toBe(true);
+  });
+
+  it('classifies legacy promoted cards as unverified without deleting them', () => {
+    upsertCognitiveSkillCard({
+      skillId: 'cogskill:assistant:legacy',
+      createdAt: '2026-06-01T00:00:00.000Z',
+      updatedAt: '2026-06-01T00:00:00.000Z',
+      groupFolder: 'main',
+      taskFamily: 'assistant',
+      triggerSummary: 'Legacy trigger.',
+      skillSummary: 'Legacy behavior retained pending evidence.',
+      requiredToolsJson: '[]',
+      evidenceNeedsJson: '{}',
+      approvalRulesJson: '{"mutatingActions":"fresh_approval"}',
+      failureModesJson: '[]',
+      verificationChecklistJson: '{}',
+      latestOutcomeScore: 0.9,
+      promotionState: 'promoted',
+      usageCount: 3,
+      lastUsedAt: '2026-06-01T00:00:00.000Z',
+    });
+
+    const report = buildCognitiveDoctorReport('2026-07-12T00:00:00.000Z');
+    expect(report.skills).toMatchObject({
+      promoted: 1,
+      trustedPromoted: 0,
+      unverifiedPromoted: 1,
+    });
+    expect(
+      listCognitiveSkillCards().find(
+        (skill) => skill.skillId === 'cogskill:assistant:legacy',
+      )?.promotionState,
+    ).toBe('promoted');
+    const library = buildSkillLibraryReport({
+      groupFolder: 'main',
+      now: new Date('2026-07-12T00:00:00.000Z'),
+    });
+    expect(
+      library.active.some((skill) => skill.skillId.includes('legacy')),
+    ).toBe(false);
+    expect(
+      library.suggested.find((skill) => skill.skillId.includes('legacy'))
+        ?.nextAction,
+    ).toContain('Legacy promotion is preserved but inactive');
+  });
+
+  it('links idempotent owner reviews to runs and quarantines a skill after two negative outcomes', () => {
+    function runReviewed(turnId: string) {
+      const kernel = beginCognitiveKernelRun({
+        turnId,
+        channel: 'telegram',
+        groupFolder: 'main',
+        taskFamily: 'assistant',
+        goal: 'Give me the best grounded next step.',
+        requestRoute: 'direct_assistant',
+        selectedSkillId: 'assistant.daily_guidance',
+        selectedSkillPurpose: 'Offer one grounded next step.',
+        selectedSkillApprovalNeed: 'none',
+        selectedSkillSideEffectRisk: 'none',
+        selectedSkillEvidenceLevel: 'strong',
+      });
+      finalizeCognitiveKernelOutcome({
+        cognitiveRun: kernel,
+        evaluationStatus: 'pass',
+        evidenceGap: 'none',
+        evaluatorFlags: ['none'],
+        routeUsed: 'assistant.daily_guidance',
+        answerClass: 'handled',
+      });
+      return kernel;
+    }
+
+    const first = runReviewed('cog-owner-review-1');
+    const second = runReviewed('cog-owner-review-2');
+    const accepted = recordCognitiveOwnerReview({
+      runId: first.run.runId,
+      feedbackId: 'feedback-accepted',
+      verdict: 'accepted',
+      reviewedAt: '2025-07-12T01:00:00.000Z',
+    });
+    recordCognitiveOwnerReview({
+      runId: first.run.runId,
+      feedbackId: 'feedback-accepted',
+      verdict: 'accepted',
+      reviewedAt: '2025-07-12T01:00:00.000Z',
+    });
+
+    expect(accepted).toMatchObject({
+      recorded: true,
+      runId: first.run.runId,
+    });
+    expect(
+      listCognitiveRewardSignals({ runId: first.run.runId }).filter(
+        (signal) => signal.signalKind === 'user_acceptance',
+      ),
+    ).toHaveLength(1);
+    expect(buildCognitiveDoctorReport().recent.reviewedOutcomeRuns).toBe(1);
+
+    const firstRejection = recordCognitiveOwnerReview({
+      runId: first.run.runId,
+      feedbackId: 'feedback-rejected-1',
+      verdict: 'rejected',
+      reviewedAt: '2026-07-12T01:01:00.000Z',
+    });
+    expect(firstRejection.promotionState).toBe('candidate');
+    const secondRejection = recordCognitiveOwnerReview({
+      runId: second.run.runId,
+      feedbackId: 'feedback-rejected-2',
+      verdict: 'rejected',
+      reviewedAt: '2026-07-12T01:02:00.000Z',
+    });
+    expect(secondRejection.promotionState).toBe('quarantined');
+    expect(
+      listCognitiveSkillCards({ taskFamily: 'assistant' }).find(
+        (skill) => skill.skillId === second.run.linkedSkillCardId,
+      )?.promotionState,
+    ).toBe('quarantined');
+    expect(
+      buildSkillLibraryReport({
+        groupFolder: 'main',
+        now: new Date('2026-07-12T01:03:00.000Z'),
+      }).paused.some((skill) => skill.skillId.includes('daily_guidance')),
+    ).toBe(true);
+    expect(JSON.stringify(secondRejection)).not.toMatch(
+      /Give me the best grounded next step/i,
+    );
+  });
+
+  it('does not quarantine a skill for one safe approval stop and keeps reports redacted', () => {
     const kernel = beginCognitiveKernelRun({
       turnId: 'cog-blocked',
       channel: 'bluebubbles',
@@ -245,11 +533,11 @@ describe('cognitive kernel', () => {
     const report = buildCognitiveDoctorReport();
     const formatted = formatCognitiveDoctorReport(report);
 
-    expect(card?.promotionState).toBe('quarantined');
+    expect(card?.promotionState).toBe('candidate');
     expect(
       listCognitiveReflections({ taskFamily: 'communication' })[0],
     ).toMatchObject({
-      reflectionKind: 'failure',
+      reflectionKind: 'approval_blocked',
     });
     expect(formatted).toContain('Cognition Status');
     expect(formatted).toContain('Checkpoints');
@@ -347,6 +635,38 @@ describe('cognitive kernel', () => {
     expect(
       report.attempts.some((attempt) => attempt.taskId === 'approval-draft'),
     ).toBe(true);
+    expect(
+      listCognitiveRuns({ limit: 20 }).every(
+        (run) => run.runOrigin === 'replay',
+      ),
+    ).toBe(true);
+    expect(listCognitiveSkillCards()).toEqual([]);
+
+    const doctor = buildCognitiveDoctorReport('2026-06-05T12:01:00.000Z');
+    expect(doctor.activeRun).toBeNull();
+    expect(doctor.recent).toMatchObject({
+      observedRuns: 4,
+      totalRuns: 0,
+      replayRuns: 4,
+      syntheticRuns: 0,
+      reviewedOutcomeRuns: 0,
+    });
+    const rejectedReview = recordCognitiveOwnerReview({
+      runId: report.attempts[0]?.runId,
+      feedbackId: 'benchmark-owner-review',
+      verdict: 'accepted',
+      reviewedAt: '2026-06-05T12:02:00.000Z',
+    });
+    expect(rejectedReview).toMatchObject({
+      recorded: false,
+      reason:
+        'Replay and synthetic cognitive runs cannot receive owner-learning signals.',
+    });
+    expect(
+      listCognitiveRewardSignals({ limit: 200 }).filter(
+        (signal) => signal.signalKind === 'user_acceptance',
+      ),
+    ).toEqual([]);
   });
 
   it('recognizes cognition natural status requests', () => {

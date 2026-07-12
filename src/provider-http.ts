@@ -2,11 +2,11 @@ const DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS = 120_000;
 const MIN_PROVIDER_REQUEST_TIMEOUT_MS = 5_000;
 const MAX_PROVIDER_REQUEST_TIMEOUT_MS = 300_000;
 
-function resolveProviderRequestTimeoutMs(): number {
-  const parsed = Number.parseInt(
-    process.env.PROVIDER_REQUEST_TIMEOUT_MS || '',
-    10,
-  );
+function resolveProviderRequestTimeoutMs(overrideMs?: number): number {
+  const parsed =
+    typeof overrideMs === 'number' && Number.isFinite(overrideMs)
+      ? overrideMs
+      : Number.parseInt(process.env.PROVIDER_REQUEST_TIMEOUT_MS || '', 10);
   if (!Number.isFinite(parsed)) return DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS;
   return Math.max(
     MIN_PROVIDER_REQUEST_TIMEOUT_MS,
@@ -14,14 +14,16 @@ function resolveProviderRequestTimeoutMs(): number {
   );
 }
 
-export function providerRequestSignal(): AbortSignal | undefined {
+export function providerRequestSignal(
+  timeoutMs?: number,
+): AbortSignal | undefined {
   const timeout = (
     AbortSignal as unknown as {
       timeout?: (ms: number) => AbortSignal;
     }
   ).timeout;
   return typeof timeout === 'function'
-    ? timeout(resolveProviderRequestTimeoutMs())
+    ? timeout(resolveProviderRequestTimeoutMs(timeoutMs))
     : undefined;
 }
 

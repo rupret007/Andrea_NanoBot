@@ -192,6 +192,47 @@ suggestions. The fallback path remains local and deterministic. Provider prompts
 must use bounded, sanitized context and must redact phone numbers, JIDs, emails,
 and token-like secrets.
 
+## Native Feedback Reactions
+
+Andrea links assistant-authored replies in the bound BlueBubbles self-thread to
+the existing outcome-learning ledger. Native tapbacks are consumed as structured
+control signals before ordinary chat routing:
+
+- Like or Love records an accepted owner outcome.
+- Dislike records a rejected outcome and opens the existing bounded repair
+  review path.
+- Laugh, Emphasize, Question, reaction removals, and reactions without an exact
+  assistant-message link do not train Andrea.
+- Reaction events never become assistant prompts and do not trigger a second
+  acknowledgement message.
+
+The link stores route/run provenance and fixed privacy placeholders, not the
+private iMessage request or response body. Untouched links expire after 30 days
+and are capped at 500; reviewed outcomes and issue-linked corrections remain in
+the normal review ledger. This is a feedback bridge, not a passive Messages
+archive, and it does not grant any additional action authority.
+
+The configured self-thread also accepts a narrow set of standalone natural
+verdicts (`that worked`, `that was helpful`, `that didn't work`, and `not
+helpful`) for the immediately preceding unreviewed Andrea reply. They expire
+after 30 minutes, preserve `natural_language` provenance, and are rejected when
+mixed with action language. For example, `that worked, send it` is ordinary
+conversation—not feedback and never send approval.
+
+## Private Identity Review
+
+The configured BlueBubbles self-thread can run the same explicit relationship
+grounding review as Telegram with `review communication identities`. Andrea may
+propose a person only when the safe chat label exactly matches one existing
+profile person. Confirm with `confirm identity "Chat label" is "Person"`, mark a
+single-person link not applicable with `dismiss identity "Chat label"`, or
+reverse a decision with `clear identity review "Chat label"`.
+
+This surface is denied in every other Messages chat so it cannot expose private
+profile names to another person or group. It uses chat metadata and existing
+profile subjects only—never message bodies, phone numbers, raw JIDs, or generic
+words such as “you”—and group chats cannot be confirmed as one person.
+
 ## Cross-Channel Handoffs
 
 BlueBubbles -> Telegram is explicit and supported:
@@ -306,9 +347,12 @@ Use this exact proof sequence:
 9. Optionally send:
    - `send me the fuller version on Telegram`
 10. Run:
-   - `npm run debug:bluebubbles -- --live`
+
+- `npm run debug:bluebubbles -- --live`
+
 11. Then run:
-   - `npm run services:status`
+
+- `npm run services:status`
 
 Success should show:
 

@@ -1034,6 +1034,7 @@ export function buildHierarchicalPlannerReport(
     requestText?: string;
     persist?: boolean;
     now?: Date | string;
+    reality?: RealityDoctorReport;
   } = {},
 ): GoalPlannerDoctorReport {
   const now = nowIso(params.now);
@@ -1047,6 +1048,7 @@ export function buildHierarchicalPlannerReport(
     groupFolder: params.groupFolder,
     now,
     persist,
+    reality: params.reality,
   });
   const activeGoals = listHierarchicalGoals({
     groupFolder: params.groupFolder,
@@ -1077,8 +1079,26 @@ export function buildHierarchicalPlannerReport(
   const milestones = goalIds.flatMap((goalId) =>
     listGoalMilestones({ goalId, limit: 5 }),
   );
-  const planSteps = goalIds.flatMap((goalId) =>
+  const storedPlanSteps = goalIds.flatMap((goalId) =>
     listGoalPlanSteps({ goalId, limit: 5 }),
+  );
+  const currentSnapshotId = result.reality.snapshot.snapshotId;
+  const currentStepIds = new Set(result.steps.map((step) => step.stepId));
+  const currentStoredPlanSteps = storedPlanSteps.filter((step) => {
+    if (currentStepIds.has(step.stepId)) return false;
+    try {
+      const context = JSON.parse(step.requiredContextJson) as {
+        realitySnapshot?: unknown;
+      };
+      return context.realitySnapshot === currentSnapshotId;
+    } catch {
+      return false;
+    }
+  });
+  const planSteps = [...result.steps, ...currentStoredPlanSteps];
+  const stalePlanStepsSuppressed = Math.max(
+    0,
+    storedPlanSteps.length - currentStoredPlanSteps.length,
   );
   const comparisons = listCounterfactualComparisons({ limit: 8 });
   const options = comparisons.flatMap((comparison) =>
@@ -1108,6 +1128,7 @@ export function buildHierarchicalPlannerReport(
     options,
     causalBeliefs,
     opportunities,
+    stalePlanStepsSuppressed,
     nextAction: result.run.nextAction,
     privacy: PRIVACY,
   };
@@ -1141,6 +1162,7 @@ export function formatGoalPlannerReport(
       ),
     '',
     '*Plan Steps*',
+    `- freshness=current_snapshot; stale_suppressed=${report.stalePlanStepsSuppressed}`,
     ...(report.planSteps.length
       ? report.planSteps.slice(0, 8).map((step) => {
           return `- ${step.status}/${step.approvalRequirement}: ${step.actionSummary} -> ${step.nextAction}`;

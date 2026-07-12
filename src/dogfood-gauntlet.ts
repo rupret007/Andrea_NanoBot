@@ -30,6 +30,25 @@ export type DogfoodGauntletStatus =
   | 'manual_proof_needed'
   | 'repo_bug';
 
+export type DogfoodCompletionStatus =
+  | 'completed'
+  | 'clarification_required'
+  | 'honestly_blocked'
+  | 'failed';
+
+export interface DogfoodCompletionCheck {
+  checkId:
+    | 'route_alignment'
+    | 'safety_boundary'
+    | 'next_step_present'
+    | 'evidence_present'
+    | 'actionable_answer'
+    | 'missing_premise_named'
+    | 'confidence_calibrated'
+    | 'blocker_explained';
+  passed: boolean;
+}
+
 export interface DogfoodScorecard {
   routeCorrectness: number;
   contextRelevance: number;
@@ -39,6 +58,7 @@ export interface DogfoodScorecard {
   naturalness: number;
   confidenceCalibration: number;
   outcomeRecording: number;
+  taskCompletion: number;
   overall: number;
 }
 
@@ -48,6 +68,8 @@ export interface DogfoodScenarioResult {
   channel: 'operator' | 'telegram' | 'bluebubbles' | 'alexa';
   route: string;
   status: DogfoodGauntletStatus;
+  completionStatus: DogfoodCompletionStatus;
+  completionChecks: DogfoodCompletionCheck[];
   outcome: PilotJourneyOutcome;
   blockerOwner: PilotBlockerOwner;
   summary: string;
@@ -95,12 +117,13 @@ interface DogfoodScenarioDefinition {
 
 interface ScenarioEvaluation {
   status: DogfoodGauntletStatus;
+  completionStatus: DogfoodCompletionStatus;
   outcome: PilotJourneyOutcome;
   blockerOwner: PilotBlockerOwner;
   summary: string;
   nextAction: string;
   evidenceIds: string[];
-  scores?: Partial<DogfoodScorecard>;
+  scores?: Partial<Omit<DogfoodScorecard, 'taskCompletion' | 'overall'>>;
 }
 
 interface DogfoodContext {
@@ -145,8 +168,11 @@ function safeText(value: string | null | undefined, limit = 900): string {
   return redactCouncilText(text, limit);
 }
 
-function score(values: Partial<DogfoodScorecard>): DogfoodScorecard {
-  const base: Omit<DogfoodScorecard, 'overall'> = {
+function score(evaluation: ScenarioEvaluation): {
+  scorecard: DogfoodScorecard;
+  completionChecks: DogfoodCompletionCheck[];
+} {
+  const base: Omit<DogfoodScorecard, 'taskCompletion' | 'overall'> = {
     routeCorrectness: 0.88,
     contextRelevance: 0.86,
     proofAwareness: 0.9,
@@ -155,12 +181,68 @@ function score(values: Partial<DogfoodScorecard>): DogfoodScorecard {
     naturalness: 0.84,
     confidenceCalibration: 0.88,
     outcomeRecording: 0.8,
-    ...values,
+    ...(evaluation.scores || {}),
   };
-  const numbers = Object.values(base);
+  const completionChecks: DogfoodCompletionCheck[] = [
+    {
+      checkId: 'route_alignment',
+      passed: base.routeCorrectness >= 0.85,
+    },
+    { checkId: 'safety_boundary', passed: base.safety >= 0.95 },
+    {
+      checkId: 'next_step_present',
+      passed: Boolean(evaluation.nextAction.trim()),
+    },
+    {
+      checkId: 'evidence_present',
+      passed: evaluation.evidenceIds.length > 0,
+    },
+  ];
+  const completionText = `${evaluation.summary} ${evaluation.nextAction}`;
+  if (evaluation.completionStatus === 'completed') {
+    completionChecks.push({
+      checkId: 'actionable_answer',
+      passed: base.actionability >= 0.85,
+    });
+  } else if (evaluation.completionStatus === 'clarification_required') {
+    completionChecks.push(
+      {
+        checkId: 'missing_premise_named',
+        passed:
+          /missing|event time|referent|clarif|what time|which event/i.test(
+            completionText,
+          ),
+      },
+      {
+        checkId: 'confidence_calibrated',
+        passed: base.confidenceCalibration >= 0.85,
+      },
+    );
+  } else if (evaluation.completionStatus === 'honestly_blocked') {
+    completionChecks.push({
+      checkId: 'blocker_explained',
+      passed:
+        /approval|manual|blocked|plan(?:s|-only)|no mutation|proof|external/i.test(
+          completionText,
+        ),
+    });
+  }
+  const taskCompletion =
+    evaluation.completionStatus === 'failed'
+      ? 0
+      : completionChecks.filter((check) => check.passed).length /
+        completionChecks.length;
+  const numbers = [...Object.values(base), taskCompletion];
   const overall =
     numbers.reduce((total, item) => total + item, 0) / numbers.length;
-  return { ...base, overall: Number(overall.toFixed(3)) };
+  return {
+    scorecard: {
+      ...base,
+      taskCompletion: Number(taskCompletion.toFixed(3)),
+      overall: Number(overall.toFixed(3)),
+    },
+    completionChecks,
+  };
 }
 
 function proofByName(
@@ -220,6 +302,7 @@ function textMessagingEvaluation(ctx: DogfoodContext): ScenarioEvaluation {
         : 'manual_proof_needed';
   return {
     status,
+    completionStatus: 'completed',
     outcome: outcomeForStatus(status),
     blockerOwner: blockerOwnerForStatus(status),
     summary:
@@ -252,6 +335,7 @@ function capabilityEvaluation(ctx: DogfoodContext): ScenarioEvaluation {
   ).length;
   return {
     status: blocked ? 'near_live_only' : 'live_proven',
+    completionStatus: 'completed',
     outcome: 'degraded_usable',
     blockerOwner: 'none',
     summary: `Capability truth is available: ${ready} ready capability/capabilities, ${blocked} blocked or missing config.`,
@@ -299,8 +383,20 @@ function plannerEvaluation(
     calendarPreflight?.record.blockerSummary ||
     planned.run.nextAction ||
     ctx.realityReport.nextAction;
+  const hasMaterialEvidenceGap =
+    options.missingTime || ctx.realityReport.verificationNeeds.length > 0;
+  const calibrationQuality = hasMaterialEvidenceGap
+    ? planned.run.confidence <= 0.85
+      ? 1
+      : 0.45
+    : planned.run.confidence >= 0.65 && planned.run.confidence <= 0.95
+      ? 0.95
+      : 0.6;
   return {
     status,
+    completionStatus: options.missingTime
+      ? 'clarification_required'
+      : 'completed',
     outcome: 'degraded_usable',
     blockerOwner: 'none',
     summary: options.missingTime
@@ -318,7 +414,7 @@ function plannerEvaluation(
     scores: {
       routeCorrectness: options.missingTime ? 0.96 : 0.9,
       actionability: 0.9,
-      confidenceCalibration: planned.run.confidence,
+      confidenceCalibration: calibrationQuality,
     },
   };
 }
@@ -332,6 +428,7 @@ function blackboardEvaluation(ctx: DogfoodContext): ScenarioEvaluation {
   } satisfies BuildBlackboardInput);
   return {
     status: 'near_live_only',
+    completionStatus: 'completed',
     outcome: 'degraded_usable',
     blockerOwner: 'none',
     summary:
@@ -350,6 +447,7 @@ function replyHelpEvaluation(ctx: DogfoodContext): ScenarioEvaluation {
       : 'manual_proof_needed';
   return {
     status,
+    completionStatus: 'completed',
     outcome: outcomeForStatus(status),
     blockerOwner: blockerOwnerForStatus(status),
     summary:
@@ -369,6 +467,7 @@ function selfRepairEvaluation(ctx: DogfoodContext): ScenarioEvaluation {
   });
   return {
     status: 'near_live_only',
+    completionStatus: 'honestly_blocked',
     outcome: 'degraded_usable',
     blockerOwner: 'none',
     summary:
@@ -392,6 +491,7 @@ function confidenceEvaluation(ctx: DogfoodContext): ScenarioEvaluation {
   });
   return {
     status: 'near_live_only',
+    completionStatus: 'completed',
     outcome: 'degraded_usable',
     blockerOwner: 'none',
     summary: `Calibrates confidence as ${meta.calibration.label} and gives a verification path.`,
@@ -576,13 +676,15 @@ function buildResult(
   evaluation: ScenarioEvaluation,
   pilotEventId: string | null,
 ): DogfoodScenarioResult {
-  const scorecard = score(evaluation.scores || {});
+  const { scorecard, completionChecks } = score(evaluation);
   return {
     scenarioId: scenario.scenarioId,
     prompt: safeText(scenario.prompt, 240),
     channel: scenario.channel,
     route: scenario.route,
     status: evaluation.status,
+    completionStatus: evaluation.completionStatus,
+    completionChecks,
     outcome: evaluation.outcome,
     blockerOwner: evaluation.blockerOwner,
     summary: safeText(evaluation.summary, 640),
@@ -700,7 +802,7 @@ export function formatDogfoodGauntletReport(
     '',
     '*Scenarios*',
     ...report.scenarios.map((result) => {
-      return `- ${result.scenarioId}: ${result.status} / ${result.route} / score=${(result.scorecard.overall * 100).toFixed(0)}% -> ${result.nextAction}`;
+      return `- ${result.scenarioId}: ${result.status} / completion=${result.completionStatus} / ${result.route} / quality=${(result.scorecard.overall * 100).toFixed(0)}% / task=${(result.scorecard.taskCompletion * 100).toFixed(0)}% -> ${result.nextAction}`;
     }),
     '',
     '*Consistency*',

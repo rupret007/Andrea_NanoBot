@@ -55,7 +55,7 @@ const fakeTruth: any = {
     ),
     messageActionProofState: 'none',
     messageActionProofAt: 'none',
-    messageActionProofChatJid: 'none',
+    messageActionProofChatJid: 'bb:iMessage;-;+14695550123',
   },
   googleCalendar: surface('live_proven', 'none', 'No action needed.'),
   research: surface(
@@ -172,7 +172,7 @@ assert.equal(
 
 assert.doesNotMatch(
   JSON.stringify(report),
-  /sk-proj-|raw private body|hidden reasoning|provider debate|raw tool output/i,
+  /sk-proj-|raw private body|hidden reasoning|provider debate|raw tool output|\+14695550123|bb:iMessage/i,
 );
 
 console.log('proof gauntlet tests passed');

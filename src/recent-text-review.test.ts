@@ -16,6 +16,7 @@ import {
 } from './recent-text-review.js';
 import {
   listCommunicationThreadsForGroup,
+  reconcileRecentTextSelfSubjectLinks,
   storeChatMetadata,
   storeMessage,
   upsertCommunicationThread,
@@ -215,6 +216,186 @@ describe('recent text review', () => {
       channel: 'bluebubbles',
       channelChatJid: 'bb:iMessage;-;+14695550123',
       followupState: 'reply_needed',
+    });
+  });
+
+  it('never treats the self subject or ordinary "you" language as a relationship link', async () => {
+    const now = '2026-04-15T17:00:00.000Z';
+    upsertProfileSubject({
+      id: 'main:self:self',
+      groupFolder: 'main',
+      kind: 'self',
+      canonicalName: 'self',
+      displayName: 'you',
+      createdAt: now,
+      updatedAt: now,
+    });
+    upsertLifeThread({
+      id: 'life-self-goals',
+      groupFolder: 'main',
+      title: 'Personal operating system',
+      category: 'personal',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: ['main:self:self'],
+      contextTags: ['goals'],
+      summary: 'Keep personal goals visible.',
+      nextAction: null,
+      nextFollowupAt: null,
+      sourceKind: 'explicit',
+      confidenceKind: 'explicit',
+      userConfirmed: true,
+      sensitivity: 'normal',
+      surfaceMode: 'default',
+      followthroughMode: 'important_only',
+      createdAt: now,
+      lastUpdatedAt: now,
+      lastUsedAt: null,
+    });
+    storeChatMetadata(
+      'bb:iMessage;-;+15550001111',
+      '2026-04-15T16:10:00.000Z',
+      'Unknown contact',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'self-word-1',
+      chat_jid: 'bb:iMessage;-;+15550001111',
+      sender: 'bb:+15550001111',
+      sender_name: 'Unknown contact',
+      content: 'Can you send me your availability tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date(now),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+    const item = result.items.find(
+      (candidate) => candidate.chatLabel === 'Unknown contact',
+    );
+    const thread = listCommunicationThreadsForGroup({
+      groupFolder: 'main',
+      includeDisabled: false,
+      limit: 20,
+    }).find(
+      (candidate) => candidate.channelChatJid === 'bb:iMessage;-;+15550001111',
+    );
+
+    expect(item?.linkedSubjectIds).toEqual([]);
+    expect(item?.linkedLifeThreadIds).toEqual([]);
+    expect(thread?.linkedSubjectIds).toEqual([]);
+    expect(thread?.linkedLifeThreadIds).toEqual([]);
+  });
+
+  it('idempotently removes historical self-only links from inferred recent-text rows', () => {
+    const originalTimestamp = '2026-04-01T12:00:00.000Z';
+    upsertProfileSubject({
+      id: 'main:self:self',
+      groupFolder: 'main',
+      kind: 'self',
+      canonicalName: 'self',
+      displayName: 'you',
+      createdAt: originalTimestamp,
+      updatedAt: originalTimestamp,
+    });
+    upsertLifeThread({
+      id: 'life-self-contaminated',
+      groupFolder: 'main',
+      title: 'My goals',
+      category: 'personal',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: ['main:self:self'],
+      contextTags: [],
+      summary: 'Personal goal context.',
+      nextAction: null,
+      nextFollowupAt: null,
+      sourceKind: 'explicit',
+      confidenceKind: 'explicit',
+      userConfirmed: true,
+      sensitivity: 'normal',
+      surfaceMode: 'default',
+      followthroughMode: 'important_only',
+      createdAt: originalTimestamp,
+      lastUpdatedAt: originalTimestamp,
+      lastUsedAt: null,
+    });
+    upsertCommunicationThread({
+      id: 'legacy-bluebubbles-thread-uuid',
+      groupFolder: 'main',
+      title: 'Messages chat',
+      linkedSubjectIds: ['main:self:self'],
+      linkedLifeThreadIds: ['life-self-contaminated'],
+      channel: 'bluebubbles',
+      channelChatJid: 'bb:iMessage;-;+15550002222',
+      lastInboundSummary: 'A generic conversation summary.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed',
+      urgency: 'soon',
+      followupDueAt: null,
+      suggestedNextAction: 'draft_reply',
+      toneStyleHints: [],
+      lastContactAt: originalTimestamp,
+      lastMessageId: 'legacy-message',
+      linkedTaskId: null,
+      inferenceState: 'assistant_inferred',
+      trackingMode: 'default',
+      createdAt: originalTimestamp,
+      updatedAt: originalTimestamp,
+      disabledAt: null,
+    });
+    upsertCommunicationThread({
+      id: 'user-confirmed-bluebubbles-self-link',
+      groupFolder: 'main',
+      title: 'Explicit personal thread',
+      linkedSubjectIds: ['main:self:self'],
+      linkedLifeThreadIds: ['life-self-contaminated'],
+      channel: 'bluebubbles',
+      channelChatJid: 'bb:iMessage;-;+15550003333',
+      lastInboundSummary: 'User-confirmed personal context.',
+      lastOutboundSummary: null,
+      followupState: 'unknown',
+      urgency: 'none',
+      followupDueAt: null,
+      suggestedNextAction: null,
+      toneStyleHints: [],
+      lastContactAt: originalTimestamp,
+      lastMessageId: 'confirmed-message',
+      linkedTaskId: null,
+      inferenceState: 'user_confirmed',
+      trackingMode: 'default',
+      createdAt: originalTimestamp,
+      updatedAt: originalTimestamp,
+      disabledAt: null,
+    });
+
+    expect(reconcileRecentTextSelfSubjectLinks()).toBe(1);
+    expect(reconcileRecentTextSelfSubjectLinks()).toBe(0);
+    const repaired = listCommunicationThreadsForGroup({
+      groupFolder: 'main',
+      includeDisabled: true,
+      limit: 20,
+    }).find((thread) => thread.id === 'legacy-bluebubbles-thread-uuid');
+    expect(repaired).toMatchObject({
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      createdAt: originalTimestamp,
+      updatedAt: originalTimestamp,
+    });
+    const confirmed = listCommunicationThreadsForGroup({
+      groupFolder: 'main',
+      includeDisabled: true,
+      limit: 20,
+    }).find((thread) => thread.id === 'user-confirmed-bluebubbles-self-link');
+    expect(confirmed).toMatchObject({
+      linkedSubjectIds: ['main:self:self'],
+      linkedLifeThreadIds: ['life-self-contaminated'],
+      inferenceState: 'user_confirmed',
     });
   });
 
