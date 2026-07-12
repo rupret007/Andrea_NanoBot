@@ -576,7 +576,7 @@ describe('debug log tails', () => {
       operatorNote: 'Local hotfix ready to land.',
     });
 
-    const status = formatDebugStatus();
+    const status = formatDebugStatus({ repoDirtyPaths: ['src/hotfix.ts'] });
     expect(status).toContain('Latest response feedback: resolved_locally');
     expect(status).toContain('Local hotfix pending landing: yes');
   });

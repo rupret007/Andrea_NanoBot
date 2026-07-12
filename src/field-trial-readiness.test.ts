@@ -546,6 +546,45 @@ describe('field-trial readiness', () => {
     expect(truth.pilotIssues.localHotfixPending).toBe(false);
   });
 
+  it('does not call covered feedback a pending local hotfix', () => {
+    upsertResponseFeedback({
+      feedbackId: 'feedback-covered',
+      createdAt: '2026-04-08T11:00:00.000Z',
+      updatedAt: '2026-04-08T11:05:00.000Z',
+      status: 'resolved_locally',
+      classification: 'repo_side_rough_edge',
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      issueId: 'issue-covered',
+      routeKey: 'communication.summarize_thread',
+      capabilityId: 'communication.summarize_thread',
+      handlerKind: 'assistant_completion',
+      responseSource: 'local_companion',
+      traceReason: 'covered',
+      traceNotes: [],
+      blockerClass: 'response_feedback_repo_side_rough_edge',
+      blockerOwner: 'repo_side',
+      originalUserText: 'Summarize my texts.',
+      assistantReplyText: 'A bounded summary.',
+      linkedRefs: {
+        responseFeedbackId: 'feedback-covered',
+        feedbackRouteCoverageResolvedAt: '2026-04-08T11:05:00.000Z',
+      },
+      operatorNote: 'Resolved by regression coverage.',
+    });
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      repoDirtyPaths: ['src/unrelated.ts'],
+    });
+
+    expect(truth.pilotIssues.latestResponseFeedbackStatus).toBe(
+      'resolved_locally',
+    );
+    expect(truth.pilotIssues.localHotfixPending).toBe(false);
+  });
+
   it('keeps LaunchRequest-only Alexa proof below live_proven', () => {
     vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
     const alexaStatePath = getAlexaLastSignedRequestStatePath(tempDir);

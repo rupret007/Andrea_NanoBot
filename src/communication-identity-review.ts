@@ -288,6 +288,10 @@ function quote(value: string): string {
   return `"${value.replace(/"/g, '')}"`;
 }
 
+function inlineCode(value: string): string {
+  return '`' + value.replace(/`/g, '') + '`';
+}
+
 function safeThreadLabel(item: CommunicationIdentityReviewItem): string {
   if (!hasIdentifierShape(item.threadTitle)) return item.threadTitle;
   return item.isGroup
@@ -298,7 +302,11 @@ function safeThreadLabel(item: CommunicationIdentityReviewItem): string {
 function firstUnreviewedItem(
   snapshot: CommunicationIdentityReviewSnapshot,
 ): CommunicationIdentityReviewItem | null {
-  return snapshot.items.find((item) => !item.review) || null;
+  return (
+    snapshot.items.find(
+      (item) => item.linkedSubjectIds.length === 0 && !item.review,
+    ) || null
+  );
 }
 
 function actionFitsTelegram(actionId: string): boolean {
@@ -344,12 +352,37 @@ export function buildCommunicationIdentityReviewActionRows(
 
 export function formatNextCommunicationIdentityReview(
   snapshot: CommunicationIdentityReviewSnapshot,
+  options: { inlineControls?: boolean } = {},
 ): string {
   const item = firstUnreviewedItem(snapshot);
   if (!item) {
     return `Identity review is complete for all ${snapshot.totalThreads} active thread${snapshot.totalThreads === 1 ? '' : 's'}.`;
   }
   const label = safeThreadLabel(item);
+  const inlineControls = options.inlineControls !== false;
+  if (!inlineControls) {
+    if (item.isGroup) {
+      return `Next: [${item.reviewKey}] ${label} is a group conversation. Reply with ${inlineCode(`dismiss identity ${item.reviewKey}`)} to mark the single-person link not applicable, or leave it unresolved.`;
+    }
+    const candidateNames = [
+      ...(item.candidate ? [item.candidate.displayName] : []),
+      ...snapshot.availablePeopleNames,
+    ]
+      .filter(
+        (name, index, all) =>
+          all.findIndex(
+            (candidate) => normalizeName(candidate) === normalizeName(name),
+          ) === index,
+      )
+      .slice(0, 5);
+    const choices = candidateNames.map((personName) =>
+      inlineCode(`link identity ${item.reviewKey} to ${quote(personName)}`),
+    );
+    const choiceText = choices.length
+      ? `Reply with ${choices.join(', ')}, or ${inlineCode(`dismiss identity ${item.reviewKey}`)} to leave it unlinked.`
+      : `No eligible profile person is configured for this thread. Add the person through profile setup, or reply with ${inlineCode(`dismiss identity ${item.reviewKey}`)} to leave it unlinked.`;
+    return `Next: [${item.reviewKey}] ${label}${item.candidate ? ` exactly matches ${item.candidate.displayName}` : ' has no safe automatic match'}. ${choiceText}`;
+  }
   if (item.isGroup) {
     return `Next: [${item.reviewKey}] ${label} is a group conversation. Mark it as a group below, or leave it unresolved.`;
   }
@@ -537,7 +570,7 @@ export function handleCommunicationIdentityReview(params: {
     return {
       handled: true,
       changed: true,
-      replyText: `Confirmed: ${itemLabel} is linked to ${resolvedPerson.person.displayName}. I can now use that reviewed relationship context, and you can reverse it with \`clear identity review ${item.reviewKey}\`.\n\n${formatNextCommunicationIdentityReview(continuation.snapshot!)}`,
+      replyText: `Confirmed: ${itemLabel} is linked to ${resolvedPerson.person.displayName}. I can now use that reviewed relationship context, and you can reverse it with \`clear identity review ${item.reviewKey}\`.\n\n${formatNextCommunicationIdentityReview(continuation.snapshot!, { inlineControls: params.channel === 'telegram' })}`,
       ...continuation,
     };
   }
@@ -564,7 +597,7 @@ export function handleCommunicationIdentityReview(params: {
     return {
       handled: true,
       changed: true,
-      replyText: `Dismissed: ${itemLabel} will not be treated as a single known person. The conversation remains available without relationship inference.\n\n${formatNextCommunicationIdentityReview(continuation.snapshot!)}`,
+      replyText: `Dismissed: ${itemLabel} will not be treated as a single known person. The conversation remains available without relationship inference.\n\n${formatNextCommunicationIdentityReview(continuation.snapshot!, { inlineControls: params.channel === 'telegram' })}`,
       ...continuation,
     };
   }
@@ -587,7 +620,7 @@ export function handleCommunicationIdentityReview(params: {
   return {
     handled: true,
     changed: true,
-    replyText: `Cleared the identity review for ${itemLabel}. I will treat it as unresolved again and will not guess.\n\n${formatNextCommunicationIdentityReview(continuation.snapshot!)}`,
+    replyText: `Cleared the identity review for ${itemLabel}. I will treat it as unresolved again and will not guess.\n\n${formatNextCommunicationIdentityReview(continuation.snapshot!, { inlineControls: params.channel === 'telegram' })}`,
     ...continuation,
   };
 }

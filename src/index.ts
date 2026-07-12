@@ -473,6 +473,7 @@ import {
   buildSupervisorStatusText,
   isAgentRuntimeSpineNaturalRequest,
   isSupervisorNaturalRequest,
+  reconcileInterruptedAgentRuntimeRuns,
 } from './agent-runtime-spine.js';
 import {
   buildSessionGraphStatusText,
@@ -10513,6 +10514,19 @@ async function main(): Promise<void> {
       'Reconciled post-delivery reflections interrupted by a prior process.',
     );
   }
+  const interruptedRuntimeRecovery = reconcileInterruptedAgentRuntimeRuns();
+  if (
+    interruptedRuntimeRecovery.interrupted > 0 ||
+    interruptedRuntimeRecovery.episodeSynced > 0
+  ) {
+    logger.warn(
+      {
+        component: 'agent_runtime_spine',
+        ...interruptedRuntimeRecovery,
+      },
+      'Reconciled runtime and Agent OS lifecycle state from a prior process.',
+    );
+  }
   loadLogControlFromPersistence();
   startLogControlAutoRefresh();
   logger.info({ component: 'assistant' }, 'Database initialized');
@@ -11986,7 +12000,12 @@ async function main(): Promise<void> {
 
     if (action.operation === 'keep_local') {
       const updated = updateResponseFeedback(existing.feedbackId, {
-        linkedRefs,
+        linkedRefs: {
+          ...linkedRefs,
+          repairFinalHealthState: 'kept_local',
+          repairNextLegalAction:
+            'No landing action is pending; the operator chose to keep this repair local.',
+        },
         status: 'resolved_locally',
         operatorNote:
           'Operator chose to keep the validated hotfix local without a commit or push.',

@@ -233,7 +233,9 @@ category records are not offered as people.
 
 Telegram adds one-at-a-time Link/Leave Unlinked buttons for this same workflow.
 Messages remains text-only so BlueBubbles does not gain a callback or control
-surface beyond the configured self-thread and the existing command parser.
+surface beyond the configured self-thread and the existing command parser. Each
+decision returns the exact opaque-key commands for the next unresolved item;
+threads with an existing explicit person link are skipped.
 
 This surface is denied in every other Messages chat so it cannot expose private
 profile names to another person or group. It uses chat metadata and existing

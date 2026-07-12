@@ -246,6 +246,84 @@ describe('communication identity review', () => {
     ).toBe(true);
   });
 
+  it('skips independently linked threads when selecting the next review card', () => {
+    seedPerson('person-candace', 'Candace');
+    seedPerson('person-travis', 'Travis');
+    seedThread({
+      id: 'communication:already-linked',
+      title: 'Candace',
+      linkedSubjectIds: ['person-candace'],
+      inferenceState: 'user_confirmed',
+      urgency: 'overdue',
+      lastContactAt: '2026-07-12T04:00:00.000Z',
+    });
+    seedThread({
+      id: 'communication:needs-review',
+      title: '+1 (469) 555-0187',
+      channelChatJid: 'bb:iMessage;-;+14695550187',
+      lastContactAt: '2026-07-12T03:00:00.000Z',
+    });
+
+    const snapshot = buildCommunicationIdentityReviewSnapshot({
+      groupFolder: 'main',
+    });
+    const unresolved = snapshot.items.find(
+      (item) => item.threadId === 'communication:needs-review',
+    )!;
+    const actions = buildCommunicationIdentityReviewActionRows(snapshot).flat();
+
+    expect(snapshot.resolvedThreads).toBe(1);
+    expect(snapshot.unreviewedThreads).toBe(1);
+    expect(actions).toHaveLength(3);
+    expect(
+      actions.every((action) =>
+        action.actionId?.includes(unresolved.reviewKey),
+      ),
+    ).toBe(true);
+  });
+
+  it('returns explicit next commands in Messages where inline controls are unavailable', () => {
+    seedPerson('person-candace', 'Candace');
+    seedThread({
+      id: 'communication:number-one',
+      title: '+1 (469) 555-0199',
+      channelChatJid: 'bb:iMessage;-;+14695550199',
+      lastContactAt: '2026-07-12T04:00:00.000Z',
+    });
+    seedThread({
+      id: 'communication:number-two',
+      title: '+1 (469) 555-0187',
+      channelChatJid: 'bb:iMessage;-;+14695550187',
+      lastContactAt: '2026-07-12T03:00:00.000Z',
+    });
+    const snapshot = buildCommunicationIdentityReviewSnapshot({
+      groupFolder: 'main',
+    });
+    const first = snapshot.items.find(
+      (item) => item.threadId === 'communication:number-one',
+    )!;
+    const next = snapshot.items.find(
+      (item) => item.threadId === 'communication:number-two',
+    )!;
+
+    const response = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      chatJid: 'bb:iMessage;-;+14695405551',
+      text: `link identity ${first.reviewKey} to "Candace"`,
+    });
+
+    expect(response).toMatchObject({ changed: true });
+    expect(response.inlineActionRows).toBeUndefined();
+    expect(response.replyText).toContain(`[${next.reviewKey}]`);
+    expect(response.replyText).toContain(
+      `link identity ${next.reviewKey} to "Candace"`,
+    );
+    expect(response.replyText).toContain(`dismiss identity ${next.reviewKey}`);
+    expect(response.replyText).not.toContain('below');
+    expect(response.replyText).not.toContain('+1 (469)');
+  });
+
   it('offers only a group dismissal control for a group conversation', () => {
     seedPerson('person-candace', 'Candace');
     seedThread({

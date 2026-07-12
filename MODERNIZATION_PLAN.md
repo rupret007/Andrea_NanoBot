@@ -1,5 +1,121 @@
 # Modernization Plan
 
+## Agent OS runtime lifecycle truth — 2026-07-12
+
+### Implemented
+
+- [x] Synchronize every finalized runtime run to its linked Agent OS episode,
+      including terminal status, bounded evidence references, and one
+      idempotent outcome step.
+- [x] Record a runtime-linked trajectory evaluation for completed, blocked, and
+      interrupted turns while keeping `promotionEligible=false` until a real
+      owner-reviewed outcome exists. Runtime completion alone cannot promote a
+      skill or expand authority.
+- [x] Reconcile prior-process `active` runs as `interrupted` during startup
+      instead of leaving them permanently active or inferring success. Existing
+      terminal runtime records repair their linked episode metadata
+      idempotently on the same pass.
+- [x] Preserve fresh approval boundaries: `awaiting_approval` remains
+      nonterminal and receives neither an inferred success nor a promotion
+      evaluation.
+
+### Validation
+
+- [x] Focused lifecycle tests prove completed, interrupted, and approval-staged
+      behavior, including owner-review gating and provenance-safe evidence.
+- [x] Complete primary validation passes 200 files and 2,228 tests plus
+      formatting, typecheck, lint with no new errors, and the production build.
+      AGI typecheck and 282/282 tests, all ten intelligence regressions, the
+      99.1% A+ zero-cost scorecard, 57-file documentation validation, signature
+      flows, the zero-vulnerability dependency audit, diff hygiene, and all 90
+      deterministic commands pass. The three-round stability/network-denial
+      sweep completed in 235.8 seconds.
+
+### Remaining evidence debt
+
+- Direct action turns that ended in an earlier process without post-delivery
+  evidence are intentionally classified as interrupted. A fresh owner-reviewed
+  turn is required to establish success; history is not backfilled.
+
+## Communication identity-review queue correctness — 2026-07-12
+
+### Implemented
+
+- [x] Select the next review card only from threads that have neither an
+      explicit review nor an existing person link. Independently linked threads
+      remain resolved and can no longer block the owner from reaching the real
+      unresolved queue.
+- [x] Keep Telegram one-at-a-time controls bounded to the actual next opaque
+      review key. Group conversations expose only `Mark as group`; direct
+      conversations expose eligible existing people plus `Leave unlinked`.
+- [x] Make the text-only Messages self-thread continuation actionable after
+      every decision by returning exact opaque-key link/dismiss commands instead
+      of referring to unavailable inline controls.
+- [x] Preserve the consent boundary: no message bodies, identifiers, similarity,
+      generic-self labels, or collective categories are used to infer a person,
+      and verification does not apply an identity decision.
+
+### Validation
+
+- [x] Focused communication review, capability routing, context packet,
+      intelligence-progress, and AGI-leap coverage passes 109/109 tests.
+- [x] The current metadata-only snapshot confirms ten unresolved threads, with
+      the next action targeting a genuinely unresolved group conversation and
+      exposing only `Mark as group`. Every action targets that opaque key;
+      Messages emits explicit commands and no nonexistent “below” controls.
+- [x] Complete primary validation passes 199 files and 2,225 tests plus
+      formatting, typecheck, lint with no errors, and the production build.
+      AGI typecheck and 282/282 tests, all ten intelligence regressions, the
+      99.1% A+ zero-cost scorecard, 57-file documentation validation, and diff
+      hygiene pass.
+
+### Remaining owner evidence
+
+- The owner must still confirm or dismiss the ten identities through the
+  private Telegram or configured Messages self-thread. No identity decision is
+  safe to automate.
+
+## Learning-lifecycle truth reconciliation — 2026-07-12
+
+### Implemented
+
+- [x] Reconcile downvoted pilot issues against their linked response-feedback
+      evidence. Historical rows with verified route-regression coverage, a
+      recorded landing, an explicit cancellation, or an intentional keep-local
+      decision no longer inflate the actionable open-issue count. Unlinked,
+      failed, running, and genuinely landing-pending issues remain open.
+- [x] Report a local hotfix as pending only when `resolved_locally` feedback has
+      a current dirty path that was not already present when remediation began.
+      Existing regression coverage, recorded commits, and keep-local decisions
+      suppress the false landing prompt.
+- [x] Record an explicit metadata-only `kept_local` terminal state when the
+      owner chooses that action; this changes lifecycle truth only and does not
+      expand commit, push, restart, or external-action authority.
+
+### Validation
+
+- [x] Focused pilot, field-trial, debug-status, response-feedback, AGI-lab, and
+      assistant-metric coverage passes 123/123 tests with typecheck, formatting,
+      and no new lint errors.
+- [x] Current operator truth now reports zero actionable pilot issues and no
+      local hotfix pending, while retaining eight fixed and two verified
+      redacted feedback fixtures. Intelligence progress remains 91% with no
+      regression.
+- [x] Complete primary validation passes 199 files and 2,223 tests plus
+      formatting, typecheck, lint with no errors, and the production build.
+      AGI typecheck and 282/282 tests, all ten intelligence regressions, the
+      99.1% A+ zero-cost scorecard, 57-file documentation validation, diff
+      hygiene, and all 90 deterministic commands pass. The three-round
+      stability/network-denial sweep completed in 235.8 seconds.
+
+### Remaining evidence debt
+
+- Five genuine owner-reviewed outcomes are still required before saving a
+  learning baseline; no outcome or routine promotion is fabricated.
+- Ten communication identities still require explicit owner confirmation or
+  dismissal before relationship-aware reply scoring can improve safely.
+- Alexa still requires a fresh signed device/simulator turn.
+
 ## Shared live-evidence freshness — 2026-07-12
 
 ### Implemented

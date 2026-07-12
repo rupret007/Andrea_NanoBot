@@ -6,9 +6,11 @@ import {
   findRecentPilotJourneyEvent,
   listPilotIssues,
   listRecentPilotJourneyEvents,
+  upsertResponseFeedback,
 } from './db.js';
 import {
   buildAlexaUtteranceReviewDigest,
+  buildPilotReviewSnapshot,
   buildPilotReviewDigest,
   capturePilotIssue,
   classifyPilotIssueKind,
@@ -232,6 +234,79 @@ describe('pilot mode', () => {
       'response_feedback_repo_side_broken',
     );
     expect(capture.record?.linkedRefs.responseFeedbackId).toBe('feedback-1');
+  });
+
+  it('keeps only actionable downvoted issues open after feedback reconciliation', () => {
+    const fixed = capturePilotIssue({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      utterance: 'not helpful',
+      linkedRefs: { responseFeedbackId: 'feedback-fixed' },
+      issueKindOverride: 'downvoted_response',
+      summaryTextOverride: 'Fixed route issue.',
+    }).record!;
+    const pending = capturePilotIssue({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      utterance: 'not helpful',
+      linkedRefs: { responseFeedbackId: 'feedback-pending' },
+      issueKindOverride: 'downvoted_response',
+      summaryTextOverride: 'Pending local repair.',
+    }).record!;
+    const feedbackBase = {
+      createdAt: '2026-07-12T08:00:00.000Z',
+      updatedAt: '2026-07-12T08:05:00.000Z',
+      status: 'resolved_locally' as const,
+      classification: 'repo_side_rough_edge' as const,
+      channel: 'telegram' as const,
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      threadId: null,
+      platformMessageId: '100',
+      userMessageId: '101',
+      routeKey: 'communication.summarize_thread',
+      capabilityId: 'communication.summarize_thread',
+      handlerKind: 'assistant_completion',
+      responseSource: 'local_companion',
+      traceReason: 'test',
+      traceNotes: [],
+      blockerClass: 'response_feedback_repo_side_rough_edge',
+      blockerOwner: 'repo_side' as const,
+      originalUserText: 'Summarize my messages.',
+      assistantReplyText: 'A bounded summary.',
+      remediationLaneId: null,
+      remediationJobId: null,
+      remediationRuntimePreference: null,
+      remediationPrompt: null,
+      operatorNote: 'test',
+    };
+    upsertResponseFeedback({
+      ...feedbackBase,
+      feedbackId: 'feedback-fixed',
+      issueId: fixed.issueId,
+      linkedRefs: {
+        responseFeedbackId: 'feedback-fixed',
+        feedbackRouteCoverageResolvedAt: '2026-07-12T08:05:00.000Z',
+      },
+    });
+    upsertResponseFeedback({
+      ...feedbackBase,
+      feedbackId: 'feedback-pending',
+      issueId: pending.issueId,
+      linkedRefs: { responseFeedbackId: 'feedback-pending' },
+    });
+
+    const review = buildPilotReviewSnapshot(
+      new Date('2026-07-12T08:10:00.000Z'),
+    );
+
+    expect(listPilotIssues({ status: 'open' })).toHaveLength(2);
+    expect(review.openIssueCount).toBe(1);
+    expect(review.openIssues.map((issue) => issue.issueId)).toEqual([
+      pending.issueId,
+    ]);
   });
 
   it('disables journey logging and issue capture when ANDREA_PILOT_LOGGING_ENABLED=0', () => {

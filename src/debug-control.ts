@@ -437,7 +437,9 @@ function formatOverrideLine(scope: string, config: LogControlConfig): string {
   return `- ${scope}: ${override.level} (expires ${override.expiresAt || 'never'}, set by ${override.updatedBy})`;
 }
 
-export function formatDebugStatus(): string {
+export function formatDebugStatus(
+  options: { repoDirtyPaths?: string[] } = {},
+): string {
   const config = readPersistedLogControlConfig();
   const probe = getAssistantExecutionProbeState();
   const scopes = Object.keys(config.scopedOverrides).sort();
@@ -450,6 +452,7 @@ export function formatDebugStatus(): string {
   const fieldTrialTruth = buildFieldTrialOperatorTruth({
     hostSnapshot,
     windowsHost,
+    repoDirtyPaths: options.repoDirtyPaths,
   });
   const hostDiskHealth = probeHostDiskHealth({
     targetPath: commitTruth.activeRepoRoot || process.cwd(),

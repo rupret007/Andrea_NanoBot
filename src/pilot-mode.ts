@@ -1,7 +1,6 @@
 import crypto from 'crypto';
 
 import {
-  countPilotIssues,
   findRecentPilotJourneyEvent,
   getPilotJourneyEvent,
   finalizePilotJourneyEvent,
@@ -9,6 +8,7 @@ import {
   insertPilotJourneyEvent,
   listPilotIssues,
   listRecentPilotJourneyEvents,
+  listRecentResponseFeedback,
 } from './db.js';
 import type {
   PilotBlockerOwner,
@@ -120,6 +120,52 @@ export interface PilotRecurringProblemDigest {
   occurrences: number;
   latestAt: string;
   latestSummaryText: string;
+}
+
+function responseFeedbackClosesPilotIssue(
+  feedback: ReturnType<typeof listRecentResponseFeedback>[number],
+): boolean {
+  if (
+    feedback.status === 'landed' ||
+    feedback.status === 'accepted' ||
+    feedback.status === 'cancelled'
+  ) {
+    return true;
+  }
+  if (feedback.status !== 'resolved_locally') return false;
+  return Boolean(
+    feedback.linkedRefs.feedbackRouteCoverageResolvedAt ||
+    feedback.linkedRefs.landingCommitSha ||
+    ['kept_local', 'landed_push_recorded', 'local_commit_recorded'].includes(
+      feedback.linkedRefs.repairFinalHealthState || '',
+    ),
+  );
+}
+
+function reconcileOpenPilotIssues(
+  issues: PilotIssueRecord[],
+): PilotIssueRecord[] {
+  const feedback = listRecentResponseFeedback({ limit: 1000 });
+  const feedbackById = new Map(
+    feedback.map((record) => [record.feedbackId, record]),
+  );
+  const feedbackByIssueId = new Map<
+    string,
+    ReturnType<typeof listRecentResponseFeedback>[number]
+  >();
+  for (const record of feedback) {
+    if (record.issueId && !feedbackByIssueId.has(record.issueId)) {
+      feedbackByIssueId.set(record.issueId, record);
+    }
+  }
+  return issues.filter((issue) => {
+    if (issue.issueKind !== 'downvoted_response') return true;
+    const linkedFeedbackId = issue.linkedRefs.responseFeedbackId;
+    const linkedFeedback = linkedFeedbackId
+      ? feedbackById.get(linkedFeedbackId)
+      : feedbackByIssueId.get(issue.issueId);
+    return !linkedFeedback || !responseFeedbackClosesPilotIssue(linkedFeedback);
+  });
 }
 
 export interface AlexaUtteranceReviewItem {
@@ -566,12 +612,14 @@ export function buildPilotReviewSnapshot(
   const recentEvents = listRecentPilotJourneyEvents({ limit: 300 }).filter(
     (event) => event.startedAt >= retentionCutoffIso,
   );
-  const openIssues = listPilotIssues({ status: 'open', limit: 50 });
+  const openIssues = reconcileOpenPilotIssues(
+    listPilotIssues({ status: 'open', limit: 1000 }),
+  );
   return {
     loggingEnabled: isPilotLoggingEnabled(),
     recentEvents,
-    openIssues,
-    openIssueCount: countPilotIssues('open'),
+    openIssues: openIssues.slice(0, 50),
+    openIssueCount: openIssues.length,
     latestOpenIssue: openIssues[0] || null,
     liveProofCutoffIso,
   };

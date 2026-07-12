@@ -143,6 +143,7 @@ Andrea now has a bounded pilot and dogfooding loop on this host:
   - Andrea can then prepare one queued self-fix job, preferring Codex local, then Codex cloud, then Cursor Cloud
   - external/manual blockers stay captured honestly instead of auto-starting a repo fix
   - local hotfixes may validate and restart on-host, but Andrea still asks before any commit or push
+  - pilot review counts only actionable issues: linked regression coverage, recorded landings, cancellations, and explicit keep-local decisions close the derived issue view, while a landing prompt appears only for a genuinely new dirty path
 - pilot review stays operator-only through `npm run debug:pilot`
 - raw private transcripts are not stored in pilot instrumentation; only short sanitized summaries and linked artifact ids are retained
 - set `ANDREA_PILOT_LOGGING_ENABLED=0` on the host if you need to disable both journey logging and explicit pilot issue capture
@@ -344,7 +345,7 @@ BlueBubbles is now Andrea's optional bounded Messages bridge, not a core require
 - BlueBubbles keeps companion-safe capabilities like daily guidance, communication help, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
 - in the configured self-thread, native Like/Love/Dislike tapbacks provide privacy-safe accepted/rejected outcome signals; ambiguous reactions and removals never train Andrea
 - the same narrow natural verdict phrases work in the configured self-thread; they retain route/run provenance only and never expand Messages authority
-- `review communication identities` starts a private, explicit identity-link review in the registered main Telegram chat or configured Messages self-thread; Telegram presents one unresolved conversation at a time with bounded Link/Leave Unlinked controls, while both channels use stable opaque review keys instead of requiring raw phone/JID labels and may propose only unique exact-name matches—never message-body, identifier, generic-self, collective-category, or similarity inference
+- `review communication identities` starts a private, explicit identity-link review in the registered main Telegram chat or configured Messages self-thread; already-linked threads are skipped, Telegram presents one genuinely unresolved conversation at a time with bounded Link/Leave Unlinked controls, and Messages returns exact text commands for the next item; both channels use stable opaque review keys instead of requiring raw phone/JID labels and may propose only unique exact-name matches—never message-body, identifier, generic-self, collective-category, or similarity inference
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 

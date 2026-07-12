@@ -102,6 +102,10 @@ Current communication capabilities:
   - in Telegram, choose from bounded buttons for the first unresolved
     conversation; each explicit choice returns the next item without granting a
     new authority path
+  - skip threads that already have an explicit person link even when they do
+    not have a separate identity-review row
+  - in the text-only Messages self-thread, return exact link/dismiss commands
+    for the next unresolved item after every decision
   - propose a person only when the safe label exactly matches one eligible
     existing individual profile person
   - mark group/unknown conversations not applicable with `dismiss identity R-12AB34CD`

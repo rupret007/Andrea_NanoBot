@@ -4,8 +4,10 @@ import type { CognitiveKernelResult } from './cognitive-kernel.js';
 import { redactCouncilText } from './council-safety.js';
 import type { IntegrationDoctorReport } from './integration-doctor.js';
 import {
+  getAgentOSEpisode,
   getAgentRuntimeRun,
   isDatabaseInitialized,
+  listAgentOSEpisodeSteps,
   listAgentRuntimeCheckpoints,
   listAgentRuntimeEvidencePackets,
   listAgentRuntimeEvents,
@@ -18,6 +20,7 @@ import {
   listAgentRuntimeWrites,
   upsertAgentOSEpisode,
   upsertAgentOSEpisodeStep,
+  upsertAgentOSTrajectoryEval,
   upsertAgentRuntimeCheckpoint,
   upsertAgentRuntimeEvidencePacket,
   upsertAgentRuntimeEvent,
@@ -59,6 +62,7 @@ import type {
   AgentOSCapabilityDiscoveryReport,
   AgentOSEpisode,
   AgentOSEpisodeStep,
+  AgentOSTrajectoryEval,
   AgentOSReport,
   AgentRuntimeCheckpoint,
   AgentRuntimeEvidencePacket,
@@ -119,6 +123,12 @@ export interface FinalizeAgentRuntimeOutcomeInput {
   routeUsed?: string | null;
   answerClass?: string | null;
   blockerClass?: string | null;
+}
+
+export interface AgentRuntimeLifecycleReconciliation {
+  inspected: number;
+  interrupted: number;
+  episodeSynced: number;
 }
 
 function nowIso(): string {
@@ -1173,7 +1183,265 @@ export function finalizeAgentRuntimeSpineOutcome(
   upsertAgentRuntimeStep(step);
   upsertAgentRuntimeEvent(event);
   upsertAgentRuntimeRun(updated);
+  syncAgentOSEpisodeFromRuntime(updated, generatedAt);
   return updated;
+}
+
+function runtimeSourceCoverage(episode: AgentOSEpisode): number {
+  const raw = safeObject(episode.sourceCoverageJson).score;
+  return typeof raw === 'number' && Number.isFinite(raw)
+    ? Math.max(0, Math.min(1, raw))
+    : 0.55;
+}
+
+function agentOSEpisodeStatusForRuntime(
+  status: AgentRuntimeRun['status'],
+): AgentOSEpisode['status'] {
+  if (status === 'completed' || status === 'shadowed') return 'completed';
+  if (status === 'awaiting_approval') return 'awaiting_approval';
+  if (status === 'blocked') return 'blocked';
+  if (status === 'interrupted') return 'interrupted';
+  return 'active';
+}
+
+function runtimeTrajectoryEval(input: {
+  run: AgentRuntimeRun;
+  episode: AgentOSEpisode;
+  generatedAt: string;
+}): AgentOSTrajectoryEval {
+  const outcome = safeObject(input.run.outcomeJson);
+  const finalStatus = String(outcome.finalStatus || 'unknown');
+  const sourceCoverage = runtimeSourceCoverage(input.episode);
+  const openApprovalInterrupt = listAgentRuntimeInterrupts({
+    runtimeRunId: input.run.runtimeRunId,
+    status: 'open',
+    limit: 100,
+  }).some((interrupt) => interrupt.interruptKind === 'approval_required');
+  const approvalSafety =
+    !openApprovalInterrupt || input.run.status === 'awaiting_approval'
+      ? 1
+      : 0.4;
+  const interruptSafety = input.run.status === 'interrupted' ? 0.7 : 1;
+  const toolUsefulness = Math.min(
+    1,
+    0.55 +
+      listAgentRuntimeEvidencePackets({
+        runtimeRunId: input.run.runtimeRunId,
+        limit: 20,
+      }).length *
+        0.08,
+  );
+  const verificationStrength = input.run.truthAuditId
+    ? finalStatus === 'pass'
+      ? 0.86
+      : finalStatus === 'warn'
+        ? 0.65
+        : 0.4
+    : 0.3;
+  const privacy = safeObject(input.run.privacyJson);
+  const privacySafety =
+    privacy.rawPromptsStored === false &&
+    privacy.rawPrivateBodiesStored === false &&
+    privacy.hiddenReasoningStored === false
+      ? 1
+      : 0;
+  const overallScore = Number(
+    (
+      (sourceCoverage +
+        interruptSafety +
+        approvalSafety +
+        toolUsefulness +
+        verificationStrength +
+        privacySafety) /
+      6
+    ).toFixed(3),
+  );
+  const status: AgentOSTrajectoryEval['status'] =
+    input.run.status === 'blocked' || input.run.status === 'interrupted'
+      ? 'fail'
+      : overallScore >= 0.78
+        ? 'pass'
+        : overallScore >= 0.55
+          ? 'warn'
+          : 'fail';
+  const demotionSignals: string[] = [];
+  if (!input.run.truthAuditId) demotionSignals.push('missing_truth_audit');
+  if (input.run.status === 'blocked') demotionSignals.push('blocked_runtime');
+  if (input.run.status === 'interrupted') {
+    demotionSignals.push('interrupted_before_outcome_verification');
+  }
+  if (approvalSafety < 1) demotionSignals.push('approval_state_mismatch');
+  if (finalStatus === 'warn') demotionSignals.push('warned_evaluation');
+  if (finalStatus === 'block') demotionSignals.push('blocked_evaluation');
+  if (privacySafety < 1) demotionSignals.push('privacy_policy_failure');
+  return {
+    evalId: runtimeSanitizeId(`runtime:agentos:eval:${input.run.runtimeRunId}`),
+    episodeId: input.episode.episodeId,
+    runId: input.episode.activeRunId || input.episode.rootRunId || null,
+    createdAt: input.generatedAt,
+    status,
+    overallScore,
+    sourceCoverage,
+    interruptSafety,
+    approvalSafety,
+    toolUsefulness,
+    verificationStrength,
+    privacySafety,
+    // A runtime completion is not an owner verdict and cannot grant authority.
+    promotionEligible: false,
+    demotionSignalsJson: runtimeSafeJson(demotionSignals, 1200),
+    nextAction:
+      'Require an owner-reviewed outcome before this runtime trajectory can influence skill promotion.',
+    privacyJson: runtimePrivacyJson(),
+  };
+}
+
+function syncAgentOSEpisodeFromRuntime(
+  run: AgentRuntimeRun,
+  generatedAt: string,
+): boolean {
+  if (!run.agentOSEpisodeId) return false;
+  const episode = getAgentOSEpisode(run.agentOSEpisodeId);
+  if (!episode) return false;
+  const status = agentOSEpisodeStatusForRuntime(run.status);
+  const terminal = ['completed', 'blocked', 'interrupted'].includes(status);
+  const evalRecord = terminal
+    ? runtimeTrajectoryEval({ run, episode, generatedAt })
+    : null;
+  const priorEvalIds = runtimeParseJsonArray(episode.trajectoryEvalIdsJson);
+  const evalIds = evalRecord
+    ? Array.from(new Set([...priorEvalIds, evalRecord.evalId]))
+    : priorEvalIds;
+  const priorLinkedRunIds = runtimeParseJsonArray(episode.linkedRunIdsJson);
+  const linkedRunIds = Array.from(
+    new Set([...priorLinkedRunIds, run.runtimeRunId]),
+  );
+  const priorEvidenceIds = runtimeParseJsonArray(episode.evidenceIdsJson);
+  const evidenceIds = Array.from(
+    new Set([
+      ...priorEvidenceIds,
+      ...runtimeParseJsonArray(run.evidencePacketIdsJson),
+      ...(run.truthAuditId ? [run.truthAuditId] : []),
+    ]),
+  );
+  const nextAction =
+    status === 'completed'
+      ? 'Await an owner-reviewed outcome before using this trajectory for promotion.'
+      : status === 'interrupted'
+        ? 'Treat this prior-process turn as interrupted; do not infer success without outcome evidence.'
+        : status === 'blocked'
+          ? 'Resolve the recorded blocker and start a fresh verified turn.'
+          : status === 'awaiting_approval'
+            ? 'Wait for explicit approval before resuming the staged action.'
+            : episode.nextAction;
+  const updatedEpisode: AgentOSEpisode = {
+    ...episode,
+    updatedAt: generatedAt,
+    status,
+    linkedRunIdsJson: runtimeSafeJson(linkedRunIds, 2400),
+    evidenceIdsJson: runtimeSafeJson(evidenceIds, 2400),
+    trajectoryEvalIdsJson: runtimeSafeJson(evalIds, 1200),
+    nextAction,
+    completedAt: status === 'completed' ? generatedAt : null,
+  };
+  const outcomeStepId = runtimeSanitizeId(
+    `runtime:agentos:step:${episode.episodeId}:outcome`,
+  );
+  const existingSteps = listAgentOSEpisodeSteps({
+    episodeId: episode.episodeId,
+    limit: 500,
+  });
+  const existingOutcomeStep = existingSteps.find(
+    (step) => step.stepId === outcomeStepId,
+  );
+  const alreadySynced =
+    episode.status === status &&
+    priorLinkedRunIds.includes(run.runtimeRunId) &&
+    evidenceIds.every((id) => priorEvidenceIds.includes(id)) &&
+    (!evalRecord || priorEvalIds.includes(evalRecord.evalId)) &&
+    Boolean(existingOutcomeStep) &&
+    (status !== 'completed' || episode.completedAt !== null);
+  if (alreadySynced) return false;
+  const outcomeStep: AgentOSEpisodeStep = {
+    stepId: outcomeStepId,
+    episodeId: episode.episodeId,
+    runId: episode.activeRunId || episode.rootRunId || null,
+    createdAt: generatedAt,
+    position:
+      existingOutcomeStep?.position ||
+      Math.max(0, ...existingSteps.map((step) => step.position)) + 1,
+    stepKind: 'outcome',
+    actorRole: 'final_arbiter',
+    status:
+      status === 'completed'
+        ? 'completed'
+        : status === 'awaiting_approval'
+          ? 'approval_staged'
+          : status === 'active'
+            ? 'planned'
+            : status === 'blocked'
+              ? 'blocked'
+              : 'warn',
+    summary: `Runtime-linked episode reconciled as ${status}.`,
+    evidenceRefsJson: runtimeSafeJson(
+      [run.runtimeRunId, run.truthAuditId].filter(Boolean),
+      1200,
+    ),
+    governanceDecisionIdsJson: runtimeSafeJson([], 1200),
+    nextAction,
+    privacyJson: runtimePrivacyJson(),
+  };
+  upsertAgentOSEpisode(updatedEpisode);
+  upsertAgentOSEpisodeStep(outcomeStep);
+  if (evalRecord) upsertAgentOSTrajectoryEval(evalRecord);
+  return true;
+}
+
+/**
+ * Reconciles per-turn runtime runs left by a prior process generation. Active
+ * runs cannot resume across a host restart, so they are marked interrupted
+ * instead of being silently treated as successful.
+ */
+export function reconcileInterruptedAgentRuntimeRuns(
+  params: { generatedAt?: string; limit?: number } = {},
+): AgentRuntimeLifecycleReconciliation {
+  if (!isDatabaseInitialized()) {
+    return { inspected: 0, interrupted: 0, episodeSynced: 0 };
+  }
+  const generatedAt = params.generatedAt || nowIso();
+  const runs = listAgentRuntimeRuns({ limit: params.limit || 2_000 });
+  let interrupted = 0;
+  let episodeSynced = 0;
+  for (const run of runs) {
+    let reconciledRun = run;
+    if (run.status === 'active') {
+      reconciledRun = {
+        ...run,
+        updatedAt: generatedAt,
+        status: 'interrupted',
+        outcomeJson: runtimeSafeJson(
+          {
+            ...safeObject(run.outcomeJson),
+            finalStatus: 'interrupted',
+            evidenceGap: 'prior_process_ended_before_outcome_verification',
+            evaluatorFlags: ['interrupted_process_reconciliation'],
+          },
+          3200,
+        ),
+        nextAction:
+          'Start a fresh turn; do not infer success from this interrupted runtime run.',
+      };
+      upsertAgentRuntimeRun(reconciledRun);
+      interrupted += 1;
+    }
+    if (
+      reconciledRun.status !== 'active' &&
+      syncAgentOSEpisodeFromRuntime(reconciledRun, generatedAt)
+    ) {
+      episodeSynced += 1;
+    }
+  }
+  return { inspected: runs.length, interrupted, episodeSynced };
 }
 
 function safeObject(json: string): Record<string, unknown> {

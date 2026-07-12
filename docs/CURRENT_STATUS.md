@@ -18,9 +18,9 @@ Generated from local operator checks on 2026-07-12.
   current SHA; every release must report `Serving commit aligned: yes`
 - Modernization work: combined release validated for direct `main` publication
 - Process/runtime state: `running_ready`
-- Host resource state: `degraded_but_usable` warning with about 4.8 GiB free
-  after the owner-authorized regenerable-cache cleanup; the critical ENOSPC
-  condition is resolved, while the preferred roughly 11 GiB target remains
+- Host resource state: healthy with about 43 GiB free after the
+  owner-authorized regenerable-cache cleanup; the prior ENOSPC condition and
+  warning threshold are both cleared
 - Serving commit aligned with workspace HEAD: yes
 - Open pilot issues: check `npm run debug:pilot`
 - Learning evidence: 56 metric samples, zero owner-reviewed outcomes, and no
@@ -29,12 +29,13 @@ Generated from local operator checks on 2026-07-12.
 
 ## Live Proof Truth
 
-- Launch status: `near_live_only` while disk pressure and one life-thread proof gap remain
-- Core status: usable with degraded persistence headroom
+- Launch status: `near_live_only` while one life-thread proof gap remains
+- Core status: usable with healthy persistence headroom
 - Live proof gauntlet: use `npm run services:status` and `npm run integrations:status -- --json`
 - Proof debt: one life-thread control turn plus a fresh signed Alexa turn
-- Operator action required: review disk usage and free the target reported by `npm run integrations:doctor` (currently about 11 GiB) without autonomous deletion
-- Repo work required for disk detection: complete locally; cleanup remains an owner decision
+- Operator action required: complete the explicit life-thread and Alexa proof
+  turns; no disk cleanup is currently required
+- Repo work required for disk detection: complete
 
 Current live-proven surfaces:
 
@@ -45,16 +46,15 @@ Current live-proven surfaces:
 
 Current blocked or proof-stale surfaces:
 
-- Host health: `degraded_but_usable` while disk pressure is warning; the process
-  and watchdog are running and the prior critical ENOSPC condition is cleared
 - Alexa signed IntentRequest proof: `manual_action_required` until a fresh signed handled turn reaches this host
 - Life-thread proof: `near_live_only` until one genuine save/thread-control turn occurs
 
 ## Next Proof Actions
 
-1. Restore persistence headroom.
-   - Review owner-controlled disk usage; do not delete Docker images, containers, evaluation evidence, or user files automatically.
-   - Target the greater of 5 GiB or 5% of the volume (currently about 11 GiB), then run `npm run integrations:doctor` and `npm run debug:status`.
+1. Preserve persistence headroom.
+   - Host disk pressure is currently healthy with about 43 GiB available; keep
+     the existing health monitor active and avoid automatic deletion of Docker
+     images, containers, evaluation evidence, or user files.
 
 2. Ground communication identities explicitly.
    - Run `review communication identities` in the registered main Telegram chat or configured Messages self-thread.
@@ -83,8 +83,7 @@ Current blocked or proof-stale surfaces:
 
 8. Establish the first real learning baseline.
    - Review at least five genuine Andrea responses with `Helpful`, `Not
-     helpful`, a Messages tapback, or a fresh standalone `that worked` / `that
-     didn't work` reply.
+     helpful`, a Messages tapback, or a fresh standalone success/failure reply.
    - Save a baseline only after the fifth genuine review; never synthesize or
      backfill these outcomes.
 

@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+
 import {
   buildBlueBubblesHealthSnapshot,
   buildBlueBubblesWebhookUrl,
@@ -29,6 +31,7 @@ import {
 } from './bluebubbles-self-thread.js';
 import { buildBlueBubblesProofReconciliationReport } from './bluebubbles-proof-reconciliation.js';
 import { readEnvFile } from './env.js';
+import { parseGitDirtyPaths } from './git-status-paths.js';
 import {
   buildGoogleCalendarBlockedProofSurface,
   buildGoogleCalendarNearLiveSurface,
@@ -705,6 +708,7 @@ export interface FieldTrialOperatorTruth {
 
 export interface BuildFieldTrialOperatorTruthOptions {
   projectRoot?: string;
+  repoDirtyPaths?: string[];
   hostSnapshot?: HostControlSnapshot;
   windowsHost?: WindowsHostReconciliation | null;
   hostDiskHealth?: HostDiskHealthReport;
@@ -715,6 +719,42 @@ export interface BuildFieldTrialOperatorTruthOptions {
     | 'quota_blocked'
     | 'degraded'
     | 'available';
+}
+
+function readRepoDirtyPaths(projectRoot: string): string[] {
+  try {
+    return parseGitDirtyPaths(
+      execFileSync('git', ['status', '--short'], {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    );
+    // Operator truth must remain available outside a Git checkout; in that
+    // case an unproven hotfix is reported as not pending rather than crashing
+    // the entire status surface.
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    return [];
+  }
+}
+
+function isLocalFeedbackHotfixPending(
+  feedback: ReturnType<typeof listRecentResponseFeedback>[number] | null,
+  repoDirtyPaths: string[],
+): boolean {
+  if (!feedback || feedback.status !== 'resolved_locally') return false;
+  if (
+    feedback.linkedRefs.feedbackRouteCoverageResolvedAt ||
+    feedback.linkedRefs.landingCommitSha ||
+    ['kept_local', 'landed_push_recorded', 'local_commit_recorded'].includes(
+      feedback.linkedRefs.repairFinalHealthState || '',
+    )
+  ) {
+    return false;
+  }
+  const baseline = new Set(feedback.linkedRefs.repoDirtyPathsAtStart || []);
+  return repoDirtyPaths.some((dirtyPath) => !baseline.has(dirtyPath));
 }
 
 interface PilotReviewSnapshotLike {
@@ -2886,6 +2926,8 @@ export function buildFieldTrialOperatorTruth(
   const review = buildPilotReviewSnapshot();
   const latestResponseFeedback =
     listRecentResponseFeedback({ limit: 1 })[0] || null;
+  const repoDirtyPaths =
+    options.repoDirtyPaths || readRepoDirtyPaths(projectRoot);
 
   const telegram = buildTelegramTruth(hostSnapshot, windowsHost);
   const alexa = buildAlexaTruth(projectRoot, review);
@@ -3022,7 +3064,10 @@ export function buildFieldTrialOperatorTruth(
             latestResponseFeedback.assistantReplyText,
           )}`
         : '',
-      localHotfixPending: latestResponseFeedback?.status === 'resolved_locally',
+      localHotfixPending: isLocalFeedbackHotfixPending(
+        latestResponseFeedback,
+        repoDirtyPaths,
+      ),
     },
     launchReadiness,
   };

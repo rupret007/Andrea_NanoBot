@@ -140,6 +140,11 @@ outcomes. Provider latency, tool, and cost telemetry never satisfy this gate.
 Andrea also reports this count after each genuine feedback verdict and in the
 conversational `learning status` answer. Reaching five reports that a baseline
 is ready for operator review; it never auto-saves or silently promotes one.
+Pilot issue and landing status are derived from the linked feedback evidence,
+not from a stale issue row alone. Existing regression coverage, recorded
+landings, cancellations, and explicit keep-local decisions are removed from the
+actionable issue count. A local hotfix is called pending only when the current
+repository has a new dirty path beyond the remediation-start baseline.
 
 ## Verified deep-work apprenticeship
 
