@@ -40,10 +40,24 @@ export interface CommunicationIdentityReviewItem {
 
 export interface CommunicationIdentityReviewSnapshot {
   totalThreads: number;
+  groupThreads: number;
+  identityApplicableThreads: number;
   resolvedThreads: number;
   unreviewedThreads: number;
   availablePeopleNames: string[];
   items: CommunicationIdentityReviewItem[];
+}
+
+function identityReviewResolved(
+  item: CommunicationIdentityReviewItem,
+): boolean {
+  return (
+    item.isGroup || item.linkedSubjectIds.length > 0 || Boolean(item.review)
+  );
+}
+
+function identityReviewPending(item: CommunicationIdentityReviewItem): boolean {
+  return !identityReviewResolved(item);
 }
 
 export interface CommunicationIdentityReviewResponse {
@@ -222,11 +236,12 @@ export function buildCommunicationIdentityReviewSnapshot(params: {
       linkedSubjectIds: [...thread.linkedSubjectIds],
     };
   });
-  const resolvedThreads = items.filter(
-    (item) => item.linkedSubjectIds.length > 0 || item.review,
-  ).length;
+  const groupThreads = items.filter((item) => item.isGroup).length;
+  const resolvedThreads = items.filter(identityReviewResolved).length;
   return {
     totalThreads: items.length,
+    groupThreads,
+    identityApplicableThreads: Math.max(0, items.length - groupThreads),
     resolvedThreads,
     unreviewedThreads: Math.max(0, items.length - resolvedThreads),
     availablePeopleNames: uniquelyResolvablePeopleNames(people),
@@ -302,11 +317,7 @@ function safeThreadLabel(item: CommunicationIdentityReviewItem): string {
 function firstUnreviewedItem(
   snapshot: CommunicationIdentityReviewSnapshot,
 ): CommunicationIdentityReviewItem | null {
-  return (
-    snapshot.items.find(
-      (item) => item.linkedSubjectIds.length === 0 && !item.review,
-    ) || null
-  );
+  return snapshot.items.find(identityReviewPending) || null;
 }
 
 function actionFitsTelegram(actionId: string): boolean {
@@ -356,7 +367,7 @@ export function formatNextCommunicationIdentityReview(
 ): string {
   const item = firstUnreviewedItem(snapshot);
   if (!item) {
-    return `Identity review is complete for all ${snapshot.totalThreads} active thread${snapshot.totalThreads === 1 ? '' : 's'}.`;
+    return `Identity review is complete for all ${snapshot.identityApplicableThreads} identity-relevant direct thread${snapshot.identityApplicableThreads === 1 ? '' : 's'}${snapshot.groupThreads > 0 ? `; ${snapshot.groupThreads} group conversation${snapshot.groupThreads === 1 ? ' is' : 's are'} already excluded from single-person linking by channel metadata` : ''}.`;
   }
   const label = safeThreadLabel(item);
   const inlineControls = options.inlineControls !== false;
@@ -411,11 +422,9 @@ function buildReviewContinuation(params: {
 export function formatCommunicationIdentityReviewSnapshot(
   snapshot: CommunicationIdentityReviewSnapshot,
 ): string {
-  const unreviewed = snapshot.items
-    .filter((item) => item.linkedSubjectIds.length === 0 && !item.review)
-    .slice(0, 5);
+  const unreviewed = snapshot.items.filter(identityReviewPending).slice(0, 5);
   if (unreviewed.length === 0) {
-    return `Communication identity review is complete for all ${snapshot.totalThreads} active thread${snapshot.totalThreads === 1 ? '' : 's'}. I only use confirmed person links for relationship-aware guidance.`;
+    return `Communication identity review is complete for all ${snapshot.identityApplicableThreads} identity-relevant direct thread${snapshot.identityApplicableThreads === 1 ? '' : 's'}${snapshot.groupThreads > 0 ? `; ${snapshot.groupThreads} group conversation${snapshot.groupThreads === 1 ? ' is' : 's are'} already excluded from single-person linking by channel metadata` : ''}. I only use confirmed person links for relationship-aware guidance.`;
   }
   const lines = unreviewed.map((item, index) => {
     const reference = item.reviewKey;
@@ -434,7 +443,10 @@ export function formatCommunicationIdentityReviewSnapshot(
     ? `Existing profile people you may choose: ${visiblePeople.join(', ')}${snapshot.availablePeopleNames.length > visiblePeople.length ? `, plus ${snapshot.availablePeopleNames.length - visiblePeople.length} more` : ''}.`
     : 'No eligible profile people are configured yet; add a person through profile setup before linking.';
   return [
-    `Communication identity review: ${snapshot.unreviewedThreads} unreviewed of ${snapshot.totalThreads}.`,
+    `Communication identity review: ${snapshot.unreviewedThreads} unreviewed of ${snapshot.identityApplicableThreads} identity-relevant direct thread${snapshot.identityApplicableThreads === 1 ? '' : 's'}.`,
+    snapshot.groupThreads > 0
+      ? `${snapshot.groupThreads} group conversation${snapshot.groupThreads === 1 ? ' is' : 's are'} already excluded from single-person linking by channel metadata; audience checks still apply before drafting or sending.`
+      : '',
     ...lines,
     remaining > 0
       ? `${remaining} more will appear after these are reviewed.`

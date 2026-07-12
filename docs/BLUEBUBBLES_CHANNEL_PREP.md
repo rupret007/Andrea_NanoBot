@@ -229,7 +229,10 @@ key such as `R-12AB34CD`; use `link identity R-12AB34CD to "Person"`, mark a
 single-person link not applicable with `dismiss identity R-12AB34CD`, or
 reverse a decision with `clear identity review R-12AB34CD`. Phone/JID-shaped
 labels are rendered as unlabeled conversations, and generic-self or collective
-category records are not offered as people.
+category records are not offered as people. BlueBubbles group metadata is
+already sufficient to exclude that conversation from single-person identity
+review; this never creates a relationship link, and group audience checks still
+apply before drafting or sending.
 
 Telegram adds one-at-a-time Link/Leave Unlinked buttons for this same workflow.
 Messages remains text-only so BlueBubbles does not gain a callback or control

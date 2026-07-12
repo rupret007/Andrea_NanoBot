@@ -58,7 +58,9 @@ Current blocked or proof-stale surfaces:
 
 2. Ground communication identities explicitly.
    - Run `review communication identities` in the registered main Telegram chat or configured Messages self-thread.
-   - Confirm or dismiss exact metadata labels; do not infer people from phone numbers or message bodies.
+   - Confirm or dismiss unresolved direct conversations; authoritative group
+     metadata is excluded automatically, and people are never inferred from
+     phone numbers or message bodies.
 
 3. Keep Telegram proof fresh.
    - Run `npm run telegram:user:smoke`.

@@ -8,6 +8,7 @@ import {
 } from './communication-identity-review.js';
 import {
   _initTestDatabase,
+  decideCommunicationThreadIdentity,
   getCommunicationIdentityReview,
   getCommunicationThread,
   setRegisteredGroup,
@@ -324,8 +325,7 @@ describe('communication identity review', () => {
     expect(response.replyText).not.toContain('+1 (469)');
   });
 
-  it('offers only a group dismissal control for a group conversation', () => {
-    seedPerson('person-candace', 'Candace');
+  it('resolves authoritative group metadata without asking for a person decision', () => {
     seedThread({
       id: 'communication:group-only',
       title: 'Family thread',
@@ -334,14 +334,25 @@ describe('communication identity review', () => {
     const snapshot = buildCommunicationIdentityReviewSnapshot({
       groupFolder: 'main',
     });
-    expect(buildCommunicationIdentityReviewActionRows(snapshot)).toEqual([
-      [
-        {
-          label: 'Mark as group',
-          actionId: `dismiss identity ${snapshot.items[0]!.reviewKey}`,
-        },
-      ],
-    ]);
+    expect(snapshot).toMatchObject({
+      totalThreads: 1,
+      groupThreads: 1,
+      identityApplicableThreads: 0,
+      resolvedThreads: 1,
+      unreviewedThreads: 0,
+    });
+    expect(buildCommunicationIdentityReviewActionRows(snapshot)).toEqual([]);
+    const response = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'review communication identities',
+    });
+    expect(response.replyText).toContain(
+      'group conversation is already excluded from single-person linking',
+    );
+    expect(
+      getCommunicationIdentityReview('communication:group-only'),
+    ).toBeUndefined();
   });
 
   it('confirms, dismisses, and clears by opaque review key', () => {
@@ -448,6 +459,16 @@ describe('communication identity review', () => {
         text: 'confirm identity "Band chat" is "Riley"',
       }),
     ).toMatchObject({ changed: false });
+    expect(
+      decideCommunicationThreadIdentity({
+        groupFolder: 'main',
+        threadId: 'communication:band',
+        decision: 'confirmed',
+        subjectId: 'person-riley',
+        sourceChannel: 'telegram',
+        now,
+      }),
+    ).toEqual({ ok: false, reason: 'group_thread_conflict' });
 
     const dismissed = handleCommunicationIdentityReview({
       groupFolder: 'main',

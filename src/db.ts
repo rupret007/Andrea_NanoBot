@@ -10195,6 +10195,7 @@ export type CommunicationIdentityDecisionResult =
         | 'person_not_found'
         | 'person_required'
         | 'review_not_found'
+        | 'group_thread_conflict'
         | 'existing_link_conflict';
     };
 
@@ -10217,6 +10218,19 @@ export function decideCommunicationThreadIdentity(params: {
     if (!thread) return { ok: false, reason: 'thread_not_found' };
     if (thread.groupFolder !== params.groupFolder) {
       return { ok: false, reason: 'group_mismatch' };
+    }
+    const channelChat = thread.channelChatJid
+      ? (db
+          .prepare('SELECT is_group FROM chats WHERE jid = ? LIMIT 1')
+          .get(thread.channelChatJid) as { is_group: number } | undefined)
+      : undefined;
+    const isGroupThread = Boolean(
+      channelChat?.is_group === 1 ||
+      (thread.channelChatJid &&
+        /;\+;|;chat|group/i.test(thread.channelChatJid)),
+    );
+    if (params.decision === 'confirmed' && isGroupThread) {
+      return { ok: false, reason: 'group_thread_conflict' };
     }
     const previous = getCommunicationIdentityReview(params.threadId);
     if (params.decision === 'clear' && !previous) {

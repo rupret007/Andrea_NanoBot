@@ -2,6 +2,7 @@ import crypto from 'crypto';
 
 import {
   getActiveOperatingProfile,
+  getAllChats,
   getOutcomeBySource,
   getTasksForGroup,
   listOutcomesForGroup,
@@ -1161,6 +1162,22 @@ export function buildPersonalContextGraph(params: {
       .filter((review) => activeCommunicationThreadIds.has(review.threadId))
       .map((review) => review.threadId),
   );
+  const knownGroupChatJids = new Set(
+    getAllChats()
+      .filter((chat) => chat.is_group === 1)
+      .map((chat) => chat.jid),
+  );
+  const groupCommunicationThreadIds = new Set(
+    communicationThreads
+      .filter((thread) =>
+        Boolean(
+          thread.channelChatJid &&
+          (knownGroupChatJids.has(thread.channelChatJid) ||
+            communicationThreadIsGroup(thread)),
+        ),
+      )
+      .map((thread) => thread.id),
+  );
   const confirmedIdentityLinks = new Set(
     identityReviews
       .filter(
@@ -1247,6 +1264,7 @@ export function buildPersonalContextGraph(params: {
   const resolvedCommunicationThreadIds = new Set([
     ...identityLinkedCommunicationThreadIds,
     ...identityReviewedThreadIds,
+    ...groupCommunicationThreadIds,
   ]);
   const coverage: PersonalContextGraphCoverage = {
     activeProfile: Boolean(activeProfile),

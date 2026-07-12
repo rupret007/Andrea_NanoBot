@@ -14,11 +14,75 @@ import {
   probeCredentialRuntime,
   probeLocalGatewayHealth,
   resolveCredentialProbeEndpoints,
+  resolveVerifyHostMetadata,
 } from './verify.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('resolveVerifyHostMetadata', () => {
+  it('reports the active persisted host truth on macOS and Linux-style hosts', () => {
+    const result = resolveVerifyHostMetadata({
+      hostState: {
+        bootId: 'host-1',
+        phase: 'running_ready',
+        pid: 42,
+        installMode: 'manual_host_control',
+        nodePath: '/opt/homebrew/bin/node',
+        nodeVersion: 'v22.22.3',
+        startedAt: '2026-07-12T10:00:00.000Z',
+        readyAt: '2026-07-12T10:00:05.000Z',
+        lastError: '',
+        dependencyState: 'ok',
+        dependencyError: 'stale error must not survive healthy state',
+        stdoutLogPath: '/tmp/out.log',
+        stderrLogPath: '/tmp/err.log',
+        hostLogPath: '/tmp/host.log',
+      },
+      nodeRuntime: {
+        version: '22.22.2',
+        nodePath: '/fallback/node',
+        platform: 'darwin-arm64',
+        sourceUrl: 'https://example.invalid/node',
+        validatedAt: '2026-07-12T09:00:00.000Z',
+      },
+    });
+
+    expect(result).toEqual({
+      installMode: 'manual_host_control',
+      activeLaunchMode: 'manual_host_control',
+      nodePath: '/opt/homebrew/bin/node',
+      nodeVersion: 'v22.22.3',
+      lastError: '',
+      dependencyState: 'ok',
+      dependencyError: '',
+    });
+  });
+
+  it('falls back to pinned Node metadata without inventing missing host state', () => {
+    expect(
+      resolveVerifyHostMetadata({
+        hostState: null,
+        nodeRuntime: {
+          version: '22.22.2',
+          nodePath: '/pinned/node',
+          platform: 'linux-x64',
+          sourceUrl: 'https://example.invalid/node',
+          validatedAt: '2026-07-12T09:00:00.000Z',
+        },
+      }),
+    ).toEqual({
+      installMode: 'unknown',
+      activeLaunchMode: 'unknown',
+      nodePath: '/pinned/node',
+      nodeVersion: '22.22.2',
+      lastError: '',
+      dependencyState: 'unknown',
+      dependencyError: '',
+    });
+  });
 });
 
 describe('determineCredentialStatus', () => {
@@ -549,7 +613,9 @@ describe('probeAssistantExecution', () => {
   it('reports success when exact, summary, and refinement probes all return assistant text', async () => {
     const prompts: string[] = [];
     const freshSessionHomeFlags: boolean[] = [];
+    const requestClose = vi.fn();
     const result = await probeAssistantExecution({
+      requestClose,
       runProbe: async (_group, input, _onProcess, onOutput) => {
         prompts.push(input.prompt);
         freshSessionHomeFlags.push(input.freshSessionHome === true);
@@ -589,6 +655,11 @@ describe('probeAssistantExecution', () => {
     );
     expect(prompts[2]).toContain('<context timezone="America/Chicago" />');
     expect(freshSessionHomeFlags).toEqual([true, true, true]);
+    expect(requestClose.mock.calls).toEqual([
+      ['verify_runtime_probe_exact'],
+      ['verify_runtime_probe_summary'],
+      ['verify_runtime_probe_refinement'],
+    ]);
   });
 
   it('retries the refinement probe with the alternate rewrite prompt when the first attempt fails', async () => {
@@ -728,7 +799,9 @@ describe('probeAssistantExecution', () => {
 
   it('fails when the summary probe only sees lifecycle output', async () => {
     let callCount = 0;
+    const requestClose = vi.fn();
     const result = await probeAssistantExecution({
+      requestClose,
       runProbe: async (_group, _input, _onProcess, onOutput) => {
         callCount += 1;
         if (callCount === 1) {
@@ -762,6 +835,8 @@ describe('probeAssistantExecution', () => {
     expect(result.reason).toBe('runtime_bootstrap_failed');
     expect(result.detail).toContain('summary probe failed');
     expect(result.detail).toContain('lifecycle output');
+    expect(requestClose).toHaveBeenCalledTimes(1);
+    expect(requestClose).toHaveBeenCalledWith('verify_runtime_probe_exact');
   });
 
   it('includes retry detail when the refinement probe exhausted one recovery retry', async () => {

@@ -104,6 +104,9 @@ Current communication capabilities:
     new authority path
   - skip threads that already have an explicit person link even when they do
     not have a separate identity-review row
+  - treat authoritative channel group metadata as single-person identity not
+    applicable, without creating a person link or pretending the owner reviewed
+    it; audience confirmation still applies before drafting or sending
   - in the text-only Messages self-thread, return exact link/dismiss commands
     for the next unresolved item after every decision
   - aggregate unresolved identity work into one daily-context gap and retain at
@@ -114,7 +117,9 @@ Current communication capabilities:
     requires a confirmed person link
   - propose a person only when the safe label exactly matches one eligible
     existing individual profile person
-  - mark group/unknown conversations not applicable with `dismiss identity R-12AB34CD`
+  - mark unknown direct conversations not applicable with
+    `dismiss identity R-12AB34CD`; known group conversations need no identity
+    decision
   - reverse a decision with `clear identity review R-12AB34CD`
   - exclude generic self labels and collective categories from one-person choices
   - withhold ambiguous duplicate profile names until the profile itself is

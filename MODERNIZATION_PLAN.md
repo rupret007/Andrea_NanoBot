@@ -1,5 +1,125 @@
 # Modernization Plan
 
+## Metadata-resolved group audiences — 2026-07-12
+
+### Implemented
+
+- [x] Stop requiring the owner to dismiss a conversation that authoritative
+      channel metadata already identifies as a group. Group threads now count
+      as single-person identity not applicable and are removed from the private
+      identity-review queue without creating a person link or owner-review row.
+- [x] Keep relationship and review truth separate: groups improve only resolved
+      audience coverage. They do not increase linked-person coverage or
+      identity-reviewed coverage, and group audience confirmation remains
+      required before drafting or sending.
+- [x] Enforce the same boundary in the database decision transaction so a
+      stale caller or race cannot confirm a platform-declared group as one
+      profile person. Explicit group dismissal remains backward compatible but
+      is no longer required.
+- [x] Explain the reduced workload in Telegram/Messages review output and
+      operator documentation while retaining opaque keys, exact-name-only
+      candidates, identifier redaction, and private owner-channel gating.
+
+### Validation
+
+- [x] Focused identity-review, context/readiness, and intelligence coverage
+      passes 36/36 tests with typecheck, quiet lint, and diff hygiene. Tests
+      prove automatic group resolution, no action card or stored review for a
+      group-only queue, database-level confirmation refusal, retained group
+      audience risk, and unchanged relationship-link credit.
+- [x] A metadata-only live snapshot changed the current workload from ten to
+      seven unresolved direct conversations: 11 active threads now comprise
+      three channel-declared groups, eight identity-relevant directs, and four
+      resolved audiences. The next private card offers three bounded choices
+      and no raw identifier.
+- [x] Live candidate measurement raises context-graph quality from 76% to 79%
+      and text-reply intelligence from 66% to 70%. Aggregate intelligence is
+      currently 90% because the independent council-health dimension moved to
+      74%; the council ledger still reports 0.938 outcome-led quality but has
+      two operationally degraded live runs and incomplete evidence coverage.
+- [x] Complete release validation passes formatting, typecheck, quiet lint,
+      202 primary test files with 2,241 tests, the production build, AGI
+      typecheck and 282/282 tests, all ten intelligence regressions, the 99.1%
+      A+ zero-cost scorecard, signature flows, 57-file documentation
+      validation, the zero-vulnerability dependency audit, and diff hygiene.
+      All 90 deterministic commands pass in 227.1 seconds, including the
+      three-round stability and network-denial gate.
+
+### Remaining owner and provider evidence
+
+- Seven direct conversations still require explicit owner confirmation or
+  dismissal; no repository logic may safely infer those identities.
+- Council evidence gaps remain Alexa/manual feature proof plus historical
+  provider degradation. They are not caused or concealed by this identity
+  change and should be handled in a separate outcome-led council round.
+
+## Setup verification lifecycle and host truth — 2026-07-12
+
+### Implemented
+
+- [x] Close each setup-verification container through the existing per-group
+      `_close` IPC protocol immediately after a non-empty successful assistant
+      answer. The standalone verifier bypasses the normal group queue, so it
+      previously had no owner for that close signal and waited for the hard
+      timeout after every valid result.
+- [x] Keep the completion boundary fail-closed: lifecycle-only output, empty
+      success markers, and errors do not request early closure and therefore
+      retain the existing failure/retry behavior.
+- [x] Scope the signal to the probe's validated group folder, request it only
+      once per attempt, and keep cleanup failures non-fatal and metadata-only.
+      No prompt, response, credential, or hidden reasoning is added to the
+      sentinel or warning.
+- [x] Remove stale operator wording that normalized post-output hard timeouts as
+      expected behavior. A healthy one-shot probe now reports plain success and
+      exits normally.
+- [x] Load the canonical host-control snapshot on macOS and Linux as well as
+      Windows. Setup verification now reports the active install/launch mode,
+      Node path and version, dependency state, error state, and log paths from
+      the same persisted evidence as service status instead of emitting
+      misleading `unknown` fields on a healthy Mac.
+- [x] Prefer the active host process metadata over older pinned-runtime
+      metadata, fall back to pinned Node evidence only when no host state
+      exists, and suppress stale dependency error text when the persisted
+      dependency state is healthy. Windows retains its stricter scheduled-task
+      and process reconciliation overrides.
+
+### Validation
+
+- [x] Focused setup-verifier coverage passes 37/37 tests with typecheck, quiet
+      lint, formatting, and diff hygiene. Tests prove that all three successful
+      one-shot probes request their own close signal while lifecycle-only
+      attempts do not, and that active host evidence takes precedence without
+      inventing state when only pinned Node metadata exists.
+- [x] A live setup verification completed all three real assistant turns in
+      16.52 seconds total. Individual containers exited normally in 4.5–5.5
+      seconds with valid answers, no hard-timeout event, and no false error log;
+      the prior path consumed roughly two minutes waiting for three 31-second
+      post-output timeouts.
+- [x] A second live setup drill proved the Mac host fields now resolve to
+      `manual_host_control`, Node `v22.22.3`, dependency `ok`, and the canonical
+      host/stdout/stderr log paths. Its exact probe closed normally; two summary
+      attempts initialized MiniMax but produced no structured result before the
+      initial-output deadline. That remains honestly classified as a provider
+      timeout rather than a host-health or post-output-cleanup regression.
+- [x] Complete release validation passes formatting, typecheck, quiet lint,
+      202 primary test files with 2,241 tests, the production build, AGI
+      typecheck and 282/282 tests, all ten intelligence regressions, the 99.1%
+      A+ zero-cost scorecard, signature flows, 57-file documentation
+      validation, the zero-vulnerability dependency audit, and diff hygiene.
+      All 90 deterministic commands pass in 256.6 seconds, including the
+      three-round stability and network-denial gate.
+
+### Release boundary and remaining evidence debt
+
+- Release only from a clean committed tree. A validation build made while this
+  increment was under review correctly recorded 12 dirty source paths; that
+  artifact must never be served. Rebuild after the release commit and require
+  service status to prove the serving commit, clean build provenance, and
+  artifact integrity after restart.
+- OneCLI remains an optional external security-hardening dependency; this
+  lifecycle correction neither installs it nor weakens the tested credential
+  fallback boundary.
+
 ## Compiled runtime provenance — 2026-07-12
 
 ### Implemented

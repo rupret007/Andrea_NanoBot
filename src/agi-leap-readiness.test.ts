@@ -421,7 +421,7 @@ describe('AGI leap readiness', () => {
     );
   });
 
-  it('credits explicit dismissals as audience review without equating them to a person link', () => {
+  it('credits authoritative group metadata without equating it to a person link or owner review', () => {
     const groupFolder = 'identity-resolution-score';
     seedSyntheticLife(groupFolder);
     upsertCommunicationThread({
@@ -453,6 +453,25 @@ describe('AGI leap readiness', () => {
       groupFolder,
       now: new Date(now),
     });
+    expect(before.contextGraph.coverage.linkedCommunicationThreads).toBe(1);
+    expect(before.contextGraph.coverage.resolvedCommunicationThreads).toBe(2);
+    expect(
+      before.contextGraph.coverage.identityReviewedCommunicationThreads,
+    ).toBe(0);
+    expect(before.contextGraph.rankedInsights).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'needs_reply',
+          title: 'Band chat',
+          riskFlags: expect.arrayContaining(['group_chat_confirm_audience']),
+        }),
+      ]),
+    );
+    expect(
+      before.contextGraph.rankedInsights
+        .find((insight) => insight.title === 'Band chat')
+        ?.riskFlags.includes('identity_unresolved'),
+    ).toBe(false);
     expect(
       decideCommunicationThreadIdentity({
         groupFolder,
@@ -470,7 +489,10 @@ describe('AGI leap readiness', () => {
     expect(dismissed.contextGraph.coverage.resolvedCommunicationThreads).toBe(
       2,
     );
-    expect(dismissed.textReviewScore).toBeGreaterThan(before.textReviewScore);
+    expect(
+      dismissed.contextGraph.coverage.identityReviewedCommunicationThreads,
+    ).toBe(1);
+    expect(dismissed.textReviewScore).toBe(before.textReviewScore);
 
     expect(
       decideCommunicationThreadIdentity({
@@ -480,16 +502,8 @@ describe('AGI leap readiness', () => {
         subjectId: 'subject-riley',
         sourceChannel: 'telegram',
         now,
-      }).ok,
-    ).toBe(true);
-    const confirmed = buildAgiLeapReadinessReport({
-      groupFolder,
-      now: new Date(now),
-    });
-    expect(confirmed.contextGraph.coverage.linkedCommunicationThreads).toBe(2);
-    expect(confirmed.textReviewScore).toBeGreaterThan(
-      dismissed.textReviewScore,
-    );
+      }),
+    ).toEqual({ ok: false, reason: 'group_thread_conflict' });
   });
 
   it('distinguishes proposed follow-through candidates from active reminders', () => {

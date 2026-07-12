@@ -35,9 +35,12 @@ import {
   detectWindowsInstallArtifacts,
   detectWindowsInstallMode,
   formatInstallModeLabel,
+  readHostControlSnapshot,
   reconcileWindowsHostState,
   type AlexaLiveProofAssessment,
+  type HostControlSnapshot,
 } from '../src/host-control.js';
+import { resolveGroupIpcPath } from '../src/group-folder.js';
 import { logger } from '../src/logger.js';
 import { readProviderProofState } from '../src/provider-proof-state.js';
 import { formatMessages } from '../src/router.js';
@@ -662,6 +665,23 @@ interface AssistantExecutionSubprobeResult {
   recoveryAttempted: boolean;
 }
 
+function requestAssistantExecutionProbeClose(groupFolder: string): void {
+  const inputDir = path.join(resolveGroupIpcPath(groupFolder), 'input');
+  try {
+    fs.mkdirSync(inputDir, { recursive: true });
+    fs.writeFileSync(path.join(inputDir, '_close'), '');
+  } catch (err) {
+    logger.warn(
+      {
+        component: 'setup_verify',
+        groupFolder,
+        errorClass: err instanceof Error ? err.name : typeof err,
+      },
+      'Assistant execution probe completed, but its close sentinel could not be written.',
+    );
+  }
+}
+
 function formatAssistantExecutionSubprobeLabel(
   promptKind: AssistantExecutionProbeKind,
 ): string {
@@ -701,6 +721,7 @@ async function runAssistantExecutionSubprobe(input: {
   promptKind: AssistantExecutionProbeKind;
   requestTimeoutMs?: number;
   runProbe: typeof runContainerAgent;
+  requestClose?: (groupFolder: string) => void;
   sessionId?: string;
 }): Promise<AssistantExecutionSubprobeResult> {
   const requestPolicy = createDirectAssistantRequestPolicy(
@@ -710,6 +731,7 @@ async function runAssistantExecutionSubprobe(input: {
   let sawLifecycleOnlyOutput = false;
   let sawRecoveryAttempt = false;
   let assistantText: string | undefined;
+  let closeRequested = false;
   const liveStylePrompt = buildDirectAssistantProbePrompt({
     promptText: input.promptText,
     promptKind: input.promptKind,
@@ -741,6 +763,21 @@ async function runAssistantExecutionSubprobe(input: {
           streamedOutput.result.trim()
         ) {
           assistantText = streamedOutput.result.trim();
+          if (!closeRequested && input.requestClose) {
+            closeRequested = true;
+            try {
+              input.requestClose(input.probeGroup.folder);
+            } catch (err) {
+              logger.warn(
+                {
+                  component: 'setup_verify',
+                  groupFolder: input.probeGroup.folder,
+                  errorClass: err instanceof Error ? err.name : typeof err,
+                },
+                'Assistant execution probe completed, but its close request failed.',
+              );
+            }
+          }
         } else if (
           streamedOutput.status === 'success' &&
           !streamedOutput.result?.trim()
@@ -812,7 +849,7 @@ async function runAssistantExecutionSubprobe(input: {
           output.newSessionId ? `session=${output.newSessionId}` : '',
           sawRecoveryAttempt || output.recoveryAttempted
             ? 'assistant execution recovered after one retry'
-            : 'assistant execution produced a real assistant answer; post-output idle cleanup is non-fatal',
+            : 'assistant execution produced a real assistant answer',
         ]
           .filter(Boolean)
           .join(' | '),
@@ -848,6 +885,7 @@ async function runAssistantExecutionSubprobeWithRetry(input: {
   promptKind: AssistantExecutionProbeKind;
   requestTimeoutMs?: number;
   runProbe: typeof runContainerAgent;
+  requestClose?: (groupFolder: string) => void;
   sessionId?: string;
 }): Promise<AssistantExecutionSubprobeResult> {
   const firstAttempt = await runAssistantExecutionSubprobe(input);
@@ -878,6 +916,7 @@ export async function probeAssistantExecution(
   input: {
     requestTimeoutMs?: number;
     runProbe?: typeof runContainerAgent;
+    requestClose?: (groupFolder: string) => void;
   } = {},
 ): Promise<AssistantExecutionProbeResult> {
   const buildProbeGroup = (
@@ -893,6 +932,9 @@ export async function probeAssistantExecution(
   });
 
   const runProbe = input.runProbe || runContainerAgent;
+  const requestClose =
+    input.requestClose ||
+    (input.runProbe ? undefined : requestAssistantExecutionProbeClose);
 
   try {
     const exactProbe = await runAssistantExecutionSubprobeWithRetry({
@@ -901,6 +943,7 @@ export async function probeAssistantExecution(
       promptKind: 'exact',
       requestTimeoutMs: input.requestTimeoutMs,
       runProbe,
+      requestClose,
     });
     if (exactProbe.status === 'failed') {
       return {
@@ -919,6 +962,7 @@ export async function probeAssistantExecution(
       promptKind: 'summary',
       requestTimeoutMs: input.requestTimeoutMs,
       runProbe,
+      requestClose,
     });
     if (summaryProbe.status === 'failed') {
       return {
@@ -940,6 +984,7 @@ export async function probeAssistantExecution(
       promptKind: 'refinement',
       requestTimeoutMs: input.requestTimeoutMs,
       runProbe,
+      requestClose,
       sessionId: refinementRewrite.shouldStartFreshSession
         ? undefined
         : summaryProbe.sessionId,
@@ -954,6 +999,7 @@ export async function probeAssistantExecution(
         promptKind: 'refinement',
         requestTimeoutMs: input.requestTimeoutMs,
         runProbe,
+        requestClose,
       });
     }
     if (refinementProbe.status === 'failed') {
@@ -1490,7 +1536,7 @@ export function resolveVerifyStatus(input: {
     [
       input.launchSummary,
       assistantExecutionUsable
-        ? 'Assistant execution probe is ok; post-output idle cleanup is non-fatal.'
+        ? 'Assistant execution probe is ok.'
         : `Assistant execution probe is ${input.assistantExecutionProbe.status} (${input.assistantExecutionProbe.reason}).`,
       nextSteps ? `Next: ${nextSteps}` : '',
     ]
@@ -1534,6 +1580,34 @@ export function resolveVerifyStatus(input: {
   };
 }
 
+export interface VerifyHostMetadata {
+  installMode: string;
+  activeLaunchMode: string;
+  nodePath: string;
+  nodeVersion: string;
+  lastError: string;
+  dependencyState: string;
+  dependencyError: string;
+}
+
+export function resolveVerifyHostMetadata(
+  snapshot: Pick<HostControlSnapshot, 'hostState' | 'nodeRuntime'> | null,
+): VerifyHostMetadata {
+  const hostState = snapshot?.hostState || null;
+  const nodeRuntime = snapshot?.nodeRuntime || null;
+  const dependencyState = hostState?.dependencyState || 'unknown';
+  return {
+    installMode: formatInstallModeLabel(hostState?.installMode),
+    activeLaunchMode: formatInstallModeLabel(hostState?.installMode),
+    nodePath: hostState?.nodePath || nodeRuntime?.nodePath || '',
+    nodeVersion: hostState?.nodeVersion || nodeRuntime?.version || '',
+    lastError: hostState?.lastError || '',
+    dependencyState,
+    dependencyError:
+      dependencyState === 'degraded' ? hostState?.dependencyError || '' : '',
+  };
+}
+
 export async function run(_args: string[]): Promise<void> {
   const projectRoot = process.cwd();
   const platform = getPlatform();
@@ -1541,7 +1615,9 @@ export async function run(_args: string[]): Promise<void> {
   const nodeMajor = getNodeMajorVersion();
   const windowsHost =
     platform === 'windows' ? reconcileWindowsHostState({ projectRoot }) : null;
-  const hostSnapshot = windowsHost?.snapshot || null;
+  const hostSnapshot =
+    windowsHost?.snapshot || readHostControlSnapshot(projectRoot);
+  const persistedHostMetadata = resolveVerifyHostMetadata(hostSnapshot);
   let nodeOk = nodeMajor === 22;
   const homeDir = os.homedir();
 
@@ -1550,13 +1626,13 @@ export async function run(_args: string[]): Promise<void> {
 
   // 1. Check service status
   let service = 'not_found';
-  let hostInstallMode = 'unknown';
-  let hostActiveLaunchMode = 'unknown';
-  let hostPinnedNodePath = '';
-  let hostPinnedNodeVersion = '';
-  let hostLastError = '';
-  let hostDependencyState = 'unknown';
-  let hostDependencyError = '';
+  let hostInstallMode = persistedHostMetadata.installMode;
+  let hostActiveLaunchMode = persistedHostMetadata.activeLaunchMode;
+  let hostPinnedNodePath = persistedHostMetadata.nodePath;
+  let hostPinnedNodeVersion = persistedHostMetadata.nodeVersion;
+  let hostLastError = persistedHostMetadata.lastError;
+  let hostDependencyState = persistedHostMetadata.dependencyState;
+  let hostDependencyError = persistedHostMetadata.dependencyError;
   let runtimeBackendState = 'unknown';
   let runtimeBackendAuthState = 'unknown';
   let runtimeBackendLocalExecutionState = 'unknown';
