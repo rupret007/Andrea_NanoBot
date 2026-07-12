@@ -3,7 +3,12 @@ import {
   getAssistantCapability,
   isAssistantCapabilityAllowed,
 } from '../src/assistant-capabilities.js';
-import { initDatabase } from '../src/db.js';
+import { _initTestDatabase, initDatabase } from '../src/db.js';
+import {
+  formatDebugExecutionPolicy,
+  resolveDebugLiveExecutionPolicy,
+  type DebugExecutionPolicy,
+} from '../src/debug-execution-policy.js';
 
 function parseArgs(argv: string[]): {
   groupFolder: string;
@@ -40,8 +45,28 @@ function printBlock(title: string, lines: string[]): void {
 }
 
 async function main(): Promise<void> {
-  initDatabase();
-  const { groupFolder, researchPrompt } = parseArgs(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  const livePolicy = resolveDebugLiveExecutionPolicy(
+    args,
+    'debug:shared-capabilities',
+  );
+  const executionPolicy: DebugExecutionPolicy =
+    livePolicy.mode === 'live_write'
+      ? livePolicy
+      : {
+          command: 'debug:shared-capabilities',
+          mode: 'isolated_write',
+          storage: 'isolated',
+          externalEffects: false,
+        };
+  if (executionPolicy.mode === 'live_write') {
+    initDatabase();
+  } else {
+    process.env.ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE = '1';
+    await import('./test-network-guard.mjs');
+    _initTestDatabase();
+  }
+  const { groupFolder, researchPrompt } = parseArgs(args);
   const now = new Date();
 
   const telegramLooseEnds = await executeAssistantCapability({
@@ -127,6 +152,7 @@ async function main(): Promise<void> {
   });
 
   printBlock('TELEGRAM DAILY', [
+    ...formatDebugExecutionPolicy(executionPolicy),
     `handled: ${telegramLooseEnds.handled}`,
     `reply: ${telegramLooseEnds.replyText || 'none'}`,
     `source: ${telegramLooseEnds.trace?.responseSource || 'none'}`,

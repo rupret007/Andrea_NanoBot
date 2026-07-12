@@ -422,8 +422,10 @@ Useful pinned-Node debug commands:
 
 - `npm run debug:daily-companion`
 - `npm run debug:alexa-conversation`
-- `npm run debug:shared-capabilities`
-- `npm run debug:research-mode`
+- `npm run debug:shared-capabilities` (isolated and network-denied) or
+  `npm run debug:shared-capabilities -- --live` (intentional provider-backed use)
+- `npm run debug:research-mode` (read-only status) or
+  `npm run debug:research-mode -- --live` (intentional provider-backed proof)
 - `npm run debug:cross-channel-handoffs`
 
 `debug:shared-capabilities` is the quickest operator-side smoke path for:

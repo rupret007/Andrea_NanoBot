@@ -193,8 +193,6 @@ Natural asks that now work:
 
 Telegram is the rich management surface; Alexa answers stay short; BlueBubbles stays calm and bounded; `debug:*` surfaces stay exact and operator-only.
 
-
-
 Andrea now tracks a small reliability ledger for the routes, tools, providers, and integrations it depends on. That lets the Cognitive Executive lower confidence, choose a fallback, or explain a blocker when BlueBubbles, Alexa, Calendar, provider quota, or a work lane is degraded.
 The canonical service refreshes current metadata-only truth at startup and on a
 bounded cadence. Unchanged observations are deduplicated, current proof can
@@ -218,8 +216,16 @@ Operator checks:
 - `npm run debug:executive -- --refresh`
 - `npm run debug:repair`
 - `npm run debug:improvement`
+  - This inspection is read-only by default. Add the explicit `--persist` flag
+    after `--` only when you intentionally want to record one improvement
+    generation.
 - `npm run integrations:heal -- --id bluebubbles --dry-run`
 - `npm run debug:agentic`
+
+Ordinary `debug:*` reports inspect state without saving another diagnostic
+generation. Add `-- --persist` only when intentionally recording one; explicit
+apply, execute, baseline-save, retention, and live-proof flags remain separate
+operations.
 
 Each production build now writes a local compiled-artifact provenance manifest.
 Runtime status verifies the artifact hash, build commit, and clean-source state

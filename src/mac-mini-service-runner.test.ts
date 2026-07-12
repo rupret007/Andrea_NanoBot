@@ -18,4 +18,16 @@ describe('mac mini service runner', () => {
       'exec node scripts/run-with-pinned-node.mjs dist/index.js',
     );
   });
+
+  it('waits for a new boot and matching serving/build commit before reporting start success', () => {
+    const script = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'mac-mini-service.sh'),
+      'utf8',
+    );
+
+    expect(script).toContain('wait_for_service_ready "$previous_boot_id"');
+    expect(script).toContain('dist/mac-service-readiness.js');
+    expect(script).toContain('ANDREA_MAC_READY_TIMEOUT_SECONDS');
+    expect(script).toContain('git -C "$PROJECT_ROOT" rev-parse HEAD');
+  });
 });

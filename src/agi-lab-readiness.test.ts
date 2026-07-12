@@ -331,6 +331,55 @@ function sources(
 }
 
 describe('agi lab readiness', () => {
+  it('separates integration operability from stale proof and prioritizes real action items', async () => {
+    const report = await buildAgiLabReadinessReport(
+      sources({
+        integrationReport: integrationReport({
+          summary: {
+            total: 4,
+            healthy: 1,
+            actionNeeded: 1,
+            needsProof: 0,
+            manualOrExternal: 1,
+          },
+          statuses: [
+            {
+              integrationId: 'telegram',
+              state: 'near_live_only',
+              nextAction: 'Refresh Telegram proof.',
+            },
+            {
+              integrationId: 'openai_cloud',
+              state: 'near_live_only',
+              nextAction: 'Probe the provider.',
+            },
+            {
+              integrationId: 'runtime_backend',
+              state: 'healthy',
+              nextAction: '',
+            },
+            {
+              integrationId: 'alexa',
+              state: 'manual_action_required',
+              nextAction: 'Complete the Alexa checklist.',
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(
+      report.gates.find((gate) => gate.gateId === 'integration_health'),
+    ).toMatchObject({
+      label: 'Integration operability',
+      status: 'warn',
+      score: 0.75,
+      summary:
+        '3/4 integrations operationally available; 1 action-needed; 2 evidence-limited.',
+      nextAction: 'Complete the Alexa checklist.',
+    });
+  });
+
   it('advances when all readiness gates are clean', async () => {
     const report = await buildAgiLabReadinessReport(sources());
 

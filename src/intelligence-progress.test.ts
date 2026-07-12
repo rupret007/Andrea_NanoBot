@@ -468,6 +468,48 @@ describe('intelligence progress gate', () => {
     expect(report.criticalRegressions.join(' ')).toMatch(/repo work/);
   });
 
+  it('treats genuine reviewed outcomes as required follow-through learning evidence', () => {
+    const progress = (reviewedOutcomeCount: number, baselineSaved = false) => ({
+      reviewedOutcomeCount,
+      requiredOutcomeCount: 5,
+      remainingOutcomeCount: Math.max(0, 5 - reviewedOutcomeCount),
+      baselineReady: reviewedOutcomeCount >= 5,
+      baselineSaved,
+    });
+    const zero = buildIntelligenceProgressReport(
+      input({ reviewedOutcomeProgress: progress(0) }),
+    );
+    const partial = buildIntelligenceProgressReport(
+      input({ reviewedOutcomeProgress: progress(3) }),
+    );
+    const ready = buildIntelligenceProgressReport(
+      input({ reviewedOutcomeProgress: progress(5) }),
+    );
+    const saved = buildIntelligenceProgressReport(
+      input({ reviewedOutcomeProgress: progress(5, true) }),
+    );
+
+    expect(zero.dimensionScores.followthrough_learning).toBeLessThan(
+      partial.dimensionScores.followthrough_learning,
+    );
+    expect(partial.dimensionScores.followthrough_learning).toBeLessThan(
+      ready.dimensionScores.followthrough_learning,
+    );
+    expect(zero.sourceScores.reviewedOutcomeEvidence).toBe(0);
+    expect(partial.sourceScores.reviewedOutcomeEvidence).toBe(0.6);
+    expect(ready.sourceScores.reviewedOutcomeEvidence).toBe(1);
+    expect(zero.topNextImprovement).toContain('5 more genuine owner-reviewed');
+    expect(partial.topNextImprovement).toContain(
+      '2 more genuine owner-reviewed',
+    );
+    expect(ready.topNextImprovement).toContain(
+      'explicitly save the first assistant-metric baseline',
+    );
+    expect(saved.topNextImprovement).toBe(
+      input().dailyAgentReport.topNextImprovement,
+    );
+  });
+
   it('redacts secret-like values, identifiers, and internal provider labels', () => {
     expect(
       sanitizeIntelligenceProgressText(

@@ -5,6 +5,12 @@ scorecard measures bounded assistant readiness across reasoning, planning,
 tool use, memory, grounding, safety, robustness, provider routing, and task
 completion. It is deliberately not a claim of general intelligence.
 
+Route-only synthetic fixtures measure route selection, not answer usefulness
+or task completion. Those outcomes are scored only by the separate isolated,
+network-denied executed-capability suite. A 100% deterministic result therefore
+means the bounded offline contracts are saturated; it does not replace genuine
+reviewed outcomes, fresh integration proof, or a budget-capped live evaluation.
+
 ## Commands
 
 - `npm run agi:scorecard` runs the deterministic CI-safe scorecard and writes

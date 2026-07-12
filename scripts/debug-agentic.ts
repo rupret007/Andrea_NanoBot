@@ -11,12 +11,13 @@ import {
   buildLiveProofGauntletReport,
   formatLiveProofGauntletReport,
 } from '../src/live-proof-gauntlet.js';
+import { resolveDebugExecutionPolicy } from '../src/debug-execution-policy.js';
 
 async function main(): Promise<void> {
   initDatabase();
   const args = process.argv.slice(2);
   const json = args.includes('--json');
-  const persist = !args.includes('--no-persist');
+  const { persist } = resolveDebugExecutionPolicy(args);
   const report = await runAgenticSimulationHarness({
     persist,
   });
@@ -27,7 +28,11 @@ async function main(): Promise<void> {
   const liveProof = buildLiveProofGauntletReport();
   if (json) {
     console.log(
-      JSON.stringify({ agentic: report, syntheticGauntlet: gauntlet, liveProof }, null, 2),
+      JSON.stringify(
+        { agentic: report, syntheticGauntlet: gauntlet, liveProof },
+        null,
+        2,
+      ),
     );
     return;
   }

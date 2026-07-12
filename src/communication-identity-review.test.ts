@@ -13,11 +13,13 @@ import {
   getCommunicationThread,
   setRegisteredGroup,
   storeChatMetadata,
+  updateChatName,
   updateCommunicationThread,
   upsertCommunicationThread,
   upsertProfileSubject,
 } from './db.js';
 import { buildPersonalContextGraph } from './personal-context-graph.js';
+import { BLUEBUBBLES_CANONICAL_SELF_THREAD_JID } from './bluebubbles-self-thread.js';
 import type { CommunicationThreadRecord, ProfileSubject } from './types.js';
 
 const now = '2026-07-12T03:00:00.000Z';
@@ -217,7 +219,7 @@ describe('communication identity review', () => {
     expect(actions.map((action) => action.label)).toEqual([
       'Link Candace',
       'Link Travis',
-      'Leave unlinked',
+      'Keep without person link',
     ]);
     expect(actions.every((action) => action.actionId?.includes(firstKey))).toBe(
       true,
@@ -245,6 +247,107 @@ describe('communication identity review', () => {
         .inlineActionRows!.flat()
         .every((action) => action.actionId?.includes(nextKey)),
     ).toBe(true);
+  });
+
+  it('prioritizes an exact profile-name match ahead of opaque unknown conversations', () => {
+    seedPerson('person-candace', 'Candace');
+    seedThread({
+      id: 'communication:opaque-first',
+      title: '+1 (469) 555-0199',
+      channelChatJid: 'bb:iMessage;-;+14695550199',
+    });
+    seedThread({
+      id: 'communication:exact-second',
+      title: 'Candace',
+      channelChatJid: 'bb:iMessage;-;+14695550188',
+    });
+
+    const response = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'review communication identities',
+    });
+    const exact = response.snapshot!.items.find(
+      (item) => item.threadId === 'communication:exact-second',
+    )!;
+
+    expect(response.replyText).toContain(`[${exact.reviewKey}] Candace`);
+    expect(response.inlineActionRows?.[0]?.[0]).toMatchObject({
+      label: 'Confirm Candace',
+    });
+    expect(response.replyText).not.toContain('+1 (469) 555-0199');
+  });
+
+  it('uses safe current chat metadata when the stored communication title is generic', () => {
+    seedPerson('person-candace', 'Candace');
+    const thread = seedThread({
+      id: 'communication:generic-title',
+      title: 'Messages chat',
+      channelChatJid: 'bb:iMessage;-;+14695550188',
+    });
+    updateChatName(thread.channelChatJid!, 'Candace');
+
+    const snapshot = buildCommunicationIdentityReviewSnapshot({
+      groupFolder: 'main',
+    });
+    const item = snapshot.items.find(
+      (candidate) => candidate.threadId === thread.id,
+    );
+
+    expect(item).toMatchObject({
+      threadTitle: 'Candace',
+      candidate: {
+        subjectId: 'person-candace',
+        reason: 'exact_profile_name_match',
+      },
+    });
+  });
+
+  it('never substitutes identifier-shaped current chat metadata', () => {
+    const thread = seedThread({
+      id: 'communication:generic-identifier',
+      title: 'Messages chat',
+      channelChatJid: 'bb:iMessage;-;+14695550188',
+    });
+    updateChatName(thread.channelChatJid!, '+1 (469) 555-0188');
+
+    const response = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'review communication identities',
+    });
+
+    expect(response.replyText).toContain('Messages chat');
+    expect(response.replyText).not.toContain('+1 (469) 555-0188');
+  });
+
+  it('excludes the configured owner self-thread from identity review and graph gaps', () => {
+    seedThread({
+      id: 'communication:owner-self-thread',
+      title: 'Jeff',
+      channelChatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+    });
+
+    const snapshot = buildCommunicationIdentityReviewSnapshot({
+      groupFolder: 'main',
+    });
+    const response = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'review communication identities',
+    });
+    const graph = buildPersonalContextGraph({ groupFolder: 'main' });
+
+    expect(snapshot).toMatchObject({
+      selfThreads: 1,
+      identityApplicableThreads: 0,
+      unreviewedThreads: 0,
+    });
+    expect(response.inlineActionRows).toEqual([]);
+    expect(response.replyText).toContain('owner self-thread is excluded');
+    expect(graph.topGaps.join(' ')).not.toContain(
+      'Confirm or dismiss identity links',
+    );
   });
 
   it('skips independently linked threads when selecting the next review card', () => {

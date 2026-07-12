@@ -462,14 +462,18 @@ export function buildCouncilDoctorReport(
     'minimax_cloud',
     'brave_search',
   ].every((providerId) => currentHealthyProviderIds.has(providerId));
+  const liveRepairAction =
+    currentCoreProvidersHealthy && hasHistoricallyDegradedProviders
+      ? 'Providers are currently healthy; run one live `ultrathink` proof to retire stale degradation history.'
+      : 'Run one live `ultrathink` proof, then inspect degraded provider reasons.';
   const nextAction =
     runs.length === 0
       ? 'Run one `ultrathink` Telegram proof turn, then rerun npm run debug:council.'
       : ok
         ? 'Run a fresh live `ultrathink` proof after major changes, then keep the challenge ladder green.'
-        : currentCoreProvidersHealthy && hasHistoricallyDegradedProviders
-          ? 'Providers are currently healthy; run npm run test:council:medium and one live `ultrathink` proof to retire stale degradation history.'
-          : 'Run npm run test:council:medium and one live `ultrathink` proof, then inspect degraded provider/replay reasons.';
+        : taskEase.status !== 'pass'
+          ? `${taskEase.nextAction} ${liveRepairAction}`
+          : liveRepairAction;
   return {
     generatedAt: now,
     ok,

@@ -569,7 +569,7 @@ describe('council quality ledger', () => {
     const formatted = formatCouncilDoctorReport(report);
 
     expect(report.ok).toBe(false);
-    expect(report.nextAction).toContain('test:council:medium');
+    expect(report.nextAction).toContain('test:council:tasks');
     expect(formatted).toContain('Current providers:');
     expect(formatted).toContain('openai_cloud=healthy');
     expect(formatted).toContain('Historical degraded providers:');

@@ -194,6 +194,16 @@ review signal. Neutral reviews count as reviewed outcomes but never inflate the
 accepted-run total required for skill promotion. Re-reviewing one packet
 updates its stable signal rather than creating duplicate samples.
 
+Intelligence progress keeps capability presence separate from outcome-led
+learning. Reminders, follow-through candidates, and approval-safe workflows
+prove that Andrea can support follow-through; they do not prove that the owner
+found it useful. The `followthrough learning` dimension therefore combines
+that capability evidence with progress toward five distinct genuine
+owner-reviewed outcomes. Until the gate is met, the top improvement asks for
+Helpful/Not helpful, a Messages tapback, or a fresh standalone success/failure
+reply before recommending synthetic score work. The first baseline still
+requires explicit operator review and is never saved automatically.
+
 Live repository work must enter this loop through the platform `code` task
 family. Repository implementation, refactoring, tests, typechecks, and bounded
 technical fixes persist as `coding` packets; runtime status and service-control

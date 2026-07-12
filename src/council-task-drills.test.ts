@@ -14,6 +14,7 @@ import {
   getCouncilRunLedger,
 } from './db.js';
 import type { AndreaPlatformProviderCouncilResult } from './andrea-platform-bridge.js';
+import { SOURCE_PATTERN_CANDIDATES } from './agent-source-intelligence.js';
 
 function structuredVerdict(): NonNullable<
   AndreaPlatformProviderCouncilResult['structuredVerdict']
@@ -100,5 +101,48 @@ describe('council task drills', () => {
     expect(JSON.stringify(report)).not.toContain('sk-proj-should-redact');
     expect(JSON.stringify(report)).not.toContain('+14695405551');
     expect(formatted).toContain('Council Task-Ease');
+  });
+
+  it('scores only executable implemented council patterns and recognizes a complete ladder', () => {
+    const councilPatterns = SOURCE_PATTERN_CANDIDATES.filter(
+      (pattern) =>
+        pattern.verificationScope === 'council_challenge' &&
+        pattern.adoptionMode !== 'reference_only',
+    );
+    for (const [index, pattern] of councilPatterns.entries()) {
+      recordCouncilRunLedger({
+        councilRunId: `council-challenge-${pattern.verificationScenarioId}`,
+        taskFamily: 'assistant',
+        channel: 'system',
+        requestedMode: 'single_model',
+        chosenMode: 'single_model',
+        calibration: calibrateCouncilMode({
+          taskFamily: 'assistant',
+          requestedMode: 'single_model',
+        }),
+        structuredVerdict: structuredVerdict(),
+        riskFlags: [],
+        now: `2026-06-04T12:${String(index).padStart(2, '0')}:00.000Z`,
+      });
+    }
+
+    const report = buildCouncilTaskEaseReport({
+      now: new Date('2026-06-04T13:00:00.000Z'),
+    });
+
+    expect(report.sourcePatternCoverage).toHaveLength(8);
+    expect(
+      report.sourcePatternCoverage.every((pattern) => pattern.verified),
+    ).toBe(true);
+    expect(
+      report.sourcePatternCoverage.some(
+        (pattern) => pattern.adoptionMode === 'reference_only',
+      ),
+    ).toBe(false);
+    expect(
+      report.qualityGates.find(
+        (gate) => gate.gateId === 'source_pattern.coverage',
+      ),
+    ).toMatchObject({ status: 'pass', actual: 1 });
   });
 });

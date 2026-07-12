@@ -17,6 +17,7 @@ import {
   scoreCouncilHealth,
 } from './agi-leap-readiness.js';
 import { applyFollowThroughActivation } from './follow-through-activation.js';
+import { BLUEBUBBLES_CANONICAL_SELF_THREAD_JID } from './bluebubbles-self-thread.js';
 import {
   exportRedactedOnboardingProfilePack,
   importRedactedOnboardingProfilePack,
@@ -385,7 +386,7 @@ describe('AGI leap readiness', () => {
         insight.kind === 'needs_reply' &&
         insight.riskFlags.includes('identity_unresolved'),
     );
-    expect(unresolvedReplyInsights).toHaveLength(2);
+    expect(unresolvedReplyInsights).toHaveLength(1);
     expect(unresolvedReplyInsights[0]).toMatchObject({
       title: 'Urgent unknown chat',
       nextAction:
@@ -411,12 +412,58 @@ describe('AGI leap readiness', () => {
         }),
       ]),
     );
+    expect(
+      graph.rankedInsights.some((insight) => insight.title === 'Messages chat'),
+    ).toBe(false);
     expect(graph.rankedInsights.slice(0, 5)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           kind: 'slipping',
           title: 'School logistics',
         }),
+      ]),
+    );
+  });
+
+  it('keeps even a minority unresolved identity visible as graph repair debt', () => {
+    const groupFolder = 'minority-link-gap';
+    seedSyntheticLife(groupFolder);
+    upsertCommunicationThread({
+      id: 'one-unresolved-thread',
+      groupFolder,
+      title: 'Unconfirmed neighbor',
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      channel: 'bluebubbles',
+      channelChatJid: 'bb:iMessage;-;+15550009999',
+      lastInboundSummary: 'A metadata-only pending conversation.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed',
+      urgency: 'soon',
+      followupDueAt: null,
+      suggestedNextAction: 'draft_reply',
+      toneStyleHints: [],
+      lastContactAt: now,
+      lastMessageId: 'minority-gap-message',
+      linkedTaskId: null,
+      inferenceState: 'assistant_inferred',
+      trackingMode: 'default',
+      createdAt: now,
+      updatedAt: now,
+      disabledAt: null,
+    });
+
+    const graph = buildPersonalContextGraph({
+      groupFolder,
+      now: new Date(now),
+    });
+
+    expect(graph.coverage.resolvedCommunicationThreads).toBe(1);
+    expect(graph.topGaps).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          'identity links for 1 recent communication thread',
+        ),
       ]),
     );
   });
@@ -504,6 +551,131 @@ describe('AGI leap readiness', () => {
         now,
       }),
     ).toEqual({ ok: false, reason: 'group_thread_conflict' });
+  });
+
+  it('keeps owner self-thread control traffic out of proactive daily insights', () => {
+    const groupFolder = 'self-thread-guidance';
+    seedSyntheticLife(groupFolder);
+    upsertCommunicationThread({
+      id: 'owner-self-thread',
+      groupFolder,
+      title: 'Messages chat',
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      channel: 'bluebubbles',
+      channelChatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+      lastInboundSummary: 'Private owner control traffic omitted.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed',
+      urgency: 'tonight',
+      followupDueAt: null,
+      suggestedNextAction: 'draft_reply',
+      toneStyleHints: [],
+      lastContactAt: now,
+      lastMessageId: 'owner-self-message',
+      linkedTaskId: null,
+      inferenceState: 'assistant_inferred',
+      trackingMode: 'default',
+      createdAt: now,
+      updatedAt: now,
+      disabledAt: null,
+    });
+
+    const graph = buildPersonalContextGraph({
+      groupFolder,
+      now: new Date(now),
+    });
+    expect(graph.coverage.resolvedCommunicationThreads).toBe(2);
+    expect(
+      graph.rankedInsights.some((insight) => insight.title === 'Messages chat'),
+    ).toBe(false);
+    expect(
+      graph.rankedInsights.find(
+        (insight) => insight.title === 'Review communication identities',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('does not promote a nameless group chat as a proactive daily insight', () => {
+    const groupFolder = 'generic-group-guidance';
+    seedSyntheticLife(groupFolder);
+    upsertCommunicationThread({
+      id: 'generic-group-thread',
+      groupFolder,
+      title: 'Messages chat',
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      channel: 'bluebubbles',
+      channelChatJid: 'bb:iMessage;+;chat-generic',
+      lastInboundSummary: 'A metadata-only group conversation.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed',
+      urgency: 'tonight',
+      followupDueAt: null,
+      suggestedNextAction: 'draft_reply',
+      toneStyleHints: [],
+      lastContactAt: now,
+      lastMessageId: 'generic-group-message',
+      linkedTaskId: null,
+      inferenceState: 'assistant_inferred',
+      trackingMode: 'default',
+      createdAt: now,
+      updatedAt: now,
+      disabledAt: null,
+    });
+
+    const graph = buildPersonalContextGraph({
+      groupFolder,
+      now: new Date(now),
+    });
+
+    expect(graph.coverage.resolvedCommunicationThreads).toBe(2);
+    expect(
+      graph.rankedInsights.some((insight) => insight.title === 'Messages chat'),
+    ).toBe(false);
+  });
+
+  it('turns a resolved saved-for-later reply into a concrete approval-safe next step', () => {
+    const groupFolder = 'saved-reply-guidance';
+    seedSyntheticLife(groupFolder);
+    upsertCommunicationThread({
+      id: 'saved-reply-thread',
+      groupFolder,
+      title: 'Candace follow-up',
+      linkedSubjectIds: ['subject-riley'],
+      linkedLifeThreadIds: [],
+      channel: 'telegram',
+      channelChatJid: 'tg:saved-reply',
+      lastInboundSummary: 'A metadata-only pending reply.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed',
+      urgency: 'tonight',
+      followupDueAt: null,
+      suggestedNextAction: 'save_for_later',
+      toneStyleHints: [],
+      lastContactAt: now,
+      lastMessageId: 'saved-reply-message',
+      linkedTaskId: null,
+      inferenceState: 'user_confirmed',
+      trackingMode: 'default',
+      createdAt: now,
+      updatedAt: now,
+      disabledAt: null,
+    });
+
+    const graph = buildPersonalContextGraph({
+      groupFolder,
+      now: new Date(now),
+    });
+
+    expect(
+      graph.rankedInsights.find(
+        (insight) => insight.title === 'Candace follow-up',
+      ),
+    ).toMatchObject({
+      nextAction:
+        'Keep this queued for later; when ready, ask Andrea to draft without sending.',
+    });
   });
 
   it('distinguishes proposed follow-through candidates from active reminders', () => {

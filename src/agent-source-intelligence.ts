@@ -32,6 +32,7 @@ export interface SourcePatternCandidate {
     | 'direct_import_candidate'
     | 'reference_only';
   verificationScenarioId: string;
+  verificationScope?: 'council_challenge' | 'subsystem_fixture';
 }
 
 export type IntelligenceKpiId =
@@ -555,6 +556,7 @@ export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
     targetSubsystem: 'council_evidence',
     adoptionMode: 'direct_import_candidate',
     verificationScenarioId: 'small.gbrain_evidence_contract',
+    verificationScope: 'council_challenge',
   },
   {
     patternId: 'gbrain.metric_glossary_quality_gates',
@@ -564,6 +566,7 @@ export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
     targetSubsystem: 'council_quality',
     adoptionMode: 'direct_import_candidate',
     verificationScenarioId: 'small.gbrain_metric_quality_gate',
+    verificationScope: 'council_challenge',
   },
   {
     patternId: 'gbrain.source_attribution_conflict_policy',
@@ -573,6 +576,7 @@ export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
     targetSubsystem: 'provider_council_runner',
     adoptionMode: 'clean_room_pattern',
     verificationScenarioId: 'medium.gbrain_source_conflict_policy',
+    verificationScope: 'council_challenge',
   },
   {
     patternId: 'agents_sdk.tracing_guardrails_handoffs',
@@ -582,6 +586,7 @@ export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
     targetSubsystem: 'provider_council_runner',
     adoptionMode: 'clean_room_pattern',
     verificationScenarioId: 'large.verifier_override_disagreement',
+    verificationScope: 'council_challenge',
   },
   {
     patternId: 'agent_os.episode_interrupt_resume',
@@ -745,6 +750,7 @@ export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
     targetSubsystem: 'repair_autopilot_and_dashboard',
     adoptionMode: 'clean_room_pattern',
     verificationScenarioId: 'medium.checkpoint_resume_interrupt',
+    verificationScope: 'council_challenge',
   },
   {
     patternId: 'openhands.lifecycle_sandbox_evidence',
@@ -754,6 +760,7 @@ export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
     targetSubsystem: 'repair_queue',
     adoptionMode: 'clean_room_pattern',
     verificationScenarioId: 'xl.human_approval_repair_queue',
+    verificationScope: 'council_challenge',
   },
   {
     patternId: 'letta.memory_block_boundaries',
@@ -763,6 +770,7 @@ export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
     targetSubsystem: 'turn_agent_harness_memory_policy',
     adoptionMode: 'clean_room_pattern',
     verificationScenarioId: 'large.memory_conflict_policy',
+    verificationScope: 'council_challenge',
   },
   {
     patternId: 'librechat.provider_redaction_surface',
@@ -772,6 +780,7 @@ export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
     targetSubsystem: 'council_dashboard',
     adoptionMode: 'clean_room_pattern',
     verificationScenarioId: 'small.source_manifest_redaction_policy',
+    verificationScope: 'council_challenge',
   },
   {
     patternId: 'autogpt.goal_loop_monitoring',
@@ -781,6 +790,7 @@ export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
     targetSubsystem: 'council_challenge_harness',
     adoptionMode: 'reference_only',
     verificationScenarioId: 'xl.dashboard_replay_checkpoint',
+    verificationScope: 'council_challenge',
   },
   {
     patternId: 'crewai.role_specialization',
@@ -790,6 +800,7 @@ export const SOURCE_PATTERN_CANDIDATES: SourcePatternCandidate[] = [
     targetSubsystem: 'provider_council_runner',
     adoptionMode: 'reference_only',
     verificationScenarioId: 'medium.live_evidence_dual_review',
+    verificationScope: 'council_challenge',
   },
 ];
 

@@ -9,6 +9,7 @@ ASSISTANT_NAME="${ASSISTANT_NAME:-Andrea}"
 MAC_PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 STATE_DIR="${ANDREA_STATE_DIR:-$HOME/.andrea}"
 LOG_DIR="${ANDREA_LOG_DIR:-$HOME/Library/Logs/andrea}"
+READY_TIMEOUT_SECONDS="${ANDREA_MAC_READY_TIMEOUT_SECONDS:-120}"
 
 usage() {
   cat <<USAGE
@@ -30,6 +31,7 @@ Environment:
   ASSISTANT_NAME overrides $ASSISTANT_NAME
   ANDREA_STATE_DIR overrides $STATE_DIR
   ANDREA_LOG_DIR overrides $LOG_DIR
+  ANDREA_MAC_READY_TIMEOUT_SECONDS overrides $READY_TIMEOUT_SECONDS
 USAGE
 }
 
@@ -69,7 +71,35 @@ is_bootstrapped() {
   launchctl print "$(service_target)" >/dev/null 2>&1
 }
 
+current_boot_id() {
+  node -e 'const fs=require("fs"); try { const v=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(typeof v.bootId === "string" ? v.bootId : ""); } catch {}' \
+    "$PROJECT_ROOT/data/runtime/nanoclaw-ready.json"
+}
+
+wait_for_service_ready() {
+  local previous_boot_id="$1"
+  local expected_commit
+  expected_commit="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
+  local args=(
+    scripts/run-with-pinned-node.mjs
+    dist/mac-service-readiness.js
+    --project-root "$PROJECT_ROOT"
+    --expected-commit "$expected_commit"
+    --timeout-seconds "$READY_TIMEOUT_SECONDS"
+  )
+  if [[ -n "$previous_boot_id" ]]; then
+    args+=(--previous-boot-id "$previous_boot_id")
+  fi
+  if ! node "${args[@]}"; then
+    echo "service readiness failed for $LABEL" >&2
+    status_service >&2 || true
+    return 1
+  fi
+}
+
 install_service() {
+  local previous_boot_id
+  previous_boot_id="$(current_boot_id)"
   mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR" "$STATE_DIR" "$PROJECT_ROOT/data/run"
   render_plist > "$PLIST"
   plutil -lint "$PLIST" >/dev/null
@@ -80,6 +110,7 @@ install_service() {
   launchctl bootstrap "$(domain)" "$PLIST"
   launchctl enable "$(service_target)"
   launchctl kickstart -k "$(service_target)"
+  wait_for_service_ready "$previous_boot_id"
   echo "installed $LABEL at $PLIST"
 }
 
@@ -96,12 +127,15 @@ start_service() {
     install_service
     return
   fi
+  local previous_boot_id
+  previous_boot_id="$(current_boot_id)"
   launchctl enable "$(service_target)" >/dev/null 2>&1 || true
   if ! is_bootstrapped; then
     launchctl bootstrap "$(domain)" "$PLIST"
   fi
   launchctl enable "$(service_target)"
   launchctl kickstart -k "$(service_target)"
+  wait_for_service_ready "$previous_boot_id"
   echo "started $LABEL"
 }
 

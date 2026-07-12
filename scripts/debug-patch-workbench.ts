@@ -9,12 +9,14 @@ import {
   type DetachedRepairVerificationCommand,
   type PatchWorkbenchMode,
 } from '../src/patch-workbench.js';
+import { resolveDebugExecutionPolicy } from '../src/debug-execution-policy.js';
 
 initDatabase();
 
 const args = process.argv.slice(2);
 const json = args.includes('--json');
-const noPersist = args.includes('--no-persist') || args.includes('--dry-run');
+const { persist } = resolveDebugExecutionPolicy(args);
+const persistApprovedExecution = !args.includes('--no-persist');
 const executeApprovedDiff = args.includes('--execute-approved-diff');
 const mode: PatchWorkbenchMode = args.includes('--apply-low-risk')
   ? 'apply_low_risk'
@@ -130,7 +132,7 @@ function runApprovedDiffExecution(): void {
     commitMessage,
     approved,
     keepWorkspace,
-    persist: !noPersist,
+    persist: persistApprovedExecution,
     operatorLabel,
   });
 
@@ -147,7 +149,7 @@ if (executeApprovedDiff) {
 } else {
   const report = buildPatchWorkbenchReport({
     mode,
-    persist: !noPersist,
+    persist,
   });
 
   console.log(

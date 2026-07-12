@@ -5,12 +5,33 @@ import {
   runCouncilChallengeHarness,
 } from './council-challenge-harness.js';
 import {
+  SOURCE_PATTERN_CANDIDATES,
   SOURCE_REPO_MANIFEST,
   compareCouncilChallengeScore,
   scoreIntelligenceAdvancement,
 } from './agent-source-intelligence.js';
 
 describe('council challenge harness', () => {
+  it('has an executable scenario for every implemented council verification pattern', () => {
+    const scenarioIds = new Set(
+      listCouncilChallengeScenarios('ladder').map(
+        (scenario) => scenario.scenarioId,
+      ),
+    );
+    const councilPatterns = SOURCE_PATTERN_CANDIDATES.filter(
+      (pattern) =>
+        pattern.verificationScope === 'council_challenge' &&
+        pattern.adoptionMode !== 'reference_only',
+    );
+
+    expect(councilPatterns).toHaveLength(8);
+    expect(
+      councilPatterns.filter(
+        (pattern) => !scenarioIds.has(pattern.verificationScenarioId),
+      ),
+    ).toEqual([]);
+  });
+
   it('classifies challenge scenarios as synthetic council evidence', async () => {
     const runCouncil = vi.fn(async (_input: unknown) => null);
 
@@ -148,7 +169,7 @@ describe('council challenge harness', () => {
       },
     );
 
-    expect(listCouncilChallengeScenarios('small')).toHaveLength(3);
+    expect(listCouncilChallengeScenarios('small')).toHaveLength(5);
     expect(report.status).toBe('pass');
     expect(report.totalScore).toBe(1);
     expect(report.results[0]).toMatchObject({

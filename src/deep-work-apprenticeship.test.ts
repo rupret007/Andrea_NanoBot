@@ -161,6 +161,7 @@ describe('deep-work apprenticeship', () => {
       groupFolder: 'main',
       taskFamily: 'coding',
       objective: 'Protect owner review integrity',
+      now: new Date('2026-07-12T15:00:00.000Z'),
     });
     upsertVerifiedDeepWorkPacket({
       ...complete,

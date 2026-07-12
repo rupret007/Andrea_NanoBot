@@ -7,6 +7,12 @@ export interface DebugExecutionPolicy {
   externalEffects: boolean;
 }
 
+export interface DebugPersistencePolicy {
+  persist: boolean;
+  persistenceRequested: boolean;
+  dryRun: boolean;
+}
+
 export function assertDebugExecutionPolicy(
   policy: DebugExecutionPolicy,
 ): DebugExecutionPolicy {
@@ -39,4 +45,39 @@ export function formatDebugExecutionPolicy(
     `storage: ${checked.storage}`,
     `external_effects: ${checked.externalEffects}`,
   ];
+}
+
+/**
+ * Diagnostic commands are observational unless persistence is explicit.
+ * `--dry-run` and the legacy `--no-persist` flag always win.
+ */
+export function resolveDebugExecutionPolicy(
+  args: readonly string[],
+): DebugPersistencePolicy {
+  const dryRun = args.includes('--dry-run');
+  const persistenceRequested = args.includes('--persist');
+  return {
+    persist: persistenceRequested && !dryRun && !args.includes('--no-persist'),
+    persistenceRequested,
+    dryRun,
+  };
+}
+
+export function resolveDebugLiveExecutionPolicy(
+  args: readonly string[],
+  command: string,
+): DebugExecutionPolicy {
+  return args.includes('--live')
+    ? {
+        command,
+        mode: 'live_write',
+        storage: 'live',
+        externalEffects: true,
+      }
+    : {
+        command,
+        mode: 'read_only',
+        storage: 'none',
+        externalEffects: false,
+      };
 }

@@ -503,7 +503,7 @@ function integrationCommand(status: IntegrationStatus): string {
     return 'npm run debug:google-calendar';
   }
   if (status.integrationId === 'research') {
-    return 'npm run debug:research-mode';
+    return 'npm run debug:research-mode -- --live';
   }
   if (status.integrationId === 'telegram') {
     return 'npm run telegram:user:smoke';

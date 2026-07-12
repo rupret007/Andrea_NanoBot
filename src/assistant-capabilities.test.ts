@@ -248,7 +248,7 @@ describe('assistant capabilities', () => {
     expect(result.handled).toBe(true);
     expect(result.sendOptions?.inlineActionRows?.flat()).toEqual([
       expect.objectContaining({ label: 'Link Candace' }),
-      expect.objectContaining({ label: 'Leave unlinked' }),
+      expect.objectContaining({ label: 'Keep without person link' }),
     ]);
     expect(JSON.stringify(result.sendOptions)).not.toContain('+1 (469)');
   });

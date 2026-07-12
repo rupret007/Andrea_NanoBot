@@ -15,6 +15,10 @@ import {
 } from './capability-self-model.js';
 import { buildLiveProofGauntletReport } from './live-proof-gauntlet.js';
 import { buildCognitiveDoctorReport } from './cognitive-kernel.js';
+import {
+  buildReviewedOutcomeProgress,
+  type ReviewedOutcomeProgress,
+} from './personal-assistant-metrics.js';
 import type { LiveProofGauntletReport } from './types.js';
 
 export type IntelligenceProgressDimensionId =
@@ -62,6 +66,7 @@ export interface IntelligenceProgressReport {
     capabilityDailyCoreRatio: number;
     dailyCommandCenterReadiness: number;
     cognitionTraceHealth: number;
+    reviewedOutcomeEvidence: number;
   };
   privacy: {
     metadataOnly: true;
@@ -83,6 +88,7 @@ export interface IntelligenceProgressInput {
   capabilityReport: CapabilitySelfModelReport;
   proofReport: LiveProofGauntletReport;
   cognitionTraceHealth?: number;
+  reviewedOutcomeProgress?: ReviewedOutcomeProgress;
 }
 
 const DIMENSION_WEIGHTS: Record<IntelligenceProgressDimensionId, number> = {
@@ -171,7 +177,10 @@ function dailyCommandCenterScore(report: AgiLeapReadinessReport): number {
   );
 }
 
-function followthroughScore(report: AgiLeapReadinessReport): number {
+function followthroughScore(
+  report: AgiLeapReadinessReport,
+  reviewedOutcomeProgress?: ReviewedOutcomeProgress,
+): number {
   const coverage = report.contextGraph.coverage;
   const active =
     coverage.reminders > 0 ? 0.65 + Math.min(coverage.reminders, 4) * 0.08 : 0;
@@ -186,7 +195,23 @@ function followthroughScore(report: AgiLeapReadinessReport): number {
   )
     ? 0.12
     : 0;
-  return round3(Math.max(active, proposed) + insightBonus);
+  const capabilityScore = round3(Math.max(active, proposed) + insightBonus);
+  if (!reviewedOutcomeProgress) return capabilityScore;
+  const reviewedOutcomeEvidence = clamp01(
+    reviewedOutcomeProgress.reviewedOutcomeCount /
+      reviewedOutcomeProgress.requiredOutcomeCount,
+  );
+  return round3(capabilityScore * 0.65 + reviewedOutcomeEvidence * 0.35);
+}
+
+function reviewedOutcomeNextAction(
+  progress?: ReviewedOutcomeProgress,
+): string | null {
+  if (!progress || progress.baselineSaved) return null;
+  if (progress.remainingOutcomeCount > 0) {
+    return `Record ${progress.remainingOutcomeCount} more genuine owner-reviewed recommendation outcome${progress.remainingOutcomeCount === 1 ? '' : 's'} before reviewing the first learning baseline. Use Helpful/Not helpful, a Messages tapback, or a fresh standalone “that worked”/“that didn't work” reply.`;
+  }
+  return 'Review and explicitly save the first assistant-metric baseline; the five-outcome evidence gate is satisfied, but Andrea must not save it automatically.';
 }
 
 function privacyScore(params: {
@@ -258,7 +283,10 @@ export function buildIntelligenceProgressReport(
     memory_quality: input.dailyAgentReport.memoryQualityScore,
     context_graph: input.dailyAgentReport.contextGraphScore,
     text_reply_intelligence: input.dailyAgentReport.textReviewScore,
-    followthrough_learning: followthroughScore(input.dailyAgentReport),
+    followthrough_learning: followthroughScore(
+      input.dailyAgentReport,
+      input.reviewedOutcomeProgress,
+    ),
     tool_truth_proof_honesty: round3(
       average([
         proofRatio,
@@ -313,6 +341,7 @@ export function buildIntelligenceProgressReport(
   const topNextImprovement =
     criticalRegressions[0] ||
     compare.nonCriticalRegressions[0] ||
+    reviewedOutcomeNextAction(input.reviewedOutcomeProgress) ||
     input.dailyAgentReport.topNextImprovement ||
     input.agiReport.recommendedNextImprovement;
 
@@ -342,6 +371,12 @@ export function buildIntelligenceProgressReport(
       capabilityDailyCoreRatio: capabilityRatio,
       dailyCommandCenterReadiness: commandCenterScore,
       cognitionTraceHealth,
+      reviewedOutcomeEvidence: input.reviewedOutcomeProgress
+        ? round3(
+            input.reviewedOutcomeProgress.reviewedOutcomeCount /
+              input.reviewedOutcomeProgress.requiredOutcomeCount,
+          )
+        : 0,
     },
     privacy: {
       metadataOnly: true,
@@ -534,6 +569,10 @@ export async function buildCurrentIntelligenceProgressReport(
     cognition.privacy.hiddenReasoningStored
       ? 0
       : 1;
+  const reviewedOutcomeProgress = buildReviewedOutcomeProgress({
+    groupFolder,
+    now,
+  });
   return buildIntelligenceProgressReport(
     {
       generatedAt,
@@ -544,6 +583,7 @@ export async function buildCurrentIntelligenceProgressReport(
       capabilityReport,
       proofReport,
       cognitionTraceHealth,
+      reviewedOutcomeProgress,
     },
     params.baseline || null,
   );

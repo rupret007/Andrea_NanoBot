@@ -61,6 +61,11 @@ npm run debug:research-mode
 npm run debug:knowledge-library
 ```
 
+The shared-capability smoke uses isolated storage plus a process-level network
+deny guard. The plain research-mode command is a zero-cost status check. It
+performs no provider request and writes no proof marker. Add `-- --live` to
+either command only for intentional provider-backed use.
+
 For ordinary companion chat, graceful degraded replies, and no-leakage checks, add:
 
 ```bash
@@ -525,6 +530,13 @@ Then validate the public-safe Telegram surface:
 - `npm run debug:cognition -- --benchmarks`
 - `npm run test:council:tasks`
 - `npm run test:council:ultrathink`
+
+Council source-pattern coverage counts only implemented patterns assigned to
+the executable council challenge ladder. Cross-subsystem fixtures and
+reference-only research ideas are not part of that denominator. Run the tier
+named by `npm run debug:council`; a complete offline ladder reports 8/8 without
+being treated as live-provider evidence.
+
 - `npm run test:cognition`
 - `npm run test:cognition:skills`
 - `npm run test:cognition:benchmarks`
@@ -589,6 +601,9 @@ For pilot-mode and daily dogfooding specifically, also validate:
 - `npm run debug:learning`
 - `npm run debug:skills`
 - `npm run debug:improvement`
+- `npm run debug:improvement -- --persist` only when intentionally recording
+  one improvement generation; ordinary debug, shadow, and workbench inspection
+  is read-only by default, and `--dry-run` overrides `--persist`
 - `npm run debug:improvement -- --shadow`
 - `npm run test:world-learning`
 - `npm run test:memory-distillation`
@@ -637,7 +652,7 @@ Use this ladder when evaluating improvement work:
 
 - `npm run debug:improvement -- --dry-run`
 - `npm run debug:improvement -- --shadow --dry-run`
-- `npm run debug:agentic -- --no-persist`
+- `npm run debug:agentic`
 - `npm run test:synthetic-gauntlet`
 - `npm run test:shadow-improvement`
 
@@ -718,6 +733,16 @@ Metacognitive Workspace sits above the Cognitive Executive and Goal Planner:
 - `debug:working-memory` shows the current bounded working-memory frame, selected context, ignored context, focus reason, freshness, confidence, and next safe action
 - `debug:metacognition` shows the selected reasoning mode, confidence calibration, warnings, and recent strategy signals
 - `debug:deliberation` shows candidate routes, critic objections, final recommendation, fallback, approval boundary, and confirms hidden reasoning is not stored
+
+All ordinary `debug:*` state inspection is read-only by default. For the
+goal/planner, opportunity, working-memory, metacognition, deliberation,
+blackboard, capability, reality, perception, agentic, improvement, and patch
+workbench reports, add `-- --persist` only when intentionally recording a
+diagnostic generation. `--dry-run` and the legacy `--no-persist` override
+persistence. Explicit `--apply`, `--execute-*`, baseline-save, retention, and
+live-proof modes remain separately named mutations and keep their own approval
+or safety gates.
+
 - focused v31 gate: `test:working-memory`, `test:metacognition`, `test:deliberation`, and `test:confidence-calibration`
 - natural checks such as `are you sure?`, `what context are you using?`, `think harder`, and `don't overthink it` should affect mode/confidence without bypassing existing approval gates
 
@@ -1006,8 +1031,11 @@ Run this when research orchestration, Telegram research rendering, or media capa
 Pinned-Node smoke path:
 
 ```bash
-npm run debug:research-mode
+npm run debug:research-mode -- --live
 ```
+
+This is an intentional live provider and image proof, not a deterministic or
+cost-free validation command. The default command remains read-only.
 
 Expect:
 
@@ -1101,6 +1129,11 @@ Pinned-Node proof harness:
 
 ```bash
 npm run debug:knowledge-library
+
+`debug:knowledge-library` always uses isolated in-memory storage. Its realistic
+sample notes exercise save/import/retrieval/citation behavior but never enter
+the live personal Knowledge Library, and its temporary import directory is
+removed when the command exits.
 ```
 
 Expected proof points:
@@ -1133,6 +1166,9 @@ npm run setup -- --step verify
 Important rule:
 
 - run restart and verify sequentially, not in parallel
+- the macOS restart command waits for a new boot whose ready/health PID and
+  serving/build commit match the workspace before returning; a nonzero timeout
+  is a restart failure, not permission to verify stale state
 
 Then rerun a small live smoke:
 

@@ -175,6 +175,12 @@ function dimensionForSyntheticScenario(scenarioId: string): AgiScoreDimension {
   return 'planning';
 }
 
+function isSyntheticRouteContractOnly(detail: string): boolean {
+  return /artifact_kind=(?:capability_route_metadata|alexa_route_metadata)\b/.test(
+    detail,
+  );
+}
+
 function summarizeSuite(
   suite: string,
   results: AgiScorecardScenarioResult[],
@@ -233,9 +239,13 @@ function recommendationsFor(
     dimension,
     score: dimensionScores[dimension],
   })).sort((a, b) => a.score - b.score)[0];
-  if (weakest) {
+  if (weakest && weakest.score < 1) {
     recs.push(
       `Raise ${weakest.dimension} next; current score ${(weakest.score * 100).toFixed(0)}%.`,
+    );
+  } else if (weakest) {
+    recs.push(
+      'The deterministic suite is saturated; prioritize genuine reviewed outcomes and fresh live evidence instead of adding score-only fixtures.',
     );
   }
   const suiteScores = Array.from(new Set(results.map((result) => result.suite)))
@@ -402,14 +412,21 @@ async function runAgiScorecardWithDatabase(
     persist: state.persistSyntheticState,
   });
   for (const result of synthetic.results) {
+    const routeContractOnly = isSyntheticRouteContractOnly(result.summary);
     scenarioResults.push({
       suite: 'synthetic-gauntlet',
       scenarioId: result.scenarioId,
       title: result.scenarioId,
-      dimension: dimensionForSyntheticScenario(result.scenarioId),
+      dimension: routeContractOnly
+        ? 'providerRouting'
+        : dimensionForSyntheticScenario(result.scenarioId),
       passed: result.status === 'passed',
-      score: roundScore(result.totalScore),
-      detail: result.summary,
+      score: roundScore(
+        routeContractOnly ? result.routeScore : result.totalScore,
+      ),
+      detail: routeContractOnly
+        ? `${result.summary}; evidence_scope=route_contract_only`
+        : result.summary,
     });
   }
 

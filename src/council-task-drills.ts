@@ -108,13 +108,19 @@ function attempt(params: {
 function buildSourcePatternCoverage(
   recentRunIds: string[],
 ): CouncilSourcePatternAdoptionStatus[] {
-  return SOURCE_PATTERN_CANDIDATES.map((pattern) => {
+  return SOURCE_PATTERN_CANDIDATES.filter(
+    (pattern) =>
+      pattern.verificationScope === 'council_challenge' &&
+      pattern.adoptionMode !== 'reference_only',
+  ).map((pattern) => {
     const implemented =
       pattern.adoptionMode !== 'reference_only' &&
       Boolean(pattern.verificationScenarioId);
-    const verified = recentRunIds.some((runId) =>
-      runId.includes(pattern.verificationScenarioId),
-    );
+    const verified =
+      implemented &&
+      recentRunIds.some((runId) =>
+        runId.includes(pattern.verificationScenarioId),
+      );
     return {
       patternId: pattern.patternId,
       sourceRepoIds: pattern.sourceRepoIds,
@@ -258,6 +264,16 @@ export function buildCouncilTaskEaseReport(
   );
   const latestSchema = parseJsonObject(latest?.schemaStatusJson || '{}');
   const schemaInvalidCount = Number(latestSchema.invalid_fallback || 0);
+  const nextUnverifiedPattern = sourcePatternCoverage.find(
+    (pattern) => !pattern.verified,
+  );
+  const nextScenarioTier =
+    nextUnverifiedPattern?.verificationScenarioId.split('.')[0] || '';
+  const nextSourcePatternAction =
+    nextUnverifiedPattern &&
+    ['small', 'medium', 'large', 'xl'].includes(nextScenarioTier)
+      ? `Run npm run test:council:${nextScenarioTier} to verify ${nextUnverifiedPattern.patternId}, then rerun npm run debug:council.`
+      : null;
   const nextAction =
     status === 'pass'
       ? 'Run one live `ultrathink` proof and keep the task ladder green after provider or channel changes.'
@@ -265,7 +281,8 @@ export function buildCouncilTaskEaseReport(
         ? 'Fix the latest schema-invalid council artifact, then rerun npm run test:council:tasks and npm run test:council:medium.'
         : signals.length === 0
           ? 'Run npm run test:council:tasks to attach a sanitized task outcome signal, then rerun npm run debug:council.'
-          : 'Run npm run test:council:medium and inspect source-pattern scenarios that remain unverified.';
+          : nextSourcePatternAction ||
+            'Inspect the latest degraded council artifact and repair its lowest quality gate.';
   const latestCitationCoverage = parseObjectValue(
     latestScorecard.citationCoverage,
   );

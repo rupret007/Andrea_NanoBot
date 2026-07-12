@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 
+import { isBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
 import {
   getActiveOperatingProfile,
   getAllChats,
@@ -181,6 +182,18 @@ function communicationThreadIsGroup(
   );
 }
 
+function communicationThreadHasUsefulTitle(
+  thread: CommunicationThreadRecord,
+): boolean {
+  const title = normalizeText(thread.title);
+  return Boolean(
+    title &&
+    !/^(?:messages? chat|messages? thread|communication (?:thread|follow-up)|text thread|recent (?:messages?|texts?))$/i.test(
+      title,
+    ),
+  );
+}
+
 function communicationThreadSummary(thread: CommunicationThreadRecord): string {
   const medium =
     thread.channel === 'bluebubbles'
@@ -203,14 +216,32 @@ function communicationThreadSummary(thread: CommunicationThreadRecord): string {
 function communicationThreadNextAction(
   thread: CommunicationThreadRecord,
 ): string {
+  if (thread.followupState === 'waiting_on_them') {
+    return 'Let it wait unless new inbound activity arrives.';
+  }
   if (thread.suggestedNextAction === 'create_reminder') {
     return 'Create an approval-gated reminder or save it for later.';
   }
-  if (thread.suggestedNextAction === 'draft_reply') {
-    return 'Review the thread and draft only after confirming the right audience.';
+  if (
+    thread.suggestedNextAction === 'draft_reply' ||
+    thread.suggestedNextAction === 'reply_now'
+  ) {
+    return 'Review recent context and prepare a draft; do not send without approval.';
   }
-  if (thread.followupState === 'waiting_on_them') {
-    return 'Let it wait unless new inbound activity arrives.';
+  if (thread.suggestedNextAction === 'save_for_later') {
+    return 'Keep this queued for later; when ready, ask Andrea to draft without sending.';
+  }
+  if (thread.suggestedNextAction === 'link_thread') {
+    return 'Confirm the identity and audience before drafting or taking action.';
+  }
+  if (thread.suggestedNextAction === 'ignore') {
+    return 'Leave it alone unless new activity changes the situation.';
+  }
+  if (thread.followupState === 'reply_needed') {
+    return 'Review recent context and prepare a draft; do not send without approval.';
+  }
+  if (thread.followupState === 'scheduled') {
+    return 'Keep the scheduled follow-through visible; do not duplicate it.';
   }
   return 'Review the thread before taking any action.';
 }
@@ -793,11 +824,15 @@ function buildGaps(coverage: PersonalContextGraphCoverage): string[] {
     coverage.communicationThreads > 0
       ? coverage.resolvedCommunicationThreads / coverage.communicationThreads
       : 1;
-  if (coverage.communicationThreads > 0 && communicationLinkRatio < 0.5) {
-    const unlinked = Math.max(
-      0,
-      coverage.communicationThreads - coverage.resolvedCommunicationThreads,
-    );
+  const unlinked = Math.max(
+    0,
+    coverage.communicationThreads - coverage.resolvedCommunicationThreads,
+  );
+  if (
+    coverage.communicationThreads > 0 &&
+    unlinked > 0 &&
+    communicationLinkRatio < 1
+  ) {
     gaps.push(
       `Confirm or dismiss identity links for ${unlinked} recent communication thread${unlinked === 1 ? '' : 's'} before trusting relationship-aware reply recommendations; use \`review communication identities\` and do not infer identities from phone numbers or generic language.`,
     );
@@ -852,6 +887,7 @@ function buildGraphInsights(params: {
   activeProfile: OperatingProfile | null;
   coverage: PersonalContextGraphCoverage;
   resolvedCommunicationThreadIds: Set<string>;
+  suppressedCommunicationThreadIds: Set<string>;
   facts: ProfileFactWithSubject[];
   lifeThreads: LifeThread[];
   communicationThreads: CommunicationThreadRecord[];
@@ -914,7 +950,9 @@ function buildGraphInsights(params: {
     });
   }
   const unresolvedCommunicationThreads = params.communicationThreads.filter(
-    (thread) => !params.resolvedCommunicationThreadIds.has(thread.id),
+    (thread) =>
+      !params.resolvedCommunicationThreadIds.has(thread.id) &&
+      !params.suppressedCommunicationThreadIds.has(thread.id),
   );
   if (unresolvedCommunicationThreads.length > 0) {
     addInsight(insights, {
@@ -959,8 +997,10 @@ function buildGraphInsights(params: {
   };
   const actionableCommunicationThreads = params.communicationThreads.filter(
     (thread) =>
-      thread.followupState === 'reply_needed' ||
-      thread.followupState === 'scheduled',
+      !params.suppressedCommunicationThreadIds.has(thread.id) &&
+      communicationThreadHasUsefulTitle(thread) &&
+      (thread.followupState === 'reply_needed' ||
+        thread.followupState === 'scheduled'),
   );
   const resolvedCommunicationInsights = actionableCommunicationThreads
     .filter((thread) => params.resolvedCommunicationThreadIds.has(thread.id))
@@ -1111,7 +1151,10 @@ function buildGraphInsights(params: {
     });
   }
   const waitingThreads = params.communicationThreads.filter(
-    (thread) => thread.followupState === 'waiting_on_them',
+    (thread) =>
+      thread.followupState === 'waiting_on_them' &&
+      !params.suppressedCommunicationThreadIds.has(thread.id) &&
+      communicationThreadHasUsefulTitle(thread),
   );
   for (const thread of waitingThreads.slice(0, 4)) {
     addInsight(insights, {
@@ -1175,6 +1218,15 @@ export function buildPersonalContextGraph(params: {
           (knownGroupChatJids.has(thread.channelChatJid) ||
             communicationThreadIsGroup(thread)),
         ),
+      )
+      .map((thread) => thread.id),
+  );
+  const selfCommunicationThreadIds = new Set(
+    communicationThreads
+      .filter(
+        (thread) =>
+          thread.channelChatJid &&
+          isBlueBubblesSelfThreadAliasJid(thread.channelChatJid),
       )
       .map((thread) => thread.id),
   );
@@ -1265,6 +1317,7 @@ export function buildPersonalContextGraph(params: {
     ...identityLinkedCommunicationThreadIds,
     ...identityReviewedThreadIds,
     ...groupCommunicationThreadIds,
+    ...selfCommunicationThreadIds,
   ]);
   const coverage: PersonalContextGraphCoverage = {
     activeProfile: Boolean(activeProfile),
@@ -1286,6 +1339,7 @@ export function buildPersonalContextGraph(params: {
     activeProfile,
     coverage,
     resolvedCommunicationThreadIds,
+    suppressedCommunicationThreadIds: selfCommunicationThreadIds,
     facts,
     lifeThreads,
     communicationThreads,

@@ -52,6 +52,14 @@ npm run mac:services:logs
 npm run mac:doctor
 ```
 
+`install`, `start`, and `restart` return only after a new process boot has
+written matching ready, health, runtime, Git, and build provenance. The
+default readiness timeout is 120 seconds; set
+`ANDREA_MAC_READY_TIMEOUT_SECONDS` only when a slower host needs a larger
+bounded window. A timeout exits nonzero and prints metadata-only service and
+readiness diagnostics plus the configured log paths instead of allowing an
+immediate verifier to trust stale state.
+
 The service label defaults to `com.nanoclaw.mac-mini`. Override it with
 `NANOCLAW_LAUNCHD_LABEL` before install if this Mac needs multiple checkouts.
 

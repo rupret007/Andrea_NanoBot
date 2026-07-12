@@ -3,7 +3,8 @@ import os from 'os';
 import path from 'path';
 
 import { executeAssistantCapability } from '../src/assistant-capabilities.js';
-import { initDatabase } from '../src/db.js';
+import { _initTestDatabase } from '../src/db.js';
+import { formatDebugExecutionPolicy } from '../src/debug-execution-policy.js';
 import {
   importKnowledgeFile,
   saveKnowledgeSource,
@@ -30,7 +31,7 @@ function printBlock(title: string, lines: string[]): void {
 }
 
 async function main(): Promise<void> {
-  initDatabase();
+  _initTestDatabase();
   const { groupFolder } = parseArgs(process.argv.slice(2));
   const now = new Date();
 
@@ -59,6 +60,9 @@ async function main(): Promise<void> {
   const tempDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'andrea-knowledge-debug-'),
   );
+  process.once('exit', () => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
   const filePath = path.join(tempDir, 'candace-planning.md');
   fs.writeFileSync(
     filePath,
@@ -155,6 +159,12 @@ async function main(): Promise<void> {
   });
 
   printBlock('KNOWLEDGE SAVE', [
+    ...formatDebugExecutionPolicy({
+      command: 'debug:knowledge-library',
+      mode: 'isolated_write',
+      storage: 'isolated',
+      externalEffects: false,
+    }),
     `note_saved: ${savedNote.ok}`,
     `research_saved: ${savedResearch.ok}`,
     `file_saved: ${importedFile.ok}`,

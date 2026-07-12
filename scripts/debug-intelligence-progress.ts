@@ -12,6 +12,7 @@ import { buildAgiLeapReadinessReport } from '../src/agi-leap-readiness.js';
 import { buildCapabilitySelfModel } from '../src/capability-self-model.js';
 import { buildLiveProofGauntletReport } from '../src/live-proof-gauntlet.js';
 import { buildCognitiveDoctorReport } from '../src/cognitive-kernel.js';
+import { buildReviewedOutcomeProgress } from '../src/personal-assistant-metrics.js';
 import { runAgiGauntlet } from '../src/agi-gauntlet.js';
 import {
   runIntelligenceRegressionHarness,
@@ -66,6 +67,10 @@ const cognitionTraceHealth =
   cognition.privacy.hiddenReasoningStored
     ? 0
     : 1;
+const reviewedOutcomeProgress = buildReviewedOutcomeProgress({
+  groupFolder,
+  now,
+});
 
 // Run synthetic/eval harnesses against an isolated in-memory database.
 _initTestDatabase();
@@ -93,6 +98,7 @@ const report = buildIntelligenceProgressReport(
     capabilityReport,
     proofReport,
     cognitionTraceHealth,
+    reviewedOutcomeProgress,
   },
   baseline,
 );

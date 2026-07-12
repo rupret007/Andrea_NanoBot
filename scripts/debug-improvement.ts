@@ -23,21 +23,24 @@ import {
   buildHierarchicalPlannerReport,
   formatGoalPlannerReport,
 } from '../src/goal-planner.js';
+import { resolveDebugExecutionPolicy } from '../src/debug-execution-policy.js';
 
 initDatabase();
 
 const args = process.argv.slice(2);
 const json = args.includes('--json');
-const dryRun = args.includes('--dry-run');
+const executionPolicy = resolveDebugExecutionPolicy(args);
+const { persist } = executionPolicy;
 const shadow = args.includes('--shadow');
-const workbench = args.includes('--workbench') || args.includes('--patch-workbench');
+const workbench =
+  args.includes('--workbench') || args.includes('--patch-workbench');
 const proof = args.includes('--proof') || args.includes('--proof-gauntlet');
 
 if (shadow) {
-  const report = buildShadowImprovementReport({ persist: !dryRun });
+  const report = buildShadowImprovementReport({ persist });
   const patchWorkbench = buildPatchWorkbenchReport({
     mode: 'dry_run',
-    persist: !dryRun,
+    persist,
   });
   const proofGauntlet = buildLiveProofGauntletReport();
   const reality = buildRealityGroundingReport({
@@ -79,7 +82,7 @@ if (workbench) {
       : args.includes('--prepare-workspace')
         ? 'prepare_workspace'
         : 'dry_run',
-    persist: !dryRun,
+    persist,
   });
   console.log(
     json ? JSON.stringify(report, null, 2) : formatPatchWorkbenchReport(report),
@@ -90,12 +93,14 @@ if (workbench) {
 if (proof) {
   const report = buildLiveProofGauntletReport();
   console.log(
-    json ? JSON.stringify(report, null, 2) : formatLiveProofGauntletReport(report),
+    json
+      ? JSON.stringify(report, null, 2)
+      : formatLiveProofGauntletReport(report),
   );
   process.exit(0);
 }
 
-const report = buildAutonomousImprovementLabReport({ persist: !dryRun });
+const report = buildAutonomousImprovementLabReport({ persist });
 const proofGauntlet = buildLiveProofGauntletReport();
 const reality = buildRealityGroundingReport({
   proofReport: proofGauntlet,
@@ -111,7 +116,13 @@ const planner = buildHierarchicalPlannerReport({
 console.log(
   json
     ? JSON.stringify({ ...report, proofGauntlet, reality, planner }, null, 2)
-    : [formatAutonomousImprovementLabReport(report), '', formatLiveProofGauntletReport(proofGauntlet), '', formatRealityGroundingReport(reality), '', formatGoalPlannerReport(planner)].join(
-        '\n',
-      ),
+    : [
+        formatAutonomousImprovementLabReport(report),
+        '',
+        formatLiveProofGauntletReport(proofGauntlet),
+        '',
+        formatRealityGroundingReport(reality),
+        '',
+        formatGoalPlannerReport(planner),
+      ].join('\n'),
 );

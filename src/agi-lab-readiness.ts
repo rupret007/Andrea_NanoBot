@@ -134,21 +134,44 @@ function proofGate(report: LiveProofGauntletReport): AgiLabReadinessGate {
 }
 
 function integrationGate(report: IntegrationDoctorReport): AgiLabReadinessGate {
+  const operationalStates = new Set([
+    'healthy',
+    'near_live_only',
+    'degraded_but_usable',
+  ]);
+  const actionStates = new Set([
+    'needs_auth',
+    'externally_blocked',
+    'manual_action_required',
+    'repo_fix_available',
+  ]);
+  const hasCompleteStatuses =
+    report.statuses.length === report.summary.total && report.summary.total > 0;
+  const operationallyAvailable = hasCompleteStatuses
+    ? report.statuses.filter((item) => operationalStates.has(item.state)).length
+    : report.summary.healthy;
+  const evidenceLimited = hasCompleteStatuses
+    ? report.statuses.filter((item) =>
+        ['near_live_only', 'needs_proof'].includes(item.state),
+      ).length
+    : report.summary.needsProof;
   const score = report.summary.total
-    ? report.summary.healthy / report.summary.total
+    ? operationallyAvailable / report.summary.total
     : 1;
   const status: AgiLabGateStatus =
     report.summary.actionNeeded > 0 ? 'warn' : statusForScore(score);
-  const next =
-    report.statuses.find((item) => item.state !== 'healthy')?.nextAction ||
-    'No integration action needed.';
+  const nextStatus =
+    report.statuses.find((item) => actionStates.has(item.state)) ||
+    report.statuses.find((item) => item.state === 'needs_proof') ||
+    report.statuses.find((item) => item.state === 'near_live_only') ||
+    report.statuses.find((item) => item.state === 'degraded_but_usable');
   return {
     gateId: 'integration_health',
-    label: 'Integration health',
+    label: 'Integration operability',
     status,
     score: round3(score),
-    summary: `${report.summary.healthy}/${report.summary.total} integrations healthy; ${report.summary.actionNeeded} action-needed; ${report.summary.needsProof} needs-proof.`,
-    nextAction: next,
+    summary: `${operationallyAvailable}/${report.summary.total} integrations operationally available; ${report.summary.actionNeeded} action-needed; ${evidenceLimited} evidence-limited.`,
+    nextAction: nextStatus?.nextAction || 'No integration action needed.',
   };
 }
 
@@ -396,7 +419,10 @@ export async function buildAgiLabReadinessReport(
     promotionPath: [
       'Keep typecheck/test/build green before trusting any AGI-lab score.',
       'Require no critical regression in approval, blocker honesty, memory safety, or internal-leakage gates.',
-      'Improve council quality before claiming a reasoning upgrade.',
+      intelligenceProgress.sourceScores.reviewedOutcomeEvidence < 1
+        ? 'Gather five genuine owner-reviewed outcomes before treating assistant behavior as learned or saving the first baseline.'
+        : 'Keep the reviewed-outcome baseline current and investigate any correction or override regression before promotion.',
+      'Use fresh live council evidence before claiming a provider-reasoning upgrade; synthetic council runs never qualify.',
       'Promote one repeated workflow only after it passes the expanded daily suite and proof-honesty checks.',
     ],
     sourceSummary: {

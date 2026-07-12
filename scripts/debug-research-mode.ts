@@ -1,5 +1,9 @@
 import { executeAssistantCapability } from '../src/assistant-capabilities.js';
 import { initDatabase } from '../src/db.js';
+import {
+  formatDebugExecutionPolicy,
+  resolveDebugLiveExecutionPolicy,
+} from '../src/debug-execution-policy.js';
 import { writeProviderProofState } from '../src/provider-proof-state.js';
 import { runResearchOrchestrator } from '../src/research-orchestrator.js';
 
@@ -60,10 +64,23 @@ function extractDebugToken(debugPath: string[], prefix: string): string {
 }
 
 async function main(): Promise<void> {
-  initDatabase();
-  const { groupFolder, localPrompt, externalPrompt, imagePrompt } = parseArgs(
-    process.argv.slice(2),
+  const args = process.argv.slice(2);
+  const executionPolicy = resolveDebugLiveExecutionPolicy(
+    args,
+    'debug:research-mode',
   );
+  if (executionPolicy.mode !== 'live_write') {
+    printBlock('RESEARCH + IMAGE PROOF STATUS', [
+      ...formatDebugExecutionPolicy(executionPolicy),
+      'provider_calls: not_run',
+      'proof_markers_written: false',
+      'next: Add -- --live only when intentionally running provider-backed research and image proof.',
+    ]);
+    return;
+  }
+  initDatabase();
+  const { groupFolder, localPrompt, externalPrompt, imagePrompt } =
+    parseArgs(args);
   const now = new Date();
 
   const local = await runResearchOrchestrator({
@@ -116,7 +133,9 @@ async function main(): Promise<void> {
           source: 'debug_research_mode' as const,
         }
       : {
-          proofState: researchProviderFailure ? 'externally_blocked' : 'near_live_only',
+          proofState: researchProviderFailure
+            ? 'externally_blocked'
+            : 'near_live_only',
           blocker:
             researchProviderFailure ||
             'Outward research still needs a fresh direct-provider proof run on this host.',
@@ -124,37 +143,36 @@ async function main(): Promise<void> {
             external.summaryText ||
             'Outward research did not complete as a live provider-backed answer in this pass.',
           nextAction: researchProviderFailure
-            ? 'Restore direct provider quota/billing or credentials, then rerun npm run debug:research-mode.'
-            : 'Rerun npm run debug:research-mode to refresh the outward research proof state.',
+            ? 'Restore direct provider quota/billing or credentials, then rerun npm run debug:research-mode -- --live.'
+            : 'Rerun npm run debug:research-mode -- --live to refresh the outward research proof state.',
           checkedAt,
           source: 'debug_research_mode' as const,
         };
   const imageReply = (media.replyText || '').split(/\r?\n/)[0]?.trim() || '';
-  const imageProof =
-    media.mediaResult?.artifact
-      ? {
-          proofState: 'live_proven' as const,
-          blocker: '',
-          detail: 'Telegram image generation returned an image artifact.',
-          nextAction: '',
-          checkedAt,
-          source: 'debug_research_mode' as const,
-        }
-      : {
-          proofState: imageReply ? 'externally_blocked' : 'near_live_only',
-          blocker:
-            imageReply ||
-            'Image generation still needs a fresh Telegram artifact proof run on this host.',
-          detail:
-            media.mediaResult?.routeExplanation ||
-            media.trace?.reason ||
-            'Image generation did not return an artifact in this pass.',
-          nextAction: imageReply
-            ? 'Restore direct provider quota/billing or credentials, then rerun npm run debug:research-mode.'
-            : 'Rerun npm run debug:research-mode to refresh the image-generation proof state.',
-          checkedAt,
-          source: 'debug_research_mode' as const,
-        };
+  const imageProof = media.mediaResult?.artifact
+    ? {
+        proofState: 'live_proven' as const,
+        blocker: '',
+        detail: 'Telegram image generation returned an image artifact.',
+        nextAction: '',
+        checkedAt,
+        source: 'debug_research_mode' as const,
+      }
+    : {
+        proofState: imageReply ? 'externally_blocked' : 'near_live_only',
+        blocker:
+          imageReply ||
+          'Image generation still needs a fresh Telegram artifact proof run on this host.',
+        detail:
+          media.mediaResult?.routeExplanation ||
+          media.trace?.reason ||
+          'Image generation did not return an artifact in this pass.',
+        nextAction: imageReply
+          ? 'Restore direct provider quota/billing or credentials, then rerun npm run debug:research-mode -- --live.'
+          : 'Rerun npm run debug:research-mode -- --live to refresh the image-generation proof state.',
+        checkedAt,
+        source: 'debug_research_mode' as const,
+      };
   writeProviderProofState(
     {
       updatedAt: checkedAt,
@@ -165,6 +183,7 @@ async function main(): Promise<void> {
   );
 
   printBlock('LOCAL CONTEXT RESEARCH', [
+    ...formatDebugExecutionPolicy(executionPolicy),
     `handled: ${local.handled}`,
     `provider: ${local.providerUsed || 'none'}`,
     `summary: ${local.summaryText || 'none'}`,

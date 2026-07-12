@@ -4,18 +4,20 @@ import {
   planGoalDirectedRequest,
   buildHierarchicalPlannerReport,
 } from '../src/goal-planner.js';
+import { resolveDebugExecutionPolicy } from '../src/debug-execution-policy.js';
 
 initDatabase();
 
 const args = process.argv.slice(2);
 const json = args.includes('--json');
+const { persist } = resolveDebugExecutionPolicy(args);
 const requestText =
   args.find((arg) => !arg.startsWith('--')) ||
   'help me get Andrea closer to done';
 const result = planGoalDirectedRequest({
   text: requestText,
   channel: 'operator',
-  persist: !args.includes('--no-persist'),
+  persist,
 });
 const report = buildHierarchicalPlannerReport({
   requestText,

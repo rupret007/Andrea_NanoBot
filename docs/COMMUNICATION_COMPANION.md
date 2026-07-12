@@ -102,11 +102,17 @@ Current communication capabilities:
   - in Telegram, choose from bounded buttons for the first unresolved
     conversation; each explicit choice returns the next item without granting a
     new authority path
+  - prioritize safe exact-profile-name matches before labeled unknowns and
+    opaque identifier-shaped conversations, while preserving stable order
+    within each class
   - skip threads that already have an explicit person link even when they do
     not have a separate identity-review row
   - treat authoritative channel group metadata as single-person identity not
     applicable, without creating a person link or pretending the owner reviewed
     it; audience confirmation still applies before drafting or sending
+  - exclude configured Messages owner self-threads automatically; a private
+    control thread is not another person and must not consume identity-review
+    work
   - in the text-only Messages self-thread, return exact link/dismiss commands
     for the next unresolved item after every decision
   - aggregate unresolved identity work into one daily-context gap and retain at
@@ -118,8 +124,9 @@ Current communication capabilities:
   - propose a person only when the safe label exactly matches one eligible
     existing individual profile person
   - mark unknown direct conversations not applicable with
-    `dismiss identity R-12AB34CD`; known group conversations need no identity
-    decision
+    `dismiss identity R-12AB34CD`; the UI calls this `Keep without person link`
+    because it resolves the review as intentionally unlinked rather than
+    leaving it pending; known group conversations need no identity decision
   - reverse a decision with `clear identity review R-12AB34CD`
   - exclude generic self labels and collective categories from one-person choices
   - withhold ambiguous duplicate profile names until the profile itself is

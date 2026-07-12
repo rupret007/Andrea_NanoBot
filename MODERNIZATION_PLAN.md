@@ -1,5 +1,337 @@
 # Modernization Plan
 
+## Combined-candidate release-readiness audit — 2026-07-12
+
+### Verified
+
+- [x] Review the 53-file tracked diff plus two new macOS readiness files for
+      accidental churn. The command-surface reference was reduced from a noisy
+      318-line formatter realignment to two intentional description edits.
+- [x] Run production-only and full dependency audits: both report zero known
+      vulnerabilities at the configured audit threshold.
+- [x] Scan added lines for credential-shaped content. The only three matches
+      are deliberate redacted leakage sentinels in council challenge fixtures;
+      no secret value is present in the candidate.
+- [x] Fetch and prune remote metadata. Local `main` and `origin/main` both point
+      to `e6331f61` with 0 ahead / 0 behind and no divergence.
+- [x] Preserve the release boundary: the combined candidate remains
+      uncommitted and unserved; no commit, push, or restart occurred during this
+      read-only audit.
+
+## Self-thread-safe proactive guidance — 2026-07-12
+
+### Implemented
+
+- [x] Suppress configured BlueBubbles owner self-thread control traffic from
+      proactive context-graph insights. Self threads remain resolved for
+      coverage and excluded from identity review, but can no longer compete
+      with real people, groups, goals, or follow-through as a `Messages chat`
+      recommendation.
+- [x] Preserve ordinary group and linked-person insights. This is a narrow
+      guidance-ranking correction, not removal of BlueBubbles history or
+      message-action continuity.
+- [x] Suppress generic labels such as `Messages chat` from proactive thread
+      cards. Named groups remain eligible, while unresolved direct chats are
+      represented once through the bounded identity-review action.
+- [x] Replace passive resolved-thread wording with action-aware guidance.
+      Draft/reply, save-for-later, reminder, link, ignore, waiting, and scheduled
+      states now produce distinct next steps while every send remains
+      approval-gated.
+- [x] Keep any genuine unresolved identity visible as graph repair debt, even
+      when linked/group/self threads form a slim majority. Daily action ranking
+      and structural graph repair now report separate, logically appropriate
+      next steps.
+
+### Validation
+
+- [x] Focused graph/readiness coverage passes 12/12 tests for self-thread
+      suppression, generic-label suppression, named groups, identity review,
+      coverage integrity, and state-specific approval-safe next actions. The
+      production top five no longer contains a generic `Messages chat`; it now
+      contains named context, one bounded identity-review action, an approved
+      follow-through, and concrete next actions. Structural repair now remains
+      visible even when unresolved threads are a minority.
+- [x] The complete combined-candidate gate passes 204 primary test files with
+      2,279 tests, 282/282 AGI tests, both TypeScript checks, production build,
+      formatting, 57-file docs validation, warning-only lint with zero errors,
+      and diff hygiene.
+
+## Read-only diagnostic plane — 2026-07-12
+
+### Implemented
+
+- [x] Make ordinary goal/planner, opportunity, working-memory, metacognition,
+      deliberation, blackboard, capability, reality, perception, agentic,
+      improvement, shadow, and patch-workbench diagnostics observational by
+      default. Inspecting intelligence state can no longer silently create
+      goals, snapshots, traces, evaluations, or improvement generations.
+- [x] Require an explicit `--persist` flag to record a diagnostic generation,
+      with `--dry-run` and legacy `--no-persist` always overriding persistence.
+      One shared policy controls every migrated command.
+- [x] Document the mutation boundary in the user guide, command reference, and
+      release runbook so copied health-check commands remain safe.
+- [x] Move the Knowledge Library debug journey to isolated storage. Its
+      realistic sample notes and imported file can no longer enter personal
+      memory, and the temporary import directory is removed on exit.
+- [x] Make research/image diagnostics zero-cost and non-mutating by default.
+      Provider-backed research, image generation, and proof-marker writes now
+      require the explicit `--live` mode; repair guidance and runbooks name the
+      live boundary instead of triggering it implicitly.
+- [x] Move the shared Telegram/Alexa capability smoke into isolated storage
+      with a process-level external-network deny guard. Provider-backed shared
+      capability execution now requires the same explicit `--live` boundary.
+
+### Validation and boundary
+
+- [x] A real-database before/after audit runs all thirteen ordinary diagnostic
+      surfaces and leaves every affected ledger count unchanged: capability,
+      blackboard, goal, planner, opportunity, working-memory, deliberation,
+      reality, agentic-evaluation, improvement, and patch-workspace tables.
+      Two consecutive improvement reports also remain identical with
+      persistence disabled.
+- [x] The isolated Knowledge Library journey leaves live knowledge sources at
+      4→4 and temporary directories at 0→0. The isolated shared-capability
+      journey handles all six Telegram/Alexa paths with no provider selected
+      and leaves live assistant metrics at 56→56.
+- [x] Focused shared-policy coverage passes 6/6 tests, preserving the existing
+      execution-mode/storage assertions while adding default, explicit-persist,
+      dry-run, legacy no-persist, and explicit-live precedence. The default
+      research command also passes under process-level network denial while
+      reporting no provider calls or proof writes. The complete combined-candidate
+      gate passes 204 primary test files with 2,275 tests,
+      282/282 AGI tests, both TypeScript checks, production build, formatting,
+      57-file docs validation, warning-only lint with zero errors, and diff
+      hygiene.
+- [ ] Existing diagnostic and improvement generations are preserved. Do not
+      delete or rewrite prior records merely because earlier inspections
+      persisted them.
+
+## Evidence-aware integration readiness — 2026-07-12
+
+### Implemented
+
+- [x] Correct AGI-lab integration scoring so configured but stale/unprobed
+      integrations are not classified as fully broken. `healthy`,
+      `near_live_only`, and `degraded_but_usable` states now count as
+      operationally available while their evidence limitations remain explicit
+      and continue to be scored separately by the live-proof gate.
+- [x] Prioritize genuine action-needed integration states before stale proof
+      refreshes. The cockpit now points to authentication, external/manual, or
+      repository repair work before recommending a Telegram/provider proof
+      refresh.
+- [x] Rename the gate to `Integration operability` and report operational,
+      action-needed, and evidence-limited counts so the score describes what it
+      actually measures.
+
+### Validation and boundary
+
+- [x] Focused readiness coverage passes 5/5 tests with typecheck. The complete
+      combined-candidate gate passes 204 primary test files with 2,271 tests,
+      282/282 AGI tests, both TypeScript checks, production build, formatting,
+      57-file docs validation, warning-only lint with zero errors, and diff
+      hygiene.
+- [x] The production report now scores integration operability at 93%: 13/14
+      are operationally available, Alexa is the one action-needed item, and
+      seven stale/unprobed integrations remain explicitly evidence-limited.
+      Overall AGI-lab readiness is 87% and remains on hold; this is a truth-model
+      correction, not fabricated evidence or a capability promotion.
+- [ ] Fresh Telegram and council proof remain approval-gated live actions; this
+      correction must not manufacture or silently refresh either proof.
+
+## Outcome-led intelligence progress — 2026-07-12
+
+### Implemented
+
+- [x] Correct `followthrough learning` so reminders, proposals, and local
+      outcome records prove capability but cannot masquerade as owner-validated
+      learning. The dimension now combines capability evidence with progress
+      toward the existing five-distinct-reviewed-outcome baseline gate.
+- [x] Add reviewed-outcome evidence to both direct intelligence reports and the
+      AGI-lab live composition before evaluation switches to isolated storage.
+      The report exposes a bounded 0..1 evidence ratio without conversation
+      text or feedback bodies.
+- [x] Prioritize the real learning gate over council score polishing. With no
+      saved baseline, the top next improvement requests the exact remaining
+      genuine owner reviews; after five it asks for explicit baseline review,
+      and after saving it returns to the next product/capability gap.
+- [x] Align the AGI-lab promotion path: five real reviewed outcomes precede
+      behavior-learning claims, while live council proof remains separately
+      required for provider-reasoning claims. Synthetic evidence satisfies
+      neither gate.
+
+### Validation and current truth
+
+- [x] Focused intelligence-progress, assistant-metric, and AGI-lab coverage
+      passes 31/31 tests with typecheck. Tests cover zero, partial, ready, and
+      saved-baseline states and prove the top action changes at each boundary.
+- [x] Production intelligence truth is now 86% rather than the misleading 89%:
+      follow-through capability remains present, but followthrough learning is
+      honestly 55% because there are 0/5 genuine reviewed outcomes. The top
+      improvement now asks for five real owner reviews instead of another
+      synthetic or provider-council score run.
+- [x] Complete combined-candidate validation passes 204 primary test files
+      with 2,270 tests, 282/282 AGI tests, both TypeScript checks, production
+      build, formatting, 57-file docs validation, warning-only lint with zero
+      errors, and diff hygiene. The live service was intentionally left on the
+      last committed release while this combined candidate remains uncommitted.
+- [ ] Gather five natural reviewed outcomes through Helpful/Not helpful,
+      Messages tapbacks, or fresh standalone success/failure replies. Do not
+      fabricate them or save an empty baseline.
+
+## Usable communication identity grounding — 2026-07-12
+
+### Implemented
+
+- [x] Replace storage-order identity review with deterministic safe priority:
+      exact existing profile-name matches first, then recognizable labeled
+      conversations, then identifier-shaped unknowns. Stable order is retained
+      within each class and no message body participates in matching.
+- [x] Use current authoritative chat names when the derived communication
+      thread still has a generic title such as `Messages chat`. Identifier-like
+      chat metadata remains redacted, and only an exact unique profile-person
+      match becomes a candidate.
+- [x] Exclude configured BlueBubbles owner self-thread aliases from both the
+      review queue and context-graph identity gaps. Andrea no longer asks the
+      owner to link a private control thread to another person.
+- [x] Correct dismissal UX. `Keep without person link` accurately describes a
+      persistent, reversible dismissed decision; the interface no longer calls
+      that action unresolved. `clear identity review <opaque-key>` still
+      reverses it.
+
+### Validation and current impact
+
+- [x] Focused identity, context-graph, readiness, and intelligence coverage
+      passes 40/40 tests with typecheck. Tests prove exact-match priority, safe
+      current-name recovery, identifier redaction, self-thread exclusion,
+      reversible dismissal, and no identity-gap inflation.
+- [x] A read-only production snapshot reduced genuine pending identity work
+      from seven to five by excluding two configured owner self-threads. No
+      identity was confirmed or dismissed automatically. Context-graph
+      readiness rose from 79% to 81%, text-reply intelligence from 70% to 73%,
+      and overall intelligence progress from 88% to 89%.
+- [x] Complete combined validation passes 204 primary files with 2,269 tests,
+      282/282 AGI tests, both TypeScript checks, production build, formatting,
+      57-file docs validation, warning-only lint with zero errors, and diff
+      hygiene. The first full run caught one stale downstream button-label
+      assertion; it was corrected and the complete gate was rerun green.
+- [ ] The remaining five conversations still require explicit owner link or
+      dismissal decisions. Generic/identifier-shaped threads remain unresolved
+      rather than being guessed from message content or phone numbers.
+
+## Evidence-scoped AGI scorecard — 2026-07-12
+
+### Implemented
+
+- [x] Stop grading route-only synthetic metadata as if it were an executed
+      assistant answer. Capability and Alexa route-contract fixtures now score
+      provider routing only; their deliberately absent answer/fallback bodies
+      no longer depress robustness or task completion.
+- [x] Keep the separate isolated, network-denied executed-capability suite as
+      the proof for grounded response usefulness, brevity, safety, fallback,
+      reflection, and task completion. Route selection and useful execution are
+      both measured, but never double-counted as the same evidence.
+- [x] Mark route-only rows explicitly in the scorecard artifact and add tests
+      proving all five are routing evidence while the matching executed
+      messaging fixture remains task-completion evidence.
+- [x] Replace the nonsensical `Raise reasoning ... 100%` recommendation at
+      deterministic saturation with an honest instruction to gather genuine
+      reviewed outcomes and fresh live evidence instead of adding score-only
+      fixtures.
+
+### Validation and boundary
+
+- [x] Focused AGI scorecard tests and AGI typecheck pass. The corrected
+      deterministic scorecard is 100% across its bounded offline suites at zero
+      cost, with no merge-blocking regression. This is measurement saturation,
+      not a claim of AGI or live product success.
+- [x] Complete combined-tree validation remains green: 204 primary files and
+      2,265 tests, 282/282 AGI tests, both TypeScript checks, production build,
+      formatting, 57-file docs validation, warning-only lint with zero errors,
+      and diff hygiene. The preceding council/readiness tree passed the 90/90
+      deterministic sweep; the only subsequent code change is this scorecard
+      evidence classification, covered by the AGI suite and a fresh zero-cost
+      scorecard artifact.
+- [ ] Preserve the five-reviewed-outcome baseline gate and fresh live-provider
+      proof requirement. Neither may be satisfied by the deterministic 100%.
+
+## Executable council source-pattern evidence — 2026-07-12
+
+### Implemented and validated
+
+- [x] Correct an impossible council task-ease denominator. The doctor no longer
+      tries to verify Agent OS, memory, session-graph, harness, and cognitive
+      workspace fixtures by searching council run IDs; council coverage now
+      includes only implemented patterns explicitly scoped to the executable
+      council challenge ladder.
+- [x] Exclude reference-only research ideas from implementation/promotion
+      evidence. They remain documented source inspiration but cannot receive a
+      verified implementation badge.
+- [x] Add the three missing council scenarios for local-first evidence and
+      citation contracts, plain-English metric quality gates, and cited source
+      conflict handling. A regression test proves every implemented
+      council-scoped pattern maps to a runnable scenario.
+- [x] Make repair guidance select the smallest tier that contains the next
+      unverified pattern instead of repeatedly recommending the already-run
+      medium tier. The council doctor now composes that deterministic repair
+      with the separate live-provider proof action.
+- [x] Focused council challenge, task-ease, quality, and AGI readiness coverage
+      passes 32/32 tests with typecheck. The full offline challenge ladder now
+      records 8/8 executable source patterns and 7/7 quality gates. Small passes
+      without degradation; medium, large, and XL have zero critical failures
+      and remain honestly degraded while provider-health observations are
+      expired/unknown. Synthetic results do not change the two-run live quality
+      ledger, which remains 0.94.
+- [x] Complete combined-candidate validation passes 204 primary test files with
+      2,265 tests, AGI typecheck and 282/282 AGI tests, production build,
+      formatting, typecheck, warning-only lint with zero errors, 57-file docs
+      validation, both zero-vulnerability dependency audits, shell syntax, and
+      diff hygiene. All 90 deterministic commands pass in 252.7 seconds,
+      including the 165.8-second stability/network-denial gate. The offline,
+      zero-cost scorecard remains 99.1% A+ with no merge-blocking regression.
+
+### Remaining evidence boundary
+
+- [ ] Refresh provider-health evidence and run one budgeted live `ultrathink`
+      proof before claiming current provider quality. Do not promote synthetic
+      challenge output into live evidence.
+
+## Authoritative macOS restart readiness — 2026-07-12
+
+### Implemented and validated
+
+- [x] Make macOS service `install`, `start`, and `restart` wait for a bounded,
+      authoritative readiness contract before reporting success. A successful
+      command now requires a new boot ID, matching ready/health/PID state, a
+      live process, the expected serving and build commit, verified build
+      provenance, and a verified build artifact.
+- [x] Fail closed after the default 120-second window and emit only bounded
+      metadata diagnostics plus existing log paths. The timeout is configurable
+      for slower hosts without allowing an unbounded release wait.
+- [x] Preserve local candidate workflows by separating artifact provenance from
+      release-tree cleanliness. Restart readiness verifies that the running
+      build belongs to the current HEAD; the release gate remains responsible
+      for requiring an intentional clean commit.
+- [x] Add focused coverage for valid new boots, stale markers, mismatched
+      runtime/build identity, delayed readiness, bounded timeout, and shell
+      wiring. The focused set passes 17/17 tests.
+- [x] Remove a date-sensitive apprenticeship assertion discovered by the full
+      suite. Both compared packets now use fixed timestamps, so owner-review
+      candidate ordering cannot change as the wall clock crosses the fixture.
+- [x] Complete regression validation passes 204 primary test files with 2,263
+      tests, AGI typecheck, 282/282 AGI tests, and all 90 offline deterministic
+      commands (including the 180.6-second three-round stability and
+      network-denial gate) in 275.1 seconds. Production build, formatting,
+      typecheck, documentation validation, both zero-vulnerability dependency
+      audits, shell syntax, and diff hygiene pass. Lint remains at the existing
+      warning-only baseline with zero errors; this increment adds no warning.
+
+### Delivery boundary
+
+- [ ] Commit, push, rebuild, and exercise the new restart waiter against the
+      live launchd service only with explicit release authorization. Until
+      then this remains an uncommitted, unserved candidate; the currently
+      running service remains on the last released commit.
+
 ## Release-truth documentation audit — 2026-07-12
 
 ### Implemented and validated

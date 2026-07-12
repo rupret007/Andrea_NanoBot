@@ -3,19 +3,22 @@ import {
   buildRealityGroundingReport,
   formatActivePerceptionReport,
 } from '../src/reality-grounding.js';
+import { resolveDebugExecutionPolicy } from '../src/debug-execution-policy.js';
 
 initDatabase();
 
 const args = process.argv.slice(2);
 const json = args.includes('--json');
-const noPersist = args.includes('--no-persist');
+const { persist } = resolveDebugExecutionPolicy(args);
 const requestIndex = args.indexOf('--request');
 const requestText =
-  requestIndex >= 0 ? args[requestIndex + 1] || null : 'operator perception check';
+  requestIndex >= 0
+    ? args[requestIndex + 1] || null
+    : 'operator perception check';
 const report = buildRealityGroundingReport({
   requestText,
   channel: 'operator',
-  persist: !noPersist,
+  persist,
 });
 
 console.log(

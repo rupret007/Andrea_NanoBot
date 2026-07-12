@@ -637,7 +637,9 @@ For operator-side conversation tuning, use:
 - `npm run debug:alexa-conversation` for a repo-side multi-turn Alexa walkthrough that does not advance live proof
 - `npm run debug:alexa-conversation -- --review` for grouped utterance misses, including no-context references, follow-up binding failures, should-have-routed communication/planning asks, weak clarifiers, and carrier-phrase gaps from recent Alexa pilot events
 - `npm run debug:daily-companion` for grounded local comparison against real `groupFolder=main` data
-- `npm run debug:shared-capabilities` for a shared Telegram/Alexa capability and research smoke pass
+- `npm run debug:shared-capabilities` for an isolated, network-denied shared
+  Telegram/Alexa capability smoke; add `-- --live` only for intentional
+  provider-backed research
 - `npm run debug:pilot` for the higher-level proof surface plus the Alexa utterance-review summary
 
 ## 6) Daily Guidance And Household Context
@@ -717,13 +719,13 @@ When the environment is configured, use this order:
    - preferred phrase: `Alexa, open Andrea Assistant skill`
    - then ask one thread-aware follow-up such as `What's still open with Candace?`
    - confirm `npm run services:status` shows `alexa_last_signed_request_type=IntentRequest`
-7. test one unlinked-safe request
-8. test one linked personal request
-9. test one linked follow-up such as `anything else`
-10. test one household-aware follow-up such as `what about Candace`
-11. test one action handoff such as `remind me before that`
-12. optionally test one preference or explainability turn
-13. optionally test one cross-channel follow-up such as `send me the details`
+8. test one unlinked-safe request
+9. test one linked personal request
+10. test one linked follow-up such as `anything else`
+11. test one household-aware follow-up such as `what about Candace`
+12. test one action handoff such as `remind me before that`
+13. optionally test one preference or explainability turn
+14. optionally test one cross-channel follow-up such as `send me the details`
 
 If you need one sentence for the current state, use this:
 

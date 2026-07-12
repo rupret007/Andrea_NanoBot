@@ -586,7 +586,7 @@ export function buildIntegrationDoctorReport(
           ? 'status_only'
           : 'guided_manual',
       safeActions: [
-        'Run npm run debug:research-mode and npm run debug:providers.',
+        'Run npm run debug:providers, then use npm run debug:research-mode -- --live only for an intentional provider-backed proof.',
       ],
     }),
     surfaceStatus({

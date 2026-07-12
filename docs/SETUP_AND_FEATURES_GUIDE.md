@@ -281,8 +281,10 @@ Helpful operator smoke paths:
 - `npm run debug:daily-companion`
 - `npm run debug:chief-of-staff`
 - `npm run debug:alexa-conversation`
-- `npm run debug:shared-capabilities`
-- `npm run debug:research-mode`
+- `npm run debug:shared-capabilities` for the isolated, network-denied shared
+  capability smoke; add `-- --live` only for intentional provider-backed use
+- `npm run debug:research-mode` for zero-cost status; add `-- --live` only for
+  an intentional provider-backed research and image proof
 - `npm run debug:agi-lab`
 - `npm run debug:knowledge-library`
 - `npm run debug:rituals`
