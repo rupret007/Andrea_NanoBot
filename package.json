@@ -16,6 +16,7 @@
     "prelint": "npm run check:node",
     "pretest": "npm run check:node",
     "build": "node scripts/run-with-pinned-node.mjs ./node_modules/typescript/bin/tsc",
+    "postbuild": "node scripts/run-with-pinned-node.mjs dist/build-provenance.js --write",
     "start": "node scripts/run-with-pinned-node.mjs dist/index.js",
     "dev": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs src/index.ts",
     "typecheck": "node scripts/run-with-pinned-node.mjs ./node_modules/typescript/bin/tsc --noEmit",

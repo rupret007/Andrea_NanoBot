@@ -1549,6 +1549,74 @@ describe('assistant capabilities', () => {
     expect(alexa.handoffPayload?.kind).toBe('message');
   });
 
+  it('shows retained web citations as visible URLs on text channels', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.OPENAI_BASE_URL = 'https://example.test/v1';
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');
+    const outputText = [
+      'Summary: The cited comparison favors the simpler delivery window.',
+      'Findings:',
+      '- The delivery window is easier to manage.',
+      'Recommendation: Verify the current price before choosing.',
+      'Follow-ups:',
+      '- Want the short version?',
+    ].join('\n');
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: outputText,
+                    annotations: [
+                      {
+                        type: 'url_citation',
+                        start_index: 0,
+                        end_index: 18,
+                        url: 'https://example.test/cited-comparison',
+                        title: 'Cited comparison',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as typeof fetch;
+
+    const telegram = await executeAssistantCapability({
+      capabilityId: 'research.compare',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:8004355504',
+      },
+      input: { canonicalText: 'Compare meal delivery options this week' },
+    });
+    const bluebubbles = await executeAssistantCapability({
+      capabilityId: 'research.compare',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      },
+      input: { canonicalText: 'Compare meal delivery options this week' },
+    });
+
+    expect(telegram.replyText).toContain(
+      'https://example.test/cited-comparison',
+    );
+    expect(bluebubbles.replyText).toContain(
+      'https://example.test/cited-comparison',
+    );
+  });
+
   it('labels MiniMax-backed research with a MiniMax trace source', async () => {
     vi.stubEnv('OPENAI_API_KEY', ' ');
     vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');

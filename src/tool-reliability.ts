@@ -47,6 +47,7 @@ const PRIVACY = {
 } as const;
 
 const CURRENT_TRUTH_HEARTBEAT_MS = 6 * 60 * 60 * 1000;
+const VERIFIED_USAGE_FRESHNESS_MS = 6 * 60 * 60 * 1000;
 
 function nowIso(now = new Date()): string {
   return now.toISOString();
@@ -444,6 +445,62 @@ function upsertCurrentTruthObservation(
   return true;
 }
 
+function isFreshVerifiedUsage(
+  record: ReliabilityObservation | undefined,
+  asOf: string,
+): boolean {
+  if (!record || record.sourceKind !== 'verified_usage') return false;
+  const ageMs = Date.parse(asOf) - Date.parse(record.observedAt);
+  return (
+    Number.isFinite(ageMs) && ageMs >= 0 && ageMs < VERIFIED_USAGE_FRESHNESS_MS
+  );
+}
+
+export function recordVerifiedUsageReliability(params: {
+  subjectIds: string[];
+  observedAt?: string;
+  outcome: Exclude<ReliabilityObservation['outcome'], 'unknown'>;
+  failureClass?: string;
+  fallbackUsed?: boolean;
+  summary: string;
+  nextAction?: string;
+  evidenceRef: string;
+}): ReliabilityObservation[] {
+  if (!isDatabaseInitialized()) return [];
+  seedToolReliabilityRegistry();
+  const observedAt = params.observedAt || nowIso();
+  const knownSubjectIds = new Set(
+    listToolReliabilitySubjects({ limit: 500 }).map((item) => item.subjectId),
+  );
+  const records = [...new Set(params.subjectIds)]
+    .filter((subjectId) => knownSubjectIds.has(subjectId))
+    .map((subjectId) =>
+      observation({
+        subjectId,
+        observedAt,
+        sourceKind: 'verified_usage',
+        outcome: params.outcome,
+        failureClass:
+          params.failureClass ||
+          (params.outcome === 'success' ? 'none' : params.outcome),
+        fallbackUsed: params.fallbackUsed,
+        summary: params.summary,
+        nextAction: params.nextAction,
+        evidenceIds: [
+          hashId('usage', `${params.evidenceRef}|${subjectId}|${observedAt}`),
+        ],
+      }),
+    );
+  for (const record of records) upsertReliabilityObservation(record);
+  if (records.length > 0) {
+    const parsedAt = new Date(observedAt);
+    rebuildToolReliabilityRollups(
+      Number.isFinite(parsedAt.getTime()) ? parsedAt : new Date(),
+    );
+  }
+  return records;
+}
+
 export function resolveToolReliabilityRefreshIntervalMs(
   providerHealthIntervalMinutes: number,
 ): number {
@@ -512,15 +569,20 @@ function buildRollup(
   const blockedRate = count(['blocked', 'failed']) / denom;
   const fallbackRate = count(['fallback']) / denom;
   const latest = sample[0];
+  const verifiedUsageExpired =
+    latest?.sourceKind === 'verified_usage' &&
+    !isFreshVerifiedUsage(latest, updatedAt);
   const currentHealth: ToolReliabilityRollup['currentHealth'] = !latest
     ? 'unknown'
-    : latest.outcome === 'success'
-      ? 'healthy'
-      : latest.outcome === 'degraded' || latest.outcome === 'fallback'
-        ? 'degraded'
-        : latest.outcome === 'blocked' || latest.outcome === 'failed'
-          ? 'blocked'
-          : 'unknown';
+    : verifiedUsageExpired
+      ? 'unknown'
+      : latest.outcome === 'success'
+        ? 'healthy'
+        : latest.outcome === 'degraded' || latest.outcome === 'fallback'
+          ? 'degraded'
+          : latest.outcome === 'blocked' || latest.outcome === 'failed'
+            ? 'blocked'
+            : 'unknown';
   const reliabilityScore = clamp(
     successRate + degradedRate * 0.45 - blockedRate * 0.55,
   );
@@ -544,12 +606,14 @@ function buildRollup(
     currentHealth,
     confidenceCap,
     cooldownUntil: null,
-    nextAction: latest
-      ? latest.nextAction ||
-        (currentHealth === 'healthy'
-          ? ''
-          : 'Collect one fresh status observation.')
-      : 'Collect one fresh status observation.',
+    nextAction: verifiedUsageExpired
+      ? 'Collect one fresh verified usage observation.'
+      : latest
+        ? latest.nextAction ||
+          (currentHealth === 'healthy'
+            ? ''
+            : 'Collect one fresh status observation.')
+        : 'Collect one fresh status observation.',
     privacyJson: privacyJson(),
   };
 }
@@ -636,21 +700,26 @@ export async function refreshToolReliabilityFromCurrentTruth(
     params.integrationReport ||
     buildIntegrationDoctorReport({ now: params.now });
   for (const provider of providers) {
-    upsertCurrentTruthObservation(
-      observation({
-        subjectId: `provider:${provider.providerId}`,
-        observedAt,
-        sourceKind: 'provider_health',
-        outcome: providerOutcome(provider),
-        failureClass: provider.failureClass,
-        summary:
-          provider.state === 'healthy'
-            ? `${provider.providerId} provider is currently healthy.`
-            : `${provider.providerId} provider is ${provider.state}: ${provider.failureClass}.`,
-        nextAction: provider.nextAction,
-        evidenceIds: [`provider:${provider.providerId}:${observedAt}`],
-      }),
-    );
+    const subjectId = `provider:${provider.providerId}`;
+    const outcome = providerOutcome(provider);
+    const latest = listReliabilityObservations({ subjectId, limit: 1 })[0];
+    if (!(outcome === 'unknown' && isFreshVerifiedUsage(latest, observedAt))) {
+      upsertCurrentTruthObservation(
+        observation({
+          subjectId,
+          observedAt,
+          sourceKind: 'provider_health',
+          outcome,
+          failureClass: provider.failureClass,
+          summary:
+            provider.state === 'healthy'
+              ? `${provider.providerId} provider is currently healthy.`
+              : `${provider.providerId} provider is ${provider.state}: ${provider.failureClass}.`,
+          nextAction: provider.nextAction,
+          evidenceIds: [`provider:${provider.providerId}:${observedAt}`],
+        }),
+      );
+    }
   }
   for (const status of integrationReport.statuses) {
     upsertCurrentTruthObservation(
@@ -819,7 +888,25 @@ export function scoreRouteCandidate(params: {
   })[0];
   let cap = routeRollup?.recommendedConfidenceCap ?? 0.95;
   const reasons: string[] = [];
+  const directResearchRollup =
+    subjectId === 'route:cognitive_executive.research'
+      ? rollups.get(subjectId)
+      : undefined;
+  const useVerifiedResearchRoute =
+    directResearchRollup?.sampleCount &&
+    directResearchRollup.currentHealth === 'healthy';
+  if (directResearchRollup?.sampleCount) {
+    cap = Math.min(cap, directResearchRollup.confidenceCap);
+    if (directResearchRollup.currentHealth !== 'healthy') {
+      reasons.push(
+        `${subjectId} is ${directResearchRollup.currentHealth}: ${directResearchRollup.nextAction}`,
+      );
+    }
+  }
   for (const dep of links) {
+    if (useVerifiedResearchRoute && dep.dependencyKind === 'provider') {
+      continue;
+    }
     const rollup = rollups.get(dep.dependencySubjectId);
     if (!rollup) continue;
     cap = Math.min(cap, rollup.confidenceCap);
@@ -919,6 +1006,7 @@ function effectiveDoctorRollupHealth(
       );
     case 'tool:research':
     case 'route:cognitive_executive.research':
+      if (rollup.currentHealth !== 'unknown') return rollup.currentHealth;
       return (
         dependencyRollupHealth('provider:brave_search', rollups) ??
         rollup.currentHealth

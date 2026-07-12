@@ -172,6 +172,7 @@ import {
   writeAssistantHealthState,
   writeAssistantReadyState,
 } from './host-control.js';
+import { assessBuildProvenance } from './build-provenance.js';
 import {
   emitAndreaPlatformDiagnosis,
   emitAndreaPlatformProofEvent,
@@ -942,6 +943,10 @@ const ACTIVE_ENV_PATH = path.resolve(ACTIVE_REPO_ROOT, '.env');
 const ACTIVE_STORE_DB_PATH = path.join(STORE_DIR, 'messages.db');
 const ACTIVE_GIT_BRANCH = readGitRef(['rev-parse', '--abbrev-ref', 'HEAD']);
 const ACTIVE_GIT_COMMIT = readGitRef(['rev-parse', 'HEAD']);
+const ACTIVE_BUILD_PROVENANCE = assessBuildProvenance({
+  projectRoot: ACTIVE_REPO_ROOT,
+  expectedGitCommit: ACTIVE_GIT_COMMIT,
+});
 
 function readGitRef(args: string[]): string {
   try {
@@ -1121,6 +1126,12 @@ function writeCurrentRuntimeAuditState(warningOverride?: string | null): void {
       activeRepoRoot: ACTIVE_REPO_ROOT,
       activeGitBranch: ACTIVE_GIT_BRANCH,
       activeGitCommit: ACTIVE_GIT_COMMIT,
+      activeBuildProvenanceState: ACTIVE_BUILD_PROVENANCE.state,
+      activeBuildGitCommit: ACTIVE_BUILD_PROVENANCE.manifest?.gitCommit || null,
+      activeBuildGitDirtyPathCount:
+        ACTIVE_BUILD_PROVENANCE.manifest?.gitDirtyPathCount ?? null,
+      activeBuildArtifactVerified: ACTIVE_BUILD_PROVENANCE.artifactVerified,
+      activeBuildAt: ACTIVE_BUILD_PROVENANCE.manifest?.builtAt || null,
       activeEntryPath: ACTIVE_ENTRY_PATH,
       activeEnvPath: ACTIVE_ENV_PATH,
       activeStoreDbPath: ACTIVE_STORE_DB_PATH,

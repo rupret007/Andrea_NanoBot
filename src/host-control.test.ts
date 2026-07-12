@@ -404,6 +404,31 @@ describe('host control state', () => {
     expect(truth.workspaceGitCommit).toBe(workspaceGitCommit);
     expect(truth.workspaceMatchesActiveRepoRoot).toBe(true);
     expect(truth.servingCommitMatchesWorkspaceHead).toBe(false);
+
+    writeRuntimeAuditState({
+      ...readRuntimeAuditState()!,
+      activeGitCommit: workspaceGitCommit,
+      activeBuildProvenanceState: 'verified',
+      activeBuildGitCommit: workspaceGitCommit,
+      activeBuildGitDirtyPathCount: 0,
+      activeBuildArtifactVerified: true,
+      activeBuildAt: '2026-04-04T19:59:00.000Z',
+    });
+    expect(
+      buildRuntimeCommitTruth({ projectRoot: tempDir })
+        .servingCommitMatchesWorkspaceHead,
+    ).toBe(true);
+
+    writeRuntimeAuditState({
+      ...readRuntimeAuditState()!,
+      activeBuildProvenanceState: 'dirty_source',
+      activeBuildGitDirtyPathCount: 1,
+    });
+    const dirtyBuildTruth = buildRuntimeCommitTruth({
+      projectRoot: tempDir,
+    });
+    expect(dirtyBuildTruth.servingCommitMatchesWorkspaceHead).toBe(false);
+    expect(dirtyBuildTruth.activeBuildProvenanceState).toBe('dirty_source');
   });
 });
 

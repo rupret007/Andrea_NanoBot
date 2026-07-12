@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 
 import { writeJsonFileAtomic } from './atomic-json-file.js';
+import type { BuildProvenanceState } from './build-provenance.js';
+import { parseGitDirtyPaths } from './git-status-paths.js';
 import { computeNextTelegramRoundtripDueAt } from './ping-presence.js';
 import {
   ANDREA_STARTUP_TASK_NAME,
@@ -154,6 +156,11 @@ export interface RuntimeAuditState {
   activeRepoRoot: string;
   activeGitBranch: string;
   activeGitCommit: string;
+  activeBuildProvenanceState?: BuildProvenanceState | 'unknown';
+  activeBuildGitCommit?: string | null;
+  activeBuildGitDirtyPathCount?: number | null;
+  activeBuildArtifactVerified?: boolean | null;
+  activeBuildAt?: string | null;
   activeEntryPath: string;
   activeEnvPath: string;
   activeStoreDbPath: string;
@@ -211,9 +218,15 @@ export interface RuntimeCommitTruth {
   activeRepoRoot: string;
   activeGitBranch: string;
   activeGitCommit: string;
+  activeBuildProvenanceState: BuildProvenanceState | 'unknown';
+  activeBuildGitCommit: string | null;
+  activeBuildGitDirtyPathCount: number | null;
+  activeBuildArtifactVerified: boolean | null;
+  activeBuildAt: string | null;
   workspaceRepoRoot: string;
   workspaceGitBranch: string;
   workspaceGitCommit: string;
+  workspaceGitDirtyPathCount: number | null;
   workspaceMatchesActiveRepoRoot: boolean;
   servingCommitMatchesWorkspaceHead: boolean;
 }
@@ -738,6 +751,21 @@ function normalizeRuntimeAuditState(value: unknown): RuntimeAuditState | null {
     input.assistantNameSource === 'default'
       ? input.assistantNameSource
       : null;
+  const activeBuildProvenanceState: RuntimeAuditState['activeBuildProvenanceState'] =
+    input.activeBuildProvenanceState === 'verified' ||
+    input.activeBuildProvenanceState === 'missing' ||
+    input.activeBuildProvenanceState === 'invalid' ||
+    input.activeBuildProvenanceState === 'dirty_source' ||
+    input.activeBuildProvenanceState === 'commit_mismatch' ||
+    input.activeBuildProvenanceState === 'artifact_mismatch'
+      ? input.activeBuildProvenanceState
+      : 'unknown';
+  const activeBuildGitDirtyPathCount =
+    typeof input.activeBuildGitDirtyPathCount === 'number' &&
+    Number.isInteger(input.activeBuildGitDirtyPathCount) &&
+    input.activeBuildGitDirtyPathCount >= 0
+      ? input.activeBuildGitDirtyPathCount
+      : null;
   if (
     !isNonEmptyString(input.updatedAt) ||
     !isNonEmptyString(input.activeRepoRoot) ||
@@ -759,6 +787,20 @@ function normalizeRuntimeAuditState(value: unknown): RuntimeAuditState | null {
     activeRepoRoot: input.activeRepoRoot,
     activeGitBranch: input.activeGitBranch,
     activeGitCommit: input.activeGitCommit,
+    activeBuildProvenanceState,
+    activeBuildGitCommit: isNonEmptyString(input.activeBuildGitCommit)
+      ? input.activeBuildGitCommit
+      : null,
+    activeBuildGitDirtyPathCount,
+    activeBuildArtifactVerified:
+      typeof input.activeBuildArtifactVerified === 'boolean'
+        ? input.activeBuildArtifactVerified
+        : null,
+    activeBuildAt:
+      isNonEmptyString(input.activeBuildAt) &&
+      Number.isFinite(Date.parse(input.activeBuildAt))
+        ? input.activeBuildAt
+        : null,
     activeEntryPath: input.activeEntryPath,
     activeEnvPath: input.activeEnvPath,
     activeStoreDbPath: input.activeStoreDbPath,
@@ -1231,6 +1273,28 @@ function readGitRef(projectRoot: string, args: string[]): string {
   }
 }
 
+function readGitDirtyPathCount(projectRoot: string): number | null {
+  try {
+    const output = execFileSync(
+      'git',
+      [
+        '-C',
+        resolveProjectRoot(projectRoot),
+        'status',
+        '--porcelain',
+        '--untracked-files=all',
+      ],
+      {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    );
+    return output.trim() ? parseGitDirtyPaths(output).length : 0;
+  } catch {
+    return null;
+  }
+}
+
 function normalizePathForComparison(input: string): string {
   const normalized = path.resolve(input);
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
@@ -1246,6 +1310,14 @@ export function buildRuntimeCommitTruth(options?: {
   const activeRepoRoot = runtimeAuditState?.activeRepoRoot || workspaceRepoRoot;
   const activeGitBranch = runtimeAuditState?.activeGitBranch || 'unknown';
   const activeGitCommit = runtimeAuditState?.activeGitCommit || 'unknown';
+  const activeBuildProvenanceState =
+    runtimeAuditState?.activeBuildProvenanceState || 'unknown';
+  const activeBuildGitCommit = runtimeAuditState?.activeBuildGitCommit || null;
+  const activeBuildGitDirtyPathCount =
+    runtimeAuditState?.activeBuildGitDirtyPathCount ?? null;
+  const activeBuildArtifactVerified =
+    runtimeAuditState?.activeBuildArtifactVerified ?? null;
+  const activeBuildAt = runtimeAuditState?.activeBuildAt || null;
   const workspaceGitBranch = readGitRef(workspaceRepoRoot, [
     'rev-parse',
     '--abbrev-ref',
@@ -1255,6 +1327,7 @@ export function buildRuntimeCommitTruth(options?: {
     'rev-parse',
     'HEAD',
   ]);
+  const workspaceGitDirtyPathCount = readGitDirtyPathCount(workspaceRepoRoot);
   const workspaceMatchesActiveRepoRoot =
     normalizePathForComparison(activeRepoRoot) ===
     normalizePathForComparison(workspaceRepoRoot);
@@ -1262,15 +1335,25 @@ export function buildRuntimeCommitTruth(options?: {
     workspaceMatchesActiveRepoRoot &&
     activeGitCommit !== 'unknown' &&
     workspaceGitCommit !== 'unknown' &&
-    activeGitCommit === workspaceGitCommit;
+    activeGitCommit === workspaceGitCommit &&
+    activeBuildProvenanceState === 'verified' &&
+    activeBuildGitCommit === activeGitCommit &&
+    activeBuildGitDirtyPathCount === 0 &&
+    activeBuildArtifactVerified === true;
 
   return {
     activeRepoRoot,
     activeGitBranch,
     activeGitCommit,
+    activeBuildProvenanceState,
+    activeBuildGitCommit,
+    activeBuildGitDirtyPathCount,
+    activeBuildArtifactVerified,
+    activeBuildAt,
     workspaceRepoRoot,
     workspaceGitBranch,
     workspaceGitCommit,
+    workspaceGitDirtyPathCount,
     workspaceMatchesActiveRepoRoot,
     servingCommitMatchesWorkspaceHead,
   };

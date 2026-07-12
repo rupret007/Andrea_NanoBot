@@ -3,6 +3,8 @@ import type {
   OpenAiModelTier,
   OpenAiProviderMode,
 } from './openai-model-routing.js';
+import { logger } from './logger.js';
+import { recordVerifiedUsageReliability } from './tool-reliability.js';
 
 export const OPENAI_USAGE_STATE_KEY = 'openai_usage_last';
 
@@ -26,6 +28,38 @@ export function recordOpenAiUsageState(state: OpenAiUsageState): void {
   } catch {
     // Some focused tests exercise routing helpers without the shared DB bootstrapped.
     // Usage-state observability should never break the user-facing path.
+  }
+  try {
+    recordVerifiedUsageReliability({
+      subjectIds: ['provider:openai_cloud'],
+      observedAt: state.at,
+      outcome: state.outcome,
+      failureClass:
+        state.outcome === 'success'
+          ? 'none'
+          : state.outcome === 'blocked'
+            ? 'provider_blocked'
+            : 'provider_request_failed',
+      summary:
+        state.outcome === 'success'
+          ? `OpenAI completed a verified ${state.surface} request.`
+          : `OpenAI ${state.surface} request ${state.outcome}.`,
+      nextAction:
+        state.outcome === 'success'
+          ? ''
+          : 'Use a healthy fallback and retry only after provider status changes.',
+      evidenceRef: `openai_usage:${state.surface}`,
+    });
+  } catch (err) {
+    logger.warn(
+      {
+        component: 'tool_reliability',
+        surface: state.surface,
+        outcome: state.outcome,
+        errorClass: err instanceof Error ? err.name : typeof err,
+      },
+      'OpenAI usage completed, but reliability evidence could not be recorded.',
+    );
   }
 }
 

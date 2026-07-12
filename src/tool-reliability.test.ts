@@ -9,8 +9,11 @@ import {
 } from './db.js';
 import type { IntegrationDoctorReport } from './integration-doctor.js';
 import {
+  rebuildToolReliabilityRollups,
+  recordVerifiedUsageReliability,
   refreshToolReliabilityFromCurrentTruth,
   resolveToolReliabilityRefreshIntervalMs,
+  scoreRouteCandidate,
 } from './tool-reliability.js';
 import type { ReliabilityObservation } from './types.js';
 
@@ -178,5 +181,149 @@ describe('tool reliability truth refresh', () => {
     expect(resolveToolReliabilityRefreshIntervalMs(Number.NaN)).toBe(
       30 * 60_000,
     );
+  });
+
+  it('preserves fresh verified provider use across configuration-only refreshes and expires it conservatively', async () => {
+    const usedAt = new Date('2026-07-12T09:30:00.000Z');
+    recordVerifiedUsageReliability({
+      subjectIds: ['provider:openai_cloud'],
+      observedAt: usedAt.toISOString(),
+      outcome: 'success',
+      summary: 'OpenAI completed a verified research request.',
+      evidenceRef: 'openai_usage:research',
+    });
+    const unknownProvider = {
+      providerId: 'openai_cloud',
+      kind: 'llm' as const,
+      state: 'unknown' as const,
+      lastHealthyAt: null,
+      lastCheckedAt: usedAt.toISOString(),
+      failureClass: 'none' as const,
+      quotaState: 'unknown' as const,
+      credentialState: 'configured' as const,
+      knownExpiresAt: null,
+      rotationDueAt: null,
+      blocker: '',
+      nextAction: '',
+      metadata: { healthEvidence: 'configuration_only' },
+    };
+
+    const fiveMinutesLater = new Date(usedAt.getTime() + 5 * 60_000);
+    await refreshToolReliabilityFromCurrentTruth({
+      now: fiveMinutesLater,
+      providers: [unknownProvider],
+      integrationReport: healthyIntegrationReport(
+        fiveMinutesLater.toISOString(),
+      ),
+    });
+    expect(
+      listReliabilityObservations({
+        subjectId: 'provider:openai_cloud',
+        limit: 1,
+      })[0],
+    ).toMatchObject({ sourceKind: 'verified_usage', outcome: 'success' });
+    expect(
+      listToolReliabilityRollups({ limit: 100 }).find(
+        (rollup) => rollup.subjectId === 'provider:openai_cloud',
+      ),
+    ).toMatchObject({ currentHealth: 'healthy', confidenceCap: 0.95 });
+
+    const sevenHoursLater = new Date(usedAt.getTime() + 7 * 60 * 60_000);
+    await refreshToolReliabilityFromCurrentTruth({
+      now: sevenHoursLater,
+      providers: [unknownProvider],
+      integrationReport: healthyIntegrationReport(
+        sevenHoursLater.toISOString(),
+      ),
+    });
+    expect(
+      listToolReliabilityRollups({ limit: 100 }).find(
+        (rollup) => rollup.subjectId === 'provider:openai_cloud',
+      ),
+    ).toMatchObject({ currentHealth: 'unknown', confidenceCap: 0.5 });
+  });
+
+  it('lets fresh cited research evidence prove the route without pretending it lasts forever', () => {
+    const usedAt = new Date('2026-07-12T09:30:00.000Z');
+    upsertReliabilityObservation(
+      reliabilityObservation({
+        observationId: 'brave-blocked',
+        subjectId: 'provider:brave_search',
+        observedAt: new Date(usedAt.getTime() - 60_000).toISOString(),
+        outcome: 'blocked',
+        failureClass: 'quota_or_rate_limit',
+      }),
+    );
+    recordVerifiedUsageReliability({
+      subjectIds: ['tool:research', 'route:cognitive_executive.research'],
+      observedAt: usedAt.toISOString(),
+      outcome: 'success',
+      summary: 'Research completed with reviewable source provenance.',
+      evidenceRef: 'research_result:openai_responses',
+    });
+
+    expect(
+      scoreRouteCandidate({
+        routeKey: 'cognitive_executive.research',
+        baseConfidence: 0.9,
+      }),
+    ).toMatchObject({ confidence: 0.9, cap: 0.95 });
+
+    rebuildToolReliabilityRollups(new Date(usedAt.getTime() + 7 * 60 * 60_000));
+    const expired = scoreRouteCandidate({
+      routeKey: 'cognitive_executive.research',
+      baseConfidence: 0.9,
+    });
+    expect(expired.cap).toBeLessThanOrEqual(0.22);
+    expect(expired.reasons.join(' ')).toContain('provider:brave_search');
+  });
+
+  it('lets an explicit current provider failure supersede recent success immediately', async () => {
+    const usedAt = new Date('2026-07-12T09:30:00.000Z');
+    recordVerifiedUsageReliability({
+      subjectIds: ['provider:openai_cloud'],
+      observedAt: usedAt.toISOString(),
+      outcome: 'success',
+      summary: 'OpenAI completed a verified research request.',
+      evidenceRef: 'openai_usage:research',
+    });
+    const blockedAt = new Date(usedAt.getTime() + 60_000);
+    await refreshToolReliabilityFromCurrentTruth({
+      now: blockedAt,
+      providers: [
+        {
+          providerId: 'openai_cloud',
+          kind: 'llm',
+          state: 'externally_blocked',
+          lastHealthyAt: usedAt.toISOString(),
+          lastCheckedAt: blockedAt.toISOString(),
+          failureClass: 'quota_or_rate_limit',
+          quotaState: 'blocked',
+          credentialState: 'configured',
+          knownExpiresAt: null,
+          rotationDueAt: null,
+          blocker: 'Provider quota is blocked.',
+          nextAction: 'Wait for provider quota recovery.',
+          metadata: {},
+        },
+      ],
+      integrationReport: healthyIntegrationReport(blockedAt.toISOString()),
+    });
+
+    expect(
+      listReliabilityObservations({
+        subjectId: 'provider:openai_cloud',
+        limit: 1,
+      })[0],
+    ).toMatchObject({
+      sourceKind: 'provider_health',
+      outcome: 'blocked',
+      failureClass: 'quota_or_rate_limit',
+    });
+    expect(
+      listToolReliabilityRollups({ limit: 100 }).find(
+        (rollup) => rollup.subjectId === 'provider:openai_cloud',
+      ),
+    ).toMatchObject({ currentHealth: 'blocked', confidenceCap: 0.22 });
   });
 });

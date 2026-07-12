@@ -1377,8 +1377,9 @@ function formatResearchTelegramReply(result: ResearchResult): string {
       const freshness = source.updatedAt
         ? `; updated ${source.updatedAt.slice(0, 10)}${source.freshness ? `, ${source.freshness}` : ''}`
         : '';
+      const visibleCitation = source.url ? ` — ${source.url}` : '';
       lines.push(
-        `- ${source.title}${source.matchReason ? ` (${source.matchReason}${freshness})` : freshness ? ` (${freshness.slice(2)})` : ''}`,
+        `- ${source.title}${visibleCitation}${source.matchReason ? ` (${source.matchReason}${freshness})` : freshness ? ` (${freshness.slice(2)})` : ''}`,
       );
     }
   }
@@ -1401,11 +1402,13 @@ function formatResearchBlueBubblesReply(result: ResearchResult): string {
     lines.push(
       `Sources: ${result.supportingSources
         .slice(0, 2)
-        .map((source) =>
-          source.updatedAt
-            ? `${source.title} (${source.updatedAt.slice(0, 10)}${source.freshness ? `, ${source.freshness}` : ''})`
-            : source.title,
-        )
+        .map((source) => {
+          const visibleCitation = source.url ? ` — ${source.url}` : '';
+          const freshness = source.updatedAt
+            ? ` (${source.updatedAt.slice(0, 10)}${source.freshness ? `, ${source.freshness}` : ''})`
+            : '';
+          return `${source.title}${visibleCitation}${freshness}`;
+        })
         .join(', ')}`,
     );
   }

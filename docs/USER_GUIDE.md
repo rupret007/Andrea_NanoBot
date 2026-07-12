@@ -201,6 +201,15 @@ bounded cadence. Unchanged observations are deduplicated, current proof can
 recover a stale confidence cap, and configuration alone never promotes an
 expired provider observation. Calendar and message-action tools become healthy
 only when their corresponding integration proof is healthy.
+Successful provider requests now feed the same ledger as metadata-only
+`verified_usage` evidence. Configuration-only status cannot erase a fresh real
+outcome, but explicit quota, authentication, or transport failures still win,
+and usage proof expires after six hours. For research, provider transport
+success and answer quality remain separate: the research route reaches healthy
+only when the result keeps reviewable saved-source provenance or URL citations.
+OpenAI Responses web-search `url_citation` annotations are retained as sources;
+a provider response without adequate citation coverage remains degraded rather
+than inflating routing confidence.
 
 Repair status is bounded. Andrea can diagnose, record cooldowns, refresh safe metadata, and tell you the exact next proof step. It does not secretly send messages, change calendar events, restart services, commit code, push branches, or make purchases.
 
@@ -211,6 +220,14 @@ Operator checks:
 - `npm run debug:improvement`
 - `npm run integrations:heal -- --id bluebubbles --dry-run`
 - `npm run debug:agentic`
+
+Each production build now writes a local compiled-artifact provenance manifest.
+Runtime status verifies the artifact hash, build commit, and clean-source state
+before reporting `Serving commit aligned: yes`. A missing manifest, changed
+artifact, stale commit, or dirty-source build fails closed. Workspace edits made
+after launch are shown separately because they do not alter the already loaded
+process. The manifest contains only build metadata, counts, and hashes—not file
+paths, source contents, prompts, credentials, or personal data.
 
 ## Autonomous Improvement Lab
 

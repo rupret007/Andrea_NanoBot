@@ -445,6 +445,9 @@ describe('debug log tails', () => {
     expect(status).toContain(
       'Serving git commit: dc67cf98c6b2f3d19c6a3c70f3a6c54abe266794',
     );
+    expect(status).toContain('Serving build provenance: unknown');
+    expect(status).toContain('Serving artifact verified: unknown');
+    expect(status).toMatch(/Workspace dirty paths: [1-9]\d*/);
     expect(status).toContain('Serving commit aligned: no');
     expect(status).toContain('Alexa last signed request: none');
     expect(status).toContain('Alexa proof kind: none');

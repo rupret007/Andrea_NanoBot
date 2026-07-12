@@ -5370,6 +5370,7 @@ export interface ReliabilityObservation {
     | 'council'
     | 'response_feedback'
     | 'message_action'
+    | 'verified_usage'
     | 'repair'
     | 'pilot_journey'
     | 'simulation';

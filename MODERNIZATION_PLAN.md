@@ -1,5 +1,103 @@
 # Modernization Plan
 
+## Compiled runtime provenance — 2026-07-12
+
+### Implemented
+
+- [x] Add a post-build provenance manifest binding the compiled `dist`
+      artifact hash and file count to the Git branch, commit, build time, and
+      source-tree dirty-path count. The manifest itself is excluded from its
+      content hash so verification is deterministic.
+- [x] Verify that manifest once at runtime startup and persist the result in
+      the existing runtime-audit marker. Missing, invalid, stale-commit,
+      dirty-source, and artifact-mismatch states all fail closed instead of
+      claiming a committed release.
+- [x] Require verified clean-build provenance before `Serving commit aligned`
+      can be true. Current workspace dirtiness is reported separately because
+      edits made after launch do not retroactively change the already loaded
+      process.
+- [x] Apply the same provenance requirement to TypeScript/macOS status and the
+      Windows PowerShell host path. No source paths, file contents, prompts,
+      credentials, or private data are stored in the manifest or audit marker.
+
+### Validation
+
+- [x] Focused build-provenance, host-control, debug-status, Mac service-runner,
+      and startup tests pass with typecheck, quiet lint, formatting, and diff
+      hygiene. Tests prove clean verification plus missing, invalid,
+      dirty-source, stale-commit, changed-artifact, and legacy-audit fail-closed
+      behavior.
+- [x] A real dirty workspace build writes a valid 64-character artifact digest
+      over 1,988 compiled files and records 19 dirty source paths, proving the
+      candidate cannot masquerade as commit `17cfd02a` after an accidental
+      restart.
+- [x] Complete release validation passes formatting, typecheck, quiet lint,
+      201 primary test files with 2,239 tests, the production build, AGI
+      typecheck and 282/282 tests, all ten intelligence regressions, the 99.1%
+      A+ zero-cost scorecard, signature flows, 57-file documentation
+      validation, the zero-vulnerability dependency audit, and diff hygiene.
+      All 90 deterministic commands pass in 276.0 seconds, including the
+      three-round stability and network-denial gate.
+
+### Remaining evidence debt
+
+- Publication acceptance requires a clean build from the final committed tree,
+  a service restart, and live status proving `verified` artifact provenance,
+  zero build-time dirty paths, and exact serving/workspace commit alignment.
+  Until that post-push proof succeeds, the currently running released process
+  remains the trusted runtime on `17cfd02a`.
+
+## Verified provider usage and cited research routing — 2026-07-12
+
+### Implemented
+
+- [x] Join real provider outcomes to the routing reliability ledger with a
+      metadata-only `verified_usage` provenance class. OpenAI usage across
+      research and assistant refinement surfaces now records successful,
+      blocked, and failed provider truth without storing prompts, response
+      bodies, secrets, or provider deliberation.
+- [x] Preserve a fresh verified outcome across configuration-only provider
+      refreshes while allowing explicit quota, authentication, transport, and
+      other current failures to supersede it immediately. Verified usage
+      expires after six hours so historical success cannot masquerade as
+      current availability.
+- [x] Parse official Responses API `url_citation` annotations into Andrea's
+      existing supporting-source structure, deduplicate them with saved and
+      Brave sources, and render the cited URL visibly on Telegram and Messages
+      so web evidence is reviewable and clickable rather than title-only.
+- [x] Separate provider transport success from research quality. A usable
+      provider response proves that provider; the research tool and route
+      become healthy only when the completed answer retains reviewable saved
+      provenance or outside URL citations. Missing citation coverage is
+      recorded as degraded.
+- [x] Let fresh empirically verified research-route evidence use a healthy
+      provider alternative instead of being unconditionally capped by stale
+      Brave-only state. When that evidence expires, normal dependency caps and
+      fallback guidance resume.
+
+### Validation
+
+- [x] Focused research, reliability, debug status, reality-grounding,
+      cognitive-routing, and intelligence regression coverage passes. Tests
+      prove Responses citation extraction, Brave/OpenAI usage ingestion,
+      configuration-only preservation, explicit failure precedence, six-hour
+      expiry, and fallback confidence behavior.
+- [x] Complete primary validation passes 201 files and 2,236 tests plus
+      formatting, typecheck, lint with no new errors, and the production build.
+      AGI typecheck and 282/282 tests, all ten intelligence regressions, the
+      99.1% A+ zero-cost scorecard, 57-file documentation validation, signature
+      flows, the zero-vulnerability dependency audit, and diff hygiene pass.
+      All 90 deterministic commands pass in 230.3 seconds, including the
+      three-round stability and network-denial gate.
+
+### Remaining evidence debt
+
+- The new route evidence starts with the next genuine cited research turn; no
+  synthetic or historical success is backfilled into production.
+- Answer acceptance still requires owner review. Provider availability and
+  citation presence do not by themselves prove that a recommendation was
+  useful or correct.
+
 ## Fresh tool-reliability truth — 2026-07-12
 
 ### Implemented

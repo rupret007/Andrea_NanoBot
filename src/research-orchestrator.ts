@@ -40,6 +40,7 @@ import {
   type OpenAiModelTier,
 } from './openai-model-routing.js';
 import { recordOpenAiUsageState } from './openai-usage-state.js';
+import { recordVerifiedUsageReliability } from './tool-reliability.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
 export type ResearchRequestKind =
@@ -1357,8 +1358,13 @@ function collectKnowledgeLibraryContext(
   return buildKnowledgeContextBlock(search);
 }
 
-function extractResponseOutputText(payload: unknown): string {
-  if (!payload || typeof payload !== 'object') return '';
+function extractOpenAiResponsePayload(payload: unknown): {
+  text: string;
+  supportingSources: ResearchSupportingSource[];
+} {
+  if (!payload || typeof payload !== 'object') {
+    return { text: '', supportingSources: [] };
+  }
   const record = payload as {
     output_text?: string;
     output?: Array<{
@@ -1366,20 +1372,62 @@ function extractResponseOutputText(payload: unknown): string {
       content?: Array<{
         type?: string;
         text?: string;
+        annotations?: Array<{
+          type?: string;
+          url?: string;
+          title?: string;
+          url_citation?: {
+            url?: string;
+            title?: string;
+          };
+        }>;
       }>;
     }>;
   };
-  if (typeof record.output_text === 'string' && record.output_text.trim()) {
-    return record.output_text.trim();
-  }
-  const text = record.output
-    ?.flatMap((item) => item.content || [])
+  const contentParts =
+    record.output?.flatMap((item) => item.content || []) || [];
+  const nestedText = contentParts
     .map((content) =>
       content.type === 'output_text' ? content.text || '' : '',
     )
     .join('\n')
     .trim();
-  return text || '';
+  const text =
+    typeof record.output_text === 'string' && record.output_text.trim()
+      ? record.output_text.trim()
+      : nestedText || '';
+  const seenUrls = new Set<string>();
+  const supportingSources = contentParts
+    .flatMap((content) => content.annotations || [])
+    .filter((annotation) => annotation.type === 'url_citation')
+    .map((annotation) => ({
+      url: annotation.url || annotation.url_citation?.url || '',
+      title: annotation.title || annotation.url_citation?.title || '',
+    }))
+    .filter((citation) => {
+      if (!/^https?:\/\//i.test(citation.url) || seenUrls.has(citation.url)) {
+        return false;
+      }
+      seenUrls.add(citation.url);
+      return true;
+    })
+    .map((citation, index) => ({
+      origin: 'outside_research' as const,
+      title:
+        citation.title ||
+        (() => {
+          try {
+            return new URL(citation.url).hostname;
+          } catch {
+            return 'Web source';
+          }
+        })(),
+      url: citation.url,
+      sourceType: 'openai_web_search',
+      retrievalScore: Math.max(0.5, 1 - index * 0.08),
+      matchReason: 'OpenAI web-search URL citation',
+    }));
+  return { text, supportingSources };
 }
 
 function parseOpenAiResearchOutput(
@@ -1775,7 +1823,8 @@ async function runOpenAiResearch(
         };
       }
       const payload = (await response.json()) as unknown;
-      const output = extractResponseOutputText(payload);
+      const extractedResponse = extractOpenAiResponsePayload(payload);
+      const output = extractedResponse.text;
       if (!output) {
         recordOpenAiUsageState({
           at: new Date().toISOString(),
@@ -1790,6 +1839,20 @@ async function runOpenAiResearch(
       }
 
       const parsed = parseOpenAiResearchOutput(output, plan.kind);
+      const supportingSources = [
+        ...(knowledge?.supportingSources || []),
+        ...(outside?.supportingSources || []),
+        ...extractedResponse.supportingSources,
+      ].filter((source, index, all) => {
+        const key = source.url || source.sourceId || source.title;
+        return (
+          all.findIndex((candidate) => {
+            const candidateKey =
+              candidate.url || candidate.sourceId || candidate.title;
+            return candidateKey === key;
+          }) === index
+        );
+      });
       const providerUsed =
         outside?.supportingSources.length &&
         ((plan.sources.localContext && localContextBlock) ||
@@ -1860,6 +1923,7 @@ async function runOpenAiResearch(
               ? 'OpenAI web search'
               : 'OpenAI Responses synthesis',
           ...buildOutsideSourceNotes(outside?.supportingSources || []),
+          ...buildOutsideSourceNotes(extractedResponse.supportingSources),
         ].filter(Boolean),
         handoffOption:
           plan.needsTelegramHandoff && request.channel === 'alexa'
@@ -1883,10 +1947,7 @@ async function runOpenAiResearch(
               : 'tool=none',
           requestId ? `request_id=${requestId}` : 'request_id=missing',
         ],
-        supportingSources: [
-          ...(knowledge?.supportingSources || []),
-          ...(outside?.supportingSources || []),
-        ],
+        supportingSources,
       };
     } catch (err) {
       logger.warn({ err }, 'Research orchestrator OpenAI request errored');
@@ -1919,7 +1980,68 @@ async function runOpenAiResearch(
   return lastFailure;
 }
 
-export async function runResearchOrchestrator(
+function recordResearchReliabilityResult(
+  result: ResearchResult,
+  observedAt: string,
+): void {
+  const providerUsed = result.providerUsed;
+  if (
+    !result.handled ||
+    !providerUsed ||
+    providerUsed === 'local_context' ||
+    providerUsed === 'knowledge_library'
+  ) {
+    return;
+  }
+  try {
+    const providerSubjectIds = [
+      providerUsed.includes('brave_search') ? 'provider:brave_search' : '',
+      providerUsed.includes('minimax') ? 'provider:minimax_cloud' : '',
+    ].filter(Boolean);
+    if (providerSubjectIds.length > 0) {
+      recordVerifiedUsageReliability({
+        subjectIds: providerSubjectIds,
+        observedAt,
+        outcome: 'success',
+        summary: 'A configured research provider returned a usable response.',
+        evidenceRef: `research_provider:${providerUsed}`,
+      });
+    }
+
+    const supportingSources = result.supportingSources || [];
+    const requiresOutsideCitations = result.plan.sources.webSearch;
+    const hasCitedProvenance = supportingSources.some(
+      (source) =>
+        Boolean(source.url) ||
+        (source.origin === 'knowledge_library' && Boolean(source.sourceId)),
+    );
+    const hasOutsideCitation = supportingSources.some(
+      (source) => source.origin === 'outside_research' && Boolean(source.url),
+    );
+    const evidenceComplete =
+      hasCitedProvenance && (!requiresOutsideCitations || hasOutsideCitation);
+    recordVerifiedUsageReliability({
+      subjectIds: ['tool:research', 'route:cognitive_executive.research'],
+      observedAt,
+      outcome: evidenceComplete ? 'success' : 'degraded',
+      failureClass: evidenceComplete ? 'none' : 'citation_coverage_incomplete',
+      summary: evidenceComplete
+        ? 'Research completed with reviewable source provenance.'
+        : 'Research provider completed, but source provenance was incomplete.',
+      nextAction: evidenceComplete
+        ? ''
+        : 'Require reviewable citations before promoting research confidence.',
+      evidenceRef: `research_result:${providerUsed}`,
+    });
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Research completed, but reliability evidence could not be recorded',
+    );
+  }
+}
+
+async function runResearchOrchestratorInternal(
   request: ResearchRequest,
 ): Promise<ResearchResult> {
   const normalized = normalizeQuery(request.query);
@@ -2273,4 +2395,15 @@ export async function runResearchOrchestrator(
     }),
     debugPath: ['plan.primary=local_context'],
   });
+}
+
+export async function runResearchOrchestrator(
+  request: ResearchRequest,
+): Promise<ResearchResult> {
+  const result = await runResearchOrchestratorInternal(request);
+  recordResearchReliabilityResult(
+    result,
+    (request.now || new Date()).toISOString(),
+  );
+  return result;
 }

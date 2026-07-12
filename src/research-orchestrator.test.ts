@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createTask, upsertLifeThread, _initTestDatabase } from './db.js';
+import {
+  createTask,
+  listReliabilityObservations,
+  listToolReliabilityRollups,
+  upsertLifeThread,
+  _initTestDatabase,
+} from './db.js';
 import { handleLifeThreadCommand } from './life-threads.js';
 import { saveKnowledgeSource } from './knowledge-library.js';
 import * as openAiProvider from './openai-provider.js';
@@ -157,6 +163,17 @@ describe('research orchestrator', () => {
         expect.stringContaining('brave_search.query=Project Hail Mary'),
       ]),
     );
+    expect(
+      listReliabilityObservations({
+        subjectId: 'provider:brave_search',
+        limit: 1,
+      })[0],
+    ).toMatchObject({ sourceKind: 'verified_usage', outcome: 'success' });
+    expect(
+      listToolReliabilityRollups({ limit: 100 }).find(
+        (rollup) => rollup.subjectId === 'route:cognitive_executive.research',
+      ),
+    ).toMatchObject({ currentHealth: 'healthy', confidenceCap: 0.95 });
   });
 
   it('prefers MiniMax synthesis over OpenAI for showtime lookups when both are configured', async () => {
@@ -570,17 +587,37 @@ describe('research orchestrator', () => {
     process.env.OPENAI_BASE_URL = 'https://example.test/v1';
     process.env.OPENAI_MODEL_COMPLEX = 'gpt-5.4-complex';
     globalThis.fetch = vi.fn(async () => {
+      const outputText = [
+        'Summary: The strongest option is the one with the lower cost and simpler delivery window.',
+        'Findings:',
+        '- Lower cost',
+        '- Simpler delivery window',
+        'Recommendation: Pick the cheaper option if flexibility matters most.',
+        'Follow-ups:',
+        '- Want the tradeoffs in one line?',
+      ].join('\n');
       return new Response(
         JSON.stringify({
-          output_text: [
-            'Summary: The strongest option is the one with the lower cost and simpler delivery window.',
-            'Findings:',
-            '- Lower cost',
-            '- Simpler delivery window',
-            'Recommendation: Pick the cheaper option if flexibility matters most.',
-            'Follow-ups:',
-            '- Want the tradeoffs in one line?',
-          ].join('\n'),
+          output: [
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: outputText,
+                  annotations: [
+                    {
+                      type: 'url_citation',
+                      start_index: 0,
+                      end_index: 20,
+                      url: 'https://example.test/meal-delivery',
+                      title: 'Meal delivery comparison',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
         }),
         {
           status: 200,
@@ -608,6 +645,25 @@ describe('research orchestrator', () => {
     expect(result.summaryText).toContain('The strongest option');
     expect(result.routeExplanation).toContain('OpenAI-backed');
     expect(result.structuredFindings[0]?.items[0]).toContain('Lower cost');
+    expect(result.supportingSources).toEqual([
+      expect.objectContaining({
+        origin: 'outside_research',
+        sourceType: 'openai_web_search',
+        title: 'Meal delivery comparison',
+        url: 'https://example.test/meal-delivery',
+      }),
+    ]);
+    expect(
+      listReliabilityObservations({
+        subjectId: 'provider:openai_cloud',
+        limit: 1,
+      })[0],
+    ).toMatchObject({ sourceKind: 'verified_usage', outcome: 'success' });
+    expect(
+      listToolReliabilityRollups({ limit: 100 }).find(
+        (rollup) => rollup.subjectId === 'tool:research',
+      ),
+    ).toMatchObject({ currentHealth: 'healthy', confidenceCap: 0.95 });
   });
 
   it('asks for the two items when a compare prompt is too generic', async () => {
