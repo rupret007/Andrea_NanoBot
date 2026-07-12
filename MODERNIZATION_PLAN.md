@@ -1,5 +1,95 @@
 # Modernization Plan
 
+## Fresh tool-reliability truth — 2026-07-12
+
+### Implemented
+
+- [x] Rebuild the reliability ledger on service startup and at a bounded
+      interval derived from the existing provider-health cadence. Overlapping
+      refreshes are skipped and failures preserve prior evidence instead of
+      disrupting the assistant.
+- [x] Deduplicate unchanged provider, integration, Calendar, and message-action
+      truth for six hours, preventing a 30-minute status loop from flooding the
+      evidence ledger while still recording state changes immediately.
+- [x] Order equal-timestamp observations by insertion order so the later
+      current-truth observation deterministically supersedes a repair/planning
+      record written in the same clock tick.
+- [x] Derive Calendar-tool health only from current Google Calendar integration
+      truth and message-action health only when BlueBubbles transport and
+      same-thread proof are both healthy. Provider-backed research remains
+      unknown when its live evidence expires; no success is inferred from
+      configuration alone.
+- [x] Stop healthy rollups from asking for another status observation. Long-run
+      reliability scores remain historical, while current health and confidence
+      caps reflect the newest proven state.
+
+### Validation
+
+- [x] Focused reliability, action-preflight, intelligence, and deterministic
+      reliability coverage passes with typecheck, quiet lint, formatting, and
+      diff hygiene.
+- [x] A live metadata-only refresh changed BlueBubbles, message actions, and
+      Calendar to healthy with 0.95 confidence caps. Expired provider evidence
+      remains unknown and Alexa remains externally/manual blocked.
+- [x] Complete primary validation passes 201 files and 2,232 tests plus
+      formatting, typecheck, lint with no new errors, and the production build.
+      AGI typecheck and 282/282 tests, all ten intelligence regressions, the
+      99.1% A+ zero-cost scorecard, 57-file documentation validation, signature
+      flows, the zero-vulnerability dependency audit, and diff hygiene pass.
+      All 90 deterministic commands pass in 240.7 seconds, including the
+      three-round stability and network-denial gate.
+
+### Remaining evidence debt
+
+- Provider-backed research needs a new explicitly live provider observation
+  before its unknown confidence cap can rise.
+- Route-specific quality still requires genuine owner-reviewed outcomes; an
+  integration recovery does not prove that every reply was useful.
+
+## Grounded daily-context ranking — 2026-07-12
+
+### Implemented
+
+- [x] Stop unresolved generic Messages threads from monopolizing Andrea's daily
+      context ranking. The graph now emits one explicit identity-review gap,
+      retains only the two most urgent unresolved reply candidates, and ranks
+      grounded people, verified follow-through, and life threads ahead of
+      lower-confidence unknown-audience suggestions.
+- [x] Keep urgent unknown-thread visibility without guessing identity: each
+      retained item is marked `identity_unresolved` and instructs Andrea to
+      review the identity and audience before drafting.
+- [x] Make text-review readiness distinguish two kinds of useful owner work.
+      Confirmed person links receive relationship-context credit; explicit
+      dismissals receive narrower audience-review credit without being treated
+      as person links. Fully linked coverage retains the prior maximum.
+- [x] Preserve privacy and authority boundaries: rankings contain metadata-only
+      summaries, no raw identifiers or message bodies, and no send or write
+      authority.
+
+### Validation
+
+- [x] Focused context-graph, readiness, intelligence-progress, and identity
+      review coverage passes 36/36 tests with typecheck, quiet lint, formatting,
+      and diff hygiene.
+- [x] The current live metadata-only graph remains honestly 76% ready and text
+      review remains 66% because ten identities still need owner review, while
+      its top five insights now contain grounded Candace context, the explicit
+      identity-review task, approved follow-through, and both active life
+      threads instead of repeated generic Messages entries.
+- [x] Complete primary validation passes 200 files and 2,229 tests plus
+      formatting, typecheck, lint with no new errors, and the production build.
+      AGI typecheck and 282/282 tests, all ten intelligence regressions, the
+      99.1% A+ zero-cost scorecard, 57-file documentation validation, signature
+      flows, the zero-vulnerability dependency audit, diff hygiene, and all 90
+      deterministic commands pass. The three-round stability/network-denial
+      sweep completed in 242.0 seconds.
+
+### Remaining owner evidence
+
+- Confirm or dismiss the ten outstanding communication identities. The new
+  score credits safe dismissals but never equates them with a known person.
+- Record five genuine reviewed outcomes before saving a learning baseline.
+
 ## Agent OS runtime lifecycle truth — 2026-07-12
 
 ### Implemented

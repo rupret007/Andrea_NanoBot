@@ -239,6 +239,10 @@ import {
   type ProviderHealthState,
 } from './provider-health.js';
 import {
+  refreshToolReliabilityFromCurrentTruth,
+  resolveToolReliabilityRefreshIntervalMs,
+} from './tool-reliability.js';
+import {
   clearPendingBootAlert,
   readPendingBootAlert,
 } from './startup-autostart.js';
@@ -10254,6 +10258,8 @@ async function main(): Promise<void> {
   let assistantHealthInterval: ReturnType<typeof setInterval> | null = null;
   let systemAlertInterval: ReturnType<typeof setInterval> | null = null;
   let bootAlertInterval: ReturnType<typeof setInterval> | null = null;
+  let toolReliabilityInterval: ReturnType<typeof setInterval> | null = null;
+  let toolReliabilityRefreshInFlight = false;
   const systemAlertLastStateByKey = new Map<string, string>();
   const systemAlertLastSentAtByKey = new Map<string, number>();
   const writeCurrentAssistantHealth = () => {
@@ -10480,6 +10486,31 @@ async function main(): Promise<void> {
       await emitChannelAlertIfNeeded(snapshot);
     }
   };
+  const refreshCurrentToolReliability = async (
+    trigger: 'startup' | 'interval',
+  ): Promise<void> => {
+    if (toolReliabilityRefreshInFlight) return;
+    toolReliabilityRefreshInFlight = true;
+    try {
+      const report = await refreshToolReliabilityFromCurrentTruth();
+      logger.debug(
+        {
+          component: 'tool_reliability',
+          trigger,
+          subjects: report.subjects.length,
+          degraded: report.topDegraded.length,
+        },
+        'Refreshed bounded tool-reliability truth.',
+      );
+    } catch (err) {
+      logger.warn(
+        { component: 'tool_reliability', trigger, err },
+        'Tool-reliability truth refresh failed; prior evidence remains intact.',
+      );
+    } finally {
+      toolReliabilityRefreshInFlight = false;
+    }
+  };
   const stopAssistantHealthLoop = () => {
     if (assistantHealthInterval) {
       clearInterval(assistantHealthInterval);
@@ -10492,6 +10523,10 @@ async function main(): Promise<void> {
     if (bootAlertInterval) {
       clearInterval(bootAlertInterval);
       bootAlertInterval = null;
+    }
+    if (toolReliabilityInterval) {
+      clearInterval(toolReliabilityInterval);
+      toolReliabilityInterval = null;
     }
     clearAssistantHealthState();
     clearTelegramTransportState();
@@ -18265,6 +18300,11 @@ async function main(): Promise<void> {
   bootAlertInterval.unref?.();
   void dispatchSystemHealthAlerts();
   const systemAlertConfig = resolveSystemAlertConfig();
+  void refreshCurrentToolReliability('startup');
+  toolReliabilityInterval = setInterval(() => {
+    void refreshCurrentToolReliability('interval');
+  }, resolveToolReliabilityRefreshIntervalMs(systemAlertConfig.providerHealthIntervalMinutes));
+  toolReliabilityInterval.unref?.();
   if (systemAlertConfig.enabled) {
     systemAlertInterval = setInterval(() => {
       void dispatchSystemHealthAlerts();

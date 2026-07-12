@@ -196,6 +196,11 @@ Telegram is the rich management surface; Alexa answers stay short; BlueBubbles s
 
 
 Andrea now tracks a small reliability ledger for the routes, tools, providers, and integrations it depends on. That lets the Cognitive Executive lower confidence, choose a fallback, or explain a blocker when BlueBubbles, Alexa, Calendar, provider quota, or a work lane is degraded.
+The canonical service refreshes current metadata-only truth at startup and on a
+bounded cadence. Unchanged observations are deduplicated, current proof can
+recover a stale confidence cap, and configuration alone never promotes an
+expired provider observation. Calendar and message-action tools become healthy
+only when their corresponding integration proof is healthy.
 
 Repair status is bounded. Andrea can diagnose, record cooldowns, refresh safe metadata, and tell you the exact next proof step. It does not secretly send messages, change calendar events, restart services, commit code, push branches, or make purchases.
 

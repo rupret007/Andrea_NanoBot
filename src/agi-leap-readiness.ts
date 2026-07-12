@@ -271,7 +271,7 @@ function scoreTextReview(
   contextGraphScore: number,
   report: PersonalContextGraphReport,
 ): number {
-  const communicationCoverage =
+  const linkedCommunicationCoverage =
     report.coverage.communicationThreads > 0
       ? Math.min(
           report.coverage.linkedCommunicationThreads /
@@ -279,9 +279,18 @@ function scoreTextReview(
           1,
         )
       : 0;
+  const reviewedCommunicationCoverage =
+    report.coverage.communicationThreads > 0
+      ? Math.min(
+          report.coverage.resolvedCommunicationThreads /
+            report.coverage.communicationThreads,
+          1,
+        )
+      : 0;
   return round3(
     Math.min(report.coverage.communicationThreads, 4) * 0.12 +
-      communicationCoverage * 0.32 +
+      linkedCommunicationCoverage * 0.2 +
+      reviewedCommunicationCoverage * 0.12 +
       contextGraphScore * 0.2,
   );
 }

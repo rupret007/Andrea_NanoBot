@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   createTask,
+  decideCommunicationThreadIdentity,
   upsertCommunicationThread,
   upsertLifeThread,
   upsertOperatingProfile,
@@ -343,7 +344,7 @@ describe('AGI leap readiness', () => {
       upsertCommunicationThread({
         id: `unlinked-thread-${index}`,
         groupFolder,
-        title: 'Messages chat',
+        title: index === 3 ? 'Urgent unknown chat' : 'Messages chat',
         linkedSubjectIds: [],
         linkedLifeThreadIds: [],
         channel: 'bluebubbles',
@@ -351,7 +352,7 @@ describe('AGI leap readiness', () => {
         lastInboundSummary: 'A metadata-only pending conversation.',
         lastOutboundSummary: null,
         followupState: 'reply_needed',
-        urgency: 'soon',
+        urgency: index === 3 ? 'overdue' : 'soon',
         followupDueAt: null,
         suggestedNextAction: 'draft_reply',
         toneStyleHints: [],
@@ -378,6 +379,116 @@ describe('AGI leap readiness', () => {
       expect.arrayContaining([
         expect.stringContaining('Confirm or dismiss identity links for 4'),
       ]),
+    );
+    const unresolvedReplyInsights = graph.rankedInsights.filter(
+      (insight) =>
+        insight.kind === 'needs_reply' &&
+        insight.riskFlags.includes('identity_unresolved'),
+    );
+    expect(unresolvedReplyInsights).toHaveLength(2);
+    expect(unresolvedReplyInsights[0]).toMatchObject({
+      title: 'Urgent unknown chat',
+      nextAction:
+        'Review the identity and audience before drafting; do not infer who this is.',
+    });
+    expect(graph.rankedInsights).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'setup_gap',
+          title: 'Review communication identities',
+          riskFlags: expect.arrayContaining([
+            'identity_review_required',
+            'no_identity_inference',
+          ]),
+        }),
+        expect.objectContaining({
+          kind: 'needs_reply',
+          title: 'Riley',
+        }),
+        expect.objectContaining({
+          kind: 'slipping',
+          title: 'School logistics',
+        }),
+      ]),
+    );
+    expect(graph.rankedInsights.slice(0, 5)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'slipping',
+          title: 'School logistics',
+        }),
+      ]),
+    );
+  });
+
+  it('credits explicit dismissals as audience review without equating them to a person link', () => {
+    const groupFolder = 'identity-resolution-score';
+    seedSyntheticLife(groupFolder);
+    upsertCommunicationThread({
+      id: 'unlinked-group-thread',
+      groupFolder,
+      title: 'Band chat',
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      channel: 'bluebubbles',
+      channelChatJid: 'bb:iMessage;+;chat-band',
+      lastInboundSummary: 'A metadata-only group conversation.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed',
+      urgency: 'soon',
+      followupDueAt: null,
+      suggestedNextAction: 'draft_reply',
+      toneStyleHints: [],
+      lastContactAt: now,
+      lastMessageId: 'band-message',
+      linkedTaskId: null,
+      inferenceState: 'assistant_inferred',
+      trackingMode: 'default',
+      createdAt: now,
+      updatedAt: now,
+      disabledAt: null,
+    });
+
+    const before = buildAgiLeapReadinessReport({
+      groupFolder,
+      now: new Date(now),
+    });
+    expect(
+      decideCommunicationThreadIdentity({
+        groupFolder,
+        threadId: 'unlinked-group-thread',
+        decision: 'dismissed',
+        sourceChannel: 'telegram',
+        now,
+      }).ok,
+    ).toBe(true);
+    const dismissed = buildAgiLeapReadinessReport({
+      groupFolder,
+      now: new Date(now),
+    });
+    expect(dismissed.contextGraph.coverage.linkedCommunicationThreads).toBe(1);
+    expect(dismissed.contextGraph.coverage.resolvedCommunicationThreads).toBe(
+      2,
+    );
+    expect(dismissed.textReviewScore).toBeGreaterThan(before.textReviewScore);
+
+    expect(
+      decideCommunicationThreadIdentity({
+        groupFolder,
+        threadId: 'unlinked-group-thread',
+        decision: 'confirmed',
+        subjectId: 'subject-riley',
+        sourceChannel: 'telegram',
+        now,
+      }).ok,
+    ).toBe(true);
+    const confirmed = buildAgiLeapReadinessReport({
+      groupFolder,
+      now: new Date(now),
+    });
+    expect(confirmed.contextGraph.coverage.linkedCommunicationThreads).toBe(2);
+    expect(confirmed.textReviewScore).toBeGreaterThan(
+      dismissed.textReviewScore,
     );
   });
 

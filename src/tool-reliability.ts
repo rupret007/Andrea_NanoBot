@@ -46,6 +46,8 @@ const PRIVACY = {
   secretsRedacted: true,
 } as const;
 
+const CURRENT_TRUTH_HEARTBEAT_MS = 6 * 60 * 60 * 1000;
+
 function nowIso(now = new Date()): string {
   return now.toISOString();
 }
@@ -413,6 +415,44 @@ function observation(params: {
   };
 }
 
+function upsertCurrentTruthObservation(
+  record: ReliabilityObservation,
+): boolean {
+  const latest = listReliabilityObservations({
+    subjectId: record.subjectId,
+    limit: 1,
+  })[0];
+  if (latest) {
+    const elapsedMs =
+      Date.parse(record.observedAt) - Date.parse(latest.observedAt);
+    const sameState =
+      latest.sourceKind === record.sourceKind &&
+      latest.outcome === record.outcome &&
+      latest.failureClass === record.failureClass &&
+      latest.summary === record.summary &&
+      latest.nextAction === record.nextAction;
+    if (
+      sameState &&
+      Number.isFinite(elapsedMs) &&
+      elapsedMs >= 0 &&
+      elapsedMs < CURRENT_TRUTH_HEARTBEAT_MS
+    ) {
+      return false;
+    }
+  }
+  upsertReliabilityObservation(record);
+  return true;
+}
+
+export function resolveToolReliabilityRefreshIntervalMs(
+  providerHealthIntervalMinutes: number,
+): number {
+  const minutes = Number.isFinite(providerHealthIntervalMinutes)
+    ? providerHealthIntervalMinutes
+    : 30;
+  return Math.max(5, Math.min(360, minutes)) * 60_000;
+}
+
 function isReminderTask(task: ScheduledTask): boolean {
   return /\breminder\b/i.test(task.prompt || '');
 }
@@ -504,7 +544,12 @@ function buildRollup(
     currentHealth,
     confidenceCap,
     cooldownUntil: null,
-    nextAction: latest?.nextAction || 'Collect one fresh status observation.',
+    nextAction: latest
+      ? latest.nextAction ||
+        (currentHealth === 'healthy'
+          ? ''
+          : 'Collect one fresh status observation.')
+      : 'Collect one fresh status observation.',
     privacyJson: privacyJson(),
   };
 }
@@ -591,7 +636,7 @@ export async function refreshToolReliabilityFromCurrentTruth(
     params.integrationReport ||
     buildIntegrationDoctorReport({ now: params.now });
   for (const provider of providers) {
-    upsertReliabilityObservation(
+    upsertCurrentTruthObservation(
       observation({
         subjectId: `provider:${provider.providerId}`,
         observedAt,
@@ -608,7 +653,7 @@ export async function refreshToolReliabilityFromCurrentTruth(
     );
   }
   for (const status of integrationReport.statuses) {
-    upsertReliabilityObservation(
+    upsertCurrentTruthObservation(
       observation({
         subjectId: `integration:${status.integrationId}`,
         observedAt,
@@ -618,6 +663,48 @@ export async function refreshToolReliabilityFromCurrentTruth(
         summary: `${status.label}: ${status.state}.`,
         nextAction: status.nextAction,
         evidenceIds: [`integration:${status.integrationId}:${observedAt}`],
+      }),
+    );
+  }
+  const googleCalendar = integrationReport.statuses.find(
+    (status) => status.integrationId === 'google_calendar',
+  );
+  if (googleCalendar) {
+    upsertCurrentTruthObservation(
+      observation({
+        subjectId: 'tool:calendar',
+        observedAt,
+        sourceKind: 'integration_doctor',
+        outcome: integrationOutcome(googleCalendar),
+        failureClass: googleCalendar.state,
+        summary: `Calendar tool dependency: ${googleCalendar.state}.`,
+        nextAction: googleCalendar.nextAction,
+        evidenceIds: [`integration:google_calendar:${observedAt}`],
+      }),
+    );
+  }
+  const blueBubbles = integrationReport.statuses.find(
+    (status) => status.integrationId === 'bluebubbles',
+  );
+  if (blueBubbles) {
+    const messageActionOutcome =
+      blueBubbles.state === 'healthy' && blueBubbles.proofState === 'healthy'
+        ? 'success'
+        : integrationOutcome(blueBubbles);
+    upsertCurrentTruthObservation(
+      observation({
+        subjectId: 'tool:message_actions',
+        observedAt,
+        sourceKind: 'message_action',
+        outcome: messageActionOutcome,
+        failureClass:
+          messageActionOutcome === 'success' ? 'none' : blueBubbles.state,
+        summary:
+          messageActionOutcome === 'success'
+            ? 'Message-action transport and same-thread proof are currently healthy.'
+            : `Message-action proof follows BlueBubbles state ${blueBubbles.state}.`,
+        nextAction: blueBubbles.nextAction,
+        evidenceIds: [`integration:bluebubbles:${observedAt}`],
       }),
     );
   }

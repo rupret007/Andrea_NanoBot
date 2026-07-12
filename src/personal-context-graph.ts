@@ -850,6 +850,7 @@ function addInsight(
 function buildGraphInsights(params: {
   activeProfile: OperatingProfile | null;
   coverage: PersonalContextGraphCoverage;
+  resolvedCommunicationThreadIds: Set<string>;
   facts: ProfileFactWithSubject[];
   lifeThreads: LifeThread[];
   communicationThreads: CommunicationThreadRecord[];
@@ -911,33 +912,96 @@ function buildGraphInsights(params: {
       riskFlags: ['sensitive_facts_remain_proposed'],
     });
   }
-  for (const thread of params.communicationThreads.slice(0, 20)) {
-    if (
-      thread.followupState !== 'reply_needed' &&
-      thread.followupState !== 'scheduled'
-    ) {
-      continue;
-    }
-    const baseScore = thread.followupState === 'reply_needed' ? 0.74 : 0.58;
+  const unresolvedCommunicationThreads = params.communicationThreads.filter(
+    (thread) => !params.resolvedCommunicationThreadIds.has(thread.id),
+  );
+  if (unresolvedCommunicationThreads.length > 0) {
+    addInsight(insights, {
+      insightId: insightId(
+        'setup_gap',
+        `communication-identities:${unresolvedCommunicationThreads.length}`,
+      ),
+      kind: 'setup_gap',
+      title: 'Review communication identities',
+      priorityScore: 0.84,
+      reason: `${unresolvedCommunicationThreads.length} recent conversation${unresolvedCommunicationThreads.length === 1 ? ' is' : 's are'} not yet linked to a person or explicitly dismissed.`,
+      nextAction:
+        'Use `review communication identities`; confirm or dismiss each thread without guessing from identifiers or message text.',
+      relatedNodeIds: unresolvedCommunicationThreads
+        .slice(0, 2)
+        .map((thread) => graphId('communication_thread', thread.id)),
+      riskFlags: [
+        'identity_review_required',
+        'no_identity_inference',
+        'owner_confirmation_required',
+      ],
+    });
+  }
+  const communicationInsightPriority = (
+    thread: CommunicationThreadRecord,
+    identityResolved: boolean,
+  ): number => {
+    const baseScore = identityResolved
+      ? thread.followupState === 'reply_needed'
+        ? 0.74
+        : 0.58
+      : thread.followupState === 'reply_needed'
+        ? 0.42
+        : 0.34;
     const urgencyBoost =
       thread.urgency === 'overdue' || thread.urgency === 'tonight'
         ? 0.16
         : thread.urgency === 'soon' || thread.urgency === 'tomorrow'
           ? 0.08
           : 0;
+    return baseScore + urgencyBoost;
+  };
+  const actionableCommunicationThreads = params.communicationThreads.filter(
+    (thread) =>
+      thread.followupState === 'reply_needed' ||
+      thread.followupState === 'scheduled',
+  );
+  const resolvedCommunicationInsights = actionableCommunicationThreads
+    .filter((thread) => params.resolvedCommunicationThreadIds.has(thread.id))
+    .sort(
+      (left, right) =>
+        communicationInsightPriority(right, true) -
+          communicationInsightPriority(left, true) ||
+        right.updatedAt.localeCompare(left.updatedAt),
+    )
+    .slice(0, 18);
+  const unresolvedCommunicationInsights = actionableCommunicationThreads
+    .filter((thread) => !params.resolvedCommunicationThreadIds.has(thread.id))
+    .sort(
+      (left, right) =>
+        communicationInsightPriority(right, false) -
+          communicationInsightPriority(left, false) ||
+        right.updatedAt.localeCompare(left.updatedAt),
+    )
+    .slice(0, 2);
+  for (const thread of [
+    ...resolvedCommunicationInsights,
+    ...unresolvedCommunicationInsights,
+  ]) {
+    const identityResolved = params.resolvedCommunicationThreadIds.has(
+      thread.id,
+    );
     addInsight(insights, {
       insightId: insightId('needs_reply', thread.id),
       kind: 'needs_reply',
       title: thread.title || 'Messages follow-up',
-      priorityScore: baseScore + urgencyBoost,
+      priorityScore: communicationInsightPriority(thread, identityResolved),
       reason: communicationThreadSummary(thread),
-      nextAction: communicationThreadNextAction(thread),
+      nextAction: identityResolved
+        ? communicationThreadNextAction(thread)
+        : 'Review the identity and audience before drafting; do not infer who this is.',
       relatedNodeIds: [graphId('communication_thread', thread.id)],
       freshnessKey: communicationThreadFreshnessKey(thread),
       riskFlags: [
         communicationThreadIsGroup(thread)
           ? 'group_chat_confirm_audience'
           : null,
+        !identityResolved ? 'identity_unresolved' : null,
         thread.inferenceState !== 'user_confirmed'
           ? 'assistant_inferred_link'
           : null,
@@ -1203,6 +1267,7 @@ export function buildPersonalContextGraph(params: {
   const rankedInsights = buildGraphInsights({
     activeProfile,
     coverage,
+    resolvedCommunicationThreadIds,
     facts,
     lifeThreads,
     communicationThreads,

@@ -26419,7 +26419,7 @@ export function listReliabilityObservations(
         SELECT *
         FROM reliability_observations
         ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
-        ORDER BY observed_at DESC
+        ORDER BY observed_at DESC, rowid DESC
         LIMIT ?
       `,
     )
