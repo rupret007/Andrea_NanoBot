@@ -9,12 +9,13 @@ import { syncBuiltinESMExports } from 'node:module';
 import net from 'node:net';
 import path from 'node:path';
 import tls from 'node:tls';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import workerThreads from 'node:worker_threads';
 
 const STATE_KEY = Symbol.for('andrea.test-network-guard');
 const DENIAL_CODE = 'ANDREA_DETERMINISTIC_NETWORK_DENIED';
 const GUARD_PRELOAD = `--import=${import.meta.url}`;
+const GUARD_REQUIRE_PATH = fileURLToPath(import.meta.url);
 const PROXY_ENV_KEYS = new Set([
   'ALL_PROXY',
   'HTTP_PROXY',
@@ -507,18 +508,8 @@ function guardedWorkerInvocation(filename, options) {
     throw denialError('worker');
   }
   const normalized = options || {};
-  const userSource = normalized.eval
-    ? String(filename)
-    : `await import(${JSON.stringify(
-        filename instanceof URL
-          ? filename.href
-          : pathToFileURL(path.resolve(String(filename))).href,
-      )});`;
-  const bootstrap = `(async () => { await import(${JSON.stringify(
-    import.meta.url,
-  )}); ${userSource}\n})().catch((error) => { setImmediate(() => { throw error; }); });`;
   return {
-    filename: bootstrap,
+    filename,
     options: {
       ...normalized,
       env: sanitizedEnvironment(
@@ -526,8 +517,11 @@ function guardedWorkerInvocation(filename, options) {
           ? process.env
           : normalized.env,
       ),
-      eval: true,
-      execArgv: [],
+      // Node workers ignore NODE_OPTIONS and --import preloads, but Node 22
+      // applies --require before both eval and file worker entry points. The
+      // guard is synchronous ESM, so this preserves the boundary without
+      // constructing executable source text.
+      execArgv: ['--require', GUARD_REQUIRE_PATH],
     },
   };
 }

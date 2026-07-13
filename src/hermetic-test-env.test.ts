@@ -448,15 +448,16 @@ describe('hermetic deterministic test environment', () => {
     }
   });
 
-  it('forces the guard into workers even when execArgv and env try to remove it', () => {
+  it('forces the guard into eval workers without constructing bootstrap source', () => {
     const output = runGuardedNode(String.raw`
       const { Worker } = require('node:worker_threads');
       const worker = new Worker(
-        "const { parentPort } = require('node:worker_threads'); const keys = Object.keys(process.env).map((key) => key.toUpperCase()); if (keys.includes('HTTP_PROXY') || keys.includes('OPENAI_API_KEY') || keys.filter((key) => key === 'NODE_OPTIONS').length !== 1) parentPort.postMessage('UNSAFE_ENV'); else fetch('https://worker-escape.example').then(() => parentPort.postMessage('BYPASS')).catch((error) => parentPort.postMessage(error.code))",
+        "const { parentPort, workerData } = require('node:worker_threads'); const keys = Object.keys(process.env).map((key) => key.toUpperCase()); fetch('https://worker-escape.example').then(() => parentPort.postMessage({ networkResult: 'BYPASS' })).catch((error) => parentPort.postMessage({ execArgv: process.execArgv, networkResult: error.code, unsafeEnvironment: keys.includes('HTTP_PROXY') || keys.includes('OPENAI_API_KEY') || keys.filter((key) => key === 'NODE_OPTIONS').length !== 1, workerData }))",
         {
           eval: true,
           execArgv: [],
           env: { PATH: process.env.PATH, Node_Options: '', Http_Proxy: 'http://127.0.0.1:9999', OpenAi_Api_Key: 'mixed-case-provider-secret' },
+          workerData: { requestId: 'preserved' },
         },
       );
       worker.once('error', (error) => {
@@ -464,12 +465,49 @@ describe('hermetic deterministic test environment', () => {
         process.exit(1);
       });
       worker.once('message', async (message) => {
-        process.stdout.write(String(message));
+        message.execArgv = message.execArgv.map((value) => value.endsWith('test-network-guard.mjs') ? '<guard>' : value);
+        process.stdout.write(JSON.stringify(message));
         await worker.terminate();
       });
     `);
 
-    expect(output).toBe('ANDREA_DETERMINISTIC_NETWORK_DENIED');
+    expect(JSON.parse(output)).toEqual({
+      execArgv: ['--require', '<guard>'],
+      networkResult: 'ANDREA_DETERMINISTIC_NETWORK_DENIED',
+      unsafeEnvironment: false,
+      workerData: { requestId: 'preserved' },
+    });
+  });
+
+  it('guards file workers while preserving worker data and discarding escape options', () => {
+    const output = runGuardedNode(String.raw`
+      const { Worker } = require('node:worker_threads');
+      const path = require('node:path');
+      const fixture = path.join(process.cwd(), 'scripts', 'fixtures', 'network-guard-worker-child.mjs');
+      const worker = new Worker(fixture, {
+        execArgv: ['--require', '/tmp/escape.cjs'],
+        env: { PATH: process.env.PATH, Node_Options: '', Http_Proxy: 'http://127.0.0.1:9999', OpenAi_Api_Key: 'mixed-case-provider-secret' },
+        workerData: { requestId: 'preserved' },
+      });
+      worker.once('error', (error) => {
+        process.stderr.write(error.stack || String(error));
+        process.exit(1);
+      });
+      worker.once('message', async (message) => {
+        process.stdout.write(JSON.stringify(message));
+        await worker.terminate();
+      });
+    `);
+
+    const result = JSON.parse(output);
+    expect(result).toMatchObject({
+      networkResult: 'ANDREA_DETERMINISTIC_NETWORK_DENIED',
+      unsafeEnvironment: false,
+      workerData: { requestId: 'preserved' },
+    });
+    expect(result.execArgv).toHaveLength(2);
+    expect(result.execArgv[0]).toBe('--require');
+    expect(result.execArgv[1]).toMatch(/test-network-guard\.mjs$/);
   });
 
   it('forces the guard into forked and clustered Node descendants', () => {

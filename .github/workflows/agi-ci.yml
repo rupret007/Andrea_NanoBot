@@ -40,7 +40,10 @@ jobs:
       - name: Audit (npm)
         run: npm audit --audit-level=high
 
-  codeql:
+  # Keep this job id stable: GitHub keys the repository's existing CodeQL
+  # baseline to `.github/workflows/agi-ci.yml:build`.
+  build:
+    name: codeql
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
