@@ -383,6 +383,44 @@ describe('hermetic deterministic test environment', () => {
     );
   });
 
+  it('emulates only Vite’s Windows mapping probe without spawning a shell', () => {
+    const output = runGuardedNode(String.raw`
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      const { exec, execSync } = require('node:child_process');
+      const denied = [];
+      const expectDenied = (name, operation) => {
+        try {
+          operation();
+          throw new Error(name + ' unexpectedly bypassed the guard');
+        } catch (error) {
+          if (error.code !== 'ANDREA_DETERMINISTIC_NETWORK_DENIED') throw error;
+          denied.push(name);
+        }
+      };
+      const result = exec('net use', (error, stdout, stderr) => {
+        if (error?.code !== 'ANDREA_DETERMINISTIC_NETWORK_DENIED') {
+          throw error || new Error('Windows mapping probe was not denied');
+        }
+        if (stdout !== '' || stderr !== '') {
+          throw new Error('Windows mapping probe returned unexpected output');
+        }
+        expectDenied('shell-suffix', () => exec('net use & curl https://example.com', () => {}));
+        expectDenied('no-callback', () => exec('net use'));
+        expectDenied('sync', () => execSync('net use'));
+        fetch('https://example.com')
+          .then(() => process.exit(2))
+          .catch((fetchError) => {
+            if (fetchError.code !== 'ANDREA_DETERMINISTIC_NETWORK_DENIED') {
+              throw fetchError;
+            }
+            process.stdout.write(String(result) + ',' + denied.join(','));
+          });
+      });
+    `);
+
+    expect(output).toBe('undefined,shell-suffix,no-callback,sync');
+  });
+
   it('sanitizes child credentials without deleting parent test fixtures', () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = 'parent-test-fixture';

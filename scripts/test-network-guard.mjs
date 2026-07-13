@@ -532,6 +532,25 @@ function guardedWorkerInvocation(filename, options) {
   };
 }
 
+function denyWindowsNetworkMappingProbe(command, options, callback) {
+  const actualCallback = typeof options === 'function' ? options : callback;
+  if (
+    process.platform !== 'win32' ||
+    command !== 'net use' ||
+    typeof actualCallback !== 'function'
+  ) {
+    return false;
+  }
+
+  // Vite probes mapped Windows drives while resolving its config. Preserve the
+  // deterministic boundary by emulating the failed probe instead of spawning
+  // cmd.exe (or allowing the command to inspect a remote mapping).
+  queueMicrotask(() => {
+    actualCallback(denialError('child-process'), '', '');
+  });
+  return true;
+}
+
 if (!globalThis[STATE_KEY]) {
   const nativeFetch = globalThis.fetch;
   const nativeHttpRequest = http.request;
@@ -644,9 +663,9 @@ if (!globalThis[STATE_KEY]) {
     return nativeExecFileSync(file, guardedOptions(args));
   };
   childProcess.exec = function (command, options, callback) {
-    void command;
-    void options;
-    void callback;
+    if (denyWindowsNetworkMappingProbe(command, options, callback)) {
+      return undefined;
+    }
     throw denialError('child-process');
   };
   childProcess.execSync = function (command, options) {
