@@ -174,7 +174,12 @@ describe('container task snapshots', () => {
 
     const write = vi.mocked(fs.writeFileSync).mock.calls.at(-1);
     expect(write?.[0]).toBe(
-      '/tmp/nanoclaw-test-data/ipc/test-group/current_tasks.json',
+      path.resolve(
+        '/tmp/nanoclaw-test-data',
+        'ipc',
+        'test-group',
+        'current_tasks.json',
+      ),
     );
     const serialized = String(write?.[1]);
     expect(serialized).not.toContain('script');

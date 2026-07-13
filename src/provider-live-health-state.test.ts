@@ -53,7 +53,7 @@ describe('provider live health state', () => {
     }
   });
 
-  it('persists only bounded probe metadata in an owner-only atomic file', () => {
+  it('persists only bounded probe metadata in an atomic state file', () => {
     const root = tempRoot();
     const state = writeProviderLiveHealthState(
       [
@@ -77,13 +77,32 @@ describe('provider live health state', () => {
     expect(raw).not.toContain('secret-value');
     expect(raw).not.toContain('request-private-1');
     expect(raw).toContain('api_key=***');
-    expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(readProviderLiveHealthState(root)?.providers[0]).toMatchObject({
       providerId: 'openai_cloud',
       liveProbe: 'ok',
       liveModel: 'gpt-test',
     });
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'uses owner-only permissions on Unix hosts',
+    () => {
+      const root = tempRoot();
+      writeProviderLiveHealthState(
+        [snapshot()],
+        '2026-07-12T08:00:00.000Z',
+        root,
+      );
+
+      const file = join(
+        root,
+        'data',
+        'runtime',
+        'provider-live-health-state.json',
+      );
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it('uses only fresh cached observations and preserves current config blockers', () => {
     const root = tempRoot();
