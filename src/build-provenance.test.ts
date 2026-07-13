@@ -1,4 +1,3 @@
-import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -14,6 +13,11 @@ import {
 
 describe('build provenance', () => {
   let projectRoot = '';
+  const cleanGitState = {
+    branch: 'main',
+    commit: 'a'.repeat(40),
+    dirtyPathCount: 0,
+  };
 
   beforeEach(() => {
     projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'build-proof-'));
@@ -24,20 +28,6 @@ describe('build provenance', () => {
       path.join(projectRoot, 'dist', 'index.js'),
       'export {};\n',
     );
-    execFileSync('git', ['init'], { cwd: projectRoot, stdio: 'ignore' });
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], {
-      cwd: projectRoot,
-    });
-    execFileSync('git', ['config', 'user.name', 'Test User'], {
-      cwd: projectRoot,
-    });
-    execFileSync('git', ['add', '.gitignore', 'README.md'], {
-      cwd: projectRoot,
-    });
-    execFileSync('git', ['commit', '-m', 'fixture'], {
-      cwd: projectRoot,
-      stdio: 'ignore',
-    });
   });
 
   afterEach(() => {
@@ -48,6 +38,7 @@ describe('build provenance', () => {
     const manifest = writeBuildProvenance({
       projectRoot,
       now: new Date('2026-07-12T10:00:00.000Z'),
+      gitState: cleanGitState,
     });
 
     expect(readBuildProvenance(projectRoot)).toEqual(manifest);
@@ -61,7 +52,10 @@ describe('build provenance', () => {
 
   it('rejects dirty-source, stale-commit, and changed-artifact claims', () => {
     fs.writeFileSync(path.join(projectRoot, 'README.md'), 'dirty source\n');
-    const dirty = writeBuildProvenance({ projectRoot });
+    const dirty = writeBuildProvenance({
+      projectRoot,
+      gitState: { ...cleanGitState, dirtyPathCount: 1 },
+    });
     expect(dirty.gitDirtyPathCount).toBe(1);
     expect(
       assessBuildProvenance({
@@ -71,7 +65,10 @@ describe('build provenance', () => {
     ).toBe('dirty_source');
 
     fs.writeFileSync(path.join(projectRoot, 'README.md'), 'proof fixture\n');
-    const clean = writeBuildProvenance({ projectRoot });
+    const clean = writeBuildProvenance({
+      projectRoot,
+      gitState: cleanGitState,
+    });
     expect(
       assessBuildProvenance({
         projectRoot,

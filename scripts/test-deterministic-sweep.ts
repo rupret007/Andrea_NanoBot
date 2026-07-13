@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 
@@ -34,7 +34,6 @@ const packageJsonPath = fileURLToPath(
   new URL('../package.json', import.meta.url),
 );
 const repoRoot = dirname(packageJsonPath);
-const networkGuardPath = resolve(repoRoot, 'scripts/test-network-guard.mjs');
 const packageJson = JSON.parse(
   readFileSync(packageJsonPath, 'utf8'),
 ) as PackageJson;
@@ -43,7 +42,8 @@ const duplicateOrInteractive = new Map<string, string>([
   ['test:watch', 'interactive watch mode'],
   ['test:major', 'aggregate gate; run separately when needed'],
   ['test:major:ci', 'aggregate CI gate; run separately when needed'],
-  ['test:agi', 'AGI Vitest suite; covered by the standard gate'],
+  ['test:agent-runner', 'container package gate; run separately'],
+  ['test:agi', 'AGI Vitest suite; run separately'],
   ['test:deterministic:sweep', 'this runner'],
 ]);
 
@@ -74,6 +74,34 @@ function formatDuration(seconds: number): string {
 
 function tailLines(value: string, count = 80): string {
   return value.split('\n').slice(-count).join('\n').trim();
+}
+
+function deterministicCommandArgs(script: TestScript): string[] {
+  if (
+    !script.command.startsWith('node ') ||
+    /[\r\n;&|<>`$'"\\]/.test(script.command)
+  ) {
+    throw new Error(
+      `Deterministic script ${script.name} must be a plain argv-safe Node command.`,
+    );
+  }
+  const tokens = script.command.trim().split(/\s+/);
+  if (tokens[0] !== 'node' || tokens.length < 2) {
+    throw new Error(
+      `Deterministic script ${script.name} has no executable Node target.`,
+    );
+  }
+  if (
+    tokens[1] === 'scripts/run-with-pinned-node.mjs' &&
+    tokens[2] === './node_modules/tsx/dist/cli.mjs' &&
+    tokens.length >= 4
+  ) {
+    // The tsx CLI re-spawns Node with its own loader flags. Launch TypeScript
+    // through Node's registered tsx import instead so the guarded process
+    // never needs to delegate control to another loader-bearing child.
+    return ['--import=tsx', ...tokens.slice(3)];
+  }
+  return tokens.slice(1);
 }
 
 const selected: TestScript[] = [];
@@ -107,15 +135,12 @@ const results: TestResult[] = [];
 
 for (const script of selected) {
   const scriptStarted = performance.now();
-  const result = spawnSync('npm', ['run', script.name], {
+  const result = spawnSync(process.execPath, deterministicCommandArgs(script), {
     cwd: repoRoot,
     encoding: 'utf8',
     env: buildHermeticTestEnv({
       ...process.env,
       CI: process.env.CI || '1',
-      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${networkGuardPath}`]
-        .filter(Boolean)
-        .join(' '),
     }),
     maxBuffer: 30 * 1024 * 1024,
   });

@@ -2,17 +2,14 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, spawn } from 'child_process';
-import { createHash } from 'crypto';
+import { ChildProcess, spawn, spawnSync } from 'child_process';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 import {
   AGENT_RUNTIME_DEFAULT,
-  AGENT_RUNTIME_FALLBACK,
-  CODEX_LOCAL_ENABLED,
-  CODEX_LOCAL_MODEL,
   CONTAINER_IMAGE,
   CONTAINER_INITIAL_OUTPUT_TIMEOUT,
   CONTAINER_MAX_OUTPUT_SIZE,
@@ -21,10 +18,14 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_URL,
-  OPENAI_MODEL_FALLBACK,
   RUNTIME_STATE_DIR,
   TIMEZONE,
 } from './config.js';
+import {
+  getAssistantCapabilityLane,
+  getAssistantSessionHomeFlavor,
+} from './assistant-session.js';
+import type { ContainerIpcContext } from './container-ipc-auth.js';
 import { listEnabledCommunitySkillsForGroup } from './db.js';
 import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
@@ -41,9 +42,11 @@ import {
 } from './container-runtime.js';
 import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
-import { OPENCLAW_MARKET_MANIFEST_FILENAME } from './openclaw-market.js';
 import { AgentRuntimeName, RegisteredGroup, RuntimeRoute } from './types.js';
-import type { AssistantRequestPolicy } from './assistant-routing.js';
+import {
+  normalizeAssistantRequestPolicy,
+  type AssistantRequestPolicy,
+} from './assistant-routing.js';
 import {
   DEFAULT_MINIMAX_ANTHROPIC_BASE_URL,
   DEFAULT_MINIMAX_MODEL_COMPLEX,
@@ -78,9 +81,10 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
-  script?: string;
   requestPolicy?: AssistantRequestPolicy;
   idleTimeoutMs?: number;
+  ipcRunId?: string;
+  ipcAuthToken?: string;
 }
 
 export interface ContainerOutput {
@@ -111,10 +115,43 @@ export interface ContainerOutput {
   runtimeToolEvidence?: RuntimeToolEvidenceV1;
 }
 
+export function assertContainerRuntimeTrustBoundary(runtimeName: string): void {
+  // Docker and Podman are covered by the isolated nested-overlay canary. The
+  // Apple `container` CLI has not yet supplied equivalent proof; accepting it
+  // would make host-owned controls writable through their session parent.
+  if (runtimeName === 'apple-container') {
+    throw new Error(
+      'Selected container runtime cannot enforce the verified nested read-only mount boundary.',
+    );
+  }
+}
+
 interface VolumeMount {
   hostPath: string;
   containerPath: string;
   readonly: boolean;
+}
+
+export function excludeProtectedAdditionalMounts(
+  mounts: VolumeMount[],
+  protectedRoots: string[],
+): VolumeMount[] {
+  const resolvedRoots = protectedRoots
+    .filter((root) => fs.existsSync(root))
+    .map((root) => fs.realpathSync(root));
+  return mounts.filter((mount) => {
+    const candidate = fs.realpathSync(mount.hostPath);
+    return !resolvedRoots.some((root) => {
+      const candidateWithinRoot = path.relative(root, candidate);
+      const rootWithinCandidate = path.relative(candidate, root);
+      return (
+        (!candidateWithinRoot.startsWith('..') &&
+          !path.isAbsolute(candidateWithinRoot)) ||
+        (!rootWithinCandidate.startsWith('..') &&
+          !path.isAbsolute(rootWithinCandidate))
+      );
+    });
+  });
 }
 
 interface ContainerLaunchMetadata {
@@ -147,6 +184,18 @@ const MODEL_OVERRIDE_ENV_KEYS = [
   'CLAUDE_MODEL',
 ] as const;
 
+const PROJECT_VIEW_EXCLUDED_ROOTS = new Set([
+  '.claude',
+  '.git',
+  'data',
+  'groups',
+  'node_modules',
+  'store',
+]);
+const MAX_PROJECT_VIEW_FILES = 10_000;
+const MAX_PROJECT_VIEW_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_PROJECT_VIEW_TOTAL_BYTES = 512 * 1024 * 1024;
+
 interface LocalOpenAiGatewayState {
   runtime?: string;
   network?: string;
@@ -173,20 +222,9 @@ const CONTAINER_HOST_ALIAS_HOSTS = new Set([
   'host.docker.internal',
 ]);
 const NINE_ROUTER_DEFAULT_PORT = '20128';
-const CODEX_AUTH_SYNC_FILENAMES = [
-  'auth.json',
-  'cap_sid',
-  'config.toml',
-] as const;
 const LOG_SAFE_ENV_KEYS = new Set([
   'TZ',
   'HOME',
-  'CODEX_HOME',
-  'AGENT_RUNTIME_DEFAULT',
-  'AGENT_RUNTIME_FALLBACK',
-  'CODEX_LOCAL_ENABLED',
-  'CODEX_LOCAL_MODEL',
-  'OPENAI_MODEL_FALLBACK',
   'NANOCLAW_RUNTIME_PROVIDER',
   'NANOCLAW_CONTAINER_RUNTIME',
   'ANTHROPIC_BASE_URL',
@@ -222,6 +260,172 @@ function appendContainerEnv(
   args.push('-e', `${key}=${value}`);
 }
 
+function normalizeSensitiveContainerEnvArgs(
+  args: string[],
+  launchEnv: Record<string, string>,
+): void {
+  const observedValues = new Map<string, string>();
+  for (let index = 0; index < args.length - 1; index += 1) {
+    if (args[index] !== '-e') continue;
+    const envArg = args[index + 1] || '';
+    const separator = envArg.indexOf('=');
+    const key = separator >= 0 ? envArg.slice(0, separator) : envArg;
+    const value = separator >= 0 ? envArg.slice(separator + 1) : undefined;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error('Container environment contains an unsafe key.');
+    }
+    if (value !== undefined) {
+      const previousValue = observedValues.get(key) ?? launchEnv[key];
+      if (previousValue !== undefined && previousValue !== value) {
+        throw new Error(
+          `Container environment contains conflicting values for ${key}.`,
+        );
+      }
+      observedValues.set(key, value);
+      if (shouldRedactEnvKey(key) || ONECLI_ALLOWED_ENV_KEYS.has(key)) {
+        launchEnv[key] = value;
+        args[index + 1] = key;
+      }
+    }
+  }
+}
+
+const ONECLI_ALLOWED_ENV_KEYS = new Set([
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+]);
+const ONECLI_CA_TARGETS = [
+  '/tmp/onecli-proxy-ca.pem',
+  '/tmp/onecli-combined-ca.pem',
+] as const;
+
+function validateOneCliProxyUrl(value: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch (cause) {
+    throw new Error('OneCLI returned an invalid proxy URL.', { cause });
+  }
+  if (
+    !['http:', 'https:'].includes(parsed.protocol) ||
+    parsed.username ||
+    parsed.password ||
+    !parsed.hostname ||
+    (parsed.pathname && parsed.pathname !== '/') ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error('OneCLI returned an unsafe proxy URL.');
+  }
+}
+
+function validateRuntimeEndpointUrl(value: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch (cause) {
+    throw new Error('Runtime endpoint URL is invalid.', { cause });
+  }
+  if (
+    !['http:', 'https:'].includes(parsed.protocol) ||
+    !parsed.hostname ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    value.length > 4096 ||
+    /[\r\n\0]/.test(value)
+  ) {
+    throw new Error('Runtime endpoint URL is unsafe.');
+  }
+}
+
+function validateOneCliCaMount(spec: string): void {
+  const target = ONECLI_CA_TARGETS.find((candidate) =>
+    spec.endsWith(`:${candidate}:ro`),
+  );
+  if (!target) {
+    throw new Error('OneCLI attempted an unsupported container mount.');
+  }
+  const hostPath = spec.slice(0, -`:${target}:ro`.length);
+  const resolvedHostPath = path.resolve(hostPath);
+  const resolvedTempRoot = path.resolve(os.tmpdir());
+  const relative = path.relative(resolvedTempRoot, resolvedHostPath);
+  if (
+    !hostPath ||
+    relative.startsWith('..') ||
+    path.isAbsolute(relative) ||
+    !['onecli-proxy-ca.pem', 'onecli-combined-ca.pem'].includes(
+      path.basename(resolvedHostPath),
+    )
+  ) {
+    throw new Error('OneCLI CA mount is outside the trusted temporary path.');
+  }
+  const stat = fs.lstatSync(resolvedHostPath);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 5 * 1024 * 1024) {
+    throw new Error('OneCLI CA mount is not a bounded regular file.');
+  }
+  const pem = fs.readFileSync(resolvedHostPath, 'utf8');
+  if (!pem.includes('-----BEGIN CERTIFICATE-----')) {
+    throw new Error('OneCLI CA mount does not contain a certificate.');
+  }
+}
+
+/** OneCLI is a credential proxy, not an executable-control authority. Validate
+ * every SDK-added argument against its documented proxy/CA contract. */
+function validateOneCliAddedArgs(
+  argsBefore: string[],
+  argsAfter: string[],
+): void {
+  if (
+    argsAfter.length < argsBefore.length ||
+    argsBefore.some((value, index) => argsAfter[index] !== value)
+  ) {
+    throw new Error('OneCLI modified existing container controls.');
+  }
+  const additions = argsAfter.slice(argsBefore.length);
+  for (let index = 0; index < additions.length; index += 2) {
+    const flag = additions[index];
+    const value = additions[index + 1];
+    if (!value || (flag !== '-e' && flag !== '-v')) {
+      throw new Error('OneCLI returned an unsupported container argument.');
+    }
+    if (flag === '-v') {
+      validateOneCliCaMount(value);
+      continue;
+    }
+    const separator = value.indexOf('=');
+    if (separator <= 0) {
+      throw new Error('OneCLI returned an invalid environment argument.');
+    }
+    const key = value.slice(0, separator);
+    const envValue = value.slice(separator + 1);
+    if (!ONECLI_ALLOWED_ENV_KEYS.has(key)) {
+      throw new Error(
+        `OneCLI returned an unsupported environment key: ${key}.`,
+      );
+    }
+    if (key === 'HTTP_PROXY' || key === 'HTTPS_PROXY') {
+      validateOneCliProxyUrl(envValue);
+    } else if (key === 'NO_PROXY') {
+      if (envValue.length > 4096 || /[\r\n\0]/.test(envValue)) {
+        throw new Error('OneCLI returned an unsafe NO_PROXY value.');
+      }
+    } else {
+      const expectedTarget =
+        key === 'NODE_EXTRA_CA_CERTS'
+          ? '/tmp/onecli-proxy-ca.pem'
+          : '/tmp/onecli-combined-ca.pem';
+      if (envValue !== expectedTarget) {
+        throw new Error(`OneCLI returned an unsafe ${key} path.`);
+      }
+    }
+  }
+}
+
 export function sanitizeContainerArgsForLogs(args: string[]): string[] {
   const sanitized = [...args];
   for (let i = 0; i < sanitized.length - 1; i++) {
@@ -237,6 +441,23 @@ export function sanitizeContainerArgsForLogs(args: string[]): string[] {
   return sanitized;
 }
 
+export function sanitizeContainerRuntimeText(
+  value: string,
+  injectedEnv: Record<string, string>,
+): string {
+  let sanitized = sanitizeLogString(value || '');
+  for (const [key, secretValue] of Object.entries(injectedEnv)) {
+    if (
+      shouldRedactEnvKey(key) &&
+      secretValue.length >= 4 &&
+      sanitized.includes(secretValue)
+    ) {
+      sanitized = sanitized.split(secretValue).join('[REDACTED]');
+    }
+  }
+  return sanitizeLogString(sanitized);
+}
+
 function hasContainerEnvArg(args: string[], key: string): boolean {
   for (let i = 0; i < args.length - 1; i++) {
     if (args[i] !== '-e') continue;
@@ -245,6 +466,62 @@ function hasContainerEnvArg(args: string[], key: string): boolean {
     }
   }
   return false;
+}
+
+export function buildContainerChildEnv(
+  launchEnv: Record<string, string>,
+  containerArgs: string[],
+  inheritedEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const processLaunchKeys = [
+    'PATH',
+    'HOME',
+    'USER',
+    'LOGNAME',
+    'SHELL',
+    'TMPDIR',
+    'TMP',
+    'TEMP',
+    'LANG',
+    'LC_ALL',
+    'DOCKER_HOST',
+    'DOCKER_CONTEXT',
+    'DOCKER_CONFIG',
+    'DOCKER_CERT_PATH',
+    'DOCKER_TLS_VERIFY',
+    'DOCKER_API_VERSION',
+    'DOCKER_DEFAULT_PLATFORM',
+    'CONTAINER_HOST',
+    'PODMAN_HOST',
+    'CONTAINER_SSHKEY',
+    'SSH_AUTH_SOCK',
+    'XDG_RUNTIME_DIR',
+    'XDG_CONFIG_HOME',
+    'DBUS_SESSION_BUS_ADDRESS',
+    'SYSTEMROOT',
+    'COMSPEC',
+    'PATHEXT',
+    'USERPROFILE',
+    'HOMEDRIVE',
+    'HOMEPATH',
+    'APPDATA',
+    'LOCALAPPDATA',
+  ] as const;
+  const explicitlyInheritedKeys = new Set<string>();
+  for (let index = 0; index < containerArgs.length - 1; index += 1) {
+    if (containerArgs[index] !== '-e') continue;
+    const value = containerArgs[index + 1] || '';
+    if (value && !value.includes('=')) explicitlyInheritedKeys.add(value);
+  }
+  const childEnv: NodeJS.ProcessEnv = {};
+  for (const key of processLaunchKeys) {
+    if (inheritedEnv[key] !== undefined) childEnv[key] = inheritedEnv[key];
+  }
+  for (const key of explicitlyInheritedKeys) {
+    if (inheritedEnv[key] !== undefined) childEnv[key] = inheritedEnv[key];
+  }
+  Object.assign(childEnv, launchEnv);
+  return childEnv;
 }
 
 function hasAnthropicAuthEnvArg(args: string[]): boolean {
@@ -330,29 +607,25 @@ function collectFallbackCredentialEnv(
   }
 
   const fromEnvFile = readEnvFile([...FALLBACK_CREDENTIAL_KEYS]);
-  const env: Record<string, string> = {};
-
-  for (const key of FALLBACK_CREDENTIAL_KEYS) {
-    const value = process.env[key] || fromEnvFile[key];
-    if (value) env[key] = value;
+  const read = (key: (typeof FALLBACK_CREDENTIAL_KEYS)[number]) =>
+    (process.env[key] || fromEnvFile[key] || '').trim();
+  const oauthToken = read('CLAUDE_CODE_OAUTH_TOKEN');
+  if (oauthToken) return { CLAUDE_CODE_OAUTH_TOKEN: oauthToken };
+  const anthropicApiKey = read('ANTHROPIC_API_KEY');
+  if (anthropicApiKey) return { ANTHROPIC_API_KEY: anthropicApiKey };
+  const anthropicAuthToken = read('ANTHROPIC_AUTH_TOKEN');
+  if (anthropicAuthToken) {
+    return { ANTHROPIC_AUTH_TOKEN: anthropicAuthToken };
   }
+  const openAiApiKey = read('OPENAI_API_KEY');
 
   // OpenAI-compatible bridge:
   // If the user configured an Anthropic-compatible base URL and only has an
   // OpenAI key, use that key as the auth token expected by the Claude SDK.
-  const hasAnthropicAuth =
-    !!env.CLAUDE_CODE_OAUTH_TOKEN ||
-    !!env.ANTHROPIC_API_KEY ||
-    !!env.ANTHROPIC_AUTH_TOKEN;
-  if (
-    !hasAnthropicAuth &&
-    endpointEnv.ANTHROPIC_BASE_URL &&
-    env.OPENAI_API_KEY
-  ) {
-    env.ANTHROPIC_AUTH_TOKEN = env.OPENAI_API_KEY;
+  if (endpointEnv.ANTHROPIC_BASE_URL && openAiApiKey) {
+    return { ANTHROPIC_AUTH_TOKEN: openAiApiKey };
   }
-
-  return env;
+  return openAiApiKey ? { OPENAI_API_KEY: openAiApiKey } : {};
 }
 
 function collectModelOverrideEnv(): Record<string, string> {
@@ -561,172 +834,588 @@ function resolveLocalOpenAiGatewayBinding(
   };
 }
 
-function ensureSecretShadowFile(): string {
-  const shadowFile = path.join(RUNTIME_STATE_DIR, 'secret-shadow-empty');
-  fs.mkdirSync(path.dirname(shadowFile), { recursive: true });
-  if (!fs.existsSync(shadowFile)) {
-    fs.writeFileSync(shadowFile, '');
-  }
-  return shadowFile;
+const MAX_TRUSTED_SKILL_DEPTH = 20;
+const MAX_TRUSTED_SKILL_ENTRIES = 2_000;
+const MAX_TRUSTED_SKILL_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_TRUSTED_SKILL_TOTAL_BYTES = 50 * 1024 * 1024;
+const MAX_TRUSTED_GUIDANCE_BYTES = 128 * 1024;
+const CONTROL_GENERATION_RETENTION_MS = Math.max(
+  24 * 60 * 60 * 1_000,
+  CONTAINER_TIMEOUT * 2,
+);
+const activeControlGenerations = new Map<string, number>();
+
+interface TrustedCopyBudget {
+  entries: number;
+  bytes: number;
 }
 
-interface AgentRunnerSyncMetadata {
-  sourceTreeHash: string;
-  cachedTreeHash: string;
-}
-
-function hashText(input: string): string {
-  return createHash('sha256').update(input).digest('hex');
-}
-
-function tryReadTextFile(filePath: string): string | null {
-  try {
-    if (!fs.existsSync(filePath)) return null;
-    return fs.readFileSync(filePath, 'utf-8');
-  } catch {
-    return null;
-  }
-}
-
-function readAgentRunnerSyncMetadata(
-  metadataPath: string,
-): AgentRunnerSyncMetadata | null {
-  const raw = tryReadTextFile(metadataPath);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<AgentRunnerSyncMetadata>;
-    if (
-      typeof parsed.sourceTreeHash !== 'string' ||
-      typeof parsed.cachedTreeHash !== 'string'
-    ) {
-      return null;
-    }
-    return {
-      sourceTreeHash: parsed.sourceTreeHash,
-      cachedTreeHash: parsed.cachedTreeHash,
-    };
-  } catch {
-    return null;
+function assertSafePathSegment(segment: string, label: string): void {
+  if (
+    !segment ||
+    segment === '.' ||
+    segment === '..' ||
+    path.basename(segment) !== segment ||
+    segment.includes('/') ||
+    segment.includes('\\')
+  ) {
+    throw new Error(`Unsafe ${label} path segment: ${segment || '<empty>'}`);
   }
 }
 
-function writeAgentRunnerSyncMetadata(
-  metadataPath: string,
-  metadata: AgentRunnerSyncMetadata,
+function assertSafeControlIdentifier(value: string, label: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) {
+    throw new Error(`Unsafe ${label}: ${value || '<empty>'}`);
+  }
+}
+
+/** Register a destination using the conservative equivalence rules of the
+ * production macOS filesystem. Exported so collision behavior is directly
+ * testable without constructing live marketplace state. */
+export function registerTrustedControlDestination(
+  destinations: Map<string, string>,
+  destinationName: string,
 ): void {
-  fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+  const key = destinationName.normalize('NFC').toLocaleLowerCase('en-US');
+  const existing = destinations.get(key);
+  if (existing !== undefined) {
+    throw new Error(
+      `Trusted skill destination collides with ${existing}: ${destinationName}`,
+    );
+  }
+  destinations.set(key, destinationName);
 }
 
-function hashDirectoryTree(
-  dirPath: string,
-  ignoredNames = new Set<string>(),
-): string | null {
-  if (!fs.existsSync(dirPath)) return null;
+function readBoundedHostGuidance(filePath: string): string | null {
+  if (!fs.existsSync(filePath)) return null;
+  const stat = fs.lstatSync(filePath);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error(`Group guidance must be a regular file: ${filePath}`);
+  }
+  if (stat.size > MAX_TRUSTED_GUIDANCE_BYTES) {
+    throw new Error(`Group guidance is too large: ${filePath}`);
+  }
+  const content = fs.readFileSync(filePath, 'utf8');
+  if (Buffer.byteLength(content, 'utf8') > MAX_TRUSTED_GUIDANCE_BYTES) {
+    throw new Error(`Group guidance is too large: ${filePath}`);
+  }
+  return content;
+}
 
-  const entries: string[] = [];
+export function resolveTrustedGroupGuidance(
+  route: AssistantRequestPolicy['route'],
+  groupWorkspaceDir: string,
+): string {
+  // Only execution lanes may consume the shell-writable group instructions.
+  // Every less-capable or host-action lane receives a host constant so an
+  // earlier execution turn cannot persistently prompt-poison a later turn.
+  if (route === 'advanced_helper' || route === 'code_plane') {
+    return (
+      readBoundedHostGuidance(path.join(groupWorkspaceDir, 'CLAUDE.md')) ||
+      '# Andrea execution guidance\n'
+    );
+  }
+  if (route === 'control_plane') return '# Andrea control guidance\n';
+  if (route === 'protected_assistant') {
+    return '# Andrea protected assistant guidance\n';
+  }
+  return '# Andrea direct assistant guidance\n';
+}
 
-  const walk = (currentPath: string, relativePrefix: string): void => {
-    const names = fs
-      .readdirSync(currentPath)
-      .filter((name) => !ignoredNames.has(name))
-      .sort();
+function assertPathWithinRoot(candidatePath: string, rootPath: string): void {
+  const resolvedRoot = fs.realpathSync(rootPath);
+  const resolvedCandidate = fs.realpathSync(candidatePath);
+  const relative = path.relative(resolvedRoot, resolvedCandidate);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(
+      `Community skill cache is outside its trusted root: ${candidatePath}`,
+    );
+  }
+}
 
-    for (const name of names) {
-      const fullPath = path.join(currentPath, name);
-      const relativePath = relativePrefix
-        ? path.join(relativePrefix, name)
-        : name;
-      const stat = fs.statSync(fullPath);
+function hashTrustedControlTree(rootDir: string): string {
+  const hash = createHash('sha256');
+  const walk = (currentDir: string, prefix: string): void => {
+    for (const entry of fs.readdirSync(currentDir).sort()) {
+      const fullPath = path.join(currentDir, entry);
+      const relativePath = prefix ? `${prefix}/${entry}` : entry;
+      const stat = fs.lstatSync(fullPath);
+      if (stat.isSymbolicLink()) {
+        throw new Error(
+          `Trusted control view contains a symbolic link: ${fullPath}`,
+        );
+      }
       if (stat.isDirectory()) {
+        hash.update(`d:${relativePath}\n`);
         walk(fullPath, relativePath);
         continue;
       }
-
-      const content = tryReadTextFile(fullPath);
-      entries.push(
-        `${relativePath.replace(/\\/g, '/')}:${hashText(content || '')}`,
-      );
+      if (!stat.isFile()) {
+        throw new Error(
+          `Trusted control view contains a special file: ${fullPath}`,
+        );
+      }
+      hash.update(`f:${relativePath}:${stat.size}\n`);
+      hash.update(fs.readFileSync(fullPath));
+      hash.update('\n');
     }
   };
-
-  walk(dirPath, '');
-  return hashText(entries.join('\n'));
+  walk(rootDir, '');
+  return hash.digest('hex');
 }
 
-function syncSkillsForGroup(
-  groupFolder: string,
-  groupSessionsDir: string,
+function retainControlGeneration(generationDir: string): void {
+  activeControlGenerations.set(
+    generationDir,
+    (activeControlGenerations.get(generationDir) || 0) + 1,
+  );
+}
+
+function releaseControlGeneration(generationDir: string): void {
+  const count = activeControlGenerations.get(generationDir) || 0;
+  if (count <= 1) {
+    activeControlGenerations.delete(generationDir);
+  } else {
+    activeControlGenerations.set(generationDir, count - 1);
+  }
+}
+
+function pruneExpiredControlGenerations(controlsRoot: string): void {
+  const cutoff = Date.now() - CONTROL_GENERATION_RETENTION_MS;
+  for (const entry of fs.readdirSync(controlsRoot)) {
+    if (!/^generation-[a-f0-9]{64}$/.test(entry)) continue;
+    const candidate = path.join(controlsRoot, entry);
+    const stat = fs.lstatSync(candidate);
+    if (
+      activeControlGenerations.has(candidate) ||
+      stat.isSymbolicLink() ||
+      !stat.isDirectory() ||
+      stat.mtimeMs >= cutoff
+    ) {
+      continue;
+    }
+    fs.rmSync(candidate, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Copy a skill tree without following links or accepting special files.
+ * Exported only so the trust boundary can be tested against real filesystem
+ * entries; callers should normally use the generated control view below.
+ */
+export function copyTrustedSkillDirectory(
+  sourceDir: string,
+  destinationDir: string,
+  budget: TrustedCopyBudget = { entries: 0, bytes: 0 },
+  depth = 0,
 ): void {
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
-  const skillsDst = path.join(groupSessionsDir, 'skills');
-  fs.mkdirSync(skillsDst, { recursive: true });
-
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true, force: true });
-    }
+  if (depth > MAX_TRUSTED_SKILL_DEPTH) {
+    throw new Error(`Trusted skill tree exceeds maximum depth: ${sourceDir}`);
   }
 
-  let enabledCommunitySkills: ReturnType<
-    typeof listEnabledCommunitySkillsForGroup
-  > = [];
-  try {
-    enabledCommunitySkills = listEnabledCommunitySkillsForGroup(groupFolder);
-  } catch (err) {
-    logger.debug(
-      { groupFolder, err },
-      'Skipping community skill sync because the marketplace DB is unavailable',
+  const sourceStat = fs.lstatSync(sourceDir);
+  if (sourceStat.isSymbolicLink() || !sourceStat.isDirectory()) {
+    throw new Error(
+      `Trusted skill source is not a regular directory: ${sourceDir}`,
     );
   }
-  const enabledCommunityDirs = new Set<string>();
-  for (const skill of enabledCommunitySkills) {
-    if (!fs.existsSync(skill.cache_path)) {
-      logger.warn(
-        {
-          groupFolder,
-          skillId: skill.skill_id,
-          cachePath: skill.cache_path,
-        },
-        'Enabled community skill cache missing; skipping sync',
+
+  fs.mkdirSync(destinationDir, { recursive: true });
+  for (const entry of fs.readdirSync(sourceDir).sort()) {
+    assertSafePathSegment(entry, 'skill entry');
+    budget.entries += 1;
+    if (budget.entries > MAX_TRUSTED_SKILL_ENTRIES) {
+      throw new Error(`Trusted skill tree has too many entries: ${sourceDir}`);
+    }
+
+    const sourcePath = path.join(sourceDir, entry);
+    const destinationPath = path.join(destinationDir, entry);
+    const stat = fs.lstatSync(sourcePath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(
+        `Trusted skill tree contains a symbolic link: ${sourcePath}`,
       );
+    }
+    if (stat.isDirectory()) {
+      copyTrustedSkillDirectory(sourcePath, destinationPath, budget, depth + 1);
       continue;
     }
-    enabledCommunityDirs.add(skill.cache_dir_name);
+    if (!stat.isFile()) {
+      throw new Error(
+        `Trusted skill tree contains a special file: ${sourcePath}`,
+      );
+    }
+    if (stat.size > MAX_TRUSTED_SKILL_FILE_BYTES) {
+      throw new Error(`Trusted skill file is too large: ${sourcePath}`);
+    }
+    budget.bytes += stat.size;
+    if (budget.bytes > MAX_TRUSTED_SKILL_TOTAL_BYTES) {
+      throw new Error(`Trusted skill tree is too large: ${sourceDir}`);
+    }
+    fs.copyFileSync(sourcePath, destinationPath);
+  }
+}
+
+function isTrustedProjectPath(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, '/');
+  const segments = normalized.split('/');
+  if (
+    !normalized ||
+    path.posix.isAbsolute(normalized) ||
+    segments.some((segment) => !segment || segment === '.' || segment === '..')
+  ) {
+    return false;
+  }
+  if (PROJECT_VIEW_EXCLUDED_ROOTS.has(segments[0]!)) return false;
+  if (normalized === '.mcp.json') return false;
+  return !segments.some((segment) => segment.toLowerCase().startsWith('.env'));
+}
+
+export function buildTrustedProjectViewFromTrackedPaths(
+  projectRoot: string,
+  trackedPaths: string[],
+  viewsRoot = path.join(RUNTIME_STATE_DIR, 'container-project-views'),
+): string {
+  const relativePaths = [...new Set(trackedPaths)]
+    .filter(isTrustedProjectPath)
+    .sort();
+  if (relativePaths.length > MAX_PROJECT_VIEW_FILES) {
+    throw new Error('Trusted project snapshot contains too many files.');
   }
 
-  for (const entry of fs.readdirSync(skillsDst)) {
-    const candidateDir = path.join(skillsDst, entry);
-    if (
-      !fs.existsSync(candidateDir) ||
-      !fs.statSync(candidateDir).isDirectory()
-    ) {
-      continue;
+  fs.mkdirSync(viewsRoot, { recursive: true });
+  const stagingDir = fs.mkdtempSync(path.join(viewsRoot, '.staging-'));
+  let committed = false;
+  let totalBytes = 0;
+  try {
+    for (const relativePath of relativePaths) {
+      const sourcePath = path.join(projectRoot, ...relativePath.split('/'));
+      const sourceStat = fs.lstatSync(sourcePath);
+      if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+        throw new Error(
+          `Trusted project source is not a regular file: ${relativePath}`,
+        );
+      }
+      if (sourceStat.size > MAX_PROJECT_VIEW_FILE_BYTES) {
+        throw new Error(`Trusted project file is too large: ${relativePath}`);
+      }
+      totalBytes += sourceStat.size;
+      if (totalBytes > MAX_PROJECT_VIEW_TOTAL_BYTES) {
+        throw new Error('Trusted project snapshot is too large.');
+      }
+      const destinationPath = path.join(stagingDir, ...relativePath.split('/'));
+      fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+      fs.copyFileSync(sourcePath, destinationPath);
     }
 
-    const manifestPath = path.join(
-      candidateDir,
-      OPENCLAW_MARKET_MANIFEST_FILENAME,
+    const generationHash = hashTrustedControlTree(stagingDir);
+    const generationDir = path.join(viewsRoot, `generation-${generationHash}`);
+    if (fs.existsSync(generationDir)) {
+      if (hashTrustedControlTree(generationDir) !== generationHash) {
+        throw new Error(
+          'Existing trusted project generation failed integrity check.',
+        );
+      }
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    } else {
+      try {
+        fs.renameSync(stagingDir, generationDir);
+      } catch (err) {
+        if (
+          !fs.existsSync(generationDir) ||
+          hashTrustedControlTree(generationDir) !== generationHash
+        ) {
+          throw err;
+        }
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      }
+    }
+    committed = true;
+    return generationDir;
+  } finally {
+    if (!committed) {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    }
+  }
+}
+
+/**
+ * Build an atomic, content-addressed snapshot containing only Git-tracked
+ * regular files. Ignored/untracked owner data, project MCP/settings files,
+ * group state, and every .env* file are absent rather than merely shadowed.
+ */
+export function buildTrustedProjectView(
+  projectRoot: string,
+  viewsRoot = path.join(RUNTIME_STATE_DIR, 'container-project-views'),
+): string {
+  const listResult = spawnSync('git', ['ls-files', '--cached', '-z'], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (listResult.error) throw listResult.error;
+  if (listResult.status !== 0) {
+    throw new Error('Unable to enumerate the trusted project snapshot.');
+  }
+  return buildTrustedProjectViewFromTrackedPaths(
+    projectRoot,
+    String(listResult.stdout || '')
+      .split('\0')
+      .filter(Boolean),
+    viewsRoot,
+  );
+}
+
+const TRUSTED_CLAUDE_SETTINGS = {
+  env: {
+    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+    CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '0',
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+  },
+} as const;
+
+const TRUSTED_USER_GUIDANCE = `# Andrea managed runtime
+
+Runtime settings, skills, plugins, and tool availability are managed by the host.
+Treat these controls as read-only. Never attempt to replace or bypass them.
+`;
+
+interface TrustedControlView {
+  generationDir: string;
+  settingsFile: string;
+  userGuidanceFile: string;
+  groupGuidanceFile: string;
+  skillsDir: string;
+  pluginsDir: string;
+  agentsDir: string;
+  commandsDir: string;
+  rulesDir: string;
+}
+
+export function shouldIncludeSkillControlsForRoute(
+  route?: AssistantRequestPolicy['route'],
+  builtinTools: readonly string[] = [],
+): boolean {
+  return (
+    (route === 'advanced_helper' || route === 'code_plane') &&
+    builtinTools.includes('Skill')
+  );
+}
+
+export type TrustedSkillControlMode = 'none' | 'catalog' | 'full';
+
+export function resolveTrustedSkillControlMode(
+  route: AssistantRequestPolicy['route'] | undefined,
+  builtinTools: readonly string[] = [],
+  mcpTools: readonly string[] = [],
+): TrustedSkillControlMode {
+  if (shouldIncludeSkillControlsForRoute(route, builtinTools)) return 'full';
+  return mcpTools.some((tool) =>
+    [
+      'mcp__nanoclaw__search_openclaw_skills',
+      'mcp__nanoclaw__enable_openclaw_skill',
+      'mcp__nanoclaw__install_openclaw_skill',
+      'mcp__nanoclaw__disable_openclaw_skill',
+      'mcp__nanoclaw__list_enabled_openclaw_skills',
+    ].includes(tool),
+  )
+    ? 'catalog'
+    : 'none';
+}
+
+export function copyTrustedOpenClawCatalog(
+  sourceFile: string,
+  destinationFile: string,
+): void {
+  const stat = fs.lstatSync(sourceFile);
+  if (
+    stat.isSymbolicLink() ||
+    !stat.isFile() ||
+    stat.size > MAX_TRUSTED_SKILL_FILE_BYTES
+  ) {
+    throw new Error('OpenClaw catalog must be a bounded regular file.');
+  }
+  const content = fs.readFileSync(sourceFile, 'utf8');
+  const parsed = JSON.parse(content) as { skills?: unknown };
+  if (!parsed || !Array.isArray(parsed.skills)) {
+    throw new Error('OpenClaw catalog has an invalid structure.');
+  }
+  fs.mkdirSync(path.dirname(destinationFile), { recursive: true });
+  fs.writeFileSync(destinationFile, content, 'utf8');
+}
+
+function buildTrustedControlView(
+  groupFolder: string,
+  route: AssistantRequestPolicy['route'],
+  groupWorkspaceDir: string,
+  skillControlMode: TrustedSkillControlMode,
+): TrustedControlView {
+  assertSafeControlIdentifier(groupFolder, 'group folder');
+  const claudeHomeFlavor = route.replace(/_/g, '-');
+  assertSafeControlIdentifier(claudeHomeFlavor, 'Claude home flavor');
+  const controlsRoot = path.join(
+    RUNTIME_STATE_DIR,
+    'container-controls',
+    groupFolder,
+    claudeHomeFlavor,
+  );
+  fs.mkdirSync(controlsRoot, { recursive: true });
+  const stagingDir = fs.mkdtempSync(path.join(controlsRoot, '.staging-'));
+  let committed = false;
+
+  try {
+    const settingsFile = path.join(stagingDir, 'settings.json');
+    const userGuidanceFile = path.join(stagingDir, 'CLAUDE.md');
+    const groupGuidanceFile = path.join(stagingDir, 'group-CLAUDE.md');
+    const skillsDir = path.join(stagingDir, 'skills');
+    const pluginsDir = path.join(stagingDir, 'plugins');
+    const agentsDir = path.join(stagingDir, 'agents');
+    const commandsDir = path.join(stagingDir, 'commands');
+    const rulesDir = path.join(stagingDir, 'rules');
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.mkdirSync(pluginsDir, { recursive: true });
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.mkdirSync(commandsDir, { recursive: true });
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(
+      settingsFile,
+      `${JSON.stringify(TRUSTED_CLAUDE_SETTINGS, null, 2)}\n`,
+      'utf8',
     );
-    if (
-      fs.existsSync(manifestPath) &&
-      !enabledCommunityDirs.has(path.basename(candidateDir))
-    ) {
-      fs.rmSync(candidateDir, { recursive: true, force: true });
+    fs.writeFileSync(userGuidanceFile, TRUSTED_USER_GUIDANCE, 'utf8');
+    const groupGuidance = resolveTrustedGroupGuidance(route, groupWorkspaceDir);
+    fs.writeFileSync(groupGuidanceFile, groupGuidance, 'utf8');
+
+    // Skills are executable/prompt-bearing controls. Keep them entirely out of
+    // direct, protected, and control profiles; only the explicitly capable
+    // advanced/code lanes receive the canonical + enabled set.
+    if (skillControlMode === 'catalog') {
+      copyTrustedOpenClawCatalog(
+        path.join(
+          process.cwd(),
+          'container',
+          'skills',
+          'openclaw-market',
+          'catalog.json',
+        ),
+        path.join(skillsDir, 'openclaw-market', 'catalog.json'),
+      );
+    } else if (skillControlMode === 'full') {
+      const destinationNames = new Map<string, string>();
+      const skillBudget: TrustedCopyBudget = { entries: 0, bytes: 0 };
+      const canonicalSkillsDir = path.join(
+        process.cwd(),
+        'container',
+        'skills',
+      );
+      if (fs.existsSync(canonicalSkillsDir)) {
+        for (const skillName of fs.readdirSync(canonicalSkillsDir).sort()) {
+          assertSafePathSegment(skillName, 'canonical skill');
+          const sourceDir = path.join(canonicalSkillsDir, skillName);
+          const sourceStat = fs.lstatSync(sourceDir);
+          if (sourceStat.isSymbolicLink() || !sourceStat.isDirectory()) {
+            throw new Error(
+              `Canonical skill is not a regular directory: ${sourceDir}`,
+            );
+          }
+          registerTrustedControlDestination(destinationNames, skillName);
+          copyTrustedSkillDirectory(
+            sourceDir,
+            path.join(skillsDir, skillName),
+            skillBudget,
+          );
+        }
+      }
+
+      let enabledCommunitySkills: ReturnType<
+        typeof listEnabledCommunitySkillsForGroup
+      > = [];
+      try {
+        enabledCommunitySkills =
+          listEnabledCommunitySkillsForGroup(groupFolder);
+      } catch (err) {
+        logger.debug(
+          { groupFolder, err },
+          'Using canonical skills only because the marketplace DB is unavailable',
+        );
+      }
+
+      for (const skill of enabledCommunitySkills) {
+        assertSafePathSegment(skill.cache_dir_name, 'community skill');
+        registerTrustedControlDestination(
+          destinationNames,
+          skill.cache_dir_name,
+        );
+        if (!fs.existsSync(skill.cache_path)) {
+          logger.warn(
+            { groupFolder, skillId: skill.skill_id },
+            'Enabled community skill cache is missing; excluding it from the control view',
+          );
+          continue;
+        }
+        const marketplaceCacheRoot = path.resolve(
+          DATA_DIR,
+          'marketplace',
+          'skills',
+        );
+        if (!fs.existsSync(marketplaceCacheRoot)) {
+          throw new Error(
+            `Marketplace cache root is missing for enabled skill: ${skill.skill_id}`,
+          );
+        }
+        assertPathWithinRoot(skill.cache_path, marketplaceCacheRoot);
+        copyTrustedSkillDirectory(
+          skill.cache_path,
+          path.join(skillsDir, skill.cache_dir_name),
+          skillBudget,
+        );
+      }
     }
-  }
 
-  for (const skill of enabledCommunitySkills) {
-    if (!enabledCommunityDirs.has(skill.cache_dir_name)) continue;
-
-    const destinationDir = path.join(skillsDst, skill.cache_dir_name);
-    fs.rmSync(destinationDir, { recursive: true, force: true });
-    fs.cpSync(skill.cache_path, destinationDir, {
-      recursive: true,
-      force: true,
-    });
+    const generationHash = hashTrustedControlTree(stagingDir);
+    const generationDir = path.join(
+      controlsRoot,
+      `generation-${generationHash}`,
+    );
+    if (fs.existsSync(generationDir)) {
+      const existingHash = hashTrustedControlTree(generationDir);
+      if (existingHash !== generationHash) {
+        throw new Error(
+          `Existing trusted control generation failed integrity check`,
+        );
+      }
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    } else {
+      try {
+        fs.renameSync(stagingDir, generationDir);
+      } catch (err) {
+        // Concurrent launches can resolve the same content-addressed view.
+        // Reuse it only after verifying the complete tree.
+        if (
+          !fs.existsSync(generationDir) ||
+          hashTrustedControlTree(generationDir) !== generationHash
+        ) {
+          throw err;
+        }
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      }
+    }
+    committed = true;
+    return {
+      generationDir,
+      settingsFile: path.join(generationDir, 'settings.json'),
+      userGuidanceFile: path.join(generationDir, 'CLAUDE.md'),
+      groupGuidanceFile: path.join(generationDir, 'group-CLAUDE.md'),
+      skillsDir: path.join(generationDir, 'skills'),
+      pluginsDir: path.join(generationDir, 'plugins'),
+      agentsDir: path.join(generationDir, 'agents'),
+      commandsDir: path.join(generationDir, 'commands'),
+      rulesDir: path.join(generationDir, 'rules'),
+    };
+  } finally {
+    if (!committed) {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    }
   }
 }
 
@@ -751,6 +1440,33 @@ Andrea is the only public assistant identity. Keep replies direct, natural, and 
 - Do not present helper layers as separate assistants.
 `;
 
+export function writeTrustedWorkspaceGuidance(
+  workspaceDir: string,
+  content: string,
+): void {
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const guidanceFile = path.join(workspaceDir, 'CLAUDE.md');
+  if (fs.existsSync(guidanceFile)) {
+    const stat = fs.lstatSync(guidanceFile);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new Error(
+        `Managed workspace guidance must be a regular file: ${guidanceFile}`,
+      );
+    }
+    if (fs.readFileSync(guidanceFile, 'utf8') === content) return;
+  }
+  const temporaryFile = path.join(
+    workspaceDir,
+    `.CLAUDE.md.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  );
+  try {
+    fs.writeFileSync(temporaryFile, content, { encoding: 'utf8', flag: 'wx' });
+    fs.renameSync(temporaryFile, guidanceFile);
+  } finally {
+    fs.rmSync(temporaryFile, { force: true });
+  }
+}
+
 function ensureDirectAssistantWorkspace(groupFolder: string): string {
   const workspaceDir = path.join(
     DATA_DIR,
@@ -758,32 +1474,11 @@ function ensureDirectAssistantWorkspace(groupFolder: string): string {
     groupFolder,
     'direct-assistant-workspace',
   );
-  fs.mkdirSync(workspaceDir, { recursive: true });
-  const claudeFile = path.join(workspaceDir, 'CLAUDE.md');
-  if (
-    !fs.existsSync(claudeFile) ||
-    tryReadTextFile(claudeFile) !== DIRECT_ASSISTANT_WORKSPACE_CLAUDE
-  ) {
-    fs.writeFileSync(claudeFile, DIRECT_ASSISTANT_WORKSPACE_CLAUDE, 'utf8');
-  }
+  writeTrustedWorkspaceGuidance(
+    workspaceDir,
+    DIRECT_ASSISTANT_WORKSPACE_CLAUDE,
+  );
   return workspaceDir;
-}
-
-function syncCodexAuthForGroup(groupCodexDir: string): void {
-  const globalCodexDir = path.join(os.homedir(), '.codex');
-  if (!fs.existsSync(globalCodexDir)) return;
-
-  for (const filename of CODEX_AUTH_SYNC_FILENAMES) {
-    const sourcePath = path.join(globalCodexDir, filename);
-    const sourceContent = tryReadTextFile(sourcePath);
-    if (sourceContent == null) continue;
-
-    const destinationPath = path.join(groupCodexDir, filename);
-    const existingContent = tryReadTextFile(destinationPath);
-    if (existingContent === sourceContent) continue;
-
-    fs.writeFileSync(destinationPath, sourceContent);
-  }
 }
 
 function buildVolumeMounts(
@@ -791,6 +1486,10 @@ function buildVolumeMounts(
   isMain: boolean,
   route?: AssistantRequestPolicy['route'],
   freshSessionHome = false,
+  allowHostActionIpc = false,
+  mountProjectView = false,
+  skillControlMode: TrustedSkillControlMode = 'none',
+  ipcInputDir?: string,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
@@ -798,30 +1497,18 @@ function buildVolumeMounts(
     route === 'direct_assistant'
       ? ensureDirectAssistantWorkspace(group.folder)
       : resolveGroupFolderPath(group.folder);
-  const shouldMountMainProject = isMain && route !== 'direct_assistant';
+  const shouldMountMainProject =
+    isMain && route !== 'direct_assistant' && mountProjectView;
 
   if (shouldMountMainProject) {
-    // Main gets the project root read-only. Writable paths the agent needs
-    // (group folder, IPC, .claude/) are mounted separately below.
-    // Read-only prevents the agent from modifying host application code
-    // (src/, dist/, package.json, etc.) which would bypass the sandbox
-    // entirely on next restart.
+    // Main gets an atomic snapshot of Git-tracked regular files only. Ignored
+    // owner data and mutable project controls are absent from this view.
+    const trustedProjectView = buildTrustedProjectView(projectRoot);
     mounts.push({
-      hostPath: projectRoot,
+      hostPath: trustedProjectView,
       containerPath: '/workspace/project',
       readonly: true,
     });
-
-    // Shadow .env so the agent cannot read secrets from the mounted project root.
-    // Credentials are injected by the OneCLI gateway, never exposed to containers.
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: ensureSecretShadowFile(),
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
-    }
 
     // Main also gets its group folder as the working directory
     mounts.push({
@@ -842,7 +1529,7 @@ function buildVolumeMounts(
     // Global memory directory (read-only for non-main style mounts)
     // Only directory mounts are supported, not file mounts
     const globalDir = path.join(GROUPS_DIR, 'global');
-    if (fs.existsSync(globalDir)) {
+    if (route !== 'direct_assistant' && fs.existsSync(globalDir)) {
       mounts.push({
         hostPath: globalDir,
         containerPath: '/workspace/global',
@@ -854,74 +1541,44 @@ function buildVolumeMounts(
   // Per-group Claude sessions directory (isolated from other groups)
   // Direct assistant gets its own session home so casual chat continuity does not
   // share persisted Claude state with heavier operator/work lanes in the same group.
-  const claudeHomeDirName =
-    route === 'direct_assistant' ? '.claude-direct-assistant' : '.claude';
+  const routeLane = route || 'direct_assistant';
+  const sessionHomeFlavor = getAssistantSessionHomeFlavor(routeLane);
+  const claudeHomeDirName = `.claude-${sessionHomeFlavor}`;
   const groupSessionsDir = path.join(
     DATA_DIR,
     'sessions',
     group.folder,
     claudeHomeDirName,
   );
-  if (route === 'direct_assistant' && freshSessionHome) {
+  if (freshSessionHome) {
     fs.rmSync(groupSessionsDir, { recursive: true, force: true });
   }
   fs.mkdirSync(groupSessionsDir, { recursive: true });
-  const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(
-      settingsFile,
-      JSON.stringify(
-        {
-          env: {
-            // Enable agent swarms (subagent orchestration)
-            // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-            // Load CLAUDE.md from additional mounted directories
-            // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-            // Enable Claude's memory feature (persists user preferences between sessions)
-            // https://code.claude.com/docs/en/memory#manage-auto-memory
-            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-          },
-        },
-        null,
-        2,
-      ) + '\n',
-    );
-  }
-
-  syncSkillsForGroup(group.folder, groupSessionsDir);
+  const trustedControls = buildTrustedControlView(
+    group.folder,
+    routeLane,
+    groupDir,
+    skillControlMode,
+  );
+  // The parent session home stays writable for Claude's resumable transcripts
+  // and auto-memory. Host-generated controls are mounted afterwards as
+  // read-only child overlays, so a container cannot persistently alter them.
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
     readonly: false,
   });
-
-  const globalCodexDir = path.join(os.homedir(), '.codex');
-  if (route === 'direct_assistant' && fs.existsSync(globalCodexDir)) {
-    // Voice and other direct-assistant turns need the live host Codex home so
-    // runtime auth state stays valid inside the container on this machine.
-    mounts.push({
-      hostPath: globalCodexDir,
-      containerPath: '/home/node/.codex',
-      readonly: false,
-    });
-  } else {
-    const groupCodexDir = path.join(
-      DATA_DIR,
-      'sessions',
-      group.folder,
-      '.codex',
-    );
-    fs.mkdirSync(groupCodexDir, { recursive: true });
-    // Shared runtime lanes that are not direct-assistant voice turns can stay
-    // on the lighter per-group Codex copy.
-    syncCodexAuthForGroup(groupCodexDir);
-    mounts.push({
-      hostPath: groupCodexDir,
-      containerPath: '/home/node/.codex',
-      readonly: false,
-    });
+  for (const [hostPath, containerPath] of [
+    [trustedControls.groupGuidanceFile, '/workspace/group/CLAUDE.md'],
+    [trustedControls.settingsFile, '/home/node/.claude/settings.json'],
+    [trustedControls.userGuidanceFile, '/home/node/.claude/CLAUDE.md'],
+    [trustedControls.skillsDir, '/home/node/.claude/skills'],
+    [trustedControls.pluginsDir, '/home/node/.claude/plugins'],
+    [trustedControls.agentsDir, '/home/node/.claude/agents'],
+    [trustedControls.commandsDir, '/home/node/.claude/commands'],
+    [trustedControls.rulesDir, '/home/node/.claude/rules'],
+  ] as const) {
+    mounts.push({ hostPath, containerPath, readonly: true });
   }
 
   // Per-group IPC namespace: each group gets its own IPC directory
@@ -932,102 +1589,95 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'rpc_requests'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'rpc_responses'), { recursive: true });
+  if (!ipcInputDir) {
+    throw new Error('Container run is missing its isolated IPC inbox.');
+  }
+  fs.mkdirSync(ipcInputDir, { recursive: true });
+  if (allowHostActionIpc) {
+    mounts.push({
+      hostPath: groupIpcDir,
+      containerPath: '/workspace/ipc',
+      readonly: false,
+    });
+  }
+  // Every run receives one fresh host-written inbox. The nested read-only
+  // overlay also applies inside the broader host-action IPC mount, so no
+  // container can forge or retain input for a later, more capable run.
   mounts.push({
-    hostPath: groupIpcDir,
-    containerPath: '/workspace/ipc',
-    readonly: false,
+    hostPath: ipcInputDir,
+    containerPath: '/workspace/ipc/input',
+    readonly: true,
   });
 
-  // Copy agent-runner source into a per-group writable location so agents
-  // can customize it (add tools, change behavior) without affecting other
-  // groups. Recompiled on container startup via entrypoint.sh.
+  // The canonical runner is recompiled into /tmp/dist at container startup.
+  // Its source is an executable control surface and must never be writable by
+  // a running assistant or persisted per group.
   const agentRunnerSrc = path.join(
     projectRoot,
     'container',
     'agent-runner',
     'src',
   );
-  const groupAgentRunnerDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    'agent-runner-src',
-  );
-  if (fs.existsSync(agentRunnerSrc)) {
-    const syncMetadataPath = path.join(
-      groupAgentRunnerDir,
-      '.nanoclaw-source-sync.json',
-    );
-    const syncMetadata = readAgentRunnerSyncMetadata(syncMetadataPath);
-    const sourceTreeHash = hashDirectoryTree(agentRunnerSrc);
-    const cachedTreeHash = hashDirectoryTree(
-      groupAgentRunnerDir,
-      new Set(['.nanoclaw-source-sync.json']),
-    );
-
-    // Backward compatibility:
-    // If metadata does not exist yet, sync once whenever source and cached
-    // content diverge so hotfixes actually land in running group caches.
-    // After that first sync, we only auto-sync when the cache still matches
-    // the last synchronized hash, preserving intentional per-group edits.
-    const needsInitialContentSync =
-      !syncMetadata &&
-      Boolean(
-        sourceTreeHash && cachedTreeHash && sourceTreeHash !== cachedTreeHash,
-      );
-    const cacheMissingOrIncomplete =
-      !fs.existsSync(groupAgentRunnerDir) || !cachedTreeHash;
-    const cacheMatchesLastSync = Boolean(
-      syncMetadata &&
-      cachedTreeHash &&
-      syncMetadata.cachedTreeHash === cachedTreeHash,
-    );
-    const sourceChangedSinceLastSync = Boolean(
-      syncMetadata &&
-      sourceTreeHash &&
-      syncMetadata.sourceTreeHash !== sourceTreeHash,
-    );
-    const needsCopy =
-      cacheMissingOrIncomplete ||
-      needsInitialContentSync ||
-      (sourceChangedSinceLastSync && cacheMatchesLastSync);
-
-    if (needsCopy) {
-      // Replace the cached source tree so deleted files do not linger in the
-      // mounted runtime and break future container starts.
-      fs.rmSync(groupAgentRunnerDir, { recursive: true, force: true });
-      fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
-      const copiedTreeHash = hashDirectoryTree(
-        groupAgentRunnerDir,
-        new Set(['.nanoclaw-source-sync.json']),
-      );
-      if (sourceTreeHash && copiedTreeHash) {
-        writeAgentRunnerSyncMetadata(syncMetadataPath, {
-          sourceTreeHash,
-          cachedTreeHash: copiedTreeHash,
-        });
-      }
-    } else if (!syncMetadata && sourceTreeHash && cachedTreeHash) {
-      writeAgentRunnerSyncMetadata(syncMetadataPath, {
-        sourceTreeHash,
-        cachedTreeHash,
-      });
-    }
-  }
   mounts.push({
-    hostPath: groupAgentRunnerDir,
+    hostPath: agentRunnerSrc,
     containerPath: '/app/src',
-    readonly: false,
+    readonly: true,
   });
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
-  if (group.containerConfig?.additionalMounts) {
+  if (route !== 'direct_assistant' && group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
       group.containerConfig.additionalMounts,
       group.name,
       isMain,
     );
-    mounts.push(...validatedMounts);
+    const safeAdditionalMounts = excludeProtectedAdditionalMounts(
+      validatedMounts,
+      [
+        projectRoot,
+        DATA_DIR,
+        GROUPS_DIR,
+        RUNTIME_STATE_DIR,
+        process.env.CODEX_HOME || '',
+        path.join(os.homedir(), '.codex'),
+        path.join(os.homedir(), '.claude'),
+      ].filter(Boolean),
+    );
+    if (safeAdditionalMounts.length !== validatedMounts.length) {
+      logger.warn(
+        { group: group.name },
+        'Rejected additional mount overlapping repository or runtime state',
+      );
+    }
+    mounts.push(...safeAdditionalMounts);
+  }
+
+  // Keep every selected immutable generation live before pruning stale
+  // siblings. The running container releases these references on close.
+  // Retaining first prevents a reused generation older than the TTL from being
+  // deleted between selection and the runtime mount.
+  const selectedGenerations = new Set(
+    mounts
+      .map((mount) => {
+        const match = mount.hostPath.match(
+          /^(.*[\\/](?:container-controls[\\/].*?|container-project-views)[\\/]generation-[a-f0-9]{64})(?:[\\/]|$)/,
+        );
+        return match?.[1] || null;
+      })
+      .filter((entry): entry is string => Boolean(entry)),
+  );
+  const retainedGenerations: string[] = [];
+  try {
+    for (const generationDir of selectedGenerations) {
+      retainControlGeneration(generationDir);
+      retainedGenerations.push(generationDir);
+      pruneExpiredControlGenerations(path.dirname(generationDir));
+    }
+  } catch (error) {
+    for (const generationDir of retainedGenerations) {
+      releaseControlGeneration(generationDir);
+    }
+    throw error;
   }
 
   return mounts;
@@ -1081,7 +1731,6 @@ async function buildContainerArgs(
         component: 'container',
         containerName,
         network: localOpenAiGatewayBinding.network,
-        endpoint: localOpenAiGatewayBinding.endpoint,
       },
       'Using local OpenAI gateway container binding',
     );
@@ -1089,17 +1738,14 @@ async function buildContainerArgs(
 
   const runtimeEndpointEnvForContainer =
     rewriteRuntimeEndpointEnvForContainer(runtimeEndpointEnv);
+  for (const value of Object.values(runtimeEndpointEnvForContainer)) {
+    validateRuntimeEndpointUrl(value);
+  }
   const modelOverrides = resolveModelOverridesForRuntime(
     runtimeEndpointEnvForContainer,
     effectiveRuntimePreference,
     miniMaxRuntime,
   );
-  const runtimeCredentials = useMiniMaxRuntime
-    ? collectFallbackCredentialEnv(
-        runtimeEndpointEnvForContainer,
-        effectiveRuntimePreference,
-      )
-    : {};
   const selectedModel =
     modelOverrides.NANOCLAW_AGENT_MODEL ||
     modelOverrides.CLAUDE_CODE_MODEL ||
@@ -1108,34 +1754,22 @@ async function buildContainerArgs(
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
-  args.push('-e', 'CODEX_HOME=/home/node/.codex');
-  args.push('-e', `AGENT_RUNTIME_DEFAULT=${AGENT_RUNTIME_DEFAULT}`);
-  args.push('-e', `AGENT_RUNTIME_FALLBACK=${AGENT_RUNTIME_FALLBACK}`);
-  args.push(
-    '-e',
-    `CODEX_LOCAL_ENABLED=${CODEX_LOCAL_ENABLED ? 'true' : 'false'}`,
-  );
-  args.push('-e', `OPENAI_MODEL_FALLBACK=${OPENAI_MODEL_FALLBACK}`);
-  if (CODEX_LOCAL_MODEL) {
-    args.push('-e', `CODEX_LOCAL_MODEL=${CODEX_LOCAL_MODEL}`);
-  }
   args.push('-e', `NANOCLAW_CONTAINER_RUNTIME=${CONTAINER_RUNTIME_NAME}`);
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
+  const argsBeforeOneCli = [...args];
   const onecliApplied = await onecli.applyContainerConfig(args, {
     addHostMapping: false, // Nanoclaw already handles host gateway
     agent: agentIdentifier,
   });
   if (onecliApplied) {
+    validateOneCliAddedArgs(argsBeforeOneCli, args);
     endpointMode = endpointMode ? `${endpointMode}+onecli` : 'onecli_gateway';
     for (const [key, value] of Object.entries(runtimeEndpointEnvForContainer)) {
       appendContainerEnv(args, launchEnv, key, value);
     }
     for (const [key, value] of Object.entries(modelOverrides)) {
-      appendContainerEnv(args, launchEnv, key, value);
-    }
-    for (const [key, value] of Object.entries(runtimeCredentials)) {
       appendContainerEnv(args, launchEnv, key, value);
     }
     if (
@@ -1174,7 +1808,7 @@ async function buildContainerArgs(
     };
     endpointMode =
       Object.keys(passthroughEnv).length > 0
-        ? 'env_passthrough'
+        ? 'degraded_env_fallback'
         : 'no_runtime_env';
 
     for (const [key, value] of Object.entries(passthroughEnv)) {
@@ -1199,6 +1833,10 @@ async function buildContainerArgs(
       );
     }
   }
+
+  // OneCLI may return `-e KEY=value`. Normalize sensitive values back into the
+  // child environment so no credential ever appears in container argv.
+  normalizeSensitiveContainerEnvArgs(args, launchEnv);
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
@@ -1278,37 +1916,152 @@ function buildFailureOutput(params: {
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
-  onProcess: (proc: ChildProcess, containerName: string) => void,
+  onProcess: (
+    proc: ChildProcess,
+    containerName: string,
+    ipcContext: ContainerIpcContext,
+  ) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
+  assertContainerRuntimeTrustBoundary(CONTAINER_RUNTIME_NAME);
   const startTime = Date.now();
+
+  // The host mount/session/IPC boundary must use the same fail-closed policy
+  // that is serialized to the independently validating container runner.
+  input = {
+    ...input,
+    requestPolicy: normalizeAssistantRequestPolicy(input.requestPolicy),
+  };
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(
-    group,
-    input.isMain,
-    input.requestPolicy?.route,
-    input.freshSessionHome === true,
+  const knownRoutes = new Set<AssistantRequestPolicy['route']>([
+    'direct_assistant',
+    'protected_assistant',
+    'control_plane',
+    'advanced_helper',
+    'code_plane',
+  ]);
+  const requestedRoute = input.requestPolicy?.route;
+  const mountRoute =
+    requestedRoute && knownRoutes.has(requestedRoute)
+      ? requestedRoute
+      : 'direct_assistant';
+  const ipcContext: ContainerIpcContext = {
+    runId: randomUUID(),
+    authToken: randomBytes(32).toString('base64url'),
+    inputDir: '',
+  };
+  ipcContext.inputDir = path.join(
+    resolveGroupIpcPath(group.folder),
+    'input',
+    getAssistantCapabilityLane(mountRoute),
+    ipcContext.runId,
   );
+  fs.mkdirSync(ipcContext.inputDir, { recursive: true });
+  input = {
+    ...input,
+    ipcRunId: ipcContext.runId,
+    ipcAuthToken: ipcContext.authToken,
+  };
+  const hostActionSafeBuiltins = new Set([
+    'Read',
+    'Glob',
+    'Grep',
+    'WebSearch',
+    'WebFetch',
+  ]);
+  const allowHostActionIpc = Boolean(
+    input.requestPolicy &&
+    input.requestPolicy.mcpTools.length > 0 &&
+    input.requestPolicy.builtinTools.every((tool) =>
+      hostActionSafeBuiltins.has(tool),
+    ),
+  );
+  const projectViewBuiltins = new Set([
+    'Bash',
+    'Read',
+    'Write',
+    'Edit',
+    'Glob',
+    'Grep',
+    'NotebookEdit',
+  ]);
+  const mountProjectView = Boolean(
+    input.requestPolicy?.builtinTools.some((tool) =>
+      projectViewBuiltins.has(tool),
+    ),
+  );
+  const skillControlMode = resolveTrustedSkillControlMode(
+    input.requestPolicy?.route,
+    input.requestPolicy?.builtinTools || [],
+    input.requestPolicy?.mcpTools || [],
+  );
+  let mounts: VolumeMount[];
+  try {
+    mounts = buildVolumeMounts(
+      group,
+      input.isMain,
+      mountRoute,
+      input.freshSessionHome === true,
+      allowHostActionIpc,
+      mountProjectView,
+      skillControlMode,
+      ipcContext.inputDir,
+    );
+  } catch (error) {
+    fs.rmSync(ipcContext.inputDir, { recursive: true, force: true });
+    throw error;
+  }
+  const controlGenerationDirs = new Set(
+    mounts
+      .map((mount) => {
+        const match = mount.hostPath.match(
+          /^(.*[\\/](?:container-controls[\\/].*?|container-project-views)[\\/]generation-[a-f0-9]{64})(?:[\\/]|$)/,
+        );
+        return match?.[1] || null;
+      })
+      .filter((entry): entry is string => Boolean(entry)),
+  );
+  let controlsReleased = false;
+  const releaseControls = (): void => {
+    if (controlsReleased) return;
+    controlsReleased = true;
+    for (const generationDir of controlGenerationDirs) {
+      releaseControlGeneration(generationDir);
+    }
+    fs.rmSync(ipcContext.inputDir, { recursive: true, force: true });
+  };
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   // Main group uses the default OneCLI agent; others use their own agent.
   const agentIdentifier = input.isMain
     ? undefined
     : group.folder.toLowerCase().replace(/_/g, '-');
+  let launchConfig: Awaited<ReturnType<typeof buildContainerArgs>>;
+  try {
+    launchConfig = await buildContainerArgs(
+      mounts,
+      containerName,
+      agentIdentifier,
+      input.preferredRuntime,
+    );
+  } catch (err) {
+    releaseControls();
+    throw err;
+  }
   const {
     args: containerArgs,
     metadata: launchMetadata,
     launchEnv,
-  } = await buildContainerArgs(
-    mounts,
-    containerName,
-    agentIdentifier,
-    input.preferredRuntime,
-  );
+  } = launchConfig;
   const containerArgsForLogs = sanitizeContainerArgsForLogs(containerArgs);
+  const sanitizeRuntimeText = (value: string): string =>
+    sanitizeContainerRuntimeText(value, {
+      ...launchEnv,
+      NANOCLAW_IPC_AUTH_TOKEN: ipcContext.authToken,
+    });
 
   logger.debug(
     {
@@ -1357,13 +2110,10 @@ export async function runContainerAgent(
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        ...launchEnv,
-      },
+      env: buildContainerChildEnv(launchEnv, containerArgs),
     });
 
-    onProcess(container, containerName);
+    onProcess(container, containerName, ipcContext);
 
     let stdout = '';
     let stderr = '';
@@ -1421,6 +2171,20 @@ export async function runContainerAgent(
       }
 
       const normalized = { ...output };
+      if (typeof normalized.result === 'string') {
+        normalized.result = sanitizeRuntimeText(normalized.result);
+      }
+      if (typeof normalized.error === 'string') {
+        normalized.error = sanitizeRuntimeText(normalized.error);
+      }
+      if (typeof normalized.diagnosticHint === 'string') {
+        normalized.diagnosticHint = sanitizeRuntimeText(
+          normalized.diagnosticHint,
+        );
+      }
+      if (typeof normalized.stderrTail === 'string') {
+        normalized.stderrTail = sanitizeRuntimeText(normalized.stderrTail);
+      }
       if (streamedRuntimeToolEvidence) {
         // A marker belongs to exactly one logical SDK query. Never attach the
         // all-query aggregate here: the persistent container may later serve
@@ -1618,7 +2382,7 @@ export async function runContainerAgent(
             ...logContext,
             group: group.name,
           },
-          line,
+          sanitizeRuntimeText(line),
         );
       }
       // Don't reset timeout on stderr — SDK writes debug logs continuously.
@@ -1638,6 +2402,7 @@ export async function runContainerAgent(
     });
 
     container.on('close', (code) => {
+      releaseControls();
       clearTimeout(timeout);
       clearInitialOutputTimeout();
       const duration = Date.now() - startTime;
@@ -1665,10 +2430,10 @@ export async function runContainerAgent(
             containerArgsForLogs.join(' '),
             ``,
             `=== Stderr Tail ===`,
-            buildSanitizedStderrTail(stderr) || '(empty)',
+            buildSanitizedStderrTail(sanitizeRuntimeText(stderr)) || '(empty)',
             ``,
             `=== Stdout Tail ===`,
-            sanitizeLogString(stdout.slice(-800) || '(empty)'),
+            sanitizeRuntimeText(stdout.slice(-800) || '(empty)'),
           ].join('\n'),
         );
 
@@ -1719,7 +2484,7 @@ export async function runContainerAgent(
               recoveryAttempted,
               sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
               firstResultSubtype,
-              stderrTail: buildSanitizedStderrTail(stderr),
+              stderrTail: buildSanitizedStderrTail(sanitizeRuntimeText(stderr)),
             },
             'Container timed out waiting for initial structured output',
           );
@@ -1731,7 +2496,7 @@ export async function runContainerAgent(
               diagnosticHint:
                 'container did not emit first structured result before timeout',
               logFile: timeoutLog,
-              stderr,
+              stderr: sanitizeRuntimeText(stderr),
               selectedModel: launchMetadata.selectedModel,
               endpointMode: launchMetadata.endpointMode,
               recoveryAttempted,
@@ -1754,7 +2519,7 @@ export async function runContainerAgent(
             recoveryAttempted,
             sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
             firstResultSubtype,
-            stderrTail: buildSanitizedStderrTail(stderr),
+            stderrTail: buildSanitizedStderrTail(sanitizeRuntimeText(stderr)),
           },
           'Container timed out with no output',
         );
@@ -1767,7 +2532,7 @@ export async function runContainerAgent(
               ? 'container produced lifecycle-only output but never reached a real assistant answer before the hard timeout'
               : 'container exceeded the configured hard timeout',
             logFile: timeoutLog,
-            stderr,
+            stderr: sanitizeRuntimeText(stderr),
             selectedModel: launchMetadata.selectedModel,
             endpointMode: launchMetadata.endpointMode,
             recoveryAttempted,
@@ -1804,7 +2569,11 @@ export async function runContainerAgent(
         // Full input is only included at verbose level to avoid
         // persisting user conversation content on every non-zero exit.
         if (isVerbose) {
-          logLines.push(`=== Input ===`, JSON.stringify(input, null, 2), ``);
+          logLines.push(
+            `=== Input ===`,
+            sanitizeRuntimeText(JSON.stringify(input, null, 2)),
+            ``,
+          );
         } else {
           logLines.push(
             `=== Input Summary ===`,
@@ -1826,10 +2595,10 @@ export async function runContainerAgent(
             .join('\n'),
           ``,
           `=== Stderr${stderrTruncated ? ' (TRUNCATED)' : ''} ===`,
-          stderr,
+          sanitizeRuntimeText(stderr),
           ``,
           `=== Stdout${stdoutTruncated ? ' (TRUNCATED)' : ''} ===`,
-          stdout,
+          sanitizeRuntimeText(stdout),
         );
       } else {
         logLines.push(
@@ -1890,8 +2659,8 @@ export async function runContainerAgent(
             group: group.name,
             code,
             duration,
-            stderrTail: buildSanitizedStderrTail(stderr),
-            stdoutTail: sanitizeLogString(stdout.slice(-400)),
+            stderrTail: buildSanitizedStderrTail(sanitizeRuntimeText(stderr)),
+            stdoutTail: sanitizeRuntimeText(stdout.slice(-400)),
             logFile,
             selectedModel: launchMetadata.selectedModel,
             endpointMode: launchMetadata.endpointMode,
@@ -1905,13 +2674,13 @@ export async function runContainerAgent(
 
         resolve(
           buildFailureOutput({
-            error: `Container exited with code ${code}: ${sanitizeLogString(stderr.slice(-200))}`,
+            error: `Container exited with code ${code}: ${sanitizeRuntimeText(stderr.slice(-200))}`,
             failureKind: 'runtime_bootstrap_failed',
             failureStage: 'runtime',
             diagnosticHint:
               'container exited non-zero before producing a stable result',
             logFile,
-            stderr,
+            stderr: sanitizeRuntimeText(stderr),
             selectedModel: launchMetadata.selectedModel,
             endpointMode: launchMetadata.endpointMode,
             recoveryAttempted,
@@ -2029,8 +2798,8 @@ export async function runContainerAgent(
           {
             ...logContext,
             group: group.name,
-            stdoutTail: sanitizeLogString(stdout.slice(-400)),
-            stderrTail: buildSanitizedStderrTail(stderr),
+            stdoutTail: sanitizeRuntimeText(stdout.slice(-400)),
+            stderrTail: buildSanitizedStderrTail(sanitizeRuntimeText(stderr)),
             error: err,
           },
           'Failed to parse container output',
@@ -2044,7 +2813,7 @@ export async function runContainerAgent(
             diagnosticHint:
               'container returned output that could not be parsed cleanly',
             logFile,
-            stderr,
+            stderr: sanitizeRuntimeText(stderr),
             selectedModel: launchMetadata.selectedModel,
             endpointMode: launchMetadata.endpointMode,
             recoveryAttempted,
@@ -2057,6 +2826,7 @@ export async function runContainerAgent(
     });
 
     container.on('error', (err) => {
+      releaseControls();
       clearTimeout(timeout);
       clearInitialOutputTimeout();
       logger.error(
@@ -2075,7 +2845,7 @@ export async function runContainerAgent(
           failureKind: 'container_runtime_unavailable',
           failureStage: 'spawn',
           diagnosticHint: 'container runtime could not start the agent process',
-          stderr,
+          stderr: sanitizeRuntimeText(stderr),
           selectedModel: launchMetadata.selectedModel,
           endpointMode: launchMetadata.endpointMode,
           recoveryAttempted,
@@ -2095,7 +2865,6 @@ export function writeTasksSnapshot(
     id: string;
     groupFolder: string;
     prompt: string;
-    script?: string | null;
     schedule_type: string;
     schedule_value: string;
     status: string;
@@ -2107,9 +2876,21 @@ export function writeTasksSnapshot(
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
   // Main sees all tasks, others only see their own
-  const filteredTasks = isMain
+  const visibleTasks = isMain
     ? tasks
     : tasks.filter((t) => t.groupFolder === groupFolder);
+  // Serialize an explicit public shape. Legacy task rows may still contain
+  // inert script text, but executable content and secrets never belong in a
+  // container-readable snapshot even if an untyped caller supplies it.
+  const filteredTasks = visibleTasks.map((task) => ({
+    id: task.id,
+    groupFolder: task.groupFolder,
+    prompt: task.prompt,
+    schedule_type: task.schedule_type,
+    schedule_value: task.schedule_value,
+    status: task.status,
+    next_run: task.next_run,
+  }));
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));

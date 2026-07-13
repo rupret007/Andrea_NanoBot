@@ -63,6 +63,63 @@ describe('task scheduler', () => {
     expect(task?.status).toBe('paused');
   });
 
+  it('pauses legacy script tasks before starting a container or shell', async () => {
+    createTask({
+      id: 'task-unapproved-script',
+      group_folder: 'main',
+      chat_jid: 'tg:main',
+      prompt: 'Perform a generic scheduled operation.',
+      script: 'printf "unexpected execution\\n"',
+      schedule_type: 'once',
+      schedule_value: '2026-05-02T04:30:00.000Z',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-05-02T04:00:00.000Z',
+    });
+
+    const pendingRuns: Promise<void>[] = [];
+    const onProcess = vi.fn();
+    const sendMessage = vi.fn(async () => {});
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'tg:main': {
+          name: 'Main',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: '2026-05-02T04:00:00.000Z',
+          isMain: true,
+          requiresTrigger: false,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: (
+          _groupJid: string,
+          _taskId: string,
+          fn: () => Promise<void>,
+        ) => {
+          pendingRuns.push(fn());
+        },
+      } as any,
+      onProcess,
+      sendMessage,
+      sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all(pendingRuns);
+
+    expect(onProcess).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(getTaskById('task-unapproved-script')).toMatchObject({
+      status: 'paused',
+      last_result:
+        'Error: Scheduled task script execution is blocked because the task has no reviewed script approval provenance.',
+    });
+  });
+
   it('delivers plain reminders directly instead of routing through an agent', async () => {
     createTask({
       id: 'task-plain-reminder',

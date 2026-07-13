@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assistantCapabilityKey,
+  classifyAssistantRequest,
+} from './assistant-routing.js';
+import {
   decideMainChatRouting,
   shouldAvoidCombinedContextForMainChat,
+  shouldPipeToActiveAssistant,
 } from './main-chat-routing.js';
 
 describe('main chat routing', () => {
@@ -93,5 +98,137 @@ describe('main chat routing', () => {
         { content: 'continue', reply_to_id: undefined },
       ]),
     ).toBe(true);
+  });
+
+  it('does not pipe a search request into a tool-free active assistant', () => {
+    const activePolicy = classifyAssistantRequest([
+      { content: 'How are you today?' },
+    ]);
+    const incomingPolicy = classifyAssistantRequest([
+      { content: 'Search the web for the latest Node release' },
+    ]);
+
+    expect(activePolicy.route).toBe('direct_assistant');
+    expect(incomingPolicy.route).toBe('protected_assistant');
+    expect(
+      shouldPipeToActiveAssistant({
+        messages: [{ content: 'Search the web for the latest Node release' }],
+        incomingPolicy,
+        activeCapabilityKey: assistantCapabilityKey(activePolicy),
+      }),
+    ).toBe(false);
+  });
+
+  it('does not pipe a new ordinary ask into an execution-capable active assistant', () => {
+    const activePolicy = classifyAssistantRequest([
+      { content: 'Edit src/index.ts and run its tests' },
+    ]);
+    const incomingPolicy = classifyAssistantRequest([
+      { content: 'How are you today?' },
+    ]);
+
+    expect(activePolicy.route).toBe('code_plane');
+    expect(incomingPolicy.route).toBe('direct_assistant');
+    expect(
+      shouldPipeToActiveAssistant({
+        messages: [{ content: 'How are you today?' }],
+        incomingPolicy,
+        activeCapabilityKey: assistantCapabilityKey(activePolicy),
+      }),
+    ).toBe(false);
+  });
+
+  it('allows an explicit continuation to finish in its active capability boundary', () => {
+    const activePolicy = classifyAssistantRequest([
+      { content: 'Edit src/index.ts and run its tests' },
+    ]);
+    const incomingPolicy = classifyAssistantRequest([{ content: 'continue' }]);
+
+    expect(
+      shouldPipeToActiveAssistant({
+        messages: [{ content: 'continue' }],
+        incomingPolicy,
+        activeCapabilityKey: assistantCapabilityKey(activePolicy),
+      }),
+    ).toBe(true);
+  });
+
+  it('does not treat an acknowledgement prefix as permission to reuse execution tools', () => {
+    const activePolicy = classifyAssistantRequest([
+      { content: 'Edit src/index.ts and run its tests' },
+    ]);
+    const incomingPolicy = classifyAssistantRequest([
+      { content: 'okay, how are you today?' },
+    ]);
+
+    expect(incomingPolicy.route).toBe('direct_assistant');
+    expect(
+      shouldPipeToActiveAssistant({
+        messages: [{ content: 'okay, how are you today?' }],
+        incomingPolicy,
+        activeCapabilityKey: assistantCapabilityKey(activePolicy),
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps a bounded skill-selection follow-up in its active tool boundary', () => {
+    const activePolicy = classifyAssistantRequest([
+      { content: 'Search the skill catalog for a calendar skill' },
+    ]);
+    const incomingPolicy = classifyAssistantRequest([
+      { content: 'install it' },
+    ]);
+
+    expect(activePolicy.route).toBe('advanced_helper');
+    expect(incomingPolicy.route).toBe('direct_assistant');
+    expect(
+      shouldPipeToActiveAssistant({
+        messages: [{ content: 'install it' }],
+        incomingPolicy,
+        activeCapabilityKey: assistantCapabilityKey(activePolicy),
+      }),
+    ).toBe(true);
+  });
+
+  it('allows another request only when the capability profile matches exactly', () => {
+    const activePolicy = classifyAssistantRequest([
+      { content: 'Search the web for Node releases' },
+    ]);
+    const incomingPolicy = classifyAssistantRequest([
+      { content: 'Read https://nodejs.org and summarize it' },
+    ]);
+
+    expect(assistantCapabilityKey(incomingPolicy)).toBe(
+      assistantCapabilityKey(activePolicy),
+    );
+    expect(
+      shouldPipeToActiveAssistant({
+        messages: [{ content: 'Read https://nodejs.org and summarize it' }],
+        incomingPolicy,
+        activeCapabilityKey: assistantCapabilityKey(activePolicy),
+      }),
+    ).toBe(true);
+  });
+
+  it('does not let reply context override a protected capability request', () => {
+    const activePolicy = classifyAssistantRequest([
+      { content: 'How are you today?' },
+    ]);
+    const incomingPolicy = classifyAssistantRequest([
+      { content: 'Search the web for the latest Node release' },
+    ]);
+
+    expect(
+      shouldPipeToActiveAssistant({
+        messages: [
+          {
+            content: 'Search the web for the latest Node release',
+            reply_to_id: '1234',
+          },
+        ],
+        incomingPolicy,
+        activeCapabilityKey: assistantCapabilityKey(activePolicy),
+      }),
+    ).toBe(false);
   });
 });

@@ -1,48 +1,59 @@
-# NanoClaw
+# Andrea_NanoBot
 
 Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
 
 ## Quick Context
 
-Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running in containers (Linux VMs). Each group has isolated filesystem and memory.
+Single Node.js process with a skill-based channel system. Channels (WhatsApp,
+Telegram, Slack, Discord, Gmail) self-register at startup. Messages are
+classified into route-specific Claude Agent SDK policies: ordinary direct chat
+is tool-free, while protected, control, advanced, and code work receive bounded
+capabilities. Each group has isolated filesystem and session state.
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `src/channels/registry.ts` | Channel registry (self-registration at startup) |
-| `src/ipc.ts` | IPC watcher and task processing |
-| `src/router.ts` | Message formatting and outbound routing |
-| `src/config.ts` | Trigger pattern, paths, intervals |
-| `src/container-runner.ts` | Spawns agent containers with mounts |
-| `src/task-scheduler.ts` | Runs scheduled tasks |
-| `src/db.ts` | SQLite operations |
-| `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
-| `container/skills/` | Skills loaded inside agent containers (browser, status, formatting) |
+| File                       | Purpose                                                           |
+| -------------------------- | ----------------------------------------------------------------- |
+| `src/index.ts`             | Orchestrator: state, message loop, agent invocation               |
+| `src/channels/registry.ts` | Channel registry (self-registration at startup)                   |
+| `src/ipc.ts`               | IPC watcher and task processing                                   |
+| `src/router.ts`            | Message formatting and outbound routing                           |
+| `src/config.ts`            | Trigger pattern, paths, intervals                                 |
+| `src/container-runner.ts`  | Spawns agent containers with mounts                               |
+| `src/task-scheduler.ts`    | Runs scheduled tasks                                              |
+| `src/db.ts`                | SQLite operations                                                 |
+| `groups/{name}/CLAUDE.md`  | Per-group memory (isolated)                                       |
+| `container/skills/`        | Canonical skills exposed only to routes with the `Skill` built-in |
 
 ## Secrets / Credentials / Proxy (OneCLI)
 
-API keys, secret keys, OAuth tokens, and auth credentials are managed by the OneCLI gateway — which handles secret injection into containers at request time, so no keys or tokens are ever passed to containers directly. Run `onecli --help`.
+OneCLI Agent Vault is the preferred credential boundary. When it is available,
+raw credentials stay behind its constrained proxy. If it is unavailable,
+Andrea may use an explicitly degraded fallback that injects exactly one selected
+credential through the container-runtime child environment. Container arguments
+contain only the bare key name; values must never appear in arguments, process
+listings, mounted files, logs, errors, or diagnostics. Host Codex home, auth,
+and config are never mounted or copied into agent containers.
 
 ## Skills
 
 Four types of skills exist in NanoClaw. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxonomy and guidelines.
 
 - **Feature skills** — merge a `skill/*` branch to add capabilities (e.g. `/add-telegram`, `/add-slack`)
-- **Utility skills** — ship code files alongside SKILL.md (e.g. `/claw`)
+- **Utility skills** — may ship reviewed code alongside SKILL.md; the historical
+  `/claw` alternate runner is retired and inert
 - **Operational skills** — instruction-only workflows, always on `main` (e.g. `/setup`, `/debug`)
 - **Container skills** — loaded inside agent containers at runtime (`container/skills/`)
 
-| Skill | When to Use |
-|-------|-------------|
-| `/setup` | First-time installation, authentication, service configuration |
-| `/customize` | Adding channels, integrations, changing behavior |
-| `/debug` | Container issues, logs, troubleshooting |
-| `/update-nanoclaw` | Bring upstream NanoClaw updates into a customized install |
-| `/init-onecli` | Install OneCLI Agent Vault and migrate `.env` credentials to it |
-| `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
-| `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
+| Skill               | When to Use                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------- |
+| `/setup`            | First-time installation, authentication, service configuration                     |
+| `/customize`        | Adding channels, integrations, changing behavior                                   |
+| `/debug`            | Container issues, logs, troubleshooting                                            |
+| `/update-nanoclaw`  | Bring upstream NanoClaw updates into a customized install                          |
+| `/init-onecli`      | Preflight an operator-provisioned OneCLI vault without reading or changing secrets |
+| `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch                      |
+| `/get-qodo-rules`   | Load org- and repo-level coding rules from Qodo before code tasks                  |
 
 ## Contributing
 
@@ -55,20 +66,23 @@ Run commands directly—don't tell the user to run them.
 ```bash
 npm run dev          # Run with hot reload
 npm run build        # Compile TypeScript
-./container/build.sh # Rebuild agent container
+npm run container:install
+npm run typecheck:agent-runner
+npm run build:agent-runner
+npm run test:agent-runner
+npm run check:container-contract
+npm run build:container
+npm run check:container-canary
+npm run check:container-mounts
 ```
 
 Service management:
-```bash
-# macOS (launchd)
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
 
-# Linux (systemd)
-systemctl --user start nanoclaw
-systemctl --user stop nanoclaw
-systemctl --user restart nanoclaw
+```bash
+npm run services:start
+npm run services:stop
+npm run services:restart
+npm run services:status
 ```
 
 ## Troubleshooting
@@ -77,4 +91,6 @@ systemctl --user restart nanoclaw
 
 ## Container Build Cache
 
-The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
+Use the repository-owned build and canary commands above. Do not automatically
+prune Docker, Podman, Apple Container, or owner caches: pruning is destructive,
+can affect unrelated workloads, and is not a release-validation shortcut.

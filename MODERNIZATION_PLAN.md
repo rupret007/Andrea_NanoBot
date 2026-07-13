@@ -4,6 +4,413 @@ The newest dated section is the authoritative candidate status. Older dated
 sections are preserved as historical evidence and may contain counts or runtime
 truth that was accurate only at that snapshot.
 
+## Durable cognitive continuity candidate — 2026-07-13
+
+### Authoritative recovery and release state
+
+This is the newest candidate-truth section. The work is on
+`codex/andrea-durable-cognitive-continuity-v1`, based on `adbc5fb4`; at the
+documentation audit that commit still matched `origin/main` with zero
+ahead/behind divergence. The complete workspace also contains the preserved
+container-authority and cross-platform release candidate described below. No
+part of either candidate has been discarded, committed, pushed, merged, or
+deployed by this continuity round yet. A fresh fetch and full combined-diff
+review remain mandatory before publication.
+
+The running Andrea process predates this candidate and must not be used as
+proof of durable recovery. This round targets one reviewed commit on the
+continuity branch and one draft pull request; it does not merge `main`. Only
+after every repository-controlled gate succeeds may the canonical Andrea
+LaunchAgent be rebuilt and restarted once for read-only post-restart proof.
+OpenClaw and external integrations are not restarted by this round.
+
+### Implemented continuity boundary
+
+- [x] Meaningful code, research, operator, mission, and approval-gated turns
+      create or reuse one canonical `DurableWorkUnit`. Ordinary
+      `direct_assistant` questions do not create durable work.
+- [x] The work identity links existing mission, goal, Runtime Spine, Agent OS,
+      Cognitive Executive, deep-work, approval, owner-review, and skill
+      projections without replacing those systems or creating a second public
+      task API.
+- [x] Work is bound to hashed owner, chat, group, and exact target scopes plus
+      channel, authorized surface, work version, plan version, checkpoint head,
+      executor scope, delivery state, retry budget, and bounded next action.
+      Origin deduplication includes channel and target scope, so one source turn
+      cannot silently alias work for another target.
+- [x] Checkpoints use compare-and-set updates and record completed, pending, and
+      uncertain plan nodes, freshness/dependency gaps, approval scope, receipt
+      IDs, verification requirements, state fingerprints, stop conditions, and
+      recovery policy. Checkpoint-array decoding is a fail-closed boundary with
+      focused malformed-state coverage.
+- [x] Resume grants are random, expiring, scope-bound, single-use capabilities.
+      Only the token hash is stored. A grant binds work/checkpoint/plan version,
+      owner/chat/group/channel/target, action class, and an inbound-message hash
+      when provided. Grant consumption and lease acquisition occur in one
+      SQLite transaction, with compare-and-set checks against current work,
+      plan, approval, expiry, and scope.
+- [x] Resume is not approval. Repository writes, external effects, sends,
+      calendar writes, purchases, admin changes, deploys, deletes, commits,
+      pushes, migrations, and dependency changes require a current approved
+      cognitive packet for the exact durable work ID, current durable
+      checkpoint ID, plan version, action class, target-scope digest, packet
+      version, and immutable scope digest. Staging atomically writes that
+      immutable packet, a new approval checkpoint, its durable link, and the
+      work transition to `awaiting_approval`; a partial approval state cannot be
+      published.
+- [x] Durable action authority is closed rather than inferred from a string.
+      Every recognized action class maps to one allowed effect class and an
+      approval requirement. Unknown classes and mismatched action/effect pairs
+      fail at planning, grant issuance/consumption, orchestration, and receipt
+      persistence boundaries.
+- [x] Cockpit approval is an exact group-scoped compare-and-set over the stored
+      summary, approval version, and scope digest. Cross-group, expired, stale,
+      changed, checkpoint-head, plan-version, and double decisions fail closed,
+      while the work version advances atomically with the decision. The cockpit
+      still cannot execute an external effect or consume a resume grant.
+- [x] The generic orchestrator runs at most one dependency-ready node per lease.
+      It reloads the current plan, revalidates dependencies and target state,
+      obtains an adapter preflight, records a `started` receipt before
+      invocation, verifies the result, checkpoints verified progress, or enters
+      verification/replan without erasing completed work. Leases are released
+      on normal and exceptional exits.
+- [x] Effect receipts are deterministic, metadata-only, target-bound, and
+      monotonic. A succeeded or failed receipt cannot later be rewritten into a
+      different outcome or different state/verification claim. Started,
+      partial, unknown, and unverified terminal receipts are inspected after a
+      crash; they are never blindly replayed. New repository-write and
+      external-effect receipts must carry the consumed grant ID plus the exact
+      approval packet ID, approval version, approval scope digest, and action
+      class that authorized that same work/checkpoint/plan/target.
+- [x] Repository execution is bound on the host to one canonical,
+      non-symlinked Git worktree inside an allowed root. Repository/Git/worktree
+      fingerprints, branch, HEAD, staged-index state, dirty path set, dirty
+      content digest, plan/checkpoint, invocation, source turn, action class,
+      and postcondition receipts must agree. Content drift at an already-dirty
+      path changes the state fingerprint. Path escape, symlink traversal,
+      cross-work evidence, stale state, reused action IDs, and failed
+      postconditions are rejected.
+- [x] A positive coding deep-work result now requires persisted repository
+      receipts from the same leased durable work and verified host scope. The
+      previous aggregate `runtime_repository_scope_unbound` signal remains a
+      useful negative gate but cannot by itself prove repository completion.
+- [x] Startup reconciliation runs before accepting new durable work. Expired
+      prior-generation leases with uncertain external effects become
+      `delivery_unverified`; other unresolved effects become verification work;
+      a lease with no unresolved receipt becomes interrupted at the committed
+      checkpoint. Unexpired leases are not stolen.
+- [x] Legacy Runtime Spine and Agent OS resume IDs are revoked as executable
+      capabilities. They remain diagnostic/projection links only and cannot
+      interrupt, resume, approve, or execute work.
+- [x] Natural recovery questions return one canonical metadata report covering
+      the goal, checkpoint, completed/pending/uncertain work, changed evidence,
+      blocker, approval need, and safest next action. Reports and storage exclude
+      raw prompts, replies, private bodies, hidden reasoning, commands, paths,
+      raw tool output, secrets, and plaintext resume tokens.
+- [x] Recovery selection prefers the newest recoverable work over newer
+      terminal history, and multi-uncertain recovery remains nonterminal until
+      every uncertain node is verified. `resume the durable mission` and
+      `continue the durable work` explicitly request this report; bare
+      `keep going` and `resume that` are not durable-recovery commands.
+
+### Carried-forward capability-lane containment
+
+- [x] Container transcript and session reuse is partitioned into exactly four
+      capability lanes: `direct-assistant`, `protected`, `control`, and
+      `execution`. Advanced and code routes intentionally share the execution
+      lane; no other route pair shares a transcript, storage key, or Claude
+      home. Legacy shared tool-bearing session rows remain preserved but inert.
+- [x] Every run receives a unique host-created inbox below
+      `data/ipc/<group>/input/<lane>/<runId>`. GroupQueue writes HMAC-SHA256
+      `provenance:host` envelopes bound to the run ID and per-run token; the
+      runner receives the inbox read-only and rejects unsigned, altered,
+      cross-run, or replayed files without exposing the token in diagnostics.
+- [x] Direct-assistant, protected, and control guidance is host-constant. Only
+      the execution lane may read the mutable group `CLAUDE.md`. Canonical
+      runner source, settings, enabled skills, and plugins remain read-only
+      trusted views; legacy writable runner/settings/skill caches are inert.
+- [x] Host containment tests, runner install/typecheck/build and 13 policy
+      tests, the 132-test host contract, pinned image build/version canary, and
+      isolated nested-read-only mount canary pass on the final local candidate.
+
+### Validation ledger
+
+- [x] The latest completed real-process hard-kill harness terminated workers at
+      all 12 declared continuity boundaries and recovered 12/12 with zero
+      duplicate repository effects, replies, or learning attempts. SQLite
+      integrity and foreign keys passed after every recovery, production state
+      stayed untouched, and external network access was denied by the
+      deterministic guard.
+- [x] The same harness raced eight independent processes against one grant:
+      one acquired the lease, seven received safe `already_consumed`
+      rejections, no duplicate effect occurred, and the plaintext token was
+      absent from SQLite, WAL, SHM, stdout, and stderr.
+- [x] The latest completed held-out harness passed ten isolated scenarios:
+      coding after edit, research before synthesis, message before send,
+      transport-unknown messaging, stale calendar state, local save, provider
+      fallback, contradicted evidence, ordinary question, and high-risk exact
+      approval. It made no council call, denied external network access,
+      touched no production state, and created no learning event in its
+      isolated database; it never opened the production ledger.
+- [x] Database migration coverage preserves staged historical cognitive
+      approvals and adds their version/scope columns idempotently. A legacy row
+      may still be decided in its legacy lifecycle, but it cannot authorize a
+      durable continuation because work/checkpoint/plan/target bindings remain
+      null; current authority requires a newly staged exact durable approval.
+      Legacy unrelated tables and rows survive initialization.
+- [x] Focused unit coverage exists for scope isolation, symlink/path rejection,
+      stale plan and repository state, exact approval, duplicate consumption,
+      receipt immutability, verification-only recovery, bounded replanning,
+      delivery separation, startup reconciliation, unavailable storage, and
+      runtime/deep-work wiring.
+- [x] The final primary suite passed 225 files and 2,605 tests, including the
+      focused continuity, owner-cockpit, repository-scope, deep-work,
+      migration, and runtime-wiring coverage. The final dedicated focused gate
+      also passed 11 files and 129 tests after the receipt/trigger hardening.
+- [x] The latest development reruns of `npm run test:continuity:hard-kill` and
+      `npm run test:continuity:heldout` passed. Hard-kill recovered all 12
+      declared boundaries with zero duplicate effects and produced one winner
+      plus seven safe rejects in the eight-process race. Held-out passed 10/10
+      scenarios with zero production mutation or learning change. Retain fresh
+      final exact-tree JSON summaries in the release evidence.
+- [x] The focused durable adversarial suite passed on the latest tested tree:
+      every completed DAG node needs same-work/same-plan verified receipt
+      evidence; expired or wrong-generation leases cannot orchestrate or persist
+      receipts; checkpoint CAS cannot erase completed/uncertain truth or promote
+      pending work without proof; malformed stored checkpoint JSON fails closed
+      through a bounded, non-leaking error. It also covers multi-uncertain
+      recovery, closed action/effect policy, and same-path content drift. The
+      complete final local matrix also passes as recorded below.
+- [x] The complete local candidate matrix passes: formatting; zero-error lint;
+      root typecheck; 225 primary files / 2,605 tests; production build; AGI
+      typecheck and 28 files / 282 tests; agent-runner and container gates;
+      93/93 selected deterministic commands with all 15 exclusions reported;
+      100% A+ offline scorecard with zero cost/regressions; signature flows;
+      57-file documentation check; release-SHA policy tests; real-Git
+      same-path content-drift proof; four zero-vulnerability root/runner
+      production/full dependency audits; and clean local artifact/secret/diff
+      review. The scorecard launcher now loads TSX in-process under the network
+      guard, avoiding a denied loader child without weakening network denial.
+      Hosted branch checks remain a separate publication gate. The
+      deterministic inventory contains 108 commands: 93 selected by the sweep
+      and 15 explicitly excluded; this is 93/93 selected, not a claim that
+      excluded live or interactive commands passed.
+- [ ] Fetch remote metadata, review and stage only the coherent combined
+      candidate, commit once on the continuity branch, push it, and open a draft
+      pull request. Do not merge `main` in this round.
+- [ ] Require exact branch-SHA CI, container, AGI, and CodeQL push checks plus
+      the pull-request merge-ref checks before treating the branch as
+      reviewable. The manually dispatched
+      security workflow is main-only and must reject an unmerged branch SHA; it
+      becomes release proof only after a separately authorized merge makes the
+      exact SHA reachable from `origin/main`. If the authorized branch gates
+      pass, build from the committed branch SHA, restart the Andrea LaunchAgent
+      once, and prove a new boot/process identity and serving SHA. Do not restart
+      OpenClaw or perform an external action.
+
+### Explicit limitations and proof debt
+
+- The hard-kill harness kills immediately after schema initialization and
+  proves clean reopen, idempotent migration, legacy-row preservation, and
+  fail-closed behavior for a deliberately malformed partial durable schema. It
+  does **not** claim a process was killed inside an individual SQLite DDL
+  statement. Exact in-DDL termination remains an unclaimed low-level test gap;
+  documentation and release summaries must preserve that distinction.
+- Deterministic fixtures use disposable local repositories, databases, files,
+  and fake adapters. They do not prove the current Mac runtime, a real provider,
+  a live channel, a production repository mission, or a user-visible reply
+  survived an outage.
+- No synthetic/hard-kill/held-out result creates an owner verdict, personal
+  baseline, routine canary, skill candidate, or promotion. Existing genuine
+  owner evidence remains exactly what the production ledger already contains;
+  this round does not backfill, duplicate, or reinterpret it.
+- One natural, owner-reviewed interrupted mission and its recovery remain
+  post-release operator evidence. Telegram roundtrip freshness, a signed Alexa
+  intent, life-thread proof, five genuine owner reviews, ten working-day
+  dogfood, OneCLI provisioning, credential rotation, and native Windows host
+  restart remain external/operator or elapsed-use evidence, not repository
+  successes.
+- Commit, push, draft-PR publication, the single allowed Andrea restart, and
+  post-restart runtime proof are still pending. Until those steps succeed, the
+  candidate is repository work in progress and the older serving process must
+  not be credited with these semantics.
+- The final local 93-command selected deterministic sweep and combined local
+  release matrix pass. Branch-SHA hosted checks and post-restart runtime proof
+  remain pending. The 15 explicitly excluded commands remain part of the
+  108-command inventory, not silent passes.
+
+## Container authority and cross-platform release truth — 2026-07-13
+
+### Authoritative pre-release state
+
+This preserved release-truth section records the container-authority candidate
+that the newer continuity section carries forward. At its round-start safe
+fetch, local and remote `main` were aligned at `adbc5fb4`; a fresh fetch
+immediately before publication is still required. The responsive Mac launchd
+service was serving
+the older `9d37cfcf` dirty artifact at the pre-release probe, so it is not
+evidence for the candidate on disk. Do not describe the candidate as deployed
+until a clean build, restart, and matching serving-SHA check succeed.
+
+Local candidate repairs now exist for two pre-existing hosted failures, but
+replacement exact-SHA jobs remain release blockers:
+
+- CI run `29255124818`, job `ci (windows-latest)`, failed the Major iteration
+  CI suite with `ERR_UNSUPPORTED_ESM_URL_SCHEME`: the raw `D:\...`
+  deterministic network-guard preload was interpreted as URL protocol `d:`.
+- Security run `29242307301`, job `scan`, failed `Detect secrets`: the action
+  received identical `BASE=main` and `HEAD=HEAD` commits, and Semgrep was
+  skipped.
+
+Ubuntu CI and AGI/CodeQL on `adbc5fb4` were green. That evidence narrows the
+repair scope; it does not waive replacement Windows or security proof. The
+local evidence below validates the uncommitted candidate only; it is not a
+substitute for exact-SHA hosted or post-release runtime evidence.
+
+### Candidate security and platform contract
+
+- The ordinary `direct_assistant` container lane supplies `tools: []` to the
+  SDK and has no MCP server, additional project directory, or host Codex
+  profile. `allowedTools` remains only an auto-approval list, not a capability
+  boundary. Explicit file, URL, search, research, protected, control,
+  advanced-helper, and code requests route to their separately minimized
+  capability sets; a classified turn cannot gain tools merely because a
+  narrower route lacks them.
+- Canonical runner source and trusted settings, guidance, skills, plugins, and
+  route controls are immutable/read-only inside agent containers. Writable
+  access is limited to explicit per-chat session state, group-workspace state,
+  and IPC. Project settings and hooks are ignored, while bounded group guidance
+  is supplied through the trusted read-only view.
+- Advanced/code profiles that explicitly receive the `Skill` built-in rebuild
+  skills atomically from the canonical bundled set plus explicitly enabled
+  community entries. A no-shell skill-management route receives only the
+  bounded read-only discovery catalog needed by its exact MCP allowlist.
+  Direct, protected, control, and other no-shell helper profiles receive empty
+  skill/plugin overlays so prompt-bearing execution controls cannot influence
+  narrower lanes. Symlinks, special files, path escapes, duplicate
+  destinations, disabled entries, and partial staging output fail closed.
+- Host Codex home, auth, and config are not mounted or copied into agent
+  containers. Host-side Codex execution remains a separately enabled operator
+  lane.
+- The legacy `/claw` alternate runner and Apple Container conversion workflow
+  are retained only as explicit fail-closed compatibility stubs. Neither may
+  launch an agent, merge a historical runtime branch, bypass the canonical
+  service/policy path, or be counted as supported capability.
+- Docker and Podman are the verified nested read-only mount implementations.
+  Apple Container remains detectable but fails closed for agent execution until
+  it passes equivalent isolated mount-canary proof; macOS resolution therefore
+  prefers Docker before that unverified candidate.
+- OneCLI Agent Vault is the preferred credential boundary. If OneCLI is
+  unavailable, environment inheritance is explicitly degraded: secret values
+  travel only through the spawned process environment, container arguments
+  contain bare key names, and values must remain absent from arguments,
+  process listings, logs, errors, and diagnostics. OneCLI responses are limited
+  to documented proxy variables and bounded read-only CA targets; it cannot add
+  executable-control environment or arbitrary mounts.
+- `/setup` and `/init-onecli` now preflight an already operator-provisioned
+  vault without downloading installers, reading or deleting `.env` secrets,
+  accepting pasted keys, migrating credentials, or putting values in command
+  arguments. Missing OneCLI remains an explicit operator decision plus degraded
+  runtime classification, not an automatic repository mutation.
+- The obsolete native-credential-proxy conversion skill is also an inert
+  compatibility stub. The repository's existing single-key degraded fallback
+  is the only non-OneCLI container credential path; no branch merge or alternate
+  proxy may silently replace it.
+- The supported runtime contract is Node `22.x` (`>=22 <23`). `.nvmrc`, hosted
+  CI, the Windows provisioner, and the container image pin `22.22.2`; macOS and
+  Linux wrappers use the active supported Node 22.x process. Lockfile installs
+  and required container CLI versions remain pinned. The deterministic network
+  guard is injected once as a portable `file:` URL. The shared TypeScript
+  artifact and hosted Windows CI validate cross-platform build/type/test and
+  launcher behavior, not a native Windows rebuild, service restart, or
+  integration canary.
+
+### Validation and release ledger
+
+- [x] The latest completed focused routing, container, credential, mount, task,
+      and hermetic-security run passed 132/132. It covers exact route tool
+      availability, a zero-tool/no-MCP direct lane, route-away signals, absence
+      of host Codex mounts, mount-spec injection rejection, bare-name secret
+      injection, redacted diagnostics, and portable network-guard preloading.
+      The guard changed afterward, so its affected cases remain part of the
+      final exact-tree rerun rather than being inferred from this result.
+- [x] The latest completed first-class host/container contract suite passed
+      121/121. Agent-runner policy tests pass 11/11; runner typecheck and build
+      also pass. Because runner/control code changed afterward, the exact-tree
+      contract, typecheck, build, and tests remain mandatory before release.
+- [ ] Rebuild the pinned Docker image from the final tree and rerun its version
+      canary plus the isolated, network-disabled two-run mount canary. The
+      earlier candidate proved immutable controls, canonical runner compilation,
+      writable session/group state, and restart continuity, but that image
+      predates the final runner/control edits and is not release evidence.
+- [x] Root typecheck passes. Documentation checks pass across 57 files, workflow
+      YAML passes checksum-verified Actionlint 1.7.7, root and agent-runner
+      dependency audits report zero findings, both new Python helpers parse,
+      and `git diff --check` is clean.
+- [x] The pinned Semgrep CE 1.169.0 image reports zero findings and 100% parsed
+      lines for the tracked-tree broad scan (322 rules across 942 targets), the
+      isolated database and runtime-entry scans (94 rules each), and a separate
+      explicit scan of all 12 untracked candidate source/helper files. The
+      hosted post-commit exact-SHA result remains the release gate because only
+      that run sees the entire candidate as one tracked tree.
+- [x] The retired `/claw` static contract test passes, and a direct invocation
+      exits with software-configuration status 78 before the preserved legacy
+      implementation can inspect state or start a container.
+- [ ] Root formatting, lint, primary tests, and production build pass under the
+      active supported Node 22.x runtime (22.22.3 on this Mac; exact 22.22.2 in
+      the pinned hosted/container/Windows boundaries).
+- [ ] AGI typecheck/tests, all 91 deterministic commands including stability
+      rounds, held-out execution-truth cases, the isolated zero-cost offline
+      scorecard, and signature flows pass without a paid or non-loopback
+      request.
+- [ ] Final generated-artifact, full-diff, whitespace, and secret review finds
+      no accidental or unrelated state.
+- [ ] Exact-release-SHA Ubuntu, Windows, container, AGI, CodeQL,
+      dependency-audit, secret-scan, and Semgrep jobs all pass. The scheduled
+      security gates are independent jobs; no legacy single `scan` job or
+      identical base/head comparison is accepted as proof.
+- [ ] A fresh remote fetch proves `main` remains non-diverged immediately before
+      publication, and the reviewed complete candidate is committed and pushed
+      without silently including unrelated state.
+- [ ] Preflight records disk, Docker, scheduled work, active containers, PIDs,
+      boot IDs, OpenClaw work, and the pending BlueBubbles cursor. A clean build
+      from the final commit proves matching source SHA and artifact digest before
+      any process is stopped.
+- [ ] OpenClaw is restarted first and proves stable RPC health, all 11 bridge
+      tools, and no direct-send exposure. The Mac launchd service is then
+      restarted from the final commit; status proves a new boot ID, aligned
+      PIDs, clean artifact provenance, canonical runtime root, and a serving SHA
+      equal to committed `main`.
+- [ ] Post-release read-only status checks prove host, Telegram transport,
+      OpenClaw gateway/bridge, BlueBubbles, Alexa endpoint/OAuth, provider-cache
+      classification, scheduler, and owner-cockpit truth without converting
+      stale operator evidence into a repository failure. The ignored
+      BlueBubbles record advances past its captured cursor without an Andrea
+      reply.
+
+No paid provider call, user-session message, calendar mutation,
+`setup --step verify`, Docker restart, or external BlueBubbles-app restart is
+part of this release proof. Any such action requires separate operator
+authorization and an explicit cost or side-effect boundary.
+
+### Residual operator evidence debt
+
+The repository cannot manufacture these observations. OneCLI is not installed
+on the audited host, so current environment fallback remains degraded until the
+operator provisions and verifies the vault. Rotation of the previously exposed
+Brave credential remains operator debt; no credential value belongs in this
+plan, repository history, diagnostics, or release output. Telegram transport is
+healthy but its user-session roundtrip proof is overdue. Alexa endpoint and
+OAuth checks are healthy while the last signed handled `IntentRequest` is
+stale. Provider and council observations expire and must be refreshed
+intentionally. One natural life-thread `save that for later` outcome, the first
+five distinct owner reviews, and native Windows host restart/integration proof
+remain real-use evidence debt. The optional Andrea OpenAI backend remains
+intentionally disabled. BlueBubbles is already live-proven and should remain
+unchanged unless regression evidence appears. Preserved legacy runner and
+session caches remain owner data on disk but inert; this round neither deletes
+nor reinterprets them.
+
 ## Verified execution truth and durable recovery boundary — 2026-07-13
 
 ### Current capability truth

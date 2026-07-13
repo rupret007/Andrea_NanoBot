@@ -4,14 +4,13 @@ import path from 'path';
 
 import { analyzeAgentError } from './agent-error.js';
 import { classifyAssistantRequest } from './assistant-routing.js';
+import { getAssistantSessionStorageKey } from './assistant-session.js';
 import {
   classifyRuntimeRoute,
   selectPreferredRuntime,
-  shouldReuseExistingThread,
 } from './agent-runtime.js';
 import {
   ASSISTANT_NAME,
-  DATA_DIR,
   DEFAULT_TRIGGER,
   GROUPS_DIR,
   TIMEZONE,
@@ -29,6 +28,7 @@ import {
 import {
   deleteAgentThread,
   deleteSession,
+  deleteSessionStorageKey,
   getAllChats,
   getAllAgentThreads,
   getAllRegisteredGroups,
@@ -125,6 +125,7 @@ type RuntimeDeps = {
   getSession: typeof getSession;
   setSession: typeof setSession;
   deleteSession?: typeof deleteSession;
+  deleteSessionStorageKey?: typeof deleteSessionStorageKey;
   getAgentThread?: typeof getAgentThread;
   getAllAgentThreads?: typeof getAllAgentThreads;
   setAgentThread?: typeof setAgentThread;
@@ -147,6 +148,7 @@ const runtimeDeps: RuntimeDeps = {
   getSession,
   setSession,
   deleteSession,
+  deleteSessionStorageKey,
   getAgentThread,
   getAllAgentThreads,
   setAgentThread,
@@ -400,9 +402,9 @@ function buildAssistantMessage(
   };
 }
 
-function requestAlexaContainerClose(groupFolder: string): void {
+function requestAlexaContainerClose(inputDir: string | null): void {
+  if (!inputDir) return;
   try {
-    const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
     fs.mkdirSync(inputDir, { recursive: true });
     fs.writeFileSync(path.join(inputDir, '_close'), '');
   } catch {
@@ -434,7 +436,6 @@ function writeSnapshotsForGroup(
       id: task.id,
       groupFolder: task.group_folder,
       prompt: task.prompt,
-      script: task.script || undefined,
       schedule_type: task.schedule_type,
       schedule_value: task.schedule_value,
       status: task.status,
@@ -494,35 +495,45 @@ export async function runAlexaAssistantTurn(
   deps.storeMessage(userMessage);
 
   const requestPolicy = classifyAssistantRequest([userMessage]);
+  const sessionStorageKey = getAssistantSessionStorageKey(
+    target.group.folder,
+    requestPolicy.route,
+  );
   writeSnapshotsForGroup(deps, target.group, registeredGroups);
 
-  const existingThread = deps.getAgentThread
-    ? deps.getAgentThread(target.group.folder)
-    : undefined;
+  const existingThread =
+    requestPolicy.route !== 'direct_assistant' && deps.getAgentThread
+      ? deps.getAgentThread(target.group.folder)
+      : undefined;
   const runtimeRoute = classifyRuntimeRoute(requestPolicy, request.utterance);
   const preferredRuntime = selectPreferredRuntime(existingThread, runtimeRoute);
-  let sessionId = shouldReuseExistingThread(existingThread, preferredRuntime)
-    ? existingThread.thread_id
-    : deps.getSession(target.group.folder);
+  let sessionId = deps.getSession(sessionStorageKey);
   const outputs: string[] = [];
+  let activeIpcInputDir: string | null = null;
 
   const persistThread = (
     runtime: AgentThreadState['runtime'] | undefined,
     threadId: string,
   ) => {
-    deps.setSession(target.group.folder, threadId);
-    deps.setAgentThread?.({
-      group_folder: target.group.folder,
-      runtime: runtime || preferredRuntime,
-      thread_id: threadId,
-      last_response_id: threadId,
-      updated_at: new Date().toISOString(),
-    });
+    deps.setSession(sessionStorageKey, threadId);
+    if (requestPolicy.route !== 'direct_assistant') {
+      deps.setAgentThread?.({
+        group_folder: target.group.folder,
+        runtime: runtime || preferredRuntime,
+        thread_id: threadId,
+        last_response_id: threadId,
+        updated_at: new Date().toISOString(),
+      });
+    }
   };
 
   const clearPersistedConversation = () => {
-    deps.deleteSession?.(target.group.folder);
-    deps.deleteAgentThread?.(target.group.folder);
+    if (sessionStorageKey === target.group.folder) {
+      deps.deleteSession?.(target.group.folder);
+      deps.deleteAgentThread?.(target.group.folder);
+    } else {
+      deps.deleteSessionStorageKey?.(sessionStorageKey);
+    }
     sessionId = undefined;
     outputs.length = 0;
   };
@@ -556,13 +567,15 @@ export async function runAlexaAssistantTurn(
         preferredRuntime,
         runtimeRoute,
       },
-      () => {},
+      (_proc, _containerName, ipcContext) => {
+        activeIpcInputDir = ipcContext.inputDir;
+      },
       async (partial) => {
         if (partial.newSessionId) {
           persistThread(partial.runtime, partial.newSessionId);
         }
         if (partial.status === 'success') {
-          requestAlexaContainerClose(target.group.folder);
+          requestAlexaContainerClose(activeIpcInputDir);
         }
         const text =
           typeof partial.result === 'string'

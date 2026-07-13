@@ -3,10 +3,36 @@ import type { ChildProcess } from 'node:child_process';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 import { GroupQueue } from './group-queue.js';
+import { verifyContainerIpcMessage } from './container-ipc-auth.js';
 import {
   InFlightTurnCursorRegistry,
   runQueuedTurnWithCursorRecovery,
 } from './in-flight-turn-cursors.js';
+
+function registerTestProcess(
+  queue: GroupQueue,
+  groupJid: string,
+  process: ChildProcess,
+  containerName: string,
+  groupFolder?: string,
+  assistantCapabilityKey?: string,
+  assistantRequestRoute?: string,
+): void {
+  queue.registerProcess(
+    groupJid,
+    process,
+    containerName,
+    groupFolder,
+    assistantCapabilityKey,
+    assistantRequestRoute,
+    {
+      inputDir:
+        '/tmp/nanoclaw-test-data/ipc/test-group/input/host-action/run-1',
+      runId: 'host-action-run-0001',
+      authToken: 'host-action-token-00000000000000001',
+    },
+  );
+}
 
 // Mock config to control concurrency limit
 vi.mock('./config.js', () => ({
@@ -322,6 +348,38 @@ describe('GroupQueue', () => {
 
   // --- Idle preemption ---
 
+  it('tracks the active assistant capability only for the process lifetime', async () => {
+    let resolveProcess: () => void;
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    registerTestProcess(
+      queue,
+      'group1@g.us',
+      {} as ChildProcess,
+      'container-1',
+      'test-group',
+      'capability-key',
+      'direct_assistant',
+    );
+
+    expect(queue.getActiveAssistantCapability('group1@g.us')).toEqual({
+      key: 'capability-key',
+      route: 'direct_assistant',
+    });
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(queue.getActiveAssistantCapability('group1@g.us')).toBeNull();
+  });
+
   it('does NOT preempt active container when not idle', async () => {
     const fs = await import('fs');
     let resolveProcess: () => void;
@@ -340,7 +398,8 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     // Register a process so closeStdin has a groupFolder
-    queue.registerProcess(
+    registerTestProcess(
+      queue,
       'group1@g.us',
       {} as any,
       'container-1',
@@ -376,7 +435,8 @@ describe('GroupQueue', () => {
     queue.setProcessMessagesFn(processMessages);
     queue.enqueueMessageCheck('group1@g.us');
     await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess(
+    registerTestProcess(
+      queue,
       'group1@g.us',
       {} as ChildProcess,
       'container-1',
@@ -411,7 +471,8 @@ describe('GroupQueue', () => {
     queue.setProcessMessagesFn(processMessages);
     queue.enqueueMessageCheck('group1@g.us');
     await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess(
+    registerTestProcess(
+      queue,
       'group1@g.us',
       {} as ChildProcess,
       'container-1',
@@ -451,7 +512,8 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     // Register process and mark idle
-    queue.registerProcess(
+    registerTestProcess(
+      queue,
       'group1@g.us',
       {} as any,
       'container-1',
@@ -490,7 +552,8 @@ describe('GroupQueue', () => {
     queue.setProcessMessagesFn(processMessages);
     queue.enqueueMessageCheck('group1@g.us');
     await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess(
+    registerTestProcess(
+      queue,
       'group1@g.us',
       {} as any,
       'container-1',
@@ -503,8 +566,22 @@ describe('GroupQueue', () => {
     // A new user message arrives — resets idleWaiting
     queue.sendMessage('group1@g.us', 'hello');
 
-    // Task enqueued after message reset — should NOT preempt (agent is working)
     const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    const messageWrite = writeFileSync.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].endsWith('.json.tmp'),
+    );
+    expect(messageWrite).toBeDefined();
+    const envelope = JSON.parse(String(messageWrite?.[1]));
+    expect(envelope.provenance).toBe('host');
+    expect(
+      verifyContainerIpcMessage(
+        envelope,
+        'host-action-run-0001',
+        'host-action-token-00000000000000001',
+      ),
+    ).toBe(true);
+
+    // Task enqueued after message reset — should NOT preempt (agent is working)
     writeFileSync.mockClear();
 
     const taskFn = vi.fn(async () => {});
@@ -532,7 +609,8 @@ describe('GroupQueue', () => {
     queue.setProcessMessagesFn(processMessages);
     queue.enqueueMessageCheck('group1@g.us');
     await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess(
+    registerTestProcess(
+      queue,
       'group1@g.us',
       {} as any,
       'container-1',
@@ -568,7 +646,8 @@ describe('GroupQueue', () => {
     // Start a task (sets isTaskContainer = true)
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
     await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess(
+    registerTestProcess(
+      queue,
       'group1@g.us',
       {} as any,
       'container-1',
@@ -601,7 +680,8 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     // Register process and enqueue a task (no idle yet — no preemption)
-    queue.registerProcess(
+    registerTestProcess(
+      queue,
       'group1@g.us',
       {} as any,
       'container-1',
@@ -649,7 +729,8 @@ describe('GroupQueue', () => {
     queue.setProcessMessagesFn(processMessages);
     queue.enqueueMessageCheck('group1@g.us');
     await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess(
+    registerTestProcess(
+      queue,
       'group1@g.us',
       {} as any,
       'container-1',

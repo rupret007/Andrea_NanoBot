@@ -105,6 +105,22 @@ function formatDockerLikeMount(
   containerPath: string,
   readonly: boolean,
 ): string {
+  if (/[,\0\r\n]/.test(hostPath)) {
+    throw new Error('Unsafe host bind-mount path.');
+  }
+  const containerSegments = containerPath.split('/').slice(1);
+  if (
+    !containerPath.startsWith('/') ||
+    containerSegments.length === 0 ||
+    containerSegments.some(
+      (segment) =>
+        segment === '.' ||
+        segment === '..' ||
+        !/^[A-Za-z0-9._-]+$/.test(segment),
+    )
+  ) {
+    throw new Error('Unsafe container bind-mount path.');
+  }
   return `type=bind,source=${hostPath},target=${containerPath}${readonly ? ',readonly' : ''}`;
 }
 
@@ -112,7 +128,7 @@ export function getDefaultContainerRuntimeCandidates(
   platform = process.platform,
 ): ContainerRuntimeName[] {
   if (platform === 'win32') return ['podman', 'docker'];
-  if (platform === 'darwin') return ['podman', 'apple-container', 'docker'];
+  if (platform === 'darwin') return ['podman', 'docker', 'apple-container'];
   if (platform === 'linux') return ['podman', 'docker'];
   return ['podman', 'docker', 'apple-container'];
 }

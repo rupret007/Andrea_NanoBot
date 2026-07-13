@@ -4,7 +4,7 @@
  *
  * Fixes: Root→system systemd, WSL nohup fallback, no `|| true` swallowing errors.
  */
-import { execFileSync, execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -22,6 +22,7 @@ import {
   getServiceManager,
   isRoot,
 } from './platform.js';
+import { buildNpmRunInvocation } from './npm-cli.js';
 import { emitStatus } from './status.js';
 
 export async function run(_args: string[]): Promise<void> {
@@ -68,9 +69,13 @@ export async function run(_args: string[]): Promise<void> {
   // Build first
   logger.info('Building TypeScript');
   try {
-    execSync('npm run build', {
+    const build = buildNpmRunInvocation('build');
+    // The shared spec validates npm-cli.js, uses argv, and always disables the shell.
+    // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
+    execFileSync(build.command, build.args, {
       cwd: projectRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
+      shell: build.shell,
     });
     logger.info('Build succeeded');
   } catch {
@@ -262,7 +267,7 @@ function setupLaunchd(
   logger.info({ plistPath }, 'Wrote launchd plist');
 
   try {
-    execSync(`launchctl load ${JSON.stringify(plistPath)}`, {
+    execFileSync('launchctl', ['load', plistPath], {
       stdio: 'ignore',
     });
     logger.info('launchctl load succeeded');
@@ -273,7 +278,7 @@ function setupLaunchd(
   // Verify
   let serviceLoaded = false;
   try {
-    const output = execSync('launchctl list', { encoding: 'utf-8' });
+    const output = execFileSync('launchctl', ['list'], { encoding: 'utf-8' });
     serviceLoaded = output.includes('com.nanoclaw');
   } catch {
     // launchctl list failed
@@ -328,7 +333,9 @@ function invokeWindowsHostControl(
   });
 }
 
-function repairExistingWindowsStartupFallback(projectRoot: string): string | null {
+function repairExistingWindowsStartupFallback(
+  projectRoot: string,
+): string | null {
   const appData = process.env.APPDATA;
   if (!appData) return null;
 
@@ -343,7 +350,10 @@ function repairExistingWindowsStartupFallback(projectRoot: string): string | nul
   );
   if (!fs.existsSync(startupScriptPath)) return null;
 
-  fs.writeFileSync(startupScriptPath, buildWindowsStartupFolderScript(projectRoot));
+  fs.writeFileSync(
+    startupScriptPath,
+    buildWindowsStartupFolderScript(projectRoot),
+  );
   logger.info(
     { startupScriptPath },
     'Repaired existing Windows startup-folder script to the canonical host launcher',
@@ -358,10 +368,7 @@ function setupWindowsTask(
 ): void {
   const taskName = 'NanoClaw';
   const wrapperPath = path.join(projectRoot, 'start-nanoclaw.ps1');
-  fs.writeFileSync(
-    wrapperPath,
-    buildWindowsCompatibilityShim() + '\n',
-  );
+  fs.writeFileSync(wrapperPath, buildWindowsCompatibilityShim() + '\n');
   logger.info({ wrapperPath }, 'Wrote Windows startup wrapper');
   repairExistingWindowsStartupFallback(projectRoot);
 
@@ -502,7 +509,10 @@ function setupWindowsStartupFallback(
   fs.mkdirSync(startupDir, { recursive: true });
   const startupScriptPath = path.join(startupDir, 'nanoclaw-start.cmd');
 
-  fs.writeFileSync(startupScriptPath, buildWindowsStartupFolderScript(projectRoot));
+  fs.writeFileSync(
+    startupScriptPath,
+    buildWindowsStartupFolderScript(projectRoot),
+  );
   logger.info({ startupScriptPath }, 'Wrote startup-folder fallback script');
 
   const initialRunSkipped = !runInitial;
@@ -532,7 +542,7 @@ function setupWindowsStartupFallback(
  */
 function killOrphanedProcesses(projectRoot: string): void {
   try {
-    execSync(`pkill -f '${projectRoot}/dist/index\\.js' || true`, {
+    execFileSync('pkill', ['-f', `${projectRoot}/dist/index\\.js`], {
       stdio: 'ignore',
     });
     logger.info('Stopped any orphaned nanoclaw processes');
@@ -552,15 +562,19 @@ function killOrphanedProcesses(projectRoot: string): void {
  */
 function checkDockerGroupStale(): boolean {
   try {
-    execSync('systemd-run --user --pipe --wait docker info', {
-      stdio: 'pipe',
-      timeout: 10000,
-    });
+    execFileSync(
+      'systemd-run',
+      ['--user', '--pipe', '--wait', 'docker', 'info'],
+      {
+        stdio: 'pipe',
+        timeout: 10000,
+      },
+    );
     return false; // Docker works from systemd session
   } catch {
     // Check if docker works from the current shell (to distinguish stale group vs broken docker)
     try {
-      execSync('docker info', { stdio: 'pipe', timeout: 5000 });
+      execFileSync('docker', ['info'], { stdio: 'pipe', timeout: 5000 });
       return true; // Works in shell but not systemd session → stale group
     } catch {
       return false; // Docker itself is not working, different issue
@@ -577,16 +591,16 @@ function setupSystemd(
 
   // Root uses system-level service, non-root uses user-level
   let unitPath: string;
-  let systemctlPrefix: string;
+  let systemctlArgs: string[];
 
   if (runningAsRoot) {
     unitPath = '/etc/systemd/system/nanoclaw.service';
-    systemctlPrefix = 'systemctl';
+    systemctlArgs = [];
     logger.info('Running as root — installing system-level systemd unit');
   } else {
     // Check if user-level systemd session is available
     try {
-      execSync('systemctl --user daemon-reload', { stdio: 'pipe' });
+      execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'pipe' });
     } catch {
       logger.warn(
         'systemd user session not available — falling back to nohup wrapper',
@@ -597,7 +611,7 @@ function setupSystemd(
     const unitDir = path.join(homeDir, '.config', 'systemd', 'user');
     fs.mkdirSync(unitDir, { recursive: true });
     unitPath = path.join(unitDir, 'nanoclaw.service');
-    systemctlPrefix = 'systemctl --user';
+    systemctlArgs = ['--user'];
   }
 
   const unit = `[Unit]
@@ -637,7 +651,7 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
   // Without linger, systemd terminates all user processes when the last session closes.
   if (!runningAsRoot) {
     try {
-      execSync('loginctl enable-linger', { stdio: 'ignore' });
+      execFileSync('loginctl', ['enable-linger'], { stdio: 'ignore' });
       logger.info('Enabled loginctl linger for current user');
     } catch (err) {
       logger.warn(
@@ -649,19 +663,25 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
 
   // Enable and start
   try {
-    execSync(`${systemctlPrefix} daemon-reload`, { stdio: 'ignore' });
+    execFileSync('systemctl', [...systemctlArgs, 'daemon-reload'], {
+      stdio: 'ignore',
+    });
   } catch (err) {
     logger.error({ err }, 'systemctl daemon-reload failed');
   }
 
   try {
-    execSync(`${systemctlPrefix} enable nanoclaw`, { stdio: 'ignore' });
+    execFileSync('systemctl', [...systemctlArgs, 'enable', 'nanoclaw'], {
+      stdio: 'ignore',
+    });
   } catch (err) {
     logger.error({ err }, 'systemctl enable failed');
   }
 
   try {
-    execSync(`${systemctlPrefix} start nanoclaw`, { stdio: 'ignore' });
+    execFileSync('systemctl', [...systemctlArgs, 'start', 'nanoclaw'], {
+      stdio: 'ignore',
+    });
   } catch (err) {
     logger.error({ err }, 'systemctl start failed');
   }
@@ -669,7 +689,9 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
   // Verify
   let serviceLoaded = false;
   try {
-    execSync(`${systemctlPrefix} is-active nanoclaw`, { stdio: 'ignore' });
+    execFileSync('systemctl', [...systemctlArgs, 'is-active', 'nanoclaw'], {
+      stdio: 'ignore',
+    });
     serviceLoaded = true;
   } catch {
     // Not active

@@ -34,6 +34,12 @@ export interface BuildProvenanceAssessment {
   artifactVerified: boolean | null;
 }
 
+export interface BuildProvenanceGitState {
+  branch: string;
+  commit: string;
+  dirtyPathCount: number;
+}
+
 function manifestPath(projectRoot: string): string {
   return path.join(projectRoot, 'dist', BUILD_PROVENANCE_FILENAME);
 }
@@ -137,6 +143,7 @@ export function readBuildProvenance(
 export function writeBuildProvenance(options?: {
   projectRoot?: string;
   now?: Date;
+  gitState?: BuildProvenanceGitState;
 }): BuildProvenanceManifest {
   const projectRoot = path.resolve(options?.projectRoot || process.cwd());
   const distDir = path.join(projectRoot, 'dist');
@@ -144,9 +151,14 @@ export function writeBuildProvenance(options?: {
   const manifest: BuildProvenanceManifest = {
     version: 1,
     builtAt: (options?.now || new Date()).toISOString(),
-    gitBranch: readGitValue(projectRoot, ['rev-parse', '--abbrev-ref', 'HEAD']),
-    gitCommit: readGitValue(projectRoot, ['rev-parse', 'HEAD']),
-    gitDirtyPathCount: readGitDirtyPathCount(projectRoot),
+    gitBranch:
+      options?.gitState?.branch ||
+      readGitValue(projectRoot, ['rev-parse', '--abbrev-ref', 'HEAD']),
+    gitCommit:
+      options?.gitState?.commit ||
+      readGitValue(projectRoot, ['rev-parse', 'HEAD']),
+    gitDirtyPathCount:
+      options?.gitState?.dirtyPathCount ?? readGitDirtyPathCount(projectRoot),
     ...artifact,
   };
   writeJsonFileAtomic(manifestPath(projectRoot), manifest);

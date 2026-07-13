@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getAssistantCapabilityLane,
   getSuppressedDeadSessionRuntimeEvidence,
+  getAssistantSessionHomeFlavor,
   getAssistantSessionStorageKey,
   isDeadAssistantSessionErrorText,
 } from './assistant-session.js';
@@ -13,15 +15,38 @@ describe('getAssistantSessionStorageKey', () => {
     );
   });
 
-  it('isolates protected assistant sessions', () => {
+  it('uses a protected session for protected assistant work', () => {
     expect(getAssistantSessionStorageKey('main', 'protected_assistant')).toBe(
-      'main::protected_assistant',
+      'main::protected',
     );
   });
 
-  it('leaves other lanes on the legacy shared key', () => {
-    expect(getAssistantSessionStorageKey('main', 'code_plane')).toBe('main');
-    expect(getAssistantSessionStorageKey('main')).toBe('main');
+  it('isolates protected, control, and execution sessions', () => {
+    expect(getAssistantSessionStorageKey('main', 'control_plane')).toBe(
+      'main::control',
+    );
+    expect(getAssistantSessionStorageKey('main', 'advanced_helper')).toBe(
+      'main::execution',
+    );
+    expect(getAssistantSessionStorageKey('main', 'code_plane')).toBe(
+      'main::execution',
+    );
+    expect(getAssistantSessionStorageKey('main')).toBe(
+      'main::direct_assistant',
+    );
+  });
+
+  it('maps storage and mounted homes to the same four trust lanes', () => {
+    expect(getAssistantSessionHomeFlavor('direct_assistant')).toBe(
+      'direct-assistant',
+    );
+    expect(getAssistantSessionHomeFlavor('protected_assistant')).toBe(
+      'protected',
+    );
+    expect(getAssistantSessionHomeFlavor('control_plane')).toBe('control');
+    expect(getAssistantSessionHomeFlavor('advanced_helper')).toBe('execution');
+    expect(getAssistantSessionHomeFlavor('code_plane')).toBe('execution');
+    expect(getAssistantCapabilityLane(undefined)).toBe('direct-assistant');
   });
 });
 

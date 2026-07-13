@@ -76,6 +76,7 @@ function buildDeps() {
     getSession: vi.fn(() => 'session-1'),
     setSession: vi.fn(),
     deleteSession: vi.fn(),
+    deleteSessionStorageKey: vi.fn(),
     getAgentThread: vi.fn(() => undefined),
     getAllAgentThreads: vi.fn(() => ({})),
     setAgentThread: vi.fn(),
@@ -143,6 +144,11 @@ describe('runAlexaAssistantTurn', () => {
     const deps = buildDeps();
     deps.runContainerAgent.mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
+        _onProcess?.({} as never, 'container-1', {
+          inputDir: '/tmp/alexa-ipc/input/protected/run-1',
+          runId: 'protected-run-0001',
+          authToken: 'protected-token-00000000000000000001',
+        });
         await onOutput?.({
           status: 'success',
           result: '<internal>plan</internal>Hello from Andrea',
@@ -169,7 +175,10 @@ describe('runAlexaAssistantTurn', () => {
 
     expect(result.text).toBe('Hello from Andrea');
     expect(result.groupFolder).toBe('main');
-    expect(deps.setSession).toHaveBeenCalledWith('main', 'session-2');
+    expect(deps.setSession).toHaveBeenCalledWith(
+      'main::protected',
+      'session-2',
+    );
     expect(deps.storeMessage).toHaveBeenCalledTimes(2);
     expect(deps.runContainerAgent).toHaveBeenCalledWith(
       expect.objectContaining({ folder: 'main' }),
@@ -257,10 +266,17 @@ describe('runAlexaAssistantTurn', () => {
       deps,
     );
 
-    expect(deps.deleteSession).toHaveBeenCalledWith('main');
-    expect(deps.deleteAgentThread).toHaveBeenCalledWith('main');
+    expect(deps.deleteSessionStorageKey).toHaveBeenCalledWith(
+      'main::direct_assistant',
+    );
+    expect(deps.getSession).toHaveBeenCalledWith('main::direct_assistant');
+    expect(deps.deleteSession).not.toHaveBeenCalled();
+    expect(deps.deleteAgentThread).not.toHaveBeenCalled();
     expect(deps.runContainerAgent).toHaveBeenCalledTimes(2);
-    expect(deps.setSession).toHaveBeenCalledWith('main', 'session-2');
+    expect(deps.setSession).toHaveBeenCalledWith(
+      'main::direct_assistant',
+      'session-2',
+    );
     expect(result.text).toContain(
       'Fresh answer after resetting the stale session.',
     );

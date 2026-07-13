@@ -4,6 +4,7 @@ import type {
   AndreaPlatformProviderCouncilResult,
   PlatformTaskFamily,
 } from './andrea-platform-bridge.js';
+import { runtimeHashId } from './agent-runtime-glue.js';
 import { isSensitiveName, redactCouncilText } from './council-safety.js';
 import {
   findOpenCognitiveCheckpoint,
@@ -4313,8 +4314,13 @@ export function beginCognitiveKernelRun(
     });
   const framePolicy = selectCognitiveMode(input);
   const selectedSkill = selectSkillCard(input);
+  const turnIdentity = input.turnId || randomUUID();
+  const readableRunId = `cog:${turnIdentity}`;
   const frame: CognitiveFrame = {
-    runId: `cog:${input.turnId || randomUUID()}`,
+    runId:
+      readableRunId.length <= 220 && /^[A-Za-z0-9:_-]+$/.test(readableRunId)
+        ? readableRunId
+        : runtimeHashId('cog:run', turnIdentity),
     goal: summarizeGoal(input.goal, input.taskFamily, input.channel),
     taskFamily: input.taskFamily,
     channel: input.channel,

@@ -7,7 +7,7 @@ import {
   shouldReuseExistingThread,
 } from './agent-runtime.js';
 import {
-  classifyAssistantRequest,
+  classifyRuntimeJobRequest,
   type AssistantRequestPolicy,
 } from '../assistant-routing.js';
 import type {
@@ -41,6 +41,7 @@ import type {
   StopRuntimeJobResult,
 } from './types.js';
 import type { RegisteredGroup } from '../types.js';
+import type { ContainerIpcContext } from '../container-ipc-auth.js';
 
 export interface RuntimeExecutionDependencies {
   assistantName: string;
@@ -59,11 +60,16 @@ export interface RuntimeExecutionDependencies {
     proc: ChildProcess,
     containerName: string,
     groupFolder?: string,
+    ipcContext?: ContainerIpcContext,
   ): void;
   runContainerAgent(
     group: RegisteredGroup,
     input: ContainerInput,
-    onProcess?: (proc: ChildProcess, containerName: string) => void,
+    onProcess?: (
+      proc: ChildProcess,
+      containerName: string,
+      ipcContext: ContainerIpcContext,
+    ) => void,
     onOutput?: (output: ContainerOutput) => Promise<void>,
   ): Promise<ContainerOutput>;
   writeGroupsSnapshot(
@@ -239,6 +245,7 @@ function planRuntimeExecution(
     classifyRuntimeRoute(request.requestPolicy, request.prompt);
   const preferredRuntime =
     request.requestedRuntime ||
+    request.existingThreadOverride?.runtime ||
     selectPreferredRuntime(existingThread, runtimeRoute);
   const reusedThreadId =
     existingThread &&
@@ -298,12 +305,13 @@ export async function executeRuntimeTurn(
       assistantName: deps.assistantName,
       requestPolicy: request.requestPolicy,
     },
-    (proc, containerName) =>
+    (proc, containerName, ipcContext) =>
       deps.registerProcess(
         request.groupJid,
         proc,
         containerName,
         request.group.folder,
+        ipcContext,
       ),
     wrappedOnOutput,
   );
@@ -547,7 +555,7 @@ async function runOrchestrationJob(
   }
 
   const executionTarget = executionContextResolver();
-  const requestPolicy = classifyAssistantRequest([{ content: prompt }]);
+  const requestPolicy = classifyRuntimeJobRequest(prompt);
   const plan = planRuntimeExecution(deps, {
     group: executionTarget.group,
     groupJid: executionTarget.jid,
@@ -679,7 +687,7 @@ export function createRuntimeOrchestrationService(
       const prompt = normalizePrompt(request.prompt);
       const source = normalizeSource(request.source);
       const target = resolveGroupTarget(deps, request.groupFolder.trim());
-      const requestPolicy = classifyAssistantRequest([{ content: prompt }]);
+      const requestPolicy = classifyRuntimeJobRequest(prompt);
       const runtimeRoute =
         request.routeHint || classifyRuntimeRoute(requestPolicy, prompt);
       const jobId = createOrchestrationJobId('create');
@@ -735,7 +743,7 @@ export function createRuntimeOrchestrationService(
       const prompt = normalizePrompt(request.prompt);
       const source = normalizeSource(request.source);
       const initialTarget = resolveFollowUpTarget(deps, request);
-      const requestPolicy = classifyAssistantRequest([{ content: prompt }]);
+      const requestPolicy = classifyRuntimeJobRequest(prompt);
       const runtimeRoute = classifyRuntimeRoute(requestPolicy, prompt);
       const jobId = createOrchestrationJobId('follow_up');
 

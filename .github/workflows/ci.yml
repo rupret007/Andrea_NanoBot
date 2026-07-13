@@ -4,10 +4,15 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'codex/**'
 
 env:
   TZ: America/Chicago
+
+permissions:
+  contents: read
 
 jobs:
   ci:
@@ -17,12 +22,53 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version-file: '.nvmrc'
           cache: npm
       - run: npm ci
 
       - name: Major iteration CI suite
         run: npm run test:major:ci
+
+      - name: Verify real Git content-state continuity
+        if: runner.os == 'Linux'
+        run: npm run check:repository-state-content
+
+      - name: Documentation checks
+        if: runner.os == 'Linux'
+        run: npm run docs:check
+
+      - name: Release SHA policy tests
+        if: runner.os == 'Linux'
+        run: python3 .github/scripts/test_verify_release_sha.py
+
+      - name: Container host contract
+        if: runner.os == 'Linux'
+        run: npm run check:container-contract
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: container/agent-runner/package-lock.json
+      - name: Install agent runner
+        run: npm run container:install
+      - name: Typecheck agent runner
+        run: npm run typecheck:agent-runner
+      - name: Build agent runner
+        run: npm run build:agent-runner
+      - name: Test agent runner policy
+        run: npm run test:agent-runner
+      - name: Build container image
+        run: npm run build:container
+      - name: Verify container image
+        run: npm run check:container-canary
+      - name: Verify container mount boundaries
+        run: npm run check:container-mounts

@@ -39,7 +39,15 @@ Important rules:
 - unsafe relative paths and traversal are rejected
 - non-main additional mounts are read-only unless explicitly allowed
 
-The main project root is mounted read-only. Writable state lives in narrower paths such as the group folder, IPC, and `.claude` state.
+The main project root and host-owned control plane—including route policy,
+runner code, and mount configuration—are immutable inside the container.
+Writable state is limited to explicit per-chat session state, the group
+workspace, and IPC. A control file must not become writable merely because a
+route needs writable working state.
+
+Host Codex home, auth, and config are not mounted or copied into agent
+containers. Host-side Codex execution remains a separate, explicitly enabled
+operator lane rather than ambient container authority.
 
 ### 3. Session And Chat Isolation
 
@@ -70,7 +78,7 @@ Real API credentials are supposed to stay on the host side, not in normal agent 
 
 The repo supports:
 
-- OneCLI Agent Vault for host-side credential injection
+- OneCLI Agent Vault as the preferred host-side credential boundary
 - Anthropic-compatible gateway flows
 - host-side shopping credentials for Amazon Business
 - host-side bridge/auth tokens for optional integrations like Cursor desktop bridge and Alexa
@@ -78,12 +86,21 @@ The repo supports:
 Important rule:
 
 - secrets should not be echoed back to users, stored in normal chat history, or mounted into general agent workspaces
-- container fallbacks pass secret values through the spawned runtime process environment and use bare `-e KEY` container arguments; secret values must never appear in command arguments, process listings, or diagnostics
+- when OneCLI is unavailable, environment inheritance is explicitly classified as degraded rather than equivalent to vault-backed execution
+- OneCLI may add only its documented proxy variables and bounded read-only CA
+  mounts; executable-control environment keys or arbitrary mount targets fail
+  closed
+- the degraded container fallback passes secret values only through the spawned runtime process environment and uses bare `-e KEY` container arguments; secret values must never appear in command arguments, process listings, logs, errors, or diagnostics
 - if a credential was previously observed in a process listing, rotate it before further live provider verification
 
 ### 6. Route-Aware Tool Narrowing
 
-Andrea now uses route-aware request policy so simple assistant turns do not automatically receive the same tool surface as heavier workflows.
+Andrea uses route-aware request policy so simple assistant turns do not
+automatically receive the same tool surface as heavier workflows. Ordinary
+`direct_assistant` requests are tool-free at the container boundary. Other
+production-routed requests receive a minimized allowlist for the task. A
+classified turn must never gain tools merely because a narrower route lacks
+them.
 
 Current route families:
 
@@ -93,7 +110,9 @@ Current route families:
 - `advanced_helper`
 - `code_plane`
 
-This is a meaningful security improvement because it reduces accidental tool reach for ordinary chat turns.
+This is a meaningful security improvement because it removes ambient tool reach
+from ordinary chat and limits higher-trust tools to the route that justified
+them.
 
 ### 7. Command Surface Gating
 
@@ -114,14 +133,19 @@ Current Cursor trust split:
 
 ## Privilege Comparison
 
-| Capability          | Main Group                                     | Non-Main Group                                    |
-| ------------------- | ---------------------------------------------- | ------------------------------------------------- |
-| Project root access | `/workspace/project` (read-only)               | None                                              |
-| Group folder        | `/workspace/group` (read/write)                | `/workspace/group` (read/write)                   |
-| Global memory       | Implicit via project                           | `/workspace/global` (read-only)                   |
-| Additional mounts   | Configurable                                   | Read-only unless explicitly allowed               |
-| Network access      | Unrestricted                                   | Unrestricted                                      |
-| MCP tools           | Route-aware subset with broader operator reach | Route-aware subset scoped to the request and chat |
+| Capability               | Ordinary direct lane              | Explicit protected/control lane                                  | Explicit advanced/code lane                                                                                                               |
+| ------------------------ | --------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| SDK built-in tools       | None                              | Exact read/web allowlist, or none                                | Explicit engineering allowlist                                                                                                            |
+| MCP                      | None                              | Exact route allowlist                                            | None while shell-capable                                                                                                                  |
+| Project root             | None                              | Main-group tracked-file snapshot only when read tools require it | Main-group tracked-file snapshot, read-only                                                                                               |
+| Global/additional mounts | None                              | Route/group policy only                                          | Route/group policy only                                                                                                                   |
+| Skill/plugin controls    | Empty read-only overlays          | Empty read-only overlays                                         | Read-only discovery catalog for skill-management MCP; canonical plus explicitly enabled entries only when the `Skill` built-in is allowed |
+| Group/session state      | Direct-only writable session home | Distinct protected/control writable session homes                | One execution-lane writable session home shared only by advanced/code routes                                                              |
+| Host Codex home/auth     | Never mounted or copied           | Never mounted or copied                                          | Never mounted or copied                                                                                                                   |
+
+Docker and Podman are the verified nested read-only mount runtimes. The Apple
+`container` runtime fails closed until it supplies equivalent mount-canary
+evidence; availability alone is not enough for this trust boundary.
 
 ## What This Model Does Well
 
@@ -152,4 +176,6 @@ When changing behavior, keep these rules intact:
 - do not let helper chatter leak into user-facing replies
 - do not assume optional integrations are safe just because tests pass
 - do not turn route-policy misses into silently broad tool access without a conscious decision
+- do not mount or copy host Codex home/auth/config into agent containers
+- do not treat degraded environment credential inheritance as equivalent to OneCLI isolation
 - do not document a feature as baseline if it still depends on same-day validation

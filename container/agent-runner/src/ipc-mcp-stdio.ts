@@ -10,6 +10,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import { isMcpToolAllowed, parseAllowedMcpTools } from './mcp-tool-boundary.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -35,19 +36,9 @@ const isMain = process.env.NANOCLAW_IS_MAIN === '1';
 const requestRoute = process.env.NANOCLAW_REQUEST_ROUTE || 'code_plane';
 const requestReason =
   process.env.NANOCLAW_REQUEST_REASON || 'compatibility fallback';
-const allowedMcpTools = (() => {
-  const raw = process.env.NANOCLAW_ALLOWED_MCP_TOOLS;
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    return new Set(
-      parsed.filter((entry): entry is string => typeof entry === 'string'),
-    );
-  } catch {
-    return null;
-  }
-})();
+const allowedMcpTools = parseAllowedMcpTools(
+  process.env.NANOCLAW_ALLOWED_MCP_TOOLS,
+);
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -303,14 +294,7 @@ function createRouteDeniedResult(toolName: string) {
 }
 
 function guardMcpTool(toolName: string) {
-  if (!allowedMcpTools) return null;
-
-  const qualifiedName = `mcp__nanoclaw__${toolName}`;
-  if (
-    allowedMcpTools.has(toolName) ||
-    allowedMcpTools.has(qualifiedName) ||
-    allowedMcpTools.has('mcp__nanoclaw__*')
-  ) {
+  if (isMcpToolAllowed(allowedMcpTools, toolName)) {
     return null;
   }
 
@@ -321,6 +305,18 @@ const server = new McpServer({
   name: 'nanoclaw',
   version: '1.0.0',
 });
+
+// Registration is the primary capability boundary: forbidden tools are not
+// advertised by ListTools and cannot be called by name. The per-handler guard
+// remains in place as defense in depth if registration behavior changes.
+const registerUnfilteredTool = server.tool.bind(server) as unknown as (
+  name: string,
+  ...args: unknown[]
+) => unknown;
+server.tool = ((name: string, ...args: unknown[]) => {
+  if (!isMcpToolAllowed(allowedMcpTools, name)) return undefined;
+  return registerUnfilteredTool(name, ...args);
+}) as typeof server.tool;
 
 server.tool(
   'search_openclaw_skills',
@@ -1203,12 +1199,6 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       .describe(
         '(Main group only) JID of the group to schedule the task for. Defaults to the current group.',
       ),
-    script: z
-      .string()
-      .optional()
-      .describe(
-        'Optional bash script to run before waking the agent. Script must output JSON on the last line of stdout: { "wakeAgent": boolean, "data"?: any }. If wakeAgent is false, the agent is not called. Test your script with bash -c "..." before scheduling.',
-      ),
   },
   async (args) => {
     const denied = guardMcpTool('schedule_task');
@@ -1280,7 +1270,6 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       type: 'schedule_task',
       taskId,
       prompt: args.prompt,
-      script: args.script || undefined,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       context_mode: args.context_mode || 'group',
@@ -1466,12 +1455,6 @@ server.tool(
       .string()
       .optional()
       .describe('New schedule value (see schedule_task for format)'),
-    script: z
-      .string()
-      .optional()
-      .describe(
-        'New script for the task. Set to empty string to remove the script.',
-      ),
   },
   async (args) => {
     const denied = guardMcpTool('update_task');
@@ -1549,7 +1532,6 @@ server.tool(
       timestamp: new Date().toISOString(),
     };
     if (args.prompt !== undefined) data.prompt = args.prompt;
-    if (args.script !== undefined) data.script = args.script;
     if (args.schedule_type !== undefined)
       data.schedule_type = args.schedule_type;
     if (args.schedule_value !== undefined)

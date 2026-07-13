@@ -27,8 +27,6 @@ import {
   listAgencyLoopOutcomes,
   listAgencyProviderParticipationPlans,
   listAgencyResumePlans,
-  listAgentRuntimeCheckpoints,
-  listAgentRuntimeResumeTokens,
   listCognitiveProviderCooldowns,
   upsertAgencyConvergenceAgenda,
   upsertAgencyConvergenceDecision,
@@ -37,6 +35,11 @@ import {
   upsertAgencyProviderParticipationPlan,
   upsertAgencyResumePlan,
 } from './db.js';
+import {
+  buildDurableContinuityReport,
+  formatDurableContinuityForOperator,
+  type DurableContinuityReport,
+} from './durable-work-continuity.js';
 import { beginLogicKernelRun } from './logic-kernel.js';
 import { collectProviderHealthSnapshots } from './provider-health.js';
 import type { ProviderHealthSnapshot } from './provider-health.js';
@@ -76,10 +79,16 @@ export interface RunAgencyConvergenceLoopInput {
   generatedAt?: string;
   mode?: AgencyConvergenceMode;
   intentText?: string | null;
+  groupFolder?: string;
   persist?: boolean;
   liveProviderProbe?: boolean;
   providerSnapshots?: ProviderHealthSnapshot[];
 }
+
+export type AgencyConvergenceContinuityReport =
+  AgencyConvergenceDoctorReport & {
+    durableContinuity: DurableContinuityReport;
+  };
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -301,52 +310,61 @@ function buildResumePlan(input: {
   convergenceRunId: string;
   generatedAt: string;
   selected: SelectedAgencyAction;
+  intentText?: string | null;
+  durableContinuity: DurableContinuityReport;
 }): AgencyResumePlan {
-  const activeToken = isDatabaseInitialized()
-    ? listAgentRuntimeResumeTokens({ status: 'active', limit: 1 })[0] || null
-    : null;
-  const interrupted = isDatabaseInitialized()
-    ? listAgentRuntimeCheckpoints({ status: 'interrupted', limit: 1 })[0] ||
-      listAgentRuntimeCheckpoints({ status: 'open', limit: 1 })[0] ||
-      null
-    : null;
+  const durable = input.durableContinuity;
+  const work = durable.work;
   const actionWantsResume =
+    wantsResume(input.intentText) ||
     input.selected.action?.kind === 'resume_checkpoint' ||
     input.selected.decisionKind === 'resume_checkpoint';
-  const status: AgencyResumePlan['status'] = activeToken
+  const approvalRequired =
+    work?.status === 'awaiting_approval' ||
+    input.selected.policyClass === 'approval_staged';
+  const status: AgencyResumePlan['status'] = approvalRequired
     ? 'approval_required'
-    : actionWantsResume && interrupted
-      ? 'available'
-      : input.selected.policyClass === 'approval_staged'
-        ? 'approval_required'
-        : 'not_needed';
-  const summary = activeToken
-    ? `Resume token ${activeToken.resumeTokenId} is active and must be approved before continuation.`
-    : interrupted
-      ? `Checkpoint ${interrupted.checkpointId} is available for safe resume planning.`
-      : 'No open Runtime Spine checkpoint needs resume.';
+    : actionWantsResume
+      ? durable.resumeEligible
+        ? 'available'
+        : 'blocked'
+      : 'not_needed';
+  const summary = approvalRequired
+    ? 'Canonical durable work is waiting for current exact-scope approval. A resume grant cannot substitute for approval.'
+    : status === 'available'
+      ? 'Canonical durable work has a current checkpoint and an opaque single-use grant eligible for transactional claim.'
+      : actionWantsResume
+        ? work
+          ? 'Canonical durable work is not currently eligible to resume. Legacy Runtime Spine resume identifiers are descriptive only.'
+          : 'No canonical durable mission is waiting for recovery. Legacy Runtime Spine resume identifiers are descriptive only.'
+        : work
+          ? 'Canonical durable continuity is tracking work, but this turn did not request continuation.'
+          : 'No canonical durable mission needs continuation.';
   return {
     resumePlanId: runtimeSanitizeId(
       hashId(
         'agency:resume',
-        `${input.convergenceRunId}|${activeToken?.resumeTokenId || interrupted?.checkpointId || 'none'}`,
+        `${input.convergenceRunId}|${work?.workId || 'none'}|${work?.checkpointHeadId || 'none'}|${status}`,
       ),
     ),
     convergenceRunId: input.convergenceRunId,
     createdAt: input.generatedAt,
     status,
-    runtimeRunId:
-      activeToken?.runtimeRunId || interrupted?.runtimeRunId || null,
-    checkpointId:
-      activeToken?.checkpointId || interrupted?.checkpointId || null,
-    resumeTokenId: activeToken?.resumeTokenId || null,
+    runtimeRunId: work?.runtimeRunId || null,
+    checkpointId: work?.checkpointHeadId || null,
+    // Legacy descriptive resume IDs are deliberately not projected as an
+    // executable capability. Opaque durable grants are claimed only through
+    // the transactionally scoped continuity boundary.
+    resumeTokenId: null,
     summary,
     nextAction:
       status === 'available'
-        ? 'Resume by creating a read-only convergence run linked to the checkpoint; do not replay side effects.'
+        ? 'Claim the opaque durable grant transactionally, re-inspect dependencies, and execute only the next valid node.'
         : status === 'approval_required'
-          ? 'Ask for explicit same-surface approval before any continuation that could mutate state.'
-          : 'Continue with the selected safe read-only action.',
+          ? 'Obtain fresh exact-scope approval on the authorized surface before any mutating continuation.'
+          : status === 'blocked'
+            ? durable.nextAction
+            : 'Continue with the selected safe read-only action.',
     privacyJson: runtimePrivacyJson(),
   };
 }
@@ -568,10 +586,15 @@ function persistAgencyArtifacts(input: {
 
 export async function runAgencyConvergenceLoop(
   input: RunAgencyConvergenceLoopInput = {},
-): Promise<AgencyConvergenceDoctorReport> {
+): Promise<AgencyConvergenceContinuityReport> {
   const generatedAt = input.generatedAt || nowIso();
+  const groupFolder = input.groupFolder || 'main';
   const mode = resolveMode(input.mode);
   const persist = input.persist !== false;
+  const durableContinuity = buildDurableContinuityReport({
+    groupId: groupFolder,
+    now: generatedAt,
+  });
   const sessionGraph = buildSessionGraphReport({ generatedAt, persist });
   const selected = selectAction(sessionGraph, input.intentText);
   const providerSnapshots =
@@ -599,6 +622,8 @@ export async function runAgencyConvergenceLoop(
     convergenceRunId,
     generatedAt,
     selected,
+    intentText: input.intentText,
+    durableContinuity,
   });
   const agenda = makeAgenda({ convergenceRunId, generatedAt, selected });
   const decision = makeDecision({ convergenceRunId, generatedAt, selected });
@@ -627,7 +652,7 @@ export async function runAgencyConvergenceLoop(
     const cognitive = beginCognitiveKernelRun({
       turnId: convergenceRunId,
       channel: 'system',
-      groupFolder: 'main',
+      groupFolder,
       taskFamily,
       goal,
       requestRoute: 'agency.convergence_loop',
@@ -650,7 +675,7 @@ export async function runAgencyConvergenceLoop(
     const runtime = beginAgentRuntimeSpineRun({
       turnId: convergenceRunId,
       channel: 'system',
-      groupFolder: 'main',
+      groupFolder,
       requestRoute: 'agency.convergence_loop',
       taskFamily,
       goal,
@@ -780,6 +805,8 @@ export async function runAgencyConvergenceLoop(
     generatedAt,
     sessionGraph: refreshedSession,
     runtimeReport,
+    groupFolder,
+    durableContinuity,
   });
 }
 
@@ -787,10 +814,12 @@ export function buildAgencyConvergenceDoctorReport(
   input: {
     convergenceRunId?: string | null;
     generatedAt?: string;
+    groupFolder?: string;
     sessionGraph?: SessionGraphDoctorReport;
     runtimeReport?: AgentRuntimeSpineReport | null;
+    durableContinuity?: DurableContinuityReport;
   } = {},
-): AgencyConvergenceDoctorReport {
+): AgencyConvergenceContinuityReport {
   const generatedAt = input.generatedAt || nowIso();
   const latestRun =
     (input.convergenceRunId
@@ -825,10 +854,20 @@ export function buildAgencyConvergenceDoctorReport(
       : null);
   const sessionGraph =
     input.sessionGraph || buildSessionGraphReport({ generatedAt });
+  const durableContinuity =
+    input.durableContinuity ||
+    buildDurableContinuityReport({
+      groupId: input.groupFolder || 'main',
+      now: generatedAt,
+    });
   const blocked =
     latestRun?.status === 'blocked' ||
-    decisions.some((decision) => decision.status === 'block');
+    decisions.some((decision) => decision.status === 'block') ||
+    ['blocked', 'verification_failed', 'delivery_unverified'].includes(
+      durableContinuity.work?.status || '',
+    );
   const nextAction =
+    durableContinuity.work?.nextAction ||
     outcomes[0]?.nextAction ||
     latestRun?.nextAction ||
     sessionGraph.cockpit.nextAction;
@@ -843,19 +882,24 @@ export function buildAgencyConvergenceDoctorReport(
     outcomes,
     sessionGraph,
     runtimeReport,
+    durableContinuity,
     nextAction,
     privacy: runtimePrivacyReport(),
   };
 }
 
 export function formatAgencyConvergenceDoctorReport(
-  report: AgencyConvergenceDoctorReport,
+  report: AgencyConvergenceDoctorReport & {
+    durableContinuity?: DurableContinuityReport;
+  },
 ): string {
   const latest = report.latestRun;
   const agenda = report.agendas[0] || null;
   const decision = report.decisions[0] || null;
   const provider = report.providerPlans[0] || null;
   const outcome = report.outcomes[0] || null;
+  const durableContinuity =
+    report.durableContinuity || buildDurableContinuityReport();
   return [
     'Agency Convergence Loop',
     '',
@@ -871,6 +915,10 @@ export function formatAgencyConvergenceDoctorReport(
     `Truth audit: ${latest?.truthAuditId || 'none'}`,
     `Session snapshot: ${latest?.refreshedSessionSnapshotId || latest?.sessionSnapshotId || report.sessionGraph.snapshot.snapshotId}`,
     '',
+    'Canonical recovery state:',
+    formatDurableContinuityForOperator(durableContinuity),
+    '',
+    'Session Graph compatibility view (descriptive only; legacy resume identifiers do not authorize or execute continuation):',
     formatSessionContinuityCockpit(report.sessionGraph.cockpit),
     '',
     `Next: ${report.nextAction}`,
@@ -892,7 +940,7 @@ export function isAgencyConvergenceNaturalRequest(text: string): boolean {
     normalized === 'convergence status' ||
     normalized === 'runtime convergence status' ||
     normalized === 'what is the agency loop doing?' ||
-    /\b(agency loop|convergence loop|closed-loop agency|what are you working on|resume that|what changed|what is stale|what should you verify next)\b/i.test(
+    /\b(agency loop|convergence loop|closed-loop agency|what are you working on|what changed|what is stale|what should you verify next)\b/i.test(
       text,
     )
   );

@@ -1,8 +1,12 @@
 import { ChildProcess } from 'child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'fs';
-import path from 'path';
 
-import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
+import { MAX_CONCURRENT_CONTAINERS } from './config.js';
+import {
+  signContainerIpcMessage,
+  type ContainerIpcContext,
+} from './container-ipc-auth.js';
 import { logger } from './logger.js';
 
 interface QueuedTask {
@@ -24,6 +28,9 @@ interface GroupState {
   process: ChildProcess | null;
   containerName: string | null;
   groupFolder: string | null;
+  assistantCapabilityKey: string | null;
+  assistantRequestRoute: string | null;
+  ipcContext: ContainerIpcContext | null;
   retryCount: number;
 }
 
@@ -61,6 +68,9 @@ export class GroupQueue {
         process: null,
         containerName: null,
         groupFolder: null,
+        assistantCapabilityKey: null,
+        assistantRequestRoute: null,
+        ipcContext: null,
         retryCount: 0,
       };
       this.groups.set(groupJid, state);
@@ -189,11 +199,35 @@ export class GroupQueue {
     proc: ChildProcess,
     containerName: string,
     groupFolder?: string,
+    assistantCapabilityKey?: string,
+    assistantRequestRoute?: string,
+    ipcContext?: ContainerIpcContext,
   ): void {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.containerName = containerName;
     if (groupFolder) state.groupFolder = groupFolder;
+    state.assistantCapabilityKey = assistantCapabilityKey || null;
+    state.assistantRequestRoute = assistantRequestRoute || null;
+    state.ipcContext = ipcContext || null;
+  }
+
+  getActiveAssistantCapability(groupJid: string): {
+    key: string;
+    route: string | null;
+  } | null {
+    const state = this.getGroup(groupJid);
+    if (
+      !state.active ||
+      state.isTaskContainer ||
+      !state.assistantCapabilityKey
+    ) {
+      return null;
+    }
+    return {
+      key: state.assistantCapabilityKey,
+      route: state.assistantRequestRoute,
+    };
   }
 
   /**
@@ -225,17 +259,22 @@ export class GroupQueue {
    */
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder || state.isTaskContainer)
+    if (!state.active || !state.ipcContext || state.isTaskContainer)
       return false;
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
-    const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+    const { inputDir, runId, authToken } = state.ipcContext;
     try {
       fs.mkdirSync(inputDir, { recursive: true });
-      const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
-      const filepath = path.join(inputDir, filename);
+      const messageId = randomUUID();
+      const filename = `${Date.now()}-${messageId}.json`;
+      const filepath = `${inputDir}/${filename}`;
       const tempPath = `${filepath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
+      const envelope = signContainerIpcMessage(
+        { runId, messageId, text },
+        authToken,
+      );
+      fs.writeFileSync(tempPath, JSON.stringify(envelope));
       fs.renameSync(tempPath, filepath);
       return true;
     } catch {
@@ -248,12 +287,12 @@ export class GroupQueue {
    */
   closeStdin(groupJid: string): void {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder) return;
+    if (!state.active || !state.ipcContext) return;
 
-    const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+    const { inputDir } = state.ipcContext;
     try {
       fs.mkdirSync(inputDir, { recursive: true });
-      fs.writeFileSync(path.join(inputDir, '_close'), '');
+      fs.writeFileSync(`${inputDir}/_close`, '');
     } catch {
       // ignore
     }
@@ -331,6 +370,9 @@ export class GroupQueue {
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;
+      state.assistantCapabilityKey = null;
+      state.assistantRequestRoute = null;
+      state.ipcContext = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }
@@ -375,6 +417,9 @@ export class GroupQueue {
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;
+      state.assistantCapabilityKey = null;
+      state.assistantRequestRoute = null;
+      state.ipcContext = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }

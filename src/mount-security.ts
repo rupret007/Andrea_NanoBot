@@ -17,6 +17,59 @@ import { AdditionalMount, AllowedRoot, MountAllowlist } from './types.js';
 let cachedAllowlist: MountAllowlist | null = null;
 let allowlistLoadError: string | null = null;
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** Validate the external mount authority configuration without coercion. */
+export function parseMountAllowlist(value: unknown): MountAllowlist {
+  if (!isPlainObject(value)) {
+    throw new Error('Mount allowlist must be an object');
+  }
+  if (!Array.isArray(value.allowedRoots)) {
+    throw new Error('allowedRoots must be an array');
+  }
+  if (!Array.isArray(value.blockedPatterns)) {
+    throw new Error('blockedPatterns must be an array');
+  }
+  if (typeof value.nonMainReadOnly !== 'boolean') {
+    throw new Error('nonMainReadOnly must be a boolean');
+  }
+
+  const allowedRoots = value.allowedRoots.map((entry, index): AllowedRoot => {
+    if (
+      !isPlainObject(entry) ||
+      typeof entry.path !== 'string' ||
+      entry.path.trim().length === 0 ||
+      typeof entry.allowReadWrite !== 'boolean' ||
+      (entry.description !== undefined && typeof entry.description !== 'string')
+    ) {
+      throw new Error(`allowedRoots[${index}] is invalid`);
+    }
+    return {
+      path: entry.path,
+      allowReadWrite: entry.allowReadWrite,
+      ...(entry.description === undefined
+        ? {}
+        : { description: entry.description }),
+    };
+  });
+  const blockedPatterns = value.blockedPatterns.map((entry, index) => {
+    if (typeof entry !== 'string' || entry.length === 0) {
+      throw new Error(`blockedPatterns[${index}] must be a nonempty string`);
+    }
+    return entry;
+  });
+
+  return {
+    allowedRoots,
+    blockedPatterns,
+    nonMainReadOnly: value.nonMainReadOnly,
+  };
+}
+
 /**
  * Default blocked patterns - paths that should never be mounted
  */
@@ -29,6 +82,8 @@ const DEFAULT_BLOCKED_PATTERNS = [
   '.gcloud',
   '.kube',
   '.docker',
+  '.codex',
+  '.claude',
   'credentials',
   '.env',
   '.netrc',
@@ -68,20 +123,7 @@ export function loadMountAllowlist(): MountAllowlist | null {
     }
 
     const content = fs.readFileSync(MOUNT_ALLOWLIST_PATH, 'utf-8');
-    const allowlist = JSON.parse(content) as MountAllowlist;
-
-    // Validate structure
-    if (!Array.isArray(allowlist.allowedRoots)) {
-      throw new Error('allowedRoots must be an array');
-    }
-
-    if (!Array.isArray(allowlist.blockedPatterns)) {
-      throw new Error('blockedPatterns must be an array');
-    }
-
-    if (typeof allowlist.nonMainReadOnly !== 'boolean') {
-      throw new Error('nonMainReadOnly must be a boolean');
-    }
+    const allowlist = parseMountAllowlist(JSON.parse(content));
 
     // Merge with default blocked patterns
     const mergedBlockedPatterns = [
@@ -194,28 +236,39 @@ function findAllowedRoot(
 /**
  * Validate the container path to prevent escaping /workspace/extra/
  */
-function isValidContainerPath(containerPath: string): boolean {
-  // Must not contain .. to prevent path traversal
-  if (containerPath.includes('..')) {
+export function isValidContainerPath(containerPath: string): boolean {
+  // Docker/Podman --mount uses comma-delimited key/value fields. Accept only
+  // simple relative POSIX segments so a user-controlled destination can never
+  // inject another source, target, or mount option.
+  const segments = containerPath.split('/');
+  return (
+    segments.length > 0 &&
+    segments.every(
+      (segment) =>
+        segment !== '.' &&
+        segment !== '..' &&
+        /^[A-Za-z0-9._-]+$/.test(segment),
+    )
+  );
+}
+
+export function isValidHostMountPath(hostPath: string): boolean {
+  return (
+    hostPath.length > 0 &&
+    !hostPath.includes(',') &&
+    !Array.from(hostPath).some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x1f || codePoint === 0x7f;
+    })
+  );
+}
+
+export function isDirectoryMountSource(realPath: string): boolean {
+  try {
+    return fs.lstatSync(realPath).isDirectory();
+  } catch {
     return false;
   }
-
-  // Must not be absolute (it will be prefixed with /workspace/extra/)
-  if (containerPath.startsWith('/')) {
-    return false;
-  }
-
-  // Must not be empty
-  if (!containerPath || containerPath.trim() === '') {
-    return false;
-  }
-
-  // Must not contain colons — prevents Docker -v option injection (e.g., "repo:rw")
-  if (containerPath.includes(':')) {
-    return false;
-  }
-
-  return true;
 }
 
 export interface MountValidationResult {
@@ -244,6 +297,17 @@ export function validateMount(
     };
   }
 
+  // Docker and Podman parse --mount as a comma-delimited option string. Fail
+  // closed before filesystem resolution so a host path can never inject a new
+  // source, target, or mount option into that string.
+  if (!isValidHostMountPath(mount.hostPath)) {
+    return {
+      allowed: false,
+      reason:
+        'Invalid host path - commas and control characters are not supported for additional mounts',
+    };
+  }
+
   // Derive containerPath from hostPath basename if not specified
   const containerPath = mount.containerPath || path.basename(mount.hostPath);
 
@@ -251,7 +315,7 @@ export function validateMount(
   if (!isValidContainerPath(containerPath)) {
     return {
       allowed: false,
-      reason: `Invalid container path: "${containerPath}" - must be relative, non-empty, and not contain ".."`,
+      reason: `Invalid container path: "${containerPath}" - use only relative alphanumeric, dot, underscore, hyphen, and slash-separated segments`,
     };
   }
 
@@ -263,6 +327,16 @@ export function validateMount(
     return {
       allowed: false,
       reason: `Host path does not exist: "${mount.hostPath}" (expanded: "${expandedPath}")`,
+    };
+  }
+
+  // Additional mounts are directory-only. Accepting a regular file, FIFO,
+  // device, or Unix socket beneath an allowed root could expose a privileged
+  // host control surface (for example a container-runtime socket).
+  if (!isDirectoryMountSource(realPath)) {
+    return {
+      allowed: false,
+      reason: `Host path is not a directory: "${realPath}"`,
     };
   }
 

@@ -13,7 +13,9 @@ function getProjectRoot() {
 }
 
 export function normalizePinnedNodeVersion(rawValue) {
-  const trimmed = String(rawValue || '').trim().replace(/^v/i, '');
+  const trimmed = String(rawValue || '')
+    .trim()
+    .replace(/^v/i, '');
   if (!/^\d+\.\d+\.\d+$/.test(trimmed)) {
     throw new Error(
       `.nvmrc must pin an exact Node version like 22.22.2. Found: ${rawValue || 'empty'}`,
@@ -41,7 +43,12 @@ export function resolvePinnedNodePaths({
       runtimeDir: '',
       installDir: '',
       nodePath: process.execPath,
-      metadataPath: path.join(projectRoot, 'data', 'runtime', 'node-runtime.json'),
+      metadataPath: path.join(
+        projectRoot,
+        'data',
+        'runtime',
+        'node-runtime.json',
+      ),
       archiveUrl: '',
       archivePath: '',
       version,
@@ -50,7 +57,9 @@ export function resolvePinnedNodePaths({
     };
   }
   if (arch !== 'x64') {
-    throw new Error(`Pinned Windows runtime currently supports x64 only. Detected ${arch}.`);
+    throw new Error(
+      `Pinned Windows runtime currently supports x64 only. Detected ${arch}.`,
+    );
   }
 
   const runtimeDir = path.join(projectRoot, 'data', 'runtime');
@@ -86,6 +95,8 @@ export function writeNodeRuntimeMetadata(metadataPath, metadata) {
 
 export function validateNodeBinary(nodePath, expectedVersion) {
   if (!fs.existsSync(nodePath)) return false;
+  // The path is the repo-derived pinned runtime candidate; argv is static and no shell is used.
+  // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
   const result = spawnSync(nodePath, ['--version'], { encoding: 'utf-8' });
   if (result.error || result.status !== 0) return false;
   return result.stdout.trim() === `v${expectedVersion}`;
@@ -97,7 +108,10 @@ async function downloadFile(url, destinationPath) {
     throw new Error(`Failed to download ${url}: HTTP ${response.status}`);
   }
   fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(destinationPath));
+  await pipeline(
+    Readable.fromWeb(response.body),
+    fs.createWriteStream(destinationPath),
+  );
 }
 
 function extractWindowsArchive(archivePath, destinationPath) {
@@ -120,7 +134,10 @@ function extractWindowsArchive(archivePath, destinationPath) {
 }
 
 async function installWindowsPinnedNode(paths, expectedVersion) {
-  const tempRoot = path.join(paths.runtimeDir, `_node-extract-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const tempRoot = path.join(
+    paths.runtimeDir,
+    `_node-extract-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  );
   const extractedFolder = path.join(tempRoot, path.basename(paths.installDir));
 
   await downloadFile(paths.archiveUrl, paths.archivePath);
@@ -135,7 +152,9 @@ async function installWindowsPinnedNode(paths, expectedVersion) {
   fs.rmSync(paths.archivePath, { force: true });
 
   if (!validateNodeBinary(paths.nodePath, expectedVersion)) {
-    throw new Error(`Pinned Node binary failed validation at ${paths.nodePath}`);
+    throw new Error(
+      `Pinned Node binary failed validation at ${paths.nodePath}`,
+    );
   }
 }
 
@@ -159,7 +178,8 @@ export async function ensurePinnedNodeRuntime(options = {}) {
     };
   }
 
-  const downloadAndInstall = options.downloadAndInstall || installWindowsPinnedNode;
+  const downloadAndInstall =
+    options.downloadAndInstall || installWindowsPinnedNode;
   const validator = options.validateNodeBinary || validateNodeBinary;
   const existingMetadata = readNodeRuntimeMetadata(paths.metadataPath);
   const metadataMatches =

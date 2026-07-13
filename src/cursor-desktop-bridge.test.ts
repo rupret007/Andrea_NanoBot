@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildCursorDesktopCliArgs,
+  buildCursorDesktopSpawnSpec,
   CursorDesktopBridge,
   resolveCursorDesktopCliMode,
   shouldUseShellForCursorDesktopCli,
@@ -49,14 +50,43 @@ describe('CursorDesktopBridge', () => {
     ).toBe('cursor-subcommand');
   });
 
-  it('uses the Windows shell only for .cmd/.bat Cursor entrypoints', () => {
+  it('never passes Cursor prompts through a command shell', () => {
     expect(shouldUseShellForCursorDesktopCli('cursor-agent')).toBe(false);
-    expect(shouldUseShellForCursorDesktopCli('cursor.cmd')).toBe(
-      process.platform === 'win32',
+    expect(shouldUseShellForCursorDesktopCli('cursor.cmd')).toBe(false);
+    expect(shouldUseShellForCursorDesktopCli('cursor.bat')).toBe(false);
+  });
+
+  it('refuses Windows shell wrappers and keeps metacharacters in one argv value', () => {
+    const promptText = 'review A & echo injected | type %USERPROFILE%';
+
+    expect(() =>
+      buildCursorDesktopSpawnSpec(
+        {
+          cliPath: 'C:\\Tools\\cursor.cmd',
+          cwd: 'C:\\workspace',
+          promptText,
+          force: false,
+        },
+        'win32',
+      ),
+    ).toThrow(/executable CLI path/);
+
+    const spec = buildCursorDesktopSpawnSpec(
+      {
+        cliPath: 'C:\\Tools\\cursor.exe',
+        cwd: 'C:\\workspace',
+        promptText,
+        force: false,
+      },
+      'win32',
     );
-    expect(shouldUseShellForCursorDesktopCli('cursor.bat')).toBe(
-      process.platform === 'win32',
-    );
+
+    expect(spec).toMatchObject({
+      command: 'C:\\Tools\\cursor.exe',
+      cwd: 'C:\\workspace',
+      shell: false,
+    });
+    expect(spec.args.filter((value) => value === promptText)).toHaveLength(1);
   });
 
   it('builds Cursor CLI args for both standalone and subcommand modes', () => {

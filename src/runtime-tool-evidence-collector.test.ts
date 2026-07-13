@@ -414,6 +414,25 @@ describe('container runtime tool evidence collector', () => {
     ).toMatchObject({ succeededAfterLastRepositoryWrite: 1 });
   });
 
+  it('classifies a direct Node syntax check as test verification', () => {
+    const collector = new RuntimeToolEvidenceCollector(
+      'evidence-node-syntax-check',
+    );
+    collector.beginAttempt();
+    collector.observeSdkMessage(
+      toolUse('syntax-check', 'Bash', {
+        command: 'node --check fixture.js',
+      }),
+    );
+    collector.observeSdkMessage(toolResult('syntax-check'));
+
+    expect(
+      collector
+        .snapshot()
+        .actions.find((action) => action.class === 'verification_test'),
+    ).toMatchObject({ succeeded: 1, lastOutcome: 'succeeded' });
+  });
+
   it('stops reading result arrays after the fingerprint input cap', () => {
     const collector = new RuntimeToolEvidenceCollector('evidence-result-cap');
     const content = ['x'.repeat(65_536)];

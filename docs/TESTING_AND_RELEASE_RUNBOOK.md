@@ -40,13 +40,54 @@ native desktop packaging scripts. Treat `npm run build` as the release build
 for macOS and Windows service/runtime deployment.
 
 The root build and typecheck do not compile
-`container/agent-runner/src/`. That source is synchronized per group and
-recompiled inside the container at startup, but a change to the runner still
-requires its own repository-side typecheck:
+`container/agent-runner/src/`. The canonical source is mounted read-only at
+`/app/src` and compiled into container-local `/tmp` at startup; no per-group
+writable runner copy is used. A runner change therefore requires its complete
+repository-side gate:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./container/agent-runner/node_modules/typescript/bin/tsc -p container/agent-runner/tsconfig.json --noEmit
+npm run container:install
+npm run typecheck:agent-runner
+npm run build:agent-runner
+npm run test:agent-runner
 ```
+
+### Container capability-lane and IPC containment
+
+The container boundary has four session lanes: `direct-assistant`, `protected`,
+`control`, and `execution`. Advanced and code routes intentionally share only
+`execution`; every other route pair must use a different storage key and Claude
+home. For group `main`, the keys are `main::direct_assistant`,
+`main::protected`, `main::control`, and `main::execution`, paired with
+`.claude-direct-assistant`, `.claude-protected`, `.claude-control`, and
+`.claude-execution`. Legacy shared tool-bearing sessions and writable runner
+caches remain preserved but inert.
+
+Every run must receive a new host-created inbox below
+`data/ipc/<group>/input/<lane>/<runId>`. GroupQueue writes HMAC-SHA256
+`provenance:host` envelopes bound to that run and its per-run token. The runner
+mounts the inbox read-only and rejects unsigned, altered, cross-run, and replayed
+messages without placing the token in diagnostics. Direct-assistant, protected,
+and control guidance is host-constant; only execution may read mutable group
+`CLAUDE.md`. Canonical runner source, settings, skills, and plugins remain
+read-only trusted views.
+
+Run the host and runner contracts together:
+
+```bash
+npm run check:container-contract
+node scripts/run-with-pinned-node.mjs --import=./scripts/test-network-guard.mjs ./node_modules/vitest/vitest.mjs run src/assistant-session.test.ts src/group-queue.test.ts src/container-ipc-auth.test.ts src/container-runner-controls.test.ts src/mount-security.test.ts
+npm run test:agent-runner
+npm run build:container
+npm run check:container-canary
+npm run check:container-mounts
+```
+
+Acceptance requires direct-after-execution poisoning rejection, all route-pair
+session isolation, authenticated one-run inbox follow-ups, replay rejection,
+read-only trusted controls, writable session continuity only inside the same
+lane, and a real nested-read-only mount canary. A focused unit pass does not
+replace the real-container canary.
 
 Platform-specific release proof means:
 
@@ -56,6 +97,11 @@ Platform-specific release proof means:
   host
 - native macOS arm64/x64 or Windows installer artifacts require a future
   packaging project before they can be claimed as produced
+
+Hosted `windows-latest` CI is a cross-platform build/type/test and launcher-
+contract boundary. It is not native Windows service restart or integration
+proof. Repository validation supports Node `22.x` (`>=22 <23`) and is pinned by
+`.nvmrc` to `22.22.2`.
 
 `npm ci` on each deployment host installs platform-specific runtime
 dependencies, including the bundled ffmpeg helpers used for media analysis.
@@ -234,7 +280,8 @@ For the personal-intelligence production loop, also run:
 
 ```bash
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/personal-context-packet.test.ts src/runtime-tool-evidence.test.ts src/runtime-tool-evidence-collector.test.ts src/container-runner.test.ts src/turn-runtime-evidence-scope.test.ts src/verified-deep-work.test.ts src/deep-work-apprenticeship.test.ts src/turn-agent-harness.test.ts src/turn-agent-intelligence-boundary.test.ts src/routine-promotion.test.ts src/personal-assistant-metrics.test.ts src/intelligence-regression-harness.test.ts
-node scripts/run-with-pinned-node.mjs ./container/agent-runner/node_modules/typescript/bin/tsc -p container/agent-runner/tsconfig.json --noEmit
+npm run typecheck:agent-runner
+npm run test:agent-runner
 npm run test:intelligence -- --no-record --quiet
 npm run debug:assistant-intelligence
 npm run debug:grounded-agency
@@ -252,6 +299,97 @@ must retain the suppressed attempt's evidence. Coding packets stay blocked on
 `runtime_repository_scope_unbound`; operator packets stay blocked on
 `runtime_operator_scope_unbound` until exact target, action, and postcondition
 binding exists.
+
+### Durable continuity and outage recovery
+
+Run this focused suite whenever durable work, cognitive approval, repository
+scope, startup recovery, owner-cockpit approval, Runtime Spine wiring, or
+deep-work completion changes:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/durable-work-continuity.test.ts src/durable-work-adversarial-invariants.test.ts src/db-durable-lease-invariants.test.ts src/durable-work-migration.test.ts src/repository-execution-scope.test.ts src/verified-deep-work.test.ts src/owner-cockpit-server.test.ts src/index-continuity.test.ts src/agency-convergence-loop.test.ts src/agent-runtime-spine.test.ts src/turn-agent-harness.test.ts
+npm run test:continuity:hard-kill
+npm run test:continuity:heldout
+```
+
+The focused suite must prove:
+
+- ordinary direct-assistant turns do not create durable work;
+- canonical work, plan, checkpoint, and target identity use compare-and-set
+  transitions and cannot cross owner/chat/group/channel/target scope;
+- a plaintext resume token is never persisted, logged, or placed in an error;
+- one atomic consume both invalidates the token and acquires one lease;
+- the action class and an inbound-message binding, when supplied, cannot change
+  at consume time;
+- a resume grant cannot satisfy a mutation approval;
+- approval staging atomically writes the immutable packet, a new approval
+  checkpoint, its durable-work link, and the `awaiting_approval` work
+  transition;
+- owner approval echoes the stored group, summary, packet version, and scope
+  digest, while a durable mutation also binds the exact work ID, current
+  durable checkpoint ID, plan version, target digest, and action class;
+- effect receipts are created before invocation, progress monotonically, and
+  cannot rewrite successful or failed execution truth;
+- every approval-bound receipt carries the consumed grant plus exact approval
+  packet/version/scope provenance for the same
+  work/checkpoint/plan/target/action, including approval-bound local operator
+  changes;
+- every completed DAG node has a referenced, same-work/same-plan succeeded
+  receipt with verification and post-state evidence;
+- an expired lease or a lease from another process generation cannot invoke a
+  callback, persist a receipt, or complete work;
+- checkpoint compare-and-set cannot silently remove completed or uncertain
+  nodes or promote a pending node to completed without verified proof;
+- malformed stored checkpoint JSON fails closed with a bounded error that does
+  not echo stored content;
+- uncertain effects enter verification-only recovery and are never blindly
+  replayed;
+- expired leases reconcile before new work, with unknown external delivery
+  kept separate from execution completion;
+- repository scope rejects a non-canonical root, path escape, symlink traversal,
+  stale state, cross-work/plan/checkpoint/turn evidence, reused action ID, and
+  failed postcondition;
+- positive coding completion requires persisted receipts from the current
+  leased, host-bound durable repository scope;
+- unavailable storage is reported honestly while unrelated continuity errors
+  still propagate;
+- legacy Runtime Spine and Agent OS resume IDs remain non-executable
+  projections; and
+- migration is idempotent and preserves historical approval rows. A legacy row
+  may still be decided through its legacy lifecycle, but it cannot authorize a
+  durable continuation while work/checkpoint/plan/target bindings remain null;
+  current authority requires a freshly staged exact durable approval.
+
+The hard-kill command uses real child processes and force-terminates one at each
+of 12 declared boundaries: before/after checkpoint commit, after lease
+acquisition, before invocation, after tool start, after effect/before receipt,
+after receipt/before checkpoint, after final write/before verification, after
+verification/before completion, after completion/before reply, after reply/
+before learning, and during replan. Every recovered boundary must finish with
+exactly one isolated repository effect, one reply, one learning attempt, clean
+SQLite integrity/foreign keys, no production mutation, and network denial.
+
+That command also races eight independent processes against one grant. Accept
+only one winner, seven `already_consumed` rejections, zero duplicate effects,
+and hash-only token storage across the SQLite database, WAL, and SHM files. It
+tests termination immediately after schema initialization, clean reopen,
+idempotent migration, preservation of an unrelated legacy row, and fail-closed
+handling of a deliberately malformed partial durable schema. It does **not**
+kill inside an individual SQLite DDL statement and must never be reported as
+in-DDL crash proof.
+
+The held-out command runs ten disposable, network-denied scenarios: coding
+after edit, research before synthesis, message before send, transport-unknown
+message, stale calendar, local save, provider fallback, contradicted evidence,
+ordinary question, and high-risk approval. Require 100% expected outcomes, zero
+duplicate effects, no council calls, no production-state touch, unchanged
+fixture learning counters, and no live provider call. Its latency
+output is a deterministic regression signal, not a production p50/p95 claim.
+
+Both commands operate on isolated databases, repositories, files, and fake
+adapters. They do not prove a live channel, provider, service restart, owner
+verdict, personal baseline, routine canary, skill promotion, or recovery of an
+actual production mission. Never backfill those proofs from fixture output.
 
 The intelligence harness must prove cited local context and a verified or
 honestly blocked synthetic deep-work outcome without public network access.
@@ -394,8 +532,13 @@ It includes:
 
 Implementation note:
 
-- `test:major` and `test:major:ci` already run with Node 22 through the `.nvmrc`-pinned `scripts/run-with-pinned-node.mjs` wrapper (invoked by the `pretest` hook)
+- `.nvmrc` pins the repository and CI runtime to Node 22.22.2. On Windows, `scripts/run-with-pinned-node.mjs` provisions and validates that exact runtime; on macOS and Linux it uses the active Node process, which must satisfy the supported Node 22.x contract
 - if the host default `node` is not 22, do not use that runtime for DB-backed Alexa checks; unsupported runtimes can fail `better-sqlite3` with ABI mismatch errors that are not Alexa feature failures
+
+`test:major` includes `setup -- --step verify`, which is intentionally live: it
+may make a real model reachability request and start container execution probes.
+Use `test:major:ci` for offline release validation and do not run the live suite
+without intentional credentials, cost awareness, and operator authorization.
 
 ## 3. Stability Gate
 
@@ -414,10 +557,18 @@ npm run test:stability:live
 For a long deterministic script inventory after the standard gate:
 
 ```bash
+npm run test:deterministic:sweep -- --list
 npm run test:deterministic:sweep
 ```
 
 This continues through independent `test:*` scripts, reports all failures at the end, and intentionally excludes interactive, aggregate, live, baseline-writing, and cloud-provider council tiers.
+
+On the current 2026-07-13 candidate tree, the sweep inventories **108** scripts:
+**93 selected** deterministic commands and **15 explicitly excluded** commands.
+Those counts are derived from the current package inventory and must be
+regenerated after script changes. Final evidence for this tree must distinguish
+the 93/93 selected result from the 108-command inventory; the 90/91 counts in
+older modernization snapshots are historical and must not be reused.
 
 The deterministic runner is hermetic at both external boundaries: it suppresses
 provider environment fallback, denies non-loopback network requests, and forces
@@ -434,6 +585,32 @@ npm run test:major:ci
 ```
 
 Use this in CI runners that do not have live credentials, channels, or operator-only integrations.
+
+### Hosted exact-SHA gates
+
+Branch and pull-request validation comes first. The normal CI, container, AGI,
+and CodeQL workflows run on pull requests and establish review-candidate
+evidence, but the manually dispatched security workflow is intentionally not a
+pre-merge branch scanner. Its release-SHA resolver accepts only commits already
+reachable from `origin/main`; an unmerged branch SHA must fail closed.
+
+After the reviewed change is merged or otherwise published on `main`, require
+the hosted Ubuntu, Windows, container, AGI, and CodeQL push jobs for that exact
+main commit. Then dispatch the security workflow from `main` with the same full
+40-character SHA:
+
+```bash
+RELEASE_SHA=$(git rev-parse HEAD)
+gh workflow run agi-security.yml --ref main -f release_sha="$RELEASE_SHA"
+```
+
+The workflow rejects malformed SHAs and commits outside `origin/main`, checks
+out that exact commit in every job, and runs dependency audit, full-history
+verified-secret scanning, and Semgrep independently. Scheduled runs use the
+latest default-branch SHA and the same main-ancestry policy. A passing scan for
+a branch SHA, merge-preview SHA, or different main commit is not release
+evidence. Do not restart production until all of these post-main exact-SHA jobs
+pass.
 
 ## 5. Operator-Host Live Validation
 
@@ -1332,11 +1509,87 @@ Telegram live-testing truth:
 
 ## 15. Release Gate
 
+Use this copy-pastable offline/exact-tree matrix before branch publication. Do
+not add `--live`, credentials, channel sends, or production storage:
+
+```bash
+npm run check:node
+npm run format:check
+npm run typecheck
+npm run lint
+npm run test
+npm run build
+npm run container:install
+npm run typecheck:agent-runner
+npm run build:agent-runner
+npm run test:agent-runner
+npm run check:container-contract
+npm run build:container
+npm run check:container-canary
+npm run check:container-mounts
+npm run typecheck:agi
+npm run test:agi
+npm run test:continuity:hard-kill
+npm run test:continuity:heldout
+npm run test:real-world-intelligence:heldout
+npm run test:stability
+npm run test:deterministic:sweep -- --list
+npm run test:deterministic:sweep
+npm run agi:scorecard -- --no-write --no-dogfood
+npm run debug:signature-flows
+npm run docs:check
+npm audit --omit=dev --audit-level=high
+npm audit --audit-level=high
+npm --prefix container/agent-runner audit --omit=dev --audit-level=high
+npm --prefix container/agent-runner audit --audit-level=high
+git diff --check
+git status --short
+```
+
+The focused durable and containment suites above are additional required gates;
+the deterministic sweep's 108-script inventory does not substitute for AGI
+tests, container canaries, audits, or hosted scanners. Review `git status`
+manually for generated artifacts, unexpected files, and secret-like values.
+
 Before pushing a release:
 
-1. `npm run test:major` passes
-2. `npm run test:stability` passes
-3. live verify is green on the operator host
-4. docs and help surfaces are updated if wording or behavior changed
-5. optional integrations are documented as optional, not baseline
-6. final command outputs and any caveats are captured in release notes or the PR summary
+1. `npm run test:major:ci` passes without using live credentials.
+2. The runner typecheck/build/tests, host container contract, image canary, and
+   isolated mount canary pass.
+3. AGI typecheck/tests, deterministic sweep and stability rounds, held-out
+   execution truth, offline scorecard, signature flows, docs checks, and
+   dependency audits pass.
+4. Docs and help surfaces match the changed behavior, and final diff,
+   whitespace, generated-artifact, and secret reviews are clean.
+5. A fresh remote fetch proves `main` is non-diverged and its ancestry has not
+   changed since the candidate review.
+
+For `codex/andrea-durable-cognitive-continuity-v1`, publication means one
+reviewed commit on that branch, a branch push, and a draft pull request. Do not
+merge `main` as part of the continuity round. Require the final exact-tree
+focused suite, adversarial durable invariants, and both continuity harnesses in
+addition to the matrix above.
+If every gate passes, the round permits one rebuild/restart of the Andrea
+LaunchAgent from the committed branch SHA for read-only recovery/provenance
+proof; it does not permit an OpenClaw restart, a paid provider call, a live
+channel send, or another external mutation.
+
+That branch publication is not a production release and cannot satisfy the
+main-only security gate. After a separately authorized merge, use the resulting
+`main` commit—not the pre-merge branch SHA or GitHub's pull-request merge
+preview—for the push-job, security-scan, build-provenance, and production
+release evidence below.
+
+After publishing the final release commit on `main`:
+
+1. Require the Ubuntu, Windows, container, AGI, CodeQL, dependency-audit,
+   secret-scan, and Semgrep jobs for the exact release SHA.
+2. Build from that committed SHA and verify clean provenance before stopping a
+   service.
+3. Restart in dependency order and require new process/boot identity plus a
+   serving SHA that matches the release commit.
+4. Run only the operator-host and optional-integration probes authorized for
+   that release. `setup -- --step verify` is live and is not implied by the
+   offline gate.
+5. Capture exact results, external proof debt, and caveats in the release notes
+   or delivery summary without promoting missing operator evidence to success.

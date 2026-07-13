@@ -882,16 +882,29 @@ export async function writeAgiReadinessArtifacts(
 }
 
 export function collectPublishStatus(
-  opts: { cwd?: string; knownOutOfScope?: string[] } = {},
+  opts: {
+    cwd?: string;
+    knownOutOfScope?: string[];
+    commandRunner?: (
+      command: string,
+      args: string[],
+      cwd: string,
+    ) => OptionalCommandResult;
+  } = {},
 ): AgiPublishStatus {
   const cwd = opts.cwd ?? process.cwd();
   const knownOutOfScope = opts.knownOutOfScope ?? OUT_OF_SCOPE_UNTRACKED;
+  const commandRunner = opts.commandRunner ?? runOptional;
   const branch =
-    runOptional('git', ['branch', '--show-current'], cwd).stdout || 'unknown';
-  const remoteResult = runOptional('git', ['remote', 'get-url', 'origin'], cwd);
+    commandRunner('git', ['branch', '--show-current'], cwd).stdout || 'unknown';
+  const remoteResult = commandRunner(
+    'git',
+    ['remote', 'get-url', 'origin'],
+    cwd,
+  );
   const remote = remoteResult.ok ? remoteResult.stdout : null;
-  const aheadBy = parseAheadCount(cwd);
-  const status = runOptional('git', ['status', '--short'], cwd)
+  const aheadBy = parseAheadCount(cwd, commandRunner);
+  const status = commandRunner('git', ['status', '--short'], cwd)
     .stdout.split('\n')
     .map((line) => line.trimEnd())
     .filter(Boolean);
@@ -905,9 +918,9 @@ export function collectPublishStatus(
   const unexpectedUntracked = untracked.filter(
     (path) => !ignoredUntracked.includes(path),
   );
-  const ghVersion = runOptional('gh', ['--version'], cwd);
+  const ghVersion = commandRunner('gh', ['--version'], cwd);
   const ghAuth = ghVersion.ok
-    ? runOptional('gh', ['auth', 'status'], cwd)
+    ? commandRunner('gh', ['auth', 'status'], cwd)
     : ghVersion;
   const blockers: string[] = [];
   if (
@@ -956,8 +969,15 @@ export function collectPublishStatus(
   };
 }
 
-function parseAheadCount(cwd: string): number {
-  const originMain = runOptional(
+function parseAheadCount(
+  cwd: string,
+  commandRunner: (
+    command: string,
+    args: string[],
+    cwd: string,
+  ) => OptionalCommandResult = runOptional,
+): number {
+  const originMain = commandRunner(
     'git',
     ['rev-list', '--left-right', '--count', 'origin/main...HEAD'],
     cwd,
@@ -966,7 +986,7 @@ function parseAheadCount(cwd: string): number {
     const [, ahead] = originMain.stdout.split(/\s+/).map(Number);
     return Number.isFinite(ahead) ? ahead : 0;
   }
-  const upstream = runOptional(
+  const upstream = commandRunner(
     'git',
     ['rev-list', '--left-right', '--count', '@{upstream}...HEAD'],
     cwd,
@@ -976,11 +996,17 @@ function parseAheadCount(cwd: string): number {
   return Number.isFinite(ahead) ? ahead : 0;
 }
 
+interface OptionalCommandResult {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+}
+
 function runOptional(
   command: string,
   args: string[],
   cwd: string,
-): { ok: boolean; stdout: string; stderr: string } {
+): OptionalCommandResult {
   try {
     const stdout = execFileSync(command, args, {
       cwd,

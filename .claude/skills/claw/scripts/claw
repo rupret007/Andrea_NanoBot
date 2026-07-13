@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-claw - NanoClaw CLI
-Run a NanoClaw agent container from the command line.
+Retired compatibility stub for the former alternate NanoClaw CLI.
 
-Usage:
-  claw "What is 2+2?"
-  claw -g <channel_name> "Review this code"
-  claw -g "<channel name with spaces>" "What's the latest issue?"
-  claw -j "<chatJid>" "Hello"
-  claw -g <channel_name> -s <session-id> "Continue"
-  claw --list-groups
-  echo "prompt text" | claw --pipe -g <channel_name>
-  cat prompt.txt | claw --pipe
+Invocation always fails closed before the preserved historical implementation.
+Use Andrea's canonical service and repository-owned container checks instead.
 """
 
 from __future__ import annotations
+
+import sys as _retired_sys
+
+_retired_sys.stderr.write(
+    "claw is retired and cannot start an alternate agent runner; "
+    "use the canonical Andrea service and repository container checks.\n"
+)
+raise SystemExit(78)
+
+# Preserved historical implementation below is intentionally unreachable.
+# It remains only so existing owner caches and references are not deleted or
+# silently reinterpreted during this trust-boundary round.
 
 import argparse
 import json

@@ -1,5 +1,11 @@
 # Apple Container Networking Setup (macOS 26)
 
+> **Historical/unsupported deployment note:** Andrea currently verifies secure
+> agent execution on Docker and Podman only. Apple Container fails closed because
+> its nested read-only control overlays have not passed the isolated mount
+> canary. Do not apply the privileged networking changes below for a current
+> Andrea release. They are preserved solely as historical investigation notes.
+
 Apple Container's vmnet networking requires manual configuration for containers to access the internet. Without this, containers can communicate with the host but cannot reach external services (DNS, HTTPS, APIs).
 
 ## Quick Setup
@@ -21,11 +27,13 @@ echo "nat on en0 from 192.168.64.0/24 to any -> (en0)" | sudo pfctl -ef -
 These settings reset on reboot. To make them permanent:
 
 **IP Forwarding** — add to `/etc/sysctl.conf`:
+
 ```
 net.inet.ip.forwarding=1
 ```
 
 **NAT Rules** — add to `/etc/pf.conf` (before any existing rules):
+
 ```
 nat on en0 from 192.168.64.0/24 to any -> (en0)
 ```
@@ -37,6 +45,7 @@ Then reload: `sudo pfctl -f /etc/pf.conf`
 By default, DNS resolvers return IPv6 (AAAA) records before IPv4 (A) records. Since our NAT only handles IPv4, Node.js applications inside containers will try IPv6 first and fail.
 
 The container image and runner are configured to prefer IPv4 via:
+
 ```
 NODE_OPTIONS=--dns-result-order=ipv4first
 ```
@@ -61,12 +70,12 @@ ifconfig bridge100
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `curl: (28) Connection timed out` | IP forwarding disabled | `sudo sysctl -w net.inet.ip.forwarding=1` |
-| HTTP works, HTTPS times out | IPv6 DNS resolution | Add `NODE_OPTIONS=--dns-result-order=ipv4first` |
-| `Could not resolve host` | DNS not forwarded | Check bridge100 exists, verify pfctl NAT rules |
-| Container hangs after output | Missing `process.exit(0)` in agent-runner | Rebuild container image |
+| Symptom                           | Cause                                     | Fix                                             |
+| --------------------------------- | ----------------------------------------- | ----------------------------------------------- |
+| `curl: (28) Connection timed out` | IP forwarding disabled                    | `sudo sysctl -w net.inet.ip.forwarding=1`       |
+| HTTP works, HTTPS times out       | IPv6 DNS resolution                       | Add `NODE_OPTIONS=--dns-result-order=ipv4first` |
+| `Could not resolve host`          | DNS not forwarded                         | Check bridge100 exists, verify pfctl NAT rules  |
+| Container hangs after output      | Missing `process.exit(0)` in agent-runner | Rebuild container image                         |
 
 ## How It Works
 

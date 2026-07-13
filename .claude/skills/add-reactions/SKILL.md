@@ -1,9 +1,26 @@
 ---
 name: add-reactions
-description: Add WhatsApp emoji reaction support — receive, send, store, and search reactions.
+description: Non-executable legacy reference for WhatsApp reaction tooling that is blocked pending a reviewed trust-boundary port.
 ---
 
 # Add Reactions
+
+## Status: blocked legacy reference (do not execute)
+
+This workflow is incompatible with Andrea's current container trust boundary. It
+merges an externally mutating MCP tool and runs a database migration without the
+current route-specific capability, approval, and release controls. Do not run
+any merge, migration, source-edit, build, restart, reaction, verification,
+troubleshooting, or removal command below.
+
+A reviewed port must separate passive reaction ingestion from reaction sends,
+expose any send tool only through an exact route policy, require a fresh
+target-bound approval, make the migration idempotent and release-reviewed, and
+verify the resulting remote message state. It must include route isolation,
+approval/replay, database rollback-safety, and external-mutation tests before
+activation.
+
+## Historical implementation notes (non-executable)
 
 This skill adds emoji reaction support to NanoClaw's WhatsApp channel: receive and store reactions, send reactions from the container agent via MCP tool, and query reaction history from SQLite.
 
@@ -45,6 +62,7 @@ git merge whatsapp/skill/reactions || {
 ```
 
 This adds:
+
 - `scripts/migrate-reactions.ts` (database migration for `reactions` table with composite PK and indexes)
 - `src/status-tracker.ts` (forward-only emoji state machine for message lifecycle signaling, with persistence and retry)
 - `src/status-tracker.test.ts` (unit tests for StatusTracker)
@@ -75,11 +93,13 @@ npm run build
 ```
 
 Linux:
+
 ```bash
 systemctl --user restart nanoclaw
 ```
 
 macOS:
+
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```

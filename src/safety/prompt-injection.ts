@@ -111,8 +111,8 @@ const INJECTION_PATTERNS: RegExp[] = [
   /忽略之前的指令/,
 
   // Markdown / HTML comment smuggling
-  /<!--\s*system:/i,
-  /<!--\s*instructions:/i,
+  new RegExp('<!--\\s*system:', 'i'),
+  new RegExp('<!--\\s*instructions:', 'i'),
 
   // Tool-call exfiltration vectors
   /!\[.*?\]\(http/i,

@@ -6,6 +6,8 @@ import {
   getDefaultContainerRuntimeCandidates,
   hostGatewayArgs,
   normalizeRuntimeArgs,
+  readonlyMountArgs,
+  writableMountArgs,
 } from './container-runtime.js';
 
 describe('getDefaultContainerRuntimeCandidates', () => {
@@ -16,11 +18,11 @@ describe('getDefaultContainerRuntimeCandidates', () => {
     ]);
   });
 
-  it('prefers podman first on macOS', () => {
+  it('prefers verified runtimes before unverified Apple Container on macOS', () => {
     expect(getDefaultContainerRuntimeCandidates('darwin')).toEqual([
       'podman',
-      'apple-container',
       'docker',
+      'apple-container',
     ]);
   });
 
@@ -76,5 +78,38 @@ describe('normalizeRuntimeArgs', () => {
         getContainerRuntimeSpec('apple-container'),
       ),
     ).toEqual(['run', '-v', '/tmp/demo:/workspace/demo:ro', 'image:latest']);
+  });
+});
+
+describe('Docker-like bind mount arguments', () => {
+  it('rejects comma-delimited source and target option injection', () => {
+    const docker = getContainerRuntimeSpec('docker');
+    expect(() =>
+      writableMountArgs(
+        '/allowed,source=/Users/owner/.codex',
+        '/workspace/extra/safe',
+        docker,
+      ),
+    ).toThrow(/Unsafe host bind-mount path/);
+    expect(() =>
+      readonlyMountArgs(
+        '/allowed',
+        '/workspace/extra/safe,source=/Users,target=/tmp/override',
+        docker,
+      ),
+    ).toThrow(/Unsafe container bind-mount path/);
+  });
+
+  it('retains one exact source and target for a valid mount', () => {
+    expect(
+      readonlyMountArgs(
+        '/Users/owner/My Project',
+        '/workspace/extra/project_docs',
+        getContainerRuntimeSpec('podman'),
+      ),
+    ).toEqual([
+      '--mount',
+      'type=bind,source=/Users/owner/My Project,target=/workspace/extra/project_docs,readonly',
+    ]);
   });
 });

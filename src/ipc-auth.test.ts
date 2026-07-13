@@ -376,6 +376,87 @@ describe('schedule_task authorization', () => {
     const allTasks = getAllTasks();
     expect(allTasks.length).toBe(0);
   });
+
+  it('rejects assistant task creation with a nonempty shell script', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'run an untrusted script later',
+        script: 'printf "unexpected execution\\n"',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(getAllTasks()).toEqual([]);
+  });
+});
+
+describe('update_task script authorization', () => {
+  it('rejects the entire assistant update when it contains a nonempty script', async () => {
+    createTask({
+      id: 'task-script-update',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'original prompt',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-script-update',
+        prompt: 'must not be applied with the rejected script',
+        script: 'printf "unexpected execution\\n"',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(getTaskById('task-script-update')).toMatchObject({
+      prompt: 'original prompt',
+      script: null,
+    });
+  });
+
+  it('allows an empty script value to remove a legacy script', async () => {
+    createTask({
+      id: 'task-script-clear',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'legacy task',
+      script: 'printf "legacy\\n"',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'paused',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-script-clear',
+        script: '',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    expect(getTaskById('task-script-clear')?.script).toBeNull();
+  });
 });
 
 // --- pause_task authorization ---

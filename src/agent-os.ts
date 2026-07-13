@@ -639,7 +639,7 @@ function buildInterrupt(input: {
       },
       2400,
     ),
-    resumeTokenId,
+    resumeTokenId: null,
     nextAction,
     privacyJson: privacyJson(),
   };
@@ -649,7 +649,7 @@ function buildInterrupt(input: {
     interruptId,
     createdAt: input.now,
     updatedAt: input.now,
-    status: 'active',
+    status: 'revoked',
     continuationKey,
     safeStateJson: safeJson(
       {
@@ -657,11 +657,13 @@ function buildInterrupt(input: {
         runId: input.episode.activeRunId || input.episode.rootRunId || null,
         checkpointId: checkpoint?.checkpointId || null,
         approvalPacketId: approval?.approvalPacketId || null,
-        resumePolicy: 'resume_from_checkpoint_without_replaying_side_effects',
+        resumePolicy: 'durable_grant_required',
+        projectionOnly: true,
       },
       3200,
     ),
-    expiresAt: approval?.expiresAt || checkpoint?.expiresAt || null,
+    expiresAt: input.now,
+    usedAt: input.now,
     privacyJson: privacyJson(),
   };
   return { interrupt, token };
@@ -1295,7 +1297,8 @@ export function buildAgentOSPlanArtifact(input: {
             status: 'staged',
             reason:
               'Goal includes side-effectful action; replay cannot execute it.',
-            resumeToken: sanitizeId(`agentos:resume:${planId}:approval`),
+            resumePolicy: 'exact_approval_then_durable_grant',
+            capabilityIssued: false,
           }
         : null,
       2400,
@@ -1390,7 +1393,7 @@ export function replayAgentOSPlan(input: {
       ? 'Replay used the saved DAG and staged side-effectful nodes for approval.'
       : 'Replay used the saved DAG and executed only read-only metadata steps.',
     nextAction: approvalRequired
-      ? 'Ask for explicit approval with the resume token before any side effect.'
+      ? 'Ask for explicit approval; issue a scoped durable grant only after the approval remains current.'
       : 'Use the replay evidence IDs to answer or verify the task.',
     privacyJson: privacyJson(),
   };
@@ -1711,7 +1714,7 @@ export function formatAgentOSReport(report: AgentOSReport): string {
       `Handoffs: ${report.handoffs.length}`,
       `Interrupts: ${report.interrupts.length}`,
       `Open interrupts: ${openInterrupts.length}`,
-      `Resume tokens: ${report.resumeTokens.length}`,
+      `Legacy resume projections: ${report.resumeTokens.length}`,
       `Tool cards: ${report.toolCards.length}`,
       `Read-only cards: ${report.capabilityDiscovery.readOnly}`,
       `Approval-staged cards: ${report.capabilityDiscovery.approvalStaged}`,
@@ -1737,7 +1740,6 @@ export function isAgentOSNaturalRequest(text: string): boolean {
   return (
     normalized === 'what are you working on?' ||
     normalized === 'what are you working on' ||
-    normalized === 'resume that' ||
     normalized === 'what is blocking this?' ||
     normalized === "what's blocking this?" ||
     normalized === 'what is blocking this' ||

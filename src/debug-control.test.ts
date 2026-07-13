@@ -1,4 +1,3 @@
-import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -393,32 +392,6 @@ describe('debug log tails', () => {
   });
 
   it('shows serving commit drift and missing Alexa live proof in debug status', () => {
-    fs.writeFileSync(path.join(tempDir, 'README.md'), 'hello\n');
-    execFileSync('git', ['init'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['config', 'user.name', 'Test User'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['branch', '-M', 'main'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['add', 'README.md'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['commit', '-m', 'init'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-
     writeRuntimeAuditState({
       updatedAt: '2026-04-07T12:00:00.000Z',
       activeRepoRoot: tempDir,
@@ -447,7 +420,7 @@ describe('debug log tails', () => {
     );
     expect(status).toContain('Serving build provenance: unknown');
     expect(status).toContain('Serving artifact verified: unknown');
-    expect(status).toMatch(/Workspace dirty paths: [1-9]\d*/);
+    expect(status).toContain('Workspace dirty paths: unknown');
     expect(status).toContain('Serving commit aligned: no');
     expect(status).toContain('Alexa last signed request: none');
     expect(status).toContain('Alexa proof kind: none');

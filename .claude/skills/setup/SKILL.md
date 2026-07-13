@@ -16,23 +16,28 @@ Run setup steps automatically. Only pause when user action is required (channel 
 Check the git remote configuration to ensure the user has a fork and upstream is configured.
 
 Run:
+
 - `git remote -v`
 
 **Case A — `origin` points to `qwibitai/nanoclaw` (user cloned directly):**
 
 The user cloned instead of forking. AskUserQuestion: "You cloned NanoClaw directly. We recommend forking so you can push your customizations. Would you like to set up a fork?"
+
 - Fork now (recommended) — walk them through it
 - Continue without fork — they'll only have local changes
 
 If fork: instruct the user to fork `qwibitai/nanoclaw` on GitHub (they need to do this in their browser), then ask them for their GitHub username. Run:
+
 ```bash
 git remote rename origin upstream
 git remote add origin https://github.com/<their-username>/nanoclaw.git
 git push --force origin main
 ```
+
 Verify with `git remote -v`.
 
 If continue without fork: add upstream so they can still pull updates:
+
 ```bash
 git remote add upstream https://github.com/qwibitai/nanoclaw.git
 ```
@@ -40,6 +45,7 @@ git remote add upstream https://github.com/qwibitai/nanoclaw.git
 **Case B — `origin` points to user's fork, no `upstream` remote:**
 
 Add upstream:
+
 ```bash
 git remote add upstream https://github.com/qwibitai/nanoclaw.git
 ```
@@ -50,7 +56,7 @@ Already configured. Continue.
 
 **Verify:** `git remote -v` should show `origin` → user's repo, `upstream` → `qwibitai/nanoclaw.git`.
 
-## 1. Bootstrap (Node.js + Dependencies + OneCLI)
+## 1. Bootstrap (Node.js + Dependencies + OneCLI Preflight)
 
 Run `bash setup.sh` and parse the status block.
 
@@ -58,37 +64,23 @@ Run `bash setup.sh` and parse the status block.
   - macOS: `brew install node@22` (if brew available) or install nvm then `nvm install 22`
   - Linux: `curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs`, or nvm
   - After installing Node, re-run `bash setup.sh`
-- If DEPS_OK=false → Read `logs/setup.log`. Try: delete `node_modules`, re-run `bash setup.sh`. If native module build fails, install build tools (`xcode-select --install` on macOS, `build-essential` on Linux), then retry.
+- If DEPS_OK=false → Read `logs/setup.log` and rerun the repository-owned
+  `npm ci` path. If a native module build fails, ask before installing host
+  build tools, then retry.
 - If NATIVE_OK=false → better-sqlite3 failed to load. Install build tools and re-run.
 - Record PLATFORM and IS_WSL for later steps.
 
-After bootstrap succeeds, install OneCLI and its CLI tool:
+After bootstrap succeeds, inspect OneCLI without installing or changing it:
 
 ```bash
-curl -fsSL onecli.sh/install | sh
-curl -fsSL onecli.sh/cli/install | sh
+onecli version 2>/dev/null
+curl -sf -o /dev/null http://127.0.0.1:10254/api/health
 ```
 
-Verify both installed: `onecli version`. If the command is not found, the CLI was likely installed to `~/.local/bin/`. Add it to PATH for the current session and persist it:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-# Persist for future sessions (append to shell profile if not already present)
-grep -q '.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-grep -q '.local/bin' ~/.zshrc 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-```
-
-Then re-verify with `onecli version`.
-
-Point the CLI at the local OneCLI instance (it defaults to the cloud service otherwise):
-```bash
-onecli config set api-host http://127.0.0.1:10254
-```
-
-Ensure `.env` has the OneCLI URL (create the file if it doesn't exist):
-```bash
-grep -q 'ONECLI_URL' .env 2>/dev/null || echo 'ONECLI_URL=http://127.0.0.1:10254' >> .env
-```
+If either check fails, record OneCLI as unavailable. Do not download installers,
+edit shell profiles, migrate credentials, or change OneCLI configuration during
+ordinary setup. OneCLI installation is a separate operator decision. Andrea can
+continue through the explicitly degraded single-key environment fallback.
 
 ## 2. Check Environment
 
@@ -112,18 +104,22 @@ Run `npx tsx setup/index.ts --step timezone` and parse the status block.
 Check `PLATFORM`, `DOCKER`, `PODMAN`, and `APPLE_CONTAINER` from step 2.
 
 Runtime policy:
-- Respect explicit `CONTAINER_RUNTIME` in `.env` if set.
-- Windows: prefer Docker if available; otherwise Podman.
-- macOS: prefer Apple Container if available; otherwise Docker.
-- Linux: prefer Docker if available; otherwise Podman.
 
-If Apple Container is available on macOS, present it as experimental and prefer Docker unless the user explicitly wants the native macOS runtime.
+- Respect explicit `CONTAINER_RUNTIME` in `.env` if set.
+- Windows: prefer Podman if available; otherwise Docker.
+- macOS: prefer Podman if available; otherwise Docker.
+- Linux: prefer Podman if available; otherwise Docker.
+
+Apple Container may be reported as detected, but do not offer or select it for
+agent execution. The runtime fails closed until its nested read-only control
+overlays pass the same isolated mount canary as Docker and Podman.
 
 If multiple runtimes are available, AskUserQuestion and let the user choose. If the user says Docker is fine, choose Docker.
 
 ### 3b. Ensure selected runtime is running
 
 If chosen runtime is Docker:
+
 - `DOCKER=running` -> continue
 - `DOCKER=installed_not_running` -> start Docker and re-check `docker info`
 - `DOCKER=not_found` -> offer install:
@@ -131,80 +127,56 @@ If chosen runtime is Docker:
   - Linux: `curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER`
 
 If chosen runtime is Podman:
+
 - `PODMAN=running` -> continue
 - `PODMAN=installed_not_running` -> start Podman machine and re-check `podman info`
 - `PODMAN=not_found` -> install Podman and verify `podman info`
 
-If chosen runtime is Apple Container:
-- ensure `container` CLI is available and working
-
-No source conversion step is needed; NanoClaw runtime abstraction already supports Docker, Podman, and Apple Container.
+If an explicit environment value selects Apple Container, stop with the
+fail-closed explanation above and ask the operator to select Docker or Podman.
+Do not run the retired `/convert-to-apple-container` workflow.
 
 ### 3c. Build and test
 
 Run `npx tsx setup/index.ts --step container -- --runtime <chosen>` and parse the status block.
 
 **If BUILD_OK=false:** Read `logs/setup.log` tail for the build error.
-- Cache issue (stale layers): `docker builder prune -f` (Docker), `podman system prune -f` (Podman), or `container builder stop && container builder rm && container builder start` (Apple Container). Retry.
+
+- Cache issue (stale layers): diagnose the selected Docker or Podman cache and
+  ask before any destructive prune. Do not change Apple Container state.
 - Dockerfile syntax or missing files: diagnose from the log and fix, then retry.
 
 **If TEST_OK=false but BUILD_OK=true:** The image built but won't run. Check logs — common cause is runtime not fully started. Wait a moment and retry the test.
 
 ## 4. Credential System
 
-NanoClaw uses OneCLI to manage credentials — API keys are never stored in `.env` or exposed to containers. The OneCLI gateway injects them at request time.
+OneCLI Agent Vault is preferred. If the preflight above shows that it is
+already healthy, inspect secret names/metadata only with `onecli secrets list`;
+never print or retrieve values. The operator must provision any missing secret
+through a trusted OneCLI surface outside this chat. Do not accept a pasted key,
+put a secret in command arguments, or install/migrate OneCLI automatically.
 
-Check if a secret already exists:
-```bash
-onecli secrets list
-```
+If OneCLI is unavailable, explain that Andrea will run in
+`degraded_env_fallback`. Ask the operator to configure one supported runtime
+credential locally, outside chat, using exactly one of
+`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or
+`OPENAI_API_KEY`. An OpenAI key also needs an approved Anthropic-compatible
+endpoint such as `ANTHROPIC_BASE_URL`.
 
-If a suitable model secret is listed, confirm with user: keep or reconfigure? If keeping, skip to step 5.
+The host selects one credential and passes its value only through the spawned
+container-runtime process environment. The container command receives a bare
+`-e KEY`, never `KEY=value`; values must stay out of process listings, mounted
+files, logs, errors, and diagnostics. Do not read `.env` contents into the
+conversation or remove/migrate any credential line.
 
-AskUserQuestion: Do you want to use **Claude subscription**, **Anthropic API key**, or **OpenAI key via Anthropic-compatible gateway**?
-
-1. **Claude subscription (Pro/Max)** — description: "Uses your existing Claude Pro or Max subscription. You'll run `claude setup-token` in another terminal to get your token."
-2. **Anthropic API key** — description: "Pay-per-use API key from console.anthropic.com."
-
-### Subscription path
-
-Tell the user to run `claude setup-token` in another terminal and copy the token it outputs. Do NOT collect the token in chat.
-
-Once they have the token, they register it with OneCLI. AskUserQuestion with two options:
-
-1. **Dashboard** — description: "Best if you have a browser on this machine. Open http://127.0.0.1:10254 and add the secret in the UI. Use type 'anthropic' and paste your token as the value."
-2. **CLI** — description: "Best for remote/headless servers. Run: `onecli secrets create --name Anthropic --type anthropic --value YOUR_TOKEN --host-pattern api.anthropic.com`"
-
-### API key path
-
-Tell the user to get an API key from https://console.anthropic.com/settings/keys if they don't have one.
-
-Then AskUserQuestion with two options:
-
-1. **Dashboard** — description: "Best if you have a browser on this machine. Open http://127.0.0.1:10254 and add the secret in the UI."
-2. **CLI** — description: "Best for remote/headless servers. Run: `onecli secrets create --name Anthropic --type anthropic --value YOUR_KEY --host-pattern api.anthropic.com`"
-
-### After either path
-
-Ask them to let you know when done.
-
-**If the user's response happens to contain a token or key** (starts with `sk-ant-`): handle it gracefully — run the `onecli secrets create` command with that value on their behalf.
-
-**After user confirms:** verify with `onecli secrets list` that required model secrets exist (Anthropic direct or OpenAI-compatible endpoint). If not, ask again.
-
-OpenAI-compatible path:
-- Ensure `.env` includes `ANTHROPIC_BASE_URL` set to an Anthropic-compatible endpoint.
-- Register the OpenAI key in OneCLI with the endpoint host as `--host-pattern`.
-- Re-run `npx tsx setup/index.ts --step verify` and confirm `CREDENTIALS=configured`.
-
-CLI example:
-```bash
-onecli secrets create --name OpenAI-Compatible --type api_key --value YOUR_OPENAI_KEY --host-pattern your-anthropic-compatible-endpoint
-```
+After the operator confirms local configuration, use a non-secret status check.
+`setup -- --step verify` may make a real model request and start container
+probes, so run it only with explicit live-validation authorization.
 
 ## 5. Set Up Channels
 
 AskUserQuestion (multiSelect): Which messaging channels do you want to enable?
+
 - WhatsApp (authenticates via QR code or pairing code)
 - Telegram (authenticates via bot token from @BotFather)
 - Slack (authenticates via Slack app with Socket Mode)
@@ -220,6 +192,7 @@ For each selected channel, invoke its skill:
 - **Discord:** Invoke `/add-discord`
 
 Each skill will:
+
 1. Install the channel code (via `git merge` of the skill branch)
 2. Collect credentials/tokens and write to `.env`
 3. Authenticate (WhatsApp QR/pairing, or verify token-based connection)
@@ -244,6 +217,7 @@ AskUserQuestion: Agent access to external directories?
 ## 7. Start Service
 
 If service already running: unload first.
+
 - macOS: `launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist`
 - Linux: `systemctl --user stop nanoclaw` (or `systemctl stop nanoclaw` if root)
 
@@ -255,6 +229,7 @@ Run `npx tsx setup/index.ts --step service` and parse the status block.
 
 1. Immediate fix: `sudo setfacl -m u:$(whoami):rw /var/run/docker.sock`
 2. Persistent fix (re-applies after every Docker restart):
+
 ```bash
 sudo mkdir -p /etc/systemd/system/docker.service.d
 sudo tee /etc/systemd/system/docker.service.d/socket-acl.conf << 'EOF'
@@ -263,9 +238,11 @@ ExecStartPost=/usr/bin/setfacl -m u:USERNAME:rw /var/run/docker.sock
 EOF
 sudo systemctl daemon-reload
 ```
+
 Replace `USERNAME` with the actual username (from `whoami`). Run the two `sudo` commands separately — the `tee` heredoc first, then `daemon-reload`. After user confirms setfacl ran, re-run the service step.
 
 **If SERVICE_LOADED=false:**
+
 - Read `logs/setup.log` for the error.
 - macOS: check `launchctl list | grep nanoclaw`. If PID=`-` and status non-zero, read `logs/nanoclaw.error.log`.
 - Linux: check `systemctl --user status nanoclaw`.
@@ -273,9 +250,13 @@ Replace `USERNAME` with the actual username (from `whoami`). Run the two `sudo` 
 
 ## 8. Verify
 
-Run `npx tsx setup/index.ts --step verify` and parse the status block.
+Explain that `setup -- --step verify` can perform a real model request and start
+container probes. Ask for explicit live-validation authorization before running
+`npx tsx setup/index.ts --step verify`. If authorization is not given, run only
+`npm run services:status` and record the live proof as pending.
 
-**If STATUS=failed, fix each:**
+**If authorized and STATUS=failed, fix each:**
+
 - SERVICE=stopped → `npm run build`, then restart: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `systemctl --user restart nanoclaw` (Linux) or `bash start-nanoclaw.sh` (WSL nohup)
 - SERVICE=not_found → re-run step 7
 - CREDENTIALS=missing → re-run step 4 (check `onecli secrets list`; for OpenAI-compatible mode also confirm `ANTHROPIC_BASE_URL` and endpoint host pattern)
@@ -287,16 +268,15 @@ Tell user to test: send a message in their registered chat. Show: `tail -f logs/
 
 ## Troubleshooting
 
-**Service not starting:** Check `logs/nanoclaw.error.log`. Common: wrong Node path (re-run step 7), OneCLI not running (check `curl http://127.0.0.1:10254/api/health`), missing channel credentials (re-invoke channel skill).
+**Service not starting:** Check `logs/nanoclaw.error.log`. Common: wrong Node path (re-run step 7), OneCLI not running (check `curl -sf -o /dev/null http://127.0.0.1:10254/api/health`), missing channel credentials (re-invoke channel skill).
 
-**Container agent fails ("Claude Code process exited with code 1"):** Ensure the container runtime is running — `open -a Docker` (macOS Docker), `container system start` (Apple Container), or `sudo systemctl start docker` (Linux). Check container logs in `groups/main/logs/container-*.log`.
+**Container agent fails ("Claude Code process exited with code 1"):** Ensure the selected Docker or Podman runtime is running. On macOS Docker, use `open -a Docker`; on Linux Docker, use `sudo systemctl start docker`. Check container logs in `groups/main/logs/container-*.log`. Apple Container remains fail-closed.
 
 **No response to messages:** Check trigger pattern. Main channel doesn't need prefix. Check DB: `npx tsx setup/index.ts --step verify`. Check `logs/nanoclaw.log`.
 
 **Channel not connecting:** Verify the channel's credentials are set in `.env`. Channels auto-enable when their credentials are present. For WhatsApp: check `store/auth/creds.json` exists. For token-based channels: check token values in `.env`. Restart the service after any `.env` change.
 
 **Unload service:** macOS: `launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist` | Linux: `systemctl --user stop nanoclaw`
-
 
 ## 9. Diagnostics
 

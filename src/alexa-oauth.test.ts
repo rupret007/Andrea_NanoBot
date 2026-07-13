@@ -17,9 +17,7 @@ import { hashAlexaAccessToken } from './alexa-identity.js';
 
 vi.mock('./alexa-bridge.js', async () => {
   const actual =
-    await vi.importActual<typeof import('./alexa-bridge.js')>(
-      './alexa-bridge.js',
-    );
+    await vi.importActual<Record<string, unknown>>('./alexa-bridge.js');
   return {
     ...actual,
     runAlexaAssistantTurn: vi.fn(),

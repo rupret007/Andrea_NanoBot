@@ -42,6 +42,30 @@ describe('cognitive kernel', () => {
   beforeEach(() => _initTestDatabase());
   afterEach(() => _closeDatabase());
 
+  it('hashes unsafe caller turn IDs into distinct durable run identities', () => {
+    const input = {
+      turnId: 'intel-assistant.daily_guidance_context',
+      channel: 'telegram',
+      taskFamily: 'assistant',
+      goal: 'Give me one grounded next step.',
+      requestRoute: 'direct_assistant',
+      selectedSkillId: 'assistant.daily_guidance',
+      selectedSkillPurpose: 'Offer one grounded next step.',
+      selectedSkillApprovalNeed: 'none',
+      selectedSkillSideEffectRisk: 'none',
+      selectedSkillEvidenceLevel: 'strong',
+    } as const;
+    const dotted = beginCognitiveKernelRun(input);
+    const slashed = beginCognitiveKernelRun({
+      ...input,
+      turnId: 'intel-assistant/daily_guidance_context',
+    });
+
+    expect(dotted.run.runId).toMatch(/^cog:run:[a-f0-9]{24}$/);
+    expect(slashed.run.runId).toMatch(/^cog:run:[a-f0-9]{24}$/);
+    expect(dotted.run.runId).not.toBe(slashed.run.runId);
+  });
+
   it('frames read-only evidence tasks with explicit subgoal contracts', () => {
     const kernel = beginCognitiveKernelRun({
       turnId: 'cog-read-only',

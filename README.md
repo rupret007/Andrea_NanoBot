@@ -38,6 +38,31 @@ after the final write. Aggregate external-action evidence cannot complete a
 mission until a dedicated receipt binds the exact approved action. The operator
 can inspect outcome quality with `npm run debug:assistant-intelligence`.
 
+The durable-continuity candidate gives meaningful coding, research, operator,
+mission, and approval-gated work one canonical work identity. It binds that
+identity to the owner, chat, group, channel, executor, plan version, checkpoint,
+and exact target scope. Resume grants are expiring, single-use capabilities;
+their plaintext values are returned once and only a hash is stored. Consuming a
+grant and acquiring an execution lease is one database transaction, and a
+grant never substitutes for fresh approval. Fresh-approval action classes
+atomically stage an immutable approval packet, a new approval checkpoint, its
+durable-work link, and the transition to `awaiting_approval`. The decision must
+still match the exact durable work ID, current checkpoint ID, plan version,
+action class, target-scope digest, packet version, and immutable scope digest.
+
+Recovery is verification-first. A started, partial, or unknown effect is
+inspected after restart and is never blindly replayed. Repository completion
+requires host-bound metadata receipts for the canonical Git worktree and a
+successful postcondition check after the final write; raw commands, paths,
+tool output, prompts, replies, and resume-token values are not stored. Ordinary
+direct-assistant questions do not create durable work. Mutation receipts also
+retain the consumed grant ID and exact approval packet/version/scope
+provenance, so a receipt cannot borrow authority from another work item,
+checkpoint, plan, target, or action class. The operator can run
+`npm run test:continuity:hard-kill` and `npm run test:continuity:heldout` for
+the isolated, network-denied recovery proofs. Deployment and real-owner outcome
+evidence remain separate from those deterministic fixtures.
+
 Andrea also includes an opt-in private owner cockpit: a calm, responsive view of
 today's focus, open loops, goals, staged approvals, and verified outcomes. It
 reuses the same database and approval lifecycle as chat, binds only to loopback,
@@ -107,6 +132,7 @@ Current host truth from the local operator commands:
 
 - `Host state: running_ready` proves the process/watchdog state; it does not by itself prove writable capacity. `Host disk pressure` and `Host health proof` must also be healthy before claiming full runtime readiness.
 - Active repo and serving commit should match before any live proof is trusted.
+- A responsive service serving an older or dirty artifact is stale, not release proof. Rebuild, restart, and require the serving SHA to match workspace `HEAD` before trusting live behavior as evidence for a candidate.
 - Dated recovery snapshot: [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md).
 - As of July 6, 2026, the canonical runtime root is `/Users/jeffstory/Andrea_NanoBot`; `/Users/jeffstory/Documents/Andrea_NanoBot` is a convenience symlink, and `/Users/jeffstory/Andrea_NanoBot_AGI` should not serve in parallel.
 - `live_proven`: BlueBubbles canonical same-thread message-action proof, Google Calendar, research, image generation, and provider checks for OpenAI, Anthropic, Gemini, MiniMax, and Brave Search.
@@ -183,8 +209,23 @@ What operators should expect:
 The runtime is still based on NanoClaw, which means the security model matters:
 
 - agents run in isolated containers
-- each registered chat keeps its own context and files
+- each registered chat keeps four isolated capability contexts:
+  `direct-assistant`, `protected`, `control`, and `execution`; advanced and
+  code routes intentionally share only the execution context, and no other
+  lane reuses transcripts or sessions
 - community skills are cached globally but enabled explicitly per chat
+- ordinary direct-assistant turns have no container tool surface; protected, control, advanced, and code routes receive only the tools required by their route
+- every container run receives one unique host-created, HMAC-authenticated IPC
+  inbox bound to its lane and run ID; the runner sees that inbox read-only and
+  rejects unsigned, altered, or replayed follow-ups
+- host-owned policy, runner, settings, skills, plugins, and non-execution
+  guidance stay immutable in containers; only the execution lane may read the
+  mutable group `CLAUDE.md`, and only explicit per-lane session,
+  group-workspace, and host IPC state is writable
+- legacy shared tool-bearing sessions and runner caches remain preserved but
+  inert; they are not reused as capability-lane state
+- host Codex home, auth, and config are not mounted or copied into agent containers
+- OneCLI Agent Vault is the preferred credential boundary; environment inheritance is an explicitly degraded fallback and must pass only key names in container arguments, never secret values
 - model access can run through OneCLI or an Anthropic-compatible gateway
 - shopping credentials stay on the host behind a narrow approval-aware boundary
 
@@ -206,7 +247,7 @@ Clone this repo, install dependencies, and open Claude Code:
 ```bash
 git clone https://github.com/rupret007/Andrea_NanoBot.git
 cd Andrea_NanoBot
-npm install
+npm ci
 claude
 ```
 
@@ -220,7 +261,10 @@ Then use this setup flow:
 
 1. In Claude Code, run `/setup`
 2. In Claude Code, add Telegram with `/add-telegram`
-3. Optionally run `/init-onecli` for safer credential handling
+3. Run `/init-onecli` to preflight an existing operator-provisioned vault. It
+   does not install or migrate OneCLI; if the vault is absent, make that
+   operator decision separately or use `.env` inheritance as an explicitly
+   degraded fallback.
 4. Start the bot and open a DM with Andrea in Telegram
 5. In Telegram, run `/start`
 6. In Telegram, run `/registermain`
@@ -694,14 +738,21 @@ Examples:
 
 Andrea currently supports:
 
-- Node.js 22.x
-- Docker, Podman, and Apple Container
+- Node.js 22.x; repository validation is pinned by `.nvmrc` to 22.22.2
+- Docker and Podman for verified agent execution; Apple Container detection is
+  retained but agent runs fail closed until its nested read-only mount behavior
+  passes the same isolated canary
 - Anthropic-compatible model endpoints
 - first-class provider council roles for OpenAI, Anthropic/Claude, Gemini, MiniMax, and Brave Search when configured
 - OpenAI-key-backed gateways exposed through Anthropic-compatible APIs
 - optional 9router / Cursor-backed runtime-routing paths
 - optional Cursor Cloud Agents API control via `CURSOR_API_KEY` and optional `CURSOR_API_AUTH_MODE=auto|bearer|basic`
 - optional integrations only after operator validation
+
+The root TypeScript artifact is shared across macOS and Windows. Hosted Windows
+CI is a cross-platform build/type/test and launcher-contract boundary; it is not
+evidence that a native Windows service was rebuilt, restarted, or integration-
+tested on a Windows host.
 
 If you need to create or verify a real Cursor Cloud key, see [docs/CURSOR_API_KEYS.md](docs/CURSOR_API_KEYS.md).
 
@@ -740,6 +791,11 @@ npm run debug:reset -- all
   - endpoint/auth/model reachability
 - `ASSISTANT_EXECUTION_PROBE`
   - whether Andrea's main direct-assistant container path can actually start and produce first output
+
+This verify step is not passive: when configured, it can perform a real model
+reachability request and start container execution probes. Use CI-safe and
+deterministic commands for offline release gates; run live verification only
+with intentional credentials, cost awareness, and operator authorization.
 
 That distinction matters during incidents:
 

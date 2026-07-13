@@ -16,25 +16,25 @@ Important product split:
 
 ## Core Runtime Features
 
-| Feature                    | What it does                                                 | Notes                                         |
-| -------------------------- | ------------------------------------------------------------ | --------------------------------------------- |
-| Container isolation        | Runs agents in isolated containers instead of host execution | Docker, Podman, and Apple Container supported |
-| Per-group isolation        | Each group gets isolated memory/filesystem context           | Group folder mounted into container           |
-| Main-channel control plane | Main chat can manage groups, tasks, and skill enablement     | Non-main chats are scoped to themselves       |
-| Scheduler                  | Supports cron, interval, and one-time tasks                  | Tasks run in group context                    |
-| Community marketplace      | Search OpenClaw catalog and enable skills per chat           | Global cache + explicit per-chat activation   |
+| Feature                    | What it does                                                 | Notes                                                                               |
+| -------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Container isolation        | Runs agents in isolated containers instead of host execution | Docker and Podman verified; Apple Container fails closed pending nested-mount proof |
+| Per-group isolation        | Each group gets isolated memory/filesystem context           | Group folder mounted into container                                                 |
+| Main-channel control plane | Main chat can manage groups, tasks, and skill enablement     | Non-main chats are scoped to themselves                                             |
+| Scheduler                  | Supports cron, interval, and one-time tasks                  | Tasks run in group context                                                          |
+| Community marketplace      | Search OpenClaw catalog and enable skills per chat           | Global cache + explicit per-chat activation                                         |
 
 ## Setup And Operations Skills
 
-| Skill              | Purpose                                                     | Typical use                                 |
-| ------------------ | ----------------------------------------------------------- | ------------------------------------------- |
-| `/setup`           | End-to-end installation and initial configuration           | First run or fresh machine setup            |
-| `/debug`           | Guided troubleshooting flow                                 | Runtime, channel, auth, or startup failures |
-| `/customize`       | Guided behavior and feature changes                         | Ongoing fork customization                  |
-| `/update-nanoclaw` | Bring in upstream base updates safely                       | Periodic maintenance                        |
-| `/update-skills`   | Refresh installed skill branches                            | Pull skill-level fixes and updates          |
-| `/claw`            | Local CLI helper for containerized NanoClaw agent execution | Dev/testing and scripted local runs         |
-| `/add-compact`     | Adds manual context compaction control                      | Long-running sessions with large context    |
+| Skill              | Purpose                                           | Typical use                                                 |
+| ------------------ | ------------------------------------------------- | ----------------------------------------------------------- |
+| `/setup`           | End-to-end installation and initial configuration | First run or fresh machine setup                            |
+| `/debug`           | Guided troubleshooting flow                       | Runtime, channel, auth, or startup failures                 |
+| `/customize`       | Guided behavior and feature changes               | Ongoing fork customization                                  |
+| `/update-nanoclaw` | Bring in upstream base updates safely             | Periodic maintenance                                        |
+| `/update-skills`   | Refresh installed skill branches                  | Pull skill-level fixes and updates                          |
+| `/claw`            | Retired alternate-runner compatibility stub       | Inert; use the canonical Andrea service and container gates |
+| `/add-compact`     | Adds manual context compaction control            | Long-running sessions with large context                    |
 
 ## Channels And Messaging Extensions
 
@@ -58,12 +58,12 @@ Important product split:
 
 ## Model, Credentials, And Review Workflows
 
-| Skill                          | Adds                                               | Notes                                          |
-| ------------------------------ | -------------------------------------------------- | ---------------------------------------------- |
-| `/init-onecli`                 | OneCLI Agent Vault bootstrap                       | Recommended credential mode                    |
-| `/use-native-credential-proxy` | Native credential-proxy path instead of OneCLI     | Alternative deployment preference              |
-| `/get-qodo-rules`              | Pull org/repo coding rules from Qodo before coding | Requires Qodo config and git repo              |
-| `/qodo-pr-resolver`            | Fetch and resolve Qodo PR review issues            | Requires git provider CLI and Qodo-reviewed PR |
+| Skill                          | Adds                                                  | Notes                                               |
+| ------------------------------ | ----------------------------------------------------- | --------------------------------------------------- |
+| `/init-onecli`                 | Read-only OneCLI availability/configuration preflight | Preferred mode when already operator-provisioned    |
+| `/use-native-credential-proxy` | Retired credential-conversion compatibility stub      | Inert; the degraded single-key fallback is built in |
+| `/get-qodo-rules`              | Pull org/repo coding rules from Qodo before coding    | Requires Qodo config and git repo                   |
+| `/qodo-pr-resolver`            | Fetch and resolve Qodo PR review issues               | Requires git provider CLI and Qodo-reviewed PR      |
 
 ## Media And Knowledge Add-Ons
 
@@ -83,10 +83,10 @@ Important product split:
 
 ## Platform-Specific Add-Ons
 
-| Skill                         | Adds                                       | Platform scope |
-| ----------------------------- | ------------------------------------------ | -------------- |
-| `/convert-to-apple-container` | Migrates runtime to Apple Container        | macOS only     |
-| `/add-macos-statusbar`        | macOS menu bar service controls and status | macOS only     |
+| Skill                         | Adds                                       | Platform scope                                                                   |
+| ----------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
+| `/convert-to-apple-container` | Retired Apple Container migration stub     | Inert; Apple Container agent execution is fail-closed pending nested-mount proof |
+| `/add-macos-statusbar`        | macOS menu bar service controls and status | macOS only                                                                       |
 
 ## Built-In Container Skills (Always Relevant)
 
@@ -98,20 +98,20 @@ Important product split:
 
 ## Cursor Operator Surfaces
 
-| Surface | What it does | Notes |
-| --- | --- | --- |
-| Cursor Cloud jobs | Create, sync, follow up, stop, inspect conversation, and fetch result files or download links | Operator-enabled validated path; requires `CURSOR_API_KEY`; preferred result commands are `/cursor-results` and `/cursor-download` |
-| Cursor desktop bridge | Recover bridge-known sessions and run line-oriented shell commands on your normal Cursor machine | Operator-only; requires bridge setup; no live PTY, GUI control, arbitrary shell attach, or validated local Windows agent-job path |
-| Cursor-backed runtime route | Route Andrea's own runtime through a Cursor-aware gateway such as 9router | Optional diagnostic/runtime surface; separate from Cloud job readiness and desktop bridge readiness |
-| `/cursor_status` | Show readiness for Cloud, desktop bridge, and runtime-route wiring | Safe status surface; public-safe |
+| Surface                     | What it does                                                                                     | Notes                                                                                                                              |
+| --------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Cursor Cloud jobs           | Create, sync, follow up, stop, inspect conversation, and fetch result files or download links    | Operator-enabled validated path; requires `CURSOR_API_KEY`; preferred result commands are `/cursor-results` and `/cursor-download` |
+| Cursor desktop bridge       | Recover bridge-known sessions and run line-oriented shell commands on your normal Cursor machine | Operator-only; requires bridge setup; no live PTY, GUI control, arbitrary shell attach, or validated local Windows agent-job path  |
+| Cursor-backed runtime route | Route Andrea's own runtime through a Cursor-aware gateway such as 9router                        | Optional diagnostic/runtime surface; separate from Cloud job readiness and desktop bridge readiness                                |
+| `/cursor_status`            | Show readiness for Cloud, desktop bridge, and runtime-route wiring                               | Safe status surface; public-safe                                                                                                   |
 
 ## Optional Operator-Only Integration Surfaces
 
-| Surface | What it does | Notes |
-| --- | --- | --- |
-| Alexa Companion Mode | Routes approved Alexa voice requests into Andrea with daily guidance, short conversational continuity, and consent-based personalization | Optional operator-enabled ingress; requires Node `22.22.2`, HTTPS, account linking, trust verification, and one real signed utterance for full live acceptance; status check is `/alexa-status` |
-| Amazon shopping approvals | Search Amazon Business products and run approval-gated purchase requests | Optional operator-enabled main-control workflow; prefer trial mode first; commands use `/amazon-status`, `/amazon-search`, and `/purchase-*` |
-| Marketplace and community skills | Discover and enable external skills per chat | Optional operator/runtime layer; not part of the default Telegram command surface |
+| Surface                          | What it does                                                                                                                             | Notes                                                                                                                                                                                           |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Alexa Companion Mode             | Routes approved Alexa voice requests into Andrea with daily guidance, short conversational continuity, and consent-based personalization | Optional operator-enabled ingress; requires Node `22.22.2`, HTTPS, account linking, trust verification, and one real signed utterance for full live acceptance; status check is `/alexa-status` |
+| Amazon shopping approvals        | Search Amazon Business products and run approval-gated purchase requests                                                                 | Optional operator-enabled main-control workflow; prefer trial mode first; commands use `/amazon-status`, `/amazon-search`, and `/purchase-*`                                                    |
+| Marketplace and community skills | Discover and enable external skills per chat                                                                                             | Optional operator/runtime layer; not part of the default Telegram command surface                                                                                                               |
 
 ## Marketplace Tool Surface
 
@@ -127,6 +127,7 @@ These runtime tools back the community skill lifecycle:
 
 1. `/setup`
 2. One channel skill (for example `/add-whatsapp` or `/add-telegram`)
-3. `/init-onecli` or `/use-native-credential-proxy`
+3. `/init-onecli` to preflight an existing operator-provisioned vault; otherwise
+   use the current degraded single-key environment fallback
 4. Optional media/tooling add-ons (`/add-pdf-reader`, `/add-image-vision`, `/add-ollama-tool`)
 5. Marketplace usage when you need additional capabilities

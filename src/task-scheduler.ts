@@ -6,7 +6,6 @@ import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
   classifyRuntimeRoute,
   selectPreferredRuntime,
-  shouldReuseExistingThread,
 } from './agent-runtime.js';
 import {
   ContainerOutput,
@@ -27,6 +26,8 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { classifyScheduledTaskRequest } from './assistant-routing.js';
+import { getAssistantSessionStorageKey } from './assistant-session.js';
+import type { ContainerIpcContext } from './container-ipc-auth.js';
 import { runScheduledMessageActionByTaskId } from './message-actions.js';
 import { buildPlainReminderDeliveryText } from './scheduled-reminder-delivery.js';
 import { buildScheduledSelfImprovementStatusUpdate } from './self-improvement-status.js';
@@ -132,6 +133,7 @@ export interface SchedulerDependencies {
     proc: ChildProcess,
     containerName: string,
     groupFolder: string,
+    ipcContext?: ContainerIpcContext,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
   sendToTarget: (
@@ -170,11 +172,6 @@ async function runTask(
   }
   fs.mkdirSync(groupDir, { recursive: true });
 
-  logger.info(
-    { taskId: task.id, group: task.group_folder },
-    'Running scheduled task',
-  );
-
   const groups = deps.registeredGroups();
   const group = Object.values(groups).find(
     (g) => g.folder === task.group_folder,
@@ -195,6 +192,31 @@ async function runTask(
     });
     return;
   }
+
+  if (typeof task.script === 'string' && task.script.trim().length > 0) {
+    const error =
+      'Scheduled task script execution is blocked because the task has no reviewed script approval provenance.';
+    updateTask(task.id, { status: 'paused' });
+    updateTaskAfterRun(task.id, task.next_run, `Error: ${error}`);
+    logger.error(
+      { taskId: task.id, groupFolder: task.group_folder },
+      'Paused legacy scheduled task with an unapproved script',
+    );
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: Date.now() - startTime,
+      status: 'error',
+      result: null,
+      error,
+    });
+    return;
+  }
+
+  logger.info(
+    { taskId: task.id, group: task.group_folder },
+    'Running scheduled task',
+  );
 
   const automationRecord = getCalendarAutomationByTaskId(task.id);
   if (automationRecord) {
@@ -389,7 +411,6 @@ async function runTask(
       id: t.id,
       groupFolder: t.group_folder,
       prompt: t.prompt,
-      script: t.script,
       schedule_type: t.schedule_type,
       schedule_value: t.schedule_value,
       status: t.status,
@@ -411,12 +432,11 @@ async function runTask(
     task.context_mode === 'group' ? agentThreads[task.group_folder] : undefined;
   const preferredRuntime = selectPreferredRuntime(existingThread, runtimeRoute);
   const sessionId =
-    task.context_mode === 'group' &&
-    shouldReuseExistingThread(existingThread, preferredRuntime)
-      ? existingThread.thread_id
-      : task.context_mode === 'group'
-        ? sessions[task.group_folder]
-        : undefined;
+    task.context_mode === 'group'
+      ? sessions[
+          getAssistantSessionStorageKey(task.group_folder, requestPolicy.route)
+        ]
+      : undefined;
 
   // After the task produces a result, close the container promptly.
   // Tasks are single-turn — no need to wait the normal idle timeout for the
@@ -443,13 +463,18 @@ async function runTask(
         isMain,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
-        script: task.script || undefined,
         requestPolicy,
         preferredRuntime,
         runtimeRoute,
       },
-      (proc, containerName) =>
-        deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+      (proc, containerName, ipcContext) =>
+        deps.onProcess(
+          task.chat_jid,
+          proc,
+          containerName,
+          task.group_folder,
+          ipcContext,
+        ),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           const outbound = formatOutbound(streamedOutput.result);

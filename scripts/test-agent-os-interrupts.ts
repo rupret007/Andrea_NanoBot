@@ -52,7 +52,6 @@ const interrupts = listAgentOSInterrupts({
 });
 const tokens = listAgentOSResumeTokens({
   episodeId: result.episode.episodeId,
-  status: 'active',
   limit: 20,
 });
 const report = buildAgentOSReport({ episodeId: result.episode.episodeId });
@@ -67,8 +66,19 @@ assert.ok(
   ),
   'approval-required episode should persist an open interrupt',
 );
-assert.ok(tokens.length >= 1, 'approval interrupt should expose a resume token');
-assert.match(tokens[0].safeStateJson, /resume_from_checkpoint/);
+assert.equal(
+  tokens.some((token) => token.status === 'active'),
+  false,
+  'legacy Agent OS token projections must never remain active',
+);
+assert.ok(
+  tokens.some(
+    (token) =>
+      token.status === 'revoked' &&
+      token.safeStateJson.includes('durable_grant_required'),
+  ),
+  'approval continuation must require a scoped durable grant',
+);
 assert.ok(report.nextAction.toLowerCase().includes('approval'));
 assert.doesNotMatch(
   serialized,
@@ -82,7 +92,11 @@ console.log(
       episodeId: result.episode.episodeId,
       episodeStatus: result.episode.status,
       interruptCount: interrupts.length,
-      activeResumeTokens: tokens.length,
+      activeResumeTokens: tokens.filter((token) => token.status === 'active')
+        .length,
+      revokedTokenProjections: tokens.filter(
+        (token) => token.status === 'revoked',
+      ).length,
       nextAction: report.nextAction,
       privacy: report.privacy,
     },

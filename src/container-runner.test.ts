@@ -54,6 +54,16 @@ vi.mock('fs', async () => {
       readFileSync: vi.fn(() => ''),
       readdirSync: vi.fn(() => []),
       statSync: vi.fn(() => ({ isDirectory: () => false })),
+      lstatSync: vi.fn(() => ({
+        isSymbolicLink: () => false,
+        isDirectory: () => false,
+        isFile: () => true,
+        size: 0,
+        mtimeMs: Date.now(),
+      })),
+      mkdtempSync: vi.fn((prefix: string) => `${prefix}test`),
+      copyFileSync: vi.fn(),
+      realpathSync: vi.fn((candidate: fs.PathLike) => String(candidate)),
       cpSync: vi.fn(),
       rmSync: vi.fn(),
       renameSync: vi.fn(),
@@ -125,9 +135,11 @@ vi.mock('child_process', async () => {
 });
 
 import {
+  assertContainerRuntimeTrustBoundary,
   runContainerAgent,
   ContainerOutput,
   sanitizeContainerArgsForLogs,
+  writeTasksSnapshot,
 } from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
@@ -144,6 +156,34 @@ const testInput = {
   chatJid: 'test@g.us',
   isMain: false,
 };
+
+describe('container task snapshots', () => {
+  it('never serializes legacy task scripts supplied by an untyped caller', () => {
+    writeTasksSnapshot('test-group', true, [
+      {
+        id: 'task-1',
+        groupFolder: 'test-group',
+        prompt: 'safe prompt',
+        script: 'export SECRET=should-not-leak',
+        schedule_type: 'once',
+        schedule_value: '2030-01-01T00:00:00.000Z',
+        status: 'active',
+        next_run: '2030-01-01T00:00:00.000Z',
+      },
+    ] as unknown as Parameters<typeof writeTasksSnapshot>[2]);
+
+    const write = vi.mocked(fs.writeFileSync).mock.calls.at(-1);
+    expect(write?.[0]).toBe(
+      '/tmp/nanoclaw-test-data/ipc/test-group/current_tasks.json',
+    );
+    const serialized = String(write?.[1]);
+    expect(serialized).not.toContain('script');
+    expect(serialized).not.toContain('should-not-leak');
+    expect(JSON.parse(serialized)).toEqual([
+      expect.objectContaining({ id: 'task-1', prompt: 'safe prompt' }),
+    ]);
+  });
+});
 
 function emitOutputMarker(
   proc: ReturnType<typeof createFakeProcess>,
@@ -193,6 +233,13 @@ function runtimeToolEvidence(
 }
 
 describe('container-runner timeout behavior', () => {
+  it('fails closed for runtimes without verified nested read-only mounts', () => {
+    expect(() =>
+      assertContainerRuntimeTrustBoundary('apple-container'),
+    ).toThrow(/nested read-only mount boundary/);
+    expect(() => assertContainerRuntimeTrustBoundary('docker')).not.toThrow();
+    expect(() => assertContainerRuntimeTrustBoundary('podman')).not.toThrow();
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     fakeProc = createFakeProcess();
@@ -571,7 +618,7 @@ describe('container-runner timeout behavior', () => {
         requestPolicy: {
           route: 'direct_assistant',
           reason: 'defaulted to direct assistant handling',
-          builtinTools: ['Read'],
+          builtinTools: [],
           mcpTools: [],
           guidance: 'Answer clearly and directly.',
         },
@@ -596,6 +643,43 @@ describe('container-runner timeout behavior', () => {
       '/tmp/nanoclaw-test-groups/test-group:/workspace/group',
     );
     expect(normalizedArgs).not.toContain('/workspace/project');
+    expect(normalizedArgs).not.toContain('/workspace/global');
+    expect(normalizedArgs).not.toContain('/workspace/extra/');
+    expect(normalizedArgs).toContain('/workspace/group/CLAUDE.md:ro');
+    expect(normalizedArgs).toContain('/home/node/.claude/settings.json:ro');
+    expect(normalizedArgs).toContain('/home/node/.claude/skills:ro');
+    expect(normalizedArgs).toContain(
+      '/nanoclaw-test-runtime/container-controls/test-group/direct-assistant/generation-',
+    );
+    expect(normalizedArgs).not.toContain(
+      '.claude-direct-assistant/skills:/home/node/.claude/skills',
+    );
+    expect(normalizedArgs).toContain('/home/node/.claude/plugins:ro');
+    expect(normalizedArgs).toContain('/home/node/.claude/agents:ro');
+    expect(normalizedArgs).toContain('/home/node/.claude/commands:ro');
+    expect(normalizedArgs).toContain('/home/node/.claude/rules:ro');
+    expect(normalizedArgs).not.toContain('/home/node/.codex');
+    expect(normalizedArgs).not.toContain('CODEX_HOME');
+    expect(normalizedArgs).not.toContain(
+      'direct-assistant-workspace/CLAUDE.md:/workspace/group/CLAUDE.md',
+    );
+    const mountSpecs = (lastArgs || []).filter((arg) => arg.includes(':'));
+    const sessionParentIndex = mountSpecs.findIndex((arg) =>
+      arg.includes('.claude-direct-assistant:/home/node/.claude'),
+    );
+    const groupGuidanceIndex = mountSpecs.findIndex((arg) =>
+      arg.includes(':/workspace/group/CLAUDE.md:ro'),
+    );
+    const settingsOverlayIndex = mountSpecs.findIndex((arg) =>
+      arg.includes(':/home/node/.claude/settings.json:ro'),
+    );
+    const skillsOverlayIndex = mountSpecs.findIndex((arg) =>
+      arg.includes(':/home/node/.claude/skills:ro'),
+    );
+    expect(sessionParentIndex).toBeGreaterThanOrEqual(0);
+    expect(groupGuidanceIndex).toBeGreaterThan(sessionParentIndex);
+    expect(settingsOverlayIndex).toBeGreaterThan(sessionParentIndex);
+    expect(skillsOverlayIndex).toBeGreaterThan(sessionParentIndex);
 
     emitOutputMarker(fakeProc, {
       status: 'success',
@@ -611,7 +695,169 @@ describe('container-runner timeout behavior', () => {
     });
   });
 
-  it('refreshes stale per-group agent-runner cache even when cached file mtime is newer', async () => {
+  it('uses the minimal direct mount profile when request policy is missing', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      { ...testInput, isMain: true },
+      () => {},
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    const lastArgs = vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[];
+    const normalizedArgs = lastArgs.join(' ').replace(/\\/g, '/');
+    expect(normalizedArgs).toContain(
+      'direct-assistant-workspace:/workspace/group',
+    );
+    expect(normalizedArgs).not.toContain('/workspace/project');
+    expect(normalizedArgs).not.toContain('/home/node/.codex');
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Done',
+      newSessionId: 'session-missing-policy',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(resultPromise).resolves.toMatchObject({ status: 'success' });
+  });
+
+  it('normalizes a tampered direct policy before selecting writable IPC or context mounts', async () => {
+    const onProcess = vi.fn();
+    const resultPromise = runContainerAgent(
+      testGroup,
+      {
+        ...testInput,
+        isMain: true,
+        requestPolicy: {
+          route: 'direct_assistant',
+          reason: 'tampered direct policy',
+          builtinTools: ['Read'],
+          mcpTools: ['mcp__nanoclaw__schedule_task'],
+          guidance: 'untrusted',
+        },
+      },
+      onProcess,
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    const lastArgs = vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[];
+    const normalizedArgs = lastArgs.join(' ').replace(/\\/g, '/');
+    expect(normalizedArgs).toMatch(
+      /\/ipc\/test-group\/input\/direct-assistant\/[^ ]+:\/workspace\/ipc\/input:ro/,
+    );
+    expect(normalizedArgs).not.toContain('/ipc/test-group:/workspace/ipc');
+    expect(normalizedArgs).not.toContain('/workspace/project');
+    expect(normalizedArgs).toContain('.claude-direct-assistant');
+    const serializedInput = JSON.parse(stdinBuffer);
+    expect(serializedInput.requestPolicy).toMatchObject({
+      route: 'direct_assistant',
+      builtinTools: [],
+      mcpTools: [],
+    });
+    const ipcContext = onProcess.mock.calls[0]?.[2];
+    expect(serializedInput.ipcRunId).toBe(ipcContext.runId);
+    expect(serializedInput.ipcAuthToken).toBe(ipcContext.authToken);
+    expect(normalizedArgs).not.toContain(ipcContext.authToken);
+    expect(ipcContext.inputDir.replace(/\\/g, '/')).toContain(
+      '/ipc/test-group/input/direct-assistant/',
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Done',
+      newSessionId: 'session-tampered-direct',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(resultPromise).resolves.toMatchObject({ status: 'success' });
+  });
+
+  it('fails an over-wide advanced policy into the minimal direct host boundary', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      {
+        ...testInput,
+        isMain: true,
+        requestPolicy: {
+          route: 'advanced_helper',
+          reason: 'tampered mixed policy',
+          builtinTools: ['Bash'],
+          mcpTools: ['mcp__nanoclaw__create_cursor_agent'],
+          guidance: 'untrusted',
+        },
+      },
+      () => {},
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    const lastArgs = vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[];
+    const normalizedArgs = lastArgs.join(' ').replace(/\\/g, '/');
+    expect(normalizedArgs).toMatch(
+      /\/ipc\/test-group\/input\/direct-assistant\/[^ ]+:\/workspace\/ipc\/input:ro/,
+    );
+    expect(normalizedArgs).not.toContain('/ipc/test-group:/workspace/ipc');
+    expect(normalizedArgs).not.toContain('/workspace/project');
+    expect(normalizedArgs).not.toContain('/home/node/.claude/skills:rw');
+    expect(normalizedArgs).toContain('.claude-direct-assistant');
+    expect(JSON.parse(stdinBuffer).requestPolicy).toMatchObject({
+      route: 'direct_assistant',
+      builtinTools: [],
+      mcpTools: [],
+    });
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Done',
+      newSessionId: 'session-tampered-advanced',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(resultPromise).resolves.toMatchObject({ status: 'success' });
+  });
+
+  it('uses the isolated protected home for protected routes', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      {
+        ...testInput,
+        requestPolicy: {
+          route: 'protected_assistant',
+          reason: 'explicit read-only lookup',
+          builtinTools: ['Read'],
+          mcpTools: [],
+          guidance: 'Inspect only the requested file.',
+        },
+      },
+      () => {},
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    const lastArgs = vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[];
+    const normalizedArgs = lastArgs.join(' ').replace(/\\/g, '/');
+    expect(normalizedArgs).toContain(
+      '/sessions/test-group/.claude-protected:/home/node/.claude',
+    );
+    expect(normalizedArgs).not.toContain('.claude-direct-assistant');
+    expect(normalizedArgs).not.toContain('.claude-execution');
+    expect(normalizedArgs).toMatch(
+      /\/ipc\/test-group\/input\/protected\/[^ ]+:\/workspace\/ipc\/input:ro/,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Done',
+      newSessionId: 'session-tool-bearing-home',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(resultPromise).resolves.toMatchObject({ status: 'success' });
+  });
+
+  it('mounts only canonical agent-runner source read-only and leaves legacy caches inert', async () => {
     const projectRoot = process.cwd();
     const sourceDir = path.join(
       projectRoot,
@@ -619,87 +865,12 @@ describe('container-runner timeout behavior', () => {
       'agent-runner',
       'src',
     );
-    const sourceIndex = path.join(sourceDir, 'index.ts');
     const cacheDir = path.join(
       '/tmp/nanoclaw-test-data',
       'sessions',
       'test-group',
       'agent-runner-src',
     );
-    const cachedIndex = path.join(cacheDir, 'index.ts');
-    const cachedStaleTest = path.join(
-      cacheDir,
-      'runtime-error-classification.test.ts',
-    );
-    const syncMetadata = path.join(cacheDir, '.nanoclaw-source-sync.json');
-
-    const existsSyncMock = vi.mocked(fs.existsSync);
-    const statSyncMock = vi.mocked(fs.statSync);
-    const readdirSyncMock = vi.mocked(fs.readdirSync);
-    const readFileSyncMock = vi.mocked(fs.readFileSync);
-
-    existsSyncMock.mockImplementation((target) => {
-      const normalized = String(target).replace(/\\/g, '/');
-      if (normalized === sourceDir.replace(/\\/g, '/')) return true;
-      if (normalized === sourceIndex.replace(/\\/g, '/')) return true;
-      if (normalized === cacheDir.replace(/\\/g, '/')) return true;
-      if (normalized === cachedIndex.replace(/\\/g, '/')) return true;
-      if (normalized === cachedStaleTest.replace(/\\/g, '/')) return true;
-      if (normalized === syncMetadata.replace(/\\/g, '/')) return false;
-      return false;
-    });
-
-    readdirSyncMock.mockImplementation((target) => {
-      const normalized = String(target).replace(/\\/g, '/');
-      if (normalized === sourceDir.replace(/\\/g, '/')) {
-        return ['index.ts'] as unknown as ReturnType<typeof fs.readdirSync>;
-      }
-      if (normalized === cacheDir.replace(/\\/g, '/')) {
-        return [
-          'index.ts',
-          'runtime-error-classification.test.ts',
-        ] as unknown as ReturnType<typeof fs.readdirSync>;
-      }
-      return [] as unknown as ReturnType<typeof fs.readdirSync>;
-    });
-
-    statSyncMock.mockImplementation((target) => {
-      const normalized = String(target).replace(/\\/g, '/');
-      if (
-        normalized === sourceDir.replace(/\\/g, '/') ||
-        normalized === cacheDir.replace(/\\/g, '/')
-      ) {
-        return {
-          isDirectory: () => true,
-          mtimeMs: 1,
-        } as unknown as ReturnType<typeof fs.statSync>;
-      }
-      return {
-        isDirectory: () => false,
-        mtimeMs: normalized === cachedIndex.replace(/\\/g, '/') ? 999 : 1,
-      } as unknown as ReturnType<typeof fs.statSync>;
-    });
-
-    readFileSyncMock.mockImplementation((target) => {
-      const normalized = String(target).replace(/\\/g, '/');
-      if (normalized === sourceIndex.replace(/\\/g, '/')) {
-        return 'export const sourceVersion = "new";' as unknown as ReturnType<
-          typeof fs.readFileSync
-        >;
-      }
-      if (normalized === cachedIndex.replace(/\\/g, '/')) {
-        return 'export const sourceVersion = "old";' as unknown as ReturnType<
-          typeof fs.readFileSync
-        >;
-      }
-      if (normalized === cachedStaleTest.replace(/\\/g, '/')) {
-        return "import { describe } from 'vitest';" as unknown as ReturnType<
-          typeof fs.readFileSync
-        >;
-      }
-      return '' as unknown as ReturnType<typeof fs.readFileSync>;
-    });
-
     const onOutput = vi.fn(async () => {});
     const resultPromise = runContainerAgent(
       testGroup,
@@ -710,8 +881,8 @@ describe('container-runner timeout behavior', () => {
 
     emitOutputMarker(fakeProc, {
       status: 'success',
-      result: 'synced',
-      newSessionId: 'session-sync',
+      result: 'started',
+      newSessionId: 'session-canonical-runner',
     });
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
@@ -719,16 +890,14 @@ describe('container-runner timeout behavior', () => {
 
     const result = await resultPromise;
     expect(result.status).toBe('success');
-    expect(fs.rmSync).toHaveBeenCalledWith(cacheDir, {
-      recursive: true,
-      force: true,
-    });
-    expect(fs.cpSync).toHaveBeenCalledWith(sourceDir, cacheDir, {
-      recursive: true,
-    });
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
-      syncMetadata,
-      expect.stringContaining('"sourceTreeHash"'),
+    const lastArgs = vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[];
+    const normalizedArgs = lastArgs.join(' ').replace(/\\/g, '/');
+    expect(normalizedArgs).toContain(
+      `${sourceDir.replace(/\\/g, '/')}:/app/src:ro`,
     );
+    expect(normalizedArgs).not.toContain(
+      `${cacheDir.replace(/\\/g, '/')}:/app/src`,
+    );
+    expect(fs.cpSync).not.toHaveBeenCalled();
   });
 });

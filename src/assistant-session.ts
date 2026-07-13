@@ -3,13 +3,35 @@ import type { AssistantRequestRoute } from './assistant-routing.js';
 const DEAD_ASSISTANT_SESSION_PATTERN =
   /no conversation found with session id(?::|\s)\s*[a-z0-9-]+/i;
 
+export type AssistantCapabilityLane =
+  | 'direct-assistant'
+  | 'protected'
+  | 'control'
+  | 'execution';
+
+export function getAssistantCapabilityLane(
+  route?: AssistantRequestRoute,
+): AssistantCapabilityLane {
+  if (route === 'protected_assistant') return 'protected';
+  if (route === 'control_plane') return 'control';
+  if (route === 'advanced_helper' || route === 'code_plane') {
+    return 'execution';
+  }
+  return 'direct-assistant';
+}
+
 export function getAssistantSessionStorageKey(
   groupFolder: string,
   route?: AssistantRequestRoute,
 ): string {
-  return route === 'direct_assistant' || route === 'protected_assistant'
-    ? `${groupFolder}::${route}`
-    : groupFolder;
+  const lane = getAssistantCapabilityLane(route);
+  return `${groupFolder}::${lane.replace(/-/g, '_')}`;
+}
+
+export function getAssistantSessionHomeFlavor(
+  route?: AssistantRequestRoute,
+): AssistantCapabilityLane {
+  return getAssistantCapabilityLane(route);
 }
 
 export function isDeadAssistantSessionErrorText(

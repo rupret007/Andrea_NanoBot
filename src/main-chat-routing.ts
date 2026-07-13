@@ -1,4 +1,8 @@
 import type { NewMessage } from './types.js';
+import {
+  assistantCapabilityKey,
+  type AssistantRequestPolicy,
+} from './assistant-routing.js';
 
 export type MainChatSessionState =
   | 'inactive'
@@ -13,6 +17,74 @@ export type MainChatRoutingDecision =
   | { kind: 'pipe_active_session' };
 
 type RoutingMessage = Pick<NewMessage, 'content' | 'reply_to_id'>;
+
+const EXACT_CAPABILITY_CONTINUATIONS = new Set([
+  'yes',
+  'yeah',
+  'yep',
+  'ok',
+  'okay',
+  'sure',
+  'sounds good',
+  'please do',
+  'do it',
+  'go ahead',
+  'continue',
+  'retry',
+  'again',
+  'next',
+  'go on',
+  'keep going',
+  'carry on',
+  'resume',
+  'enable it',
+  'disable it',
+  'install it',
+  'stop it',
+  'pause it',
+  'resume it',
+  'sync it',
+  'that one',
+  'this one',
+  'the first one',
+  'the second one',
+  'use that',
+  'use this',
+]);
+
+function isExactCapabilityContinuation(content: string): boolean {
+  const normalized = content
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/u, '')
+    .trim();
+  return EXACT_CAPABILITY_CONTINUATIONS.has(normalized);
+}
+
+export function shouldPipeToActiveAssistant(params: {
+  messages: RoutingMessage[];
+  incomingPolicy: AssistantRequestPolicy;
+  activeCapabilityKey: string | null;
+}): boolean {
+  if (!params.activeCapabilityKey || params.messages.length === 0) return false;
+  if (
+    assistantCapabilityKey(params.incomingPolicy) === params.activeCapabilityKey
+  ) {
+    return true;
+  }
+
+  // Only bounded acknowledgements and direct-route reply context may finish
+  // inside the already-classified active boundary. A prefix such as "okay" on
+  // a new ask is not enough to inherit execution tools.
+  return (
+    params.incomingPolicy.route === 'direct_assistant' &&
+    params.messages.every(
+      (message) =>
+        Boolean(message.reply_to_id) ||
+        isExactCapabilityContinuation(message.content),
+    )
+  );
+}
 
 function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;

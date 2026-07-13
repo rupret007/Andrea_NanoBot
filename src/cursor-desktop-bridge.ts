@@ -62,6 +62,13 @@ interface SpawnedRun {
   onError: (handler: (err: Error) => void) => void;
 }
 
+interface CursorDesktopSpawnSpec {
+  command: string;
+  args: string[];
+  cwd: string;
+  shell: false;
+}
+
 interface CursorDesktopBridgeDeps {
   createRun?: (options: {
     cliPath: string;
@@ -210,9 +217,8 @@ function resolveCursorDesktopCliMode(cliPath: string): CursorDesktopCliMode {
 }
 
 function shouldUseShellForCursorDesktopCli(cliPath: string): boolean {
-  if (process.platform !== 'win32') return false;
-  const normalized = cursorCliBasename(cliPath);
-  return normalized.endsWith('.cmd') || normalized.endsWith('.bat');
+  void cliPath;
+  return false;
 }
 
 function buildCursorDesktopCliArgs(options: {
@@ -238,6 +244,35 @@ function buildCursorDesktopCliArgs(options: {
   return args;
 }
 
+function buildCursorDesktopSpawnSpec(
+  options: {
+    cliPath: string;
+    cwd: string;
+    promptText: string;
+    model?: string | null;
+    resumeSessionId?: string | null;
+    force: boolean;
+  },
+  platform: NodeJS.Platform = process.platform,
+): CursorDesktopSpawnSpec {
+  const normalized = cursorCliBasename(options.cliPath);
+  if (
+    platform === 'win32' &&
+    (normalized.endsWith('.cmd') || normalized.endsWith('.bat'))
+  ) {
+    throw new Error(
+      'Windows Cursor desktop execution requires an executable CLI path; .cmd and .bat wrappers are refused because prompts must never cross a command shell.',
+    );
+  }
+
+  return {
+    command: options.cliPath,
+    args: buildCursorDesktopCliArgs(options),
+    cwd: options.cwd,
+    shell: false,
+  };
+}
+
 function createChildRun(options: {
   cliPath: string;
   cwd: string;
@@ -246,12 +281,14 @@ function createChildRun(options: {
   resumeSessionId?: string | null;
   force: boolean;
 }): SpawnedRun {
-  const args = buildCursorDesktopCliArgs(options);
+  const spec = buildCursorDesktopSpawnSpec(options);
 
-  const child = spawn(options.cliPath, args, {
-    cwd: options.cwd,
+  // The spawn spec rejects Windows shell wrappers and always keeps prompt text in one argv value.
+  // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
+  const child = spawn(spec.command, spec.args, {
+    cwd: spec.cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: shouldUseShellForCursorDesktopCli(options.cliPath),
+    shell: spec.shell,
   });
 
   return {
@@ -1263,6 +1300,7 @@ if (isDirectRun) {
 
 export {
   buildCursorDesktopCliArgs,
+  buildCursorDesktopSpawnSpec,
   resolveCursorDesktopCliMode,
   shouldUseShellForCursorDesktopCli,
 };

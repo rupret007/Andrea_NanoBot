@@ -50,11 +50,33 @@ const tokens = listAgentRuntimeResumeTokens({
 });
 const replay = buildAgentRuntimeReplayPacket(runtime.run.runtimeRunId);
 
-assert.ok(checkpoints.some((checkpoint) => checkpoint.status === 'interrupted'));
+assert.ok(
+  checkpoints.some((checkpoint) => checkpoint.status === 'interrupted'),
+);
 assert.ok(writes.some((write) => write.status === 'pending'));
-assert.ok(writes.every((write) => write.appliedAt === null || write.status === 'applied'));
-assert.ok(interrupts.some((interrupt) => interrupt.interruptKind === 'approval_required'));
-assert.ok(tokens.some((token) => token.status === 'active'));
+assert.ok(
+  writes.every(
+    (write) => write.appliedAt === null || write.status === 'applied',
+  ),
+);
+assert.ok(
+  interrupts.some(
+    (interrupt) => interrupt.interruptKind === 'approval_required',
+  ),
+);
+assert.equal(
+  tokens.some((token) => token.status === 'active'),
+  false,
+  'legacy Runtime Spine token projections must never remain active',
+);
+assert.ok(
+  tokens.some(
+    (token) =>
+      token.status === 'revoked' &&
+      token.safeStateJson.includes('durable_grant_required'),
+  ),
+  'approval continuation must require a scoped durable grant',
+);
 assert.ok(
   replay.runtimeWrites.some((write) => write.status === 'pending'),
   'replay packet should include pending writes',
@@ -63,7 +85,14 @@ assert.equal(replay.privacy.rawPromptsStored, false);
 assert.equal(replay.privacy.rawPrivateBodiesStored, false);
 assert.equal(replay.privacy.hiddenReasoningStored, false);
 
-const serialized = JSON.stringify({ runtime, checkpoints, writes, interrupts, tokens, replay });
+const serialized = JSON.stringify({
+  runtime,
+  checkpoints,
+  writes,
+  interrupts,
+  tokens,
+  replay,
+});
 assert.doesNotMatch(serialized, SECRET_RE);
 
 console.log(
@@ -72,7 +101,8 @@ console.log(
       status: 'pass',
       runtimeRunId: runtime.run.runtimeRunId,
       checkpointCount: checkpoints.length,
-      pendingWrites: writes.filter((write) => write.status === 'pending').length,
+      pendingWrites: writes.filter((write) => write.status === 'pending')
+        .length,
       interruptCount: interrupts.length,
       resumeTokens: tokens.length,
       nextAction: runtime.report.nextAction,

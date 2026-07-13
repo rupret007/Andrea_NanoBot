@@ -373,6 +373,16 @@ export async function processTaskIpc(
   switch (data.type) {
     case 'schedule_task':
       if (
+        data.script !== undefined &&
+        (typeof data.script !== 'string' || data.script.trim().length > 0)
+      ) {
+        logger.warn(
+          { sourceGroup },
+          'Rejected assistant task creation with an unapproved script',
+        );
+        break;
+      }
+      if (
         data.prompt &&
         data.schedule_type &&
         data.schedule_value &&
@@ -526,6 +536,16 @@ export async function processTaskIpc(
 
     case 'update_task':
       if (data.taskId) {
+        if (
+          data.script !== undefined &&
+          (typeof data.script !== 'string' || data.script.trim().length > 0)
+        ) {
+          logger.warn(
+            { taskId: data.taskId, sourceGroup },
+            'Rejected assistant task update with an unapproved script',
+          );
+          break;
+        }
         const task = getTaskById(data.taskId);
         if (!task) {
           logger.warn(

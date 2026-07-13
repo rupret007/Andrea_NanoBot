@@ -46,6 +46,8 @@ import {
   recordAgentRuntimeTruthAudit,
   type AgentRuntimeSpineResult,
 } from './agent-runtime-spine.js';
+import { linkDurableWorkProjection } from './durable-work-continuity.js';
+import { repositoryExecutionTargetScopeKey } from './repository-execution-scope.js';
 import { runTruthEngine } from './truth-engine.js';
 import {
   beginVerifiedDeepWorkForTurn,
@@ -203,6 +205,7 @@ export interface TurnAgentHarnessContext {
   runtimeSpine?: AgentRuntimeSpineResult | null;
   platformHoldReply?: string | null;
   actorId?: string | null;
+  chatId?: string | null;
   personalContextPacket?: PersonalContextPacket | null;
   verifiedDeepWorkPacket?: VerifiedDeepWorkPacket | null;
 }
@@ -217,6 +220,7 @@ export interface BeginTurnAgentHarnessInput {
   capabilityId?: string | null;
   knownBlockers?: string[];
   actorId?: string | null;
+  chatId?: string | null;
 }
 
 export interface EvaluateTurnReplyInput {
@@ -1031,18 +1035,38 @@ export async function beginTurnAgentHarness(
           generatedAt: new Date().toISOString(),
         })
       : null;
+  const repositorySnapshot =
+    runOrigin === 'live' && taskFamily === 'code'
+      ? captureCurrentRepositorySnapshot()
+      : null;
+  let repositoryTargetScopeKey: string | undefined;
+  if (repositorySnapshot?.root) {
+    try {
+      repositoryTargetScopeKey = repositoryExecutionTargetScopeKey(
+        repositorySnapshot.root,
+      );
+      // An uninspectable repository remains unbound and cannot later satisfy
+      // the positive execution proof.
+      // eslint-disable-next-line no-catch-all/no-catch-all
+    } catch {
+      repositoryTargetScopeKey = undefined;
+    }
+  }
   const runtimeSpine =
     runOrigin === 'live'
       ? beginAgentRuntimeSpineRun({
           turnId: input.turnId,
           channel: input.channel,
           groupFolder: input.groupFolder,
+          actorId: input.actorId,
+          chatId: input.chatId,
           requestRoute: input.requestRoute,
           taskFamily,
           goal: buildSanitizedGoal(input, taskFamily),
           cognitiveRun,
           logicRun,
           providerCouncil,
+          targetScopeKey: repositoryTargetScopeKey,
         })
       : null;
   const verifiedDeepWorkPacket =
@@ -1063,11 +1087,16 @@ export async function beginTurnAgentHarness(
           knownBlockers: input.knownBlockers,
           resumePendingApproval: input.requestRoute === 'repair_approval',
           repositorySnapshotProvider:
-            taskFamily === 'code'
-              ? () => captureCurrentRepositorySnapshot()
-              : undefined,
+            taskFamily === 'code' ? () => repositorySnapshot : undefined,
         })
       : null;
+  if (runtimeSpine?.durableWork && verifiedDeepWorkPacket) {
+    linkDurableWorkProjection(
+      runtimeSpine.durableWork.workId,
+      'deep_work_packet',
+      verifiedDeepWorkPacket.packetId,
+    );
+  }
   return {
     turnId: input.turnId,
     channel: input.channel,
@@ -1086,6 +1115,7 @@ export async function beginTurnAgentHarness(
     platformHoldReply:
       councilHoldReply || buildPlatformHoldReply(deliberation, contextCompile),
     actorId: input.actorId,
+    chatId: input.chatId,
     personalContextPacket,
     verifiedDeepWorkPacket,
   };
@@ -1976,6 +2006,7 @@ export function reconcileTurnRuntimeEvidence(
       evaluation?.summary ||
       `Runtime ${input.runtimeStatus} on ${input.routeUsed}; no delivered answer evaluation was available.`,
     blocker: input.blockerClass || null,
+    durableWorkId: context.runtimeSpine?.durableWork?.workId || null,
   });
   return context.verifiedDeepWorkPacket;
 }

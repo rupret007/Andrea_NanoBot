@@ -2532,6 +2532,13 @@ export interface CognitiveApprovalPacket {
   approvalChannel?: string | null;
   approvalKey?: string | null;
   expiresAt?: string | null;
+  approvalVersion?: number;
+  scopeDigest?: string | null;
+  summaryDigest?: string | null;
+  durableWorkId?: string | null;
+  durableCheckpointId?: string | null;
+  planVersion?: number | null;
+  targetScopeDigest?: string | null;
   decisionJson: string;
   privacyJson: string;
 }
@@ -4016,6 +4023,258 @@ export interface AgentRuntimeResumeToken {
   safeStateJson: string;
   expiresAt?: string | null;
   usedAt?: string | null;
+  privacyJson: string;
+}
+
+export type DurableWorkStatus =
+  | 'proposed'
+  | 'inspecting'
+  | 'planned'
+  | 'ready'
+  | 'awaiting_approval'
+  | 'executing'
+  | 'verifying'
+  | 'completed'
+  | 'blocked'
+  | 'interrupted'
+  | 'needs_replan'
+  | 'delivery_unverified'
+  | 'verification_failed'
+  | 'cancelled'
+  | 'superseded';
+
+export interface DurableWorkUnit {
+  workId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: DurableWorkStatus;
+  version: number;
+  planVersion: number;
+  originTurnHash: string;
+  authorizedSurface: string;
+  ownerScopeHash: string;
+  chatScopeHash: string;
+  groupScopeHash: string;
+  channel: string;
+  goalSummary: string;
+  missionId?: string | null;
+  goalId?: string | null;
+  runtimeRunId?: string | null;
+  agentOSEpisodeId?: string | null;
+  trajectoryId?: string | null;
+  cognitiveRunId?: string | null;
+  deepWorkPacketId?: string | null;
+  approvalPacketId?: string | null;
+  approvalVersion?: number | null;
+  checkpointHeadId?: string | null;
+  planId?: string | null;
+  targetScopeHash: string;
+  executionEvidenceRefsJson: string;
+  deliveryState:
+    | 'not_started'
+    | 'pending'
+    | 'delivered'
+    | 'partial'
+    | 'unknown';
+  ownerReviewId?: string | null;
+  skillCandidateId?: string | null;
+  leaseId?: string | null;
+  leaseExpiresAt?: string | null;
+  attemptCount: number;
+  expiresAt?: string | null;
+  interruptedAt?: string | null;
+  completedAt?: string | null;
+  nextAction: string;
+  privacyJson: string;
+}
+
+export interface DurableWorkLink {
+  linkId: string;
+  workId: string;
+  linkKind:
+    | 'mission'
+    | 'goal'
+    | 'runtime_run'
+    | 'agent_os_episode'
+    | 'trajectory'
+    | 'cognitive_run'
+    | 'deep_work_packet'
+    | 'approval_packet'
+    | 'checkpoint'
+    | 'outcome'
+    | 'skill_candidate';
+  linkedId: string;
+  createdAt: string;
+  privacyJson: string;
+}
+
+export interface DurableWorkCheckpoint {
+  durableCheckpointId: string;
+  workId: string;
+  runtimeCheckpointId?: string | null;
+  parentCheckpointId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  status:
+    | 'open'
+    | 'interrupted'
+    | 'verification_needed'
+    | 'completed'
+    | 'superseded';
+  workVersion: number;
+  planVersion: number;
+  sequence: number;
+  completedNodeIdsJson: string;
+  pendingNodeIdsJson: string;
+  uncertainNodeIdsJson: string;
+  dependencyIdsJson: string;
+  worldSignalStateJson: string;
+  approvalScopeJson: string;
+  executorScopeHash: string;
+  targetScopeHash: string;
+  preStateFingerprint?: string | null;
+  verifiedPostStateFingerprint?: string | null;
+  receiptIdsJson: string;
+  verificationRequirementsJson: string;
+  retryBudget: number;
+  attemptsUsed: number;
+  stopConditionsJson: string;
+  recoveryPolicy:
+    | 'inspect_then_resume'
+    | 'verify_unknown_effect'
+    | 'approval_required'
+    | 'manual_only';
+  nextSafeAction: string;
+  privacyJson: string;
+}
+
+export interface DurableResumeGrant {
+  grantId: string;
+  tokenHash: string;
+  workId: string;
+  checkpointId: string;
+  workVersion: number;
+  planVersion: number;
+  ownerScopeHash: string;
+  chatScopeHash: string;
+  groupScopeHash: string;
+  channel: string;
+  targetScopeHash: string;
+  actionClass: string;
+  approvalPacketId?: string | null;
+  approvalVersion?: number | null;
+  approvalScopeHash?: string | null;
+  inboundMessageHash?: string | null;
+  status: 'active' | 'consumed' | 'expired' | 'revoked';
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  consumedAt?: string | null;
+  revokedAt?: string | null;
+  consumedLeaseId?: string | null;
+  privacyJson: string;
+}
+
+export interface DurableWorkLease {
+  leaseId: string;
+  workId: string;
+  processGeneration: string;
+  workerScopeHash: string;
+  status: 'active' | 'released' | 'expired';
+  attempt: number;
+  acquiredAt: string;
+  heartbeatAt: string;
+  expiresAt: string;
+  releasedAt?: string | null;
+  privacyJson: string;
+}
+
+export interface DurableEffectReceipt {
+  receiptId: string;
+  workId: string;
+  checkpointId: string;
+  planVersion: number;
+  nodeId: string;
+  invocationId: string;
+  actionClass: string;
+  effectClass:
+    | 'read_only'
+    | 'repository_write'
+    | 'local_write'
+    | 'external_effect';
+  status: 'started' | 'succeeded' | 'failed' | 'partial' | 'unknown';
+  targetScopeHash: string;
+  grantId?: string | null;
+  approvalPacketId?: string | null;
+  approvalVersion?: number | null;
+  approvalScopeHash?: string | null;
+  preStateFingerprint?: string | null;
+  postStateFingerprint?: string | null;
+  verificationFingerprint?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  metadataJson: string;
+  privacyJson: string;
+}
+
+export interface DurableWorkEvent {
+  eventId: string;
+  workId: string;
+  createdAt: string;
+  eventKind:
+    | 'created'
+    | 'transition'
+    | 'checkpoint'
+    | 'grant_issued'
+    | 'grant_consumed'
+    | 'lease_acquired'
+    | 'lease_heartbeat'
+    | 'lease_released'
+    | 'receipt'
+    | 'reconciled'
+    | 'replanned'
+    | 'verified'
+    | 'owner_review';
+  fromStatus?: DurableWorkStatus | null;
+  toStatus?: DurableWorkStatus | null;
+  workVersion: number;
+  planVersion: number;
+  summary: string;
+  refsJson: string;
+  privacyJson: string;
+}
+
+export type DurableDecisionAction =
+  | 'inspect'
+  | 'clarify'
+  | 'execute'
+  | 'verify'
+  | 'fallback'
+  | 'stage_approval'
+  | 'replan'
+  | 'stop';
+
+export interface DurableAdaptiveDecision {
+  decisionId: string;
+  workId: string;
+  checkpointId?: string | null;
+  createdAt: string;
+  selectedAction: DurableDecisionAction;
+  confidence: number;
+  candidateScoresJson: string;
+  evidenceRefsJson: string;
+  assumptionsJson: string;
+  contradictionIdsJson: string;
+  staleSignalIdsJson: string;
+  missingSignalIdsJson: string;
+  approvalRequired: boolean;
+  verificationMethod: string;
+  stopCondition: string;
+  attemptLimit: number;
+  replanLimit: number;
+  costLimitUsd: number;
+  timeLimitMs: number;
+  summary: string;
   privacyJson: string;
 }
 

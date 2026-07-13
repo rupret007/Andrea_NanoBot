@@ -11,17 +11,17 @@ jobs:
     if: github.repository == 'qwibitai/nanoclaw'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/create-github-app-token@v1
+      - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         id: app-token
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           token: ${{ steps.app-token.outputs.token }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
@@ -33,11 +33,13 @@ jobs:
           badge-path: 'repo-tokens/badge.svg'
 
       - name: Commit if changed
+        env:
+          TOKEN_BADGE: ${{ steps.tokens.outputs.badge }}
         run: |
           git add README.md repo-tokens/badge.svg
           git diff --cached --quiet && exit 0
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "docs: update token count to ${{ steps.tokens.outputs.badge }}"
+          git commit -m "docs: update token count to $TOKEN_BADGE"
           git pull --rebase
           git push

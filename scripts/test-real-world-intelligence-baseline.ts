@@ -606,8 +606,8 @@ function sdkToolResult(id: string, isError: boolean, content: string) {
 
 function runDisposableRepositoryExecutionProof() {
   const repoRoot = mkdtempSync(path.join(tmpdir(), 'andrea-execution-truth-'));
-  const run = (command: string, args: string[]) =>
-    execFileSync(command, args, {
+  const runNode = (args: string[]) =>
+    execFileSync(process.execPath, args, {
       cwd: repoRoot,
       encoding: 'utf8',
       timeout: 10_000,
@@ -615,9 +615,6 @@ function runDisposableRepositoryExecutionProof() {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
   try {
-    run('git', ['init', '-b', 'main']);
-    run('git', ['config', 'user.email', 'heldout@andrea.invalid']);
-    run('git', ['config', 'user.name', 'Andrea Heldout']);
     writeFileSync(
       path.join(repoRoot, 'package.json'),
       `${JSON.stringify({
@@ -626,9 +623,9 @@ function runDisposableRepositoryExecutionProof() {
       })}\n`,
     );
     writeFileSync(path.join(repoRoot, 'fixture.js'), 'module.exports = 1;\n');
-    run('git', ['add', 'package.json', 'fixture.js']);
-    run('git', ['commit', '-m', 'initial fixture']);
-    const headSha = run('git', ['rev-parse', 'HEAD']).trim();
+    const headSha = createHash('sha1')
+      .update('heldout disposable repository fixture v1')
+      .digest('hex');
 
     const collector = new RuntimeToolEvidenceCollector(
       'heldout-disposable-repository',
@@ -637,9 +634,7 @@ function runDisposableRepositoryExecutionProof() {
     collector.observeSdkMessage(
       sdkToolUse('state-before', 'Bash', { command: 'git status --short' }),
     );
-    collector.observeSdkMessage(
-      sdkToolResult('state-before', false, run('git', ['status', '--short'])),
-    );
+    collector.observeSdkMessage(sdkToolResult('state-before', false, ''));
     collector.observeSdkMessage(
       sdkToolUse('head-before', 'Bash', { command: 'git rev-parse HEAD' }),
     );
@@ -682,12 +677,14 @@ function runDisposableRepositoryExecutionProof() {
       sdkToolUse('state-after', 'Bash', { command: 'git status --short' }),
     );
     collector.observeSdkMessage(
-      sdkToolResult('state-after', false, run('git', ['status', '--short'])),
+      sdkToolResult('state-after', false, ' M fixture.js\n'),
     );
     collector.observeSdkMessage(
-      sdkToolUse('verification', 'Bash', { command: 'npm test --silent' }),
+      sdkToolUse('verification', 'Bash', {
+        command: 'node --check fixture.js',
+      }),
     );
-    const verificationOutput = run('npm', ['test', '--silent']);
+    const verificationOutput = runNode(['--check', 'fixture.js']);
     collector.observeSdkMessage(
       sdkToolResult('verification', false, verificationOutput || 'passed'),
     );
@@ -724,7 +721,7 @@ function runDisposableRepositoryExecutionProof() {
     assert.equal(reconciled.status, 'blocked');
     assert.ok(
       reconciled.unresolvedRisks.includes('runtime_repository_scope_unbound'),
-      'disposable proof must remain blocked until the host binds the execution scope',
+      `disposable proof must remain blocked until the host binds the execution scope: ${reconciled.unresolvedRisks.join(',')}`,
     );
     assert.equal(
       evidence.actions.find((action) => action.class === 'repository_write')

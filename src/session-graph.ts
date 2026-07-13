@@ -1198,7 +1198,8 @@ function addDeterministicEdges(
       new Map(linkedNodes.map((item) => [item.nodeId, item])).values(),
     );
     if (unique.length < 2 || unique.length > 12) continue;
-    for (let index = 0; index < unique.length - 1; index += 1) {
+    const lastIndex = unique.length - 1;
+    for (let index = 0; index < lastIndex; index += 1) {
       const left = unique[index];
       const right = unique[index + 1];
       const kind: SessionGraphEdgeKind = key.startsWith('thread:')
@@ -2194,7 +2195,6 @@ export function isSessionGraphNaturalRequest(text: string): boolean {
     normalized === 'what belongs together?' ||
     normalized === 'what belongs together' ||
     normalized === 'what are you working on?' ||
-    normalized === 'resume that' ||
     normalized === 'what should you verify next?' ||
     normalized === 'why did you choose that?' ||
     /\b(session graph|continuity layer|connected sessions|belongs together)\b/i.test(

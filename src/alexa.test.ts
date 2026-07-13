@@ -56,9 +56,7 @@ import type { DelegationRuleRecord } from './types.js';
 
 vi.mock('./alexa-bridge.js', async () => {
   const actual =
-    await vi.importActual<typeof import('./alexa-bridge.js')>(
-      './alexa-bridge.js',
-    );
+    await vi.importActual<Record<string, unknown>>('./alexa-bridge.js');
   return {
     ...actual,
     runAlexaAssistantTurn: vi.fn(),
@@ -66,7 +64,7 @@ vi.mock('./alexa-bridge.js', async () => {
 });
 
 vi.mock('./daily-companion.js', async () => {
-  const actual = await vi.importActual<typeof import('./daily-companion.js')>(
+  const actual = await vi.importActual<Record<string, unknown>>(
     './daily-companion.js',
   );
   return {
@@ -76,7 +74,7 @@ vi.mock('./daily-companion.js', async () => {
 });
 
 vi.mock('./google-calendar.js', async () => {
-  const actual = await vi.importActual<typeof import('./google-calendar.js')>(
+  const actual = await vi.importActual<Record<string, unknown>>(
     './google-calendar.js',
   );
   return {

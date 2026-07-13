@@ -4,7 +4,7 @@
  * Other channels discover group names at runtime — this step auto-skips for them.
  * Replaces 05-sync-groups.sh + 05b-list-groups.sh
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -12,6 +12,7 @@ import Database from 'better-sqlite3';
 
 import { STORE_DIR } from '../src/config.js';
 import { logger } from '../src/logger.js';
+import { buildNpmRunInvocation } from './npm-cli.js';
 import { emitStatus } from './status.js';
 
 function parseArgs(args: string[]): { list: boolean; limit: number } {
@@ -87,9 +88,13 @@ async function syncGroups(projectRoot: string): Promise<void> {
   logger.info('Building TypeScript');
   let buildOk = false;
   try {
-    execSync('npm run build', {
+    const build = buildNpmRunInvocation('build');
+    // The shared spec validates npm-cli.js, uses argv, and always disables the shell.
+    // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
+    execFileSync(build.command, build.args, {
       cwd: projectRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
+      shell: build.shell,
     });
     buildOk = true;
     logger.info('Build succeeded');
@@ -182,7 +187,7 @@ sock.ev.on('connection.update', async (update) => {
     const tmpScript = path.join(projectRoot, '.tmp-group-sync.mjs');
     fs.writeFileSync(tmpScript, syncScript, 'utf-8');
     try {
-      const output = execSync(`node ${tmpScript}`, {
+      const output = execFileSync(process.execPath, [tmpScript], {
         cwd: projectRoot,
         encoding: 'utf-8',
         timeout: 45000,

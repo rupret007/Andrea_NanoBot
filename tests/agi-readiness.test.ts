@@ -1,5 +1,4 @@
-import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -266,29 +265,32 @@ describe('AGI readiness', () => {
   });
 
   it('does not call a clean synchronized main checkout publish-blocked', async () => {
-    const repo = await mkdtemp(join(tmpdir(), 'agi-readiness-main-'));
-    try {
-      execFileSync('git', ['init', '-b', 'main'], { cwd: repo });
-      execFileSync('git', ['config', 'user.name', 'Readiness Test'], {
-        cwd: repo,
-      });
-      execFileSync('git', ['config', 'user.email', 'test@example.invalid'], {
-        cwd: repo,
-      });
-      await writeFile(join(repo, 'README.md'), 'ready\n', 'utf8');
-      execFileSync('git', ['add', 'README.md'], { cwd: repo });
-      execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo });
+    const status = collectPublishStatus({
+      cwd: '/fixtures/clean-main',
+      commandRunner: (command, args) => {
+        const invocation = [command, ...args].join(' ');
+        const stdout = new Map([
+          ['git branch --show-current', 'main'],
+          [
+            'git remote get-url origin',
+            'https://github.com/example/andrea.git',
+          ],
+          ['git rev-list --left-right --count origin/main...HEAD', '0 0'],
+          ['git status --short', ''],
+          ['gh --version', 'gh version fixture'],
+          ['gh auth status', 'authenticated'],
+        ]).get(invocation);
+        return stdout === undefined
+          ? { ok: false, stdout: '', stderr: 'unexpected fixture command' }
+          : { ok: true, stdout, stderr: '' };
+      },
+    });
 
-      const status = collectPublishStatus({ cwd: repo });
-
-      expect(status.branch).toBe('main');
-      expect(status.aheadBy).toBe(0);
-      expect(status.blockers).not.toContain(
-        'Create or switch to a codex/* branch before publishing.',
-      );
-    } finally {
-      await rm(repo, { recursive: true, force: true });
-    }
+    expect(status.branch).toBe('main');
+    expect(status.aheadBy).toBe(0);
+    expect(status.blockers).not.toContain(
+      'Create or switch to a codex/* branch before publishing.',
+    );
   });
 });
 

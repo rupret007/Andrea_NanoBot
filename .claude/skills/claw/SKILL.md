@@ -1,133 +1,27 @@
 ---
 name: claw
-description: Install the claw CLI tool — run NanoClaw agent containers from the command line without opening a chat app.
+description: Retired compatibility stub for the old alternate container runner. Do not install or execute it; use Andrea's canonical service and route-aware container runtime.
 ---
 
-# claw — NanoClaw CLI
+# claw (retired)
 
-`claw` is a Python CLI that sends prompts directly to a NanoClaw agent container from the terminal. It reads registered groups from the NanoClaw database, picks up secrets from `.env`, and pipes a JSON payload into a container run — no chat app required.
+The old `claw` terminal helper bypassed Andrea's canonical host policy,
+route-specific capability boundary, trusted control view, and release
+provenance. It is intentionally inert.
 
-## What it does
+Do not copy or symlink its bundled script, invoke it directly, or use it for
+development/testing. The preserved script fails closed so historical caches or
+old instructions cannot start an alternate agent runner.
 
-- Send a prompt to any registered group by name, folder, or JID
-- Default target is the main group (no `-g` needed for most use)
-- Resume a previous session with `-s <session-id>`
-- Read prompts from stdin (`--pipe`) for scripting and piping
-- List all registered groups with `--list-groups`
-- Auto-detects `docker`, `podman`, or `container` runtime (or override with `--runtime`)
-- Prints the agent's response to stdout; session ID to stderr
-- Verbose mode (`-v`) shows the command, redacted payload, and exit code
+Use only the repository-owned paths:
 
-## Prerequisites
+- normal assistant work through the canonical Andrea service;
+- container validation through `npm run check:container-contract`,
+  `npm run check:container-canary`, and `npm run check:container-mounts`;
+- explicitly classified code/advanced work through Andrea's enforced request
+  policies.
 
-- Python 3.8 or later
-- NanoClaw installed with a built and tagged container image (`nanoclaw-agent:latest`)
-- One of `podman`, `docker`, or `container` (Apple Container, macOS 15+) available in `PATH`
-
-## Install
-
-Run this skill from within the NanoClaw directory. The script auto-detects its location, so the symlink always points to the right place.
-
-### 1. Copy the script
-
-```bash
-mkdir -p scripts
-cp "${CLAUDE_SKILL_DIR}/scripts/claw" scripts/claw
-chmod +x scripts/claw
-```
-
-### 2. Symlink into PATH
-
-```bash
-mkdir -p ~/bin
-ln -sf "$(pwd)/scripts/claw" ~/bin/claw
-```
-
-Make sure `~/bin` is in `PATH`. Add this to `~/.zshrc` or `~/.bashrc` if needed:
-
-```bash
-export PATH="$HOME/bin:$PATH"
-```
-
-Then reload the shell:
-
-```bash
-source ~/.zshrc   # or ~/.bashrc
-```
-
-### 3. Verify
-
-```bash
-claw --list-groups
-```
-
-You should see registered groups. If NanoClaw isn't running or the database doesn't exist yet, the list will be empty — that's fine.
-
-## Usage Examples
-
-```bash
-# Send a prompt to the main group
-claw "What's on my calendar today?"
-
-# Send to a specific group by name (fuzzy match)
-claw -g "family" "Remind everyone about dinner at 7"
-
-# Send to a group by exact JID
-claw -j "120363336345536173@g.us" "Hello"
-
-# Resume a previous session
-claw -s abc123 "Continue where we left off"
-
-# Read prompt from stdin
-echo "Summarize this" | claw --pipe -g dev
-
-# Pipe a file
-cat report.txt | claw --pipe "Summarize this report"
-
-# List all registered groups
-claw --list-groups
-
-# Force a specific runtime
-claw --runtime docker "Hello"
-
-# Use a custom image tag (e.g. after rebuilding with a new tag)
-claw --image nanoclaw-agent:dev "Hello"
-
-# Verbose mode (debug info, secrets redacted)
-claw -v "Hello"
-
-# Custom timeout for long-running tasks
-claw --timeout 600 "Run the full analysis"
-```
-
-## Troubleshooting
-
-### "none of 'podman', 'docker', or 'container' were found"
-
-Install Docker Desktop or Apple Container (macOS 15+), or pass `--runtime` explicitly.
-
-### "no local secrets found and OneCLI is unreachable"
-
-The script checks `.env` first, then falls back to OneCLI availability. Ensure either:
-- `.env` contains one of `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`
-- or OneCLI is reachable and configured (`ONECLI_URL`, `onecli secrets list`)
-
-### Container times out
-
-The default timeout is 300 seconds. For longer tasks, pass `--timeout 600` (or higher). If the container consistently hangs, check that your `nanoclaw-agent:latest` image is up to date by running `./container/build.sh`.
-
-### "group not found"
-
-Run `claw --list-groups` to see what's registered. Group lookup does a fuzzy partial match on name and folder — if your query matches multiple groups, you'll get an error listing the ambiguous matches.
-
-### Container crashes mid-stream
-
-Containers run with `--rm` so they are automatically removed. If the agent crashes before emitting the output sentinel, `claw` falls back to printing raw stdout. Use `-v` to see what the container produced. Rebuild the image with `./container/build.sh` if crashes are consistent.
-
-### Override the NanoClaw directory
-
-If `claw` can't find your database or `.env`, set the `NANOCLAW_DIR` environment variable:
-
-```bash
-export NANOCLAW_DIR=/path/to/your/nanoclaw
-```
+Reactivation would require a new threat model, an enforceable route policy,
+credential/mount isolation, deterministic and real-container tests, and an
+explicit product decision. Do not reinterpret this compatibility stub as an
+available feature.

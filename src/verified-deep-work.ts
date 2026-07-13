@@ -2,7 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 import {
+  getDurableWorkCheckpoint,
+  getDurableWorkUnit,
   getVerifiedDeepWorkPacket,
+  listDurableEffectReceipts,
+  listDurableWorkLinks,
   listVerifiedDeepWorkPackets,
   upsertVerifiedDeepWorkPacket,
 } from './db.js';
@@ -54,17 +58,95 @@ function persist(packet: VerifiedDeepWorkPacket): VerifiedDeepWorkPacket {
   return packet;
 }
 
-export function captureCurrentRepositorySnapshot(
-  repoRoot = process.cwd(),
-  now = new Date(),
+function repositoryProofSequence(metadataJson: string): number | null {
+  try {
+    const metadata = JSON.parse(metadataJson) as Record<string, unknown>;
+    const match = String(metadata.resultCode || '').match(/:sequence:(\d+)$/);
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasBoundRepositoryExecutionProof(input: {
+  packet: VerifiedDeepWorkPacket;
+  durableWorkId?: string | null;
+  requiresWrite: boolean;
+}): boolean {
+  if (!input.durableWorkId || !input.packet.repository?.headSha) return false;
+  const work = getDurableWorkUnit(input.durableWorkId);
+  const checkpoint = work?.checkpointHeadId
+    ? getDurableWorkCheckpoint(work.checkpointHeadId)
+    : null;
+  if (
+    !work ||
+    !checkpoint ||
+    checkpoint.workId !== work.workId ||
+    checkpoint.planVersion !== work.planVersion ||
+    checkpoint.targetScopeHash !== work.targetScopeHash ||
+    !listDurableWorkLinks(work.workId).some(
+      (link) =>
+        link.linkKind === 'deep_work_packet' &&
+        link.linkedId === input.packet.packetId,
+    )
+  ) {
+    return false;
+  }
+  const expectedBase = `base_head:${input.packet.repository.headSha}:sequence:`;
+  const receipts = listDurableEffectReceipts({ workId: work.workId }).filter(
+    (receipt) => {
+      if (
+        receipt.checkpointId !== checkpoint.durableCheckpointId ||
+        receipt.planVersion !== work.planVersion ||
+        receipt.targetScopeHash !== work.targetScopeHash ||
+        receipt.status !== 'succeeded'
+      ) {
+        return false;
+      }
+      try {
+        const metadata = JSON.parse(receipt.metadataJson) as Record<
+          string,
+          unknown
+        >;
+        return (
+          metadata.receiptClass === 'repository_execution_scope_v1' &&
+          metadata.source === 'host_enforced_repository_scope' &&
+          String(metadata.resultCode || '').startsWith(expectedBase)
+        );
+      } catch {
+        return false;
+      }
+    },
+  );
+  const write = receipts.find(
+    (receipt) =>
+      receipt.effectClass === 'repository_write' &&
+      Boolean(receipt.preStateFingerprint) &&
+      Boolean(receipt.postStateFingerprint) &&
+      receipt.preStateFingerprint !== receipt.postStateFingerprint,
+  );
+  if (input.requiresWrite && !write) return false;
+  const writeSequence = write
+    ? repositoryProofSequence(write.metadataJson)
+    : -1;
+  const verification = receipts.find((receipt) => {
+    if (
+      !receipt.verificationFingerprint ||
+      receipt.effectClass !== 'read_only'
+    ) {
+      return false;
+    }
+    const sequence = repositoryProofSequence(receipt.metadataJson);
+    return sequence !== null && sequence > (writeSequence ?? -1);
+  });
+  return Boolean(verification);
+}
+
+export function captureRepositorySnapshotFromGitReader(
+  _repoRoot: string,
+  now: Date,
+  readGit: (args: string[]) => string,
 ): NonNullable<VerifiedDeepWorkPacket['repository']> | null {
-  const readGit = (args: string[]) =>
-    execFileSync('git', ['-C', repoRoot, ...args], {
-      encoding: 'utf8',
-      timeout: 2_000,
-      maxBuffer: 512 * 1024,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
   try {
     const root = readGit(['rev-parse', '--show-toplevel']);
     const branch = readGit(['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -90,6 +172,20 @@ export function captureCurrentRepositorySnapshot(
   } catch {
     return null;
   }
+}
+
+export function captureCurrentRepositorySnapshot(
+  repoRoot = process.cwd(),
+  now = new Date(),
+): NonNullable<VerifiedDeepWorkPacket['repository']> | null {
+  return captureRepositorySnapshotFromGitReader(repoRoot, now, (args) =>
+    execFileSync('git', ['-C', repoRoot, ...args], {
+      encoding: 'utf8',
+      timeout: 2_000,
+      maxBuffer: 512 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim(),
+  );
 }
 
 export function createVerifiedDeepWorkPacket(params: {
@@ -446,6 +542,7 @@ export function reconcileVerifiedDeepWorkExecution(params: {
   evidenceGap: 'none' | 'minor' | 'major' | 'blocked';
   outcomeSummary: string;
   blocker?: string | null;
+  durableWorkId?: string | null;
   now?: Date;
 }): VerifiedDeepWorkPacket {
   let packet = getVerifiedDeepWorkPacket(params.packetId);
@@ -763,7 +860,14 @@ export function reconcileVerifiedDeepWorkExecution(params: {
       now,
     });
   }
-  if (packet.taskFamily === 'coding') {
+  if (
+    packet.taskFamily === 'coding' &&
+    !hasBoundRepositoryExecutionProof({
+      packet,
+      durableWorkId: params.durableWorkId,
+      requiresWrite: requiresRepositoryWrite,
+    })
+  ) {
     return evidenceRiskUpdate({
       packet,
       risk: 'runtime_repository_scope_unbound',

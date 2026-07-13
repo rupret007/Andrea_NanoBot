@@ -2,6 +2,12 @@ import { buildAgentOSReport } from './agent-os.js';
 import type { AndreaPlatformProviderCouncilResult } from './andrea-platform-bridge.js';
 import type { CognitiveKernelResult } from './cognitive-kernel.js';
 import { redactCouncilText } from './council-safety.js';
+import {
+  commitDurableCheckpointCAS,
+  createOrLoadDurableWork,
+  shouldCreateDurableWork,
+  stageDurableWorkApproval,
+} from './durable-work-continuity.js';
 import type { IntegrationDoctorReport } from './integration-doctor.js';
 import {
   getAgentOSEpisode,
@@ -76,6 +82,7 @@ import type {
   AgentRuntimeSpineReport,
   AgentRuntimeStep,
   AgentRuntimeWrite,
+  DurableWorkUnit,
   CognitiveReplayPacket,
   TruthEngineReport,
   TruthVerdict,
@@ -87,6 +94,10 @@ export interface BeginAgentRuntimeSpineInput {
   turnId?: string | null;
   channel?: string | null;
   groupFolder?: string | null;
+  actorId?: string | null;
+  chatId?: string | null;
+  targetScopeKey?: string | null;
+  explicitlyDurable?: boolean;
   requestRoute?: string | null;
   taskFamily?: string | null;
   goal: string;
@@ -103,6 +114,7 @@ export interface AgentRuntimeSpineResult {
   report: AgentRuntimeSpineReport;
   worldReport: WorldModelDoctorReport;
   supervisor?: SupervisorKernelResult | null;
+  durableWork?: DurableWorkUnit | null;
 }
 
 export interface RecordAgentRuntimeTruthInput {
@@ -163,10 +175,48 @@ function taskFamilyForGoal(goal: string, fallback?: string | null): string {
   return 'general';
 }
 
+export function classifyRuntimeMutatingAction(goal: string): string | null {
+  const normalized = String(goal || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  if (!normalized) return null;
+  if (
+    /\b(create|write|update|change|move|reschedule|schedule|cancel|delete)\b.*\b(calendar|event|meeting)\b|\b(calendar|event|meeting)\b.*\b(create|write|update|change|move|reschedule|schedule|cancel|delete)\b|\bschedule it\b|\bwrite calendar\b/.test(
+      normalized,
+    )
+  )
+    return 'calendar_write';
+  if (/\b(buy|purchase|order)\b/.test(normalized)) return 'purchase';
+  if (/\bpush\b/.test(normalized)) return 'push';
+  if (/\bcommit\b/.test(normalized)) return 'commit';
+  if (/\bdeploy\b/.test(normalized)) return 'deploy';
+  if (/\b(migrate|migration)\b/.test(normalized)) return 'migration';
+  if (
+    /\b(install|upgrade|update|remove|change)\b.*\b(dependency|dependencies|package|packages)\b|\b(dependency|dependencies|package|packages)\b.*\b(install|upgrade|update|remove|change)\b/.test(
+      normalized,
+    )
+  )
+    return 'dependency_change';
+  if (
+    /\b(restart|stop service|start service|change service|admin)\b/.test(
+      normalized,
+    )
+  )
+    return 'admin';
+  if (/\bsend\b/.test(normalized)) return 'send';
+  if (/\b(delete|remove|cancel)\b/.test(normalized)) return 'delete';
+  if (
+    /\b(edit|write|modify|change|fix|implement|patch|create)\b.*\b(file|code|repository|repo|source|readme|docs?|test)\b|\b(file|code|repository|repo|source|readme|docs?|test)\b.*\b(edit|write|modify|change|fix|implement|patch|create)\b/.test(
+      normalized,
+    )
+  )
+    return 'repository_write';
+  return null;
+}
+
 function mutatingActionNeeded(goal: string): boolean {
-  return /\b(send|delete|remove|buy|purchase|order|commit|push|restart|stop service|change service|create event|schedule it|write calendar|cancel)\b/i.test(
-    goal,
-  );
+  return classifyRuntimeMutatingAction(goal) !== null;
 }
 
 function sourceLayerFromStep(step: string): AgentRuntimeStep['layer'] {
@@ -430,6 +480,7 @@ function buildRuntimeInterrupt(input: {
   checkpoint: AgentRuntimeCheckpoint;
   write?: AgentRuntimeWrite | null;
   guardrail: AgentRuntimeGuardrailResult;
+  approvalPacketId?: string | null;
   generatedAt: string;
 }): { interrupt: AgentRuntimeInterrupt; token: AgentRuntimeResumeToken } {
   const interruptId = runtimeSanitizeId(
@@ -454,11 +505,15 @@ function buildRuntimeInterrupt(input: {
         checkpointId: input.checkpoint.checkpointId,
         writeId: input.write?.writeId || null,
         guardrailResultId: input.guardrail.guardrailResultId,
+        approvalPacketId: input.approvalPacketId || null,
         approvalPolicy: 'explicit_approval_required',
       },
       2400,
     ),
-    resumeTokenId,
+    // Historical Runtime Spine resume IDs are descriptive projections only.
+    // Authority-bearing continuation is issued by durable-work-continuity as
+    // an opaque, scoped, expiring, single-use grant after exact approval.
+    resumeTokenId: null,
     nextAction:
       'Wait for explicit user approval, then resume from the checkpoint without replaying completed nodes.',
     privacyJson: runtimePrivacyJson(),
@@ -470,19 +525,20 @@ function buildRuntimeInterrupt(input: {
     checkpointId: input.checkpoint.checkpointId,
     createdAt: input.generatedAt,
     updatedAt: input.generatedAt,
-    status: 'active',
+    status: 'revoked',
     continuationKey: `${input.runtimeRunId}:approval`,
     safeStateJson: runtimeSafeJson(
       {
         runtimeRunId: input.runtimeRunId,
         checkpointId: input.checkpoint.checkpointId,
         pendingWriteId: input.write?.writeId || null,
-        resumePolicy: 'checkpoint_without_side_effect_replay',
+        resumePolicy: 'durable_grant_required',
+        projectionOnly: true,
       },
       3200,
     ),
-    expiresAt: null,
-    usedAt: null,
+    expiresAt: input.generatedAt,
+    usedAt: input.generatedAt,
     privacyJson: runtimePrivacyJson(),
   };
   return { interrupt, token };
@@ -527,7 +583,7 @@ function runtimeReportFromParts(input: {
     supervisorReport: input.supervisorReport || null,
     sourceRefs: AGENT_RUNTIME_SOURCE_REFS,
     nextAction: approvalRequired
-      ? 'Approve or decline the staged resume token before any side effect.'
+      ? 'Approve or decline the exact staged action; a scoped durable resume grant is required before any side effect.'
       : input.run.nextAction,
     privacy: runtimePrivacyReport(),
   };
@@ -550,7 +606,8 @@ export function beginAgentRuntimeSpineRun(
       ? `runtime:run:${input.turnId}`
       : runtimeHashId('runtime:run', `${generatedAt}|${taskFamily}|${goal}`),
   );
-  const needsApproval = mutatingActionNeeded(goal);
+  const mutatingActionClass = classifyRuntimeMutatingAction(goal);
+  const needsApproval = mutatingActionClass !== null;
   const linkedEpisode = linkedAgentOSEpisode({
     runtimeRunId,
     generatedAt,
@@ -561,6 +618,42 @@ export function beginAgentRuntimeSpineRun(
     cognitiveRun: input.cognitiveRun || null,
     persist,
   });
+  const durableTargetScopeKey =
+    input.targetScopeKey ||
+    `runtime:${input.channel || 'unknown'}:${input.chatId || input.turnId || runtimeRunId}`;
+  const hasExactMutatingTarget = Boolean(input.targetScopeKey?.trim());
+  const durableWork =
+    persist &&
+    shouldCreateDurableWork({
+      taskFamily,
+      requestRoute: input.requestRoute,
+      approvalRequired: needsApproval,
+      explicitlyDurable: input.explicitlyDurable,
+    })
+      ? createOrLoadDurableWork({
+          originTurnId: input.turnId || runtimeRunId,
+          authorizedSurface: input.channel || 'system',
+          binding: {
+            ownerId:
+              input.actorId || input.chatId || input.groupFolder || 'system',
+            chatId: input.chatId || input.turnId || runtimeRunId,
+            groupId: input.groupFolder || 'main',
+            channel: input.channel || 'system',
+            targetScopeKey: durableTargetScopeKey,
+          },
+          goalSummary: goal,
+          status: needsApproval ? 'awaiting_approval' : 'ready',
+          runtimeRunId,
+          agentOSEpisodeId: linkedEpisode.episodeId,
+          cognitiveRunId: input.cognitiveRun?.run.runId || null,
+          nextAction: needsApproval
+            ? hasExactMutatingTarget
+              ? 'Wait for exact-scope approval before issuing a resume grant.'
+              : 'Resolve the exact mutation target before staging approval.'
+            : 'Commit a bounded checkpoint before executing the next plan node.',
+          now: generatedAt,
+        }).work
+      : null;
   const agentOSReport = persist
     ? buildAgentOSReport({
         episodeId: linkedEpisode.episodeId,
@@ -688,6 +781,70 @@ export function beginAgentRuntimeSpineRun(
     },
     3200,
   );
+  const durableCheckpoint = durableWork
+    ? commitDurableCheckpointCAS({
+        workId: durableWork.workId,
+        expectedWorkVersion: durableWork.version,
+        runtimeCheckpointId: checkpoint.checkpointId,
+        // World, goal, and guardrail evidence is linked below as checkpoint
+        // dependencies. It is not predeclared as completed execution work:
+        // terminal durable nodes require their own verified effect receipts.
+        completedNodeIds: [],
+        pendingNodeIds: needsApproval
+          ? ['approval', 'tool_step', 'verification', 'outcome']
+          : ['tool_step', 'verification', 'outcome'],
+        uncertainNodeIds: [],
+        dependencyIds: [
+          worldReport.snapshot.snapshotId,
+          linkedEpisode.episodeId,
+          input.cognitiveRun?.run.runId || '',
+        ].filter(Boolean),
+        worldSignals: {
+          fresh: [worldReport.snapshot.snapshotId],
+          stale: [],
+          missing: worldReport.verificationNeeds
+            .filter((need) => need.status !== 'resolved')
+            .map((need) => need.needId),
+        },
+        executorScopeKey: `runtime-spine:${mode}`,
+        targetScopeKey: durableTargetScopeKey,
+        verificationRequirementIds: ['truth_audit', 'postcondition'],
+        retryBudget: 3,
+        attemptsUsed: 0,
+        stopConditionIds: [
+          'approval_boundary',
+          'terminal_runtime_error',
+          'retry_budget',
+        ],
+        recoveryPolicy: needsApproval
+          ? 'approval_required'
+          : 'inspect_then_resume',
+        nextSafeAction: needsApproval
+          ? 'Revalidate the target and approval before any mutating continuation.'
+          : 'Execute only the next dependency-ready node and verify it.',
+        status: needsApproval ? 'interrupted' : 'open',
+        now: generatedAt,
+      })
+    : null;
+  const durableApproval =
+    needsApproval &&
+    mutatingActionClass &&
+    hasExactMutatingTarget &&
+    durableCheckpoint &&
+    input.cognitiveRun?.run.runId
+      ? stageDurableWorkApproval({
+          workId: durableCheckpoint.work.workId,
+          expectedWorkVersion: durableCheckpoint.work.version,
+          cognitiveRunId: input.cognitiveRun.run.runId,
+          actionClass: mutatingActionClass,
+          summary: redactCouncilText(
+            `Approve one exact ${mutatingActionClass.replaceAll('_', ' ')} action: ${goal}`,
+            620,
+          ),
+          checkpointId: durableCheckpoint.checkpoint.durableCheckpointId,
+          now: generatedAt,
+        })
+      : null;
   const worldEvidencePacket = makeRuntimeEvidencePacket({
     runtimeRunId,
     generatedAt,
@@ -760,6 +917,7 @@ export function beginAgentRuntimeSpineRun(
         checkpoint,
         write,
         guardrail,
+        approvalPacketId: durableApproval?.packet.approvalPacketId || null,
         generatedAt,
       })
     : null;
@@ -861,10 +1019,11 @@ export function beginAgentRuntimeSpineRun(
             stepKind: 'approval',
             status: 'approval_staged',
             summary:
-              'Mutating action is staged as a pending write and resume token.',
+              'Mutating action is staged as a pending write; no continuation capability has been issued.',
             refs: [
               interruptBundle?.interrupt.interruptId || '',
               write.writeId,
+              durableApproval?.packet.approvalPacketId || '',
             ].filter(Boolean),
             checkpointId: checkpoint.checkpointId,
             writeId: write.writeId,
@@ -987,6 +1146,8 @@ export function beginAgentRuntimeSpineRun(
   return {
     run,
     worldReport,
+    durableWork:
+      durableApproval?.work || durableCheckpoint?.work || durableWork,
     report: persist
       ? buildAgentRuntimeSpineReport({ runtimeRunId, generatedAt })
       : runtimeReportFromParts({
@@ -1533,7 +1694,7 @@ export function buildAgentRuntimeSpineReport(
     sourceRefs: AGENT_RUNTIME_SOURCE_REFS,
     nextAction: latestRun
       ? approvalRequired
-        ? 'Approve or decline the staged resume token before any side effect.'
+        ? 'Approve or decline the exact staged action; a scoped durable resume grant is required before any side effect.'
         : latestRun.nextAction
       : 'No runtime spine run exists yet; process a meaningful turn or run debug:runtime-spine -- --json.',
     privacy: runtimePrivacyReport(),
@@ -1584,7 +1745,6 @@ export function isAgentRuntimeSpineNaturalRequest(text: string): boolean {
     normalized === 'runtime spine status' ||
     normalized === 'agent runtime status' ||
     normalized === 'what should you verify next?' ||
-    normalized === 'resume that' ||
     normalized === 'what changed?' ||
     normalized === 'what is stale?' ||
     /\bwhy did you choose that\b/i.test(normalized) ||

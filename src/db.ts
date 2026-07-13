@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -7,6 +8,12 @@ import { redactCouncilText } from './council-safety.js';
 import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { pruneMediaCache } from './media-cache.js';
+import {
+  assertDurableActionEffectPolicy,
+  durableApprovalBoundActionClasses,
+  durableActionPolicy,
+  durableActionRequiresApproval,
+} from './durable-action-policy.js';
 import type {
   ListRuntimeJobsRequest,
   RuntimeOrchestrationJob,
@@ -101,6 +108,14 @@ import {
   AgentRuntimeSkillManifest,
   AgentRuntimeStep,
   AgentRuntimeWrite,
+  DurableEffectReceipt,
+  DurableResumeGrant,
+  DurableWorkCheckpoint,
+  DurableWorkEvent,
+  DurableWorkLease,
+  DurableWorkLink,
+  DurableWorkStatus,
+  DurableWorkUnit,
   SupervisorAgendaItem,
   SupervisorBlackboard,
   SupervisorBlackboardPatch,
@@ -330,26 +345,46 @@ function sanitizeStoredIdArrayJson(value: string, limit = 12000): string {
   try {
     const parsed = JSON.parse(value || '[]');
     if (!Array.isArray(parsed)) {
-      return redactStoredCognitiveMetadata(value, limit);
+      return JSON.stringify(['__invalid_json_shape__']);
     }
     const ids = parsed
-      .map((item) =>
-        String(item)
-          .replace(/[^A-Za-z0-9:_-]+/g, '_')
-          .slice(0, 220),
-      )
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.replace(/[^A-Za-z0-9:_-]+/g, '_').slice(0, 220))
       .filter(Boolean);
+    if (ids.length !== parsed.length) {
+      ids.push('__invalid_array_item__');
+    }
     const json = JSON.stringify(ids);
     if (json.length <= limit) return json;
     const kept: string[] = [];
     for (const id of ids) {
-      const next = JSON.stringify({ truncated: true, ids: [...kept, id] });
+      const next = JSON.stringify([...kept, id, '__truncated__']);
       if (next.length > limit) break;
       kept.push(id);
     }
-    return JSON.stringify({ truncated: true, ids: kept });
+    return JSON.stringify([...kept, '__truncated__']);
   } catch {
-    return redactStoredCognitiveMetadata(value, limit);
+    return JSON.stringify(['__invalid_json__']);
+  }
+}
+
+function sanitizeStoredJsonObject(value: string, limit: number): string {
+  try {
+    const parsed = JSON.parse(value || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return '{"invalid":true,"reason":"shape"}';
+    }
+    const redacted = redactStoredCognitiveMetadata(
+      JSON.stringify(parsed),
+      limit,
+    );
+    const reparsed = JSON.parse(redacted);
+    if (!reparsed || typeof reparsed !== 'object' || Array.isArray(reparsed)) {
+      return '{"invalid":true,"reason":"redaction"}';
+    }
+    return redacted;
+  } catch {
+    return '{"invalid":true,"reason":"parse"}';
   }
 }
 
@@ -377,6 +412,9 @@ export interface CursorMessageContextRecord {
 }
 
 function createSchema(database: Database.Database): void {
+  const approvalBoundActionSql = durableApprovalBoundActionClasses()
+    .map((actionClass) => `'${actionClass}'`)
+    .join(', ');
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
       jid TEXT PRIMARY KEY,
@@ -1822,6 +1860,13 @@ function createSchema(database: Database.Database): void {
       approval_channel TEXT,
       approval_key TEXT,
       expires_at TEXT,
+      approval_version INTEGER NOT NULL DEFAULT 1,
+      scope_digest TEXT,
+      summary_digest TEXT,
+      durable_work_id TEXT,
+      durable_checkpoint_id TEXT,
+      plan_version INTEGER,
+      target_scope_digest TEXT,
       decision_json TEXT NOT NULL,
       privacy_json TEXT NOT NULL,
       FOREIGN KEY (run_id) REFERENCES cognitive_runs(run_id) ON DELETE CASCADE
@@ -4883,6 +4928,295 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_assistant_baselines_group_generated
       ON assistant_metric_baselines(group_folder, generated_at DESC);
+    CREATE TABLE IF NOT EXISTS durable_work_units (
+      work_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      plan_version INTEGER NOT NULL,
+      origin_turn_hash TEXT NOT NULL,
+      authorized_surface TEXT NOT NULL,
+      owner_scope_hash TEXT NOT NULL,
+      chat_scope_hash TEXT NOT NULL,
+      group_scope_hash TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      goal_summary TEXT NOT NULL,
+      mission_id TEXT,
+      goal_id TEXT,
+      runtime_run_id TEXT,
+      agent_os_episode_id TEXT,
+      trajectory_id TEXT,
+      cognitive_run_id TEXT,
+      deep_work_packet_id TEXT,
+      approval_packet_id TEXT,
+      approval_version INTEGER,
+      checkpoint_head_id TEXT,
+      plan_id TEXT,
+      target_scope_hash TEXT NOT NULL,
+      execution_evidence_refs_json TEXT NOT NULL,
+      delivery_state TEXT NOT NULL,
+      owner_review_id TEXT,
+      skill_candidate_id TEXT,
+      lease_id TEXT,
+      lease_expires_at TEXT,
+      attempt_count INTEGER NOT NULL,
+      expires_at TEXT,
+      interrupted_at TEXT,
+      completed_at TEXT,
+      next_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_work_origin_scope_v1
+      ON durable_work_units(
+        origin_turn_hash, authorized_surface, owner_scope_hash,
+        chat_scope_hash, group_scope_hash, channel, target_scope_hash
+      ) WHERE origin_turn_hash <> '';
+    CREATE INDEX IF NOT EXISTS idx_durable_work_status_updated
+      ON durable_work_units(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_durable_work_group_updated
+      ON durable_work_units(group_scope_hash, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS durable_work_links (
+      link_id TEXT PRIMARY KEY,
+      work_id TEXT NOT NULL,
+      link_kind TEXT NOT NULL,
+      linked_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (work_id) REFERENCES durable_work_units(work_id) ON DELETE CASCADE,
+      UNIQUE(work_id, link_kind, linked_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_durable_work_links_work
+      ON durable_work_links(work_id, link_kind);
+    CREATE TABLE IF NOT EXISTS durable_work_checkpoints (
+      durable_checkpoint_id TEXT PRIMARY KEY,
+      work_id TEXT NOT NULL,
+      runtime_checkpoint_id TEXT,
+      parent_checkpoint_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      work_version INTEGER NOT NULL,
+      plan_version INTEGER NOT NULL,
+      sequence INTEGER NOT NULL,
+      completed_node_ids_json TEXT NOT NULL,
+      pending_node_ids_json TEXT NOT NULL,
+      uncertain_node_ids_json TEXT NOT NULL,
+      dependency_ids_json TEXT NOT NULL,
+      world_signal_state_json TEXT NOT NULL,
+      approval_scope_json TEXT NOT NULL,
+      executor_scope_hash TEXT NOT NULL,
+      target_scope_hash TEXT NOT NULL,
+      pre_state_fingerprint TEXT,
+      verified_post_state_fingerprint TEXT,
+      receipt_ids_json TEXT NOT NULL,
+      verification_requirements_json TEXT NOT NULL,
+      retry_budget INTEGER NOT NULL,
+      attempts_used INTEGER NOT NULL,
+      stop_conditions_json TEXT NOT NULL,
+      recovery_policy TEXT NOT NULL,
+      next_safe_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (work_id) REFERENCES durable_work_units(work_id) ON DELETE CASCADE,
+      FOREIGN KEY (parent_checkpoint_id) REFERENCES durable_work_checkpoints(durable_checkpoint_id) ON DELETE SET NULL,
+      UNIQUE(work_id, durable_checkpoint_id),
+      UNIQUE(work_id, plan_version, sequence)
+    );
+    CREATE INDEX IF NOT EXISTS idx_durable_checkpoints_work_sequence
+      ON durable_work_checkpoints(work_id, plan_version, sequence DESC);
+    CREATE INDEX IF NOT EXISTS idx_durable_checkpoints_status
+      ON durable_work_checkpoints(status, updated_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_checkpoints_work_identity
+      ON durable_work_checkpoints(work_id, durable_checkpoint_id);
+    CREATE TABLE IF NOT EXISTS durable_resume_grants (
+      grant_id TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      work_id TEXT NOT NULL,
+      checkpoint_id TEXT NOT NULL,
+      work_version INTEGER NOT NULL,
+      plan_version INTEGER NOT NULL,
+      owner_scope_hash TEXT NOT NULL,
+      chat_scope_hash TEXT NOT NULL,
+      group_scope_hash TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      target_scope_hash TEXT NOT NULL,
+      action_class TEXT NOT NULL,
+      approval_packet_id TEXT,
+      approval_version INTEGER,
+      approval_scope_hash TEXT,
+      inbound_message_hash TEXT,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT,
+      revoked_at TEXT,
+      consumed_lease_id TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (work_id) REFERENCES durable_work_units(work_id) ON DELETE CASCADE,
+      FOREIGN KEY (checkpoint_id) REFERENCES durable_work_checkpoints(durable_checkpoint_id) ON DELETE CASCADE,
+      FOREIGN KEY (work_id, checkpoint_id) REFERENCES durable_work_checkpoints(work_id, durable_checkpoint_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_durable_resume_grants_work_status
+      ON durable_resume_grants(work_id, status, updated_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_resume_inbound_once
+      ON durable_resume_grants(work_id, inbound_message_hash)
+      WHERE inbound_message_hash IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS durable_work_leases (
+      lease_id TEXT PRIMARY KEY,
+      work_id TEXT NOT NULL,
+      process_generation TEXT NOT NULL,
+      worker_scope_hash TEXT NOT NULL,
+      status TEXT NOT NULL,
+      attempt INTEGER NOT NULL,
+      acquired_at TEXT NOT NULL,
+      heartbeat_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      released_at TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (work_id) REFERENCES durable_work_units(work_id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_work_one_active_lease
+      ON durable_work_leases(work_id) WHERE status = 'active';
+    CREATE INDEX IF NOT EXISTS idx_durable_leases_expiry
+      ON durable_work_leases(status, expires_at);
+    CREATE TABLE IF NOT EXISTS durable_effect_receipts (
+      receipt_id TEXT PRIMARY KEY,
+      work_id TEXT NOT NULL,
+      checkpoint_id TEXT NOT NULL,
+      plan_version INTEGER NOT NULL,
+      node_id TEXT NOT NULL,
+      invocation_id TEXT NOT NULL,
+      action_class TEXT NOT NULL,
+      effect_class TEXT NOT NULL,
+      status TEXT NOT NULL,
+      target_scope_hash TEXT NOT NULL,
+      grant_id TEXT,
+      approval_packet_id TEXT,
+      approval_version INTEGER,
+      approval_scope_hash TEXT,
+      pre_state_fingerprint TEXT,
+      post_state_fingerprint TEXT,
+      verification_fingerprint TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (work_id) REFERENCES durable_work_units(work_id) ON DELETE CASCADE,
+      FOREIGN KEY (checkpoint_id) REFERENCES durable_work_checkpoints(durable_checkpoint_id) ON DELETE CASCADE,
+      FOREIGN KEY (work_id, checkpoint_id) REFERENCES durable_work_checkpoints(work_id, durable_checkpoint_id) ON DELETE CASCADE,
+      FOREIGN KEY (grant_id) REFERENCES durable_resume_grants(grant_id) ON DELETE RESTRICT,
+      FOREIGN KEY (approval_packet_id) REFERENCES cognitive_approval_packets(approval_packet_id) ON DELETE RESTRICT,
+      UNIQUE(work_id, plan_version, node_id, invocation_id, effect_class)
+    );
+    CREATE INDEX IF NOT EXISTS idx_durable_receipts_work_node
+      ON durable_effect_receipts(work_id, plan_version, node_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS durable_work_events (
+      event_id TEXT PRIMARY KEY,
+      work_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      event_kind TEXT NOT NULL,
+      from_status TEXT,
+      to_status TEXT,
+      work_version INTEGER NOT NULL,
+      plan_version INTEGER NOT NULL,
+      summary TEXT NOT NULL,
+      refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (work_id) REFERENCES durable_work_units(work_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_durable_work_events_work_created
+      ON durable_work_events(work_id, created_at ASC);
+    CREATE TRIGGER IF NOT EXISTS trg_durable_grant_checkpoint_scope_insert
+      BEFORE INSERT ON durable_resume_grants
+      FOR EACH ROW
+      WHEN NOT EXISTS (
+        SELECT 1 FROM durable_work_checkpoints
+        WHERE work_id = NEW.work_id
+          AND durable_checkpoint_id = NEW.checkpoint_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable grant checkpoint scope mismatch');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_grant_checkpoint_scope_update
+      BEFORE UPDATE OF work_id, checkpoint_id ON durable_resume_grants
+      FOR EACH ROW
+      WHEN NOT EXISTS (
+        SELECT 1 FROM durable_work_checkpoints
+        WHERE work_id = NEW.work_id
+          AND durable_checkpoint_id = NEW.checkpoint_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable grant checkpoint scope mismatch');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_receipt_checkpoint_scope_insert
+      BEFORE INSERT ON durable_effect_receipts
+      FOR EACH ROW
+      WHEN NOT EXISTS (
+        SELECT 1 FROM durable_work_checkpoints
+        WHERE work_id = NEW.work_id
+          AND durable_checkpoint_id = NEW.checkpoint_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable receipt checkpoint scope mismatch');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_receipt_checkpoint_scope_update
+      BEFORE UPDATE OF work_id, checkpoint_id ON durable_effect_receipts
+      FOR EACH ROW
+      WHEN NOT EXISTS (
+        SELECT 1 FROM durable_work_checkpoints
+        WHERE work_id = NEW.work_id
+          AND durable_checkpoint_id = NEW.checkpoint_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable receipt checkpoint scope mismatch');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_work_verified_completion_update
+      BEFORE UPDATE OF status ON durable_work_units
+      FOR EACH ROW
+      WHEN NEW.status = 'completed'
+        AND OLD.status <> 'completed'
+        AND (
+          NOT EXISTS (
+            SELECT 1
+            FROM durable_work_checkpoints checkpoint_record
+            JOIN json_each(checkpoint_record.receipt_ids_json) receipt_ref
+            JOIN durable_effect_receipts receipt
+              ON receipt.receipt_id = receipt_ref.value
+            WHERE checkpoint_record.durable_checkpoint_id = NEW.checkpoint_head_id
+              AND checkpoint_record.work_id = NEW.work_id
+              AND checkpoint_record.plan_version = NEW.plan_version
+              AND checkpoint_record.status = 'completed'
+              AND checkpoint_record.verified_post_state_fingerprint IS NOT NULL
+              AND receipt.work_id = NEW.work_id
+              AND receipt.plan_version = NEW.plan_version
+              AND receipt.status = 'succeeded'
+              AND receipt.verification_fingerprint IS NOT NULL
+              AND receipt.post_state_fingerprint = checkpoint_record.verified_post_state_fingerprint
+              AND receipt.target_scope_hash = NEW.target_scope_hash
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM durable_work_checkpoints checkpoint_record
+            JOIN json_each(checkpoint_record.receipt_ids_json) receipt_ref
+            JOIN durable_effect_receipts receipt
+              ON receipt.receipt_id = receipt_ref.value
+            WHERE checkpoint_record.durable_checkpoint_id = NEW.checkpoint_head_id
+              AND receipt.work_id = NEW.work_id
+              AND receipt.plan_version = NEW.plan_version
+              AND receipt.status IN ('started', 'failed', 'partial', 'unknown')
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable work completion lacks verified terminal evidence');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_work_verified_completion_insert
+      BEFORE INSERT ON durable_work_units
+      FOR EACH ROW
+      WHEN NEW.status = 'completed'
+      BEGIN
+        SELECT RAISE(ABORT, 'durable work cannot begin as completed');
+      END;
     CREATE TABLE IF NOT EXISTS redacted_regression_fixtures (
       fixture_id TEXT PRIMARY KEY,
       source_feedback_id TEXT NOT NULL UNIQUE,
@@ -4894,6 +5228,338 @@ function createSchema(database: Database.Database): void {
       contains_raw_user_text INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
+  `);
+
+  // The first continuity candidate omitted channel and target scope from its
+  // origin dedupe index. Remove that never-released shape after the corrected
+  // index exists so one originating turn cannot be confused across targets.
+  database.exec(`DROP INDEX IF EXISTS idx_durable_work_origin_scope`);
+
+  for (const statement of [
+    `ALTER TABLE cognitive_approval_packets ADD COLUMN approval_version INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE cognitive_approval_packets ADD COLUMN scope_digest TEXT`,
+    `ALTER TABLE cognitive_approval_packets ADD COLUMN summary_digest TEXT`,
+    `ALTER TABLE cognitive_approval_packets ADD COLUMN durable_work_id TEXT`,
+    `ALTER TABLE cognitive_approval_packets ADD COLUMN durable_checkpoint_id TEXT`,
+    `ALTER TABLE cognitive_approval_packets ADD COLUMN plan_version INTEGER`,
+    `ALTER TABLE cognitive_approval_packets ADD COLUMN target_scope_digest TEXT`,
+    `ALTER TABLE durable_effect_receipts ADD COLUMN action_class TEXT NOT NULL DEFAULT 'legacy_unbound'`,
+    `ALTER TABLE durable_effect_receipts ADD COLUMN grant_id TEXT`,
+    `ALTER TABLE durable_effect_receipts ADD COLUMN approval_packet_id TEXT`,
+    `ALTER TABLE durable_effect_receipts ADD COLUMN approval_version INTEGER`,
+    `ALTER TABLE durable_effect_receipts ADD COLUMN approval_scope_hash TEXT`,
+  ]) {
+    try {
+      database.exec(statement);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !/duplicate column name/i.test(error.message)
+      ) {
+        throw error;
+      }
+    }
+  }
+
+  // These triggers depend on columns added above for databases created by an
+  // earlier, never-released continuity candidate. Install them only after the
+  // additive migration has made the provenance shape uniform.
+  // Recreate these candidate-era triggers so databases initialized by an
+  // earlier build receive the complete provenance checks as well. This round
+  // has not shipped, so there is no released trigger contract to preserve.
+  database.exec(`
+    DROP TRIGGER IF EXISTS trg_durable_checkpoint_parent_scope_insert;
+    DROP TRIGGER IF EXISTS trg_durable_checkpoint_parent_scope_update;
+    DROP TRIGGER IF EXISTS trg_durable_work_checkpoint_head_scope_update;
+    DROP TRIGGER IF EXISTS trg_durable_work_verified_completion_update;
+    DROP TRIGGER IF EXISTS trg_durable_mutating_receipt_provenance_insert;
+    DROP TRIGGER IF EXISTS trg_durable_mutating_receipt_provenance_update;
+    DROP TRIGGER IF EXISTS trg_durable_mutating_receipt_current_authority_update;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_checkpoint_parent_scope_insert
+      BEFORE INSERT ON durable_work_checkpoints
+      FOR EACH ROW
+      WHEN NEW.parent_checkpoint_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM durable_work_checkpoints parent_record
+          WHERE parent_record.durable_checkpoint_id = NEW.parent_checkpoint_id
+            AND parent_record.work_id = NEW.work_id
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable checkpoint parent scope mismatch');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_checkpoint_parent_scope_update
+      BEFORE UPDATE OF work_id, parent_checkpoint_id ON durable_work_checkpoints
+      FOR EACH ROW
+      WHEN NEW.parent_checkpoint_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM durable_work_checkpoints parent_record
+          WHERE parent_record.durable_checkpoint_id = NEW.parent_checkpoint_id
+            AND parent_record.work_id = NEW.work_id
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable checkpoint parent scope mismatch');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_work_checkpoint_head_scope_update
+      BEFORE UPDATE OF checkpoint_head_id, plan_version, target_scope_hash
+      ON durable_work_units
+      FOR EACH ROW
+      WHEN NEW.checkpoint_head_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM durable_work_checkpoints checkpoint_record
+          WHERE checkpoint_record.durable_checkpoint_id = NEW.checkpoint_head_id
+            AND checkpoint_record.work_id = NEW.work_id
+            AND checkpoint_record.target_scope_hash = NEW.target_scope_hash
+            AND (
+              checkpoint_record.plan_version = NEW.plan_version
+              OR (
+                NEW.status = 'planned'
+                AND NEW.plan_version = OLD.plan_version + 1
+                AND checkpoint_record.plan_version = OLD.plan_version
+              )
+            )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable work checkpoint head scope mismatch');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_work_verified_completion_update
+      BEFORE UPDATE OF status ON durable_work_units
+      FOR EACH ROW
+      WHEN NEW.status = 'completed'
+        AND OLD.status <> 'completed'
+        AND (
+          NOT EXISTS (
+            SELECT 1
+            FROM durable_work_checkpoints checkpoint_record
+            WHERE checkpoint_record.durable_checkpoint_id = NEW.checkpoint_head_id
+              AND checkpoint_record.work_id = NEW.work_id
+              AND checkpoint_record.plan_version = NEW.plan_version
+              AND checkpoint_record.target_scope_hash = NEW.target_scope_hash
+              AND checkpoint_record.status = 'completed'
+              AND checkpoint_record.verified_post_state_fingerprint IS NOT NULL
+              AND json_valid(checkpoint_record.completed_node_ids_json)
+              AND json_type(checkpoint_record.completed_node_ids_json) = 'array'
+              AND json_valid(checkpoint_record.pending_node_ids_json)
+              AND json_type(checkpoint_record.pending_node_ids_json) = 'array'
+              AND json_array_length(checkpoint_record.pending_node_ids_json) = 0
+              AND json_valid(checkpoint_record.uncertain_node_ids_json)
+              AND json_type(checkpoint_record.uncertain_node_ids_json) = 'array'
+              AND json_array_length(checkpoint_record.uncertain_node_ids_json) = 0
+              AND json_valid(checkpoint_record.receipt_ids_json)
+              AND json_type(checkpoint_record.receipt_ids_json) = 'array'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM json_each(checkpoint_record.completed_node_ids_json) completed_node
+                WHERE NOT EXISTS (
+                  SELECT 1
+                  FROM json_each(checkpoint_record.receipt_ids_json) receipt_ref
+                  JOIN durable_effect_receipts receipt
+                    ON receipt.receipt_id = receipt_ref.value
+                  WHERE receipt.work_id = NEW.work_id
+                    AND receipt.plan_version = NEW.plan_version
+                    AND receipt.node_id = completed_node.value
+                    AND receipt.target_scope_hash = NEW.target_scope_hash
+                    AND receipt.status = 'succeeded'
+                    AND receipt.post_state_fingerprint IS NOT NULL
+                    AND receipt.verification_fingerprint IS NOT NULL
+                )
+              )
+              AND EXISTS (
+                SELECT 1
+                FROM json_each(checkpoint_record.receipt_ids_json) receipt_ref
+                JOIN durable_effect_receipts receipt
+                  ON receipt.receipt_id = receipt_ref.value
+                WHERE receipt.work_id = NEW.work_id
+                  AND receipt.plan_version = NEW.plan_version
+                  AND receipt.target_scope_hash = NEW.target_scope_hash
+                  AND receipt.status = 'succeeded'
+                  AND receipt.verification_fingerprint IS NOT NULL
+                  AND receipt.post_state_fingerprint =
+                    checkpoint_record.verified_post_state_fingerprint
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM json_each(checkpoint_record.receipt_ids_json) receipt_ref
+                JOIN durable_effect_receipts receipt
+                  ON receipt.receipt_id = receipt_ref.value
+                WHERE receipt.work_id = NEW.work_id
+                  AND receipt.plan_version = NEW.plan_version
+                  AND receipt.status IN ('started', 'failed', 'partial', 'unknown')
+              )
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable work completion lacks verified terminal evidence');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_mutating_receipt_provenance_insert_v2
+      BEFORE INSERT ON durable_effect_receipts
+      FOR EACH ROW
+      WHEN NEW.action_class IN (${approvalBoundActionSql})
+        AND NOT EXISTS (
+          SELECT 1
+          FROM durable_resume_grants grant_record
+          JOIN durable_work_checkpoints checkpoint_record
+            ON checkpoint_record.work_id = grant_record.work_id
+           AND checkpoint_record.durable_checkpoint_id = grant_record.checkpoint_id
+          JOIN durable_work_units work_record
+            ON work_record.work_id = grant_record.work_id
+          JOIN durable_work_leases lease_record
+            ON lease_record.lease_id = grant_record.consumed_lease_id
+           AND lease_record.work_id = grant_record.work_id
+          JOIN cognitive_approval_packets approval
+            ON approval.approval_packet_id = grant_record.approval_packet_id
+          WHERE grant_record.grant_id = NEW.grant_id
+            AND grant_record.work_id = NEW.work_id
+            AND grant_record.checkpoint_id = NEW.checkpoint_id
+            AND grant_record.plan_version = NEW.plan_version
+            AND grant_record.status = 'consumed'
+            AND grant_record.consumed_at IS NOT NULL
+            AND grant_record.consumed_at <= NEW.created_at
+            AND grant_record.target_scope_hash = NEW.target_scope_hash
+            AND grant_record.action_class = NEW.action_class
+            AND grant_record.approval_packet_id = NEW.approval_packet_id
+            AND grant_record.approval_version = NEW.approval_version
+            AND grant_record.approval_scope_hash = NEW.approval_scope_hash
+            AND checkpoint_record.plan_version = NEW.plan_version
+            AND checkpoint_record.target_scope_hash = NEW.target_scope_hash
+            AND work_record.plan_version = NEW.plan_version
+            AND work_record.checkpoint_head_id = NEW.checkpoint_id
+            AND work_record.target_scope_hash = NEW.target_scope_hash
+            AND work_record.lease_id = lease_record.lease_id
+            AND work_record.lease_expires_at > NEW.created_at
+            AND work_record.status IN ('executing', 'verifying')
+            AND lease_record.status = 'active'
+            AND lease_record.expires_at > NEW.created_at
+            AND approval.status = 'approved'
+            AND approval.durable_work_id = NEW.work_id
+            AND approval.durable_checkpoint_id = NEW.checkpoint_id
+            AND approval.plan_version = NEW.plan_version
+            AND approval.target_scope_digest = NEW.target_scope_hash
+            AND approval.action_class = NEW.action_class
+            AND approval.approval_version = NEW.approval_version
+            AND approval.scope_digest = NEW.approval_scope_hash
+            AND (approval.expires_at IS NULL OR approval.expires_at > NEW.created_at)
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable mutating receipt approval provenance mismatch');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_mutating_receipt_provenance_update_v2
+      BEFORE UPDATE ON durable_effect_receipts
+      FOR EACH ROW
+      WHEN NEW.action_class IN (${approvalBoundActionSql})
+        AND (
+          NEW.work_id IS NOT OLD.work_id
+          OR NEW.checkpoint_id IS NOT OLD.checkpoint_id
+          OR NEW.plan_version IS NOT OLD.plan_version
+          OR NEW.node_id IS NOT OLD.node_id
+          OR NEW.invocation_id IS NOT OLD.invocation_id
+          OR NEW.action_class IS NOT OLD.action_class
+          OR NEW.effect_class IS NOT OLD.effect_class
+          OR NEW.target_scope_hash IS NOT OLD.target_scope_hash
+          OR NEW.grant_id IS NOT OLD.grant_id
+          OR NEW.approval_packet_id IS NOT OLD.approval_packet_id
+          OR NEW.approval_version IS NOT OLD.approval_version
+          OR NEW.approval_scope_hash IS NOT OLD.approval_scope_hash
+          OR NEW.created_at IS NOT OLD.created_at
+          OR NOT EXISTS (
+            SELECT 1
+            FROM durable_resume_grants original_grant
+            JOIN durable_work_checkpoints original_checkpoint
+              ON original_checkpoint.work_id = original_grant.work_id
+             AND original_checkpoint.durable_checkpoint_id = original_grant.checkpoint_id
+            JOIN durable_work_units original_work
+              ON original_work.work_id = original_grant.work_id
+            JOIN cognitive_approval_packets original_approval
+              ON original_approval.approval_packet_id = original_grant.approval_packet_id
+            WHERE original_grant.grant_id = OLD.grant_id
+              AND original_grant.work_id = OLD.work_id
+              AND original_grant.checkpoint_id = OLD.checkpoint_id
+              AND original_grant.plan_version = OLD.plan_version
+              AND original_grant.status = 'consumed'
+              AND original_grant.consumed_at IS NOT NULL
+              AND original_grant.consumed_at <= OLD.created_at
+              AND original_grant.owner_scope_hash = original_work.owner_scope_hash
+              AND original_grant.chat_scope_hash = original_work.chat_scope_hash
+              AND original_grant.group_scope_hash = original_work.group_scope_hash
+              AND original_grant.channel = original_work.channel
+              AND original_grant.target_scope_hash = OLD.target_scope_hash
+              AND original_grant.action_class = OLD.action_class
+              AND original_grant.approval_packet_id = OLD.approval_packet_id
+              AND original_grant.approval_version = OLD.approval_version
+              AND original_grant.approval_scope_hash = OLD.approval_scope_hash
+              AND original_checkpoint.plan_version = OLD.plan_version
+              AND original_checkpoint.target_scope_hash = OLD.target_scope_hash
+              AND original_approval.status IN ('approved', 'expired')
+              AND original_approval.durable_work_id = OLD.work_id
+              AND original_approval.durable_checkpoint_id = OLD.checkpoint_id
+              AND original_approval.plan_version = OLD.plan_version
+              AND original_approval.target_scope_digest = OLD.target_scope_hash
+              AND original_approval.action_class = OLD.action_class
+              AND original_approval.approval_version = OLD.approval_version
+              AND original_approval.scope_digest = OLD.approval_scope_hash
+              AND (
+                original_approval.expires_at IS NULL
+                OR original_approval.expires_at > OLD.created_at
+              )
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable mutating receipt original provenance mismatch');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_mutating_receipt_current_authority_update_v2
+      BEFORE UPDATE ON durable_effect_receipts
+      FOR EACH ROW
+      WHEN NEW.action_class IN (${approvalBoundActionSql})
+        AND NOT EXISTS (
+          SELECT 1
+          FROM durable_work_units current_work
+          JOIN durable_work_checkpoints current_checkpoint
+            ON current_checkpoint.work_id = current_work.work_id
+           AND current_checkpoint.durable_checkpoint_id = current_work.checkpoint_head_id
+          JOIN durable_work_leases current_lease
+            ON current_lease.lease_id = current_work.lease_id
+           AND current_lease.work_id = current_work.work_id
+          JOIN durable_resume_grants current_grant
+            ON current_grant.consumed_lease_id = current_lease.lease_id
+           AND current_grant.work_id = current_work.work_id
+          JOIN cognitive_approval_packets current_approval
+            ON current_approval.approval_packet_id = current_grant.approval_packet_id
+          WHERE current_work.work_id = NEW.work_id
+            AND current_work.plan_version = NEW.plan_version
+            AND current_work.checkpoint_head_id = NEW.checkpoint_id
+            AND current_work.target_scope_hash = NEW.target_scope_hash
+            AND current_work.lease_expires_at > NEW.updated_at
+            AND current_work.status IN ('executing', 'verifying')
+            AND current_checkpoint.plan_version = NEW.plan_version
+            AND current_checkpoint.target_scope_hash = NEW.target_scope_hash
+            AND current_lease.status = 'active'
+            AND current_lease.expires_at > NEW.updated_at
+            AND current_grant.status = 'consumed'
+            AND current_grant.consumed_at IS NOT NULL
+            AND current_grant.consumed_at <= NEW.updated_at
+            AND current_grant.plan_version = NEW.plan_version
+            AND current_grant.checkpoint_id = NEW.checkpoint_id
+            AND current_grant.owner_scope_hash = current_work.owner_scope_hash
+            AND current_grant.chat_scope_hash = current_work.chat_scope_hash
+            AND current_grant.group_scope_hash = current_work.group_scope_hash
+            AND current_grant.channel = current_work.channel
+            AND current_grant.target_scope_hash = NEW.target_scope_hash
+            AND current_grant.action_class = NEW.action_class
+            AND current_approval.status = 'approved'
+            AND current_approval.durable_work_id = NEW.work_id
+            AND current_approval.durable_checkpoint_id = NEW.checkpoint_id
+            AND current_approval.plan_version = NEW.plan_version
+            AND current_approval.target_scope_digest = NEW.target_scope_hash
+            AND current_approval.action_class = NEW.action_class
+            AND current_approval.approval_version = current_grant.approval_version
+            AND current_approval.scope_digest = current_grant.approval_scope_hash
+            AND (
+              current_approval.expires_at IS NULL
+              OR current_approval.expires_at > NEW.updated_at
+            )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'durable mutating receipt current authority mismatch');
+      END;
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -14633,6 +15299,13 @@ function mapCognitiveApprovalPacketRow(row: {
   approval_channel: string | null;
   approval_key: string | null;
   expires_at: string | null;
+  approval_version: number;
+  scope_digest: string | null;
+  summary_digest: string | null;
+  durable_work_id: string | null;
+  durable_checkpoint_id: string | null;
+  plan_version: number | null;
+  target_scope_digest: string | null;
   decision_json: string;
   privacy_json: string;
 }): CognitiveApprovalPacket {
@@ -14648,33 +15321,59 @@ function mapCognitiveApprovalPacketRow(row: {
     approvalChannel: row.approval_channel,
     approvalKey: row.approval_key,
     expiresAt: row.expires_at,
+    approvalVersion: row.approval_version,
+    scopeDigest: row.scope_digest,
+    summaryDigest: row.summary_digest,
+    durableWorkId: row.durable_work_id,
+    durableCheckpointId: row.durable_checkpoint_id,
+    planVersion: row.plan_version,
+    targetScopeDigest: row.target_scope_digest,
     decisionJson: row.decision_json,
     privacyJson: row.privacy_json,
   };
 }
 
+function cognitiveApprovalDigest(value: string): string {
+  return createHash('sha256')
+    .update(`andrea:cognitive-approval:v1\0${value}`)
+    .digest('hex');
+}
+
+function cognitiveApprovalScopeDigest(record: CognitiveApprovalPacket): string {
+  return cognitiveApprovalDigest(
+    [
+      record.runId,
+      record.toolId,
+      record.actionClass,
+      redactStoredCognitiveMetadata(record.approvalKey || '', 240),
+      record.durableWorkId || '',
+      record.durableCheckpointId || '',
+      record.planVersion === null || record.planVersion === undefined
+        ? ''
+        : String(record.planVersion),
+      record.targetScopeDigest || '',
+    ].join('|'),
+  );
+}
+
 export function upsertCognitiveApprovalPacket(
   record: CognitiveApprovalPacket,
 ): void {
+  const storedSummary = redactStoredCognitiveMetadata(record.summary, 640);
+  const storedApprovalKey = redactStoredCognitiveMetadata(
+    record.approvalKey || '',
+    240,
+  );
   db.prepare(
     `
       INSERT INTO cognitive_approval_packets (
         approval_packet_id, created_at, updated_at, run_id, tool_id,
         action_class, status, summary, approval_channel, approval_key,
-        expires_at, decision_json, privacy_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(approval_packet_id) DO UPDATE SET
-        updated_at = excluded.updated_at,
-        run_id = excluded.run_id,
-        tool_id = excluded.tool_id,
-        action_class = excluded.action_class,
-        status = excluded.status,
-        summary = excluded.summary,
-        approval_channel = excluded.approval_channel,
-        approval_key = excluded.approval_key,
-        expires_at = excluded.expires_at,
-        decision_json = excluded.decision_json,
-        privacy_json = excluded.privacy_json
+        expires_at, approval_version, scope_digest, summary_digest,
+        durable_work_id, durable_checkpoint_id, plan_version,
+        target_scope_digest, decision_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(approval_packet_id) DO NOTHING
     `,
   ).run(
     record.approvalPacketId,
@@ -14684,10 +15383,19 @@ export function upsertCognitiveApprovalPacket(
     record.toolId,
     record.actionClass,
     record.status,
-    redactStoredCognitiveMetadata(record.summary, 640),
+    storedSummary,
     record.approvalChannel || null,
-    redactStoredCognitiveMetadata(record.approvalKey || '', 240),
+    storedApprovalKey,
     record.expiresAt || null,
+    Math.max(1, Math.trunc(record.approvalVersion || 1)),
+    cognitiveApprovalScopeDigest(record),
+    cognitiveApprovalDigest(storedSummary),
+    record.durableWorkId || null,
+    record.durableCheckpointId || null,
+    record.planVersion === null || record.planVersion === undefined
+      ? null
+      : Math.max(1, Math.trunc(record.planVersion)),
+    record.targetScopeDigest || null,
     redactStoredCognitiveMetadata(record.decisionJson, 2400),
     redactStoredCognitiveMetadata(record.privacyJson),
   );
@@ -14696,6 +15404,7 @@ export function upsertCognitiveApprovalPacket(
 export function listCognitiveApprovalPackets(
   params: {
     runId?: string;
+    groupFolder?: string;
     status?: CognitiveApprovalPacket['status'];
     limit?: number;
   } = {},
@@ -14703,26 +15412,240 @@ export function listCognitiveApprovalPackets(
   const clauses: string[] = [];
   const args: Array<string | number> = [];
   if (params.runId) {
-    clauses.push('run_id = ?');
+    clauses.push('cap.run_id = ?');
     args.push(params.runId);
   }
+  if (params.groupFolder) {
+    clauses.push('cr.group_folder = ?');
+    args.push(params.groupFolder);
+  }
   if (params.status) {
-    clauses.push('status = ?');
+    clauses.push('cap.status = ?');
     args.push(params.status);
   }
   args.push(Math.max(1, Math.min(params.limit || 100, 500)));
   const rows = db
     .prepare(
       `
-        SELECT *
-        FROM cognitive_approval_packets
+        SELECT cap.*
+        FROM cognitive_approval_packets cap
+        JOIN cognitive_runs cr ON cr.run_id = cap.run_id
         ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
-        ORDER BY updated_at DESC
+        ORDER BY cap.updated_at DESC
         LIMIT ?
       `,
     )
     .all(...args) as Array<Parameters<typeof mapCognitiveApprovalPacketRow>[0]>;
   return rows.map((row) => mapCognitiveApprovalPacketRow(row));
+}
+
+export type CognitiveApprovalCASStatus =
+  | 'approved'
+  | 'not_found_or_scope_mismatch'
+  | 'expired'
+  | 'summary_changed'
+  | 'already_decided';
+
+export function approveCognitiveApprovalPacketCAS(params: {
+  approvalPacketId: string;
+  groupFolder: string;
+  expectedSummary: string;
+  expectedApprovalVersion: number;
+  expectedScopeDigest: string | null;
+  now: string;
+  approvalChannel: string;
+}): { status: CognitiveApprovalCASStatus; approvalVersion?: number } {
+  const transact = db.transaction(() => {
+    const row = db
+      .prepare(
+        `
+          SELECT cap.*, cr.group_folder
+          FROM cognitive_approval_packets cap
+          JOIN cognitive_runs cr ON cr.run_id = cap.run_id
+          WHERE cap.approval_packet_id = ? AND cr.group_folder = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.approvalPacketId, params.groupFolder) as
+      | (Parameters<typeof mapCognitiveApprovalPacketRow>[0] & {
+          group_folder: string | null;
+        })
+      | undefined;
+    if (!row) return { status: 'not_found_or_scope_mismatch' as const };
+    if (row.status !== 'staged') {
+      return { status: 'already_decided' as const };
+    }
+    if (
+      Math.max(1, Math.trunc(row.approval_version || 1)) !==
+        Math.max(1, Math.trunc(params.expectedApprovalVersion)) ||
+      String(row.scope_digest || '') !==
+        String(params.expectedScopeDigest || '')
+    ) {
+      return { status: 'summary_changed' as const };
+    }
+    if (row.expires_at && row.expires_at <= params.now) {
+      db.prepare(
+        `
+          UPDATE cognitive_approval_packets
+          SET status = 'expired', updated_at = ?
+          WHERE approval_packet_id = ? AND status = 'staged'
+        `,
+      ).run(params.now, params.approvalPacketId);
+      return { status: 'expired' as const };
+    }
+    const expectedDigest = cognitiveApprovalDigest(params.expectedSummary);
+    const storedDigest =
+      row.summary_digest || cognitiveApprovalDigest(row.summary);
+    if (
+      expectedDigest !== storedDigest ||
+      params.expectedSummary !== row.summary
+    ) {
+      return { status: 'summary_changed' as const };
+    }
+    const linkedWork = row.durable_work_id
+      ? (db
+          .prepare(
+            `
+              SELECT * FROM durable_work_units
+              WHERE work_id = ?
+                AND cognitive_run_id = ?
+                AND approval_packet_id = ?
+                AND approval_version = ?
+                AND checkpoint_head_id = ?
+                AND plan_version = ?
+                AND target_scope_hash = ?
+                AND status NOT IN ('completed', 'cancelled', 'superseded')
+              LIMIT 1
+            `,
+          )
+          .get(
+            row.durable_work_id,
+            row.run_id,
+            row.approval_packet_id,
+            Math.max(1, Math.trunc(row.approval_version || 1)),
+            row.durable_checkpoint_id || '',
+            row.plan_version || 0,
+            row.target_scope_digest || '',
+          ) as Record<string, unknown> | undefined)
+      : undefined;
+    if (row.durable_work_id && !linkedWork) {
+      return { status: 'not_found_or_scope_mismatch' as const };
+    }
+    const currentVersion = Math.max(1, Math.trunc(row.approval_version || 1));
+    const nextVersion = currentVersion + 1;
+    const decisionJson = redactStoredCognitiveMetadata(
+      JSON.stringify({
+        decision: 'approved',
+        channel: params.approvalChannel,
+        approvedAt: params.now,
+        metadataOnly: true,
+      }),
+      2400,
+    );
+    const scopeDigest =
+      row.scope_digest ||
+      cognitiveApprovalDigest(
+        [
+          row.run_id,
+          row.tool_id,
+          row.action_class,
+          row.approval_key || '',
+          row.durable_work_id || '',
+          row.durable_checkpoint_id || '',
+          row.plan_version === null ? '' : String(row.plan_version),
+          row.target_scope_digest || '',
+        ].join('|'),
+      );
+    const result = db
+      .prepare(
+        `
+          UPDATE cognitive_approval_packets
+          SET status = 'approved', updated_at = ?, approval_channel = ?,
+              approval_version = ?, scope_digest = COALESCE(scope_digest, ?),
+              summary_digest = COALESCE(summary_digest, ?), decision_json = ?
+          WHERE approval_packet_id = ?
+            AND status = 'staged'
+            AND approval_version = ?
+            AND COALESCE(scope_digest, '') = ?
+            AND (expires_at IS NULL OR expires_at > ?)
+            AND EXISTS (
+              SELECT 1 FROM cognitive_runs cr
+              WHERE cr.run_id = cognitive_approval_packets.run_id
+                AND cr.group_folder = ?
+            )
+        `,
+      )
+      .run(
+        params.now,
+        params.approvalChannel,
+        nextVersion,
+        scopeDigest,
+        storedDigest,
+        decisionJson,
+        params.approvalPacketId,
+        currentVersion,
+        String(params.expectedScopeDigest || ''),
+        params.now,
+        params.groupFolder,
+      );
+    if (result.changes === 1 && row.durable_work_id) {
+      const workUpdate = db
+        .prepare(
+          `
+            UPDATE durable_work_units
+            SET approval_version = ?, updated_at = ?, version = version + 1,
+                next_action = ?
+            WHERE work_id = ?
+              AND cognitive_run_id = ?
+              AND approval_packet_id = ?
+              AND approval_version = ?
+              AND checkpoint_head_id = ?
+              AND plan_version = ?
+              AND target_scope_hash = ?
+              AND status NOT IN ('completed', 'cancelled', 'superseded')
+          `,
+        )
+        .run(
+          nextVersion,
+          params.now,
+          'Issue a fresh exact-scope resume grant before continuing.',
+          row.durable_work_id,
+          row.run_id,
+          row.approval_packet_id,
+          currentVersion,
+          row.durable_checkpoint_id || '',
+          row.plan_version || 0,
+          row.target_scope_digest || '',
+        );
+      if (workUpdate.changes !== 1) {
+        throw new Error(
+          'Linked durable work changed while its approval was being decided.',
+        );
+      }
+      const updatedWork = db
+        .prepare(`SELECT * FROM durable_work_units WHERE work_id = ?`)
+        .get(row.durable_work_id) as Record<string, unknown>;
+      insertDurableEventRow({
+        eventId: `durable:event:approval:${cognitiveApprovalDigest(
+          `${row.durable_work_id}|${row.approval_packet_id}|${nextVersion}`,
+        ).slice(0, 32)}`,
+        workId: row.durable_work_id,
+        createdAt: params.now,
+        eventKind: 'owner_review',
+        fromStatus: linkedWork?.status as DurableWorkStatus,
+        toStatus: updatedWork.status as DurableWorkStatus,
+        workVersion: Number(updatedWork.version),
+        planVersion: Number(updatedWork.plan_version),
+        summary: 'Owner approved one exact durable action scope.',
+        refsJson: JSON.stringify([row.approval_packet_id]),
+        privacyJson: JSON.stringify({ metadataOnly: true }),
+      });
+    }
+    return result.changes === 1
+      ? { status: 'approved' as const, approvalVersion: nextVersion }
+      : { status: 'already_decided' as const };
+  });
+  return transact.immediate();
 }
 
 function mapCognitiveTrajectoryScoreRow(row: {
@@ -34902,6 +35825,2018 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Durable cognitive continuity ---
+
+function mapDurableWorkUnitRow(row: Record<string, unknown>): DurableWorkUnit {
+  return {
+    workId: String(row.work_id),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    status: row.status as DurableWorkStatus,
+    version: Number(row.version),
+    planVersion: Number(row.plan_version),
+    originTurnHash: String(row.origin_turn_hash),
+    authorizedSurface: String(row.authorized_surface),
+    ownerScopeHash: String(row.owner_scope_hash),
+    chatScopeHash: String(row.chat_scope_hash),
+    groupScopeHash: String(row.group_scope_hash),
+    channel: String(row.channel),
+    goalSummary: String(row.goal_summary),
+    missionId: row.mission_id ? String(row.mission_id) : null,
+    goalId: row.goal_id ? String(row.goal_id) : null,
+    runtimeRunId: row.runtime_run_id ? String(row.runtime_run_id) : null,
+    agentOSEpisodeId: row.agent_os_episode_id
+      ? String(row.agent_os_episode_id)
+      : null,
+    trajectoryId: row.trajectory_id ? String(row.trajectory_id) : null,
+    cognitiveRunId: row.cognitive_run_id ? String(row.cognitive_run_id) : null,
+    deepWorkPacketId: row.deep_work_packet_id
+      ? String(row.deep_work_packet_id)
+      : null,
+    approvalPacketId: row.approval_packet_id
+      ? String(row.approval_packet_id)
+      : null,
+    approvalVersion:
+      row.approval_version === null || row.approval_version === undefined
+        ? null
+        : Number(row.approval_version),
+    checkpointHeadId: row.checkpoint_head_id
+      ? String(row.checkpoint_head_id)
+      : null,
+    planId: row.plan_id ? String(row.plan_id) : null,
+    targetScopeHash: String(row.target_scope_hash),
+    executionEvidenceRefsJson: String(row.execution_evidence_refs_json),
+    deliveryState: row.delivery_state as DurableWorkUnit['deliveryState'],
+    ownerReviewId: row.owner_review_id ? String(row.owner_review_id) : null,
+    skillCandidateId: row.skill_candidate_id
+      ? String(row.skill_candidate_id)
+      : null,
+    leaseId: row.lease_id ? String(row.lease_id) : null,
+    leaseExpiresAt: row.lease_expires_at ? String(row.lease_expires_at) : null,
+    attemptCount: Number(row.attempt_count),
+    expiresAt: row.expires_at ? String(row.expires_at) : null,
+    interruptedAt: row.interrupted_at ? String(row.interrupted_at) : null,
+    completedAt: row.completed_at ? String(row.completed_at) : null,
+    nextAction: String(row.next_action),
+    privacyJson: String(row.privacy_json),
+  };
+}
+
+function insertDurableEventRow(record: DurableWorkEvent): void {
+  db.prepare(
+    `
+      INSERT INTO durable_work_events (
+        event_id, work_id, created_at, event_kind, from_status, to_status,
+        work_version, plan_version, summary, refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    record.eventId,
+    record.workId,
+    record.createdAt,
+    record.eventKind,
+    record.fromStatus || null,
+    record.toStatus || null,
+    record.workVersion,
+    record.planVersion,
+    redactStoredCognitiveMetadata(record.summary, 900),
+    sanitizeStoredIdArrayJson(record.refsJson, 3200),
+    sanitizeStoredJsonObject(record.privacyJson, 1200),
+  );
+}
+
+export function insertDurableWorkUnit(params: {
+  record: DurableWorkUnit;
+  createdEvent: DurableWorkEvent;
+}): { record: DurableWorkUnit; created: boolean } {
+  const transact = db.transaction(() => {
+    const record = params.record;
+    const result = db
+      .prepare(
+        `
+          INSERT OR IGNORE INTO durable_work_units (
+            work_id, created_at, updated_at, status, version, plan_version,
+            origin_turn_hash, authorized_surface, owner_scope_hash,
+            chat_scope_hash, group_scope_hash, channel, goal_summary,
+            mission_id, goal_id, runtime_run_id, agent_os_episode_id,
+            trajectory_id, cognitive_run_id, deep_work_packet_id,
+            approval_packet_id, approval_version, checkpoint_head_id, plan_id,
+            target_scope_hash, execution_evidence_refs_json, delivery_state,
+            owner_review_id, skill_candidate_id, lease_id, lease_expires_at,
+            attempt_count, expires_at, interrupted_at, completed_at,
+            next_action, privacy_json
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          )
+        `,
+      )
+      .run(
+        record.workId,
+        record.createdAt,
+        record.updatedAt,
+        record.status,
+        record.version,
+        record.planVersion,
+        record.originTurnHash,
+        record.authorizedSurface,
+        record.ownerScopeHash,
+        record.chatScopeHash,
+        record.groupScopeHash,
+        redactStoredCognitiveMetadata(record.channel, 80),
+        redactStoredCognitiveMetadata(record.goalSummary, 900),
+        record.missionId || null,
+        record.goalId || null,
+        record.runtimeRunId || null,
+        record.agentOSEpisodeId || null,
+        record.trajectoryId || null,
+        record.cognitiveRunId || null,
+        record.deepWorkPacketId || null,
+        record.approvalPacketId || null,
+        record.approvalVersion || null,
+        record.checkpointHeadId || null,
+        record.planId || null,
+        record.targetScopeHash,
+        sanitizeStoredIdArrayJson(record.executionEvidenceRefsJson, 4800),
+        record.deliveryState,
+        record.ownerReviewId || null,
+        record.skillCandidateId || null,
+        record.leaseId || null,
+        record.leaseExpiresAt || null,
+        record.attemptCount,
+        record.expiresAt || null,
+        record.interruptedAt || null,
+        record.completedAt || null,
+        redactStoredCognitiveMetadata(record.nextAction, 900),
+        sanitizeStoredJsonObject(record.privacyJson, 1200),
+      );
+    let selected = db
+      .prepare(`SELECT * FROM durable_work_units WHERE work_id = ?`)
+      .get(record.workId) as Record<string, unknown> | undefined;
+    if (!selected && record.originTurnHash) {
+      selected = db
+        .prepare(
+          `
+            SELECT * FROM durable_work_units
+            WHERE origin_turn_hash = ? AND authorized_surface = ?
+              AND owner_scope_hash = ? AND chat_scope_hash = ?
+              AND group_scope_hash = ? AND channel = ?
+              AND target_scope_hash = ?
+            LIMIT 1
+          `,
+        )
+        .get(
+          record.originTurnHash,
+          record.authorizedSurface,
+          record.ownerScopeHash,
+          record.chatScopeHash,
+          record.groupScopeHash,
+          record.channel,
+          record.targetScopeHash,
+        ) as Record<string, unknown> | undefined;
+    }
+    if (!selected) throw new Error('Durable work insert did not persist.');
+    const mapped = mapDurableWorkUnitRow(selected);
+    if (result.changes === 1) {
+      insertDurableEventRow({ ...params.createdEvent, workId: mapped.workId });
+    }
+    return { record: mapped, created: result.changes === 1 };
+  });
+  return transact.immediate();
+}
+
+export function getDurableWorkUnit(workId: string): DurableWorkUnit | null {
+  const row = db
+    .prepare(`SELECT * FROM durable_work_units WHERE work_id = ?`)
+    .get(workId) as Record<string, unknown> | undefined;
+  return row ? mapDurableWorkUnitRow(row) : null;
+}
+
+export function stageDurableWorkApprovalPacketAtomic(params: {
+  packet: CognitiveApprovalPacket;
+  expectedWorkVersion: number;
+  checkpoint: DurableWorkCheckpoint;
+  link: DurableWorkLink;
+  event: DurableWorkEvent;
+}): {
+  packet: CognitiveApprovalPacket;
+  work: DurableWorkUnit;
+  checkpoint: DurableWorkCheckpoint;
+} | null {
+  const transact = db.transaction(() => {
+    const packet = params.packet;
+    if (
+      packet.status !== 'staged' ||
+      !packet.durableWorkId ||
+      !packet.durableCheckpointId ||
+      !packet.planVersion ||
+      !packet.targetScopeDigest ||
+      !durableActionPolicy(packet.actionClass) ||
+      !durableActionRequiresApproval(packet.actionClass) ||
+      Math.max(1, Math.trunc(packet.approvalVersion || 1)) !== 1
+    ) {
+      throw new Error(
+        'Durable approval staging requires one exact staged scope.',
+      );
+    }
+    const workRow = db
+      .prepare(`SELECT * FROM durable_work_units WHERE work_id = ? LIMIT 1`)
+      .get(packet.durableWorkId) as Record<string, unknown> | undefined;
+    if (!workRow || Number(workRow.version) !== params.expectedWorkVersion) {
+      return null;
+    }
+    const work = mapDurableWorkUnitRow(workRow);
+    if (
+      ![
+        'ready',
+        'awaiting_approval',
+        'interrupted',
+        'needs_replan',
+        'verifying',
+        'delivery_unverified',
+      ].includes(work.status) ||
+      work.cognitiveRunId !== packet.runId ||
+      work.targetScopeHash !== packet.targetScopeDigest ||
+      work.planVersion !== packet.planVersion
+    ) {
+      throw new Error('Durable approval does not match its work identity.');
+    }
+    const parentCheckpoint = work.checkpointHeadId
+      ? (db
+          .prepare(
+            `SELECT * FROM durable_work_checkpoints WHERE durable_checkpoint_id = ?`,
+          )
+          .get(work.checkpointHeadId) as Record<string, unknown> | undefined)
+      : undefined;
+    const checkpoint = params.checkpoint;
+    if (
+      !parentCheckpoint ||
+      checkpoint.durableCheckpointId !== packet.durableCheckpointId ||
+      checkpoint.workId !== work.workId ||
+      checkpoint.parentCheckpointId !== work.checkpointHeadId ||
+      checkpoint.planVersion !== work.planVersion ||
+      checkpoint.sequence !== Number(parentCheckpoint.sequence) + 1 ||
+      checkpoint.targetScopeHash !== work.targetScopeHash ||
+      checkpoint.status !== 'interrupted' ||
+      checkpoint.recoveryPolicy !== 'approval_required'
+    ) {
+      throw new Error('Durable approval checkpoint scope does not match.');
+    }
+    let replacedApprovalId: string | null = null;
+    if (work.approvalPacketId || work.approvalVersion) {
+      const prior = work.approvalPacketId
+        ? (db
+            .prepare(
+              `SELECT * FROM cognitive_approval_packets WHERE approval_packet_id = ?`,
+            )
+            .get(work.approvalPacketId) as
+            | Parameters<typeof mapCognitiveApprovalPacketRow>[0]
+            | undefined)
+        : undefined;
+      const elapsed = Boolean(
+        prior?.expires_at && prior.expires_at <= packet.createdAt,
+      );
+      if (
+        !prior ||
+        (!['expired', 'rejected'].includes(prior.status) && !elapsed) ||
+        prior.durable_work_id !== work.workId ||
+        Number(prior.approval_version) !== work.approvalVersion
+      ) {
+        throw new Error(
+          'An active durable approval must be decided before restaging.',
+        );
+      }
+      if (elapsed && !['expired', 'rejected'].includes(prior.status)) {
+        db.prepare(
+          `
+            UPDATE cognitive_approval_packets
+            SET status = 'expired', updated_at = ?
+            WHERE approval_packet_id = ? AND status IN ('staged', 'approved')
+          `,
+        ).run(packet.createdAt, prior.approval_packet_id);
+      }
+      replacedApprovalId = prior.approval_packet_id;
+    }
+    if (
+      params.link.workId !== work.workId ||
+      params.link.linkKind !== 'approval_packet' ||
+      params.link.linkedId !== packet.approvalPacketId
+    ) {
+      throw new Error('Durable approval link does not match its packet.');
+    }
+
+    upsertCognitiveApprovalPacket(packet);
+    const packetRow = db
+      .prepare(
+        `SELECT * FROM cognitive_approval_packets WHERE approval_packet_id = ?`,
+      )
+      .get(packet.approvalPacketId) as
+      | Parameters<typeof mapCognitiveApprovalPacketRow>[0]
+      | undefined;
+    if (!packetRow)
+      throw new Error('Durable approval packet was not persisted.');
+    const persistedPacket = mapCognitiveApprovalPacketRow(packetRow);
+    if (
+      persistedPacket.status !== 'staged' ||
+      persistedPacket.runId !== packet.runId ||
+      persistedPacket.actionClass !== packet.actionClass ||
+      persistedPacket.durableWorkId !== work.workId ||
+      persistedPacket.durableCheckpointId !== checkpoint.durableCheckpointId ||
+      persistedPacket.planVersion !== work.planVersion ||
+      persistedPacket.targetScopeDigest !== work.targetScopeHash ||
+      persistedPacket.approvalVersion !== 1 ||
+      persistedPacket.scopeDigest !== cognitiveApprovalScopeDigest(packet)
+    ) {
+      throw new Error('Durable approval packet identity collision.');
+    }
+
+    db.prepare(
+      `
+        INSERT INTO durable_work_checkpoints (
+          durable_checkpoint_id, work_id, runtime_checkpoint_id,
+          parent_checkpoint_id, created_at, updated_at, status, work_version,
+          plan_version, sequence, completed_node_ids_json,
+          pending_node_ids_json, uncertain_node_ids_json, dependency_ids_json,
+          world_signal_state_json, approval_scope_json, executor_scope_hash,
+          target_scope_hash, pre_state_fingerprint,
+          verified_post_state_fingerprint, receipt_ids_json,
+          verification_requirements_json, retry_budget, attempts_used,
+          stop_conditions_json, recovery_policy, next_safe_action, privacy_json
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?
+        )
+      `,
+    ).run(
+      checkpoint.durableCheckpointId,
+      checkpoint.workId,
+      checkpoint.runtimeCheckpointId || null,
+      checkpoint.parentCheckpointId || null,
+      checkpoint.createdAt,
+      checkpoint.updatedAt,
+      checkpoint.status,
+      params.expectedWorkVersion + 1,
+      checkpoint.planVersion,
+      checkpoint.sequence,
+      sanitizeStoredIdArrayJson(checkpoint.completedNodeIdsJson, 4800),
+      sanitizeStoredIdArrayJson(checkpoint.pendingNodeIdsJson, 4800),
+      sanitizeStoredIdArrayJson(checkpoint.uncertainNodeIdsJson, 4800),
+      sanitizeStoredIdArrayJson(checkpoint.dependencyIdsJson, 4800),
+      sanitizeStoredJsonObject(checkpoint.worldSignalStateJson, 4800),
+      sanitizeStoredJsonObject(
+        JSON.stringify({
+          approvalPacketId: persistedPacket.approvalPacketId,
+          approvalVersion: persistedPacket.approvalVersion,
+          scopeDigest: persistedPacket.scopeDigest,
+          actionClass: persistedPacket.actionClass,
+          durableWorkId: work.workId,
+          durableCheckpointId: checkpoint.durableCheckpointId,
+          planVersion: work.planVersion,
+          targetScopeHash: work.targetScopeHash,
+          expiresAt: persistedPacket.expiresAt,
+          metadataOnly: true,
+        }),
+        3200,
+      ),
+      checkpoint.executorScopeHash,
+      checkpoint.targetScopeHash,
+      checkpoint.preStateFingerprint || null,
+      checkpoint.verifiedPostStateFingerprint || null,
+      sanitizeStoredIdArrayJson(checkpoint.receiptIdsJson, 4800),
+      sanitizeStoredIdArrayJson(checkpoint.verificationRequirementsJson, 4800),
+      checkpoint.retryBudget,
+      checkpoint.attemptsUsed,
+      sanitizeStoredIdArrayJson(checkpoint.stopConditionsJson, 3200),
+      checkpoint.recoveryPolicy,
+      redactStoredCognitiveMetadata(checkpoint.nextSafeAction, 900),
+      sanitizeStoredJsonObject(checkpoint.privacyJson, 1200),
+    );
+
+    const workUpdate = db
+      .prepare(
+        `
+          UPDATE durable_work_units
+          SET status = 'awaiting_approval',
+              approval_packet_id = ?, approval_version = 1,
+              checkpoint_head_id = ?,
+              updated_at = ?, version = version + 1, next_action = ?
+          WHERE work_id = ? AND version = ?
+            AND status IN (
+              'ready', 'awaiting_approval', 'interrupted', 'needs_replan',
+              'verifying', 'delivery_unverified'
+            )
+            AND COALESCE(approval_packet_id, '') = ?
+            AND COALESCE(approval_version, 0) = ?
+        `,
+      )
+      .run(
+        packet.approvalPacketId,
+        checkpoint.durableCheckpointId,
+        packet.updatedAt,
+        'Wait for owner confirmation of the exact staged action.',
+        work.workId,
+        params.expectedWorkVersion,
+        work.approvalPacketId || '',
+        work.approvalVersion || 0,
+      );
+    if (workUpdate.changes !== 1) {
+      throw new Error('Durable approval lost its work-link compare-and-set.');
+    }
+    db.prepare(
+      `
+        INSERT INTO durable_work_links (
+          link_id, work_id, link_kind, linked_id, created_at, privacy_json
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `,
+    ).run(
+      params.link.linkId,
+      params.link.workId,
+      params.link.linkKind,
+      params.link.linkedId,
+      params.link.createdAt,
+      sanitizeStoredJsonObject(params.link.privacyJson, 1200),
+    );
+    const updatedRow = db
+      .prepare(`SELECT * FROM durable_work_units WHERE work_id = ?`)
+      .get(work.workId) as Record<string, unknown>;
+    const updatedWork = mapDurableWorkUnitRow(updatedRow);
+    insertDurableEventRow({
+      ...params.event,
+      workId: updatedWork.workId,
+      fromStatus: work.status,
+      toStatus: updatedWork.status,
+      workVersion: updatedWork.version,
+      planVersion: updatedWork.planVersion,
+      refsJson: JSON.stringify([
+        packet.approvalPacketId,
+        checkpoint.durableCheckpointId,
+        ...(replacedApprovalId ? [replacedApprovalId] : []),
+      ]),
+    });
+    return {
+      packet: persistedPacket,
+      work: updatedWork,
+      checkpoint: mapDurableCheckpointRow(
+        db
+          .prepare(
+            `SELECT * FROM durable_work_checkpoints WHERE durable_checkpoint_id = ?`,
+          )
+          .get(checkpoint.durableCheckpointId) as Record<string, unknown>,
+      ),
+    };
+  });
+  return transact.immediate();
+}
+
+export function listDurableWorkUnits(
+  params: {
+    statuses?: DurableWorkStatus[];
+    groupScopeHash?: string;
+    limit?: number;
+  } = {},
+): DurableWorkUnit[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  if (params.groupScopeHash) {
+    clauses.push('group_scope_hash = ?');
+    args.push(params.groupScopeHash);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 2_000)));
+  const rows = db
+    .prepare(
+      `
+        SELECT * FROM durable_work_units
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Record<string, unknown>>;
+  return rows.map(mapDurableWorkUnitRow);
+}
+
+export function transitionDurableWorkUnitCAS(params: {
+  workId: string;
+  expectedVersion: number;
+  allowedFrom: DurableWorkStatus[];
+  toStatus: DurableWorkStatus;
+  updatedAt: string;
+  nextAction: string;
+  checkpointHeadId?: string | null;
+  planVersion?: number;
+  deliveryState?: DurableWorkUnit['deliveryState'];
+  completedAt?: string | null;
+  interruptedAt?: string | null;
+  invalidateApproval?: boolean;
+  event: DurableWorkEvent;
+}): DurableWorkUnit | null {
+  if (params.allowedFrom.length === 0) return null;
+  const transact = db.transaction(() => {
+    const approvalPlanVersion = params.invalidateApproval
+      ? (
+          db
+            .prepare(
+              `SELECT plan_version FROM durable_work_units WHERE work_id = ? AND version = ?`,
+            )
+            .get(params.workId, params.expectedVersion) as
+            | { plan_version: number }
+            | undefined
+        )?.plan_version
+      : null;
+    const placeholders = params.allowedFrom.map(() => '?').join(', ');
+    const result = db
+      .prepare(
+        `
+          UPDATE durable_work_units
+          SET status = ?, version = version + 1, updated_at = ?,
+              next_action = ?,
+              checkpoint_head_id = COALESCE(?, checkpoint_head_id),
+              plan_version = COALESCE(?, plan_version),
+              delivery_state = COALESCE(?, delivery_state),
+              completed_at = COALESCE(?, completed_at),
+              interrupted_at = COALESCE(?, interrupted_at),
+              approval_packet_id = CASE WHEN ? = 1 THEN NULL ELSE approval_packet_id END,
+              approval_version = CASE WHEN ? = 1 THEN NULL ELSE approval_version END
+          WHERE work_id = ? AND version = ?
+            AND status IN (${placeholders})
+        `,
+      )
+      .run(
+        params.toStatus,
+        params.updatedAt,
+        redactStoredCognitiveMetadata(params.nextAction, 900),
+        params.checkpointHeadId || null,
+        params.planVersion ?? null,
+        params.deliveryState || null,
+        params.completedAt || null,
+        params.interruptedAt || null,
+        params.invalidateApproval ? 1 : 0,
+        params.invalidateApproval ? 1 : 0,
+        params.workId,
+        params.expectedVersion,
+        ...params.allowedFrom,
+      );
+    if (result.changes !== 1) return null;
+    if (params.invalidateApproval) {
+      db.prepare(
+        `
+          UPDATE cognitive_approval_packets
+          SET status = 'expired', updated_at = ?
+          WHERE durable_work_id = ? AND plan_version = ?
+            AND status IN ('staged', 'approved')
+        `,
+      ).run(params.updatedAt, params.workId, approvalPlanVersion || 0);
+      db.prepare(
+        `
+          UPDATE durable_resume_grants
+          SET status = 'revoked', updated_at = ?, revoked_at = ?
+          WHERE work_id = ? AND status = 'active'
+        `,
+      ).run(params.updatedAt, params.updatedAt, params.workId);
+    }
+    const row = db
+      .prepare(`SELECT * FROM durable_work_units WHERE work_id = ?`)
+      .get(params.workId) as Record<string, unknown>;
+    const work = mapDurableWorkUnitRow(row);
+    insertDurableEventRow({
+      ...params.event,
+      workId: work.workId,
+      fromStatus: params.event.fromStatus || params.allowedFrom[0] || null,
+      toStatus: work.status,
+      workVersion: work.version,
+      planVersion: work.planVersion,
+    });
+    return work;
+  });
+  return transact.immediate();
+}
+
+export function upsertDurableWorkLink(record: DurableWorkLink): void {
+  db.prepare(
+    `
+      INSERT OR IGNORE INTO durable_work_links (
+        link_id, work_id, link_kind, linked_id, created_at, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    record.linkId,
+    record.workId,
+    record.linkKind,
+    record.linkedId,
+    record.createdAt,
+    sanitizeStoredJsonObject(record.privacyJson, 1200),
+  );
+}
+
+export function listDurableWorkLinks(workId: string): DurableWorkLink[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM durable_work_links WHERE work_id = ? ORDER BY created_at ASC`,
+    )
+    .all(workId) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    linkId: String(row.link_id),
+    workId: String(row.work_id),
+    linkKind: row.link_kind as DurableWorkLink['linkKind'],
+    linkedId: String(row.linked_id),
+    createdAt: String(row.created_at),
+    privacyJson: String(row.privacy_json),
+  }));
+}
+
+function mapDurableCheckpointRow(
+  row: Record<string, unknown>,
+): DurableWorkCheckpoint {
+  return {
+    durableCheckpointId: String(row.durable_checkpoint_id),
+    workId: String(row.work_id),
+    runtimeCheckpointId: row.runtime_checkpoint_id
+      ? String(row.runtime_checkpoint_id)
+      : null,
+    parentCheckpointId: row.parent_checkpoint_id
+      ? String(row.parent_checkpoint_id)
+      : null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    status: row.status as DurableWorkCheckpoint['status'],
+    workVersion: Number(row.work_version),
+    planVersion: Number(row.plan_version),
+    sequence: Number(row.sequence),
+    completedNodeIdsJson: String(row.completed_node_ids_json),
+    pendingNodeIdsJson: String(row.pending_node_ids_json),
+    uncertainNodeIdsJson: String(row.uncertain_node_ids_json),
+    dependencyIdsJson: String(row.dependency_ids_json),
+    worldSignalStateJson: String(row.world_signal_state_json),
+    approvalScopeJson: String(row.approval_scope_json),
+    executorScopeHash: String(row.executor_scope_hash),
+    targetScopeHash: String(row.target_scope_hash),
+    preStateFingerprint: row.pre_state_fingerprint
+      ? String(row.pre_state_fingerprint)
+      : null,
+    verifiedPostStateFingerprint: row.verified_post_state_fingerprint
+      ? String(row.verified_post_state_fingerprint)
+      : null,
+    receiptIdsJson: String(row.receipt_ids_json),
+    verificationRequirementsJson: String(row.verification_requirements_json),
+    retryBudget: Number(row.retry_budget),
+    attemptsUsed: Number(row.attempts_used),
+    stopConditionsJson: String(row.stop_conditions_json),
+    recoveryPolicy:
+      row.recovery_policy as DurableWorkCheckpoint['recoveryPolicy'],
+    nextSafeAction: String(row.next_safe_action),
+    privacyJson: String(row.privacy_json),
+  };
+}
+
+export function insertDurableWorkCheckpoint(params: {
+  checkpoint: DurableWorkCheckpoint;
+  expectedWorkVersion: number;
+  event: DurableWorkEvent;
+}): { checkpoint: DurableWorkCheckpoint; work: DurableWorkUnit } | null {
+  const transact = db.transaction(() => {
+    const checkpoint = params.checkpoint;
+    const priorWork = db
+      .prepare(`SELECT * FROM durable_work_units WHERE work_id = ?`)
+      .get(checkpoint.workId) as Record<string, unknown> | undefined;
+    if (
+      !priorWork ||
+      Number(priorWork.version) !== params.expectedWorkVersion ||
+      Number(priorWork.plan_version) !== checkpoint.planVersion ||
+      ['completed', 'cancelled', 'superseded'].includes(
+        String(priorWork.status),
+      )
+    ) {
+      return null;
+    }
+    db.prepare(
+      `
+        INSERT INTO durable_work_checkpoints (
+          durable_checkpoint_id, work_id, runtime_checkpoint_id,
+          parent_checkpoint_id, created_at, updated_at, status, work_version,
+          plan_version, sequence, completed_node_ids_json,
+          pending_node_ids_json, uncertain_node_ids_json, dependency_ids_json,
+          world_signal_state_json, approval_scope_json, executor_scope_hash,
+          target_scope_hash, pre_state_fingerprint,
+          verified_post_state_fingerprint, receipt_ids_json,
+          verification_requirements_json, retry_budget, attempts_used,
+          stop_conditions_json, recovery_policy, next_safe_action, privacy_json
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?
+        )
+      `,
+    ).run(
+      checkpoint.durableCheckpointId,
+      checkpoint.workId,
+      checkpoint.runtimeCheckpointId || null,
+      checkpoint.parentCheckpointId || null,
+      checkpoint.createdAt,
+      checkpoint.updatedAt,
+      checkpoint.status,
+      params.expectedWorkVersion + 1,
+      checkpoint.planVersion,
+      checkpoint.sequence,
+      sanitizeStoredIdArrayJson(checkpoint.completedNodeIdsJson, 4800),
+      sanitizeStoredIdArrayJson(checkpoint.pendingNodeIdsJson, 4800),
+      sanitizeStoredIdArrayJson(checkpoint.uncertainNodeIdsJson, 4800),
+      sanitizeStoredIdArrayJson(checkpoint.dependencyIdsJson, 4800),
+      sanitizeStoredJsonObject(checkpoint.worldSignalStateJson, 4800),
+      sanitizeStoredJsonObject(checkpoint.approvalScopeJson, 3200),
+      checkpoint.executorScopeHash,
+      checkpoint.targetScopeHash,
+      checkpoint.preStateFingerprint || null,
+      checkpoint.verifiedPostStateFingerprint || null,
+      sanitizeStoredIdArrayJson(checkpoint.receiptIdsJson, 4800),
+      sanitizeStoredIdArrayJson(checkpoint.verificationRequirementsJson, 4800),
+      checkpoint.retryBudget,
+      checkpoint.attemptsUsed,
+      sanitizeStoredIdArrayJson(checkpoint.stopConditionsJson, 3200),
+      checkpoint.recoveryPolicy,
+      redactStoredCognitiveMetadata(checkpoint.nextSafeAction, 900),
+      sanitizeStoredJsonObject(checkpoint.privacyJson, 1200),
+    );
+    const workUpdate = db
+      .prepare(
+        `
+          UPDATE durable_work_units
+          SET checkpoint_head_id = ?, updated_at = ?, version = version + 1,
+              approval_packet_id = NULL, approval_version = NULL
+          WHERE work_id = ? AND version = ?
+            AND plan_version = ?
+            AND status NOT IN ('completed', 'cancelled', 'superseded')
+        `,
+      )
+      .run(
+        checkpoint.durableCheckpointId,
+        checkpoint.updatedAt,
+        checkpoint.workId,
+        params.expectedWorkVersion,
+        checkpoint.planVersion,
+      );
+    if (workUpdate.changes !== 1) {
+      throw new Error('Durable checkpoint lost its work-head compare-and-set.');
+    }
+    if (priorWork.approval_packet_id) {
+      db.prepare(
+        `
+          UPDATE cognitive_approval_packets
+          SET status = 'expired', updated_at = ?
+          WHERE approval_packet_id = ? AND status = 'staged'
+        `,
+      ).run(checkpoint.updatedAt, String(priorWork.approval_packet_id));
+      db.prepare(
+        `
+          UPDATE durable_resume_grants
+          SET status = 'revoked', updated_at = ?, revoked_at = ?
+          WHERE work_id = ? AND status = 'active'
+        `,
+      ).run(checkpoint.updatedAt, checkpoint.updatedAt, checkpoint.workId);
+    }
+    const workRow = db
+      .prepare(`SELECT * FROM durable_work_units WHERE work_id = ?`)
+      .get(checkpoint.workId) as Record<string, unknown>;
+    const work = mapDurableWorkUnitRow(workRow);
+    insertDurableEventRow({
+      ...params.event,
+      workVersion: work.version,
+      planVersion: work.planVersion,
+      refsJson: JSON.stringify([checkpoint.durableCheckpointId]),
+    });
+    return {
+      checkpoint: { ...checkpoint, workVersion: work.version },
+      work,
+    };
+  });
+  return transact.immediate();
+}
+
+export function getDurableWorkCheckpoint(
+  checkpointId: string,
+): DurableWorkCheckpoint | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM durable_work_checkpoints WHERE durable_checkpoint_id = ?`,
+    )
+    .get(checkpointId) as Record<string, unknown> | undefined;
+  return row ? mapDurableCheckpointRow(row) : null;
+}
+
+export function listDurableWorkCheckpoints(params: {
+  workId: string;
+  limit?: number;
+}): DurableWorkCheckpoint[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT * FROM durable_work_checkpoints
+        WHERE work_id = ?
+        ORDER BY plan_version DESC, sequence DESC
+        LIMIT ?
+      `,
+    )
+    .all(
+      params.workId,
+      Math.max(1, Math.min(params.limit || 100, 500)),
+    ) as Array<Record<string, unknown>>;
+  return rows.map(mapDurableCheckpointRow);
+}
+
+function mapDurableResumeGrantRow(
+  row: Record<string, unknown>,
+): DurableResumeGrant {
+  return {
+    grantId: String(row.grant_id),
+    tokenHash: String(row.token_hash),
+    workId: String(row.work_id),
+    checkpointId: String(row.checkpoint_id),
+    workVersion: Number(row.work_version),
+    planVersion: Number(row.plan_version),
+    ownerScopeHash: String(row.owner_scope_hash),
+    chatScopeHash: String(row.chat_scope_hash),
+    groupScopeHash: String(row.group_scope_hash),
+    channel: String(row.channel),
+    targetScopeHash: String(row.target_scope_hash),
+    actionClass: String(row.action_class),
+    approvalPacketId: row.approval_packet_id
+      ? String(row.approval_packet_id)
+      : null,
+    approvalVersion:
+      row.approval_version === null || row.approval_version === undefined
+        ? null
+        : Number(row.approval_version),
+    approvalScopeHash: row.approval_scope_hash
+      ? String(row.approval_scope_hash)
+      : null,
+    inboundMessageHash: row.inbound_message_hash
+      ? String(row.inbound_message_hash)
+      : null,
+    status: row.status as DurableResumeGrant['status'],
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    expiresAt: String(row.expires_at),
+    consumedAt: row.consumed_at ? String(row.consumed_at) : null,
+    revokedAt: row.revoked_at ? String(row.revoked_at) : null,
+    consumedLeaseId: row.consumed_lease_id
+      ? String(row.consumed_lease_id)
+      : null,
+    privacyJson: String(row.privacy_json),
+  };
+}
+
+export function insertDurableResumeGrant(params: {
+  grant: DurableResumeGrant;
+  event: DurableWorkEvent;
+}): void {
+  const transact = db.transaction(() => {
+    const grant = params.grant;
+    const policy = durableActionPolicy(grant.actionClass);
+    if (!policy) {
+      throw new Error(
+        'Durable resume grant action is not in the closed policy set.',
+      );
+    }
+    const workRow = db
+      .prepare(`SELECT * FROM durable_work_units WHERE work_id = ? LIMIT 1`)
+      .get(grant.workId) as Record<string, unknown> | undefined;
+    const checkpointRow = db
+      .prepare(
+        `SELECT * FROM durable_work_checkpoints WHERE durable_checkpoint_id = ? LIMIT 1`,
+      )
+      .get(grant.checkpointId) as Record<string, unknown> | undefined;
+    if (!workRow || !checkpointRow) {
+      throw new Error('Durable resume grant scope does not exist.');
+    }
+    const work = mapDurableWorkUnitRow(workRow);
+    const checkpoint = mapDurableCheckpointRow(checkpointRow);
+    if (
+      grant.status !== 'active' ||
+      grant.createdAt !== grant.updatedAt ||
+      grant.expiresAt <= grant.createdAt ||
+      grant.consumedAt ||
+      grant.revokedAt ||
+      grant.consumedLeaseId ||
+      ![
+        'ready',
+        'awaiting_approval',
+        'interrupted',
+        'needs_replan',
+        'verifying',
+        'delivery_unverified',
+      ].includes(work.status) ||
+      grant.workVersion !== work.version ||
+      grant.planVersion !== work.planVersion ||
+      grant.checkpointId !== work.checkpointHeadId ||
+      checkpoint.workId !== work.workId ||
+      checkpoint.planVersion !== work.planVersion ||
+      checkpoint.targetScopeHash !== work.targetScopeHash ||
+      grant.ownerScopeHash !== work.ownerScopeHash ||
+      grant.chatScopeHash !== work.chatScopeHash ||
+      grant.groupScopeHash !== work.groupScopeHash ||
+      grant.channel !== work.channel ||
+      grant.targetScopeHash !== work.targetScopeHash ||
+      params.event.eventKind !== 'grant_issued' ||
+      params.event.workId !== work.workId ||
+      params.event.workVersion !== work.version ||
+      params.event.planVersion !== work.planVersion ||
+      params.event.createdAt !== grant.createdAt
+    ) {
+      throw new Error(
+        'Durable resume grant does not match its exact active work scope.',
+      );
+    }
+    if (policy.requiresApproval) {
+      const approvalRow = grant.approvalPacketId
+        ? (db
+            .prepare(
+              `SELECT * FROM cognitive_approval_packets WHERE approval_packet_id = ? LIMIT 1`,
+            )
+            .get(grant.approvalPacketId) as
+            | Parameters<typeof mapCognitiveApprovalPacketRow>[0]
+            | undefined)
+        : undefined;
+      if (
+        !approvalRow ||
+        approvalRow.status !== 'approved' ||
+        grant.approvalVersion === null ||
+        !grant.approvalScopeHash ||
+        work.approvalPacketId !== grant.approvalPacketId ||
+        work.approvalVersion !== grant.approvalVersion ||
+        Number(approvalRow.approval_version) !== grant.approvalVersion ||
+        String(approvalRow.scope_digest || '') !== grant.approvalScopeHash ||
+        approvalRow.durable_work_id !== work.workId ||
+        approvalRow.durable_checkpoint_id !== checkpoint.durableCheckpointId ||
+        Number(approvalRow.plan_version) !== work.planVersion ||
+        approvalRow.target_scope_digest !== work.targetScopeHash ||
+        approvalRow.action_class !== grant.actionClass ||
+        (approvalRow.expires_at && approvalRow.expires_at <= grant.createdAt)
+      ) {
+        throw new Error(
+          'Durable resume grant requires a current exact approved scope.',
+        );
+      }
+    } else if (
+      grant.approvalPacketId ||
+      grant.approvalVersion !== null ||
+      grant.approvalScopeHash
+    ) {
+      throw new Error(
+        'Durable read-only or delegated grant cannot carry unrelated approval authority.',
+      );
+    }
+    db.prepare(
+      `
+        INSERT INTO durable_resume_grants (
+          grant_id, token_hash, work_id, checkpoint_id, work_version,
+          plan_version, owner_scope_hash, chat_scope_hash, group_scope_hash,
+          channel, target_scope_hash, action_class, approval_packet_id,
+          approval_version, approval_scope_hash, inbound_message_hash, status,
+          created_at, updated_at, expires_at, consumed_at, revoked_at,
+          consumed_lease_id, privacy_json
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?
+        )
+      `,
+    ).run(
+      grant.grantId,
+      grant.tokenHash,
+      grant.workId,
+      grant.checkpointId,
+      grant.workVersion,
+      grant.planVersion,
+      grant.ownerScopeHash,
+      grant.chatScopeHash,
+      grant.groupScopeHash,
+      redactStoredCognitiveMetadata(grant.channel, 80),
+      grant.targetScopeHash,
+      redactStoredCognitiveMetadata(grant.actionClass, 160),
+      grant.approvalPacketId || null,
+      grant.approvalVersion || null,
+      grant.approvalScopeHash || null,
+      grant.inboundMessageHash || null,
+      grant.status,
+      grant.createdAt,
+      grant.updatedAt,
+      grant.expiresAt,
+      grant.consumedAt || null,
+      grant.revokedAt || null,
+      grant.consumedLeaseId || null,
+      sanitizeStoredJsonObject(grant.privacyJson, 1200),
+    );
+    insertDurableEventRow(params.event);
+  });
+  transact.immediate();
+}
+
+export function listDurableResumeGrants(
+  params: {
+    workId?: string;
+    status?: DurableResumeGrant['status'];
+    limit?: number;
+  } = {},
+): DurableResumeGrant[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.workId) {
+    clauses.push('work_id = ?');
+    args.push(params.workId);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `
+        SELECT * FROM durable_resume_grants
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Record<string, unknown>>;
+  return rows.map(mapDurableResumeGrantRow);
+}
+
+export function getDurableResumeGrantByTokenHash(
+  tokenHash: string,
+): DurableResumeGrant | null {
+  const row = db
+    .prepare(`SELECT * FROM durable_resume_grants WHERE token_hash = ? LIMIT 1`)
+    .get(tokenHash) as Record<string, unknown> | undefined;
+  return row ? mapDurableResumeGrantRow(row) : null;
+}
+
+export function revokeDurableResumeGrant(params: {
+  grantId: string;
+  now: string;
+}): boolean {
+  return (
+    db
+      .prepare(
+        `
+          UPDATE durable_resume_grants
+          SET status = 'revoked', updated_at = ?, revoked_at = ?
+          WHERE grant_id = ? AND status = 'active'
+        `,
+      )
+      .run(params.now, params.now, params.grantId).changes === 1
+  );
+}
+
+function mapDurableLeaseRow(row: Record<string, unknown>): DurableWorkLease {
+  return {
+    leaseId: String(row.lease_id),
+    workId: String(row.work_id),
+    processGeneration: String(row.process_generation),
+    workerScopeHash: String(row.worker_scope_hash),
+    status: row.status as DurableWorkLease['status'],
+    attempt: Number(row.attempt),
+    acquiredAt: String(row.acquired_at),
+    heartbeatAt: String(row.heartbeat_at),
+    expiresAt: String(row.expires_at),
+    releasedAt: row.released_at ? String(row.released_at) : null,
+    privacyJson: String(row.privacy_json),
+  };
+}
+
+export function getDurableWorkLease(leaseId: string): DurableWorkLease | null {
+  const row = db
+    .prepare(`SELECT * FROM durable_work_leases WHERE lease_id = ? LIMIT 1`)
+    .get(leaseId) as Record<string, unknown> | undefined;
+  return row ? mapDurableLeaseRow(row) : null;
+}
+
+export type DurableGrantConsumeStatus =
+  | 'consumed'
+  | 'not_found'
+  | 'already_consumed'
+  | 'expired'
+  | 'revoked'
+  | 'scope_mismatch'
+  | 'stale_work_version'
+  | 'stale_plan_version'
+  | 'checkpoint_mismatch'
+  | 'approval_missing_or_stale'
+  | 'lease_held';
+
+export function consumeDurableResumeGrantAtomic(params: {
+  tokenHash: string;
+  ownerScopeHash: string;
+  chatScopeHash: string;
+  groupScopeHash: string;
+  channel: string;
+  targetScopeHash: string;
+  actionClass: string;
+  inboundMessageHash?: string | null;
+  processGeneration: string;
+  workerScopeHash: string;
+  leaseId: string;
+  now: string;
+  leaseExpiresAt: string;
+  resumeStatus: 'executing' | 'verifying';
+  event: DurableWorkEvent;
+  beforeCommit?: () => void;
+}): {
+  status: DurableGrantConsumeStatus;
+  work?: DurableWorkUnit;
+  grant?: DurableResumeGrant;
+  lease?: DurableWorkLease;
+} {
+  if (params.leaseExpiresAt <= params.now) {
+    throw new Error(
+      'Durable lease expiry must be later than acquisition time.',
+    );
+  }
+  const transact = db.transaction(() => {
+    const grantRow = db
+      .prepare(
+        `SELECT * FROM durable_resume_grants WHERE token_hash = ? LIMIT 1`,
+      )
+      .get(params.tokenHash) as Record<string, unknown> | undefined;
+    if (!grantRow) return { status: 'not_found' as const };
+    const grant = mapDurableResumeGrantRow(grantRow);
+    if (grant.status === 'consumed') {
+      return { status: 'already_consumed' as const, grant };
+    }
+    if (grant.status === 'revoked')
+      return { status: 'revoked' as const, grant };
+    if (grant.status === 'expired' || grant.expiresAt <= params.now) {
+      db.prepare(
+        `
+          UPDATE durable_resume_grants
+          SET status = 'expired', updated_at = ?
+          WHERE grant_id = ? AND status = 'active'
+        `,
+      ).run(params.now, grant.grantId);
+      return {
+        status: 'expired' as const,
+        grant: { ...grant, status: 'expired' as const },
+      };
+    }
+    if (
+      grant.ownerScopeHash !== params.ownerScopeHash ||
+      grant.chatScopeHash !== params.chatScopeHash ||
+      grant.groupScopeHash !== params.groupScopeHash ||
+      grant.channel !== params.channel ||
+      grant.targetScopeHash !== params.targetScopeHash ||
+      grant.actionClass !== params.actionClass ||
+      (grant.inboundMessageHash &&
+        grant.inboundMessageHash !== (params.inboundMessageHash || null))
+    ) {
+      return { status: 'scope_mismatch' as const, grant };
+    }
+    if (!durableActionPolicy(grant.actionClass)) {
+      return { status: 'approval_missing_or_stale' as const, grant };
+    }
+    const workRow = db
+      .prepare(`SELECT * FROM durable_work_units WHERE work_id = ? LIMIT 1`)
+      .get(grant.workId) as Record<string, unknown> | undefined;
+    if (!workRow) return { status: 'not_found' as const };
+    const work = mapDurableWorkUnitRow(workRow);
+    if (work.version !== grant.workVersion) {
+      return { status: 'stale_work_version' as const, work, grant };
+    }
+    if (work.planVersion !== grant.planVersion) {
+      return { status: 'stale_plan_version' as const, work, grant };
+    }
+    if (work.checkpointHeadId !== grant.checkpointId) {
+      return { status: 'checkpoint_mismatch' as const, work, grant };
+    }
+    const checkpointRow = db
+      .prepare(
+        `
+          SELECT * FROM durable_work_checkpoints
+          WHERE durable_checkpoint_id = ? AND work_id = ?
+          LIMIT 1
+        `,
+      )
+      .get(grant.checkpointId, grant.workId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!checkpointRow) {
+      return { status: 'checkpoint_mismatch' as const, work, grant };
+    }
+    if (
+      durableActionRequiresApproval(grant.actionClass) &&
+      !grant.approvalPacketId
+    ) {
+      return {
+        status: 'approval_missing_or_stale' as const,
+        work,
+        grant,
+      };
+    }
+    if (grant.approvalPacketId) {
+      const approval = db
+        .prepare(
+          `
+            SELECT * FROM cognitive_approval_packets
+            WHERE approval_packet_id = ?
+            LIMIT 1
+          `,
+        )
+        .get(grant.approvalPacketId) as
+        | Parameters<typeof mapCognitiveApprovalPacketRow>[0]
+        | undefined;
+      if (
+        !approval ||
+        approval.status !== 'approved' ||
+        Number(approval.approval_version) !== grant.approvalVersion ||
+        String(approval.scope_digest || '') !==
+          String(grant.approvalScopeHash || '') ||
+        work.approvalPacketId !== grant.approvalPacketId ||
+        work.approvalVersion !== grant.approvalVersion ||
+        approval.durable_work_id !== grant.workId ||
+        approval.durable_checkpoint_id !== grant.checkpointId ||
+        Number(approval.plan_version) !== grant.planVersion ||
+        approval.target_scope_digest !== grant.targetScopeHash ||
+        approval.action_class !== grant.actionClass ||
+        (approval.expires_at && approval.expires_at <= params.now)
+      ) {
+        return {
+          status: 'approval_missing_or_stale' as const,
+          work,
+          grant,
+        };
+      }
+    }
+    const activeLease = db
+      .prepare(
+        `
+          SELECT * FROM durable_work_leases
+          WHERE work_id = ? AND status = 'active'
+          LIMIT 1
+        `,
+      )
+      .get(work.workId) as Record<string, unknown> | undefined;
+    if (activeLease) {
+      const lease = mapDurableLeaseRow(activeLease);
+      if (lease.expiresAt > params.now) {
+        return { status: 'lease_held' as const, work, grant };
+      }
+      const unresolvedRows = db
+        .prepare(
+          `
+            SELECT * FROM durable_effect_receipts
+            WHERE work_id = ? AND plan_version = ?
+              AND (
+                status IN ('started', 'partial', 'unknown')
+                OR (status = 'succeeded' AND verification_fingerprint IS NULL)
+              )
+            ORDER BY updated_at DESC LIMIT 5000
+          `,
+        )
+        .all(work.workId, work.planVersion) as Array<Record<string, unknown>>;
+      const unresolved = unresolvedRows.map(mapDurableReceiptRow);
+      const externalUnknown = unresolved.some(
+        (receipt) => receipt.effectClass === 'external_effect',
+      );
+      const verificationNeeded = unresolved.some((receipt) =>
+        ['repository_write', 'local_write'].includes(receipt.effectClass),
+      );
+      const reconciledStatus: DurableWorkStatus = externalUnknown
+        ? 'delivery_unverified'
+        : verificationNeeded || work.status === 'verifying'
+          ? 'verifying'
+          : 'interrupted';
+      db.prepare(
+        `UPDATE durable_work_leases
+         SET status = 'expired', released_at = ?, heartbeat_at = ?
+         WHERE lease_id = ? AND status = 'active' AND expires_at <= ?`,
+      ).run(params.now, params.now, lease.leaseId, params.now);
+      db.prepare(
+        `UPDATE durable_work_units
+         SET status = ?, version = version + 1, updated_at = ?,
+             lease_id = NULL, lease_expires_at = NULL, interrupted_at = ?,
+             next_action = ?
+         WHERE work_id = ? AND version = ? AND lease_id = ?`,
+      ).run(
+        reconciledStatus,
+        params.now,
+        params.now,
+        reconciledStatus === 'delivery_unverified'
+          ? 'Inspect the exact external target; do not repeat the effect.'
+          : reconciledStatus === 'verifying'
+            ? 'Verify the uncertain effect before any retry.'
+            : 'Issue a fresh scoped grant after revalidating dependencies.',
+        work.workId,
+        work.version,
+        lease.leaseId,
+      );
+      const reconciledRow = db
+        .prepare(`SELECT * FROM durable_work_units WHERE work_id = ?`)
+        .get(work.workId) as Record<string, unknown>;
+      const reconciled = mapDurableWorkUnitRow(reconciledRow);
+      insertDurableEventRow({
+        eventId: `durable:event:reconcile:${lease.leaseId}`,
+        workId: work.workId,
+        createdAt: params.now,
+        eventKind: 'reconciled',
+        fromStatus: work.status,
+        toStatus: reconciled.status,
+        workVersion: reconciled.version,
+        planVersion: reconciled.planVersion,
+        summary: 'Expired lease was reconciled before a new claim.',
+        refsJson: JSON.stringify([lease.leaseId]),
+        privacyJson: reconciled.privacyJson,
+      });
+      return {
+        status: 'stale_work_version' as const,
+        work: reconciled,
+        grant,
+      };
+    }
+    const lease: DurableWorkLease = {
+      leaseId: params.leaseId,
+      workId: work.workId,
+      processGeneration: params.processGeneration,
+      workerScopeHash: params.workerScopeHash,
+      status: 'active',
+      attempt: work.attemptCount + 1,
+      acquiredAt: params.now,
+      heartbeatAt: params.now,
+      expiresAt: params.leaseExpiresAt,
+      releasedAt: null,
+      privacyJson: work.privacyJson,
+    };
+    db.prepare(
+      `
+        INSERT INTO durable_work_leases (
+          lease_id, work_id, process_generation, worker_scope_hash, status,
+          attempt, acquired_at, heartbeat_at, expires_at, released_at,
+          privacy_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    ).run(
+      lease.leaseId,
+      lease.workId,
+      lease.processGeneration,
+      lease.workerScopeHash,
+      lease.status,
+      lease.attempt,
+      lease.acquiredAt,
+      lease.heartbeatAt,
+      lease.expiresAt,
+      null,
+      sanitizeStoredJsonObject(lease.privacyJson, 1200),
+    );
+    const grantUpdate = db
+      .prepare(
+        `
+          UPDATE durable_resume_grants
+          SET status = 'consumed', updated_at = ?, consumed_at = ?,
+              consumed_lease_id = ?
+          WHERE grant_id = ? AND status = 'active'
+        `,
+      )
+      .run(params.now, params.now, lease.leaseId, grant.grantId);
+    const workUpdate = db
+      .prepare(
+        `
+          UPDATE durable_work_units
+          SET status = ?, version = version + 1, updated_at = ?,
+              lease_id = ?, lease_expires_at = ?,
+              attempt_count = attempt_count + 1, interrupted_at = NULL,
+              next_action = ?
+          WHERE work_id = ? AND version = ? AND plan_version = ?
+            AND status IN ('ready', 'awaiting_approval', 'interrupted',
+                           'needs_replan', 'verifying', 'delivery_unverified')
+        `,
+      )
+      .run(
+        params.resumeStatus,
+        params.now,
+        lease.leaseId,
+        lease.expiresAt,
+        params.resumeStatus === 'verifying'
+          ? 'Verify the uncertain effect before any retry.'
+          : 'Execute only the next dependency-ready plan node.',
+        work.workId,
+        work.version,
+        work.planVersion,
+      );
+    if (grantUpdate.changes !== 1 || workUpdate.changes !== 1) {
+      throw new Error('Durable grant consume lost its compare-and-set race.');
+    }
+    const updatedRow = db
+      .prepare(`SELECT * FROM durable_work_units WHERE work_id = ?`)
+      .get(work.workId) as Record<string, unknown>;
+    const updatedWork = mapDurableWorkUnitRow(updatedRow);
+    insertDurableEventRow({
+      ...params.event,
+      workId: updatedWork.workId,
+      fromStatus: work.status,
+      toStatus: updatedWork.status,
+      workVersion: updatedWork.version,
+      planVersion: updatedWork.planVersion,
+      refsJson: JSON.stringify([grant.grantId, lease.leaseId]),
+    });
+    params.beforeCommit?.();
+    return {
+      status: 'consumed' as const,
+      work: updatedWork,
+      grant: {
+        ...grant,
+        status: 'consumed' as const,
+        updatedAt: params.now,
+        consumedAt: params.now,
+        consumedLeaseId: lease.leaseId,
+      },
+      lease,
+    };
+  });
+  try {
+    return transact.immediate();
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      /unique constraint failed:\s*durable_work_leases\.work_id/i.test(
+        error.message,
+      )
+    ) {
+      return { status: 'lease_held' };
+    }
+    throw error;
+  }
+}
+
+export function heartbeatDurableWorkLease(params: {
+  leaseId: string;
+  processGeneration: string;
+  now: string;
+  expiresAt: string;
+}): boolean {
+  if (params.expiresAt <= params.now) return false;
+  const transact = db.transaction(() => {
+    const result = db
+      .prepare(
+        `
+          UPDATE durable_work_leases
+          SET heartbeat_at = ?, expires_at = ?
+          WHERE lease_id = ? AND process_generation = ?
+            AND status = 'active' AND expires_at > ?
+            AND EXISTS (
+              SELECT 1 FROM durable_work_units work_record
+              WHERE work_record.work_id = durable_work_leases.work_id
+                AND work_record.lease_id = durable_work_leases.lease_id
+                AND work_record.lease_expires_at > ?
+            )
+        `,
+      )
+      .run(
+        params.now,
+        params.expiresAt,
+        params.leaseId,
+        params.processGeneration,
+        params.now,
+        params.now,
+      );
+    if (result.changes !== 1) return false;
+    const workResult = db
+      .prepare(
+        `
+        UPDATE durable_work_units
+        SET lease_expires_at = ?, updated_at = ?
+        WHERE lease_id = ? AND lease_expires_at > ?
+      `,
+      )
+      .run(params.expiresAt, params.now, params.leaseId, params.now);
+    if (workResult.changes !== 1) {
+      throw new Error('Durable lease lost its work binding during heartbeat.');
+    }
+    return true;
+  });
+  return transact.immediate();
+}
+
+export function releaseDurableWorkLease(params: {
+  leaseId: string;
+  processGeneration: string;
+  now: string;
+}): boolean {
+  const transact = db.transaction(() => {
+    const result = db
+      .prepare(
+        `
+          UPDATE durable_work_leases
+          SET status = 'released', released_at = ?, heartbeat_at = ?
+          WHERE lease_id = ? AND process_generation = ? AND status = 'active'
+            AND expires_at > ?
+            AND EXISTS (
+              SELECT 1 FROM durable_work_units work_record
+              WHERE work_record.work_id = durable_work_leases.work_id
+                AND work_record.lease_id = durable_work_leases.lease_id
+                AND work_record.lease_expires_at > ?
+            )
+        `,
+      )
+      .run(
+        params.now,
+        params.now,
+        params.leaseId,
+        params.processGeneration,
+        params.now,
+        params.now,
+      );
+    if (result.changes !== 1) return false;
+    const workResult = db
+      .prepare(
+        `
+        UPDATE durable_work_units
+        SET lease_id = NULL, lease_expires_at = NULL, updated_at = ?
+        WHERE lease_id = ? AND lease_expires_at > ?
+      `,
+      )
+      .run(params.now, params.leaseId, params.now);
+    if (workResult.changes !== 1) {
+      throw new Error('Durable lease lost its work binding during release.');
+    }
+    return true;
+  });
+  return transact.immediate();
+}
+
+function mapDurableReceiptRow(
+  row: Record<string, unknown>,
+): DurableEffectReceipt {
+  return {
+    receiptId: String(row.receipt_id),
+    workId: String(row.work_id),
+    checkpointId: String(row.checkpoint_id),
+    planVersion: Number(row.plan_version),
+    nodeId: String(row.node_id),
+    invocationId: String(row.invocation_id),
+    actionClass: String(row.action_class || 'legacy_unbound'),
+    effectClass: row.effect_class as DurableEffectReceipt['effectClass'],
+    status: row.status as DurableEffectReceipt['status'],
+    targetScopeHash: String(row.target_scope_hash),
+    grantId: row.grant_id ? String(row.grant_id) : null,
+    approvalPacketId: row.approval_packet_id
+      ? String(row.approval_packet_id)
+      : null,
+    approvalVersion:
+      row.approval_version === null || row.approval_version === undefined
+        ? null
+        : Number(row.approval_version),
+    approvalScopeHash: row.approval_scope_hash
+      ? String(row.approval_scope_hash)
+      : null,
+    preStateFingerprint: row.pre_state_fingerprint
+      ? String(row.pre_state_fingerprint)
+      : null,
+    postStateFingerprint: row.post_state_fingerprint
+      ? String(row.post_state_fingerprint)
+      : null,
+    verificationFingerprint: row.verification_fingerprint
+      ? String(row.verification_fingerprint)
+      : null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    metadataJson: String(row.metadata_json),
+    privacyJson: String(row.privacy_json),
+  };
+}
+
+export function upsertDurableEffectReceipt(params: {
+  receipt: DurableEffectReceipt;
+  event: DurableWorkEvent;
+  leaseAssertion?: {
+    leaseId: string;
+    processGeneration: string;
+    now: string;
+  };
+}): DurableEffectReceipt {
+  const transact = db.transaction(() => {
+    const receipt = params.receipt;
+    assertDurableActionEffectPolicy(receipt.actionClass, receipt.effectClass);
+    if (params.leaseAssertion) {
+      const assertedLease = db
+        .prepare(
+          `
+            SELECT lease_record.lease_id
+            FROM durable_work_leases lease_record
+            JOIN durable_work_units work_record
+              ON work_record.work_id = lease_record.work_id
+            JOIN durable_work_checkpoints checkpoint_record
+              ON checkpoint_record.work_id = work_record.work_id
+             AND checkpoint_record.durable_checkpoint_id = ?
+            WHERE lease_record.lease_id = ?
+              AND lease_record.work_id = ?
+              AND lease_record.process_generation = ?
+              AND lease_record.status = 'active'
+              AND lease_record.expires_at > ?
+              AND work_record.lease_id = lease_record.lease_id
+              AND work_record.lease_expires_at > ?
+              AND work_record.status IN ('executing', 'verifying')
+              AND work_record.plan_version = ?
+              AND work_record.checkpoint_head_id = ?
+              AND work_record.target_scope_hash = ?
+              AND checkpoint_record.plan_version = ?
+              AND checkpoint_record.target_scope_hash = ?
+            LIMIT 1
+          `,
+        )
+        .get(
+          receipt.checkpointId,
+          params.leaseAssertion.leaseId,
+          receipt.workId,
+          params.leaseAssertion.processGeneration,
+          params.leaseAssertion.now,
+          params.leaseAssertion.now,
+          receipt.planVersion,
+          receipt.checkpointId,
+          receipt.targetScopeHash,
+          receipt.planVersion,
+          receipt.targetScopeHash,
+        ) as { lease_id: string } | undefined;
+      if (!assertedLease) {
+        throw new Error(
+          'Durable effect receipt requires an active bound lease generation.',
+        );
+      }
+      if (durableActionRequiresApproval(receipt.actionClass)) {
+        const assertedAuthorization = db
+          .prepare(
+            `
+              SELECT current_grant.grant_id
+              FROM durable_resume_grants current_grant
+              JOIN cognitive_approval_packets current_approval
+                ON current_approval.approval_packet_id = current_grant.approval_packet_id
+              WHERE current_grant.consumed_lease_id = ?
+                AND current_grant.grant_id = ?
+                AND current_grant.work_id = ?
+                AND current_grant.checkpoint_id = ?
+                AND current_grant.plan_version = ?
+                AND current_grant.status = 'consumed'
+                AND current_grant.consumed_at IS NOT NULL
+                AND current_grant.consumed_at <= ?
+                AND current_grant.target_scope_hash = ?
+                AND current_grant.action_class = ?
+                AND current_grant.approval_packet_id = ?
+                AND current_grant.approval_version = ?
+                AND current_grant.approval_scope_hash = ?
+                AND current_approval.status = 'approved'
+                AND current_approval.durable_work_id = ?
+                AND current_approval.durable_checkpoint_id = ?
+                AND current_approval.plan_version = ?
+                AND current_approval.target_scope_digest = ?
+                AND current_approval.action_class = ?
+                AND current_approval.approval_version = current_grant.approval_version
+                AND current_approval.scope_digest = current_grant.approval_scope_hash
+                AND (
+                  current_approval.expires_at IS NULL
+                  OR current_approval.expires_at > ?
+                )
+              LIMIT 1
+            `,
+          )
+          .get(
+            params.leaseAssertion.leaseId,
+            receipt.grantId,
+            receipt.workId,
+            receipt.checkpointId,
+            receipt.planVersion,
+            params.leaseAssertion.now,
+            receipt.targetScopeHash,
+            receipt.actionClass,
+            receipt.approvalPacketId,
+            receipt.approvalVersion,
+            receipt.approvalScopeHash,
+            receipt.workId,
+            receipt.checkpointId,
+            receipt.planVersion,
+            receipt.targetScopeHash,
+            receipt.actionClass,
+            params.leaseAssertion.now,
+          ) as { grant_id: string } | undefined;
+        if (!assertedAuthorization) {
+          throw new Error(
+            'Durable approval-bound receipt requires a current exact-scope lease approval.',
+          );
+        }
+      }
+    } else if (durableActionRequiresApproval(receipt.actionClass)) {
+      throw new Error(
+        'Durable approval-bound receipt requires an active bound lease generation.',
+      );
+    }
+    const metadataJson = sanitizeStoredJsonObject(receipt.metadataJson, 3200);
+    const existing = db
+      .prepare(
+        `SELECT receipt_id FROM durable_effect_receipts WHERE receipt_id = ?`,
+      )
+      .get(receipt.receiptId) as { receipt_id: string } | undefined;
+    const write = existing
+      ? db
+          .prepare(
+            `
+              UPDATE durable_effect_receipts
+              SET status = ?,
+                  post_state_fingerprint = COALESCE(?, post_state_fingerprint),
+                  verification_fingerprint = COALESCE(?, verification_fingerprint),
+                  updated_at = ?, metadata_json = ?
+              WHERE receipt_id = ?
+                AND work_id = ?
+                AND checkpoint_id = ?
+                AND plan_version = ?
+                AND node_id = ?
+                AND invocation_id = ?
+                AND action_class = ?
+                AND effect_class = ?
+                AND target_scope_hash = ?
+                AND grant_id IS ?
+                AND approval_packet_id IS ?
+                AND approval_version IS ?
+                AND approval_scope_hash IS ?
+                AND pre_state_fingerprint IS ?
+                AND (
+                  (
+                    status = ?
+                    AND post_state_fingerprint IS ?
+                    AND verification_fingerprint IS ?
+                    AND metadata_json = ?
+                  )
+                  OR (status = 'started' AND ? IN ('succeeded', 'failed', 'partial', 'unknown'))
+                  OR (status = 'unknown' AND ? IN ('succeeded', 'failed', 'partial'))
+                  OR (status = 'partial' AND ? IN ('succeeded', 'failed'))
+                )
+            `,
+          )
+          .run(
+            receipt.status,
+            receipt.postStateFingerprint || null,
+            receipt.verificationFingerprint || null,
+            receipt.updatedAt,
+            metadataJson,
+            receipt.receiptId,
+            receipt.workId,
+            receipt.checkpointId,
+            receipt.planVersion,
+            receipt.nodeId,
+            receipt.invocationId,
+            receipt.actionClass,
+            receipt.effectClass,
+            receipt.targetScopeHash,
+            receipt.grantId || null,
+            receipt.approvalPacketId || null,
+            receipt.approvalVersion || null,
+            receipt.approvalScopeHash || null,
+            receipt.preStateFingerprint || null,
+            receipt.status,
+            receipt.postStateFingerprint || null,
+            receipt.verificationFingerprint || null,
+            metadataJson,
+            receipt.status,
+            receipt.status,
+            receipt.status,
+          )
+      : db
+          .prepare(
+            `
+              INSERT INTO durable_effect_receipts (
+                receipt_id, work_id, checkpoint_id, plan_version, node_id,
+                invocation_id, action_class, effect_class, status,
+                target_scope_hash, grant_id, approval_packet_id,
+                approval_version, approval_scope_hash, pre_state_fingerprint,
+                post_state_fingerprint, verification_fingerprint, created_at,
+                updated_at, metadata_json, privacy_json
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+          )
+          .run(
+            receipt.receiptId,
+            receipt.workId,
+            receipt.checkpointId,
+            receipt.planVersion,
+            receipt.nodeId,
+            receipt.invocationId,
+            receipt.actionClass,
+            receipt.effectClass,
+            receipt.status,
+            receipt.targetScopeHash,
+            receipt.grantId || null,
+            receipt.approvalPacketId || null,
+            receipt.approvalVersion || null,
+            receipt.approvalScopeHash || null,
+            receipt.preStateFingerprint || null,
+            receipt.postStateFingerprint || null,
+            receipt.verificationFingerprint || null,
+            receipt.createdAt,
+            receipt.updatedAt,
+            metadataJson,
+            sanitizeStoredJsonObject(receipt.privacyJson, 1200),
+          );
+    if (write.changes !== 1) {
+      throw new Error(
+        'Durable effect receipt update violated its immutable scope or monotonic status.',
+      );
+    }
+    insertDurableEventRow(params.event);
+    const row = db
+      .prepare(`SELECT * FROM durable_effect_receipts WHERE receipt_id = ?`)
+      .get(receipt.receiptId) as Record<string, unknown>;
+    return mapDurableReceiptRow(row);
+  });
+  return transact.immediate();
+}
+
+export function listDurableEffectReceipts(params: {
+  workId: string;
+  checkpointId?: string;
+  limit?: number;
+}): DurableEffectReceipt[] {
+  const rows = params.checkpointId
+    ? (db
+        .prepare(
+          `
+            SELECT * FROM durable_effect_receipts
+            WHERE work_id = ? AND checkpoint_id = ?
+            ORDER BY updated_at ASC LIMIT ?
+          `,
+        )
+        .all(
+          params.workId,
+          params.checkpointId,
+          Math.max(1, Math.min(params.limit || 200, 1_000)),
+        ) as Array<Record<string, unknown>>)
+    : (db
+        .prepare(
+          `
+            SELECT * FROM durable_effect_receipts
+            WHERE work_id = ? ORDER BY updated_at ASC LIMIT ?
+          `,
+        )
+        .all(
+          params.workId,
+          Math.max(1, Math.min(params.limit || 200, 1_000)),
+        ) as Array<Record<string, unknown>>);
+  return rows.map(mapDurableReceiptRow);
+}
+
+export function listDurableWorkEvents(params: {
+  workId: string;
+  limit?: number;
+}): DurableWorkEvent[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT * FROM durable_work_events
+        WHERE work_id = ? ORDER BY created_at ASC LIMIT ?
+      `,
+    )
+    .all(
+      params.workId,
+      Math.max(1, Math.min(params.limit || 500, 2_000)),
+    ) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    eventId: String(row.event_id),
+    workId: String(row.work_id),
+    createdAt: String(row.created_at),
+    eventKind: row.event_kind as DurableWorkEvent['eventKind'],
+    fromStatus: row.from_status
+      ? (String(row.from_status) as DurableWorkStatus)
+      : null,
+    toStatus: row.to_status
+      ? (String(row.to_status) as DurableWorkStatus)
+      : null,
+    workVersion: Number(row.work_version),
+    planVersion: Number(row.plan_version),
+    summary: String(row.summary),
+    refsJson: String(row.refs_json),
+    privacyJson: String(row.privacy_json),
+  }));
+}
+
+export function reconcileExpiredDurableWorkLeases(params: {
+  processGeneration: string;
+  now: string;
+}): {
+  inspected: number;
+  expired: number;
+  interrupted: number;
+  verificationNeeded: number;
+  deliveryUnverified: number;
+  healthyLeaseSkipped: number;
+} {
+  const transact = db.transaction(() => {
+    const activeRows = db
+      .prepare(`SELECT * FROM durable_work_leases WHERE status = 'active'`)
+      .all() as Array<Record<string, unknown>>;
+    let expired = 0;
+    let interrupted = 0;
+    let verificationNeeded = 0;
+    let deliveryUnverified = 0;
+    let healthyLeaseSkipped = 0;
+    for (const row of activeRows) {
+      const lease = mapDurableLeaseRow(row);
+      if (lease.expiresAt > params.now) {
+        healthyLeaseSkipped += 1;
+        continue;
+      }
+      const workRow = db
+        .prepare(`SELECT * FROM durable_work_units WHERE work_id = ?`)
+        .get(lease.workId) as Record<string, unknown> | undefined;
+      if (!workRow) continue;
+      const work = mapDurableWorkUnitRow(workRow);
+      const unresolvedRows = db
+        .prepare(
+          `
+            SELECT * FROM durable_effect_receipts
+            WHERE work_id = ? AND plan_version = ?
+              AND (
+                status IN ('started', 'partial', 'unknown')
+                OR (status = 'succeeded' AND verification_fingerprint IS NULL)
+              )
+            ORDER BY updated_at DESC
+            LIMIT 5000
+          `,
+        )
+        .all(work.workId, work.planVersion) as Array<Record<string, unknown>>;
+      const unresolved = unresolvedRows.map(mapDurableReceiptRow);
+      const externalUnknown = unresolved.some(
+        (receipt) => receipt.effectClass === 'external_effect',
+      );
+      const localUnknown = unresolved.some((receipt) =>
+        ['repository_write', 'local_write'].includes(receipt.effectClass),
+      );
+      const nextStatus: DurableWorkStatus = externalUnknown
+        ? 'delivery_unverified'
+        : localUnknown || work.status === 'verifying'
+          ? 'verifying'
+          : 'interrupted';
+      db.prepare(
+        `
+          UPDATE durable_work_leases
+          SET status = 'expired', released_at = ?, heartbeat_at = ?
+          WHERE lease_id = ? AND status = 'active' AND expires_at <= ?
+        `,
+      ).run(params.now, params.now, lease.leaseId, params.now);
+      const changed = db
+        .prepare(
+          `
+            UPDATE durable_work_units
+            SET status = ?, version = version + 1, updated_at = ?,
+                lease_id = NULL, lease_expires_at = NULL,
+                interrupted_at = ?, next_action = ?
+            WHERE work_id = ? AND lease_id = ?
+              AND status IN ('executing', 'verifying')
+          `,
+        )
+        .run(
+          nextStatus,
+          params.now,
+          params.now,
+          nextStatus === 'delivery_unverified'
+            ? 'Inspect the exact external target; do not send again.'
+            : nextStatus === 'verifying'
+              ? 'Inspect current target state and verify the uncertain effect before retrying.'
+              : 'Issue a fresh scoped grant after revalidating dependencies.',
+          work.workId,
+          lease.leaseId,
+        );
+      if (changed.changes !== 1) continue;
+      const updated = getDurableWorkUnit(work.workId);
+      if (!updated) continue;
+      insertDurableEventRow({
+        eventId: `durable:event:reconcile:${lease.leaseId}`,
+        workId: work.workId,
+        createdAt: params.now,
+        eventKind: 'reconciled',
+        fromStatus: work.status,
+        toStatus: updated.status,
+        workVersion: updated.version,
+        planVersion: updated.planVersion,
+        summary:
+          lease.processGeneration === params.processGeneration
+            ? 'Expired lease from this process generation was reconciled.'
+            : 'Expired lease from a prior process generation was reconciled.',
+        refsJson: JSON.stringify(
+          [lease.leaseId, updated.checkpointHeadId].filter(Boolean),
+        ),
+        privacyJson: updated.privacyJson,
+      });
+      expired += 1;
+      if (nextStatus === 'interrupted') interrupted += 1;
+      if (nextStatus === 'verifying') verificationNeeded += 1;
+      if (nextStatus === 'delivery_unverified') deliveryUnverified += 1;
+    }
+    return {
+      inspected: activeRows.length,
+      expired,
+      interrupted,
+      verificationNeeded,
+      deliveryUnverified,
+      healthyLeaseSkipped,
+    };
+  });
+  return transact.immediate();
 }
 
 // --- JSON migration ---

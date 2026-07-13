@@ -18,6 +18,7 @@ import {
   buildPatchWorkbenchReport,
   createTempPatchRecipeWorkspace,
   evaluatePatchPlanSafety,
+  evaluateGitSafety,
   executeApprovedDetachedRepairCandidate,
   executeDetachedRepairCandidate,
 } from '../src/patch-workbench.js';
@@ -320,28 +321,43 @@ assert.doesNotMatch(
   /sk-proj-|raw private body|hidden reasoning|provider debate|raw tool output/i,
 );
 
-const successRepo = createRepairExecutorRepo('repair-executor-success');
-try {
-  const successBranch = 'codex/improvement/test-detached-success';
-  const success = executeDetachedRepairCandidate({
-    repoRoot: successRepo.repoRoot,
-    branchName: successBranch,
-    diffText: successRepo.diffText,
-    verificationCommands: [
-      {
-        command: process.execPath,
-        args: ['check.js'],
-      },
-      {
-        command: process.execPath,
-        args: ['require-probe.js'],
-        label: 'dependency resolution inside detached worktree',
-      },
-    ],
-    commitMessage: 'Apply detached repair candidate',
-    approved: true,
-    policy: {
-      allowedVerificationCommands: [
+if (process.env.ANDREA_TEST_NETWORK_GUARD_ACTIVE === '1') {
+  const guardedRepo = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'andrea-guarded-repair-executor-'),
+  );
+  try {
+    assert.equal(evaluateGitSafety(guardedRepo).blocker, 'git_unavailable');
+    const denied = executeDetachedRepairCandidate({
+      repoRoot: guardedRepo,
+      branchName: 'codex/improvement/test-guarded-git-denial',
+      diffText: [
+        'diff --git a/file.txt b/file.txt',
+        '--- a/file.txt',
+        '+++ b/file.txt',
+        '@@ -1 +1 @@',
+        '-before',
+        '+after',
+        '',
+      ].join('\n'),
+      verificationCommands: [],
+      commitMessage: 'This must remain blocked under deterministic guard',
+      approved: true,
+    });
+    assert.equal(denied.status, 'blocked');
+    assert.match(denied.reason, /network access is disabled|worktree/i);
+    assert.equal(fs.existsSync(denied.workspacePath), false);
+  } finally {
+    fs.rmSync(guardedRepo, { recursive: true, force: true });
+  }
+} else {
+  const successRepo = createRepairExecutorRepo('repair-executor-success');
+  try {
+    const successBranch = 'codex/improvement/test-detached-success';
+    const success = executeDetachedRepairCandidate({
+      repoRoot: successRepo.repoRoot,
+      branchName: successBranch,
+      diffText: successRepo.diffText,
+      verificationCommands: [
         {
           command: process.execPath,
           args: ['check.js'],
@@ -349,193 +365,212 @@ try {
         {
           command: process.execPath,
           args: ['require-probe.js'],
+          label: 'dependency resolution inside detached worktree',
         },
       ],
-    },
-  });
-
-  assert.equal(success.status, 'committed', success.reason);
-  assert.ok(success.commitHash);
-  assert.equal(success.verificationResults[0]?.ok, true);
-  assert.equal(
-    success.verificationResults[1]?.ok,
-    true,
-    `node_modules must be reachable from the detached worktree: ${success.verificationResults[1]?.detail}`,
-  );
-  assert.ok(branchExists(successRepo.repoRoot, successBranch));
-  assert.equal(fs.existsSync(success.workspacePath), false);
-  const successFile = git(successRepo.repoRoot, [
-    'show',
-    `${successBranch}:file.txt`,
-  ]);
-  assert.match(successFile, /\bBETA\b/);
-  assert.match(successFile, /\bGAMMA\b/);
-  assert.equal(git(successRepo.repoRoot, ['status', '--porcelain']), '');
-} finally {
-  cleanupRepairExecutorRepo(successRepo.repoRoot);
-}
-
-const failingRepo = createRepairExecutorRepo('repair-executor-failing');
-try {
-  const failingBranch = 'codex/improvement/test-detached-failing';
-  const failure = executeDetachedRepairCandidate({
-    repoRoot: failingRepo.repoRoot,
-    branchName: failingBranch,
-    diffText: failingRepo.diffText,
-    verificationCommands: [
-      {
-        command: process.execPath,
-        args: ['fail.js'],
+      commitMessage: 'Apply detached repair candidate',
+      approved: true,
+      policy: {
+        allowedVerificationCommands: [
+          {
+            command: process.execPath,
+            args: ['check.js'],
+          },
+          {
+            command: process.execPath,
+            args: ['require-probe.js'],
+          },
+        ],
       },
-    ],
-    commitMessage: 'Apply failing detached repair candidate',
-    approved: true,
-    policy: {
-      allowedVerificationCommands: [
+    });
+
+    assert.equal(success.status, 'committed', success.reason);
+    assert.ok(success.commitHash);
+    assert.equal(success.verificationResults[0]?.ok, true);
+    assert.equal(
+      success.verificationResults[1]?.ok,
+      true,
+      `node_modules must be reachable from the detached worktree: ${success.verificationResults[1]?.detail}`,
+    );
+    assert.ok(branchExists(successRepo.repoRoot, successBranch));
+    assert.equal(fs.existsSync(success.workspacePath), false);
+    const successFile = git(successRepo.repoRoot, [
+      'show',
+      `${successBranch}:file.txt`,
+    ]);
+    assert.match(successFile, /\bBETA\b/);
+    assert.match(successFile, /\bGAMMA\b/);
+    assert.equal(git(successRepo.repoRoot, ['status', '--porcelain']), '');
+  } finally {
+    cleanupRepairExecutorRepo(successRepo.repoRoot);
+  }
+
+  const failingRepo = createRepairExecutorRepo('repair-executor-failing');
+  try {
+    const failingBranch = 'codex/improvement/test-detached-failing';
+    const failure = executeDetachedRepairCandidate({
+      repoRoot: failingRepo.repoRoot,
+      branchName: failingBranch,
+      diffText: failingRepo.diffText,
+      verificationCommands: [
         {
           command: process.execPath,
           args: ['fail.js'],
         },
       ],
-    },
-  });
-
-  assert.equal(failure.status, 'rolled_back');
-  assert.equal(failure.commitHash, null);
-  assert.equal(failure.verificationResults[0]?.ok, false);
-  assert.equal(failure.rollbackApplied, true);
-  assert.equal(branchExists(failingRepo.repoRoot, failingBranch), false);
-  assert.equal(fs.existsSync(failure.workspacePath), false);
-  const failingHeadFile = git(failingRepo.repoRoot, ['show', 'HEAD:file.txt']);
-  assert.match(failingHeadFile, /\bbeta\b/);
-  assert.match(failingHeadFile, /\bGAMMA\b/);
-  assert.equal(git(failingRepo.repoRoot, ['status', '--porcelain']), '');
-} finally {
-  cleanupRepairExecutorRepo(failingRepo.repoRoot);
-}
-
-const blockedRepo = createRepairExecutorRepo('repair-executor-blocked');
-try {
-  const blocked = executeDetachedRepairCandidate({
-    repoRoot: blockedRepo.repoRoot,
-    branchName: 'codex/improvement/test-detached-blocked',
-    diffText: [
-      'diff --git a/.env b/.env',
-      '--- a/.env',
-      '+++ b/.env',
-      '@@ -0,0 +1 @@',
-      '+SECRET=not-allowed',
-      '',
-    ].join('\n'),
-    verificationCommands: [],
-    commitMessage: 'Blocked candidate',
-    approved: true,
-  });
-  assert.equal(blocked.status, 'blocked');
-  assert.match(blocked.reason, /sensitive paths|dangerous-change/i);
-} finally {
-  cleanupRepairExecutorRepo(blockedRepo.repoRoot);
-}
-
-const verifyIntegrityRepo = createRepairExecutorRepo(
-  'repair-executor-verify-integrity',
-);
-try {
-  const verifyIntegrityBlocked = executeDetachedRepairCandidate({
-    repoRoot: verifyIntegrityRepo.repoRoot,
-    branchName: 'codex/improvement/test-verify-integrity-blocked',
-    diffText: [
-      'diff --git a/package.json b/package.json',
-      '--- a/package.json',
-      '+++ b/package.json',
-      '@@ -0,0 +1 @@',
-      '+{ "scripts": { "test:patch-workbench": "true" } }',
-      '',
-    ].join('\n'),
-    verificationCommands: [],
-    commitMessage: 'Blocked verification-integrity candidate',
-    approved: true,
-  });
-  assert.equal(verifyIntegrityBlocked.status, 'blocked');
-  assert.match(verifyIntegrityBlocked.reason, /sensitive paths/i);
-
-  const verifyChainBlocked = executeDetachedRepairCandidate({
-    repoRoot: verifyIntegrityRepo.repoRoot,
-    branchName: 'codex/improvement/test-verify-chain-blocked',
-    diffText: [
-      'diff --git a/scripts/test-patch-workbench.ts b/scripts/test-patch-workbench.ts',
-      '--- a/scripts/test-patch-workbench.ts',
-      '+++ b/scripts/test-patch-workbench.ts',
-      '@@ -0,0 +1 @@',
-      '+// weakened verification',
-      '',
-    ].join('\n'),
-    verificationCommands: [],
-    commitMessage: 'Blocked verify-chain candidate',
-    approved: true,
-  });
-  assert.equal(verifyChainBlocked.status, 'blocked');
-  assert.match(verifyChainBlocked.reason, /sensitive paths/i);
-} finally {
-  cleanupRepairExecutorRepo(verifyIntegrityRepo.repoRoot);
-}
-
-const persistedRepo = createRepairExecutorRepo('repair-executor-persisted');
-try {
-  const persistedBranch = 'codex/improvement/test-detached-persisted';
-  const persisted = executeApprovedDetachedRepairCandidate({
-    repoRoot: persistedRepo.repoRoot,
-    branchName: persistedBranch,
-    diffText: persistedRepo.diffText,
-    verificationCommands: [
-      {
-        command: process.execPath,
-        args: ['check.js'],
+      commitMessage: 'Apply failing detached repair candidate',
+      approved: true,
+      policy: {
+        allowedVerificationCommands: [
+          {
+            command: process.execPath,
+            args: ['fail.js'],
+          },
+        ],
       },
-    ],
-    commitMessage: 'Apply persisted detached repair candidate',
-    approved: true,
-    operatorLabel: 'Persisted detached repair test',
-    policy: {
-      allowedVerificationCommands: [
+    });
+
+    assert.equal(failure.status, 'rolled_back');
+    assert.equal(failure.commitHash, null);
+    assert.equal(failure.verificationResults[0]?.ok, false);
+    assert.equal(failure.rollbackApplied, true);
+    assert.equal(branchExists(failingRepo.repoRoot, failingBranch), false);
+    assert.equal(fs.existsSync(failure.workspacePath), false);
+    const failingHeadFile = git(failingRepo.repoRoot, [
+      'show',
+      'HEAD:file.txt',
+    ]);
+    assert.match(failingHeadFile, /\bbeta\b/);
+    assert.match(failingHeadFile, /\bGAMMA\b/);
+    assert.equal(git(failingRepo.repoRoot, ['status', '--porcelain']), '');
+  } finally {
+    cleanupRepairExecutorRepo(failingRepo.repoRoot);
+  }
+
+  const blockedRepo = createRepairExecutorRepo('repair-executor-blocked');
+  try {
+    const blocked = executeDetachedRepairCandidate({
+      repoRoot: blockedRepo.repoRoot,
+      branchName: 'codex/improvement/test-detached-blocked',
+      diffText: [
+        'diff --git a/.env b/.env',
+        '--- a/.env',
+        '+++ b/.env',
+        '@@ -0,0 +1 @@',
+        '+SECRET=not-allowed',
+        '',
+      ].join('\n'),
+      verificationCommands: [],
+      commitMessage: 'Blocked candidate',
+      approved: true,
+    });
+    assert.equal(blocked.status, 'blocked');
+    assert.match(blocked.reason, /sensitive paths|dangerous-change/i);
+  } finally {
+    cleanupRepairExecutorRepo(blockedRepo.repoRoot);
+  }
+
+  const verifyIntegrityRepo = createRepairExecutorRepo(
+    'repair-executor-verify-integrity',
+  );
+  try {
+    const verifyIntegrityBlocked = executeDetachedRepairCandidate({
+      repoRoot: verifyIntegrityRepo.repoRoot,
+      branchName: 'codex/improvement/test-verify-integrity-blocked',
+      diffText: [
+        'diff --git a/package.json b/package.json',
+        '--- a/package.json',
+        '+++ b/package.json',
+        '@@ -0,0 +1 @@',
+        '+{ "scripts": { "test:patch-workbench": "true" } }',
+        '',
+      ].join('\n'),
+      verificationCommands: [],
+      commitMessage: 'Blocked verification-integrity candidate',
+      approved: true,
+    });
+    assert.equal(verifyIntegrityBlocked.status, 'blocked');
+    assert.match(verifyIntegrityBlocked.reason, /sensitive paths/i);
+
+    const verifyChainBlocked = executeDetachedRepairCandidate({
+      repoRoot: verifyIntegrityRepo.repoRoot,
+      branchName: 'codex/improvement/test-verify-chain-blocked',
+      diffText: [
+        'diff --git a/scripts/test-patch-workbench.ts b/scripts/test-patch-workbench.ts',
+        '--- a/scripts/test-patch-workbench.ts',
+        '+++ b/scripts/test-patch-workbench.ts',
+        '@@ -0,0 +1 @@',
+        '+// weakened verification',
+        '',
+      ].join('\n'),
+      verificationCommands: [],
+      commitMessage: 'Blocked verify-chain candidate',
+      approved: true,
+    });
+    assert.equal(verifyChainBlocked.status, 'blocked');
+    assert.match(verifyChainBlocked.reason, /sensitive paths/i);
+  } finally {
+    cleanupRepairExecutorRepo(verifyIntegrityRepo.repoRoot);
+  }
+
+  const persistedRepo = createRepairExecutorRepo('repair-executor-persisted');
+  try {
+    const persistedBranch = 'codex/improvement/test-detached-persisted';
+    const persisted = executeApprovedDetachedRepairCandidate({
+      repoRoot: persistedRepo.repoRoot,
+      branchName: persistedBranch,
+      diffText: persistedRepo.diffText,
+      verificationCommands: [
         {
           command: process.execPath,
           args: ['check.js'],
         },
       ],
-    },
-  });
+      commitMessage: 'Apply persisted detached repair candidate',
+      approved: true,
+      operatorLabel: 'Persisted detached repair test',
+      policy: {
+        allowedVerificationCommands: [
+          {
+            command: process.execPath,
+            args: ['check.js'],
+          },
+        ],
+      },
+    });
 
-  assert.equal(persisted.result.status, 'committed', persisted.result.reason);
-  assert.equal(persisted.persisted, true);
-  assert.equal(persisted.review.approvalRequired, true);
-  assert.equal(persisted.review.mergeReadiness, 'ready_after_approval');
-  assert.equal(branchExists(persistedRepo.repoRoot, persistedBranch), true);
-  assert.equal(
-    listPatchWorkspaces({
-      hypothesisId: persisted.hypothesis.hypothesisId,
-      limit: 5,
-    }).some(
-      (workspace) => workspace.workspaceId === persisted.workspace.workspaceId,
-    ),
-    true,
-  );
-  assert.equal(
-    listPatchAttempts({
-      workspaceId: persisted.workspace.workspaceId,
-      limit: 5,
-    }).some((attempt) => attempt.attemptId === persisted.attempt.attemptId),
-    true,
-  );
-  assert.equal(
-    listPatchReviews({
-      attemptId: persisted.attempt.attemptId,
-      limit: 5,
-    }).some((review) => review.reviewId === persisted.review.reviewId),
-    true,
-  );
-} finally {
-  cleanupRepairExecutorRepo(persistedRepo.repoRoot);
+    assert.equal(persisted.result.status, 'committed', persisted.result.reason);
+    assert.equal(persisted.persisted, true);
+    assert.equal(persisted.review.approvalRequired, true);
+    assert.equal(persisted.review.mergeReadiness, 'ready_after_approval');
+    assert.equal(branchExists(persistedRepo.repoRoot, persistedBranch), true);
+    assert.equal(
+      listPatchWorkspaces({
+        hypothesisId: persisted.hypothesis.hypothesisId,
+        limit: 5,
+      }).some(
+        (workspace) =>
+          workspace.workspaceId === persisted.workspace.workspaceId,
+      ),
+      true,
+    );
+    assert.equal(
+      listPatchAttempts({
+        workspaceId: persisted.workspace.workspaceId,
+        limit: 5,
+      }).some((attempt) => attempt.attemptId === persisted.attempt.attemptId),
+      true,
+    );
+    assert.equal(
+      listPatchReviews({
+        attemptId: persisted.attempt.attemptId,
+        limit: 5,
+      }).some((review) => review.reviewId === persisted.review.reviewId),
+      true,
+    );
+  } finally {
+    cleanupRepairExecutorRepo(persistedRepo.repoRoot);
+  }
 }
 
 console.log('patch workbench tests passed');

@@ -2,31 +2,126 @@ name: Security
 
 on:
   schedule:
-    - cron: "0 7 * * 1" # Mondays 07:00 UTC
+    - cron: '0 7 * * 1' # Mondays 07:00 UTC
   workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact 40-character release commit already on main
+        required: true
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
-  scan:
+  resolve-release:
     runs-on: ubuntu-latest
-    permissions:
-      security-events: write
+    outputs:
+      release_sha: ${{ steps.resolve.outputs.release_sha }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          node-version-file: ".nvmrc"
-      - name: Install
-        run: npm ci
-      - name: npm audit (high+)
+          fetch-depth: 0
+      - name: Resolve exact release commit
+        id: resolve
+        env:
+          REQUESTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.release_sha || github.sha }}
+        run: python3 .github/scripts/verify-release-sha.py resolve
+
+  dependency-audit:
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: python3 .github/scripts/verify-release-sha.py verify
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            container/agent-runner/package-lock.json
+      - name: Audit root dependencies (high+)
         run: npm audit --audit-level=high
-      - name: Detect secrets
-        uses: trufflesecurity/trufflehog@main
+      - name: Audit agent-runner dependencies (high+)
+        run: npm --prefix container/agent-runner audit --audit-level=high
+
+  secret-scan:
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: python3 .github/scripts/verify-release-sha.py verify
+      - name: Detect verified secrets
+        uses: trufflesecurity/trufflehog@27b0417c16317ca9a472a9a8092acce143b49c55 # v3.95.9
         with:
           path: .
-          base: main
-          head: HEAD
-          extra_args: --only-verified
-      - name: Semgrep
-        uses: returntocorp/semgrep-action@v1
+          # Scan all history reachable from the exact release commit. Supplying
+          # both values avoids relying on event-specific action defaults.
+          base: ''
+          head: ${{ needs.resolve-release.outputs.release_sha }}
+          version: 3.95.9
+          extra_args: --only-verified --fail-on-scan-errors
+
+  semgrep:
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: semgrep/semgrep:1.169.0@sha256:2b33f46ba66cf8cc2ad59ccfa7d22951fd00c632c38f1339e84ec8e6e641a942
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          config: p/typescript p/owasp-top-ten p/security-audit
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: python3 .github/scripts/verify-release-sha.py verify
+      - name: Semgrep CE (broad)
+        run: >-
+          semgrep scan --error
+          --strict
+          --timeout 30
+          --timeout-threshold 0
+          --max-target-bytes 2000000
+          --exclude src/db.ts
+          --exclude src/index.ts
+          --config p/typescript
+          --config p/owasp-top-ten
+          --config p/security-audit
+          .
+      - name: Semgrep CE (database)
+        run: >-
+          semgrep scan --error
+          --strict
+          --jobs 1
+          --timeout 120
+          --timeout-threshold 0
+          --max-target-bytes 2000000
+          --config p/typescript
+          --config p/owasp-top-ten
+          --config p/security-audit
+          src/db.ts
+      - name: Semgrep CE (runtime entrypoint)
+        run: >-
+          semgrep scan --error
+          --strict
+          --jobs 1
+          --timeout 120
+          --timeout-threshold 0
+          --max-target-bytes 2000000
+          --config p/typescript
+          --config p/owasp-top-ten
+          --config p/security-audit
+          src/index.ts

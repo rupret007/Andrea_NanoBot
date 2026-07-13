@@ -100,21 +100,21 @@ For Cursor output files specifically, the preferred operator examples are `/curs
 
 Use these when you are enabling or validating specific capabilities:
 
-| Feature                            | Read this                                                                |
-| ---------------------------------- | ------------------------------------------------------------------------ |
-| Telegram onboarding and command UX | [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md) |
-| Formal command inventory           | [COMMAND_SURFACE_REFERENCE.md](COMMAND_SURFACE_REFERENCE.md)             |
-| Telegram operator live testing     | [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md)   |
-| Follow-Through Reviews / Approvals | [ACTION_BUNDLES.md](ACTION_BUNDLES.md)                                   |
-| Delegation Rules / Safe Automation | [DELEGATION_RULES_AND_SAFE_AUTOMATION.md](DELEGATION_RULES_AND_SAFE_AUTOMATION.md) |
+| Feature                                | Read this                                                                                  |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Telegram onboarding and command UX     | [CHANNEL_COMMANDS_AND_ONBOARDING.md](CHANNEL_COMMANDS_AND_ONBOARDING.md)                   |
+| Formal command inventory               | [COMMAND_SURFACE_REFERENCE.md](COMMAND_SURFACE_REFERENCE.md)                               |
+| Telegram operator live testing         | [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md)                     |
+| Follow-Through Reviews / Approvals     | [ACTION_BUNDLES.md](ACTION_BUNDLES.md)                                                     |
+| Delegation Rules / Safe Automation     | [DELEGATION_RULES_AND_SAFE_AUTOMATION.md](DELEGATION_RULES_AND_SAFE_AUTOMATION.md)         |
 | Messaging Trust Ladder / Live Delivery | [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md) |
-| Outcome Tracking / Reviews         | [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md)       |
-| Knowledge Library                  | [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md)                             |
-| Cursor Cloud API keys              | [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md)                                 |
-| Cursor desktop machine access      | [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md)                     |
-| Alexa Companion Mode               | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                 |
-| Amazon shopping + approvals        | [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)     |
-| Optional add-ons and skills        | [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md)             |
+| Outcome Tracking / Reviews             | [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md)                         |
+| Knowledge Library                      | [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md)                                               |
+| Cursor Cloud API keys                  | [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md)                                                   |
+| Cursor desktop machine access          | [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md)                                       |
+| Alexa Companion Mode                   | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                                   |
+| Amazon shopping + approvals            | [AMAZON_SHOPPING_AND_APPROVALS.md](AMAZON_SHOPPING_AND_APPROVALS.md)                       |
+| Optional add-ons and skills            | [ADDONS_AND_FEATURE_MATRIX.md](ADDONS_AND_FEATURE_MATRIX.md)                               |
 
 For the productized flagship-flow view specifically:
 
@@ -194,13 +194,13 @@ Current Andrea operator truth lives in the README, admin guide, setup guide, and
 
 Only read these when changing core runtime behavior:
 
-| Read this                                                      | Use it for                                |
-| -------------------------------------------------------------- | ----------------------------------------- |
-| [SPEC.md](SPEC.md)                                             | Runtime architecture and IPC model        |
-| [SDK_DEEP_DIVE.md](SDK_DEEP_DIVE.md)                           | Agent SDK/runtime implementation details  |
-| [skills-as-branches.md](skills-as-branches.md)                 | Skill and branch workflow internals       |
-| [APPLE-CONTAINER-NETWORKING.md](APPLE-CONTAINER-NETWORKING.md) | Apple Container network behavior on macOS |
-| [docker-sandboxes.md](docker-sandboxes.md)                     | Docker sandbox notes                      |
+| Read this                                                      | Use it for                                                                         |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [SPEC.md](SPEC.md)                                             | Historical runtime and IPC reference                                               |
+| [SDK_DEEP_DIVE.md](SDK_DEEP_DIVE.md)                           | Agent SDK/runtime implementation details                                           |
+| [skills-as-branches.md](skills-as-branches.md)                 | Skill and branch workflow internals                                                |
+| [APPLE-CONTAINER-NETWORKING.md](APPLE-CONTAINER-NETWORKING.md) | Historical Apple Container network notes; agent execution is currently fail-closed |
+| [docker-sandboxes.md](docker-sandboxes.md)                     | Retired Docker Sandbox guide and the supported container-validation path           |
 
 `SPEC.md` is a historical runtime reference. When it disagrees with current operator docs or live host behavior, follow the current README, admin guide, setup guide, and Alexa guide.
 

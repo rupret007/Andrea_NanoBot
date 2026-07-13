@@ -484,7 +484,9 @@ function addReminderNodes(params: {
       label: redactPersonalContextText(task.prompt),
       status: task.status,
       updatedAt: task.next_run || task.created_at,
-      summary: redactPersonalContextText(task.last_result || task.script || ''),
+      // Legacy script bodies are inert execution data, not personal context.
+      // Never promote them into prompts, summaries, or memory surfaces.
+      summary: redactPersonalContextText(task.last_result || ''),
       refs: {
         scheduleType: task.schedule_type,
         hasNextRun: Boolean(task.next_run),

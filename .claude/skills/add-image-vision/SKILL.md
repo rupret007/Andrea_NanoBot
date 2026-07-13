@@ -40,6 +40,7 @@ git merge whatsapp/skill/image-vision || {
 ```
 
 This merges in:
+
 - `src/image.ts` (image download, resize via sharp, base64 encoding)
 - `src/image.test.ts` (8 unit tests)
 - Image attachment handling in `src/channels/whatsapp.ts`
@@ -62,21 +63,19 @@ All tests must pass and build must be clean before proceeding.
 ## Phase 3: Configure
 
 1. Rebuild the container (agent-runner changes need a rebuild):
+
    ```bash
    ./container/build.sh
    ```
 
-2. Sync agent-runner source to group caches:
-   ```bash
-   for dir in data/sessions/*/agent-runner-src/; do
-     cp container/agent-runner/src/*.ts "$dir"
-   done
-   ```
-
-3. Restart the service:
+2. Restart the service:
    ```bash
    launchctl kickstart -k gui/$(id -u)/com.nanoclaw
    ```
+
+The canonical agent-runner source is mounted read-only and compiled into
+ephemeral storage for each run. Do not copy runner files into
+`data/sessions/*/agent-runner-src`; preserved legacy caches are inert owner data.
 
 ## Phase 4: Verify
 
@@ -91,4 +90,4 @@ All tests must pass and build must be clean before proceeding.
 
 - **"Image - download failed"**: Check WhatsApp connection stability. The download may timeout on slow connections.
 - **"Image - processing failed"**: Sharp may not be installed correctly. Run `npm ls sharp` to verify.
-- **Agent doesn't mention image content**: Check container logs for "Loaded image" messages. If missing, ensure agent-runner source was synced to group caches.
+- **Agent doesn't mention image content**: Check container logs for "Loaded image" messages. If missing, verify the canonical runner build and container image rather than modifying preserved session caches.

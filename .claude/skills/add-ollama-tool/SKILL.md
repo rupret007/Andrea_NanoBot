@@ -1,17 +1,37 @@
 ---
 name: add-ollama-tool
-description: Add Ollama MCP server so the container agent can call local models and optionally manage the Ollama model library.
+description: Non-executable legacy reference for an Ollama MCP integration that is blocked pending a reviewed trust-boundary port.
 ---
 
 # Add Ollama Integration
 
+## Status: blocked legacy reference (do not execute)
+
+This workflow is incompatible with Andrea's current container trust boundary. It
+adds ambient MCP and management tools, widens tool availability outside the
+route-specific capability policy, and copies mutable runner files into preserved
+session caches. Do not run any merge, copy, configuration, model-management,
+build, restart, verification, or troubleshooting command below.
+
+A reviewed port must register an exact, least-privilege MCP allowlist through
+`AssistantRequestPolicy`, keep ordinary `direct_assistant` turns tool-free,
+separate read-only inference from destructive model management, require fresh
+approval for pulls and deletions, and preserve the canonical read-only runner.
+It must include route isolation, host-boundary, approval, and restart-continuity
+tests. Preserved session and runner caches must remain inert and must not be
+deleted or rewritten.
+
+## Historical implementation notes (non-executable)
+
 This skill adds a stdio-based MCP server that exposes local Ollama models as tools for the container agent. Claude remains the orchestrator but can offload work to local models, and can optionally manage the model library directly.
 
 Core tools (always available):
+
 - `ollama_list_models` — list installed Ollama models with name, size, and family
 - `ollama_generate` — send a prompt to a specified model and return the response
 
 Management tools (opt-in via `OLLAMA_ADMIN_TOOLS=true`):
+
 - `ollama_pull_model` — pull (download) a model from the Ollama registry
 - `ollama_delete_model` — delete a locally installed model to free disk space
 - `ollama_show_model` — show model details: modelfile, parameters, and architecture info
@@ -65,6 +85,7 @@ git merge upstream/skill/ollama-tool
 ```
 
 This merges in:
+
 - `container/agent-runner/src/ollama-mcp-stdio.ts` (Ollama MCP server)
 - `scripts/ollama-watch.sh` (macOS notification watcher)
 - Ollama MCP config in `container/agent-runner/src/index.ts` (allowedTools + mcpServers)
@@ -160,6 +181,7 @@ tail -f logs/nanoclaw.log | grep -i ollama
 ```
 
 Look for:
+
 - `[OLLAMA] >>> Generating` — generation started
 - `[OLLAMA] <<< Done` — generation completed
 - `[OLLAMA] Pulling model:` — pull in progress (management tools)
@@ -170,6 +192,7 @@ Look for:
 ### Agent says "Ollama is not installed"
 
 The agent is trying to run `ollama` CLI inside the container instead of using the MCP tools. This means:
+
 1. The MCP server wasn't registered — check `container/agent-runner/src/index.ts` has the `ollama` entry in `mcpServers`
 2. The per-group source wasn't updated — re-copy files (see Phase 2)
 3. The container wasn't rebuilt — run `./container/build.sh`

@@ -1,4 +1,3 @@
-import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -348,35 +347,12 @@ describe('host control state', () => {
   });
 
   it('builds runtime commit truth from the serving process and workspace head', () => {
-    fs.writeFileSync(path.join(tempDir, 'README.md'), 'hello\n');
-    execFileSync('git', ['init'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['config', 'user.name', 'Test User'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['branch', '-M', 'main'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['add', 'README.md'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    execFileSync('git', ['commit', '-m', 'init'], {
-      cwd: tempDir,
-      stdio: 'ignore',
-    });
-    const workspaceGitCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: tempDir,
-      encoding: 'utf-8',
-    }).trim();
+    const workspaceGitCommit = 'a'.repeat(40);
+    const workspaceGitState = {
+      branch: 'main',
+      commit: workspaceGitCommit,
+      dirtyPathCount: 0,
+    };
 
     writeRuntimeAuditState({
       updatedAt: '2026-04-04T20:00:00.000Z',
@@ -398,7 +374,10 @@ describe('host control state', () => {
       mainChatAuditWarning: null,
     });
 
-    const truth = buildRuntimeCommitTruth({ projectRoot: tempDir });
+    const truth = buildRuntimeCommitTruth({
+      projectRoot: tempDir,
+      workspaceGitState,
+    });
     expect(truth.workspaceRepoRoot).toBe(tempDir);
     expect(truth.workspaceGitBranch).toBe('main');
     expect(truth.workspaceGitCommit).toBe(workspaceGitCommit);
@@ -415,7 +394,7 @@ describe('host control state', () => {
       activeBuildAt: '2026-04-04T19:59:00.000Z',
     });
     expect(
-      buildRuntimeCommitTruth({ projectRoot: tempDir })
+      buildRuntimeCommitTruth({ projectRoot: tempDir, workspaceGitState })
         .servingCommitMatchesWorkspaceHead,
     ).toBe(true);
 
@@ -426,6 +405,7 @@ describe('host control state', () => {
     });
     const dirtyBuildTruth = buildRuntimeCommitTruth({
       projectRoot: tempDir,
+      workspaceGitState,
     });
     expect(dirtyBuildTruth.servingCommitMatchesWorkspaceHead).toBe(false);
     expect(dirtyBuildTruth.activeBuildProvenanceState).toBe('dirty_source');

@@ -148,6 +148,7 @@ function classifyShellSegment(segment: string): RuntimeToolActionClass[] {
       command,
     ) ||
     /^(?:python(?:3)?\s+-m\s+)?pytest(?:\s|$)/i.test(command) ||
+    /^(?:node|nodejs)\s+--check(?:\s|$)/i.test(command) ||
     /^(?:go\s+test|cargo\s+test|mvn(?:w)?\s+test|\.\/gradlew\s+test|gradle\s+test)(?:\s|$)/i.test(
       command,
     )

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   classifyAssistantRequest,
+  classifyRuntimeJobRequest,
   classifyScheduledTaskRequest,
   maybeBuildOpenClawPresenceReply,
 } from './assistant-routing.js';
@@ -14,15 +15,13 @@ describe('assistant request routing', () => {
 
     expect(policy.route).toBe('direct_assistant');
     expect(policy.mcpTools).toEqual([]);
-    expect(policy.builtinTools).toEqual(['Read']);
+    expect(policy.builtinTools).toEqual([]);
     expect(policy.builtinTools).not.toContain('Bash');
     expect(policy.builtinTools).not.toContain('Write');
     expect(policy.builtinTools).not.toContain('Edit');
-    expect(policy.builtinTools).toContain('Read');
+    expect(policy.builtinTools).not.toContain('Read');
     expect(policy.guidance).toContain('lightly witty tone');
-    expect(policy.guidance).toContain(
-      'Do not use tools unless the user explicitly asks',
-    );
+    expect(policy.guidance).toContain('This route is tool-free');
   });
 
   it('keeps private outcome-review inbox asks on the local direct route', () => {
@@ -35,7 +34,7 @@ describe('assistant request routing', () => {
       const policy = classifyAssistantRequest([{ content }]);
       expect(policy.route).toBe('direct_assistant');
       expect(policy.mcpTools).toEqual([]);
-      expect(policy.builtinTools).toEqual(['Read']);
+      expect(policy.builtinTools).toEqual([]);
     }
   });
 
@@ -106,6 +105,7 @@ describe('assistant request routing', () => {
     expect(policy.route).toBe('protected_assistant');
     expect(policy.mcpTools).toContain('mcp__nanoclaw__schedule_task');
     expect(policy.mcpTools).not.toContain('mcp__nanoclaw__create_cursor_agent');
+    expect(policy.builtinTools).toEqual([]);
     expect(policy.builtinTools).not.toContain('Bash');
     expect(policy.guidance).toContain('use the task MCP tools');
     expect(policy.guidance).toContain(
@@ -140,6 +140,128 @@ describe('assistant request routing', () => {
     expect(policy.mcpTools).toContain('mcp__nanoclaw__list_cursor_agents');
     expect(policy.mcpTools).not.toContain('mcp__nanoclaw__create_cursor_agent');
     expect(policy.builtinTools).not.toContain('Bash');
+    expect(policy.builtinTools).toEqual(['Read', 'Glob', 'Grep']);
+  });
+
+  it('routes explicit local file inspection to a read-only protected policy', () => {
+    const policy = classifyAssistantRequest([
+      { content: 'Open and summarize the attached document for me.' },
+    ]);
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.builtinTools).toEqual(['Read', 'Glob', 'Grep']);
+    expect(policy.mcpTools).toEqual([]);
+  });
+
+  it('keeps repository and concrete path inspection read-only', () => {
+    for (const content of [
+      'Review the attached file for typos.',
+      'Review this file.',
+      'Open and review README.md.',
+      'Search the repository for AssistantRequestPolicy.',
+      'Find AssistantRequestPolicy in the repo.',
+      'Inspect src/container-runner.ts.',
+      'Read /tmp/example.txt.',
+      'Open package.json.',
+      'What is in package.json?',
+      'What does README.md say?',
+      'What about /tmp/example.txt?',
+    ]) {
+      const policy = classifyAssistantRequest([{ content }]);
+      expect(policy.route).toBe('protected_assistant');
+      expect(policy.builtinTools).toEqual(['Read', 'Glob', 'Grep']);
+      expect(policy.mcpTools).toEqual([]);
+    }
+  });
+
+  it('combines read-only file and web tools for an explicit mixed lookup', () => {
+    const policy = classifyAssistantRequest([
+      { content: 'Please check the latest file online.' },
+    ]);
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.builtinTools).toEqual([
+      'Read',
+      'Glob',
+      'Grep',
+      'WebSearch',
+      'WebFetch',
+    ]);
+    expect(policy.mcpTools).toEqual([]);
+  });
+
+  it('retains write-capable code routing for actual implementation asks', () => {
+    const policy = classifyAssistantRequest([
+      { content: 'Fix the parser in src/container-runner.ts and add tests.' },
+    ]);
+
+    expect(policy.route).toBe('code_plane');
+    expect(policy.builtinTools).toContain('Bash');
+    expect(policy.builtinTools).toContain('Write');
+  });
+
+  it('keeps terse explicit runtime jobs on the tool-bearing lane', () => {
+    const policy = classifyRuntimeJobRequest('continue');
+
+    expect(policy.route).toBe('code_plane');
+    expect(policy.builtinTools).toContain('Bash');
+    expect(policy.mcpTools).toEqual([]);
+  });
+
+  it('routes explicit web and URL lookups to web-only protected policies', () => {
+    for (const content of [
+      'Search the web for the latest release notes.',
+      'Please check https://example.com/status and summarize it.',
+      'Search for capybaras.',
+      'Look up Jeff Story.',
+      'Find recent news about OpenAI.',
+    ]) {
+      const policy = classifyAssistantRequest([{ content }]);
+      expect(policy.route).toBe('protected_assistant');
+      expect(policy.builtinTools).toEqual(['WebSearch', 'WebFetch']);
+      expect(policy.mcpTools).toEqual([]);
+    }
+  });
+
+  it('preserves reminder and shopping actions when their payload includes a file or URL', () => {
+    for (const content of [
+      'Remind me tomorrow to read https://example.com.',
+      'Remind me to review README.md tomorrow.',
+    ]) {
+      const policy = classifyAssistantRequest([{ content }]);
+      expect(policy.route).toBe('protected_assistant');
+      expect(policy.builtinTools).toEqual([]);
+      expect(policy.mcpTools).toContain('mcp__nanoclaw__schedule_task');
+    }
+
+    const shopping = classifyAssistantRequest([
+      { content: 'Buy this on Amazon: https://amazon.com/dp/example.' },
+    ]);
+    expect(shopping.route).toBe('protected_assistant');
+    expect(shopping.builtinTools).toEqual([]);
+    expect(shopping.mcpTools).toContain(
+      'mcp__nanoclaw__request_amazon_purchase',
+    );
+  });
+
+  it('routes explicit research to bounded read and web tools without execution', () => {
+    const policy = classifyAssistantRequest([
+      {
+        content: 'Research and compare sources on current battery technology.',
+      },
+    ]);
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.builtinTools).toEqual([
+      'Read',
+      'Glob',
+      'Grep',
+      'WebSearch',
+      'WebFetch',
+    ]);
+    expect(policy.builtinTools).not.toContain('Bash');
+    expect(policy.builtinTools).not.toContain('Write');
+    expect(policy.mcpTools).toEqual([]);
   });
 
   it('routes community skill asks to advanced helper handling', () => {
@@ -151,8 +273,13 @@ describe('assistant request routing', () => {
     ]);
 
     expect(policy.route).toBe('advanced_helper');
-    expect(policy.mcpTools).toContain('mcp__nanoclaw__search_openclaw_skills');
-    expect(policy.mcpTools).toContain('mcp__nanoclaw__enable_openclaw_skill');
+    expect(policy.builtinTools).toEqual([]);
+    expect(policy.mcpTools).toEqual(
+      expect.arrayContaining([
+        'mcp__nanoclaw__search_openclaw_skills',
+        'mcp__nanoclaw__enable_openclaw_skill',
+      ]),
+    );
   });
 
   it('routes explicit @openclaw addressing to advanced helper handling', () => {
@@ -164,6 +291,7 @@ describe('assistant request routing', () => {
 
     expect(policy.route).toBe('advanced_helper');
     expect(policy.reason).toBe('matched explicit OpenClaw address');
+    expect(policy.builtinTools).toEqual([]);
     expect(policy.mcpTools).toContain('mcp__nanoclaw__search_openclaw_skills');
     expect(policy.guidance).toContain('speak as OpenClaw');
     expect(policy.guidance).not.toContain('Never present them as a second');
@@ -177,6 +305,8 @@ describe('assistant request routing', () => {
     ]);
 
     expect(policy.route).toBe('advanced_helper');
+    expect(policy.builtinTools).toContain('Bash');
+    expect(policy.mcpTools).toEqual([]);
   });
 
   it('answers simple @openclaw presence checks locally as OpenClaw', () => {
@@ -199,7 +329,22 @@ describe('assistant request routing', () => {
 
     expect(policy.route).toBe('code_plane');
     expect(policy.builtinTools).toContain('Bash');
-    expect(policy.mcpTools).toContain('mcp__nanoclaw__create_cursor_agent');
+    expect(policy.mcpTools).toEqual([]);
+  });
+
+  it('keeps cursor creation on a no-shell host-action profile', () => {
+    const policy = classifyAssistantRequest([
+      { content: 'Launch a Cursor agent for this repository task.' },
+    ]);
+
+    expect(policy.route).toBe('advanced_helper');
+    expect(policy.builtinTools).toEqual([]);
+    expect(policy.mcpTools).toEqual(
+      expect.arrayContaining([
+        'mcp__nanoclaw__list_cursor_agents',
+        'mcp__nanoclaw__create_cursor_agent',
+      ]),
+    );
   });
 
   it('routes engineering work about stop commands to code plane instead of control plane', () => {
@@ -258,6 +403,8 @@ describe('assistant request routing', () => {
     ]) {
       const policy = classifyAssistantRequest([{ content: prompt }]);
       expect(policy.route).toBe('protected_assistant');
+      expect(policy.builtinTools).toEqual(['WebSearch', 'WebFetch']);
+      expect(policy.mcpTools).toEqual([]);
     }
   });
 
@@ -268,6 +415,8 @@ describe('assistant request routing', () => {
     ]);
 
     expect(policy.route).toBe('advanced_helper');
+    expect(policy.builtinTools).toEqual([]);
+    expect(policy.mcpTools).toContain('mcp__nanoclaw__enable_openclaw_skill');
   });
 
   it('does not inherit older work context for terse standalone phrases when combined context is disabled', () => {
@@ -347,6 +496,7 @@ describe('assistant request routing', () => {
     ]);
 
     expect(policy.route).toBe('protected_assistant');
+    expect(policy.builtinTools).toEqual([]);
     expect(policy.mcpTools).toContain('mcp__nanoclaw__search_amazon_products');
   });
 });

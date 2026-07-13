@@ -5,7 +5,7 @@
  * Input protocol:
  *   Stdin: Full ContainerInput JSON (read until EOF, like before)
  *   IPC:   Follow-up messages written as JSON files to /workspace/ipc/input/
- *          Files: {type:"message", text:"..."}.json — polled and consumed
+ *          Files are authenticated host envelopes in a per-run read-only inbox
  *          Sentinel: /workspace/ipc/input/_close — signals session end
  *
  * Stdout protocol:
@@ -16,7 +16,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
 import {
   query,
   HookCallback,
@@ -32,6 +31,13 @@ import {
   RuntimeToolEvidenceCollector,
   type RuntimeToolEvidenceV1,
 } from './runtime-tool-evidence.js';
+import {
+  buildSdkMcpBoundaryConfig,
+  buildSdkToolPolicy,
+  normalizeRequestPolicy,
+  type RuntimeRequestPolicy,
+} from './request-policy.js';
+import { verifyAuthenticatedIpcMessage } from './ipc-message-auth.js';
 
 interface ContainerInput {
   prompt: string;
@@ -41,15 +47,10 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
-  script?: string;
   idleTimeoutMs?: number;
-  requestPolicy?: {
-    route: string;
-    reason: string;
-    builtinTools: string[];
-    mcpTools: string[];
-    guidance: string;
-  };
+  requestPolicy?: RuntimeRequestPolicy;
+  ipcRunId?: string;
+  ipcAuthToken?: string;
 }
 
 interface ContainerOutput {
@@ -92,84 +93,31 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
-const COMPATIBILITY_BUILTIN_TOOLS = [
-  'Bash',
-  'Read',
-  'Write',
-  'Edit',
-  'Glob',
-  'Grep',
-  'WebSearch',
-  'WebFetch',
-  'Task',
-  'TaskOutput',
-  'TaskStop',
-  'TeamCreate',
-  'TeamDelete',
-  'SendMessage',
-  'TodoWrite',
-  'ToolSearch',
-  'Skill',
-  'NotebookEdit',
-] as const;
-const COMPATIBILITY_MCP_TOOLS = [
-  'mcp__nanoclaw__search_openclaw_skills',
-  'mcp__nanoclaw__enable_openclaw_skill',
-  'mcp__nanoclaw__install_openclaw_skill',
-  'mcp__nanoclaw__disable_openclaw_skill',
-  'mcp__nanoclaw__list_enabled_openclaw_skills',
-  'mcp__nanoclaw__list_cursor_agents',
-  'mcp__nanoclaw__create_cursor_agent',
-  'mcp__nanoclaw__followup_cursor_agent',
-  'mcp__nanoclaw__stop_cursor_agent',
-  'mcp__nanoclaw__sync_cursor_agent',
-  'mcp__nanoclaw__list_cursor_agent_artifacts',
-  'mcp__nanoclaw__search_amazon_products',
-  'mcp__nanoclaw__request_amazon_purchase',
-  'mcp__nanoclaw__list_amazon_purchase_requests',
-  'mcp__nanoclaw__approve_amazon_purchase_request',
-  'mcp__nanoclaw__cancel_amazon_purchase_request',
-  'mcp__nanoclaw__send_message',
-  'mcp__nanoclaw__schedule_task',
-  'mcp__nanoclaw__list_tasks',
-  'mcp__nanoclaw__pause_task',
-  'mcp__nanoclaw__resume_task',
-  'mcp__nanoclaw__cancel_task',
-  'mcp__nanoclaw__update_task',
-  'mcp__nanoclaw__register_group',
-] as const;
+const MAX_GUIDANCE_BYTES = 128 * 1024;
+const processedIpcFiles = new Set<string>();
+let closeObserved = false;
+let expectedIpcRunId = '';
+let expectedIpcAuthToken = '';
 
-function dedupeTools(tools: readonly string[]): string[] {
-  return [...new Set(tools)];
-}
-
-function normalizeRequestPolicy(
-  policy: ContainerInput['requestPolicy'],
-): NonNullable<ContainerInput['requestPolicy']> {
-  if (policy) {
-    const builtinTools =
-      policy.route === 'direct_assistant'
-        ? dedupeTools(policy.builtinTools)
-        : dedupeTools([...policy.builtinTools, 'ToolSearch']);
-    return {
-      route: policy.route,
-      reason: policy.reason,
-      builtinTools,
-      mcpTools: dedupeTools(policy.mcpTools),
-      guidance: policy.guidance,
-    };
+function readBoundedGuidance(filePath: string): string | undefined {
+  if (!fs.existsSync(filePath)) return undefined;
+  const stat = fs.lstatSync(filePath);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error(`Guidance must be a regular file: ${filePath}`);
   }
-
-  return {
-    route: 'code_plane',
-    reason: 'compatibility fallback',
-    builtinTools: dedupeTools(COMPATIBILITY_BUILTIN_TOOLS),
-    mcpTools: dedupeTools(COMPATIBILITY_MCP_TOOLS),
-    guidance:
-      'Andrea is the only public assistant identity. Keep internal helper and orchestration details out of user-facing replies.',
-  };
+  if (stat.size > MAX_GUIDANCE_BYTES) {
+    throw new Error(
+      `Guidance exceeds ${MAX_GUIDANCE_BYTES} bytes: ${filePath}`,
+    );
+  }
+  const content = fs.readFileSync(filePath, 'utf8');
+  if (Buffer.byteLength(content, 'utf8') > MAX_GUIDANCE_BYTES) {
+    throw new Error(
+      `Guidance exceeds ${MAX_GUIDANCE_BYTES} bytes: ${filePath}`,
+    );
+  }
+  return content;
 }
-
 /**
  * Push-based async iterable for streaming user messages to the SDK.
  * Keeps the iterable alive until end() is called, preventing isSingleUserTurn.
@@ -406,15 +354,9 @@ function formatTranscriptMarkdown(
  * Check for _close sentinel.
  */
 function shouldClose(): boolean {
-  if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
-    try {
-      fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
-    } catch {
-      /* ignore */
-    }
-    return true;
-  }
-  return false;
+  if (closeObserved) return true;
+  closeObserved = fs.existsSync(IPC_INPUT_CLOSE_SENTINEL);
+  return closeObserved;
 }
 
 /**
@@ -426,27 +368,30 @@ function drainIpcInput(): string[] {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
     const files = fs
       .readdirSync(IPC_INPUT_DIR)
-      .filter((f) => f.endsWith('.json'))
+      .filter((f) => f.endsWith('.json') && !processedIpcFiles.has(f))
       .sort();
 
     const messages: string[] = [];
     for (const file of files) {
       const filePath = path.join(IPC_INPUT_DIR, file);
+      processedIpcFiles.add(file);
       try {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        fs.unlinkSync(filePath);
-        if (data.type === 'message' && data.text) {
+        if (
+          verifyAuthenticatedIpcMessage(
+            data,
+            expectedIpcRunId,
+            expectedIpcAuthToken,
+          )
+        ) {
           messages.push(data.text);
+        } else {
+          log(`Rejected unauthenticated IPC input file ${file}`);
         }
       } catch (err) {
         log(
           `Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`,
         );
-        try {
-          fs.unlinkSync(filePath);
-        } catch {
-          /* ignore */
-        }
       }
     }
     return messages;
@@ -563,23 +508,29 @@ async function runQuery(
   let firstResultSubtype: string | undefined;
   const requestPolicy = normalizeRequestPolicy(containerInput.requestPolicy);
 
-  // Load global CLAUDE.md as additional system context (shared across all groups)
+  const directAssistantMinimalMode = requestPolicy.route === 'direct_assistant';
+
+  // Project filesystem settings are deliberately disabled below. Preserve the
+  // host-shadowed group instructions from the read-only workspace overlay, and
+  // load only the read-only shared global guidance separately.
+  const groupClaudeMd = readBoundedGuidance('/workspace/group/CLAUDE.md');
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
   let globalClaudeMd: string | undefined;
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
-    globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
+  if (!directAssistantMinimalMode && !containerInput.isMain) {
+    globalClaudeMd = readBoundedGuidance(globalClaudeMdPath);
   }
 
   // Discover additional directories mounted at /workspace/extra/*
-  // These are passed to the SDK so their CLAUDE.md files are loaded automatically
+  // only for tool-bearing routes. Their CLAUDE.md files are intentionally not
+  // loaded because an additional mount may be writable.
   const extraDirs: string[] = [];
   const extraBase = '/workspace/extra';
-  if (fs.existsSync(extraBase)) {
+  if (!directAssistantMinimalMode && fs.existsSync(extraBase)) {
     for (const entry of fs.readdirSync(extraBase)) {
       const fullPath = path.join(extraBase, entry);
-      if (fs.statSync(fullPath).isDirectory()) {
-        extraDirs.push(fullPath);
-      }
+      const stat = fs.lstatSync(fullPath);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) continue;
+      extraDirs.push(fullPath);
     }
   }
   if (extraDirs.length > 0) {
@@ -590,20 +541,27 @@ async function runQuery(
     log(`Using SDK model override: ${selectedModel}`);
   }
 
-  const directAssistantMinimalMode = requestPolicy.route === 'direct_assistant';
   const recoveryGuidance = options.fallbackMode
     ? directAssistantMinimalMode
       ? 'Recovery mode: previous attempt hit a transient execution failure. Answer directly and concisely from the user prompt without helper orchestration.'
       : 'Recovery mode: previous attempt hit a transient execution failure. Answer directly and concisely without relying on MCP helper orchestration unless absolutely necessary.'
     : null;
-  const useMcpServer =
-    !directAssistantMinimalMode && options.disableMcpServer !== true;
-  const allowedTools =
-    options.fallbackMode || directAssistantMinimalMode
-      ? dedupeTools(requestPolicy.builtinTools)
-      : dedupeTools([...requestPolicy.builtinTools, ...requestPolicy.mcpTools]);
+  const toolPolicy = buildSdkToolPolicy(requestPolicy, options);
+  const { allowedTools, tools, useMcpServer } = toolPolicy;
+  const mcpBoundary = buildSdkMcpBoundaryConfig(useMcpServer, {
+    command: 'node',
+    args: [mcpServerPath],
+    env: {
+      NANOCLAW_CHAT_JID: containerInput.chatJid,
+      NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+      NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+      NANOCLAW_REQUEST_ROUTE: requestPolicy.route,
+      NANOCLAW_REQUEST_REASON: requestPolicy.reason,
+      NANOCLAW_ALLOWED_MCP_TOOLS: JSON.stringify(requestPolicy.mcpTools),
+    },
+  });
   log(
-    `Tool mode: ${options.fallbackMode ? 'recovery' : 'standard'} | MCP ${useMcpServer ? 'enabled' : 'disabled'} | allowedTools=${allowedTools.join(', ')}`,
+    `Tool mode: ${options.fallbackMode ? 'recovery' : 'standard'} | MCP ${useMcpServer ? 'enabled' : 'disabled'} | tools=${tools.join(', ')} | allowedTools=${allowedTools.join(', ')}`,
   );
   log(
     `Query start: route=${requestPolicy.route} reason=${requestPolicy.reason} session=${sessionId || 'new'} resumeAt=${resumeAt || 'latest'}`,
@@ -613,40 +571,33 @@ async function runQuery(
     prompt: stream,
     options: {
       cwd: '/workspace/group',
-      additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
+      additionalDirectories:
+        !directAssistantMinimalMode && extraDirs.length > 0
+          ? extraDirs
+          : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
       systemPrompt: {
         type: 'preset' as const,
         preset: 'claude_code' as const,
-        append: [globalClaudeMd, requestPolicy.guidance, recoveryGuidance]
+        append: [
+          globalClaudeMd,
+          groupClaudeMd,
+          requestPolicy.guidance,
+          recoveryGuidance,
+        ]
           .filter((entry): entry is string => Boolean(entry?.trim()))
           .join('\n\n'),
       },
+      tools,
       allowedTools,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
-      settingSources: ['project', 'user'],
+      settingSources: ['user'],
       model: selectedModel,
-      mcpServers: useMcpServer
-        ? {
-            nanoclaw: {
-              command: 'node',
-              args: [mcpServerPath],
-              env: {
-                NANOCLAW_CHAT_JID: containerInput.chatJid,
-                NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-                NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-                NANOCLAW_REQUEST_ROUTE: requestPolicy.route,
-                NANOCLAW_REQUEST_REASON: requestPolicy.reason,
-                NANOCLAW_ALLOWED_MCP_TOOLS: JSON.stringify(
-                  requestPolicy.mcpTools,
-                ),
-              },
-            },
-          }
-        : undefined,
+      strictMcpConfig: mcpBoundary.strictMcpConfig,
+      mcpServers: mcpBoundary.mcpServers,
       hooks: {
         PreCompact: [
           { hooks: [createPreCompactHook(containerInput.assistantName)] },
@@ -821,62 +772,6 @@ async function runQuery(
   };
 }
 
-interface ScriptResult {
-  wakeAgent: boolean;
-  data?: unknown;
-}
-
-const SCRIPT_TIMEOUT_MS = 30_000;
-
-async function runScript(script: string): Promise<ScriptResult | null> {
-  const scriptPath = '/tmp/task-script.sh';
-  fs.writeFileSync(scriptPath, script, { mode: 0o755 });
-
-  return new Promise((resolve) => {
-    execFile(
-      'bash',
-      [scriptPath],
-      {
-        timeout: SCRIPT_TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
-        env: process.env,
-      },
-      (error, stdout, stderr) => {
-        if (stderr) {
-          log(`Script stderr: ${stderr.slice(0, 500)}`);
-        }
-
-        if (error) {
-          log(`Script error: ${error.message}`);
-          return resolve(null);
-        }
-
-        // Parse last non-empty line of stdout as JSON
-        const lines = stdout.trim().split('\n');
-        const lastLine = lines[lines.length - 1];
-        if (!lastLine) {
-          log('Script produced no output');
-          return resolve(null);
-        }
-
-        try {
-          const result = JSON.parse(lastLine);
-          if (typeof result.wakeAgent !== 'boolean') {
-            log(
-              `Script output missing wakeAgent boolean: ${lastLine.slice(0, 200)}`,
-            );
-            return resolve(null);
-          }
-          resolve(result as ScriptResult);
-        } catch {
-          log(`Script output is not valid JSON: ${lastLine.slice(0, 200)}`);
-          resolve(null);
-        }
-      },
-    );
-  });
-}
-
 async function main(): Promise<void> {
   let containerInput: ContainerInput;
 
@@ -889,6 +784,8 @@ async function main(): Promise<void> {
       /* may not exist */
     }
     log(`Received input for group: ${containerInput.groupFolder}`);
+    expectedIpcRunId = containerInput.ipcRunId || '';
+    expectedIpcAuthToken = containerInput.ipcAuthToken || '';
   } catch (err) {
     writeOutput({
       status: 'error',
@@ -898,8 +795,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
-  // No real secrets exist in the container environment.
+  // OneCLI-backed runs receive only a local credential-proxy endpoint. A
+  // deliberately classified degraded fallback may receive one selected runtime
+  // credential through the child environment; it must never enter arguments or
+  // diagnostics.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -926,28 +825,6 @@ async function main(): Promise<void> {
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
     prompt += '\n' + pending.join('\n');
-  }
-
-  // Script phase: run script before waking agent
-  if (containerInput.script && containerInput.isScheduledTask) {
-    log('Running task script...');
-    const scriptResult = await runScript(containerInput.script);
-
-    if (!scriptResult || !scriptResult.wakeAgent) {
-      const reason = scriptResult
-        ? 'wakeAgent=false'
-        : 'script error/no output';
-      log(`Script decided not to wake agent: ${reason}`);
-      writeOutput({
-        status: 'success',
-        result: null,
-      });
-      return;
-    }
-
-    // Script says wake agent — enrich prompt with script data
-    log(`Script wakeAgent=true, enriching prompt with data`);
-    prompt = `[SCHEDULED TASK]\n\nScript output:\n${JSON.stringify(scriptResult.data, null, 2)}\n\nInstructions:\n${containerInput.prompt}`;
   }
 
   // Query loop: run query → wait for IPC message → run new query → repeat

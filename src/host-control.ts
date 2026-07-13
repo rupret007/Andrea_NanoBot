@@ -1303,6 +1303,11 @@ function normalizePathForComparison(input: string): string {
 export function buildRuntimeCommitTruth(options?: {
   projectRoot?: string;
   runtimeAuditState?: RuntimeAuditState | null;
+  workspaceGitState?: {
+    branch: string;
+    commit: string;
+    dirtyPathCount: number | null;
+  };
 }): RuntimeCommitTruth {
   const workspaceRepoRoot = resolveProjectRoot(options?.projectRoot);
   const runtimeAuditState =
@@ -1318,16 +1323,15 @@ export function buildRuntimeCommitTruth(options?: {
   const activeBuildArtifactVerified =
     runtimeAuditState?.activeBuildArtifactVerified ?? null;
   const activeBuildAt = runtimeAuditState?.activeBuildAt || null;
-  const workspaceGitBranch = readGitRef(workspaceRepoRoot, [
-    'rev-parse',
-    '--abbrev-ref',
-    'HEAD',
-  ]);
-  const workspaceGitCommit = readGitRef(workspaceRepoRoot, [
-    'rev-parse',
-    'HEAD',
-  ]);
-  const workspaceGitDirtyPathCount = readGitDirtyPathCount(workspaceRepoRoot);
+  const workspaceGitBranch =
+    options?.workspaceGitState?.branch ||
+    readGitRef(workspaceRepoRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  const workspaceGitCommit =
+    options?.workspaceGitState?.commit ||
+    readGitRef(workspaceRepoRoot, ['rev-parse', 'HEAD']);
+  const workspaceGitDirtyPathCount = options?.workspaceGitState
+    ? options.workspaceGitState.dirtyPathCount
+    : readGitDirtyPathCount(workspaceRepoRoot);
   const workspaceMatchesActiveRepoRoot =
     normalizePathForComparison(activeRepoRoot) ===
     normalizePathForComparison(workspaceRepoRoot);

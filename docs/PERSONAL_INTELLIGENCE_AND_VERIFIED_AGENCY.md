@@ -79,6 +79,84 @@ action, and postcondition are bound. The current aggregate evidence proves
 action classes, counts, ordering, outcomes, recovery, and state fingerprints;
 it does not prove the contents of a named artifact or semantic postcondition.
 
+### Canonical durable recovery
+
+Meaningful coding, research, operator, mission, and approval-required turns now
+link their existing projections to one `DurableWorkUnit`. The record is bound
+to hashed owner/chat/group/target scopes plus channel, work and plan versions,
+checkpoint head, executor scope, bounded node IDs, receipts, verification
+requirements, retry budget, and next safe action. Ordinary direct-assistant
+questions stay off this path.
+
+Checkpoints commit with compare-and-set semantics. A resume grant is random,
+expiring, single-use, scope-bound, and stored only as a token hash. Grant
+consumption and lease acquisition are atomic; exactly one concurrent consumer
+can win. The current work version, plan version, checkpoint, owner, chat, group,
+channel, target, action class, inbound-message binding when present, and fresh
+approval all revalidate before execution. Legacy Runtime Spine and Agent OS
+resume identifiers are revoked as executable capabilities and remain
+projection-only history.
+
+Fresh-approval action classes need a staged cognitive approval that survives an
+exact database compare-and-set over its stored summary, version, and scope
+digest. Staging is one transaction: Andrea writes the immutable packet, creates
+a new approval checkpoint, links it to the durable work, and moves that work to
+`awaiting_approval` together. The approved packet must bind the same durable
+work ID, current durable checkpoint ID, plan version, target-scope digest, and
+action class. This keeps approval separate from observation, checkpoint
+existence, resume possession, model confidence, and skill promotion.
+
+The one-node orchestrator revalidates dependencies and target state, records a
+`started` receipt before invocation, executes through an injected bounded
+adapter, verifies the result, and either commits verified progress, preserves
+an uncertain node for verification-only recovery, or replans while retaining
+completed steps. A crash or callback error never turns an attempted effect into
+success. Unresolved repository or external effects are inspected rather than
+blindly replayed; an external unknown remains `delivery_unverified`. A new
+repository-write or external-effect receipt must retain the consumed grant ID
+and exact approval packet ID, version, scope digest, and action class for that
+same work/checkpoint/plan/target; a receipt cannot borrow another action's
+authority.
+
+Repository proof is host-bound to the canonical non-symlinked Git worktree and
+allowed root. It binds repository/Git/worktree fingerprints, branch, HEAD,
+dirty-state digest, plan/checkpoint/invocation/turn identity, action class, and
+postcondition evidence. Traversal, symlinks, scope drift, stale state, action-ID
+reuse, cross-work receipts, and verification failure are rejected. Durable
+storage receives only opaque IDs and fingerprints, not raw paths, commands,
+tool output, prompts, replies, or secrets.
+
+Startup reconciliation expires leases from prior process generations and
+classifies the surviving truth before new work proceeds. Unknown local effects
+return to verification; uncertain external effects stay delivery-unverified;
+otherwise the work becomes interrupted at the committed checkpoint. Recovery
+reports fail closed on malformed checkpoint arrays and can answer natural
+questions about what survived, what is verified, what remains, and what still
+needs approval without consuming a grant or inventing completion.
+
+Final exact-tree adversarial proof remains a release gate. It must demonstrate
+per-completed-node verified receipts, expiry and process-generation lease
+enforcement through receipt persistence, monotonic completed/uncertain
+checkpoint truth, proof-gated pending-to-completed transitions, and bounded
+non-leaking behavior for malformed stored checkpoint JSON.
+
+### Container capability and context isolation
+
+Container-backed assistance keeps transcript and session continuity within one
+of four capability lanes: `direct-assistant`, `protected`, `control`, or
+`execution`. Advanced and code work intentionally share only the execution
+lane; no other route pair reuses a transcript, storage key, or Claude home.
+Legacy shared tool-bearing session rows remain preserved but inert.
+
+Every run receives a fresh host-created inbox scoped to its group, lane, and
+run ID. Host follow-ups use HMAC-SHA256 `provenance:host` envelopes tied to that
+run and a redacted per-run token. The inbox is read-only inside the runner, and
+unsigned, altered, cross-run, or replayed messages fail closed. Direct,
+protected, and control guidance is host-constant; only execution may consume
+the mutable group `CLAUDE.md`. Runner source, settings, enabled skills, and
+plugins remain read-only trusted views. Final real-container and full-suite
+validation of this candidate remains pending.
+
 ## Evaluation and improvement
 
 Deterministic scorecards use isolated database state, an injected synthetic
@@ -379,10 +457,30 @@ Run the focused proof with:
 
 ```bash
 node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/evaluation-execution.test.ts src/container-runner.credentials.test.ts src/council-quality.test.ts src/personal-context-packet.test.ts src/routine-promotion.test.ts src/runtime-tool-evidence.test.ts src/runtime-tool-evidence-collector.test.ts src/container-runner.test.ts src/turn-runtime-evidence-scope.test.ts src/verified-deep-work.test.ts src/deep-work-apprenticeship.test.ts src/turn-agent-harness.test.ts src/turn-agent-intelligence-boundary.test.ts src/personal-assistant-metrics.test.ts
-node scripts/run-with-pinned-node.mjs ./container/agent-runner/node_modules/typescript/bin/tsc -p container/agent-runner/tsconfig.json --noEmit
+npm run container:install
+npm run typecheck:agent-runner
+npm run build:agent-runner
+npm run test:agent-runner
+npm run check:container-contract
 npm run typecheck
+npm run test:continuity:hard-kill
+npm run test:continuity:heldout
 npm run agi:scorecard -- --no-write --no-dogfood
 ```
+
+The continuity commands are isolated, deterministic, and network-denied. The
+hard-kill harness exercises 12 real process-termination boundaries plus an
+eight-process single-grant race. The held-out harness exercises ten recovery
+scenarios and requires zero duplicate effects, no live provider calls, no
+council calls, no production mutations, and no fixture learning-counter
+change. Their output is recovery evidence only: it cannot
+create an owner review, save a baseline, promote a skill, prove a live channel,
+or establish that the current service is running the candidate.
+
+The schema proof kills after initialization, verifies clean reopen and
+idempotent migration, preserves unrelated legacy rows, and rejects a malformed
+partial durable schema. It does not kill inside an individual DDL statement;
+in-DDL termination is explicitly unclaimed.
 
 Live evaluation is never part of the deterministic gate. When explicitly
 approved and budgeted, use:

@@ -20,7 +20,21 @@ export interface AssistantRoutingOptions {
   allowCombinedContext?: boolean;
 }
 
-const STANDARD_ASSISTANT_TOOLS = [
+const FILE_READ_TOOLS = ['Read', 'Glob', 'Grep'] as const;
+
+const WEB_LOOKUP_TOOLS = ['WebSearch', 'WebFetch'] as const;
+
+const RESEARCH_TOOLS = [
+  'Read',
+  'Glob',
+  'Grep',
+  'WebSearch',
+  'WebFetch',
+] as const;
+
+const DIRECT_ASSISTANT_TOOLS: readonly string[] = [];
+
+const ENGINEERING_TOOLS = [
   'Read',
   'Write',
   'Edit',
@@ -28,14 +42,6 @@ const STANDARD_ASSISTANT_TOOLS = [
   'Grep',
   'WebSearch',
   'WebFetch',
-  'TodoWrite',
-  'Skill',
-  'NotebookEdit',
-] as const;
-
-const DIRECT_ASSISTANT_TOOLS = ['Read'] as const;
-
-const ADVANCED_EXECUTION_TOOLS = [
   'Bash',
   'Task',
   'TaskOutput',
@@ -43,42 +49,22 @@ const ADVANCED_EXECUTION_TOOLS = [
   'TeamCreate',
   'TeamDelete',
   'SendMessage',
+  'TodoWrite',
+  'ToolSearch',
+  'Skill',
+  'NotebookEdit',
 ] as const;
 
-const ALL_INTERNAL_MCP_TOOLS = [
-  'mcp__nanoclaw__search_openclaw_skills',
-  'mcp__nanoclaw__enable_openclaw_skill',
-  'mcp__nanoclaw__install_openclaw_skill',
-  'mcp__nanoclaw__disable_openclaw_skill',
-  'mcp__nanoclaw__list_enabled_openclaw_skills',
-  'mcp__nanoclaw__list_cursor_agents',
-  'mcp__nanoclaw__create_cursor_agent',
-  'mcp__nanoclaw__followup_cursor_agent',
-  'mcp__nanoclaw__stop_cursor_agent',
-  'mcp__nanoclaw__sync_cursor_agent',
-  'mcp__nanoclaw__list_cursor_agent_artifacts',
-  'mcp__nanoclaw__search_amazon_products',
-  'mcp__nanoclaw__request_amazon_purchase',
-  'mcp__nanoclaw__list_amazon_purchase_requests',
-  'mcp__nanoclaw__approve_amazon_purchase_request',
-  'mcp__nanoclaw__cancel_amazon_purchase_request',
-  'mcp__nanoclaw__send_message',
+const TASK_ASSISTANT_MCP_TOOLS = [
   'mcp__nanoclaw__schedule_task',
   'mcp__nanoclaw__list_tasks',
   'mcp__nanoclaw__pause_task',
   'mcp__nanoclaw__resume_task',
   'mcp__nanoclaw__cancel_task',
   'mcp__nanoclaw__update_task',
-  'mcp__nanoclaw__register_group',
 ] as const;
 
-const PROTECTED_TASK_MCP_TOOLS = [
-  'mcp__nanoclaw__schedule_task',
-  'mcp__nanoclaw__list_tasks',
-  'mcp__nanoclaw__pause_task',
-  'mcp__nanoclaw__resume_task',
-  'mcp__nanoclaw__cancel_task',
-  'mcp__nanoclaw__update_task',
+const SHOPPING_ASSISTANT_MCP_TOOLS = [
   'mcp__nanoclaw__search_amazon_products',
   'mcp__nanoclaw__request_amazon_purchase',
   'mcp__nanoclaw__list_amazon_purchase_requests',
@@ -101,37 +87,64 @@ const CONTROL_PLANE_MCP_TOOLS = [
   'mcp__nanoclaw__register_group',
 ] as const;
 
-const ADVANCED_HELPER_MCP_TOOLS = [
+const SKILL_MANAGEMENT_MCP_TOOLS = [
   'mcp__nanoclaw__search_openclaw_skills',
   'mcp__nanoclaw__enable_openclaw_skill',
   'mcp__nanoclaw__install_openclaw_skill',
   'mcp__nanoclaw__disable_openclaw_skill',
   'mcp__nanoclaw__list_enabled_openclaw_skills',
-  'mcp__nanoclaw__list_cursor_agents',
-  'mcp__nanoclaw__create_cursor_agent',
-  'mcp__nanoclaw__followup_cursor_agent',
-  'mcp__nanoclaw__stop_cursor_agent',
-  'mcp__nanoclaw__sync_cursor_agent',
-  'mcp__nanoclaw__list_cursor_agent_artifacts',
-  'mcp__nanoclaw__search_amazon_products',
-  'mcp__nanoclaw__request_amazon_purchase',
-  'mcp__nanoclaw__list_amazon_purchase_requests',
-  'mcp__nanoclaw__approve_amazon_purchase_request',
-  'mcp__nanoclaw__cancel_amazon_purchase_request',
-  'mcp__nanoclaw__send_message',
 ] as const;
 
-const CODE_PLANE_MCP_TOOLS = [
+const CURSOR_CREATION_MCP_TOOLS = [
   'mcp__nanoclaw__list_cursor_agents',
   'mcp__nanoclaw__create_cursor_agent',
-  'mcp__nanoclaw__followup_cursor_agent',
-  'mcp__nanoclaw__stop_cursor_agent',
-  'mcp__nanoclaw__sync_cursor_agent',
-  'mcp__nanoclaw__list_cursor_agent_artifacts',
-  'mcp__nanoclaw__search_openclaw_skills',
-  'mcp__nanoclaw__list_enabled_openclaw_skills',
-  'mcp__nanoclaw__send_message',
 ] as const;
+
+// Shell-capable profiles deliberately receive no host-action MCP surface.
+// Without a kernel-enforced broker, Bash could otherwise forge the writable
+// IPC files used by those tools and bypass the route allowlist.
+const EXECUTION_LANE_MCP_TOOLS: readonly string[] = [];
+
+const HOST_ACTION_INCOMPATIBLE_BUILTINS = new Set([
+  'Bash',
+  'Write',
+  'Edit',
+  'NotebookEdit',
+  'Task',
+  'TaskOutput',
+  'TaskStop',
+  'TeamCreate',
+  'TeamDelete',
+  'SendMessage',
+  'TodoWrite',
+  'ToolSearch',
+  'Skill',
+]);
+
+const ROUTE_BUILTIN_MAXIMUMS: Record<
+  AssistantRequestRoute,
+  ReadonlySet<string>
+> = {
+  direct_assistant: new Set(),
+  protected_assistant: new Set(RESEARCH_TOOLS),
+  control_plane: new Set(FILE_READ_TOOLS),
+  advanced_helper: new Set(ENGINEERING_TOOLS),
+  code_plane: new Set(ENGINEERING_TOOLS),
+};
+
+const ROUTE_MCP_MAXIMUMS: Record<AssistantRequestRoute, ReadonlySet<string>> = {
+  direct_assistant: new Set(),
+  protected_assistant: new Set([
+    ...TASK_ASSISTANT_MCP_TOOLS,
+    ...SHOPPING_ASSISTANT_MCP_TOOLS,
+  ]),
+  control_plane: new Set(CONTROL_PLANE_MCP_TOOLS),
+  advanced_helper: new Set([
+    ...SKILL_MANAGEMENT_MCP_TOOLS,
+    ...CURSOR_CREATION_MCP_TOOLS,
+  ]),
+  code_plane: new Set(),
+};
 
 interface RouteSignal {
   pattern: RegExp;
@@ -204,12 +217,12 @@ const CONTROL_PLANE_SIGNALS: RouteSignal[] = [
 const CODE_PLANE_SIGNALS: RouteSignal[] = [
   {
     pattern:
-      /\b(implement|fix|debug|refactor|patch|write|add|update|rename|build|compile|test|review|commit|ship)\b[\s\S]{0,80}\b(code|repo|repository|bug|feature|test|tests|pr\b|pull request|branch|function|file|command|handler|route|routing|logic|module|integration|api)\b/i,
+      /\b(implement|fix|debug|refactor|patch|write|edit|add|update|rename|build|compile|test|commit|ship)\b[\s\S]{0,80}\b(code|repo|repository|bug|feature|test|tests|pr\b|pull request|branch|function|file|command|handler|route|routing|logic|module|integration|api)\b/i,
     reason: 'matched coding intent and engineering target',
   },
   {
     pattern:
-      /\b(code|repo|repository|bug|feature|tests?|pr\b|pull request|branch|function|file|command|handler|route|routing|logic|module|integration|api)\b[\s\S]{0,80}\b(implement|fix|debug|refactor|patch|write|add|update|rename|build|compile|test|review|commit|ship)\b/i,
+      /\b(code|repo|repository|bug|feature|tests?|pr\b|pull request|branch|function|file|command|handler|route|routing|logic|module|integration|api)\b[\s\S]{0,80}\b(implement|fix|debug|refactor|patch|write|edit|add|update|rename|build|compile|test|commit|ship)\b/i,
     reason: 'matched engineering target and coding action',
   },
 ];
@@ -217,8 +230,12 @@ const CODE_PLANE_SIGNALS: RouteSignal[] = [
 const ADVANCED_HELPER_SIGNALS: RouteSignal[] = [
   {
     pattern:
-      /\b(openclaw|clawhub|clawskills|community skill|skill catalog|enable skill|disable skill|install skill|search skills)\b/i,
+      /\b(clawhub|clawskills|community skill|skill catalog|enable skill|disable skill|install skill|search skills)\b/i,
     reason: 'matched community skill management intent',
+  },
+  {
+    pattern: /\bopenclaw\b/i,
+    reason: 'matched OpenClaw helper intent',
   },
   {
     pattern:
@@ -235,17 +252,95 @@ const ADVANCED_HELPER_SIGNALS: RouteSignal[] = [
 const PROTECTED_ASSISTANT_SIGNALS: RouteSignal[] = [
   {
     pattern:
-      /\b(remind|reminder|schedule|scheduled|appointment|appointments|calendar|meeting|availability|available|weather|forecast|temperature|current conditions?|rain|snow|umbrella|precipitation|wind|humidity|humid|help me remember|remember to)\b/i,
-    reason: 'matched assistant scheduling or lookup intent',
+      /\b(remind|reminder|schedule|scheduled|appointment|appointments|calendar|meeting|availability|available|help me remember|remember to)\b/i,
+    reason: 'matched assistant scheduling intent',
   },
   {
     pattern: /\b(todo|to-do|task list|checklist|agenda)\b/i,
     reason: 'matched personal organization intent',
   },
+];
+
+const SHOPPING_ASSISTANT_SIGNALS: RouteSignal[] = [
   {
     pattern:
       /\b(amazon|shop for|shopping|buy|purchase|order this|find .* on amazon)\b/i,
     reason: 'matched shopping or purchase intent',
+  },
+];
+
+const WEATHER_LOOKUP_SIGNALS: RouteSignal[] = [
+  {
+    pattern:
+      /\b(weather|forecast|temperature|current conditions?|rain|snow|umbrella|precipitation|wind|humidity|humid)\b/i,
+    reason: 'matched explicit weather lookup intent',
+  },
+];
+
+const FILE_READ_SIGNALS: RouteSignal[] = [
+  {
+    pattern:
+      /\b(?:what(?:'s| is)?|what does|tell me|show me|contents?|inside|about)\b[\s\S]{0,100}(?:\bpackage\.json\b|\breadme(?:\.md)?\b|(?:^|[\s'"(])(?:~\/|\.{0,2}\/|[A-Za-z]:[\\/])[^\s'"()]+)/i,
+    reason: 'matched a content question about a concrete file or path',
+  },
+  {
+    pattern:
+      /(?:\bpackage\.json\b|\breadme(?:\.md)?\b|(?:^|[\s'"(])(?:~\/|\.{0,2}\/|[A-Za-z]:[\\/])[^\s'"()]+)[\s\S]{0,100}\b(?:say|contain|inside|about|contents?)\b/i,
+    reason: 'matched a concrete file or path content question',
+  },
+  {
+    pattern:
+      /\b(read|open|inspect|summarize|review|search|find|check)\b[\s\S]{0,80}\b(file|files|document|documents|folder|directory|attachment|workspace)\b/i,
+    reason: 'matched explicit local file inspection intent',
+  },
+  {
+    pattern:
+      /\b(file|files|document|documents|folder|directory|attachment|workspace)\b[\s\S]{0,80}\b(read|open|inspect|summarize|review|search|find|check)\b/i,
+    reason: 'matched explicit local file inspection target',
+  },
+  {
+    pattern:
+      /\b(read|open|inspect|summarize|review|search|find|check)\b[\s\S]{0,100}(?:\brepo(?:sitory)?\b|\bworkspace\b|\bpackage\.json\b|\breadme(?:\.md)?\b|(?:^|[\s'"(])(?:~\/|\.{0,2}\/|[A-Za-z]:[\\/])?[^\s'"()]+\.[A-Za-z0-9]{1,12})/i,
+    reason: 'matched explicit repository or path inspection intent',
+  },
+  {
+    pattern:
+      /(?:\brepo(?:sitory)?\b|\bworkspace\b|\bpackage\.json\b|\breadme(?:\.md)?\b|(?:^|[\s'"(])(?:~\/|\.{0,2}\/|[A-Za-z]:[\\/])?[^\s'"()]+\.[A-Za-z0-9]{1,12})[\s\S]{0,100}\b(read|open|inspect|summarize|review|search|find|check)\b/i,
+    reason: 'matched repository or path target and inspection action',
+  },
+];
+
+const WEB_LOOKUP_SIGNALS: RouteSignal[] = [
+  {
+    pattern:
+      /^\s*(?:please\s+)?(?:search(?:\s+(?:the\s+)?(?:web|internet))?\s+for|look\s+up)\s+\S/i,
+    reason: 'matched explicit search or look-up request',
+  },
+  {
+    pattern: /^\s*(?:please\s+)?find\s+(?:the\s+)?(?:latest|recent|current)\b/i,
+    reason: 'matched explicit current-information lookup request',
+  },
+  {
+    pattern:
+      /\b(search|look up|browse|check|verify|find)\b[\s\S]{0,80}\b(web|internet|online|website|site|latest|current|today)\b/i,
+    reason: 'matched explicit web lookup intent',
+  },
+  {
+    pattern:
+      /\b(web|internet|online|website|site|latest|current)\b[\s\S]{0,80}\b(search|look up|browse|check|verify|find)\b/i,
+    reason: 'matched explicit web lookup target',
+  },
+  {
+    pattern: /https?:\/\/[^\s]+/i,
+    reason: 'matched explicit URL lookup intent',
+  },
+];
+
+const RESEARCH_SIGNALS: RouteSignal[] = [
+  {
+    pattern:
+      /\b(research|investigate|literature review|compare sources|source-backed|deep dive)\b/i,
+    reason: 'matched explicit research intent',
   },
 ];
 
@@ -303,7 +398,7 @@ function buildGuidance(route: AssistantRequestRoute, reason: string): string {
     direct_assistant: [
       'Treat this as a direct assistant request. Answer clearly and directly.',
       'Use a concise, confident, and lightly witty tone when appropriate. For classic jokes or pop-culture prompts (like meaning of life), prefer the expected punchline first.',
-      'Do not use tools unless the user explicitly asks you to inspect local files, search the web, or fetch external content.',
+      'This route is tool-free. Answer only from the visible prompt and established conversation context.',
       'Do not escalate into heavy orchestration, background jobs, or community skill management unless the user explicitly asks for that kind of workflow.',
     ],
     protected_assistant: [
@@ -312,6 +407,7 @@ function buildGuidance(route: AssistantRequestRoute, reason: string): string {
       'For reminders, scheduling, recurring follow-ups, and task changes, use the task MCP tools instead of freehand promises.',
       'Do not claim a reminder, schedule, or task update is complete unless the relevant tool call succeeded and you can confirm the result.',
       'If you cannot confirm completion, say so plainly instead of ending with a blank or implicit result.',
+      'When local inspection tools are available, the repository is a read-only tracked-file snapshot at /workspace/project; never claim access to ignored or untracked owner data.',
     ],
     control_plane: [
       'Treat this as control-plane work: inspect, stop, resume, sync, or update existing operational state.',
@@ -323,9 +419,11 @@ function buildGuidance(route: AssistantRequestRoute, reason: string): string {
         ? 'The user explicitly addressed @openclaw, so keep the answer in the OpenClaw helper/tool lane.'
         : 'If the user explicitly addressed @openclaw, treat that as selection of the OpenClaw helper/tool lane.',
       'Use helper capabilities intentionally, but keep the public reply outcome-focused and free of internal implementation chatter.',
+      'The tracked Andrea repository is a read-only snapshot at /workspace/project. Write only to the group workspace or an explicitly allowlisted writable mount; never claim the host repository was changed unless a separate host-side workflow proves it.',
     ],
     code_plane: [
       'Treat this as code-plane work. Engineering tools and async helper execution are allowed when useful.',
+      'The tracked Andrea repository is a read-only snapshot at /workspace/project. Write artifacts only to the group workspace or an explicitly allowlisted writable mount; never claim the host repository was changed unless a separate host-side workflow proves it.',
       'Stay outcome-focused in the final reply and avoid narrating internal helper mechanics unless the user explicitly asks for them.',
     ],
   };
@@ -347,6 +445,24 @@ function evaluateSignals(
   return null;
 }
 
+export function isAssistantContinuationMessage(content: string): boolean {
+  const normalized = content.trim().toLowerCase();
+  if (!normalized) return false;
+  return /^(?:yes|yeah|yep|ok|okay|sure|sounds good|please do|do it|go ahead|continue|retry|again|next|go on|keep going|carry on|resume|enable it|disable it|install it|stop it|pause it|resume it|sync it|that one|this one|the first one|the second one|use that|use this)\b/.test(
+    normalized,
+  );
+}
+
+export function assistantCapabilityKey(
+  policy: Pick<AssistantRequestPolicy, 'route' | 'builtinTools' | 'mcpTools'>,
+): string {
+  return JSON.stringify([
+    policy.route,
+    [...new Set(policy.builtinTools)].sort(),
+    [...new Set(policy.mcpTools)].sort(),
+  ]);
+}
+
 function shouldUseCombinedContext(lastContent: string): boolean {
   if (!lastContent) return true;
 
@@ -356,72 +472,48 @@ function shouldUseCombinedContext(lastContent: string): boolean {
   // Follow-up approvals and terse references should inherit the immediate
   // conversation context. Rich new asks should stand on their own so an older
   // control/helper message does not force the wrong route.
-  return /^(?:yes|yeah|yep|ok|okay|sure|sounds good|please do|do it|go ahead|continue|retry|enable it|disable it|install it|stop it|pause it|resume it|sync it|that one|this one|the first one|the second one|use that|use this)\b/.test(
-    normalized,
-  );
+  return isAssistantContinuationMessage(normalized);
 }
 
 function createPolicy(
   route: AssistantRequestRoute,
   reason: string,
+  overrides: {
+    builtinTools?: readonly string[];
+    mcpTools?: readonly string[];
+  } = {},
 ): AssistantRequestPolicy {
+  let builtinTools: readonly string[];
+  let mcpTools: readonly string[];
   switch (route) {
     case 'direct_assistant':
-      return {
-        route,
-        reason,
-        builtinTools: dedupe(DIRECT_ASSISTANT_TOOLS),
-        mcpTools: [],
-        guidance: buildGuidance(route, reason),
-      };
+      builtinTools = DIRECT_ASSISTANT_TOOLS;
+      mcpTools = [];
+      break;
     case 'protected_assistant':
-      return {
-        route,
-        reason,
-        builtinTools: dedupe(STANDARD_ASSISTANT_TOOLS),
-        mcpTools: dedupe(PROTECTED_TASK_MCP_TOOLS),
-        guidance: buildGuidance(route, reason),
-      };
+      builtinTools = [];
+      mcpTools = TASK_ASSISTANT_MCP_TOOLS;
+      break;
     case 'control_plane':
-      return {
-        route,
-        reason,
-        builtinTools: dedupe([
-          'Read',
-          'Write',
-          'Edit',
-          'Glob',
-          'Grep',
-          'TodoWrite',
-          'Skill',
-          'NotebookEdit',
-        ]),
-        mcpTools: dedupe(CONTROL_PLANE_MCP_TOOLS),
-        guidance: buildGuidance(route, reason),
-      };
+      builtinTools = FILE_READ_TOOLS;
+      mcpTools = CONTROL_PLANE_MCP_TOOLS;
+      break;
     case 'advanced_helper':
-      return {
-        route,
-        reason,
-        builtinTools: dedupe([
-          ...STANDARD_ASSISTANT_TOOLS,
-          ...ADVANCED_EXECUTION_TOOLS,
-        ]),
-        mcpTools: dedupe(ADVANCED_HELPER_MCP_TOOLS),
-        guidance: buildGuidance(route, reason),
-      };
+      builtinTools = ENGINEERING_TOOLS;
+      mcpTools = EXECUTION_LANE_MCP_TOOLS;
+      break;
     case 'code_plane':
-      return {
-        route,
-        reason,
-        builtinTools: dedupe([
-          ...STANDARD_ASSISTANT_TOOLS,
-          ...ADVANCED_EXECUTION_TOOLS,
-        ]),
-        mcpTools: dedupe(CODE_PLANE_MCP_TOOLS),
-        guidance: buildGuidance(route, reason),
-      };
+      builtinTools = ENGINEERING_TOOLS;
+      mcpTools = EXECUTION_LANE_MCP_TOOLS;
+      break;
   }
+  return {
+    route,
+    reason,
+    builtinTools: dedupe(overrides.builtinTools ?? builtinTools),
+    mcpTools: dedupe(overrides.mcpTools ?? mcpTools),
+    guidance: buildGuidance(route, reason),
+  };
 }
 
 export function createDirectAssistantRequestPolicy(
@@ -431,16 +523,78 @@ export function createDirectAssistantRequestPolicy(
 }
 
 export function createCompatibilityRequestPolicy(): AssistantRequestPolicy {
+  return createPolicy('code_plane', 'explicit development mode');
+}
+
+/** Normalize an untrusted serialized policy before it can influence host
+ * mounts, writable IPC, session context, or the container payload. The
+ * container repeats this validation as a separate defense-in-depth boundary. */
+export function normalizeAssistantRequestPolicy(
+  policy: unknown,
+): AssistantRequestPolicy {
+  const failClosed = (reason: string) =>
+    createPolicy('direct_assistant', reason);
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
+    return failClosed('missing or malformed request policy');
+  }
+  const candidate = policy as Record<string, unknown>;
+  if (
+    typeof candidate.route !== 'string' ||
+    !Object.hasOwn(ROUTE_BUILTIN_MAXIMUMS, candidate.route) ||
+    typeof candidate.reason !== 'string' ||
+    typeof candidate.guidance !== 'string' ||
+    !Array.isArray(candidate.builtinTools) ||
+    !candidate.builtinTools.every((tool) => typeof tool === 'string') ||
+    !Array.isArray(candidate.mcpTools) ||
+    !candidate.mcpTools.every((tool) => typeof tool === 'string')
+  ) {
+    return failClosed('missing or malformed request policy');
+  }
+
+  const route = candidate.route as AssistantRequestRoute;
+  if (route === 'direct_assistant') {
+    return {
+      route,
+      reason: candidate.reason,
+      builtinTools: [],
+      mcpTools: [],
+      guidance: candidate.guidance,
+    };
+  }
+
+  const builtinTools = dedupe(candidate.builtinTools as string[]);
+  const mcpTools = dedupe(candidate.mcpTools as string[]);
+  if (
+    (mcpTools.length > 0 &&
+      builtinTools.some((tool) =>
+        HOST_ACTION_INCOMPATIBLE_BUILTINS.has(tool),
+      )) ||
+    builtinTools.some((tool) => !ROUTE_BUILTIN_MAXIMUMS[route].has(tool)) ||
+    mcpTools.some((tool) => !ROUTE_MCP_MAXIMUMS[route].has(tool))
+  ) {
+    return failClosed('request policy exceeds its route capability boundary');
+  }
+
   return {
-    route: 'code_plane',
-    reason: 'compatibility fallback',
-    builtinTools: dedupe([
-      ...STANDARD_ASSISTANT_TOOLS,
-      ...ADVANCED_EXECUTION_TOOLS,
-    ]),
-    mcpTools: dedupe(ALL_INTERNAL_MCP_TOOLS),
-    guidance: buildGuidance('code_plane', 'explicit development mode'),
+    route,
+    reason: candidate.reason,
+    builtinTools,
+    mcpTools,
+    guidance: candidate.guidance,
   };
+}
+
+/** Explicit runtime jobs are execution work even when a terse follow-up such
+ * as "continue" has no standalone coding keyword. Keeping them on the
+ * execution lane preserves that transcript without contaminating ordinary
+ * chat or the host-action session. */
+export function classifyRuntimeJobRequest(
+  prompt: string,
+): AssistantRequestPolicy {
+  const classified = classifyAssistantRequest([{ content: prompt }]);
+  return classified.route === 'direct_assistant'
+    ? createPolicy('code_plane', 'explicit runtime orchestration job')
+    : classified;
 }
 
 export function classifyAssistantRequest(
@@ -466,6 +620,26 @@ export function classifyAssistantRequest(
     EXPLICIT_ADVANCED_HELPER_SIGNALS,
   );
   if (explicitHelperReason) {
+    if (
+      /\b(clawhub|clawskills|community skills?|skill catalog|enable skill|disable skill|install skill|search skills?|calendar skill)\b/i.test(
+        lastContent,
+      )
+    ) {
+      return createPolicy('advanced_helper', explicitHelperReason, {
+        builtinTools: [],
+        mcpTools: SKILL_MANAGEMENT_MCP_TOOLS,
+      });
+    }
+    if (
+      /\b(create|launch|start|spin up)\b[\s\S]{0,60}\b(cursor agent|cursor job|agent job|background agent)\b/i.test(
+        lastContent,
+      )
+    ) {
+      return createPolicy('advanced_helper', explicitHelperReason, {
+        builtinTools: [],
+        mcpTools: CURSOR_CREATION_MCP_TOOLS,
+      });
+    }
     return createPolicy('advanced_helper', explicitHelperReason);
   }
 
@@ -482,12 +656,75 @@ export function classifyAssistantRequest(
     EXPLICIT_PROTECTED_ASSISTANT_SIGNALS,
   );
   if (explicitProtectedReason) {
-    return createPolicy('protected_assistant', explicitProtectedReason);
+    return createPolicy('protected_assistant', explicitProtectedReason, {
+      builtinTools: [],
+      mcpTools: SHOPPING_ASSISTANT_MCP_TOOLS,
+    });
   }
 
   const directReason = evaluateSignals(lastOnly, DIRECT_ASSISTANT_SIGNALS);
   if (directReason) {
     return createPolicy('direct_assistant', directReason);
+  }
+
+  // Preserve the requested host action when a reminder or purchase includes a
+  // file/URL as payload. Fetching the reference is not required to schedule or
+  // stage the action, and must not silently strip its exact MCP capability.
+  const earlyProtectedActionReason = evaluateSignals(
+    candidates.filter((candidate) =>
+      /\b(remind|reminder|schedule|scheduled|help me remember|remember to)\b/i.test(
+        candidate,
+      ),
+    ),
+    PROTECTED_ASSISTANT_SIGNALS,
+  );
+  if (earlyProtectedActionReason) {
+    return createPolicy('protected_assistant', earlyProtectedActionReason);
+  }
+
+  const earlyShoppingReason = evaluateSignals(
+    candidates.filter((candidate) =>
+      /\b(?:buy|order this|shop for|shopping for|purchase (?:this|it|the\b)|find\b[\s\S]{0,50}\bon amazon)\b/i.test(
+        candidate,
+      ),
+    ),
+    SHOPPING_ASSISTANT_SIGNALS,
+  );
+  if (earlyShoppingReason) {
+    return createPolicy('protected_assistant', earlyShoppingReason, {
+      builtinTools: [],
+      mcpTools: SHOPPING_ASSISTANT_MCP_TOOLS,
+    });
+  }
+
+  // Resolve explicit information gathering before mutation-oriented code
+  // signals. A request to inspect a repository/file must not gain Bash or
+  // write tools merely because its target is code.
+  const localInspectionCandidates = candidates.map((candidate) =>
+    candidate.replace(/https?:\/\/\S+/gi, ' '),
+  );
+  const earlyFileReadReason = evaluateSignals(
+    localInspectionCandidates,
+    FILE_READ_SIGNALS,
+  );
+  const earlyWebLookupReason = evaluateSignals(candidates, WEB_LOOKUP_SIGNALS);
+  const earlyResearchReason = evaluateSignals(candidates, RESEARCH_SIGNALS);
+  if (earlyResearchReason || (earlyFileReadReason && earlyWebLookupReason)) {
+    return createPolicy(
+      'protected_assistant',
+      earlyResearchReason || `${earlyFileReadReason}; ${earlyWebLookupReason}`,
+      {
+        builtinTools: RESEARCH_TOOLS,
+        mcpTools: [],
+      },
+    );
+  }
+
+  if (earlyFileReadReason) {
+    return createPolicy('protected_assistant', earlyFileReadReason, {
+      builtinTools: FILE_READ_TOOLS,
+      mcpTools: [],
+    });
   }
 
   const codeReason = evaluateSignals(candidates, CODE_PLANE_SIGNALS);
@@ -502,7 +739,70 @@ export function classifyAssistantRequest(
 
   const helperReason = evaluateSignals(candidates, ADVANCED_HELPER_SIGNALS);
   if (helperReason) {
+    const helperIntentText = candidates.join('\n');
+    if (
+      /clawhub|clawskills|community skills?|skill catalog|openclaw catalog|calendar skill|enable skill|disable skill|install skill|search skills?/i.test(
+        helperIntentText,
+      )
+    ) {
+      return createPolicy('advanced_helper', helperReason, {
+        builtinTools: [],
+        mcpTools: SKILL_MANAGEMENT_MCP_TOOLS,
+      });
+    }
+    if (/async helper job creation/i.test(helperReason)) {
+      return createPolicy('advanced_helper', helperReason, {
+        builtinTools: [],
+        mcpTools: CURSOR_CREATION_MCP_TOOLS,
+      });
+    }
     return createPolicy('advanced_helper', helperReason);
+  }
+
+  const fileReadReason = evaluateSignals(
+    localInspectionCandidates,
+    FILE_READ_SIGNALS,
+  );
+  if (fileReadReason) {
+    return createPolicy('protected_assistant', fileReadReason, {
+      builtinTools: FILE_READ_TOOLS,
+      mcpTools: [],
+    });
+  }
+
+  const researchReason = evaluateSignals(candidates, RESEARCH_SIGNALS);
+  if (researchReason) {
+    return createPolicy('protected_assistant', researchReason, {
+      builtinTools: RESEARCH_TOOLS,
+      mcpTools: [],
+    });
+  }
+
+  const webLookupReason = evaluateSignals(candidates, WEB_LOOKUP_SIGNALS);
+  if (webLookupReason) {
+    return createPolicy('protected_assistant', webLookupReason, {
+      builtinTools: WEB_LOOKUP_TOOLS,
+      mcpTools: [],
+    });
+  }
+
+  const weatherReason = evaluateSignals(candidates, WEATHER_LOOKUP_SIGNALS);
+  if (weatherReason) {
+    return createPolicy('protected_assistant', weatherReason, {
+      builtinTools: WEB_LOOKUP_TOOLS,
+      mcpTools: [],
+    });
+  }
+
+  const shoppingReason = evaluateSignals(
+    candidates,
+    SHOPPING_ASSISTANT_SIGNALS,
+  );
+  if (shoppingReason) {
+    return createPolicy('protected_assistant', shoppingReason, {
+      builtinTools: [],
+      mcpTools: SHOPPING_ASSISTANT_MCP_TOOLS,
+    });
   }
 
   const protectedReason = evaluateSignals(

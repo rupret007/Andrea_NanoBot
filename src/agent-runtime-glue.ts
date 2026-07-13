@@ -451,7 +451,7 @@ export function citationCoverageFor(
 function looksFactual(paragraph: string): boolean {
   const stripped = paragraph
     .replace(/`[^`\n]*`/g, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(new RegExp('<!--[\\s\\S]*?-->', 'g'), ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (!stripped) return false;

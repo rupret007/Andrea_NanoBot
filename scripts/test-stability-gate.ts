@@ -13,12 +13,14 @@ function runStep(step: Step): void {
   console.log(`\n[stability] START ${step.name}: ${pretty}`);
 
   const startedAt = Date.now();
+  // Every command and argv list comes from the static step table below; no shell is used.
+  // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
   const result = spawnSync(step.command, step.args, {
     stdio: 'inherit',
     env: buildHermeticTestEnv(process.env, {
       isolateStorage: !step.liveStorage,
     }),
-    shell: process.platform === 'win32',
+    shell: false,
   });
   const durationSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
 

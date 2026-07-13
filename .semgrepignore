@@ -1,0 +1,3 @@
+# Historical upstream snapshot retained for provenance and comparison only.
+# It is not built, loaded, or executed by Andrea; active code remains fully scanned.
+imported/andrea_openai_bot/

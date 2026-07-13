@@ -1,8 +1,6 @@
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -79,6 +77,16 @@ vi.mock('fs', async () => {
       readFileSync: vi.fn(() => ''),
       readdirSync: vi.fn(() => []),
       statSync: vi.fn(() => ({ isDirectory: () => false })),
+      lstatSync: vi.fn(() => ({
+        isSymbolicLink: () => false,
+        isDirectory: () => false,
+        isFile: () => true,
+        size: 0,
+        mtimeMs: Date.now(),
+      })),
+      mkdtempSync: vi.fn((prefix: string) => `${prefix}test`),
+      copyFileSync: vi.fn(),
+      realpathSync: vi.fn((candidate: fs.PathLike) => String(candidate)),
       cpSync: vi.fn(),
       rmSync: vi.fn(),
       renameSync: vi.fn(),
@@ -144,7 +152,10 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent } from './container-runner.js';
+import {
+  buildContainerChildEnv,
+  runContainerAgent,
+} from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -228,6 +239,32 @@ describe('container-runner credential env wiring', () => {
     vi.unstubAllEnvs();
   });
 
+  it('preserves only explicit cross-platform runtime discovery variables', () => {
+    const child = buildContainerChildEnv({}, ['run'], {
+      PATH: 'runtime-path',
+      USERPROFILE: 'C:\\Users\\Andrea',
+      APPDATA: 'C:\\Users\\Andrea\\AppData\\Roaming',
+      LOCALAPPDATA: 'C:\\Users\\Andrea\\AppData\\Local',
+      DOCKER_CERT_PATH: 'C:\\docker-certs',
+      DOCKER_TLS_VERIFY: '1',
+      PODMAN_HOST: 'ssh://podman.example',
+      SSH_AUTH_SOCK: '/tmp/agent.sock',
+      OPENAI_API_KEY: 'must-not-leak',
+    });
+
+    expect(child).toMatchObject({
+      PATH: 'runtime-path',
+      USERPROFILE: 'C:\\Users\\Andrea',
+      APPDATA: 'C:\\Users\\Andrea\\AppData\\Roaming',
+      LOCALAPPDATA: 'C:\\Users\\Andrea\\AppData\\Local',
+      DOCKER_CERT_PATH: 'C:\\docker-certs',
+      DOCKER_TLS_VERIFY: '1',
+      PODMAN_HOST: 'ssh://podman.example',
+      SSH_AUTH_SOCK: '/tmp/agent.sock',
+    });
+    expect(child.OPENAI_API_KEY).toBeUndefined();
+  });
+
   it('passes ANTHROPIC_BASE_URL into container args when OneCLI is active', async () => {
     mockEnvStore.values = {
       ANTHROPIC_BASE_URL: 'https://compat.example.com',
@@ -252,7 +289,85 @@ describe('container-runner credential env wiring', () => {
     );
   });
 
-  it('maps requested MiniMax runtime to Anthropic-compatible MiniMax env', async () => {
+  it('rejects undocumented OneCLI environment controls before spawn', async () => {
+    const opaqueSecret = 'onecli-opaque-runtime-secret';
+    applyContainerConfigMock.mockImplementation(async (args: string[]) => {
+      args.push('-e', `ONECLI_SESSION_SECRET=${opaqueSecret}`);
+      return true;
+    });
+
+    await expect(
+      runContainerAgent(testGroup, testInput, () => {}),
+    ).rejects.toThrow(/unsupported environment key/);
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(
+      JSON.stringify(vi.mocked(fs.writeFileSync).mock.calls),
+    ).not.toContain(opaqueSecret);
+  });
+
+  it('rejects executable-control env returned by OneCLI', async () => {
+    applyContainerConfigMock.mockImplementation(async (args: string[]) => {
+      args.push('-e', 'NODE_OPTIONS=--import=/tmp/evil.mjs');
+      return true;
+    });
+
+    await expect(
+      runContainerAgent(testGroup, testInput, () => {}),
+    ).rejects.toThrow(/unsupported environment key/);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts only the documented OneCLI proxy environment surface', async () => {
+    applyContainerConfigMock.mockImplementation(async (args: string[]) => {
+      args.push('-e', 'HTTP_PROXY=http://host.docker.internal:10255');
+      args.push('-e', 'HTTPS_PROXY=http://host.docker.internal:10255');
+      args.push('-e', 'NO_PROXY=localhost,127.0.0.1');
+      return true;
+    });
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await expect(resultPromise).resolves.toMatchObject({ status: 'success' });
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toEqual(expect.arrayContaining(['-e', 'HTTPS_PROXY']));
+    expect(args.join(' ')).not.toContain('host.docker.internal:10255');
+    expect(spawnedEnvironment().HTTPS_PROXY).toBe(
+      'http://host.docker.internal:10255',
+    );
+  });
+
+  it('rejects token-bearing OneCLI proxy URLs before spawn', async () => {
+    applyContainerConfigMock.mockImplementation(async (args: string[]) => {
+      args.push(
+        '-e',
+        'HTTPS_PROXY=http://host.docker.internal:10255/?token=opaque-secret',
+      );
+      return true;
+    });
+
+    await expect(
+      runContainerAgent(testGroup, testInput, () => {}),
+    ).rejects.toThrow(/unsafe proxy URL/);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects credential-bearing runtime endpoint URLs before spawn', async () => {
+    mockEnvStore.values = {
+      ANTHROPIC_BASE_URL:
+        'https://user:opaque-secret@compat.example.com/v1?token=opaque-secret',
+    };
+
+    await expect(
+      runContainerAgent(testGroup, testInput, () => {}),
+    ).rejects.toThrow(/Runtime endpoint URL is unsafe/);
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(
+      JSON.stringify(vi.mocked(fs.writeFileSync).mock.calls),
+    ).not.toContain('opaque-secret');
+  });
+
+  it('keeps MiniMax credentials behind OneCLI when the gateway is active', async () => {
     mockEnvStore.values = {
       MINIMAX_ENABLED: 'true',
       MINIMAX_API_KEY: 'sk-minimax-123',
@@ -290,14 +405,50 @@ describe('container-runner credential env wiring', () => {
         'ANTHROPIC_AUTH_TOKEN',
       ]),
     );
-    expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe('sk-minimax-123');
-    expect(args).not.toContain('ANTHROPIC_AUTH_TOKEN=onecli-placeholder');
+    expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe(
+      'onecli-placeholder',
+    );
+    expect(JSON.stringify(spawnMock.mock.calls)).not.toContain(
+      'sk-minimax-123',
+    );
     expect(args).not.toContain(
       'ANTHROPIC_API_KEY=dummy-anthropic-key-should-not-be-used',
     );
     expect(args).not.toContain(
       'OPENAI_API_KEY=dummy-openai-key-should-not-be-used',
     );
+  });
+
+  it('injects only the selected MiniMax credential in degraded fallback mode', async () => {
+    applyContainerConfigMock.mockResolvedValue(false);
+    mockEnvStore.values = {
+      MINIMAX_ENABLED: 'true',
+      MINIMAX_API_KEY: 'sk-minimax-fallback',
+      MINIMAX_ANTHROPIC_BASE_URL: 'https://api.minimax.io/anthropic',
+      MINIMAX_OPENAI_BASE_URL: 'https://api.minimax.io/v1',
+      ANTHROPIC_API_KEY: 'unselected-anthropic-key',
+      OPENAI_API_KEY: 'unselected-openai-key',
+    };
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      { ...testInput, preferredRuntime: 'minimax_cloud' as const },
+      () => {},
+    );
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await resultPromise;
+
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toEqual(
+      expect.arrayContaining(['-e', 'ANTHROPIC_AUTH_TOKEN']),
+    );
+    expect(args.join(' ')).not.toContain('sk-minimax-fallback');
+    expect(spawnedEnvironment()).toMatchObject({
+      ANTHROPIC_AUTH_TOKEN: 'sk-minimax-fallback',
+    });
+    expect(spawnedEnvironment().ANTHROPIC_API_KEY).toBeUndefined();
+    expect(spawnedEnvironment().OPENAI_API_KEY).toBeUndefined();
   });
 
   it('rewrites localhost Anthropic endpoint to runtime host alias when OneCLI is active', async () => {
@@ -405,12 +556,11 @@ describe('container-runner credential env wiring', () => {
         '-e',
         'ANTHROPIC_BASE_URL=https://compat.example.com',
         '-e',
-        'OPENAI_API_KEY',
-        '-e',
         'ANTHROPIC_AUTH_TOKEN',
       ]),
     );
-    expect(spawnedEnvironment().OPENAI_API_KEY).toBe('sk-openai-123');
+    expect(args).not.toContain('OPENAI_API_KEY');
+    expect(spawnedEnvironment().OPENAI_API_KEY).toBeUndefined();
     expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe('sk-openai-123');
   });
 
@@ -432,6 +582,8 @@ describe('container-runner credential env wiring', () => {
       expect.arrayContaining(['-e', 'ANTHROPIC_AUTH_TOKEN']),
     );
     expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe('token-explicit');
+    expect(args).not.toContain('OPENAI_API_KEY');
+    expect(spawnedEnvironment().OPENAI_API_KEY).toBeUndefined();
     expect(args).not.toContain('ANTHROPIC_AUTH_TOKEN=sk-openai-123');
   });
 
@@ -455,13 +607,36 @@ describe('container-runner credential env wiring', () => {
         '-e',
         'ANTHROPIC_BASE_URL=https://openai-compat.example.com',
         '-e',
-        'OPENAI_API_KEY',
-        '-e',
         'ANTHROPIC_AUTH_TOKEN',
       ]),
     );
-    expect(spawnedEnvironment().OPENAI_API_KEY).toBe('sk-openai-123');
+    expect(args).not.toContain('OPENAI_API_KEY');
+    expect(spawnedEnvironment().OPENAI_API_KEY).toBeUndefined();
     expect(spawnedEnvironment().ANTHROPIC_AUTH_TOKEN).toBe('sk-openai-123');
+  });
+
+  it('scrubs unrelated host secrets from the container runtime child process', async () => {
+    vi.stubEnv('BRAVE_API_KEY', 'brave-secret-must-not-pass');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', 'telegram-secret-must-not-pass');
+    vi.stubEnv('CODEX_INTERNAL_ORIGINATOR_OVERRIDE', 'internal-metadata');
+    mockEnvStore.values = {
+      ANTHROPIC_API_KEY: 'selected-anthropic-key',
+    };
+    applyContainerConfigMock.mockResolvedValue(false);
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await waitForSpawnCall();
+    emitSuccessfulExit(fakeProc);
+    await resultPromise;
+
+    expect(spawnedEnvironment().ANTHROPIC_API_KEY).toBe(
+      'selected-anthropic-key',
+    );
+    expect(spawnedEnvironment().BRAVE_API_KEY).toBeUndefined();
+    expect(spawnedEnvironment().TELEGRAM_BOT_TOKEN).toBeUndefined();
+    expect(
+      spawnedEnvironment().CODEX_INTERNAL_ORIGINATOR_OVERRIDE,
+    ).toBeUndefined();
   });
 
   it('redacts fallback secrets from error log output', async () => {
@@ -473,10 +648,12 @@ describe('container-runner credential env wiring', () => {
 
     const resultPromise = runContainerAgent(testGroup, testInput, () => {});
     await waitForSpawnCall();
+    fakeProc.stderr.write('opaque failure sk-openai-123\n');
     fakeProc.emit('close', 1);
     const result = await resultPromise;
 
     expect(result.status).toBe('error');
+    expect(JSON.stringify(result)).not.toContain('sk-openai-123');
 
     const writes = vi
       .mocked(fs.writeFileSync)
@@ -487,9 +664,40 @@ describe('container-runner credential env wiring', () => {
     expect(writes.some((content) => content.includes('sk-openai-123'))).toBe(
       false,
     );
-    expect(writes.some((content) => content.includes('OPENAI_API_KEY'))).toBe(
-      true,
+    expect(
+      writes.some((content) => content.includes('ANTHROPIC_AUTH_TOKEN')),
+    ).toBe(true);
+  });
+
+  it('redacts selected credentials from structured container output', async () => {
+    applyContainerConfigMock.mockResolvedValue(false);
+    mockEnvStore.values = { ANTHROPIC_API_KEY: 'opaque-selected-secret' };
+    const onOutput = vi.fn(async () => {});
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
     );
+    await waitForSpawnCall();
+    fakeProc.stdout.push(
+      `${OUTPUT_START_MARKER}\n${JSON.stringify({
+        status: 'success',
+        result: 'tool echoed opaque-selected-secret',
+        newSessionId: 'sess-redacted',
+      })}\n${OUTPUT_END_MARKER}\n`,
+    );
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+
+    expect(JSON.stringify(onOutput.mock.calls)).not.toContain(
+      'opaque-selected-secret',
+    );
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ result: 'tool echoed [REDACTED]' }),
+    );
+    expect(JSON.stringify(result)).not.toContain('opaque-selected-secret');
   });
 
   it('rewrites local host endpoint to local gateway container binding when state exists', async () => {
@@ -594,70 +802,30 @@ describe('container-runner credential env wiring', () => {
     expect(args).not.toContain(
       'ANTHROPIC_BASE_URL=http://litellm-gateway:4000',
     );
+    expect(args).toContain('ANTHROPIC_API_KEY');
+    expect(args).not.toContain('OPENAI_API_KEY');
+    expect(spawnedEnvironment().OPENAI_API_KEY).toBeUndefined();
   });
 
-  it('syncs shared Codex auth files into the per-group runtime mount', async () => {
-    const globalCodexDir = path.join(os.homedir(), '.codex');
-    const globalAuth = path.join(os.homedir(), '.codex', 'auth.json');
-    const globalCapSid = path.join(os.homedir(), '.codex', 'cap_sid');
-    const globalConfig = path.join(os.homedir(), '.codex', 'config.toml');
-    const groupCodexDir = path.join(
-      '/tmp/nanoclaw-test-data',
-      'sessions',
-      'test-group',
-      '.codex',
-    );
-
-    vi.mocked(fs.existsSync).mockImplementation((candidatePath) => {
-      const normalized = String(candidatePath).replace(/\\/g, '/');
-      return (
-        normalized === globalCodexDir.replace(/\\/g, '/') ||
-        normalized === globalAuth.replace(/\\/g, '/') ||
-        normalized === globalCapSid.replace(/\\/g, '/') ||
-        normalized === globalConfig.replace(/\\/g, '/')
-      );
-    });
-    vi.mocked(fs.readFileSync).mockImplementation((candidatePath) => {
-      const normalized = String(candidatePath).replace(/\\/g, '/');
-      if (normalized === globalAuth.replace(/\\/g, '/')) {
-        return '{"provider":"openai"}';
-      }
-      if (normalized === globalCapSid.replace(/\\/g, '/')) {
-        return 'cap-sid-value';
-      }
-      if (normalized === globalConfig.replace(/\\/g, '/')) {
-        return 'profile = "default"';
-      }
-      return '';
-    });
-
+  it('does not copy or mount a per-group Codex home', async () => {
     const resultPromise = runContainerAgent(testGroup, testInput, () => {});
     await waitForSpawnCall();
     emitSuccessfulExit(fakeProc);
     await resultPromise;
 
-    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
-      path.join(groupCodexDir, 'auth.json'),
-      '{"provider":"openai"}',
-    );
-    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
-      path.join(groupCodexDir, 'cap_sid'),
-      'cap-sid-value',
-    );
-    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
-      path.join(groupCodexDir, 'config.toml'),
-      'profile = "default"',
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    const normalizedArgs = args.join(' ').replace(/\\/g, '/');
+    expect(normalizedArgs).not.toContain('/home/node/.codex');
+    expect(normalizedArgs).not.toContain('/sessions/test-group/.codex');
+    expect(normalizedArgs).not.toContain('CODEX_HOME');
+    expect(vi.mocked(fs.writeFileSync).mock.calls).not.toEqual(
+      expect.arrayContaining([
+        expect.arrayContaining([expect.stringMatching(/\.codex\/auth\.json$/)]),
+      ]),
     );
   });
 
-  it('mounts the live host Codex home directly for direct-assistant routes', async () => {
-    const globalCodexDir = path.join(os.homedir(), '.codex');
-
-    vi.mocked(fs.existsSync).mockImplementation((candidatePath) => {
-      const normalized = String(candidatePath).replace(/\\/g, '/');
-      return normalized === globalCodexDir.replace(/\\/g, '/');
-    });
-
+  it('does not expose host Codex state to direct-assistant routes', async () => {
     const resultPromise = runContainerAgent(
       testGroup,
       {
@@ -665,7 +833,7 @@ describe('container-runner credential env wiring', () => {
         requestPolicy: {
           route: 'direct_assistant',
           reason: 'defaulted to direct assistant handling',
-          builtinTools: ['Read'],
+          builtinTools: [],
           mcpTools: [],
           guidance: 'Answer clearly and directly.',
         },
@@ -677,8 +845,9 @@ describe('container-runner credential env wiring', () => {
     await resultPromise;
 
     const args = spawnMock.mock.calls[0]?.[1] as string[];
-    expect(args).toEqual(
-      expect.arrayContaining(['-v', `${globalCodexDir}:/home/node/.codex`]),
-    );
+    const normalizedArgs = args.join(' ').replace(/\\/g, '/');
+    expect(normalizedArgs).not.toContain('/home/node/.codex');
+    expect(normalizedArgs).not.toContain('/.codex:');
+    expect(normalizedArgs).not.toContain('CODEX_HOME');
   });
 });

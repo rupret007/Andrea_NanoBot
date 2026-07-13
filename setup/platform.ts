@@ -4,6 +4,7 @@
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
+import path from 'path';
 
 export type Platform = 'macos' | 'linux' | 'windows' | 'unknown';
 export type ServiceManager = 'launchd' | 'systemd' | 'none';
@@ -109,7 +110,10 @@ export function getNodePath(): string {
       const output = execFileSync('where.exe', ['node'], {
         encoding: 'utf-8',
       }).trim();
-      const candidates = output.split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
+      const candidates = output
+        .split(/\r?\n/)
+        .map((v) => v.trim())
+        .filter(Boolean);
       const preferred = candidates.find((candidate) => {
         const normalized = candidate.replace(/\\/g, '/').toLowerCase();
         return (
@@ -127,16 +131,37 @@ export function getNodePath(): string {
 }
 
 export function commandExists(name: string): boolean {
-  try {
-    if (process.platform === 'win32') {
-      execFileSync('where.exe', [name], { stdio: 'ignore' });
-    } else {
-      execFileSync('which', [name], { stdio: 'ignore' });
+  if (!name || name.includes('\0')) return false;
+
+  const isWindows = process.platform === 'win32';
+  const extensions = isWindows
+    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+    : [''];
+  const hasWindowsExtension = isWindows && path.extname(name).length > 0;
+  const candidateExtensions = hasWindowsExtension ? [''] : extensions;
+  const searchDirectories =
+    name.includes('/') || name.includes('\\')
+      ? ['']
+      : (process.env.PATH || '').split(path.delimiter);
+
+  for (const directory of searchDirectories) {
+    const cleanDirectory = directory.replace(/^"|"$/g, '');
+    for (const extension of candidateExtensions) {
+      const candidate = cleanDirectory
+        ? path.join(cleanDirectory, `${name}${extension}`)
+        : `${name}${extension}`;
+      try {
+        const stat = fs.statSync(candidate);
+        if (!stat.isFile()) continue;
+        if (!isWindows) fs.accessSync(candidate, fs.constants.X_OK);
+        return true;
+      } catch {
+        // Continue searching the remaining PATH candidates.
+      }
     }
-    return true;
-  } catch {
-    return false;
   }
+
+  return false;
 }
 
 export function getNodeVersion(): string | null {

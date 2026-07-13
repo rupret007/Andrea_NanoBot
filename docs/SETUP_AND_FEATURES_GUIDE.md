@@ -150,7 +150,8 @@ On this Mac mini host, Google Calendar read/write is live-proven through that pr
 ## What This Package Includes
 
 - `nanoclaw` runtime and isolation model as the base.
-- Container runtime abstraction across Docker, Podman, and Apple Container.
+- Container runtime abstraction across Docker, Podman, and Apple Container;
+  secure agent execution is currently verified on Docker and Podman only.
 - Channel integration through skills (`/add-whatsapp`, `/add-telegram`, and others).
 - OpenClaw community marketplace integration:
   - bundled discovery catalog
@@ -524,7 +525,7 @@ See [BLUEBUBBLES_CHANNEL_PREP.md](BLUEBUBBLES_CHANNEL_PREP.md) for the exact con
 From repo root:
 
 ```bash
-npm install
+npm ci
 ```
 
 Windows PowerShell note:
@@ -550,7 +551,10 @@ Then inside Claude Code:
 2. Add at least one channel (`/add-whatsapp`, `/add-telegram`, `/add-discord`, `/add-slack`, or `/add-gmail`).
 3. For Telegram-first setups, send `/registermain` to the bot in the exact direct chat you want to use as the main control chat.
    - After registration, `npm run services:status` should show that DM as `registered_main_chat_jid`.
-4. If you want OneCLI vault mode, run `/init-onecli`.
+4. Run `/init-onecli` to preflight an existing operator-provisioned vault. It
+   does not install or migrate OneCLI. If the vault is absent, make that
+   operator decision separately or use `.env` inheritance only as an explicitly
+   degraded fallback.
 5. Verify install health:
    - `npm run setup -- --step verify`
 
@@ -558,12 +562,16 @@ Then inside Claude Code:
 
 Required baseline:
 
-- Node.js `22.x` (`>=22 <23`)
+- Node.js `22.x` (`>=22 <23`); repository validation is pinned by `.nvmrc` to
+  `22.22.2`
 - Claude Code
 - One container runtime:
   - Docker (Windows/macOS/Linux)
-  - Podman (Windows/Linux)
-  - Apple Container (macOS)
+  - Podman (Windows/macOS/Linux)
+
+Apple Container can be detected on macOS, but agent execution currently fails
+closed because its nested read-only control overlays have not passed the
+repository's isolated mount canary.
 
 Suggested quick checks:
 
@@ -583,7 +591,8 @@ Only one runtime must be healthy.
 Default resolution when `CONTAINER_RUNTIME` is not set:
 
 - Windows: Podman, then Docker
-- macOS: Podman, then Apple Container, then Docker
+- macOS: Podman, then Docker; Apple Container remains a final detected but
+  fail-closed candidate
 - Linux: Podman, then Docker
 
 Force a runtime in `.env`:
@@ -591,19 +600,45 @@ Force a runtime in `.env`:
 ```bash
 CONTAINER_RUNTIME=docker
 # or podman
-# or apple-container
 ```
 
-If Podman is installed and running, it is selected by default on every platform; Docker (or Apple Container on macOS) is used only when Podman is unavailable.
+If Podman is installed and running, it is selected first on every platform;
+Docker is the verified fallback. Do not force `apple-container` until its nested
+read-only mount canary is promoted.
+
+Container authority is narrower than container availability:
+
+- ordinary `direct_assistant` turns are tool-free at the container boundary
+- protected, control, advanced, and code routes receive only the tool allowlist
+  required by that route
+- host-owned route policy, runner code, project source, and mount controls stay
+  immutable/read-only inside the container
+- only explicit per-chat session state, group-workspace state, and IPC are
+  writable
+- host Codex home, auth, and config are never mounted or copied into agent
+  containers
 
 ## 4) Model Credentials (Anthropic And OpenAI-Compatible)
 
 ### Option A (Recommended): OneCLI Agent Vault
 
-Run `/init-onecli` in Claude Code.
-This keeps raw credentials out of container environments and routes auth through OneCLI.
+Provision OneCLI through a trusted operator process outside this assistant
+session, then run `/init-onecli` in Claude Code for a read-only preflight. The
+skill never installs OneCLI, migrates credentials, reads `.env` secrets, or
+accepts pasted keys. When already provisioned, OneCLI is the preferred boundary:
+raw credentials stay behind its constrained proxy rather than entering an agent
+workspace.
 
-### Option B: `.env` Credentials
+### Option B (Degraded Fallback): `.env` Credentials
+
+Use this only when OneCLI is unavailable. Andrea must report this mode as
+degraded rather than equivalent to vault-backed execution. Secret values pass
+through the spawned process environment; container arguments contain only bare
+key names such as `-e OPENAI_API_KEY`, never the value. Secret values must not
+appear in command arguments, process listings, logs, errors, or diagnostics.
+
+Agent containers must not mount or copy the host Codex home, auth, or config.
+Host-side Codex execution is a separate explicitly enabled operator lane.
 
 Use one of these patterns:
 
@@ -686,7 +721,7 @@ Important notes:
 - the bridge runs on the machine that has your normal Cursor setup
 - in the current product shape, use Cursor Cloud for queued heavy-lift coding jobs and use the desktop bridge for operator-only session recovery plus line-oriented terminal control on that machine
 - it uses the local Cursor agent CLI there for bridge-managed session state instead of the hosted Cursor API
-- on Windows PCs, if you do not have a standalone `cursor-agent` command on `PATH`, set `CURSOR_DESKTOP_CLI_PATH` to Cursor's installed `cursor.cmd`; the bridge can invoke it in agent mode for health checks and compatibility attempts, but `/cursor_status` is still the source of truth for whether desktop agent jobs are actually validated on that machine
+- on Windows PCs, `CURSOR_DESKTOP_CLI_PATH` must name a native executable entrypoint such as a validated `cursor-agent.exe`; `.cmd` and `.bat` wrappers are intentionally refused so prompt text can never cross a command shell. Confirm the executable accepts the expected agent flags, then use `/cursor_status` as the source of truth for desktop-agent compatibility
 - after a bridge session is tracked or recovered, operators can also run line-oriented shell commands on that machine with `/cursor-terminal ...`
 - those terminal commands are operator-only and limited to bridge-managed session state
 - if the bridge health probe works on Windows but desktop sessions fail immediately with `Warning: 'p' is not in the list of known options`, your local Cursor CLI is not accepting the expected agent flags yet; keep using Cursor Cloud for heavy-lift jobs on that machine until the Windows agent entrypoint is confirmed
@@ -915,6 +950,12 @@ npm run setup -- --step verify
 
 Read both fields together. A passing credential probe does **not** guarantee that the assistant lane can actually answer.
 
+`verify` is not a passive or CI-safe status command. When the corresponding
+providers are configured, it can perform a real model reachability request and
+start container execution probes. Use deterministic/CI-safe gates for offline
+validation, and run `verify` only with intentional credentials, cost awareness,
+and operator authorization.
+
 ## 7) Daily Usage
 
 Use your configured trigger in chats.
@@ -1047,7 +1088,9 @@ npm run debug:reset -- all
 
 Validation runner note:
 
-- `npm run test:major`, `npm run test:major:ci`, and `npm run test:stability` run their internal checks on Node 22 via `npx -p node@22`, which keeps results consistent on hosts where the default Node version is newer.
+- The supported runtime contract is Node `22.x` (`>=22 <23`), and the repository
+  validation runtime is pinned by `.nvmrc` to `22.22.2`.
+- `npm run test:major`, `npm run test:major:ci`, and `npm run test:stability` run their internal checks through the repository's Node wrapper. It provisions the exact 22.22.2 runtime on Windows; on macOS and Linux it uses the active Node 22.x process, so use `.nvmrc` when exact patch-level parity is required.
 
 Windows service lifecycle helpers:
 
@@ -1057,6 +1100,11 @@ Windows service lifecycle helpers:
 - `npm run services:ensure` runs one explicit health-enforcement pass through the same host launcher.
 - `npm run services:status` reports the active repo root, git branch and commit, pinned Node runtime, installed login-start mechanism, active `.env` and DB paths, the local Alexa listener and OAuth health when Alexa is configured, the current `assistant_health` view, `telegram_roundtrip_health`, the public assistant name/source, the registered main Telegram chat, whether the watchdog is running, and the last startup error if one occurred.
 
+The shared TypeScript build and hosted Windows CI validate cross-platform
+build/type/test behavior plus the launcher contract. They do not prove that a
+native Windows service was rebuilt, restarted, or that its integrations work on
+a real Windows host. Record those as separate operator-host evidence.
+
 macOS service lifecycle helpers:
 
 - On the Mac mini, launchd owns the local runtime.
@@ -1064,6 +1112,8 @@ macOS service lifecycle helpers:
 - The canonical runtime root is `/Users/jeffstory/Andrea_NanoBot`.
 - The local service should not be run from `/Users/jeffstory/Andrea_NanoBot_AGI` in parallel.
 - After code changes, run `npm run build`, reload or restart the launchd service, then confirm `npm run services:status` reports `Host state: running_ready` and the active root is the canonical path.
+- Also require the reported serving commit to match workspace `HEAD`; a healthy
+  process serving an older build is stale, not release proof.
 
 Startup behavior:
 
@@ -1154,8 +1204,10 @@ Use this exact order:
    - `npm run setup -- --step environment`
    - confirm `CONTAINER_RUNTIME_RESOLVED` is healthy
 2. Configure model credentials:
-   - preferred: `/init-onecli`
-   - fallback: `.env` with Anthropic or OpenAI-compatible gateway credentials
+   - preferred when already operator-provisioned: `/init-onecli` read-only
+     preflight
+   - explicitly degraded fallback: `.env` with Anthropic or OpenAI-compatible
+     gateway credentials
 3. Configure at least one channel:
    - Telegram/Discord/Slack tokens or WhatsApp auth
 4. Register at least one group from the main chat.

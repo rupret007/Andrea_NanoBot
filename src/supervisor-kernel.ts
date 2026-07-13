@@ -1190,7 +1190,6 @@ export function isSupervisorNaturalRequest(text: string): boolean {
     normalized === 'blackboard status' ||
     normalized === 'what are you working on?' ||
     normalized === 'what should you verify next?' ||
-    normalized === 'resume that' ||
     normalized === 'why did you choose that?' ||
     /\bsupervisor\b.*\b(status|blackboard|handoff|working|verify)\b/i.test(
       normalized,

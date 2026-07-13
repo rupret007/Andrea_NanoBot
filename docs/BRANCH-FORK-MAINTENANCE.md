@@ -6,7 +6,11 @@
 
 **Channel forks** (`nanoclaw-whatsapp`, `nanoclaw-telegram`, `nanoclaw-slack`, etc.) — each fork = upstream + one channel's code applied. Users clone upstream, then merge a fork into their clone to add a channel.
 
-**`skill/*` and `feat/*` branches on upstream** — add features unrelated to channels (e.g. `skill/compact`, `skill/apple-container`). Users merge these into their clone to add capabilities. Channel-specific skill branches that duplicate the forks (e.g. `skill/whatsapp`, `skill/telegram`) are legacy.
+**`skill/*` and `feat/*` branches on upstream** historically added features
+unrelated to channels. Do not merge the old `skill/apple-container` branch into
+Andrea: it predates the current trusted-control boundary and is retired.
+Channel-specific skill branches that duplicate the forks (e.g.
+`skill/whatsapp`, `skill/telegram`) are legacy.
 
 ## How users add capabilities
 
@@ -14,7 +18,7 @@
 user clones upstream main
   ├── merges nanoclaw-whatsapp fork  → adds WhatsApp
   ├── merges skill/compact branch    → adds /compact command
-  └── merges skill/apple-container   → switches to Apple Container
+  └── does not merge skill/apple-container (retired for Andrea)
 ```
 
 ## Merge directions
@@ -54,12 +58,12 @@ git checkout main && git branch -D skill/compact
 
 The same files conflict every time:
 
-| File | Resolution |
-|------|------------|
-| `package.json` | Take main's version + keep fork/branch-specific deps |
-| `package-lock.json` | `git checkout main -- package-lock.json && npm install` |
-| `.env.example` | Combine: main's entries + fork/branch-specific entries |
-| `repo-tokens/badge.svg` | Take main's version (auto-generated) |
+| File                    | Resolution                                              |
+| ----------------------- | ------------------------------------------------------- |
+| `package.json`          | Take main's version + keep fork/branch-specific deps    |
+| `package-lock.json`     | `git checkout main -- package-lock.json && npm install` |
+| `.env.example`          | Combine: main's entries + fork/branch-specific entries  |
+| `repo-tokens/badge.svg` | Take main's version (auto-generated)                    |
 
 Source code changes (e.g. `src/types.ts`, `src/index.ts`) usually auto-merge cleanly, but can conflict if both sides modify the same lines. **Always build and test after every forward merge** — auto-merged code can be silently wrong (e.g. referencing a renamed function or using a removed parameter) even when git reports no conflicts.
 

@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'http';
 
 import {
+  approveCognitiveApprovalPacketCAS,
   listCognitiveApprovalPackets,
   listHierarchicalGoals,
   listLifeThreadsForGroup,
@@ -9,7 +10,6 @@ import {
   listVerifiedDeepWorkPackets,
   updateHierarchicalGoalStatus,
   updateLifeThread,
-  upsertCognitiveApprovalPacket,
 } from './db.js';
 import {
   assessDeepWorkSkillPromotion,
@@ -25,10 +25,7 @@ import {
   buildAssistantMetricSnapshot,
   buildReviewedOutcomeProgress,
 } from './personal-assistant-metrics.js';
-import type {
-  CognitiveApprovalPacket,
-  VerifiedDeepWorkPacket,
-} from './types.js';
+import type { VerifiedDeepWorkPacket } from './types.js';
 import {
   OWNER_COCKPIT_CSS,
   OWNER_COCKPIT_HTML,
@@ -270,6 +267,7 @@ export class OwnerCockpitServer {
       limit: 8,
     });
     const approvals = listCognitiveApprovalPackets({
+      groupFolder: this.config.groupFolder,
       status: 'staged',
       limit: 8,
     }).filter((item) => !item.expiresAt || item.expiresAt > generatedAt);
@@ -343,9 +341,15 @@ export class OwnerCockpitServer {
       })),
       approvals: approvals.map((item) => ({
         id: item.approvalPacketId,
-        summary: safeText(item.summary, 'Staged action'),
+        // Confirmation compare-and-set uses the exact summary shown to the
+        // owner. Approval summaries are already bounded and redacted when
+        // persisted; normalizing or truncating here would make the displayed
+        // value differ from the value protected by the CAS.
+        summary: item.summary,
         actionClass: item.actionClass,
         expiresAt: item.expiresAt || null,
+        approvalVersion: item.approvalVersion || 1,
+        scopeDigest: item.scopeDigest || null,
       })),
       outcomes: outcomes.map((item) => ({
         id: item.outcomeId,
@@ -548,40 +552,32 @@ export class OwnerCockpitServer {
     }
     if (req.method === 'POST' && approvalMatch) {
       if (!this.requireMutationAuth(req, res)) return;
-      const body = JSON.parse(await readBody(req)) as Record<string, string>;
-      const packet = listCognitiveApprovalPackets({
-        status: 'staged',
-        limit: 100,
-      }).find(
-        (item) =>
-          item.approvalPacketId === decodeURIComponent(approvalMatch[1]!),
-      );
-      if (
-        !packet ||
-        (packet.expiresAt && packet.expiresAt <= this.now().toISOString())
-      )
-        return json(res, 409, {
-          error: 'This approval is stale or no longer available.',
-        });
+      const body = JSON.parse(await readBody(req)) as Record<string, unknown>;
       if (
         body.confirmation !== 'APPROVE' ||
-        !secureEqual(body.summary || '', packet.summary)
+        typeof body.summary !== 'string' ||
+        !body.summary ||
+        typeof body.approvalVersion !== 'number' ||
+        !Number.isSafeInteger(body.approvalVersion) ||
+        (body.scopeDigest !== null && typeof body.scopeDigest !== 'string')
       )
         return json(res, 409, {
           error: 'The action summary changed. Review it again.',
         });
-      const approved: CognitiveApprovalPacket = {
-        ...packet,
-        status: 'approved',
+      const result = approveCognitiveApprovalPacketCAS({
+        approvalPacketId: decodeURIComponent(approvalMatch[1]!),
+        groupFolder: this.config.groupFolder,
+        expectedSummary: body.summary,
+        expectedApprovalVersion: body.approvalVersion,
+        expectedScopeDigest: body.scopeDigest,
+        now: this.now().toISOString(),
         approvalChannel: 'owner_cockpit',
-        updatedAt: this.now().toISOString(),
-        decisionJson: JSON.stringify({
-          decision: 'approved',
-          channel: 'owner_cockpit',
-          approvedAt: this.now().toISOString(),
-        }),
-      };
-      upsertCognitiveApprovalPacket(approved);
+      });
+      if (result.status !== 'approved')
+        return json(res, 409, {
+          error:
+            'This approval is stale, changed, expired, or no longer available. Review it again.',
+        });
       return json(res, 200, { ok: true, status: 'approved' });
     }
     json(res, 404, { error: 'Not found.' });

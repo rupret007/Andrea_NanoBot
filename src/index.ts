@@ -8,7 +8,6 @@ import { OneCLI } from '@onecli-sh/sdk';
 import {
   classifyRuntimeRoute,
   selectPreferredRuntime,
-  shouldReuseExistingThread,
 } from './agent-runtime.js';
 import {
   ASSISTANT_NAME,
@@ -38,6 +37,7 @@ import {
   getRegisteredChannelNames,
 } from './channels/registry.js';
 import {
+  type AvailableGroup,
   AvailableCursorAgent,
   AvailableOpenClawSkill,
   ContainerOutput,
@@ -494,6 +494,12 @@ import {
   isSessionGraphNaturalRequest,
 } from './session-graph.js';
 import {
+  buildDurableContinuityReport,
+  formatDurableContinuityForUser,
+  isDurableContinuityNaturalRequest,
+  reconcileDurableWorkOnStartup,
+} from './durable-work-continuity.js';
+import {
   buildAgencyConvergenceStatusText,
   isAgencyConvergenceNaturalRequest,
 } from './agency-convergence-loop.js';
@@ -580,6 +586,7 @@ import {
   installOpenClawSkill,
 } from './openclaw-market.js';
 import {
+  assistantCapabilityKey,
   classifyAssistantRequest,
   maybeBuildOpenClawPresenceReply,
 } from './assistant-routing.js';
@@ -643,6 +650,7 @@ import {
 } from './assistant-session.js';
 import {
   decideMainChatRouting,
+  shouldPipeToActiveAssistant,
   shouldAvoidCombinedContextForMainChat,
   type MainChatSessionState,
 } from './main-chat-routing.js';
@@ -3070,7 +3078,6 @@ function refreshTaskSnapshots(groups: Record<string, RegisteredGroup>): void {
     id: t.id,
     groupFolder: t.group_folder,
     prompt: t.prompt,
-    script: t.script || undefined,
     schedule_type: t.schedule_type,
     schedule_value: t.schedule_value,
     status: t.status,
@@ -3216,8 +3223,6 @@ function persistAgentThread(
   threadId: string,
   runtime: AgentThreadState['runtime'],
 ): void {
-  sessions[groupFolder] = threadId;
-  setSession(groupFolder, threadId);
   const thread: AgentThreadState = {
     group_folder: groupFolder,
     runtime,
@@ -3235,10 +3240,12 @@ function clearPersistedAssistantSessionState(
 ): void {
   delete sessions[sessionStorageKey];
   deleteSessionStorageKey(sessionStorageKey);
-  delete sessions[groupFolder];
-  deleteSession(groupFolder);
-  delete agentThreads[groupFolder];
-  deleteAgentThread(groupFolder);
+  if (sessionStorageKey === groupFolder) {
+    delete sessions[groupFolder];
+    deleteSession(groupFolder);
+    delete agentThreads[groupFolder];
+    deleteAgentThread(groupFolder);
+  }
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -3410,7 +3417,7 @@ async function bootstrapMainChatRegistration(
  * Get available groups list for the agent.
  * Returns groups ordered by most recent activity.
  */
-export function getAvailableGroups(): import('./container-runner.js').AvailableGroup[] {
+export function getAvailableGroups(): AvailableGroup[] {
   const chats = getAllChats();
   const registeredJids = new Set(Object.keys(registeredGroups));
 
@@ -3850,6 +3857,26 @@ function resolveExplicitCompanionHandoffTarget(
   return null;
 }
 
+export function buildDurableContinuityNaturalReply(input: {
+  text: string;
+  groupFolder: string;
+  now?: Date | string;
+}): string | null {
+  if (!isDurableContinuityNaturalRequest(input.text)) return null;
+  return formatDurableContinuityForUser(
+    buildDurableContinuityReport({
+      groupId: input.groupFolder,
+      now: input.now,
+    }),
+  );
+}
+
+export function reconcileDurableContinuityBeforeAcceptingWork(
+  now: Date | string = new Date(),
+) {
+  return reconcileDurableWorkOnStartup({ now });
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
@@ -4047,9 +4074,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       requestRoute: requestPolicy.route,
       text: rawLastContent || lastContent,
     });
+  const shouldHandleDurableContinuityLocally =
+    isDurableContinuityNaturalRequest(lastContent);
   const turnHarnessStartedAt = Date.now();
   const turnAgentHarness: TurnAgentHarnessContext | null =
-    shouldHandleOutcomeReviewLocally
+    shouldHandleOutcomeReviewLocally || shouldHandleDurableContinuityLocally
       ? null
       : await beginTurnAgentHarness({
           turnId:
@@ -4069,6 +4098,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // chats) or fall back to chatJid (1-on-1) so the platform's user-belief
           // state actually accumulates per actor instead of staying empty.
           actorId: latestUserMessage?.sender || chatJid,
+          chatId: chatJid,
         });
   const turnHarnessCompletedAt = Date.now();
   const interactionTurnId = randomUUID();
@@ -4114,6 +4144,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       requestPolicy.route === 'protected_assistant') &&
     Boolean(
       quickReply ||
+      shouldHandleDurableContinuityLocally ||
       currentMessageCapabilityMatch ||
       shouldDeferPlatformHoldForLocalCalendarLookup ||
       shouldDeferPlatformHoldForLocalMessageAction ||
@@ -4211,7 +4242,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         turnDequeuedAtMs: turnDequeuedAt,
         harnessStartedAtMs: turnHarnessStartedAt,
         harnessCompletedAtMs: turnHarnessCompletedAt,
-        harnessBypassed: shouldHandleOutcomeReviewLocally,
+        harnessBypassed:
+          shouldHandleOutcomeReviewLocally ||
+          shouldHandleDurableContinuityLocally,
         hostPressure: turnHostPressure,
       },
       send: () => channel.sendMessage(chatJid, replyText, sendOptions),
@@ -9015,10 +9048,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   };
 
+  const tryHandleDurableContinuity = async (): Promise<boolean> => {
+    const text = buildDurableContinuityNaturalReply({
+      text: lastContent,
+      groupFolder: group.folder,
+      now,
+    });
+    if (!text) return false;
+    await sendAssistantReplyWithFeedback({
+      text,
+      routeKey: 'durable_continuity.recovery',
+      capabilityId: 'cognition.status',
+      handlerKind: 'local_durable_continuity',
+      responseSource: 'local_companion',
+      traceReason:
+        'answered recovery request from canonical durable continuity metadata',
+      preserveStructuredText: true,
+      latencyTargetClass: 'local_command',
+    });
+    clearSharedAssistantCapabilitySeed(chatJid);
+    return true;
+  };
+
   if (
     requestPolicy.route === 'direct_assistant' ||
     requestPolicy.route === 'protected_assistant'
   ) {
+    if (await tryHandleDurableContinuity()) {
+      return true;
+    }
     if (await tryHandleSelfImprovementStatus()) {
       return true;
     }
@@ -9881,20 +9939,15 @@ async function runAgent(
   );
   const runtimeRoute = classifyRuntimeRoute(requestPolicy, prompt);
   const existingThread =
-    agentThreads[group.folder] || getAgentThread(group.folder);
+    requestPolicy.route === 'direct_assistant'
+      ? undefined
+      : agentThreads[group.folder] || getAgentThread(group.folder);
   if (existingThread) {
     agentThreads[group.folder] = existingThread;
   }
   const preferredRuntime = selectPreferredRuntime(existingThread, runtimeRoute);
-  const persistedSessionId =
-    requestPolicy.route === 'direct_assistant'
-      ? sessions[sessionStorageKey]
-      : sessions[group.folder];
-  const sessionId = forceFreshSession
-    ? undefined
-    : shouldReuseExistingThread(existingThread, preferredRuntime)
-      ? existingThread.thread_id
-      : persistedSessionId;
+  const persistedSessionId = sessions[sessionStorageKey];
+  const sessionId = forceFreshSession ? undefined : persistedSessionId;
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -9905,7 +9958,6 @@ async function runAgent(
       id: t.id,
       groupFolder: t.group_folder,
       prompt: t.prompt,
-      script: t.script || undefined,
       schedule_type: t.schedule_type,
       schedule_value: t.schedule_value,
       status: t.status,
@@ -9949,11 +10001,13 @@ async function runAgent(
         if (output.newSessionId) {
           sessions[sessionStorageKey] = output.newSessionId;
           setSession(sessionStorageKey, output.newSessionId);
-          persistAgentThread(
-            group.folder,
-            output.newSessionId,
-            output.runtime || preferredRuntime,
-          );
+          if (requestPolicy.route !== 'direct_assistant') {
+            persistAgentThread(
+              group.folder,
+              output.newSessionId,
+              output.runtime || preferredRuntime,
+            );
+          }
         }
         await onOutput(output);
       }
@@ -9977,8 +10031,16 @@ async function runAgent(
         requestPolicy,
         idleTimeoutMs,
       },
-      (proc, containerName) =>
-        queue.registerProcess(chatJid, proc, containerName, group.folder),
+      (proc, containerName, ipcContext) =>
+        queue.registerProcess(
+          chatJid,
+          proc,
+          containerName,
+          group.folder,
+          assistantCapabilityKey(requestPolicy),
+          requestPolicy.route,
+          ipcContext,
+        ),
       wrappedOnOutput,
     );
 
@@ -10048,11 +10110,13 @@ async function runAgent(
     if (output.newSessionId) {
       sessions[sessionStorageKey] = output.newSessionId;
       setSession(sessionStorageKey, output.newSessionId);
-      persistAgentThread(
-        group.folder,
-        output.newSessionId,
-        output.runtime || preferredRuntime,
-      );
+      if (requestPolicy.route !== 'direct_assistant') {
+        persistAgentThread(
+          group.folder,
+          output.newSessionId,
+          output.runtime || preferredRuntime,
+        );
+      }
     }
 
     if (output.status === 'error') {
@@ -10186,6 +10250,47 @@ async function startMessageLoop(): Promise<void> {
             sessionState,
             localQuickReply,
           });
+
+          if (mainChatRoutingDecision.kind === 'pipe_active_session') {
+            const incomingPolicy = classifyAssistantRequest(messagesToSend, {
+              allowCombinedContext:
+                !isMainGroup ||
+                !shouldAvoidCombinedContextForMainChat(messagesToSend),
+            });
+            const triggerPattern = needsTrigger
+              ? getTriggerPattern(group.trigger)
+              : null;
+            const routingMessages = messagesToSend.map((message) => ({
+              content: triggerPattern
+                ? message.content.replace(triggerPattern, '').trim()
+                : message.content,
+              reply_to_id: message.reply_to_id,
+            }));
+            const activeCapability =
+              queue.getActiveAssistantCapability(chatJid);
+            if (
+              !shouldPipeToActiveAssistant({
+                messages: routingMessages,
+                incomingPolicy,
+                activeCapabilityKey: activeCapability?.key || null,
+              })
+            ) {
+              queue.enqueueMessageCheck(chatJid);
+              if (sessionState === 'idle_assistant') {
+                queue.closeStdin(chatJid);
+              }
+              logger.debug(
+                {
+                  chatJid,
+                  sessionState,
+                  activeRoute: activeCapability?.route || null,
+                  incomingRoute: incomingPolicy.route,
+                },
+                'Queued message for fresh route-specific processing instead of piping across a capability boundary',
+              );
+              continue;
+            }
+          }
 
           if (mainChatRoutingDecision.kind === 'reply_locally') {
             try {
@@ -10991,6 +11096,15 @@ async function main(): Promise<void> {
   clearTelegramTransportState();
   ensureContainerSystemRunning();
   initDatabase();
+  const durableContinuityRecovery =
+    reconcileDurableContinuityBeforeAcceptingWork();
+  logger.info(
+    {
+      component: 'durable_continuity',
+      ...durableContinuityRecovery,
+    },
+    'Reconciled durable work leases before accepting new work.',
+  );
   const interruptedReflectionRecovery =
     reconcileInterruptedPostDeliveryReflections();
   if (interruptedReflectionRecovery.reconciled > 0) {
@@ -18768,8 +18882,16 @@ async function main(): Promise<void> {
     getSessions: () => sessions,
     getAgentThreads: () => agentThreads,
     queue,
-    onProcess: (groupJid, proc, containerName, groupFolder) =>
-      queue.registerProcess(groupJid, proc, containerName, groupFolder),
+    onProcess: (groupJid, proc, containerName, groupFolder, ipcContext) =>
+      queue.registerProcess(
+        groupJid,
+        proc,
+        containerName,
+        groupFolder,
+        undefined,
+        undefined,
+        ipcContext,
+      ),
     sendMessage: async (jid, rawText) => {
       const channel = findChannel(channels, jid);
       if (!channel) {

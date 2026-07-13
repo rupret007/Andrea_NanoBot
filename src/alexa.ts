@@ -149,6 +149,7 @@ import { formatOutbound } from './router.js';
 import { handleRitualCommand } from './rituals.js';
 import {
   type AlexaCompanionGuidanceGoal,
+  type AlexaConversationFollowupAction,
   type CompanionContinuationCandidate,
   type PilotBlockerOwner,
   type PilotJourneyOutcome,
@@ -2599,7 +2600,7 @@ function buildAlexaNextStateForFollowupAction(
 
 function baseFollowupsForSubject(
   subjectKind: AlexaConversationState['subjectKind'],
-): import('./types.js').AlexaConversationFollowupAction[] {
+): AlexaConversationFollowupAction[] {
   const common: AlexaConversationState['supportedFollowups'] = [
     'anything_else',
     'shorter',

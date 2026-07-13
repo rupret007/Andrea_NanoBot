@@ -10,7 +10,7 @@ import {
 import {
   advanceVerifiedDeepWorkPacket,
   beginVerifiedDeepWorkForTurn,
-  captureCurrentRepositorySnapshot,
+  captureRepositorySnapshotFromGitReader,
   createVerifiedDeepWorkPacket,
   finalizeVerifiedDeepWorkForTurn,
   reconcileVerifiedDeepWorkExecution,
@@ -139,15 +139,32 @@ describe('verified deep work', () => {
   afterEach(() => _closeDatabase());
 
   it('captures a bounded current repository baseline for production code turns', () => {
-    const snapshot = captureCurrentRepositorySnapshot(process.cwd());
+    const repoRoot = '/fixtures/repository';
+    const snapshot = captureRepositorySnapshotFromGitReader(
+      repoRoot,
+      new Date('2026-07-10T11:59:00.000Z'),
+      (args) => {
+        const command = args.join(' ');
+        if (command === 'rev-parse --show-toplevel') return repoRoot;
+        if (command === 'rev-parse --abbrev-ref HEAD') return 'main';
+        if (command === 'rev-parse HEAD') return TEST_REPOSITORY_HEAD;
+        if (command.startsWith('status --porcelain=v1')) {
+          return Array.from(
+            { length: 205 },
+            (_, index) => ` M src/file-${index}.ts`,
+          ).join('\n');
+        }
+        throw new Error(`Unexpected Git fixture command: ${command}`);
+      },
+    );
     expect(snapshot).toMatchObject({
-      root: expect.any(String),
-      branch: expect.any(String),
-      headSha: expect.stringMatching(/^[a-f0-9]{40,64}$/),
+      root: repoRoot,
+      branch: 'main',
+      headSha: TEST_REPOSITORY_HEAD,
       dirtyPaths: expect.any(Array),
-      capturedAt: expect.any(String),
+      capturedAt: '2026-07-10T11:59:00.000Z',
     });
-    expect(snapshot!.dirtyPaths.length).toBeLessThanOrEqual(200);
+    expect(snapshot!.dirtyPaths).toHaveLength(200);
   });
 
   it('requires approval, verifies postconditions, and records an evidence-backed outcome', () => {

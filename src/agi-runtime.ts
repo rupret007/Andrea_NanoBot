@@ -1469,10 +1469,13 @@ function truthView(truth: TruthVerdict): AskTruthView {
 }
 
 function activeResumeToken(
-  runtime: AgentRuntimeSpineResult | null,
+  _runtime: AgentRuntimeSpineResult | null,
 ): string | undefined {
-  return runtime?.report.resumeTokens.find((token) => token.status === 'active')
-    ?.resumeTokenId;
+  // Runtime Spine IDs were deterministic descriptive references, not secure
+  // capabilities. Durable continuity returns opaque grants only at the exact
+  // authorized resume boundary, so the general AGI response must not surface
+  // a legacy ID as a usable token.
+  return undefined;
 }
 
 function collectMemoryWrites(value: unknown, out: AskMemoryWriteView[]): void {

@@ -54,7 +54,7 @@ Sometimes required on the bridge machine:
 CURSOR_DESKTOP_CLI_PATH=/path/to/cursor-agent
 ```
 
-On Windows, if you do not have a standalone `cursor-agent`, you can point `CURSOR_DESKTOP_CLI_PATH` at Cursor's installed `cursor.cmd`.
+On Windows, `CURSOR_DESKTOP_CLI_PATH` must point to a native executable entrypoint such as a validated `cursor-agent.exe`. The bridge intentionally refuses `.cmd` and `.bat` wrappers so prompt text never crosses a command shell. If no compatible executable is available, terminal/session control can remain usable while desktop agent jobs stay conditional or unavailable.
 
 ## What Ready vs Conditional Means
 

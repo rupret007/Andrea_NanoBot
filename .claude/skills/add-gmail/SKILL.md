@@ -1,9 +1,28 @@
 ---
 name: add-gmail
-description: Add Gmail integration to NanoClaw. Can be configured as a tool (agent reads/sends emails when triggered from WhatsApp) or as a full channel (emails can trigger the agent, schedule tasks, and receive replies). Guides through GCP OAuth setup and implements the integration.
+description: Non-executable legacy reference for a Gmail integration that is blocked pending a reviewed trust-boundary port.
 ---
 
 # Add Gmail Integration
+
+## Status: blocked legacy reference (do not execute)
+
+This workflow is incompatible with Andrea's current container trust boundary. It
+mounts a host OAuth credential directory, adds an ambient MCP server and tool
+wildcard, and modifies the runner outside the route-specific capability policy.
+Do not run any merge, credential, authorization, cache, build, restart, test, or
+removal command below. Do not collect or store Gmail credentials through this
+skill.
+
+A reviewed port must use an approved host-side broker or a narrowly selected
+child-process credential, add exact tools to the appropriate
+`AssistantRequestPolicy` route, keep ordinary `direct_assistant` turns tool-free,
+preserve the canonical read-only runner and trusted controls, enforce fresh
+approval for external sends, and add route, secret-redaction, and authorization
+tests. Preserved session and runner caches must remain inert and must not be
+deleted or rewritten.
+
+## Historical implementation notes (non-executable)
 
 This skill adds Gmail support to NanoClaw — either as a tool (read, send, search, draft) or as a full channel that polls the inbox.
 
@@ -48,6 +67,7 @@ git merge gmail/main || {
 ```
 
 This merges in:
+
 - `src/channels/gmail.ts` (GmailChannel class with self-registration via `registerChannel`)
 - `src/channels/gmail.test.ts` (unit tests)
 - `import './gmail.js'` appended to the channel barrel file `src/channels/index.ts`
