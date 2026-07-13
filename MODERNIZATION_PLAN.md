@@ -1,5 +1,789 @@
 # Modernization Plan
 
+The newest dated section is the authoritative candidate status. Older dated
+sections are preserved as historical evidence and may contain counts or runtime
+truth that was accurate only at that snapshot.
+
+## Verified execution truth and durable recovery boundary — 2026-07-13
+
+### Current capability truth
+
+This round began from `main` at `9d37cfcf`, aligned with `origin/main` at the
+last safe fetch, plus the preserved candidate below. The owner explicitly
+authorized one combined commit and push to `main` after all
+repository-controlled gates pass and a fresh fetch proves the branch remains
+non-diverged. This round does not authorize a restart, deployment, paid
+provider call, or user-facing side effect. The running Mac service is healthy
+enough to answer, but it was built from an earlier dirty tree and predates this
+repository-verified release; it is therefore not evidence for the release's
+behavior.
+
+Repository-side routing, memory, approval, delivery-integrity, checkpoint,
+council, and deterministic-evaluation foundations are strong. Live learning
+and execution evidence are not: production now has **one of five** required
+genuine owner reviews (a corrected/rejected coding interaction), no reviewed
+baseline, no completed real mission, no promoted skill proposal, and one
+blocked coding deep-work packet with zero real artifacts and zero checks. The
+database contains abundant planning metadata—90 completed and six interrupted
+runtime checkpoints—but no production V2 runtime-execution evidence and no
+`assistant_interaction` tool-attempt/tool-success metrics from that boundary.
+
+The latest latency evidence also narrows the Telegram symptom. Six live
+deliveries averaged about 45.2 seconds while paired detached reflections
+averaged 136 ms and peaked at 568 ms. Slow samples were dominated before
+delivery by the turn harness and answer preparation. The candidate removes the
+proven broad-council and idle-container causes and limits each optional
+coordinator step to one second on ordinary, non-state-changing turns while
+retaining the configured safety timeout on deep, high-risk, approval, or
+state-changing work. It is not serving yet; post-delivery work is correctness
+debt, not the measured tens-of-seconds root cause.
+
+### Selected bottleneck
+
+The highest-leverage bounded bottleneck is **verified execution truth**: the
+older serving behavior could advance a deep-work packet from a policy-compliant
+reply evaluation, a synthetic `turn outcome evidence` check, and internal
+council/cognitive/runtime IDs. Those values prove that Andrea reasoned and
+replied; they do not prove that a tool ran or that the requested work completed.
+The unserved candidate removes reflection from the execution-finalization path
+and reconciles only strictly validated aggregate runtime evidence. Learning,
+recovery, skill promotion, and owner trust must not treat model prose or trace
+IDs as execution evidence.
+
+This ranks just ahead of full durable resume consumption. Resume tokens are
+also currently descriptive: they are produced and listed, but not atomically
+consumed, scoped, or used to continue a real executor. Building recovery on
+top of unverified attempts would preserve the wrong truth, so this increment
+first establishes the runtime-evidence boundary that recovery can later resume.
+
+### Implemented and repository-verified candidate boundary
+
+1. Add a bounded, typed, idempotent `RuntimeToolEvidenceV1` wire contract for
+   SDK-observed runtime outcomes. It records an opaque evidence ID, cumulative
+   attempt and call counts, aggregate action classes, terminal outcome and
+   recovery state, successful-verification ordering relative to the final
+   repository write, state fingerprints, and explicit privacy flags. It never
+   stores prompts, replies, tool arguments, commands, paths, raw outputs,
+   private reasoning, credentials, provider payloads, or SDK tool-use IDs.
+2. Bind validated wire evidence on the host as
+   `BoundRuntimeExecutionEvidence`, adding only the source-turn scope, approval
+   reference, and reconciliation time. The aggregate contract does not carry a
+   named artifact, command, semantic postcondition, exact external action, or
+   raw result body.
+3. Instrument the existing container-agent stream to correlate SDK tool starts
+   and results in process, then emit only aggregate categories, counts, ordering,
+   outcomes, recovery flags, and fingerprints. Unknown, malformed, missing,
+   failed, interrupted, or unclassified results fail closed.
+4. Carry and merge the evidence through the existing container result and turn
+   harness without granting a tool, changing `allowedTools`, bypassing request
+   policy, or inferring approval from tool use. Multiple attempts merge
+   idempotently; an earlier failure remains visible after a later recovery.
+   Stale-session retry carries the suppressed attempt's evidence into the fresh
+   session rather than resetting execution truth.
+5. Reconcile V2 deep work only from evidence bound to the packet's current
+   source turn. Reply delivery and post-send reflection prove communication or
+   answer quality only. Completion requires a complete task-relevant action,
+   healthy answer evidence, and at least one successful verification action.
+   Repository writes additionally require pre/post state fingerprints, an
+   observed state transition, and a successful verification after the final
+   write. Any aggregate `external_side_effect` observation remains blocked,
+   even with approval, until a dedicated receipt binds the exact approved
+   action. Coding packets also remain blocked on
+   `runtime_repository_scope_unbound` until the host binds repository reads,
+   writes, state probes, and verification to one inspected target. Operator
+   packets similarly remain blocked on `runtime_operator_scope_unbound` until
+   the exact target, action, and postcondition are bound. A terminal runtime
+   error blocks completion even if individual receipts report success.
+   Answer-only tasks never fabricate tool work.
+6. Emit `assistant_interaction` tool-attempt/tool-success metrics only from
+   validated bound evidence. Preserve historical evaluation metrics as legacy
+   evidence and do not rewrite production rows. Keep `VerifiedDeepWorkPacket`
+   and Runtime Spine as projections rather than adding another workflow engine.
+   Follow with a separate durable-task increment for canonical task identity,
+   scope-bound expiring single-use resume tokens, transactional consume, real
+   replanning, and exact-once read-only continuation.
+
+### Adversarial design review
+
+- **Authority:** observation is not authorization. Aggregate evidence describes
+  only what the already-authorized runner observed; it cannot make a blocked
+  action permissible or satisfy fresh approval. Because it cannot bind an exact
+  external action, `external_side_effect` evidence always blocks completion
+  until a dedicated exact-action receipt exists.
+- **Truth boundary:** a tool-use start is an attempt, never success. A result
+  without a matching start, a start without a result, SDK truncation, timeout,
+  process exit, partial delivery, or malformed evidence remains unresolved. A
+  terminal runtime error is authoritative over otherwise successful receipts.
+- **Artifact and verification semantics:** opaque council/cognitive/runtime IDs
+  remain trace references. The persisted runtime-evidence reference identifies
+  an observed action class, not the existence or contents of a named artifact.
+  A verification-class success proves the observed tool result category, not a
+  semantic claim extracted from raw output. For repository writes, at least one
+  such verification must occur after the final write.
+- **Retries and recovery:** evidence identity and merge rules prevent duplicate
+  delivery/reflection from double-counting. Earlier failed or uncertain
+  attempts remain represented; later success does not erase them. A suppressed
+  stale-session attempt is retained when the outer runner retries in a fresh
+  session.
+- **Privacy/security:** the summary allowlists categories, status, ordering,
+  counts, fingerprints, and one opaque evidence ID while stripping inputs,
+  commands, paths, content, SDK tool-use IDs, stack traces, and secret shapes.
+  Raw SDK messages remain process-local and are not added to SQLite.
+- **Compatibility:** all new result fields are optional at the process
+  boundary. Old or third-party runners without runtime evidence continue
+  returning an answer, but execution-requiring work remains unverified rather
+  than being upgraded from reply quality.
+- **Latency:** aggregation is synchronous bounded metadata work over events
+  already streamed by the SDK; it adds no provider call, council, database
+  lookup, or foreground reflection.
+- **Failure isolation:** evidence persistence/metric failure cannot resend an
+  already delivered reply. It must leave deep work unverified and expose a
+  bounded evidence gap.
+- **Rollback:** optional protocol fields and packet JSON remain readable by
+  older code; reverting the consumer leaves unused metadata without a schema
+  migration or production-row rewrite.
+
+### Required validation
+
+- [x] Unit tests prove start/success, start/failure, missing result, orphan
+      result, malformed event, retry, duplicate, timeout/cancel, and bounded
+      metadata behavior (46/46 collector and normalizer tests).
+- [x] Privacy tests prove sentinel prompt/reply/command/path/tool-argument /
+      secret values never reach the evidence, logs, errors, or diagnostics.
+- [x] Protocol integration proves the container runner emits backward-
+      compatible aggregate evidence and the host merges retry attempts without
+      inventing success.
+- [x] Deep-work tests prove reply quality and internal trace IDs alone cannot
+      complete execution work; complete bound runtime evidence is required,
+      repository verification must follow the final write, and aggregate
+      external-action evidence cannot complete without exact-action binding.
+- [x] Negative tests cover approval mismatch, stale pre-state, failed /
+      unresolved verification, partial or unknown outcome, duplicate
+      reflection, and cross-turn evidence scope.
+- [x] The held-out deterministic command passes 6/6 execution-truth cases. Its
+      disposable repository proof performs a real local write failure and
+      recovery, observes the state transition, runs a real post-write syntax
+      test, and reaches the expected `runtime_repository_scope_unbound` blocked
+      state without touching production. It does not claim container/mount/IPC
+      end-to-end or production-target binding.
+- [x] Focused suites pass, including the final 77/77 execution-evidence review;
+      the primary gate passes 213 files / 2,456 tests plus typecheck, lint, and
+      production build; AGI typecheck and 28 files / 282 tests pass; all 91
+      selected deterministic commands pass; the isolated network-denied
+      scorecard is 100% A+ with zero regressions and $0 estimated cost; the
+      container runner build, signature flows, 57-file documentation check,
+      full changed-file formatting check, four root/container production/full
+      audits with zero vulnerabilities, and final diff checks pass. ESLint has
+      zero errors and 634 non-blocking warnings across 516 source files.
+- [ ] A live read-only canary remains explicit operator proof after an
+      authorized release; it is not fabricated or run in this increment.
+
+## Confirmed-delivery and host-aware latency truth — 2026-07-13
+
+### Live symptom and root-cause boundary
+
+During ordinary Telegram use, the host showed a load average of 19.11 on eight
+CPU cores, 141 MB free of 8 GB physical memory, about 3.1 GB in the compressor,
+and heavy swap activity. Andrea's Node host used roughly 1% CPU; a separate
+`TACTrack` pytest process, the local VM, and desktop development processes were
+the primary load. Andrea's own logs still reveal two distinct paths: a local
+Telegram action delivered in about 1.7 seconds, while one ordinary turn spent
+about 53 seconds between `Processing messages` and container start, then about
+23 seconds in the model/container. Two new messages waited behind that turn;
+the next batched turn took about 16 seconds before container start and about ten
+seconds through answer delivery.
+
+The candidate's delivery metric currently starts when a queued group turn is
+dequeued, so it cannot represent that user-visible queue wait. More critically,
+Telegram's channel adapter catches terminal send and edit failures and resolves
+an empty result. The primary delivery wrapper interprets any resolved promise
+as delivery, commits the cursor, and records success. A failed Telegram send
+can therefore become unretryable and contaminate latency/outcome evidence.
+
+The first adversarial pass found two deeper retry-boundary defects before the
+candidate reached release gates. The production queue wrapper removed every
+in-flight rollback record in a `finally` block, including failed turns; the
+queue then scheduled a retry against an already-advanced cursor and found no
+message. Long Telegram responses also had no partial-delivery policy: if one
+chunk was confirmed and the next failed, retrying the whole turn duplicated
+the confirmed chunk. Transport timeouts were incorrectly eligible for the
+Markdown-to-plain-text retry even though the first request could have reached
+Telegram.
+
+Runtime logs also confirm an independent queue lifecycle delay. A non-direct
+container can deliver visible output and become idle while a fresh standalone
+Telegram turn is already marked pending. `notifyIdle()` preempted the idle
+container for queued tasks but not queued messages, so the new turn could wait
+for the container's idle timeout (observed at roughly 50 seconds in one run and
+over five minutes in another) even though the prior user-visible answer was
+already delivered.
+
+The dominant July 13 sample still spent about 53 seconds in pre-container
+harness work. Production evidence identified an avoidable contributor: an
+ordinary Telegram question about coding and game ideas was classified as
+`code`, fell through to `unknown.learn_first` because no code affordance
+existed, and synchronously ran a four-provider max-IQ council. The council
+blocked the answer; the owner later marked it not helpful. The existing gate
+also escalated every code/operator turn, most six-word calendar or drafting
+turns, and `learn_first`/`approval_first` postures, which contradicts the
+documented ordinary-single-model policy.
+
+### Selected increment
+
+- Make Telegram message and edit operations throw a bounded delivery error
+  after Markdown and plain-text attempts both fail, and throw when the adapter
+  is unavailable or an edit target is invalid. Preserve the successful
+  Markdown-to-plain-text fallback.
+- Require a non-empty platform receipt in the primary evaluated delivery seam
+  before committing its in-flight cursor or writing a success metric.
+- Reconcile the optimistic message cursor with the queue result: finish a
+  safely handled or already committed turn, but rewind and persist the prior
+  cursor before a failed or thrown turn reaches GroupQueue's retry scheduler.
+- Collect every Telegram chunk receipt. Retry plain text only after Telegram
+  explicitly rejects Markdown parsing; classify transport uncertainty as
+  `unknown` and confirmed-prefix failure as `partial`. Commit partial/unknown
+  turns to prevent duplicate replay, omit them from success latency samples,
+  and store a bounded degraded-delivery event instead. Attach feedback buttons
+  only to the final chunk so an incomplete response cannot create an orphaned
+  review action.
+- Centralize complete-delivery classification for durable workflows. Handoffs,
+  approved/delegated message actions, scheduled/IPC delivery, routed outbound
+  messages, runtime receipts, and job cards must reject partial, unknown,
+  malformed, or receiptless results before they mark work delivered/sent or
+  advance state. Surface live partial/unknown counts in the existing report
+  and owner cockpit while excluding them from success p50/p95.
+- Preserve ambiguous durable sends as explicit terminal
+  `delivery_unverified` evidence rather than collapsing them into `failed`.
+  Retain confirmed receipt IDs/count and the next unknown chunk, remove replay
+  controls, pause scheduled sends, and require target inspection plus a new
+  draft before any later message.
+- Stop every primary-reply caller after a committed partial/unknown outcome so
+  presentation IDs, cognitive links, action-bundle context, and
+  `outputSentToUser` cannot advance after only a prefix. Interactive direct
+  presentations likewise arm context only after complete delivery.
+- Preserve an already-created/followed-up/stopped runtime or unified job before
+  sending its card. A blocked or unverified notification is distinct from a
+  backend failure and cannot invite recreation of the job.
+- Derive turn ingress from the earliest valid queued inbound timestamp, clamp
+  future clock skew to dequeue time, and add `queue_wait` as a distinct v3
+  latency stage. Preserve v2 four-stage records as valid historical evidence.
+- Capture only bounded host-pressure metadata at dequeue—one-minute load per
+  CPU, free-memory ratio, and `normal`/`elevated`/`high`/`unknown` class—and
+  expose the current sample count/high-pressure count/latest class in the
+  existing intelligence report and owner cockpit. Store no process list,
+  command, prompt, reply, or machine identifier.
+- Close an idle non-direct container when a fresh-turn message is already
+  pending, then let the existing per-group drain start that turn. Preserve IPC
+  continuation sessions: an actually piped continuation does not set the
+  pending-message flag and therefore does not trigger this preemption.
+- Add a bounded `code.assistance` affordance and replace the broad council
+  boolean/mode split with one deterministic decision. Council runs only for an
+  explicit deep control, a material close-score route disagreement, or
+  planning in a genuinely high-risk production/security/data domain. Ordinary
+  coding, status, diagnostics, drafting, calendar, research, approval, and
+  learn-first turns use one capable model. A quick control cannot suppress a
+  confirmed high-risk planning review.
+- Bound each optional personal-context and deep-work coordinator call to one
+  second for ordinary, non-state-changing turns. Preserve the configured
+  longer timeout for explicit deep work, high-risk planning, approval-required
+  requests, and state-changing work so the latency optimization cannot weaken
+  a safety boundary.
+- Do not change primary-model selection, provider ordering, or concurrency
+  policy from this single overloaded sample. Narrow only the council gate that
+  production evidence and the owner's negative verdict proved was broader than
+  its documented contract; use the new stage evidence to decide any further
+  harness optimization after release.
+
+### Adversarial design review
+
+- **Transport compatibility:** a successful Telegram Markdown failure still
+  retries plain text. Only terminal failure changes from silent `{}` to a
+  rejection, matching BlueBubbles and the channel contract's operational
+  meaning. Existing outer retry/error boundaries now see a real failure.
+- **No false commit:** receipt validation occurs after the channel promise
+  resolves but before `onDelivered`, timestamp finalization, or metric write.
+  Empty receipts cannot advance the cursor or create a latency success sample.
+- **Retry lifecycle:** false and thrown queue outcomes rewind the persisted
+  cursor before backoff. A delivery-confirmed turn deletes its rollback record
+  at the delivery boundary, so later metric/enrichment failures and shutdown
+  cannot resend it.
+- **Partial and uncertain transport:** Telegram has no idempotency key for
+  `sendMessage`. A confirmed prefix or transport-unknown request must therefore
+  never trigger an automatic full replay. These outcomes commit the input
+  cursor but are recorded under `interaction_delivery_degraded`, not the
+  successful latency population. A definite Bot API rejection before any
+  receipt still throws and remains retryable.
+- **Residual artifact ambiguity:** Telegram artifact uploads still have a
+  transport-ambiguity edge: a timeout can occur after the remote service has
+  accepted a file. The candidate keeps the existing fail-closed error instead
+  of claiming success, but operators must verify before manually retrying an
+  ambiguous artifact. Extending chunk-style receipt semantics to uploads is a
+  separate work package because media methods return different receipt shapes.
+- **Durable state integrity:** the primary cursor-aware reply seam may commit
+  partial/unknown transport to prevent replay, but no durable external workflow
+  may translate that into delivered, sent, completed, or posted. Shared guards
+  fail closed with bounded errors and no prompt/message/provider payload.
+  Ambiguous message actions and handoffs become non-replayable
+  `delivery_unverified` records rather than ordinary failures.
+- **Workflow advancement:** a committed incomplete primary reply raises one
+  bounded internal stop signal after its degraded metric is persisted. Local
+  fallback catches must rethrow that signal; the queue consumes it as handled
+  only because the input cursor is already committed. Direct presentations
+  return without storing controls or presentation IDs when delivery is
+  partial/unknown.
+- **Backend-versus-notification truth:** runtime and unified job creation is an
+  external fact that precedes its chat card. Selection/job identity is kept
+  even if the notification is blocked, and card delivery returns a distinct
+  `notification_blocked` result instead of making the user repeat the backend
+  operation.
+- **Fallback safety:** plain-text fallback is limited to explicit Bot API
+  Markdown entity parsing failures. Network and timeout failures are unknown,
+  because retrying them can duplicate an already accepted Telegram message.
+- **Clock safety:** invalid timestamps use dequeue time; future timestamps are
+  clamped rather than creating negative durations. Genuine backlog remains
+  visible rather than capped away.
+- **Historical compatibility:** stage validation selects v3 only when the new
+  instrumentation version/queue field is present. Existing complete four-stage
+  v2 samples remain comparable; legacy and malformed records retain their
+  prior classification.
+- **Host attribution limits:** host pressure is correlation evidence, not a
+  causal verdict. It cannot excuse a slow route automatically or change
+  authority/routing. Unknown platforms fail to `unknown` rather than healthy.
+- **Queue semantics:** a busy container is never interrupted merely because a
+  message arrived. Preemption occurs only at its explicit idle transition and
+  only when GroupQueue already classified a fresh turn as pending. Piped
+  reply-context remains in the active session, and pending tasks retain drain
+  priority.
+- **Council semantics:** approval enforcement remains independent from model
+  count; asking for approval or entering learn-first does not itself justify
+  latency/cost. Explicit deep overrides a safe-local classification, while
+  route disagreement uses dual review and high-risk repair planning uses the
+  repair council. No synthetic outcome can promote a route.
+- **Coordinator timeout semantics:** only optional enrichment on ordinary safe
+  turns receives the one-second bound. Safety-sensitive turns retain their
+  configured timeout, and an optional timeout degrades enrichment rather than
+  fabricating evidence or changing authority.
+- **Privacy/security:** pressure fields are aggregate ratios/classes. Delivery
+  failures throw fixed messages; provider errors, credentials, text, and raw
+  Telegram payloads are not added to metrics.
+- **Scope restraint:** feedback-verdict queue integration, post-delivery stage
+  isolation, and direct-assistant harness optimization remain separate
+  increments because each has distinct idempotency and authority risks.
+
+### Required validation
+
+- [x] Telegram Markdown fallback succeeds, while double failure, unavailable
+      adapter, and invalid edit target reject without a false receipt.
+- [x] Empty resolved receipts leave the cursor retryable and write no success
+      metric; confirmed delivery still commits before metric/enrichment errors.
+- [x] Failed and thrown production queue turns rewind their persisted cursor
+      before retry; an integrated queue test proves the retried read sees the
+      original message.
+- [x] Complete multi-chunk sends return all receipts; confirmed-prefix and
+      transport-unknown failures cannot replay earlier chunks and cannot enter
+      successful p50/p95 latency evidence.
+- [x] Partial handoffs/message actions/job cards fail closed, malformed partial
+      receipts are rejected, scheduler/IPC/routed sends use the shared complete
+      guard, and cockpit/report counters expose degraded delivery outcomes.
+- [x] Ambiguous handoffs/message actions persist `delivery_unverified`, expose
+      bounded receipt/chunk evidence, disable resend/cancel controls, and do not
+      complete scheduled tasks or delegation outcomes.
+- [x] Committed incomplete primary replies stop all later workflow state;
+      direct action/review/rule/dashboard presentations and unified/runtime job
+      cards cannot arm context or recreate work without a complete receipt.
+- [x] Queue wait is measured from inbound time, invalid/future timestamps fail
+      safe, v2 records remain valid, and v3 stage totals must reconcile.
+- [x] Host-pressure metadata is bounded, aggregate-only, and visible in the
+      report/cockpit without changing routing or approval behavior.
+- [x] A fresh message arriving while the prior container is busy waits until
+      its idle transition, closes it there, and drains as a second turn; a
+      piped continuation does not close the idle session.
+- [x] The real ordinary game-idea shape selects `code.assistance`, does not
+      call council, and cannot hang on a never-resolving council promise;
+      deterministic cases cover ordinary code/status/drafting, explicit deep
+      calendar, close-score disagreement, and quick high-risk planning.
+- [x] Focused bridge/harness tests prove optional coordinators cannot hold an
+      ordinary safe turn beyond the one-second per-call bound and that
+      safety-sensitive turns retain the configured timeout.
+- [x] Focused channel, delivery, metrics, cockpit, and report tests pass before
+      the full release gates are rerun.
+
+The preceding delivery/cursor/council slice passed 17 files / 266 tests, and its
+then-current full gates passed. Those results predate the latest execution-scope
+hardening and are not release evidence for the complete current candidate. The
+current held-out command passes 5/5 latency-target classifications, 5/5
+behavioral outcomes, 13/13 council scenarios, and 6/6 injected execution-truth
+cases. Its separate disposable Git proof observes a real failed write,
+recovery, state transition, and post-write syntax test, then reaches the
+expected `runtime_repository_scope_unbound` blocked state without touching
+production. The current deterministic inventory remains 91 selected and 14
+excluded. The authoritative current results above supersede the earlier pending
+state: primary and AGI gates, all 91 selected commands, the 100% A+ / $0
+network-denied scorecard, signatures, docs, formatting, lint, audits, and final
+diff review now pass.
+
+A post-gate host sample still shows material machine pressure: load averages
+were 5.93 / 9.48 / 9.39 on eight cores, only about 64 MB was free, and roughly
+3.4 GB remained compressed. The leading CPU/memory consumers were macOS media
+analysis/indexing and the desktop development clients, not Andrea's Node host.
+This corroborates the owner's machine-pressure suspicion but does not replace
+the repository fixes or excuse slow application stages. No process is killed
+or reprioritized automatically.
+
+A live rebuild/restart is intentionally not performed in this increment. A
+read-only status snapshot reports `running_ready`, but the serving artifact is
+an earlier `dirty_source` build from the same base SHA and explicitly reports
+`Serving commit aligned: no`; it contains only a subset of the current dirty
+paths and therefore is not this completed candidate. It does not yet emit v3
+queue/pressure samples. Runtime rebuild/restart, serving-build alignment, and
+fresh Telegram latency proof remain separately authorized and unperformed.
+
+That snapshot classifies Telegram and BlueBubbles as `live_proven`, with the
+BlueBubbles endpoint, detection, webhook registration, and shadow poll healthy.
+Telegram's last successful roundtrip marker is overdue and must be refreshed
+after the service is restarted into the candidate. OpenClaw is live with all 11 required Andrea
+bridge tools available; Calendar, outward research, and image generation retain
+live proof. Honest remaining evidence debt is still visible: seven tool-health
+subjects are unknown and one is blocked, life threads need a fresh same-host
+save/control turn, and Alexa's last handled signed intent is stale. None of
+those external/operator proofs is silently promoted by this code round.
+
+The live council diagnostic's threshold is now explicitly classified as an
+estimate reservation, not an enforceable provider billing cap. Existing runner
+APIs lack pre-call monetary reservation and complete reconciled usage, so the
+command requires `--ack-estimate-only` and records
+`actualBillingCapEnforced: false` plus `acceptanceEligible: false`. A true
+cost-capped live proof remains release/operator proof debt; no estimate-only run
+may satisfy that acceptance criterion.
+
+## Deterministic storage integrity and truthful health accounting — 2026-07-13
+
+### Confirmed problem and root cause
+
+The next highest-leverage repository-controlled bottleneck is not another
+capability layer. It is **evaluation evidence contaminating the production
+state that Andrea uses to judge its own reliability**. The deterministic sweep
+correctly suppresses provider environment fallback and denies non-loopback
+network access, but it does not isolate storage. Several `scripts/test-*`
+entrypoints call the production `initDatabase()` path. In particular,
+`test:agentic` persists deterministic scenario and reliability evidence at the
+fixed timestamp `2026-06-07T13:00:00.000Z`, while `test:repair` persists repair
+and cooldown evidence. Production contained 41 reliability observations at
+that synthetic timestamp. The long-running host subsequently recomputed the
+current rollups, so present health is no longer pinned to the fixture time, but
+historical rates still contain synthetic evidence and must not be silently
+rewritten or deleted in this round.
+
+The same audit found a smaller reporting defect: the tool-reliability doctor
+limits `topDegraded` to eight attention items, while `services:status` labels
+that bounded array length as the total degraded-subject count. At audit time
+the true effective total was ten: seven unknown, two degraded, one blocked.
+`tool:research` being unknown is honest proof debt—there is no direct verified
+usage and the last live provider probe has passed its deliberate 30-minute
+freshness window—not proof that research is down.
+
+### Selected increment
+
+- Make hermetic test environments set an explicit deterministic storage mode
+  in addition to provider suppression and network denial.
+- Make the production database initializer fail closed into an isolated
+  in-memory database whenever that mode is active; reject unknown mode values.
+- Convert every `scripts/test-*` database initializer to the explicit isolated
+  test initializer, including council fixtures, so running an individual test
+  script cannot mutate production state outside the aggregate sweep.
+- Convert database migration tests to their existing disposable-path helper so
+  they continue exercising on-disk schema migration without invoking the
+  production initializer.
+- Add a static invariant covering all TypeScript test entrypoints plus a
+  runtime invariant proving `initDatabase()` cannot enter production mode in a
+  hermetic environment. Keep persistence assertions inside isolated storage.
+- Add unbounded health totals and a healthy/degraded/blocked/unknown breakdown
+  to the doctor report while retaining the bounded, ranked `topDegraded` list
+  for concise detail. Update count consumers and operator wording accordingly.
+
+### Adversarial design review
+
+- **Simpler alternative rejected:** changing only `test:agentic` and
+  `test:repair` would repair the two observed writers but leave the same unsafe
+  production initializer available to other or future deterministic scripts.
+  The environment guard plus static source invariant closes both paths.
+- **False isolation risk:** network denial is not storage isolation. The new
+  database mode is checked inside `initDatabase()` itself, after all imports,
+  so a test cannot bypass it merely by importing production code. Individual
+  test scripts still use `_initTestDatabase()` explicitly for defense in depth.
+- **Migration coverage:** schema migration needs a real SQLite file. It uses a
+  generated disposable path through `_initTestDatabaseAtPath()` rather than an
+  exception that would weaken the production-storage guard.
+- **Production safety:** the guard is opt-in and the hermetic builder overwrites
+  inherited values with the single supported `memory` value. Normal runtime
+  startup remains unchanged. An invalid deterministic mode throws instead of
+  falling back to production.
+- **Data integrity:** existing synthetic rows are not auto-deleted. Cleanup
+  would change historical evidence and needs a reviewed provenance migration;
+  current rollups can continue aging/recomputing while new contamination is
+  prevented.
+- **Privacy and authority:** isolated tests retain only fixtures in process
+  memory. The change adds no tool, model, action authority, provider call, user
+  message, approval bypass, or background mutation.
+- **Count semantics:** `topDegraded` remains bounded for UI readability; all
+  decisions that need a total use `degradedSubjectCount` and the explicit
+  health breakdown. Existing detail consumers remain compatible.
+- **Rollback:** no database schema or production-row rewrite is required. The
+  code can be reverted without migrating stored data.
+
+### Required validation
+
+- [x] Focused hermetic-environment, database-isolation, tool-reliability, status,
+      and affected fixture tests pass, including invalid-mode rejection.
+- [x] Every TypeScript `scripts/test-*` entrypoint is statically proven free of
+      the production `initDatabase()` initializer.
+- [x] `test:agentic`, `test:repair`, council task fixtures, and migration tests
+      pass using isolated storage and preserve their persistence assertions.
+- [x] The held-out deterministic baseline remains network-denied and passes.
+- [x] Full primary and AGI tests, both typechecks, build, deterministic sweep,
+      offline scorecard, docs, format, lint, audits, signature flows, and final
+      diff review pass; the exact complete-candidate results are recorded in the
+      authoritative validation section above.
+- [x] No production row is deleted or rewritten as cleanup, and no live
+      provider, channel, or user-facing action is invoked in this increment.
+
+Focused validation exposed and corrected one hidden live-state dependency:
+`test:council:tasks` had no fixture and therefore passed only when production
+council history happened to satisfy its report. It now seeds one redacted,
+fixed-time synthetic run in memory, verifies that its outcome signal persisted
+there, and no longer recommends rerunning itself after that signal is attached.
+The focused result is 4 Vitest files / 11 tests plus the standalone agentic,
+repair, tool-reliability, active-perception, reality-grounding,
+truth-maintenance, critic, council-task, and council-ultrathink scripts. The
+repository typecheck also passes. The later complete-candidate release gates
+recorded in the authoritative section above pass.
+
+## Real-world intelligence baseline round — 2026-07-12
+
+### Evidence-backed baseline and capability matrix
+
+The repository baseline for this round is `main` at `9d37cfcf`, initially
+aligned with `origin/main`, plus the preserved uncommitted candidate below. No
+release, restart, commit, or push is authorized in this mission. The Mac service
+is `running_ready`, but its build provenance is `dirty_source` and predates the
+latest edits: it is an intermediate dirty artifact, not the current candidate
+and not a clean committed build. The shared application has been rebuilt on
+disk from the candidate, but the service has not been restarted into it. A
+`main`-group, 90-day snapshot taken on
+2026-07-12 contains 67 metric events, zero genuine owner-reviewed outcomes,
+three legacy/unattributed delivery samples (average 24,004 ms, p50 35,596 ms,
+p95 35,616 ms), $0.3042 of recorded non-reservation cost estimates, and one
+$0.75 fixed estimated-cost reservation. Provider billing is not available at
+this boundary. The final candidate passes all 91 selected deterministic scripts
+with 14 explicitly excluded live/operator scripts; its three-round stability
+gate took 384.5 seconds. The offline scorecard is saturated at 100% A+ with
+zero regressions and zero estimated cost. Those bounded results do not replace
+real owner reviews, an authorized runtime restart, or strict live proof.
+
+The July 12 baseline prose above remains the historical snapshot. This matrix
+is refreshed for the current July 13 candidate; the bottleneck narrative below
+the matrix remains the original July 12 record.
+
+| Capability                          | Present implementation                                                                                                                | Current evidence                                                                                                                                                              | Known failure mode                                                                                                                                        | Status                             | Highest-value next improvement                                                                                      |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Goal understanding and routing      | request policy, cognitive executive, task-family routing, explicit deep-work packets                                                  | deterministic route/cognitive tests, existing primary/AGI suites, and one distinct owner-reviewed outcome                                                                     | real owner acceptance is 1/5; route value is inferred more often than reviewed                                                                            | Partial                            | collect four more distinct owner verdicts and correlate them with the selected route                                |
+| Long-horizon execution and recovery | goals, checkpoints, mission packets, aggregate runtime evidence, Agent OS trajectory bridge                                           | deterministic checkpoint/resume and deep-work tests; V2 execution reconciliation passes focused, primary, AGI, sweep, and held-out repository validation                      | zero completed ten-working-day mission series; resume tokens remain descriptive rather than scoped, atomically consumed executor continuations            | Partial; repo-verified boundary    | add the durable scoped-resume boundary before dogfooding repeated missions                                          |
+| Planning, replanning, and council   | agency loop, provider council, evidence scorecard, verifier, replay ledger                                                            | historical five-provider diagnostic plus repository-verified deterministic provider/degradation coverage                                                                      | historical run had 11 evidence gaps, repaired schemas, degraded budget, and a Gemini fast-tier retry; strict acceptance has not been proven live          | Partial                            | run a separately authorized strict proof after serving-build alignment                                              |
+| General tool use and safe action    | capability registry, tool reliability, preflight, approval packets, reversible-action policy, aggregate runtime action/state evidence | 46/46 collector/normalizer tests; final 77/77 focused review; heldout 6/6 plus expected scope-blocked disposable local proof                                                  | repository and operator scope are not host-bound; aggregates do not prove named artifacts or exact action/postcondition identity                          | Partial; fail-closed repo-verified | bind repository and operator actions to exact host-enforced targets                                                 |
+| Durable personal memory             | provenance-aware personal context, contradiction handling, expiry/revocation, cited retrieval                                         | focused memory/privacy tests and two citation-eligible live retrievals at 100% coverage                                                                                       | life-thread save/retrieval proof remains missing; precision has no owner judgments                                                                        | Partial                            | complete one genuine save-and-retrieve interaction, then review correctness                                         |
+| Learning from outcomes              | owner review inbox, canonical outcome identity, regression fixtures, explicit baseline save                                           | baseline and deduplication tests; current genuine evidence 1/5                                                                                                                | synthetic or duplicate evidence could inflate learning if provenance gates regress                                                                        | Partial                            | gather four more distinct genuine reviews; present but never auto-save the baseline                                 |
+| Skill composition and promotion     | mission-to-trajectory bridge, 3/5 candidate/promotion gates, quarantine rules                                                         | deterministic promotion, stale-state, approval, and negative-outcome tests                                                                                                    | zero real promoted routines or skill proposals                                                                                                            | Partial                            | dogfood repeated verified missions before any promotion                                                             |
+| Self-monitoring and recovery        | integration/provider doctors, health cache, latency/cost/council observability                                                        | focused doctor tests, current metadata reports, candidate persisted-health hydration, six live delivery samples averaging about 45.2 seconds, and ordinary-turn timeout tests | the service runs an older intermediate dirty artifact; three samples are legacy/unattributed, while newer stage evidence remains unserved candidate proof | Partial                            | rebuild/restart only when authorized, prove serving provenance, then collect fresh attributed primary-reply samples |
+| Safe agency                         | same-user/chat boundaries, fresh approval classes, reversible-only delegation, audit ledgers                                          | broad deterministic approval/privacy/guardrail coverage                                                                                                                       | live integration proof can still become stale; no guard may grant new authority                                                                           | Proven repo-side                   | keep authority independent from performance or promotion evidence                                                   |
+| Verifiable intelligence             | offline scorecard, 91-script inventory, deterministic regression fixtures, and opt-in live diagnostic                                 | current 100% A+ / $0 network-denied scorecard, 91/91 sweep, 2,456 primary tests, 282 AGI tests, and heldout 5/5 targets, 5/5 outcomes, 13/13 council, 6/6 execution           | live proof remains pending; local disposable evidence is not container/mount/IPC or production binding proof                                              | Proven bounded offline             | obtain separately authorized serving-build and live evidence without treating it as a deterministic merge gate      |
+
+### Bottleneck selection and implementation plan
+
+The highest-leverage bottleneck is **truthful real-world feedback at the
+delivery and multi-provider verification boundaries**. It ranks above adding a
+new tool, model, or workflow because the system cannot safely learn which
+routes work while ordinary delivery is represented by three unattributed
+24-second samples, genuine usefulness remains 0/5, and a structurally strong
+council proof can still be mislabeled or accepted without proving verifier
+completion. This bottleneck affects every channel, recommendation, local
+control, model route, council decision, baseline, and later skill promotion.
+
+Ranked gaps for this round:
+
+1. Transport-accepted send-boundary latency and outcome attribution: widest reuse, direct
+   UX value, low authority risk, and fully testable.
+2. Council health/provenance acceptance: high grounding and safety value, but
+   intentionally exceptional rather than an ordinary response path.
+3. Genuine dogfood outcomes and mission reviews: essential evidence, but they
+   require elapsed real use and cannot be fabricated by repository work.
+4. Alexa/life-thread/Telegram freshness: important channel proof debt, but not
+   a reason to create another cognitive subsystem.
+
+The coherent slice therefore uses the existing metric and council ledgers to:
+
+- measure request preprocessing, turn harness, answer preparation, and channel
+  delivery around the primary evaluated reply path's real `sendMessage` call;
+  local control routes opt into the two-second target and missing/malformed
+  target metadata conservatively uses the ordinary target;
+- attach bounded route, response source, handler/capability, provider runtime,
+  selected model, and endpoint metadata where the runtime exposes it; raw
+  prompts, outputs, and per-tool arguments remain excluded;
+- preserve legacy samples for audit while using complete, internally consistent
+  attributed samples for current percentiles once they exist; malformed stage
+  bundles are excluded and counted separately;
+- make post-send metric failure observable without treating an already sent
+  message as failed or retryable;
+- expose bounded p50/p95, breached route, slow stage, baseline state, recorded
+  cost estimates, and the fixed estimated-cost reservation in existing owner
+  surfaces without calling either provider billing;
+- hydrate current provider health and require completed members/verifier,
+  provider provenance, evidence, participation, budget, and internally
+  consistent confidence before a live council proof passes.
+
+No database migration is required: existing metric and council tables already
+store typed event kinds and redacted JSON metadata. Old latency stays readable,
+and the one legacy council reservation is classified compatibly without
+rewriting production data. The change is model-agnostic and can be rolled back
+at the runtime wiring point without deleting historical evidence.
+
+### Adversarial design review
+
+- **Simpler alternative:** timing before the send or inferring a local command
+  from a zero harness duration is smaller, but misclassifies ordinary bypasses
+  and cannot separate provider work from delivery. Explicit route class at the
+  real send boundary is the smallest correct interface.
+- **Hidden coupling:** the delivery helper depends only on a typed context, an
+  injected send, and the canonical metric recorder. The cockpit consumes the
+  snapshot rather than channel internals; council acceptance remains a pure
+  function used by both tests and the live command.
+- **Memory/privacy:** no prompt, reply, message body, provider output, or
+  credential enters the new records. Metadata is bounded to group, route,
+  channel, handler, capability, timings, structural evidence, and cost class.
+- **Approval and authority:** the slice observes existing execution. Its opt-in
+  proof makes live, potentially billable provider/search requests and persists
+  redacted local health, council, and reservation evidence. On the current
+  coordinator-disabled runtime it performs no user-facing send or user/world
+  mutation; an enabled coordinator may receive council-record POSTs. It adds no
+  action class, permission, promotion authority, or automatic baseline save.
+- **User/session isolation:** every metric retains the validated group folder;
+  the intelligence view remains behind the cockpit's existing authentication
+  and CSRF boundary. No evidence is copied between channels or users.
+- **Model trust:** deterministic code, not model prose, checks max-IQ mode,
+  usable verdict/directives, approval and privacy boundaries, verifier status,
+  member/participation provenance, schema fallbacks, evidence grades/gaps,
+  substitutions, failures/risk flags, budget invariants, and confidence math.
+- **Retries and partial failure:** a rejected channel send writes no success
+  metric. Once the primary evaluated wrapper's `sendMessage` resolves, its
+  in-flight cursor is committed before optional metrics/enrichment; protected
+  observers cannot rethrow into the retry path. Deterministic seam tests prove
+  that a delivered cursor is not rewound and an unresolved cursor is rewound at
+  the final shutdown boundary; a full authorized runtime restart proof remains
+  pending. Specialized direct/handoff sends remain outside this protection and
+  percentile. The proof reservation is written before provider calls and is
+  replaced by a terminal blocked record if execution throws.
+- **Malformed input and stale state:** missing/malformed latency target metadata
+  defaults to the less aggressive 10-second ordinary target; incomplete,
+  negative, non-monotonic, or inconsistent stage bundles are excluded. Council
+  collections fail closed instead of throwing. Current provider health can
+  resolve stale diagnostic gaps but never rewrites run history.
+- **Generality:** the interface covers the primary evaluated assistant reply
+  wrapper across Telegram and BlueBubbles, including local controls and model
+  answers. Direct action presentations and specialized handoff sends are
+  intentionally outside this comparable percentile until they receive typed
+  route semantics. The proof policy applies to any eligible provider council
+  rather than one hard-coded answer.
+- **Rollback/compatibility:** no schema or deployment topology changes are
+  introduced. Unknown older fields remain tolerated, legacy events remain
+  auditable, and deterministic/network-denied evaluation stays cost-free.
+
+### Implemented
+
+- [x] Preserve the existing five-distinct-owner-review baseline gate, explicit
+      baseline save, ten-working-day dogfood packet, 3/5 skill-promotion gates,
+      and fresh-approval boundaries. No outcome, mission review, baseline, or
+      authority was synthesized or promoted in this round.
+- [x] Add stage-attributed timing around the primary evaluated reply's
+      transport-accepted send boundary: request preprocessing, turn harness, response
+      preparation, and channel delivery. Metrics expose average, p50, p95,
+      route-specific targets, target breaches, and the slowest stage while
+      retaining legacy samples for audit and excluding malformed stage bundles.
+      Only the first primary reply per inbound turn is sampled; specialized
+      direct sends remain explicitly outside this comparable distribution.
+- [x] Add the same genuine-outcome progress and latency view to the private
+      owner cockpit without exposing conversation bodies or provider output.
+      Local-only attributed routes target 2 seconds; ordinary attributed routes
+      target 10 seconds.
+- [x] Hydrate the council runner and evidence pack from the existing recent
+      live-provider cache instead of treating configured healthy providers as
+      unknown in a fresh process. Council diagnostics now distinguish provider
+      failure, timeout, substitution, and platform-record fallback.
+- [x] Add an explicitly opted-in, live and potentially billable council
+      diagnostic requiring `--live` and an estimated-cost threshold. It writes
+      a fixed $0.75 reservation before outbound calls, terminally classifies
+      interruptions, and persists redacted diagnostic evidence. The threshold
+      does not meter or cap provider billing. Current-runtime user/world state
+      remains unchanged, but an enabled coordinator can receive council posts.
+- [x] Close the final adversarial gaps: defer unresolved-cursor rollback until
+      after caught channel disconnects and make it the last synchronous state
+      operation before exit; reject contradictory schema summaries, member
+      counts, answer guidance, and provider-role health in strict council
+      assessment; allowlist diagnostic error classes so a secret-bearing custom
+      error name cannot persist; and record OpenAI routing provider/model/endpoint
+      separately from the local response producer.
+
+### Verified evidence and remaining operator work
+
+- [x] Trace the three comparable production turns: the pre-fix platform hold
+      and pre-bypass review each took about 35.6 seconds; the committed local
+      review bypass later delivered server-side in 799 ms. All three persisted
+      samples remain legacy/unattributed. The candidate will switch current
+      percentiles to new attributed samples only after it is released and a
+      successful real delivery occurs; history is never deleted.
+- [x] Preserve the historical live diagnostic accurately. It completed 5/5
+      roles with 12 cited evidence cards, 0 valid / 5 repaired / 0 invalid
+      schemas, no provider-level failure, confidence 0.64, and 65.541-second
+      runtime. Gemini's verifier retried on its fast tier, the budget was
+      degraded, and 11 evidence gaps remained. It is diagnostic evidence, not
+      a pass under the candidate's stricter acceptance policy.
+- [x] Correct the proof's platform-record classification. This NanoBot runtime
+      intentionally has the external coordinator disabled and uses Andrea's
+      local council ledger, so that path is now `local_runtime`, not a degraded
+      fallback. A null response from an enabled or injected coordinator remains
+      an explicit `local_fallback`. The historical ledger row is not rewritten
+      and retains its legacy fallback label.
+- [ ] Collect five genuine owner-reviewed outcomes and explicitly review the
+      first baseline. Current evidence remains 0/5.
+- [ ] Complete and owner-review one bounded coding mission on each of ten
+      working days. No mission or promotion evidence is fabricated.
+- [ ] Run one real `save that for later` life-thread interaction and one fresh
+      signed Alexa device/simulator `IntentRequest`. BlueBubbles remains
+      live-proven and unchanged.
+- [ ] Refresh the Telegram user proof with `npm run telegram:user:smoke`; it is
+      currently `near_live_only` rather than fresh proof.
+- [ ] After explicit release authorization, rebuild/restart and prove the
+      running artifact matches the final source/commit before collecting one
+      attributed local-command and one ordinary-response delivery sample.
+- [ ] Resolve material evidence gaps and separately authorize a strict live
+      proof. Reconcile provider usage manually or retain the reservation as an
+      explicitly unverified estimate.
+
+### Validation required before release
+
+- [x] Focused latency, cockpit, council, provider-health, baseline, dogfood,
+      promotion, and proof-classification coverage passes 7 files / 106 tests.
+      The isolated network-denied fixture passes 5/5 target classifications,
+      5/5 target outcomes, and 13/13 council scenarios. Independent code and
+      documentation adversarial audits found no remaining release blocker.
+- [x] Full validation passes: 206 primary files / 2,338 tests; 28 AGI files /
+      282 tests; both repository typechecks; strict standalone typecheck for the
+      two new scripts; build and provenance write; 91/91 deterministic commands;
+      100% A+ zero-cost offline scorecard; signature flows; formatting; 57-file
+      docs check; lint with 0 errors and 652 existing warnings; root production,
+      root full, and container production audits with zero vulnerabilities; and
+      final whitespace/credential review. The only credential-shaped added text
+      is an intentional fake secret in a negative redaction test, and the test
+      proves it cannot enter records or thrown diagnostics.
+
 ## Private owner outcome-review inbox — 2026-07-12
 
 ### Implemented
@@ -1569,7 +2353,7 @@ signature flows, formatting, and typecheck pass. The deterministic scorecard is
 99.1% A+ with zero regressions and $0 cost. Its route-only synthetic suite is an
 honest 90.0%, while the separate executed-response suite passes 5/5 at 100.0%.
 The 12-case redacted live comparison
-completed across OpenAI, Anthropic, and Gemini with a conservative estimated
+completed across OpenAI, Anthropic, and Gemini with a catalog-derived estimated
 cost of $0.30416; structural passes are explicitly not owner-verified outcomes
 and do not satisfy the five-outcome baseline gate.
 
@@ -1588,10 +2372,10 @@ future explicitly authorized commit, push, rebuild, and restart.
 
 Latest learning-evidence UX validation (2026-07-12): 42 focused metric and
 feedback tests prove deduplication, telemetry exclusion, honest remaining-count
-reporting, ready-but-unsaved behavior, and saved-baseline reporting. The live
-metadata-only ledger still truthfully reports 56 metric samples, zero genuine
-owner-reviewed outcomes, no baseline, and $0.3042 cumulative live-evaluation
-cost. No historical outcome was inferred or backfilled.
+reporting, ready-but-unsaved behavior, and saved-baseline reporting. The
+then-current live metadata-only ledger reported 56 metric samples, zero genuine
+owner-reviewed outcomes, no baseline, and $0.3042 of recorded live-evaluation
+cost estimates. No historical outcome was inferred or backfilled.
 
 Latest responsiveness validation (2026-07-12): production ledger analysis
 showed that the prior 15.8-second aggregate mixed twelve live-evaluation samples
@@ -1927,7 +2711,7 @@ owner secret and the existing Serve map must be inspected before mutation.
       live storage or external effects. No accidental live records existed to
       remove.
 - [x] Make live scorecard runs emit explicit start, timeout, success/failure,
-      cost-cap, and terminal metadata.
+      estimated-cost-threshold, and terminal metadata.
 - [x] Refuse to save an assistant metric baseline until at least five reviewed
       outcome samples exist.
 
@@ -1979,7 +2763,7 @@ owner secret and the existing Serve map must be inspected before mutation.
 - [x] Complete full primary, AGI, deterministic, build, docs, lint, audit, and
       signature-flow validation on the combined working tree.
 - [x] Restart Mac services and verify serving SHA/runtime health.
-- [x] Run one budgeted read-only live council proof. No routine canary or metric
+- [x] Run one opt-in live council diagnostic with no user/world mutation. No routine canary or metric
       baseline is due until a real user-selected routine or verified daily
       recommendation exists; the live store currently has zero of both.
 - [x] Fetch remote metadata, review the combined diff, commit once, and push
@@ -1994,7 +2778,7 @@ owner secret and the existing Serve map must be inspected before mutation.
 - [x] Added deterministic/live evaluation policy. Deterministic scorecards use
       isolated storage, injected platform fixtures, provider-env suppression, zero
       budget, and non-loopback network denial. Live runs require an explicit
-      positive cost cap.
+      positive estimated-cost threshold; it is not provider-billing metering.
 - [x] Added council run origin provenance and restricted calibration and
       provider-quality signals to live runs. Legacy rows are classified as replay.
 - [x] Added opt-in source memory policies, redacted derived fact candidates,

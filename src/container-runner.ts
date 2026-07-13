@@ -53,6 +53,12 @@ import {
   CONTAINER_CLOSE_GRACE_PERIOD_MS,
   resolveEffectiveIdleTimeout,
 } from './runtime-timeout.js';
+import {
+  collapseRuntimeToolEvidenceV1,
+  mergeRuntimeToolEvidenceV1,
+  normalizeRuntimeToolEvidenceV1,
+} from './runtime-tool-evidence.js';
+import type { RuntimeToolEvidenceV1 } from './runtime-tool-evidence.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 
@@ -102,6 +108,7 @@ export interface ContainerOutput {
   recoveryAttempted?: boolean;
   sawLifecycleOnlyOutput?: boolean;
   firstResultSubtype?: string | null;
+  runtimeToolEvidence?: RuntimeToolEvidenceV1;
 }
 
 interface VolumeMount {
@@ -1248,6 +1255,7 @@ function buildFailureOutput(params: {
   recoveryAttempted?: boolean;
   sawLifecycleOnlyOutput?: boolean;
   firstResultSubtype?: string | null;
+  runtimeToolEvidence?: RuntimeToolEvidenceV1;
 }): ContainerOutput {
   return {
     status: 'error',
@@ -1263,6 +1271,7 @@ function buildFailureOutput(params: {
     recoveryAttempted: params.recoveryAttempted || undefined,
     sawLifecycleOnlyOutput: params.sawLifecycleOnlyOutput || undefined,
     firstResultSubtype: params.firstResultSubtype || null,
+    runtimeToolEvidence: params.runtimeToolEvidence,
   };
 }
 
@@ -1377,6 +1386,52 @@ export async function runContainerAgent(
     let recoveryAttempted = false;
     let firstResultSubtype: string | null = null;
     let terminalDirectAssistantErrorOutput: ContainerOutput | null = null;
+    const runtimeToolEvidenceById = new Map<string, RuntimeToolEvidenceV1>();
+    let latestRuntimeToolEvidence: RuntimeToolEvidenceV1 | null = null;
+
+    const normalizeOutputRuntimeToolEvidence = (
+      output: ContainerOutput,
+    ): ContainerOutput => {
+      const rawOutput = output as ContainerOutput & Record<string, unknown>;
+      let streamedRuntimeToolEvidence: RuntimeToolEvidenceV1 | null = null;
+      if (
+        Object.prototype.hasOwnProperty.call(rawOutput, 'runtimeToolEvidence')
+      ) {
+        const candidate = normalizeRuntimeToolEvidenceV1(
+          rawOutput.runtimeToolEvidence,
+        );
+        if (candidate) {
+          const current = runtimeToolEvidenceById.get(candidate.evidenceId);
+          const merged = current
+            ? mergeRuntimeToolEvidenceV1(current, candidate)
+            : candidate;
+          if (merged) {
+            runtimeToolEvidenceById.set(candidate.evidenceId, merged);
+            streamedRuntimeToolEvidence = merged;
+          }
+          latestRuntimeToolEvidence = collapseRuntimeToolEvidenceV1([
+            ...runtimeToolEvidenceById.values(),
+          ]);
+        } else {
+          logger.warn(
+            { ...logContext, group: group.name },
+            'Discarded invalid runtime tool evidence from container output',
+          );
+        }
+      }
+
+      const normalized = { ...output };
+      if (streamedRuntimeToolEvidence) {
+        // A marker belongs to exactly one logical SDK query. Never attach the
+        // all-query aggregate here: the persistent container may later serve
+        // another IPC query, and streaming a composite would let callers
+        // double-count or attribute that later query to the wrong turn.
+        normalized.runtimeToolEvidence = streamedRuntimeToolEvidence;
+      } else {
+        delete normalized.runtimeToolEvidence;
+      }
+      return normalized;
+    };
 
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     const effectiveIdleTimeout = resolveEffectiveIdleTimeout(
@@ -1503,7 +1558,9 @@ export async function runContainerAgent(
           parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
 
           try {
-            const parsed: ContainerOutput = JSON.parse(jsonStr);
+            const parsed = normalizeOutputRuntimeToolEvidence(
+              JSON.parse(jsonStr) as ContainerOutput,
+            );
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
             }
@@ -1642,6 +1699,7 @@ export async function runContainerAgent(
               recoveryAttempted: recoveryAttempted || undefined,
               sawLifecycleOnlyOutput: hadLifecycleOnlyOutput || undefined,
               firstResultSubtype,
+              runtimeToolEvidence: latestRuntimeToolEvidence || undefined,
             });
           });
           return;
@@ -1679,6 +1737,7 @@ export async function runContainerAgent(
               recoveryAttempted,
               sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
               firstResultSubtype,
+              runtimeToolEvidence: latestRuntimeToolEvidence || undefined,
             }),
           );
           return;
@@ -1714,6 +1773,7 @@ export async function runContainerAgent(
             recoveryAttempted,
             sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
             firstResultSubtype,
+            runtimeToolEvidence: latestRuntimeToolEvidence || undefined,
           }),
         );
         return;
@@ -1817,6 +1877,7 @@ export async function runContainerAgent(
             newSessionId,
             recoveryAttempted: recoveryAttempted || undefined,
             firstResultSubtype,
+            runtimeToolEvidence: latestRuntimeToolEvidence || undefined,
           });
         });
         return;
@@ -1856,6 +1917,7 @@ export async function runContainerAgent(
             recoveryAttempted,
             sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
             firstResultSubtype,
+            runtimeToolEvidence: latestRuntimeToolEvidence || undefined,
           }),
         );
         return;
@@ -1899,6 +1961,7 @@ export async function runContainerAgent(
               firstResultSubtype:
                 terminalDirectAssistantErrorOutput.firstResultSubtype ||
                 firstResultSubtype,
+              runtimeToolEvidence: latestRuntimeToolEvidence || undefined,
             });
             return;
           }
@@ -1922,6 +1985,7 @@ export async function runContainerAgent(
             recoveryAttempted: recoveryAttempted || undefined,
             sawLifecycleOnlyOutput: hadLifecycleOnlyOutput || undefined,
             firstResultSubtype,
+            runtimeToolEvidence: latestRuntimeToolEvidence || undefined,
           });
         });
         return;
@@ -1944,7 +2008,9 @@ export async function runContainerAgent(
           jsonLine = lines[lines.length - 1];
         }
 
-        const output: ContainerOutput = JSON.parse(jsonLine);
+        const output = normalizeOutputRuntimeToolEvidence(
+          JSON.parse(jsonLine) as ContainerOutput,
+        );
 
         logger.info(
           {
@@ -1984,6 +2050,7 @@ export async function runContainerAgent(
             recoveryAttempted,
             sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
             firstResultSubtype,
+            runtimeToolEvidence: latestRuntimeToolEvidence || undefined,
           }),
         );
       }
@@ -2014,6 +2081,7 @@ export async function runContainerAgent(
           recoveryAttempted,
           sawLifecycleOnlyOutput: hadLifecycleOnlyOutput,
           firstResultSubtype,
+          runtimeToolEvidence: latestRuntimeToolEvidence || undefined,
         }),
       );
     });

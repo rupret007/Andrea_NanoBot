@@ -21,6 +21,10 @@ const COORDINATOR_BASE_URL = (
   .replace(/\/+$/, '');
 const DEFAULT_PLATFORM_BRIDGE_TIMEOUT_MS = 15_000;
 
+interface CoordinatorRequestOptions {
+  timeoutMs?: number;
+}
+
 type IntentResponseOutcome = 'handled' | 'blocked' | 'degraded' | 'fallback';
 type ProofState =
   | 'LIVE_PROVEN'
@@ -74,16 +78,21 @@ function coordinatorRoute(path: string): string | null {
   return `${COORDINATOR_BASE_URL}${path}`;
 }
 
-function platformBridgeSignal(): AbortSignal | undefined {
+export function isAndreaPlatformCoordinatorBridgeEnabled(): boolean {
+  return Boolean(COORDINATOR_BASE_URL);
+}
+
+function platformBridgeSignal(
+  timeoutOverrideMs?: number,
+): AbortSignal | undefined {
   const timeout = (
     AbortSignal as unknown as {
       timeout?: (ms: number) => AbortSignal;
     }
   ).timeout;
-  const parsed = Number.parseInt(
-    process.env.ANDREA_PLATFORM_BRIDGE_TIMEOUT_MS || '',
-    10,
-  );
+  const parsed =
+    timeoutOverrideMs ??
+    Number.parseInt(process.env.ANDREA_PLATFORM_BRIDGE_TIMEOUT_MS || '', 10);
   const timeoutMs = Number.isFinite(parsed)
     ? Math.max(1000, Math.min(parsed, 60_000))
     : DEFAULT_PLATFORM_BRIDGE_TIMEOUT_MS;
@@ -126,6 +135,7 @@ async function postShellGateway(path: string, payload: object): Promise<void> {
 async function postCoordinatorJson(
   path: string,
   payload: object,
+  options: CoordinatorRequestOptions = {},
 ): Promise<unknown | null> {
   const url = coordinatorRoute(path);
   if (!url) return null;
@@ -135,7 +145,7 @@ async function postCoordinatorJson(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      signal: platformBridgeSignal(),
+      signal: platformBridgeSignal(options.timeoutMs),
     });
     if (!response.ok) {
       logger.warn(
@@ -162,7 +172,10 @@ async function postCoordinatorJson(
   }
 }
 
-async function getCoordinatorJson(path: string): Promise<unknown | null> {
+async function getCoordinatorJson(
+  path: string,
+  options: CoordinatorRequestOptions = {},
+): Promise<unknown | null> {
   const url = coordinatorRoute(path);
   if (!url) return null;
 
@@ -170,7 +183,7 @@ async function getCoordinatorJson(path: string): Promise<unknown | null> {
     const response = await fetch(url, {
       method: 'GET',
       headers: { Accept: 'application/json' },
-      signal: platformBridgeSignal(),
+      signal: platformBridgeSignal(options.timeoutMs),
     });
     if (!response.ok) {
       logger.warn(
@@ -911,31 +924,36 @@ export async function emitAndreaPlatformDeliberation(input: {
   knownBlockers?: string[];
   actorId?: string | null;
   metadata?: Record<string, string>;
+  coordinatorTimeoutMs?: number;
 }): Promise<AndreaPlatformDeliberationResult | null> {
-  const response = await postCoordinatorJson('/deliberate', {
-    goal: input.goal,
-    category: input.taskFamily,
-    channel: input.channel || 'telegram',
-    ...(input.groupFolder ? { groupFolder: input.groupFolder } : {}),
-    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
-    ...(input.approvalPosture
-      ? { approvalPosture: input.approvalPosture }
-      : {}),
-    ...(input.routeCandidates && input.routeCandidates.length > 0
-      ? { routeCandidates: input.routeCandidates }
-      : {}),
-    ...(input.actorId ? { actorId: input.actorId } : {}),
-    metadata: {
-      sourceSystem: 'andrea_nanobot',
-      turn_intelligence_version: 'v10',
-      ...(input.actorId ? { actor_id: input.actorId } : {}),
-      ...(input.memoryMetadata || {}),
-      ...(input.knownBlockers && input.knownBlockers.length > 0
-        ? { known_blockers: input.knownBlockers.join(',') }
+  const response = await postCoordinatorJson(
+    '/deliberate',
+    {
+      goal: input.goal,
+      category: input.taskFamily,
+      channel: input.channel || 'telegram',
+      ...(input.groupFolder ? { groupFolder: input.groupFolder } : {}),
+      ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+      ...(input.approvalPosture
+        ? { approvalPosture: input.approvalPosture }
         : {}),
-      ...(input.metadata || {}),
+      ...(input.routeCandidates && input.routeCandidates.length > 0
+        ? { routeCandidates: input.routeCandidates }
+        : {}),
+      ...(input.actorId ? { actorId: input.actorId } : {}),
+      metadata: {
+        sourceSystem: 'andrea_nanobot',
+        turn_intelligence_version: 'v10',
+        ...(input.actorId ? { actor_id: input.actorId } : {}),
+        ...(input.memoryMetadata || {}),
+        ...(input.knownBlockers && input.knownBlockers.length > 0
+          ? { known_blockers: input.knownBlockers.join(',') }
+          : {}),
+        ...(input.metadata || {}),
+      },
     },
-  });
+    { timeoutMs: input.coordinatorTimeoutMs },
+  );
   if (!response || typeof response !== 'object') return null;
   const body = response as Record<string, unknown>;
   const decision = pickRecord(body.decision);
@@ -1395,8 +1413,9 @@ export async function emitAndreaPlatformSkillCandidate(input: {
 
 export async function listAndreaPlatformActiveSkillCandidates(
   taskFamily?: PlatformTaskFamily | null,
+  options: CoordinatorRequestOptions = {},
 ): Promise<AndreaPlatformSkillCandidateSummary[]> {
-  const response = await getCoordinatorJson('/skill-evolution-report');
+  const response = await getCoordinatorJson('/skill-evolution-report', options);
   if (!response || typeof response !== 'object') return [];
   const body = response as Record<string, unknown>;
   const active = Array.isArray(body.active_skills) ? body.active_skills : [];

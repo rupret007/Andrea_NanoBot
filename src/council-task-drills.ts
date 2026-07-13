@@ -279,7 +279,7 @@ export function buildCouncilTaskEaseReport(
       ? 'Run one live `ultrathink` proof and keep the task ladder green after provider or channel changes.'
       : latest && schemaInvalidCount > 0
         ? 'Fix the latest schema-invalid council artifact, then rerun npm run test:council:tasks and npm run test:council:medium.'
-        : signals.length === 0
+        : effectiveOutcomeSignalCount === 0
           ? 'Run npm run test:council:tasks to attach a sanitized task outcome signal, then rerun npm run debug:council.'
           : nextSourcePatternAction ||
             'Inspect the latest degraded council artifact and repair its lowest quality gate.';

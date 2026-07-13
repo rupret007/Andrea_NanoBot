@@ -560,7 +560,11 @@ function buildAllowedOperations(action: {
   sourceKey: string;
   linkedRefsJson?: string | null;
 }): BlueBubblesMessageActionOperationKind[] {
-  if (action.sendStatus === 'sent' || action.sendStatus === 'skipped') {
+  if (
+    action.sendStatus === 'sent' ||
+    action.sendStatus === 'skipped' ||
+    action.sendStatus === 'delivery_unverified'
+  ) {
     return [];
   }
   if (isBlueBubblesProofDrillAction(action)) {

@@ -13,10 +13,17 @@ export function withTestNetworkGuard(nodeOptions = ''): string {
 
 export function buildHermeticTestEnv(
   environment: NodeJS.ProcessEnv = process.env,
+  options: { isolateStorage?: boolean } = {},
 ): NodeJS.ProcessEnv {
-  return {
+  const result: NodeJS.ProcessEnv = {
     ...environment,
     ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE: '1',
     NODE_OPTIONS: withTestNetworkGuard(environment.NODE_OPTIONS),
   };
+  if (options.isolateStorage !== false) {
+    result.ANDREA_DETERMINISTIC_STORAGE_MODE = 'memory';
+  } else {
+    delete result.ANDREA_DETERMINISTIC_STORAGE_MODE;
+  }
+  return result;
 }

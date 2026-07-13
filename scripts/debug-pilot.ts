@@ -214,11 +214,10 @@ async function main(): Promise<void> {
   });
   const metacognition = buildMetacognitionDoctorReport({
     requestText: 'what should I do next for pilot readiness?',
-    channel: 'operator',
     persist: false,
   });
   const opportunities = buildProactiveOpportunityReport({
-    reality,
+    realityReport: reality,
     persist: false,
   });
   const attention = collectAttentionItems(truth);
@@ -331,7 +330,7 @@ async function main(): Promise<void> {
     ...formatResponseFeedbackLoop(),
     '',
     '*Executive Reliability And Repair*',
-    `- Degraded tool/route subjects: ${reliability.topDegraded.length}`,
+    `- Nonhealthy tool/route subjects: ${reliability.degradedSubjectCount} (unknown=${reliability.healthCounts.unknown}, degraded=${reliability.healthCounts.degraded}, blocked=${reliability.healthCounts.blocked})`,
     ...(reliability.topDegraded.length
       ? reliability.topDegraded.slice(0, 5).map((item) => {
           return `- ${item.subjectId}: ${item.currentHealth} / score=${item.reliabilityScore.toFixed(2)} / cap=${item.confidenceCap.toFixed(2)} / next=${item.nextAction}`;

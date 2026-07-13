@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 
-import { initDatabase } from '../src/db.js';
+import { _initTestDatabase } from '../src/db.js';
 import { runObservableProviderCouncil } from '../src/provider-council-runner.js';
 
-initDatabase();
+_initTestDatabase();
 
 const correlationId = `council-ultrathink-${Date.now().toString(36)}`;
 
@@ -119,7 +119,10 @@ const result = await runObservableProviderCouncil(
 
 assert.ok(result, 'council should return a result');
 assert.equal(result.mode, 'max_iq_council');
-assert.equal(result.structuredVerdict?.schemaStatusSummary?.invalid_fallback, 0);
+assert.equal(
+  result.structuredVerdict?.schemaStatusSummary?.invalid_fallback,
+  0,
+);
 assert.ok(
   result.structuredVerdict?.actionDirectives?.some(
     (directive) => directive.directive === 'require_approval',

@@ -76,6 +76,12 @@ Thinking and learning controls:
 
 - Say `ultrathink`, `ultracode`, `think harder`, `use all models`, `max IQ`, or `deep dive` when a request deserves the protected multi-model council.
 - Say `quick answer` or `keep it simple` when you want the fast path.
+- Smart auto keeps ordinary coding, status, diagnostics, drafting, calendar,
+  research, approval, and capability-discovery work on one capable model.
+  Council is reserved for an explicit deep request, material route
+  disagreement, or genuinely high-risk planning. Quick mode cannot bypass a
+  confirmed high-risk planning review, and approval requirements never depend
+  on how many models are used.
 - Andrea may show a concise council verdict, but not hidden reasoning or provider debate transcripts.
 - Use `/council`, `council status`, or `council tasks` to inspect the redacted council quality ledger, task-ease drills, and next repair action.
 - Use `/cognition`, `cognition status`, `cognitive workspace status`, `agency loop status`, `convergence status`, `runtime spine status`, `agent runtime status`, `supervisor status`, `blackboard status`, `session graph status`, `continuity status`, `what sessions are connected?`, `what belongs together?`, `why did you choose that?`, `why do you believe that?`, `why is that true?`, `what supports that?`, `what could be wrong?`, `how certain are you?`, `what are the alternatives?`, `what's missing?`, `what's most useful next?`, `what changed?`, `what is stale?`, `what do you know for sure?`, `what's true right now?`, `is text messaging working?`, `what's broken right now?`, `what should you verify next?`, `what is most useful now?`, `what evidence supports this?`, `what goals are active?`, `what are we trying to accomplish?`, `show me the plan`, `what is blocking this?`, `what is the safest next step?`, `what if we do nothing?`, `stop suggesting that`, or `run the safe checks` to inspect the Cognitive Workspace packet, safe task graph, Agent OS episode, Runtime Spine checkpoints, Supervisor Core blackboard/handoffs, Session Graph continuity clusters, continuity cockpit action queue, Agency Convergence selected action, Logic Kernel claims, Truth Engine support, World Model proof debt, Reality Grounding observations/beliefs, Hierarchical Goal Planner, uncertainty, approval blockers, and useful next action. Use `that is stale`, `mark that current`, or `resolve that` only when you are intentionally correcting Andrea's belief state.
@@ -228,6 +234,15 @@ generation. Add `-- --persist` only when intentionally recording one; explicit
 apply, execute, baseline-save, retention, and live-proof flags remain separate
 operations.
 
+For a long Telegram reply, complete delivery means every chunk returned a
+platform receipt. If only a prefix is confirmed, or a network failure makes
+Telegram acceptance unknowable, Andrea records an incomplete/uncertain outcome
+and does not count it in successful latency. It also avoids an automatic full
+replay, because that could duplicate text you already received. Durable sends,
+handoffs, scheduled messages, and status cards fail closed unless delivery is
+complete. File and media timeouts remain inherently ambiguous; check the target
+thread before manually resending an artifact.
+
 Each production build now writes a local compiled-artifact provenance manifest.
 Runtime status verifies the artifact hash, build commit, and clean-source state
 before reporting `Serving commit aligned: yes`. A missing manifest, changed
@@ -235,6 +250,10 @@ artifact, stale commit, or dirty-source build fails closed. Workspace edits made
 after launch are shown separately because they do not alter the already loaded
 process. The manifest contains only build metadata, counts, and hashes—not file
 paths, source contents, prompts, credentials, or personal data.
+This manifest describes the shared Node runtime artifact, not a native macOS or
+Windows application bundle. Native installers are not produced by this
+repository today; platform proof requires building and restarting the service
+on that platform.
 
 ## Autonomous Improvement Lab
 

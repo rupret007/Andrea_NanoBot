@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { PreSendEvaluation } from './turn-agent-harness.js';
+
 afterEach(async () => {
   const database = await import('./db.js');
   if (database.isDatabaseInitialized()) database._closeDatabase();
@@ -19,7 +21,7 @@ describe('production intelligence persistence boundary', () => {
     }));
     vi.doMock('./verified-deep-work.js', () => ({
       beginVerifiedDeepWorkForTurn: beginDeepWork,
-      finalizeVerifiedDeepWorkForTurn: vi.fn(),
+      reconcileVerifiedDeepWorkExecution: vi.fn(),
     }));
 
     const { beginTurnAgentHarness } = await import('./turn-agent-harness.js');
@@ -48,7 +50,7 @@ describe('production intelligence persistence boundary', () => {
     }));
     vi.doMock('./verified-deep-work.js', () => ({
       beginVerifiedDeepWorkForTurn: vi.fn(),
-      finalizeVerifiedDeepWorkForTurn: vi.fn(),
+      reconcileVerifiedDeepWorkExecution: vi.fn(),
     }));
 
     const { beginTurnAgentHarness } = await import('./turn-agent-harness.js');
@@ -63,36 +65,55 @@ describe('production intelligence persistence boundary', () => {
     ).rejects.toThrow('personal context persistence failed');
   });
 
-  it('propagates an unexpected deep-work finalization failure', async () => {
+  it('does not finalize deep work from reflection and propagates a runtime-evidence persistence failure', async () => {
     const database = await import('./db.js');
     database._initTestDatabase();
+    const reconcile = vi.fn(() => {
+      throw new Error('deep-work outcome persistence failed');
+    });
     vi.doMock('./verified-deep-work.js', () => ({
       beginVerifiedDeepWorkForTurn: vi.fn(),
-      finalizeVerifiedDeepWorkForTurn: vi.fn(() => {
-        throw new Error('deep-work outcome persistence failed');
-      }),
+      reconcileVerifiedDeepWorkExecution: reconcile,
     }));
 
-    const { reflectTurnAgentOutcome } = await import('./turn-agent-harness.js');
+    const { reconcileTurnRuntimeEvidence, reflectTurnAgentOutcome } =
+      await import('./turn-agent-harness.js');
+    const context = {
+      turnId: 'turn-runtime-evidence',
+      verifiedDeepWorkPacket: { packetId: 'packet-failure' },
+    } as never;
+    const evaluation: PreSendEvaluation = {
+      status: 'pass',
+      evidenceLevel: 'strong',
+      evidenceGap: 'none',
+      evaluatorFlags: [],
+      safeRewriteApplied: false,
+      rewrittenText: 'Verified result.',
+      approvalCorrectness: 'correct',
+      memoryEffect: 'neutral',
+      summary: 'Verified result.',
+    };
     await expect(
       reflectTurnAgentOutcome({
-        context: {
-          verifiedDeepWorkPacket: { packetId: 'packet-failure' },
-        } as never,
-        evaluation: {
-          status: 'pass',
-          evidenceLevel: 'strong',
-          evidenceGap: 'none',
-          evaluatorFlags: [],
-          safeRewriteApplied: false,
-          rewrittenText: 'Verified result.',
-          approvalCorrectness: 'correct',
-          memoryEffect: 'neutral',
-          summary: 'Verified result.',
-        },
+        context,
+        evaluation,
         routeUsed: 'research.live',
         answerClass: 'handled',
       }),
-    ).rejects.toThrow('deep-work outcome persistence failed');
+    ).resolves.toMatchObject({ reflection: null });
+    expect(reconcile).not.toHaveBeenCalled();
+
+    expect(() =>
+      reconcileTurnRuntimeEvidence({
+        context: {
+          turnId: 'turn-runtime-evidence',
+          verifiedDeepWorkPacket: { packetId: 'packet-failure' },
+        } as never,
+        evaluation,
+        runtimeStatus: 'success',
+        runtimeToolEvidence: undefined,
+        routeUsed: 'research.live',
+      }),
+    ).toThrow('deep-work outcome persistence failed');
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 describe('turn agent harness', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     vi.resetModules();
@@ -28,6 +29,181 @@ describe('turn agent harness', () => {
         requestRoute: 'direct_assistant',
       }),
     ).toBe('operator');
+  });
+
+  it('routes ordinary work to one model and reserves council for explicit evidence', async () => {
+    const {
+      classifyTurnTaskFamily,
+      decideProviderCouncil,
+      selectSkillAffordance,
+    } = await import('./turn-agent-harness.js');
+    const decide = (text: string) => {
+      const taskFamily = classifyTurnTaskFamily({
+        text,
+        requestRoute: 'direct_assistant',
+      });
+      return {
+        taskFamily,
+        skill: selectSkillAffordance({ taskFamily, text }),
+      };
+    };
+
+    for (const text of [
+      'How do you write code for a game, maybe give me some ideas?',
+      'Explain what this TypeScript function does.',
+      'quick answer: explain the build',
+      'Check service status and summarize the logs.',
+      'Draft a friendly reply saying Friday works.',
+    ]) {
+      const selected = decide(text);
+      expect(
+        decideProviderCouncil({
+          text,
+          taskFamily: selected.taskFamily,
+          selectedSkill: selected.skill,
+        }).run,
+      ).toBe(false);
+    }
+
+    const game = decide(
+      'How do you write code for a game, maybe give me some ideas?',
+    );
+    expect(game.taskFamily).toBe('code');
+    expect(game.skill.skillId).toBe('code.assistance');
+
+    const calendar = decide("ultrathink: what's on my schedule tomorrow?");
+    expect(
+      decideProviderCouncil({
+        text: "ultrathink: what's on my schedule tomorrow?",
+        taskFamily: calendar.taskFamily,
+        selectedSkill: calendar.skill,
+      }),
+    ).toMatchObject({
+      run: true,
+      reason: 'explicit_deep',
+      mode: 'max_iq_council',
+    });
+
+    const highRisk = decide(
+      'quick answer: plan a production database migration',
+    );
+    expect(
+      decideProviderCouncil({
+        text: 'quick answer: plan a production database migration',
+        taskFamily: highRisk.taskFamily,
+        selectedSkill: highRisk.skill,
+      }),
+    ).toMatchObject({
+      run: true,
+      reason: 'high_risk_plan',
+      mode: 'max_iq_council',
+    });
+
+    const disagreement = decide('Help me choose the best safe route.');
+    expect(
+      decideProviderCouncil({
+        text: 'Help me choose the best safe route.',
+        taskFamily: disagreement.taskFamily,
+        selectedSkill: disagreement.skill,
+        deliberation: {
+          routeScores: [
+            { routeId: 'local_capability', score: 0.72, confidence: 0.8 },
+            { routeId: 'direct_integration', score: 0.68, confidence: 0.75 },
+          ],
+        },
+      }),
+    ).toMatchObject({
+      run: true,
+      reason: 'material_route_disagreement',
+      mode: 'dual_review',
+    });
+  });
+
+  it('classifies high-risk planning before broad research keywords', async () => {
+    const {
+      classifyTurnTaskFamily,
+      decideProviderCouncil,
+      selectSkillAffordance,
+    } = await import('./turn-agent-harness.js');
+    const assertHighRiskCouncil = (text: string) => {
+      const taskFamily = classifyTurnTaskFamily({
+        text,
+        requestRoute: 'direct_assistant',
+      });
+      const selectedSkill = selectSkillAffordance({ taskFamily, text });
+
+      expect(taskFamily).toBe('operator');
+      expect(
+        decideProviderCouncil({ text, taskFamily, selectedSkill }),
+      ).toMatchObject({
+        run: true,
+        reason: 'high_risk_plan',
+        mode: 'max_iq_council',
+      });
+    };
+
+    assertHighRiskCouncil(
+      'recommend the safest production database migration rollout',
+    );
+    assertHighRiskCouncil('review the latest production security architecture');
+    assertHighRiskCouncil(
+      'quick answer: recommend the safest production database migration rollout',
+    );
+  });
+
+  it('does not await council for the real ordinary game-idea shape', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    const calls: string[] = [];
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation(() => new AbortController().signal);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        calls.push(String(input));
+        if (String(input).endsWith('/skill-evolution-report')) {
+          return new Response(JSON.stringify({ active_skills: [] }), {
+            status: 200,
+          });
+        }
+        if (String(input).endsWith('/council-run')) {
+          return new Promise<Response>(() => undefined);
+        }
+        return new Response(
+          JSON.stringify({
+            decision: {
+              selected_route: 'runtime_conductor',
+              execution_posture: 'execute_now',
+              selected_policy_id: 'runtime_conductor',
+            },
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+    );
+
+    const { beginTurnAgentHarness } = await import('./turn-agent-harness.js');
+    const context = await beginTurnAgentHarness({
+      turnId: 'turn-game-ideas',
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'How do you write code for a game, maybe give me some ideas?',
+      requestRoute: 'direct_assistant',
+    });
+
+    expect(context?.selectedSkill.skillId).toBe('code.assistance');
+    expect(context?.providerCouncil).toBeNull();
+    expect(context?.contextCompile.metadata.provider_council_gate_reason).toBe(
+      'ordinary_single_model',
+    );
+    expect(calls.some((url) => url.endsWith('/council-run'))).toBe(false);
+    expect(timeoutSpy).toHaveBeenNthCalledWith(1, 1_000);
+    expect(timeoutSpy).toHaveBeenNthCalledWith(2, 1_000);
+    expect(
+      context?.contextCompile.metadata.platform_coordinator_timeout_class,
+    ).toBe('ordinary_1000ms');
   });
 
   it('skips simple greetings instead of deliberating every turn', async () => {
@@ -216,6 +392,10 @@ describe('turn agent harness', () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    vi.stubEnv('ANDREA_PLATFORM_BRIDGE_TIMEOUT_MS', '15000');
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation(() => new AbortController().signal);
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
@@ -247,6 +427,11 @@ describe('turn agent harness', () => {
     });
 
     expect(context?.platformHoldReply).toContain('Which thread should I use?');
+    expect(timeoutSpy).toHaveBeenNthCalledWith(1, 15_000);
+    expect(timeoutSpy).toHaveBeenNthCalledWith(2, 15_000);
+    expect(
+      context?.contextCompile.metadata.platform_coordinator_timeout_class,
+    ).toBe('safety_default');
   });
 
   it('recognizes read-only calendar lookup asks as safe local-first turns', async () => {
@@ -379,7 +564,7 @@ describe('turn agent harness', () => {
     expect(calls.some((call) => call.url.endsWith('/council-run'))).toBe(false);
   });
 
-  it('runs provider council for complex research and operator turns', async () => {
+  it('runs provider council for explicit deep research', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
@@ -449,7 +634,7 @@ describe('turn agent harness', () => {
       turnId: 'turn-research',
       channel: 'telegram',
       groupFolder: 'main',
-      text: 'do deep research and compare the latest model council options',
+      text: 'deep dive: research and compare the latest model council options',
       requestRoute: 'direct_assistant',
     });
 
@@ -460,12 +645,13 @@ describe('turn agent harness', () => {
     });
     const councilCall = calls.find((call) => call.url.endsWith('/council-run'));
     expect(councilCall?.body).toMatchObject({
-      goal: 'Handle research turn from telegram via direct_assistant. Safe user intent: do deep research and compare the latest model council options.',
+      goal: 'Handle research turn from telegram via direct_assistant. Safe user intent: deep dive: research and compare the latest model council options.',
       taskFamily: 'research',
       requestedMode: 'max_iq_council',
       requiredEvidence: 'strong',
       metadata: {
-        turn_agent_harness: 'v15_multi_llm_answer_guidance',
+        turn_agent_harness: 'v16_empirical_council_gate',
+        council_gate_reason: 'explicit_deep',
         raw_content_policy: 'sanitized_snippets',
       },
     });

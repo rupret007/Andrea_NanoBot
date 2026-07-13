@@ -268,6 +268,46 @@ describe('intelligence regression harness', () => {
     expect(report.scenarios[0]?.actual.council_id).toBe('council-filtered');
   });
 
+  it('keeps ordinary approval-sensitive scenarios single-model without weakening approval posture', async () => {
+    const expectedApproval = new Map([
+      ['research.provider_blocked_honesty', 'none'],
+      ['communication.approval_guard', 'explicit'],
+      ['bluebubbles.same_thread_continuity', 'explicit'],
+      ['memory.conflict_staged', 'conditional'],
+      ['operator.runtime_leakage_repair', 'explicit'],
+      ['repair.approval_binding', 'explicit'],
+    ]);
+    const { runIntelligenceRegressionHarness } =
+      await import('./intelligence-regression-harness.js');
+    const report = await runIntelligenceRegressionHarness({
+      runId: 'intel-ordinary-single-model',
+      scenarioIds: [...expectedApproval.keys()],
+      recordToPlatform: false,
+      reflectTurns: false,
+      executionMode: 'deterministic',
+    });
+
+    expect(report).toMatchObject({
+      status: 'pass',
+      scenarioCount: expectedApproval.size,
+      criticalFailureCount: 0,
+    });
+    for (const scenario of report.scenarios) {
+      expect(scenario.actual.council_mode, scenario.scenarioId).toBe('none');
+      expect(scenario.actual.approval_need, scenario.scenarioId).toBe(
+        expectedApproval.get(scenario.scenarioId),
+      );
+      expect(
+        scenario.gates.find((gate) => gate.gateId === 'council_role_fit'),
+        scenario.scenarioId,
+      ).toMatchObject({ passed: true });
+      expect(
+        scenario.gates.find((gate) => gate.gateId === 'approval_correctness'),
+        scenario.scenarioId,
+      ).toMatchObject({ passed: true });
+    }
+  });
+
   it('emits progress and fails a scenario cleanly on timeout', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');

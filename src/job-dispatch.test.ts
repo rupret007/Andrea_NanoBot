@@ -291,6 +291,59 @@ describe('dispatchUnifiedJob — streaming through completion', () => {
 });
 
 describe('dispatchUnifiedJob — failure paths', () => {
+  it('preserves a created job when its initial notification is unverified', async () => {
+    let createCount = 0;
+    let fetchCount = 0;
+    const adapter: JobLaneAdapter = {
+      label: 'Cursor',
+      async createJob() {
+        createCount += 1;
+        return {
+          jobId: 'cursor-notification-unverified',
+          status: 'queued',
+          lastUpdate: null,
+          outputTail: null,
+          errorText: null,
+          finalOutput: null,
+          pctComplete: null,
+        };
+      },
+      async fetchJob() {
+        fetchCount += 1;
+        throw new Error('must not poll after notification is blocked');
+      },
+    };
+    let sendCount = 0;
+    const result = await dispatchUnifiedJob({
+      channel: {
+        async sendMessage() {
+          sendCount += 1;
+          return {
+            platformMessageId: 'prefix-only',
+            deliveryState: 'partial' as const,
+            nextUnconfirmedChunkIndex: 1,
+          };
+        },
+      },
+      input: {
+        chatJid: 'tg:1',
+        prompt: 'edit something.ts',
+        laneOverride: 'cursor',
+      },
+      adapters: { cursor: adapter, codex: adapter },
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'notification_blocked',
+      lane: 'cursor',
+      jobId: 'cursor-notification-unverified',
+    });
+    expect(result.summary).toContain('notification:blocked');
+    expect(createCount).toBe(1);
+    expect(sendCount).toBe(1);
+    expect(fetchCount).toBe(0);
+  });
+
   it('returns failed when createJob throws', async () => {
     const { channel, sends } = makeChannel();
     const adapter: JobLaneAdapter = {

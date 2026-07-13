@@ -1430,6 +1430,11 @@ export interface CouncilDoctorReport {
     riskFlags: string[];
     nextAction: string;
   };
+  platformRecordMode?: 'coordinator' | 'local_runtime';
+  degradationClasses?: Array<{
+    kind: 'provider_failure' | 'timeout' | 'substitution' | 'local_fallback';
+    runs: number;
+  }>;
   degradedReasons: string[];
   evidenceGaps: string[];
   historicalEvidenceGaps?: string[];
@@ -1553,6 +1558,69 @@ export type VerifiedDeepWorkStage =
   | 'verify'
   | 'record_outcome';
 
+export type RuntimeToolActionClass =
+  | 'repository_read'
+  | 'repository_state'
+  | 'repository_write'
+  | 'verification_test'
+  | 'verification_typecheck'
+  | 'verification_build'
+  | 'verification_lint'
+  | 'verification_format'
+  | 'web_research'
+  | 'delegation'
+  | 'external_side_effect'
+  | 'workflow_control'
+  | 'other';
+
+export interface RuntimeToolEvidenceCounts {
+  observed: number;
+  succeeded: number;
+  failed: number;
+  unresolved: number;
+}
+
+export interface RuntimeToolActionEvidence extends RuntimeToolEvidenceCounts {
+  class: RuntimeToolActionClass;
+  succeededAfterLastRepositoryWrite: number;
+  lastOutcome: 'succeeded' | 'failed' | 'unresolved' | 'none';
+  recovered: boolean;
+}
+
+/**
+ * Privacy-bounded evidence emitted by the container runtime. It intentionally
+ * contains no tool arguments, commands, paths, result bodies, SDK IDs, or
+ * hidden reasoning. The host still validates this untrusted wire value before
+ * it can affect a durable outcome.
+ */
+export interface RuntimeToolEvidenceV1 {
+  version: 1;
+  evidenceId: string;
+  cumulative: true;
+  attempts: number;
+  collectorStatus: 'complete' | 'partial';
+  calls: RuntimeToolEvidenceCounts;
+  actions: RuntimeToolActionEvidence[];
+  state: {
+    preStateFingerprint: string | null;
+    postStateFingerprint: string | null;
+    repositoryHeadFingerprint: string | null;
+  };
+  privacy: {
+    metadataOnly: true;
+    rawInputsStored: false;
+    resultBodiesStored: false;
+    toolUseIdsStored: false;
+  };
+}
+
+export interface BoundRuntimeExecutionEvidence extends RuntimeToolEvidenceV1 {
+  scopeKey: string;
+  sourceTurnId: string;
+  approvalRef?: string | null;
+  reconciledAt: string;
+}
+
 export interface VerifiedDeepWorkPacket {
   packetId: string;
   groupFolder: string;
@@ -1562,6 +1630,10 @@ export interface VerifiedDeepWorkPacket {
   currentStage: VerifiedDeepWorkStage;
   stagesCompleted: VerifiedDeepWorkStage[];
   checkpointVersion: number;
+  /** V2 packets require actual runtime evidence; prose cannot complete them. */
+  evidencePolicyVersion?: 2;
+  sourceTurnId?: string | null;
+  runtimeExecutionEvidence?: BoundRuntimeExecutionEvidence | null;
   approvalRequired: boolean;
   approvalRef?: string | null;
   sources: string[];
@@ -1649,7 +1721,8 @@ export type AssistantMetricEventKind =
   | 'tool_attempt'
   | 'tool_success'
   | 'latency_sample'
-  | 'live_eval_cost';
+  | 'live_eval_cost'
+  | 'live_eval_cost_reservation';
 
 export interface AssistantMetricEventRecord {
   eventId: string;
@@ -1676,8 +1749,53 @@ export interface AssistantMetricSnapshot {
   toolReliability: number;
   toolReliabilitySampleCount: number;
   averageLatencyMs: number;
+  p50LatencyMs: number;
+  p95LatencyMs: number;
+  slowestLatencyStage: string | null;
+  slowestLatencyRoute: string | null;
+  slowestLatencyProvider: string | null;
+  slowestLatencyTool: string | null;
+  worstBreachingLatencyRoute: string | null;
+  interactionLatencyTargetBreaches: number;
+  legacyInteractionLatencySampleCount: number;
+  invalidInteractionLatencySampleCount: number;
+  hostPressureSampleCount: number;
+  highHostPressureSampleCount: number;
+  latestHostPressureClass: 'normal' | 'elevated' | 'high' | 'unknown' | null;
+  degradedInteractionDeliveryCount: number;
+  partialInteractionDeliveryCount: number;
+  unknownInteractionDeliveryCount: number;
+  latestDegradedDeliveryOutcome: 'partial' | 'unknown' | null;
+  latestDegradedDeliveryRoute: string | null;
+  interactionLatencyByRoute: Array<{
+    routeKey: string;
+    sampleCount: number;
+    averageMs: number;
+    p50Ms: number;
+    p95Ms: number;
+    slowestStage: string | null;
+    targetMs: number;
+    meetsTarget: boolean;
+  }>;
+  interactionLatencyByProvider: Array<{
+    providerId: string;
+    modelId: string | null;
+    providerRole: 'response' | 'routing';
+    sampleCount: number;
+    p50Ms: number;
+    p95Ms: number;
+    slowestStage: string | null;
+  }>;
+  interactionLatencyByTool: Array<{
+    toolClass: string;
+    sampleCount: number;
+    p50Ms: number;
+    p95Ms: number;
+    slowestStage: string | null;
+  }>;
   interactionLatencySampleCount: number;
-  liveEvalCostUsd: number;
+  liveEvalRecordedCostEstimateUsd: number;
+  liveEvalCostReservationUsd: number;
   sampleCount: number;
   reviewedOutcomeCount: number;
 }
@@ -5429,6 +5547,8 @@ export interface ToolReliabilityDoctorReport {
   subjects: ToolReliabilitySubject[];
   rollups: ToolReliabilityRollup[];
   routeRollups: RouteConfidenceRollup[];
+  degradedSubjectCount: number;
+  healthCounts: Record<ToolReliabilityRollup['currentHealth'], number>;
   topDegraded: ToolReliabilityRollup[];
   nextAction: string;
   privacy: CognitiveReplayPacket['privacy'];
@@ -6167,6 +6287,7 @@ export type MessageActionSendStatus =
   | 'approved'
   | 'sent'
   | 'deferred'
+  | 'delivery_unverified'
   | 'failed'
   | 'skipped';
 
@@ -6179,6 +6300,7 @@ export type MessageActionLastActionKind =
   | 'save_to_thread'
   | 'rewrite'
   | 'skipped'
+  | 'delivery_unverified'
   | 'failed';
 
 export interface MessageActionLinkedRefs {
@@ -6207,6 +6329,13 @@ export interface MessageActionExplanation {
   safetyReason?: string | null;
   delegationNote?: string | null;
   trustNote?: string | null;
+  deliveryVerification?: {
+    outcome: 'partial' | 'unknown';
+    confirmedReceiptIds: string[];
+    confirmedReceiptCount: number;
+    nextUnconfirmedChunkIndex?: number;
+    retryPolicy: 'verify_before_resend';
+  };
 }
 
 export interface MessageActionRecord {
@@ -6879,6 +7008,7 @@ export interface MediaGenerationResult {
 export type CompanionHandoffStatus =
   | 'queued'
   | 'delivered'
+  | 'delivery_unverified'
   | 'failed'
   | 'cancelled'
   | 'expired';
@@ -7337,6 +7467,8 @@ export interface SendMessageResult {
   platformMessageId?: string;
   platformMessageIds?: string[];
   threadId?: string | null;
+  deliveryState?: 'complete' | 'partial' | 'unknown';
+  nextUnconfirmedChunkIndex?: number;
 }
 
 export interface ReplyMessageRef {

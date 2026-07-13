@@ -771,7 +771,86 @@ describe('council quality ledger', () => {
     });
     expect(formatted).toContain('Provider participation: degraded');
     expect(formatted).toContain('verifier:gemini_cloud->openai_cloud');
+    expect(report.degradationClasses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'provider_failure', runs: 1 }),
+        expect.objectContaining({ kind: 'substitution', runs: 1 }),
+      ]),
+    );
+    expect(formatted).toContain('Degradation classes:');
     expect(JSON.stringify(report)).not.toContain('sk-proj-');
+  });
+
+  it('classifies a platform record fallback without treating healthy providers as unknown', () => {
+    recordCouncilRunLedger({
+      councilRunId: 'local-council:record-fallback',
+      taskFamily: 'operator',
+      requestedMode: 'max_iq_council',
+      chosenMode: 'max_iq_council',
+      calibration: calibrateCouncilMode({
+        taskFamily: 'operator',
+        requestedMode: 'max_iq_council',
+      }),
+      structuredVerdict: verdict({
+        evidenceScorecard: {
+          requiredGrade: 'partial',
+          availableGrade: 'partial',
+          freshnessCoverage: {
+            total: 1,
+            fresh: 1,
+            stale: 0,
+            unknown: 0,
+            notApplicable: 0,
+          },
+          sourceCoverage: { provider_health: 1 },
+          privateContentPolicy: 'metadata_only',
+          gapCount: 1,
+          gapIds: ['provider_openai_cloud_unknown'],
+          sourceClasses: ['provider_health'],
+          confidencePenalty: 0.05,
+        },
+      }),
+      riskFlags: ['platform_council_record_local_fallback'],
+    });
+
+    const report = buildCouncilDoctorReport('2026-06-04T10:03:00.000Z', {
+      providerHealth: healthyCoreProviders,
+      platformCoordinatorExpected: true,
+    });
+    expect(report.degradationClasses).toContainEqual({
+      kind: 'local_fallback',
+      runs: 1,
+    });
+    expect(report.evidenceGaps).not.toContain('provider_openai_cloud_unknown');
+    expect(report.resolvedEvidenceGaps).toContain(
+      'provider_openai_cloud_unknown',
+    );
+    expect(report.nextAction).toContain('platform council record handoff');
+  });
+
+  it('treats intentional local runtime recording as healthy rather than fallback degradation', () => {
+    recordCouncilRunLedger({
+      councilRunId: 'local-council:intentional-local-runtime',
+      taskFamily: 'operator',
+      requestedMode: 'max_iq_council',
+      chosenMode: 'max_iq_council',
+      calibration: calibrateCouncilMode({
+        taskFamily: 'operator',
+        requestedMode: 'max_iq_council',
+      }),
+      structuredVerdict: verdict(),
+      riskFlags: ['platform_council_record_local_runtime'],
+    });
+
+    const report = buildCouncilDoctorReport('2026-06-04T10:03:00.000Z', {
+      providerHealth: healthyCoreProviders,
+      platformCoordinatorExpected: false,
+    });
+    expect(report.platformRecordMode).toBe('local_runtime');
+    expect(report.degradationClasses).not.toContainEqual(
+      expect.objectContaining({ kind: 'local_fallback' }),
+    );
+    expect(report.nextAction).not.toContain('platform council record handoff');
   });
 
   it('uses recent live provider evidence without rewriting degraded run history', () => {

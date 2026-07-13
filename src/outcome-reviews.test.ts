@@ -642,6 +642,70 @@ describe('outcome reviews', () => {
     expect(presentation.text).toContain('Converted to a reminder');
   });
 
+  it('shows unverified message delivery without inviting a resend', () => {
+    const now = new Date('2026-04-08T20:20:00.000Z');
+    upsertMessageAction({
+      messageActionId: 'msg-delivery-unverified',
+      groupFolder: 'main',
+      sourceType: 'communication_thread',
+      sourceKey: 'comm-unverified',
+      sourceSummary: 'Candace follow-through',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:chat-1',
+        personName: 'Candace',
+      }),
+      draftText: 'Yes, tonight still works for me.',
+      trustLevel: 'never_automate',
+      sendStatus: 'delivery_unverified',
+      followupAt: null,
+      requiresApproval: false,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: JSON.stringify({
+        deliveryVerification: {
+          outcome: 'partial',
+          confirmedReceiptIds: ['prefix-only'],
+          confirmedReceiptCount: 1,
+          nextUnconfirmedChunkIndex: 1,
+          retryPolicy: 'verify_before_resend',
+        },
+      }),
+      linkedRefsJson: JSON.stringify({ personName: 'Candace' }),
+      platformMessageId: 'prefix-only',
+      scheduledTaskId: null,
+      approvedAt: now.toISOString(),
+      lastActionKind: 'delivery_unverified',
+      lastActionAt: now.toISOString(),
+      dedupeKey: 'msg-delivery-unverified',
+      presentationChatJid: 'tg:main',
+      presentationThreadId: null,
+      presentationMessageId: null,
+      createdAt: now.toISOString(),
+      lastUpdatedAt: now.toISOString(),
+      sentAt: null,
+    });
+    const outcome = syncOutcomeFromMessageActionRecord(
+      getMessageAction('msg-delivery-unverified')!,
+      now,
+    );
+
+    expect(outcome).toMatchObject({
+      status: 'partial',
+      blockerText: expect.stringContaining('replay is blocked'),
+    });
+    const shown = applyOutcomeReviewControl({
+      groupFolder: 'main',
+      outcomeId: outcome.outcomeId,
+      control: { kind: 'show' },
+      now,
+    });
+    expect(shown.replyText).toContain('Check the target conversation');
+    expect(shown.replyText).not.toContain('Send it, send it later');
+  });
+
   it('applies review controls to handle, defer, and suppress open loops', () => {
     const now = new Date('2026-04-08T20:30:00.000Z');
     const communication = seedCommunicationThread({

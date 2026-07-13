@@ -57,12 +57,12 @@ export function buildThinkingStatusText(assistantName = 'Andrea'): string {
   return [
     `*${assistantName} Thinking Mode*`,
     '',
-    'Smart auto is on. I keep simple chats fast, then escalate complex planning, research, calendar, drafting, troubleshooting, and higher-risk decisions to the multi-model council.',
+    'Smart auto is on. Ordinary work uses one capable model. I reserve the multi-model council for explicit deep requests, material route disagreement, and genuinely high-risk planning.',
     '',
     '*Controls*',
     '- Say `ultrathink`, `think harder`, `use all models`, `max IQ`, or `deep dive` to force the council.',
     '- Say `ultracode` for the same protected deep route on operator/code tasks.',
-    '- Say `quick answer`, `fast answer`, or `keep it simple` to prefer the fast path.',
+    '- Say `quick answer`, `fast answer`, or `keep it simple` to prefer the fast path unless the request is confirmed high-risk planning.',
     '- I show a concise council verdict when deeper checking materially shapes the answer.',
   ].join('\n');
 }

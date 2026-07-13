@@ -15,6 +15,7 @@ import type {
   AndreaPlatformProviderCouncilResult,
   PlatformTaskFamily,
 } from './andrea-platform-bridge.js';
+import { isAndreaPlatformCoordinatorBridgeEnabled } from './andrea-platform-bridge.js';
 import type {
   CouncilCalibrationSnapshot,
   CouncilDoctorReport,
@@ -361,12 +362,16 @@ export function buildCouncilDoctorReport(
     providerHealth?: ProviderHealthSnapshot[];
     integrationHealth?: Array<{ integrationId: string; state: string }>;
     projectRoot?: string;
+    platformCoordinatorExpected?: boolean;
   } = {},
 ): CouncilDoctorReport {
   const allRuns = safeListCouncilRunLedger({ limit: DOCTOR_LOOKBACK });
   const runs = allRuns.filter((run) => run.runOrigin === 'live');
   const signals = listCouncilOutcomeSignals({ limit: DOCTOR_LOOKBACK });
   const taskEase = buildCouncilTaskEaseReport({ now: new Date(now) });
+  const platformCoordinatorExpected =
+    options.platformCoordinatorExpected ??
+    isAndreaPlatformCoordinatorBridgeEnabled();
   const currentProviderHealth =
     options.providerHealth ||
     safeCollectProviderHealth(now, options.projectRoot);
@@ -429,6 +434,10 @@ export function buildCouncilDoctorReport(
       : 0;
   const lastRun = runs[0];
   const degradedReasons = collectDegradedReasons(runs);
+  const degradationClasses = classifyCouncilDegradation(
+    runs,
+    platformCoordinatorExpected,
+  );
   const latestRunEvidenceGaps = lastRun ? collectEvidenceGaps([lastRun]) : [];
   const historicalRunEvidenceGaps = collectEvidenceGaps(runs.slice(1)).filter(
     (gap) => !latestRunEvidenceGaps.includes(gap),
@@ -438,7 +447,11 @@ export function buildCouncilDoctorReport(
   const resolvedEvidenceGaps = [
     ...latestRunEvidenceGaps,
     ...historicalRunEvidenceGaps,
-  ].filter((gap) => evidenceGapIsResolved(gap, integrationHealth));
+  ].filter(
+    (gap) =>
+      evidenceGapIsResolved(gap, integrationHealth) ||
+      providerEvidenceGapIsResolved(gap, currentHealthyProviderIds),
+  );
   const evidenceGaps = latestRunEvidenceGaps.filter(
     (gap) => !resolvedEvidenceGaps.includes(gap),
   );
@@ -462,18 +475,31 @@ export function buildCouncilDoctorReport(
     'minimax_cloud',
     'brave_search',
   ].every((providerId) => currentHealthyProviderIds.has(providerId));
+  const latestPlatformRecordFallback =
+    platformCoordinatorExpected && lastRun
+      ? [
+          ...parseJsonArray(lastRun.providerFailuresJson),
+          ...parseJsonArray(lastRun.riskFlagsJson),
+        ].some((flag) =>
+          /platform_council_record_local_fallback/i.test(String(flag)),
+        )
+      : false;
   const liveRepairAction =
-    currentCoreProvidersHealthy && hasHistoricallyDegradedProviders
-      ? 'Providers are currently healthy; run one live `ultrathink` proof to retire stale degradation history.'
-      : 'Run one live `ultrathink` proof, then inspect degraded provider reasons.';
+    currentCoreProvidersHealthy && latestPlatformRecordFallback
+      ? 'Direct provider participation is healthy; repair the platform council record handoff before another live proof.'
+      : currentCoreProvidersHealthy && hasHistoricallyDegradedProviders
+        ? 'Providers are currently healthy; run one live `ultrathink` proof to retire stale degradation history.'
+        : 'Run one live `ultrathink` proof, then inspect degraded provider reasons.';
   const nextAction =
     runs.length === 0
       ? 'Run one `ultrathink` Telegram proof turn, then rerun npm run debug:council.'
-      : ok
-        ? 'Run a fresh live `ultrathink` proof after major changes, then keep the challenge ladder green.'
-        : taskEase.status !== 'pass'
-          ? `${taskEase.nextAction} ${liveRepairAction}`
-          : liveRepairAction;
+      : currentCoreProvidersHealthy && latestPlatformRecordFallback
+        ? liveRepairAction
+        : ok
+          ? 'Run a fresh live `ultrathink` proof after major changes, then keep the challenge ladder green.'
+          : taskEase.status !== 'pass'
+            ? `${taskEase.nextAction} ${liveRepairAction}`
+            : liveRepairAction;
   return {
     generatedAt: now,
     ok,
@@ -521,6 +547,10 @@ export function buildCouncilDoctorReport(
       credentialState: provider.credentialState,
     })),
     providerParticipation,
+    platformRecordMode: platformCoordinatorExpected
+      ? 'coordinator'
+      : 'local_runtime',
+    degradationClasses,
     degradedReasons,
     evidenceGaps,
     historicalEvidenceGaps,
@@ -586,6 +616,8 @@ export function formatCouncilDoctorReport(report: CouncilDoctorReport): string {
     report.providerParticipation
       ? `Provider participation: ${report.providerParticipation.status} skipped=${report.providerParticipation.skippedProviderIds.join(', ') || 'none'} substituted=${report.providerParticipation.substitutedRoles.join(', ') || 'none'}`
       : 'Provider participation: none recorded',
+    `Platform record mode: ${report.platformRecordMode || 'unknown'}`,
+    `Degradation classes: ${report.degradationClasses?.length ? report.degradationClasses.map((item) => `${item.kind}=${item.runs}`).join(', ') : 'none'}`,
     ...replayLines,
     `Current evidence gaps: ${report.evidenceGaps.slice(0, 4).join(', ') || 'none'}`,
     ...(report.historicalEvidenceGaps?.length
@@ -1038,6 +1070,46 @@ function collectDegradedReasons(records: CouncilRunLedgerRecord[]): string[] {
   return Array.from(reasons).slice(0, 10);
 }
 
+function classifyCouncilDegradation(
+  records: CouncilRunLedgerRecord[],
+  platformCoordinatorExpected = true,
+): CouncilDoctorReport['degradationClasses'] {
+  const counts = new Map<
+    NonNullable<CouncilDoctorReport['degradationClasses']>[number]['kind'],
+    number
+  >();
+  const increment = (
+    kind: NonNullable<
+      CouncilDoctorReport['degradationClasses']
+    >[number]['kind'],
+  ) => counts.set(kind, (counts.get(kind) || 0) + 1);
+  for (const run of records.slice(0, DOCTOR_LOOKBACK)) {
+    const providerFailures = parseJsonArray(run.providerFailuresJson).map(
+      String,
+    );
+    const riskFlags = parseJsonArray(run.riskFlagsJson).map(String);
+    const members = parseMemberStatuses(run.memberStatusesJson);
+    const combined = [...providerFailures, ...riskFlags].join(' ');
+    if (providerFailures.length > 0) increment('provider_failure');
+    if (/timeout/i.test(combined)) increment('timeout');
+    if (
+      /substitut|fallback_used|openai_verifier_fallback/i.test(combined) ||
+      members.some((member) => member.memberId === 'openai_verifier_fallback')
+    ) {
+      increment('substitution');
+    }
+    if (
+      platformCoordinatorExpected &&
+      /platform_council_record_local_fallback/i.test(combined)
+    ) {
+      increment('local_fallback');
+    }
+  }
+  return [...counts.entries()]
+    .map(([kind, runCount]) => ({ kind, runs: runCount }))
+    .sort((a, b) => b.runs - a.runs || a.kind.localeCompare(b.kind));
+}
+
 function collectEvidenceGaps(records: CouncilRunLedgerRecord[]): string[] {
   const gaps = new Set<string>();
   for (const run of records.slice(0, DOCTOR_LOOKBACK)) {
@@ -1072,6 +1144,18 @@ function evidenceGapIsResolved(
     (status) =>
       status.state === 'healthy' &&
       gap.startsWith(`integration_${status.integrationId}_`),
+  );
+}
+
+function providerEvidenceGapIsResolved(
+  gap: string,
+  healthyProviderIds: Set<string>,
+): boolean {
+  return [...healthyProviderIds].some(
+    (providerId) =>
+      gap === `provider_${providerId}_unknown` ||
+      gap === `provider_${providerId}_degraded` ||
+      gap === `provider_${providerId}_externally_blocked`,
   );
 }
 

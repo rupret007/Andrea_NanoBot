@@ -25,6 +25,11 @@ import {
 import { handleLifeThreadCommand } from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
 import { runActionPreflight } from './action-preflight.js';
+import {
+  isChannelDeliveryUnverifiedError,
+  requireCompleteChannelDelivery,
+  type ChannelDeliveryUnverifiedError,
+} from './channel-delivery.js';
 import { recordCognitiveOwnerReview } from './cognitive-kernel.js';
 import { recordAssistantMetric } from './personal-assistant-metrics.js';
 import {
@@ -447,7 +452,11 @@ function parseTargetConversation(
 }
 
 function isOpenMessageActionStatus(status: MessageActionSendStatus): boolean {
-  return status !== 'sent' && status !== 'skipped';
+  return (
+    status !== 'sent' &&
+    status !== 'skipped' &&
+    status !== 'delivery_unverified'
+  );
 }
 
 function isActionableBlueBubblesDecisionStatus(
@@ -799,6 +808,7 @@ export function createOrRefreshMessageActionFromDraft(
   const reuseExisting =
     existing &&
     existing.sendStatus !== 'sent' &&
+    existing.sendStatus !== 'delivery_unverified' &&
     normalizeText(existing.draftText).toLowerCase() ===
       normalizeText(params.draftText).toLowerCase();
   const record: MessageActionRecord = {
@@ -1661,6 +1671,8 @@ function buildActionLead(record: MessageActionRecord): string {
         : 'Andrea: I saved that to revisit before sending.';
     case 'failed':
       return "Andrea: I couldn't send that right now.";
+    case 'delivery_unverified':
+      return 'Andrea: I could not verify whether that message arrived.';
     case 'approved':
       return 'Andrea: This is approved and ready.';
     case 'skipped':
@@ -1707,6 +1719,9 @@ function buildStatusLine(record: MessageActionRecord): string {
   if (record.sendStatus === 'failed') {
     return 'Status: send failed, but the draft is still saved.';
   }
+  if (record.sendStatus === 'delivery_unverified') {
+    return 'Status: delivery unverified; resending is blocked to prevent a duplicate.';
+  }
   if (record.sendStatus === 'skipped') {
     return 'Status: skipped for now.';
   }
@@ -1740,6 +1755,13 @@ function buildStateNote(record: MessageActionRecord): string | null {
   if (record.sendStatus === 'drafted') {
     return 'This message is still just a draft.';
   }
+  if (record.sendStatus === 'delivery_unverified') {
+    const evidence = parseExplanation(record).deliveryVerification;
+    const confirmedPrefix = evidence?.confirmedReceiptCount
+      ? ` The provider confirmed ${evidence.confirmedReceiptCount} message part${evidence.confirmedReceiptCount === 1 ? '' : 's'} before verification stopped.`
+      : '';
+    return `The send may have arrived in whole or in part.${confirmedPrefix}`;
+  }
   return null;
 }
 
@@ -1751,6 +1773,9 @@ function nextStepLine(record: MessageActionRecord): string {
   }
   if (record.sendStatus === 'sent') {
     return 'Next: review it later if you want to track the follow-through.';
+  }
+  if (record.sendStatus === 'delivery_unverified') {
+    return 'Next: check the target conversation before deciding whether any new message is needed.';
   }
   if (isScheduledSendAction(record)) {
     return 'Next: send it now, cancel the scheduled send, remind yourself instead, or revise it.';
@@ -1774,6 +1799,9 @@ function nextStepLine(record: MessageActionRecord): string {
 }
 
 function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
+  if (record.sendStatus === 'delivery_unverified') {
+    return [];
+  }
   if (isBlueBubblesProofDrillAction(record)) {
     return [
       [
@@ -1942,11 +1970,13 @@ export function buildMessageActionPresentation(
       lead: buildActionLead(record),
       facts: [buildTargetLine(record), buildStatusLine(record)],
       state:
-        record.sendStatus === 'failed'
-          ? 'failed'
-          : record.sendStatus === 'sent'
-            ? 'verified'
-            : 'ready',
+        record.sendStatus === 'delivery_unverified'
+          ? 'blocked'
+          : record.sendStatus === 'failed'
+            ? 'failed'
+            : record.sendStatus === 'sent'
+              ? 'verified'
+              : 'ready',
       nextAction: nextStepLine(record),
       actions:
         channel === 'telegram'
@@ -2530,6 +2560,49 @@ async function markFailedSend(params: {
   };
 }
 
+async function markDeliveryUnverified(params: {
+  action: MessageActionRecord;
+  now: Date;
+  error: ChannelDeliveryUnverifiedError;
+}): Promise<SendExecutionResult> {
+  const target = parseTarget(params.action);
+  pauseScheduledTask(params.action.scheduledTaskId);
+  const evidence = params.error.evidence;
+  updateMessageAction(params.action.messageActionId, {
+    sendStatus: 'delivery_unverified',
+    followupAt: null,
+    scheduledTaskId: null,
+    requiresApproval: false,
+    trustLevel: 'never_automate',
+    platformMessageId:
+      evidence.confirmedReceiptIds[0] ||
+      params.action.platformMessageId ||
+      null,
+    lastActionKind: 'delivery_unverified',
+    lastActionAt: params.now.toISOString(),
+    explanationJson: JSON.stringify({
+      ...parseExplanation(params.action),
+      safetyReason:
+        'Delivery could not be verified. Check the target conversation before considering a new message.',
+      deliveryVerification: {
+        ...evidence,
+        retryPolicy: 'verify_before_resend',
+      },
+    }),
+    lastUpdatedAt: params.now.toISOString(),
+  });
+  const updatedAction =
+    getMessageAction(params.action.messageActionId) || params.action;
+  syncOutcomeFromMessageActionRecord(updatedAction, params.now);
+  return {
+    action: updatedAction,
+    replyText:
+      'Andrea: I could not confirm whether all of that message arrived. I will not retry it because that could duplicate all or part of the message. Check the target conversation before deciding what to do next.',
+    target,
+    didSend: false,
+  };
+}
+
 async function executeSendOperation(params: {
   action: MessageActionRecord;
   deps: MessageActionExecutionDeps;
@@ -2604,11 +2677,13 @@ async function executeSendOperation(params: {
         };
   try {
     pauseScheduledTask(params.action.scheduledTaskId);
-    const receipt = await params.deps.sendToTarget(
-      params.action.targetChannel,
-      target.chatJid,
-      params.action.draftText,
-      sendOptions,
+    const receipt = requireCompleteChannelDelivery(
+      await params.deps.sendToTarget(
+        params.action.targetChannel,
+        target.chatJid,
+        params.action.draftText,
+        sendOptions,
+      ),
     );
     updateMessageAction(params.action.messageActionId, {
       sendStatus: 'sent',
@@ -2650,7 +2725,14 @@ async function executeSendOperation(params: {
       target,
       didSend: true,
     };
-  } catch {
+  } catch (error) {
+    if (isChannelDeliveryUnverifiedError(error)) {
+      return markDeliveryUnverified({
+        action: params.action,
+        now: params.now,
+        error,
+      });
+    }
     return markFailedSend(params);
   }
 }
@@ -2727,7 +2809,9 @@ export async function runScheduledMessageActionByTaskId(
             ? ` to ${eligibility.target.personName}`
             : ''
         }.`
-      : 'Scheduled message send failed.',
+      : executed.action.sendStatus === 'delivery_unverified'
+        ? 'Scheduled message delivery could not be verified; automatic retry is blocked.'
+        : 'Scheduled message send failed.',
     notificationChatJid:
       executed.action.presentationChatJid &&
       executed.action.presentationChatJid !== eligibility.target.chatJid
@@ -2788,6 +2872,19 @@ export async function applyMessageActionOperation(
         explanation.approvalReason ||
         explanation.safetyReason ||
         'Andrea: I still want your approval before sending that.',
+      presentation: buildMessageActionPresentation(
+        action,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
+  }
+
+  if (action.sendStatus === 'delivery_unverified') {
+    return {
+      handled: true,
+      action,
+      replyText:
+        'Andrea: Delivery is still unverified, so I will not resend, rewrite-and-send, defer, or relabel this attempt. Check the target conversation first; if another message is needed after that, create a new draft.',
       presentation: buildMessageActionPresentation(
         action,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',

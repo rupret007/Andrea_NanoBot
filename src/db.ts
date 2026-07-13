@@ -261,6 +261,8 @@ let databaseMode: 'uninitialized' | 'production' | 'isolated_test' =
   'uninitialized';
 
 const DATABASE_BUSY_TIMEOUT_MS = 15_000;
+const DATABASE_WAL_AUTOCHECKPOINT_PAGES = 1_000;
+const DATABASE_JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
 
 function openDatabaseConnection(dbPath: string): Database.Database {
   const database = new Database(dbPath, {
@@ -274,6 +276,16 @@ function openDatabaseConnection(dbPath: string): Database.Database {
     // timeout makes short writer overlap retry instead of failing immediately.
     database.pragma('journal_mode = WAL');
     database.pragma('synchronous = NORMAL');
+    // Keep the normal checkpoint trigger explicit and bound retained WAL file
+    // capacity after a successful reset. journal_size_limit does not cap an
+    // active transaction; it only prevents an old high-water allocation from
+    // consuming disk indefinitely after SQLite can safely reset the WAL.
+    database.pragma(
+      `wal_autocheckpoint = ${DATABASE_WAL_AUTOCHECKPOINT_PAGES}`,
+    );
+    database.pragma(
+      `journal_size_limit = ${DATABASE_JOURNAL_SIZE_LIMIT_BYTES}`,
+    );
   }
   return database;
 }
@@ -284,6 +296,30 @@ export function isDatabaseInitialized(): boolean {
 
 export function isIsolatedTestDatabase(): boolean {
   return isDatabaseInitialized() && databaseMode === 'isolated_test';
+}
+
+/** @internal - exposes connection policy for disposable-database tests. */
+export function _getDatabaseConnectionPolicy(): {
+  busyTimeoutMs: number;
+  journalMode: string;
+  synchronous: number;
+  walAutoCheckpointPages: number;
+  journalSizeLimitBytes: number;
+} {
+  if (!isDatabaseInitialized()) {
+    throw new Error('Database is not initialized.');
+  }
+  return {
+    busyTimeoutMs: Number(db.pragma('busy_timeout', { simple: true })),
+    journalMode: String(db.pragma('journal_mode', { simple: true })),
+    synchronous: Number(db.pragma('synchronous', { simple: true })),
+    walAutoCheckpointPages: Number(
+      db.pragma('wal_autocheckpoint', { simple: true }),
+    ),
+    journalSizeLimitBytes: Number(
+      db.pragma('journal_size_limit', { simple: true }),
+    ),
+  };
 }
 
 function redactStoredCognitiveMetadata(value: string, limit = 12000): string {
@@ -5255,6 +5291,18 @@ function createSchema(database: Database.Database): void {
 }
 
 export function initDatabase(): void {
+  const deterministicStorageMode = (
+    process.env.ANDREA_DETERMINISTIC_STORAGE_MODE || ''
+  )
+    .trim()
+    .toLowerCase();
+  if (deterministicStorageMode) {
+    if (deterministicStorageMode !== 'memory') {
+      throw new Error('Unsupported deterministic storage mode.');
+    }
+    _initTestDatabase();
+    return;
+  }
   const dbPath = path.join(STORE_DIR, 'messages.db');
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 

@@ -28,6 +28,10 @@ import {
   classifyDirectAssistantError,
   isDirectAssistantErrorText,
 } from './runtime-error-classification.js';
+import {
+  RuntimeToolEvidenceCollector,
+  type RuntimeToolEvidenceV1,
+} from './runtime-tool-evidence.js';
 
 interface ContainerInput {
   prompt: string;
@@ -64,6 +68,7 @@ interface ContainerOutput {
   recoveryAttempted?: boolean;
   sawLifecycleOnlyOutput?: boolean;
   firstResultSubtype?: string | null;
+  runtimeToolEvidence?: RuntimeToolEvidenceV1;
 }
 
 interface SessionEntry {
@@ -505,6 +510,7 @@ async function runQuery(
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
+  runtimeToolEvidence: RuntimeToolEvidenceCollector,
   resumeAt?: string,
   options: {
     fallbackMode?: boolean;
@@ -521,6 +527,7 @@ async function runQuery(
   hadErrorResult: boolean;
   firstResultSubtype?: string;
 }> {
+  runtimeToolEvidence.beginAttempt();
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -647,6 +654,7 @@ async function runQuery(
       },
     },
   })) {
+    runtimeToolEvidence.observeSdkMessage(message);
     messageCount++;
     const msgType =
       message.type === 'system'
@@ -762,6 +770,7 @@ async function runQuery(
         newSessionId,
         firstResultSubtype:
           typeof message.subtype === 'string' ? message.subtype : null,
+        runtimeToolEvidence: runtimeToolEvidence.snapshot(),
         ...(treatAsErrorResult
           ? {
               error: debugErrorText || 'Agent execution failed',
@@ -943,6 +952,7 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+  let runtimeToolEvidence = new RuntimeToolEvidenceCollector();
   try {
     let usedDirectRecoveryRetry = false;
     while (true) {
@@ -959,6 +969,7 @@ async function main(): Promise<void> {
           mcpServerPath,
           containerInput,
           sdkEnv,
+          runtimeToolEvidence,
           resumeAt,
           {
             fallbackMode: usedDirectRecoveryRetry,
@@ -1025,6 +1036,7 @@ async function main(): Promise<void> {
               directAssistantError?.diagnosticHint ||
               'assistant runtime failed before producing a stable answer',
             recoveryAttempted: usedDirectRecoveryRetry || undefined,
+            runtimeToolEvidence: runtimeToolEvidence.snapshot(),
           });
           break;
         }
@@ -1083,7 +1095,12 @@ async function main(): Promise<void> {
       }
 
       // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+      writeOutput({
+        status: 'success',
+        result: null,
+        newSessionId: sessionId,
+        runtimeToolEvidence: runtimeToolEvidence.snapshot(),
+      });
 
       log('Query ended, waiting for next IPC message...');
 
@@ -1096,6 +1113,7 @@ async function main(): Promise<void> {
 
       log(`Got new message (${nextMessage.length} chars), starting new query`);
       prompt = nextMessage;
+      runtimeToolEvidence = new RuntimeToolEvidenceCollector();
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
@@ -1105,6 +1123,7 @@ async function main(): Promise<void> {
       result: null,
       newSessionId: sessionId,
       error: errorMessage,
+      runtimeToolEvidence: runtimeToolEvidence.snapshot(),
     });
     process.exit(1);
   }

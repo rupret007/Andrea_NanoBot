@@ -5,6 +5,7 @@ type Step = {
   name: string;
   command: string;
   args: string[];
+  liveStorage?: boolean;
 };
 
 function runStep(step: Step): void {
@@ -14,7 +15,9 @@ function runStep(step: Step): void {
   const startedAt = Date.now();
   const result = spawnSync(step.command, step.args, {
     stdio: 'inherit',
-    env: buildHermeticTestEnv(),
+    env: buildHermeticTestEnv(process.env, {
+      isolateStorage: !step.liveStorage,
+    }),
     shell: process.platform === 'win32',
   });
   const durationSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
@@ -69,6 +72,7 @@ function resolveSteps(includeLiveVerify: boolean): Step[] {
         '--step',
         'verify',
       ],
+      liveStorage: true,
     });
   }
 

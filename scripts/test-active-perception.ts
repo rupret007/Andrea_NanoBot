@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 
-import { initDatabase } from '../src/db.js';
+import { _initTestDatabase } from '../src/db.js';
 import { buildLiveProofGauntletReport } from '../src/live-proof-gauntlet.js';
 import {
   buildRealityGroundingReport,
   formatActivePerceptionReport,
 } from '../src/reality-grounding.js';
 
-initDatabase();
+_initTestDatabase();
 
 function surface(
   proofState: 'live_proven' | 'near_live_only' | 'externally_blocked',

@@ -7,6 +7,10 @@ import {
   upsertCompanionHandoff,
 } from './db.js';
 import { syncOutcomeFromHandoffRecord } from './outcome-reviews.js';
+import {
+  isChannelDeliveryUnverifiedError,
+  requireCompleteChannelDelivery,
+} from './channel-delivery.js';
 import type {
   ChannelArtifact,
   CompanionHandoffPayload,
@@ -93,6 +97,9 @@ export interface DeliverCompanionHandoffResult {
   speech: string;
   targetChatJid?: string;
   platformMessageId?: string;
+  confirmedReceiptCount?: number;
+  nextUnconfirmedChunkIndex?: number;
+  deliveryOutcome?: 'partial' | 'unknown';
   errorText?: string;
 }
 
@@ -324,7 +331,7 @@ export async function deliverCompanionHandoff(
         targetChatJid: target.chatJid,
       };
     }
-    const delivery =
+    const delivery = requireCompleteChannelDelivery(
       payload.kind === 'artifact' && payload.artifact
         ? await sendHandoffArtifact(
             deps,
@@ -344,25 +351,8 @@ export async function deliverCompanionHandoff(
             targetChannel,
             target.chatJid,
             renderCompanionHandoffText(targetChannel, payload),
-          );
-    if (!delivery.platformMessageId && !delivery.platformMessageIds?.length) {
-      const errorText = `${getTargetLabel(targetChannel)} did not return a delivery receipt.`;
-      updateCompanionHandoff(record.handoffId, {
-        status: 'failed',
-        errorText,
-        updatedAt: new Date().toISOString(),
-      });
-      const updated = getCompanionHandoff(record.handoffId);
-      if (updated) syncOutcomeFromHandoffRecord(updated);
-      return {
-        ok: false,
-        handoffId: record.handoffId,
-        status: 'failed',
-        speech: `I could not send that to ${getTargetLabel(targetChannel)} just now.`,
-        errorText,
-        targetChatJid: target.chatJid,
-      };
-    }
+          ),
+    );
     const platformMessageId =
       delivery.platformMessageId || delivery.platformMessageIds?.[0];
     updateCompanionHandoff(record.handoffId, {
@@ -385,6 +375,39 @@ export async function deliverCompanionHandoff(
       platformMessageId,
     };
   } catch (error) {
+    if (isChannelDeliveryUnverifiedError(error)) {
+      const evidence = error.evidence;
+      const platformMessageId = evidence.confirmedReceiptIds[0];
+      const nextChunkEvidence = Number.isInteger(
+        evidence.nextUnconfirmedChunkIndex,
+      )
+        ? `; next_unconfirmed_chunk_index=${evidence.nextUnconfirmedChunkIndex}`
+        : '';
+      const errorText =
+        `Delivery unverified (${evidence.outcome}; ` +
+        `confirmed_receipts=${evidence.confirmedReceiptCount}${nextChunkEvidence}). ` +
+        'Automatic retry is blocked; verify the target conversation before any new send.';
+      updateCompanionHandoff(record.handoffId, {
+        status: 'delivery_unverified',
+        deliveredMessageId: platformMessageId || null,
+        errorText,
+        updatedAt: new Date().toISOString(),
+      });
+      const updated = getCompanionHandoff(record.handoffId);
+      if (updated) syncOutcomeFromHandoffRecord(updated);
+      return {
+        ok: false,
+        handoffId: record.handoffId,
+        status: 'delivery_unverified',
+        speech: `I could not verify whether the ${getTargetLabel(targetChannel)} handoff arrived in whole or in part. I will not retry it because that could create a duplicate.`,
+        errorText,
+        targetChatJid: target.chatJid,
+        platformMessageId,
+        confirmedReceiptCount: evidence.confirmedReceiptCount,
+        nextUnconfirmedChunkIndex: evidence.nextUnconfirmedChunkIndex,
+        deliveryOutcome: evidence.outcome,
+      };
+    }
     const errorText =
       error instanceof Error
         ? error.message
@@ -413,6 +436,9 @@ export function cancelCompanionHandoff(
 ): CompanionHandoffRecord | undefined {
   const record = getCompanionHandoff(handoffId);
   if (!record) return undefined;
+  if (record.status === 'delivery_unverified') {
+    return record;
+  }
   updateCompanionHandoff(handoffId, {
     status: 'cancelled',
     errorText: reason || record.errorText || null,

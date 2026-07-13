@@ -91,6 +91,18 @@ async function main(): Promise<void> {
   });
   assert.equal(report.privacy.metadataOnly, true);
   const doctor = buildToolReliabilityDoctorReport(now);
+  const expectedNonhealthy = doctor.rollups.filter(
+    (item) => item.currentHealth !== 'healthy',
+  ).length;
+  assert.equal(doctor.degradedSubjectCount, expectedNonhealthy);
+  assert.equal(
+    Object.values(doctor.healthCounts).reduce((sum, count) => sum + count, 0),
+    doctor.rollups.length,
+  );
+  assert.equal(
+    doctor.topDegraded.length,
+    Math.min(8, doctor.degradedSubjectCount),
+  );
   assert.ok(
     doctor.subjects.some((item) => item.subjectId === 'provider:brave_search'),
   );

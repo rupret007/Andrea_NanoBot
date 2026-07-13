@@ -43,6 +43,231 @@ function metricMetadata(
   }
 }
 
+function isLegacyCouncilCostReservation(
+  event: AssistantMetricEventRecord,
+): boolean {
+  if (event.kind !== 'live_eval_cost') return false;
+  const metadata = metricMetadata(event);
+  // A short-lived pre-release candidate used this metadata label. Keep it
+  // readable without treating the value as provider billing.
+  if (metadata.costAccountingClass === 'conservative_upper_bound_reservation')
+    return true;
+  if (metadata.costAccountingClass === 'conservative_estimate_reservation')
+    return true;
+  if (metadata.costAccountingClass === 'fixed_estimate_reservation')
+    return true;
+  if (metadata.actualCostKnown === false) return true;
+  return (
+    metadata.surface === 'budgeted_live_council' &&
+    typeof metadata.estimatedCostUsd === 'number' &&
+    typeof metadata.actualCostUsd !== 'number'
+  );
+}
+
+function sumMetricValues(events: AssistantMetricEventRecord[]): number {
+  return events.reduce((sum, event) => sum + event.value, 0);
+}
+
+function percentile(values: number[], percentileValue: number): number {
+  if (values.length === 0) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const rank = Math.max(
+    0,
+    Math.min(sorted.length - 1, Math.ceil(percentileValue * sorted.length) - 1),
+  );
+  return Math.round(sorted[rank] || 0);
+}
+
+const DELIVERY_STAGE_KEYS_V2 = [
+  ['request_preprocessing', 'preprocessingMs'],
+  ['turn_harness', 'harnessMs'],
+  ['response_preparation', 'responsePreparationMs'],
+  ['channel_delivery', 'channelDeliveryMs'],
+] as const;
+
+const DELIVERY_STAGE_KEYS_V3 = [
+  ['queue_wait', 'queueWaitMs'],
+  ...DELIVERY_STAGE_KEYS_V2,
+] as const;
+
+function deliveryStageKeys(metadata: Record<string, unknown>) {
+  return Number(metadata.deliveryInstrumentationVersion) >= 3 ||
+    metadata.queueWaitMs !== undefined
+    ? DELIVERY_STAGE_KEYS_V3
+    : DELIVERY_STAGE_KEYS_V2;
+}
+
+function isFiniteNonNegativeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function deliveryAttributionState(
+  event: AssistantMetricEventRecord,
+): 'complete' | 'legacy' | 'invalid' {
+  const metadata = metricMetadata(event);
+  const stageKeys = deliveryStageKeys(metadata);
+  const stageValues = stageKeys.map(([, key]) => metadata[key]);
+  const presentStageCount = stageValues.filter(
+    (value) => value !== undefined,
+  ).length;
+  if (presentStageCount === 0) return 'legacy';
+  if (
+    presentStageCount !== stageKeys.length ||
+    !stageValues.every(isFiniteNonNegativeNumber) ||
+    !isFiniteNonNegativeNumber(event.value)
+  ) {
+    return 'invalid';
+  }
+  const attributedTotal = (stageValues as number[]).reduce(
+    (sum, value) => sum + value,
+    0,
+  );
+  return Math.abs(attributedTotal - event.value) <= 1 ? 'complete' : 'invalid';
+}
+
+function slowestDeliveryStage(
+  events: AssistantMetricEventRecord[],
+): string | null {
+  const totals = new Map<string, { total: number; samples: number }>();
+  for (const event of events) {
+    const metadata = metricMetadata(event);
+    for (const [stage, key] of deliveryStageKeys(metadata)) {
+      const value = metadata[key];
+      if (!isFiniteNonNegativeNumber(value)) continue;
+      const current = totals.get(stage) || { total: 0, samples: 0 };
+      current.total += value;
+      current.samples += 1;
+      totals.set(stage, current);
+    }
+  }
+  return (
+    [...totals.entries()].sort(
+      (a, b) => b[1].total / b[1].samples - a[1].total / a[1].samples,
+    )[0]?.[0] || null
+  );
+}
+
+function buildLatencyRouteBreakdown(events: AssistantMetricEventRecord[]) {
+  const byRoute = new Map<string, AssistantMetricEventRecord[]>();
+  for (const event of events) {
+    const metadata = metricMetadata(event);
+    const routeKey =
+      typeof metadata.routeKey === 'string' && metadata.routeKey.trim()
+        ? metadata.routeKey.trim().slice(0, 120)
+        : 'unknown';
+    const routeEvents = byRoute.get(routeKey) || [];
+    routeEvents.push(event);
+    byRoute.set(routeKey, routeEvents);
+  }
+  return [...byRoute.entries()]
+    .map(([routeKey, routeEvents]) => {
+      const values = routeEvents.map((event) => event.value);
+      const localOnly = routeEvents.every(
+        (event) => metricMetadata(event).latencyTargetClass === 'local_command',
+      );
+      const targetMs = localOnly ? 2_000 : 10_000;
+      const p95Ms = percentile(values, 0.95);
+      return {
+        routeKey,
+        sampleCount: routeEvents.length,
+        averageMs: Math.round(
+          values.reduce((sum, value) => sum + value, 0) / values.length,
+        ),
+        p50Ms: percentile(values, 0.5),
+        p95Ms,
+        slowestStage: slowestDeliveryStage(routeEvents),
+        targetMs,
+        meetsTarget: p95Ms <= targetMs,
+      };
+    })
+    .sort((a, b) => b.p95Ms - a.p95Ms || a.routeKey.localeCompare(b.routeKey));
+}
+
+function buildLatencyProviderBreakdown(events: AssistantMetricEventRecord[]) {
+  const grouped = new Map<string, AssistantMetricEventRecord[]>();
+  for (const event of events) {
+    const metadata = metricMetadata(event);
+    const hasRoutingProvider =
+      typeof metadata.routingProviderId === 'string' &&
+      metadata.routingProviderId.trim().length > 0;
+    const providerId = hasRoutingProvider
+      ? String(metadata.routingProviderId).trim().slice(0, 120)
+      : typeof metadata.providerId === 'string' && metadata.providerId.trim()
+        ? metadata.providerId.trim().slice(0, 120)
+        : 'unknown';
+    const modelValue = hasRoutingProvider
+      ? metadata.routingModelId
+      : metadata.modelId;
+    const modelId =
+      typeof modelValue === 'string' && modelValue.trim()
+        ? modelValue.trim().slice(0, 160)
+        : null;
+    const providerRole = hasRoutingProvider ? 'routing' : 'response';
+    const key = JSON.stringify([providerId, modelId, providerRole]);
+    const providerEvents = grouped.get(key) || [];
+    providerEvents.push(event);
+    grouped.set(key, providerEvents);
+  }
+  return [...grouped.entries()]
+    .map(([key, providerEvents]) => {
+      const [providerId, modelId, providerRole] = JSON.parse(key) as [
+        string,
+        string | null,
+        'response' | 'routing',
+      ];
+      const values = providerEvents.map((event) => event.value);
+      return {
+        providerId,
+        modelId,
+        providerRole,
+        sampleCount: providerEvents.length,
+        p50Ms: percentile(values, 0.5),
+        p95Ms: percentile(values, 0.95),
+        slowestStage: slowestDeliveryStage(providerEvents),
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.p95Ms - left.p95Ms ||
+        left.providerId.localeCompare(right.providerId),
+    );
+}
+
+function buildLatencyToolBreakdown(events: AssistantMetricEventRecord[]) {
+  const grouped = new Map<string, AssistantMetricEventRecord[]>();
+  for (const event of events) {
+    const metadata = metricMetadata(event);
+    const rawToolClass =
+      typeof metadata.toolClass === 'string'
+        ? metadata.toolClass
+        : typeof metadata.capabilityId === 'string'
+          ? metadata.capabilityId
+          : typeof metadata.handlerKind === 'string'
+            ? metadata.handlerKind
+            : 'unknown';
+    const toolClass = rawToolClass.trim().slice(0, 120) || 'unknown';
+    const toolEvents = grouped.get(toolClass) || [];
+    toolEvents.push(event);
+    grouped.set(toolClass, toolEvents);
+  }
+  return [...grouped.entries()]
+    .map(([toolClass, toolEvents]) => {
+      const values = toolEvents.map((event) => event.value);
+      return {
+        toolClass,
+        sampleCount: toolEvents.length,
+        p50Ms: percentile(values, 0.5),
+        p95Ms: percentile(values, 0.95),
+        slowestStage: slowestDeliveryStage(toolEvents),
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.p95Ms - left.p95Ms ||
+        left.toolClass.localeCompare(right.toolClass),
+    );
+}
+
 function reviewedOutcomeIdentity(event: AssistantMetricEventRecord): string {
   const metadata = metricMetadata(event);
   const identity =
@@ -268,7 +493,7 @@ export function buildAssistantMetricSnapshot(params: {
   );
   const toolAttempts = count(comparableInteractionEvents, 'tool_attempt');
   const toolSuccesses = count(comparableInteractionEvents, 'tool_success');
-  const latency = events.filter((event) => {
+  const allDeliveryLatency = events.filter((event) => {
     if (event.kind !== 'latency_sample') return false;
     const metadata = metricMetadata(event);
     return (
@@ -277,6 +502,81 @@ export function buildAssistantMetricSnapshot(params: {
       metadata.runOrigin !== 'synthetic'
     );
   });
+  const degradedDeliveryEvents = events.filter((event) => {
+    if (event.kind !== 'latency_sample') return false;
+    const metadata = metricMetadata(event);
+    return (
+      metadata.latencyClass === 'interaction_delivery_degraded' &&
+      metadata.runOrigin !== 'replay' &&
+      metadata.runOrigin !== 'synthetic'
+    );
+  });
+  const partialInteractionDeliveryCount = degradedDeliveryEvents.filter(
+    (event) => metricMetadata(event).deliveryOutcome === 'partial',
+  ).length;
+  const unknownInteractionDeliveryCount = degradedDeliveryEvents.filter(
+    (event) => metricMetadata(event).deliveryOutcome === 'unknown',
+  ).length;
+  const latestDegradedDelivery = degradedDeliveryEvents
+    .slice()
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+  const latestDegradedMetadata = latestDegradedDelivery
+    ? metricMetadata(latestDegradedDelivery)
+    : {};
+  const latestDegradedDeliveryOutcome = ['partial', 'unknown'].includes(
+    String(latestDegradedMetadata.deliveryOutcome),
+  )
+    ? (String(latestDegradedMetadata.deliveryOutcome) as 'partial' | 'unknown')
+    : null;
+  const attributedDeliveryLatency = allDeliveryLatency.filter(
+    (event) => deliveryAttributionState(event) === 'complete',
+  );
+  const legacyDeliveryLatency = allDeliveryLatency.filter(
+    (event) => deliveryAttributionState(event) === 'legacy',
+  );
+  const invalidDeliveryLatency = allDeliveryLatency.filter(
+    (event) => deliveryAttributionState(event) === 'invalid',
+  );
+  const hostPressureSamples = attributedDeliveryLatency.filter((event) => {
+    const pressureClass = metricMetadata(event).hostPressureClass;
+    return ['normal', 'elevated', 'high', 'unknown'].includes(
+      String(pressureClass),
+    );
+  });
+  const highHostPressureSampleCount = hostPressureSamples.filter(
+    (event) => metricMetadata(event).hostPressureClass === 'high',
+  ).length;
+  const latestHostPressureClass = hostPressureSamples
+    .slice()
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .map((event) => String(metricMetadata(event).hostPressureClass))
+    .find((value) =>
+      ['normal', 'elevated', 'high', 'unknown'].includes(value),
+    ) as 'normal' | 'elevated' | 'high' | 'unknown' | undefined;
+  const latency =
+    attributedDeliveryLatency.length > 0
+      ? attributedDeliveryLatency
+      : legacyDeliveryLatency;
+  const latencyValues = latency.map((event) => event.value);
+  const interactionLatencyByRoute = buildLatencyRouteBreakdown(latency);
+  const interactionLatencyByProvider = buildLatencyProviderBreakdown(latency);
+  const interactionLatencyByTool = buildLatencyToolBreakdown(latency);
+  const worstBreachingLatencyRoute = interactionLatencyByRoute
+    .filter((route) => !route.meetsTarget)
+    .sort(
+      (a, b) =>
+        b.p95Ms / b.targetMs - a.p95Ms / a.targetMs || b.p95Ms - a.p95Ms,
+    )[0]?.routeKey;
+  const legacyCouncilCostReservations = events.filter(
+    isLegacyCouncilCostReservation,
+  );
+  const recordedLiveEvalCostEstimateEvents = events.filter(
+    (event) =>
+      event.kind === 'live_eval_cost' && !isLegacyCouncilCostReservation(event),
+  );
+  const explicitLiveEvalCostReservations = events.filter(
+    (event) => event.kind === 'live_eval_cost_reservation',
+  );
   return {
     snapshotId: randomUUID(),
     groupFolder: params.groupFolder,
@@ -302,8 +602,42 @@ export function buildAssistantMetricSnapshot(params: {
               latency.length,
           )
         : 0,
+    p50LatencyMs: percentile(latencyValues, 0.5),
+    p95LatencyMs: percentile(latencyValues, 0.95),
+    slowestLatencyStage: slowestDeliveryStage(latency),
+    slowestLatencyRoute: interactionLatencyByRoute[0]?.routeKey || null,
+    slowestLatencyProvider: interactionLatencyByProvider[0]?.providerId || null,
+    slowestLatencyTool: interactionLatencyByTool[0]?.toolClass || null,
+    worstBreachingLatencyRoute: worstBreachingLatencyRoute || null,
+    interactionLatencyTargetBreaches: interactionLatencyByRoute.filter(
+      (route) => !route.meetsTarget,
+    ).length,
+    legacyInteractionLatencySampleCount: legacyDeliveryLatency.length,
+    invalidInteractionLatencySampleCount: invalidDeliveryLatency.length,
+    hostPressureSampleCount: hostPressureSamples.length,
+    highHostPressureSampleCount,
+    latestHostPressureClass: latestHostPressureClass || null,
+    degradedInteractionDeliveryCount: degradedDeliveryEvents.length,
+    partialInteractionDeliveryCount,
+    unknownInteractionDeliveryCount,
+    latestDegradedDeliveryOutcome,
+    latestDegradedDeliveryRoute:
+      typeof latestDegradedMetadata.routeKey === 'string'
+        ? latestDegradedMetadata.routeKey
+        : null,
+    interactionLatencyByRoute,
+    interactionLatencyByProvider,
+    interactionLatencyByTool,
     interactionLatencySampleCount: latency.length,
-    liveEvalCostUsd: Number(count(events, 'live_eval_cost').toFixed(4)),
+    liveEvalRecordedCostEstimateUsd: Number(
+      sumMetricValues(recordedLiveEvalCostEstimateEvents).toFixed(4),
+    ),
+    liveEvalCostReservationUsd: Number(
+      sumMetricValues([
+        ...explicitLiveEvalCostReservations,
+        ...legacyCouncilCostReservations,
+      ]).toFixed(4),
+    ),
     sampleCount: events.length,
     reviewedOutcomeCount: reviewedDecisions.length,
   };

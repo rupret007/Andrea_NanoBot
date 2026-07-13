@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getSuppressedDeadSessionRuntimeEvidence,
   getAssistantSessionStorageKey,
   isDeadAssistantSessionErrorText,
 } from './assistant-session.js';
@@ -39,5 +40,37 @@ describe('isDeadAssistantSessionErrorText', () => {
         'Andrea: I drafted a reply you can send when you are ready.',
       ),
     ).toBe(false);
+  });
+
+  it('preserves receipts attached to suppressed stale-session output', () => {
+    const receipt = { evidenceId: 'stale-attempt-receipt' };
+    expect(
+      getSuppressedDeadSessionRuntimeEvidence({
+        result: 'No conversation found with session ID: dead-session-123',
+        runtimeToolEvidence: receipt,
+      }),
+    ).toBe(receipt);
+    expect(
+      getSuppressedDeadSessionRuntimeEvidence({
+        result: 'Fresh answer.',
+        runtimeToolEvidence: receipt,
+      }),
+    ).toBeNull();
+    expect(
+      getSuppressedDeadSessionRuntimeEvidence({
+        result: null,
+        error: 'No conversation found with session ID dead-session-456',
+        runtimeToolEvidence: receipt,
+      }),
+    ).toBe(receipt);
+    expect(
+      getSuppressedDeadSessionRuntimeEvidence(
+        {
+          result: 'No conversation found with session ID: dead-session-123',
+          runtimeToolEvidence: { evidenceId: 'composite:a-and-b' },
+        },
+        { streamedEvidenceForwarded: true },
+      ),
+    ).toBeNull();
   });
 });

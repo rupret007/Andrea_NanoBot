@@ -948,7 +948,7 @@ export function buildRealityGroundingReport(
     buildAutonomousImprovementLabReport({ persist: false });
   const snapshotId = hashId(
     'reality:snapshot',
-    `${generatedAt}|${proofReport.liveProvenCount}|${proofReport.proofDebtCount}|${reliabilityReport.topDegraded.length}`,
+    `${generatedAt}|${proofReport.liveProvenCount}|${proofReport.proofDebtCount}|${reliabilityReport.degradedSubjectCount}`,
   );
   const proofRecords = buildProofRecords({
     snapshotId,

@@ -27,12 +27,16 @@ Andrea is designed to be practically useful every day: schedule help, reminders,
 </p>
 
 <p align="center">
-  Andrea's personal-intelligence loop now compiles cited opt-in context, promotes only canary-verified reversible routines, verifies deep-work postconditions, and learns from redacted outcome metrics.
+  Andrea's personal-intelligence loop now compiles cited opt-in context, promotes only canary-verified reversible routines, keeps execution-heavy deep work open until bounded runtime action and state evidence is reconciled, and learns from redacted outcome metrics.
 </p>
 
 The loop is wired into real assistant turns: daily and deep-work planning share
-one local context packet, approval turns resume pending verified work, and the
-operator can inspect outcome quality with `npm run debug:assistant-intelligence`.
+one local context packet, approval turns bind a pending verification packet to
+that turn, and post-send reflection can assess reply quality but cannot prove
+execution. Repository writes also require a successful verification observed
+after the final write. Aggregate external-action evidence cannot complete a
+mission until a dedicated receipt binds the exact approved action. The operator
+can inspect outcome quality with `npm run debug:assistant-intelligence`.
 
 Andrea also includes an opt-in private owner cockpit: a calm, responsive view of
 today's focus, open loops, goals, staged approvals, and verified outcomes. It

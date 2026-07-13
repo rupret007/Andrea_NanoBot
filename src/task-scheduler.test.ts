@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _initTestDatabase,
   createTask,
+  getMessageAction,
   getTaskById,
+  upsertCommunicationThread,
+  upsertMessageAction,
   upsertResponseFeedback,
 } from './db.js';
 import type { ResponseFeedbackRecord } from './types.js';
@@ -22,6 +25,7 @@ describe('task scheduler', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   it('pauses due tasks with invalid group folders to prevent retry churn', async () => {
@@ -197,6 +201,129 @@ describe('task scheduler', () => {
     const task = getTaskById('task-self-improvement-status');
     expect(task?.status).toBe('active');
     expect(task?.next_run).not.toBeNull();
+  });
+
+  it('records an ambiguous scheduled send as unverified without replaying it', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    const taskId = 'task-scheduled-unverified';
+    const nowIso = new Date().toISOString();
+    upsertCommunicationThread({
+      id: 'comm-scheduled-unverified',
+      groupFolder: 'main',
+      title: 'Candace',
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      channel: 'bluebubbles',
+      channelChatJid: 'bb:chat-1',
+      lastInboundSummary: 'Candace asked about rehearsal.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed',
+      urgency: 'tonight',
+      followupDueAt: nowIso,
+      suggestedNextAction: 'draft_reply',
+      toneStyleHints: [],
+      lastContactAt: nowIso,
+      lastMessageId: 'bb:last-message',
+      linkedTaskId: null,
+      inferenceState: 'user_confirmed',
+      trackingMode: 'default',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      disabledAt: null,
+    });
+    createTask({
+      id: taskId,
+      group_folder: 'main',
+      chat_jid: 'bb:chat-1',
+      prompt: 'Scheduled message send for the owner',
+      schedule_type: 'once',
+      schedule_value: nowIso,
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: nowIso,
+    });
+    upsertMessageAction({
+      messageActionId: 'message-scheduled-unverified',
+      groupFolder: 'main',
+      sourceType: 'manual_prompt',
+      sourceKey: 'scheduled-unverified',
+      sourceSummary: 'Owner follow-through',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:chat-1',
+        isGroup: false,
+        personName: 'Candace',
+      }),
+      draftText: 'Remember to check the rehearsal plan.',
+      trustLevel: 'schedule_send',
+      sendStatus: 'deferred',
+      followupAt: nowIso,
+      requiresApproval: false,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: JSON.stringify({
+        communicationThreadId: 'comm-scheduled-unverified',
+      }),
+      platformMessageId: null,
+      scheduledTaskId: taskId,
+      approvedAt: nowIso,
+      lastActionKind: 'scheduled_send',
+      lastActionAt: nowIso,
+      dedupeKey: 'scheduled-unverified',
+      presentationChatJid: 'bb:chat-1',
+      presentationThreadId: null,
+      presentationMessageId: null,
+      createdAt: nowIso,
+      lastUpdatedAt: nowIso,
+      sentAt: null,
+    });
+    const sendToTarget = vi.fn(async () => ({
+      deliveryState: 'unknown' as const,
+      nextUnconfirmedChunkIndex: 0,
+    }));
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'bb:chat-1': {
+          name: 'Main',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: nowIso,
+          isMain: true,
+          requiresTrigger: false,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: (
+          _groupJid: string,
+          _taskId: string,
+          fn: () => Promise<void>,
+        ) => {
+          void fn();
+        },
+      } as any,
+      onProcess: () => {},
+      sendMessage: vi.fn(async () => {}),
+      sendToTarget,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(sendToTarget).toHaveBeenCalledTimes(1);
+    expect(getMessageAction('message-scheduled-unverified')).toMatchObject({
+      sendStatus: 'delivery_unverified',
+      trustLevel: 'never_automate',
+    });
+    expect(getTaskById(taskId)).toMatchObject({
+      status: 'completed',
+      last_result:
+        'Scheduled message delivery could not be verified; automatic retry is blocked.',
+    });
   });
 
   it('computeNextRun anchors interval tasks to scheduled time to prevent drift', () => {

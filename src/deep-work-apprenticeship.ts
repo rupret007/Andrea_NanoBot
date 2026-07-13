@@ -266,7 +266,11 @@ export type DeepWorkEvidenceGap =
   | 'check_missing'
   | 'check_failed'
   | 'risk_unresolved'
-  | 'approval_evidence_missing';
+  | 'approval_evidence_missing'
+  | 'runtime_execution_missing'
+  | 'runtime_execution_unresolved'
+  | 'runtime_verification_missing'
+  | 'approval_violation';
 
 export function deepWorkEvidenceGapLabel(gap: DeepWorkEvidenceGap): string {
   switch (gap) {
@@ -280,6 +284,14 @@ export function deepWorkEvidenceGapLabel(gap: DeepWorkEvidenceGap): string {
       return 'unresolved risks to be cleared';
     case 'approval_evidence_missing':
       return 'fresh approval evidence';
+    case 'runtime_execution_missing':
+      return 'an actual runtime execution receipt';
+    case 'runtime_execution_unresolved':
+      return 'all runtime tool results to resolve';
+    case 'runtime_verification_missing':
+      return 'a runtime-observed postcondition check';
+    case 'approval_violation':
+      return 'a valid fresh approval binding for the observed external action';
   }
 }
 
@@ -297,6 +309,44 @@ export function listDeepWorkEvidenceGaps(
     !packet.approvalRef
   ) {
     gaps.push('approval_evidence_missing');
+  }
+  if (packet.evidencePolicyVersion === 2) {
+    const evidence = packet.runtimeExecutionEvidence;
+    if (!evidence || evidence.calls.observed === 0) {
+      gaps.push('runtime_execution_missing');
+    } else {
+      if (
+        evidence.collectorStatus !== 'complete' ||
+        evidence.calls.unresolved > 0 ||
+        evidence.actions.some(
+          (action) =>
+            action.unresolved > 0 || action.lastOutcome === 'unresolved',
+        )
+      ) {
+        gaps.push('runtime_execution_unresolved');
+      }
+      if (
+        !evidence.actions.some(
+          (action) =>
+            action.class.startsWith('verification_') &&
+            action.succeeded > 0 &&
+            action.lastOutcome === 'succeeded' &&
+            action.unresolved === 0,
+        )
+      ) {
+        gaps.push('runtime_verification_missing');
+      }
+      if (
+        evidence.actions.some(
+          (action) =>
+            action.class === 'external_side_effect' && action.observed > 0,
+        ) &&
+        !packet.approvalPacketId &&
+        !packet.approvalRef
+      ) {
+        gaps.push('approval_violation');
+      }
+    }
   }
   return gaps;
 }

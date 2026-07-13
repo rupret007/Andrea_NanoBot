@@ -4,9 +4,48 @@ import type { ChannelHealthSnapshot, RuntimeBackendStatus } from './types.js';
 
 describe('andrea platform shell bridge', () => {
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     vi.resetModules();
+  });
+
+  it('fails open after a caller-bounded optional coordinator request', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
+    vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_URL', 'http://127.0.0.1:4400');
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((timeoutMs) => {
+      const controller = new AbortController();
+      setTimeout(
+        () => controller.abort(new Error('bounded timeout')),
+        timeoutMs,
+      );
+      return controller.signal;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        });
+      }) as unknown as typeof fetch,
+    );
+
+    const bridge = await import('./andrea-platform-bridge.js');
+    const request = bridge.listAndreaPlatformActiveSkillCandidates(
+      'assistant',
+      { timeoutMs: 1_000 },
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(request).resolves.toEqual([]);
+    expect(AbortSignal.timeout).toHaveBeenCalledWith(1_000);
   });
 
   it('posts shell intent and health events when the bridge is enabled', async () => {

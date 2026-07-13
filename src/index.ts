@@ -104,6 +104,10 @@ import {
 } from './db.js';
 import { buildDeepWorkReviewInvitation } from './deep-work-apprenticeship.js';
 import { GroupQueue } from './group-queue.js';
+import {
+  classifyChannelDelivery,
+  requireCompleteChannelDelivery,
+} from './channel-delivery.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import {
@@ -203,10 +207,12 @@ import {
   beginTurnAgentHarness,
   evaluateTurnReply,
   isSafeReadOnlyCalendarLookupAsk,
+  reconcileTurnRuntimeEvidence,
   reflectTurnAgentOutcome,
   type PreSendEvaluation,
   type TurnAgentHarnessContext,
 } from './turn-agent-harness.js';
+import { TurnRuntimeEvidenceScope } from './turn-runtime-evidence-scope.js';
 import {
   buildPendingPostDeliveryReflectionRefs,
   drainPostDeliveryReflections,
@@ -543,6 +549,7 @@ import {
   RegisteredGroup,
   ResponseFeedbackRecord,
   SendMessageOptions,
+  SendMessageResult,
   RuntimeBackendJob,
 } from './types.js';
 import { logger } from './logger.js';
@@ -630,6 +637,7 @@ import {
 import { analyzeMessageMedia } from './media-analysis.js';
 import { buildDirectAssistantContinuationPrompt } from './direct-assistant-continuation.js';
 import {
+  getSuppressedDeadSessionRuntimeEvidence,
   getAssistantSessionStorageKey,
   isDeadAssistantSessionErrorText,
 } from './assistant-session.js';
@@ -736,6 +744,7 @@ import {
   computeRuntimeCardContextExpiry,
   resolveRuntimeReplyContext,
 } from './runtime-chat-context.js';
+import { deliverRuntimeCardNotification } from './runtime-card-delivery.js';
 import {
   ALEXA_STATUS_COMMANDS,
   AMAZON_SEARCH_COMMANDS,
@@ -805,10 +814,22 @@ import {
   buildReviewedOutcomeProgress,
   createRegressionFixtureFromFeedback,
   formatReviewedOutcomeProgress,
-  recordAssistantMetric,
   recordMemoryRetrievalJudgment,
   recordReviewedRecommendationOutcome,
 } from './personal-assistant-metrics.js';
+import {
+  captureHostPressureSnapshot,
+  CommittedIncompleteDeliveryError,
+  deliverAssistantReplyWithMetric,
+  isCommittedIncompleteDeliveryError,
+  resolveInteractionTurnStartedAtMs,
+  runPostDeliveryEnrichment,
+  type InteractionLatencyTargetClass,
+} from './interaction-delivery-metrics.js';
+import {
+  InFlightTurnCursorRegistry,
+  runQueuedTurnWithCursorRecovery,
+} from './in-flight-turn-cursors.js';
 import {
   auditRegisteredMainChat,
   type RegisteredMainChatRecord,
@@ -827,7 +848,7 @@ let lastAgentTimestamp: Record<string, string> = {};
 // Chats with a turn currently being processed, mapped to the cursor value
 // from before that turn advanced it. Shutdown rolls these back so an
 // in-flight turn is re-fetched after restart instead of dropped silently.
-const inFlightCursorRollbacks = new Map<string, string>();
+const inFlightCursorRollbacks = new InFlightTurnCursorRegistry();
 let messageLoopRunning = false;
 const NON_RETRIABLE_ERROR_NOTIFY_COOLDOWN_MS = 15 * 60 * 1000;
 const lastNonRetriableErrorNotice: Record<
@@ -1933,6 +1954,36 @@ function parseDelegationRuleCommand(rawText: string): {
   return null;
 }
 
+function acceptConfirmedPresentationDelivery<
+  T extends SendMessageResult,
+>(params: {
+  result: T;
+  channel: string;
+  chatJid: string;
+  workflow: string;
+  onUnverified?: () => void;
+}): T | null {
+  const classification = classifyChannelDelivery(params.result);
+  if (classification.outcome === 'confirmed') return params.result;
+  if (classification.outcome === 'rejected') {
+    throw new Error('Channel presentation returned no confirmed receipt.');
+  }
+  params.onUnverified?.();
+  logger.error(
+    {
+      component: 'channel_presentation',
+      channel: params.channel,
+      chatJid: params.chatJid,
+      workflow: params.workflow,
+      deliveryOutcome: classification.outcome,
+      confirmedReceiptCount: classification.confirmedReceiptCount,
+      nextUnconfirmedChunkIndex: classification.nextUnconfirmedChunkIndex,
+    },
+    'Presentation delivery is incomplete or uncertain; workflow context was not advanced and automatic replay is blocked',
+  );
+  return null;
+}
+
 async function applyAndPresentActionBundle(params: {
   chatJid: string;
   bundleId: string;
@@ -1994,13 +2045,19 @@ async function applyAndPresentActionBundle(params: {
         });
       }
     } else {
-      const sent = await channel.sendMessage(
-        params.chatJid,
-        result.presentation.text,
-        {
-          inlineActionRows: result.presentation.inlineActionRows,
-        },
-      );
+      const sent = acceptConfirmedPresentationDelivery({
+        result: await channel.sendMessage(
+          params.chatJid,
+          result.presentation.text,
+          {
+            inlineActionRows: result.presentation.inlineActionRows,
+          },
+        ),
+        channel: channel.name,
+        chatJid: params.chatJid,
+        workflow: 'action_bundle_presentation',
+      });
+      if (!sent) return true;
       rememberActionBundlePresentation({
         bundleId: params.bundleId,
         messageId: sent.platformMessageId || null,
@@ -2067,13 +2124,19 @@ async function applyAndPresentMessageAction(params: {
         },
       );
     } else {
-      const sent = await channel.sendMessage(
-        params.chatJid,
-        result.presentation.text,
-        {
-          inlineActionRows: result.presentation.inlineActionRows,
-        },
-      );
+      const sent = acceptConfirmedPresentationDelivery({
+        result: await channel.sendMessage(
+          params.chatJid,
+          result.presentation.text,
+          {
+            inlineActionRows: result.presentation.inlineActionRows,
+          },
+        ),
+        channel: channel.name,
+        chatJid: params.chatJid,
+        workflow: 'message_action_presentation',
+      });
+      if (!sent) return true;
       updateMessageAction(params.messageActionId, {
         presentationMessageId: sent.platformMessageId || null,
         presentationChatJid: params.chatJid,
@@ -2092,10 +2155,16 @@ async function applyAndPresentMessageAction(params: {
   if (result.replyText) {
     await channel.sendMessage(params.chatJid, result.replyText);
   } else if (result.presentation) {
-    const sent = await channel.sendMessage(
-      params.chatJid,
-      result.presentation.text,
-    );
+    const sent = acceptConfirmedPresentationDelivery({
+      result: await channel.sendMessage(
+        params.chatJid,
+        result.presentation.text,
+      ),
+      channel: channel.name,
+      chatJid: params.chatJid,
+      workflow: 'message_action_presentation',
+    });
+    if (!sent) return true;
     if (channel.name === 'bluebubbles' && result.action) {
       syncBlueBubblesMessageActionPresentation({
         groupFolder: group.folder,
@@ -2207,11 +2276,17 @@ async function applyAndPresentOutcomeReviewControl(params: {
       presentationMessageId: context.presentationMessageId,
     });
   } else if (refreshedPresentation && channel.name === 'telegram') {
-    const sent = await channel.sendMessage(
-      params.chatJid,
-      refreshedPresentation.text,
-      { inlineActionRows: refreshedPresentation.inlineActionRows },
-    );
+    const sent = acceptConfirmedPresentationDelivery({
+      result: await channel.sendMessage(
+        params.chatJid,
+        refreshedPresentation.text,
+        { inlineActionRows: refreshedPresentation.inlineActionRows },
+      ),
+      channel: channel.name,
+      chatJid: params.chatJid,
+      workflow: 'outcome_review_presentation',
+    });
+    if (!sent) return true;
     setOutcomeReviewContext(params.chatJid, {
       ...(nextContext || {
         version: 1,
@@ -3723,7 +3798,9 @@ let sendCompanionHandoffMessageToChannel = async (
   if (!channel) {
     throw new Error(`No channel found for ${chatJid}`);
   }
-  return channel.sendMessage(chatJid, text, options);
+  return requireCompleteChannelDelivery(
+    await channel.sendMessage(chatJid, text, options),
+  );
 };
 let sendCompanionHandoffMessage = async (
   _targetChannel: 'telegram' | 'bluebubbles',
@@ -3812,6 +3889,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
+  const turnDequeuedAt = Date.now();
+  const turnStartedAt = resolveInteractionTurnStartedAtMs({
+    inboundTimestamps: missedMessages.map((message) => message.timestamp),
+    dequeuedAtMs: turnDequeuedAt,
+  });
+  const turnHostPressure = captureHostPressureSnapshot();
+
   const requestPolicy = classifyAssistantRequest(missedMessages, {
     allowCombinedContext:
       !isMainGroup || !shouldAvoidCombinedContextForMainChat(missedMessages),
@@ -3889,7 +3973,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const previousCursor = lastAgentTimestamp[chatJid] || '';
   lastAgentTimestamp[chatJid] =
     missedMessages[missedMessages.length - 1].timestamp;
-  inFlightCursorRollbacks.set(chatJid, previousCursor);
+  inFlightCursorRollbacks.begin(chatJid, previousCursor);
   saveState();
 
   logger.info(
@@ -3963,7 +4047,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       requestRoute: requestPolicy.route,
       text: rawLastContent || lastContent,
     });
-  const turnStartedAt = Date.now();
+  const turnHarnessStartedAt = Date.now();
   const turnAgentHarness: TurnAgentHarnessContext | null =
     shouldHandleOutcomeReviewLocally
       ? null
@@ -3986,6 +4070,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           // state actually accumulates per actor instead of staying empty.
           actorId: latestUserMessage?.sender || chatJid,
         });
+  const turnHarnessCompletedAt = Date.now();
+  const interactionTurnId = randomUUID();
+  let primaryDeliveryCompleted = false;
+  let latestDeliveredTurnEvaluation: PreSendEvaluation | null = null;
+  const runtimeEvidenceScope = new TurnRuntimeEvidenceScope();
   const shouldDeferPlatformHoldForLocalCalendarLookup =
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant') &&
@@ -4035,6 +4124,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     sendOptions?: SendMessageOptions;
     routeKey?: string | null;
     capabilityId?: string | null;
+    providerId?: string | null;
+    modelId?: string | null;
+    endpointMode?: string | null;
+    routingProviderId?: string | null;
+    routingModelId?: string | null;
+    routingEndpointMode?: string | null;
+    toolClass?: string | null;
     handlerKind?: string | null;
     responseSource?: string | null;
     traceReason?: string | null;
@@ -4045,6 +4141,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     allowFeedback?: boolean;
     preserveStructuredText?: boolean;
     skipBlueBubblesActionRehydration?: boolean;
+    latencyTargetClass?: InteractionLatencyTargetClass;
   }) => {
     const turnEvaluation: PreSendEvaluation = params.preserveStructuredText
       ? {
@@ -4083,186 +4180,273 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       shouldAttachFeedbackButtons && feedbackId
         ? appendResponseFeedbackInlineRow(params.sendOptions || {}, feedbackId)
         : params.sendOptions || {};
-    const sent = await channel.sendMessage(chatJid, replyText, sendOptions);
-    recordAssistantMetric({
-      groupFolder: group.folder,
-      kind: 'latency_sample',
-      value: Date.now() - turnStartedAt,
-      metadata: {
-        latencyClass: 'interaction_delivery',
-        runOrigin: turnRunOrigin,
+    const delivery = await deliverAssistantReplyWithMetric({
+      context: {
+        groupFolder: group.folder,
         routeKey: params.routeKey || requestPolicy.route,
         channel: conversationChannel,
         responseSource: params.responseSource || 'unknown',
+        handlerKind: params.handlerKind || 'unknown',
+        capabilityId: params.capabilityId || 'unknown',
+        providerId:
+          params.providerId ||
+          (params.responseSource === 'local_companion'
+            ? 'local_runtime'
+            : params.responseSource || 'unknown'),
+        modelId: params.modelId || undefined,
+        endpointMode: params.endpointMode || undefined,
+        routingProviderId: params.routingProviderId || undefined,
+        routingModelId: params.routingModelId || undefined,
+        routingEndpointMode: params.routingEndpointMode || undefined,
+        toolClass:
+          params.toolClass ||
+          params.capabilityId ||
+          params.handlerKind ||
+          undefined,
+        turnId: interactionTurnId,
+        deliveryOrdinal: 1,
+        runOrigin: turnRunOrigin,
+        latencyTargetClass: params.latencyTargetClass || 'ordinary_response',
+        turnStartedAtMs: turnStartedAt,
+        turnDequeuedAtMs: turnDequeuedAt,
+        harnessStartedAtMs: turnHarnessStartedAt,
+        harnessCompletedAtMs: turnHarnessCompletedAt,
+        harnessBypassed: shouldHandleOutcomeReviewLocally,
+        hostPressure: turnHostPressure,
       },
-      now: new Date(),
+      send: () => channel.sendMessage(chatJid, replyText, sendOptions),
+      classifyDelivery: classifyChannelDelivery,
+      recordMetricEnabled: !primaryDeliveryCompleted,
+      onDelivered: () => {
+        inFlightCursorRollbacks.markDelivered(chatJid);
+      },
+      onDeliveryCommitError: (error) =>
+        logger.error(
+          { err: error, chatJid, groupFolder: group.folder },
+          'Assistant reply was delivered but its in-flight cursor could not be committed',
+        ),
+      onMetricError: (error) =>
+        logger.warn(
+          {
+            err: error,
+            chatJid,
+            groupFolder: group.folder,
+            routeKey: params.routeKey || requestPolicy.route,
+          },
+          'Assistant reply was delivered but latency evidence could not be persisted',
+        ),
     });
-    if (
-      channel.name === 'bluebubbles' &&
-      !params.skipBlueBubblesActionRehydration
-    ) {
-      ensureBlueBubblesSelfThreadMessageActionForReplyText({
-        groupFolder: group.folder,
-        chatJid,
-        replyText,
-        presentationMessageId: sent.platformMessageId || null,
-        now,
-      });
-    }
-    const feedbackClassification = feedbackId
-      ? classifyResponseFeedbackCandidate({
-          originalUserText: rawLastContent || lastContent,
-          assistantReplyText: replyText,
-          routeKey: params.routeKey,
-          capabilityId: params.capabilityId,
-          responseSource: params.responseSource,
-          traceReason: params.traceReason,
-          blockerClass: params.blockerClass,
-        })
-      : null;
-    if (feedbackId && feedbackClassification) {
-      upsertResponseFeedback({
-        feedbackId,
-        createdAt: now.toISOString(),
-        updatedAt: now.toISOString(),
-        status: feedbackClassification.status,
-        classification: feedbackClassification.classification,
-        channel: conversationChannel,
-        groupFolder: group.folder,
-        chatJid,
-        threadId: sent.threadId || latestUserMessage?.thread_id || null,
-        platformMessageId: sent.platformMessageId || null,
-        userMessageId: latestUserMessage?.id || null,
-        routeKey: params.routeKey || requestPolicy.route,
-        capabilityId: params.capabilityId || null,
-        handlerKind: params.handlerKind || null,
-        responseSource: params.responseSource || null,
-        traceReason: params.traceReason || null,
-        traceNotes: params.traceNotes || [],
-        blockerClass: params.blockerClass || null,
-        blockerOwner:
-          params.blockerOwner || feedbackClassification.blockerOwner,
-        originalUserText:
-          conversationChannel === 'bluebubbles'
-            ? '[private BlueBubbles request omitted]'
-            : rawLastContent || lastContent,
-        assistantReplyText:
-          conversationChannel === 'bluebubbles'
-            ? '[private BlueBubbles response omitted]'
-            : replyText,
-        linkedRefs: {
-          ...(params.linkedRefs || {}),
-          platformTaskLedgerId: turnAgentHarness?.deliberation?.taskLedgerId,
-          platformProgressLedgerId:
-            turnAgentHarness?.deliberation?.progressLedgerId,
-          platformEvaluationId: turnAgentHarness?.deliberation?.evaluationId,
-          platformTraceGradeId: turnAgentHarness?.deliberation?.traceGradeId,
-          providerCouncilRunId: turnAgentHarness?.providerCouncil?.councilRunId,
-          providerCouncilMode: turnAgentHarness?.providerCouncil?.mode,
-          providerCouncilStatus:
-            turnAgentHarness?.providerCouncil?.answerGuidance?.status,
-          personalContextPacketId:
-            turnAgentHarness?.personalContextPacket?.packetId,
-          personalContextCitations:
-            turnAgentHarness?.personalContextPacket?.citations.slice(0, 12),
-          verifiedDeepWorkPacketId:
-            turnAgentHarness?.verifiedDeepWorkPacket?.packetId,
-          cognitiveRunId: turnAgentHarness?.cognitiveRun?.run.runId,
-          cognitiveSkillId:
-            turnAgentHarness?.cognitiveRun?.run.linkedSkillCardId || undefined,
-          cognitiveTrajectoryId:
-            turnAgentHarness?.cognitiveRun?.trajectoryScore.trajectoryId,
-          agentRuntimeRunId: turnAgentHarness?.runtimeSpine?.run.runtimeRunId,
-          ...buildPendingPostDeliveryReflectionRefs(now),
+    const sent = delivery.result;
+    primaryDeliveryCompleted = true;
+    if (delivery.deliveryOutcome !== 'confirmed') {
+      const confirmedReceiptCount = new Set(
+        [sent.platformMessageId, ...(sent.platformMessageIds || [])].filter(
+          (value): value is string => Boolean(value),
+        ),
+      ).size;
+      logger.error(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          routeKey: params.routeKey || requestPolicy.route,
+          deliveryOutcome: delivery.deliveryOutcome,
+          confirmedReceiptCount,
+          nextUnconfirmedChunkIndex: sent.nextUnconfirmedChunkIndex,
         },
-        issueId: null,
-        remediationLaneId: null,
-        remediationJobId: null,
-        remediationRuntimePreference: null,
-        remediationPrompt: null,
-        operatorNote: feedbackClassification.explanation,
+        'Assistant reply delivery was incomplete or uncertain; cursor committed to prevent duplicate replay',
+      );
+      throw new CommittedIncompleteDeliveryError({
+        deliveryOutcome: delivery.deliveryOutcome,
+        confirmedReceiptCount,
+        nextUnconfirmedChunkIndex: sent.nextUnconfirmedChunkIndex,
       });
     }
-    void schedulePostDeliveryReflection({
-      groupFolder: group.folder,
-      routeKey: params.routeKey || requestPolicy.route,
-      runOrigin: turnRunOrigin,
-      feedbackId,
-      reflect: () =>
-        reflectTurnAgentOutcome({
-          context: turnAgentHarness,
-          evaluation: turnEvaluation,
-          routeUsed: params.routeKey || requestPolicy.route,
-          answerClass: params.blockerClass
-            ? 'blocked'
-            : params.responseSource === 'container_agent'
-              ? 'handled'
-              : params.handlerKind?.includes('fallback')
-                ? 'fallback'
-                : 'handled',
+    latestDeliveredTurnEvaluation = turnEvaluation;
+    await runPostDeliveryEnrichment({
+      run: async () => {
+        if (
+          channel.name === 'bluebubbles' &&
+          !params.skipBlueBubblesActionRehydration
+        ) {
+          ensureBlueBubblesSelfThreadMessageActionForReplyText({
+            groupFolder: group.folder,
+            chatJid,
+            replyText,
+            presentationMessageId: sent.platformMessageId || null,
+            now,
+          });
+        }
+        const feedbackClassification = feedbackId
+          ? classifyResponseFeedbackCandidate({
+              originalUserText: rawLastContent || lastContent,
+              assistantReplyText: replyText,
+              routeKey: params.routeKey,
+              capabilityId: params.capabilityId,
+              responseSource: params.responseSource,
+              traceReason: params.traceReason,
+              blockerClass: params.blockerClass,
+            })
+          : null;
+        if (feedbackId && feedbackClassification) {
+          upsertResponseFeedback({
+            feedbackId,
+            createdAt: now.toISOString(),
+            updatedAt: now.toISOString(),
+            status: feedbackClassification.status,
+            classification: feedbackClassification.classification,
+            channel: conversationChannel,
+            groupFolder: group.folder,
+            chatJid,
+            threadId: sent.threadId || latestUserMessage?.thread_id || null,
+            platformMessageId: sent.platformMessageId || null,
+            userMessageId: latestUserMessage?.id || null,
+            routeKey: params.routeKey || requestPolicy.route,
+            capabilityId: params.capabilityId || null,
+            handlerKind: params.handlerKind || null,
+            responseSource: params.responseSource || null,
+            traceReason: params.traceReason || null,
+            traceNotes: params.traceNotes || [],
+            blockerClass: params.blockerClass || null,
+            blockerOwner:
+              params.blockerOwner || feedbackClassification.blockerOwner,
+            originalUserText:
+              conversationChannel === 'bluebubbles'
+                ? '[private BlueBubbles request omitted]'
+                : rawLastContent || lastContent,
+            assistantReplyText:
+              conversationChannel === 'bluebubbles'
+                ? '[private BlueBubbles response omitted]'
+                : replyText,
+            linkedRefs: {
+              ...(params.linkedRefs || {}),
+              platformTaskLedgerId:
+                turnAgentHarness?.deliberation?.taskLedgerId,
+              platformProgressLedgerId:
+                turnAgentHarness?.deliberation?.progressLedgerId,
+              platformEvaluationId:
+                turnAgentHarness?.deliberation?.evaluationId,
+              platformTraceGradeId:
+                turnAgentHarness?.deliberation?.traceGradeId,
+              providerCouncilRunId:
+                turnAgentHarness?.providerCouncil?.councilRunId,
+              providerCouncilMode: turnAgentHarness?.providerCouncil?.mode,
+              providerCouncilStatus:
+                turnAgentHarness?.providerCouncil?.answerGuidance?.status,
+              personalContextPacketId:
+                turnAgentHarness?.personalContextPacket?.packetId,
+              personalContextCitations:
+                turnAgentHarness?.personalContextPacket?.citations.slice(0, 12),
+              verifiedDeepWorkPacketId:
+                turnAgentHarness?.verifiedDeepWorkPacket?.packetId,
+              cognitiveRunId: turnAgentHarness?.cognitiveRun?.run.runId,
+              cognitiveSkillId:
+                turnAgentHarness?.cognitiveRun?.run.linkedSkillCardId ||
+                undefined,
+              cognitiveTrajectoryId:
+                turnAgentHarness?.cognitiveRun?.trajectoryScore.trajectoryId,
+              agentRuntimeRunId:
+                turnAgentHarness?.runtimeSpine?.run.runtimeRunId,
+              ...buildPendingPostDeliveryReflectionRefs(now),
+            },
+            issueId: null,
+            remediationLaneId: null,
+            remediationJobId: null,
+            remediationRuntimePreference: null,
+            remediationPrompt: null,
+            operatorNote: feedbackClassification.explanation,
+          });
+        }
+        void schedulePostDeliveryReflection({
+          groupFolder: group.folder,
+          routeKey: params.routeKey || requestPolicy.route,
+          runOrigin: turnRunOrigin,
+          feedbackId,
+          reflect: () =>
+            reflectTurnAgentOutcome({
+              context: turnAgentHarness,
+              evaluation: turnEvaluation,
+              routeUsed: params.routeKey || requestPolicy.route,
+              answerClass: params.blockerClass
+                ? 'blocked'
+                : params.responseSource === 'container_agent'
+                  ? 'handled'
+                  : params.handlerKind?.includes('fallback')
+                    ? 'fallback'
+                    : 'handled',
+              blockerClass: params.blockerClass,
+              fallbackUsed:
+                params.handlerKind?.includes('fallback') ||
+                params.responseSource === 'local_companion',
+            }),
+        });
+        if (!feedbackId || !feedbackClassification) return;
+        const classification = feedbackClassification;
+        if (conversationChannel === 'bluebubbles') {
+          pruneUnreviewedBlueBubblesFeedbackLinks({ now });
+        }
+        recordCouncilOutcomeSignal({
+          councilRunId: turnAgentHarness?.providerCouncil?.councilRunId,
+          signalKind: 'feedback_attached',
+          groupFolder: group.folder,
+          channel: conversationChannel,
+          routeKey: params.routeKey || requestPolicy.route,
+          capabilityId: params.capabilityId,
           blockerClass: params.blockerClass,
-          fallbackUsed:
-            params.handlerKind?.includes('fallback') ||
-            params.responseSource === 'local_companion',
-        }),
-    });
-    if (!feedbackId || !feedbackClassification) {
-      return sent;
-    }
-    const classification = feedbackClassification;
-    if (conversationChannel === 'bluebubbles') {
-      pruneUnreviewedBlueBubblesFeedbackLinks({ now });
-    }
-    recordCouncilOutcomeSignal({
-      councilRunId: turnAgentHarness?.providerCouncil?.councilRunId,
-      signalKind: 'feedback_attached',
-      groupFolder: group.folder,
-      channel: conversationChannel,
-      routeKey: params.routeKey || requestPolicy.route,
-      capabilityId: params.capabilityId,
-      blockerClass: params.blockerClass,
-      feedbackId,
-      flags: [
-        conversationChannel === 'telegram'
-          ? 'feedback_card_attached'
-          : 'reaction_feedback_linked',
-      ],
-      summary:
-        conversationChannel === 'telegram'
-          ? 'Telegram feedback affordance attached to a council-guided response.'
-          : 'BlueBubbles response linked to privacy-safe native reaction feedback.',
-    });
-    void emitAndreaPlatformTraceEvent({
-      traceId: feedbackId,
-      traceKind: 'feedback',
-      title:
-        conversationChannel === 'telegram'
-          ? 'Response feedback affordance attached'
-          : 'Native reaction feedback linked',
-      summary: classification.explanation,
-      refs: compactPlatformStrings({
-        feedbackId,
-        platformMessageId: sent.platformMessageId || '',
-        userMessageId: latestUserMessage?.id
-          ? String(latestUserMessage.id)
-          : '',
-        threadId:
-          sent.threadId ||
-          (latestUserMessage?.thread_id
-            ? String(latestUserMessage.thread_id)
-            : ''),
-        chatJid,
-      }),
-      metadata: compactPlatformStrings({
-        status: classification.status,
-        classification: classification.classification,
-        routeKey: params.routeKey || requestPolicy.route,
-        capabilityId: params.capabilityId || '',
-        handlerKind: params.handlerKind || '',
-        responseSource: params.responseSource || '',
-        blockerClass: params.blockerClass || '',
-        blockerOwner: params.blockerOwner || classification.blockerOwner,
-      }),
+          feedbackId,
+          flags: [
+            conversationChannel === 'telegram'
+              ? 'feedback_card_attached'
+              : 'reaction_feedback_linked',
+          ],
+          summary:
+            conversationChannel === 'telegram'
+              ? 'Telegram feedback affordance attached to a council-guided response.'
+              : 'BlueBubbles response linked to privacy-safe native reaction feedback.',
+        });
+        void emitAndreaPlatformTraceEvent({
+          traceId: feedbackId,
+          traceKind: 'feedback',
+          title:
+            conversationChannel === 'telegram'
+              ? 'Response feedback affordance attached'
+              : 'Native reaction feedback linked',
+          summary: classification.explanation,
+          refs: compactPlatformStrings({
+            feedbackId,
+            platformMessageId: sent.platformMessageId || '',
+            userMessageId: latestUserMessage?.id
+              ? String(latestUserMessage.id)
+              : '',
+            threadId:
+              sent.threadId ||
+              (latestUserMessage?.thread_id
+                ? String(latestUserMessage.thread_id)
+                : ''),
+            chatJid,
+          }),
+          metadata: compactPlatformStrings({
+            status: classification.status,
+            classification: classification.classification,
+            routeKey: params.routeKey || requestPolicy.route,
+            capabilityId: params.capabilityId || '',
+            handlerKind: params.handlerKind || '',
+            responseSource: params.responseSource || '',
+            blockerClass: params.blockerClass || '',
+            blockerOwner: params.blockerOwner || classification.blockerOwner,
+          }),
+        });
+      },
+      onError: (error) =>
+        logger.error(
+          {
+            err: error,
+            chatJid,
+            groupFolder: group.folder,
+            routeKey: params.routeKey || requestPolicy.route,
+          },
+          'Assistant reply was delivered but post-delivery state could not be fully persisted',
+        ),
     });
     return sent;
   };
@@ -4285,6 +4469,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
       logger.warn(
@@ -4364,6 +4549,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
       logger.warn(
@@ -4386,10 +4572,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       chatJid,
       now,
     });
-    const sent = await channel.sendMessage(
-      started.action.presentationChatJid || chatJid,
-      buildBlueBubblesProofDrillPresentationText(started.action),
-    );
+    const sent = acceptConfirmedPresentationDelivery({
+      result: await channel.sendMessage(
+        started.action.presentationChatJid || chatJid,
+        buildBlueBubblesProofDrillPresentationText(started.action),
+      ),
+      channel: channel.name,
+      chatJid,
+      workflow: 'bluebubbles_proof_drill_presentation',
+      onUnverified: () => inFlightCursorRollbacks.markDelivered(chatJid),
+    });
+    if (!sent) return true;
     updateMessageAction(started.action.messageActionId, {
       presentationMessageId: sent.platformMessageId || null,
       presentationChatJid: started.action.presentationChatJid || chatJid,
@@ -4709,7 +4902,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       now,
     });
     const presentation = buildMessageActionPresentation(action, 'bluebubbles');
-    const sent = await channel.sendMessage(chatJid, presentation.text);
+    const sent = acceptConfirmedPresentationDelivery({
+      result: await channel.sendMessage(chatJid, presentation.text),
+      channel: channel.name,
+      chatJid,
+      workflow: 'bluebubbles_message_action_presentation',
+      onUnverified: () => inFlightCursorRollbacks.markDelivered(chatJid),
+    });
+    if (!sent) return true;
     syncBlueBubblesMessageActionPresentation({
       groupFolder: group.folder,
       chatJid,
@@ -4740,9 +4940,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         now,
         timeZone: TIMEZONE,
       });
-      const sent = await channel.sendMessage(chatJid, presentation.text, {
-        inlineActionRows: presentation.inlineActionRows,
+      const sent = acceptConfirmedPresentationDelivery({
+        result: await channel.sendMessage(chatJid, presentation.text, {
+          inlineActionRows: presentation.inlineActionRows,
+        }),
+        channel: channel.name,
+        chatJid,
+        workflow: 'outcome_review_presentation',
+        onUnverified: () => inFlightCursorRollbacks.markDelivered(chatJid),
       });
+      if (!sent) return true;
       setOutcomeReviewContext(chatJid, {
         version: 1,
         createdAt: now.toISOString(),
@@ -4784,9 +4991,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         groupFolder: group.folder,
         channel: conversationChannel,
       });
-      const sent = await channel.sendMessage(chatJid, presentation.text, {
-        inlineActionRows: presentation.inlineActionRows,
+      const sent = acceptConfirmedPresentationDelivery({
+        result: await channel.sendMessage(chatJid, presentation.text, {
+          inlineActionRows: presentation.inlineActionRows,
+        }),
+        channel: channel.name,
+        chatJid,
+        workflow: 'delegation_rule_list_presentation',
+        onUnverified: () => inFlightCursorRollbacks.markDelivered(chatJid),
       });
+      if (!sent) return true;
       setDelegationRuleContext(chatJid, {
         version: 1,
         createdAt: now.toISOString(),
@@ -4877,9 +5091,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const presentation = buildDelegationRulePreviewPresentation(
       previewResult.preview,
     );
-    const sent = await channel.sendMessage(chatJid, presentation.text, {
-      inlineActionRows: presentation.inlineActionRows,
+    const sent = acceptConfirmedPresentationDelivery({
+      result: await channel.sendMessage(chatJid, presentation.text, {
+        inlineActionRows: presentation.inlineActionRows,
+      }),
+      channel: channel.name,
+      chatJid,
+      workflow: 'delegation_rule_preview_presentation',
+      onUnverified: () => inFlightCursorRollbacks.markDelivered(chatJid),
     });
+    if (!sent) return true;
     setDelegationRuleContext(chatJid, {
       version: 1,
       createdAt: now.toISOString(),
@@ -5906,6 +6127,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           );
           return true;
         } catch (sendError) {
+          if (isCommittedIncompleteDeliveryError(sendError)) throw sendError;
           lastAgentTimestamp[chatJid] = previousCursor;
           saveState();
           logger.warn(
@@ -5994,6 +6216,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
         return true;
       } catch (err) {
+        if (isCommittedIncompleteDeliveryError(err)) throw err;
         lastAgentTimestamp[chatJid] = previousCursor;
         saveState();
         logger.warn(
@@ -6034,6 +6257,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         });
         return true;
       } catch (err) {
+        if (isCommittedIncompleteDeliveryError(err)) throw err;
         lastAgentTimestamp[chatJid] = previousCursor;
         saveState();
         logger.warn(
@@ -6151,6 +6375,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         });
         return true;
       } catch (err) {
+        if (isCommittedIncompleteDeliveryError(err)) throw err;
         lastAgentTimestamp[chatJid] = previousCursor;
         saveState();
         logger.warn(
@@ -6193,6 +6418,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         });
         return true;
       } catch (err) {
+        if (isCommittedIncompleteDeliveryError(err)) throw err;
         lastAgentTimestamp[chatJid] = previousCursor;
         saveState();
         logger.warn(
@@ -6271,6 +6497,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (error) {
+      if (isCommittedIncompleteDeliveryError(error)) throw error;
       try {
         clearPendingGoogleCalendarCreateState(chatJid);
         clearGoogleCalendarSchedulingContext(chatJid);
@@ -6309,6 +6536,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
         return true;
       } catch (sendError) {
+        if (isCommittedIncompleteDeliveryError(sendError)) throw sendError;
         lastAgentTimestamp[chatJid] = previousCursor;
         saveState();
         logger.warn(
@@ -6649,6 +6877,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
       logger.warn(
@@ -6738,6 +6967,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
       logger.warn(
@@ -6839,6 +7069,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
       logger.warn(
@@ -7336,6 +7567,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       finalizeCognitiveExecutiveTurn({
         context: executiveContext,
         status: 'failed',
@@ -7876,9 +8108,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         }
         if (conversationChannel === 'telegram') {
           const presentation = buildActionBundlePresentation(actionBundle);
-          const sent = await channel.sendMessage(chatJid, presentation.text, {
-            inlineActionRows: presentation.inlineActionRows,
+          const sent = acceptConfirmedPresentationDelivery({
+            result: await channel.sendMessage(chatJid, presentation.text, {
+              inlineActionRows: presentation.inlineActionRows,
+            }),
+            channel: channel.name,
+            chatJid,
+            workflow: 'capability_action_bundle_presentation',
+            onUnverified: () => inFlightCursorRollbacks.markDelivered(chatJid),
           });
+          if (!sent) return true;
           rememberActionBundlePresentation({
             bundleId: actionBundle.bundle.bundleId,
             messageId: sent.platformMessageId || null,
@@ -8007,6 +8246,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       });
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       finalizeCognitiveExecutiveTurn({
         context: executiveContext,
         status: 'failed',
@@ -8065,6 +8305,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         routeKey: 'openai_guided_clarify',
         handlerKind: 'direct_quick_reply',
         responseSource: 'local_companion',
+        routingProviderId:
+          decision.providerMode === 'compatible_gateway'
+            ? 'openai_compatible_gateway'
+            : 'openai_cloud',
+        routingModelId: decision.selectedModel || null,
+        routingEndpointMode: decision.providerMode || null,
+        toolClass: 'openai_guided_router',
         traceReason: 'handled message via OpenAI-guided clarification path',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -8113,6 +8360,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         routeKey: 'openai_guided_direct_quick_reply',
         handlerKind: 'direct_quick_reply',
         responseSource: 'local_companion',
+        routingProviderId:
+          decision.providerMode === 'compatible_gateway'
+            ? 'openai_compatible_gateway'
+            : 'openai_cloud',
+        routingModelId: decision.selectedModel || null,
+        routingEndpointMode: decision.providerMode || null,
+        toolClass: 'openai_guided_router',
         traceReason:
           'handled message via OpenAI-guided direct quick reply path',
       });
@@ -8138,6 +8392,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       completeConversationPilotProof(quickReplyPilot, {
         outcome: 'internal_failure',
         blockerClass: 'openai_guided_direct_quick_reply_send_failed',
@@ -8266,6 +8521,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           linkedRefs: {
             reminderTaskId: statusMonitor.task.id,
           },
+          latencyTargetClass: 'local_command',
         });
         logger.info(
           {
@@ -8279,6 +8535,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
         return true;
       } catch (err) {
+        if (isCommittedIncompleteDeliveryError(err)) throw err;
         lastAgentTimestamp[chatJid] = previousCursor;
         saveState();
         logger.warn(
@@ -8319,6 +8576,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       responseSource: 'local_companion',
       traceReason:
         'answered self-improvement status from response-feedback repair truth',
+      latencyTargetClass: 'local_command',
     });
     return true;
   };
@@ -8341,6 +8599,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       responseSource: 'local_companion',
       traceReason:
         'answered integration health from canonical integration doctor truth',
+      latencyTargetClass: 'local_command',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
     return true;
@@ -8358,6 +8617,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       handlerKind: 'local_council_doctor',
       responseSource: 'local_companion',
       traceReason: 'answered council quality status from local metadata ledger',
+      latencyTargetClass: 'local_command',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
     return true;
@@ -8379,6 +8639,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           traceReason:
             'refused to expose review candidates outside owner-only surfaces',
           allowFeedback: false,
+          latencyTargetClass: 'local_command',
         });
         clearSharedAssistantCapabilitySeed(chatJid);
         return true;
@@ -8410,6 +8671,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         traceReason:
           'presented one recent unreviewed answer without recording a verdict',
         allowFeedback: false,
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8424,6 +8686,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'kept an unresolved default-learning request proposed until the behavior is explicit',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8452,6 +8715,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         handlerKind: 'local_learning_control',
         responseSource: 'local_companion',
         traceReason: 'paused latest inspectable skill metadata when available',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8488,6 +8752,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'updated latest inspectable learning metadata when available',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8501,6 +8766,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         handlerKind: 'local_learning_control',
         responseSource: 'local_companion',
         traceReason: 'confirmed approval-first learning boundary',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8530,6 +8796,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       responseSource: 'local_companion',
       traceReason:
         'answered learning and skill status from metadata-only ledgers',
+      latencyTargetClass: 'local_command',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
     return true;
@@ -8569,6 +8836,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered current-state request from metadata-only cognitive blackboard',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8583,6 +8851,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered pending-action request from metadata-only action lifecycle ledger',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8597,6 +8866,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered capability/setup request from metadata-only capability self-model',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8611,6 +8881,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered learning-recall request from redacted episodic memory summaries',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8625,6 +8896,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered autonomy-boundary request from static governor policy',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8639,6 +8911,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered metacognitive confidence/context request from metadata-only ledger',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8658,6 +8931,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered executive route explanation from local metadata ledger',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8672,6 +8946,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered reality grounding status from metadata-only proof and tool truth',
+        latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       return true;
@@ -8690,6 +8965,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered goal-directed planning request from metadata-only planner',
+        latencyTargetClass: 'local_command',
       });
       completeConversationPilotProof(pilotRecord, {
         outcome: 'success',
@@ -8733,6 +9009,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       handlerKind: 'local_cognition_doctor',
       responseSource: 'local_companion',
       traceReason: 'answered cognitive task status from local metadata ledger',
+      latencyTargetClass: 'local_command',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
     return true;
@@ -8882,6 +9159,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       completeConversationPilotProof(quickReplyPilot, {
         outcome: 'internal_failure',
         blockerClass: 'direct_quick_reply_send_failed',
@@ -8945,6 +9223,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
         return true;
       } catch (err) {
+        if (isCommittedIncompleteDeliveryError(err)) throw err;
         lastAgentTimestamp[chatJid] = previousCursor;
         saveState();
         logger.warn(
@@ -9010,6 +9289,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
         return true;
       } catch (err) {
+        if (isCommittedIncompleteDeliveryError(err)) throw err;
         lastAgentTimestamp[chatJid] = previousCursor;
         saveState();
         logger.warn(
@@ -9069,6 +9349,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
       logger.warn(
@@ -9102,6 +9383,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
       lastAgentTimestamp[chatJid] = previousCursor;
       saveState();
       logger.warn(
@@ -9158,7 +9440,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  let runtimeEvidenceReconciled = false;
+  let scopedDeliveredTurnEvaluation: PreSendEvaluation | null = null;
+  const reconcileCurrentRuntimeEvidence = (
+    runtimeStatus: 'success' | 'error',
+  ) => {
+    if (runtimeEvidenceReconciled) return;
+    reconcileTurnRuntimeEvidence({
+      context: turnAgentHarness,
+      evaluation:
+        scopedDeliveredTurnEvaluation || latestDeliveredTurnEvaluation,
+      runtimeToolEvidence: runtimeEvidenceScope.snapshot(),
+      runtimeStatus,
+      routeUsed: requestPolicy.route,
+    });
+    runtimeEvidenceReconciled = true;
+  };
   const handleAgentOutput = async (result: ContainerOutput) => {
+    if (result.runtimeToolEvidence) {
+      runtimeEvidenceScope.observe(result.runtimeToolEvidence);
+    }
     if (result.result) {
       const raw =
         typeof result.result === 'string'
@@ -9197,6 +9498,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           responseSource: shieldedProtectedText
             ? 'local_companion'
             : 'container_agent',
+          providerId: shieldedProtectedText
+            ? 'local_runtime'
+            : result.runtime || 'container_runtime',
+          modelId: shieldedProtectedText
+            ? undefined
+            : result.selectedModel || undefined,
+          endpointMode: shieldedProtectedText
+            ? undefined
+            : result.endpointMode || undefined,
+          toolClass: 'container_agent',
           traceReason: shieldedProtectedText
             ? 'shielded protected assistant container output with a safe degraded reply'
             : requestPolicy.route === 'direct_assistant'
@@ -9204,6 +9515,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               : 'handled request through the assistant container lane',
         });
         outputSentToUser = true;
+        runtimeEvidenceScope.freezeDelivered();
+        scopedDeliveredTurnEvaluation ||= latestDeliveredTurnEvaluation;
         if (requestPolicy.route === 'direct_assistant') {
           lastDirectAssistantTextByChatJid[chatJid] = outboundText;
         }
@@ -9212,6 +9525,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     if (result.status === 'success') {
+      if (!result.result && outputSentToUser) {
+        reconcileCurrentRuntimeEvidence('success');
+      }
       if (requestPolicy.route === 'direct_assistant') {
         queue.closeStdin(chatJid);
       } else {
@@ -9229,7 +9545,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     freshSession: boolean,
   ) => {
     hadError = false;
-    return runAgent(
+    runtimeEvidenceScope.beginAttempt();
+    const attemptOutput = await runAgent(
       group,
       promptText,
       chatJid,
@@ -9237,7 +9554,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       effectiveIdleTimeout,
       freshSession,
       handleAgentOutput,
+      (evidence) => runtimeEvidenceScope.observe(evidence),
     );
+    if (attemptOutput.status === 'error' || hadError) {
+      runtimeEvidenceScope.markCurrentAttemptFailed();
+    }
+    return attemptOutput;
   };
 
   let lastDirectAssistantAttemptPrompt = prompt;
@@ -9305,6 +9627,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
     output = await executeAgentPrompt(lastDirectAssistantAttemptPrompt, true);
   }
+
+  reconcileCurrentRuntimeEvidence(
+    output.status === 'error' || hadError ? 'error' : 'success',
+  );
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -9529,6 +9855,9 @@ async function runAgent(
   idleTimeoutMs: number,
   forceFreshSession = false,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  onSuppressedRuntimeEvidence?: (
+    evidence: NonNullable<ContainerOutput['runtimeToolEvidence']>,
+  ) => void | Promise<void>,
 ): Promise<{
   status: 'success' | 'error';
   code:
@@ -9600,6 +9929,7 @@ async function runAgent(
   );
 
   let staleSessionOutputDetected = false;
+  let staleSessionStreamedEvidenceForwarded = false;
 
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
@@ -9608,6 +9938,12 @@ async function runAgent(
           typeof output.result === 'string' ? output.result : null;
         if (isDeadAssistantSessionErrorText(streamedText)) {
           staleSessionOutputDetected = true;
+          const suppressedEvidence =
+            getSuppressedDeadSessionRuntimeEvidence(output);
+          if (suppressedEvidence) {
+            await onSuppressedRuntimeEvidence?.(suppressedEvidence);
+            staleSessionStreamedEvidenceForwarded = true;
+          }
           return;
         }
         if (output.newSessionId) {
@@ -9654,6 +9990,15 @@ async function runAgent(
       );
 
     if (staleSessionDetected) {
+      const suppressedFinalEvidence = getSuppressedDeadSessionRuntimeEvidence(
+        output,
+        {
+          streamedEvidenceForwarded: staleSessionStreamedEvidenceForwarded,
+        },
+      );
+      if (suppressedFinalEvidence) {
+        await onSuppressedRuntimeEvidence?.(suppressedFinalEvidence);
+      }
       if (!forceFreshSession) {
         logger.warn(
           {
@@ -9674,6 +10019,7 @@ async function runAgent(
           idleTimeoutMs,
           true,
           onOutput,
+          onSuppressedRuntimeEvidence,
         );
         return {
           ...recovered,
@@ -10375,7 +10721,7 @@ async function main(): Promise<void> {
   const sendSystemAlertMessage = async (
     targetChannel: 'telegram' | 'bluebubbles',
     message: string,
-  ): Promise<boolean> => {
+  ): Promise<'confirmed' | 'unverified' | false> => {
     const target =
       targetChannel === 'telegram'
         ? resolveTelegramMainChatForAlexa('main')
@@ -10389,8 +10735,26 @@ async function main(): Promise<void> {
     ) {
       return false;
     }
-    await channel.sendMessage(target.chatJid, message);
-    return true;
+    const result = await channel.sendMessage(target.chatJid, message);
+    const classification = classifyChannelDelivery(result);
+    if (classification.outcome === 'confirmed') return 'confirmed';
+    if (
+      classification.outcome === 'partial' ||
+      classification.outcome === 'unknown'
+    ) {
+      logger.error(
+        {
+          component: 'system_alert_delivery',
+          channel: targetChannel,
+          deliveryOutcome: classification.outcome,
+          confirmedReceiptCount: classification.confirmedReceiptCount,
+          nextUnconfirmedChunkIndex: classification.nextUnconfirmedChunkIndex,
+        },
+        'System alert delivery is unverified; cooldown will suppress automatic replay',
+      );
+      return 'unverified';
+    }
+    return false;
   };
   const maybeSendSystemAlert = async (params: {
     dedupeKey: string;
@@ -10412,7 +10776,9 @@ async function main(): Promise<void> {
     for (const channelName of alertConfig.channels) {
       attempted.push(channelName);
       try {
-        if (await sendSystemAlertMessage(channelName, params.message)) {
+        if (
+          (await sendSystemAlertMessage(channelName, params.message)) !== false
+        ) {
           sent = true;
         }
       } catch (err) {
@@ -10586,7 +10952,7 @@ async function main(): Promise<void> {
           component: 'tool_reliability',
           trigger,
           subjects: report.subjects.length,
-          degraded: report.topDegraded.length,
+          degraded: report.degradedSubjectCount,
         },
         'Refreshed bounded tool-reliability truth.',
       );
@@ -10692,20 +11058,6 @@ async function main(): Promise<void> {
           : 'Shutdown drained active post-delivery reflections.',
       );
     }
-    // Detached containers cannot deliver replies once this process exits, so
-    // rewind the cursor for every turn still in flight; the next process
-    // re-fetches those messages and retries instead of dropping them.
-    if (inFlightCursorRollbacks.size > 0) {
-      for (const [chatJid, previousCursor] of inFlightCursorRollbacks) {
-        lastAgentTimestamp[chatJid] = previousCursor;
-        logger.info(
-          { component: 'assistant', chatJid },
-          'Rolled back message cursor for in-flight turn; it will retry after restart',
-        );
-      }
-      inFlightCursorRollbacks.clear();
-      saveState();
-    }
     if (alexaRuntime) {
       await alexaRuntime
         .close()
@@ -10730,7 +11082,30 @@ async function main(): Promise<void> {
         .shutdown()
         .catch((err) => logger.warn({ err }, 'AGI runtime shutdown failed'));
     }
-    for (const ch of channels) await ch.disconnect();
+    for (const ch of channels) {
+      await ch
+        .disconnect()
+        .catch((err) =>
+          logger.warn(
+            { err, channel: ch.name },
+            'Channel disconnect failed during shutdown',
+          ),
+        );
+    }
+    // Keep this as the final synchronous operation before exit. A channel send
+    // that settles while transports are disconnecting can still commit its
+    // cursor; only replies that remain unresolved after transports stop are
+    // rewound. No event-loop turn exists between this rollback and exit.
+    if (inFlightCursorRollbacks.size > 0) {
+      inFlightCursorRollbacks.rollbackAll((chatJid, previousCursor) => {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        logger.info(
+          { component: 'assistant', chatJid },
+          'Rolled back message cursor for unresolved turn; it will retry after restart',
+        );
+      });
+      saveState();
+    }
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -10959,12 +11334,17 @@ async function main(): Promise<void> {
   ): Promise<string | undefined> {
     const channel = findChannel(channels, chatJid);
     if (!channel) return undefined;
-    const sent = await channel.sendMessage(
+    const sent = acceptConfirmedPresentationDelivery({
+      result: await channel.sendMessage(
+        chatJid,
+        text,
+        buildOperatorSendOptions(message, extra),
+      ),
+      channel: channel.name,
       chatJid,
-      text,
-      buildOperatorSendOptions(message, extra),
-    );
-    return sent.platformMessageId;
+      workflow: 'cursor_operator_message',
+    });
+    return sent?.platformMessageId;
   }
 
   function buildDebugUpdatedBy(chatJid: string, message?: NewMessage): string {
@@ -13313,13 +13693,19 @@ async function main(): Promise<void> {
     }
 
     if (!platformMessageId) {
-      const sent = await channel.sendMessage(
-        params.chatJid,
-        params.text,
-        buildOperatorSendOptions(params.sourceMessage, {
-          inlineActionRows: params.inlineActionRows,
-        }),
-      );
+      const sent = acceptConfirmedPresentationDelivery({
+        result: await channel.sendMessage(
+          params.chatJid,
+          params.text,
+          buildOperatorSendOptions(params.sourceMessage, {
+            inlineActionRows: params.inlineActionRows,
+          }),
+        ),
+        channel: channel.name,
+        chatJid: params.chatJid,
+        workflow: 'cursor_dashboard_presentation',
+      });
+      if (!sent) return undefined;
       platformMessageId = sent.platformMessageId;
     }
 
@@ -13999,7 +14385,7 @@ async function main(): Promise<void> {
     threadId?: string;
     armReplyContext?: boolean;
     updateSelection?: boolean;
-  }): Promise<void> {
+  }): Promise<'confirmed' | 'notification_blocked'> {
     const {
       channel,
       chatJid,
@@ -14011,29 +14397,45 @@ async function main(): Promise<void> {
       updateSelection = false,
     } = params;
 
-    let receipt = null;
-    if (channel.sendMessageWithReceipt) {
-      receipt = await channel.sendMessageWithReceipt(chatJid, text, {
-        ...(threadId ? { threadId } : {}),
-      });
-      if (!receipt) return;
-    } else {
-      await channel.sendMessage(chatJid, text, {
-        ...(threadId ? { threadId } : {}),
-      });
-    }
-
-    if (!job) return;
-
     const nowIso = new Date().toISOString();
-    if (updateSelection) {
+    // The backend mutation has already happened. Persist its selection before
+    // attempting the notification so an uncertain send can never make the
+    // user repeat create/follow-up/stop against stale local context.
+    if (job && updateSelection) {
       updateCurrentRuntimeSelection(chatJid, group.folder, job.jobId, nowIso);
     }
 
-    if (!armReplyContext || !receipt?.platformMessageIds.length) return;
+    const delivery = await deliverRuntimeCardNotification({
+      send: () =>
+        channel.sendMessage(chatJid, text, {
+          ...(threadId ? { threadId } : {}),
+        }),
+    });
+    if (delivery.status !== 'confirmed') {
+      logger.error(
+        {
+          component: 'runtime_backend_notification',
+          chatJid,
+          groupFolder: group.folder,
+          jobId: job?.jobId || null,
+          deliveryOutcome: delivery.deliveryOutcome,
+          confirmedReceiptCount: delivery.platformMessageIds.length,
+          nextUnconfirmedChunkIndex: delivery.nextUnconfirmedChunkIndex,
+          errorClass: delivery.errorClass || null,
+        },
+        'Runtime operation state was preserved, but its chat notification is blocked or unverified; do not repeat the backend operation',
+      );
+      return 'notification_blocked';
+    }
+
+    if (!job) return 'confirmed';
+
+    if (!armReplyContext || delivery.platformMessageIds.length === 0) {
+      return 'confirmed';
+    }
 
     const expiresAt = computeRuntimeCardContextExpiry(nowIso);
-    for (const messageId of receipt.platformMessageIds) {
+    for (const messageId of delivery.platformMessageIds) {
       upsertRuntimeBackendCardContext({
         backend_id: ANDREA_OPENAI_BACKEND_ID,
         chat_jid: chatJid,
@@ -14045,6 +14447,7 @@ async function main(): Promise<void> {
         expires_at: expiresAt,
       });
     }
+    return 'confirmed';
   }
 
   async function maybeHandleRuntimeReplyContext(
@@ -14228,7 +14631,7 @@ async function main(): Promise<void> {
       resolveGroup: (jid: string) => registeredGroups[jid] ?? null,
     });
     try {
-      await dispatchUnifiedJob({
+      const dispatchResult = await dispatchUnifiedJob({
         channel: {
           sendMessage: channel.sendMessage.bind(channel),
           editMessage: channel.editMessage
@@ -14243,6 +14646,17 @@ async function main(): Promise<void> {
         },
         adapters,
       });
+      if (dispatchResult.outcome === 'notification_blocked') {
+        logger.error(
+          {
+            component: 'unified_job_notification',
+            chatJid,
+            lane: dispatchResult.lane,
+            jobId: dispatchResult.jobId,
+          },
+          'Unified job was created or remained active, but its status notification is blocked; the job must not be recreated',
+        );
+      }
     } catch (err) {
       logger.error({ err, chatJid }, 'Unified /job dispatch failed');
       await channel.sendMessage(
@@ -16502,12 +16916,17 @@ async function main(): Promise<void> {
       await dispatchRuntimeCommand(
         {
           async sendToChat(targetChatJid, text, extra = {}) {
-            const sent = await channel.sendMessage(
-              targetChatJid,
-              text,
-              buildOperatorSendOptions(sourceMessage, extra),
-            );
-            return sent.platformMessageId;
+            const sent = acceptConfirmedPresentationDelivery({
+              result: await channel.sendMessage(
+                targetChatJid,
+                text,
+                buildOperatorSendOptions(sourceMessage, extra),
+              ),
+              channel: channel.name,
+              chatJid: targetChatJid,
+              workflow: 'andrea_runtime_operator_message',
+            });
+            return sent?.platformMessageId;
           },
           async sendRuntimeJobMessage({
             operatorChatJid,
@@ -17969,10 +18388,16 @@ async function main(): Promise<void> {
               chatJid,
               now: companionNow,
             });
-            const sent = await blueBubblesChannel.sendMessage(
-              started.action.presentationChatJid || chatJid,
-              buildBlueBubblesProofDrillPresentationText(started.action),
-            );
+            const sent = acceptConfirmedPresentationDelivery({
+              result: await blueBubblesChannel.sendMessage(
+                started.action.presentationChatJid || chatJid,
+                buildBlueBubblesProofDrillPresentationText(started.action),
+              ),
+              channel: blueBubblesChannel.name,
+              chatJid,
+              workflow: 'bluebubbles_proof_drill_presentation',
+            });
+            if (!sent) return;
             updateMessageAction(started.action.messageActionId, {
               presentationMessageId: sent.platformMessageId || null,
               presentationChatJid:
@@ -18267,7 +18692,9 @@ async function main(): Promise<void> {
     if (!channel) {
       throw new Error(`No channel found for ${chatJid}`);
     }
-    return channel.sendMessage(chatJid, text, options);
+    return requireCompleteChannelDelivery(
+      await channel.sendMessage(chatJid, text, options),
+    );
   };
   sendCompanionHandoffMessage = async (
     _targetChannel,
@@ -18350,7 +18777,9 @@ async function main(): Promise<void> {
         return;
       }
       const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
+      if (text) {
+        requireCompleteChannelDelivery(await channel.sendMessage(jid, text));
+      }
     },
     sendToTarget: async (targetChannel, chatJid, text, options) =>
       sendCompanionHandoffMessage(targetChannel, chatJid, text, options),
@@ -18359,7 +18788,7 @@ async function main(): Promise<void> {
     sendMessage: async (jid, text) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      await channel.sendMessage(jid, text);
+      requireCompleteChannelDelivery(await channel.sendMessage(jid, text));
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
@@ -18407,11 +18836,32 @@ async function main(): Promise<void> {
     writeCursorAgentsSnapshot(group.folder, group.isMain === true, cursorRows);
   }
   queue.setProcessMessagesFn(async (groupJid: string) => {
-    try {
-      return await processGroupMessages(groupJid);
-    } finally {
-      inFlightCursorRollbacks.delete(groupJid);
-    }
+    return runQueuedTurnWithCursorRecovery({
+      chatJid: groupJid,
+      registry: inFlightCursorRollbacks,
+      run: async () => {
+        try {
+          return await processGroupMessages(groupJid);
+        } catch (error) {
+          if (!isCommittedIncompleteDeliveryError(error)) throw error;
+          logger.error(
+            {
+              component: 'assistant',
+              chatJid: groupJid,
+              deliveryOutcome: error.deliveryOutcome,
+              confirmedReceiptCount: error.confirmedReceiptCount,
+              nextUnconfirmedChunkIndex: error.nextUnconfirmedChunkIndex,
+            },
+            'Stopped workflow advancement after an incomplete or uncertain committed reply',
+          );
+          return true;
+        }
+      },
+      rollback: (chatJid, previousCursor) => {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+      },
+    });
   });
   writeAssistantReadyState(appVersion);
   writeCurrentAssistantHealth();

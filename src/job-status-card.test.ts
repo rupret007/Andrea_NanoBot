@@ -107,6 +107,24 @@ describe('renderJobStatusCard', () => {
 });
 
 describe('JobStatusCard streaming', () => {
+  it('does not remember an incomplete initial card as posted', async () => {
+    const card = new JobStatusCard({
+      channel: {
+        async sendMessage() {
+          return {
+            platformMessageId: 'prefix-only',
+            deliveryState: 'partial' as const,
+            nextUnconfirmedChunkIndex: 1,
+          };
+        },
+      },
+      chatJid: 'tg:1',
+      initialState: baseState(),
+    });
+
+    await expect(card.post()).rejects.toThrow('automatic retry is blocked');
+  });
+
   it('debounces edits within minEditIntervalMs and flushes when the window passes', async () => {
     const { channel, sends, edits } = makeChannel();
     let now = 0;

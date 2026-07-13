@@ -79,6 +79,12 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingMessages = true;
+      // A message arriving after the container has already declared itself
+      // idle otherwise waits for the idle timeout before the queued turn can
+      // drain. Do not preempt active work or task containers.
+      if (state.idleWaiting && !state.isTaskContainer) {
+        this.closeStdin(groupJid);
+      }
       logger.debug(
         {
           component: 'assistant',
@@ -192,7 +198,8 @@ export class GroupQueue {
 
   /**
    * Mark the container as idle-waiting (finished work, waiting for IPC input).
-   * If tasks are pending, preempt the idle container immediately.
+   * If queued tasks or fresh-turn messages are pending, preempt the idle
+   * container immediately so the queued work can drain without an idle wait.
    */
   notifyIdle(groupJid: string): void {
     const state = this.getGroup(groupJid);
@@ -207,7 +214,7 @@ export class GroupQueue {
       },
       'Container entered idle-waiting state',
     );
-    if (state.pendingTasks.length > 0) {
+    if (state.pendingTasks.length > 0 || state.pendingMessages) {
       this.closeStdin(groupJid);
     }
   }

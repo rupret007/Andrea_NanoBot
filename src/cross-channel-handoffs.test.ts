@@ -102,6 +102,91 @@ describe('cross-channel handoffs', () => {
     expect(stored?.errorText).toContain('No registered main Telegram chat');
   });
 
+  it('preserves a partial Telegram handoff as delivery-unverified', async () => {
+    const result = await deliverCompanionHandoff(
+      {
+        groupFolder: 'main',
+        originChannel: 'alexa',
+        voiceSummary: 'Dinner follow-up details.',
+        payload: {
+          kind: 'message',
+          title: 'Dinner follow-up',
+          text: 'Candace still needs a dinner answer tonight.',
+          followupSuggestions: [],
+        },
+      },
+      {
+        resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+        sendTelegramMessage: vi.fn(async () => ({
+          platformMessageId: 'prefix-only',
+          platformMessageIds: ['prefix-only'],
+          deliveryState: 'partial' as const,
+          nextUnconfirmedChunkIndex: 1,
+        })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'delivery_unverified',
+      platformMessageId: 'prefix-only',
+      deliveryOutcome: 'partial',
+      confirmedReceiptCount: 1,
+      nextUnconfirmedChunkIndex: 1,
+    });
+    expect(result.speech).not.toContain('I sent');
+    expect(result.speech).toContain('will not retry');
+    const stored = getCompanionHandoff(result.handoffId);
+    expect(stored).toMatchObject({
+      status: 'delivery_unverified',
+      deliveredMessageId: 'prefix-only',
+    });
+    expect(stored?.errorText).toContain('confirmed_receipts=1');
+    expect(stored?.errorText).toContain('next_unconfirmed_chunk_index=1');
+    expect(stored?.errorText).toContain('Automatic retry is blocked');
+
+    const cancelled = cancelCompanionHandoff(result.handoffId, 'Cancel it.');
+    expect(cancelled?.status).toBe('delivery_unverified');
+  });
+
+  it('preserves receiptless transport ambiguity without calling it failed', async () => {
+    const result = await deliverCompanionHandoff(
+      {
+        groupFolder: 'main',
+        originChannel: 'alexa',
+        voiceSummary: 'Dinner follow-up details.',
+        payload: {
+          kind: 'message',
+          title: 'Dinner follow-up',
+          text: 'Candace still needs a dinner answer tonight.',
+          followupSuggestions: [],
+        },
+      },
+      {
+        resolveTelegramMainChat: () => ({ chatJid: 'tg:main' }),
+        sendTelegramMessage: vi.fn(async () => ({
+          deliveryState: 'unknown' as const,
+          nextUnconfirmedChunkIndex: 0,
+        })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'delivery_unverified',
+      deliveryOutcome: 'unknown',
+      confirmedReceiptCount: 0,
+      nextUnconfirmedChunkIndex: 0,
+    });
+    expect(result.platformMessageId).toBeUndefined();
+    const stored = getCompanionHandoff(result.handoffId);
+    expect(stored).toMatchObject({
+      status: 'delivery_unverified',
+      deliveredMessageId: null,
+    });
+    expect(stored?.errorText).toContain('unknown');
+  });
+
   it('can cancel a queued handoff before delivery', () => {
     const record = queueCompanionHandoff({
       groupFolder: 'main',

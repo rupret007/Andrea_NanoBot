@@ -1,7 +1,8 @@
 import type { AddressInfo } from 'net';
 import { Script } from 'node:vm';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { _closeDatabase, _initTestDatabase } from './db.js';
 import {
   buildOwnerCockpitMissionView,
   createOwnerCockpitHttpServer,
@@ -10,6 +11,7 @@ import {
   type OwnerCockpitConfig,
 } from './owner-cockpit-server.js';
 import { OWNER_COCKPIT_JS } from './owner-cockpit-ui.js';
+import { recordAssistantMetric } from './personal-assistant-metrics.js';
 import type { VerifiedDeepWorkPacket } from './types.js';
 
 const config: OwnerCockpitConfig = {
@@ -22,6 +24,8 @@ const config: OwnerCockpitConfig = {
 };
 
 const servers: ReturnType<typeof createOwnerCockpitHttpServer>[] = [];
+
+beforeEach(() => _initTestDatabase());
 
 function missionPacket(
   id: string,
@@ -60,6 +64,7 @@ afterEach(async () => {
           new Promise<void>((resolve) => server.close(() => resolve())),
       ),
   );
+  _closeDatabase();
 });
 
 async function start() {
@@ -103,6 +108,102 @@ describe('owner cockpit security', () => {
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('SameSite=Strict');
     expect(cookie).not.toContain(config.secret);
+  });
+
+  it('serves authenticated baseline and attributed latency evidence without saving a baseline', async () => {
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 1_250,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'council.doctor',
+        latencyTargetClass: 'local_command',
+        providerId: 'local_runtime',
+        toolClass: 'council_doctor',
+        deliveryInstrumentationVersion: 3,
+        queueWaitMs: 100,
+        preprocessingMs: 0,
+        harnessMs: 400,
+        responsePreparationMs: 550,
+        channelDeliveryMs: 200,
+        hostPressureClass: 'high',
+      },
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 900,
+      metadata: {
+        latencyClass: 'interaction_delivery_degraded',
+        deliveryOutcome: 'unknown',
+        runOrigin: 'live',
+        routeKey: 'telegram.uncertain',
+      },
+    });
+    const base = await start();
+    const login = await fetch(`${base}/auth/login`, {
+      method: 'POST',
+      body: new URLSearchParams({ secret: config.secret }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      redirect: 'manual',
+    });
+    const cookie = (login.headers.get('set-cookie') || '').split(';')[0];
+    const response = await fetch(`${base}/api/v1/snapshot`, {
+      headers: { cookie },
+    });
+    const snapshot = (await response.json()) as {
+      intelligence: {
+        reviewedOutcomeCount: number;
+        baselineReady: boolean;
+        baselineSaved: boolean;
+        latency: {
+          sampleCount: number;
+          p95Ms: number;
+          targetBreaches: number;
+          hostPressureSampleCount: number;
+          highHostPressureSampleCount: number;
+          latestHostPressureClass: string | null;
+          degradedDeliveryCount: number;
+          partialDeliveryCount: number;
+          unknownDeliveryCount: number;
+          latestDegradedDeliveryOutcome: string | null;
+          latestDegradedDeliveryRoute: string | null;
+          routes: Array<{ routeKey: string; targetMs: number }>;
+          providers: Array<{ providerId: string }>;
+          tools: Array<{ toolClass: string }>;
+        };
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(snapshot.intelligence).toMatchObject({
+      reviewedOutcomeCount: 0,
+      baselineReady: false,
+      baselineSaved: false,
+      latency: {
+        sampleCount: 1,
+        p95Ms: 1_250,
+        targetBreaches: 0,
+        hostPressureSampleCount: 1,
+        highHostPressureSampleCount: 1,
+        latestHostPressureClass: 'high',
+        degradedDeliveryCount: 1,
+        partialDeliveryCount: 0,
+        unknownDeliveryCount: 1,
+        latestDegradedDeliveryOutcome: 'unknown',
+        latestDegradedDeliveryRoute: 'telegram.uncertain',
+        routes: [
+          expect.objectContaining({
+            routeKey: 'council.doctor',
+            targetMs: 2_000,
+          }),
+        ],
+        providers: [expect.objectContaining({ providerId: 'local_runtime' })],
+        tools: [expect.objectContaining({ toolClass: 'council_doctor' })],
+      },
+    });
   });
 
   it('rejects authenticated mutations without same-origin CSRF proof', async () => {
@@ -222,5 +323,8 @@ describe('owner cockpit deep-work review', () => {
     expect(OWNER_COCKPIT_JS).toContain('data-verdict="rejected"');
     expect(OWNER_COCKPIT_JS).toContain('Verification still needs:');
     expect(OWNER_COCKPIT_JS).toContain('Deterministic replay:');
+    expect(OWNER_COCKPIT_JS).toContain('p50');
+    expect(OWNER_COCKPIT_JS).toContain('p95');
+    expect(OWNER_COCKPIT_JS).toContain('Slowest stage:');
   });
 });

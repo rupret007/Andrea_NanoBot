@@ -7,6 +7,7 @@ export default defineConfig({
     setupFiles: ['./scripts/test-network-guard.mjs'],
     env: {
       ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE: '1',
+      ANDREA_DETERMINISTIC_STORAGE_MODE: 'memory',
     },
   },
 });

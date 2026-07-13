@@ -1,6 +1,12 @@
+import type { ChildProcess } from 'node:child_process';
+
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 import { GroupQueue } from './group-queue.js';
+import {
+  InFlightTurnCursorRegistry,
+  runQueuedTurnWithCursorRecovery,
+} from './in-flight-turn-cursors.js';
 
 // Mock config to control concurrency limit
 vi.mock('./config.js', () => ({
@@ -166,6 +172,42 @@ describe('GroupQueue', () => {
     expect(callCount).toBe(3);
   });
 
+  it('rewinds the persisted cursor before a failed turn is retried', async () => {
+    const registry = new InFlightTurnCursorRegistry();
+    let persistedCursor = 'cursor-before';
+    let attemptedMessageCount = 0;
+    const processMessages = vi.fn(async (groupJid: string) =>
+      runQueuedTurnWithCursorRecovery({
+        chatJid: groupJid,
+        registry,
+        run: async () => {
+          if (persistedCursor !== 'cursor-before') return true;
+          const previousCursor = persistedCursor;
+          persistedCursor = 'cursor-after';
+          registry.begin(groupJid, previousCursor);
+          attemptedMessageCount += 1;
+          return attemptedMessageCount > 1;
+        },
+        rollback: (_chatJid, previousCursor) => {
+          persistedCursor = previousCursor;
+        },
+      }),
+    );
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('tg:cursor-retry');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(attemptedMessageCount).toBe(1);
+    expect(persistedCursor).toBe('cursor-before');
+
+    await vi.advanceTimersByTimeAsync(5_010);
+
+    expect(attemptedMessageCount).toBe(2);
+    expect(persistedCursor).toBe('cursor-after');
+    expect(registry.size).toBe(0);
+  });
+
   // --- Shutdown prevents new enqueues ---
 
   it('prevents new enqueues after shutdown', async () => {
@@ -320,6 +362,77 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  it('does not preempt an active container when a message is enqueued before idle', async () => {
+    const fs = await import('fs');
+    let resolveProcess: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as ChildProcess,
+      'container-1',
+      'test-group',
+    );
+
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    writeFileSync.mockClear();
+    queue.enqueueMessageCheck('group1@g.us');
+
+    expect(
+      writeFileSync.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+      ),
+    ).toHaveLength(0);
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('preempts an idle-waiting container when a fresh message is enqueued', async () => {
+    const fs = await import('fs');
+    let resolveProcess: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as ChildProcess,
+      'container-1',
+      'test-group',
+    );
+    queue.notifyIdle('group1@g.us');
+
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    writeFileSync.mockClear();
+    queue.enqueueMessageCheck('group1@g.us');
+
+    expect(
+      writeFileSync.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+      ),
+    ).toHaveLength(1);
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
   it('preempts idle container when task is enqueued', async () => {
     const fs = await import('fs');
     let resolveProcess: () => void;
@@ -406,6 +519,43 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  it('does not close an idle container after an IPC-piped continuation', async () => {
+    const fs = await import('fs');
+    let resolveProcess: () => void;
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+
+    expect(queue.sendMessage('group1@g.us', 'continue that thought')).toBe(
+      true,
+    );
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    writeFileSync.mockClear();
+    queue.notifyIdle('group1@g.us');
+
+    expect(
+      writeFileSync.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+      ),
+    ).toHaveLength(0);
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
   it('sendMessage returns false for task containers so user messages queue up', async () => {
     let resolveTask: () => void;
 
@@ -480,5 +630,50 @@ describe('GroupQueue', () => {
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('closes an idle container when a fresh message is already pending', async () => {
+    const fs = await import('fs');
+    let resolveFirstProcess: () => void;
+    let callCount = 0;
+    const processMessages = vi.fn(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        await new Promise<void>((resolve) => {
+          resolveFirstProcess = resolve;
+        });
+      }
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    writeFileSync.mockClear();
+    queue.enqueueMessageCheck('group1@g.us');
+    expect(
+      writeFileSync.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+      ),
+    ).toHaveLength(0);
+
+    queue.notifyIdle('group1@g.us');
+    expect(
+      writeFileSync.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+      ),
+    ).toHaveLength(1);
+
+    resolveFirstProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(processMessages).toHaveBeenCalledTimes(2);
   });
 });

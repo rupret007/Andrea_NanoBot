@@ -263,22 +263,20 @@ async function runTask(
     }
 
     const durationMs = Date.now() - startTime;
+    const deliveryDidNotComplete =
+      scheduledMessageResult.action?.sendStatus === 'failed' ||
+      scheduledMessageResult.action?.sendStatus === 'delivery_unverified';
     logTaskRun({
       task_id: task.id,
       run_at: new Date().toISOString(),
       duration_ms: durationMs,
-      status:
-        scheduledMessageResult.action?.sendStatus === 'failed'
-          ? 'error'
-          : 'success',
-      result:
-        scheduledMessageResult.action?.sendStatus === 'failed'
-          ? null
-          : scheduledMessageResult.resultSummary,
-      error:
-        scheduledMessageResult.action?.sendStatus === 'failed'
-          ? scheduledMessageResult.resultSummary
-          : null,
+      status: deliveryDidNotComplete ? 'error' : 'success',
+      result: deliveryDidNotComplete
+        ? null
+        : scheduledMessageResult.resultSummary,
+      error: deliveryDidNotComplete
+        ? scheduledMessageResult.resultSummary
+        : null,
     });
     updateTaskAfterRun(task.id, null, scheduledMessageResult.resultSummary);
     return;

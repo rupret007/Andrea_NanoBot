@@ -3,6 +3,7 @@ import {
   emitAndreaPlatformCouncilMemberResult,
   emitAndreaPlatformProviderCouncil,
   finalizeAndreaPlatformCouncil,
+  isAndreaPlatformCoordinatorBridgeEnabled,
   type AndreaPlatformCouncilAnswerGuidance,
   type AndreaPlatformCouncilEventInput,
   type AndreaPlatformCouncilMemberResultInput,
@@ -41,10 +42,8 @@ import {
 import { runGeminiOpenAiText } from './gemini-provider.js';
 import { runMiniMaxAnthropicText } from './minimax-provider.js';
 import { runOpenAiChatText } from './openai-provider.js';
-import {
-  collectProviderHealthSnapshots,
-  type ProviderHealthSnapshot,
-} from './provider-health.js';
+import type { ProviderHealthSnapshot } from './provider-health.js';
+import { collectProviderHealthSnapshotsWithRecentLiveEvidence } from './provider-live-probe.js';
 import { listCognitiveProviderCooldowns } from './db.js';
 import type { CouncilRunOrigin } from './types.js';
 
@@ -792,6 +791,9 @@ export async function runObservableProviderCouncil(
     },
   };
   const emittedCouncil = await emitProviderCouncil(calibratedInput);
+  const platformCoordinatorExpected =
+    Boolean(deps.emitProviderCouncil) ||
+    isAndreaPlatformCoordinatorBridgeEnabled();
   const localCouncilRunId = `local-council:${input.correlationId || now().toString(36)}`;
   const council: AndreaPlatformProviderCouncilResult =
     emittedCouncil?.councilRunId
@@ -808,7 +810,11 @@ export async function runObservableProviderCouncil(
           memberCount: 0,
           skippedMemberCount: 0,
           blockedMemberCount: 0,
-          riskFlags: ['platform_council_record_local_fallback'],
+          riskFlags: [
+            platformCoordinatorExpected
+              ? 'platform_council_record_local_fallback'
+              : 'platform_council_record_local_runtime',
+          ],
         };
 
   const councilRunId = council.councilRunId || localCouncilRunId;
@@ -821,7 +827,8 @@ export async function runObservableProviderCouncil(
   const providerTimeoutMs = Math.max(5_000, budgetPolicy.roleTimeoutMs - 500);
   const checkedAt = new Date().toISOString();
   const rawProviderHealthSnapshots =
-    deps.providerHealthSnapshots || collectProviderHealthSnapshots(checkedAt);
+    deps.providerHealthSnapshots ||
+    collectProviderHealthSnapshotsWithRecentLiveEvidence(checkedAt);
   const providerHealthSnapshots = deps.providerHealthSnapshots
     ? applyActiveProviderCooldowns(rawProviderHealthSnapshots, checkedAt)
     : withInjectedProviderHealthOverrides(
@@ -856,6 +863,7 @@ export async function runObservableProviderCouncil(
     requiredEvidence: input.requiredEvidence || 'unknown',
     rawContentPolicy: input.rawContentPolicy || 'sanitized_snippets',
     metadata: input.metadata,
+    providerHealthSnapshots,
   });
   const observedMemberIds: string[] = [];
   const observedRoles: string[] = [];

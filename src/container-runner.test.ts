@@ -147,10 +147,49 @@ const testInput = {
 
 function emitOutputMarker(
   proc: ReturnType<typeof createFakeProcess>,
-  output: ContainerOutput,
+  output: unknown,
 ) {
   const json = JSON.stringify(output);
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
+}
+
+function runtimeToolEvidence(
+  evidenceId: string,
+  outcome: 'succeeded' | 'failed',
+): NonNullable<ContainerOutput['runtimeToolEvidence']> {
+  const succeeded = outcome === 'succeeded' ? 1 : 0;
+  const failed = outcome === 'failed' ? 1 : 0;
+  return {
+    version: 1,
+    evidenceId,
+    cumulative: true,
+    attempts: 1,
+    collectorStatus: 'complete',
+    calls: { observed: 1, succeeded, failed, unresolved: 0 },
+    actions: [
+      {
+        class: 'repository_read',
+        observed: 1,
+        succeeded,
+        failed,
+        unresolved: 0,
+        succeededAfterLastRepositoryWrite: 0,
+        lastOutcome: outcome,
+        recovered: false,
+      },
+    ],
+    state: {
+      preStateFingerprint: null,
+      postStateFingerprint: null,
+      repositoryHeadFingerprint: null,
+    },
+    privacy: {
+      metadataOnly: true,
+      rawInputsStored: false,
+      resultBodiesStored: false,
+      toolUseIdsStored: false,
+    },
+  };
 }
 
 describe('container-runner timeout behavior', () => {
@@ -181,6 +220,7 @@ describe('container-runner timeout behavior', () => {
       status: 'success',
       result: 'Here is my response',
       newSessionId: 'session-123',
+      runtimeToolEvidence: runtimeToolEvidence('timeout-attempt', 'succeeded'),
     });
 
     // Let output processing settle
@@ -198,9 +238,59 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-123');
+    expect(result.runtimeToolEvidence?.evidenceId).toBe('timeout-attempt');
     expect(onOutput).toHaveBeenCalledWith(
       expect.objectContaining({ result: 'Here is my response' }),
     );
+  });
+
+  it('keeps streamed query evidence scoped while retaining a final diagnostic aggregate', async () => {
+    const onOutput = vi.fn(async (_output: ContainerOutput) => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      runtimeToolEvidence: runtimeToolEvidence('attempt-a', 'failed'),
+    });
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Recovered response',
+      runtimeToolEvidence: runtimeToolEvidence('attempt-b', 'succeeded'),
+    });
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      runtimeToolEvidence: {
+        ...runtimeToolEvidence('attempt-b', 'succeeded'),
+        version: 2,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    const firstStreamedOutput = onOutput.mock.calls[0]?.[0];
+    const secondStreamedOutput = onOutput.mock.calls[1]?.[0];
+    const lastStreamedOutput = onOutput.mock.calls.at(-1)?.[0];
+    expect(onOutput).toHaveBeenCalledTimes(3);
+    expect(firstStreamedOutput?.runtimeToolEvidence?.evidenceId).toBe(
+      'attempt-a',
+    );
+    expect(secondStreamedOutput?.runtimeToolEvidence?.evidenceId).toBe(
+      'attempt-b',
+    );
+    expect(lastStreamedOutput?.runtimeToolEvidence).toBeUndefined();
+    expect(result.runtimeToolEvidence).toMatchObject({
+      evidenceId: expect.stringMatching(/^composite:/),
+      calls: { observed: 2, succeeded: 1, failed: 1, unresolved: 0 },
+    });
   });
 
   it('timeout with no output resolves as error', async () => {

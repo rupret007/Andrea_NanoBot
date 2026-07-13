@@ -9,7 +9,27 @@ Route-only synthetic fixtures measure route selection, not answer usefulness
 or task completion. Those outcomes are scored only by the separate isolated,
 network-denied executed-capability suite. A 100% deterministic result therefore
 means the bounded offline contracts are saturated; it does not replace genuine
-reviewed outcomes, fresh integration proof, or a budget-capped live evaluation.
+reviewed outcomes, fresh integration proof, or an explicitly authorized live
+evaluation with an estimated-cost threshold.
+
+Synthetic execution-evidence scenarios likewise prove only the aggregate
+runtime action/state evidence and reconciliation contract. They do not prove
+that a live tool created a named artifact or satisfied a semantic
+postcondition. Repository-write completion requires a successful verification
+observed after the final write, and aggregate external-action evidence remains
+blocked until a dedicated receipt binds the exact approved action.
+Terminal runtime errors remain blocking even if individual receipts claim
+success. Suppressed stale-session attempts remain in the retry evidence, and
+operator work remains blocked on `runtime_operator_scope_unbound` until its
+exact target, action, and postcondition are bound.
+
+The held-out command adds a stronger but still local proof: in a disposable Git
+repository it triggers a real write failure, recovers with a real edit, observes
+the state transition, and runs a post-write syntax test. The packet correctly
+remains blocked on `runtime_repository_scope_unbound`; the proof does not cover
+the production container, mount, IPC path, or host-enforced target binding.
+The held-out acceptance result is 6/6 execution-truth cases plus this expected
+scope-blocked disposable result, with no production-state touch.
 
 ## Commands
 
@@ -20,8 +40,9 @@ reviewed outcomes, fresh integration proof, or a budget-capped live evaluation.
   safety regressions or a low overall score.
 - `npm run agi:scorecard:live -- --max-cost-usd=1` uses the same scorecard
   wrapper in live mode. Live mode fails closed unless an explicit positive cost
-  cap is supplied. Use it only after provider and Telegram credentials are
-  configured and the run is approved.
+  threshold is supplied for the harness estimate. It is not reconciled provider
+  billing. Use it only after provider and Telegram credentials are configured
+  and the run is approved.
 - `npm run agi:readiness -- --json --no-live-probe` merges scorecard,
   doctor checks, integration status, live-proof debt, and publish blockers into
   one operator-facing launch report without making live provider calls.
@@ -68,4 +89,7 @@ failures.
 Live runs are evidence, not merge gates. Deterministic local scorecards are the
 CI gate because they are stable, cost-free, and do not depend on external model
 availability. Deterministic execution rejects non-loopback network requests and
-uses injected synthetic platform responses instead of configured providers.
+uses injected synthetic platform responses instead of configured providers. It
+also forces production-style database initialization into isolated in-memory
+storage, so synthetic evaluation, repair, council, and reliability evidence
+cannot alter Andrea's live self-assessment.

@@ -639,7 +639,7 @@ function buildCounterfactual(input: {
   const comparisonId = id('counterfactual', input.text, input.now.slice(0, 10));
   const evidence = jsonIds(evidenceFromReality(input.reality));
   const reliability = buildToolReliabilityDoctorReport();
-  const degraded = reliability.topDegraded.length;
+  const degraded = reliability.degradedSubjectCount;
   const raw = [
     {
       suffix: 'do_nothing',

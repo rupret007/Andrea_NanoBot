@@ -23,6 +23,7 @@
  */
 
 import type { Channel } from './types.js';
+import { requireCompleteChannelDelivery } from './channel-delivery.js';
 
 export type JobStatus =
   | 'queued'
@@ -165,7 +166,9 @@ export class JobStatusCard {
    */
   async post(): Promise<void> {
     const text = renderJobStatusCard(this.state);
-    const result = await this.channel.sendMessage(this.chatJid, text);
+    const result = requireCompleteChannelDelivery(
+      await this.channel.sendMessage(this.chatJid, text),
+    );
     this.currentMessageId = result.platformMessageId ?? null;
     this.editsOnCurrent = 0;
     this.lastEditAt = this.config.now();
@@ -260,7 +263,9 @@ export class JobStatusCard {
       }
       // Send a fresh card — either no editMessage support, no message id
       // yet, the edit ceiling was hit, or the edit raised. Reset budget.
-      const result = await this.channel.sendMessage(this.chatJid, text);
+      const result = requireCompleteChannelDelivery(
+        await this.channel.sendMessage(this.chatJid, text),
+      );
       this.currentMessageId = result.platformMessageId ?? null;
       this.editsOnCurrent = 0;
       this.lastEditAt = this.config.now();
@@ -282,6 +287,8 @@ export class JobStatusCard {
     if (!text) return;
     const trimmed = text.trim();
     if (!trimmed) return;
-    await this.channel.sendMessage(this.chatJid, trimmed);
+    requireCompleteChannelDelivery(
+      await this.channel.sendMessage(this.chatJid, trimmed),
+    );
   }
 }

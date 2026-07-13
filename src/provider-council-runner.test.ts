@@ -26,6 +26,123 @@ function providerSnapshot(
 }
 
 describe('provider council runner', () => {
+  it('classifies the configured direct runtime as local recording, not a platform fallback', async () => {
+    const providerArtifact = JSON.stringify({
+      verdict: 'pass',
+      confidence: 0.82,
+      evidence_grade: 'partial',
+      recommended_action: 'answer',
+      answer_direction: 'Return the bounded read-only diagnosis.',
+      uncertainty: 'No external platform record is configured.',
+      risk_flags: [],
+      evidence_ids: ['intent:local-runtime-record'],
+      approval_need: 'none',
+    });
+    const result = await runObservableProviderCouncil(
+      {
+        goal: 'Produce a read-only local runtime diagnosis.',
+        taskFamily: 'operator',
+        correlationId: 'local-runtime-record',
+        requestedMode: 'dual_review',
+        allowedSideEffects: 'none',
+      },
+      {
+        providerHealthSnapshots: [
+          providerSnapshot('openai_cloud'),
+          providerSnapshot('anthropic_cloud'),
+          providerSnapshot('gemini_cloud'),
+          providerSnapshot('minimax_cloud'),
+          providerSnapshot('brave_search'),
+        ],
+        runOpenAi: vi.fn(async () => ({
+          text: providerArtifact,
+          model: 'gpt-test',
+        })),
+        runAnthropic: vi.fn(async () => ({
+          text: providerArtifact,
+          model: 'claude-test',
+        })),
+        runMiniMax: vi.fn(async () => ({
+          text: providerArtifact,
+          model: 'minimax-test',
+        })),
+        runGemini: vi.fn(async () => ({
+          text: providerArtifact,
+          model: 'gemini-test',
+        })),
+        searchBrave: vi.fn(async () => ({ query: '', results: [] })),
+      },
+    );
+
+    expect(result?.councilRunId).toBe('local-council:local-runtime-record');
+    expect(result?.riskFlags).toContain(
+      'platform_council_record_local_runtime',
+    );
+    expect(result?.riskFlags).not.toContain(
+      'platform_council_record_local_fallback',
+    );
+  });
+
+  it('classifies an expected platform coordinator that returns no record as a fallback', async () => {
+    const providerArtifact = JSON.stringify({
+      verdict: 'pass',
+      confidence: 0.82,
+      evidence_grade: 'partial',
+      recommended_action: 'answer',
+      answer_direction: 'Return the bounded read-only diagnosis.',
+      uncertainty: 'The expected platform record was unavailable.',
+      risk_flags: [],
+      evidence_ids: ['intent:expected-platform-fallback'],
+      approval_need: 'none',
+    });
+    const result = await runObservableProviderCouncil(
+      {
+        goal: 'Produce a read-only diagnosis with an expected coordinator.',
+        taskFamily: 'operator',
+        correlationId: 'expected-platform-fallback',
+        requestedMode: 'dual_review',
+        allowedSideEffects: 'none',
+      },
+      {
+        emitProviderCouncil: vi.fn(async () => null),
+        providerHealthSnapshots: [
+          providerSnapshot('openai_cloud'),
+          providerSnapshot('anthropic_cloud'),
+          providerSnapshot('gemini_cloud'),
+          providerSnapshot('minimax_cloud'),
+          providerSnapshot('brave_search'),
+        ],
+        runOpenAi: vi.fn(async () => ({
+          text: providerArtifact,
+          model: 'gpt-test',
+        })),
+        runAnthropic: vi.fn(async () => ({
+          text: providerArtifact,
+          model: 'claude-test',
+        })),
+        runMiniMax: vi.fn(async () => ({
+          text: providerArtifact,
+          model: 'minimax-test',
+        })),
+        runGemini: vi.fn(async () => ({
+          text: providerArtifact,
+          model: 'gemini-test',
+        })),
+        searchBrave: vi.fn(async () => ({ query: '', results: [] })),
+      },
+    );
+
+    expect(result?.councilRunId).toBe(
+      'local-council:expected-platform-fallback',
+    );
+    expect(result?.riskFlags).toContain(
+      'platform_council_record_local_fallback',
+    );
+    expect(result?.riskFlags).not.toContain(
+      'platform_council_record_local_runtime',
+    );
+  });
+
   it('keeps public web evidence out of local operator councils when explicitly scoped', async () => {
     const members: Array<Record<string, unknown>> = [];
     const searchBrave = vi.fn(async () => ({

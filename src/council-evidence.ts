@@ -9,7 +9,10 @@ import type {
 } from './council-contracts.js';
 import { redactCouncilText } from './council-safety.js';
 import type { PlatformTaskFamily } from './andrea-platform-bridge.js';
-import { collectProviderHealthSnapshots } from './provider-health.js';
+import {
+  collectProviderHealthSnapshots,
+  type ProviderHealthSnapshot,
+} from './provider-health.js';
 import { attachCouncilEvidenceContracts } from './council-evidence-contracts.js';
 
 export interface BuildCouncilEvidencePackInput {
@@ -20,6 +23,7 @@ export interface BuildCouncilEvidencePackInput {
   rawContentPolicy?: 'metadata_only' | 'local_only' | 'sanitized_snippets';
   metadata?: Record<string, string>;
   correlationId?: string | null;
+  providerHealthSnapshots?: ProviderHealthSnapshot[];
 }
 
 export function buildCouncilEvidencePack(
@@ -151,7 +155,8 @@ export function buildCouncilEvidencePack(
   }
 
   try {
-    const providers = collectProviderHealthSnapshots();
+    const providers =
+      input.providerHealthSnapshots || collectProviderHealthSnapshots();
     const providerCards = providers.slice(0, 8).map((provider) => ({
       evidenceId: `provider_health:${provider.providerId}`,
       sourceClass: 'provider_health' as const,

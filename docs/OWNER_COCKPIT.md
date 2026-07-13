@@ -2,8 +2,40 @@
 
 The owner cockpit is an optional personal command center. It shows a bounded
 view of current focus, open loops, active goals, staged approvals, and recent
-outcomes. It does not expose raw messages, hidden reasoning, credentials, or
-database records.
+outcomes. Its real-world intelligence card shows genuine owner-review progress,
+delivery p50/p95, route targets, provider/model and capability attribution when
+available, the slowest measured stage, and aggregate host-pressure correlation.
+Queue wait behind earlier work is a separate stage rather than being hidden in
+request preparation. Host pressure is a bounded dequeue-time observation, not
+a causal diagnosis or an excuse for a latency breach. Legacy timing samples
+remain counted for audit but stop influencing current percentiles once
+complete stage-attributed samples exist. Malformed or internally inconsistent
+stage bundles are excluded and counted separately. It does not expose raw
+messages, hidden reasoning, credentials, or database records.
+
+On the primary evaluated reply path, local controls explicitly opt into a
+two-second target and ordinary responses use ten seconds. Missing or malformed
+classification fails conservatively to the ordinary target; a zero-duration or
+bypassed harness never implies that a response is local. The first primary
+reply per inbound turn is timed from the earliest valid queued inbound
+timestamp but recorded only after the channel returns a non-empty platform
+receipt for every response chunk; this is transport acceptance, not
+recipient-read confirmation. A confirmed prefix followed by failure is shown
+as `partial`; uncertain server acceptance is shown as `unknown`. The cockpit
+counts both as incomplete or uncertain delivery, but excludes them from
+successful p50/p95 and route-target claims. Their inbound cursor is committed
+only to avoid duplicating an already accepted or possibly accepted response,
+and no feedback or post-delivery enrichment is created. A definite failure or
+empty complete receipt creates no success sample and remains retryable.
+
+After confirmed transport acceptance, the in-flight cursor is committed before
+optional metrics or enrichment, and observer failures cannot re-enter that
+reply's retry path. Specialized action presentations and handoff sends remain
+outside comparable latency until they have typed route semantics; durable
+message workflows separately fail closed unless the shared guard sees complete
+delivery. File and media artifacts retain a narrower residual ambiguity: a
+transport timeout is unconfirmed rather than proof that the artifact did not
+arrive, so inspect the target thread before manually resending one.
 
 ## Enable locally
 

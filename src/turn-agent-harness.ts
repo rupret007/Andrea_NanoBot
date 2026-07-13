@@ -49,7 +49,8 @@ import {
 import { runTruthEngine } from './truth-engine.js';
 import {
   beginVerifiedDeepWorkForTurn,
-  finalizeVerifiedDeepWorkForTurn,
+  captureCurrentRepositorySnapshot,
+  reconcileVerifiedDeepWorkExecution,
 } from './verified-deep-work.js';
 import type {
   CouncilOutcomeSignalKind,
@@ -176,6 +177,15 @@ export interface PostTurnReflection {
   reflection?: AndreaPlatformTurnReflectionResult | null;
 }
 
+export interface ReconcileTurnRuntimeEvidenceInput {
+  context: TurnAgentHarnessContext | null;
+  evaluation: PreSendEvaluation | null;
+  runtimeToolEvidence?: unknown;
+  runtimeStatus: 'success' | 'error';
+  routeUsed: string;
+  blockerClass?: string | null;
+}
+
 export interface TurnAgentHarnessContext {
   turnId: string;
   channel: TurnAgentChannel;
@@ -267,6 +277,7 @@ function logicReportForUserFacingReply(input: EvaluateTurnReplyInput): {
 
 const SIMPLE_TURN_PATTERN =
   /^(?:hi|hey|hello|yo|thanks|thank you|ok|okay|cool|great|nice|yes|no|yep|nope|what'?s up|whats up)$/i;
+const ORDINARY_PLATFORM_COORDINATOR_TIMEOUT_MS = 1_000;
 
 const SKILL_AFFORDANCES: SkillAffordanceCard[] = [
   {
@@ -322,6 +333,19 @@ const SKILL_AFFORDANCES: SkillAffordanceCard[] = [
     approvalNeed: 'none',
     failureModes: ['quota blocked', 'stale saved context'],
     examples: ['what changed today', 'is it going to rain tonight'],
+  },
+  {
+    skillId: 'code.assistance',
+    taskFamily: 'code',
+    purpose:
+      'Explain, inspect, plan, or implement bounded code work with repository evidence.',
+    inputs: ['coding question', 'repository state', 'validation evidence'],
+    outputs: ['grounded explanation', 'bounded implementation plan or patch'],
+    evidenceLevel: 'strong',
+    sideEffectRisk: 'medium',
+    approvalNeed: 'conditional',
+    failureModes: ['stale repository state', 'missing validation evidence'],
+    examples: ['explain this function', 'help me build a small game'],
   },
   {
     skillId: 'memory.arbitration',
@@ -384,6 +408,19 @@ function sanitizeMetadataValue(value: string, max = 160): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
+function hasHighRiskPlanningIntent(text: string): boolean {
+  const normalized = normalize(text);
+  const asksForPlanning =
+    /\b(plan|review|design|assess|strategy|architecture|safest|how should|threat model|rollout)\b/.test(
+      normalized,
+    );
+  const hazardousDomain =
+    /\b(production|deploy(?:ment)?|release|migration|database|schema|security|credential|secret|privacy|delete|deletion|rollback|admin|purchase|payment)\b/.test(
+      normalized,
+    );
+  return asksForPlanning && hazardousDomain;
+}
+
 export function isSimpleTurn(text: string): boolean {
   const normalized = normalize(text);
   return normalized.length <= 40 && SIMPLE_TURN_PATTERN.test(normalized);
@@ -403,6 +440,13 @@ export function classifyTurnTaskFamily(input: {
   ]
     .join(' ')
     .toLowerCase();
+  // High-risk planning must be classified before generic research terms such
+  // as "recommend", "latest", and "architecture review". The council gate
+  // deliberately relies on an operator/code family so a research-first match
+  // here would silently downgrade production and security planning.
+  if (hasHighRiskPlanningIntent(haystack)) {
+    return 'operator';
+  }
   if (
     /\b(research|news|weather|rain|changed today|compare|recommend|buy|model council|architecture review|evidence scout|latest)\b/.test(
       haystack,
@@ -593,9 +637,14 @@ function collectEffectiveDirectives(
 async function attachActiveSkillCandidates(
   context: ContextCompileResult,
   taskFamily: PlatformTaskFamily,
+  coordinatorTimeoutMs?: number,
 ): Promise<ContextCompileResult> {
-  const activeSkillCandidates =
-    await listAndreaPlatformActiveSkillCandidates(taskFamily);
+  const activeSkillCandidates = await listAndreaPlatformActiveSkillCandidates(
+    taskFamily,
+    {
+      timeoutMs: coordinatorTimeoutMs,
+    },
+  );
   if (activeSkillCandidates.length === 0) return context;
   const candidateIds = activeSkillCandidates.map(
     (candidate) => candidate.candidateId,
@@ -691,76 +740,110 @@ function buildPlatformHoldReply(
   return null;
 }
 
-function shouldRunProviderCouncil(input: {
+export type ProviderCouncilDecisionReason =
+  | 'explicit_deep'
+  | 'material_route_disagreement'
+  | 'high_risk_plan'
+  | 'explicit_quick'
+  | 'safe_local_lookup'
+  | 'ordinary_single_model';
+
+export interface ProviderCouncilDecision {
+  run: boolean;
+  reason: ProviderCouncilDecisionReason;
+  mode: AndreaPlatformCouncilMode | null;
+}
+
+function hasMaterialRouteDisagreement(
+  deliberation: AndreaPlatformDeliberationResult | null | undefined,
+): boolean {
+  if (
+    deliberation?.riskFlags?.some((flag) =>
+      /(?:material_)?route_disagreement/i.test(flag),
+    )
+  ) {
+    return true;
+  }
+  const viable = (deliberation?.routeScores || [])
+    .filter(
+      (route) =>
+        route.score >= 0.5 &&
+        route.confidence >= 0.5 &&
+        !route.blockerClass?.trim(),
+    )
+    .sort((left, right) => right.score - left.score);
+  return (
+    viable.length >= 2 &&
+    viable[0]!.routeId !== viable[1]!.routeId &&
+    Math.abs(viable[0]!.score - viable[1]!.score) <= 0.08
+  );
+}
+
+function isHighRiskPlanningTurn(input: {
+  text: string;
+  taskFamily: PlatformTaskFamily;
+}): boolean {
+  if (input.taskFamily !== 'operator' && input.taskFamily !== 'code') {
+    return false;
+  }
+  return hasHighRiskPlanningIntent(input.text);
+}
+
+function coordinatorTimeoutForTurn(input: {
+  text: string;
+  stateChanging: boolean;
+  selectedSkill: SkillAffordanceCard;
+}): number | undefined {
+  const safetySensitive =
+    input.stateChanging ||
+    input.selectedSkill.sideEffectRisk === 'high' ||
+    input.selectedSkill.approvalNeed === 'explicit' ||
+    detectThinkingControlPreference(input.text) === 'deep' ||
+    hasHighRiskPlanningIntent(input.text);
+  return safetySensitive ? undefined : ORDINARY_PLATFORM_COORDINATOR_TIMEOUT_MS;
+}
+
+export function decideProviderCouncil(input: {
   text: string;
   taskFamily: PlatformTaskFamily;
   selectedSkill: SkillAffordanceCard;
   deliberation?: AndreaPlatformDeliberationResult | null;
-}): boolean {
+}): ProviderCouncilDecision {
   const text = normalize(input.text);
+  const thinkingControl = detectThinkingControlPreference(input.text);
+  if (thinkingControl === 'deep') {
+    return {
+      run: true,
+      reason: 'explicit_deep',
+      mode: 'max_iq_council',
+    };
+  }
+  if (isHighRiskPlanningTurn(input)) {
+    return {
+      run: true,
+      reason: 'high_risk_plan',
+      mode: /\b(repair|fix|recover|remediat)\b/.test(text)
+        ? 'repair_council'
+        : 'max_iq_council',
+    };
+  }
+  if (thinkingControl === 'quick') {
+    return { run: false, reason: 'explicit_quick', mode: null };
+  }
   if (
     input.taskFamily === 'calendar' &&
     isSafeReadOnlyCalendarLookupAsk(input.text)
   ) {
-    return false;
+    return { run: false, reason: 'safe_local_lookup', mode: null };
   }
-  const thinkingControl = detectThinkingControlPreference(input.text);
-  const highRiskRequired =
-    input.taskFamily === 'operator' ||
-    input.taskFamily === 'code' ||
-    (input.selectedSkill.sideEffectRisk === 'high' &&
-      /\b(send|deploy|repair|fix|commit|push|restart)\b/.test(text));
-  if (thinkingControl === 'quick' && !highRiskRequired) {
-    return false;
+  if (hasMaterialRouteDisagreement(input.deliberation)) {
+    return {
+      run: true,
+      reason: 'material_route_disagreement',
+      mode: 'dual_review',
+    };
   }
-  if (thinkingControl === 'deep') {
-    return true;
-  }
-  if (
-    input.taskFamily === 'assistant' &&
-    input.selectedSkill.skillId === 'assistant.daily_guidance' &&
-    !/\b(complex|hard|deep|architecture|diagnose|repair|debug|review|critic|second opinion|autonomous|agentic)\b/.test(
-      text,
-    )
-  ) {
-    return false;
-  }
-  if (input.taskFamily === 'operator' || input.taskFamily === 'code') {
-    return true;
-  }
-  if (input.taskFamily === 'research') {
-    return /\b(deep|compare|latest|research|evaluate|recommend|market|architecture|strategy)\b/.test(
-      text,
-    );
-  }
-  if (
-    /\b(complex|hard|deep|architecture|self[- ]?improve|diagnose|repair|debug|review|critic|second opinion|unimaginable|autonomous|agentic)\b/.test(
-      text,
-    )
-  ) {
-    return true;
-  }
-  if (
-    input.selectedSkill.sideEffectRisk === 'high' &&
-    /\b(send|deploy|repair|fix|commit|push|restart)\b/.test(text)
-  ) {
-    return true;
-  }
-  if (
-    (input.taskFamily === 'assistant' ||
-      input.taskFamily === 'calendar' ||
-      input.taskFamily === 'communication') &&
-    (input.text.trim().split(/\s+/).length >= 6 ||
-      /\b(should i|help me decide|what should|plan|prioriti[sz]e|tomorrow|this week|draft|make sense|solve|logic|calendar|schedule|reply|what am i forgetting|what matters)\b/.test(
-        text,
-      ))
-  ) {
-    return true;
-  }
-  return (
-    input.deliberation?.executionPosture === 'learn_first' ||
-    input.deliberation?.executionPosture === 'approval_first'
-  );
+  return { run: false, reason: 'ordinary_single_model', mode: null };
 }
 
 export function isSafeReadOnlyCalendarLookupAsk(text: string): boolean {
@@ -768,37 +851,6 @@ export function isSafeReadOnlyCalendarLookupAsk(text: string): boolean {
   return !/\b(?:add|create|book|move|reschedule|cancel|delete|remove|change|edit|update)\b[\s\S]{0,80}\b(?:calendar|event|meeting|appointment|call)\b/i.test(
     text,
   );
-}
-
-function selectProviderCouncilMode(input: {
-  text: string;
-  taskFamily: PlatformTaskFamily;
-  selectedSkill: SkillAffordanceCard;
-}): AndreaPlatformCouncilMode {
-  const text = normalize(input.text);
-  if (detectThinkingControlPreference(input.text) === 'deep') {
-    return 'max_iq_council';
-  }
-  if (
-    input.taskFamily === 'operator' &&
-    /\b(repair|diagnose|fix|deploy|restart|commit|push|approval|approve|approved|go ahead|do it)\b/.test(
-      text,
-    )
-  ) {
-    return 'repair_council';
-  }
-  if (
-    input.taskFamily === 'operator' ||
-    input.taskFamily === 'code' ||
-    input.taskFamily === 'research' ||
-    /\b(max[- ]?iq|deep|architecture|autonomous|agentic|unimaginable)\b/.test(
-      text,
-    )
-  ) {
-    return 'max_iq_council';
-  }
-  if (input.selectedSkill.sideEffectRisk === 'high') return 'dual_review';
-  return 'dual_review';
 }
 
 function riskLevelForCouncil(
@@ -825,19 +877,33 @@ export async function beginTurnAgentHarness(
   if (isSimpleTurn(input.text)) return null;
   const runOrigin = input.runOrigin || 'live';
   const taskFamily = classifyTurnTaskFamily(input);
+  const stateChanging =
+    /\b(send|create|move|cancel|delete|forget|remember|repair|deploy|push)\b/i.test(
+      input.text,
+    );
   const baseContextCompile = compileTurnContext({
     taskFamily,
     channel: input.channel,
     text: input.text,
     capabilityId: input.capabilityId,
-    stateChanging:
-      /\b(send|create|move|cancel|delete|forget|remember|repair|deploy|push)\b/i.test(
-        input.text,
-      ),
+    stateChanging,
   });
+  const coordinatorTimeoutMs = coordinatorTimeoutForTurn({
+    text: input.text,
+    stateChanging,
+    selectedSkill: baseContextCompile.selectedSkill,
+  });
+  baseContextCompile.metadata.platform_coordinator_timeout_class =
+    coordinatorTimeoutMs === undefined
+      ? 'safety_default'
+      : `ordinary_${coordinatorTimeoutMs}ms`;
   const contextCompile =
     runOrigin === 'live'
-      ? await attachActiveSkillCandidates(baseContextCompile, taskFamily)
+      ? await attachActiveSkillCandidates(
+          baseContextCompile,
+          taskFamily,
+          coordinatorTimeoutMs,
+        )
       : baseContextCompile;
   const personalContextPacket =
     runOrigin === 'live' && input.groupFolder && isDatabaseInitialized()
@@ -885,6 +951,7 @@ export async function beginTurnAgentHarness(
           memoryMetadata: contextCompile.metadata,
           knownBlockers: input.knownBlockers,
           actorId: input.actorId,
+          coordinatorTimeoutMs,
           metadata: {
             request_route: input.requestRoute || '',
             capability_id: input.capabilityId || '',
@@ -894,25 +961,28 @@ export async function beginTurnAgentHarness(
           },
         })
       : null;
+  const providerCouncilDecision = decideProviderCouncil({
+    text: input.text,
+    taskFamily,
+    selectedSkill: contextCompile.selectedSkill,
+    deliberation,
+  });
+  contextCompile.metadata.provider_council_gate_reason =
+    providerCouncilDecision.reason;
+  contextCompile.metadata.provider_council_gate_run = String(
+    providerCouncilDecision.run,
+  );
   const providerCouncil =
     runOrigin === 'live' &&
-    shouldRunProviderCouncil({
-      text: input.text,
-      taskFamily,
-      selectedSkill: contextCompile.selectedSkill,
-      deliberation,
-    })
+    providerCouncilDecision.run &&
+    providerCouncilDecision.mode
       ? await runObservableProviderCouncil({
           goal: buildSanitizedGoal(input, taskFamily),
           taskFamily,
           channel: input.channel,
           groupFolder: input.groupFolder,
           correlationId: input.turnId,
-          requestedMode: selectProviderCouncilMode({
-            text: input.text,
-            taskFamily,
-            selectedSkill: contextCompile.selectedSkill,
-          }),
+          requestedMode: providerCouncilDecision.mode,
           riskLevel: riskLevelForCouncil(contextCompile.selectedSkill),
           requiredEvidence: contextCompile.selectedSkill.evidenceLevel,
           allowedSideEffects: sideEffectsForCouncil(
@@ -924,7 +994,8 @@ export async function beginTurnAgentHarness(
           metadata: {
             request_route: input.requestRoute || '',
             capability_id: input.capabilityId || '',
-            turn_agent_harness: 'v15_multi_llm_answer_guidance',
+            turn_agent_harness: 'v16_empirical_council_gate',
+            council_gate_reason: providerCouncilDecision.reason,
             skill_id: contextCompile.selectedSkill.skillId,
             selected_policy_id: deliberation?.selectedPolicyId || '',
             raw_content_policy: 'sanitized_snippets',
@@ -991,6 +1062,10 @@ export async function beginTurnAgentHarness(
           ].filter(Boolean),
           knownBlockers: input.knownBlockers,
           resumePendingApproval: input.requestRoute === 'repair_approval',
+          repositorySnapshotProvider:
+            taskFamily === 'code'
+              ? () => captureCurrentRepositorySnapshot()
+              : undefined,
         })
       : null;
   return {
@@ -1659,27 +1734,6 @@ export async function reflectTurnAgentOutcome(input: {
     answerClass: input.answerClass || 'unknown',
     blockerClass: input.blockerClass,
   });
-  if (context?.verifiedDeepWorkPacket && isDatabaseInitialized()) {
-    context.verifiedDeepWorkPacket = finalizeVerifiedDeepWorkForTurn({
-      packetId: context.verifiedDeepWorkPacket.packetId,
-      outcomeSummary: input.evaluation.summary,
-      evidencePassed:
-        input.evaluation.status !== 'block' &&
-        input.evaluation.evidenceGap !== 'blocked',
-      evidenceRef:
-        input.evaluation.truthVerdict?.audit.auditId ||
-        context.deliberation?.traceGradeId ||
-        null,
-      blocker: input.blockerClass || null,
-      toolId: input.routeUsed,
-      toolReliability: input.evaluation.evidenceGap === 'major' ? 0.7 : 1,
-      artifactRefs: [
-        context.providerCouncil?.councilRunId || '',
-        context.cognitiveRun?.run.runId || '',
-        context.runtimeSpine?.run.runtimeRunId || '',
-      ].filter(Boolean),
-    });
-  }
   if (!context?.deliberation?.taskLedgerId) {
     return {
       routeUsed: input.routeUsed,
@@ -1897,6 +1951,33 @@ export async function reflectTurnAgentOutcome(input: {
     fallbackUsed: input.fallbackUsed === true,
     reflection,
   };
+}
+
+/**
+ * Reconcile execution-requiring work once, after the final runtime attempt.
+ * Post-delivery reflection intentionally cannot call this boundary: delivery
+ * and answer quality prove communication, not tool execution or postconditions.
+ */
+export function reconcileTurnRuntimeEvidence(
+  input: ReconcileTurnRuntimeEvidenceInput,
+): VerifiedDeepWorkPacket | null {
+  const context = input.context;
+  const packet = context?.verifiedDeepWorkPacket;
+  if (!context || !packet || !isDatabaseInitialized()) return packet || null;
+  const evaluation = input.evaluation;
+  context.verifiedDeepWorkPacket = reconcileVerifiedDeepWorkExecution({
+    packetId: packet.packetId,
+    turnId: context.turnId,
+    runtimeToolEvidence: input.runtimeToolEvidence,
+    runtimeStatus: input.runtimeStatus,
+    evaluationStatus: evaluation?.status || 'block',
+    evidenceGap: evaluation?.evidenceGap || 'blocked',
+    outcomeSummary:
+      evaluation?.summary ||
+      `Runtime ${input.runtimeStatus} on ${input.routeUsed}; no delivered answer evaluation was available.`,
+    blocker: input.blockerClass || null,
+  });
+  return context.verifiedDeepWorkPacket;
 }
 
 export function listSkillAffordances(): SkillAffordanceCard[] {

@@ -760,13 +760,19 @@ export function syncOutcomeFromMessageActionRecord(
                   action.sourceSummary || 'Approved and ready to send.',
                   140,
                 )
-              : action.sendStatus === 'failed'
+              : action.sendStatus === 'delivery_unverified'
                 ? clipText(
                     action.sourceSummary ||
-                      'The message still needs to go out.',
+                      'Message delivery is unverified and blocked from replay.',
                     140,
                   )
-                : clipText(action.sourceSummary || action.draftText, 140);
+                : action.sendStatus === 'failed'
+                  ? clipText(
+                      action.sourceSummary ||
+                        'The message still needs to go out.',
+                      140,
+                    )
+                  : clipText(action.sourceSummary || action.draftText, 140);
   const nextFollowupText =
     action.sendStatus === 'sent'
       ? 'That message already went out.'
@@ -786,9 +792,11 @@ export function syncOutcomeFromMessageActionRecord(
               : 'This draft is saved to revisit before sending.'
             : action.sendStatus === 'failed'
               ? 'The draft is still here if you want to retry or send it later.'
-              : action.sendStatus === 'approved'
-                ? 'This is approved but not sent yet.'
-                : 'A reply is drafted, but it still needs your approval to send.';
+              : action.sendStatus === 'delivery_unverified'
+                ? 'Check the target conversation before deciding whether a new message is needed; replay is blocked.'
+                : action.sendStatus === 'approved'
+                  ? 'This is approved but not sent yet.'
+                  : 'A reply is drafted, but it still needs your approval to send.';
   return upsertOutcomeRecord({
     groupFolder: action.groupFolder,
     sourceType: 'message_action',
@@ -799,7 +807,9 @@ export function syncOutcomeFromMessageActionRecord(
     blockerText:
       action.sendStatus === 'failed'
         ? 'I could not send that right now.'
-        : null,
+        : action.sendStatus === 'delivery_unverified'
+          ? 'Delivery could not be verified, so replay is blocked to prevent a duplicate.'
+          : null,
     dueAt: action.followupAt || null,
     reviewHorizon:
       action.sendStatus === 'sent'
@@ -995,10 +1005,15 @@ export function syncOutcomeFromHandoffRecord(
         ? `The ${
             handoff.targetChannel === 'telegram' ? 'Telegram' : 'Messages'
           } handoff landed, but it still needs attention.`
-        : handoff.status === 'failed'
-          ? 'The handoff did not land cleanly yet.'
-          : null,
-    blockerText: handoff.status === 'failed' ? handoff.errorText || null : null,
+        : handoff.status === 'delivery_unverified'
+          ? 'Check the target conversation before any new handoff; replay is blocked because delivery may have occurred.'
+          : handoff.status === 'failed'
+            ? 'The handoff did not land cleanly yet.'
+            : null,
+    blockerText:
+      handoff.status === 'failed' || handoff.status === 'delivery_unverified'
+        ? handoff.errorText || null
+        : null,
     dueAt: handoff.expiresAt,
     reviewHorizon:
       handoff.status === 'delivered'
@@ -1882,7 +1897,9 @@ function buildShowReferenceReply(
         nextAction:
           messageAction.sendStatus === 'sent'
             ? null
-            : 'Send it, send it later, or remind yourself instead.',
+            : messageAction.sendStatus === 'delivery_unverified'
+              ? 'Check the target conversation before deciding whether a new message is needed.'
+              : 'Send it, send it later, or remind yourself instead.',
       });
     }
   }

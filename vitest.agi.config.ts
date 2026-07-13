@@ -1,11 +1,12 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
-    include: ["tests/**/*.test.ts"],
+    include: ['tests/**/*.test.ts'],
     testTimeout: 10000,
-    setupFiles: ["./scripts/test-network-guard.mjs"],
+    setupFiles: ['./scripts/test-network-guard.mjs'],
     env: {
-      ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE: "1",
+      ANDREA_TEST_DISABLE_PROVIDER_ENV_FILE: '1',
+      ANDREA_DETERMINISTIC_STORAGE_MODE: 'memory',
     },
   },
 });

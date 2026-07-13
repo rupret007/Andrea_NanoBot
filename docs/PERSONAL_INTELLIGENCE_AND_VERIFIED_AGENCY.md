@@ -55,21 +55,37 @@ The existing rule explanation remains visible when a rule fires.
 `VerifiedDeepWorkPacket` persists the flow `plan -> inspect -> approval ->
 execute -> verify -> record outcome`. Approval evidence is mandatory when the
 packet is marked approval-required. Degraded providers or tools block execution,
-failed postconditions block completion, and resumed packets must revalidate
-stale tool snapshots. Research and coding packets retain sources, artifacts,
-checks, unresolved risks, and the next user-readable decision.
+failed or unresolved runtime results block completion, and a later approval turn
+must rebind the pending packet before execution is assessed. Research and coding
+packets retain sources, bounded artifact or evidence references, checks,
+unresolved risks, and the next user-readable decision.
 
-Research, operator, repair, and explicitly deep planning turns now create these
-packets automatically. A later approval turn binds to the pending packet, and
-post-send reflection advances the packet to a verified completion or records an
-honest blocker.
+Execution-intent coding and operator turns create V2 packets automatically. A
+later approval turn binds to the pending packet, but post-send reflection only
+assesses answer quality and never advances execution. Completion requires
+strictly validated evidence from the packet's bound turn, a complete result for
+a task-relevant runtime action, and an answer evaluation without a major or
+blocked evidence gap. Repository writes additionally require before/after state
+fingerprints and a successful verification observed after the final write.
+Terminal runtime errors and unclassified actions fail closed even when an
+individual receipt claims success. Stale-session retry preserves evidence from
+the suppressed attempt so a fresh session cannot erase earlier failure or
+uncertainty. An aggregate `external_side_effect` observation cannot complete a
+packet—even with approval—until a dedicated receipt binds the exact approved
+action. Coding packets remain blocked on `runtime_repository_scope_unbound`
+until repository actions are bound to one inspected target. Operator packets
+remain blocked on `runtime_operator_scope_unbound` until the exact target,
+action, and postcondition are bound. The current aggregate evidence proves
+action classes, counts, ordering, outcomes, recovery, and state fingerprints;
+it does not prove the contents of a named artifact or semantic postcondition.
 
 ## Evaluation and improvement
 
 Deterministic scorecards use isolated database state, an injected synthetic
 platform fixture, provider-env suppression, and a process fetch guard that
 rejects every non-loopback request. Live evaluation is opt-in and requires an
-explicit positive `--max-cost-usd` value.
+explicit positive `--max-cost-usd` threshold for the harness estimate; this is
+not an enforceable provider-billing maximum.
 
 Council ledger rows carry `synthetic`, `replay`, or `live` origin. Only live
 runs influence provider reliability and route promotion. Feedback can be
@@ -115,6 +131,57 @@ filter.
 Interaction latency means live reply delivery only. Provider evaluations,
 deep-work route timing, replay drills, synthetic turns, and post-delivery
 reflection are labeled separately and cannot distort the personal UX metric.
+The primary evaluated reply path records request-preprocessing, turn-harness,
+response-preparation, and channel-delivery stages after the channel attempt has
+been classified. A confirmed success requires a non-empty platform receipt for
+every response chunk. A confirmed prefix followed by failure is `partial`; a
+transport failure whose server-acceptance state cannot be known is `unknown`.
+Those two outcomes commit the inbound cursor only to prevent an unsafe full
+replay, create bounded `interaction_delivery_degraded` evidence, and skip
+feedback and other post-delivery enrichment. They are not successful delivery
+samples and do not enter p50/p95. A definite rejection before any receipt, or
+an otherwise complete result without a receipt, remains retryable and creates
+no delivery metric.
+Instrumentation v3 also records time spent waiting behind an earlier turn from
+the earliest valid queued inbound timestamp. Invalid timestamps fall back to
+dequeue time and future clock skew is clamped. An empty resolved result cannot
+become a success sample or an unretryable cursor. Four-stage v2 samples remain
+valid historical attribution.
+Local controls explicitly opt into two seconds; ordinary replies and missing or
+malformed classifications use ten seconds. Andrea never infers the class from
+an incidental zero-duration harness. Legacy samples remain auditable and are
+excluded from current percentiles once attributed samples exist. Metric or
+later post-delivery enrichment errors are logged but cannot turn an already
+delivered reply into a retryable send failure. Specialized action
+presentations and handoff sends remain excluded from comparable latency until
+they carry typed route semantics. When those message workflows advance durable
+state, the shared complete-delivery guard rejects partial, unknown, malformed,
+or receiptless results before they can be marked delivered, sent, completed,
+or posted. Message actions and cross-channel handoffs persist partial/unknown
+attempts as terminal `delivery_unverified` evidence, retain confirmed prefix
+receipts and the next unknown chunk, remove resend controls, and require target
+inspection plus a new draft before any later send. Runtime jobs preserve the
+already-created/followed-up/stopped backend job and current selection when the
+status card notification is blocked; they never relabel that backend operation
+as failed or recreate it. Approval and delegation rules remain independent of
+this transport guard.
+Each v3 sample may also include aggregate host pressure at dequeue: one-minute
+load per CPU, free-memory ratio, and a bounded pressure class. This stores no
+process list, command, host identifier, prompt, or response and is diagnostic
+correlation only; it never changes routing or excuses a target breach.
+Queue wait is attribution, not a claim that the host caused the delay. A busy
+container is never interrupted for a new turn. If a fresh turn is pending when
+that container explicitly becomes idle, the idle container closes and the
+existing per-group queue drains the new turn; an IPC-piped continuation stays
+in the active session, and pending tasks retain priority.
+
+Text delivery truth does not remove the remaining ambiguity for file or media
+artifacts. Those are single transport operations rather than chunk-classified
+primary replies, and a transport timeout can still leave server acceptance
+unknowable. A thrown artifact send is therefore unconfirmed—not evidence that
+nothing arrived—and an operator should inspect the target thread before a
+manual resend. No durable workflow should infer artifact success without a
+confirmed receipt.
 Fresh provider probes are reconciled into route reliability through the
 existing redacted live-health cache. The cache is owner-only, stores no raw
 credential or provider response, expires after 30 minutes, and cannot override
@@ -179,10 +246,14 @@ Andrea creates a candidate coding skill after three owner-reviewed verified
 missions. Promotion requires five verified missions, at least 80% acceptance,
 and fewer than two corrected or rejected outcomes. Verified promotion evidence
 also requires artifacts, passing checks, resolved risks, approval evidence when
-needed, and a deterministic test/replay signal. The review is bridged into one
-Agent OS trajectory evaluation, stable skill proposal, cognitive skill card, and
-runtime manifest. Two negative outcomes block promotion and quarantine every
-linked representation. Promotion never expands authority:
+needed, and a deterministic test/replay signal. V2 packets additionally require
+complete bound runtime evidence; repository writes require a verification after
+the final write, and aggregate external-action evidence remains ineligible until
+the exact approved action has its own binding. Reply quality and internal trace
+IDs never satisfy those execution requirements. The review is bridged into one
+Agent OS trajectory evaluation, stable skill proposal, cognitive skill card,
+and runtime manifest. Two negative outcomes block promotion and quarantine
+every linked representation. Promotion never expands authority:
 commit, push, deploy, migration, dependency changes, deletion, and other
 irreversible actions continue to require fresh approval.
 
@@ -267,6 +338,16 @@ The council doctor reads the same recent evidence for current provider status
 while preserving the recorded participation, failures, and quality of each
 historical council run.
 
+Production council routing uses an empirical gate, not task-family breadth as
+a proxy for difficulty. Ordinary coding, status, diagnostics, drafting,
+calendar, research, approval, and learn-first turns use one capable model.
+Council runs only after an explicit deep control, a material disagreement
+between viable routes, or planning in a genuinely high-risk production,
+security, privacy, credential, deployment, migration, deletion, or payment
+domain. Explicit quick mode cannot suppress confirmed high-risk planning
+review. Approval enforcement remains independent of model count, and synthetic
+or degraded council evidence cannot promote a route.
+
 `npm run debug:grounded-agency` prints the metadata-only capability registry and
 twelve redacted routing cases without provider calls. Live comparison is opt-in:
 
@@ -274,10 +355,12 @@ twelve redacted routing cases without provider calls. Live comparison is opt-in:
 npm run debug:grounded-agency -- --live --max-cost-usd=25
 ```
 
-The live runner fails closed without a positive cap, stops before exceeding the
-cap, rotates across configured providers, stores only provider/model/latency/cost
-and structural outcome metadata, and never stores raw provider output or user
-conversation text. Its final registry is derived from those same capped calls:
+The live runner fails closed without a positive catalog-derived estimate cap,
+stops before its estimated next call would exceed that threshold, rotates across
+configured providers, stores only provider/model/latency/estimated-cost and
+structural outcome metadata, and never stores raw provider output or user
+conversation text. It does not reconcile or enforce provider billing. Its final
+registry is derived from those same estimate-bounded calls:
 any observed failure leaves that provider degraded, while an all-successful
 observed provider is healthy. It does not make extra unbudgeted health calls. A
 structural pass proves response-contract compliance, not owner-verified task
@@ -295,7 +378,8 @@ the transport as failed or copying a success sentence into `lastFailure`.
 Run the focused proof with:
 
 ```bash
-npm test -- --run src/evaluation-execution.test.ts src/container-runner.credentials.test.ts src/council-quality.test.ts src/personal-context-packet.test.ts src/routine-promotion.test.ts src/verified-deep-work.test.ts src/personal-assistant-metrics.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/evaluation-execution.test.ts src/container-runner.credentials.test.ts src/council-quality.test.ts src/personal-context-packet.test.ts src/routine-promotion.test.ts src/runtime-tool-evidence.test.ts src/runtime-tool-evidence-collector.test.ts src/container-runner.test.ts src/turn-runtime-evidence-scope.test.ts src/verified-deep-work.test.ts src/deep-work-apprenticeship.test.ts src/turn-agent-harness.test.ts src/turn-agent-intelligence-boundary.test.ts src/personal-assistant-metrics.test.ts
+node scripts/run-with-pinned-node.mjs ./container/agent-runner/node_modules/typescript/bin/tsc -p container/agent-runner/tsconfig.json --noEmit
 npm run typecheck
 npm run agi:scorecard -- --no-write --no-dogfood
 ```
@@ -306,3 +390,46 @@ approved and budgeted, use:
 ```bash
 npm run agi:scorecard:live -- --max-cost-usd=1
 ```
+
+The real-world intelligence slice also has a network-denied deterministic
+fixture comparison:
+
+```bash
+npm run test:real-world-intelligence:heldout
+```
+
+It compares the superseded harness-duration target heuristic with explicit
+route classification on five synthetic latency fixtures, validates current
+percentile and breach attribution, exercises a separate synthetic
+execution-truth set, and requires council acceptance to carry complete mode,
+verifier, provenance, evidence, approval, privacy, and budget semantics. The
+execution fixtures inject aggregate evidence objects; they prove fail-closed
+reconciliation behavior, not a live tool run, named artifact, or semantic
+postcondition.
+
+The same command also creates a disposable local Git repository, observes a
+real failed write and recovery, fingerprints the state transition, and runs a
+real syntax test after the final write. Its reconciliation is expected to stop
+at `runtime_repository_scope_unbound`: the fixture has not proven a
+host-enforced binding between the inspected repository and every read, write,
+state probe, and verification. This proves the collector and fail-closed
+reconciliation boundary, not container/mount/IPC end-to-end execution or
+production-target binding.
+
+The current held-out result passes all six injected execution-truth cases. The
+disposable proof also passes by reaching its expected blocked state with
+`productionStateTouched: false`; blocked is the safe acceptance result here,
+not an incomplete test.
+
+The live council diagnostic writes its fixed estimated-cost reservation before
+any outbound call and records it separately from other recorded cost estimates;
+neither value is reconciled provider billing.
+`--max-cost-usd` is an operator threshold for that estimate, not an enforceable
+provider billing maximum, because actual billing is unavailable at this
+boundary. The command therefore also requires `--ack-estimate-only` and marks
+the result `acceptanceEligible: false` with
+`actualBillingCapEnforced: false`. It makes live, potentially billable
+provider/search calls and writes redacted local health, council, and metric
+evidence. It makes no user-facing send or user/world mutation on the current
+coordinator-disabled runtime; if the coordinator is enabled it can also POST
+council records.

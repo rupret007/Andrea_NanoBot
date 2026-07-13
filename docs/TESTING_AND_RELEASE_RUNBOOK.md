@@ -39,6 +39,15 @@ The root project currently builds a cross-platform Node runtime artifact at
 native desktop packaging scripts. Treat `npm run build` as the release build
 for macOS and Windows service/runtime deployment.
 
+The root build and typecheck do not compile
+`container/agent-runner/src/`. That source is synchronized per group and
+recompiled inside the container at startup, but a change to the runner still
+requires its own repository-side typecheck:
+
+```bash
+node scripts/run-with-pinned-node.mjs ./container/agent-runner/node_modules/typescript/bin/tsc -p container/agent-runner/tsconfig.json --noEmit
+```
+
 Platform-specific release proof means:
 
 - macOS: build from the canonical checkout, restart launchd, and verify the
@@ -224,34 +233,68 @@ Treat that delegation suite as the fast proof that Andrea can:
 For the personal-intelligence production loop, also run:
 
 ```bash
-npm test -- --run src/personal-context-packet.test.ts src/verified-deep-work.test.ts src/routine-promotion.test.ts src/personal-assistant-metrics.test.ts src/intelligence-regression-harness.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/personal-context-packet.test.ts src/runtime-tool-evidence.test.ts src/runtime-tool-evidence-collector.test.ts src/container-runner.test.ts src/turn-runtime-evidence-scope.test.ts src/verified-deep-work.test.ts src/deep-work-apprenticeship.test.ts src/turn-agent-harness.test.ts src/turn-agent-intelligence-boundary.test.ts src/routine-promotion.test.ts src/personal-assistant-metrics.test.ts src/intelligence-regression-harness.test.ts
+node scripts/run-with-pinned-node.mjs ./container/agent-runner/node_modules/typescript/bin/tsc -p container/agent-runner/tsconfig.json --noEmit
 npm run test:intelligence -- --no-record --quiet
 npm run debug:assistant-intelligence
 npm run debug:grounded-agency
 ```
 
+The focused runtime-evidence suite proves only the aggregate action/state
+contract: strict metadata validation, result correlation, retry merge,
+turn/approval binding, and fail-closed deep-work reconciliation. It does not
+claim a named artifact or semantic postcondition from raw output. A repository
+write can complete only when a verification succeeded after the final write.
+An aggregate external-action observation cannot complete, even with approval,
+until a dedicated receipt binds the exact approved action. A terminal runtime
+error blocks regardless of successful receipt counts, and a stale-session retry
+must retain the suppressed attempt's evidence. Coding packets stay blocked on
+`runtime_repository_scope_unbound`; operator packets stay blocked on
+`runtime_operator_scope_unbound` until exact target, action, and postcondition
+binding exists.
+
 The intelligence harness must prove cited local context and a verified or
-honestly blocked deep-work outcome without public network access.
+honestly blocked synthetic deep-work outcome without public network access.
 The grounded-agency command must report twelve redacted cases and zero cost in
-deterministic mode. Live mode requires an explicit positive cost cap and remains
-outside CI.
+deterministic mode. Live mode requires an explicit positive estimated-cost
+threshold, does not claim to cap provider billing, and remains outside CI.
 
 For messaging trust-ladder and live-delivery changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/message-actions.test.ts src/channels/bluebubbles.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/delegation-rules.test.ts src/alexa.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/channel-delivery.test.ts src/channels/telegram.test.ts src/interaction-delivery-metrics.test.ts src/in-flight-turn-cursors.test.ts src/group-queue.test.ts src/message-actions.test.ts src/channels/bluebubbles.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/delegation-rules.test.ts src/alexa.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts src/job-status-card.test.ts src/job-dispatch.test.ts src/runtime-card-delivery.test.ts
 npm run telegram:user:smoke
 npm run debug:bluebubbles -- --live
 ```
 
 Treat that messaging suite as the fast proof that Andrea can:
 
+- require a non-empty receipt for complete primary delivery
+- keep a definite pre-receipt rejection retryable while preventing automatic
+  replay after a confirmed prefix or transport-unknown attempt
+- exclude `partial` and `unknown` delivery evidence from successful p50/p95
+- fail durable message workflows closed on partial, unknown, malformed, or
+  receiptless delivery
+- persist message actions/handoffs as `delivery_unverified` without resend
+  controls, and preserve an already-created runtime job when only its status
+  notification is blocked
+- rewind a failed turn's persisted cursor before queue retry
+- measure v3 `queue_wait` from valid inbound time while preserving v2 records
+- record only aggregate dequeue-time host pressure and never use it to alter
+  routing, approval, or latency targets
+- drain a fresh pending turn when the prior container becomes idle without
+  interrupting a busy container or closing an IPC-piped continuation
 - persist a tracked message action from a draft
 - require approval before external send by default
 - send a BlueBubbles same-thread reply without the Andrea prefix
 - keep one-off scheduled send distinct from remind-later
 - keep save-under-thread distinct from remind-later and scheduled send
 - surface sent vs deferred messaging honestly in review
+
+Artifact delivery is a separate residual-risk check. A file/media transport
+timeout may be unconfirmed even when the server accepted it; tests must not
+equate a thrown artifact send with proof of non-delivery or automatically replay
+it. Inspect the real target thread before any operator resend.
 
 For Google Calendar create, follow-through, or calendar-routing changes, add:
 
@@ -376,6 +419,14 @@ npm run test:deterministic:sweep
 
 This continues through independent `test:*` scripts, reports all failures at the end, and intentionally excludes interactive, aggregate, live, baseline-writing, and cloud-provider council tiers.
 
+The deterministic runner is hermetic at both external boundaries: it suppresses
+provider environment fallback, denies non-loopback network requests, and forces
+any production-style `initDatabase()` call into an in-memory test database.
+Every TypeScript `scripts/test-*` entrypoint also uses the isolated test
+initializer directly. A test that needs an on-disk migration fixture must use a
+generated disposable path; deterministic tests must never read or write
+`store/messages.db`.
+
 ## 4. CI-Safe Suite
 
 ```bash
@@ -458,6 +509,34 @@ Then validate the public-safe Telegram surface:
 - `npm run debug:council`
 - `npm run debug:council -- --metrics`
 - `npm run debug:council -- --evidence --json`
+- `npm run test:real-world-intelligence:heldout` before any live proof. It uses
+  isolated storage, asserts the non-loopback network guard, compares the old
+  timing heuristic with five synthetic explicit-route fixtures, and exercises
+  strict council acceptance without credentials or cost. It also creates a
+  disposable local Git repository, observes a real failed write and recovery,
+  fingerprints the resulting state transition, and runs a syntax test after
+  the final write. Reconciliation must remain blocked on
+  `runtime_repository_scope_unbound` because this local fixture does not bind
+  every repository action to a host-enforced target. It is collector and
+  fail-closed reconciliation proof, not a container/mount/IPC end-to-end canary
+  or production-target proof. The accepted result is 6/6 execution-truth cases
+  plus an intentionally scope-blocked disposable proof with no production-state
+  touch.
+- `npm run debug:council:live-proof -- --live --max-cost-usd=1.00 --ack-estimate-only`
+  only when an explicitly budgeted live diagnostic is authorized. The
+  threshold is a fixed estimate reservation, not an
+  enforceable provider billing maximum; the extra acknowledgement is required
+  so it cannot be mistaken for cost-cap acceptance evidence. The result is
+  marked `acceptanceEligible: false` and `actualBillingCapEnforced: false` until
+  provider calls support pre-call monetary reservation and complete reconciled
+  usage. The command writes the estimate reservation before outbound calls and
+  replaces it with a terminal blocked record if execution throws. It makes
+  live, potentially billable provider/search calls and persists redacted
+  health, council, and metric evidence locally. It performs no user-facing send
+  or user/world mutation on the current coordinator-disabled runtime; an
+  enabled coordinator can receive council-record POSTs. Evidence gaps, provider
+  failure, timeout, substitution, platform-record fallback, and cost-control
+  proof debt remain separate.
 - `npm run debug:cognition -- --json`
 - `npm run debug:cognition -- --config-only --json`
 - `npm run debug:cognition -- --resume`
@@ -564,6 +643,15 @@ being treated as live-provider evidence.
 - `npm run test:harness:rho`
 - `/cursor_status`
 
+The empirical council gate must also be exercised independently of provider
+quality. Ordinary coding, status, diagnostics, drafting, calendar, research,
+approval, and learn-first fixtures must select one capable model. Explicit deep
+controls and a material close-score route disagreement must select council.
+Confirmed high-risk production, security, privacy, credential, deployment,
+migration, deletion, or payment planning must still select council under a
+quick control. These routing assertions are deterministic and cannot be
+replaced by a synthetic quality score or a successful live provider call.
+
 The cognition benchmark ladder must prove more than answer quality: each drill
 should persist a redacted goal lifecycle row, a metadata-only blackboard trail,
 an autonomy budget with mutating actions disabled by default, checkpoint/resume
@@ -594,6 +682,15 @@ required non-verifier route is blocked, and `none` means no replayable council
 run exists yet. A fallback like `verifier:gemini_cloud->openai_cloud` is useful
 but should be read as reduced provider independence, not full multi-provider
 agreement.
+The estimated-threshold live diagnostic may report `completed_degraded` when
+direct providers and the verifier succeed but the external platform council
+record falls back to Andrea's local ledger. That is diagnostic-only evidence,
+not a passing strict proof, a fully healthy platform handoff, or permission to
+rerun repeatedly. The threshold does not meter provider billing.
+When the external coordinator is intentionally disabled, Andrea's canonical
+local ledger is reported as `platformRecordLocalRuntime=true` and is not a
+degradation. Only an expected coordinator that fails to return a record is
+classified as `platformRecordFallback=true`.
 
 For pilot-mode and daily dogfooding specifically, also validate:
 

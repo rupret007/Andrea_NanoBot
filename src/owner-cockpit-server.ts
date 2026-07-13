@@ -21,6 +21,10 @@ import {
 } from './deep-work-apprenticeship.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import {
+  buildAssistantMetricSnapshot,
+  buildReviewedOutcomeProgress,
+} from './personal-assistant-metrics.js';
 import type {
   CognitiveApprovalPacket,
   VerifiedDeepWorkPacket,
@@ -280,6 +284,14 @@ export class OwnerCockpitServer {
       limit: 20,
     });
     const currentMission = selectOwnerCockpitMission(deepWorkPackets);
+    const assistantMetrics = buildAssistantMetricSnapshot({
+      groupFolder: this.config.groupFolder,
+      now: this.now(),
+    });
+    const reviewedOutcomeProgress = buildReviewedOutcomeProgress({
+      groupFolder: this.config.groupFolder,
+      now: this.now(),
+    });
     const activeThread = threads.find(
       (item) => item.status === 'active' && item.nextAction,
     );
@@ -356,6 +368,45 @@ export class OwnerCockpitServer {
           this.config.groupFolder,
           this.now(),
         ),
+      },
+      intelligence: {
+        reviewedOutcomeCount: assistantMetrics.reviewedOutcomeCount,
+        requiredOutcomeCount: 5,
+        baselineReady: assistantMetrics.reviewedOutcomeCount >= 5,
+        baselineSaved: reviewedOutcomeProgress.baselineSaved,
+        latency: {
+          sampleCount: assistantMetrics.interactionLatencySampleCount,
+          averageMs: assistantMetrics.averageLatencyMs,
+          p50Ms: assistantMetrics.p50LatencyMs,
+          p95Ms: assistantMetrics.p95LatencyMs,
+          slowestStage: assistantMetrics.slowestLatencyStage,
+          slowestRoute: assistantMetrics.slowestLatencyRoute,
+          slowestProvider: assistantMetrics.slowestLatencyProvider,
+          slowestTool: assistantMetrics.slowestLatencyTool,
+          worstBreachingRoute: assistantMetrics.worstBreachingLatencyRoute,
+          targetBreaches: assistantMetrics.interactionLatencyTargetBreaches,
+          legacySampleCount:
+            assistantMetrics.legacyInteractionLatencySampleCount,
+          invalidSampleCount:
+            assistantMetrics.invalidInteractionLatencySampleCount,
+          hostPressureSampleCount: assistantMetrics.hostPressureSampleCount,
+          highHostPressureSampleCount:
+            assistantMetrics.highHostPressureSampleCount,
+          latestHostPressureClass: assistantMetrics.latestHostPressureClass,
+          degradedDeliveryCount:
+            assistantMetrics.degradedInteractionDeliveryCount,
+          partialDeliveryCount:
+            assistantMetrics.partialInteractionDeliveryCount,
+          unknownDeliveryCount:
+            assistantMetrics.unknownInteractionDeliveryCount,
+          latestDegradedDeliveryOutcome:
+            assistantMetrics.latestDegradedDeliveryOutcome,
+          latestDegradedDeliveryRoute:
+            assistantMetrics.latestDegradedDeliveryRoute,
+          routes: assistantMetrics.interactionLatencyByRoute.slice(0, 5),
+          providers: assistantMetrics.interactionLatencyByProvider.slice(0, 5),
+          tools: assistantMetrics.interactionLatencyByTool.slice(0, 5),
+        },
       },
     };
   }

@@ -6,6 +6,7 @@ type Step = {
   command: string;
   args: string[];
   enabled: boolean;
+  liveStorage?: boolean;
 };
 
 function runStep(step: Step): void {
@@ -15,7 +16,9 @@ function runStep(step: Step): void {
   const startedAt = Date.now();
   const result = spawnSync(step.command, step.args, {
     stdio: 'inherit',
-    env: buildHermeticTestEnv(),
+    env: buildHermeticTestEnv(process.env, {
+      isolateStorage: !step.liveStorage,
+    }),
     shell: process.platform === 'win32',
   });
   const durationSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
@@ -45,11 +48,13 @@ function main(): void {
     scriptPath: string,
     extraArgs: string[] = [],
     enabled = true,
+    liveStorage = false,
   ): Step => ({
     name,
     command: nodeCommand,
     args: [scriptPath, ...extraArgs],
     enabled,
+    liveStorage,
   });
 
   const steps: Step[] = [
@@ -68,6 +73,7 @@ function main(): void {
       './node_modules/tsx/dist/cli.mjs',
       ['./setup/index.ts', '--step', 'verify'],
       !skipLiveVerify,
+      true,
     ),
   ];
 

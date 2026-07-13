@@ -939,6 +939,131 @@ describe('message actions', () => {
     ).toBe('completed');
   });
 
+  it('blocks replay and preserves evidence when channel delivery is partial', async () => {
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick answer.',
+      draftText: 'Yes, that still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:10:00.000Z'),
+    });
+
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:12:00.000Z'),
+        sendToTarget: vi.fn(async () => ({
+          platformMessageId: 'prefix-only',
+          platformMessageIds: ['prefix-only'],
+          deliveryState: 'partial' as const,
+          nextUnconfirmedChunkIndex: 1,
+        })),
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('could not confirm');
+    expect(result.replyText).toContain('will not retry');
+    expect(result.presentation?.inlineActionRows).toEqual([]);
+    expect(getMessageAction(action.messageActionId)).toMatchObject({
+      sendStatus: 'delivery_unverified',
+      platformMessageId: 'prefix-only',
+      trustLevel: 'never_automate',
+      lastActionKind: 'delivery_unverified',
+    });
+    const stored = getMessageAction(action.messageActionId)!;
+    expect(JSON.parse(stored.explanationJson || '{}')).toMatchObject({
+      deliveryVerification: {
+        outcome: 'partial',
+        confirmedReceiptIds: ['prefix-only'],
+        confirmedReceiptCount: 1,
+        nextUnconfirmedChunkIndex: 1,
+        retryPolicy: 'verify_before_resend',
+      },
+    });
+    expect(
+      getOutcomeBySource('main', 'message_action', action.messageActionId)
+        ?.status,
+    ).toBe('partial');
+
+    const retrySend = vi.fn(async () => ({
+      platformMessageId: 'must-not-send',
+    }));
+    const retry = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send_again' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:13:00.000Z'),
+        sendToTarget: retrySend,
+      },
+    );
+    expect(retry.replyText).toContain('will not resend');
+    expect(retry.replyText).toContain('create a new draft');
+    expect(retrySend).not.toHaveBeenCalled();
+  });
+
+  it('keeps receiptless transport uncertainty distinct from a failed send', async () => {
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick answer.',
+      draftText: 'Yes, that still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:10:00.000Z'),
+    });
+
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:12:00.000Z'),
+        sendToTarget: vi.fn(async () => ({
+          deliveryState: 'unknown' as const,
+          nextUnconfirmedChunkIndex: 0,
+        })),
+      },
+    );
+
+    const stored = getMessageAction(action.messageActionId)!;
+    expect(stored).toMatchObject({
+      sendStatus: 'delivery_unverified',
+      platformMessageId: null,
+    });
+    expect(JSON.parse(stored.explanationJson || '{}')).toMatchObject({
+      deliveryVerification: {
+        outcome: 'unknown',
+        confirmedReceiptIds: [],
+        confirmedReceiptCount: 0,
+        nextUnconfirmedChunkIndex: 0,
+      },
+    });
+  });
+
   it('can convert a drafted reply into a reminder-backed follow-up instead of a queued send', async () => {
     const thread = seedCommunicationThread();
     const action = createOrRefreshMessageActionFromDraft({

@@ -1,6 +1,6 @@
 import https from 'https';
 
-import { Api, Bot, InlineKeyboard, InputFile } from 'grammy';
+import { Api, Bot, GrammyError, InlineKeyboard, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
@@ -369,14 +369,48 @@ async function sendTelegramMessage(
       parse_mode: 'Markdown',
     });
     return { platformMessageId: sent.message_id.toString() };
-  } catch (err) {
+  } catch (error) {
+    if (!isTelegramMarkdownParseFailure(error)) {
+      throw new TelegramChunkAttemptError(classifyTelegramChunkAttempt(error));
+    }
     logger.debug(
-      { component: 'telegram', err },
+      { component: 'telegram', errorClass: 'markdown_send_failed' },
       'Markdown send failed, falling back to plain text',
     );
-    const sent = await api.sendMessage(chatId, text, options);
-    return { platformMessageId: sent.message_id.toString() };
+    try {
+      const sent = await api.sendMessage(chatId, text, options);
+      return { platformMessageId: sent.message_id.toString() };
+    } catch (fallbackError) {
+      throw new TelegramChunkAttemptError(
+        classifyTelegramChunkAttempt(fallbackError),
+      );
+    }
   }
+}
+
+type TelegramChunkAttemptState = 'none' | 'unknown';
+
+class TelegramChunkAttemptError extends Error {
+  constructor(readonly attemptState: TelegramChunkAttemptState) {
+    super('Telegram chunk delivery was not confirmed.');
+    this.name = 'TelegramChunkAttemptError';
+  }
+}
+
+function classifyTelegramChunkAttempt(
+  error: unknown,
+): TelegramChunkAttemptState {
+  return error instanceof GrammyError ? 'none' : 'unknown';
+}
+
+function isTelegramMarkdownParseFailure(error: unknown): boolean {
+  if (!(error instanceof GrammyError) || error.error_code !== 400) return false;
+  const description = error.description.toLowerCase();
+  return (
+    description.includes("can't parse entities") ||
+    description.includes('cannot parse entities') ||
+    description.includes('unsupported start tag')
+  );
 }
 
 async function sendTelegramArtifact(
@@ -440,7 +474,7 @@ async function editTelegramMessage(
       return { platformMessageId: messageId.toString() };
     }
     logger.debug(
-      { component: 'telegram', err },
+      { component: 'telegram', errorClass: 'markdown_edit_failed' },
       'Markdown edit failed, falling back to plain text',
     );
     await api.editMessageText(chatId, messageId, text, options);
@@ -1620,9 +1654,11 @@ export class TelegramChannel implements Channel {
   ): Promise<SendMessageResult> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
-      return {};
+      throw new Error('Telegram message delivery is unavailable.');
     }
 
+    const confirmedPlatformMessageIds: string[] = [];
+    let nextUnconfirmedChunkIndex = 0;
     try {
       const numericId = jid.replace(/^tg:/, '');
       const baseOptions = {
@@ -1636,30 +1672,32 @@ export class TelegramChannel implements Channel {
           : {}),
       };
       const inlineKeyboard = buildInlineKeyboard(options);
-      let firstMessageId: string | undefined;
-
       const chunks = splitTelegramMessage(text);
       for (const [index, chunk] of chunks.entries()) {
+        nextUnconfirmedChunkIndex = index;
         const result = await sendTelegramMessage(
           this.bot.api,
           numericId,
           chunk,
           {
             ...baseOptions,
-            ...(index === 0 && inlineKeyboard
+            ...(index === chunks.length - 1 && inlineKeyboard
               ? { reply_markup: inlineKeyboard }
               : {}),
             ...(index > 0
               ? {
                   reply_to_message_id: undefined,
-                  reply_markup: undefined,
                 }
               : {}),
           },
         );
-        if (!firstMessageId) {
-          firstMessageId = result.platformMessageId;
+        if (result.platformMessageId) {
+          confirmedPlatformMessageIds.push(result.platformMessageId);
         }
+      }
+      const firstMessageId = confirmedPlatformMessageIds[0];
+      if (!firstMessageId) {
+        throw new Error('Telegram did not return a message receipt.');
       }
       this.maybeReportSendRoundtrip(jid);
       logger.info(
@@ -1676,15 +1714,51 @@ export class TelegramChannel implements Channel {
       );
       return {
         platformMessageId: firstMessageId,
-        platformMessageIds: firstMessageId ? [firstMessageId] : [],
+        platformMessageIds: confirmedPlatformMessageIds,
         threadId: options.threadId || null,
+        deliveryState: 'complete',
       };
-    } catch (err) {
+    } catch (error) {
+      if (error instanceof TelegramChunkAttemptError) {
+        const deliveryState =
+          error.attemptState === 'unknown'
+            ? 'unknown'
+            : confirmedPlatformMessageIds.length > 0
+              ? 'partial'
+              : 'none';
+        logger.error(
+          {
+            component: 'telegram',
+            jid,
+            errorClass: 'telegram_message_delivery_unconfirmed',
+            deliveryState,
+            confirmedReceiptCount: confirmedPlatformMessageIds.length,
+            nextUnconfirmedChunkIndex,
+          },
+          'Telegram message delivery was not fully confirmed',
+        );
+        if (deliveryState !== 'none') {
+          return {
+            platformMessageId: confirmedPlatformMessageIds[0],
+            platformMessageIds: confirmedPlatformMessageIds,
+            threadId: options.threadId || null,
+            deliveryState,
+            nextUnconfirmedChunkIndex,
+          };
+        }
+      }
       logger.error(
-        { component: 'telegram', jid, err },
+        {
+          component: 'telegram',
+          jid,
+          errorClass: 'telegram_message_delivery_failed',
+        },
         'Failed to send Telegram message',
       );
-      return {};
+      // Telegram/transport errors may contain request bodies or credentials.
+      // Keep the public boundary fixed instead of attaching the raw cause.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error('Telegram message delivery failed.');
     }
   }
 
@@ -1694,6 +1768,12 @@ export class TelegramChannel implements Channel {
     options: SendMessageOptions = {},
   ): Promise<ChannelSendReceipt | null> {
     const result = await this.sendMessage(jid, text, options);
+    if (
+      result.deliveryState === 'partial' ||
+      result.deliveryState === 'unknown'
+    ) {
+      return null;
+    }
     const platformMessageIds =
       result.platformMessageIds ||
       (result.platformMessageId ? [result.platformMessageId] : []);
@@ -1713,7 +1793,7 @@ export class TelegramChannel implements Channel {
   ): Promise<SendMessageResult> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
-      return {};
+      throw new Error('Telegram artifact delivery is unavailable.');
     }
 
     try {
@@ -1750,12 +1830,20 @@ export class TelegramChannel implements Channel {
           : [],
         threadId: options.threadId || null,
       };
-    } catch (err) {
+    } catch (error) {
+      void error;
       logger.error(
-        { component: 'telegram', jid, artifactKind: artifact.kind, err },
+        {
+          component: 'telegram',
+          jid,
+          artifactKind: artifact.kind,
+          errorClass: 'telegram_artifact_delivery_failed',
+        },
         'Failed to send Telegram artifact',
       );
-      return {};
+      // Artifact transport failures can contain raw provider payloads.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error('Telegram artifact delivery failed.');
     }
   }
 
@@ -1767,15 +1855,15 @@ export class TelegramChannel implements Channel {
   ): Promise<SendMessageResult> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
-      return {};
+      throw new Error('Telegram message editing is unavailable.');
+    }
+    const messageId = Number.parseInt(platformMessageId, 10);
+    if (!Number.isFinite(messageId) || messageId <= 0) {
+      throw new Error('Telegram message edit target is invalid.');
     }
 
     try {
       const numericId = jid.replace(/^tg:/, '');
-      const messageId = Number.parseInt(platformMessageId, 10);
-      if (!Number.isFinite(messageId) || messageId <= 0) {
-        return {};
-      }
       const inlineKeyboard = buildInlineKeyboard(options);
       const result = await editTelegramMessage(
         this.bot.api,
@@ -1797,12 +1885,21 @@ export class TelegramChannel implements Channel {
         'Telegram message edited',
       );
       return result;
-    } catch (err) {
+    } catch (error) {
+      void error;
       logger.error(
-        { component: 'telegram', jid, platformMessageId, err },
+        {
+          component: 'telegram',
+          jid,
+          platformMessageId,
+          errorClass: 'telegram_message_edit_failed',
+        },
         'Failed to edit Telegram message',
       );
-      return {};
+      // Edit failures can contain raw provider payloads. Preserve only the
+      // bounded symptom at this channel boundary.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error('Telegram message editing failed.');
     }
   }
 

@@ -523,10 +523,10 @@ export function formatDebugStatus(
     ...formatOpenClawDebugStatusLines(openClawStatus),
     ...formatOpenClawAndreaBridgeDebugStatusLines(openClawAndreaBridgeStatus),
     `- OpenAI-guided routing last source: ${guidedRouting?.source || 'none yet'}`,
-    `- Tool reliability degraded subjects: ${reliability.topDegraded.length}`,
+    `- Tool reliability nonhealthy subjects: ${reliability.degradedSubjectCount} (unknown=${reliability.healthCounts.unknown}, degraded=${reliability.healthCounts.degraded}, blocked=${reliability.healthCounts.blocked})`,
     ...(topReliabilityBlocker
       ? [
-          `- Tool reliability top blocker: ${topReliabilityBlocker.subjectId} (${topReliabilityBlocker.currentHealth}, cap=${topReliabilityBlocker.confidenceCap.toFixed(2)})`,
+          `- Tool reliability top attention item: ${topReliabilityBlocker.subjectId} (${topReliabilityBlocker.currentHealth}, cap=${topReliabilityBlocker.confidenceCap.toFixed(2)})`,
           `- Tool reliability next step: ${topReliabilityBlocker.nextAction}`,
         ]
       : []),

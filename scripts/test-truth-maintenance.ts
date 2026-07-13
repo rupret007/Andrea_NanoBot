@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { initDatabase } from '../src/db.js';
+import { _initTestDatabase } from '../src/db.js';
 import { buildLiveProofGauntletReport } from '../src/live-proof-gauntlet.js';
 import {
   buildRealityGroundingReport,
@@ -9,7 +9,7 @@ import {
 } from '../src/reality-grounding.js';
 import type { ToolReliabilityDoctorReport } from '../src/types.js';
 
-initDatabase();
+_initTestDatabase();
 
 function surface(
   proofState:
@@ -36,11 +36,7 @@ const proofReport = buildLiveProofGauntletReport({
       ordinary_chat: surface('live_proven', 'none', 'No action needed.'),
     },
     alexa: {
-      ...surface(
-        'near_live_only',
-        'external',
-        'Use Alexa simulator/device.',
-      ),
+      ...surface('near_live_only', 'external', 'Use Alexa simulator/device.'),
       lastHandledProofAt: 'none',
       lastSignedRequestAt: 'none',
       proofFreshness: 'none',
@@ -83,6 +79,8 @@ const reliability: ToolReliabilityDoctorReport = {
       privacyJson: '{}',
     },
   ],
+  degradedSubjectCount: 1,
+  healthCounts: { healthy: 0, degraded: 0, blocked: 1, unknown: 0 },
   topDegraded: [],
   nextAction: 'Use local fallback.',
   privacy: {

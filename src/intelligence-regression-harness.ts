@@ -198,11 +198,10 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'research',
-      councilMode: 'max_iq_council',
+      councilMode: 'none',
       evidenceLevel: 'weak',
       approvalNeed: 'none',
       safeRewriteApplied: true,
-      verifiedDeepWorkOutcome: 'blocked',
     },
   },
   {
@@ -214,7 +213,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'communication',
-      councilMode: 'dual_review',
+      councilMode: 'none',
       evidenceLevel: 'partial',
       approvalNeed: 'explicit',
       safeRewriteApplied: true,
@@ -231,7 +230,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'communication',
-      councilMode: 'dual_review',
+      councilMode: 'none',
       evidenceLevel: 'partial',
       approvalNeed: 'explicit',
     },
@@ -246,7 +245,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'assistant',
-      councilMode: 'dual_review',
+      councilMode: 'none',
       evidenceLevel: 'partial',
       approvalNeed: 'conditional',
     },
@@ -261,7 +260,7 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'operator',
-      councilMode: 'repair_council',
+      councilMode: 'none',
       evidenceLevel: 'partial',
       approvalNeed: 'explicit',
       safeRewriteApplied: true,
@@ -278,15 +277,15 @@ const SCENARIOS: IntelligenceScenarioFixture[] = [
     expected: {
       meaningful: true,
       taskFamily: 'operator',
-      councilMode: 'repair_council',
+      councilMode: 'none',
       evidenceLevel: 'partial',
       approvalNeed: 'explicit',
     },
   },
   {
     scenarioId: 'council.max_iq_roles',
-    title: 'Complex architecture task triggers Max-IQ council',
-    text: 'do a deep architecture review of the multi-LLM council and tell me what we are missing',
+    title: 'Explicit deep architecture task triggers Max-IQ council',
+    text: 'ultrathink: do an architecture review of the multi-LLM council and tell me what we are missing',
     requestRoute: 'direct_assistant',
     draftReply:
       'The answer should use a planner, critic, evidence scout, and verifier before synthesis.',

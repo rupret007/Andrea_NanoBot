@@ -80,6 +80,8 @@ describe('personal assistant metrics', () => {
       toolReliability: 1,
       toolReliabilitySampleCount: 1,
       averageLatencyMs: 120,
+      p50LatencyMs: 120,
+      p95LatencyMs: 120,
       interactionLatencySampleCount: 1,
     });
   });
@@ -364,7 +366,7 @@ describe('personal assistant metrics', () => {
     );
   });
 
-  it('keeps replay and non-interaction timing out of live delivery latency', () => {
+  it('keeps replay and non-interaction timing out and attributes live delivery latency', () => {
     recordAssistantMetric({
       groupFolder: 'main',
       kind: 'latency_sample',
@@ -387,21 +389,383 @@ describe('personal assistant metrics', () => {
       metadata: {
         latencyClass: 'interaction_delivery',
         runOrigin: 'live',
+        routeKey: 'learning.outcome_review',
+        latencyTargetClass: 'local_command',
+        providerId: 'local_runtime',
+        toolClass: 'outcome_review',
+        preprocessingMs: 0,
+        harnessMs: 0,
+        responsePreparationMs: 600,
+        channelDeliveryMs: 200,
+      },
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 35_000,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'legacy.pre_attribution',
+      },
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 1_200,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'learning.outcome_review',
+        latencyTargetClass: 'local_command',
+        providerId: 'local_runtime',
+        toolClass: 'outcome_review',
+        preprocessingMs: 0,
+        harnessMs: 0,
+        responsePreparationMs: 900,
+        channelDeliveryMs: 300,
+      },
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 9_000,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'ordinary.answer',
+        latencyTargetClass: 'ordinary_response',
+        providerId: 'local_runtime',
+        routingProviderId: 'claude',
+        routingModelId: 'claude-test-model',
+        toolClass: 'container_agent',
+        preprocessingMs: 0,
+        harnessMs: 2_000,
+        responsePreparationMs: 6_500,
+        channelDeliveryMs: 500,
+      },
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 1_500,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'council.doctor',
+        latencyTargetClass: 'local_command',
+        providerId: 'local_runtime',
+        toolClass: 'council_doctor',
+        preprocessingMs: 0,
+        harnessMs: 800,
+        responsePreparationMs: 500,
+        channelDeliveryMs: 200,
       },
     });
 
     expect(buildAssistantMetricSnapshot({ groupFolder: 'main' })).toMatchObject(
       {
-        averageLatencyMs: 800,
-        interactionLatencySampleCount: 1,
+        averageLatencyMs: 3_125,
+        p50LatencyMs: 1_200,
+        p95LatencyMs: 9_000,
+        slowestLatencyStage: 'response_preparation',
+        slowestLatencyRoute: 'ordinary.answer',
+        worstBreachingLatencyRoute: null,
+        interactionLatencyTargetBreaches: 0,
+        legacyInteractionLatencySampleCount: 1,
+        interactionLatencySampleCount: 4,
+        interactionLatencyByRoute: [
+          expect.objectContaining({
+            routeKey: 'ordinary.answer',
+            sampleCount: 1,
+            p95Ms: 9_000,
+            slowestStage: 'response_preparation',
+            targetMs: 10_000,
+            meetsTarget: true,
+          }),
+          expect.objectContaining({
+            routeKey: 'council.doctor',
+            sampleCount: 1,
+            p95Ms: 1_500,
+            targetMs: 2_000,
+            meetsTarget: true,
+          }),
+          expect.objectContaining({
+            routeKey: 'learning.outcome_review',
+            sampleCount: 2,
+            p50Ms: 800,
+            p95Ms: 1_200,
+            targetMs: 2_000,
+            meetsTarget: true,
+          }),
+        ],
+        interactionLatencyByProvider: [
+          expect.objectContaining({
+            providerId: 'claude',
+            modelId: 'claude-test-model',
+            providerRole: 'routing',
+            sampleCount: 1,
+            p95Ms: 9_000,
+          }),
+          expect.objectContaining({
+            providerId: 'local_runtime',
+            providerRole: 'response',
+            sampleCount: 3,
+            p95Ms: 1_500,
+          }),
+        ],
+        interactionLatencyByTool: expect.arrayContaining([
+          expect.objectContaining({
+            toolClass: 'container_agent',
+            p95Ms: 9_000,
+          }),
+          expect.objectContaining({
+            toolClass: 'outcome_review',
+            sampleCount: 2,
+          }),
+        ]),
       },
     );
     expect(
       formatAssistantIntelligenceReport(
         buildAssistantIntelligenceReport({ groupFolder: 'main' }),
       ),
-    ).toContain(
-      'Interaction delivery latency: 800 ms across 1 comparable sample',
+    ).toContain('p50 1200 ms · p95 9000 ms across 4 comparable samples');
+  });
+
+  it('flags local and ordinary route latency against distinct delivery targets', () => {
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 2_500,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'learning.outcome_review',
+        latencyTargetClass: 'local_command',
+        preprocessingMs: 0,
+        harnessMs: 0,
+        responsePreparationMs: 2_300,
+        channelDeliveryMs: 200,
+      },
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 9_000,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'ordinary.answer',
+        latencyTargetClass: 'ordinary_response',
+        preprocessingMs: 0,
+        harnessMs: 2_000,
+        responsePreparationMs: 6_500,
+        channelDeliveryMs: 500,
+      },
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 1_500,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'council.doctor',
+        latencyTargetClass: 'local_command',
+        preprocessingMs: 0,
+        harnessMs: 700,
+        responsePreparationMs: 600,
+        channelDeliveryMs: 200,
+      },
+    });
+    const report = buildAssistantIntelligenceReport({ groupFolder: 'main' });
+    expect(report.metrics.interactionLatencyTargetBreaches).toBe(1);
+    expect(report.metrics.worstBreachingLatencyRoute).toBe(
+      'learning.outcome_review',
+    );
+    expect(
+      report.metrics.interactionLatencyByRoute.find(
+        (route) => route.routeKey === 'council.doctor',
+      ),
+    ).toMatchObject({ targetMs: 2_000, meetsTarget: true });
+    expect(report.topNextImprovement).toContain(
+      'worst target-breaching delivery route (learning.outcome_review)',
+    );
+  });
+
+  it('keeps v2 latency comparable while requiring complete v3 queue and host attribution', () => {
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 400,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'legacy.v2.attributed',
+        preprocessingMs: 0,
+        harnessMs: 100,
+        responsePreparationMs: 200,
+        channelDeliveryMs: 100,
+      },
+      now: new Date('2026-07-13T05:00:00.000Z'),
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 1_200,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'current.v3.attributed',
+        deliveryInstrumentationVersion: 3,
+        queueWaitMs: 800,
+        preprocessingMs: 0,
+        harnessMs: 100,
+        responsePreparationMs: 200,
+        channelDeliveryMs: 100,
+        hostPressureClass: 'high',
+        hostLoad1mPerCpu: 2.4,
+        hostFreeMemoryRatio: 0.02,
+      },
+      now: new Date('2026-07-13T05:00:01.000Z'),
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 400,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'malformed.v3.missing_queue',
+        deliveryInstrumentationVersion: 3,
+        preprocessingMs: 0,
+        harnessMs: 100,
+        responsePreparationMs: 200,
+        channelDeliveryMs: 100,
+        hostPressureClass: 'normal',
+      },
+      now: new Date('2026-07-13T05:00:02.000Z'),
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 900,
+      metadata: {
+        latencyClass: 'interaction_delivery_degraded',
+        deliveryOutcome: 'partial',
+        runOrigin: 'live',
+        routeKey: 'telegram.partial',
+        confirmedReceiptCount: 1,
+      },
+      now: new Date('2026-07-13T05:00:03.000Z'),
+    });
+
+    const report = buildAssistantIntelligenceReport({ groupFolder: 'main' });
+    expect(report.metrics).toMatchObject({
+      interactionLatencySampleCount: 2,
+      invalidInteractionLatencySampleCount: 1,
+      slowestLatencyStage: 'queue_wait',
+      hostPressureSampleCount: 1,
+      highHostPressureSampleCount: 1,
+      latestHostPressureClass: 'high',
+      degradedInteractionDeliveryCount: 1,
+      partialInteractionDeliveryCount: 1,
+      unknownInteractionDeliveryCount: 0,
+      latestDegradedDeliveryOutcome: 'partial',
+      latestDegradedDeliveryRoute: 'telegram.partial',
+    });
+    expect(formatAssistantIntelligenceReport(report)).toContain(
+      'high latest · 1/1 high-pressure sample',
+    );
+    expect(formatAssistantIntelligenceReport(report)).toContain(
+      '1 total · 1 partial · 0 unknown',
+    );
+  });
+
+  it('fails safe to the ordinary target when latency target metadata is absent or malformed', () => {
+    for (const [routeKey, latencyTargetClass] of [
+      ['missing.target', undefined],
+      ['malformed.target', 'local-ish'],
+    ] as const) {
+      recordAssistantMetric({
+        groupFolder: 'main',
+        kind: 'latency_sample',
+        value: 2_500,
+        metadata: {
+          latencyClass: 'interaction_delivery',
+          runOrigin: 'live',
+          routeKey,
+          ...(latencyTargetClass ? { latencyTargetClass } : {}),
+          preprocessingMs: 0,
+          harnessMs: 0,
+          responsePreparationMs: 2_300,
+          channelDeliveryMs: 200,
+        },
+      });
+    }
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'latency_sample',
+      value: 900,
+      metadata: {
+        latencyClass: 'interaction_delivery',
+        runOrigin: 'live',
+        routeKey: 'malformed.stage',
+        latencyTargetClass: 'local_command',
+        harnessMs: '0',
+        responsePreparationMs: -1,
+        channelDeliveryMs: false,
+      },
+    });
+
+    const snapshot = buildAssistantMetricSnapshot({ groupFolder: 'main' });
+    expect(snapshot.interactionLatencyByRoute).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          routeKey: 'missing.target',
+          targetMs: 10_000,
+          meetsTarget: true,
+        }),
+        expect.objectContaining({
+          routeKey: 'malformed.target',
+          targetMs: 10_000,
+          meetsTarget: true,
+        }),
+      ]),
+    );
+    expect(snapshot.legacyInteractionLatencySampleCount).toBe(0);
+    expect(snapshot.invalidInteractionLatencySampleCount).toBe(1);
+    expect(snapshot.interactionLatencySampleCount).toBe(2);
+  });
+
+  it('keeps recorded live cost estimates separate from conservative proof reservations', () => {
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'live_eval_cost',
+      value: 0.2,
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'live_eval_cost_reservation',
+      value: 0.75,
+    });
+    recordAssistantMetric({
+      groupFolder: 'main',
+      kind: 'live_eval_cost',
+      value: 0.75,
+      metadata: {
+        metricClass: 'live_evaluation',
+        surface: 'budgeted_live_council',
+        estimatedCostUsd: 0.75,
+      },
+    });
+
+    expect(buildAssistantMetricSnapshot({ groupFolder: 'main' })).toMatchObject(
+      {
+        liveEvalRecordedCostEstimateUsd: 0.2,
+        liveEvalCostReservationUsd: 1.5,
+      },
     );
   });
 

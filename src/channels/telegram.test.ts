@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { GrammyError, HttpError } from 'grammy';
 
 import {
   TelegramChannel,
@@ -27,6 +28,19 @@ import {
   getTelegramBotGroupMenuCommands,
   getTelegramBotMenuCommands,
 } from '../command-surface-registry.js';
+
+function telegramApiError(description: string, errorCode = 400): GrammyError {
+  return new GrammyError(
+    'Telegram API rejected the request',
+    {
+      ok: false,
+      error_code: errorCode,
+      description,
+    },
+    'sendMessage',
+    {},
+  );
+}
 
 describe('extractTelegramLeadingCommand', () => {
   it('extracts plain slash commands', () => {
@@ -453,6 +467,136 @@ describe('TelegramChannel.sendMessage', () => {
     );
   });
 
+  it('keeps the Markdown-to-plain-text fallback but rejects a terminal double failure', async () => {
+    const fallbackSend = vi
+      .fn()
+      .mockRejectedValueOnce(
+        telegramApiError("Bad Request: can't parse entities"),
+      )
+      .mockResolvedValueOnce({ message_id: 322 });
+    const failedSend = vi
+      .fn()
+      .mockRejectedValueOnce(
+        telegramApiError("Bad Request: can't parse entities"),
+      )
+      .mockRejectedValueOnce(
+        telegramApiError('Bad Request: message text is empty'),
+      );
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+    const internals = channel as unknown as {
+      bot: { api: { sendMessage: typeof fallbackSend } } | null;
+    };
+    internals.bot = { api: { sendMessage: fallbackSend } };
+
+    await expect(
+      channel.sendMessage('tg:123', 'Fallback'),
+    ).resolves.toMatchObject({ platformMessageId: '322' });
+    expect(fallbackSend).toHaveBeenCalledTimes(2);
+
+    internals.bot = { api: { sendMessage: failedSend } };
+    await expect(channel.sendMessage('tg:123', 'Fail')).rejects.toThrow(
+      'Telegram message delivery failed.',
+    );
+    expect(failedSend).toHaveBeenCalledTimes(2);
+
+    internals.bot = null;
+    await expect(channel.sendMessage('tg:123', 'Unavailable')).rejects.toThrow(
+      'Telegram message delivery is unavailable.',
+    );
+  });
+
+  it('returns all chunk receipts and attaches feedback actions only to the final chunk', async () => {
+    const sendMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ message_id: 700 })
+      .mockResolvedValueOnce({ message_id: 701 });
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+    (
+      channel as unknown as {
+        bot: { api: { sendMessage: typeof sendMessage } };
+      }
+    ).bot = { api: { sendMessage } };
+
+    const result = await channel.sendMessage('tg:123', `${'a'.repeat(4096)}b`, {
+      inlineActions: [{ label: 'Helpful', actionId: 'feedback:accepted' }],
+    });
+
+    expect(result).toMatchObject({
+      platformMessageId: '700',
+      platformMessageIds: ['700', '701'],
+      deliveryState: 'complete',
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage.mock.calls[0]?.[2]).not.toHaveProperty('reply_markup');
+    expect(sendMessage.mock.calls[1]?.[2]).toEqual(
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
+  });
+
+  it('reports a confirmed partial chunk delivery without replaying prior chunks', async () => {
+    const sendMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ message_id: 710 })
+      .mockRejectedValueOnce(
+        telegramApiError('Bad Request: message is too long'),
+      );
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+    (
+      channel as unknown as {
+        bot: { api: { sendMessage: typeof sendMessage } };
+      }
+    ).bot = { api: { sendMessage } };
+
+    await expect(
+      channel.sendMessage('tg:123', `${'a'.repeat(4096)}b`),
+    ).resolves.toMatchObject({
+      platformMessageId: '710',
+      platformMessageIds: ['710'],
+      deliveryState: 'partial',
+      nextUnconfirmedChunkIndex: 1,
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports an unknown transport outcome instead of blindly retrying it', async () => {
+    const sendMessage = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new HttpError('Telegram request timed out', new Error('timeout')),
+      );
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+    (
+      channel as unknown as {
+        bot: { api: { sendMessage: typeof sendMessage } };
+      }
+    ).bot = { api: { sendMessage } };
+
+    await expect(channel.sendMessage('tg:123', 'uncertain')).resolves.toEqual({
+      platformMessageId: undefined,
+      platformMessageIds: [],
+      threadId: null,
+      deliveryState: 'unknown',
+      nextUnconfirmedChunkIndex: 0,
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('supports row-based inline button layouts for dashboard tiles', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 654 });
     const channel = new TelegramChannel('test-token', {
@@ -655,6 +799,31 @@ describe('TelegramChannel.sendArtifact', () => {
       }),
     );
   });
+
+  it('rejects terminal artifact failures instead of returning an empty receipt', async () => {
+    const sendPhoto = vi
+      .fn()
+      .mockRejectedValue(new Error('artifact transport unavailable'));
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+    (
+      channel as unknown as {
+        bot: { api: { sendPhoto: typeof sendPhoto } };
+      }
+    ).bot = { api: { sendPhoto } };
+
+    await expect(
+      channel.sendArtifact?.('tg:123', {
+        kind: 'image',
+        filename: 'failed.png',
+        mimeType: 'image/png',
+        bytesBase64: Buffer.from('png-bytes').toString('base64'),
+      }),
+    ).rejects.toThrow('Telegram artifact delivery failed.');
+  });
 });
 
 describe('TelegramChannel.editMessage', () => {
@@ -730,6 +899,32 @@ describe('TelegramChannel.editMessage', () => {
         parse_mode: 'Markdown',
       }),
     );
+  });
+
+  it('rejects invalid targets and terminal edit failures instead of returning an empty receipt', async () => {
+    const editMessageText = vi
+      .fn()
+      .mockRejectedValue(new Error('edit transport unavailable'));
+    const channel = new TelegramChannel('test-token', {
+      onMessage: () => undefined,
+      onChatMetadata: () => undefined,
+      registeredGroups: () => ({}),
+    });
+    (
+      channel as unknown as {
+        bot: { api: { editMessageText: typeof editMessageText } };
+      }
+    ).bot = { api: { editMessageText } };
+
+    await expect(
+      channel.editMessage?.('tg:123', 'not-a-message-id', 'No target'),
+    ).rejects.toThrow('Telegram message edit target is invalid.');
+    expect(editMessageText).not.toHaveBeenCalled();
+
+    await expect(
+      channel.editMessage?.('tg:123', '9001', 'Will fail'),
+    ).rejects.toThrow('Telegram message editing failed.');
+    expect(editMessageText).toHaveBeenCalledTimes(2);
   });
 });
 

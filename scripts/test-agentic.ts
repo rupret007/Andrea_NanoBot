@@ -1,10 +1,10 @@
 import assert from 'assert/strict';
 
-import { initDatabase } from '../src/db.js';
+import { _initTestDatabase } from '../src/db.js';
 import { runAgenticSimulationHarness } from '../src/agentic-simulation-harness.js';
 
 async function main(): Promise<void> {
-  initDatabase();
+  _initTestDatabase();
   const report = await runAgenticSimulationHarness({
     now: new Date('2026-06-07T13:00:00.000Z'),
     persist: true,

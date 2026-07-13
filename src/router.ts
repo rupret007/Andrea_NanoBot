@@ -1,4 +1,5 @@
 import { Channel, NewMessage } from './types.js';
+import { requireCompleteChannelDelivery } from './channel-delivery.js';
 import { formatLocalTime } from './timezone.js';
 
 export function escapeXml(s: string): string {
@@ -41,7 +42,10 @@ export function routeOutbound(
 ): Promise<void> {
   const channel = channels.find((c) => c.ownsJid(jid) && c.isConnected());
   if (!channel) throw new Error(`No channel for JID: ${jid}`);
-  return channel.sendMessage(jid, text).then(() => undefined);
+  return channel
+    .sendMessage(jid, text)
+    .then(requireCompleteChannelDelivery)
+    .then(() => undefined);
 }
 
 export function findChannel(

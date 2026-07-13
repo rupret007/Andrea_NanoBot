@@ -46,7 +46,11 @@ export interface JobDispatchInput {
 }
 
 export interface JobDispatchResult {
-  outcome: 'dispatched' | 'clarification_required' | 'failed';
+  outcome:
+    | 'dispatched'
+    | 'clarification_required'
+    | 'failed'
+    | 'notification_blocked';
   lane: JobLane | null;
   jobId: string | null;
   // Human-readable summary for callers that want to log the outcome
@@ -182,80 +186,93 @@ export async function dispatchUnifiedJob(args: {
     initialState,
     config: config.cardConfig,
   });
-  await card.post();
+  try {
+    await card.post();
 
-  if (TERMINAL.has(initialJob.status)) {
+    if (TERMINAL.has(initialJob.status)) {
+      await card.update({
+        status: initialJob.status,
+        lastUpdate: initialJob.lastUpdate,
+        outputTail: initialJob.outputTail,
+        errorText: initialJob.errorText,
+        pctComplete: initialJob.pctComplete,
+      });
+      await card.sendFinalOutput(initialJob.finalOutput);
+      return {
+        outcome: 'dispatched',
+        lane,
+        jobId: initialJob.jobId,
+        summary: `lane:${lane} job:${initialJob.jobId} status:${initialJob.status}`,
+      };
+    }
+
+    const pollIntervalMs = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    const maxPollMs = config.maxPollMs ?? DEFAULT_MAX_POLL_MS;
+    const watchUntil = startedAt + maxPollMs;
+    let lastSeenStatus: JobStatus = initialJob.status;
+    let lastFinalOutput: string | null = null;
+    while (now() < watchUntil) {
+      await sleep(pollIntervalMs);
+      let snapshot: UnifiedJobView;
+      try {
+        snapshot = await adapter.fetchJob(initialJob.jobId, {
+          chatJid: input.chatJid,
+        });
+      } catch (err) {
+        // Network/auth/etc. — don't tear down the card, just push a
+        // diagnostic line and keep polling. Persistent failure will hit
+        // the maxPollMs ceiling.
+        await card.update({
+          lastUpdate: `(refresh failed: ${snippet(
+            err instanceof Error ? err.message : String(err),
+            80,
+          )})`,
+        });
+        continue;
+      }
+      lastFinalOutput = snapshot.finalOutput ?? lastFinalOutput;
+      await card.update({
+        status: snapshot.status,
+        lastUpdate: snapshot.lastUpdate,
+        outputTail: snapshot.outputTail,
+        errorText: snapshot.errorText,
+        pctComplete: snapshot.pctComplete,
+      });
+      lastSeenStatus = snapshot.status;
+      if (TERMINAL.has(snapshot.status)) {
+        await card.sendFinalOutput(snapshot.finalOutput);
+        return {
+          outcome: 'dispatched',
+          lane,
+          jobId: snapshot.jobId,
+          summary: `lane:${lane} job:${snapshot.jobId} status:${snapshot.status}`,
+        };
+      }
+    }
+
+    // Watch budget exhausted — surface a "still running" state and stop
+    // polling. The job continues on the lane; the user can re-attach via
+    // the lane-specific command surface.
     await card.update({
-      status: initialJob.status,
-      lastUpdate: initialJob.lastUpdate,
-      outputTail: initialJob.outputTail,
-      errorText: initialJob.errorText,
-      pctComplete: initialJob.pctComplete,
+      lastUpdate: `(watch budget reached after ${Math.round(maxPollMs / 60000)}m — job still running on ${adapter.label})`,
     });
-    await card.sendFinalOutput(initialJob.finalOutput);
+    await card.sendFinalOutput(lastFinalOutput);
     return {
       outcome: 'dispatched',
       lane,
       jobId: initialJob.jobId,
-      summary: `lane:${lane} job:${initialJob.jobId} status:${initialJob.status}`,
+      summary: `lane:${lane} job:${initialJob.jobId} status:${lastSeenStatus} (watch_timeout)`,
+    };
+  } catch (error) {
+    const errorClass =
+      (error instanceof Error ? error.name : typeof error)
+        .replace(/[^a-z0-9_.-]/gi, '')
+        .slice(0, 80) || 'unknown_error';
+    return {
+      outcome: 'notification_blocked',
+      lane,
+      jobId: initialJob.jobId,
+      summary: `lane:${lane} job:${initialJob.jobId} notification:blocked error_class:${errorClass}`,
     };
   }
-
-  const pollIntervalMs = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  const maxPollMs = config.maxPollMs ?? DEFAULT_MAX_POLL_MS;
-  const watchUntil = startedAt + maxPollMs;
-  let lastSeenStatus: JobStatus = initialJob.status;
-  let lastFinalOutput: string | null = null;
-  while (now() < watchUntil) {
-    await sleep(pollIntervalMs);
-    let snapshot: UnifiedJobView;
-    try {
-      snapshot = await adapter.fetchJob(initialJob.jobId, {
-        chatJid: input.chatJid,
-      });
-    } catch (err) {
-      // Network/auth/etc. — don't tear down the card, just push a
-      // diagnostic line and keep polling. Persistent failure will hit
-      // the maxPollMs ceiling.
-      await card.update({
-        lastUpdate: `(refresh failed: ${snippet(
-          err instanceof Error ? err.message : String(err),
-          80,
-        )})`,
-      });
-      continue;
-    }
-    lastFinalOutput = snapshot.finalOutput ?? lastFinalOutput;
-    await card.update({
-      status: snapshot.status,
-      lastUpdate: snapshot.lastUpdate,
-      outputTail: snapshot.outputTail,
-      errorText: snapshot.errorText,
-      pctComplete: snapshot.pctComplete,
-    });
-    lastSeenStatus = snapshot.status;
-    if (TERMINAL.has(snapshot.status)) {
-      await card.sendFinalOutput(snapshot.finalOutput);
-      return {
-        outcome: 'dispatched',
-        lane,
-        jobId: snapshot.jobId,
-        summary: `lane:${lane} job:${snapshot.jobId} status:${snapshot.status}`,
-      };
-    }
-  }
-
-  // Watch budget exhausted — surface a "still running" state and stop
-  // polling. The job continues on the lane; the user can re-attach via
-  // the lane-specific command surface.
-  await card.update({
-    lastUpdate: `(watch budget reached after ${Math.round(maxPollMs / 60000)}m — job still running on ${adapter.label})`,
-  });
-  await card.sendFinalOutput(lastFinalOutput);
-  return {
-    outcome: 'dispatched',
-    lane,
-    jobId: initialJob.jobId,
-    summary: `lane:${lane} job:${initialJob.jobId} status:${lastSeenStatus} (watch_timeout)`,
-  };
 }

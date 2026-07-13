@@ -1,10 +1,10 @@
 import assert from 'assert/strict';
 
-import { initDatabase } from '../src/db.js';
+import { _initTestDatabase } from '../src/db.js';
 import { reviewAgentAction } from '../src/critic-agent.js';
 
 function main(): void {
-  initDatabase();
+  _initTestDatabase();
   const readOnly = reviewAgentAction({
     actor: 'test',
     action: 'read calendar pressure',

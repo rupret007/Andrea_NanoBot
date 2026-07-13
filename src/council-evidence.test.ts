@@ -121,4 +121,37 @@ describe('council evidence scorecard', () => {
     expect(summary).toContain('intent:bounded-summary-proof');
     expect(summary).toContain('policy:sanitized_snippets');
   });
+
+  it('uses injected live provider evidence without configuration-only unknown gaps', () => {
+    const checkedAt = '2026-07-12T22:00:00.000Z';
+    const pack = buildCouncilEvidencePack({
+      goal: 'Review local runtime status.',
+      taskFamily: 'operator',
+      correlationId: 'live-provider-evidence',
+      providerHealthSnapshots: [
+        {
+          providerId: 'openai_cloud',
+          kind: 'llm',
+          state: 'healthy',
+          lastHealthyAt: checkedAt,
+          lastCheckedAt: checkedAt,
+          failureClass: 'none',
+          quotaState: 'unknown',
+          credentialState: 'configured',
+          knownExpiresAt: null,
+          rotationDueAt: null,
+          blocker: '',
+          nextAction: '',
+          metadata: { healthEvidence: 'live_probe', liveProbe: 'ok' },
+        },
+      ],
+    });
+
+    expect(pack.gaps).not.toContain('provider_openai_cloud_unknown');
+    expect(
+      pack.cards.find(
+        (card) => card.evidenceId === 'provider_health:openai_cloud',
+      ),
+    ).toMatchObject({ evidenceGrade: 'partial', gap: null });
+  });
 });

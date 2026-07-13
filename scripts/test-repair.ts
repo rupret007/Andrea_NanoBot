@@ -1,6 +1,6 @@
 import assert from 'assert/strict';
 
-import { initDatabase } from '../src/db.js';
+import { _initTestDatabase } from '../src/db.js';
 import {
   buildRepairDoctorReport,
   runIntegrationRepair,
@@ -56,7 +56,7 @@ const provider: ProviderHealthSnapshot = {
 };
 
 async function main(): Promise<void> {
-  initDatabase();
+  _initTestDatabase();
   const blue = await runIntegrationRepair({
     id: 'bluebubbles',
     dryRun: true,
@@ -83,7 +83,11 @@ async function main(): Promise<void> {
 
   const doctor = buildRepairDoctorReport(now);
   assert.ok(doctor.attempts.length >= 2);
-  assert.ok(doctor.cooldowns.some((item) => item.targetId === 'provider:anthropic_cloud'));
+  assert.ok(
+    doctor.cooldowns.some(
+      (item) => item.targetId === 'provider:anthropic_cloud',
+    ),
+  );
   console.log('repair tests passed');
 }
 

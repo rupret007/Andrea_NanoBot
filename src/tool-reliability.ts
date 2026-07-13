@@ -966,6 +966,8 @@ export function buildToolReliabilityDoctorReport(
       subjects: [],
       rollups: [],
       routeRollups: [],
+      degradedSubjectCount: 0,
+      healthCounts: { healthy: 0, degraded: 0, blocked: 0, unknown: 0 },
       topDegraded: [],
       nextAction: 'Initialize the database before reading tool reliability.',
       privacy: PRIVACY,
@@ -982,8 +984,19 @@ export function buildToolReliabilityDoctorReport(
     effectiveDoctorRollup(rollup, rollupBySubject, tasks),
   );
   const routeRollups = listRouteConfidenceRollups({ limit: 100 });
-  const topDegraded = rollups
-    .filter((rollup) => rollup.currentHealth !== 'healthy')
+  const degraded = rollups.filter(
+    (rollup) => rollup.currentHealth !== 'healthy',
+  );
+  const healthCounts = rollups.reduce<
+    ToolReliabilityDoctorReport['healthCounts']
+  >(
+    (counts, rollup) => {
+      counts[rollup.currentHealth] += 1;
+      return counts;
+    },
+    { healthy: 0, degraded: 0, blocked: 0, unknown: 0 },
+  );
+  const topDegraded = degraded
     .sort(
       (a, b) =>
         degradedSubjectRank(a.subjectId) - degradedSubjectRank(b.subjectId),
@@ -994,6 +1007,8 @@ export function buildToolReliabilityDoctorReport(
     subjects,
     rollups,
     routeRollups,
+    degradedSubjectCount: degraded.length,
+    healthCounts,
     topDegraded,
     nextAction:
       topDegraded[0]?.nextAction ||

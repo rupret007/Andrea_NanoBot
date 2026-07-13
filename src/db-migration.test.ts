@@ -40,10 +40,10 @@ describe('database migrations', () => {
       legacyDb.close();
 
       vi.resetModules();
-      const { initDatabase, getAllChats, _closeDatabase } =
+      const { _initTestDatabaseAtPath, getAllChats, _closeDatabase } =
         await import('./db.js');
 
-      initDatabase();
+      _initTestDatabaseAtPath(dbPath);
 
       const chats = getAllChats();
       expect(chats.find((chat) => chat.jid === 'tg:12345')).toMatchObject({
@@ -116,9 +116,9 @@ describe('database migrations', () => {
       legacyDb.close();
 
       vi.resetModules();
-      const { initDatabase, listCognitiveRuns, _closeDatabase } =
+      const { _initTestDatabaseAtPath, listCognitiveRuns, _closeDatabase } =
         await import('./db.js');
-      initDatabase();
+      _initTestDatabaseAtPath(dbPath);
 
       expect(
         listCognitiveRuns({ limit: 10 }).map((run) => ({
