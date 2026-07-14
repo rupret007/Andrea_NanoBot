@@ -11,6 +11,7 @@ import unittest
 
 
 SCRIPT = Path(__file__).with_name("verify-release-sha.py")
+SECURITY_WORKFLOW = SCRIPT.parents[1] / "workflows" / "agi-security.yml"
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -94,6 +95,15 @@ class VerifyReleaseShaTests(unittest.TestCase):
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn("does not match", rejected.stderr)
+
+    def test_semgrep_container_trusts_only_the_checked_out_workspace(self) -> None:
+        workflow = SECURITY_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            'git config --global --add safe.directory "$GITHUB_WORKSPACE"',
+            workflow,
+        )
+        self.assertNotIn("safe.directory '*'", workflow)
+        self.assertNotIn('safe.directory "*"', workflow)
 
 
 if __name__ == "__main__":
