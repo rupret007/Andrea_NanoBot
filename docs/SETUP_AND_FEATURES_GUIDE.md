@@ -211,6 +211,8 @@ Practical user prompts:
 - `What am I forgetting?`
 - `What's still open with Candace?`
 - `Don't bring this up automatically`
+- `Actually, the deadline moved to Monday at noon`
+- `Push that to Tuesday morning`
 
 Important limits:
 
@@ -218,6 +220,10 @@ Important limits:
 - explicit save/track phrasing creates or updates threads directly
 - inferred thread suggestions stay confirmation-first
 - sensitive topics are not silently persisted just because they were mentioned once
+- temporal corrections require a uniquely identified or sufficiently
+  context-bound thread; ambiguous corrections ask for the target
+- the accepted profile timezone controls relative dates, while superseded
+  values remain historical evidence and cannot drive active follow-through
 
 ## Shared Capability Graph And Research Orchestrator
 

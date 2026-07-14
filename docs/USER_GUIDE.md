@@ -438,6 +438,8 @@ Useful thread prompts:
 - `Why do you think this is still open?`
 - `Don't bring this up automatically`
 - `Forget that thread`
+- `Actually, the deadline moved to Monday at noon`
+- `Push that to Tuesday morning`
 
 Important trust rules:
 
@@ -445,6 +447,11 @@ Important trust rules:
 - sensitive topics are not silently persisted just because they came up in conversation
 - inferred thread suggestions are confirmation-first
 - `forget that thread` deletes the thread; `close` or `pause` keeps history without surfacing it as active
+- a clearly targeted temporal correction replaces the current deadline or
+  scheduled time without creating another thread; Andrea asks for clarification
+  when two active obligations are plausible
+- relative corrections use the accepted profile timezone, and the prior value
+  is retained only as explicitly superseded history
 
 ## What To Expect From `/cursor_status`
 

@@ -26,7 +26,7 @@ uncommitted candidate changes.
 
 ## Verified Repository Gates
 
-- Primary suite: 638 suites / 2,720 tests.
+- Primary suite: 230 files / 2,727 tests.
 - AGI suite: 28 files / 282 tests.
 - Deterministic sweep: 93/93 selected commands passed from an inventory of 108;
   the other 15 are explicitly excluded live, interactive, aggregate, or
@@ -35,6 +35,49 @@ uncommitted candidate changes.
 - Container runner install, typecheck, build, policy contracts, image canary,
   nested read-only mount canary, signature flows, documentation checks, and
   root/runner dependency audits passed on the released tree.
+
+## Temporal Truth And Durable Restart Certification — 2026-07-14
+
+This is synthetic, isolated repository evidence, not a real user outcome or a
+learning-baseline sample. The round began from clean, synchronized, and serving
+SHA `4b8571f64230fabaf1ea0b74f346c1f1afecc224`. The original life-thread
+certification reproduced both target failures: a Northstar correction changed
+the summary to Friday noon while the active `nextAction` remained Thursday at
+5:00 PM, and a durable SQLite close/reopen restored that stale planning value.
+
+The production correction now parses a bounded temporal correction using the
+accepted profile timezone, resolves only a uniquely named or sufficiently
+context-bound active obligation, and updates `summary`, `nextAction`, and
+`nextFollowupAt` in one database transaction. The previous value remains in an
+explicit `temporal_supersession` signal for provenance but is excluded from
+active snapshot, ranking, reminder/follow-through, personal-context, and daily
+companion consumers. A deterministic signal identity makes replay of the same
+correction a no-op. Ambiguous corrections ask which obligation to update and
+mutate nothing.
+
+Run `npm run certify:temporal-truth` for the isolated certification. Run
+`ANDREA_TEMPORAL_RUN_ID=... npm run certify:temporal-truth` to provide a fixed
+correlation ID. The final pre-release run was
+`ANDREA-TEMPORAL-20260714T173200Z-9F3C7A2D`. The harness creates its cleanup
+manifest before seeding, uses a disposable SQLite datastore through Andrea's
+production initialization path, performs two complete close/reopen cycles with
+a correction between them, and exits nonzero on a scenario or cleanup failure.
+
+The current certification matrix is 13 `PASS`, 0 `FAIL`: initial parsing,
+pre-restart supersession, two durable restarts, sequential correction,
+ordinal-date correction, relative one-week extension, a mixed
+meeting/application sentence, ambiguous-target refusal, duplicate replay,
+move into the past, time-only change, and relative-date change. It proves one
+permit thread, three lifecycle signals, zero scheduled-task duplicates, one
+active snapshot record, and zero production residue after cleanup.
+
+The existing broader life-thread harness was also rerun as
+`ANDREA-LIFETHREAD-20260714T173200Z-9F3C7A2D`. It improved from the prior round's
+4 `PASS`, 2 `PARTIAL`, 4 `FAIL` to 6 `PASS`, 2 `PARTIAL`, 2 `FAIL`: temporal
+supersession and restart recovery are now passing, while the intentionally
+out-of-scope tentative-state and selective-forget cases remain failing. Its
+held-out completion, cancellation, temporal correction, and deduplication cases
+pass; tentative intent and the broad alternate recall query remain failing.
 
 ## Synthetic Life-Thread Certification — 2026-07-14
 
@@ -61,15 +104,15 @@ Confirmed strengths:
   facts, were removed; the database/WAL/SHM and manifest no longer exist, and
   independent production searches found zero run-bound residue.
 
-Measured limitations intentionally left for later rounds:
+Measured limitations from that earlier certification, with later status:
 
-- a corrected deadline updates the summary but not the stale active
-  `nextAction`;
+- the stale active deadline and restart-recovery defects are resolved by the
+  later temporal-truth certification above;
 - waiting and tentative intent are not structured life-thread states;
 - urgent, scheduled, low-urgency, and tentative items are not ranked strongly
   enough;
 - a scoped multi-item forget request and the held-out phrasing `Is there
-  anything important I'm dropping?` are not handled by the local path.
+anything important I'm dropping?` are not handled by the local path.
 
 Run `npm run certify:life-thread` for a fresh isolated lifecycle. The command
 creates its cleanup manifest before seeding and exits nonzero if independent
@@ -84,11 +127,11 @@ then rebuilt and exercised from serving SHA `3a02430c`. A later documentation
 commit can change repository `HEAD`; use `git rev-parse origin/main` and
 `npm run services:status` for the final published and serving SHA.
 
-| Channel | Scenario | Result | Timestamp (UTC) | Correlation / receipt | Evidence | Limitation |
-| --- | --- | --- | --- | --- | --- | --- |
-| Telegram | Production `/ping` user-session roundtrip | `VERIFIED` | `2026-07-14T15:10:07.618Z` | sent `11709`, reply `11710` | `data/runtime/telegram-roundtrip-health.json` | This was the canonical harmless `/ping` probe, not a mutating task. |
-| BlueBubbles + OpenClaw | Canonical self-thread request for exactly one read-only `bluebubbles_status` call | `FAILED` | `2026-07-14T15:42:27.262Z` | `BB-CERT-20260714T154100Z-3A02430C`; request `bb:37AD510B-7645-447C-A299-75A9C7787F1A`; observed reply `bb:01EE530B-943F-4FDB-BC00-73A884AA846C` | `$HOME/.openclaw/agents/main/sessions/d8236900-084d-40f1-91e2-d546f6789721.jsonl` and `abfecee0-3436-4d3f-b927-e2afe3e19d3a.jsonl`; local message ledger | Transport, same physical thread, tool grounding, and delivery worked, but phone/email aliases produced two read-only calls and more than one response path. No mutation occurred. The defect is patched and deterministically tested, but was not re-probed to avoid another provider send in this pass. |
-| Alexa | Fresh signed `IntentRequest` through a real device or authenticated simulator | `BLOCKED` (prior proof `STALE`) | assessed `2026-07-14` | none | `data/runtime/alexa-last-signed-request.json`; `npm run services:status` | This environment has no authenticated simulator/device client. The last handled signed `WhatAmIForgettingIntent` remains `2026-06-03T13:57:39.518Z`; an unsigned local request is not equivalent. |
+| Channel                | Scenario                                                                          | Result                          | Timestamp (UTC)            | Correlation / receipt                                                                                                                            | Evidence                                                                                                                                                 | Limitation                                                                                                                                                                                                                                                                                               |
+| ---------------------- | --------------------------------------------------------------------------------- | ------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Telegram               | Production `/ping` user-session roundtrip                                         | `VERIFIED`                      | `2026-07-14T15:10:07.618Z` | sent `11709`, reply `11710`                                                                                                                      | `data/runtime/telegram-roundtrip-health.json`                                                                                                            | This was the canonical harmless `/ping` probe, not a mutating task.                                                                                                                                                                                                                                      |
+| BlueBubbles + OpenClaw | Canonical self-thread request for exactly one read-only `bluebubbles_status` call | `FAILED`                        | `2026-07-14T15:42:27.262Z` | `BB-CERT-20260714T154100Z-3A02430C`; request `bb:37AD510B-7645-447C-A299-75A9C7787F1A`; observed reply `bb:01EE530B-943F-4FDB-BC00-73A884AA846C` | `$HOME/.openclaw/agents/main/sessions/d8236900-084d-40f1-91e2-d546f6789721.jsonl` and `abfecee0-3436-4d3f-b927-e2afe3e19d3a.jsonl`; local message ledger | Transport, same physical thread, tool grounding, and delivery worked, but phone/email aliases produced two read-only calls and more than one response path. No mutation occurred. The defect is patched and deterministically tested, but was not re-probed to avoid another provider send in this pass. |
+| Alexa                  | Fresh signed `IntentRequest` through a real device or authenticated simulator     | `BLOCKED` (prior proof `STALE`) | assessed `2026-07-14`      | none                                                                                                                                             | `data/runtime/alexa-last-signed-request.json`; `npm run services:status`                                                                                 | This environment has no authenticated simulator/device client. The last handled signed `WhatAmIForgettingIntent` remains `2026-06-03T13:57:39.518Z`; an unsigned local request is not equivalent.                                                                                                        |
 
 Historical BlueBubbles attempts are retained rather than rewritten:
 

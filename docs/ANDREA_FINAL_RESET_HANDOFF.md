@@ -4,6 +4,95 @@ Snapshot date: 2026-07-14. Use `git rev-parse origin/main` and
 `npm run services:status` for the current release SHA and serving provenance;
 the sections below retain the exact baseline SHA for each bounded pass.
 
+## Temporal truth and durable restart certification
+
+Label: `ANDREA TEMPORAL TRUTH AND DURABLE RESTART CERTIFICATION`
+
+The round began from clean, synchronized, and serving `main` at
+`4b8571f64230fabaf1ea0b74f346c1f1afecc224`. Before implementation,
+`npm run certify:life-thread` reproduced both selected defects: temporal
+supersession was `FAIL` because Northstar's summary said Friday noon while its
+active `nextAction` still said Thursday at 5:00 PM, and restart recovery was
+`FAIL` because a real disposable SQLite close/reopen preserved that stale
+active value.
+
+The final isolated run was
+`ANDREA-TEMPORAL-20260714T173200Z-9F3C7A2D`: 13 `PASS`, 0 `FAIL`, 14 cleanup
+entries removed, zero production residue, and no retained database, WAL, SHM,
+directory, or manifest. The companion broader lifecycle run was
+`ANDREA-LIFETHREAD-20260714T173200Z-9F3C7A2D`: 6 `PASS`, 2 `PARTIAL`, 2 `FAIL`;
+the two remaining failures are the explicitly out-of-scope tentative-state and
+multi-target-forget scenarios.
+
+### Root cause and production correction
+
+The save/update path treated a newer temporal correction as another historical
+signal and summary, while deliberately retaining `existing.nextAction`. It had
+no canonical temporal parser, no synchronized mutation of active planning
+fields, no supersession provenance, and no correction-ingestion identity.
+
+The bounded correction now:
+
+- interprets explicit dates, relative dates, weekday changes, date-only,
+  time-only, date-and-time, earlier/later, and one-week extensions with a
+  deterministic reference clock and the subject's accepted timezone;
+- resolves only a unique lexical target, one sufficiently context-bound target,
+  or the sole active obligation; two plausible targets produce an explicit
+  clarification result and no write;
+- atomically sets the sole active temporal value in `nextFollowupAt` and
+  synchronizes the current `summary` and `nextAction` so stale text cannot drive
+  snapshots, urgency, follow-through, retrieval, or daily output;
+- stores the old value only in an explicit `temporal_supersession` signal, and
+  uses a deterministic correction-signal ID so exact replay is idempotent;
+- preserves completion, cancellation, privacy, and one-thread deduplication
+  behavior without adding a second temporal store or changing authority.
+
+### Before-and-after matrix
+
+| Scenario                    | Baseline      | Post-change | Machine evidence                                                                                                                                      |
+| --------------------------- | ------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deadline supersession       | `FAIL`        | `PASS`      | Friday 3:00 PM became Monday noon in `nextFollowupAt`, `summary`, and `nextAction`; the old timestamp exists only in an explicitly superseded signal. |
+| Restart recovery            | `FAIL`        | `PASS`      | Monday noon survived a full close/reopen; a post-restart Tuesday-morning correction survived a second close/reopen.                                   |
+| Multiple corrections        | Not certified | `PASS`      | A became B and B became C on one thread with three total lifecycle signals.                                                                           |
+| Duplicate ingestion         | Not certified | `PASS`      | Replaying the exact correction returned `duplicate`, did not change `lastUpdatedAt`, and did not add a signal.                                        |
+| Ambiguous correction        | Not certified | `PASS`      | `Move it to Tuesday` with two plausible active obligations requested clarification and changed neither.                                               |
+| Active-consumer convergence | `FAIL`        | `PASS`      | One thread, one active snapshot record, no stale current text, and zero scheduled-task duplicates after restart.                                      |
+
+The isolated held-out matrix also passes ordinal `19th, not the 16th`, `another
+week`, a mixed meeting/application sentence, a past deadline, a time-only
+change, a relative-date change, and `Push that to Tuesday morning`. These tests
+assert timestamps and stored state rather than response wording.
+
+### Certification and cleanup contract
+
+`npm run certify:temporal-truth` creates a manifest before seeding, creates one
+synthetic profile subject with an accepted `America/Chicago` timezone, uses a
+unique group/chat namespace and disposable SQLite file, and never writes a real
+user, Calendar, contact, message provider, or production database. It performs
+two durable close/reopen cycles through `_initTestDatabaseAtPath`. Cleanup
+unlinks the database directory, WAL/SHM, and manifest, then independently opens
+the production database read-only and requires zero run-ID, namespace, or
+created-ID residue. A scenario or cleanup failure makes the command fail.
+
+This round intentionally does not implement structured tentative/waiting
+states, scoped multi-item forgetting, or general proactive-recall paraphrase
+expansion. Those earlier measured limitations remain honest future work.
+
+### Repository validation
+
+- Focused affected-consumer pass: 8 files / 106 tests; final focused temporal,
+  life-thread, chief-of-staff, and daily-companion rerun: 4 files / 56 tests.
+- Full primary gate: 230 files / 2,727 tests, root typecheck, formatting,
+  production build, and lint with zero errors. The unchanged repository warning
+  backlog is 649; touched temporal code adds no warning.
+- AGI gate: typecheck plus 28 files / 282 tests.
+- Hermetic deterministic sweep: 93/93 selected commands passed, including the
+  200.5-second three-round stability gate.
+- Offline scorecard: 100.0% A+, all nine dimensions at 100%, no merge-blocking
+  regression, network denial active, 1,370 ms, and $0.0000 cost.
+- Six signature flows, 69-file documentation check, root and container-runner
+  production/full dependency audits, formatting, and whitespace checks passed.
+
 ## Synthetic life-thread certification
 
 Label: `SYNTHETIC LIFE-THREAD CERTIFICATION`
@@ -27,18 +116,18 @@ the run ID.
 
 ### Scenario results
 
-| # | Scenario | Baseline | Post-change | Machine evidence |
-| --- | --- | --- | --- | --- |
-| 1 | Initial proactive recall | `PARTIAL` | `PARTIAL` | Eight active items; concise three-line response; no verification-phrase leak, but recency chose the repair meeting instead of the urgent proposal. |
-| 2 | Completion suppression | `FAIL` | `PASS` | Natural completion changed the expense thread from active to closed, cleared follow-through fields, and added one explicit terminal signal. |
-| 3 | Cancellation suppression | `FAIL` | `PASS` | Natural cancellation changed the repair-meeting thread from active to closed and added one explicit cancellation signal. |
-| 4 | Temporal supersession | `FAIL` | `FAIL` | The latest summary says Friday at noon, but `nextAction` still contains Thursday at 5:00 PM. |
-| 5 | Semantic deduplication | `PASS` | `PASS` | Three Northstar signals remain attached to one underlying thread. |
-| 6 | Waiting state | `PARTIAL` | `PARTIAL` | The Jordan blocker text is retained, but waiting is not a structured life-thread state. |
-| 7 | Tentative versus committed | `FAIL` | `FAIL` | A tentative idea is still stored as an active obligation. |
-| 8 | Privacy and relevance | `PASS` | `PASS` | Proactive recall stayed concise and did not expose `ORCHID-LANTERN`. |
-| 9 | Restart recovery | `FAIL` | `FAIL` | Durable reopen now preserves completion/cancellation suppression and one deduplicated Northstar thread, but the stale deadline still controls `nextAction`. |
-| 10 | Selective forgetting | `FAIL` | `FAIL` | One multi-target natural forget request is not handled; unrelated active state remains intact. |
+| #   | Scenario                   | Baseline  | Post-change | Machine evidence                                                                                                                                            |
+| --- | -------------------------- | --------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Initial proactive recall   | `PARTIAL` | `PARTIAL`   | Eight active items; concise three-line response; no verification-phrase leak, but recency chose the repair meeting instead of the urgent proposal.          |
+| 2   | Completion suppression     | `FAIL`    | `PASS`      | Natural completion changed the expense thread from active to closed, cleared follow-through fields, and added one explicit terminal signal.                 |
+| 3   | Cancellation suppression   | `FAIL`    | `PASS`      | Natural cancellation changed the repair-meeting thread from active to closed and added one explicit cancellation signal.                                    |
+| 4   | Temporal supersession      | `FAIL`    | `FAIL`      | The latest summary says Friday at noon, but `nextAction` still contains Thursday at 5:00 PM.                                                                |
+| 5   | Semantic deduplication     | `PASS`    | `PASS`      | Three Northstar signals remain attached to one underlying thread.                                                                                           |
+| 6   | Waiting state              | `PARTIAL` | `PARTIAL`   | The Jordan blocker text is retained, but waiting is not a structured life-thread state.                                                                     |
+| 7   | Tentative versus committed | `FAIL`    | `FAIL`      | A tentative idea is still stored as an active obligation.                                                                                                   |
+| 8   | Privacy and relevance      | `PASS`    | `PASS`      | Proactive recall stayed concise and did not expose `ORCHID-LANTERN`.                                                                                        |
+| 9   | Restart recovery           | `FAIL`    | `FAIL`      | Durable reopen now preserves completion/cancellation suppression and one deduplicated Northstar thread, but the stale deadline still controls `nextAction`. |
+| 10  | Selective forgetting       | `FAIL`    | `FAIL`      | One multi-target natural forget request is not handled; unrelated active state remains intact.                                                              |
 
 Aggregate lifecycle evidence moved from 2 `PASS`, 2 `PARTIAL`, and 6 `FAIL`
 to 4 `PASS`, 2 `PARTIAL`, and 4 `FAIL`. This is synthetic certification, not
@@ -91,12 +180,12 @@ folded into a second production change.
 
 ### Next full-reset priorities
 
-1. Make newer deadline corrections atomically supersede active planning fields
-   while retaining historical provenance.
-2. Add bounded structured `waiting` and `tentative` semantics, then rank urgent
+1. Add bounded structured `waiting` and `tentative` semantics, then rank urgent
    obligations above scheduled facts and low-urgency ideas.
-3. Support scoped multi-item forgetting and route held-out proactive-recall
+2. Support scoped multi-item forgetting and route held-out proactive-recall
    paraphrases through the same local loose-ends behavior.
+3. Collect one genuine owner-reviewed life-thread outcome after release; do not
+   convert synthetic certification into a learning-baseline sample.
 
 ## Latest live transport pass
 

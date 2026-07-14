@@ -451,11 +451,12 @@ async function main(): Promise<void> {
       scenario: 4,
       name: 'Temporal supersession',
       status:
-        corrected.summary.includes('Friday at noon') &&
-        !String(getLifeThread(corrected.id)?.nextAction).includes('Thursday')
+        corrected.nextFollowupAt === '2026-07-17T17:00:00.000Z' &&
+        !String(getLifeThread(corrected.id)?.nextAction).includes('Thursday') &&
+        !String(getLifeThread(corrected.id)?.nextAction).includes('5:00 PM')
           ? 'PASS'
           : 'FAIL',
-      evidence: `summary=${getLifeThread(corrected.id)?.summary}; next_action=${getLifeThread(corrected.id)?.nextAction}`,
+      evidence: `active_at=${getLifeThread(corrected.id)?.nextFollowupAt}; summary=${getLifeThread(corrected.id)?.summary}; next_action=${getLifeThread(corrected.id)?.nextAction}`,
     });
 
     saveThread(
@@ -630,10 +631,12 @@ async function main(): Promise<void> {
     );
     heldOutResults.push({
       name: 'Held-out deadline correction',
-      status: String(heldOutDeadline.nextAction).includes('Thursday')
-        ? 'FAIL'
-        : 'PASS',
-      evidence: `summary=${heldOutDeadline.summary}; next_action=${heldOutDeadline.nextAction}`,
+      status:
+        heldOutDeadline.nextFollowupAt === '2026-07-17T17:00:00.000Z' &&
+        !String(heldOutDeadline.nextAction).includes('Thursday')
+          ? 'PASS'
+          : 'FAIL',
+      evidence: `active_at=${heldOutDeadline.nextFollowupAt}; summary=${heldOutDeadline.summary}; next_action=${heldOutDeadline.nextAction}`,
     });
 
     saveThread(

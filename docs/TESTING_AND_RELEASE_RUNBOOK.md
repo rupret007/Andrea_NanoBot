@@ -1566,6 +1566,8 @@ npm run test:real-world-intelligence:heldout
 npm run test:stability
 npm run test:deterministic:sweep -- --list
 npm run test:deterministic:sweep
+npm run certify:life-thread
+npm run certify:temporal-truth
 npm run agi:scorecard -- --no-write --no-dogfood
 npm run debug:signature-flows
 npm run docs:check

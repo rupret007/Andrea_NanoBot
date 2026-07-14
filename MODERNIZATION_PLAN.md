@@ -1,5 +1,70 @@
 # Modernization Plan
 
+## Temporal truth and durable restart release — 2026-07-14 (current worktree)
+
+This focused reliability release starts from clean, synchronized, and serving
+SHA `4b8571f64230fabaf1ea0b74f346c1f1afecc224`. It does not include waiting,
+tentative, selective multi-forget, general recall-paraphrase, or authority work.
+
+### Reproduced failures and root cause
+
+- [x] Reproduce deadline supersession: the correction updates the Northstar
+      summary but retains Thursday 5:00 PM in the active `nextAction`.
+- [x] Reproduce durable restart recovery: a real disposable SQLite close/reopen
+      restores the same stale active planning value.
+- [x] Trace all active consumers. Snapshots, ranking, chief-of-staff due labels,
+      personal context, and daily companion rely on the life thread's
+      `nextAction`/`nextFollowupAt`; historical signals are not active inputs.
+- [x] Confirm the root cause: existing updates append a signal and summary but
+      deliberately preserve `existing.nextAction`; no canonical temporal
+      interpretation or synchronized supersession transaction exists.
+
+### Implemented bounded correction
+
+- [x] Parse explicit, relative, weekday, ordinal, date-only, time-only,
+      date-and-time, earlier/later, and extension corrections using a controlled
+      reference time and the accepted profile timezone.
+- [x] Resolve only a uniquely identified, sufficiently context-bound, or sole
+      active obligation. Ambiguous targets request clarification and mutate
+      nothing; unrelated temporal facts remain unchanged.
+- [x] Atomically synchronize the canonical active planning timestamp,
+      `summary`, and `nextAction`, with explicit supersession provenance in the
+      existing signal ledger.
+- [x] Give each correction a deterministic signal identity so duplicate replay
+      is idempotent, including after a later correction has become authoritative.
+- [x] Preserve one underlying thread and keep completion, cancellation,
+      privacy, cleanup, and authority boundaries unchanged.
+- [x] Add focused semantic tests and an isolated certification with two real
+      durable close/reopen cycles, a correction between restarts, held-out
+      variants, cleanup manifest, and independent production-residue check.
+
+### Validation and release closure required
+
+- [x] Focused temporal and life-thread regression suite passes.
+- [x] Synthetic temporal certification passes 13/13 scenarios with two restart
+      cycles, one converged permit record, three lifecycle signals, zero
+      scheduled-task duplicates, and zero cleanup residue.
+- [x] Re-run the existing synthetic life-thread certification and completion,
+      cancellation, deduplication, context, memory, and replay regressions.
+- [x] Run root and AGI typechecks/tests, full primary suite, production build,
+      formatting, lint, documentation checks, repository-standard deterministic
+      sweep/scorecard/audits/signature flows, and final diff/secret review.
+- [x] Record exact final totals and the fixed certification run ID in current
+      status and handoff documentation.
+- [ ] Fetch immediately before release; require zero divergence. Commit and
+      push one coherent release to `main`, rebuild/restart Andrea from that
+      commit, and verify clean runtime provenance plus Andrea/OpenClaw health.
+
+### Intentionally unchanged
+
+- Historical temporal evidence remains reviewable; it is marked superseded,
+  not deleted or allowed into active reasoning.
+- No database schema migration, second temporal store, model/provider change,
+  live send, Calendar write, broad memory redesign, or authority expansion is
+  part of this round.
+- Structured waiting/tentative semantics, selective multi-forget, broader
+  proactive recall, and real owner-reviewed learning evidence remain later work.
+
 ## Reminder-plus-research recovery candidate — 2026-07-14 (current worktree)
 
 This candidate extends the released Calendar + research flow without adding a

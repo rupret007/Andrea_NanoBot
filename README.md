@@ -713,6 +713,12 @@ Andrea now has a bounded **life thread** layer for ongoing matters like Candace,
 - current work is still the immediate execution focus in the cockpit
 - explicit prompts like `save this under the band thread`, `remember I need to talk to Candace about dinner plans tonight`, `what's still open with Candace`, and `what threads do I have open` work in plain language
 - inferred continuity stays confirmation-first; Andrea does not silently turn every recurring topic into durable memory
+- a clearly targeted date, deadline, or time correction replaces the stale
+  active value everywhere the thread is used; the old value remains only as
+  explicitly superseded history
+- relative corrections use the accepted profile timezone, exact correction
+  replay is idempotent, and an ambiguous `move it` request asks which active
+  obligation to update instead of guessing
 - `don't bring this up automatically` moves a thread into manual-only use without deleting it
 - `forget that thread` is the explicit hard-delete path
 

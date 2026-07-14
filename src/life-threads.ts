@@ -8,10 +8,12 @@ import {
   getRouterState,
   listLifeThreadSignals,
   listLifeThreadsForGroup,
+  listProfileFactsForGroup,
   listProfileSubjectsForGroup,
   listRecentMessagesForChat,
   reassignLifeThreadSignals,
   setRouterState,
+  supersedeLifeThreadTemporalState,
   updateLifeThread,
   upsertLifeThread,
   upsertLifeThreadSignal,
@@ -28,6 +30,12 @@ import type {
   PendingLifeThreadSuggestionState,
   ProfileSubject,
 } from './types.js';
+import {
+  formatLifeThreadTemporalTruth,
+  isLifeThreadTemporalCorrection,
+  normalizeLifeThreadTimeZone,
+  parseLifeThreadTemporalState,
+} from './life-thread-temporal.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
 
 export interface LifeThreadContextReference {
@@ -53,6 +61,7 @@ export interface LifeThreadCommandResult {
   handled: boolean;
   responseText?: string;
   referencedThread?: LifeThread | null;
+  temporalResolution?: 'applied' | 'duplicate' | 'ambiguous';
 }
 
 const PENDING_THREAD_SUGGESTION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -696,6 +705,223 @@ function resolveTerminalLifeThread(params: {
   return undefined;
 }
 
+const TEMPORAL_TARGET_STOP_WORDS = new Set([
+  'actually',
+  'another',
+  'changed',
+  'client',
+  'correction',
+  'date',
+  'deadline',
+  'does',
+  'due',
+  'earlier',
+  'gave',
+  'later',
+  'moved',
+  'needs',
+  'noon',
+  'longer',
+  'morning',
+  'night',
+  'push',
+  'scheduled',
+  'stayed',
+  'that',
+  'they',
+  'this',
+  'time',
+  'today',
+  'tomorrow',
+  'week',
+]);
+
+function temporalTargetTokens(value: string): string[] {
+  return [
+    ...new Set(
+      normalizeText(value)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .split(/\s+/)
+        .filter(
+          (token) =>
+            token.length >= 3 &&
+            !/\d/.test(token) &&
+            !WEEKDAY_WORDS.has(token) &&
+            !TEMPORAL_TARGET_STOP_WORDS.has(token),
+        ),
+    ),
+  ];
+}
+
+function temporalTargetClause(value: string): string {
+  const clauses = value.split(/\bbut\b|[;.]/i).map((part) => part.trim());
+  return (
+    clauses.find((part) =>
+      /\b(?:deadline|due|moved?|push|reschedul|correction|another week|now)\b/i.test(
+        part,
+      ),
+    ) || value
+  );
+}
+
+const WEEKDAY_WORDS = new Set([
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+]);
+
+function resolveTemporalLifeThread(params: {
+  groupFolder: string;
+  text: string;
+  contextThread?: LifeThread;
+}): LifeThread | undefined {
+  const activeThreads = listLifeThreadsForGroup(params.groupFolder, ['active']);
+  const tokens = temporalTargetTokens(temporalTargetClause(params.text));
+  const scored = activeThreads
+    .map((candidate) => {
+      const titleTokens = new Set(temporalTargetTokens(candidate.title));
+      const detailTokens = new Set(
+        temporalTargetTokens(
+          `${candidate.summary} ${candidate.nextAction || ''} ${candidate.contextTags.join(' ')}`,
+        ),
+      );
+      const titleMatches = tokens.filter((token) => titleTokens.has(token));
+      const detailMatches = tokens.filter(
+        (token) => detailTokens.has(token) && !titleTokens.has(token),
+      );
+      return {
+        candidate,
+        score: titleMatches.length * 5 + detailMatches.length,
+        titleMatches: titleMatches.length,
+      };
+    })
+    .filter((entry) => entry.titleMatches > 0 || entry.score >= 2)
+    .sort((left, right) => right.score - left.score);
+
+  if (scored[0] && (!scored[1] || scored[0].score > scored[1].score)) {
+    return scored[0].candidate;
+  }
+  if (
+    params.contextThread?.status === 'active' &&
+    params.contextThread.groupFolder === params.groupFolder &&
+    (scored.length === 0 ||
+      scored.some(
+        (entry) =>
+          entry.score === scored[0]?.score &&
+          entry.candidate.id === params.contextThread?.id,
+      ))
+  ) {
+    return params.contextThread;
+  }
+  if (activeThreads.length === 1 && scored.length === 0) {
+    return activeThreads[0];
+  }
+  return undefined;
+}
+
+function lifeThreadTimeZone(groupFolder: string): string {
+  const fact = listProfileFactsForGroup(groupFolder, ['accepted']).find(
+    (candidate) => candidate.factKey.toLowerCase() === 'timezone',
+  );
+  if (fact) {
+    try {
+      const parsed = JSON.parse(fact.valueJson) as unknown;
+      if (typeof parsed === 'string')
+        return normalizeLifeThreadTimeZone(parsed);
+      if (parsed && typeof parsed === 'object') {
+        const value = parsed as Record<string, unknown>;
+        const configured = value.timezone || value.timeZone || value.value;
+        if (typeof configured === 'string') {
+          return normalizeLifeThreadTimeZone(configured);
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      // Invalid profile facts fail safely to the configured host timezone.
+    }
+  }
+  return normalizeLifeThreadTimeZone(process.env.TZ);
+}
+
+function temporalCorrectionSignalId(threadId: string, text: string): string {
+  const digest = crypto
+    .createHash('sha256')
+    .update(`${threadId}\n${normalizeText(text).toLowerCase()}`)
+    .digest('hex');
+  return `life-thread-temporal:${digest}`;
+}
+
+function applyTemporalCorrection(params: {
+  thread: LifeThread;
+  text: string;
+  groupFolder: string;
+  chatJid?: string;
+  now: Date;
+}): {
+  status: 'applied' | 'duplicate' | 'not_temporal';
+  thread: LifeThread;
+} {
+  const timeZone = lifeThreadTimeZone(params.groupFolder);
+  const inferredCurrent =
+    params.thread.nextFollowupAt ||
+    parseLifeThreadTemporalState({
+      text: params.thread.nextAction || params.thread.summary,
+      now: new Date(params.thread.createdAt),
+      timeZone,
+    })?.activeAt ||
+    null;
+  const temporal = parseLifeThreadTemporalState({
+    text: params.text,
+    now: params.now,
+    timeZone,
+    currentTemporalAt: inferredCurrent,
+    requireCorrection: true,
+  });
+  if (!temporal) return { status: 'not_temporal', thread: params.thread };
+
+  const activeTruth = formatLifeThreadTemporalTruth({
+    thread: params.thread,
+    temporal,
+    timeZone,
+  });
+  const oldTruth =
+    params.thread.nextFollowupAt || inferredCurrent || 'unparsed';
+  const signalId = temporalCorrectionSignalId(params.thread.id, params.text);
+  const result = supersedeLifeThreadTemporalState({
+    threadId: params.thread.id,
+    groupFolder: params.groupFolder,
+    summary: activeTruth,
+    nextAction: activeTruth,
+    nextFollowupAt: temporal.activeAt,
+    lastUpdatedAt: params.now.toISOString(),
+    signal: {
+      id: signalId,
+      threadId: params.thread.id,
+      groupFolder: params.groupFolder,
+      sourceKind: 'explicit',
+      summaryText: clipSummary(
+        `temporal_supersession: active=${temporal.activeAt}; superseded=${oldTruth}; correction=${normalizeText(params.text)}`,
+        600,
+      ),
+      chatJid: params.chatJid || null,
+      confidenceKind: 'explicit',
+      createdAt: params.now.toISOString(),
+    },
+  });
+  if (result === 'missing') {
+    throw new Error('Temporal correction target disappeared before commit.');
+  }
+  return {
+    status: result,
+    thread: getLifeThread(params.thread.id) || params.thread,
+  };
+}
+
 function upsertExplicitLifeThread(params: {
   groupFolder: string;
   title: string;
@@ -721,6 +947,23 @@ function upsertExplicitLifeThread(params: {
     params.now,
   );
   const existing = findThreadByTitle(params.groupFolder, title);
+  if (existing && isLifeThreadTemporalCorrection(summary)) {
+    const correction = applyTemporalCorrection({
+      thread: existing,
+      text: summary,
+      groupFolder: params.groupFolder,
+      chatJid: params.chatJid,
+      now: params.now,
+    });
+    if (correction.status !== 'not_temporal') return correction.thread;
+  }
+  const inferredInitialTemporal = !existing
+    ? parseLifeThreadTemporalState({
+        text: summary,
+        now: params.now,
+        timeZone: lifeThreadTimeZone(params.groupFolder),
+      })
+    : null;
   const record: LifeThread = existing
     ? {
         ...existing,
@@ -733,7 +976,9 @@ function upsertExplicitLifeThread(params: {
         nextFollowupAt:
           params.nextFollowupAt !== undefined
             ? params.nextFollowupAt
-            : existing.nextFollowupAt || null,
+            : existing.nextFollowupAt ||
+              inferredInitialTemporal?.activeAt ||
+              null,
         category: inferred.category,
         scope: inferred.scope,
         relatedSubjectIds:
@@ -771,7 +1016,8 @@ function upsertExplicitLifeThread(params: {
           params.nextAction !== undefined
             ? params.nextAction
             : defaultNextAction,
-        nextFollowupAt: params.nextFollowupAt || null,
+        nextFollowupAt:
+          params.nextFollowupAt || inferredInitialTemporal?.activeAt || null,
         sourceKind: params.sourceKind || 'explicit',
         confidenceKind: 'explicit',
         userConfirmed: true,
@@ -1340,6 +1586,50 @@ export function handleLifeThreadCommand(
           : `Okay. I marked ${terminalThread.title} cancelled and removed it from active follow-through.`,
       referencedThread: updated,
     };
+  }
+
+  if (isLifeThreadTemporalCorrection(raw)) {
+    const target = resolveTemporalLifeThread({
+      groupFolder: input.groupFolder,
+      text: raw,
+      contextThread: thread,
+    });
+    if (!target) {
+      const activeThreads = listLifeThreadsForGroup(input.groupFolder, [
+        'active',
+      ]);
+      if (activeThreads.length > 1) {
+        return {
+          handled: true,
+          responseText:
+            'I found more than one active obligation that could match that correction. Which one should I update?',
+          referencedThread: null,
+          temporalResolution: 'ambiguous',
+        };
+      }
+      return { handled: false };
+    }
+    const correction = applyTemporalCorrection({
+      thread: target,
+      text: raw,
+      groupFolder: input.groupFolder,
+      chatJid: input.chatJid,
+      now,
+    });
+    if (correction.status !== 'not_temporal') {
+      if (input.chatJid) {
+        setLastReferencedLifeThread(input.chatJid, correction.thread, now);
+      }
+      return {
+        handled: true,
+        responseText:
+          correction.status === 'duplicate'
+            ? `That correction is already recorded for ${target.title}.`
+            : `Okay. I updated ${target.title}: ${correction.thread.nextAction}`,
+        referencedThread: correction.thread,
+        temporalResolution: correction.status,
+      };
+    }
   }
 
   const renameMatch = raw.match(/^rename (?:that|this|the)? ?thread to (.+)$/i);

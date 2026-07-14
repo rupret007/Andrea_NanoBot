@@ -34743,6 +34743,114 @@ export function updateLifeThread(
   return result.changes === 1;
 }
 
+export function supersedeLifeThreadTemporalState(params: {
+  threadId: string;
+  groupFolder: string;
+  summary: string;
+  nextAction: string;
+  nextFollowupAt: string;
+  lastUpdatedAt: string;
+  signal: LifeThreadSignal;
+}): 'applied' | 'duplicate' | 'missing' {
+  assertValidGroupFolder(params.groupFolder);
+  if (
+    params.signal.threadId !== params.threadId ||
+    params.signal.groupFolder !== params.groupFolder
+  ) {
+    throw new Error('Temporal supersession signal does not match its thread.');
+  }
+
+  return db.transaction(() => {
+    const thread = db
+      .prepare(
+        `SELECT id FROM life_threads WHERE id = ? AND group_folder = ? LIMIT 1`,
+      )
+      .get(params.threadId, params.groupFolder);
+    if (!thread) return 'missing' as const;
+
+    const inserted = db
+      .prepare(
+        `
+          INSERT OR IGNORE INTO life_thread_signals (
+            id,
+            thread_id,
+            group_folder,
+            source_kind,
+            summary_text,
+            chat_jid,
+            message_id,
+            task_id,
+            calendar_event_id,
+            profile_fact_id,
+            confidence_kind,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        params.signal.id,
+        params.signal.threadId,
+        params.signal.groupFolder,
+        params.signal.sourceKind,
+        params.signal.summaryText,
+        params.signal.chatJid || null,
+        params.signal.messageId || null,
+        params.signal.taskId || null,
+        params.signal.calendarEventId || null,
+        params.signal.profileFactId || null,
+        params.signal.confidenceKind,
+        params.signal.createdAt,
+      );
+    if (inserted.changes === 0) {
+      const existingSignal = db
+        .prepare(
+          `SELECT thread_id, group_folder FROM life_thread_signals WHERE id = ? LIMIT 1`,
+        )
+        .get(params.signal.id) as
+        | { thread_id: string; group_folder: string }
+        | undefined;
+      if (
+        existingSignal?.thread_id !== params.threadId ||
+        existingSignal.group_folder !== params.groupFolder
+      ) {
+        throw new Error(
+          'Temporal correction identity conflicts with another signal.',
+        );
+      }
+      return 'duplicate' as const;
+    }
+
+    const updated = db
+      .prepare(
+        `
+          UPDATE life_threads
+          SET summary = ?,
+              next_action = ?,
+              next_followup_at = ?,
+              source_kind = 'explicit',
+              confidence_kind = 'explicit',
+              user_confirmed = 1,
+              last_updated_at = ?,
+              last_used_at = ?
+          WHERE id = ? AND group_folder = ?
+        `,
+      )
+      .run(
+        params.summary,
+        params.nextAction,
+        params.nextFollowupAt,
+        params.lastUpdatedAt,
+        params.lastUpdatedAt,
+        params.threadId,
+        params.groupFolder,
+      );
+    if (updated.changes !== 1) {
+      throw new Error('Temporal supersession lost its target thread.');
+    }
+    return 'applied' as const;
+  })();
+}
+
 export function deleteLifeThread(id: string): boolean {
   db.prepare('DELETE FROM life_thread_signals WHERE thread_id = ?').run(id);
   const result = db.prepare('DELETE FROM life_threads WHERE id = ?').run(id);
