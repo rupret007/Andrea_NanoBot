@@ -4,6 +4,7 @@ import {
   classifyGoogleCalendarFailureDetail,
   createGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
+  googleCalendarEventIdForIdempotencyKey,
   getGoogleCalendarFailureNextAction,
   isGoogleCalendarAuthFailureKind,
   listGoogleCalendars,
@@ -125,7 +126,7 @@ describe('listGoogleCalendars', () => {
         JSON.stringify({
           items: [
             {
-              id: 'jeffstory007@gmail.com',
+              id: 'owner@example.com',
               summary: 'Jeff',
               primary: true,
               accessRole: 'owner',
@@ -149,7 +150,7 @@ describe('listGoogleCalendars', () => {
 
     expect(calendars).toHaveLength(1);
     expect(calendars[0]).toMatchObject({
-      id: 'jeffstory007@gmail.com',
+      id: 'owner@example.com',
       primary: true,
       selected: true,
     });
@@ -171,7 +172,7 @@ describe('validateGoogleCalendarConfig', () => {
           JSON.stringify({
             items: [
               {
-                id: 'jeffstory007@gmail.com',
+                id: 'owner@example.com',
                 summary: 'Jeff',
                 primary: true,
                 accessRole: 'owner',
@@ -182,7 +183,7 @@ describe('validateGoogleCalendarConfig', () => {
         );
       }
 
-      if (url.includes('/calendars/jeffstory007%40gmail.com/events')) {
+      if (url.includes('/calendars/owner%40example.com/events')) {
         return new Response(JSON.stringify({ items: [] }), { status: 200 });
       }
 
@@ -203,7 +204,7 @@ describe('validateGoogleCalendarConfig', () => {
     expect(result.complete).toBe(true);
     expect(result.failures).toEqual([]);
     expect(result.validatedCalendars).toHaveLength(1);
-    expect(result.validatedCalendars[0]?.id).toBe('jeffstory007@gmail.com');
+    expect(result.validatedCalendars[0]?.id).toBe('owner@example.com');
   });
 });
 
@@ -259,6 +260,99 @@ describe('createGoogleCalendarEvent', () => {
     expect(created.id).toBe('evt-1');
     expect(created.title).toBe('Project sync');
     expect(created.htmlLink).toContain('calendar.google.com');
+  });
+
+  it('reconciles an accepted-but-unacknowledged idempotent create without posting a duplicate', async () => {
+    const idempotencyKey = 'calendar-draft:owner:2026-07-14:one';
+    const providerEventId =
+      googleCalendarEventIdForIdempotencyKey(idempotencyKey);
+    const fetchImpl = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (init?.method === 'POST') {
+          const body = JSON.parse(String(init.body)) as { id?: string };
+          expect(body.id).toBe(providerEventId);
+          return new Response(
+            JSON.stringify({ error: { message: 'already exists' } }),
+            { status: 409 },
+          );
+        }
+        expect(url).toContain(`/events/${providerEventId}`);
+        expect(init?.method).toBeUndefined();
+        return new Response(
+          JSON.stringify({
+            id: providerEventId,
+            summary: 'Project sync',
+            start: { dateTime: '2026-04-02T21:00:00Z' },
+            end: { dateTime: '2026-04-02T22:00:00Z' },
+          }),
+          { status: 200 },
+        );
+      },
+    );
+
+    const created = await createGoogleCalendarEvent(
+      {
+        calendarId: 'primary',
+        title: 'Project sync',
+        start: new Date('2026-04-02T21:00:00Z'),
+        end: new Date('2026-04-02T22:00:00Z'),
+        timeZone: 'America/Chicago',
+        allDay: false,
+        idempotencyKey,
+      },
+      {
+        accessToken: 'token',
+        refreshToken: null,
+        clientId: null,
+        clientSecret: null,
+        calendarIds: ['primary'],
+      },
+      fetchImpl,
+    );
+
+    expect(created.id).toBe(providerEventId);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed when an idempotency collision does not match the approved event', async () => {
+    const fetchImpl = vi.fn(
+      async (_input: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+          return new Response('', { status: 409 });
+        }
+        return new Response(
+          JSON.stringify({
+            id: 'other-event',
+            summary: 'Different event',
+            start: { dateTime: '2026-04-02T21:00:00Z' },
+            end: { dateTime: '2026-04-02T22:00:00Z' },
+          }),
+        );
+      },
+    );
+
+    await expect(
+      createGoogleCalendarEvent(
+        {
+          calendarId: 'primary',
+          title: 'Project sync',
+          start: new Date('2026-04-02T21:00:00Z'),
+          end: new Date('2026-04-02T22:00:00Z'),
+          timeZone: 'America/Chicago',
+          allDay: false,
+          idempotencyKey: 'calendar-draft:collision',
+        },
+        {
+          accessToken: 'token',
+          refreshToken: null,
+          clientId: null,
+          clientSecret: null,
+          calendarIds: ['primary'],
+        },
+        fetchImpl,
+      ),
+    ).rejects.toThrow('idempotency conflict did not match');
   });
 });
 

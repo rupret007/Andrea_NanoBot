@@ -17,7 +17,7 @@ describe('messages fluidity', () => {
   it('treats the BlueBubbles self-thread as conversational 1:1 mode', () => {
     expect(
       resolveBlueBubblesReplyGateMode({
-        chatJid: 'bb:iMessage;-;+14695405551',
+        chatJid: 'bb:iMessage;-;+12025550101',
         isGroup: false,
       }),
     ).toBe('direct_1to1');
@@ -57,7 +57,7 @@ describe('messages fluidity', () => {
 
     const result = await interpretBlueBubblesDirectTurn({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       text: 'can you make that a little warmer?',
     });
 
@@ -77,7 +77,7 @@ describe('messages fluidity', () => {
 
     const result = await interpretBlueBubblesDirectTurn({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       text: 'what do you think?',
     });
 
@@ -97,7 +97,7 @@ describe('messages fluidity', () => {
 
     const result = await interpretBlueBubblesDirectTurn({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       text: 'can you make that a little warmer?',
       routingResult: {
         decision: {

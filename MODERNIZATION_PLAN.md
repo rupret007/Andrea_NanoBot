@@ -1,8 +1,191 @@
 # Modernization Plan
 
-The newest dated section is the authoritative candidate status. Older dated
-sections are preserved as historical evidence and may contain counts or runtime
-truth that was accurate only at that snapshot.
+## Documentation truth and compound assistance candidate — 2026-07-13 (current worktree)
+
+This section describes the current uncommitted candidate. It does not replace
+the published-release snapshot below until the candidate is reviewed,
+committed, released, and runtime-proven.
+
+### Confirmed problems and root causes
+
+- [x] A genuine user turn asked Andrea to add meditation to the calendar and
+      look for a good meditation. The calendar fast path consumed the whole
+      utterance, polluted the event title with the research clause, and
+      returned before the research capability could run.
+- [x] Routing returned on scheduling before recognizing the second intent; the
+      calendar parser received the unsplit utterance; polite `look for`
+      research phrasing was not recognized; and the production fast path had no
+      typed compound-task seam.
+- [x] Several repository and host documents mixed dated proof, candidate state,
+      historical requirements, and present behavior. The AGI roadmap,
+      evaluation, and security notes also overstated experimental-module,
+      benchmark, or universal-production coverage.
+- [x] The tracked BlueBubbles self-thread fallback and multiple fixtures
+      contained deployment-specific owner identifiers. This was unnecessary
+      public coupling and unsafe for an unconfigured clone.
+
+### Implemented candidate
+
+- [x] Add a conservative calendar-plus-research planner. It splits only at an
+      explicit research clause, preserves conjunctions that belong in an event
+      title, and feeds only the calendar clause to the existing calendar
+      parser.
+- [x] Confirm delivery of the calendar draft/clarifier/blocker before starting
+      the read-only research sidecar, then run it once through a caught
+      background completion. Stored-draft confirmation is not queue-blocked by
+      provider latency and does not repeat research; research never grants
+      calendar-write authority or starts when primary delivery fails.
+- [x] Recognize polite and explicit deep-research phrasing, including bounded
+      `use all available resources` language. Deep means the smallest relevant
+      outward source set under configured provider routing and request
+      controls—not indiscriminate use of every provider, model, or tool. This
+      path does not claim a dedicated per-turn dollar cap.
+- [x] Correct the independent-review blockers: compound drafts require
+      `confirm calendar event` rather than an ambiguous bare acknowledgement;
+      research follow-ups cannot invite a conflicting `yes`; quoted, bracketed,
+      and parenthesized title text fails closed; and generic `for me` wording
+      cannot export unrelated life threads, tasks, profile facts, or Calendar
+      entries to an outward provider.
+- [x] Record the research delivery as a separate second-leg latency sample,
+      suppress stale continuation-seed writes, and drain active read-only
+      sidecars for a bounded interval before graceful transport shutdown.
+- [x] Give every approved pending Google Calendar create a stable private
+      provider event identity. Persist an accepted event receipt before the
+      confirmation is delivered; a graceful retry reconciles and reports that
+      event instead of issuing a second write. Completed receipts are never
+      superseded by a newly parsed compound request.
+- [x] Refresh the primary READMEs, documentation hub, current-status snapshot,
+      setup, security, privacy, release, roadmap, evaluation, command, and
+      modernization guidance. Expand the docs checker to all canonical
+      Markdown files and reject deployment-specific paths/message identifiers.
+- [x] Complete the tracked-identifier cleanup and its focused regression tests.
+
+### Validation required before handoff
+
+- [x] Exact live-prompt parser regression, sequencing, polite-research,
+      non-research lost-object, confirmation/no-repeat, and provider-failure
+      tests pass.
+- [x] Calendar idempotency and reconciliation tests pass, including a provider
+      conflict that returns the exact prior event and a mismatched conflict
+      that fails closed.
+- [x] Formatting, lint, root typecheck, full primary tests, production build,
+      AGI typecheck/tests, documentation checks, and final diff checks pass.
+- [x] Review the combined diff for approval boundaries, duplicate delivery,
+      sensitive identifiers, documentation overclaims, accidental live state,
+      and unrelated scope.
+- [ ] One genuine post-release user turn proves the compound behavior. Do not
+      create or mutate a calendar event or run paid/live research merely to
+      manufacture that proof.
+
+### Verified candidate evidence
+
+- [x] Focused compound/routing/research/Calendar validation passed, including
+      exact-prompt parsing, source-scoped privacy, contradictory confirmation,
+      primary-delivery failure, graceful-shutdown race, no-repeat, separate
+      second-leg metrics, provider degradation, and delivery failure cases.
+- [x] Primary gate: formatting, root typecheck, lint with zero errors, 227 test
+      files / 2,701 tests, and the production TypeScript build. The repository's
+      existing warning-only lint backlog remains visible and was not expanded.
+- [x] AGI gate: typecheck and 28 files / 282 tests. Offline scorecard: 100.0% A+
+      across all nine dimensions, process network denial active, no regression,
+      and $0.0000 cost.
+- [x] Deterministic sweep: 93/93 selected commands passed from the 108-command
+      inventory, with all 15 live, interactive, aggregate, or state-writing
+      exclusions reported. All six signature flows passed.
+- [x] Documentation: 67 canonical Markdown files passed link, package-command,
+      and deployment-identifier checks. Root and container-runner production
+      and full dependency audits each reported zero vulnerabilities. Prettier,
+      `git diff --check`, candidate credential review, and independent code
+      review passed.
+- [x] One audit subtask unintentionally ran the bounded live provider doctor.
+      It refreshed local provider-health cache metadata and observed all five
+      configured lanes healthy, but it changed no tracked file and is not
+      counted as release or compound-workflow proof. No other live provider,
+      paid evaluation, or mutating channel/Calendar call was used to validate
+      this candidate.
+
+### Intentionally unchanged
+
+- The malformed live calendar event created by the earlier turn is preserved;
+  correcting or deleting it requires a separate explicit calendar mutation.
+- The Calendar write approval requirement, provider controls, model/council
+  policy, memory boundaries, and channel authority remain unchanged. Only a
+  compound draft's confirmation wording is narrowed to its exact target.
+- The read-only sidecar is drained on graceful shutdown but is not a durable
+  mission. A hard process failure can still require the user to rerun missing
+  research; promoting long-running compound work into existing durable mission
+  infrastructure remains evidence-led follow-up work, not an implicit promise.
+- Alexa passes the same stable provider identity when it continues a persisted
+  Calendar draft, but it does not yet have an independent delivery receipt
+  boundary equivalent to the text-channel cursor. Voice retry semantics remain
+  bounded provider-idempotency work, not a claim of full delivery
+  reconciliation.
+- Historical modernization sections remain dated evidence and are not rewritten
+  to match current counts.
+
+## Release closure — 2026-07-13 (authoritative)
+
+This section supersedes every older status snapshot below. Those dated sections
+are preserved as **historical implementation evidence** and may describe a
+candidate branch, counts, runtime state, or pending release work that is no
+longer current.
+
+### Published state
+
+- [x] Pull request #6 was reviewed and its complete continuity, containment,
+      CI, documentation, and release work is on `main`.
+- [x] Local `main` is clean and matches `origin/main` at `25bc6177`.
+- [x] The application-bearing release commit is `e625432b`. The final
+      `25bc6177` forward fix changes only the Semgrep workflow and its policy
+      test: the Semgrep container now marks only `$GITHUB_WORKSPACE` as a Git
+      `safe.directory`; wildcard trust is explicitly forbidden.
+- [x] Exact-SHA Ubuntu, Windows, container, AGI, CodeQL, dependency-audit,
+      verified-secret-scan, and Semgrep jobs are green for final `main`.
+- [x] The released validation matrix passed: 225 primary files / 2,608 tests;
+      28 AGI files / 282 tests; 93/93 selected deterministic commands from the
+      108-command inventory with all 15 exclusions reported; 100% A+ offline
+      scorecard with isolated storage, network denial, and zero live cost;
+      runner install/typecheck/build/contracts; container image and nested
+      read-only mount canaries; continuity hard-kill and held-out proofs;
+      signature flows; documentation checks; four zero-vulnerability root and
+      runner dependency audits; and clean diff/artifact/secret review.
+
+### Runtime truth
+
+- [x] The currently serving Mac artifact is clean and provenance-verified at
+      `e625432b`; the host is `running_ready`, and OpenClaw is live with 11/11
+      bridge tools.
+- [ ] Serving SHA does not equal `main` because the final main-only commit is a
+      scanner-workflow fix. Rebuild/restart from `25bc6177` when exact alignment
+      is required; do not misclassify the clean `e625432b` artifact as dirty or
+      application-stale.
+- [ ] A reported boot ID is not currently an authoritative independent restart
+      proof. Until that instrumentation is corrected, require a changed process
+      identity/PID together with ready/health PID agreement, committed build
+      provenance, and the expected serving SHA.
+- [ ] Disk headroom is degraded at 6.4 GiB (2.80%) free. Preserve owner data and
+      restore the target reported by `npm run debug:status` before disk pressure
+      becomes a persistence or container failure.
+
+### Remaining operator and elapsed-use evidence
+
+- [ ] Refresh the overdue Telegram roundtrip, BlueBubbles canonical same-thread
+      message-action proof, Alexa signed `IntentRequest`, and genuine
+      life-thread interaction. Keep missing proof distinct from transport or
+      repository failure.
+- [ ] Reach five distinct owner-reviewed outcomes before presenting the first
+      baseline, and complete the ten-working-day reviewed dogfood sequence.
+- [ ] Provision OneCLI only by explicit operator decision. Rotate credentials
+      previously pasted into chat, logs, issues, or diagnostics, including the
+      exposed Brave credential.
+- [ ] Obtain a native Windows service/restart proof when a Windows host is
+      available. Hosted Windows CI proves the shared build and launcher
+      contract only.
+
+## Historical sections
+
+Everything below this heading is retained for traceability and is not current
+release or runtime truth unless the authoritative section above restates it.
 
 ## Durable cognitive continuity candidate — 2026-07-13
 

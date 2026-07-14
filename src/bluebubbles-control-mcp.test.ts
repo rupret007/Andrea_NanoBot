@@ -113,7 +113,7 @@ describe('BlueBubbles MCP bridge helpers', () => {
       timingHint: 'later tonight',
     });
     await handlers.bluebubbles_start_proof_drill({
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
     });
     await handlers.bluebubbles_get_media_metadata({
       attachmentId: 'media-1',
@@ -149,7 +149,7 @@ describe('BlueBubbles MCP bridge helpers', () => {
     );
     expect(stub.requests[0]?.body).toContain('Hello there');
     expect(stub.requests[1]?.body).toContain('later tonight');
-    expect(stub.requests[2]?.body).toContain('+14695405551');
+    expect(stub.requests[2]?.body).toContain('+12025550101');
     expect(stub.requests[4]?.body).toContain('What is in this?');
   });
 });

@@ -28,7 +28,7 @@ describe('council evidence contracts', () => {
 
   it('redacts contact identifiers in citation labels', () => {
     const enriched = attachCouncilEvidenceContract({
-      evidenceId: 'knowledge:user@example.com:+14695405551',
+      evidenceId: 'knowledge:user@example.com:+12025550101',
       sourceClass: 'knowledge',
       evidenceGrade: 'partial',
       freshness: 'unknown',

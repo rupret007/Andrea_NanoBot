@@ -948,7 +948,7 @@ describe('field-trial readiness', () => {
       false,
     );
     storeChatMetadata(
-      'bb:iMessage;-;+14695405551',
+      'bb:iMessage;-;+12025550101',
       '2026-04-07T20:00:00.000Z',
       'Andrea Self',
       'bluebubbles',
@@ -956,7 +956,7 @@ describe('field-trial readiness', () => {
     );
     storeMessage({
       id: 'bb:self-proof-ask',
-      chat_jid: 'bb:iMessage;-;+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
       sender: 'Jeff',
       sender_name: 'Jeff',
       content: '@Andrea what should I say back to Candace?',
@@ -966,7 +966,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:self-proof-draft',
-      chat_jid: 'bb:iMessage;-;+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: [
@@ -985,7 +985,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:self-proof-decision',
-      chat_jid: 'bb:iMessage;-;+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
       sender: 'Jeff',
       sender_name: 'Jeff',
       content: 'send it later tonight',
@@ -995,7 +995,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:self-proof-confirmation',
-      chat_jid: 'bb:iMessage;-;+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Andrea: I queued that to send around tonight.',
@@ -1034,7 +1034,7 @@ describe('field-trial readiness', () => {
       lastActionKind: 'scheduled_send',
       lastActionAt: '2026-04-07T20:04:30.000Z',
       dedupeKey: 'proof-defer-key-1',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       presentationThreadId: null,
       presentationMessageId: 'bb:self-proof-draft',
       createdAt: '2026-04-07T20:01:00.000Z',
@@ -1096,7 +1096,7 @@ describe('field-trial readiness', () => {
     };
 
     storeChatMetadata(
-      'bb:iMessage;-;+14695405551',
+      'bb:iMessage;-;+12025550101',
       '2026-04-07T20:00:00.000Z',
       'Andrea Self',
       'bluebubbles',
@@ -1104,7 +1104,7 @@ describe('field-trial readiness', () => {
     );
     storeMessage({
       id: 'bb:proof-drill-ready',
-      chat_jid: 'bb:iMessage;-;+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Andrea: BlueBubbles proof drill is ready.',
@@ -1114,7 +1114,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:proof-drill-confirmed',
-      chat_jid: 'bb:iMessage;-;+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content:
@@ -1133,7 +1133,7 @@ describe('field-trial readiness', () => {
       targetChannel: 'bluebubbles',
       targetConversationJson: JSON.stringify({
         kind: 'external_thread',
-        chatJid: 'bb:iMessage;-;+14695405551',
+        chatJid: 'bb:iMessage;-;+12025550101',
         personName: 'Andrea self-thread',
       }),
       draftText:
@@ -1146,7 +1146,7 @@ describe('field-trial readiness', () => {
       delegationMode: 'always_ask',
       explanationJson: null,
       linkedRefsJson: JSON.stringify({
-        chatJid: 'bb:iMessage;-;+14695405551',
+        chatJid: 'bb:iMessage;-;+12025550101',
         personName: 'Andrea self-thread',
         bluebubblesProofDrill: true,
         proofDrillStartedAt: '2026-04-07T20:04:00.000Z',
@@ -1157,7 +1157,7 @@ describe('field-trial readiness', () => {
       lastActionKind: 'remind_instead',
       lastActionAt: '2026-04-07T20:04:30.000Z',
       dedupeKey: 'proof-drill-key-1',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       presentationThreadId: null,
       presentationMessageId: 'bb:proof-drill-ready',
       createdAt: '2026-04-07T20:04:00.000Z',
@@ -1207,7 +1207,7 @@ describe('field-trial readiness', () => {
             state: 'ready',
             updatedAt: '2026-04-10T00:12:00.000Z',
             detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate direct_1to1 | group trigger required yes | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;+14695405551 | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;+14695405551) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695405551 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate direct_1to1 | group trigger required yes | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;+12025550101 | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;+12025550101) | last outbound target kind chat_guid | last outbound target value iMessage;-;+12025550101 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
           },
         ],
       },
@@ -1262,7 +1262,7 @@ describe('field-trial readiness', () => {
             state: 'ready',
             updatedAt: '2026-04-10T00:12:00.000Z',
             detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;jeffstory007@gmail.com | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;jeffstory007@gmail.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695405551 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;owner@example.com | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;owner@example.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;+12025550101 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
           },
         ],
       },
@@ -1323,7 +1323,7 @@ describe('field-trial readiness', () => {
       lastActionKind: null,
       lastActionAt: '2026-04-10T00:11:30.000Z',
       dedupeKey: 'bb-open-self-thread-action',
-      presentationChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      presentationChatJid: 'bb:iMessage;-;owner@example.com',
       presentationThreadId: null,
       presentationMessageId: 'bb:self-thread-draft-1',
       createdAt: '2026-04-10T00:11:00.000Z',
@@ -1376,9 +1376,9 @@ describe('field-trial readiness', () => {
         ...createDefaultBlueBubblesMonitorState('2026-04-10T00:12:00.000Z'),
         updatedAt: '2026-04-10T00:12:00.000Z',
         lastOutboundObservedAt: '2026-04-10T00:11:00.000Z',
-        lastOutboundObservedChatJid: 'bb:iMessage;-;+14695405551',
+        lastOutboundObservedChatJid: 'bb:iMessage;-;+12025550101',
         lastOutboundTargetKind: 'chat_guid',
-        lastOutboundTargetValue: 'iMessage;-;+14695405551',
+        lastOutboundTargetValue: 'iMessage;-;+12025550101',
         lastMetadataHydrationSource: 'history',
         lastAttemptedTargetSequence: ['chat_guid', 'service_specific_direct'],
       },
@@ -1419,7 +1419,7 @@ describe('field-trial readiness', () => {
 
     expect(truth.bluebubbles.lastOutboundTargetKind).toBe('chat_guid');
     expect(truth.bluebubbles.lastOutboundTarget).toBe(
-      'iMessage;-;+14695405551',
+      'iMessage;-;+12025550101',
     );
     expect(truth.bluebubbles.lastMetadataHydrationSource).toBe('history');
     expect(truth.bluebubbles.attemptedTargetSequence).toBe(
@@ -1457,7 +1457,7 @@ describe('field-trial readiness', () => {
             state: 'ready',
             updatedAt: '2026-04-10T00:12:00.000Z',
             detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;jeffstory007@gmail.com | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;jeffstory007@gmail.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;jeffstory007@gmail.com | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;owner@example.com | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;owner@example.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;owner@example.com | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
           },
         ],
       },
@@ -1467,7 +1467,7 @@ describe('field-trial readiness', () => {
     };
 
     storeChatMetadata(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;owner@example.com',
       '2026-04-10T00:11:00.000Z',
       'Jeff',
       'bluebubbles',
@@ -1475,8 +1475,8 @@ describe('field-trial readiness', () => {
     );
     storeMessage({
       id: 'bb:self-proof-user-1',
-      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
-      sender: 'bb:jeffstory007@gmail.com',
+      chat_jid: 'bb:iMessage;-;owner@example.com',
+      sender: 'bb:owner@example.com',
       sender_name: 'Jeff',
       content: '@Andrea what should I send back?',
       timestamp: '2026-04-10T00:10:00.000Z',
@@ -1485,7 +1485,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:self-proof-bot-1',
-      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chat_jid: 'bb:iMessage;-;owner@example.com',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Andrea: Here is a draft you can send.',
@@ -1498,7 +1498,7 @@ describe('field-trial readiness', () => {
       journeyId: 'ordinary_chat',
       channel: 'bluebubbles',
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chatJid: 'bb:iMessage;-;owner@example.com',
       threadId: null,
       routeKey: 'direct_quick_reply',
       systemsInvolved: ['assistant_shell'],
@@ -1522,7 +1522,7 @@ describe('field-trial readiness', () => {
       journeyId: 'daily_guidance',
       channel: 'bluebubbles',
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chatJid: 'bb:iMessage;-;owner@example.com',
       threadId: null,
       routeKey: 'communication.draft_reply',
       systemsInvolved: ['communication_companion'],
@@ -1572,7 +1572,7 @@ describe('field-trial readiness', () => {
       lastActionKind: 'sent',
       lastActionAt: '2026-04-10T00:11:40.000Z',
       dedupeKey: 'proof-key-self-1',
-      presentationChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      presentationChatJid: 'bb:iMessage;-;owner@example.com',
       presentationThreadId: null,
       presentationMessageId: null,
       createdAt: '2026-04-10T00:11:20.000Z',
@@ -1626,7 +1626,7 @@ describe('field-trial readiness', () => {
             state: 'ready',
             updatedAt: '2026-04-10T19:01:34.886Z',
             detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T19:01:27.147Z | last inbound chat bb:iMessage;-;+14695405551 | last inbound self_authored no | last outbound 2026-04-10T19:01:34.886Z (bb:iMessage;-;+14695405551) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695405551 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T19:01:27.147Z | last inbound chat bb:iMessage;-;+12025550101 | last inbound self_authored no | last outbound 2026-04-10T19:01:34.886Z (bb:iMessage;-;+12025550101) | last outbound target kind chat_guid | last outbound target value iMessage;-;+12025550101 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
           },
         ],
       },
@@ -1636,7 +1636,7 @@ describe('field-trial readiness', () => {
     };
 
     storeChatMetadata(
-      'bb:iMessage;-;+14695405551',
+      'bb:iMessage;-;+12025550101',
       '2026-04-10T19:01:34.886Z',
       'Jeff',
       'bluebubbles',
@@ -1644,8 +1644,8 @@ describe('field-trial readiness', () => {
     );
     storeMessage({
       id: 'bb:continuation-action-user',
-      chat_jid: 'bb:iMessage;-;+14695405551',
-      sender: 'bb:+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
+      sender: 'bb:+12025550101',
       sender_name: 'Jeff',
       content: '@Andrea send it',
       timestamp: '2026-04-10T14:43:21.164Z',
@@ -1654,7 +1654,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:continuation-action-bot',
-      chat_jid: 'bb:iMessage;-;+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Andrea: I sent that to Communication follow-up.',
@@ -1664,8 +1664,8 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:continuation-user',
-      chat_jid: 'bb:iMessage;-;+14695405551',
-      sender: 'bb:+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
+      sender: 'bb:+12025550101',
       sender_name: 'Jeff',
       content: '@Andrea sounds good.',
       timestamp: '2026-04-10T19:01:27.147Z',
@@ -1674,7 +1674,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:continuation-bot',
-      chat_jid: 'bb:iMessage;-;+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Andrea: Okay.',
@@ -1711,7 +1711,7 @@ describe('field-trial readiness', () => {
       lastActionKind: 'sent',
       lastActionAt: '2026-04-10T14:43:26.973Z',
       dedupeKey: 'continuation-proof-key-1',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       presentationThreadId: null,
       presentationMessageId: null,
       createdAt: '2026-04-10T14:42:55.469Z',
@@ -1893,7 +1893,7 @@ describe('field-trial readiness', () => {
             lastError:
               'BlueBubbles send failed after targets [chat_guid, last_addressed_handle, service_specific_last_addressed_handle]: Message Send Error',
             detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-08T05:10:24.440Z | last inbound chat bb:iMessage;-;+14695405551 | last inbound self_authored yes | no outbound sent yet | last outbound target kind service_specific_last_addressed_handle | last outbound target value iMessage;-;jeffstory007@gmail.com | last send error Message Send Error | send method apple-script | private api available no | last metadata hydration history | attempted target sequence chat_guid -> last_addressed_handle -> service_specific_last_addressed_handle',
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-08T05:10:24.440Z | last inbound chat bb:iMessage;-;+12025550101 | last inbound self_authored yes | no outbound sent yet | last outbound target kind service_specific_last_addressed_handle | last outbound target value iMessage;-;owner@example.com | last send error Message Send Error | send method apple-script | private api available no | last metadata hydration history | attempted target sequence chat_guid -> last_addressed_handle -> service_specific_last_addressed_handle',
           },
         ],
       },
@@ -1903,7 +1903,7 @@ describe('field-trial readiness', () => {
     };
 
     storeChatMetadata(
-      'bb:iMessage;-;+14695405551',
+      'bb:iMessage;-;+12025550101',
       '2026-04-08T05:10:24.440Z',
       'Jeff',
       'bluebubbles',
@@ -1911,8 +1911,8 @@ describe('field-trial readiness', () => {
     );
     storeMessage({
       id: 'bb:msg-self-1',
-      chat_jid: 'bb:iMessage;-;+14695405551',
-      sender: 'bb:+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
+      sender: 'bb:+12025550101',
       sender_name: 'Jeff',
       content: '@Andrea what time is it?',
       timestamp: '2026-04-08T05:10:24.440Z',
@@ -1936,7 +1936,7 @@ describe('field-trial readiness', () => {
       '2026-04-08T05:10:24.440Z',
     );
     expect(truth.bluebubbles.lastInboundChatJid).toBe(
-      'bb:iMessage;-;+14695405551',
+      'bb:iMessage;-;+12025550101',
     );
     expect(truth.bluebubbles.lastInboundWasSelfAuthored).toBe(true);
     expect(truth.bluebubbles.lastOutboundResult).toBe('none');
@@ -1944,7 +1944,7 @@ describe('field-trial readiness', () => {
       'service_specific_last_addressed_handle',
     );
     expect(truth.bluebubbles.lastOutboundTarget).toBe(
-      'iMessage;-;jeffstory007@gmail.com',
+      'iMessage;-;owner@example.com',
     );
     expect(truth.bluebubbles.lastSendErrorDetail).toBe('Message Send Error');
     expect(truth.bluebubbles.sendMethod).toBe('apple-script');
@@ -1985,7 +1985,7 @@ describe('field-trial readiness', () => {
             state: 'ready',
             updatedAt: '2026-04-09T23:45:38.000Z',
             detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-09T23:45:19.881Z | last inbound chat bb:iMessage;-;+14695405551 | last inbound self_authored yes | last outbound 2026-04-09T23:45:38.765Z (bb:iMessage;-;+14695405551) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695405551 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-09T23:45:19.881Z | last inbound chat bb:iMessage;-;+12025550101 | last inbound self_authored yes | last outbound 2026-04-09T23:45:38.765Z (bb:iMessage;-;+12025550101) | last outbound target kind chat_guid | last outbound target value iMessage;-;+12025550101 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
           },
         ],
       },
@@ -1995,7 +1995,7 @@ describe('field-trial readiness', () => {
     };
 
     storeChatMetadata(
-      'bb:iMessage;-;+14695405551',
+      'bb:iMessage;-;+12025550101',
       '2026-04-09T23:45:38.765Z',
       'Jeff',
       'bluebubbles',
@@ -2003,8 +2003,8 @@ describe('field-trial readiness', () => {
     );
     storeMessage({
       id: 'bb:msg-active-1',
-      chat_jid: 'bb:iMessage;-;+14695405551',
-      sender: 'bb:+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
+      sender: 'bb:+12025550101',
       sender_name: 'Jeff',
       content: '@Andrea what should I say back',
       timestamp: '2026-04-09T23:45:19.881Z',
@@ -2013,7 +2013,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:msg-active-2',
-      chat_jid: 'bb:iMessage;-;+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Here is a draft you can send.',
@@ -2026,7 +2026,7 @@ describe('field-trial readiness', () => {
       journeyId: 'ordinary_chat',
       channel: 'bluebubbles',
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chatJid: 'bb:iMessage;-;owner@example.com',
       threadId: null,
       routeKey: 'direct_quick_reply',
       systemsInvolved: ['assistant_shell'],
@@ -2059,9 +2059,9 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.mostRecentEngagedAt).toBe(
       '2026-04-09T23:45:38.765Z',
     );
-    expect(truth.bluebubbles.detail).toContain('bb:iMessage;-;+14695405551');
+    expect(truth.bluebubbles.detail).toContain('bb:iMessage;-;+12025550101');
     expect(truth.bluebubbles.detail).not.toContain(
-      'bb:iMessage;-;jeffstory007@gmail.com, but a fresh same-chat message-action decision is still missing',
+      'bb:iMessage;-;owner@example.com, but a fresh same-chat message-action decision is still missing',
     );
   });
 
@@ -2095,7 +2095,7 @@ describe('field-trial readiness', () => {
             state: 'ready',
             updatedAt: '2026-04-10T00:32:10.000Z',
             detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:32:06.334Z | last inbound chat bb:RCS;-;+14696881303 | last inbound self_authored no | last outbound 2026-04-10T00:11:29.973Z (bb:iMessage;-;jeffstory007@gmail.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;jeffstory007@gmail.com | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:32:06.334Z | last inbound chat bb:RCS;-;+12025550107 | last inbound self_authored no | last outbound 2026-04-10T00:11:29.973Z (bb:iMessage;-;owner@example.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;owner@example.com | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
           },
         ],
       },
@@ -2105,23 +2105,23 @@ describe('field-trial readiness', () => {
     };
 
     storeChatMetadata(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;owner@example.com',
       '2026-04-10T00:11:29.973Z',
       'Jeff',
       'bluebubbles',
       false,
     );
     storeChatMetadata(
-      'bb:RCS;-;+14696881303',
+      'bb:RCS;-;+12025550107',
       '2026-04-10T00:32:06.334Z',
-      'RCS;-;+14696881303',
+      'RCS;-;+12025550107',
       'bluebubbles',
       false,
     );
     storeMessage({
       id: 'bb:self-thread-user-1',
-      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
-      sender: 'bb:jeffstory007@gmail.com',
+      chat_jid: 'bb:iMessage;-;owner@example.com',
+      sender: 'bb:owner@example.com',
       sender_name: 'Jeff',
       content: '@Andrea what should I say back',
       timestamp: '2026-04-10T00:08:15.455Z',
@@ -2130,7 +2130,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:self-thread-bot-1',
-      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chat_jid: 'bb:iMessage;-;owner@example.com',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Sure! Here is your draft text you can send.',
@@ -2140,9 +2140,9 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:other-chat-1',
-      chat_jid: 'bb:RCS;-;+14696881303',
-      sender: 'bb:+14696881303',
-      sender_name: '+14696881303',
+      chat_jid: 'bb:RCS;-;+12025550107',
+      sender: 'bb:+12025550107',
+      sender_name: '+12025550107',
       content: "I'm home",
       timestamp: '2026-04-10T00:32:06.334Z',
       is_from_me: false,
@@ -2162,10 +2162,10 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.mostRecentEngagedAt).toBe(
       '2026-04-10T00:11:29.973Z',
     );
-    expect(truth.bluebubbles.lastInboundChatJid).toBe('bb:RCS;-;+14696881303');
+    expect(truth.bluebubbles.lastInboundChatJid).toBe('bb:RCS;-;+12025550107');
     expect(truth.bluebubbles.messageActionProofState).toBe('none');
     expect(truth.bluebubbles.messageActionProofDetail).toContain(
-      'Andrea drafted in bb:iMessage;-;jeffstory007@gmail.com earlier',
+      'Andrea drafted in bb:iMessage;-;owner@example.com earlier',
     );
     expect(truth.bluebubbles.messageActionProofDetail).toContain(
       'no active message-action record remains',
@@ -2206,7 +2206,7 @@ describe('field-trial readiness', () => {
         mostRecentServerSeenChatJid: 'bb:iMessage;-;+14695550123',
         mostRecentServerSeenMessageId: 'bb:missed-msg-1',
         mostRecentWebhookObservedAt: '2026-04-08T11:40:00.000Z',
-        mostRecentWebhookObservedChatJid: 'bb:RCS;-;+14696881303',
+        mostRecentWebhookObservedChatJid: 'bb:RCS;-;+12025550107',
         crossSurfaceFallbackState: 'sent',
         crossSurfaceFallbackLastSentAt: '2026-04-08T11:58:00.000Z',
         crossSurfaceFallbackLastDetail: 'sent fallback notice to tg:main',
@@ -2228,7 +2228,7 @@ describe('field-trial readiness', () => {
           'bb:iMessage;-;+14695550123': '2026-04-08T11:56:30.000Z',
         },
         perChatWebhookObserved: {
-          'bb:RCS;-;+14696881303': '2026-04-08T11:40:00.000Z',
+          'bb:RCS;-;+12025550107': '2026-04-08T11:40:00.000Z',
         },
       },
       tempDir,
@@ -2251,7 +2251,7 @@ describe('field-trial readiness', () => {
             state: 'ready',
             updatedAt: '2026-04-08T11:58:00.000Z',
             detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-08T11:40:00.000Z | last inbound chat bb:RCS;-;+14696881303 | last inbound self_authored no | last outbound 2026-04-08T11:32:00.000Z (bb:iMessage;-;+14695405551) | last outbound target kind chat_guid | last outbound target value iMessage;-;+14695405551 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-08T11:40:00.000Z | last inbound chat bb:RCS;-;+12025550107 | last inbound self_authored no | last outbound 2026-04-08T11:32:00.000Z (bb:iMessage;-;+12025550101) | last outbound target kind chat_guid | last outbound target value iMessage;-;+12025550101 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
           },
         ],
       },
@@ -2275,7 +2275,7 @@ describe('field-trial readiness', () => {
       'bb:iMessage;-;+14695550123',
     );
     expect(truth.bluebubbles.mostRecentWebhookObservedChatJid).toBe(
-      'bb:RCS;-;+14696881303',
+      'bb:RCS;-;+12025550107',
     );
     expect(truth.bluebubbles.crossSurfaceFallbackState).toBe('sent');
     expect(truth.bluebubbles.crossSurfaceFallbackLastSentAt).toBe(
@@ -2285,7 +2285,7 @@ describe('field-trial readiness', () => {
       'Most recent server-seen chat: bb:iMessage;-;+14695550123.',
     );
     expect(truth.bluebubbles.detail).toContain(
-      'Most recent webhook-observed chat: bb:RCS;-;+14696881303.',
+      'Most recent webhook-observed chat: bb:RCS;-;+12025550107.',
     );
     expect(truth.bluebubbles.detail).toContain('Telegram fallback: sent');
   });

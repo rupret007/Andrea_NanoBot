@@ -26,7 +26,7 @@ function seedSelfThreadMessages(): void {
   storeMessageDirect({
     id: 'bb:user-proof-start',
     chat_jid: canonical,
-    sender: '+14695405551',
+    sender: '+12025550101',
     sender_name: 'Jeff',
     content: '@Andrea send it later tonight with secret words',
     timestamp: '2026-06-04T12:00:00.000Z',

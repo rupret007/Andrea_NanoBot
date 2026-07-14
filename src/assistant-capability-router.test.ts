@@ -134,6 +134,29 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'research.recommend',
     });
+    for (const prompt of [
+      'Can you look for a good meditation for me?',
+      'Could you find the best breathing exercise for me?',
+      'Would you research sleep routines?',
+    ]) {
+      expect(matchAssistantCapabilityRequest(prompt)).toMatchObject({
+        capabilityId: prompt.includes('research')
+          ? 'research.topic'
+          : 'research.recommend',
+      });
+    }
+    expect(matchAssistantCapabilityRequest('Can you find my keys?')).toBeNull();
+    expect(
+      matchAssistantCapabilityRequest('Can you look for my phone?'),
+    ).toBeNull();
+    expect(
+      matchAssistantCapabilityRequest(
+        'Kick off some research on guided meditation and provide me the results.',
+      ),
+    ).toMatchObject({ capabilityId: 'research.topic' });
+    expect(
+      matchAssistantCapabilityRequest('Start research on sleep routines.'),
+    ).toMatchObject({ capabilityId: 'research.topic' });
     expect(
       matchAssistantCapabilityRequest("What's the next step?"),
     ).toMatchObject({

@@ -15,31 +15,38 @@ Start with exactly one document based on your role:
 
 ## Current Field-Trial Truth
 
-Use this shorthand when you need the current host story fast:
+[CURRENT_STATUS.md](CURRENT_STATUS.md) is the dated repository and host
+snapshot. Do not copy host paths, personal channel identifiers, or a proof
+label from this page into release notes; refresh the operator commands below.
 
-- **canonical Mac mini runtime**
-  - `/Users/jeffstory/Andrea_NanoBot` is the runtime root
-  - `/Users/jeffstory/Documents/Andrea_NanoBot` is a convenience symlink
-  - `/Users/jeffstory/Andrea_NanoBot_AGI` should stay stopped unless an operator intentionally starts an isolated comparison run
-- **core live-proven as of July 12, 2026**
-  - host-control / watchdog / health
-  - BlueBubbles optional Messages bridge with a fresh canonical same-thread `message_action` proof
-  - Google Calendar scheduling
-  - provider checks for OpenAI, Anthropic, Gemini, MiniMax, Brave Search, research, and image generation
-- **manual live proof still pending**
-  - Alexa requires one real device or authenticated simulator turn before claiming a fresh signed handled `IntentRequest`
-  - after any Alexa interaction-model change, import/build in the Developer Console and run `npm run setup -- --step alexa-model-sync mark-synced`
-- **fresh-proof gaps, not host failure**
-  - Telegram is configured and transport-healthy, but its user-session roundtrip proof is overdue
-  - flagship journey proofs such as daily guidance, work cockpit, life threads, communication companion, missions, and knowledge-library flows may age out separately from integration health
-- **optional or intentionally disabled lanes**
-  - the Andrea OpenAI backend/work cockpit lane can be externally blocked when that backend is disabled on this host
-  - Telegram stays the dependable main messaging surface even while BlueBubbles is healthy
+The July 13, 2026 snapshot is deliberately conservative:
+
+- **canonical Mac mini runtime**: the host process is running, but disk pressure
+  is a warning with about 6.4 GiB free at snapshot capture
+- the released `main` SHA passed the exact-SHA hosted gates; the running build
+  is one CI-only commit behind and must not be described as SHA-aligned
+- Telegram transport is healthy, but its user-session roundtrip proof is stale
+- BlueBubbles transport is ready, but the host is
+  `degraded_but_usable`/`needs_proof` until a fresh canonical same-thread
+  `message_action` proof is recorded
+- **manual live proof still pending**: Alexa needs a fresh signed handled
+  custom-skill `IntentRequest`, and BlueBubbles needs the action proof above
+- Google Calendar is live-proven; configured provider entries are not live
+  health claims unless a current probe or verified-use record says so
+- flagship journey proofs can age out separately from integration health
+- Telegram stays the dependable main messaging surface while optional channel
+  proof is stale
+
+Retired wording such as “BlueBubbles optional Messages bridge with a fresh canonical same-thread `message_action` proof” describes an aged-out historical result and must not be used as the current host claim.
+
+After any Alexa interaction-model change, import/build in the Developer Console
+and run `npm run setup -- --step alexa-model-sync mark-synced`.
 
 When operator surfaces disagree, the release truth should come from:
 
 1. `npm run services:status`
-2. `npm run setup -- --step verify`
+2. `npm run setup -- --step verify` (live; may call a model and start a
+   container execution probe)
 3. `npm run debug:status`
 4. `npm run debug:pilot`
 
@@ -136,8 +143,11 @@ Current host-proof rule:
 - Telegram ordinary chat and the main flagship follow-through journeys are status-led and should be refreshed with `npm run debug:pilot` before demos
 - Alexa is status-led on this host: it is currently manual-action proof debt until a fresh signed handled custom-skill turn is recorded
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
-- BlueBubbles is status-led on this host: it is currently `live_proven` after the fresh same-thread `message_action` proof in `bb:iMessage;-;+14695405551`
-- outward-facing research and Telegram image generation are currently healthy when provider status remains green
+- BlueBubbles is status-led on this host: transport is ready, but current proof
+  is `degraded_but_usable`/`needs_proof` until the configured canonical
+  self-thread records a fresh `message_action` chain
+- outward-facing research and Telegram image generation should be called
+  healthy only when a current provider status or verified-use record is green
 - local compatibility/runtime lanes should be reported separately from direct provider health if they degrade later
 
 ## Pilot Review Loop
@@ -203,6 +213,22 @@ Only read these when changing core runtime behavior:
 | [docker-sandboxes.md](docker-sandboxes.md)                     | Retired Docker Sandbox guide and the supported container-validation path           |
 
 `SPEC.md` is a historical runtime reference. When it disagrees with current operator docs or live host behavior, follow the current README, admin guide, setup guide, and Alexa guide.
+
+## Intelligence Design And Evidence
+
+These documents describe the intelligence goal without turning experimental
+modules or synthetic scores into production claims:
+
+| Topic                                                       | Read this                              |
+| ----------------------------------------------------------- | -------------------------------------- |
+| Grounded intelligence and verified-agency direction         | [AGI_ROADMAP.md](AGI_ROADMAP.md)       |
+| Evaluation classes and what each result can prove           | [AGI_EVALUATION.md](AGI_EVALUATION.md) |
+| Intelligence-layer security and production trust boundaries | [AGI_SECURITY.md](AGI_SECURITY.md)     |
+| Durable agency contract, invariants, and proof requirements  | [ANDREA_DURABLE_AGENCY_PLAN.md](ANDREA_DURABLE_AGENCY_PLAN.md) |
+
+Use [CURRENT_STATUS.md](CURRENT_STATUS.md) for the dated host/release snapshot
+and [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md) for the
+actual commands and acceptance gates.
 
 ## Quick Rule
 

@@ -91,7 +91,10 @@ Important rule:
   mounts; executable-control environment keys or arbitrary mount targets fail
   closed
 - the degraded container fallback passes secret values only through the spawned runtime process environment and uses bare `-e KEY` container arguments; secret values must never appear in command arguments, process listings, logs, errors, or diagnostics
-- if a credential was previously observed in a process listing, rotate it before further live provider verification
+- rotate a credential before further live provider verification if it was
+  previously observed in a process listing or pasted into chat, logs, issues,
+  diagnostics, or any other non-secret-controlled surface; deletion or
+  redaction of the pasted copy does not make the original credential safe
 
 ### 6. Route-Aware Tool Narrowing
 

@@ -239,8 +239,8 @@ describe('OpenClaw connector', () => {
   });
 
   it('builds sanitized per-chat session keys', () => {
-    expect(buildOpenClawChatSessionKey('tg:8004355504', 'main')).toBe(
-      'agent:main:andrea-chat:tg-8004355504',
+    expect(buildOpenClawChatSessionKey('tg:100000001', 'main')).toBe(
+      'agent:main:andrea-chat:tg-100000001',
     );
     expect(buildOpenClawChatSessionKey('', 'main')).toBe(
       'agent:main:andrea-chat:default',
@@ -304,7 +304,7 @@ describe('OpenClaw connector', () => {
       message: 'per-chat session check',
       config: { ...baseConfig, delegationEnabled: true },
       runner,
-      sessionKey: buildOpenClawChatSessionKey('tg:8004355504', 'main'),
+      sessionKey: buildOpenClawChatSessionKey('tg:100000001', 'main'),
       skipPreflight: true,
     });
 
@@ -313,7 +313,7 @@ describe('OpenClaw connector', () => {
     if (!args) throw new Error('Expected OpenClaw runner to be called.');
     const sessionKeyIndex = args.indexOf('--session-key');
     expect(args[sessionKeyIndex + 1]).toBe(
-      'agent:main:andrea-chat:tg-8004355504',
+      'agent:main:andrea-chat:tg-100000001',
     );
   });
 

@@ -19,15 +19,18 @@ describe('thinking controls', () => {
   it('documents ultrathink and keeps intent snippets redacted', () => {
     expect(buildThinkingStatusText()).toContain('ultrathink');
 
+    const syntheticApiKey = ['sk', 'proj', 'exampleSecretValue1234567890'].join(
+      '-',
+    );
     const snippet = sanitizeCouncilIntentSnippet(
-      'Use key sk-proj-exampleSecretValue1234567890 for jeff@example.com and +1 469 540 5551',
+      `Use key ${syntheticApiKey} for jeff@example.com and +1 202 555 0101`,
     );
 
     expect(snippet).toContain('[REDACTED_SECRET]');
     expect(snippet).toContain('[redacted-email]');
     expect(snippet).toContain('[redacted-phone]');
-    expect(snippet).not.toContain('sk-proj-exampleSecretValue1234567890');
+    expect(snippet).not.toContain(syntheticApiKey);
     expect(snippet).not.toContain('jeff@example.com');
-    expect(snippet).not.toContain('469 540 5551');
+    expect(snippet).not.toContain('202 555 0101');
   });
 });

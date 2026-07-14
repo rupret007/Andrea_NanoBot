@@ -97,7 +97,11 @@ Default product shape:
 - Alexa gives short voice help for schedule, reminders, planning, review, and quick reply help
 - Alexa is also a good first stop for pill reminders, open bills, grocery capture, and quick tonight planning
 - Telegram is the richer execution and follow-through surface, including setup, grouped list views, and edits
-- BlueBubbles stays calm and text-first across synced chats, only replies when a message explicitly mentions `@Andrea` or `@OpenClaw`, and escalates explicitly to Telegram when the fuller answer is better there
+- BlueBubbles stays calm and text-first: the canonical self-thread accepts
+  bounded direct asks without a mention, recent direct 1:1 chats accept bounded
+  bare follow-ups after fresh Andrea context, and groups or cold direct chats
+  require `@Andrea` or `@OpenClaw`; richer answers can hand off explicitly to
+  Telegram
 - `@Andrea` is Andrea; `@OpenClaw` is the OpenClaw helper lane for deeper orchestration, skill work, and advanced helper requests
 
 ## Status Terms
@@ -169,7 +173,10 @@ On this Mac mini host, Google Calendar read/write is live-proven through that pr
 - A bounded rituals and follow-through layer for morning, midday, evening, and carryover guidance.
 - A bounded Alexa-to-Telegram cross-channel handoff layer for richer continuations and voice-triggered action completion.
 - A small bounded personality layer plus request-driven Andrea Pulse.
-- A real bounded BlueBubbles companion channel across synced personal and group chats, gated to explicit `@Andrea` or `@OpenClaw` mentions only.
+- A real bounded BlueBubbles companion channel across synced personal and group
+  chats, with mention-free direct asks limited to the canonical self-thread and
+  bounded recent 1:1 follow-ups; groups and cold direct chats remain gated to
+  `@Andrea` or `@OpenClaw`.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
 The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
@@ -258,12 +265,11 @@ Current media truth:
 - `media.image_edit` and `media.video_generate` remain prepared-only
 - if OpenAI is not configured, Andrea now reports the exact blocker honestly instead of pretending the provider is live
 
-Current operator truth on this host:
-
-- the core companion is healthy
-- outward research and Telegram image generation are healthy when their provider checks stay green
-- the local Anthropic-compatible LiteLLM lane is a degraded compatibility path, not the same thing as total host failure
-- BlueBubbles is live-proven while its same-thread `message_action` proof stays fresh
+Do not infer live provider or channel health from this static routing
+description. Use `npm run debug:status` and `npm run services:status` for the
+current host: configured credentials are not live provider proof, and
+BlueBubbles is `live_proven` only while its same-thread `message_action` proof
+is fresh.
 
 Research output shape now differs intentionally by channel:
 
@@ -511,7 +517,11 @@ BlueBubbles is now a live V1 companion channel through the same adapter architec
 Current implementation truth:
 
 - all synced BlueBubbles chats can share the same Andrea companion folder, defaulting to `main`, when `BLUEBUBBLES_CHAT_SCOPE=all_synced`
-- Andrea accepts inbound BlueBubbles webhook messages, normalizes them into shared `bb:` identities, and replies back only when the message explicitly mentions `@Andrea` or `@OpenClaw`
+- Andrea accepts inbound BlueBubbles webhook messages and normalizes them into
+  shared opaque identities; the canonical self-thread accepts bounded direct
+  asks without a mention, a recent direct 1:1 chat accepts bounded bare
+  follow-ups after fresh Andrea context, and groups or cold direct chats require
+  `@Andrea` or `@OpenClaw`
 - outbound is intentionally text-only in V1
 - BlueBubbles stays companion-safe and does not become a main control chat
 - richer detail and artifacts still hand off explicitly to Telegram
@@ -711,7 +721,7 @@ CURSOR_DESKTOP_BRIDGE_URL=https://your-mac-bridge.example.com
 CURSOR_DESKTOP_BRIDGE_TOKEN=replace-with-random-secret
 # Optional:
 # CURSOR_DESKTOP_BRIDGE_TIMEOUT_MS=30000
-# CURSOR_DESKTOP_BRIDGE_LABEL=Jeff MacBook Pro
+# CURSOR_DESKTOP_BRIDGE_LABEL=Owner MacBook Pro
 ```
 
 Use this mode when you want Andrea to reach the Cursor machine you normally use, such as your Mac while you are away from your desk.
@@ -742,14 +752,15 @@ ANDREA_RUNTIME_EXECUTION_ENABLED=true
 AGENT_RUNTIME_DEFAULT=codex_local
 AGENT_RUNTIME_FALLBACK=openai_cloud
 CODEX_LOCAL_ENABLED=true
-OPENAI_MODEL_SIMPLE=gpt-5.4-mini
-OPENAI_MODEL_STANDARD=gpt-5.4
-OPENAI_MODEL_COMPLEX=gpt-5.4
-# compatibility default if the tier vars above are unset
-OPENAI_MODEL_FALLBACK=gpt-5.4
+# Configure OPENAI_MODEL_SIMPLE, OPENAI_MODEL_STANDARD,
+# OPENAI_MODEL_COMPLEX, and OPENAI_MODEL_FALLBACK from .env.example using
+# identifiers that are enabled for your provider account.
 ```
 
-Use this only after validating Codex/OpenAI runtime execution on the host.
+Model catalogs and account availability change. Treat
+[`../.env.example`](../.env.example) as the maintained configuration template,
+not model names copied from this guide. Use this lane only after validating
+Codex/OpenAI runtime execution on the host.
 
 Important truth:
 
@@ -775,8 +786,10 @@ Important compatibility note:
 
 - The core runtime uses Claude Agent SDK semantics.
 - Native OpenAI endpoints (`https://api.openai.com/v1`) are not direct drop-ins unless exposed through an Anthropic-compatible layer.
-- If your gateway does not yet accept the newest Claude default alias, set:
-  - `NANOCLAW_AGENT_MODEL=claude-3-5-sonnet-latest`
+- If a gateway does not accept the configured default alias, set
+  `NANOCLAW_AGENT_MODEL` to an exact identifier enabled by that gateway. Use
+  `.env.example` for the maintained variable contract; confirm availability
+  with a bounded live probe rather than assuming an identifier is current.
 
 ### Option C: Amazon Business Shopping
 
@@ -922,9 +935,9 @@ Main chat can:
 - manage cross-group scheduled tasks
 - enable/disable marketplace skills for target chats
 
-## 6) Setup CLI Steps (For Manual Or CI-Style Verification)
+## 6) Setup CLI Steps (Offline Checks And Intentional Live Verification)
 
-The setup runner supports these deterministic steps:
+The setup runner supports these steps:
 
 - `npm run setup -- --step timezone`
 - `npm run setup -- --step environment`
@@ -935,7 +948,7 @@ The setup runner supports these deterministic steps:
 - `npm run setup -- --step service`
 - `npm run setup -- --step verify`
 
-For a full health check, always run:
+For an intentional live health check, run:
 
 ```bash
 npm run setup -- --step verify
@@ -950,11 +963,11 @@ npm run setup -- --step verify
 
 Read both fields together. A passing credential probe does **not** guarantee that the assistant lane can actually answer.
 
-`verify` is not a passive or CI-safe status command. When the corresponding
-providers are configured, it can perform a real model reachability request and
-start container execution probes. Use deterministic/CI-safe gates for offline
-validation, and run `verify` only with intentional credentials, cost awareness,
-and operator authorization.
+`verify` is not a passive, deterministic, or CI-safe status command. When the
+corresponding providers are configured, it can perform real network/model
+requests, start container execution probes, and incur provider cost. Use
+deterministic/CI-safe gates for offline validation, and run `verify` only with
+intentional credentials, cost awareness, and operator authorization.
 
 ## 7) Daily Usage
 
@@ -1077,9 +1090,7 @@ npm run test:major
 npm run test:major:ci
 npm run test:stability
 npm run setup -- --step verify
-npm run services:start
-npm run services:stop
-npm run services:restart
+npm run services:status
 npm run debug:status
 npm run debug:level -- verbose component:container 30m
 npm run debug:logs -- current 120
@@ -1091,6 +1102,9 @@ Validation runner note:
 - The supported runtime contract is Node `22.x` (`>=22 <23`), and the repository
   validation runtime is pinned by `.nvmrc` to `22.22.2`.
 - `npm run test:major`, `npm run test:major:ci`, and `npm run test:stability` run their internal checks through the repository's Node wrapper. It provisions the exact 22.22.2 runtime on Windows; on macOS and Linux it uses the active Node 22.x process, so use `.nvmrc` when exact patch-level parity is required.
+- `npm run test:major:ci` skips the live setup verification. By contrast,
+  `npm run test:major` includes it and can therefore make network/provider
+  requests and incur cost when credentials are configured.
 
 Windows service lifecycle helpers:
 
@@ -1107,11 +1121,16 @@ a real Windows host. Record those as separate operator-host evidence.
 
 macOS service lifecycle helpers:
 
-- On the Mac mini, launchd owns the local runtime.
+- On macOS, launchd owns the local runtime.
 - The canonical launchd runner is `scripts/mac-mini-service-runner.sh`.
-- The canonical runtime root is `/Users/jeffstory/Andrea_NanoBot`.
-- The local service should not be run from `/Users/jeffstory/Andrea_NanoBot_AGI` in parallel.
-- After code changes, run `npm run build`, reload or restart the launchd service, then confirm `npm run services:status` reports `Host state: running_ready` and the active root is the canonical path.
+- Use one canonical checkout such as `$HOME/Andrea_NanoBot`; do not run a
+  second checkout in parallel.
+- Use `npm run mac:services:start`, `npm run mac:services:stop`, and
+  `npm run mac:services:restart` for lifecycle control.
+- After code changes, run `npm run build`, restart with
+  `npm run mac:services:restart`, then confirm `npm run services:status`
+  reports `Host state: running_ready` and the active root is the canonical
+  checkout.
 - Also require the reported serving commit to match workspace `HEAD`; a healthy
   process serving an older build is stale, not release proof.
 
@@ -1119,9 +1138,9 @@ Startup behavior:
 
 - `npm run setup -- --step service` configures platform-native startup.
 - On Windows it prefers a Scheduled Task (`NanoClaw`) at user logon and falls back to the repo-owned Startup-folder launcher when task creation is denied by OS policy.
-- On this machine, Scheduled Task creation is denied, so the canonical validated login path is:
-  - `C:\Users\rupret\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\nanoclaw-start.cmd`
-  - which delegates to `scripts\nanoclaw-host.ps1`
+- If Windows Scheduled Task creation is denied, the fallback login path is
+  `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\nanoclaw-start.cmd`;
+  it delegates to `scripts/nanoclaw-host.ps1`.
 - The Windows host launcher bootstraps and reuses the repo-local pinned runtime under `data\runtime\node-v22.22.2-win-x64`, so daily startup does not depend on host Node 24.
 - The Windows host launcher also keeps a repo-owned watchdog running and periodically calls `ensure`, so a live process that loses Telegram polling or stops updating its health marker gets corrected automatically.
 - Telegram responsiveness is now enforced with a real `/ping` roundtrip probe every 30 minutes when no more recent successful Telegram exchange has already refreshed the same heartbeat.
@@ -1184,7 +1203,9 @@ Important interpretation:
 When blocked, start here:
 
 - `/debug-status`
-- if service state looks stale: `npm run services:restart`, wait for it to finish, then run `npm run setup -- --step verify`
+- if service state looks stale: run `npm run services:restart` on Windows or
+  `npm run mac:services:restart` on macOS, wait for it to finish, then run
+  `npm run setup -- --step verify`
 - `/debug-level debug chat 60m`
 - `/debug-logs current 120`
 - [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md)
@@ -1216,7 +1237,8 @@ Use this exact order:
    - expected: `STATUS: success`
 6. Start service:
    - `npm run setup -- --step service`
-   - optional immediate restart check: `npm run services:restart`
+   - optional immediate restart check: `npm run services:restart` on Windows
+     or `npm run mac:services:restart` on macOS
 7. Optional same-day operator validation only:
    - if you plan to use marketplace skills, search one skill, enable it in one chat, confirm it appears on the next response, then disable it again
    - if you plan to use Alexa, validate the live HTTPS endpoint and one real voice request

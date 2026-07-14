@@ -51,7 +51,7 @@ function buildRunner(outputs: Record<string, string>): OpenClawSyncRunner {
   };
 }
 
-function registeredList(repoRoot = '/Users/jeffstory/Andrea_NanoBot_AGI') {
+function registeredList(repoRoot = '/Users/example/Andrea_NanoBot_AGI') {
   return JSON.stringify({
     [ANDREA_BLUEBUBBLES_MCP_SERVER_NAME]: buildAndreaBlueBubblesMcpSetConfig(
       buildAndreaBlueBubblesMcpConfig(repoRoot),
@@ -78,11 +78,11 @@ function successfulProbe(
 describe('OpenClaw Andrea BlueBubbles bridge', () => {
   it('builds a local MCP config that excludes direct BlueBubbles sends', () => {
     const config = buildAndreaBlueBubblesMcpConfig(
-      '/Users/jeffstory/Andrea_NanoBot_AGI',
+      '/Users/example/Andrea_NanoBot_AGI',
     );
 
     expect(config.command).toBe('node');
-    expect(config.cwd).toBe('/Users/jeffstory/Andrea_NanoBot_AGI');
+    expect(config.cwd).toBe('/Users/example/Andrea_NanoBot_AGI');
     expect(config.args).toEqual([
       'scripts/run-with-pinned-node.mjs',
       './node_modules/tsx/dist/cli.mjs',
@@ -104,7 +104,7 @@ describe('OpenClaw Andrea BlueBubbles bridge', () => {
 
   it('reports a missing OpenClaw MCP server as offline', () => {
     const status = getOpenClawAndreaBridgeStatusSummary({
-      repoRoot: '/Users/jeffstory/Andrea_NanoBot_AGI',
+      repoRoot: '/Users/example/Andrea_NanoBot_AGI',
       openClawSummary: healthyOpenClaw,
       runner: buildRunner({
         'mcp list --json': '{}',
@@ -119,7 +119,7 @@ describe('OpenClaw Andrea BlueBubbles bridge', () => {
 
   it('reports missing BlueBubbles env after MCP registration', () => {
     const status = getOpenClawAndreaBridgeStatusSummary({
-      repoRoot: '/Users/jeffstory/Andrea_NanoBot_AGI',
+      repoRoot: '/Users/example/Andrea_NanoBot_AGI',
       openClawSummary: healthyOpenClaw,
       runner: buildRunner({
         'mcp list --json': registeredList(),
@@ -135,7 +135,7 @@ describe('OpenClaw Andrea BlueBubbles bridge', () => {
 
   it('reports an MCP probe failure distinctly', () => {
     const status = getOpenClawAndreaBridgeStatusSummary({
-      repoRoot: '/Users/jeffstory/Andrea_NanoBot_AGI',
+      repoRoot: '/Users/example/Andrea_NanoBot_AGI',
       openClawSummary: healthyOpenClaw,
       runner: buildRunner({
         'mcp list --json': registeredList(),
@@ -155,7 +155,7 @@ describe('OpenClaw Andrea BlueBubbles bridge', () => {
 
   it('reports a configured probe without exposing direct send', () => {
     const status = getOpenClawAndreaBridgeStatusSummary({
-      repoRoot: '/Users/jeffstory/Andrea_NanoBot_AGI',
+      repoRoot: '/Users/example/Andrea_NanoBot_AGI',
       openClawSummary: healthyOpenClaw,
       runner: buildRunner({
         'mcp list --json': registeredList(),
@@ -173,7 +173,7 @@ describe('OpenClaw Andrea BlueBubbles bridge', () => {
 
   it('reports live only after BlueBubbles control health succeeds', async () => {
     const status = await getOpenClawAndreaBridgeStatusSummaryWithHealth({
-      repoRoot: '/Users/jeffstory/Andrea_NanoBot_AGI',
+      repoRoot: '/Users/example/Andrea_NanoBot_AGI',
       openClawSummary: healthyOpenClaw,
       runner: buildRunner({
         'mcp list --json': registeredList(),
@@ -197,7 +197,7 @@ describe('OpenClaw Andrea BlueBubbles bridge', () => {
 
   it('degrades if OpenClaw exposes direct BlueBubbles send', () => {
     const status = getOpenClawAndreaBridgeStatusSummary({
-      repoRoot: '/Users/jeffstory/Andrea_NanoBot_AGI',
+      repoRoot: '/Users/example/Andrea_NanoBot_AGI',
       openClawSummary: healthyOpenClaw,
       runner: buildRunner({
         'mcp list --json': registeredList(),

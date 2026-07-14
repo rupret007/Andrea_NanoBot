@@ -333,12 +333,12 @@ describe('graceful degraded replies', () => {
       endIso: '2026-04-09T01:00:00.000Z',
       allDay: false,
       timeZone: 'America/Chicago',
-      calendarName: 'jeffstory007@gmail.com',
+      calendarName: 'owner@example.com',
       htmlLink: null,
     });
 
     expect(reply).toContain('to your calendar');
-    expect(reply).not.toContain('jeffstory007@gmail.com');
+    expect(reply).not.toContain('owner@example.com');
   });
 
   it('formats reminder confirmations like the same assistant', () => {

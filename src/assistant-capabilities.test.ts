@@ -413,7 +413,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T12:00:00-05:00'),
       },
       input: {
@@ -457,8 +457,8 @@ describe('assistant capabilities', () => {
     storeMessage({
       id: 'msg-pops-old',
       chat_jid: 'bb:iMessage;+;chat-pops-clean',
-      sender: 'bb:+14697852580',
-      sender_name: '+14697852580',
+      sender: 'bb:+12025550102',
+      sender_name: '+12025550102',
       content:
         'Yesterday everyone was still just figuring out whether to read the comics first.',
       timestamp: '2026-04-14T23:10:00.000Z',
@@ -467,8 +467,8 @@ describe('assistant capabilities', () => {
     storeMessage({
       id: 'msg-pops-today-1',
       chat_jid: 'bb:iMessage;+;chat-pops-clean',
-      sender: 'bb:+14697852580',
-      sender_name: '+14697852580',
+      sender: 'bb:+12025550102',
+      sender_name: '+12025550102',
       content:
         'I think Fallout works because it keeps the world right while still telling a continuation story.',
       timestamp: '2026-04-15T16:46:28.314Z',
@@ -477,8 +477,8 @@ describe('assistant capabilities', () => {
     storeMessage({
       id: 'msg-pops-today-2',
       chat_jid: 'bb:iMessage;+;chat-pops-clean',
-      sender: 'bb:+13373027596',
-      sender_name: '+13373027596',
+      sender: 'bb:+12025550103',
+      sender_name: '+12025550103',
       content:
         'I do not want an adaptation to just repeat the exact same material with a different format.',
       timestamp: '2026-04-15T16:48:09.713Z',
@@ -487,8 +487,8 @@ describe('assistant capabilities', () => {
     storeMessage({
       id: 'msg-pops-today-3',
       chat_jid: 'bb:iMessage;+;chat-pops-clean',
-      sender: 'bb:+13373027596',
-      sender_name: '+13373027596',
+      sender: 'bb:+12025550103',
+      sender_name: '+12025550103',
       content:
         'Yeah I like the Fallout story but I do not know too much about the world yet.',
       timestamp: '2026-04-15T18:51:51.947Z',
@@ -509,7 +509,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T19:00:00-05:00'),
       },
       input: {
@@ -524,8 +524,8 @@ describe('assistant capabilities', () => {
     expect(result.replyText).toContain(
       'Here’s the gist from Pops of Punk today.',
     );
-    expect(result.replyText).not.toContain('+14697852580');
-    expect(result.replyText).not.toContain('+13373027596');
+    expect(result.replyText).not.toContain('+12025550102');
+    expect(result.replyText).not.toContain('+12025550103');
     expect(result.replyText).not.toContain('@Andrea');
     expect(result.replyText).not.toContain(
       'Yesterday everyone was still just figuring out',
@@ -559,8 +559,8 @@ describe('assistant capabilities', () => {
     storeMessage({
       id: 'msg-all-today-2',
       chat_jid: 'bb:iMessage;+;chat-pops-clean',
-      sender: 'bb:+13373027596',
-      sender_name: '+13373027596',
+      sender: 'bb:+12025550103',
+      sender_name: '+12025550103',
       content: 'Fallout still has the best worldbuilding argument.',
       timestamp: '2026-04-15T18:51:51.947Z',
       is_from_me: false,
@@ -571,7 +571,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T19:00:00-05:00'),
       },
       input: {
@@ -612,7 +612,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T19:00:00-05:00'),
       },
       input: {
@@ -659,7 +659,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T17:00:00.000Z'),
       },
       input: {
@@ -694,7 +694,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T17:05:00.000Z'),
         priorSubjectData: review.conversationSeed?.subjectData,
       },
@@ -785,7 +785,7 @@ describe('assistant capabilities', () => {
     const baseContext = {
       channel: 'telegram' as const,
       groupFolder: 'main',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       now: new Date('2026-04-15T17:05:00.000Z'),
       priorSubjectData: {
         activeCapabilityId: 'communication.review_recent_texts' as const,
@@ -977,7 +977,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T17:05:00.000Z'),
         priorSubjectData: {
           activeCapabilityId: 'communication.review_recent_texts' as const,
@@ -1038,7 +1038,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T17:05:00.000Z'),
         priorSubjectData: {
           activeCapabilityId: 'communication.review_recent_texts' as const,
@@ -1101,7 +1101,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T17:05:00.000Z'),
         priorSubjectData: {
           activeCapabilityId: 'communication.review_recent_texts' as const,
@@ -1131,7 +1131,7 @@ describe('assistant capabilities', () => {
     const planned = planSimpleReminder(
       'remind me tomorrow afternoon at 4:15pm to review the Andrea QA reminder path',
       'main',
-      'tg:8004355504',
+      'tg:100000001',
       new Date('2026-04-15T12:00:00-05:00'),
     );
     expect(planned).not.toBeNull();
@@ -1142,7 +1142,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T12:05:00-05:00'),
       },
       input: {
@@ -1180,7 +1180,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-15T12:00:00-05:00'),
       },
       input: {
@@ -1199,7 +1199,7 @@ describe('assistant capabilities', () => {
     createTask({
       id: 'task-chief-of-staff',
       group_folder: 'main',
-      chat_jid: 'tg:8004355504',
+      chat_jid: 'tg:100000001',
       prompt: 'Reply to Candace about dinner tonight',
       schedule_type: 'once',
       schedule_value: '2026-04-05T19:00:00.000Z',
@@ -1267,7 +1267,7 @@ describe('assistant capabilities', () => {
     createTask({
       id: 'task-loose-ends',
       group_folder: 'main',
-      chat_jid: 'tg:8004355504',
+      chat_jid: 'tg:100000001',
       prompt: 'Call Candace about dinner plans',
       schedule_type: 'once',
       schedule_value: '2026-04-05T19:00:00.000Z',
@@ -1282,7 +1282,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText: 'what am I forgetting',
@@ -1301,7 +1301,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-12T09:00:00-05:00'),
       },
       input: {
@@ -1327,7 +1327,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'alexa',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-12T09:05:00-05:00'),
         priorSubjectData: add.conversationSeed?.subjectData,
       },
@@ -1349,7 +1349,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-12T10:00:00-05:00'),
       },
       input: {
@@ -1362,7 +1362,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-12T10:05:00-05:00'),
         priorSubjectData: add.conversationSeed?.subjectData,
       },
@@ -1385,7 +1385,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-12T10:10:00-05:00'),
       },
       input: {
@@ -1398,7 +1398,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         now: new Date('2026-04-12T10:15:00-05:00'),
       },
       input: {
@@ -1419,7 +1419,7 @@ describe('assistant capabilities', () => {
     createTask({
       id: 'task-daily-handoff',
       group_folder: 'main',
-      chat_jid: 'tg:8004355504',
+      chat_jid: 'tg:100000001',
       prompt: 'Candace still needs a dinner answer',
       schedule_type: 'once',
       schedule_value: '2026-04-05T19:00:00.000Z',
@@ -1500,7 +1500,7 @@ describe('assistant capabilities', () => {
     createTask({
       id: 'task-research-rich',
       group_folder: 'main',
-      chat_jid: 'tg:8004355504',
+      chat_jid: 'tg:100000001',
       prompt: 'Decide whether to switch dinner plans',
       schedule_type: 'once',
       schedule_value: '2026-04-05T19:00:00.000Z',
@@ -1515,7 +1515,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText: 'Summarize what matters from my current context',
@@ -1547,6 +1547,87 @@ describe('assistant capabilities', () => {
       ]),
     );
     expect(alexa.handoffPayload?.kind).toBe('message');
+  });
+
+  it('propagates explicit research depth and web permission into the research plan', async () => {
+    vi.stubEnv('OPENAI_API_KEY', '');
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');
+    vi.stubEnv('MINIMAX_ENABLED', 'false');
+    const result = await executeAssistantCapability({
+      capabilityId: 'research.recommend',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+      },
+      input: {
+        canonicalText: 'recommend a good meditation for me',
+        researchDepth: 'deep',
+        allowWebSearch: true,
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.researchResult?.plan.kind).toBe('deep_research');
+    expect(result.researchResult?.plan.sources).toMatchObject({
+      localContext: true,
+      openAiResponses: true,
+      webSearch: true,
+    });
+  });
+
+  it('requires explicit research follow-ups for a pending compound calendar request without changing standalone research', async () => {
+    vi.stubEnv('OPENAI_API_KEY', '');
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'false');
+    vi.stubEnv('MINIMAX_ENABLED', 'false');
+    const input = {
+      canonicalText: 'recommend a good meditation for me',
+      researchDepth: 'standard' as const,
+      allowWebSearch: true,
+    };
+    const explicitResults = await Promise.all(
+      (['telegram', 'bluebubbles', 'alexa'] as const).map((channel) =>
+        executeAssistantCapability({
+          capabilityId: 'research.recommend',
+          context: {
+            channel,
+            groupFolder: 'main',
+            chatJid:
+              channel === 'bluebubbles'
+                ? 'bb:iMessage;-;+12025550101'
+                : 'tg:100000001',
+          },
+          input: {
+            ...input,
+            researchFollowupMode: 'explicit_only',
+          },
+        }),
+      ),
+    );
+
+    for (const result of explicitResults) {
+      expect(result.handled).toBe(true);
+      expect(result.replyText).toMatch(/ask explicitly/i);
+      expect(result.replyText).toMatch(
+        /a bare (?:“yes”|yes) or (?:“okay”|okay) is not a research follow-up/,
+      );
+      expect(result.replyText).not.toContain('*Next if useful*');
+      expect(result.replyText).not.toMatch(/\bWant\b/);
+      expect(result.replyText).not.toContain('If you want');
+    }
+
+    const standalone = await executeAssistantCapability({
+      capabilityId: 'research.recommend',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+      },
+      input,
+    });
+    expect(standalone.replyText).toContain('*Next if useful*');
+    expect(standalone.replyText).toMatch(/\bWant\b/);
+    expect(standalone.replyText).not.toMatch(/ask explicitly/i);
   });
 
   it('shows retained web citations as visible URLs on text channels', async () => {
@@ -1595,7 +1676,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: { canonicalText: 'Compare meal delivery options this week' },
     });
@@ -1604,7 +1685,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'bluebubbles',
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        chatJid: 'bb:iMessage;-;owner@example.com',
       },
       input: { canonicalText: 'Compare meal delivery options this week' },
     });
@@ -1654,7 +1735,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText: 'Compare meal delivery options for this week',
@@ -1692,7 +1773,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText: 'What is the weather today in Dallas?',
@@ -1703,7 +1784,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'bluebubbles',
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        chatJid: 'bb:iMessage;-;owner@example.com',
       },
       input: {
         canonicalText: 'What is the weather today in Dallas?',
@@ -1722,7 +1803,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         text: 'Save this note to my library: Candace wants Friday dinner after rehearsal because pickup is easier.',
@@ -1740,7 +1821,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText:
@@ -1774,7 +1855,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         priorSubjectData: {
           knowledgeSourceIds:
             telegram.conversationSeed?.subjectData?.knowledgeSourceIds,
@@ -1803,7 +1884,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText:
@@ -1872,7 +1953,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         text: "what's still open with Candace?",
@@ -1892,7 +1973,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         text: 'Candace: Can you let me know if dinner still works tonight?',
@@ -1908,7 +1989,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         priorSubjectData: understand.conversationSeed?.subjectData,
       },
       input: {
@@ -1925,7 +2006,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
         priorSubjectData: openLoops.conversationSeed?.subjectData,
       },
       input: {
@@ -1984,7 +2065,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         text: 'Save this to my library titled Knowledge Proof Dinner Title: Friday dinner after rehearsal keeps pickup simpler and avoids a late bedtime. tags: proof,candace',
@@ -1997,7 +2078,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         text: 'Save this to my library titled Knowledge Proof Dinner Backup: If rehearsal runs late, skipping Friday dinner may protect bedtime and keep the evening less rushed. tags: proof,candace',
@@ -2016,7 +2097,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText:
@@ -2066,7 +2147,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText: 'a poster for a spring dinner party',
@@ -2087,7 +2168,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText: 'enable morning brief',
@@ -2102,7 +2183,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText:
@@ -2115,7 +2196,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText: 'what rituals do I have enabled',
@@ -2126,7 +2207,7 @@ describe('assistant capabilities', () => {
       context: {
         channel: 'telegram',
         groupFolder: 'main',
-        chatJid: 'tg:8004355504',
+        chatJid: 'tg:100000001',
       },
       input: {
         canonicalText: 'what follow-ups am I carrying right now',

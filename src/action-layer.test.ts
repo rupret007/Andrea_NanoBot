@@ -261,7 +261,7 @@ describe('buildActionLayerResponse', () => {
         env: baseEnv,
         fetchImpl,
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        chatJid: 'bb:iMessage;-;owner@example.com',
       },
     );
 
@@ -274,9 +274,9 @@ describe('buildActionLayerResponse', () => {
       "create an adoption barrier for Wintrust's new defect with agent login",
     );
     expect(response.state.originChatJid).toBe(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;owner@example.com',
     );
-    expect(response.state.canonicalChatJid).toBe('bb:iMessage;-;+14695405551');
+    expect(response.state.canonicalChatJid).toBe('bb:iMessage;-;+12025550101');
   });
 
   it('leaves broad summarize-my-actions asks to the shared chief-of-staff layer', async () => {
@@ -634,12 +634,12 @@ describe('action-layer pending flows', () => {
         createdAt: '2026-04-10T10:55:00.000Z',
         label:
           "create an adoption barrier for Wintrust's new defect with agent login",
-        originChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
-        canonicalChatJid: 'bb:iMessage;-;+14695405551',
+        originChatJid: 'bb:iMessage;-;owner@example.com',
+        canonicalChatJid: 'bb:iMessage;-;+12025550101',
       },
       {
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        chatJid: 'bb:iMessage;-;owner@example.com',
         now: new Date('2026-04-10T10:56:00-05:00'),
       },
     );
@@ -662,8 +662,8 @@ describe('action-layer pending flows', () => {
       label:
         "create an adoption barrier for Wintrust's new defect with agent login",
       status: 'created' as const,
-      originChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
-      canonicalChatJid: 'bb:iMessage;-;+14695405551',
+      originChatJid: 'bb:iMessage;-;owner@example.com',
+      canonicalChatJid: 'bb:iMessage;-;+12025550101',
       confirmation:
         "Okay. I'll remind you today at 12pm to create an adoption barrier for Wintrust's new defect with agent login.",
       taskId: 'task-proof-1',
@@ -674,7 +674,7 @@ describe('action-layer pending flows', () => {
       createdState,
       {
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        chatJid: 'bb:iMessage;-;owner@example.com',
         now: new Date('2026-04-10T10:57:00-05:00'),
       },
     );
@@ -689,7 +689,7 @@ describe('action-layer pending flows', () => {
       createdState,
       {
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        chatJid: 'bb:iMessage;-;owner@example.com',
         now: new Date('2026-04-10T10:58:00-05:00'),
       },
     );

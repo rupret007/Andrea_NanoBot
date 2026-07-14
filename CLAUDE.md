@@ -1,14 +1,19 @@
 # Andrea_NanoBot
 
-Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
+Personal AI assistant. See [README.md](README.md) for the product and setup
+overview, [docs/SECURITY.md](docs/SECURITY.md) for current trust boundaries,
+and [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) only for the archived upstream
+design record.
 
 ## Quick Context
 
-Single Node.js process with a skill-based channel system. Channels (WhatsApp,
-Telegram, Slack, Discord, Gmail) self-register at startup. Messages are
-classified into route-specific Claude Agent SDK policies: ordinary direct chat
-is tool-free, while protected, control, advanced, and code work receive bounded
-capabilities. Each group has isolated filesystem and session state.
+Single Node.js process with a skill-based channel system. Telegram and
+BlueBubbles are bundled Andrea channel surfaces; WhatsApp, Slack, Discord,
+Gmail, and other channel paths are optional skills/add-ons when enabled. Active
+channels self-register at startup. Messages are classified into route-specific
+Claude Agent SDK policies: ordinary direct chat is tool-free, while protected,
+control, advanced, and code work receive bounded capabilities. Each group has
+isolated filesystem and session state.
 
 ## Key Files
 
@@ -79,10 +84,18 @@ npm run check:container-mounts
 Service management:
 
 ```bash
+# Cross-platform status
+npm run services:status
+
+# Windows lifecycle
 npm run services:start
 npm run services:stop
 npm run services:restart
-npm run services:status
+
+# macOS launchd lifecycle
+npm run mac:services:start
+npm run mac:services:stop
+npm run mac:services:restart
 ```
 
 ## Troubleshooting

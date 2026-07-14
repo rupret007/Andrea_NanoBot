@@ -50,6 +50,27 @@ Good first messages:
 - `Summarize my tasks for today`
 - `Research the best standing desks for a small office`
 
+Andrea can also split one clear calendar-plus-research request, for example:
+
+- `Add meditation tomorrow at 8 AM, and can you look for a good guided meditation for me?`
+
+The two parts keep separate safety boundaries. Andrea prepares the calendar
+draft from only the scheduling clause and requires `confirm calendar event`
+before writing it; a bare `yes`, `okay`, or `go ahead` does not confirm a
+compound draft. After that draft or clarification is delivered, the read-only
+research leg starts separately in the background so it does not hold up a quick
+calendar confirmation. Generic wording such as `for me` does not export your
+tasks, life threads, profile facts, or calendar to the research provider; name
+the personal source explicitly if you want it considered. A provider problem
+cannot discard the draft, and no research call or cost starts if the primary
+calendar response cannot be delivered.
+
+This is a bounded convenience for an explicit second research clause, not
+permission to fan an arbitrary message out across tools or models. Graceful
+service restarts give active research a bounded drain window, but this sidecar
+is not a durable mission: after a hard process failure, ask Andrea to rerun any
+missing result.
+
 In BlueBubbles/Messages, start assistant-directed messages with `@Andrea`. If you specifically want the OpenClaw helper/tool lane, use `@OpenClaw`.
 
 ## Public-Safe Commands
@@ -173,7 +194,7 @@ This is bounded metacognition, not hidden chain-of-thought exposure. Andrea may 
 
 ## General Intelligence Control Plane (v32)
 
-Andrea is not AGI, and this layer does not make it AGI. The control plane is a bounded, testable, approval-governed architecture that makes Andrea's existing subsystems behave like one coherent assistant. Jeff stays in control of every external action.
+Andrea is not AGI, and this layer does not make it AGI. The control plane is a bounded, testable, approval-governed architecture that makes Andrea's existing subsystems behave like one coherent assistant. The owner stays in control of every external action.
 
 What it adds:
 

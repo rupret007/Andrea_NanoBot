@@ -136,10 +136,17 @@ import {
 } from './life-threads.js';
 import {
   executeAssistantCapability,
+  inferResearchCapabilityId,
   type AssistantCapabilityId,
   type AssistantCapabilityConversationSeed,
   type AssistantCapabilityResult,
 } from './assistant-capabilities.js';
+import { planCompoundCalendarResearchRequest } from './calendar-research-coordinator.js';
+import {
+  deliverPrimaryThenStartReadOnlySidecar,
+  drainBackgroundReadOnlySidecars,
+} from './calendar-research-sequencing.js';
+import { resolveExplicitResearchPersonalContextMode } from './research-orchestrator.js';
 import { buildAndreaPlatformConfigSnapshots } from './assistant-profile-pack.js';
 import { completeAssistantActionFromAlexa } from './assistant-action-completion.js';
 import {
@@ -355,10 +362,14 @@ import {
   buildGoogleCalendarSchedulingContextState,
   buildPendingGoogleCalendarCreateState,
   formatGoogleCalendarCreatePrompt,
+  getGoogleCalendarCreateConfirmationActionId,
+  getGoogleCalendarCreateIdempotencyKey,
+  getPendingGoogleCalendarCreatedEvent,
   isExplicitGoogleCalendarCreateRequest,
   isGoogleCalendarSchedulingContextExpired,
   isPendingGoogleCalendarCreateExpired,
   planGoogleCalendarCreate,
+  recordPendingGoogleCalendarCreateSuccess,
   type GoogleCalendarConflictEvent,
   type GoogleCalendarDraftConflictSummary,
   type GoogleCalendarSchedulingContextState,
@@ -2645,7 +2656,7 @@ function buildGoogleCalendarCreateInlineActionRows(
       label: state.conflictSummary?.blockingEvents.length
         ? 'Create Anyway'
         : 'Create',
-      actionId: 'yes',
+      actionId: getGoogleCalendarCreateConfirmationActionId(state),
     },
     { label: 'Cancel', actionId: 'cancel' },
   ]);
@@ -4034,6 +4045,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let lastContent = chatJid.startsWith('bb:')
     ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
     : rawLastContent;
+  const compoundCalendarResearchPlan =
+    planCompoundCalendarResearchRequest(lastContent);
   const currentTurnAttachments = missedMessages.flatMap(
     (message) => message.attachments || [],
   );
@@ -4078,7 +4091,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     isDurableContinuityNaturalRequest(lastContent);
   const turnHarnessStartedAt = Date.now();
   const turnAgentHarness: TurnAgentHarnessContext | null =
-    shouldHandleOutcomeReviewLocally || shouldHandleDurableContinuityLocally
+    shouldHandleOutcomeReviewLocally ||
+    shouldHandleDurableContinuityLocally ||
+    Boolean(compoundCalendarResearchPlan)
       ? null
       : await beginTurnAgentHarness({
           turnId:
@@ -4148,7 +4163,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       currentMessageCapabilityMatch ||
       shouldDeferPlatformHoldForLocalCalendarLookup ||
       shouldDeferPlatformHoldForLocalMessageAction ||
-      shouldDeferPlatformHoldForLocalOutcomeReview,
+      shouldDeferPlatformHoldForLocalOutcomeReview ||
+      compoundCalendarResearchPlan,
     );
   const sendAssistantReplyWithFeedback = async (params: {
     text: string;
@@ -4172,7 +4188,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     allowFeedback?: boolean;
     preserveStructuredText?: boolean;
     skipBlueBubblesActionRehydration?: boolean;
+    skipCursorDeliveryMark?: boolean;
     latencyTargetClass?: InteractionLatencyTargetClass;
+    deliveryOrdinal?: number;
+    recordMetricEnabled?: boolean;
   }) => {
     const turnEvaluation: PreSendEvaluation = params.preserveStructuredText
       ? {
@@ -4235,7 +4254,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           params.handlerKind ||
           undefined,
         turnId: interactionTurnId,
-        deliveryOrdinal: 1,
+        deliveryOrdinal: params.deliveryOrdinal ?? 1,
         runOrigin: turnRunOrigin,
         latencyTargetClass: params.latencyTargetClass || 'ordinary_response',
         turnStartedAtMs: turnStartedAt,
@@ -4244,14 +4263,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         harnessCompletedAtMs: turnHarnessCompletedAt,
         harnessBypassed:
           shouldHandleOutcomeReviewLocally ||
-          shouldHandleDurableContinuityLocally,
+          shouldHandleDurableContinuityLocally ||
+          Boolean(compoundCalendarResearchPlan),
         hostPressure: turnHostPressure,
       },
       send: () => channel.sendMessage(chatJid, replyText, sendOptions),
       classifyDelivery: classifyChannelDelivery,
-      recordMetricEnabled: !primaryDeliveryCompleted,
+      recordMetricEnabled:
+        params.recordMetricEnabled ?? !primaryDeliveryCompleted,
       onDelivered: () => {
-        inFlightCursorRollbacks.markDelivered(chatJid);
+        if (!params.skipCursorDeliveryMark) {
+          inFlightCursorRollbacks.markDelivered(chatJid);
+        }
       },
       onDeliveryCommitError: (error) =>
         logger.error(
@@ -6070,7 +6093,246 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     let activePendingState = getPendingGoogleCalendarCreateState(chatJid);
-    const explicitCreate = isExplicitGoogleCalendarCreateRequest(lastContent);
+    const compoundRequest = compoundCalendarResearchPlan;
+    const calendarRequestText =
+      compoundRequest?.calendarText?.trim() || lastContent;
+    const compoundResearchPersonalContextMode = compoundRequest
+      ? resolveExplicitResearchPersonalContextMode(compoundRequest.researchText)
+      : null;
+    const compoundResearchErrorClass = (error: unknown): string =>
+      error instanceof Error
+        ? error.name.replace(/[^a-z0-9_.-]/gi, '').slice(0, 80) || 'Error'
+        : typeof error;
+    const explicitCreate =
+      isExplicitGoogleCalendarCreateRequest(calendarRequestText);
+    // A new compound request supersedes an unfinished draft, but never discard
+    // a provider receipt. The latter is the only evidence we have that the
+    // approved write already happened if delivery was interrupted.
+    if (
+      activePendingState &&
+      compoundRequest &&
+      !getPendingGoogleCalendarCreatedEvent(activePendingState)
+    ) {
+      clearPendingGoogleCalendarCreateState(chatJid);
+      clearGoogleCalendarSchedulingContext(chatJid);
+      activePendingState = null;
+    }
+    const reconciledCreatedEvent = activePendingState
+      ? getPendingGoogleCalendarCreatedEvent(activePendingState)
+      : null;
+    if (activePendingState && reconciledCreatedEvent) {
+      try {
+        const selectedCalendar = activePendingState.calendars.find(
+          (calendar) => calendar.id === reconciledCreatedEvent.calendarId,
+        );
+        setActiveGoogleCalendarEventContext(
+          chatJid,
+          buildActiveGoogleCalendarEventContextState(
+            reconciledCreatedEvent,
+            now,
+          ),
+        );
+        await sendAssistantReplyWithFeedback({
+          text: formatCalendarPanelText(
+            '*Google Calendar*',
+            buildCalendarCompanionEventReply({
+              action: 'create_event',
+              title: activePendingState.draft.title,
+              startIso: reconciledCreatedEvent.startIso,
+              endIso: reconciledCreatedEvent.endIso,
+              allDay: activePendingState.draft.allDay,
+              timeZone: activePendingState.draft.timeZone,
+              calendarName:
+                selectedCalendar?.summary ||
+                reconciledCreatedEvent.calendarName ||
+                'Google Calendar',
+              htmlLink: reconciledCreatedEvent.htmlLink || null,
+            }),
+          ),
+          sendOptions: {
+            inlineActionRows: buildGoogleCalendarCreatedInlineActionRows({
+              htmlLink: reconciledCreatedEvent.htmlLink || null,
+            }),
+          },
+          routeKey: 'google_calendar.create_event',
+          capabilityId: 'calendar.google_create',
+          handlerKind: 'google_calendar_create_local',
+          responseSource: 'local_companion',
+          traceReason:
+            'reconciled a calendar event that was created before delivery completed',
+          linkedRefs: {
+            googleCalendarEventId: reconciledCreatedEvent.id,
+          },
+        });
+        clearPendingGoogleCalendarCreateState(chatJid);
+        clearGoogleCalendarSchedulingContext(chatJid);
+        return true;
+      } catch (error) {
+        if (isCommittedIncompleteDeliveryError(error)) throw error;
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err: error },
+          'Calendar create reconciliation reply failed; retained the provider receipt for retry',
+        );
+        return false;
+      }
+    }
+    const startCompoundResearch = compoundRequest
+      ? () =>
+          executeAssistantCapability({
+            capabilityId: inferResearchCapabilityId(
+              compoundRequest.researchText,
+            ),
+            context: {
+              channel: conversationChannel,
+              groupFolder: group.folder,
+              chatJid,
+              ownerReviewAllowed:
+                isMainGroup &&
+                (conversationChannel === 'telegram' ||
+                  isBlueBubblesSelfThreadAliasJid(chatJid)),
+              currentMessageId: latestUserMessage?.id,
+              now,
+              conversationSummary:
+                getSharedAssistantCapabilitySeed(chatJid, now)?.summaryText ||
+                getDailyCompanionContext(chatJid, now)?.summaryText,
+            },
+            input: {
+              text: compoundRequest.researchText,
+              canonicalText: compoundRequest.researchText,
+              researchDepth: compoundRequest.requestedDepth,
+              allowWebSearch: compoundRequest.allowWebSearch,
+              personalContextMode:
+                compoundResearchPersonalContextMode || 'disabled',
+              researchFollowupMode: 'explicit_only',
+            },
+          })
+      : null;
+    const deliverCompoundResearchFailure = async (
+      error: unknown,
+    ): Promise<void> => {
+      if (!compoundRequest) return;
+      const errorClass = compoundResearchErrorClass(error);
+      await sendAssistantReplyWithFeedback({
+        text: formatCalendarPanelText(
+          '*Research*',
+          'I could not complete the research leg cleanly. The calendar response I just sent still stands, and no calendar write happened. Ask me to retry the research when the provider is available.',
+        ),
+        routeKey: 'compound.calendar_research',
+        capabilityId: inferResearchCapabilityId(compoundRequest.researchText),
+        handlerKind: 'assistant_capability',
+        responseSource: 'unavailable',
+        traceReason:
+          'the read-only research leg of a compound calendar request was blocked',
+        blockerClass: 'compound_calendar_research_unavailable',
+        skipCursorDeliveryMark: true,
+        deliveryOrdinal: 2,
+        recordMetricEnabled: true,
+      });
+      logger.warn(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          routeKey: 'compound.calendar_research',
+          requestedDepth: compoundRequest.requestedDepth,
+          allowWebSearch: compoundRequest.allowWebSearch,
+          errorClass,
+        },
+        'Compound calendar research leg did not complete',
+      );
+    };
+    const deliverCompoundResearchResult = async (
+      result: AssistantCapabilityResult,
+    ): Promise<void> => {
+      if (!compoundRequest) return;
+      if (!result.handled) {
+        await deliverCompoundResearchFailure(
+          new Error('The selected research capability declined the request.'),
+        );
+        return;
+      }
+      await sendAssistantReplyWithFeedback({
+        text: result.replyText || 'The research completed.',
+        sendOptions: result.sendOptions || {},
+        routeKey: 'compound.calendar_research',
+        capabilityId:
+          result.capabilityId ||
+          inferResearchCapabilityId(compoundRequest.researchText),
+        providerId: result.researchResult?.providerUsed || null,
+        toolClass: 'compound_read_only_research',
+        handlerKind: result.trace?.handlerKind || 'assistant_capability',
+        responseSource: result.trace?.responseSource || 'local_companion',
+        traceReason:
+          result.trace?.reason ||
+          'completed the read-only research leg of a compound calendar request',
+        traceNotes: [
+          ...(result.trace?.notes || []),
+          `compound_research_depth:${compoundRequest.requestedDepth}`,
+          `compound_web_search:${compoundRequest.allowWebSearch ? 'allowed' : 'disabled'}`,
+          `compound_personal_context:${compoundResearchPersonalContextMode || 'disabled'}`,
+          `compound_explicit_max_effort:${compoundRequest.explicitMaxEffort ? 'yes' : 'no'}`,
+        ],
+        skipCursorDeliveryMark: true,
+        deliveryOrdinal: 2,
+        recordMetricEnabled: true,
+      });
+      logger.info(
+        {
+          component: 'assistant',
+          chatJid,
+          groupFolder: group.folder,
+          group: group.name,
+          routeKey: 'compound.calendar_research',
+          capabilityId: result.capabilityId,
+          requestedDepth: compoundRequest.requestedDepth,
+          allowWebSearch: compoundRequest.allowWebSearch,
+          explicitMaxEffort: compoundRequest.explicitMaxEffort,
+          conversationSeedSuppressed: Boolean(result.conversationSeed),
+        },
+        'Delivered compound calendar research result after calendar response',
+      );
+    };
+    const deliverCalendarReplyThenCompoundResearch = async (
+      deliverCalendarReply: () => Promise<void>,
+    ): Promise<void> => {
+      const background = await deliverPrimaryThenStartReadOnlySidecar({
+        deliverPrimary: deliverCalendarReply,
+        startSidecar: startCompoundResearch,
+        deliverResult: deliverCompoundResearchResult,
+        deliverFailure: deliverCompoundResearchFailure,
+        onSidecarDeliveryError: (error) => {
+          logger.error(
+            {
+              component: 'assistant',
+              chatJid,
+              groupFolder: group.folder,
+              group: group.name,
+              routeKey: 'compound.calendar_research',
+              errorClass: compoundResearchErrorClass(error),
+            },
+            'Calendar response was delivered but the compound research result could not be delivered',
+          );
+        },
+      });
+      if (background) {
+        void background.completion.catch((error) => {
+          logger.error(
+            {
+              component: 'assistant',
+              chatJid,
+              groupFolder: group.folder,
+              group: group.name,
+              routeKey: 'compound.calendar_research',
+              errorClass: compoundResearchErrorClass(error),
+            },
+            'Unexpected rejection escaped the compound research background boundary',
+          );
+        });
+      }
+    };
     let writableCalendars:
       | Awaited<ReturnType<typeof listGoogleCalendars>>
       | undefined;
@@ -6084,7 +6346,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           (calendar) => calendar.selected && calendar.writable,
         );
         createPlan = planGoogleCalendarCreate(
-          lastContent,
+          calendarRequestText,
           writableCalendars,
           now,
           TIMEZONE,
@@ -6115,7 +6377,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             (calendar) => calendar.selected && calendar.writable,
           );
           createPlan = planGoogleCalendarCreate(
-            lastContent,
+            calendarRequestText,
             writableCalendars,
             now,
             TIMEZONE,
@@ -6126,26 +6388,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         try {
           const technicalDetail =
             error instanceof Error ? error.message : String(error);
-          await sendAssistantReplyWithFeedback({
-            text: buildCalendarCompanionFailurePanelText({
-              title: '*Google Calendar*',
-              channelName: channel.name,
-              action: 'create_event',
-              technicalDetail,
-            }),
-            sendOptions: {
-              inlineActionRows: buildCalendarLookupInlineActionRows(
-                CALENDAR_LOOKUP_TOMORROW_PROMPT,
-              ),
-            },
-            routeKey: 'google_calendar.create_event',
-            capabilityId: 'calendar.google_create',
-            handlerKind: 'google_calendar_create_local',
-            responseSource: 'local_companion',
-            traceReason:
-              'google calendar create fast path hit a provider failure',
-            blockerClass: technicalDetail,
-            blockerOwner: 'external',
+          await deliverCalendarReplyThenCompoundResearch(async () => {
+            await sendAssistantReplyWithFeedback({
+              text: buildCalendarCompanionFailurePanelText({
+                title: '*Google Calendar*',
+                channelName: channel.name,
+                action: 'create_event',
+                technicalDetail,
+              }),
+              sendOptions: {
+                inlineActionRows: buildCalendarLookupInlineActionRows(
+                  CALENDAR_LOOKUP_TOMORROW_PROMPT,
+                ),
+              },
+              routeKey: 'google_calendar.create_event',
+              capabilityId: 'calendar.google_create',
+              handlerKind: 'google_calendar_create_local',
+              responseSource: 'local_companion',
+              traceReason:
+                'google calendar create fast path hit a provider failure',
+              blockerClass: technicalDetail,
+              blockerOwner: 'external',
+            });
           });
           logger.warn(
             {
@@ -6172,6 +6436,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
 
       if (!createPlan || createPlan.kind === 'none') {
+        if (compoundRequest) {
+          try {
+            await deliverCalendarReplyThenCompoundResearch(async () => {
+              await sendAssistantReplyWithFeedback({
+                text: formatCalendarPanelText(
+                  '*Google Calendar*',
+                  'I recognized the calendar part, but I still need the event title, date, and time before I can prepare a safe draft. I did not create anything.',
+                ),
+                routeKey: 'compound.calendar_research',
+                capabilityId: 'calendar.google_create',
+                handlerKind: 'google_calendar_create_local',
+                responseSource: 'local_companion',
+                traceReason:
+                  'compound calendar request needed more event details before drafting',
+              });
+            });
+            return true;
+          } catch (error) {
+            if (isCommittedIncompleteDeliveryError(error)) throw error;
+            lastAgentTimestamp[chatJid] = previousCursor;
+            saveState();
+            logger.warn(
+              {
+                component: 'assistant',
+                chatJid,
+                groupFolder: group.folder,
+                group: group.name,
+                routeKey: 'compound.calendar_research',
+                err: error,
+              },
+              'Compound calendar clarification could not be delivered; rolled back cursor for retry',
+            );
+            return false;
+          }
+        }
         return false;
       }
 
@@ -6187,6 +6486,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 draft: createPlan.draft,
                 writableCalendars,
                 selectedCalendarId: createPlan.selectedCalendarId,
+                ...(compoundRequest
+                  ? { confirmationMode: 'calendar_targeted' as const }
+                  : {}),
                 now,
               }),
             )
@@ -6194,7 +6496,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const pendingStateToPersist =
         pendingDraftState ||
         (createPlan.kind === 'needs_details' && !noWritableCalendars
-          ? createPlan.pendingState || null
+          ? createPlan.pendingState
+            ? {
+                ...createPlan.pendingState,
+                ...(compoundRequest
+                  ? { confirmationMode: 'calendar_targeted' as const }
+                  : {}),
+              }
+            : null
           : null);
       const reply =
         createPlan.kind === 'needs_details'
@@ -6208,6 +6517,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 kind: 'calendar_auth_unavailable',
               })
             : formatGoogleCalendarCreatePrompt(pendingDraftState!);
+      const calendarDraftTraceReason =
+        createPlan.kind === 'needs_details'
+          ? 'google calendar create is waiting on one missing detail'
+          : 'google calendar create draft is ready for confirmation';
 
       try {
         if (pendingStateToPersist) {
@@ -6220,23 +6533,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             setGoogleCalendarSchedulingContext(chatJid, contextState);
           }
         }
-        await sendAssistantReplyWithFeedback({
-          text: formatCalendarPanelText('*Google Calendar*', reply),
-          sendOptions: {
-            inlineActionRows: pendingDraftState
-              ? buildGoogleCalendarCreateInlineActionRows(pendingDraftState)
-              : buildCalendarLookupInlineActionRows(
-                  CALENDAR_LOOKUP_TOMORROW_PROMPT,
-                ),
-          },
-          routeKey: 'google_calendar.create_event',
-          capabilityId: 'calendar.google_create',
-          handlerKind: 'google_calendar_create_local',
-          responseSource: 'local_companion',
-          traceReason:
-            createPlan.kind === 'needs_details'
-              ? 'google calendar create is waiting on one missing detail'
-              : 'google calendar create draft is ready for confirmation',
+        await deliverCalendarReplyThenCompoundResearch(async () => {
+          await sendAssistantReplyWithFeedback({
+            text: formatCalendarPanelText('*Google Calendar*', reply),
+            sendOptions: {
+              inlineActionRows: pendingDraftState
+                ? buildGoogleCalendarCreateInlineActionRows(pendingDraftState)
+                : buildCalendarLookupInlineActionRows(
+                    CALENDAR_LOOKUP_TOMORROW_PROMPT,
+                  ),
+            },
+            routeKey: 'google_calendar.create_event',
+            capabilityId: 'calendar.google_create',
+            handlerKind: 'google_calendar_create_local',
+            responseSource: 'local_companion',
+            traceReason: calendarDraftTraceReason,
+          });
         });
         logger.info(
           {
@@ -6474,14 +6786,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           allDay: continueResult.state.draft.allDay,
           location: continueResult.state.draft.location,
           description: continueResult.state.draft.description,
+          idempotencyKey: getGoogleCalendarCreateIdempotencyKey(
+            continueResult.state,
+          ),
         },
         googleConfig,
       );
       const selectedCalendar = continueResult.state.calendars.find(
         (calendar) => calendar.id === continueResult.calendarId,
       );
-      clearPendingGoogleCalendarCreateState(chatJid);
-      clearGoogleCalendarSchedulingContext(chatJid);
+      setPendingGoogleCalendarCreateState(
+        chatJid,
+        recordPendingGoogleCalendarCreateSuccess(
+          continueResult.state,
+          createdEvent,
+          now,
+        ),
+      );
       setActiveGoogleCalendarEventContext(
         chatJid,
         buildActiveGoogleCalendarEventContextState(createdEvent, now),
@@ -6518,6 +6839,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           googleCalendarEventId: createdEvent.id,
         },
       });
+      clearPendingGoogleCalendarCreateState(chatJid);
+      clearGoogleCalendarSchedulingContext(chatJid);
       logger.info(
         {
           component: 'assistant',
@@ -6531,9 +6854,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     } catch (error) {
       if (isCommittedIncompleteDeliveryError(error)) throw error;
+      const persistedCreateState = getPendingGoogleCalendarCreateState(chatJid);
+      if (
+        persistedCreateState &&
+        getPendingGoogleCalendarCreatedEvent(persistedCreateState)
+      ) {
+        lastAgentTimestamp[chatJid] = previousCursor;
+        saveState();
+        logger.warn(
+          { group: group.name, err: error },
+          'Calendar event was created but its confirmation was not delivered; retained the receipt for reconciliation',
+        );
+        return false;
+      }
       try {
-        clearPendingGoogleCalendarCreateState(chatJid);
-        clearGoogleCalendarSchedulingContext(chatJid);
         const technicalDetail =
           error instanceof Error ? error.message : String(error);
         await sendAssistantReplyWithFeedback({
@@ -11170,6 +11504,18 @@ async function main(): Promise<void> {
         reflectionDrain.timedOut
           ? 'Shutdown reflection drain reached its bounded timeout; startup will reconcile remaining work.'
           : 'Shutdown drained active post-delivery reflections.',
+      );
+    }
+    const readOnlySidecarDrain = await drainBackgroundReadOnlySidecars(10_000);
+    if (readOnlySidecarDrain.attempted > 0) {
+      logger.info(
+        {
+          component: 'background_read_only_sidecar',
+          ...readOnlySidecarDrain,
+        },
+        readOnlySidecarDrain.timedOut
+          ? 'Shutdown read-only sidecar drain reached its bounded timeout; unfinished non-durable work must be requested again after restart.'
+          : 'Shutdown drained active read-only sidecars.',
       );
     }
     if (alexaRuntime) {

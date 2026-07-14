@@ -155,7 +155,10 @@ unsigned, altered, cross-run, or replayed messages fail closed. Direct,
 protected, and control guidance is host-constant; only execution may consume
 the mutable group `CLAUDE.md`. Runner source, settings, enabled skills, and
 plugins remain read-only trusted views. Final real-container and full-suite
-validation of this candidate remains pending.
+validation, the exact-SHA hosted gates, and release publication are complete.
+Production currently serves the preceding application commit because the final
+`main` commit changed CI workflow/test code only; that running/workspace SHA
+mismatch remains explicit rather than being treated as deployed proof.
 
 ## Evaluation and improvement
 
@@ -456,7 +459,7 @@ the transport as failed or copying a success sentence into `lastFailure`.
 Run the focused proof with:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/evaluation-execution.test.ts src/container-runner.credentials.test.ts src/council-quality.test.ts src/personal-context-packet.test.ts src/routine-promotion.test.ts src/runtime-tool-evidence.test.ts src/runtime-tool-evidence-collector.test.ts src/container-runner.test.ts src/turn-runtime-evidence-scope.test.ts src/verified-deep-work.test.ts src/deep-work-apprenticeship.test.ts src/turn-agent-harness.test.ts src/turn-agent-intelligence-boundary.test.ts src/personal-assistant-metrics.test.ts
+node scripts/run-with-pinned-node.mjs --import=./scripts/test-network-guard.mjs ./node_modules/vitest/vitest.mjs run src/evaluation-execution.test.ts src/container-runner.credentials.test.ts src/council-quality.test.ts src/personal-context-packet.test.ts src/routine-promotion.test.ts src/runtime-tool-evidence.test.ts src/runtime-tool-evidence-collector.test.ts src/container-runner.test.ts src/turn-runtime-evidence-scope.test.ts src/verified-deep-work.test.ts src/deep-work-apprenticeship.test.ts src/turn-agent-harness.test.ts src/turn-agent-intelligence-boundary.test.ts src/personal-assistant-metrics.test.ts
 npm run container:install
 npm run typecheck:agent-runner
 npm run build:agent-runner

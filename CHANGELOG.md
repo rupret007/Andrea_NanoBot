@@ -1,10 +1,46 @@
 # Changelog
 
-All notable changes to NanoClaw will be documented in this file.
+Notable Andrea_NanoBot changes are documented here. Older entries retain the
+upstream NanoClaw names that were current when those changes shipped.
 
-For detailed release notes, see the [full changelog on the documentation site](https://docs.nanoclaw.dev/changelog).
+## [Unreleased]
 
-## [Unreleased] - 2026-04-04
+- Added conservative calendar-plus-research decomposition: only the calendar
+  clause becomes the approval-bound event draft, while a separately traced,
+  read-only research leg can run promptly and report its own result or blocker
+  without being repeated by calendar confirmation. Explicit maximum-effort
+  wording selects the bounded deep-research route.
+- Refreshed the README and operator, security, evaluation, roadmap, setup,
+  status, privacy, and release documentation against the published repository
+  and current host evidence; documentation validation now covers every
+  canonical Markdown file.
+- Removed deployment-specific owner identifiers from examples and the
+  BlueBubbles self-thread fallback so an unconfigured clone cannot inherit a
+  real person's destination.
+
+## [1.2.42] - 2026-07-13
+
+- Published durable cognitive continuity for bounded coding, research,
+  operator, mission, and approval-gated work, including scope-bound single-use
+  resume grants, crash-safe receipts, exact approvals, and verified recovery.
+- Enforced route-specific container capabilities: ordinary direct assistance
+  is tool-free; trusted runner, settings, skills, plugins, and guidance are
+  read-only; host Codex profiles and credentials are not mounted or copied.
+- Added deterministic offline evaluation with network denial, isolated state,
+  explicit live-evaluation budgets, and provenance-aware council evidence.
+- Expanded personal context, verified agency, outcome review, owner cockpit,
+  BlueBubbles, Telegram, Alexa, calendar, and deep-work validation without
+  weakening fresh-approval boundaries.
+- Repaired Windows deterministic preload handling and split exact-SHA security
+  gates for dependency audit, secret scanning, Semgrep, AGI, CodeQL, container,
+  Ubuntu, and Windows validation.
+- Published the release on `main`; operator-host proof and integration freshness
+  remain status-led and are not implied by repository publication.
+
+For older upstream release notes, see the
+[NanoClaw changelog](https://docs.nanoclaw.dev/changelog).
+
+### Earlier 1.2.42 product work carried forward from 2026-04-04
 
 - Added the v32 General Intelligence Control Plane: unified action lifecycle (intents, attempts, reviews with legal status transitions), a ten-check action preflight where the strictest of critic review, autonomy policy, reality/truth state, and tool reliability always wins, a bounded cognitive blackboard, reflective episodic memory with enforced retention and redaction, a capability self-model grounded in live proof and config presence (names only), an explicit autonomy governor (levels 0–7, levels 5+ always approval-gated, level 7 never executed), multi-strategy reasoning evals that feed strategy-learning signals, and a ten-scenario AGI-readiness gauntlet with new `debug:blackboard`, `debug:actions`, `debug:episodes`, `debug:capabilities`, `debug:autonomy`, and `debug:agi-readiness` surfaces. The control plane orchestrates existing systems, executes nothing itself, and is explicitly not an AGI claim.
 - Landed Andrea Alexa Companion Mode on the mainline integration path, including daily guidance, stronger follow-ups, household-aware phrasing, and explicit consent-based personalization.

@@ -113,6 +113,86 @@ describe('assistant request routing', () => {
     );
   });
 
+  it('keeps the compound fallback research-only while the host owns the calendar draft', () => {
+    const policy = classifyAssistantRequest([
+      {
+        content:
+          'Add to my calendar that I need to meditate tomorrow morning at 8 am and can you look for a good meditation for me please.',
+      },
+    ]);
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.reason).toContain('calendar-create and research');
+    expect(policy.builtinTools).toEqual([
+      'Read',
+      'Glob',
+      'Grep',
+      'WebSearch',
+      'WebFetch',
+    ]);
+    expect(policy.mcpTools).toEqual([]);
+    expect(policy.builtinTools).not.toContain('Bash');
+  });
+
+  it('routes polite explicit research asks to bounded research tools', () => {
+    for (const content of [
+      'Can you look for a good meditation for me?',
+      'Could you find a source-backed sleep guide?',
+      'Would you research current breathing exercises?',
+    ]) {
+      const policy = classifyAssistantRequest([{ content }]);
+      expect(policy.route).toBe('protected_assistant');
+      expect(policy.builtinTools).toEqual([
+        'Read',
+        'Glob',
+        'Grep',
+        'WebSearch',
+        'WebFetch',
+      ]);
+      expect(policy.mcpTools).toEqual([]);
+    }
+  });
+
+  it('keeps obvious local lost-object asks off the research tool lane', () => {
+    for (const content of [
+      'Can you find my keys?',
+      'Can you look for my phone?',
+    ]) {
+      const policy = classifyAssistantRequest([{ content }]);
+      expect(policy.route).toBe('direct_assistant');
+      expect(policy.builtinTools).toEqual([]);
+      expect(policy.mcpTools).toEqual([]);
+    }
+  });
+
+  it('routes natural research-launch wording without widening arbitrary start requests', () => {
+    for (const content of [
+      'Kick off some research on guided meditation and provide me the results.',
+      'Start research on sleep routines.',
+    ]) {
+      const policy = classifyAssistantRequest([{ content }]);
+      expect(policy.route).toBe('protected_assistant');
+      expect(policy.builtinTools).toContain('WebSearch');
+      expect(policy.builtinTools).not.toContain('Bash');
+    }
+    expect(
+      classifyAssistantRequest([{ content: 'Start a timer for ten minutes.' }])
+        .route,
+    ).toBe('direct_assistant');
+  });
+
+  it('does not treat conjunctions inside calendar titles as a research sidecar', () => {
+    const policy = classifyAssistantRequest([
+      {
+        content: 'Add dinner with Sam and Alex to my calendar tomorrow at 7pm.',
+      },
+    ]);
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.builtinTools).toEqual([]);
+    expect(policy.mcpTools).toContain('mcp__nanoclaw__schedule_task');
+  });
+
   it('routes help-me-remember phrasing to protected assistant handling', () => {
     const policy = classifyAssistantRequest([
       { content: 'Can you help me remember to call Brian tomorrow morning?' },

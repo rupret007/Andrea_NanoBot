@@ -1,5 +1,10 @@
+import { createHash } from 'node:crypto';
+
 import { TIMEZONE } from './config.js';
-import type { GoogleCalendarMetadata } from './google-calendar.js';
+import type {
+  GoogleCalendarEventRecord,
+  GoogleCalendarMetadata,
+} from './google-calendar.js';
 import { formatVoiceChoicePrompt } from './voice-ready.js';
 
 const WEEKDAY_INDEX: Record<string, number> = {
@@ -39,7 +44,10 @@ const CANCEL_PATTERN =
   /^(?:cancel|never mind|nevermind|stop|no|(?:actually\s+)?scratch that|delete(?:\s+(?:that|it))?|remove(?:\s+(?:that|it))?|discard(?:\s+(?:that|it))?)\b/i;
 const CONFIRM_PATTERN =
   /^(?:yes|yep|yeah|confirm|create it|go ahead|looks good|ok|okay)\b/i;
+const CALENDAR_TARGETED_CONFIRM_PATTERN =
+  /^(?:(?:confirm|create)(?:\s+the)?\s+calendar\s+event|(?:confirm|create)(?:\s+the)?\s+event\s+on\s+(?:my\s+)?calendar)(?:\s*,?\s*please)?[.!]?$/i;
 const DEFAULT_CONFIRMATION_TTL_MS = 30 * 60 * 1000;
+const DELIVERED_CREATE_RECONCILIATION_TTL_MS = 24 * 60 * 60 * 1000;
 const ALL_DAY_PATTERN = /\ball(?:\s+|-)day\b/i;
 
 export interface GoogleCalendarCreateDraft {
@@ -93,6 +101,23 @@ export interface PendingGoogleCalendarCreateState {
   }>;
   selectedCalendarId: string | null;
   conflictSummary: GoogleCalendarDraftConflictSummary | null;
+  confirmationMode?: 'standard' | 'calendar_targeted';
+  /** Stable for this pending draft; never expose it in user-facing text. */
+  idempotencyKey?: string;
+  /**
+   * Persisted immediately after the provider accepts the event and before
+   * outbound delivery. This lets a restart report the already-created event
+   * rather than replaying the write.
+   */
+  completedEvent?: {
+    id: string;
+    startIso: string;
+    endIso: string;
+    calendarId: string;
+    calendarName: string;
+    htmlLink?: string | null;
+    completedAt: string;
+  };
 }
 
 export type GoogleCalendarCreatePlanResult =
@@ -778,6 +803,7 @@ export function buildPendingGoogleCalendarCreateState(input: {
   draft: GoogleCalendarCreateDraft;
   writableCalendars: GoogleCalendarMetadata[];
   selectedCalendarId: string | null;
+  confirmationMode?: 'standard' | 'calendar_targeted';
   now?: Date;
 }): PendingGoogleCalendarCreateState {
   const calendars = input.writableCalendars.map((calendar) => ({
@@ -789,15 +815,95 @@ export function buildPendingGoogleCalendarCreateState(input: {
     input.selectedCalendarId ||
     (calendars.length === 1 ? calendars[0].id : null);
 
+  const createdAt = (input.now || new Date()).toISOString();
+  const idempotencyKey = createHash('sha256')
+    .update(
+      [
+        'andrea:calendar-draft:v1',
+        createdAt,
+        input.draft.title,
+        input.draft.startIso,
+        input.draft.endIso,
+        selectedCalendarId || 'unselected',
+      ].join('\0'),
+    )
+    .digest('hex');
+
   return {
     version: 2,
-    createdAt: (input.now || new Date()).toISOString(),
+    createdAt,
     step: selectedCalendarId ? 'confirm_create' : 'choose_calendar',
     draft: input.draft,
     calendars,
     selectedCalendarId,
     conflictSummary: null,
+    idempotencyKey,
+    ...(input.confirmationMode
+      ? { confirmationMode: input.confirmationMode }
+      : {}),
   };
+}
+
+export function getGoogleCalendarCreateIdempotencyKey(
+  state: PendingGoogleCalendarCreateState,
+): string {
+  if (state.idempotencyKey) return state.idempotencyKey;
+  return createHash('sha256')
+    .update(
+      [
+        'andrea:calendar-draft:legacy:v1',
+        state.createdAt,
+        state.draft.title,
+        state.draft.startIso,
+        state.draft.endIso,
+        state.selectedCalendarId || 'unselected',
+      ].join('\0'),
+    )
+    .digest('hex');
+}
+
+export function recordPendingGoogleCalendarCreateSuccess(
+  state: PendingGoogleCalendarCreateState,
+  event: GoogleCalendarEventRecord,
+  now: Date = new Date(),
+): PendingGoogleCalendarCreateState {
+  return {
+    ...state,
+    completedEvent: {
+      id: event.id,
+      startIso: event.startIso,
+      endIso: event.endIso,
+      calendarId: event.calendarId,
+      calendarName: event.calendarName,
+      htmlLink: event.htmlLink || null,
+      completedAt: now.toISOString(),
+    },
+  };
+}
+
+export function getPendingGoogleCalendarCreatedEvent(
+  state: PendingGoogleCalendarCreateState,
+): GoogleCalendarEventRecord | null {
+  if (!state.completedEvent) return null;
+  return {
+    id: state.completedEvent.id,
+    title: state.draft.title,
+    startIso: state.completedEvent.startIso,
+    endIso: state.completedEvent.endIso,
+    allDay: state.draft.allDay,
+    location: state.draft.location || null,
+    calendarId: state.completedEvent.calendarId,
+    calendarName: state.completedEvent.calendarName,
+    htmlLink: state.completedEvent.htmlLink || null,
+  };
+}
+
+export function getGoogleCalendarCreateConfirmationActionId(
+  state: PendingGoogleCalendarCreateState,
+): 'yes' | 'confirm calendar event' {
+  return state.confirmationMode === 'calendar_targeted'
+    ? 'confirm calendar event'
+    : 'yes';
 }
 
 export function buildGoogleCalendarSchedulingContextState(input: {
@@ -831,6 +937,12 @@ export function isPendingGoogleCalendarCreateExpired(
 ): boolean {
   const createdAt = new Date(state.createdAt).getTime();
   if (Number.isNaN(createdAt)) return true;
+  const completedAt = state.completedEvent
+    ? new Date(state.completedEvent.completedAt).getTime()
+    : Number.NaN;
+  if (Number.isFinite(completedAt)) {
+    return now.getTime() - completedAt > DELIVERED_CREATE_RECONCILIATION_TTL_MS;
+  }
   return now.getTime() - createdAt > DEFAULT_CONFIRMATION_TTL_MS;
 }
 
@@ -866,6 +978,7 @@ export function formatGoogleCalendarCreatePrompt(
   const selectedCalendar = state.calendars.find(
     (calendar) => calendar.id === state.selectedCalendarId,
   );
+  const confirmationAction = getGoogleCalendarCreateConfirmationActionId(state);
 
   return [
     ...(state.conflictSummary?.blockingEvents.length
@@ -915,8 +1028,8 @@ export function formatGoogleCalendarCreatePrompt(
     ...(state.draft.description ? [`- Notes: ${state.draft.description}`] : []),
     '',
     state.conflictSummary?.blockingEvents.length
-      ? 'Reply "yes" to create it anyway, choose a suggestion number, or say "cancel".'
-      : 'Reply "yes" to create it or "cancel" to stop.',
+      ? `Reply "${confirmationAction}" to create it anyway, choose a suggestion number, or say "cancel".`
+      : `Reply "${confirmationAction}" to create it or "cancel" to stop.`,
   ].join('\n');
 }
 
@@ -1263,7 +1376,11 @@ export function advancePendingGoogleCalendarCreate(
     };
   }
 
-  if (!CONFIRM_PATTERN.test(normalized)) {
+  const confirmationPattern =
+    state.confirmationMode === 'calendar_targeted'
+      ? CALENDAR_TARGETED_CONFIRM_PATTERN
+      : CONFIRM_PATTERN;
+  if (!confirmationPattern.test(normalized)) {
     return { kind: 'no_match' };
   }
 

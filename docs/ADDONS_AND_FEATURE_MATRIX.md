@@ -9,6 +9,15 @@ Many entries here are optional operator-enabled skills or integrations, and they
 Important product split:
 
 - Andrea's public-safe surface stays narrow
+- ordinary `direct_assistant` chat runs in a host-generated managed workspace,
+  not the owner group/repository workspace, and receives no built-in tools, MCP
+  server, extra directories, or runtime skills
+- `.claude/skills` contains operator/development transformation packages; their
+  presence in the checkout does not install a channel or grant a runtime tool
+- `container/skills` is the canonical bundled runtime set. The host exposes only
+  the exact bundled and enabled-community entries allowed for the selected
+  route; skill controls are absent unless that route includes the `Skill`
+  capability or the bounded marketplace catalog
 - Cursor Cloud is the validated operator-enabled heavy-lift path
 - desktop bridge is operator-only and environment-dependent
 - runtime routing is a separate diagnostic/config surface
@@ -24,7 +33,10 @@ Important product split:
 | Scheduler                  | Supports cron, interval, and one-time tasks                  | Tasks run in group context                                                          |
 | Community marketplace      | Search OpenClaw catalog and enable skills per chat           | Global cache + explicit per-chat activation                                         |
 
-## Setup And Operations Skills
+## Setup And Operations Transformation Packages
+
+These checkout-local packages guide an operator or coding agent. They are not
+automatically callable by Andrea's managed runtime.
 
 | Skill              | Purpose                                           | Typical use                                                 |
 | ------------------ | ------------------------------------------------- | ----------------------------------------------------------- |
@@ -36,12 +48,17 @@ Important product split:
 | `/claw`            | Retired alternate-runner compatibility stub       | Inert; use the canonical Andrea service and container gates |
 | `/add-compact`     | Adds manual context compaction control            | Long-running sessions with large context                    |
 
-## Channels And Messaging Extensions
+## Optional Channel Transformation Packages
+
+Telegram and BlueBubbles are built into this Andrea fork. The Telegram package
+below is retained for upstream/custom-fork workflows; it is not required to
+enable the bundled Telegram implementation. Every other entry remains optional
+until its code, credentials, policy, and live proof are present.
 
 | Skill            | Adds                                     | Platform scope                  |
 | ---------------- | ---------------------------------------- | ------------------------------- |
 | `/add-whatsapp`  | WhatsApp channel support                 | Cross-platform                  |
-| `/add-telegram`  | Telegram channel support                 | Cross-platform                  |
+| `/add-telegram`  | Telegram transformation for other forks  | Cross-platform; bundled here    |
 | `/add-discord`   | Discord channel support                  | Cross-platform                  |
 | `/add-slack`     | Slack channel support                    | Cross-platform                  |
 | `/add-gmail`     | Gmail integration (tool or channel mode) | Cross-platform                  |
@@ -88,7 +105,11 @@ Important product split:
 | `/convert-to-apple-container` | Retired Apple Container migration stub     | Inert; Apple Container agent execution is fail-closed pending nested-mount proof |
 | `/add-macos-statusbar`        | macOS menu bar service controls and status | macOS only                                                                       |
 
-## Built-In Container Skills (Always Relevant)
+## Bundled Container Skills (Route-Scoped)
+
+Bundled means trusted source is available to the host compiler, not that every
+turn can invoke it. Direct-assistant turns receive none; other routes receive
+only their explicit skill/tool policy.
 
 | Skill             | Purpose                                                 | Notes                                             |
 | ----------------- | ------------------------------------------------------- | ------------------------------------------------- |
@@ -126,7 +147,8 @@ These runtime tools back the community skill lifecycle:
 ## Recommended Activation Order For New Installs
 
 1. `/setup`
-2. One channel skill (for example `/add-whatsapp` or `/add-telegram`)
+2. Configure and prove one bundled channel (Telegram or BlueBubbles), or apply
+   one optional channel transformation such as `/add-whatsapp`
 3. `/init-onecli` to preflight an existing operator-provisioned vault; otherwise
    use the current degraded single-key environment fallback
 4. Optional media/tooling add-ons (`/add-pdf-reader`, `/add-image-vision`, `/add-ollama-tool`)

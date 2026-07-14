@@ -16,21 +16,21 @@ update the proof before demoing that lane.
 
 ## Readiness Matrix
 
-| Surface                                      | Current truth                  | Exact blocker                                               | Owner              | Smallest next action                                                                  |
-| -------------------------------------------- | ------------------------------ | ----------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------- |
-| Telegram user-session proof                  | `near_live_only`               | last successful roundtrip is outside the freshness window   | operator/live turn | Run `npm run telegram:user:smoke` before a formal demo                                |
-| Alexa companion                              | `manual_action_required`       | no fresh signed handled `IntentRequest` recorded            | external/live turn | Use a real simulator/device turn, then run `npm run services:status`                  |
-| BlueBubbles companion                        | `live_proven`                  | none                                                        | none               | Keep proof fresh with `npm run debug:bluebubbles -- --live`                           |
-| Google Calendar                              | `live_proven`                  | none                                                        | none               | Keep proof fresh with `npm run debug:google-calendar` when calendar writes are demoed |
-| Work cockpit                                 | `near_live_only` / proof-stale | backend lane may be disabled or no fresh work-cockpit turn  | operator/live turn | Re-run one `/cursor` sanity flow after enabling the intended backend lane             |
-| Life threads / communication                 | `near_live_only` / proof-stale | no fresh Candace/communication chain                        | operator/live turn | Re-run one Candace follow-through chain                                               |
-| Chief-of-staff / missions                    | `near_live_only` / proof-stale | no fresh planning journey                                   | operator/live turn | Re-run one nightly-planning or mission chain                                          |
-| Knowledge library                            | `near_live_only` / proof-stale | no fresh save plus grounded answer                          | operator/live turn | Re-run one save and one library-grounded answer                                       |
-| Action bundles / delegation / outcome review | `near_live_only` / proof-stale | no fresh approve/partial/review chain                       | operator/live turn | Re-run one action-bundle review chain                                                 |
-| Follow-through review                        | `not_intended_for_trial`       | retired as a standalone launch proof surface                | none               | Use daily command center and action-bundle review proofs instead                      |
-| Research mode                                | `live_proven`                  | none                                                        | none               | Keep the proof fresh if it will be demoed                                             |
-| Image generation                             | `live_proven`                  | none                                                        | none               | Keep the proof fresh if it will be demoed                                             |
-| Startup / host-control / watchdog / health   | `live_proven`                  | none for core host                                          | none               | Keep `services:status`, `setup verify`, and `debug:status` aligned after each restart |
+| Surface                                      | Current truth                  | Exact blocker                                                  | Owner              | Smallest next action                                                                  |
+| -------------------------------------------- | ------------------------------ | -------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------- |
+| Telegram user-session proof                  | `near_live_only`               | last successful roundtrip is outside the freshness window      | operator/live turn | Run `npm run telegram:user:smoke` before a formal demo                                |
+| Alexa companion                              | `near_live_only` / proof-stale | signed handled `IntentRequest` is outside the freshness window | external/live turn | Use a real simulator/device turn, then run `npm run services:status`                  |
+| BlueBubbles companion                        | `degraded_but_usable`          | fresh canonical same-thread `message_action` proof missing     | operator/live turn | Run `npm run debug:bluebubbles -- --live`, then complete the same-thread proof chain  |
+| Google Calendar                              | `live_proven`                  | none                                                           | none               | Keep proof fresh with `npm run debug:google-calendar` when calendar writes are demoed |
+| Work cockpit                                 | `near_live_only` / proof-stale | backend lane may be disabled or no fresh work-cockpit turn     | operator/live turn | Re-run one `/cursor` sanity flow after enabling the intended backend lane             |
+| Life threads / communication                 | `near_live_only` / proof-stale | no fresh Candace/communication chain                           | operator/live turn | Re-run one Candace follow-through chain                                               |
+| Chief-of-staff / missions                    | `near_live_only` / proof-stale | no fresh planning journey                                      | operator/live turn | Re-run one nightly-planning or mission chain                                          |
+| Knowledge library                            | `near_live_only` / proof-stale | no fresh save plus grounded answer                             | operator/live turn | Re-run one save and one library-grounded answer                                       |
+| Action bundles / delegation / outcome review | `near_live_only` / proof-stale | no fresh approve/partial/review chain                          | operator/live turn | Re-run one action-bundle review chain                                                 |
+| Follow-through review                        | `not_intended_for_trial`       | retired as a standalone launch proof surface                   | none               | Use daily command center and action-bundle review proofs instead                      |
+| Research mode                                | status-led / `unknown`         | configuration alone is not live provider proof                 | operator/live turn | Require a current verified-use record before demoing                                  |
+| Image generation                             | status-led / `unknown`         | configuration alone is not live provider proof                 | operator/live turn | Require a current verified-use record before demoing                                  |
+| Startup / host-control / watchdog / health   | `degraded_but_usable`          | disk pressure warning; running SHA trails one CI-only commit   | operator           | Free disk space, then align the built/running SHA before a formal release claim       |
 
 ## Operator Preflight
 
@@ -38,7 +38,7 @@ Run these before anyone is watching:
 
 ```bash
 npm run services:status
-npm run setup -- --step verify
+npm run setup -- --step verify # live: may call a model and start a container probe
 npm run debug:status
 npm run debug:pilot
 ```
@@ -46,27 +46,41 @@ npm run debug:pilot
 Confirm:
 
 - host state is `running_ready`
-- `serving_commit_matches_workspace_head=true`
-- active repo and serving commit are aligned
+- the serving SHA is compared with workspace `HEAD`; if they differ, describe
+  the exact difference and do not claim SHA alignment
+- the active repo is canonical and the serving/workspace relationship is
+  explicitly classified
 - `LAUNCH_CANDIDATE_STATUS` is not described as ready while Telegram, Alexa, or same-host flagship proof is missing
 - external blockers and proof freshness gaps are explicit instead of vague
 
 Important truth:
 
-- `setup verify` can prove assistant execution while still failing launch readiness because external proof/config gates are open.
+- `setup verify` is a live command: it can make a real model reachability call
+  and start container execution probes. Run it only with intentional
+  credentials, cost awareness, and operator authorization. It can prove
+  assistant execution while still failing launch readiness because external
+  proof/config gates are open.
 - `ASSISTANT_EXECUTION_PROBE: ok` means the assistant answered; a final failed launch status should be read with the listed blockers, not as an ambiguous runtime failure.
-- Telegram transport is healthy, but the same-host user-session proof is currently overdue; run `npm run telegram:user:smoke` before a formal demo.
+- Telegram transport is healthy, but the same-host user-session proof is
+  currently overdue. `npm run telegram:user:smoke` sends a real `/ping` to the
+  configured Telegram target and waits for the reply; run it only when that
+  visible side effect is intended.
 - Alexa is not `live_proven` until a fresh signed handled `IntentRequest` is recorded.
-- BlueBubbles is live-proven while the canonical same-thread message-action proof remains fresh.
+- BlueBubbles transport is ready, but current proof remains
+  `degraded_but_usable` until the canonical same-thread message-action chain is
+  fresh.
 - Google Calendar is currently healthy; if it later reports `invalid_grant`, reauthorize before claiming calendar launch readiness.
-- Research, image generation, and provider checks are currently live-proven advanced lanes, not core launch blockers.
+- Research, image generation, and provider checks are advanced lanes, not core
+  launch blockers. Configured provider identifiers currently remain `unknown`;
+  require a current probe or verified-use record before claiming live health.
 
 ## Proof Recovery Checklist
 
 Close proof debt in this order:
 
 1. Telegram
-   - Run `npm run telegram:user:smoke`.
+   - With the operator's consent, run `npm run telegram:user:smoke`. It sends a
+     real `/ping` to the configured target and waits for the bot reply.
    - Success shape: no missing-credential blocker, user-session smoke records a request/response proof, and `debug:status` keeps Telegram out of `externally_blocked`.
 2. Google Calendar
    - Run `npm run debug:google-calendar` and `npm run services:status`.
@@ -244,7 +258,8 @@ Optional lanes that should be described honestly:
 ## Short Pilot Checklist
 
 1. Run `npm run services:status`, `npm run setup -- --step verify`, `npm run debug:status`, and `npm run debug:pilot`.
-2. Confirm host state is `running_ready` and `serving_commit_matches_workspace_head=true`.
+2. Confirm host state is `running_ready`; compare the serving and workspace
+   SHAs and do not claim alignment unless they actually match.
 3. Confirm the launch story is still:
    - no stale `live_proven` claims
    - Telegram user-session proof unblocked only after credentials and smoke test
@@ -272,7 +287,8 @@ Optional lanes that should be described honestly:
 
 - Telegram externally blocked:
   - set `TELEGRAM_USER_API_ID` and `TELEGRAM_USER_API_HASH`
-  - run `npm run telegram:user:smoke`
+  - with approval for the visible live `/ping`, run
+    `npm run telegram:user:smoke`
 - Alexa near-live only:
   - run one real signed simulator/device flow: `Open Andrea Assistant`, then `What am I forgetting?`
   - run `npm run services:status`

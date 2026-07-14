@@ -46,7 +46,7 @@ function truth(
       serverBaseUrl: 'http://MacBook-Pro.local:1234',
       messageActionProofState: 'none',
       lastIgnoredReason: 'direct_chat_requires_recent_context',
-      lastIgnoredChatJid: 'bb:iMessage;-;+18173681595',
+      lastIgnoredChatJid: 'bb:iMessage;-;+12025550105',
       detectionDetail:
         'Direct 1:1 chat lacks fresh Andrea context and needs @Andrea once.',
     },

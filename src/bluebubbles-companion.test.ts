@@ -74,22 +74,22 @@ describe('bluebubbles companion helpers', () => {
   it('allows direct assistant asks in the canonical BlueBubbles self-thread without @Andrea', () => {
     expect(
       isBlueBubblesExplicitAsk('hi', {
-        chatJid: 'bb:iMessage;-;+14695405551',
+        chatJid: 'bb:iMessage;-;+12025550101',
       }),
     ).toBe(true);
     expect(
       isBlueBubblesExplicitAsk('what should I say back', {
-        chatJid: 'bb:iMessage;-;+14695405551',
+        chatJid: 'bb:iMessage;-;+12025550101',
       }),
     ).toBe(true);
     expect(
       isBlueBubblesExplicitAsk('what am I forgetting', {
-        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        chatJid: 'bb:iMessage;-;owner@example.com',
       }),
     ).toBe(true);
     expect(
       isBlueBubblesExplicitAsk('sounds good', {
-        chatJid: 'bb:iMessage;-;+14695405551',
+        chatJid: 'bb:iMessage;-;+12025550101',
       }),
     ).toBe(false);
   });
@@ -109,7 +109,7 @@ describe('bluebubbles companion helpers', () => {
 
   it('allows recent direct 1:1 BlueBubbles chats to become conversational without @Andrea', () => {
     storeChatMetadata(
-      'bb:iMessage;-;+12147254219',
+      'bb:iMessage;-;+12025550104',
       '2026-04-07T20:05:00.000Z',
       'Candace',
       'bluebubbles',
@@ -118,25 +118,25 @@ describe('bluebubbles companion helpers', () => {
 
     expect(
       isBlueBubblesExplicitAsk('what should I say back', {
-        chatJid: 'bb:iMessage;-;+12147254219',
+        chatJid: 'bb:iMessage;-;+12025550104',
         hasRecentCompanionContext: true,
       }),
     ).toBe(true);
     expect(
       isBlueBubblesExplicitAsk('what am I forgetting', {
-        chatJid: 'bb:iMessage;-;+12147254219',
+        chatJid: 'bb:iMessage;-;+12025550104',
         hasRecentCompanionContext: true,
       }),
     ).toBe(true);
     expect(
       isBlueBubblesExplicitAsk('sounds good', {
-        chatJid: 'bb:iMessage;-;+12147254219',
+        chatJid: 'bb:iMessage;-;+12025550104',
         hasRecentCompanionContext: true,
       }),
     ).toBe(false);
     expect(
       isBlueBubblesExplicitAsk('what should I say back', {
-        chatJid: 'bb:iMessage;-;+12147254219',
+        chatJid: 'bb:iMessage;-;+12025550104',
         hasRecentCompanionContext: false,
       }),
     ).toBe(false);
@@ -153,7 +153,7 @@ describe('bluebubbles companion helpers', () => {
   it('treats a bare self-thread reply-help ask as an explicit ask', () => {
     expect(
       decideBlueBubblesCompanionIngress('what should I say back', {
-        chatJid: 'bb:iMessage;-;+14695405551',
+        chatJid: 'bb:iMessage;-;+12025550101',
       }),
     ).toEqual({ kind: 'explicit_ask' });
   });
@@ -236,7 +236,7 @@ describe('bluebubbles companion helpers', () => {
   it('routes @Andrea-prefixed message-action follow-ups before generic asks', () => {
     expect(
       decideBlueBubblesCompanionIngress('@Andrea send it later tonight', {
-        chatJid: 'bb:iMessage;-;+14695405551',
+        chatJid: 'bb:iMessage;-;+12025550101',
         hasOpenMessageActionFollowup: true,
       }),
     ).toEqual({
@@ -245,7 +245,7 @@ describe('bluebubbles companion helpers', () => {
     });
     expect(
       decideBlueBubblesCompanionIngress('@Andrea what am I forgetting', {
-        chatJid: 'bb:iMessage;-;+14695405551',
+        chatJid: 'bb:iMessage;-;+12025550101',
         hasOpenMessageActionFollowup: false,
       }),
     ).toEqual({ kind: 'explicit_ask' });
@@ -254,10 +254,10 @@ describe('bluebubbles companion helpers', () => {
   it('allows a bare follow-up when a pending calendar create exists on the canonical self-thread alias', () => {
     const seenChatJids: string[] = [];
     const pendingKind = resolveBlueBubblesPendingLocalContinuationKind({
-      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chatJid: 'bb:iMessage;-;owner@example.com',
       hasGoogleCalendarCreate: (chatJid) => {
         seenChatJids.push(chatJid);
-        return chatJid === 'bb:iMessage;-;+14695405551';
+        return chatJid === 'bb:iMessage;-;+12025550101';
       },
       hasGoogleCalendarReminder: () => false,
       hasGoogleCalendarEventAction: () => false,
@@ -267,7 +267,7 @@ describe('bluebubbles companion helpers', () => {
     });
 
     expect(pendingKind).toBe('google_calendar_create');
-    expect(seenChatJids).toContain('bb:iMessage;-;+14695405551');
+    expect(seenChatJids).toContain('bb:iMessage;-;+12025550101');
     expect(
       decideBlueBubblesCompanionIngress('Yes', {
         pendingLocalContinuationKind: pendingKind,
@@ -289,21 +289,21 @@ describe('bluebubbles companion helpers', () => {
   it('checks both self-thread aliases for exact-keyed pending local follow-ups', () => {
     const seenChatJids: string[] = [];
     const pendingKind = resolveBlueBubblesPendingLocalContinuationKind({
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       hasGoogleCalendarCreate: () => false,
       hasGoogleCalendarReminder: () => false,
       hasGoogleCalendarEventAction: () => false,
       hasCalendarAutomation: () => false,
       hasActionReminder: (chatJid) => {
         seenChatJids.push(chatJid);
-        return chatJid === 'bb:iMessage;-;jeffstory007@gmail.com';
+        return chatJid === 'bb:iMessage;-;owner@example.com';
       },
       hasActionDraft: () => false,
     });
 
     expect(pendingKind).toBe('action_reminder');
-    expect(seenChatJids).toContain('bb:iMessage;-;+14695405551');
-    expect(seenChatJids).toContain('bb:iMessage;-;jeffstory007@gmail.com');
+    expect(seenChatJids).toContain('bb:iMessage;-;+12025550101');
+    expect(seenChatJids).toContain('bb:iMessage;-;owner@example.com');
   });
 
   it.each([
@@ -331,8 +331,8 @@ describe('bluebubbles companion helpers', () => {
     'allows bare follow-ups for a pending $label across BlueBubbles self-thread aliases',
     ({ expected, resolver }) => {
       const seenChatJids: string[] = [];
-      const emailAlias = 'bb:iMessage;-;jeffstory007@gmail.com';
-      const canonicalAlias = 'bb:iMessage;-;+14695405551';
+      const emailAlias = 'bb:iMessage;-;owner@example.com';
+      const canonicalAlias = 'bb:iMessage;-;+12025550101';
       const handlers: {
         hasGoogleCalendarCreate(chatJid: string): boolean;
         hasGoogleCalendarReminder(chatJid: string): boolean;
@@ -469,7 +469,7 @@ describe('bluebubbles companion helpers', () => {
       lastActionKind: null,
       lastActionAt: '2026-04-07T20:20:00.000Z',
       dedupeKey: 'self-thread-proof-gap',
-      presentationChatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      presentationChatJid: 'bb:iMessage;-;owner@example.com',
       presentationThreadId: null,
       presentationMessageId: null,
       createdAt: '2026-04-07T20:19:00.000Z',
@@ -484,7 +484,7 @@ describe('bluebubbles companion helpers', () => {
         now: new Date('2026-04-07T20:30:00.000Z'),
       }),
     ).toEqual({
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       engagedAt: '2026-04-07T20:20:00.000Z',
     });
   });

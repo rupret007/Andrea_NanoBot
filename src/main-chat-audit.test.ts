@@ -8,13 +8,13 @@ import {
 
 describe('main chat audit helpers', () => {
   it('recognizes numeric Telegram chat ids', () => {
-    expect(isNumericTelegramChatJid('tg:8004355504')).toBe(true);
+    expect(isNumericTelegramChatJid('tg:100000001')).toBe(true);
     expect(isNumericTelegramChatJid('tg:runtime-proof')).toBe(false);
   });
 
   it('recognizes synthetic Telegram chat ids', () => {
     expect(isSyntheticTelegramChatJid('tg:runtime-proof')).toBe(true);
-    expect(isSyntheticTelegramChatJid('tg:8004355504')).toBe(false);
+    expect(isSyntheticTelegramChatJid('tg:100000001')).toBe(false);
   });
 
   it('recommends repair when a stale synthetic main chat has one live Telegram DM candidate', () => {
@@ -30,7 +30,7 @@ describe('main chat audit helpers', () => {
       },
       chats: [
         {
-          jid: 'tg:8004355504',
+          jid: 'tg:100000001',
           name: 'Jeff',
           last_message_time: '2026-04-04T18:37:12.000Z',
           channel: 'telegram',
@@ -40,14 +40,14 @@ describe('main chat audit helpers', () => {
     });
 
     expect(result.warning).toContain('looks stale');
-    expect(result.repairTargetChat?.jid).toBe('tg:8004355504');
+    expect(result.repairTargetChat?.jid).toBe('tg:100000001');
     expect(result.registeredMainChatPresentInChats).toBe(false);
   });
 
   it('does not recommend repair when the existing main chat is already valid', () => {
     const result = auditRegisteredMainChat({
       registeredMainChat: {
-        jid: 'tg:8004355504',
+        jid: 'tg:100000001',
         name: 'Jeff',
         folder: 'main',
         trigger: '@Andrea',
@@ -57,7 +57,7 @@ describe('main chat audit helpers', () => {
       },
       chats: [
         {
-          jid: 'tg:8004355504',
+          jid: 'tg:100000001',
           name: 'Jeff',
           last_message_time: '2026-04-04T18:37:12.000Z',
           channel: 'telegram',
@@ -84,7 +84,7 @@ describe('main chat audit helpers', () => {
       },
       chats: [
         {
-          jid: 'tg:8004355504',
+          jid: 'tg:100000001',
           name: 'Jeff',
           last_message_time: '2026-04-04T18:37:12.000Z',
           channel: 'telegram',

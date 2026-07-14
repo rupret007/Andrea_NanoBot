@@ -1,6 +1,14 @@
-# NanoClaw Requirements
+# Archived NanoClaw Requirements (Non-Normative)
 
-> Historical NanoClaw design reference. Current Andrea_NanoBot operator truth lives in the root README, `docs/ADMIN_GUIDE.md`, `docs/SETUP_AND_FEATURES_GUIDE.md`, and `docs/ALEXA_VOICE_INTEGRATION.md`.
+> **ARCHIVED DESIGN RECORD — NOT CURRENT REQUIREMENTS.** The text below
+> preserves the original NanoClaw author's goals and may contradict Andrea's
+> present product, security, channels, memory, tools, deployment, and approval
+> model. Do not use it to configure a host, grant authority, choose mounts,
+> expose tools, delete authentication state, or make a release claim. Current
+> operator truth lives in the root README, [ADMIN_GUIDE.md](ADMIN_GUIDE.md),
+> [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md),
+> [SECURITY.md](SECURITY.md), and live status commands. Where any statement
+> below conflicts, the current code, tests, and operator docs win.
 
 Original requirements and design decisions from the project creator.
 
@@ -111,6 +119,11 @@ A personal Claude assistant accessible via messaging, with minimal custom code.
 - Bash access is safe because commands run inside the container, not on the host
 - Browser automation via agent-browser with Chromium in the container
 
+> **Current correction:** a container bounds risk; it does not make Bash safe by
+> itself or eliminate host effects. Current Andrea exposes shell capability only
+> to classified execution routes and enforces mount, IPC, approval, and
+> postcondition boundaries.
+
 ### Scheduled Tasks
 
 - Users can ask Claude to schedule recurring or one-time tasks from any group
@@ -121,6 +134,10 @@ A personal Claude assistant accessible via messaging, with minimal custom code.
 - Schedule types: cron expressions, intervals (ms), or one-time (ISO timestamp)
 - From main: can schedule tasks for any group, view/manage all tasks
 - From other groups: can only manage that group's tasks
+
+> **Current correction:** scheduled work is route- and policy-scoped. It never
+> inherits every tool merely because it is scheduled, and external effects do
+> not bypass fresh approval.
 
 ### Group Management
 

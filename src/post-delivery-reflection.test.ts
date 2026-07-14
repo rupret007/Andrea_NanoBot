@@ -29,7 +29,7 @@ function seedFeedback(
     classification: 'repo_side_rough_edge',
     channel: 'bluebubbles',
     groupFolder: 'main',
-    chatJid: 'bb:iMessage;-;+14695405551',
+    chatJid: 'bb:iMessage;-;+12025550101',
     threadId: null,
     platformMessageId: 'message-1',
     userMessageId: 'user-message-1',

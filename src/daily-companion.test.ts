@@ -79,7 +79,7 @@ function createReminderTask(
   return {
     id,
     group_folder: 'main',
-    chat_jid: 'tg:8004355504',
+    chat_jid: 'tg:100000001',
     prompt: `Send a concise reminder telling the user to ${label}.`,
     script: null,
     schedule_type: 'once',
@@ -264,7 +264,7 @@ describe('buildDailyCompanionResponse', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the Candace thread',
       replyText: 'Talk through dinner plans tonight.',
       now: new Date('2026-04-04T11:00:00-05:00'),
@@ -342,14 +342,14 @@ describe('buildDailyCompanionResponse', () => {
     await handleEverydayCaptureCommand({
       channel: 'telegram',
       groupFolder: 'main',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'add pay water bill to my list',
       now,
     });
     await handleEverydayCaptureCommand({
       channel: 'telegram',
       groupFolder: 'main',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'add my pills to tonight',
       now,
     });
@@ -377,7 +377,7 @@ describe('buildDailyCompanionResponse', () => {
     analyzeCommunicationMessage({
       channel: 'telegram',
       groupFolder: 'main',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'Candace: Can you let me know if dinner still works tonight?',
       now: new Date('2026-04-04T11:00:00-05:00'),
     });
@@ -589,7 +589,7 @@ describe('buildDailyCompanionResponse', () => {
     const saved = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the Candace thread',
       replyText: 'Talk through dinner plans tonight.',
       now: new Date('2026-04-04T09:00:00-05:00'),
@@ -598,7 +598,7 @@ describe('buildDailyCompanionResponse', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: "don't bring this up automatically",
       priorContext: {
         summaryText: 'Candace dinner plans',
@@ -652,7 +652,7 @@ describe('buildDailyCompanionResponse', () => {
     const saved = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the Candace thread',
       replyText: 'Confirm dinner plans and pickup timing.',
       now: new Date('2026-04-04T10:00:00-05:00'),
@@ -661,7 +661,7 @@ describe('buildDailyCompanionResponse', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: "don't bring this up automatically",
       priorContext: {
         summaryText: 'Candace dinner plans',
@@ -706,7 +706,7 @@ describe('buildDailyCompanionResponse', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the Candace thread',
       replyText: 'Confirm dinner plans and pickup timing.',
       now: new Date('2026-04-04T10:00:00-05:00'),
@@ -742,7 +742,7 @@ describe('buildDailyCompanionResponse', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the Candace thread',
       replyText: 'Talk through dinner plans tonight.',
       now: new Date('2026-04-04T10:00:00-05:00'),
@@ -774,7 +774,7 @@ describe('buildDailyCompanionResponse', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the Candace thread',
       replyText:
         'Candace wants a follow-up about whether dinner still works tonight.',
@@ -903,7 +903,7 @@ describe('buildDailyCompanionResponse', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this for later',
       replyText:
         'The first fixed point in your day is pest control is coming today at 1:00 PM.',
@@ -1081,7 +1081,7 @@ describe('buildDailyCompanionResponse', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'remind me to talk to Candace about dinner plans tonight',
       now: new Date('2026-04-04T09:00:00-05:00'),
     });
@@ -1121,7 +1121,7 @@ describe('buildDailyCompanionResponse', () => {
     handleRitualCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'make the morning brief shorter',
       now: new Date('2026-04-04T07:00:00-05:00'),
     });
@@ -1259,7 +1259,7 @@ describe('buildDailyCompanionResponse', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the band thread',
       replyText: 'Confirm rehearsal time with the drummer.',
       now: new Date('2026-04-04T08:30:00-05:00'),

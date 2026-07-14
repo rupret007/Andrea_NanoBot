@@ -76,6 +76,7 @@ export interface ResearchRequest {
   requestedDepth?: 'brief' | 'standard' | 'deep';
   comparisonTargets?: string[];
   allowWebSearch?: boolean;
+  personalContextMode?: 'auto' | 'explicit' | 'disabled';
   savedMaterialMode?: 'auto' | 'only' | 'prefer' | 'combine';
   requestedSourceIds?: string[];
 }
@@ -87,6 +88,13 @@ export interface ResearchSourceSet {
   braveSearch: boolean;
   runtimeDelegate: boolean;
   webSearch: boolean;
+}
+
+export interface ResearchPersonalContextSources {
+  lifeThreads: boolean;
+  tasks: boolean;
+  calendar: boolean;
+  profileFacts: boolean;
 }
 
 export interface ResearchPlan {
@@ -183,9 +191,61 @@ const SAVED_ONLY_RE =
   /\b(use only my saved material|only my saved material|what do my saved notes say|what did i save about|summari[sz]e what i saved|what do i already know about|what have i saved)\b/i;
 const SAVED_COMBINE_RE =
   /\b(combine my notes with outside research|combine my saved material with general knowledge|use my saved material with outside research)\b/i;
+const EXPLICIT_PERSONAL_CONTEXT_RE =
+  /(?:\b(?:use|using|include|consider|check|review|factor in|based on)\b[\s\S]{0,70}\b(?:my (?:personal )?context|my calendar|my (?:active )?tasks?|my reminders?|my (?:saved )?(?:preferences|profile|notes)|my life threads?|what you know about me)\b|\btake\b[\s\S]{0,50}\b(?:my (?:personal )?context|my calendar|my (?:active )?tasks?|my reminders?|my (?:saved )?(?:preferences|profile|notes)|my life threads?|what you know about me)\b[\s\S]{0,20}\binto account\b)/i;
 
 function normalizeQuery(value: string): string {
   return normalizeVoicePrompt(value).replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Compound outward research stays privacy-minimized unless the user names the
+ * personal source they want considered. Generic phrasing such as "for me" is
+ * not enough to authorize collecting calendar, task, profile, or life-thread
+ * context for an external synthesis request.
+ */
+export function resolveExplicitResearchPersonalContextMode(
+  text: string,
+): 'explicit' | 'disabled' {
+  return EXPLICIT_PERSONAL_CONTEXT_RE.test(normalizeQuery(text))
+    ? 'explicit'
+    : 'disabled';
+}
+
+export function resolveResearchPersonalContextSources(
+  request: ResearchRequest,
+): ResearchPersonalContextSources {
+  if (request.personalContextMode === 'disabled') {
+    return {
+      lifeThreads: false,
+      tasks: false,
+      calendar: false,
+      profileFacts: false,
+    };
+  }
+  if (request.personalContextMode !== 'explicit') {
+    return {
+      lifeThreads: true,
+      tasks: true,
+      calendar: true,
+      profileFacts: true,
+    };
+  }
+
+  const query = normalizeQuery(request.query);
+  const broad = /\b(?:my (?:personal )?context|what you know about me)\b/i.test(
+    query,
+  );
+  return {
+    lifeThreads: broad || /\bmy life threads?\b/i.test(query),
+    tasks:
+      broad ||
+      /\bmy (?:(?:active )?tasks?|reminders?|open loops?)\b/i.test(query),
+    calendar: broad || /\bmy calendar\b/i.test(query),
+    profileFacts:
+      broad ||
+      /\bmy (?:(?:saved )?(?:preferences|profile)|saved notes?)\b/i.test(query),
+  };
 }
 
 function cleanSearchPart(value: string | undefined): string {
@@ -773,10 +833,20 @@ function buildResearchBlockerResult(
 export function isResearchPrompt(text: string): boolean {
   const normalized = normalizeQuery(text).toLowerCase();
   if (!normalized) return false;
+  const qualifiedFindOrLookFor = normalized.match(
+    /^(?:(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:also\s+)?)(?:find|look\s+for)\s+(.+)$/,
+  )?.[1];
+  const hasResearchQualifier = Boolean(
+    qualifiedFindOrLookFor &&
+    /\b(?:good|best|right|suitable|recommended|recommendation|source[- ]backed|current|latest|recent|information|info|evidence|sources?|guides?|options?|comparison|research)\b/i.test(
+      qualifiedFindOrLookFor,
+    ),
+  );
   return (
-    /^(research|look into|compare|summarize|summarise|explain the tradeoffs|what'?s the best choice|what is the best choice|what should i know before deciding|what are the pros and cons|which one'?s actually better for me)\b/.test(
+    /^(?:(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:also\s+)?)(?:research|(?:kick\s+off|start)\s+(?:some\s+)?research|look\s+(?:up|into)|investigate|compare|recommend|summarize|summarise|explain the tradeoffs|what'?s the best choice|what is the best choice|what should i know before deciding|what are the pros and cons|which one'?s actually better for me)\b/.test(
       normalized,
     ) ||
+    hasResearchQualifier ||
     /\b(report back|tradeoffs?|compare options|summarize findings|summarise findings|pros and cons|before deciding)\b/.test(
       normalized,
     ) ||
@@ -788,14 +858,24 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
   const query = normalizeQuery(request.query);
   const lower = query.toLowerCase();
   const savedMaterialMode = resolveSavedMaterialMode(request, lower);
-  const kind: ResearchRequestKind =
-    /\b(compare|versus|vs\.?|tradeoffs?|pros and cons|pros|cons)\b/i.test(lower)
+  const personalContextAllowed = request.personalContextMode !== 'disabled';
+  const explicitDeepResearch =
+    request.requestedDepth === 'deep' ||
+    /\b(?:deep dive|comprehensive research|thorough research|research thoroughly|use all available resources|use all resources|ultrathink|max[- ]?iq)\b/i.test(
+      lower,
+    );
+  const kind: ResearchRequestKind = explicitDeepResearch
+    ? 'deep_research'
+    : /\b(compare|versus|vs\.?|tradeoffs?|pros and cons|pros|cons)\b/i.test(
+          lower,
+        )
       ? 'compare'
       : /\b(best choice|recommend|which should i|which one'?s actually better for me|what should i pick|what should i know before deciding|before deciding|why|should i buy this one or that one|should i buy this or that)\b/i.test(
             lower,
           )
         ? 'recommend'
-        : /\b(research|look into|report back|deep dive|explain the tradeoffs)\b/i.test(
+        : request.requestedDepth === undefined &&
+            /\b(research|look into|report back|deep dive|explain the tradeoffs)\b/i.test(
               lower,
             )
           ? 'deep_research'
@@ -810,13 +890,24 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
     /\b(news|headlines|latest news|news today|today'?s news)\b/i.test(lower);
   const liveLookupLikely = isLiveLookupConversationalPrompt(lower);
   const personalContextLikely =
-    PERSONAL_CONTEXT_RE.test(lower) && !currentNewsLikely && !liveLookupLikely;
+    personalContextAllowed &&
+    (request.personalContextMode === 'explicit' ||
+      (PERSONAL_CONTEXT_RE.test(lower) &&
+        !currentNewsLikely &&
+        !liveLookupLikely));
+  const explicitOutwardResearch =
+    request.allowWebSearch === true ||
+    (explicitDeepResearch &&
+      /\b(?:research|look\s+(?:for|up|into)|find|investigate|compare|recommend|best|good)\b/i.test(
+        lower,
+      ));
   const externalLikely =
-    (currentNewsLikely ||
+    explicitOutwardResearch ||
+    ((currentNewsLikely ||
       liveLookupLikely ||
       EXTERNAL_FACT_RE.test(lower) ||
       isResearchEligibleConversationalPrompt(lower)) &&
-    !personalContextLikely;
+      !personalContextLikely);
   const synthesisHeavy =
     kind !== 'summary' ||
     /\b(report back|research|look into|what matters|before deciding)\b/i.test(
@@ -836,6 +927,7 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
     mixedContextLikely ||
     (!personalContextLikely && synthesisHeavy);
   const shouldUseLocalContext =
+    personalContextAllowed &&
     Boolean(request.groupFolder) &&
     (personalContextLikely ||
       mixedContextLikely ||
@@ -857,6 +949,7 @@ export function planResearchRequest(request: ResearchRequest): ResearchPlan {
         ? savedMaterialMode === 'combine'
         : shouldUseOpenAi) &&
         (externalLikely ||
+          explicitDeepResearch ||
           /\b(current|latest|today|this week)\b/i.test(lower))),
     ),
   };
@@ -927,43 +1020,51 @@ async function collectLocalResearchContext(
   }
 
   const now = request.now ?? new Date();
-  const snapshot = buildLifeThreadSnapshot({
-    groupFolder: request.groupFolder,
-    now,
-  });
-  const threadCandidates = [
-    ...snapshot.dueFollowups,
-    ...snapshot.activeThreads.filter(
-      (thread) => thread.surfaceMode !== 'manual_only',
-    ),
-  ];
-  const threadLines = threadCandidates
-    .slice(0, 3)
-    .map((thread) => {
-      const focus = thread.nextAction || thread.summary;
-      return buildResearchLifeThreadLine(thread.title, focus);
-    })
-    .filter(Boolean);
+  const personalSources = resolveResearchPersonalContextSources(request);
+  const threadLines = personalSources.lifeThreads
+    ? (() => {
+        const snapshot = buildLifeThreadSnapshot({
+          groupFolder: request.groupFolder,
+          now,
+        });
+        return [
+          ...snapshot.dueFollowups,
+          ...snapshot.activeThreads.filter(
+            (thread) => thread.surfaceMode !== 'manual_only',
+          ),
+        ]
+          .slice(0, 3)
+          .map((thread) => {
+            const focus = thread.nextAction || thread.summary;
+            return buildResearchLifeThreadLine(thread.title, focus);
+          })
+          .filter(Boolean);
+      })()
+    : [];
 
-  const taskLines = getAllTasks()
-    .filter(
-      (task) =>
-        task.group_folder === request.groupFolder && task.status === 'active',
-    )
-    .slice(0, 3)
-    .map((task) => normalizeResearchTaskPrompt(task.prompt))
-    .filter(Boolean);
+  const taskLines = personalSources.tasks
+    ? getAllTasks()
+        .filter(
+          (task) =>
+            task.group_folder === request.groupFolder &&
+            task.status === 'active',
+        )
+        .slice(0, 3)
+        .map((task) => normalizeResearchTaskPrompt(task.prompt))
+        .filter(Boolean)
+    : [];
 
-  const memoryLines = listProfileFactsForGroup(request.groupFolder, [
-    'accepted',
-  ])
-    .slice(0, 3)
-    .map((fact) => fact.sourceSummary.trim())
-    .filter(Boolean);
+  const memoryLines = personalSources.profileFacts
+    ? listProfileFactsForGroup(request.groupFolder, ['accepted'])
+        .slice(0, 3)
+        .map((fact) => fact.sourceSummary.trim())
+        .filter(Boolean)
+    : [];
 
   const calendarConfig = resolveGoogleCalendarConfig();
   let calendarLines: string[] = [];
   if (
+    personalSources.calendar &&
     calendarConfig.accessToken &&
     (calendarConfig.refreshToken ||
       (calendarConfig.clientId && calendarConfig.clientSecret))
@@ -2094,7 +2195,8 @@ async function runResearchOrchestratorInternal(
   }
 
   const context =
-    plan.sources.localContext || plan.primarySource === 'openai_responses'
+    request.personalContextMode !== 'disabled' &&
+    (plan.sources.localContext || plan.primarySource === 'openai_responses')
       ? await collectLocalResearchContext(normalizedRequest)
       : {
           threadLines: [],

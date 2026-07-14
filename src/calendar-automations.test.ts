@@ -376,7 +376,7 @@ describe('planCalendarAutomation', () => {
         configuredCalendars: [
           {
             id: 'primary',
-            summary: 'jeffstory007@gmail.com',
+            summary: 'owner@example.com',
             primary: true,
             accessRole: 'owner',
             writable: true,
@@ -400,7 +400,7 @@ describe('planCalendarAutomation', () => {
     if (result.state.step !== 'confirm') return;
     expect(result.state.draft.config.scopeKind).toBe('named_calendar');
     expect(result.state.draft.config.scopeCalendarId).toBe('primary');
-    expect(result.message).toContain('Scope: jeffstory007@gmail.com');
+    expect(result.message).toContain('Scope: owner@example.com');
   });
 
   it('asks briefly when multiple named calendars match', async () => {

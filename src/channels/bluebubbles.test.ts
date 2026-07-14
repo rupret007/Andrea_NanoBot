@@ -604,18 +604,18 @@ describe('BlueBubbles channel', () => {
       const basePayload = {
         type: 'new-message',
         data: {
-          chatGuid: 'iMessage;-;+14695405551',
+          chatGuid: 'iMessage;-;+12025550101',
           chat: {
-            guid: 'iMessage;-;+14695405551',
+            guid: 'iMessage;-;+12025550101',
             displayName: 'Jeff',
-            participants: [{ address: '+14695405551' }],
+            participants: [{ address: '+12025550101' }],
             isGroup: false,
           },
           message: {
             body: '@Andrea help',
             senderName: 'Jeff',
             isFromMe: true,
-            handle: { address: '+14695405551', displayName: 'Jeff' },
+            handle: { address: '+12025550101', displayName: 'Jeff' },
             dateCreated: '2026-04-12T20:08:00.000Z',
           },
         },
@@ -704,21 +704,21 @@ describe('BlueBubbles channel', () => {
                 text: '@Andrea Hi',
                 isFromMe: true,
                 service: 'iMessage',
-                chatIdentifier: '+14695405551',
-                lastAddressedHandle: 'jeffstory007@gmail.com',
+                chatIdentifier: '+12025550101',
+                lastAddressedHandle: 'owner@example.com',
                 handle: {
-                  address: '+14695405551',
+                  address: '+12025550101',
                   displayName: 'Jeff',
                   service: 'iMessage',
                 },
                 chats: [
                   {
-                    guid: 'iMessage;-;+14695405551',
-                    chatIdentifier: '+14695405551',
-                    lastAddressedHandle: 'jeffstory007@gmail.com',
+                    guid: 'iMessage;-;+12025550101',
+                    chatIdentifier: '+12025550101',
+                    lastAddressedHandle: 'owner@example.com',
                     service: 'iMessage',
                     isGroup: false,
-                    participants: [{ address: '+14695405551' }],
+                    participants: [{ address: '+12025550101' }],
                   },
                 ],
               },
@@ -738,19 +738,19 @@ describe('BlueBubbles channel', () => {
       }
       const parsed = JSON.parse(body) as Record<string, unknown>;
       requests.push(parsed);
-      if (parsed.chatGuid === 'iMessage;-;+14695405551') {
+      if (parsed.chatGuid === 'iMessage;-;+12025550101') {
         res.statusCode = 500;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ error: 'Message Send Error' }));
         return;
       }
-      if (parsed.chatGuid === 'any;-;jeffstory007@gmail.com') {
+      if (parsed.chatGuid === 'any;-;owner@example.com') {
         res.statusCode = 500;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ error: 'Message Send Error' }));
         return;
       }
-      if (parsed.chatGuid === 'iMessage;-;jeffstory007@gmail.com') {
+      if (parsed.chatGuid === 'iMessage;-;owner@example.com') {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         res.end(
@@ -799,20 +799,20 @@ describe('BlueBubbles channel', () => {
         body: JSON.stringify({
           type: 'new-message',
           data: {
-            chatGuid: 'iMessage;-;+14695405551',
+            chatGuid: 'iMessage;-;+12025550101',
             chat: {
-              guid: 'iMessage;-;+14695405551',
+              guid: 'iMessage;-;+12025550101',
               displayName: 'Jeff',
               isGroup: false,
-              chatIdentifier: '+14695405551',
-              participants: [{ address: '+14695405551' }],
+              chatIdentifier: '+12025550101',
+              participants: [{ address: '+12025550101' }],
             },
             message: {
               guid: 'msg-self-1',
               body: '@Andrea hi',
               senderName: 'Jeff',
               handle: {
-                address: '+14695405551',
+                address: '+12025550101',
                 displayName: 'Jeff',
                 service: 'iMessage',
               },
@@ -826,20 +826,20 @@ describe('BlueBubbles channel', () => {
       expect(inbound.status).toBe(200);
       expect(
         (channel as any)['buildOutboundTargetCandidates'](
-          'bb:iMessage;-;+14695405551',
-          'iMessage;-;+14695405551',
+          'bb:iMessage;-;+12025550101',
+          'iMessage;-;+12025550101',
         ),
       ).toEqual([
-        { kind: 'chat_guid', chatGuid: 'iMessage;-;+14695405551' },
-        { kind: 'chat_identifier', chatGuid: 'any;-;+14695405551' },
+        { kind: 'chat_guid', chatGuid: 'iMessage;-;+12025550101' },
+        { kind: 'chat_identifier', chatGuid: 'any;-;+12025550101' },
       ]);
 
       const first = await channel.sendMessage(
-        'bb:iMessage;-;+14695405551',
+        'bb:iMessage;-;+12025550101',
         'Hi. I am here.',
       );
       const second = await channel.sendMessage(
-        'bb:iMessage;-;+14695405551',
+        'bb:iMessage;-;+12025550101',
         'Still here.',
       );
 
@@ -847,14 +847,14 @@ describe('BlueBubbles channel', () => {
       expect(second.platformMessageId).toBe('bb:server-msg-5');
       expect(historyRequests).toHaveLength(1);
       expect(historyRequests[0]).toContain(
-        '/api/v1/chat/iMessage%3B-%3B%2B14695405551/message',
+        '/api/v1/chat/iMessage%3B-%3B%2B12025550101/message',
       );
       expect(requests.map((request) => request.chatGuid)).toEqual([
-        'iMessage;-;+14695405551',
-        'any;-;jeffstory007@gmail.com',
-        'iMessage;-;jeffstory007@gmail.com',
-        'iMessage;-;+14695405551',
-        'iMessage;-;jeffstory007@gmail.com',
+        'iMessage;-;+12025550101',
+        'any;-;owner@example.com',
+        'iMessage;-;owner@example.com',
+        'iMessage;-;+12025550101',
+        'iMessage;-;owner@example.com',
       ]);
       expect(
         requests.every((request) => request.method === 'apple-script'),
@@ -868,20 +868,20 @@ describe('BlueBubbles channel', () => {
       ).toBe(true);
       expect(
         (channel as any)['buildOutboundTargetCandidates'](
-          'bb:iMessage;-;+14695405551',
-          'iMessage;-;+14695405551',
+          'bb:iMessage;-;+12025550101',
+          'iMessage;-;+12025550101',
         ),
       ).toEqual([
-        { kind: 'chat_guid', chatGuid: 'iMessage;-;+14695405551' },
+        { kind: 'chat_guid', chatGuid: 'iMessage;-;+12025550101' },
         {
           kind: 'service_specific_last_addressed_handle',
-          chatGuid: 'iMessage;-;jeffstory007@gmail.com',
+          chatGuid: 'iMessage;-;owner@example.com',
         },
         {
           kind: 'last_addressed_handle',
-          chatGuid: 'any;-;jeffstory007@gmail.com',
+          chatGuid: 'any;-;owner@example.com',
         },
-        { kind: 'chat_identifier', chatGuid: 'any;-;+14695405551' },
+        { kind: 'chat_identifier', chatGuid: 'any;-;+12025550101' },
       ]);
       expect(
         healthDetails.some((detail) =>
@@ -2515,11 +2515,11 @@ describe('BlueBubbles channel', () => {
         body: JSON.stringify({
           type: 'new-message',
           data: {
-            chatGuid: 'iMessage;-;+14695405551',
+            chatGuid: 'iMessage;-;+12025550101',
             chat: {
-              guid: 'iMessage;-;+14695405551',
+              guid: 'iMessage;-;+12025550101',
               displayName: 'Jeff',
-              participants: [{ address: '+14695405551' }],
+              participants: [{ address: '+12025550101' }],
               isGroup: false,
             },
             message: {
@@ -2527,7 +2527,7 @@ describe('BlueBubbles channel', () => {
               body: 'what do i still need to buy',
               senderName: 'Jeff',
               isFromMe: true,
-              handle: { address: '+14695405551', displayName: 'Jeff' },
+              handle: { address: '+12025550101', displayName: 'Jeff' },
               dateCreated: '2026-04-12T20:08:00.000Z',
             },
           },
@@ -2537,7 +2537,7 @@ describe('BlueBubbles channel', () => {
       expect(response.status).toBe(200);
       expect(onMessage).toHaveBeenCalledTimes(1);
       expect(onMessage).toHaveBeenCalledWith(
-        'bb:iMessage;-;+14695405551',
+        'bb:iMessage;-;+12025550101',
         expect.objectContaining({
           content: 'what do i still need to buy',
           is_from_me: true,
@@ -2655,7 +2655,7 @@ describe('BlueBubbles channel', () => {
       }
       if (
         (req.url || '').includes(
-          '/api/v1/chat/iMessage%3B-%3B%2B14695405551/message',
+          '/api/v1/chat/iMessage%3B-%3B%2B12025550101/message',
         )
       ) {
         res.statusCode = 200;
@@ -2671,13 +2671,13 @@ describe('BlueBubbles channel', () => {
                 dateCreated: '2026-04-12T20:09:30.000Z',
                 chats: [
                   {
-                    guid: 'iMessage;-;+14695405551',
+                    guid: 'iMessage;-;+12025550101',
                     displayName: 'Jeff',
-                    participants: [{ address: '+14695405551' }],
+                    participants: [{ address: '+12025550101' }],
                     isGroup: false,
                   },
                 ],
-                handle: { address: '+14695405551', displayName: 'Jeff' },
+                handle: { address: '+12025550101', displayName: 'Jeff' },
               },
             ],
           }),
@@ -2686,7 +2686,7 @@ describe('BlueBubbles channel', () => {
       }
       if (
         (req.url || '').includes(
-          '/api/v1/chat/iMessage%3B-%3B%2B12147254219/message',
+          '/api/v1/chat/iMessage%3B-%3B%2B12025550104/message',
         )
       ) {
         res.statusCode = 200;
@@ -2702,13 +2702,13 @@ describe('BlueBubbles channel', () => {
                 dateCreated: '2026-04-12T20:09:45.000Z',
                 chats: [
                   {
-                    guid: 'iMessage;-;+12147254219',
+                    guid: 'iMessage;-;+12025550104',
                     displayName: 'Friend',
-                    participants: [{ address: '+12147254219' }],
+                    participants: [{ address: '+12025550104' }],
                     isGroup: false,
                   },
                 ],
-                handle: { address: '+12147254219', displayName: 'Friend' },
+                handle: { address: '+12025550104', displayName: 'Friend' },
               },
             ],
           }),
@@ -2736,7 +2736,7 @@ describe('BlueBubbles channel', () => {
 
     try {
       storeChatMetadata(
-        'bb:iMessage;-;+12147254219',
+        'bb:iMessage;-;+12025550104',
         '2026-04-12T20:09:40.000Z',
         'Friend',
         'bluebubbles',
@@ -2748,10 +2748,10 @@ describe('BlueBubbles channel', () => {
       const monitorState = readBlueBubblesMonitorState();
       expect(monitorState.shadowPollLastError).toBeNull();
       expect(monitorState.shadowPollMostRecentChat).toBe(
-        'bb:iMessage;-;+12147254219',
+        'bb:iMessage;-;+12025550104',
       );
       expect(monitorState.mostRecentServerSeenChatJid).toBe(
-        'bb:iMessage;-;+12147254219',
+        'bb:iMessage;-;+12025550104',
       );
       expect(monitorState.detectionState).toBe('healthy');
     } finally {
@@ -2784,7 +2784,7 @@ describe('BlueBubbles channel', () => {
       }
       if (
         (req.url || '').includes(
-          '/api/v1/chat/iMessage%3B-%3B%2B14695405551/message',
+          '/api/v1/chat/iMessage%3B-%3B%2B12025550101/message',
         )
       ) {
         res.statusCode = 200;
@@ -2800,12 +2800,12 @@ describe('BlueBubbles channel', () => {
       ...createDefaultBlueBubblesMonitorState('2026-04-12T20:05:00.000Z'),
       updatedAt: '2026-04-12T20:05:00.000Z',
       lastInboundObservedAt: '2026-04-12T20:04:00.000Z',
-      lastInboundChatJid: 'bb:iMessage;-;+14695405551',
+      lastInboundChatJid: 'bb:iMessage;-;+12025550101',
       lastInboundWasSelfAuthored: true,
       lastOutboundObservedAt: '2026-04-12T20:05:00.000Z',
-      lastOutboundObservedChatJid: 'bb:iMessage;-;+14695405551',
+      lastOutboundObservedChatJid: 'bb:iMessage;-;+12025550101',
       lastOutboundTargetKind: 'chat_guid',
-      lastOutboundTargetValue: 'iMessage;-;+14695405551',
+      lastOutboundTargetValue: 'iMessage;-;+12025550101',
       lastMetadataHydrationSource: 'history',
       lastAttemptedTargetSequence: ['chat_guid', 'service_specific_direct'],
     });
@@ -2834,11 +2834,11 @@ describe('BlueBubbles channel', () => {
       const latestDetail = healthUpdates[healthUpdates.length - 1] || '';
       expect(latestDetail).toContain('reply gate direct_1to1');
       expect(latestDetail).toContain(
-        'last outbound 2026-04-12T20:05:00.000Z (bb:iMessage;-;+14695405551)',
+        'last outbound 2026-04-12T20:05:00.000Z (bb:iMessage;-;+12025550101)',
       );
       expect(latestDetail).toContain('last outbound target kind chat_guid');
       expect(latestDetail).toContain(
-        'last outbound target value iMessage;-;+14695405551',
+        'last outbound target value iMessage;-;+12025550101',
       );
       expect(latestDetail).toContain('last metadata hydration history');
       expect(latestDetail).toContain(

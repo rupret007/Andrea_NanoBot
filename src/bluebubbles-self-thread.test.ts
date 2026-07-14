@@ -25,37 +25,51 @@ describe('BlueBubbles self-thread resolver', () => {
     }
   });
 
-  it('defaults to the Mac mini iMessage proof thread and account alias', () => {
+  it('uses only reserved non-personal fixtures when self-thread config is absent', () => {
     delete process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
     delete process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
 
     const config = resolveBlueBubblesSelfThreadConfig({});
 
-    expect(config.canonicalJid).toBe('bb:iMessage;-;+14695405551');
-    expect(config.aliasJids).toContain('bb:iMessage;-;+14695405551');
-    expect(config.aliasJids).toContain('bb:iMessage;-;jeffstory007@gmail.com');
-    expect(config.aliasJids).not.toContain('bb:SMS;-;+19128007274');
+    expect(config).toEqual({
+      canonicalJid: 'bb:iMessage;-;+12025550101',
+      aliasJids: [
+        'bb:iMessage;-;+12025550101',
+        'bb:iMessage;-;owner@example.com',
+      ],
+    });
   });
 
-  it('canonicalizes env aliases without requiring the bb: prefix', () => {
-    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID = 'SMS;-;+15551234567';
+  it('lets environment configuration override the sentinel and canonicalizes aliases', () => {
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID = 'SMS;-;+12025550109';
     process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS =
-      'SMS;-;+15551234567,iMessage;-;jeff@example.com';
+      'SMS;-;+12025550109,iMessage;-;alias@example.invalid';
 
     expect(getBlueBubblesCanonicalSelfThreadJid()).toBe(
-      'bb:SMS;-;+15551234567',
+      'bb:SMS;-;+12025550109',
     );
     expect(
-      isBlueBubblesSelfThreadAliasJid('bb:iMessage;-;jeff@example.com'),
+      isBlueBubblesSelfThreadAliasJid('bb:iMessage;-;alias@example.invalid'),
     ).toBe(true);
     expect(
-      canonicalizeBlueBubblesSelfThreadJid('iMessage;-;jeff@example.com'),
-    ).toBe('bb:SMS;-;+15551234567');
+      canonicalizeBlueBubblesSelfThreadJid('iMessage;-;alias@example.invalid'),
+    ).toBe('bb:SMS;-;+12025550109');
     expect(
-      expandBlueBubblesLogicalSelfThreadJids('bb:SMS;-;+15551234567'),
-    ).toContain('bb:iMessage;-;jeff@example.com');
+      expandBlueBubblesLogicalSelfThreadJids('bb:SMS;-;+12025550109'),
+    ).toContain('bb:iMessage;-;alias@example.invalid');
     expect(
-      expandBlueBubblesLogicalSelfThreadJids('bb:SMS;-;+15551234567'),
-    ).not.toContain('bb:iMessage;-;+14695405551');
+      expandBlueBubblesLogicalSelfThreadJids('bb:SMS;-;+12025550109'),
+    ).not.toContain('bb:iMessage;-;+12025550101');
+  });
+
+  it('does not blend fallback aliases into a canonical-only environment override', () => {
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;configured@example.invalid';
+    delete process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
+
+    expect(resolveBlueBubblesSelfThreadConfig({})).toEqual({
+      canonicalJid: 'bb:iMessage;-;configured@example.invalid',
+      aliasJids: ['bb:iMessage;-;configured@example.invalid'],
+    });
   });
 });

@@ -152,7 +152,7 @@ function isQuickControl(text: string): boolean {
 }
 
 function isDeepControl(text: string): boolean {
-  return /\b(think harder|think deeply|think this through|use all models|max[- ]?iq|ultrathink|deep dive|be really smart|reason this through)\b/i.test(
+  return /\b(think harder|think deeply|think this through|use all models|(?:use|using) all (?:the )?(?:available )?resources(?: available)?|max[- ]?iq|ultrathink|deep dive|be really smart|reason this through)\b/i.test(
     text,
   );
 }

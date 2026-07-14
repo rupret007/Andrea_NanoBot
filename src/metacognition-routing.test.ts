@@ -58,4 +58,20 @@ describe('metacognition strategy routing', () => {
       ),
     ).toBe(true);
   });
+
+  it('treats all-available-resources as explicit deep reasoning without escalating an ordinary compound ask', () => {
+    const ordinary = analyze(
+      'Add a meditation block to my calendar tomorrow at 8am and research a good meditation for me',
+    );
+    const explicit = analyze(
+      'Add a meditation block to my calendar tomorrow at 8am and use all available resources to research a good meditation for me',
+    );
+    const explicitNatural = analyze(
+      'Add a meditation block to my calendar tomorrow at 8am using all the resources available to research a good meditation for me',
+    );
+
+    expect(ordinary.mode).not.toBe('deliberate_with_critic');
+    expect(explicit.mode).toBe('deliberate_with_critic');
+    expect(explicitNatural.mode).toBe('deliberate_with_critic');
+  });
 });

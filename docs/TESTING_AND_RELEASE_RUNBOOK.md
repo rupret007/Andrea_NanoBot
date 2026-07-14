@@ -92,7 +92,7 @@ replace the real-container canary.
 Platform-specific release proof means:
 
 - macOS: build from the canonical checkout, restart launchd, and verify the
-  Mac mini service reports the serving commit from `/Users/jeffstory/Andrea_NanoBot`
+  Mac mini service reports the serving commit from `$HOME/Andrea_NanoBot`
 - Windows: build and verify through `scripts/nanoclaw-host.ps1` on a Windows
   host
 - native macOS arm64/x64 or Windows installer artifacts require a future
@@ -536,9 +536,10 @@ Implementation note:
 - if the host default `node` is not 22, do not use that runtime for DB-backed Alexa checks; unsupported runtimes can fail `better-sqlite3` with ABI mismatch errors that are not Alexa feature failures
 
 `test:major` includes `setup -- --step verify`, which is intentionally live: it
-may make a real model reachability request and start container execution probes.
-Use `test:major:ci` for offline release validation and do not run the live suite
-without intentional credentials, cost awareness, and operator authorization.
+may make a real, potentially billable model reachability request and start
+container execution probes. Use `test:major:ci` for offline release validation
+and do not run the live suite without intentional credentials, cost awareness,
+and operator authorization.
 
 ## 3. Stability Gate
 
@@ -612,13 +613,19 @@ a branch SHA, merge-preview SHA, or different main commit is not release
 evidence. Do not restart production until all of these post-main exact-SHA jobs
 pass.
 
+The Semgrep container may trust only the checked-out `$GITHUB_WORKSPACE` as a
+Git `safe.directory`. Never use wildcard `safe.directory` trust to make a
+scanner pass; that would broaden the container trust boundary beyond the exact
+release checkout.
+
 ## 5. Operator-Host Live Validation
 
 Run this on the real deployed host.
 
 ### Preconditions
 
-- Node 22 available
+- a supported Node runtime (`>=22 <23`) is available; `.nvmrc` pins repository
+  and CI validation to 22.22.2
 - one healthy container runtime
 - model credentials configured
 - at least one configured channel
@@ -633,6 +640,9 @@ Run:
 npm run setup -- --step verify
 ```
 
+This is a **live, potentially billable** operator command. It may probe a
+configured model and container runtime; it is not part of the offline gate.
+
 If Google Calendar writes are part of the release bar on that host, also run:
 
 ```bash
@@ -643,7 +653,7 @@ npm run debug:google-calendar
 Confirm:
 
 - `SERVICE: running_ready`
-- `ACTIVE_REPO_ROOT` matches `/Users/jeffstory/Andrea_NanoBot`
+- `ACTIVE_REPO_ROOT` matches `$HOME/Andrea_NanoBot`
 - `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: true` after the final restart into the release-candidate commit
 - `HOST_INSTALL_MODE` and `HOST_ACTIVE_LAUNCH_MODE` are both truthful and understandable
 - `CONFIGURED_CHANNELS: telegram`
@@ -985,11 +995,14 @@ When this Mac host must restart Andrea after a validated repo change, use:
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run mac:services:restart
+npm run mac:services:status
 npm run services:status
 ```
 
-Treat `services:status` serving-commit alignment as the acceptance check.
+Require a changed process identity/PID, matching ready/health PIDs, verified
+build provenance, and the expected serving commit. The current boot-ID marker
+is not an authoritative independent restart proof, so do not accept it alone.
 
 Hierarchical Goal Planning sits above Reality Grounding and Cognitive Executive:
 
@@ -1197,7 +1210,8 @@ Check:
 
 Only run a real Alexa acceptance pass if all of these are configured:
 
-- Node `22.22.2` on the host
+- a supported Node runtime (`>=22 <23`) on the host; the repository and CI pin
+  22.22.2 through `.nvmrc`
 - `ALEXA_SKILL_ID`
 - local Alexa listener config
 - local Andrea OAuth config:
@@ -1211,17 +1225,24 @@ Only run a real Alexa acceptance pass if all of these are configured:
 
 If any of those are missing, record Alexa as **code-ready but setup-blocked** instead of failing the release gate for missing external setup.
 
-Current truthful closeout note:
+Status-led closeout rules:
 
-- Telegram is configured and transport-healthy on this host, but its current
-  user-session proof is overdue; rerun `npm run telegram:user:smoke` before
-  claiming it as live-proven for a release or demo
+- Read `npm run services:status`, `npm run integrations:status -- --json`, and
+  the integration-specific debug command immediately before making a live
+  claim. Documentation is not a durable proof ledger.
+- A healthy Telegram transport is not an end-to-end reply proof; run
+  `npm run telegram:user:smoke` only when a real `/ping` send to the registered
+  Telegram chat is authorized.
 - Alexa listener, OAuth, public ingress, and pinned Node 22 can be healthy while Alexa proof is still `manual_action_required`; do not claim Alexa `live_proven` until a fresh handled custom-skill proof lands
 - after restart, operator surfaces may credit that Alexa proof either from the persisted handled signed-request markers or from a recent same-host `alexa_orientation` pilot success that already recorded the qualifying handled turn
 - if the repo Alexa model changed, the remaining release-candidate step is to import `docs/alexa/interaction-model.en-US.json`, run `Build Model`, and then run `npm run setup -- --step alexa-model-sync mark-synced`
 - if `npm run services:status` later shows `alexa_live_proof=near_live_only`, the remaining Alexa blocker is one human-operated voice or authenticated simulator run
-- BlueBubbles is currently a `live_proven` optional Messages bridge on this host because transport, webhook registration, the recent-activity shadow poll, and the canonical same-thread `message_action` proof chain are all healthy on this machine as of July 6, 2026
-- outward-facing research and Telegram image generation are currently healthy when the provider status checks remain green
+- BlueBubbles transport, webhook registration, recent-activity polling, and
+  canonical same-thread `message_action` proof are separate checks. Claim
+  `live_proven` only when the current status command reports a fresh complete
+  chain.
+- Research and image generation are live only when their dedicated current
+  probes pass. Provider configuration or cached health alone is insufficient.
 - if the Anthropic-compatible LiteLLM gateway degrades later, report that separately as the core-runtime compatibility lane rather than as a direct OpenAI billing problem
 - typed Alexa+ app chat is not an authoritative proof surface unless Andrea logs a real signed follow-up `IntentRequest` after launch
 - interaction-model changes require a fresh import of `docs/alexa/interaction-model.en-US.json` plus `Build Model` in the Alexa Developer Console before live utterance failures count against the repo
@@ -1247,10 +1268,11 @@ Dogfood handoff for this week:
   - run `npm run setup -- --step alexa-model-sync mark-synced`
   - run one fresh Alexa daily-guidance turn: `Open Andrea Assistant` then `What am I forgetting?`
   - run one fresh Telegram daily-guidance turn: `what am I forgetting` or `what should I remember tonight`
-- Still externally blocked:
-  - outward research
-  - image generation
-  - local Anthropic-compatible gateway / local gateway quota-backed compatibility lane
+- Recheck rather than assume:
+  - outward research and image generation may be live, provider-blocked, or
+    stale; use their dedicated current probes
+  - the local Anthropic-compatible gateway is a separate compatibility lane
+    whose quota and transport state must be reported independently
 - Watch for during dogfooding:
   - awkward wording
   - repeated phrasing
@@ -1321,7 +1343,9 @@ Expect:
 Important truth:
 
 - OpenAI-backed research is only live when `OPENAI_API_KEY` is configured and the provider account has usable quota/billing
-- on the current host, that direct OpenAI research path is live-proven and should not be reported as blocked unless a fresh provider proof fails again
+- do not infer current provider health from configuration or an older proof;
+  the dedicated live research probe must succeed in the current validation
+  window before the path is reported as live
 - `web_search` is in scope for research; file search is not promised unless separate file-search plumbing is added
 - Telegram is the rich research and media surface
 - Alexa should stay concise and use handoffs when the result is too long or not voice-safe
@@ -1433,16 +1457,20 @@ After meaningful runtime or operator-surface changes:
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run mac:services:restart
+npm run mac:services:status
 npm run setup -- --step verify
 ```
 
 Important rule:
 
 - run restart and verify sequentially, not in parallel
-- the macOS restart command waits for a new boot whose ready/health PID and
-  serving/build commit match the workspace before returning; a nonzero timeout
-  is a restart failure, not permission to verify stale state
+- require a changed process identity/PID, matching ready/health PIDs, verified
+  build provenance, and the expected serving/build commit; the current boot-ID
+  marker is not authoritative independent restart evidence
+- a nonzero restart timeout is a failure, not permission to verify stale state
+- `setup -- --step verify` is live and potentially billable; run it only with
+  intentional credentials, cost awareness, and operator authorization
 
 Then rerun a small live smoke:
 
@@ -1451,6 +1479,9 @@ Then rerun a small live smoke:
 - `/help`
 - `/cursor_status`
 - `npm run telegram:user:smoke`
+
+The Telegram smoke command performs a real `/ping` send to the registered chat.
+It is not a read-only transport check and requires explicit live-send authority.
 
 For registration and recovery hardening, run:
 
@@ -1564,21 +1595,13 @@ Before pushing a release:
 5. A fresh remote fetch proves `main` is non-diverged and its ancestry has not
    changed since the candidate review.
 
-For `codex/andrea-durable-cognitive-continuity-v1`, publication means one
-reviewed commit on that branch, a branch push, and a draft pull request. Do not
-merge `main` as part of the continuity round. Require the final exact-tree
-focused suite, adversarial durable invariants, and both continuity harnesses in
-addition to the matrix above.
-If every gate passes, the round permits one rebuild/restart of the Andrea
-LaunchAgent from the committed branch SHA for read-only recovery/provenance
-proof; it does not permit an OpenClaw restart, a paid provider call, a live
-channel send, or another external mutation.
-
-That branch publication is not a production release and cannot satisfy the
-main-only security gate. After a separately authorized merge, use the resulting
-`main` commit—not the pre-merge branch SHA or GitHub's pull-request merge
-preview—for the push-job, security-scan, build-provenance, and production
-release evidence below.
+For a review branch, publish a coherent reviewed commit and require its normal
+CI, container, AGI, and CodeQL checks plus any focused invariants for the
+changed boundary. Branch publication is not a production release and cannot
+satisfy the main-only security gate. After an authorized merge or direct-main
+release, use the resulting `main` commit—not a pre-merge branch SHA or GitHub
+pull-request merge preview—for push-job, security-scan, build-provenance, and
+production evidence.
 
 After publishing the final release commit on `main`:
 
@@ -1586,10 +1609,12 @@ After publishing the final release commit on `main`:
    secret-scan, and Semgrep jobs for the exact release SHA.
 2. Build from that committed SHA and verify clean provenance before stopping a
    service.
-3. Restart in dependency order and require new process/boot identity plus a
-   serving SHA that matches the release commit.
+3. Restart in dependency order and require a changed process identity/PID,
+   ready/health PID agreement, verified build provenance, and a serving SHA
+   that matches the release commit. Do not use the current boot-ID marker as
+   authoritative independent proof.
 4. Run only the operator-host and optional-integration probes authorized for
-   that release. `setup -- --step verify` is live and is not implied by the
-   offline gate.
+   that release. `setup -- --step verify` is live, potentially billable, and
+   not implied by the offline gate.
 5. Capture exact results, external proof debt, and caveats in the release notes
    or delivery summary without promoting missing operator evidence to success.

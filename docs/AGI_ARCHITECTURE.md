@@ -1,5 +1,11 @@
 # Architecture — AGI Layer
 
+> Historical design reference. The current production authority and recovery
+> model is documented in [PERSONAL_INTELLIGENCE_AND_VERIFIED_AGENCY.md](PERSONAL_INTELLIGENCE_AND_VERIFIED_AGENCY.md)
+> and [ANDREA_DURABLE_AGENCY_PLAN.md](ANDREA_DURABLE_AGENCY_PLAN.md). Do not
+> treat the provider names, latency/cost figures, or implementation paths below
+> as a current runtime inventory.
+
 ## Overview
 
 The AGI layer is a **bolt-on** to the existing NanoClaw / Andrea_NanoBot orchestrator. It does not replace `src/index.ts`, the channel registry, or the container runtime. Channels (WhatsApp, Telegram, Slack, Discord, Gmail, Alexa, BlueBubbles) continue to own message I/O. They now ask the AGI runtime "what should I say?" instead of invoking the agent SDK directly.

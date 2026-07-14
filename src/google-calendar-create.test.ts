@@ -4,9 +4,14 @@ import {
   advancePendingGoogleCalendarCreate,
   buildGoogleCalendarSchedulingContextState,
   buildPendingGoogleCalendarCreateState,
+  getGoogleCalendarCreateIdempotencyKey,
   formatGoogleCalendarCreatePrompt,
+  getGoogleCalendarCreateConfirmationActionId,
   isExplicitGoogleCalendarCreateRequest,
+  isPendingGoogleCalendarCreateExpired,
   planGoogleCalendarCreate,
+  getPendingGoogleCalendarCreatedEvent,
+  recordPendingGoogleCalendarCreateSuccess,
 } from './google-calendar-create.js';
 
 const writableCalendars = [
@@ -132,8 +137,8 @@ describe('planGoogleCalendarCreate', () => {
       "Add check air filters to Jeff's calendar tomorrow at 4pm.",
       [
         {
-          id: 'jeffstory007@gmail.com',
-          summary: 'jeffstory007@gmail.com',
+          id: 'owner@example.com',
+          summary: 'owner@example.com',
           primary: true,
           accessRole: 'owner',
           writable: true,
@@ -155,8 +160,8 @@ describe('planGoogleCalendarCreate', () => {
       'Add check air filters to my main calendar tomorrow at 4pm.',
       [
         {
-          id: 'jeffstory007@gmail.com',
-          summary: 'jeffstory007@gmail.com',
+          id: 'owner@example.com',
+          summary: 'owner@example.com',
           primary: true,
           accessRole: 'owner',
           writable: true,
@@ -170,7 +175,7 @@ describe('planGoogleCalendarCreate', () => {
     expect(plan.kind).toBe('draft');
     if (plan.kind !== 'draft') return;
     expect(plan.draft.title).toBe('check air filters');
-    expect(plan.selectedCalendarId).toBe('jeffstory007@gmail.com');
+    expect(plan.selectedCalendarId).toBe('owner@example.com');
   });
 
   it('accepts hyphenated all-day phrasing', () => {
@@ -245,6 +250,81 @@ describe('planGoogleCalendarCreate', () => {
   });
 });
 
+describe('calendar-create idempotency state', () => {
+  it('keeps one private provider idempotency identity across restart-safe pending-state reloads', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'Project sync',
+        startIso: '2026-04-02T21:00:00.000Z',
+        endIso: '2026-04-02T22:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    expect(pending.idempotencyKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(getGoogleCalendarCreateIdempotencyKey({ ...pending })).toBe(
+      pending.idempotencyKey,
+    );
+    expect(
+      getGoogleCalendarCreateIdempotencyKey(
+        Object.fromEntries(
+          Object.entries(pending).filter(([key]) => key !== 'idempotencyKey'),
+        ) as typeof pending,
+      ),
+    ).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('retains a provider receipt long enough to reconcile a restart before delivery', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'Project sync',
+        startIso: '2026-04-02T21:00:00.000Z',
+        endIso: '2026-04-02T22:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+    const completed = recordPendingGoogleCalendarCreateSuccess(
+      pending,
+      {
+        id: 'event-1',
+        title: 'Project sync',
+        startIso: '2026-04-02T21:00:00.000Z',
+        endIso: '2026-04-02T22:00:00.000Z',
+        allDay: false,
+        calendarId: 'primary',
+        calendarName: 'Jeff',
+        htmlLink: 'https://calendar.google.test/event-1',
+      },
+      new Date('2026-04-01T10:00:00-05:00'),
+    );
+
+    expect(getPendingGoogleCalendarCreatedEvent(completed)).toMatchObject({
+      id: 'event-1',
+      title: 'Project sync',
+    });
+    expect(
+      isPendingGoogleCalendarCreateExpired(
+        completed,
+        new Date('2026-04-02T09:59:59-05:00'),
+      ),
+    ).toBe(false);
+    expect(
+      isPendingGoogleCalendarCreateExpired(
+        completed,
+        new Date('2026-04-02T10:00:01-05:00'),
+      ),
+    ).toBe(true);
+  });
+});
+
 describe('google calendar create pending flow', () => {
   it('asks for a calendar when multiple writable calendars exist', () => {
     const draft = planGoogleCalendarCreate(
@@ -309,9 +389,93 @@ describe('google calendar create pending flow', () => {
     });
 
     const result = advancePendingGoogleCalendarCreate('yes', pending);
+    expect(getGoogleCalendarCreateConfirmationActionId(pending)).toBe('yes');
     expect(result.kind).toBe('confirmed');
     if (result.kind !== 'confirmed') return;
     expect(result.calendarId).toBe('primary');
+  });
+
+  it('requires an explicit calendar-targeted confirmation for compound drafts', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'meditation',
+        startIso: '2026-04-02T13:00:00.000Z',
+        endIso: '2026-04-02T14:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: 'primary',
+      confirmationMode: 'calendar_targeted',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    expect(getGoogleCalendarCreateConfirmationActionId(pending)).toBe(
+      'confirm calendar event',
+    );
+    expect(formatGoogleCalendarCreatePrompt(pending)).toContain(
+      'Reply "confirm calendar event" to create it',
+    );
+    for (const acknowledgement of [
+      'yes',
+      'yep',
+      'ok',
+      'okay',
+      'go ahead',
+      'looks good',
+    ]) {
+      expect(
+        advancePendingGoogleCalendarCreate(acknowledgement, pending),
+      ).toEqual({ kind: 'no_match' });
+    }
+    for (const confirmation of [
+      'confirm calendar event',
+      'confirm the calendar event',
+      'confirm the calendar event, please.',
+      'create calendar event',
+      'create the event on my calendar',
+    ]) {
+      expect(
+        advancePendingGoogleCalendarCreate(confirmation, pending),
+      ).toMatchObject({ kind: 'confirmed', calendarId: 'primary' });
+    }
+    for (const contradictory of [
+      'confirm calendar event but do not create it',
+      'confirm calendar event, wait',
+      'create calendar event unless there is a conflict',
+      'confirm calendar event?',
+    ]) {
+      expect(
+        advancePendingGoogleCalendarCreate(contradictory, pending),
+      ).toEqual({ kind: 'no_match' });
+    }
+  });
+
+  it('preserves targeted confirmation after choosing a calendar', () => {
+    const pending = buildPendingGoogleCalendarCreateState({
+      draft: {
+        title: 'meditation',
+        startIso: '2026-04-02T13:00:00.000Z',
+        endIso: '2026-04-02T14:00:00.000Z',
+        allDay: false,
+        timeZone: 'America/Chicago',
+      },
+      writableCalendars: [...writableCalendars],
+      selectedCalendarId: null,
+      confirmationMode: 'calendar_targeted',
+      now: new Date('2026-04-01T09:00:00-05:00'),
+    });
+
+    const selection = advancePendingGoogleCalendarCreate('Family', pending);
+    expect(selection.kind).toBe('awaiting_input');
+    if (selection.kind !== 'awaiting_input') return;
+    expect(selection.state.confirmationMode).toBe('calendar_targeted');
+    expect(selection.message).toContain(
+      'Reply "confirm calendar event" to create it',
+    );
+    expect(advancePendingGoogleCalendarCreate('yes', selection.state)).toEqual({
+      kind: 'no_match',
+    });
   });
 
   it('updates a pending draft when the user retimes it', () => {
@@ -372,8 +536,8 @@ describe('google calendar create pending flow', () => {
       },
       writableCalendars: [
         {
-          id: 'jeffstory007@gmail.com',
-          summary: 'jeffstory007@gmail.com',
+          id: 'owner@example.com',
+          summary: 'owner@example.com',
           primary: true,
           accessRole: 'owner',
           writable: true,
@@ -400,7 +564,7 @@ describe('google calendar create pending flow', () => {
     expect(result.kind).toBe('awaiting_input');
     if (result.kind !== 'awaiting_input') return;
     expect(result.state.step).toBe('confirm_create');
-    expect(result.state.selectedCalendarId).toBe('jeffstory007@gmail.com');
+    expect(result.state.selectedCalendarId).toBe('owner@example.com');
     expect(result.state.draft.startIso).toBe('2026-04-02T20:00:00.000Z');
     expect(result.state.draft.endIso).toBe('2026-04-02T21:00:00.000Z');
   });

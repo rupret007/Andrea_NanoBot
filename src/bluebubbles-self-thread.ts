@@ -5,12 +5,14 @@ const SELF_THREAD_ENV_KEYS = [
   'BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS',
 ];
 
-const FALLBACK_BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
-  'bb:iMessage;-;+14695405551';
+// NANPA reserves +1 202-555-0100 through -0199 for fictional use, and
+// example.com is reserved. These are non-personal unconfigured placeholders.
+const UNCONFIGURED_BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+  'bb:iMessage;-;+12025550101';
 
-const FALLBACK_BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS = [
-  FALLBACK_BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
-  'bb:iMessage;-;jeffstory007@gmail.com',
+const UNCONFIGURED_BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS = [
+  UNCONFIGURED_BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+  'bb:iMessage;-;owner@example.com',
 ] as const;
 
 function normalizeBlueBubblesSelfThreadJid(
@@ -34,13 +36,16 @@ export interface BlueBubblesSelfThreadConfig {
 }
 
 export function resolveBlueBubblesSelfThreadConfig(
-  env = readEnvFile(SELF_THREAD_ENV_KEYS),
+  env = process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE === '1'
+    ? {}
+    : readEnvFile(SELF_THREAD_ENV_KEYS),
 ): BlueBubblesSelfThreadConfig {
+  const configuredCanonical = normalizeBlueBubblesSelfThreadJid(
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID ||
+      env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+  );
   const canonical =
-    normalizeBlueBubblesSelfThreadJid(
-      process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID ||
-        env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
-    ) || FALLBACK_BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+    configuredCanonical || UNCONFIGURED_BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
   const configuredAliases = splitAliasList(
     process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS ||
       env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS,
@@ -49,7 +54,9 @@ export function resolveBlueBubblesSelfThreadConfig(
     canonical,
     ...(configuredAliases.length > 0
       ? configuredAliases
-      : FALLBACK_BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS),
+      : configuredCanonical
+        ? []
+        : UNCONFIGURED_BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS),
   ]);
   return {
     canonicalJid: canonical,

@@ -11,11 +11,20 @@ Depending on which channels and features are enabled, Andrea may store:
 - safe metadata for incoming attachments and, when available, a bounded local
   cache of image, video, or file bytes
 - task and reminder definitions
+- provenance-aware profile facts, goals, life threads, saved knowledge, and
+  derived personal-context candidates that the operator has enabled
+- bounded mission, approval, execution-receipt, outcome-review, and learning
+  metadata used to verify work and prevent unsafe replay
 - enabled skill state per chat
 - local runtime logs and operational state
 - per-chat working files inside isolated group folders
 
 Andrea runtime logs are designed to redact token-like secrets from emitted error text, but operators should still treat logs as sensitive operational data.
+
+Personal-context records are intended to remain reviewable: derived facts carry
+source/provenance, confidence, freshness, and expiry where the feature supports
+them. Forget, revoke, and source opt-out controls prevent future use; operators
+remain responsible for any separate backups or retained operational logs.
 
 ## Why Andrea Stores It
 
@@ -78,6 +87,12 @@ Examples can include:
 - OneCLI credential proxy or vault services
 - approved third-party skills and integrations explicitly enabled by the operator
 
+Ordinary direct-assistant container turns are tool-free. Other classified
+routes receive only their bounded tool and integration allowlists. Enabling an
+external model, search provider, channel, or community skill can still send the
+minimum request context needed for that feature, so operators should review its
+privacy policy and data handling before enabling it.
+
 If a provider or skill is enabled, the data sent to that provider depends on the user request and the feature being used.
 
 ## Isolation And Skills
@@ -103,6 +118,8 @@ The person deploying Andrea is responsible for:
 - reviewing or removing cached media locally when a shorter retention period is
   needed
 - reviewing which community skills are enabled
+- honoring source opt-ins, revocations, forget requests, and retention choices
+  for personal-context and outcome-learning data
 
 ## Contact
 

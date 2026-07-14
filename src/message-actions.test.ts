@@ -250,7 +250,7 @@ describe('message actions', () => {
     const action = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       sourceType: 'manual_prompt',
       sourceKey: 'self-thread-followup-proof',
       sourceSummary: 'Draft text message to Candace.',
@@ -273,14 +273,14 @@ describe('message actions', () => {
     expect(
       findLatestChatMessageAction({
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        chatJid: 'bb:iMessage;-;owner@example.com',
         now: new Date('2026-04-16T16:20:00.000Z'),
       })?.messageActionId,
     ).toBe(action.messageActionId);
     expect(
       resolveMessageActionForFollowup({
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        chatJid: 'bb:iMessage;-;owner@example.com',
         rawText: 'send it later tonight',
         now: new Date('2026-04-16T16:20:00.000Z'),
       })?.messageActionId,
@@ -296,7 +296,7 @@ describe('message actions', () => {
       false,
     );
     storeChatMetadata(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;owner@example.com',
       '2026-04-16T16:06:22.703Z',
       'Jeff',
       'bluebubbles',
@@ -304,7 +304,7 @@ describe('message actions', () => {
     );
     storeMessageDirect({
       id: 'bb:self-thread-draft-1',
-      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chat_jid: 'bb:iMessage;-;owner@example.com',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: [
@@ -324,7 +324,7 @@ describe('message actions', () => {
 
     const action = resolveMessageActionForFollowup({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       rawText: 'send it later tonight',
       now: new Date('2026-04-16T16:20:00.000Z'),
     });
@@ -350,7 +350,7 @@ describe('message actions', () => {
       false,
     );
     storeChatMetadata(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;owner@example.com',
       '2026-04-16T16:06:22.703Z',
       'Jeff',
       'bluebubbles',
@@ -359,7 +359,7 @@ describe('message actions', () => {
 
     const action = ensureBlueBubblesSelfThreadMessageActionForReplyText({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chatJid: 'bb:iMessage;-;owner@example.com',
       presentationMessageId: 'bb:self-thread-draft-ensure',
       replyText: [
         'Andrea: I drafted a reply.',
@@ -386,7 +386,7 @@ describe('message actions', () => {
     const older = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       sourceType: 'manual_prompt',
       sourceKey: 'duplicate-self-thread-older',
       sourceSummary: 'Draft text message to Candace.',
@@ -408,7 +408,7 @@ describe('message actions', () => {
     const newer = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       sourceType: 'manual_prompt',
       sourceKey: 'duplicate-self-thread-newer',
       sourceSummary: 'Draft text message to Candace.',
@@ -430,7 +430,7 @@ describe('message actions', () => {
 
     const continuity = reconcileBlueBubblesSelfThreadContinuity({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chatJid: 'bb:iMessage;-;owner@example.com',
       now: new Date('2026-04-16T16:10:00.000Z'),
       allowRehydrate: false,
     });
@@ -446,7 +446,7 @@ describe('message actions', () => {
     const stale = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       sourceType: 'manual_prompt',
       sourceKey: 'stale-self-thread-only',
       sourceSummary: 'Older draft text message to Candace.',
@@ -468,7 +468,7 @@ describe('message actions', () => {
 
     const continuity = reconcileBlueBubblesSelfThreadContinuity({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chatJid: 'bb:iMessage;-;owner@example.com',
       now: new Date('2026-04-16T16:20:00.000Z'),
       allowRehydrate: true,
     });
@@ -481,7 +481,7 @@ describe('message actions', () => {
     expect(
       findLatestChatMessageAction({
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+        chatJid: 'bb:iMessage;-;owner@example.com',
       }),
     ).toBeUndefined();
   });
@@ -489,12 +489,12 @@ describe('message actions', () => {
   it('starts one active BlueBubbles proof drill action and refreshes it on repeat start', () => {
     const first = startBlueBubblesProofDrill({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chatJid: 'bb:iMessage;-;owner@example.com',
       now: new Date('2026-04-16T16:00:00.000Z'),
     });
     const second = startBlueBubblesProofDrill({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       now: new Date('2026-04-16T16:05:00.000Z'),
     });
     const snapshot = resolveBlueBubblesProofDrillSnapshot({
@@ -503,7 +503,7 @@ describe('message actions', () => {
     });
     const continuity = reconcileBlueBubblesSelfThreadContinuity({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       now: new Date('2026-04-16T16:05:00.000Z'),
       allowRehydrate: false,
     });
@@ -608,7 +608,7 @@ describe('message actions', () => {
     const stale = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       sourceType: 'manual_prompt',
       sourceKey: 'stale-self-thread-action',
       sourceSummary: 'Older draft text message to Candace.',
@@ -635,7 +635,7 @@ describe('message actions', () => {
       false,
     );
     storeChatMetadata(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;owner@example.com',
       '2026-04-16T16:06:22.703Z',
       'Jeff',
       'bluebubbles',
@@ -643,7 +643,7 @@ describe('message actions', () => {
     );
     storeMessageDirect({
       id: 'bb:self-thread-draft-fresh',
-      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chat_jid: 'bb:iMessage;-;owner@example.com',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: [
@@ -663,7 +663,7 @@ describe('message actions', () => {
 
     const resolved = resolveMessageActionForFollowup({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       rawText: 'send it later tonight',
       now: new Date('2026-04-16T16:20:00.000Z'),
     });
@@ -727,7 +727,7 @@ describe('message actions', () => {
 
   it('treats a recent direct 1:1 BlueBubbles chat as conversational after fresh Andrea context', () => {
     storeChatMetadata(
-      'bb:iMessage;-;+12147254219',
+      'bb:iMessage;-;+12025550104',
       '2026-04-16T18:05:00.000Z',
       'Candace',
       'bluebubbles',
@@ -735,7 +735,7 @@ describe('message actions', () => {
     );
     storeMessageDirect({
       id: 'bb:direct-recent-andrea',
-      chat_jid: 'bb:iMessage;-;+12147254219',
+      chat_jid: 'bb:iMessage;-;+12025550104',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Andrea: Here is the latest draft option.',
@@ -746,7 +746,7 @@ describe('message actions', () => {
 
     const continuity = reconcileBlueBubblesMessageActionContinuity({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+12147254219',
+      chatJid: 'bb:iMessage;-;+12025550104',
       now: new Date('2026-04-16T18:10:00.000Z'),
       allowRehydrate: true,
     });
@@ -755,7 +755,7 @@ describe('message actions', () => {
     expect(continuity.decisionPolicy).toBe('semi_auto_recent_direct_1to1');
     expect(continuity.conversationalEligibility).toBe('conversational_now');
     expect(continuity.requiresExplicitMention).toBe(false);
-    expect(continuity.recentTargetChatJid).toBe('bb:iMessage;-;+12147254219');
+    expect(continuity.recentTargetChatJid).toBe('bb:iMessage;-;+12025550104');
     expect(
       listBlueBubblesMessageActionContinuitySnapshots({
         groupFolder: 'main',
@@ -763,7 +763,7 @@ describe('message actions', () => {
         allowRehydrate: true,
       }).some(
         (snapshot) =>
-          snapshot.recentTargetChatJid === 'bb:iMessage;-;+12147254219' &&
+          snapshot.recentTargetChatJid === 'bb:iMessage;-;+12025550104' &&
           snapshot.decisionPolicy === 'semi_auto_recent_direct_1to1',
       ),
     ).toBe(true);
@@ -771,7 +771,7 @@ describe('message actions', () => {
 
   it('keeps stale direct 1:1 BlueBubbles continuity explicit-only when Andrea context is no longer fresh', () => {
     storeChatMetadata(
-      'bb:iMessage;-;+12147254219',
+      'bb:iMessage;-;+12025550104',
       '2026-04-16T16:05:00.000Z',
       'Candace',
       'bluebubbles',
@@ -779,7 +779,7 @@ describe('message actions', () => {
     );
     storeMessageDirect({
       id: 'bb:direct-stale-andrea',
-      chat_jid: 'bb:iMessage;-;+12147254219',
+      chat_jid: 'bb:iMessage;-;+12025550104',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Andrea: Here is the latest draft option.',
@@ -790,7 +790,7 @@ describe('message actions', () => {
 
     const continuity = reconcileBlueBubblesMessageActionContinuity({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+12147254219',
+      chatJid: 'bb:iMessage;-;+12025550104',
       now: new Date('2026-04-16T18:10:00.000Z'),
       allowRehydrate: true,
     });
@@ -834,7 +834,7 @@ describe('message actions', () => {
     createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       sourceType: 'manual_prompt',
       sourceKey: 'self-thread-draft-order',
       sourceSummary: 'Draft text message to Candace.',
@@ -1692,7 +1692,7 @@ describe('message actions', () => {
     createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       sourceType: 'manual_prompt',
       sourceKey: 'self-thread-policy',
       sourceSummary: 'Draft text message to Candace.',
@@ -1713,7 +1713,7 @@ describe('message actions', () => {
     });
     const selfThreadContinuity = reconcileBlueBubblesMessageActionContinuity({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       now: new Date('2026-04-16T19:05:00.000Z'),
       allowRehydrate: true,
     });
@@ -1779,7 +1779,7 @@ describe('message actions', () => {
       true,
     );
     storeChatMetadata(
-      'bb:iMessage;-;+14695405551',
+      'bb:iMessage;-;+12025550101',
       '2026-04-10T19:01:34.886Z',
       'Jeff',
       'bluebubbles',
@@ -1829,7 +1829,7 @@ describe('message actions', () => {
     const action = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+14695405551',
+      presentationChatJid: 'bb:iMessage;-;+12025550101',
       sourceType: 'manual_prompt',
       sourceKey: 'bluebubbles-thread-send:bb:iMessage;+;chat-rad-dad:hey',
       sourceSummary: 'Draft text message to Rad Dad.',

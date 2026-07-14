@@ -5,21 +5,34 @@
 1. **Check for existing work.** Search open PRs and issues before starting:
 
    ```bash
-   gh pr list --repo qwibitai/nanoclaw --search "<your feature>"
-   gh issue list --repo qwibitai/nanoclaw --search "<your feature>"
+   gh pr list --repo rupret007/Andrea_NanoBot --search "<topic>"
+   gh issue list --repo rupret007/Andrea_NanoBot --search "<topic>"
    ```
 
    If a related PR or issue exists, build on it rather than duplicating effort.
 
-2. **Check alignment.** Read the [Philosophy section in README.md](README.md#philosophy). Source code changes should only be things 90%+ of users need. Skills can be more niche, but should still be useful beyond a single person's setup.
+2. **Check alignment.** Read the [README](README.md), current
+   [security model](docs/SECURITY.md), and the relevant subsystem guide.
+   `docs/REQUIREMENTS.md` is an archived upstream design record, not current
+   policy. For release-affecting work, also read the
+   [testing and release runbook](docs/TESTING_AND_RELEASE_RUNBOOK.md).
 
-3. **One thing per PR.** Each PR should do one thing — one bug fix, one skill, one simplification. Don't mix unrelated changes in a single PR.
+3. **Keep the change coherent.** A review unit may span implementation, tests,
+   documentation, and a migration when they are one complete change. Do not
+   mix unrelated cleanup or speculative features into that unit.
 
 ## Source Code Changes
 
-**Accepted:** Bug fixes, security fixes, simplifications, reducing code.
+Source changes should solve a confirmed Andrea product, reliability, security,
+accessibility, compatibility, or developer-experience problem. Keep existing
+approval, privacy, and verification boundaries intact; add focused tests and
+update operator-facing documentation when behavior changes.
 
-**Not accepted:** Features, capabilities, compatibility, enhancements. These should be skills.
+Use a skill when a capability is optional, install-specific, or can remain
+self-contained. A feature that changes Andrea's shared runtime or public
+contract belongs in source only when the repository evidence supports that
+shared behavior. Broad rewrites, dependency churn, weakened gates, and silent
+authority expansion are not acceptable substitutes for a bounded solution.
 
 ## Skills
 
@@ -47,7 +60,7 @@ Add capabilities to NanoClaw by merging a git branch. The SKILL.md contains setu
 
 **Contributing a feature skill:**
 
-1. Fork `qwibitai/nanoclaw` and branch from `main`
+1. Fork `rupret007/Andrea_NanoBot` and branch from `main`
 2. Make the code changes (new files, modified source, updated `package.json`, etc.)
 3. Add a SKILL.md in `.claude/skills/<name>/` with setup instructions — step 1 should be merging the branch
 4. Open a PR. We'll create the `skill/<name>` branch from your work
@@ -129,14 +142,33 @@ Instructions here...
 
 ## Testing
 
-Test your contribution on a fresh clone before submitting. For skills, run the skill end-to-end and verify it works.
+Run validation that matches the affected surface. At minimum for a normal
+source or documentation change:
+
+```bash
+npm ci
+npm run test:major:ci
+npm run docs:check
+```
+
+If container controls or the agent runner changed, also run the repository's
+container install, typecheck, build, contract, and canary commands documented
+in [CLAUDE.md](CLAUDE.md). AGI, deterministic, security, platform, and live-
+runtime gates are separate release evidence; use the
+[testing and release runbook](docs/TESTING_AND_RELEASE_RUNBOOK.md) for the full
+matrix. A passing `test:major:ci` alone is not a release claim.
+
+For skills, validate the install or workflow end to end in an isolated test
+environment and verify that disabling it restores the prior behavior. Never use
+owner data or live credentials as test fixtures.
 
 ## Pull Requests
 
 ### Before opening
 
 1. **Link related issues.** If your PR resolves an open issue, include `Closes #123` in the description so it's auto-closed on merge.
-2. **Test thoroughly.** Run the feature yourself. For skills, test on a fresh clone.
+2. **Report exact validation.** List the commands and relevant live/operator
+   proofs you actually ran; distinguish unrun or externally blocked checks.
 3. **Check the right box** in the PR template. Labels are auto-applied based on your selection:
 
 | Checkbox                    | Label                       |

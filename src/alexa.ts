@@ -191,6 +191,7 @@ import {
   planGoogleCalendarCreate,
   type GoogleCalendarSchedulingContextState,
   type PendingGoogleCalendarCreateState,
+  getGoogleCalendarCreateIdempotencyKey,
 } from './google-calendar-create.js';
 import {
   advancePendingGoogleCalendarEventAction,
@@ -3474,6 +3475,22 @@ export function createAlexaSkill(
     now: Date;
   }): Promise<{ speech: string }> => {
     const googleConfig = resolveGoogleCalendarConfig();
+    const persistedPending = parseAlexaPendingCalendarCreate(
+      input.conversationState,
+    );
+    const idempotencyState =
+      persistedPending &&
+      persistedPending.selectedCalendarId === input.calendarId &&
+      persistedPending.draft.startIso === input.draft.startIso &&
+      persistedPending.draft.endIso === input.draft.endIso &&
+      persistedPending.draft.title === input.draft.title
+        ? persistedPending
+        : buildPendingGoogleCalendarCreateState({
+            draft: input.draft,
+            writableCalendars: input.calendars,
+            selectedCalendarId: input.calendarId,
+            now: input.now,
+          });
     const created = await createGoogleCalendarEvent(
       {
         calendarId: input.calendarId,
@@ -3484,6 +3501,7 @@ export function createAlexaSkill(
         allDay: input.draft.allDay,
         location: input.draft.location || null,
         description: input.draft.description || null,
+        idempotencyKey: getGoogleCalendarCreateIdempotencyKey(idempotencyState),
       },
       googleConfig,
     );

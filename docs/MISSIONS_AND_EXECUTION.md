@@ -178,11 +178,13 @@ silently become control- or direct-assistant context. Mutable group
 plugins remain read-only trusted views.
 
 Focused adversarial, hard-kill, held-out, repository-content, and legacy
-projection checks pass on the final local candidate. The deterministic
+projection checks pass on the released tree. The deterministic
 inventory contains 108 commands: 93 selected by the release sweep and 15
 explicitly excluded; all 93 selected commands pass. The complete local release
-matrix passes, while hosted branch-SHA checks and committed runtime proof remain
-pending. Local fixtures are not a deployed recovery claim.
+matrix and exact-SHA hosted gates pass. Production currently serves the prior
+application commit because the final `main` commit changed CI workflow/test
+code only, so the running SHA and workspace `HEAD` remain honestly reported as
+different. Local fixtures are not a deployed recovery claim.
 
 ## Channel Shape
 
@@ -235,7 +237,7 @@ Andrea should always be able to point back to the actual signals shaping the pla
 Focused validation for this layer:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/missions.test.ts src/assistant-capability-router.test.ts src/assistant-capabilities.test.ts src/cross-channel-handoffs.test.ts
+node scripts/run-with-pinned-node.mjs --import=./scripts/test-network-guard.mjs ./node_modules/vitest/vitest.mjs run src/missions.test.ts src/assistant-capability-router.test.ts src/assistant-capabilities.test.ts src/cross-channel-handoffs.test.ts
 npm run test:continuity:hard-kill
 npm run test:continuity:heldout
 npm run debug:missions -- --dry-run
@@ -243,5 +245,7 @@ npm run debug:missions
 npm run typecheck
 npm run build
 npm test
+# Live side effect: sends a visible /ping to the configured Telegram target.
+# Run only with operator authorization.
 npm run telegram:user:smoke
 ```

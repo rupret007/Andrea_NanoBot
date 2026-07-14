@@ -152,14 +152,14 @@ describe('communication companion', () => {
 
   it('can reuse recent self-chat context across BlueBubbles self handles for draft replies', () => {
     storeChatMetadata(
-      'bb:iMessage;-;+14695405551',
+      'bb:iMessage;-;+12025550101',
       '2026-04-10T00:03:20.633Z',
       'Jeff',
       'bluebubbles',
       false,
     );
     storeChatMetadata(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;owner@example.com',
       '2026-04-10T00:04:05.518Z',
       'Jeff',
       'bluebubbles',
@@ -167,8 +167,8 @@ describe('communication companion', () => {
     );
     storeMessageDirect({
       id: 'bb:self-handle-source-1',
-      chat_jid: 'bb:iMessage;-;+14695405551',
-      sender: 'bb:+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
+      sender: 'bb:+12025550101',
       sender_name: 'Jeff',
       content:
         '@Andrea Che is saying this.\n\nSo we’re pretty sure about Saturday right? I’m just making sure you’ve got a few mixed messages lol.',
@@ -178,7 +178,7 @@ describe('communication companion', () => {
     });
     storeMessageDirect({
       id: 'bb:self-handle-source-2',
-      chat_jid: 'bb:iMessage;-;+14695405551',
+      chat_jid: 'bb:iMessage;-;+12025550101',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Andrea: Here is the latest show summary.',
@@ -188,8 +188,8 @@ describe('communication companion', () => {
     });
     storeMessageDirect({
       id: 'bb:self-handle-ask-1',
-      chat_jid: 'bb:iMessage;-;jeffstory007@gmail.com',
-      sender: 'bb:jeffstory007@gmail.com',
+      chat_jid: 'bb:iMessage;-;owner@example.com',
+      sender: 'bb:owner@example.com',
       sender_name: 'Jeff',
       content: '@Andrea what should I send back?',
       timestamp: '2026-04-10T00:04:05.518Z',
@@ -200,7 +200,7 @@ describe('communication companion', () => {
     const result = draftCommunicationReply({
       channel: 'bluebubbles',
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;jeffstory007@gmail.com',
+      chatJid: 'bb:iMessage;-;owner@example.com',
       text: 'what should I send back',
       now: new Date('2026-04-10T00:04:30.000Z'),
     });
@@ -208,7 +208,7 @@ describe('communication companion', () => {
     expect(result.ok).toBe(true);
     expect(result.summaryText).toContain('Saturday');
     expect(result.thread?.channelChatJid).toBe(
-      'bb:iMessage;-;jeffstory007@gmail.com',
+      'bb:iMessage;-;owner@example.com',
     );
   });
 
@@ -311,7 +311,7 @@ describe('communication companion', () => {
     storeMessageDirect({
       id: 'tg:control-ask',
       chat_jid: 'tg:main',
-      sender: '8004355504',
+      sender: '100000001',
       sender_name: 'Jeff',
       content: 'what am I forgetting',
       timestamp: '2026-04-14T11:50:00.000Z',

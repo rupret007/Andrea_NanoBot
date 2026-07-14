@@ -1071,7 +1071,7 @@ describe('provider council runner', () => {
     const finalize = vi.fn(async () => ({}));
     const fakeSecret = 'sk-proj-testSecretValue1234567890abcdef';
     const rawEmail = 'jeff@example.com';
-    const rawPhone = '+1 469 540 5551';
+    const rawPhone = '+1 202 555 0101';
 
     const result = await runObservableProviderCouncil(
       {

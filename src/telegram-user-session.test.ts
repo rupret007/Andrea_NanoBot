@@ -36,14 +36,14 @@ import {
 
 describe('normalizeTelegramTestTarget', () => {
   it('strips tg prefix from stored chat ids', () => {
-    expect(normalizeTelegramTestTarget('tg:8004355504')).toBe('8004355504');
+    expect(normalizeTelegramTestTarget('tg:100000001')).toBe('100000001');
   });
 
   it('preserves usernames and numeric ids', () => {
     expect(normalizeTelegramTestTarget('@andrea_nanobot')).toBe(
       '@andrea_nanobot',
     );
-    expect(normalizeTelegramTestTarget('8004355504')).toBe('8004355504');
+    expect(normalizeTelegramTestTarget('100000001')).toBe('100000001');
   });
 });
 
@@ -125,12 +125,12 @@ describe('resolveTelegramUserSessionConfig', () => {
       {
         TELEGRAM_USER_API_ID: '12345',
         TELEGRAM_USER_API_HASH: 'hash-value',
-        TELEGRAM_TEST_CHAT_ID: 'tg:8004355504',
+        TELEGRAM_TEST_CHAT_ID: 'tg:100000001',
       },
       {},
     );
 
-    expect(config.testTarget).toBe('8004355504');
+    expect(config.testTarget).toBe('100000001');
     expect(config.authMode).toBe('qr');
   });
 });

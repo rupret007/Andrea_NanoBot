@@ -84,7 +84,7 @@ describe('council task drills', () => {
         requestedMode: 'single_model',
       }),
       structuredVerdict: structuredVerdict(),
-      riskFlags: ['phone +14695405551', 'secret sk-proj-should-redact'],
+      riskFlags: ['phone +12025550101', 'secret sk-proj-should-redact'],
       now: '2026-06-04T12:00:00.000Z',
     });
 
@@ -99,7 +99,7 @@ describe('council task drills', () => {
     expect(report.sourcePatternCoverage.length).toBeGreaterThan(0);
     expect(getCouncilRunLedger('task-ease-run')?.outcomeSignalCount).toBe(1);
     expect(JSON.stringify(report)).not.toContain('sk-proj-should-redact');
-    expect(JSON.stringify(report)).not.toContain('+14695405551');
+    expect(JSON.stringify(report)).not.toContain('+12025550101');
     expect(formatted).toContain('Council Task-Ease');
   });
 

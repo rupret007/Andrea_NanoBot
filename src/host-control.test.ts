@@ -321,11 +321,11 @@ describe('host control state', () => {
       activeRuntimeStateDir: path.join(tempDir, 'data', 'runtime'),
       assistantName: 'Andrea',
       assistantNameSource: 'env',
-      registeredMainChatJid: 'tg:8004355504',
+      registeredMainChatJid: 'tg:100000001',
       registeredMainChatName: 'Jeff',
       registeredMainChatFolder: 'main',
       registeredMainChatPresentInChats: true,
-      latestTelegramChatJid: 'tg:8004355504',
+      latestTelegramChatJid: 'tg:100000001',
       latestTelegramChatName: 'Jeff',
       mainChatAuditWarning: null,
     });
@@ -335,7 +335,7 @@ describe('host control state', () => {
       expect.objectContaining({
         assistantName: 'Andrea',
         assistantNameSource: 'env',
-        registeredMainChatJid: 'tg:8004355504',
+        registeredMainChatJid: 'tg:100000001',
       }),
     );
     expect(readHostControlSnapshot().runtimeAuditState).toEqual(

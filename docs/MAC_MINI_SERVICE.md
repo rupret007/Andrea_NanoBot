@@ -52,9 +52,12 @@ npm run mac:services:logs
 npm run mac:doctor
 ```
 
-`install`, `start`, and `restart` return only after a new process boot has
-written matching ready, health, runtime, Git, and build provenance. The
-default readiness timeout is 120 seconds; set
+`install`, `start`, and `restart` return only after the replacement process has
+written matching ready, health, runtime, Git, and build provenance. The current
+boot-ID marker is not authoritative independent restart proof. Until that
+instrumentation is corrected, require a changed process identity/PID, matching
+ready/health PIDs, verified build provenance, and the expected serving commit.
+The default readiness timeout is 120 seconds; set
 `ANDREA_MAC_READY_TIMEOUT_SECONDS` only when a slower host needs a larger
 bounded window. A timeout exits nonzero and prints metadata-only service and
 readiness diagnostics plus the configured log paths instead of allowing an
@@ -75,6 +78,10 @@ npm run services:status
 npm run setup -- --step verify
 npm run debug:status
 ```
+
+`npm run setup -- --step verify` is a live, potentially billable operator
+probe. Run it only when model/container probing is authorized; it is not part of
+the offline release gate.
 
 Confirm the active root is the intended checkout, host state is
 `running_ready`, and the serving commit matches workspace `HEAD`. For

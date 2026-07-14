@@ -689,7 +689,7 @@ describe('registered main chat repair', () => {
       isMain: true,
     });
     storeChatMetadata(
-      'tg:8004355504',
+      'tg:100000001',
       '2026-04-04T18:37:12.000Z',
       'Jeff',
       'telegram',
@@ -712,15 +712,15 @@ describe('registered main chat repair', () => {
 
     const repaired = repairRegisteredMainChat({
       fromJid: 'tg:runtime-proof',
-      toJid: 'tg:8004355504',
+      toJid: 'tg:100000001',
       toName: 'Jeff',
     });
 
-    expect(repaired.jid).toBe('tg:8004355504');
+    expect(repaired.jid).toBe('tg:100000001');
     expect(repaired.name).toBe('Jeff');
     expect(repaired.folder).toBe('main');
     expect(getRegisteredGroup('tg:runtime-proof')).toBeUndefined();
-    expect(getRegisteredMainChat()?.jid).toBe('tg:8004355504');
+    expect(getRegisteredMainChat()?.jid).toBe('tg:100000001');
     expect(getCursorOperatorContext('tg:runtime-proof')).toBeUndefined();
     expect(getCursorMessageContext('tg:runtime-proof', '9001')).toBeUndefined();
   });
@@ -989,6 +989,7 @@ describe('cognitive kernel persistence', () => {
 
   it('stores checkpoint, tool, world belief, and benchmark metadata', () => {
     storeCognitiveRun('cog-v7', '2026-06-05T12:00:00.000Z');
+    const syntheticApiKey = ['sk', 'testexample1234567890'].join('-');
 
     upsertCognitiveCheckpoint({
       checkpointId: 'checkpoint-v7',
@@ -1065,14 +1066,15 @@ describe('cognitive kernel persistence', () => {
       parentGoalId: null,
       rootRunId: 'cog-v7',
       taskFamily: 'assistant',
-      objectiveSummary:
-        'metadata-only goal with phone +14695405551 and key sk-testexample1234567890',
+      objectiveSummary: `metadata-only goal with phone +12025550101 and key ${syntheticApiKey}`,
       status: 'active',
       priority: 0.8,
-      successCriteriaJson:
-        '{"secret":"sk-testexample1234567890","email":"person@example.com"}',
+      successCriteriaJson: JSON.stringify({
+        secret: syntheticApiKey,
+        email: 'person@example.com',
+      }),
       decompositionJson: '[{"title":"metadata only"}]',
-      linkedRunIdsJson: '["cog-v7","+14695405551"]',
+      linkedRunIdsJson: '["cog-v7","+12025550101"]',
       activeCheckpointId: null,
       rewardScore: 0.7,
       nextAction: 'continue without raw private bodies',
@@ -1084,7 +1086,7 @@ describe('cognitive kernel persistence', () => {
       status: 'active',
     });
     expect(JSON.stringify(getCognitiveGoal('goal-v8'))).not.toMatch(
-      /sk-testexample|14695405551|person@example\.com/,
+      /sk-testexample|12025550101|person@example\.com/,
     );
     expect(listCognitiveGoals({ taskFamily: 'assistant' })[0]?.goalId).toBe(
       'goal-v8',
@@ -1102,7 +1104,7 @@ describe('cognitive kernel persistence', () => {
       status: 'active',
       summary:
         'metadata-only blackboard entry with token Bearer abcdefghijklmnop',
-      evidenceRefsJson: '["person@example.com","+14695405551"]',
+      evidenceRefsJson: '["person@example.com","+12025550101"]',
       confidence: 0.8,
       expiresAt: null,
       privacyJson: '{"secretsRedacted":true}',
@@ -1112,7 +1114,7 @@ describe('cognitive kernel persistence', () => {
     ).toMatchObject({ entryId: 'blackboard-v8', entryKind: 'constraint' });
     expect(
       JSON.stringify(listCognitiveBlackboardEntries({ runId: 'cog-v7' })),
-    ).not.toMatch(/abcdefghijklmnop|person@example\.com|14695405551/);
+    ).not.toMatch(/abcdefghijklmnop|person@example\.com|12025550101/);
 
     upsertCognitiveAutonomyBudget({
       budgetId: 'budget-v8',
@@ -1127,7 +1129,7 @@ describe('cognitive kernel persistence', () => {
       approvalRequired: false,
       maxRuntimeMs: 15000,
       clarificationAfterBlockedSteps: 1,
-      budgetJson: '{"token":"sk-testexample1234567890","readOnly":true}',
+      budgetJson: JSON.stringify({ token: syntheticApiKey, readOnly: true }),
       privacyJson: '{"rawToolOutputStored":false}',
     });
     expect(

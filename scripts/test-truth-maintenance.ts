@@ -50,7 +50,7 @@ const proofReport = buildLiveProofGauntletReport({
       ),
       messageActionProofState: 'stale',
       messageActionProofAt: '2026-06-01T00:00:00.000Z',
-      messageActionProofChatJid: 'bb:iMessage;-;+14695405551',
+      messageActionProofChatJid: 'bb:iMessage;-;+12025550101',
     },
     googleCalendar: surface('live_proven', 'none', 'No action needed.'),
     research: surface('live_proven', 'none', 'No action needed.'),

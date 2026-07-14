@@ -13,8 +13,11 @@ Current host reality for the Mac mini operator machine:
 - the BlueBubbles desktop app is installed and connected to the local Mac mini server
 - Andrea now has live `BLUEBUBBLES_*` config loaded on this host
 - Andrea reaches BlueBubbles locally at `http://127.0.0.1:1234`; the Cloudflare BlueBubbles URL is fallback/diagnostic only
-- BlueBubbles is `live_proven` while the fresh same-thread inbound, outbound, and `message_action` proof chain remains current on this host
-- the canonical proof thread is `bb:iMessage;-;+14695405551`, and alias support remains enabled for `bb:iMessage;-;jeffstory007@gmail.com`
+- BlueBubbles transport is ready, but the current host proof is
+  `degraded_but_usable`/`needs_proof` until the configured canonical self-thread
+  has a fresh inbound, outbound, continuity, and `message_action` chain
+- canonical and alias self-thread identifiers come from local configuration;
+  do not copy personal addresses or raw thread IDs into documentation or logs
 - Telegram remains Andrea's dependable main messaging surface, while BlueBubbles stays an optional bridge with its own proof freshness clock
 
 Use these operator truth surfaces:
@@ -266,18 +269,18 @@ BlueBubbles V1 uses these env settings:
 ```bash
 BLUEBUBBLES_ENABLED=true
 BLUEBUBBLES_BASE_URL=http://127.0.0.1:1234
-BLUEBUBBLES_BASE_URL_CANDIDATES=http://127.0.0.1:1234,http://localhost:1234,https://ensemble-mercy-population-spending.trycloudflare.com
+BLUEBUBBLES_BASE_URL_CANDIDATES=http://127.0.0.1:1234,http://localhost:1234,<optional-https-fallback>
 BLUEBUBBLES_PASSWORD=
 BLUEBUBBLES_HOST=127.0.0.1
 BLUEBUBBLES_PORT=4305
 BLUEBUBBLES_GROUP_FOLDER=main
 BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL=http://127.0.0.1:4305
-BLUEBUBBLES_SERVER_PUBLIC_URL=https://ensemble-mercy-population-spending.trycloudflare.com
+BLUEBUBBLES_SERVER_PUBLIC_URL=<operator-configured-public-url>
 BLUEBUBBLES_LOCAL_PORT=1234
-BLUEBUBBLES_IMESSAGE_ACCOUNT_LABEL=jeffstory007@gmail.com
-BLUEBUBBLES_COMPUTER_ID=jeffstory@Jeffs-Mac-mini.local
-BLUEBUBBLES_CANONICAL_SELF_THREAD_JID=bb:iMessage;-;+14695405551
-BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS=bb:iMessage;-;+14695405551,bb:iMessage;-;jeffstory007@gmail.com
+BLUEBUBBLES_IMESSAGE_ACCOUNT_LABEL=<configured-account-label>
+BLUEBUBBLES_COMPUTER_ID=<configured-host-identifier>
+BLUEBUBBLES_CANONICAL_SELF_THREAD_JID=<canonical-self-thread-jid>
+BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS=<comma-separated-self-thread-alias-jids>
 BLUEBUBBLES_CHAT_SCOPE=all_synced
 BLUEBUBBLES_ALLOWED_CHAT_GUIDS=
 BLUEBUBBLES_ALLOWED_CHAT_GUID=
@@ -290,8 +293,11 @@ Meaning:
 
 - `BLUEBUBBLES_GROUP_FOLDER` binds BlueBubbles companion state into Andrea's shared companion folder, usually `main`
 - prefer local `127.0.0.1` first; keep the Cloudflare BlueBubbles URL as fallback/diagnostic only
-- `BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL` stays local/private on this Mac mini
+- `BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL` stays local/private on the configured host
 - `BLUEBUBBLES_CANONICAL_SELF_THREAD_JID` and `BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS` keep proof drills and follow-ups aligned with the live Messages self-thread
+- configure the canonical self-thread and aliases explicitly before self-thread
+  drafts, proof, or sends; source defaults are reserved fictional placeholders
+  and do not identify a real destination
 - `BLUEBUBBLES_CHAT_SCOPE=all_synced` allows all synced personal and group chats
 - `BLUEBUBBLES_ALLOWED_CHAT_GUIDS` and `BLUEBUBBLES_ALLOWED_CHAT_GUID` are only for optional allowlist mode
 - `BLUEBUBBLES_SEND_ENABLED=true` is required for real reply-back
@@ -329,7 +335,10 @@ BlueBubbles is `live_proven` only after all of these happen on this host:
 
 If config is present and the server, webhook, and recent-activity shadow poll are ready but the fresh same-thread proof chain is still incomplete, BlueBubbles stays below `live_proven` and should read as `degraded_but_usable` on that host. If this host cannot reach the configured endpoint at all, the bridge should read as `externally_blocked` with `transport_unreachable`, and Telegram should be treated as the dependable main path.
 
-On this host, that proof bar was refreshed on July 6, 2026 in `bb:iMessage;-;+14695405551` with a real same-thread ask, a fresh drafted message action, and a same-thread `send it later tonight` continuation.
+This host previously cleared that proof bar on July 6, 2026. That evidence has
+aged out: current status is `degraded_but_usable`/`needs_proof` until the same
+configured canonical thread completes the proof bar again. Historical success
+must not be promoted into a fresh host claim.
 
 ## Operator Proof Steps
 

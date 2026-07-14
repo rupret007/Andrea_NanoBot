@@ -1,5 +1,6 @@
 import { NewMessage } from './types.js';
 import { classifyConversationalTurn } from './conversational-core.js';
+import { planCompoundCalendarResearchRequest } from './calendar-research-coordinator.js';
 
 export type AssistantRequestRoute =
   | 'direct_assistant'
@@ -342,6 +343,11 @@ const RESEARCH_SIGNALS: RouteSignal[] = [
       /\b(research|investigate|literature review|compare sources|source-backed|deep dive)\b/i,
     reason: 'matched explicit research intent',
   },
+  {
+    pattern:
+      /^\s*(?:please\s+)?(?:can|could|would)\s+you\s+(?:also\s+)?(?:(?:look\s+for|find)\b(?=[\s\S]{0,100}\b(?:good|best|right|suitable|recommended|recommendation|source[- ]backed|current|latest|recent|information|info|evidence|sources?|guides?|options?|comparison|research)\b)|look\s+into\b|recommend\b|compare\b)/i,
+    reason: 'matched explicit conversational research intent',
+  },
 ];
 
 function dedupe(items: readonly string[]): string[] {
@@ -667,6 +673,23 @@ export function classifyAssistantRequest(
     return createPolicy('direct_assistant', directReason);
   }
 
+  const compoundCalendarResearch = candidates
+    .map((candidate) => planCompoundCalendarResearchRequest(candidate))
+    .find((plan) => plan !== null);
+  if (compoundCalendarResearch) {
+    return createPolicy(
+      'protected_assistant',
+      'matched coordinated calendar-create and research request',
+      {
+        builtinTools: RESEARCH_TOOLS,
+        // The host-owned calendar path stages the approval-bound draft. Keep
+        // the fallback research-only so web-derived content can never share a
+        // session with mutable task tools.
+        mcpTools: [],
+      },
+    );
+  }
+
   // Preserve the requested host action when a reminder or purchase includes a
   // file/URL as payload. Fetching the reference is not required to schedule or
   // stage the action, and must not silently strip its exact MCP capability.
@@ -708,7 +731,9 @@ export function classifyAssistantRequest(
     FILE_READ_SIGNALS,
   );
   const earlyWebLookupReason = evaluateSignals(candidates, WEB_LOOKUP_SIGNALS);
-  const earlyResearchReason = evaluateSignals(candidates, RESEARCH_SIGNALS);
+  const earlyResearchReason = earlyFileReadReason
+    ? null
+    : evaluateSignals(candidates, RESEARCH_SIGNALS);
   if (earlyResearchReason || (earlyFileReadReason && earlyWebLookupReason)) {
     return createPolicy(
       'protected_assistant',

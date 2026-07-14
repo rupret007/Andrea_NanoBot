@@ -1,9 +1,13 @@
-# NanoClaw Specification
+# Archived NanoClaw Specification (Non-Normative)
 
-> Historical runtime reference. When this file disagrees with the current
-> Andrea_NanoBot README, admin guide, setup guide, or Alexa guide, follow the
-> current operator docs and live host behavior. In particular, current ordinary
-> chat is tool-free; other routes receive explicit tool/MCP allowlists; trusted
+> **ARCHIVED DESIGN RECORD — DO NOT USE AS CURRENT OPERATING, SECURITY, OR
+> RELEASE INSTRUCTIONS.** This document preserves the upstream NanoClaw design
+> for historical context. Its code samples, paths, commands, interfaces, channel
+> lists, and authority descriptions may no longer execute or be safe. Current
+> truth lives in the root README, [ADMIN_GUIDE.md](ADMIN_GUIDE.md),
+> [SETUP_AND_FEATURES_GUIDE.md](SETUP_AND_FEATURES_GUIDE.md),
+> [SECURITY.md](SECURITY.md), and live status commands. Current ordinary chat is
+> tool-free; other routes receive exact capability and MCP allowlists; trusted
 > controls are read-only; and no host `.env`, Codex home, auth, or configuration
 > is mounted or copied into an agent container.
 
@@ -93,18 +97,20 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 
 ## Architecture: Channel System
 
-The core ships with no channels built in — each channel (WhatsApp, Telegram, Slack, Discord, Gmail) is installed as a [Claude Code skill](https://code.claude.com/docs/en/skills) that adds the channel code to your fork. Channels self-register at startup; installed channels with missing credentials emit a WARN log and are skipped.
+The current Andrea fork ships Telegram and BlueBubbles as built-in channel
+implementations. Other channel integrations remain optional transformations or
+add-ons and are not baseline product claims. Enabled channels self-register at
+startup; an installed channel with missing credentials is skipped with bounded
+health evidence.
 
 ### System Diagram
 
 ```mermaid
 graph LR
     subgraph Channels["Channels"]
-        WA[WhatsApp]
         TG[Telegram]
-        SL[Slack]
-        DC[Discord]
-        New["Other Channel (Signal, Gmail...)"]
+        BB[BlueBubbles]
+        New["Optional add-on channels"]
     end
 
     subgraph Orchestrator["Orchestrator — index.ts"]
@@ -122,7 +128,7 @@ graph LR
     end
 
     %% Flow
-    WA & TG & SL & DC & New -->|onMessage| ML
+    TG & BB & New -->|onMessage| ML
     ML --> GQ
     GQ -->|concurrency| CR
     CR --> LC
@@ -165,20 +171,10 @@ Each factory receives `ChannelOpts` (callbacks for `onMessage`, `onChatMetadata`
 
 ### Channel Interface
 
-Every channel implements this interface (defined in `src/types.ts`):
-
-```typescript
-interface Channel {
-  name: string;
-  connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
-  isConnected(): boolean;
-  ownsJid(jid: string): boolean;
-  disconnect(): Promise<void>;
-  setTyping?(jid: string, isTyping: boolean): Promise<void>;
-  syncGroups?(force: boolean): Promise<void>;
-}
-```
+Do not copy an interface from this archive. The authoritative `Channel`, send
+receipt, artifact, health, typing, group-sync, and bounded-history contracts are
+in [src/types.ts](../src/types.ts). Review all current callers and tests before
+changing that interface.
 
 ### Self-Registration Pattern
 
@@ -397,6 +393,11 @@ Additional mounts appear at `/workspace/extra/{containerPath}` inside the contai
 
 **Mount syntax note:** Read-write mounts use `-v host:container`, but readonly mounts require `--mount "type=bind,source=...,target=...,readonly"` (the `:ro` suffix may not work on all runtimes).
 
+In current Andrea, this archived example is not authority to attach a directory.
+Ordinary direct-assistant turns receive no additional directories. Any eligible
+execution route must pass the canonical path/symlink allowlist and route policy;
+a runtime that cannot enforce required read-only mounts fails closed.
+
 ### Claude Authentication
 
 OneCLI Agent Vault is the preferred credential boundary. If OneCLI is
@@ -461,22 +462,25 @@ NanoClaw uses a hierarchical memory system based on CLAUDE.md files.
 
 ### How Memory Works
 
-1. **Agent Context Loading**
-   - Agent runs with `cwd` set to `groups/{group-name}/`
-   - Claude Agent SDK with `settingSources: ['project']` automatically loads:
-     - `../CLAUDE.md` (parent directory = global memory)
-     - `./CLAUDE.md` (current directory = group memory)
+1. **Context Loading**
+   - Transcript/session state is separated by capability lane.
+   - Direct-assistant, protected, and control routes receive host-constant
+     guidance; only the execution lane may consume mutable group `CLAUDE.md`.
+   - Project settings and hooks are ignored. Canonical runner source, settings,
+     enabled skills, plugins, and IPC controls are trusted read-only views.
 
 2. **Writing Memory**
-   - When user says "remember this", agent writes to `./CLAUDE.md`
-   - When user says "remember this globally" (main channel only), agent writes to `../CLAUDE.md`
-   - Agent can create files like `notes.md`, `research.md` in the group folder
+   - Current personal learning uses structured, provenance-aware stores and
+     approval/forget controls; this archived file hierarchy is not the
+     authoritative memory contract.
+   - File writes require an explicitly classified execution capability and a
+     permitted mount; ordinary chat cannot write files.
 
 3. **Main Channel Privileges**
-   - Only the "main" group (self-chat) can write to global memory
-   - Main can manage registered groups and schedule tasks for any group
-   - Main can configure additional directory mounts for any group
-   - Tool access is route-specific; ordinary direct-assistant turns have none
+   - Main-channel identity changes which control requests may be staged; it does
+     not bypass route policy or grant tools automatically.
+   - External sends, calendar writes, purchases, deployments, deletions, and
+     administrative changes continue to require fresh target-bound approval.
 
 ---
 
@@ -521,16 +525,17 @@ Sessions enable conversation continuity - Claude remembers what you talked about
    └── Build prompt with full conversation context
    │
    ▼
-7. Router invokes Claude Agent SDK:
-   ├── cwd: groups/{group-name}/
-   ├── prompt: conversation history + current message
-   ├── resume: session_id (for continuity)
-   └── mcpServers: nanoclaw (scheduler)
+7. Router classifies the route before invoking the Agent SDK:
+   ├── direct assistant: no built-in tools, MCP, or additional directories
+   ├── protected/control: exact read/lookup tools and MCP allowlists only
+   ├── advanced/code: explicit execution tools, with no MCP while shell-capable
+   └── resume: only session state from the same capability lane
    │
    ▼
-8. Claude processes message:
-   ├── Reads CLAUDE.md files for context
-   └── Uses tools as needed (search, email, etc.)
+8. The runner processes the request:
+   ├── uses host-constant guidance outside the execution lane
+   ├── may use mutable group guidance only in the execution lane
+   └── can call only the SDK tools/MCP servers enforced by that route policy
    │
    ▼
 9. Router prefixes response with assistant name and sends via the owning channel
@@ -583,13 +588,17 @@ This allows the agent to understand the conversation context even if it wasn't m
 
 ## Scheduled Tasks
 
-NanoClaw has a built-in scheduler that runs tasks as full agents in their group's context.
+Andrea has a built-in scheduler, but a scheduled task does not inherit an
+unbounded "full agent" capability.
 
 ### How Scheduling Works
 
 1. **Group Context**: Tasks created in a group run with that group's working directory and memory
-2. **Full Agent Capabilities**: Scheduled tasks have access to all tools (WebSearch, file operations, etc.)
-3. **Optional Messaging**: Tasks can send messages to their group using the `send_message` tool, or complete silently
+2. **Policy-Scoped Capabilities**: Each run receives only the tools, mounts, and
+   MCP servers permitted by its classified route and stored policy
+3. **Approval-Bound Effects**: A schedule may prepare local output, but external
+   messages, calendar writes, purchases, deployments, deletions, and other
+   sensitive effects still require current policy checks and fresh approval
 4. **Main Channel Privileges**: The main channel can schedule tasks for any group and view all tasks
 
 ### Schedule Types
@@ -646,9 +655,13 @@ From main channel:
 
 ## MCP Servers
 
-### NanoClaw MCP (built-in)
+### NanoClaw MCP (route-scoped)
 
-The `nanoclaw` MCP server is created dynamically per agent call with the current group's context.
+The MCP server is not available to every call. Direct-assistant turns receive
+no MCP server. Protected/control routes receive only their exact allowlist, and
+shell-capable execution routes do not receive MCP concurrently. The tools below
+are potential operations when the selected route and policy permit them; their
+presence here is not an authority grant.
 
 **Available Tools:**
 | Tool | Purpose |
@@ -683,62 +696,18 @@ When NanoClaw starts, it:
    - Recovers any unprocessed messages from before shutdown
    - Starts the message polling loop
 
-### Service: com.nanoclaw
-
-**launchd/com.nanoclaw.plist:**
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "...">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.nanoclaw</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{{NODE_PATH}}</string>
-        <string>{{PROJECT_ROOT}}/dist/index.js</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>{{PROJECT_ROOT}}</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>{{HOME}}/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
-        <key>HOME</key>
-        <string>{{HOME}}</string>
-        <key>ASSISTANT_NAME</key>
-        <string>Andrea</string>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>{{PROJECT_ROOT}}/logs/nanoclaw.log</string>
-    <key>StandardErrorPath</key>
-    <string>{{PROJECT_ROOT}}/logs/nanoclaw.error.log</string>
-</dict>
-</plist>
-```
-
 ### Managing the Service
 
+Do not copy or hand-edit the archived plist template. Use the canonical service
+wrapper so paths, Node selection, provenance, and health checks stay aligned:
+
 ```bash
-# Install service
-cp launchd/com.nanoclaw.plist ~/Library/LaunchAgents/
-
-# Start service
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-
-# Stop service
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
-
-# Check status
-launchctl list | grep nanoclaw
-
-# View logs
-tail -f logs/nanoclaw.log
+npm run mac:services:install
+npm run mac:services:start
+npm run mac:services:stop
+npm run mac:services:restart
+npm run mac:services:status
+npm run mac:services:logs
 ```
 
 ---
@@ -753,7 +722,10 @@ Agent work runs inside containers, providing:
 - **Route-specific command access**: only explicitly classified advanced/code
   routes may receive shell-capable tools
 - **Network isolation**: Can be configured per-container if needed
-- **Process isolation**: Container processes can't affect the host
+- **Bounded host effects**: Containers are not a claim of zero host impact.
+  They can consume CPU, memory, disk, network, and explicitly mounted/IPC
+  capabilities; mount policy, route-scoped tools, authenticated IPC, approval
+  gates, and postcondition checks bound those effects
 - **Non-root user**: Container runs as unprivileged `node` user (uid 1000)
 
 ### Prompt Injection Risk
@@ -798,14 +770,14 @@ chmod 700 groups/
 ### Common Issues
 
 | Issue                                    | Cause                             | Solution                                                                                                   |
-| ---------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------- |
-| No response to messages                  | Service not running               | Check `launchctl list                                                                                      | grep nanoclaw` |
-| "Claude Code process exited with code 1" | Container runtime failed to start | Check logs; NanoClaw auto-starts container runtime but may fail                                            |
+| ---------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| No response to messages                  | Service not running               | Run `npm run mac:services:status`, then inspect the canonical logs                                         |
+| "Claude Code process exited with code 1" | Container runtime failed to start | Check logs and the container contract; do not weaken isolation to make the probe pass                      |
 | "Claude Code process exited with code 1" | Session/control mount rejected    | Run the canonical container contract and isolated mount canary; do not mount host profiles as a workaround |
-| Session not continuing                   | Session ID not saved              | Check SQLite: `sqlite3 store/messages.db "SELECT * FROM sessions"`                                         |
-| Session not continuing                   | Mount path mismatch               | Container user is `node` with HOME=/home/node; sessions must be at `/home/node/.claude/`                   |
-| "QR code expired"                        | WhatsApp session expired          | Delete store/auth/ and restart                                                                             |
-| "No groups registered"                   | Haven't added groups              | Use `@Andrea add group "Name"` in main                                                                     |
+| Session not continuing                   | Session ID or lane mismatch       | Use sanitized diagnostics; preserve session data and verify the route-specific session lane                |
+| Session not continuing                   | Mount path mismatch               | Container user is `node` with `HOME=/home/node`; use the canonical mount builder                           |
+| Channel authentication expired           | Provider session requires renewal | Use that channel's documented reauthorization flow; never delete the whole auth store as a first response  |
+| No groups registered                     | Registration is incomplete        | Follow [ADMIN_GUIDE.md](ADMIN_GUIDE.md) registration recovery; do not invent a group from stored messages  |
 
 ### Log Location
 

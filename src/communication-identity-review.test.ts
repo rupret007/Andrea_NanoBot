@@ -413,7 +413,7 @@ describe('communication identity review', () => {
     const response = handleCommunicationIdentityReview({
       groupFolder: 'main',
       channel: 'bluebubbles',
-      chatJid: 'bb:iMessage;-;+14695405551',
+      chatJid: 'bb:iMessage;-;+12025550101',
       text: `link identity ${first.reviewKey} to "Candace"`,
     });
 

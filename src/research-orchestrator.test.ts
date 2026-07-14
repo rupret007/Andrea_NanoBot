@@ -4,6 +4,8 @@ import {
   createTask,
   listReliabilityObservations,
   listToolReliabilityRollups,
+  upsertProfileFact,
+  upsertProfileSubject,
   upsertLifeThread,
   _initTestDatabase,
 } from './db.js';
@@ -14,6 +16,8 @@ import {
   buildOutsideResearchSearchQuery,
   isResearchPrompt,
   planResearchRequest,
+  resolveExplicitResearchPersonalContextMode,
+  resolveResearchPersonalContextSources,
   runResearchOrchestrator,
 } from './research-orchestrator.js';
 
@@ -106,6 +110,301 @@ describe('research orchestrator', () => {
     );
     expect(isResearchPrompt('What time is it in Australia?')).toBe(false);
     expect(isResearchPrompt("What's still open with Candace?")).toBe(false);
+  });
+
+  it('recognizes polite research verbs without requiring imperative wording', () => {
+    for (const prompt of [
+      'Can you look for a good meditation for me?',
+      'Could you find a source-backed breathing guide?',
+      'Would you research sleep routines?',
+      'Can you investigate current meditation guidance?',
+      'Can you find current sleep information?',
+      'Could you look for meditation options?',
+      'Kick off some research on meditation and provide me the results.',
+      'Start research on sleep routines.',
+    ]) {
+      expect(isResearchPrompt(prompt)).toBe(true);
+    }
+    expect(isResearchPrompt('Can you help me find my keys?')).toBe(false);
+    expect(isResearchPrompt('Can you find my keys?')).toBe(false);
+    expect(isResearchPrompt('Can you look for my phone?')).toBe(false);
+    expect(isResearchPrompt('Start a timer for ten minutes.')).toBe(false);
+    expect(isResearchPrompt('Kick off the meeting.')).toBe(false);
+  });
+
+  it('keeps standalone personal recommendations on their existing outward-plus-local source plan', () => {
+    const plan = planResearchRequest({
+      query: 'recommend a good meditation for me',
+      channel: 'telegram',
+      groupFolder: 'main',
+      requestedDepth: 'standard',
+      allowWebSearch: true,
+    });
+
+    expect(plan.kind).toBe('recommend');
+    expect(plan.primarySource).toBe('openai_responses');
+    expect(plan.sources).toMatchObject({
+      localContext: true,
+      openAiResponses: true,
+      braveSearch: true,
+      webSearch: true,
+    });
+  });
+
+  it('disables personal sources for the privacy-minimized compound research input', () => {
+    const plan = planResearchRequest({
+      query: 'recommend a good meditation for me',
+      channel: 'telegram',
+      groupFolder: 'main',
+      requestedDepth: 'standard',
+      allowWebSearch: true,
+      personalContextMode: 'disabled',
+    });
+
+    expect(plan.kind).toBe('recommend');
+    expect(plan.primarySource).toBe('openai_responses');
+    expect(plan.sources).toMatchObject({
+      localContext: false,
+      openAiResponses: true,
+      braveSearch: true,
+      webSearch: true,
+    });
+  });
+
+  it('requires a named personal source before compound research opts into local context', () => {
+    expect(
+      resolveExplicitResearchPersonalContextMode(
+        'recommend a good meditation for me',
+      ),
+    ).toBe('disabled');
+    expect(
+      resolveExplicitResearchPersonalContextMode(
+        'recommend a meditation using my calendar and preferences',
+      ),
+    ).toBe('explicit');
+
+    const explicitPlan = planResearchRequest({
+      query: 'recommend a meditation using my calendar and preferences',
+      channel: 'telegram',
+      groupFolder: 'main',
+      allowWebSearch: true,
+      personalContextMode: 'explicit',
+    });
+    expect(explicitPlan.sources.localContext).toBe(true);
+  });
+
+  it('limits explicit compound personalization to the named local sources', () => {
+    expect(
+      resolveResearchPersonalContextSources({
+        query: 'recommend a meditation using my calendar',
+        channel: 'telegram',
+        groupFolder: 'main',
+        personalContextMode: 'explicit',
+      }),
+    ).toEqual({
+      lifeThreads: false,
+      tasks: false,
+      calendar: true,
+      profileFacts: false,
+    });
+    expect(
+      resolveResearchPersonalContextSources({
+        query: 'recommend a meditation using my personal context',
+        channel: 'telegram',
+        groupFolder: 'main',
+        personalContextMode: 'explicit',
+      }),
+    ).toEqual({
+      lifeThreads: true,
+      tasks: true,
+      calendar: true,
+      profileFacts: true,
+    });
+  });
+
+  it('reserves deep research for an explicitly deep personal recommendation', () => {
+    const plan = planResearchRequest({
+      query: 'recommend a good meditation for me',
+      channel: 'telegram',
+      groupFolder: 'main',
+      requestedDepth: 'deep',
+      allowWebSearch: true,
+    });
+
+    expect(plan.kind).toBe('deep_research');
+    expect(plan.primarySource).toBe('openai_responses');
+    expect(plan.sources).toMatchObject({
+      localContext: true,
+      openAiResponses: true,
+      braveSearch: true,
+      webSearch: true,
+    });
+  });
+
+  it('does not collect or send private local context for the compound meditation research leg', async () => {
+    const privateThread = 'private-life-thread-marker';
+    const privateTask = 'private-task-marker';
+    const privateProfile = 'private-profile-marker';
+    const privateCalendar = 'private-calendar-marker';
+
+    upsertLifeThread({
+      id: 'lt-compound-privacy',
+      groupFolder: 'main',
+      title: privateThread,
+      category: 'personal',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: [],
+      contextTags: [],
+      summary: privateThread,
+      nextAction: privateThread,
+      nextFollowupAt: null,
+      sourceKind: 'explicit',
+      confidenceKind: 'high',
+      userConfirmed: true,
+      sensitivity: 'normal',
+      surfaceMode: 'default',
+      mergedIntoThreadId: null,
+      createdAt: '2026-07-13T12:00:00.000Z',
+      lastUpdatedAt: '2026-07-13T12:00:00.000Z',
+      lastUsedAt: '2026-07-13T12:00:00.000Z',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+    });
+    createTask({
+      id: 'task-compound-privacy',
+      group_folder: 'main',
+      chat_jid: 'tg:100000001',
+      prompt: privateTask,
+      schedule_type: 'once',
+      schedule_value: '2026-07-14T13:00:00.000Z',
+      context_mode: 'group',
+      next_run: '2026-07-14T13:00:00.000Z',
+      status: 'active',
+      created_at: '2026-07-13T12:00:00.000Z',
+    });
+    upsertProfileSubject({
+      id: 'subject-compound-privacy',
+      groupFolder: 'main',
+      kind: 'self',
+      canonicalName: 'self',
+      displayName: 'You',
+      createdAt: '2026-07-13T12:00:00.000Z',
+      updatedAt: '2026-07-13T12:00:00.000Z',
+      disabledAt: null,
+    });
+    upsertProfileFact({
+      id: 'fact-compound-privacy',
+      groupFolder: 'main',
+      subjectId: 'subject-compound-privacy',
+      category: 'preferences',
+      factKey: 'privacy.compound_test',
+      valueJson: JSON.stringify({ value: privateProfile }),
+      state: 'accepted',
+      sourceChannel: 'telegram',
+      sourceSummary: privateProfile,
+      createdAt: '2026-07-13T12:00:00.000Z',
+      updatedAt: '2026-07-13T12:00:00.000Z',
+      decidedAt: '2026-07-13T12:00:00.000Z',
+    });
+
+    vi.stubEnv('OPENAI_API_KEY', 'test-openai-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    vi.stubEnv('OPENAI_MODEL_COMPLEX', 'gpt-test-complex');
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'true');
+    vi.stubEnv('BRAVE_SEARCH_API_KEY', 'test-brave-key');
+    vi.stubEnv('GOOGLE_CALENDAR_ACCESS_TOKEN', 'test-calendar-token');
+    vi.stubEnv('GOOGLE_CALENDAR_IDS', 'primary');
+
+    let calendarRequestCount = 0;
+    let openAiInput = '';
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'www.googleapis.com') {
+        calendarRequestCount += 1;
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: 'event-compound-privacy',
+                summary: privateCalendar,
+                start: { dateTime: '2026-07-14T13:00:00.000Z' },
+                end: { dateTime: '2026-07-14T14:00:00.000Z' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url.hostname === 'api.search.brave.com') {
+        return new Response(
+          JSON.stringify({
+            web: {
+              results: [
+                {
+                  title: 'Public meditation guide',
+                  url: 'https://example.test/meditation',
+                  description: 'A public overview of guided meditation.',
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url.hostname === 'openai.test') {
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          input?: string;
+        };
+        openAiInput = body.input || '';
+        return new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: [
+                      'Summary: Start with a short guided meditation.',
+                      'Findings:',
+                      '- A brief guided session is approachable.',
+                      'Recommendation: Try one ten-minute session.',
+                      'Follow-ups:',
+                      '- Want another option?',
+                    ].join('\n'),
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      throw new Error(`Unexpected test request host: ${url.hostname}`);
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const result = await runResearchOrchestrator({
+      query: 'recommend a good meditation for me',
+      channel: 'telegram',
+      groupFolder: 'main',
+      requestedDepth: 'standard',
+      allowWebSearch: true,
+      personalContextMode: 'disabled',
+      now: new Date('2026-07-13T12:00:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.plan.sources.localContext).toBe(false);
+    expect(calendarRequestCount).toBe(0);
+    expect(openAiInput).not.toContain(privateThread);
+    expect(openAiInput).not.toContain(privateTask);
+    expect(openAiInput).not.toContain(privateProfile);
+    expect(openAiInput).not.toContain(privateCalendar);
+    expect(openAiInput).toContain('recommend a good meditation for me');
   });
 
   it('uses the enriched public search query for showtime lookups', async () => {
@@ -266,7 +565,7 @@ describe('research orchestrator', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the Candace thread',
       replyText: 'Confirm dinner plans and pickup timing.',
       now: new Date('2026-04-05T09:00:00.000Z'),
@@ -274,7 +573,7 @@ describe('research orchestrator', () => {
     createTask({
       id: 'task-research-local',
       group_folder: 'main',
-      chat_jid: 'tg:8004355504',
+      chat_jid: 'tg:100000001',
       prompt: 'Review the school pickup timing',
       schedule_type: 'once',
       schedule_value: '2026-04-05T20:00:00.000Z',
@@ -303,7 +602,7 @@ describe('research orchestrator', () => {
     createTask({
       id: 'task-research-reminder',
       group_folder: 'main',
-      chat_jid: 'tg:8004355504',
+      chat_jid: 'tg:100000001',
       prompt:
         'Send a concise reminder telling the user to decide whether to switch dinner plans.',
       schedule_type: 'once',

@@ -38,7 +38,7 @@ after the final write. Aggregate external-action evidence cannot complete a
 mission until a dedicated receipt binds the exact approved action. The operator
 can inspect outcome quality with `npm run debug:assistant-intelligence`.
 
-The durable-continuity candidate gives meaningful coding, research, operator,
+The durable-continuity layer gives meaningful coding, research, operator,
 mission, and approval-gated work one canonical work identity. It binds that
 identity to the owner, chat, group, channel, executor, plan version, checkpoint,
 and exact target scope. Resume grants are expiring, single-use capabilities;
@@ -128,19 +128,34 @@ Static docs are not the source of truth for launch readiness. Use this order whe
 3. `npm run debug:pilot`
 4. docs
 
-Current host truth from the local operator commands:
+Current host truth from the local operator commands (snapshot: July 13, 2026):
 
-- `Host state: running_ready` proves the process/watchdog state; it does not by itself prove writable capacity. `Host disk pressure` and `Host health proof` must also be healthy before claiming full runtime readiness.
-- Active repo and serving commit should match before any live proof is trusted.
-- A responsive service serving an older or dirty artifact is stale, not release proof. Rebuild, restart, and require the serving SHA to match workspace `HEAD` before trusting live behavior as evidence for a candidate.
+- At snapshot capture, local `main` was clean at `25bc6177` and matched
+  `origin/main`.
+- The installed runtime is a verified, clean build of `e625432b`. It is not
+  exact-SHA aligned with workspace `HEAD` because `25bc6177` is a scanner-only
+  workflow forward fix. That explains the current mismatch; it does not turn
+  the older artifact into exact-SHA release proof.
+- `Host state: running_ready` proves the process/watchdog state; it does not by
+  itself prove writable capacity. Disk pressure is currently a warning at
+  approximately 6.4 GiB free (2.80%), so full host readiness must not be
+  claimed until safe capacity is restored.
+- A responsive service serving an older or dirty artifact is stale, not exact-
+  SHA release proof. Rebuild and restart with the platform-specific service
+  command before using live behavior as evidence for a code change.
 - Dated recovery snapshot: [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md).
-- As of July 6, 2026, the canonical runtime root is `/Users/jeffstory/Andrea_NanoBot`; `/Users/jeffstory/Documents/Andrea_NanoBot` is a convenience symlink, and `/Users/jeffstory/Andrea_NanoBot_AGI` should not serve in parallel.
-- `live_proven`: BlueBubbles canonical same-thread message-action proof, Google Calendar, research, image generation, and provider checks for OpenAI, Anthropic, Gemini, MiniMax, and Brave Search.
-- Host process, watchdog, and disk pressure are currently healthy. Andrea reports exact capacity and safe owner guidance without deleting Docker or user data if pressure returns.
-- `manual_action_required`: Alexa proof remains a real device or authenticated simulator step because it needs a fresh signed handled `IntentRequest`.
-- `near_live_only`: Telegram transport is healthy but its user-session roundtrip proof is overdue; other flagship journey proofs can also age out independently of core integration health. Refresh the exact proof named by `debug:status` before demos.
+- BlueBubbles transport is usable, but current status is
+  `degraded_but_usable`/`needs_proof`: a fresh canonical same-thread
+  `message_action` decision is missing. Do not describe it as currently
+  `live_proven` until that bounded proof is refreshed.
+- Telegram transport is healthy, but its user-session roundtrip proof is
+  overdue. Alexa still needs a fresh signed handled `IntentRequest`, and the
+  life-thread journey still needs a fresh real interaction.
 - Integration status keeps configuration, transport health, and proof freshness separate. For example, an overdue Telegram `/ping` may be `near_live_only` while the configured long-polling transport remains healthy; the stale success timestamp is proof debt, not a transport failure.
-- Model-provider configuration is not promoted to live health. Config-only model inventory remains `unknown` until a real probe or capped evaluation observes the provider; failed observations remain degraded or blocked instead of being hidden by configured credentials.
+- Model-provider configuration is not live health. OpenAI, Anthropic, Gemini,
+  MiniMax, and Brave Search remain `unknown` when only configuration is
+  present; only a bounded current probe or capped evaluation may promote an
+  observed provider state.
 - Successful or failed live provider probes persist only bounded health metadata (provider, state, failure class, model, and timestamp) in an owner-only local file for 30 minutes. Operator reality/readiness reports and the council doctor may reuse that explicitly labeled cached observation without another paid/network call; recorded council-run quality is unchanged by later provider recovery, and `npm run agi:readiness -- --config-only` ignores the cache for a strict configuration-only view. Prompts, outputs, credentials, request IDs, and raw provider errors are never cached.
 - `externally_blocked`: work cockpit execution can be blocked when the Andrea OpenAI backend lane is intentionally disabled; report that separately from host health.
 - `npm run services:status`, `npm run setup -- --step verify`, and `npm run debug:status` are the operator truth surfaces and should agree on the same proof/config blocker story
@@ -151,7 +166,7 @@ For the current demo/field-trial script, use [docs/DEMO_CHECKLIST.md](docs/DEMO_
 
 ## Pilot Mode
 
-Andrea now has a bounded pilot and dogfooding loop on this host:
+Andrea has a bounded pilot and dogfooding loop on configured hosts:
 
 - flagship journey proof is recorded privately in local SQLite as sanitized journey events
 - operator review now distinguishes `live_proven`, `degraded_but_usable`, and externally blocked pilot states so dogfooding does not confuse a bounded fallback with a clean live proof
@@ -344,7 +359,7 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 - use Node `22.22.2` for truthful Alexa validation on the operator host
 - use `npm run debug:alexa-conversation -- --review` to see repeated Alexa misses, weak clarifiers, and carrier phrases worth adding from real use
 
-Alexa proof on this host is now status-led:
+Alexa proof is status-led on each host:
 
 - treat `npm run services:status`, `npm run debug:status`, and `npm run setup -- --step verify` as the live authority
 - Alexa only becomes `live_proven` while a fresh handled Andrea custom-skill proof remains inside the 24-hour window
@@ -385,7 +400,10 @@ BlueBubbles is now Andrea's optional bounded Messages bridge, not a core require
 
 - BlueBubbles V1 now supports all synced personal and group chats, not one pinned linked thread
 - `@Andrea` addresses Andrea, while `@OpenClaw` selects the OpenClaw helper lane for deeper orchestration and skill work
-- Andrea replies only when a message explicitly mentions one of those aliases, so ordinary social chatter does not trigger assistant replies
+- the canonical self-thread accepts bounded direct asks without a mention;
+  a recent direct 1:1 chat accepts bounded bare follow-ups after fresh Andrea
+  context; groups and cold direct chats still require `@Andrea` or `@OpenClaw`
+  so ordinary social chatter does not trigger assistant replies
 - current-chat asks like `summarize this` now use recent `bb:` chat context, exclude the wake command itself, and can prime recent history from the live BlueBubbles server when local context is thin
 - communication asks now favor fuller conversation recaps plus grounded suggested replies; choosing a suggestion creates one approval-gated draft/action, not an automatic send
 - incoming BlueBubbles and Telegram images/videos are cached as bounded local message attachments (20 MiB per file, 7-day / 1 GiB retention by default) so Andrea can answer asks like `analyze this photo` or `what is in this video` when OpenAI vision is configured
@@ -397,9 +415,16 @@ BlueBubbles is now Andrea's optional bounded Messages bridge, not a core require
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
-On this Mac mini, the Messages bridge is local-first: Andrea has the live `BLUEBUBBLES_*` configuration loaded, the local endpoint is reachable at `127.0.0.1:1234`, the webhook is registered, and the Cloudflare BlueBubbles URL is fallback/diagnostic only. Telegram remains Andrea's dependable main messaging surface; BlueBubbles is `live_proven` when the fresh same-thread inbound, outbound, and `message_action` proof chain is current on this host.
+On a configured Mac, keep the Messages bridge local-first: prefer the local
+BlueBubbles endpoint, register the webhook, and treat any public tunnel as a
+fallback or diagnostic path. Telegram remains the dependable main messaging
+surface. BlueBubbles is `live_proven` only while a fresh same-thread inbound,
+outbound, and `message_action` proof chain is current. See
+[docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) for the dated operator-host
+state instead of inferring live configuration from this README.
 
-OpenBubbles is still not an active Andrea provider for this Mac mini BlueBubbles bridge.
+OpenBubbles is a future/provider-feasibility track, not the active Andrea
+Messages provider described here.
 
 See [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md) for the live V1 scope, config, webhook/send model, media analysis behavior, summary/suggested-reply behavior, and exact current limits. See [docs/MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](docs/MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md) for the approval-first send boundary.
 
@@ -633,6 +658,11 @@ Google Calendar now supports two practical operator flows on a configured host:
 
 - read real events from explicit selected calendars such as `primary` plus family/shared calendars
 - create simple one-time Google Calendar events after a clear confirmation in chat
+- split a clear calendar-plus-research ask into an approval-bound event draft and
+  a separately reported read-only research result; the research clause is never
+  copied into the event title, compound drafts require `confirm calendar event`,
+  and generic `for me` wording does not opt private local context into an
+  outward research request
 
 Use the Google setup flow on the host instead of trying to give Andrea your Google account password:
 
@@ -647,13 +677,15 @@ Notes:
 - while the Google OAuth app stays in Testing, the Google account must be listed as a test user, and Google can expire Calendar refresh tokens after 7 days
 - for durable Calendar auth, publish/verify the OAuth app in Google Cloud Console, then rerun `auth`, `discover`, and `validate` once
 - `GOOGLE_CALENDAR_IDS` should stay explicit so Andrea only reads the calendars you selected
-- `npm run setup -- --step google-calendar validate` is the operator truth surface for calendar access on the current host
+- `npm run setup -- --step google-calendar validate` is the operator truth surface for calendar access on the host being checked
   - `FAILURE_KIND: missing_config` means the current repo does not have usable Google Calendar credentials yet
   - `FAILURE_KIND: invalid_refresh_token` means the stored refresh token is stale or revoked; if the OAuth app is still in Testing, publish/verify it first, then rerun `auth` in the current repo instead of copying legacy tokens forward
 - if the browser reaches the Google callback but `auth` still times out, finish the same current-repo OAuth run with `npm run setup -- --step google-calendar auth-complete --callback-url "http://127.0.0.1:PORT/?state=...&code=..."`
 - reminder phrasing still creates reminders, not Google Calendar events
 - a host is only live-proven for Google Calendar writes after `auth`, `discover`, `validate`, and one disposable create-event proof all succeed on that host
-- on this host, Google Calendar is currently healthy and live-proven; if it later reports `invalid_grant`, rerun the current-repo OAuth setup and validation before claiming calendar launch readiness
+- use [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) for the dated operator-host
+  proof; if validation reports `invalid_grant`, rerun the current-repo OAuth
+  setup before claiming calendar launch readiness
 
 ## What Andrea Can Do
 
@@ -774,13 +806,27 @@ npm run test:major:ci
 npm run docs:check
 npm run test:major
 npm run test:stability
-npm run services:restart
 npm run services:status
 npm run setup -- --step verify
 npm run debug:status
 npm run debug:level -- verbose component:container 30m
 npm run debug:logs -- stderr 120
 npm run debug:reset -- all
+```
+
+`npm run services:status` is cross-platform. Lifecycle commands are
+platform-specific:
+
+```bash
+# Windows
+npm run services:start
+npm run services:stop
+npm run services:restart
+
+# macOS launchd host
+npm run mac:services:start
+npm run mac:services:stop
+npm run mac:services:restart
 ```
 
 ## Verify And Troubleshooting
@@ -804,7 +850,9 @@ That distinction matters during incidents:
 - `/debug-*` commands are operator-only and let you turn log volume up or down live without restarting the service
 - `npm run services:status`, `npm run debug:status`, and `npm run setup -- --step verify` now show the serving commit, the local workspace `HEAD`, installed artifact mode, current launch mode, and exact external blockers so host truth and dependency truth do not get mixed together
 - if `SERVING_COMMIT_MATCHES_WORKSPACE_HEAD: false`, restart into the current repo before treating any live proof as current
-- when you need both restart and verify, run `npm run services:restart` first, wait for it to finish, then run `npm run setup -- --step verify`
+- when you need both restart and verify, run the Windows
+  `npm run services:restart` or macOS `npm run mac:services:restart` command,
+  wait for it to finish, then run `npm run setup -- --step verify`
 
 ## Documentation Map
 
@@ -852,8 +900,8 @@ Key areas in this repo:
 
 ## Testing And Release Discipline
 
-This repo is meant to be run methodically.
-The standard validation gate is:
+This repo is meant to be run methodically. The primary CI-safe application
+suite is:
 
 ```bash
 npm run test:major:ci
@@ -866,6 +914,11 @@ That runs:
 3. linting
 4. unit tests
 5. production build
+
+It is not the complete release matrix. Container-runner contracts, AGI gates,
+the deterministic sweep and scorecard, documentation, dependency/security
+checks, hosted platform checks, and runtime proof are defined in
+[the testing and release runbook](docs/TESTING_AND_RELEASE_RUNBOOK.md).
 
 For live operator verification on a real machine, use:
 

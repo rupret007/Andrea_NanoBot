@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { readEnvFile } from './env.js';
 
 const GOOGLE_CALENDAR_ENV_KEYS = [
@@ -48,6 +50,12 @@ export interface GoogleCalendarEventCreateInput {
   allDay: boolean;
   location?: string | null;
   description?: string | null;
+  /**
+   * Stable, private runtime identity for one approved create attempt. Google
+   * Calendar accepts client-provided event IDs, which lets a retry reconcile
+   * an accepted-but-unacknowledged POST instead of creating a second event.
+   */
+  idempotencyKey?: string | null;
 }
 
 export interface GoogleCalendarEventUpdateInput {
@@ -699,14 +707,88 @@ function mapGoogleCalendarEventPayload(
   };
 }
 
+/**
+ * Calendar event IDs use a restricted alphabet. Hashing keeps the durable
+ * runtime key out of the provider identifier while producing a deterministic,
+ * valid value for every retry of the same approved action.
+ */
+export function googleCalendarEventIdForIdempotencyKey(key: string): string {
+  const normalized = key.trim();
+  if (!normalized || normalized.length > 512) {
+    throw new Error('Google Calendar idempotency key is invalid.');
+  }
+  return `a${createHash('sha256')
+    .update(`andrea:google-calendar-event:v1\0${normalized}`)
+    .digest('hex')}`;
+}
+
+function isSameCalendarCreateIntent(
+  event: GoogleCalendarEventRecord,
+  input: GoogleCalendarEventCreateInput,
+): boolean {
+  if (event.calendarId !== input.calendarId || event.title !== input.title) {
+    return false;
+  }
+  if (event.allDay !== input.allDay) return false;
+  return (
+    event.startIso === input.start.toISOString() &&
+    event.endIso === input.end.toISOString()
+  );
+}
+
+async function fetchGoogleCalendarEventById(input: {
+  calendarId: string;
+  eventId: string;
+  accessToken: string;
+  fallback: { title: string; location?: string | null };
+  fetchImpl: FetchLike;
+}): Promise<GoogleCalendarEventRecord> {
+  const response = await input.fetchImpl(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(input.calendarId)}/events/${encodeURIComponent(input.eventId)}`,
+    {
+      headers: { Authorization: `Bearer ${input.accessToken}` },
+    },
+  );
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      extractJsonErrorDetail(
+        text,
+        'Google Calendar event reconciliation',
+        response.status,
+      ),
+    );
+  }
+  return mapGoogleCalendarEventPayload(
+    JSON.parse(text) as {
+      id?: string;
+      summary?: string;
+      location?: string;
+      htmlLink?: string;
+      start?: { date?: string; dateTime?: string };
+      end?: { date?: string; dateTime?: string };
+      organizer?: { displayName?: string; email?: string };
+    },
+    {
+      calendarId: input.calendarId,
+      title: input.fallback.title,
+      location: input.fallback.location || null,
+    },
+  );
+}
+
 export async function createGoogleCalendarEvent(
   input: GoogleCalendarEventCreateInput,
   config: GoogleCalendarConfig,
   fetchImpl: FetchLike = globalThis.fetch,
 ): Promise<GoogleCalendarEventRecord> {
   const accessToken = await getGoogleCalendarAccessToken(config, fetchImpl);
+  const providerEventId = input.idempotencyKey
+    ? googleCalendarEventIdForIdempotencyKey(input.idempotencyKey)
+    : null;
   const body = input.allDay
     ? {
+        ...(providerEventId ? { id: providerEventId } : {}),
         summary: input.title,
         location: input.location || undefined,
         description: input.description || undefined,
@@ -718,6 +800,7 @@ export async function createGoogleCalendarEvent(
         },
       }
     : {
+        ...(providerEventId ? { id: providerEventId } : {}),
         summary: input.title,
         location: input.location || undefined,
         description: input.description || undefined,
@@ -744,6 +827,21 @@ export async function createGoogleCalendarEvent(
   );
   const text = await response.text();
   if (!response.ok) {
+    if (response.status === 409 && providerEventId) {
+      const existing = await fetchGoogleCalendarEventById({
+        calendarId: input.calendarId,
+        eventId: providerEventId,
+        accessToken,
+        fallback: { title: input.title, location: input.location || null },
+        fetchImpl,
+      });
+      if (isSameCalendarCreateIntent(existing, input)) {
+        return existing;
+      }
+      throw new Error(
+        'Google Calendar idempotency conflict did not match the approved event; no duplicate was created.',
+      );
+    }
     throw new Error(
       extractJsonErrorDetail(
         text,

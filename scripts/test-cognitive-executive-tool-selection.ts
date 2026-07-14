@@ -64,7 +64,7 @@ const approvalContext = beginCognitiveExecutiveTurn({
   rawAsk: 'what should I say back and send it',
   channel: 'bluebubbles',
   groupFolder: 'main',
-  chatJid: 'bb:iMessage;-;+14695405551',
+  chatJid: 'bb:iMessage;-;+12025550101',
   turnId: 'tool:approval',
   capabilityMatchOverride: {
     capabilityId: 'communication.draft_reply',
@@ -98,7 +98,10 @@ const missionBlockerContext = beginCognitiveExecutiveTurn({
 const selectedMissionBlockerTool = missionBlockerContext?.toolChoices.find(
   (choice) => choice.selected,
 );
-assert.equal(missionBlockerContext?.capabilityMatch?.capabilityId, 'missions.explain');
+assert.equal(
+  missionBlockerContext?.capabilityMatch?.capabilityId,
+  'missions.explain',
+);
 assert.equal(missionBlockerContext?.plan.selectedRoute, 'missions');
 assert.equal(selectedMissionBlockerTool?.toolId, 'missions');
 assert.equal(missionBlockerContext?.plan.approvalRequired, false);
@@ -119,7 +122,10 @@ const missionHandleContext = beginCognitiveExecutiveTurn({
 const selectedMissionHandleTool = missionHandleContext?.toolChoices.find(
   (choice) => choice.selected,
 );
-assert.equal(missionHandleContext?.capabilityMatch?.capabilityId, 'missions.execute');
+assert.equal(
+  missionHandleContext?.capabilityMatch?.capabilityId,
+  'missions.execute',
+);
 assert.equal(missionHandleContext?.plan.selectedRoute, 'missions');
 assert.equal(selectedMissionHandleTool?.toolId, 'missions');
 assert.equal(missionHandleContext?.plan.approvalRequired, true);

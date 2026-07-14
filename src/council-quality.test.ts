@@ -155,17 +155,17 @@ describe('council quality ledger', () => {
       structuredVerdict: verdict({
         riskFlags: ['provider key sk-proj-abcdefghijklmnopqrstuvwx'],
         replaySummary:
-          'Verdict mentions jeff@example.com and +14695405551 but not raw prompts.',
+          'Verdict mentions jeff@example.com and +12025550101 but not raw prompts.',
       }),
       providerFailures: ['token=sk-proj-abcdefghijklmnopqrstuvwx'],
-      riskFlags: ['phone +14695405551'],
+      riskFlags: ['phone +12025550101'],
       now: '2026-06-04T10:00:00.000Z',
     });
 
     const stored = getCouncilRunLedger('council-secret');
 
     expect(stored?.providerFailuresJson).not.toContain('sk-proj-');
-    expect(stored?.riskFlagsJson).not.toContain('+14695405551');
+    expect(stored?.riskFlagsJson).not.toContain('+12025550101');
     expect(stored?.replaySummary).toContain('[redacted-email]');
     expect(stored?.replaySummary).toContain('[redacted-phone]');
     expect(stored?.memberStatusesJson).not.toContain('raw prompt');

@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 
-import {
-  buildSessionGraphReport,
-} from '../src/session-graph.js';
+import { buildSessionGraphReport } from '../src/session-graph.js';
 import {
   _closeDatabase,
   _initTestDatabase,
@@ -42,7 +40,7 @@ upsertCommunicationThread({
   linkedSubjectIds: ['subject:candace'],
   linkedLifeThreadIds: ['life:candace-open-loop'],
   channel: 'bluebubbles',
-  channelChatJid: 'bb:iMessage;-;+14695405551',
+  channelChatJid: 'bb:iMessage;-;+12025550101',
   lastInboundSummary: 'Asked for help deciding what to say back.',
   lastOutboundSummary: 'Andrea drafted a reply but held send approval.',
   followupState: 'reply_needed',
@@ -88,7 +86,7 @@ assert.ok(
 );
 
 const serialized = JSON.stringify(report);
-assert.doesNotMatch(serialized, /\+14695405551/);
+assert.doesNotMatch(serialized, /\+12025550101/);
 assert.match(serialized, /fp:/);
 
 console.log(

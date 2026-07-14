@@ -334,6 +334,10 @@ export interface AssistantCapabilityInput {
   savedMaterialOnly?: boolean | null;
   replyStyle?: 'shorter' | 'warmer' | 'more_direct' | null;
   followupAction?: AlexaConversationFollowupAction;
+  researchDepth?: 'brief' | 'standard' | 'deep';
+  allowWebSearch?: boolean;
+  personalContextMode?: 'auto' | 'explicit' | 'disabled';
+  researchFollowupMode?: 'default' | 'explicit_only';
   reason?: string;
 }
 
@@ -1357,7 +1361,17 @@ function isResearchExplainabilityTurn(query: string): boolean {
   );
 }
 
-function formatResearchTelegramReply(result: ResearchResult): string {
+interface ResearchReplyFormattingOptions {
+  followupMode?: 'default' | 'explicit_only';
+}
+
+const EXPLICIT_RESEARCH_FOLLOWUP_TEXT =
+  'Ask explicitly for the next research action you want—for example, “compare the tradeoffs” or “make the research summary shorter.” While the calendar request is pending, a bare “yes” or “okay” is not a research follow-up.';
+
+function formatResearchTelegramReply(
+  result: ResearchResult,
+  options: ResearchReplyFormattingOptions = {},
+): string {
   const lines = [
     '*Research Summary*',
     result.summaryText || result.fullText || '',
@@ -1384,7 +1398,9 @@ function formatResearchTelegramReply(result: ResearchResult): string {
       );
     }
   }
-  if (result.followupSuggestions.length) {
+  if (options.followupMode === 'explicit_only') {
+    lines.push('', '*To continue research*', EXPLICIT_RESEARCH_FOLLOWUP_TEXT);
+  } else if (result.followupSuggestions.length) {
     lines.push('', '*Next if useful*');
     for (const suggestion of result.followupSuggestions.slice(0, 2)) {
       lines.push(`- ${suggestion}`);
@@ -1393,7 +1409,10 @@ function formatResearchTelegramReply(result: ResearchResult): string {
   return lines.filter(Boolean).join('\n');
 }
 
-function formatResearchBlueBubblesReply(result: ResearchResult): string {
+function formatResearchBlueBubblesReply(
+  result: ResearchResult,
+  options: ResearchReplyFormattingOptions = {},
+): string {
   const lines = [result.summaryText || result.fullText || ''];
   const firstSection = result.structuredFindings[0];
   if (firstSection?.items.length) {
@@ -1413,7 +1432,9 @@ function formatResearchBlueBubblesReply(result: ResearchResult): string {
         .join(', ')}`,
     );
   }
-  if (result.handoffOption) {
+  if (options.followupMode === 'explicit_only') {
+    lines.push(EXPLICIT_RESEARCH_FOLLOWUP_TEXT);
+  } else if (result.handoffOption) {
     lines.push('If you want, I can send the fuller version to Telegram.');
   } else if (result.followupSuggestions[0]) {
     lines.push(result.followupSuggestions[0]);
@@ -1421,25 +1442,31 @@ function formatResearchBlueBubblesReply(result: ResearchResult): string {
   return lines.filter(Boolean).join('\n');
 }
 
-function formatResearchAlexaReply(result: ResearchResult): {
+function formatResearchAlexaReply(
+  result: ResearchResult,
+  options: ResearchReplyFormattingOptions = {},
+): {
   replyText: string;
   handoffOffer?: string;
 } {
   const lead =
     result.spokenText || result.summaryText || result.fullText || 'Okay.';
   const followupPrompt =
-    result.handoffOption && result.plan.kind === 'compare'
-      ? ' Want the tradeoffs, or should I send the fuller version to Telegram?'
-      : result.handoffOption
-        ? ' I can send the fuller version to Telegram if you want.'
-        : result.followupSuggestions[0]
-          ? ` ${result.followupSuggestions[0]}`
-          : '';
+    options.followupMode === 'explicit_only'
+      ? ' To continue the research, ask explicitly for the next research action. While the calendar request is pending, a bare yes or okay is not a research follow-up.'
+      : result.handoffOption && result.plan.kind === 'compare'
+        ? ' Want the tradeoffs, or should I send the fuller version to Telegram?'
+        : result.handoffOption
+          ? ' I can send the fuller version to Telegram if you want.'
+          : result.followupSuggestions[0]
+            ? ` ${result.followupSuggestions[0]}`
+            : '';
   return {
     replyText: `${lead}${followupPrompt}`.trim(),
-    handoffOffer: result.handoffOption
-      ? 'I can send the fuller version to Telegram if you want.'
-      : undefined,
+    handoffOffer:
+      options.followupMode !== 'explicit_only' && result.handoffOption
+        ? 'I can send the fuller version to Telegram if you want.'
+        : undefined,
   };
 }
 
@@ -1743,11 +1770,20 @@ async function runResearchCapability(
     now: context.now,
     conversationSummary: context.conversationSummary,
     preferBrief: context.channel === 'alexa',
+    requestedDepth: input.researchDepth,
+    allowWebSearch: input.allowWebSearch,
+    personalContextMode: input.personalContextMode,
   });
   if (!result.handled) return { handled: false };
-  const voice = formatResearchAlexaReply(result);
-  const telegramReply = formatResearchTelegramReply(result);
-  const bluebubblesReply = formatResearchBlueBubblesReply(result);
+  const formattingOptions: ResearchReplyFormattingOptions = {
+    followupMode: input.researchFollowupMode,
+  };
+  const voice = formatResearchAlexaReply(result, formattingOptions);
+  const telegramReply = formatResearchTelegramReply(result, formattingOptions);
+  const bluebubblesReply = formatResearchBlueBubblesReply(
+    result,
+    formattingOptions,
+  );
   const continuationCandidate = buildResearchContinuationCandidate(
     descriptor,
     query,
@@ -2437,6 +2473,9 @@ async function runKnowledgeResearchCapability(
     preferBrief: context.channel === 'alexa',
     savedMaterialMode,
     requestedSourceIds,
+    requestedDepth: input.researchDepth,
+    allowWebSearch: input.allowWebSearch,
+    personalContextMode: input.personalContextMode,
   });
   if (!researchResult.handled) return { handled: false };
 
@@ -6983,6 +7022,9 @@ export function inferResearchCapabilityId(text: string): AssistantCapabilityId {
   }
   if (
     /\b(best choice|which should i|which one'?s actually better for me|recommend|what should i know before deciding|before deciding|why)\b/.test(
+      normalized,
+    ) ||
+    /\b(?:look\s+for|find)\s+(?:me\s+)?(?:(?:a|an|the|some)\s+)?(?:good|best|right|suitable|recommended)\b/.test(
       normalized,
     )
   ) {

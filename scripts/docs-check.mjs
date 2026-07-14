@@ -2,11 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = path.dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
+const repoRoot = path.dirname(
+  fileURLToPath(new URL('../package.json', import.meta.url)),
+);
 const packageJson = JSON.parse(
   fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'),
 );
-const markdownFiles = [path.join(repoRoot, 'README.md')];
+const markdownFiles = [];
 
 function collectMarkdownFiles(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -19,7 +21,15 @@ function collectMarkdownFiles(dir) {
   }
 }
 
+for (const entry of fs.readdirSync(repoRoot, { withFileTypes: true })) {
+  if (entry.isFile() && entry.name.endsWith('.md')) {
+    markdownFiles.push(path.join(repoRoot, entry.name));
+  }
+}
+
 collectMarkdownFiles(path.join(repoRoot, 'docs'));
+collectMarkdownFiles(path.join(repoRoot, 'repo-tokens'));
+markdownFiles.sort();
 
 function isExternalTarget(target) {
   return /^(?:[a-z][a-z0-9+.-]*:|#|\/)/i.test(target);
@@ -48,7 +58,22 @@ for (const filePath of markdownFiles) {
         )
       : Boolean(packageJson.scripts?.[command]);
     if (!exists) {
-      failures.push(`${relativeFile}: missing package script npm run ${command}`);
+      failures.push(
+        `${relativeFile}: missing package script npm run ${command}`,
+      );
+    }
+  }
+
+  const deploymentIdentifierPatterns = [
+    /\/Users\/[^/\s`]+\/Andrea_NanoBot/g,
+    /C:\\Users\\[^\\\s`]+\\/g,
+    /bb:iMessage;[^\s`)]+/g,
+  ];
+  for (const pattern of deploymentIdentifierPatterns) {
+    if (pattern.test(contents)) {
+      failures.push(
+        `${relativeFile}: contains a deployment-specific path or messaging identifier`,
+      );
     }
   }
 }
@@ -59,4 +84,6 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`Documentation check passed for ${markdownFiles.length} Markdown file(s).`);
+console.log(
+  `Documentation check passed for ${markdownFiles.length} Markdown file(s).`,
+);

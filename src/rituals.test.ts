@@ -39,7 +39,7 @@ describe('rituals', () => {
     const result = handleRitualCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'enable morning brief',
       now: new Date('2026-04-04T07:00:00.000Z'),
     });
@@ -64,7 +64,7 @@ describe('rituals', () => {
     handleRitualCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'enable morning brief',
       now: new Date('2026-04-04T07:00:00.000Z'),
     });
@@ -72,7 +72,7 @@ describe('rituals', () => {
     const result = handleRitualCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'stop doing that',
       priorCompanionMode: 'morning_brief',
       now: new Date('2026-04-04T07:30:00.000Z'),
@@ -95,7 +95,7 @@ describe('rituals', () => {
     const created = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the Candace thread',
       replyText: 'Talk through dinner plans tonight.',
       now: new Date('2026-04-04T16:00:00.000Z'),
@@ -104,7 +104,7 @@ describe('rituals', () => {
     const result = handleRitualCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'make this part of my evening reset',
       priorCompanionMode: 'open_guidance',
       priorContext: {
@@ -126,7 +126,7 @@ describe('rituals', () => {
     const result = handleRitualCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'stop surfacing family context automatically',
       now: new Date('2026-04-04T18:00:00.000Z'),
     });

@@ -28,7 +28,7 @@ function storeChatMessage(input: {
   timestamp: string;
   chatJid?: string;
 }) {
-  const chatJid = input.chatJid || 'tg:8004355504';
+  const chatJid = input.chatJid || 'tg:100000001';
   storeChatMetadata(chatJid, input.timestamp);
   storeMessage({
     id: input.id,
@@ -46,7 +46,7 @@ describe('life threads', () => {
     const result = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the band thread',
       replyText: 'Confirm rehearsal time with the drummer before Friday.',
       now: new Date('2026-04-04T09:00:00.000Z'),
@@ -65,7 +65,7 @@ describe('life threads', () => {
     const result = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'Remember I need to talk to Candace about dinner plans tonight.',
       now: new Date('2026-04-04T09:00:00.000Z'),
     });
@@ -85,7 +85,7 @@ describe('life threads', () => {
     const created = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the family thread',
       replyText: 'Talk about dinner plans and school pickup.',
       now: new Date('2026-04-04T09:00:00.000Z'),
@@ -96,7 +96,7 @@ describe('life threads', () => {
     const renamed = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'rename that thread to Candace',
       priorContext: {
         summaryText: 'family logistics',
@@ -114,7 +114,7 @@ describe('life threads', () => {
     const paused = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'pause that',
       priorContext: {
         summaryText: 'Candace',
@@ -132,7 +132,7 @@ describe('life threads', () => {
     const closed = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'close that thread',
       priorContext: {
         summaryText: 'Candace',
@@ -150,7 +150,7 @@ describe('life threads', () => {
     const forgotten = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'forget that thread',
       priorContext: {
         summaryText: 'Candace',
@@ -172,7 +172,7 @@ describe('life threads', () => {
     const band = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the band thread',
       replyText: 'Book rehearsal space.',
       now: new Date('2026-04-04T09:00:00.000Z'),
@@ -180,7 +180,7 @@ describe('life threads', () => {
     const community = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the community thread',
       replyText: 'Confirm the neighborhood fundraiser set.',
       now: new Date('2026-04-04T09:01:00.000Z'),
@@ -220,7 +220,7 @@ describe('life threads', () => {
 
     const suggestion = maybeCreatePendingLifeThreadSuggestion({
       groupFolder: 'main',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'What am I forgetting about the band this week?',
       now: new Date('2026-04-04T12:00:00.000Z'),
     });
@@ -229,7 +229,7 @@ describe('life threads', () => {
     expect(listLifeThreadsForGroup('main')).toHaveLength(0);
     expect(
       getPendingLifeThreadSuggestion(
-        'tg:8004355504',
+        'tg:100000001',
         new Date('2026-04-04T12:10:00.000Z'),
       )?.title,
     ).toBe('Band');
@@ -237,7 +237,7 @@ describe('life threads', () => {
     const accepted = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'yes',
       now: new Date('2026-04-04T12:11:00.000Z'),
     });
@@ -249,7 +249,7 @@ describe('life threads', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the Candace thread',
       replyText: 'Talk through dinner plans tonight.',
       now: new Date('2026-04-04T09:00:00.000Z'),
@@ -257,7 +257,7 @@ describe('life threads', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the work thread',
       replyText: 'Finish the rollout notes.',
       now: new Date('2026-04-04T09:01:00.000Z'),
@@ -288,7 +288,7 @@ describe('life threads', () => {
     const created = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the Candace thread',
       replyText: 'Talk through dinner plans tonight.',
       now: new Date('2026-04-04T09:00:00.000Z'),
@@ -297,7 +297,7 @@ describe('life threads', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: "don't bring this up automatically",
       priorContext: {
         summaryText: 'Candace dinner plans',
@@ -328,7 +328,7 @@ describe('life threads', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the band thread',
       replyText:
         'The next grounded thing is your schedule, because I do not have a better signal than that yet.',
@@ -337,7 +337,7 @@ describe('life threads', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the work thread',
       replyText: 'Finish the rollout notes.',
       now: new Date('2026-04-04T09:01:00.000Z'),
@@ -360,7 +360,7 @@ describe('life threads', () => {
     const result = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'remind me to talk to Candace about dinner plans tonight',
       now: new Date('2026-04-04T09:00:00.000Z'),
     });
@@ -388,7 +388,7 @@ describe('life threads', () => {
     const result = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this for later',
       replyText: dirtyDraftReply,
       now: new Date('2026-04-04T09:00:00.000Z'),
@@ -412,7 +412,7 @@ describe('life threads', () => {
     const due = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: "don't let me forget this band thing tonight",
       replyText: 'Confirm the rehearsal set list before tonight.',
       now: new Date('2026-04-04T09:00:00-05:00'),
@@ -421,7 +421,7 @@ describe('life threads', () => {
     const manual = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the house thread',
       replyText: 'Check the back porch light.',
       now: new Date('2026-04-04T09:05:00.000Z'),
@@ -437,7 +437,7 @@ describe('life threads', () => {
     const snoozed = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
-      chatJid: 'tg:8004355504',
+      chatJid: 'tg:100000001',
       text: 'save this under the work thread',
       replyText: 'Finish the rollout notes.',
       now: new Date('2026-04-04T09:10:00.000Z'),
