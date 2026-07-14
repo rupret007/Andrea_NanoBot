@@ -35,8 +35,8 @@ The latest released host snapshot records:
 - the latest dated status records disk pressure as warning at about 11 GiB free;
   the release completed, but headroom should be improved before another
   container-heavy round
-- Telegram transport and its last recorded `/ping` roundtrip are healthy in
-  the dated status; refresh them rather than carrying the label into a release
+- Telegram transport is healthy; the last recorded `/ping` roundtrip at
+  `2026-07-14T15:10:07.618Z` is aged and needs a genuine user-path refresh
 - BlueBubbles transport is reachable, while a same-thread action proof can age
   independently and must remain explicit in the dated status
 - **manual live proof still pending**: Alexa needs a fresh signed handled

@@ -123,10 +123,10 @@ created-ID residue. A scenario or cleanup failure makes the command fail.
 
 At the time of this historical temporal round, structured tentative/waiting
 states, scoped multi-item forgetting, and general proactive-recall paraphrase
-expansion were intentionally unimplemented. The current candidate above adds
-structured commitment/waiting state and its repository certification passes;
-publication and runtime proof remain separate. Scoped destructive multi-item
-forgetting remains intentionally unimplemented.
+expansion were intentionally unimplemented. The released implementation above
+adds structured commitment/waiting state and its repository certification
+passes; publication and runtime remain distinct evidence classes. Scoped
+destructive multi-item forgetting remains intentionally unimplemented.
 
 ### Repository validation
 

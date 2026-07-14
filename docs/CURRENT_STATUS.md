@@ -248,8 +248,9 @@ single-probe recertification is still required before this scenario can become
 Treat a configured transport as different from a fresh user-path proof. Use the
 status commands above instead of carrying these point-in-time states forward.
 
-- Telegram: transport and the production user-session `/ping` roundtrip are
-  freshly verified at `2026-07-14T15:10:07.618Z`.
+- Telegram: transport is healthy. The last successful production user-session
+  `/ping` roundtrip was recorded at `2026-07-14T15:10:07.618Z`; it is now aged
+  and needs a genuine user-path refresh.
 - BlueBubbles: transport is reachable and usable; current readiness is degraded
   because a fresh canonical same-thread `message_action` proof is missing. The
   OpenClaw status drill reached the tool path, but its exactly-once
@@ -298,10 +299,11 @@ status commands above instead of carrying these point-in-time states forward.
 
 ## Open Operator Debt
 
-1. Before rebuilding or restarting a newer candidate, rerun
-   `npm run services:status` and require healthy disk pressure; never delete
+1. Before rebuilding or restarting a newer release, rerun
+   `npm run services:status` and require adequate measured headroom; defer
+   container-heavy work while disk pressure remains at warning. Never delete
    owner data or evidence automatically.
-2. After the release restart, require exact serving-SHA alignment.
+2. After every future release restart, require exact serving-SHA alignment.
 3. Refresh Telegram, BlueBubbles same-thread message-action, Alexa signed
    intent, and life-thread proofs through genuine user interactions.
 4. Collect five distinct owner reviews before presenting a baseline, and

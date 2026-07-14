@@ -241,8 +241,8 @@ reprojecting it.
 
 ## Production Consumers
 
-The candidate updates the shared life-thread snapshot and the major consumers
-that present or reason over ongoing matters:
+The released implementation updates the shared life-thread snapshot and the
+major consumers that present or reason over ongoing matters:
 
 - daily companion and chief-of-staff guidance;
 - rituals and follow-through;
