@@ -18,7 +18,7 @@ uncommitted candidate changes.
 - Exact-SHA Ubuntu, Windows, container, AGI, CodeQL, dependency-audit,
   verified-secret-scan, and Semgrep checks are green.
 - The Mac host reports `running_ready` and healthy disk pressure. The latest
-  checked status had 18 GiB available (7.97% free), restoring enough headroom
+  checked status had 14 GiB available (5.95% free), retaining enough headroom
   for the normal build and restart sequence. Recheck before a disk-heavy
   container build because this value is deliberately not treated as durable
   release evidence.

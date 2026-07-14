@@ -87,11 +87,21 @@ expansion. Those earlier measured limitations remain honest future work.
   backlog is 649; touched temporal code adds no warning.
 - AGI gate: typecheck plus 28 files / 282 tests.
 - Hermetic deterministic sweep: 93/93 selected commands passed, including the
-  200.5-second three-round stability gate.
+  189.5-second three-round stability gate.
 - Offline scorecard: 100.0% A+, all nine dimensions at 100%, no merge-blocking
-  regression, network denial active, 1,370 ms, and $0.0000 cost.
+  regression, network denial active, 2,453 ms, and $0.0000 cost.
 - Six signature flows, 69-file documentation check, root and container-runner
   production/full dependency audits, formatting, and whitespace checks passed.
+
+Implementation commit `6d14ebf3c0682e179d8cecc4be43ff2f31f71f10`
+was pushed directly to `main`. Its exact-SHA Ubuntu, Windows, container, AGI,
+and CodeQL jobs passed. The clean release artifact was rebuilt with zero dirty
+paths; OpenClaw restarted at PID 49107 with a healthy control API and 11/11
+required bridge tools, and Andrea restarted at PID 49652 with boot ID
+`host-76461-1780389249797` serving that implementation commit. A documentation-
+only forward commit may advance repository and serving SHA; use the commands at
+the top of this handoff for current identity rather than treating these process
+IDs as durable health evidence.
 
 ## Synthetic life-thread certification
 

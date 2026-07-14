@@ -1,6 +1,6 @@
 # Modernization Plan
 
-## Temporal truth and durable restart release — 2026-07-14 (current worktree)
+## Temporal truth and durable restart release — 2026-07-14 (released)
 
 This focused reliability release starts from clean, synchronized, and serving
 SHA `4b8571f64230fabaf1ea0b74f346c1f1afecc224`. It does not include waiting,
@@ -38,7 +38,7 @@ tentative, selective multi-forget, general recall-paraphrase, or authority work.
       durable close/reopen cycles, a correction between restarts, held-out
       variants, cleanup manifest, and independent production-residue check.
 
-### Validation and release closure required
+### Validation and release closure
 
 - [x] Focused temporal and life-thread regression suite passes.
 - [x] Synthetic temporal certification passes 13/13 scenarios with two restart
@@ -51,9 +51,12 @@ tentative, selective multi-forget, general recall-paraphrase, or authority work.
       sweep/scorecard/audits/signature flows, and final diff/secret review.
 - [x] Record exact final totals and the fixed certification run ID in current
       status and handoff documentation.
-- [ ] Fetch immediately before release; require zero divergence. Commit and
-      push one coherent release to `main`, rebuild/restart Andrea from that
-      commit, and verify clean runtime provenance plus Andrea/OpenClaw health.
+- [x] Fetch immediately before release; require zero divergence. Implementation
+      commit `6d14ebf3c0682e179d8cecc4be43ff2f31f71f10` was pushed to `main`, built
+      with zero dirty paths, and served after a fresh Andrea boot. Exact-SHA
+      Ubuntu, Windows, container, AGI, and CodeQL jobs passed. OpenClaw restarted
+      cleanly, its control API remained healthy, and all 11/11 required bridge
+      tools passed the post-restart probe without exposing direct send.
 
 ### Intentionally unchanged
 
