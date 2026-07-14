@@ -514,7 +514,9 @@ Treat Alexa as an optional private channel, not part of the baseline rollout.
 
 Alexa is only **live-ready** when all of these are true:
 
-- Node `22.22.2` is the active runtime on the host
+- a supported Node `22.x` runtime (`>=22 <23`) is active on macOS/Linux; CI,
+  Windows provisioning, and the container image use the exact repository pin
+  `22.22.2`
 - `ALEXA_SKILL_ID` is configured
 - the Alexa listener is enabled locally
 - an HTTPS tunnel or reverse proxy is forwarding the public Alexa endpoint

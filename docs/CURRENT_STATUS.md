@@ -18,7 +18,7 @@ uncommitted candidate changes.
 - Exact-SHA Ubuntu, Windows, container, AGI, CodeQL, dependency-audit,
   verified-secret-scan, and Semgrep checks are green.
 - The Mac host reports `running_ready` and healthy disk pressure. The latest
-  checked status had 21 GiB available (9.36% free), restoring enough headroom
+  checked status had 18 GiB available (7.97% free), restoring enough headroom
   for the normal build and restart sequence. Recheck before a disk-heavy
   container build because this value is deliberately not treated as durable
   release evidence.
@@ -26,7 +26,7 @@ uncommitted candidate changes.
 
 ## Verified Repository Gates
 
-- Primary suite: 225 files / 2,608 tests.
+- Primary suite: 229 files / 2,712 tests.
 - AGI suite: 28 files / 282 tests.
 - Deterministic sweep: 93/93 selected commands passed from an inventory of 108;
   the other 15 are explicitly excluded live, interactive, aggregate, or
@@ -50,17 +50,19 @@ status commands above instead of carrying these point-in-time states forward.
 - Life threads: one genuine save/thread-control interaction is still missing.
 - Google Calendar, research, and image generation report live proof in their
   current dedicated commands. Recheck before relying on them.
-- OpenAI, Anthropic, Gemini, MiniMax, and Brave are configured provider lanes;
-  configuration alone is not blanket live-provider proof. Their config-only
-  health state is currently unknown until an explicitly authorized live probe.
+- OpenAI, Anthropic, Gemini, MiniMax, and Brave are configured provider lanes.
+  The latest bounded cached observations report them healthy, but configuration
+  alone is not blanket live-provider proof and strict config-only status remains
+  unknown.
 
 ## Learning Evidence
 
 - One genuine owner-reviewed outcome exists; the five-outcome minimum for the
   first reviewed baseline has not been met, and no baseline has been saved.
-- The latency ledger has three valid comparable samples: average 24,004 ms,
-  p50 35,596 ms, and p95 35,616 ms. Three legacy and three invalid samples are
-  excluded from that comparison.
+- The latency ledger has four valid comparable samples: average 10,994 ms,
+  p50 7,328 ms, and p95 26,353 ms. The calendar route currently meets its
+  target; one direct-assistant container sample remains over the ten-second
+  target. Three legacy and three invalid samples are excluded.
 - Synthetic, deterministic, proof-drill, and duplicate outcomes do not count as
   owner reviews, routine canaries, skill promotions, or live mission evidence.
 - Ten working days of reviewed deep-work dogfood remain elapsed-use evidence,

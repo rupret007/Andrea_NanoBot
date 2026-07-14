@@ -91,7 +91,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 | Container Runtime  | Containers (Linux VMs)                        | Isolated environments for agent execution         |
 | Agent              | @anthropic-ai/claude-agent-sdk (0.2.29)       | Run Claude with tools and MCP servers             |
 | Browser Automation | agent-browser + Chromium                      | Web interaction and screenshots                   |
-| Runtime            | Node.js 22.22.2                               | Validated host process for routing and scheduling |
+| Runtime            | Node.js 22.x (`>=22 <23`)                     | Supported host process for routing and scheduling |
 
 ---
 

@@ -65,6 +65,12 @@ the personal source explicitly if you want it considered. A provider problem
 cannot discard the draft, and no research call or cost starts if the primary
 calendar response cannot be delivered.
 
+Alexa uses the same write boundary for ordinary calendar creation. The first
+voice request stores a draft and asks for confirmation, even when only one
+writable calendar is available. If Andrea asks which calendar to use, choosing
+one only sets the destination; a following explicit confirmation is still
+required before exactly one event is created.
+
 This is a bounded convenience for an explicit second research clause, not
 permission to fan an arbitrary message out across tools or models. Graceful
 service restarts give active research a bounded drain window, but this sidecar

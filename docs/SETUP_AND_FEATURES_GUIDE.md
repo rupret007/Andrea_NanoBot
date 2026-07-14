@@ -120,6 +120,10 @@ Andrea's Google Calendar action path is intentionally separate from reminders an
 - `put this on my calendar` or `add this event tomorrow` should route to the Google Calendar create path
 - `remind me later` should stay a reminder
 - `save that for later` should stay a non-calendar carryover action
+- Alexa always persists the draft and asks before a write, including on a
+  single-calendar account. A calendar-selection answer chooses the target; it
+  is not approval, so Andrea asks for a separate confirmation before creating
+  exactly one event.
 
 Operator setup on the current repo:
 
@@ -841,7 +845,10 @@ Current closeout truth:
 - the Alexa v1 code path is ready in this repo
 - live Alexa use is still setup-dependent
 - if `ALEXA_*` env, HTTPS ingress, console setup, or account linking are missing, treat Alexa as **code-ready but setup-blocked**
-- validate Alexa on **Node 22.22.2**; unsupported host runtimes such as Node 24 can fail DB-backed Alexa checks without indicating an Alexa feature bug
+- validate Alexa on supported Node **22.x** (`>=22 <23`); CI, Windows
+  provisioning, and the container image use the exact repository pin
+  **22.22.2**, while unsupported host runtimes such as Node 24 can fail
+  DB-backed Alexa checks without indicating an Alexa feature bug
 
 Minimum:
 

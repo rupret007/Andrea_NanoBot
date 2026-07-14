@@ -169,7 +169,8 @@ Treat Alexa as:
 
 Current truthful host status:
 
-- Andrea runs under Node `22.22.2`
+- Andrea runs under supported Node `22.x` (`>=22 <23`); CI, Windows
+  provisioning, and the container use the exact repository pin `22.22.2`
 - the local Alexa listener can run even when no Telegram channel is connected
 - `groupFolder=main` is valid
 - local Alexa health responds on `/alexa/health`
@@ -262,7 +263,9 @@ If the turn does not register, check:
 
 Important validation note:
 
-- use **Node 22.22.2** for Alexa validation on this repo
+- use supported **Node 22.x** (`>=22 <23`) for Alexa validation on macOS/Linux;
+  use the exact repository pin **22.22.2** for reproducible CI, Windows, and
+  container validation
 - do not rely on host Node 24 for truthful Alexa checks
 - `npm run services:status` now exposes the local Alexa listener and OAuth health when Alexa is configured, plus the last signed Alexa request markers
 - public HTTPS ingress and real signed Alexa requests still need their own checks
@@ -707,7 +710,8 @@ Alexa answers these briefly. Telegram can return a richer structured summary.
 
 When the environment is configured, use this order:
 
-1. verify the host is on Node `22.22.2`
+1. verify the macOS/Linux host is on supported Node `22.x` (`>=22 <23`), or
+   the Windows/reproducible validation runtime is on the exact `22.22.2` pin
 2. confirm `/alexa-status`
 3. confirm local `GET /alexa/oauth/health`
 4. confirm public `GET /alexa/oauth/health`

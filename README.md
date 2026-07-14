@@ -128,29 +128,22 @@ Static docs are not the source of truth for launch readiness. Use this order whe
 3. `npm run debug:pilot`
 4. docs
 
-Current host truth from the local operator commands (snapshot: July 13, 2026):
+Release and host truth are deliberately not pinned to a commit, process, or
+free-space value in this README. Before a release or demo:
 
-- At snapshot capture, local `main` was clean at `25bc6177` and matched
-  `origin/main`.
-- The installed runtime is a verified, clean build of `e625432b`. It is not
-  exact-SHA aligned with workspace `HEAD` because `25bc6177` is a scanner-only
-  workflow forward fix. That explains the current mismatch; it does not turn
-  the older artifact into exact-SHA release proof.
-- `Host state: running_ready` proves the process/watchdog state; it does not by
-  itself prove writable capacity. Disk pressure is currently a warning at
-  approximately 6.4 GiB free (2.80%), so full host readiness must not be
-  claimed until safe capacity is restored.
-- A responsive service serving an older or dirty artifact is stale, not exact-
-  SHA release proof. Rebuild and restart with the platform-specific service
-  command before using live behavior as evidence for a code change.
-- Dated recovery snapshot: [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md).
-- BlueBubbles transport is usable, but current status is
-  `degraded_but_usable`/`needs_proof`: a fresh canonical same-thread
-  `message_action` decision is missing. Do not describe it as currently
-  `live_proven` until that bounded proof is refreshed.
-- Telegram transport is healthy, but its user-session roundtrip proof is
-  overdue. Alexa still needs a fresh signed handled `IntentRequest`, and the
-  life-thread journey still needs a fresh real interaction.
+- require a clean, non-diverged `main` with `git status --branch` and
+  `git rev-list --left-right --count main...origin/main`;
+- require `npm run services:status` to report `running_ready`, healthy disk
+  pressure, verified build provenance, zero dirty build paths, and a serving
+  commit aligned with workspace `HEAD`;
+- rebuild and restart with the platform-specific service command whenever the
+  serving commit is stale, even when the old process still responds;
+- use [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) for the latest dated
+  evidence summary, then rerun the commands above because integration proof
+  and disk capacity expire independently of repository documentation;
+- treat BlueBubbles, Telegram, Alexa, life-thread, and provider states exactly
+  as the live status surfaces classify them. Configured transport, stale
+  proof, and current end-to-end proof are different claims.
 - Integration status keeps configuration, transport health, and proof freshness separate. For example, an overdue Telegram `/ping` may be `near_live_only` while the configured long-polling transport remains healthy; the stale success timestamp is proof debt, not a transport failure.
 - Model-provider configuration is not live health. OpenAI, Anthropic, Gemini,
   MiniMax, and Brave Search remain `unknown` when only configuration is
@@ -356,7 +349,9 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 - it can handle bounded research or comparison asks briefly by voice and keep longer follow-through on Telegram when needed
 - it can now orient you around open conversations, owed replies, and communication follow-through without turning Alexa into a full messaging client
 - personalization remains explicit and consent-based
-- use Node `22.22.2` for truthful Alexa validation on the operator host
+- use a supported Node `22.x` runtime (`>=22 <23`) for Alexa on macOS/Linux;
+  reproducible CI, Windows provisioning, and the container image use the exact
+  repository pin `22.22.2`
 - use `npm run debug:alexa-conversation -- --review` to see repeated Alexa misses, weak clarifiers, and carrier phrases worth adding from real use
 
 Alexa proof is status-led on each host:
@@ -658,6 +653,9 @@ Google Calendar now supports two practical operator flows on a configured host:
 
 - read real events from explicit selected calendars such as `primary` plus family/shared calendars
 - create simple one-time Google Calendar events after a clear confirmation in chat
+- on Alexa, store the event draft and ask for confirmation even when only one
+  writable calendar exists; choosing a calendar selects the destination but
+  does not authorize the write
 - split a clear calendar-plus-research ask into an approval-bound event draft and
   a separately reported read-only research result; the research clause is never
   copied into the event title, compound drafts require `confirm calendar event`,
