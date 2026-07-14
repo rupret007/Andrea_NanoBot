@@ -91,12 +91,30 @@ and other external effects remain fresh-approval-only.
 
 ## Current Candidate And Next Proof
 
-The current worktree includes a calendar-plus-research correction. Before it
-can be described as released, run the full repository validation matrix,
-review the complete diff for privacy and approval regressions, then commit and
-publish the coherent candidate. A real user turn may later prove the compound
-journey; that proof must not be manufactured by creating an event or paid
-research solely for testing.
+The released calendar-plus-research correction remains the baseline. The
+current worktree adds a reminder-plus-research recovery candidate: an inbound
+channel operation creates a deterministic reminder task identity, the task is
+the durable receipt before acknowledgement, and retries converge on the same
+task. Its read-only research sidecar has a separate persisted status; a
+previously started sidecar is reported as possibly interrupted rather than
+blindly replayed.
+
+Reminder clarification keeps its scoped state until task persistence and
+confirmation delivery have both completed. The current operation view stores
+only the task identifier and redacted state labels, allowing a natural status
+question to distinguish a saved reminder from completed, failed, or uncertain
+research without retaining a second copy of the user's request.
+
+More than one pending reminder remains scoped to its originating chat. Andrea
+does not attach a bare timing answer to an arbitrary draft: it asks for an
+explicit target (for example, `call the pharmacy: Friday afternoon`) and leaves
+the other pending reminder intact.
+
+Before this candidate can be described as released, run the full repository
+validation matrix, review the complete diff for privacy and approval
+regressions, then commit and publish the coherent candidate. A real user turn
+may later prove the compound journey; that proof must not be manufactured by
+creating a reminder or paid/live research solely for testing.
 
 Remaining architectural work is deliberately incremental: migrate ordinary
 action surfaces into the existing durable/action ledgers where evidence shows a

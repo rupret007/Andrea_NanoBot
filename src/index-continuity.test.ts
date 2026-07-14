@@ -17,7 +17,9 @@ import {
 } from './durable-work-continuity.js';
 import {
   buildDurableContinuityNaturalReply,
+  formatPendingActionReminderDisambiguation,
   reconcileDurableContinuityBeforeAcceptingWork,
+  resolvePendingActionReminderContinuation,
 } from './index.js';
 import { isAgencyConvergenceNaturalRequest } from './agency-convergence-loop.js';
 import { isAgentOSNaturalRequest } from './agent-os.js';
@@ -69,6 +71,38 @@ function seedCheckpoint() {
 }
 
 describe('Andrea durable continuity runtime wiring', () => {
+  it('requires an explicit target when multiple reminder drafts await timing', () => {
+    const states = [
+      {
+        version: 1 as const,
+        createdAt: NOW,
+        label: 'call the pharmacy',
+        status: 'awaiting_time' as const,
+      },
+      {
+        version: 1 as const,
+        createdAt: '2026-07-13T12:01:00.000Z',
+        label: 'email the school',
+        status: 'awaiting_time' as const,
+      },
+    ];
+    expect(
+      resolvePendingActionReminderContinuation(states, 'Friday afternoon'),
+    ).toBeNull();
+    expect(
+      resolvePendingActionReminderContinuation(
+        states,
+        'call the pharmacy: Friday afternoon',
+      ),
+    ).toMatchObject({
+      state: { label: 'call the pharmacy' },
+      timingText: 'Friday afternoon',
+    });
+    expect(formatPendingActionReminderDisambiguation(states)).toContain(
+      'call the pharmacy: Friday afternoon',
+    );
+  });
+
   it('leaves bare conversational continuation to the ordinary chat router', () => {
     const cognitionStatusPredicates = [
       isAgencyConvergenceNaturalRequest,

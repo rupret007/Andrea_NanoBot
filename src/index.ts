@@ -63,6 +63,7 @@ import {
   deleteRuntimeBackendChatSelection,
   getAllAgentThreads,
   getAllChats,
+  getTaskById,
   getAgentThread,
   getRegisteredMainChat,
   getResponseFeedback,
@@ -118,6 +119,7 @@ import {
 import { startBlueBubblesControlServer } from './bluebubbles-control-server.js';
 import { startOwnerCockpitServer } from './owner-cockpit-server.js';
 import { planSimpleReminder } from './local-reminder.js';
+import { persistReminderOperation } from './reminder-operation.js';
 import {
   buildCalendarAssistantResponse,
   type CalendarSchedulingContext,
@@ -142,6 +144,7 @@ import {
   type AssistantCapabilityResult,
 } from './assistant-capabilities.js';
 import { planCompoundCalendarResearchRequest } from './calendar-research-coordinator.js';
+import { planCompoundReminderResearchRequest } from './reminder-research-coordinator.js';
 import {
   deliverPrimaryThenStartReadOnlySidecar,
   drainBackgroundReadOnlySidecars,
@@ -888,6 +891,8 @@ const GOOGLE_CALENDAR_PENDING_AUTOMATION_PREFIX =
   'google_calendar_pending_automation:';
 const ACTION_LAYER_CONTEXT_PREFIX = 'action_layer_context:';
 const ACTION_LAYER_PENDING_REMINDER_PREFIX = 'action_layer_pending_reminder:';
+const ACTION_LAYER_PENDING_REMINDER_COLLECTION_PREFIX =
+  'action_layer_pending_reminder_collection:';
 const ACTION_LAYER_PENDING_DRAFT_PREFIX = 'action_layer_pending_draft:';
 const DAILY_COMPANION_CONTEXT_PREFIX = 'daily_companion_context:';
 const DAILY_COMPANION_CONTEXT_TTL_MS = 10 * 60 * 1000;
@@ -936,6 +941,10 @@ function getActionLayerContextKey(chatJid: string): string {
 
 function getActionLayerPendingReminderKey(chatJid: string): string {
   return `${ACTION_LAYER_PENDING_REMINDER_PREFIX}${chatJid}`;
+}
+
+function getActionLayerPendingReminderCollectionKey(chatJid: string): string {
+  return `${ACTION_LAYER_PENDING_REMINDER_COLLECTION_PREFIX}${chatJid}`;
 }
 
 function getActionLayerPendingDraftKey(chatJid: string): string {
@@ -1472,35 +1481,233 @@ function clearActionLayerContext(chatJid: string): void {
   deleteRouterState(getActionLayerContextKey(chatJid));
 }
 
-function getPendingActionReminderState(
+interface PendingActionReminderCollection {
+  version: 1;
+  states: PendingActionReminderState[];
+}
+
+function getPendingActionReminderStates(
   chatJid: string,
-): PendingActionReminderState | null {
+): PendingActionReminderState[] {
+  const collectionRaw = getRouterState(
+    getActionLayerPendingReminderCollectionKey(chatJid),
+  );
+  if (collectionRaw) {
+    try {
+      const parsed = JSON.parse(
+        collectionRaw,
+      ) as PendingActionReminderCollection;
+      if (
+        parsed?.version === 1 &&
+        Array.isArray(parsed.states) &&
+        parsed.states.every((state) => state?.version === 1 && state.label)
+      ) {
+        return parsed.states;
+      }
+    } catch {
+      // Fall back to the legacy single-state record below.
+    }
+  }
   const raw = getRouterState(getActionLayerPendingReminderKey(chatJid));
-  if (!raw) return null;
+  if (!raw) return [];
 
   try {
     const parsed = JSON.parse(raw) as PendingActionReminderState;
     if (!parsed || parsed.version !== 1 || !parsed.label) {
-      return null;
+      return [];
     }
-    return parsed;
+    return [parsed];
   } catch {
-    return null;
+    return [];
   }
+}
+
+function getPendingActionReminderState(
+  chatJid: string,
+): PendingActionReminderState | null {
+  return getPendingActionReminderStates(chatJid).at(-1) || null;
+}
+
+function writePendingActionReminderStates(
+  chatJid: string,
+  states: PendingActionReminderState[],
+): void {
+  if (states.length === 0) {
+    deleteRouterState(getActionLayerPendingReminderKey(chatJid));
+    deleteRouterState(getActionLayerPendingReminderCollectionKey(chatJid));
+    return;
+  }
+  if (states.length === 1) {
+    setRouterState(
+      getActionLayerPendingReminderKey(chatJid),
+      JSON.stringify(states[0]),
+    );
+    deleteRouterState(getActionLayerPendingReminderCollectionKey(chatJid));
+    return;
+  }
+  setRouterState(
+    getActionLayerPendingReminderCollectionKey(chatJid),
+    JSON.stringify({ version: 1, states }),
+  );
+  deleteRouterState(getActionLayerPendingReminderKey(chatJid));
 }
 
 function setPendingActionReminderState(
   chatJid: string,
   state: PendingActionReminderState,
 ): void {
-  setRouterState(
-    getActionLayerPendingReminderKey(chatJid),
-    JSON.stringify(state),
+  const states = getPendingActionReminderStates(chatJid);
+  const existingIndex = states.findIndex(
+    (candidate) => candidate.createdAt === state.createdAt,
+  );
+  if (existingIndex >= 0) states[existingIndex] = state;
+  else states.push(state);
+  writePendingActionReminderStates(chatJid, states);
+}
+
+function clearPendingActionReminderState(
+  chatJid: string,
+  state?: PendingActionReminderState,
+): void {
+  if (!state) {
+    writePendingActionReminderStates(chatJid, []);
+    return;
+  }
+  writePendingActionReminderStates(
+    chatJid,
+    getPendingActionReminderStates(chatJid).filter(
+      (candidate) => candidate.createdAt !== state.createdAt,
+    ),
   );
 }
 
-function clearPendingActionReminderState(chatJid: string): void {
-  deleteRouterState(getActionLayerPendingReminderKey(chatJid));
+export function resolvePendingActionReminderContinuation(
+  states: PendingActionReminderState[],
+  message: string,
+): { state: PendingActionReminderState; timingText: string } | null {
+  const match = message.match(/^\s*(.+?)\s*:\s*(.+?)\s*[.?!]*$/);
+  if (!match) return null;
+  const target = match[1]!.trim().toLowerCase().replace(/\s+/g, ' ');
+  const timingText = match[2]!.trim();
+  if (!target || !timingText) return null;
+  const matches = states.filter((state) => {
+    const label = state.label.toLowerCase().replace(/\s+/g, ' ');
+    return label === target || label.includes(target) || target.includes(label);
+  });
+  return matches.length === 1 ? { state: matches[0]!, timingText } : null;
+}
+
+export function formatPendingActionReminderDisambiguation(
+  states: PendingActionReminderState[],
+): string {
+  const labels = states.slice(0, 3).map((state) => `“${state.label}”`);
+  return `I still need a time for ${labels.join(' and ')}. Tell me which one and when, for example: “${states[0]!.label}: Friday afternoon.”`;
+}
+
+interface ReminderResearchReceipt {
+  version: 1;
+  status: 'running' | 'completed' | 'failed';
+  updatedAt: string;
+}
+
+interface ReminderResearchOperationState {
+  version: 1;
+  taskId: string;
+  reminderStatus: 'persisted' | 'confirmation_delivered';
+  researchStatus: 'not_started' | ReminderResearchReceipt['status'];
+  updatedAt: string;
+}
+
+function getReminderResearchOperationKey(chatJid: string): string {
+  return `reminder-research-operation:${chatJid}`;
+}
+
+function getReminderResearchOperation(
+  chatJid: string,
+): ReminderResearchOperationState | null {
+  const raw = getRouterState(getReminderResearchOperationKey(chatJid));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as ReminderResearchOperationState;
+    return parsed?.version === 1 && parsed.taskId && parsed.reminderStatus
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function setReminderResearchOperation(
+  chatJid: string,
+  state: Omit<ReminderResearchOperationState, 'version' | 'updatedAt'>,
+  now: Date,
+): void {
+  setRouterState(
+    getReminderResearchOperationKey(chatJid),
+    JSON.stringify({ ...state, version: 1, updatedAt: now.toISOString() }),
+  );
+}
+
+function isReminderResearchStatusPrompt(text: string): boolean {
+  return /^(?:what happened with that|what happened|status(?: of that)?|did (?:that|the research) (?:finish|work)|where (?:are|is) (?:we|that))(?:[?.! ]*)$/i.test(
+    text.trim(),
+  );
+}
+
+function formatReminderResearchStatus(
+  state: ReminderResearchOperationState,
+): string {
+  const task = getTaskById(state.taskId);
+  const reminder = task
+    ? state.reminderStatus === 'confirmation_delivered'
+      ? 'The reminder is saved and its confirmation was delivered.'
+      : 'The reminder is saved; its earlier confirmation may not have reached you.'
+    : 'I cannot verify the reminder record now, so I will not recreate it automatically.';
+  const research =
+    state.researchStatus === 'completed'
+      ? 'Research completed separately.'
+      : state.researchStatus === 'failed'
+        ? 'Research did not finish cleanly; ask me to retry it if you want a fresh read-only run.'
+        : state.researchStatus === 'running'
+          ? 'Research was started and may have been interrupted before its result was delivered; I will not replay it automatically.'
+          : 'Research had not started yet.';
+  return `${reminder} ${research}`;
+}
+
+function getReminderResearchReceiptKey(
+  chatJid: string,
+  taskId: string,
+): string {
+  return `reminder-research:${chatJid}:${taskId}`;
+}
+
+function getReminderResearchReceipt(
+  chatJid: string,
+  taskId: string,
+): ReminderResearchReceipt | null {
+  const raw = getRouterState(getReminderResearchReceiptKey(chatJid, taskId));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as ReminderResearchReceipt;
+    return parsed?.version === 1 &&
+      ['running', 'completed', 'failed'].includes(parsed.status)
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function setReminderResearchReceipt(
+  chatJid: string,
+  taskId: string,
+  status: ReminderResearchReceipt['status'],
+  now: Date,
+): void {
+  setRouterState(
+    getReminderResearchReceiptKey(chatJid, taskId),
+    JSON.stringify({ version: 1, status, updatedAt: now.toISOString() }),
+  );
 }
 
 function getPendingActionDraftState(
@@ -4065,6 +4272,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     ? currentMessageCapabilityMatch
     : null;
   const now = new Date();
+  const reminderOperationIdentity = {
+    channel:
+      conversationChannel === 'bluebubbles'
+        ? ('bluebubbles' as const)
+        : ('telegram' as const),
+    inboundId: latestUserMessage?.id || null,
+    timeZone: TIMEZONE,
+  };
+  const compoundReminderResearchPlan = planCompoundReminderResearchRequest(
+    lastContent,
+    group.folder,
+    chatJid,
+    now,
+    reminderOperationIdentity,
+  );
   const preHarnessMessageActionOperation =
     conversationChannel === 'bluebubbles'
       ? interpretMessageActionFollowup(lastContent)
@@ -4093,7 +4315,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const turnAgentHarness: TurnAgentHarnessContext | null =
     shouldHandleOutcomeReviewLocally ||
     shouldHandleDurableContinuityLocally ||
-    Boolean(compoundCalendarResearchPlan)
+    Boolean(compoundCalendarResearchPlan || compoundReminderResearchPlan)
       ? null
       : await beginTurnAgentHarness({
           turnId:
@@ -4164,7 +4386,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       shouldDeferPlatformHoldForLocalCalendarLookup ||
       shouldDeferPlatformHoldForLocalMessageAction ||
       shouldDeferPlatformHoldForLocalOutcomeReview ||
-      compoundCalendarResearchPlan,
+      compoundCalendarResearchPlan ||
+      compoundReminderResearchPlan,
     );
   const sendAssistantReplyWithFeedback = async (params: {
     text: string;
@@ -4264,7 +4487,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         harnessBypassed:
           shouldHandleOutcomeReviewLocally ||
           shouldHandleDurableContinuityLocally ||
-          Boolean(compoundCalendarResearchPlan),
+          Boolean(compoundCalendarResearchPlan || compoundReminderResearchPlan),
         hostPressure: turnHostPressure,
       },
       send: () => channel.sendMessage(chatJid, replyText, sendOptions),
@@ -6944,12 +7167,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         clearActionLayerContext(chatJid);
       }
 
-      const pendingActionReminder = getPendingActionReminderState(chatJid);
-      if (
-        pendingActionReminder &&
-        isPendingActionReminderExpired(pendingActionReminder, now)
-      ) {
-        clearPendingActionReminderState(chatJid);
+      for (const pendingActionReminder of getPendingActionReminderStates(
+        chatJid,
+      )) {
+        if (isPendingActionReminderExpired(pendingActionReminder, now)) {
+          clearPendingActionReminderState(chatJid, pendingActionReminder);
+        }
       }
 
       const pendingActionDraft = getPendingActionDraftState(chatJid);
@@ -6969,16 +7192,44 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           groupFolder: group.folder,
           chatJid,
         });
-      const activeActionReminder = getPendingActionReminderState(chatJid);
+      const activeActionReminders = getPendingActionReminderStates(chatJid);
+      let activeActionReminder =
+        activeActionReminders.length === 1 ? activeActionReminders[0]! : null;
+      let reminderContinuationText = lastContent;
+      if (activeActionReminders.length > 1 && !freshIntent) {
+        const resolved = resolvePendingActionReminderContinuation(
+          activeActionReminders,
+          lastContent,
+        );
+        if (!resolved) {
+          await sendAssistantReplyWithFeedback({
+            text: formatCalendarPanelText(
+              '*Next Step*',
+              formatPendingActionReminderDisambiguation(activeActionReminders),
+            ),
+            routeKey: 'local_reminder.clarify',
+            capabilityId: 'capture.reminder',
+            handlerKind: 'local_reminder',
+            responseSource: 'local_companion',
+            traceReason:
+              'refused to bind an ambiguous timing answer across pending reminders',
+          });
+          return true;
+        }
+        activeActionReminder = resolved.state;
+        reminderContinuationText = resolved.timingText;
+      }
       if (activeActionReminder) {
         if (freshIntent) {
-          clearPendingActionReminderState(chatJid);
+          if (freshIntent.kind !== 'capture_reminder') {
+            clearPendingActionReminderState(chatJid, activeActionReminder);
+          }
         } else if (shouldInterruptPendingActionFlow) {
           clearPendingActionReminderState(chatJid);
           return false;
         } else {
           const continued = advancePendingActionReminder(
-            lastContent,
+            reminderContinuationText,
             activeActionReminder,
             {
               groupFolder: group.folder,
@@ -6988,23 +7239,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           );
           if (continued.kind === 'awaiting_reminder_time') {
             setPendingActionReminderState(chatJid, continued.state);
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Next Step*', continued.message),
-              {
+            await sendAssistantReplyWithFeedback({
+              text: formatCalendarPanelText('*Next Step*', continued.message),
+              sendOptions: {
                 inlineActionRows:
                   buildCalendarLookupInlineActionRows(lastContent),
               },
-            );
+              routeKey: 'local_reminder.clarify',
+              capabilityId: 'capture.reminder',
+              handlerKind: 'local_reminder',
+              responseSource: 'local_companion',
+              traceReason:
+                'persisted a scoped reminder clarification before delivery',
+            });
             return true;
           }
-          clearPendingActionReminderState(chatJid);
           if (continued.kind === 'none') {
+            clearPendingActionReminderState(chatJid, activeActionReminder);
             return false;
           }
           if (continued.kind === 'created_reminder') {
-            createTask(continued.task);
-            syncOutcomeFromReminderTask(continued.task, {
+            const persisted = persistReminderOperation({
+              confirmation: continued.confirmation,
+              task: continued.task,
+            });
+            syncOutcomeFromReminderTask(persisted.task, {
               linkedRefs: {
                 reminderTaskId: continued.task.id,
                 chatJid,
@@ -7014,30 +7273,49 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             });
             refreshTaskSnapshots(registeredGroups);
             if (continued.state) {
+              clearPendingActionReminderState(chatJid, activeActionReminder);
               setPendingActionReminderState(chatJid, continued.state);
             }
             if (continued.actionContext) {
               setActionLayerContext(chatJid, continued.actionContext);
             }
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Next Step*', continued.confirmation),
-              {
+            await sendAssistantReplyWithFeedback({
+              text: formatCalendarPanelText(
+                '*Next Step*',
+                continued.confirmation,
+              ),
+              sendOptions: {
                 inlineActionRows:
                   buildCalendarLookupInlineActionRows(lastContent),
               },
-            );
+              routeKey: 'local_reminder',
+              capabilityId: 'capture.reminder',
+              handlerKind: 'local_reminder',
+              responseSource: 'local_companion',
+              traceReason:
+                'persisted a clarified reminder before confirmation delivery',
+              linkedRefs: { reminderTaskId: persisted.task.id },
+            });
             return true;
           }
           if (continued.kind === 'reply') {
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Next Step*', continued.reply),
-              {
+            await sendAssistantReplyWithFeedback({
+              text: formatCalendarPanelText('*Next Step*', continued.reply),
+              sendOptions: {
                 inlineActionRows:
                   buildCalendarLookupInlineActionRows(lastContent),
               },
-            );
+              routeKey: 'local_reminder',
+              capabilityId: 'capture.reminder',
+              handlerKind: 'local_reminder',
+              responseSource: 'local_companion',
+              traceReason:
+                'reconciled an existing reminder without creating another task',
+              linkedRefs: {
+                reminderTaskId: activeActionReminder.taskId || undefined,
+              },
+            });
+            clearPendingActionReminderState(chatJid, activeActionReminder);
             return true;
           }
           return false;
@@ -9569,20 +9847,239 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
+  const tryHandleCompoundReminderResearch = async (): Promise<boolean> => {
+    const compoundRequest = compoundReminderResearchPlan;
+    if (!compoundRequest) return false;
+    const plannedReminder = planSimpleReminder(
+      compoundRequest.reminderText,
+      group.folder,
+      chatJid,
+      now,
+      reminderOperationIdentity,
+    );
+    if (!plannedReminder) return false;
+
+    try {
+      const persisted = persistReminderOperation(plannedReminder);
+      syncOutcomeFromReminderTask(persisted.task, {
+        linkedRefs: { reminderTaskId: persisted.task.id, chatJid },
+        summaryText: plannedReminder.confirmation,
+        now,
+      });
+      if (persisted.created) {
+        refreshTaskSnapshots(registeredGroups);
+      }
+      setReminderResearchOperation(
+        chatJid,
+        {
+          taskId: persisted.task.id,
+          reminderStatus: 'persisted',
+          researchStatus: 'not_started',
+        },
+        now,
+      );
+      clearSharedAssistantCapabilitySeed(chatJid);
+      const priorResearchReceipt = getReminderResearchReceipt(
+        chatJid,
+        persisted.task.id,
+      );
+      const researchStatusNote = priorResearchReceipt
+        ? priorResearchReceipt.status === 'completed'
+          ? '\n\n*Research* This request already completed; I will not run it again automatically.'
+          : '\n\n*Research* This request was already started and may have been interrupted before delivery. I will not replay it automatically; ask me to retry if you want a fresh run.'
+        : '';
+      const startResearch = () => {
+        setReminderResearchReceipt(
+          chatJid,
+          persisted.task.id,
+          'running',
+          new Date(),
+        );
+        setReminderResearchOperation(
+          chatJid,
+          {
+            taskId: persisted.task.id,
+            reminderStatus: 'confirmation_delivered',
+            researchStatus: 'running',
+          },
+          new Date(),
+        );
+        return executeAssistantCapability({
+          capabilityId: inferResearchCapabilityId(compoundRequest.researchText),
+          context: {
+            channel: conversationChannel,
+            groupFolder: group.folder,
+            chatJid,
+            ownerReviewAllowed:
+              isMainGroup &&
+              (conversationChannel === 'telegram' ||
+                isBlueBubblesSelfThreadAliasJid(chatJid)),
+            currentMessageId: latestUserMessage?.id,
+            now,
+          },
+          input: {
+            text: compoundRequest.researchText,
+            canonicalText: compoundRequest.researchText,
+            researchDepth: compoundRequest.requestedDepth,
+            allowWebSearch: true,
+            personalContextMode: 'disabled',
+            researchFollowupMode: 'explicit_only',
+          },
+        });
+      };
+      const background = await deliverPrimaryThenStartReadOnlySidecar({
+        deliverPrimary: async () => {
+          await sendAssistantReplyWithFeedback({
+            text: `${plannedReminder.confirmation}${researchStatusNote}`,
+            routeKey: 'compound.reminder_research',
+            capabilityId: 'capture.reminder',
+            handlerKind: 'local_reminder',
+            responseSource: 'local_companion',
+            traceReason:
+              'persisted the reminder before delivery and queued bounded read-only research',
+            linkedRefs: { reminderTaskId: persisted.task.id },
+          });
+          setReminderResearchOperation(
+            chatJid,
+            {
+              taskId: persisted.task.id,
+              reminderStatus: 'confirmation_delivered',
+              researchStatus: priorResearchReceipt?.status || 'not_started',
+            },
+            new Date(),
+          );
+        },
+        startSidecar: priorResearchReceipt ? null : startResearch,
+        deliverResult: async (result) => {
+          if (!result.handled)
+            throw new Error('Research capability declined the request.');
+          setReminderResearchReceipt(
+            chatJid,
+            persisted.task.id,
+            'completed',
+            new Date(),
+          );
+          setReminderResearchOperation(
+            chatJid,
+            {
+              taskId: persisted.task.id,
+              reminderStatus: 'confirmation_delivered',
+              researchStatus: 'completed',
+            },
+            new Date(),
+          );
+          await sendAssistantReplyWithFeedback({
+            text: result.replyText || 'The research completed.',
+            sendOptions: result.sendOptions || {},
+            routeKey: 'compound.reminder_research',
+            capabilityId:
+              result.capabilityId ||
+              inferResearchCapabilityId(compoundRequest.researchText),
+            providerId: result.researchResult?.providerUsed || null,
+            toolClass: 'compound_read_only_research',
+            handlerKind: result.trace?.handlerKind || 'assistant_capability',
+            responseSource: result.trace?.responseSource || 'local_companion',
+            traceReason:
+              result.trace?.reason ||
+              'completed the independent read-only research leg after reminder delivery',
+            traceNotes: [
+              `compound_research_depth:${compoundRequest.requestedDepth}`,
+              `compound_explicit_max_effort:${compoundRequest.explicitMaxEffort ? 'yes' : 'no'}`,
+            ],
+            skipCursorDeliveryMark: true,
+            deliveryOrdinal: 2,
+          });
+        },
+        deliverFailure: async (error) => {
+          setReminderResearchReceipt(
+            chatJid,
+            persisted.task.id,
+            'failed',
+            new Date(),
+          );
+          setReminderResearchOperation(
+            chatJid,
+            {
+              taskId: persisted.task.id,
+              reminderStatus: 'confirmation_delivered',
+              researchStatus: 'failed',
+            },
+            new Date(),
+          );
+          await sendAssistantReplyWithFeedback({
+            text: '*Research*\nI saved the reminder, but research could not finish cleanly. Ask me to retry the research when the provider is available.',
+            routeKey: 'compound.reminder_research',
+            capabilityId: inferResearchCapabilityId(
+              compoundRequest.researchText,
+            ),
+            handlerKind: 'assistant_capability',
+            responseSource: 'unavailable',
+            traceReason: 'the independent reminder research leg was blocked',
+            blockerClass: 'compound_reminder_research_unavailable',
+            traceNotes: [
+              `error_class:${error instanceof Error ? error.name : typeof error}`,
+            ],
+            skipCursorDeliveryMark: true,
+            deliveryOrdinal: 2,
+          });
+        },
+        onSidecarDeliveryError: (error) => {
+          logger.warn(
+            {
+              chatJid,
+              errorClass: error instanceof Error ? error.name : typeof error,
+            },
+            'Reminder research completed but its result could not be delivered',
+          );
+        },
+      });
+      if (background) void background.completion;
+      return true;
+    } catch (err) {
+      if (isCommittedIncompleteDeliveryError(err)) throw err;
+      lastAgentTimestamp[chatJid] = previousCursor;
+      saveState();
+      logger.warn({ group: group.name, err }, 'Compound reminder path failed');
+      return false;
+    }
+  };
+
+  const tryHandleReminderResearchStatus = async (): Promise<boolean> => {
+    if (!isReminderResearchStatusPrompt(lastContent)) return false;
+    const state = getReminderResearchOperation(chatJid);
+    if (!state) return false;
+    await sendAssistantReplyWithFeedback({
+      text: formatReminderResearchStatus(state),
+      routeKey: 'compound.reminder_research_status',
+      capabilityId: 'capture.reminder',
+      handlerKind: 'local_reminder',
+      responseSource: 'local_companion',
+      traceReason:
+        'reported persisted reminder and research states without re-executing either leg',
+      linkedRefs: { reminderTaskId: state.taskId },
+    });
+    return true;
+  };
+
   if (requestPolicy.route === 'direct_assistant') {
+    if (await tryHandleReminderResearchStatus()) return true;
     if (await tryHandleLocalActionLayer('direct')) {
       return true;
     }
+
+    if (await tryHandleCompoundReminderResearch()) return true;
 
     const plannedReminder = planSimpleReminder(
       lastContent,
       group.folder,
       chatJid,
+      now,
+      reminderOperationIdentity,
     );
     if (plannedReminder) {
       try {
-        createTask(plannedReminder.task);
-        syncOutcomeFromReminderTask(plannedReminder.task, {
+        const persisted = persistReminderOperation(plannedReminder);
+        syncOutcomeFromReminderTask(persisted.task, {
           linkedRefs: {
             reminderTaskId: plannedReminder.task.id,
             chatJid,
@@ -9636,19 +10133,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   if (requestPolicy.route === 'protected_assistant') {
+    if (await tryHandleReminderResearchStatus()) return true;
     if (await tryHandleLocalActionLayer('protected')) {
       return true;
     }
+
+    if (await tryHandleCompoundReminderResearch()) return true;
 
     const plannedReminder = planSimpleReminder(
       lastContent,
       group.folder,
       chatJid,
+      now,
+      reminderOperationIdentity,
     );
     if (plannedReminder) {
       try {
-        createTask(plannedReminder.task);
-        syncOutcomeFromReminderTask(plannedReminder.task, {
+        const persisted = persistReminderOperation(plannedReminder);
+        syncOutcomeFromReminderTask(persisted.task, {
           linkedRefs: {
             reminderTaskId: plannedReminder.task.id,
             chatJid,

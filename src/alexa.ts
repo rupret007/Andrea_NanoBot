@@ -130,7 +130,6 @@ import {
   type DailyCompanionContext,
 } from './daily-companion.js';
 import {
-  createTask,
   getActionBundleSnapshot,
   getAllTasks,
   getDelegationRule,
@@ -205,6 +204,7 @@ import {
   type PendingGoogleCalendarEventActionState,
 } from './google-calendar-followthrough.js';
 import { planContextualReminder } from './local-reminder.js';
+import { persistReminderOperation } from './reminder-operation.js';
 
 const ALEXA_REQUEST_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_ALEXA_HOST = '127.0.0.1';
@@ -3213,6 +3213,7 @@ export function createAlexaSkill(
     reminderBody: string,
     timingText: string,
     now: Date,
+    requestId: string,
   ) => {
     const target = resolveReminderTargetChat(linked.account.groupFolder);
     if (!target?.chatJid) {
@@ -3229,6 +3230,7 @@ export function createAlexaSkill(
       linked.account.groupFolder,
       target.chatJid,
       now,
+      { channel: 'alexa', inboundId: requestId, timeZone: TIMEZONE },
     );
     if (!plannedReminder) {
       return {
@@ -3237,8 +3239,8 @@ export function createAlexaSkill(
       };
     }
 
-    createTask(plannedReminder.task);
-    syncOutcomeFromReminderTask(plannedReminder.task, {
+    const persisted = persistReminderOperation(plannedReminder);
+    syncOutcomeFromReminderTask(persisted.task, {
       linkedRefs: {
         reminderTaskId: plannedReminder.task.id,
         threadId: conversationState?.subjectData.threadId,
@@ -3768,6 +3770,7 @@ export function createAlexaSkill(
           pendingReminderBody,
           timing,
           now,
+          input.handlerInput.requestEnvelope.request.requestId,
         );
       }
     }
@@ -3933,6 +3936,7 @@ export function createAlexaSkill(
           reminderRequest.reminderBody,
           reminderRequest.timingText,
           now,
+          input.handlerInput.requestEnvelope.request.requestId,
         );
       }
       if (reminderRequest.needsTiming) {

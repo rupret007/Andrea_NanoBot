@@ -1,6 +1,6 @@
 # Andrea Current Status
 
-Local operator and repository snapshot from 2026-07-13. Runtime and integration
+Local operator and repository snapshot from 2026-07-14. Runtime and integration
 proof is time-sensitive; rerun `npm run debug:status`,
 `npm run services:status`, and `npm run integrations:status -- --json` before a
 release or demo. The release facts below describe the published tree at
@@ -9,17 +9,19 @@ uncommitted candidate changes.
 
 ## Repository And Release
 
-- At snapshot capture, `main` was clean and matched `origin/main` at
-  `25bc6177`.
+- Release state is intentionally time-sensitive. Before a release or demo,
+  treat `git status --branch`, `npm run services:status`, and
+  `npm run integrations:status -- --json` as the authoritative source for the
+  active commit and runtime provenance; this document does not pin a serving
+  SHA that will become stale after the next release.
 - Pull request #6 and its release-closure changes are on `main`.
 - Exact-SHA Ubuntu, Windows, container, AGI, CodeQL, dependency-audit,
   verified-secret-scan, and Semgrep checks are green.
-- The verified production artifact is clean and serves `e625432b`. It is not
-  aligned with `main` because `25bc6177` is a GitHub security-workflow-only
-  forward fix; no application source changed between those commits.
-- The Mac host reports `running_ready`, but overall health is
-  `degraded_but_usable`: only 6.4 GiB (2.80%) is free, below the configured
-  persistence-headroom target.
+- The Mac host reports `running_ready` and healthy disk pressure. The latest
+  checked status had 21 GiB available (9.36% free), restoring enough headroom
+  for the normal build and restart sequence. Recheck before a disk-heavy
+  container build because this value is deliberately not treated as durable
+  release evidence.
 - OpenClaw is live and all 11/11 Andrea bridge tools are available.
 
 ## Verified Repository Gates
@@ -83,10 +85,10 @@ status commands above instead of carrying these point-in-time states forward.
 
 ## Open Operator Debt
 
-1. Restore disk headroom to at least the target reported by
-   `npm run debug:status`; never delete owner data or evidence automatically.
-2. Rebuild/restart from `25bc6177` when exact serving-SHA alignment is required,
-   even though its delta from the serving commit is scanner-only.
+1. Before rebuilding or restarting a newer candidate, rerun
+   `npm run services:status` and require healthy disk pressure; never delete
+   owner data or evidence automatically.
+2. After the release restart, require exact serving-SHA alignment.
 3. Refresh Telegram, BlueBubbles same-thread message-action, Alexa signed
    intent, and life-thread proofs through genuine user interactions.
 4. Collect five distinct owner reviews before presenting a baseline, and

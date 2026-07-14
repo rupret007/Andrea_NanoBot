@@ -1,10 +1,54 @@
 # Modernization Plan
 
-## Documentation truth and compound assistance candidate — 2026-07-13 (current worktree)
+## Reminder-plus-research recovery candidate — 2026-07-14 (current worktree)
 
-This section describes the current uncommitted candidate. It does not replace
-the published-release snapshot below until the candidate is reviewed,
-committed, released, and runtime-proven.
+This candidate extends the released Calendar + research flow without adding a
+second task ledger or widening authority.
+
+### Confirmed problem and bounded correction
+
+- [x] Direct reminder paths previously generated random task IDs and created
+      the task before acknowledgement. A duplicate inbound update or a retry
+      after an interrupted reply could therefore create a second reminder.
+- [x] Reminder + research wording was not decomposed, so a reminder could
+      absorb the research clause or ordinary routing could delay the primary
+      acknowledgement.
+- [x] Bind Telegram/BlueBubbles inbound message IDs and Alexa signed request
+      IDs into a deterministic reminder task identity. Persist the task as the
+      operation receipt before delivery and fail closed on a conflicting key.
+- [x] Split only an explicit reminder from an unmistakable research clause.
+      Deliver the reminder acknowledgement first, then start one bounded,
+      read-only research sidecar with separate routing and delivery evidence.
+- [x] Persist research `running`, `completed`, or `failed` status. A retry of
+      already-started work is reported honestly and is never automatically
+      replayed after a crash or uncertain delivery.
+- [x] Retain scoped clarification state through task persistence and confirmed
+      response delivery. The status surface reports the persisted reminder and
+      the separately recorded research state without executing either leg.
+- [x] Keep multiple pending reminder drafts in their original chat scope. A
+      bare timing answer is disambiguated instead of being attached to the
+      newest draft; a labeled timing answer advances only its matching draft.
+
+### Required release evidence
+
+- [x] Formatting, lint, root typecheck, production build, the full unit suite
+      (229 files / 2,711 tests), AGI typecheck/tests (28 files / 282 tests),
+      and the 93-command hermetic deterministic sweep passed on 2026-07-14.
+- [x] Documentation command validation passed for all 68 Markdown files. The
+      current-status snapshot now records healthy host disk pressure rather
+      than the pre-cleanup low-space condition.
+- [ ] Complete final diff/secret review, then publish only this coherent
+      candidate to `main`.
+- [x] Restore disk headroom before the release build. The latest checked host
+      status reports healthy pressure with 21 GiB available; recheck before
+      the restart because this is time-sensitive.
+- [ ] Live reminder/research proof remains real operator evidence and must not
+      be manufactured.
+
+## Documentation truth and compound assistance candidate — 2026-07-13 (released baseline)
+
+This section is the released baseline retained for historical validation
+evidence. It does not describe the current reminder-plus-research candidate.
 
 ### Confirmed problems and root causes
 

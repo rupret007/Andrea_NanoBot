@@ -6,6 +6,29 @@ import {
 } from './local-reminder.js';
 
 describe('planSimpleReminder', () => {
+  it('uses a stable, scope-bound task identity for a retried channel request', () => {
+    const input = [
+      'Remind me tomorrow at 3pm to call Sam',
+      'main',
+      'tg:123',
+      new Date('2026-03-29T10:00:00-05:00'),
+      { channel: 'telegram' as const, inboundId: 'message-42' },
+    ] as const;
+    const first = planSimpleReminder(...input);
+    const retry = planSimpleReminder(...input);
+    const otherChannel = planSimpleReminder(
+      input[0],
+      input[1],
+      input[2],
+      input[3],
+      { channel: 'bluebubbles', inboundId: 'message-42' },
+    );
+
+    expect(first?.task.id).toMatch(/^reminder-[a-f0-9]{32}$/);
+    expect(retry?.task.id).toBe(first?.task.id);
+    expect(otherChannel?.task.id).not.toBe(first?.task.id);
+  });
+
   it('parses tomorrow reminders into one-off tasks', () => {
     const planned = planSimpleReminder(
       'Remind me tomorrow at 3pm to call Sam',

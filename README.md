@@ -663,6 +663,14 @@ Google Calendar now supports two practical operator flows on a configured host:
   copied into the event title, compound drafts require `confirm calendar event`,
   and generic `for me` wording does not opt private local context into an
   outward research request
+- split a clear reminder-plus-research ask into one local reminder and a
+  separately reported, bounded read-only research leg. The reminder is
+  persisted before its acknowledgement; retrying the same inbound Telegram,
+  BlueBubbles, or Alexa request converges on that reminder instead of creating
+  another one. Research starts only after the primary reply is delivered and
+  is never replayed automatically after an interrupted run. A natural
+  “what happened with that?” asks Andrea for the separately persisted reminder
+  and research states without executing either leg again.
 
 Use the Google setup flow on the host instead of trying to give Andrea your Google account password:
 

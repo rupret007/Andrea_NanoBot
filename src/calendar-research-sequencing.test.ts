@@ -33,10 +33,10 @@ describe('compound calendar and research production sequencing', () => {
     expect(planIndex).toBeGreaterThan(-1);
     expect(harnessIndex).toBeGreaterThan(planIndex);
     expect(indexSource).toContain(
-      'Boolean(compoundCalendarResearchPlan)\n      ? null',
+      'Boolean(compoundCalendarResearchPlan || compoundReminderResearchPlan)\n      ? null',
     );
     expect(indexSource).toContain(
-      'harnessBypassed:\n          shouldHandleOutcomeReviewLocally ||\n          shouldHandleDurableContinuityLocally ||\n          Boolean(compoundCalendarResearchPlan)',
+      'harnessBypassed:\n          shouldHandleOutcomeReviewLocally ||\n          shouldHandleDurableContinuityLocally ||\n          Boolean(compoundCalendarResearchPlan || compoundReminderResearchPlan)',
     );
     expect(indexSource).toContain(
       'resolveExplicitResearchPersonalContextMode(compoundRequest.researchText)',
@@ -55,6 +55,13 @@ describe('compound calendar and research production sequencing', () => {
     expect(
       indexSource.match(/planCompoundCalendarResearchRequest\(lastContent\)/g),
     ).toHaveLength(1);
+    expect(indexSource).toContain('persistReminderOperation(plannedReminder)');
+    expect(indexSource).toContain('setReminderResearchReceipt(');
+    expect(indexSource).toContain('setReminderResearchOperation(');
+    expect(indexSource).toContain(
+      'startSidecar: priorResearchReceipt ? null : startResearch',
+    );
+    expect(indexSource).toContain('tryHandleReminderResearchStatus');
   });
 
   it('drains active sidecars before production channel disconnect', () => {

@@ -1,4 +1,5 @@
 import type { ScheduledTask } from './types.js';
+import { createHash } from 'node:crypto';
 import { buildQuickMathReply } from './direct-quick-reply.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
@@ -32,6 +33,17 @@ function normalizeReminderInput(message: string): string {
 export interface PlannedReminder {
   confirmation: string;
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>;
+}
+
+/**
+ * A channel message (or Alexa request) is the authority boundary for a
+ * reminder write.  Supplying its stable identifier makes retries and a
+ * process restart converge on the same scheduled_tasks primary key.
+ */
+export interface ReminderOperationIdentity {
+  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'internal';
+  inboundId?: string | null;
+  timeZone?: string | null;
 }
 
 interface ReminderTimingPlan {
@@ -148,8 +160,28 @@ function buildPlannedReminder(
   chatJid: string,
   now: Date,
   mathReply: string | null = null,
+  identity?: ReminderOperationIdentity,
 ): PlannedReminder {
   const scheduleValue = toLocalTimestamp(scheduledAt);
+  const stableOperation = identity?.inboundId
+    ? createHash('sha256')
+        .update('andrea.reminder.v1\u0000')
+        .update(identity.channel || 'internal')
+        .update('\u0000')
+        .update(groupFolder)
+        .update('\u0000')
+        .update(chatJid)
+        .update('\u0000')
+        .update(identity.inboundId)
+        .update('\u0000')
+        .update(identity.timeZone || '')
+        .update('\u0000')
+        .update(reminderBody.toLowerCase().replace(/\s+/g, ' ').trim())
+        .update('\u0000')
+        .update(scheduleValue)
+        .digest('hex')
+        .slice(0, 32)
+    : null;
 
   return {
     confirmation: [
@@ -159,7 +191,12 @@ function buildPlannedReminder(
       .filter(Boolean)
       .join('\n\n'),
     task: {
-      id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      // Legacy callers without an inbound operation stay backward compatible.
+      // Production channels always pass identity, so duplicate delivery is
+      // harmless at the database primary-key boundary.
+      id: stableOperation
+        ? `reminder-${stableOperation}`
+        : `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       group_folder: groupFolder,
       chat_jid: chatJid,
       prompt: `Send a concise reminder telling the user to ${reminderBody}.`,
@@ -180,6 +217,7 @@ export function planContextualReminder(
   groupFolder: string,
   chatJid: string,
   now = new Date(),
+  identity?: ReminderOperationIdentity,
 ): PlannedReminder | null {
   const timingText = normalizeReminderInput(timingMessage).toLowerCase();
   const { reminderBody, mathReply } =
@@ -369,6 +407,7 @@ export function planContextualReminder(
     chatJid,
     now,
     mathReply,
+    identity,
   );
 }
 
@@ -377,6 +416,7 @@ export function planSimpleReminder(
   groupFolder: string,
   chatJid: string,
   now = new Date(),
+  identity?: ReminderOperationIdentity,
 ): PlannedReminder | null {
   const normalizedMessage = normalizeReminderInput(message);
   const explicitMatch = normalizedMessage.match(REMINDER_PATTERN);
@@ -465,5 +505,6 @@ export function planSimpleReminder(
     chatJid,
     now,
     mathReply,
+    identity,
   );
 }

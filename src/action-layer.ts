@@ -1324,6 +1324,7 @@ export function advancePendingActionReminder(
       deps.groupFolder,
       deps.chatJid,
       now,
+      { channel: 'internal', inboundId: state.createdAt, timeZone: TIMEZONE },
     );
     if (repeatedReminder) {
       return {
@@ -1357,6 +1358,7 @@ export function advancePendingActionReminder(
     deps.groupFolder,
     deps.chatJid,
     now,
+    { channel: 'internal', inboundId: state.createdAt, timeZone: TIMEZONE },
   );
   if (!plannedReminder) {
     return {
