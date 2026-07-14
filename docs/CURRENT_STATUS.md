@@ -57,9 +57,9 @@ Confirmed strengths:
 - proactive recall stayed concise and did not expose the fictional
   verification phrase;
 - completion and cancellation suppression survived database close/reopen;
-- all 13 cleanup-manifest entries were removed, the isolated database/WAL/SHM
-  and manifest no longer exist, and independent production searches found zero
-  run-bound residue.
+- all 16 cleanup-manifest entries, including the isolated profile subject and
+  facts, were removed; the database/WAL/SHM and manifest no longer exist, and
+  independent production searches found zero run-bound residue.
 
 Measured limitations intentionally left for later rounds:
 

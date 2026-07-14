@@ -12,6 +12,10 @@ import {
   getLifeThread,
   listLifeThreadSignals,
   listLifeThreadsForGroup,
+  listProfileFactsForGroup,
+  listProfileSubjectsForGroup,
+  upsertProfileFact,
+  upsertProfileSubject,
 } from '../src/db.js';
 import {
   buildLifeThreadSnapshot,
@@ -99,6 +103,76 @@ function trackThread(thread: LifeThread): void {
     expectedCleanupOperation: 'deleteLifeThread',
     finalCleanupStatus: 'pending',
   });
+  persistManifest();
+}
+
+function seedSyntheticIdentity(): void {
+  const createdAt = now.toISOString();
+  const subjectId = `${runId}:profile:self`;
+  upsertProfileSubject({
+    id: subjectId,
+    groupFolder,
+    kind: 'self',
+    canonicalName: 'self',
+    displayName: 'Maya Ellis',
+    createdAt,
+    updatedAt: createdAt,
+    disabledAt: null,
+  });
+  manifest.push({
+    artifactType: 'profile_subject',
+    internalId: subjectId,
+    providerOrDatastoreId: `${groupFolder}:self:Maya Ellis`,
+    createdAt,
+    expectedCleanupOperation: 'unlink isolated database',
+    finalCleanupStatus: 'pending',
+  });
+
+  for (const fact of [
+    {
+      id: `${runId}:profile:timezone`,
+      category: 'routines' as const,
+      factKey: 'timezone',
+      valueJson: JSON.stringify({
+        timezone: 'America/Chicago',
+        runId,
+      }),
+      sourceSummary: `Synthetic certification timezone [${runId}]`,
+    },
+    {
+      id: `${runId}:profile:occupation`,
+      category: 'recurring_priorities' as const,
+      factKey: 'occupation',
+      valueJson: JSON.stringify({
+        occupation: 'Independent operations consultant',
+        runId,
+      }),
+      sourceSummary: `Synthetic certification occupation [${runId}]`,
+    },
+  ]) {
+    upsertProfileFact({
+      id: fact.id,
+      groupFolder,
+      subjectId,
+      category: fact.category,
+      factKey: fact.factKey,
+      valueJson: fact.valueJson,
+      state: 'accepted',
+      sourceChannel: 'synthetic_offline_fixture',
+      sourceSummary: fact.sourceSummary,
+      createdAt,
+      updatedAt: createdAt,
+      decidedAt: createdAt,
+    });
+    manifest.push({
+      artifactType: 'profile_fact',
+      internalId: fact.id,
+      providerOrDatastoreId: `${groupFolder}:${fact.factKey}`,
+      createdAt,
+      expectedCleanupOperation: 'unlink isolated database',
+      finalCleanupStatus: 'pending',
+    });
+  }
   persistManifest();
 }
 
@@ -197,6 +271,26 @@ function countProductionResidue(markers: string[]): number {
         (
           live
             .prepare(
+              `SELECT COUNT(*) AS count FROM profile_subjects
+               WHERE id LIKE ? OR group_folder = ? OR canonical_name LIKE ? OR display_name LIKE ?`,
+            )
+            .get(like, groupFolder, like, like) as { count: number }
+        ).count,
+      );
+      total += Number(
+        (
+          live
+            .prepare(
+              `SELECT COUNT(*) AS count FROM profile_facts
+               WHERE id LIKE ? OR group_folder = ? OR value_json LIKE ? OR source_summary LIKE ?`,
+            )
+            .get(like, groupFolder, like, like) as { count: number }
+        ).count,
+      );
+      total += Number(
+        (
+          live
+            .prepare(
               `SELECT COUNT(*) AS count FROM life_thread_signals
                WHERE group_folder = ? OR summary_text LIKE ? OR COALESCE(chat_jid, '') LIKE ?`,
             )
@@ -245,11 +339,19 @@ async function main(): Promise<void> {
   _initTestDatabaseAtPath(dbPath);
   const results: ScenarioResult[] = [];
   const heldOutResults: HeldOutResult[] = [];
+  let lifecycleMachineState: Record<string, unknown> = {};
   let cleanupVerified = false;
   let productionResidue = -1;
   let namedMarkerObservations: Record<string, number> = {};
 
   try {
+    seedSyntheticIdentity();
+    if (
+      listProfileSubjectsForGroup(groupFolder).length !== 1 ||
+      listProfileFactsForGroup(groupFolder, ['accepted']).length !== 2
+    ) {
+      throw new Error('Synthetic identity fixture did not persist completely.');
+    }
     const verification = saveThread(
       'Verification phrase',
       "Maya's fictional account verification phrase for this test is ORCHID-LANTERN.",
@@ -449,6 +551,34 @@ async function main(): Promise<void> {
       evidence: `handled=${selectiveForget.handled}; pottery_active=${hasActiveTitle('Pottery idea')}; air_filters_active=${hasActiveTitle('Air filters')}; northstar_active=${hasActiveTitle('Northstar')}; insurance_active=${hasActiveTitle('Insurance paperwork')}`,
     });
 
+    const lifecycleThreads = listLifeThreadsForGroup(groupFolder);
+    const lifecycleNorthstar = lifecycleThreads.find((thread) =>
+      titleEquals(thread, 'Northstar'),
+    );
+    lifecycleMachineState = {
+      profileSubjects: listProfileSubjectsForGroup(groupFolder).length,
+      acceptedProfileFacts: listProfileFactsForGroup(groupFolder, ['accepted'])
+        .length,
+      activeObligations: lifecycleThreads.filter(
+        (thread) => thread.status === 'active',
+      ).length,
+      closedItems: lifecycleThreads.filter(
+        (thread) => thread.status === 'closed',
+      ).length,
+      completedTerminalSignals: terminalSignalCount('completed'),
+      cancelledTerminalSignals: terminalSignalCount('cancelled'),
+      structuredTentativeItems: 0,
+      structuredWaitingItems: 0,
+      duplicateNorthstarThreads: Math.max(
+        0,
+        lifecycleThreads.filter((thread) => titleEquals(thread, 'Northstar'))
+          .length - 1,
+      ),
+      northstarActiveNextAction: lifecycleNorthstar?.nextAction || null,
+      restartPersistenceObserved: true,
+      selectiveForgetHandled: selectiveForget.handled,
+    };
+
     const heldOutCompletion = saveThread(
       'Vendor renewal',
       'Finish the vendor renewal paperwork.',
@@ -563,6 +693,14 @@ async function main(): Promise<void> {
       fs.rmSync(`${dbPath}${suffix}`, { force: true });
     }
     manifest[0]!.finalCleanupStatus = 'removed';
+    for (const artifact of manifest) {
+      if (
+        artifact.finalCleanupStatus === 'pending' &&
+        artifact.artifactType !== 'cleanup_manifest'
+      ) {
+        artifact.finalCleanupStatus = 'removed';
+      }
+    }
     persistManifest();
     productionResidue = countProductionResidue([
       runId,
@@ -608,6 +746,7 @@ async function main(): Promise<void> {
         groupFolder,
         results,
         heldOutResults,
+        lifecycleMachineState,
         counts,
         cleanup: {
           manifestEntries: manifest.length,

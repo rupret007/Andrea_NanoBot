@@ -15,8 +15,9 @@ opened through `_initTestDatabaseAtPath`, a unique synthetic group/chat
 namespace, an offline Calendar fake, and no external provider destination.
 It did not open Jeff's production database for writes.
 
-The fixture represented Maya Ellis in `America/Chicago` and created bounded
-life-thread records for the Northstar proposal, air filters, a tentative
+The fixture represented Maya Ellis, an independent operations consultant in
+`America/Chicago`, using an isolated profile subject and two accepted profile
+facts. It created bounded life-thread records for the Northstar proposal, air filters, a tentative
 pottery idea, insurance paperwork waiting on another person, a plumbing
 inspection, an expense report, a cancelled repair meeting, and a fictional
 verification phrase. Later turns corrected and paraphrased Northstar, completed
@@ -72,9 +73,9 @@ folded into a second production change.
 - Full primary suite: 638 suites / 2,720 tests passed.
 - Root and AGI typechecks, formatting, lint (zero errors; 649 existing
   warnings), and production build passed.
-- The certification harness created a cleanup manifest before seeding. Its 13
-  entries covered the isolated database, manifest, and all life threads with
-  cascading signals. Threads/signals were deleted, the database/WAL/SHM and
+- The certification harness created a cleanup manifest before seeding. Its 16
+  entries covered the isolated database, manifest, profile subject/facts, and
+  all life threads with cascading signals. Threads/signals were deleted, the database/WAL/SHM and
   manifest were unlinked, and an independent read-only production search found
   zero run-ID, namespace, or created-ID residue.
 - Independent generic-name searches found zero production observations for
