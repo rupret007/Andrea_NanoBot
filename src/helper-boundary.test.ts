@@ -177,6 +177,18 @@ describe('helper boundary wiring', () => {
     expect(source).toContain(
       "'BlueBubbles self-thread OpenClaw delegation error'",
     );
+
+    const durableRouteIndex = source.indexOf(
+      'const queuedOpenClawRoute = resolveOpenClawDelegationRoute({',
+    );
+    const genericTurnIndex = source.indexOf(
+      'const turnDequeuedAt = Date.now();',
+      durableRouteIndex,
+    );
+    expect(durableRouteIndex).toBeGreaterThan(-1);
+    expect(genericTurnIndex).toBeGreaterThan(durableRouteIndex);
+    expect(source).toContain("ingress: 'durable_queue'");
+    expect(source).toContain('await prepareOpenClawDelegationResponse({');
   });
 
   it('reconciles work-cockpit current-work panels against the visible lane state before clearing selection', () => {

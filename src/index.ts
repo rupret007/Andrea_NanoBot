@@ -4096,6 +4096,53 @@ export function reconcileDurableContinuityBeforeAcceptingWork(
   return reconcileDurableWorkOnStartup({ now });
 }
 
+async function prepareOpenClawDelegationResponse(params: {
+  chatJid: string;
+  prompt: string;
+  message?: NewMessage;
+  command: OpenClawDelegationCommand;
+}): Promise<{ responseText: string; ok: boolean }> {
+  const mediaAttachmentIds = (params.message?.attachments || [])
+    .filter((attachment) => ['image', 'video'].includes(attachment.kind))
+    .map((attachment) => attachment.attachmentId);
+  let delegatedPrompt = params.prompt;
+  if (mediaAttachmentIds.length > 0) {
+    const media = await analyzeMessageMedia({
+      attachmentIds: mediaAttachmentIds,
+      prompt:
+        'Describe the attached image or sampled video accurately for another assistant. Include visible text and uncertainty. Do not infer details that are not visible.',
+      requester: 'andrea',
+    });
+    delegatedPrompt = buildOpenClawMediaGroundedPrompt({
+      prompt: params.prompt,
+      mediaSummary: media.summaryText,
+      mediaBlocker: media.handled ? null : media.blocker,
+    });
+    logger.info(
+      {
+        chatJid: params.chatJid,
+        attachmentCount: mediaAttachmentIds.length,
+        mediaHandled: media.handled,
+        mediaProvider: media.providerUsed || null,
+        mediaDebugPath: media.debugPath,
+      },
+      'Prepared bounded media evidence for OpenClaw delegation',
+    );
+  }
+
+  const result = await delegateToOpenClawAgent({
+    message: delegatedPrompt,
+    sessionKey: buildOpenClawChatSessionKey(params.chatJid),
+  });
+  return {
+    responseText: formatOpenClawDelegationResponse(
+      result,
+      params.command === 'mention' ? 'mention' : 'operator',
+    ),
+    ok: result.ok,
+  };
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
@@ -4133,6 +4180,71 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
     if (!hasTrigger) return true;
+  }
+
+  const queuedLatestMessage = missedMessages.at(-1);
+  const queuedOpenClawRoute = resolveOpenClawDelegationRoute({
+    rawMessage: queuedLatestMessage?.content || '',
+    mainControlChat: isOpenClawOwnerControlSurface({
+      mainControlChat: false,
+      channelName: channel.name,
+      blueBubblesSelfThread: isBlueBubblesSelfThreadAliasJid(chatJid),
+    }),
+    delegationEnabled: isOpenClawDelegationEnabled(),
+  });
+  if (queuedOpenClawRoute.action === 'delegate' && queuedLatestMessage) {
+    const startedAt = Date.now();
+    lastAgentTimestamp[chatJid] = queuedLatestMessage.timestamp;
+    saveState();
+    logger.info(
+      {
+        chatJid,
+        command: queuedOpenClawRoute.request.command,
+        sessionKey: buildOpenClawChatSessionKey(chatJid),
+        promptChars: queuedOpenClawRoute.request.prompt.length,
+        ingress: 'durable_queue',
+      },
+      'OpenClaw delegation started',
+    );
+    try {
+      await channel.setTyping?.(chatJid, true);
+      if (
+        queuedOpenClawRoute.request.command === 'mention' ||
+        queuedOpenClawRoute.request.command === 'natural'
+      ) {
+        await channel.sendMessage(chatJid, 'Asking OpenClaw…', {
+          replyToMessageId: queuedLatestMessage.id,
+        });
+      }
+      const prepared = await prepareOpenClawDelegationResponse({
+        chatJid,
+        prompt: queuedOpenClawRoute.request.prompt,
+        message: queuedLatestMessage,
+        command: queuedOpenClawRoute.request.command,
+      });
+      await channel.sendMessage(chatJid, prepared.responseText, {
+        replyToMessageId: queuedLatestMessage.id,
+      });
+      logger.info(
+        {
+          chatJid,
+          command: queuedOpenClawRoute.request.command,
+          sessionKey: buildOpenClawChatSessionKey(chatJid),
+          ok: prepared.ok,
+          durationMs: Date.now() - startedAt,
+          ingress: 'durable_queue',
+        },
+        'OpenClaw delegation completed',
+      );
+    } catch (err) {
+      logger.error(
+        { err, chatJid, ingress: 'durable_queue' },
+        'Queued OpenClaw delegation failed',
+      );
+    } finally {
+      await channel.setTyping?.(chatJid, false).catch(() => undefined);
+    }
+    return true;
   }
 
   const turnDequeuedAt = Date.now();
@@ -14109,43 +14221,13 @@ async function main(): Promise<void> {
         }
       }
 
-      const mediaAttachmentIds = (message?.attachments || [])
-        .filter((attachment) => ['image', 'video'].includes(attachment.kind))
-        .map((attachment) => attachment.attachmentId);
-      let delegatedPrompt = prompt;
-      if (mediaAttachmentIds.length > 0) {
-        const media = await analyzeMessageMedia({
-          attachmentIds: mediaAttachmentIds,
-          prompt:
-            'Describe the attached image or sampled video accurately for another assistant. Include visible text and uncertainty. Do not infer details that are not visible.',
-          requester: 'andrea',
-        });
-        delegatedPrompt = buildOpenClawMediaGroundedPrompt({
-          prompt,
-          mediaSummary: media.summaryText,
-          mediaBlocker: media.handled ? null : media.blocker,
-        });
-        logger.info(
-          {
-            chatJid,
-            attachmentCount: mediaAttachmentIds.length,
-            mediaHandled: media.handled,
-            mediaProvider: media.providerUsed || null,
-            mediaDebugPath: media.debugPath,
-          },
-          'Prepared bounded media evidence for OpenClaw delegation',
-        );
-      }
-
-      const result = await delegateToOpenClawAgent({
-        message: delegatedPrompt,
-        sessionKey,
+      const prepared = await prepareOpenClawDelegationResponse({
+        chatJid,
+        prompt,
+        message,
+        command,
       });
-      const responseStyle = command === 'mention' ? 'mention' : 'operator';
-      const responseText = formatOpenClawDelegationResponse(
-        result,
-        responseStyle,
-      );
+      const responseText = prepared.responseText;
 
       try {
         await sendCursorMessage(chatJid, responseText, message);
@@ -14173,7 +14255,7 @@ async function main(): Promise<void> {
           chatJid,
           command,
           sessionKey,
-          ok: result.ok,
+          ok: prepared.ok,
           durationMs: Date.now() - startedAt,
         },
         'OpenClaw delegation completed',
