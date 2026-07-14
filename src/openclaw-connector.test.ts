@@ -9,6 +9,7 @@ import {
   formatOpenClawDelegationResponse,
   formatOpenClawDebugStatusLines,
   getOpenClawStatusSummary,
+  isOpenClawOwnerControlSurface,
   parseOpenClawDelegationRequest,
   parseOpenClawJsonOutput,
   redactOpenClawText,
@@ -469,6 +470,31 @@ describe('OpenClaw connector', () => {
       action: 'delegate',
       request: { prompt: 'summarize my week', command: 'natural' },
     });
+  });
+
+  it('allows OpenClaw only on private owner-control surfaces', () => {
+    expect(isOpenClawOwnerControlSurface({ mainControlChat: true })).toBe(true);
+    expect(
+      isOpenClawOwnerControlSurface({
+        mainControlChat: false,
+        channelName: 'bluebubbles',
+        blueBubblesSelfThread: true,
+      }),
+    ).toBe(true);
+    expect(
+      isOpenClawOwnerControlSurface({
+        mainControlChat: false,
+        channelName: 'bluebubbles',
+        blueBubblesSelfThread: false,
+      }),
+    ).toBe(false);
+    expect(
+      isOpenClawOwnerControlSurface({
+        mainControlChat: false,
+        channelName: 'telegram',
+        blueBubblesSelfThread: true,
+      }),
+    ).toBe(false);
   });
 
   it('fails fast when the gateway preflight is not live', async () => {

@@ -652,6 +652,7 @@ import {
   delegateToOpenClawAgent,
   formatOpenClawDelegationResponse,
   isOpenClawDelegationEnabled,
+  isOpenClawOwnerControlSurface,
   resolveOpenClawDelegationRoute,
   type OpenClawDelegationCommand,
 } from './openclaw-connector.js';
@@ -18483,9 +18484,15 @@ async function main(): Promise<void> {
         return;
       }
 
+      const openClawChannel = findChannel(channels, chatJid);
+      const openClawOwnerControlSurface = isOpenClawOwnerControlSurface({
+        mainControlChat,
+        channelName: openClawChannel?.name,
+        blueBubblesSelfThread: isBlueBubblesSelfThreadAliasJid(chatJid),
+      });
       const openClawRoute = resolveOpenClawDelegationRoute({
         rawMessage: rawTrimmed,
-        mainControlChat,
+        mainControlChat: openClawOwnerControlSurface,
         delegationEnabled: isOpenClawDelegationEnabled(),
       });
       if (openClawRoute.action === 'restrict') {
@@ -18493,7 +18500,7 @@ async function main(): Promise<void> {
         channel
           ?.sendMessage(
             chatJid,
-            "OpenClaw delegation is restricted to Andrea's main control chat.",
+            "OpenClaw delegation is restricted to Andrea's private owner-control surfaces.",
             buildOperatorSendOptions(msg),
           )
           .catch((err) =>

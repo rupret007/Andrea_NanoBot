@@ -66,6 +66,18 @@ export type OpenClawDelegationRoute =
       request: { prompt: string; command: OpenClawDelegationCommand };
     };
 
+export function isOpenClawOwnerControlSurface(params: {
+  mainControlChat: boolean;
+  channelName?: string | null;
+  blueBubblesSelfThread?: boolean;
+}): boolean {
+  return (
+    params.mainControlChat ||
+    (params.channelName === 'bluebubbles' &&
+      params.blueBubblesSelfThread === true)
+  );
+}
+
 export function buildOpenClawMediaGroundedPrompt(params: {
   prompt: string;
   mediaSummary?: string | null;
