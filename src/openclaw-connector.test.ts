@@ -8,6 +8,7 @@ import {
   delegateToOpenClawAgent,
   formatOpenClawDelegationResponse,
   formatOpenClawDebugStatusLines,
+  getOpenClawGatewayPreflight,
   getOpenClawStatusSummary,
   isOpenClawOwnerControlSurface,
   parseOpenClawDelegationRequest,
@@ -517,6 +518,38 @@ describe('OpenClaw connector', () => {
     expect(result.ok).toBe(false);
     expect(result.detail).toContain('not reachable');
     expect(agentCalled).toBe(false);
+  });
+
+  it('uses only the fast health command for agent preflight', async () => {
+    const statusCalls: string[][] = [];
+    const statusRunner: OpenClawSyncRunner = (_file, args) => {
+      statusCalls.push([...args]);
+      if (args[0] !== 'health') {
+        throw new Error('slow diagnostic command should not run');
+      }
+      return '{"ok":true}';
+    };
+    const runner: OpenClawAsyncRunner = async () =>
+      '{"reply":"healthy gateway reply"}';
+
+    expect(
+      getOpenClawGatewayPreflight(
+        { ...baseConfig, delegationEnabled: true },
+        statusRunner,
+      ),
+    ).toEqual({ state: 'live', detail: 'OpenClaw health check is ok.' });
+    statusCalls.length = 0;
+
+    const result = await delegateToOpenClawAgent({
+      message: 'preflight check',
+      config: { ...baseConfig, delegationEnabled: true },
+      runner,
+      statusRunner,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.reply).toBe('healthy gateway reply');
+    expect(statusCalls).toEqual([['health', '--json']]);
   });
 
   it('reports empty agent replies as delegation failures', async () => {

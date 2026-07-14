@@ -326,6 +326,39 @@ function runOpenClawJsonCommand(
   }
 }
 
+export function getOpenClawGatewayPreflight(
+  overrides: Partial<OpenClawConnectorConfig> = {},
+  runner: OpenClawSyncRunner = defaultSyncRunner,
+): {
+  state: 'live' | 'degraded' | 'offline';
+  detail: string;
+} {
+  const config = resolveOpenClawConfig(overrides);
+  const healthResult = runOpenClawJsonCommand(
+    config,
+    ['health', '--json'],
+    runner,
+  );
+  if (!healthResult.ok) {
+    return {
+      state: 'offline',
+      detail: healthResult.cliMissing
+        ? `OpenClaw CLI not found: ${config.cli}`
+        : healthResult.detail || 'OpenClaw gateway health check failed.',
+    };
+  }
+  const healthOk = firstBoolean(healthResult.value, [['ok']]);
+  if (healthOk === true) {
+    return { state: 'live', detail: 'OpenClaw health check is ok.' };
+  }
+  return {
+    state: 'degraded',
+    detail:
+      firstString(healthResult.value, [['status'], ['error']]) ||
+      'OpenClaw gateway health check did not report ok.',
+  };
+}
+
 function providerNamesFromAuth(auth: unknown): string[] {
   const providers = new Set<string>();
   const runtimeRoutes = readPath(auth, ['runtimeAuthRoutes']);
@@ -718,16 +751,16 @@ export async function delegateToOpenClawAgent(params: {
   }
 
   if (!params.skipPreflight) {
-    const summary = getOpenClawStatusSummary(
+    const preflight = getOpenClawGatewayPreflight(
       config,
       params.statusRunner || defaultSyncRunner,
     );
-    if (summary.gatewayState !== 'live') {
+    if (preflight.state !== 'live') {
       const detail =
-        summary.gatewayState === 'offline'
+        preflight.state === 'offline'
           ? 'OpenClaw gateway is not reachable; run openclaw health.'
-          : summary.detail ||
-            `OpenClaw gateway is not ready (${summary.gatewayState}).`;
+          : preflight.detail ||
+            `OpenClaw gateway is not ready (${preflight.state}).`;
       return {
         ok: false,
         reply: '',

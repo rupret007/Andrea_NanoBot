@@ -187,8 +187,19 @@ describe('helper boundary wiring', () => {
     );
     expect(durableRouteIndex).toBeGreaterThan(-1);
     expect(genericTurnIndex).toBeGreaterThan(durableRouteIndex);
-    expect(source).toContain("ingress: 'durable_queue'");
-    expect(source).toContain('await prepareOpenClawDelegationResponse({');
+    const durableRouteSource = source.slice(
+      durableRouteIndex,
+      genericTurnIndex,
+    );
+    expect(durableRouteSource).toContain("ingress: 'durable_queue'");
+    expect(durableRouteSource).toContain(
+      'await prepareOpenClawDelegationResponse({',
+    );
+    expect(durableRouteSource).toContain(
+      'OpenClaw delegation prepared for same-chat delivery',
+    );
+    expect(durableRouteSource).not.toContain('replyToMessageId:');
+    expect(durableRouteSource).not.toContain('Asking OpenClaw…');
   });
 
   it('reconciles work-cockpit current-work panels against the visible lane state before clearing selection', () => {

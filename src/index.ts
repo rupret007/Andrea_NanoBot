@@ -4208,23 +4208,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
     try {
       await channel.setTyping?.(chatJid, true);
-      if (
-        queuedOpenClawRoute.request.command === 'mention' ||
-        queuedOpenClawRoute.request.command === 'natural'
-      ) {
-        await channel.sendMessage(chatJid, 'Asking OpenClaw…', {
-          replyToMessageId: queuedLatestMessage.id,
-        });
-      }
       const prepared = await prepareOpenClawDelegationResponse({
         chatJid,
         prompt: queuedOpenClawRoute.request.prompt,
         message: queuedLatestMessage,
         command: queuedOpenClawRoute.request.command,
       });
-      await channel.sendMessage(chatJid, prepared.responseText, {
-        replyToMessageId: queuedLatestMessage.id,
-      });
+      logger.info(
+        {
+          chatJid,
+          command: queuedOpenClawRoute.request.command,
+          ok: prepared.ok,
+          ingress: 'durable_queue',
+        },
+        'OpenClaw delegation prepared for same-chat delivery',
+      );
+      await channel.sendMessage(chatJid, prepared.responseText);
       logger.info(
         {
           chatJid,
