@@ -1,4 +1,7 @@
-import { isBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
+import {
+  canonicalizeBlueBubblesSelfThreadJid,
+  isBlueBubblesSelfThreadAliasJid,
+} from './bluebubbles-self-thread.js';
 import { clipCouncilText } from './council-safety.js';
 import {
   interpretBlueBubblesDirectTurnWithBackend,
@@ -189,11 +192,13 @@ export function buildBlueBubblesIngressFingerprint(input: {
   chatJid: string;
   message: Pick<NewMessage, 'content' | 'timestamp' | 'sender' | 'is_from_me'>;
 }): string {
+  const selfThread = isBlueBubblesSelfThreadAliasJid(input.chatJid);
   return [
-    input.chatJid,
-    input.message.timestamp,
+    selfThread
+      ? canonicalizeBlueBubblesSelfThreadJid(input.chatJid)
+      : input.chatJid,
     input.message.is_from_me ? 'self' : 'other',
-    normalizeText(input.message.sender),
+    selfThread ? 'self-thread' : normalizeText(input.message.sender),
     normalizeText(input.message.content).toLowerCase(),
   ].join('|');
 }

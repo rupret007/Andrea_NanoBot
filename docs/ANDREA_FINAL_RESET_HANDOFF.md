@@ -1,6 +1,78 @@
 # Andrea Final Reset Handoff
 
-Snapshot date: 2026-07-14. The pushed baseline inspected for this pass was
+Snapshot date: 2026-07-14. The live transport certification pass began from
+`24371f1139504bde57df536f8af4139ee1c8c28f`. The latest code-bearing runtime
+used for the BlueBubbles drill was `3a02430c`; use
+`git rev-parse origin/main` and `npm run services:status` for the final
+documentation/release SHA and serving provenance.
+
+## Latest live transport pass
+
+- Telegram is `VERIFIED`. The production user-session `/ping` sent message
+  `11709`, received exactly one expected reply `11710`, and persisted the fresh
+  marker at `2026-07-14T15:10:07.618Z` in
+  `data/runtime/telegram-roundtrip-health.json`.
+- BlueBubbles transport is ready and OpenClaw is live with 11/11 bridge tools,
+  but the exactly-once certification is `FAILED`. Correlation
+  `BB-CERT-20260714T154100Z-3A02430C` reached the correct read-only
+  `andrea-bluebubbles__bluebubbles_status` tool and produced grounded replies,
+  but the same physical self-thread request was mirrored under phone and email
+  aliases with different provider IDs. OpenClaw therefore recorded two
+  read-only calls. No send tool, message-action execution, calendar write, or
+  other mutation occurred.
+- Alexa is `BLOCKED` for this pass and its prior proof is `STALE`. There is no
+  authenticated Alexa simulator/device client in this environment. The last
+  qualifying handled signed request remains `WhatAmIForgettingIntent` at
+  `2026-06-03T13:57:39.518Z`. No unsigned local call was substituted for signed
+  proof.
+
+BlueBubbles evidence is retained in the local message ledger and in these
+OpenClaw transcripts:
+
+- `$HOME/.openclaw/agents/main/sessions/d8236900-084d-40f1-91e2-d546f6789721.jsonl`
+- `$HOME/.openclaw/agents/main/sessions/abfecee0-3436-4d3f-b927-e2afe3e19d3a.jsonl`
+
+The repository now recognizes the configured Messages self-thread as an
+OpenClaw owner surface, routes direct and durable asks through the same
+connector, uses a fast gateway health preflight, and suppresses a physical
+self-thread message mirrored across aliases even when BlueBubbles changes the
+message ID and timestamp slightly. The regression test also proves the guard
+does not swallow an intentional repeat outside the two-second mirror window.
+Focused transport tests and root typechecking pass. No further BlueBubbles live
+probe was sent after the final dedupe correction, so the fix is repository
+verified but not yet live recertified.
+
+Exact remaining proof steps:
+
+```bash
+npm run services:status
+npm run debug:bluebubbles -- --live
+npm run openclaw:bridge:status -- --json
+```
+
+Then send one new uniquely correlated `@OpenClaw` request in the configured
+canonical Messages self-thread that requires exactly one read-only
+`bluebubbles_status` call. Confirm one request session, one tool call, and one
+same-thread reply before changing the result to `VERIFIED`. Do not repeat the
+probe if provider outcome is indeterminate.
+
+For Alexa, use a real device or authenticated Alexa Developer Console
+simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run
+`npm run services:status`. Success requires a fresh handled signed
+`IntentRequest` with `WhatAmIForgettingIntent`; local HTTP is diagnosis only.
+
+### Next full-reset priorities
+
+1. Run one BlueBubbles/OpenClaw recertification after the alias-dedupe release
+   and require exactly one read-only tool call and one same-thread reply.
+2. Complete the fresh signed Alexa device/simulator turn and confirm the
+   request type, intent, handled response source, and freshness marker.
+3. Complete one genuine BlueBubbles `message_action` continuation and one
+   life-thread save/retrieval turn without manufacturing evidence.
+
+## Prior release handoff (preserved history)
+
+The pushed baseline inspected for the prior pass was
 `9dd2b1e7` on `main`, aligned with `origin/main` before the change below.
 The completed code-bearing pass was pushed as `d74b8191` (`Require Alexa
 calendar confirmation`). A later handoff-only commit may contain this line;

@@ -659,6 +659,115 @@ describe('BlueBubbles channel', () => {
     }
   });
 
+  it('suppresses one physical self-thread message mirrored across phone and email aliases', async () => {
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    const onMessage = vi.fn(async (_chatJid, message) => {
+      storeMessage(message);
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage,
+        onChatMetadata: vi.fn(
+          async (
+            chatJid: string,
+            timestamp: string,
+            name?: string,
+            channelName?: string,
+            isGroup?: boolean,
+          ) => {
+            storeChatMetadata(chatJid, timestamp, name, channelName, isGroup);
+          },
+        ),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      const webhookUrl = channel.getWebhookUrl();
+      const sendAliasWebhook = (input: {
+        chatGuid: string;
+        messageGuid: string;
+        handle: string;
+        timestamp: string;
+      }) =>
+        fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'new-message',
+            data: {
+              chatGuid: input.chatGuid,
+              chat: {
+                guid: input.chatGuid,
+                displayName: 'Owner',
+                participants: [{ address: input.handle }],
+                isGroup: false,
+              },
+              message: {
+                guid: input.messageGuid,
+                body: '@OpenClaw check status',
+                senderName: 'Owner',
+                isFromMe: true,
+                handle: { address: input.handle, displayName: 'Owner' },
+                dateCreated: input.timestamp,
+              },
+            },
+          }),
+        });
+
+      const first = await sendAliasWebhook({
+        chatGuid: 'iMessage;-;+12025550101',
+        messageGuid: 'mirrored-phone-guid',
+        handle: '+12025550101',
+        timestamp: '2026-04-12T20:08:00.000Z',
+      });
+      const mirrored = await sendAliasWebhook({
+        chatGuid: 'iMessage;-;owner@example.com',
+        messageGuid: 'mirrored-email-guid',
+        handle: 'owner@example.com',
+        timestamp: '2026-04-12T20:08:00.500Z',
+      });
+      const intentionalRepeat = await sendAliasWebhook({
+        chatGuid: 'iMessage;-;+12025550101',
+        messageGuid: 'intentional-repeat-guid',
+        handle: '+12025550101',
+        timestamp: '2026-04-12T20:08:03.000Z',
+      });
+
+      expect(first.status).toBe(200);
+      expect(mirrored.status).toBe(202);
+      expect(await mirrored.text()).toBe('Ignored duplicate delivery');
+      expect(intentionalRepeat.status).toBe(200);
+      expect(onMessage).toHaveBeenCalledTimes(2);
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
   it('hydrates direct-chat metadata from history and caches the first successful self-chat target', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const historyRequests: string[] = [];

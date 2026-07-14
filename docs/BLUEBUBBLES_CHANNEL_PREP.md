@@ -48,6 +48,14 @@ npm run openclaw:bridge:probe -- --json
 
 The installer registers the local stdio command and then applies OpenClaw's native tool filter. It exposes read/status tools, media metadata/analysis tools, and `bluebubbles_execute_message_action`; it intentionally excludes `bluebubbles_send`, so send-like work must still go through Andrea's same-thread message-action gates.
 
+In the explicitly configured private self-thread, an `@OpenClaw` ask may use
+those filtered tools and return the result in that same Messages conversation.
+Phone and email aliases for one physical self-thread are canonicalized for
+ingress deduplication: identical direction/content within two seconds of
+provider timestamp is one delivery even when BlueBubbles assigns different
+message IDs. Repeating the same text outside that narrow mirror window remains
+an intentional new turn. Other chats do not become OpenClaw owner surfaces.
+
 OpenClaw keeps its own auth store. Andrea does not copy OpenClaw secrets, and the OpenClaw MCP config does not store `BLUEBUBBLES_CONTROL_TOKEN`; the MCP process reads Andrea's local `.env` from this checkout.
 
 Required local-only control API env:
@@ -107,7 +115,9 @@ Allowed directly:
 Handoff-only or blocked:
 
 - work cockpit
-- runtime, logs, and provider diagnostics
+- general runtime, logs, and provider diagnostics; the configured private
+  self-thread may still request the bounded read-only BlueBubbles status tool
+  through `@OpenClaw`
 - `registermain` and main-chat control flows
 - slash-command operator internals
 - artifact-heavy delivery

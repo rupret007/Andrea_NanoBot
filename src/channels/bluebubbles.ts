@@ -81,6 +81,12 @@ const BLUEBUBBLES_EVIDENCE_WINDOW_MS = 10 * 60 * 1_000;
 const BLUEBUBBLES_FALLBACK_COOLDOWN_MS = 6 * 60 * 60 * 1_000;
 const BLUEBUBBLES_FALLBACK_EVIDENCE_THRESHOLD = 2;
 const BLUEBUBBLES_INGRESS_FINGERPRINT_WINDOW_MS = 2 * 60 * 1_000;
+const BLUEBUBBLES_MIRRORED_MESSAGE_TIMESTAMP_TOLERANCE_MS = 2_000;
+
+interface BlueBubblesIngressFingerprintObservation {
+  observedAtMs: number;
+  messageTimestampMs: number;
+}
 
 function parseBool(value: string | undefined, fallback = false): boolean {
   if (value == null) return fallback;
@@ -1904,7 +1910,10 @@ export class BlueBubblesChannel implements Channel {
 
   private readonly inflightMessageIds = new Set<string>();
 
-  private readonly recentIngressFingerprints = new Map<string, number>();
+  private readonly recentIngressFingerprints = new Map<
+    string,
+    BlueBubblesIngressFingerprintObservation[]
+  >();
 
   private readonly directChatMetadataByJid = new Map<
     string,
@@ -2519,10 +2528,17 @@ export class BlueBubblesChannel implements Channel {
   private pruneRecentIngressFingerprints(nowMs = Date.now()): void {
     for (const [
       fingerprint,
-      observedAtMs,
+      observations,
     ] of this.recentIngressFingerprints.entries()) {
-      if (nowMs - observedAtMs > BLUEBUBBLES_INGRESS_FINGERPRINT_WINDOW_MS) {
+      const current = observations.filter(
+        (observation) =>
+          nowMs - observation.observedAtMs <=
+          BLUEBUBBLES_INGRESS_FINGERPRINT_WINDOW_MS,
+      );
+      if (current.length === 0) {
         this.recentIngressFingerprints.delete(fingerprint);
+      } else if (current.length !== observations.length) {
+        this.recentIngressFingerprints.set(fingerprint, current);
       }
     }
   }
@@ -2535,11 +2551,18 @@ export class BlueBubblesChannel implements Channel {
     >,
   ): boolean {
     this.pruneRecentIngressFingerprints();
-    return this.recentIngressFingerprints.has(
-      buildBlueBubblesIngressFingerprint({
-        chatJid,
-        message,
-      }),
+    const observations = this.recentIngressFingerprints.get(
+      buildBlueBubblesIngressFingerprint({ chatJid, message }),
+    );
+    if (!observations) return false;
+    const messageTimestampMs = Date.parse(message.timestamp);
+    return (
+      Number.isFinite(messageTimestampMs) &&
+      observations.some(
+        (observation) =>
+          Math.abs(observation.messageTimestampMs - messageTimestampMs) <=
+          BLUEBUBBLES_MIRRORED_MESSAGE_TIMESTAMP_TOLERANCE_MS,
+      )
     );
   }
 
@@ -2551,13 +2574,19 @@ export class BlueBubblesChannel implements Channel {
     >,
   ): void {
     this.pruneRecentIngressFingerprints();
-    this.recentIngressFingerprints.set(
-      buildBlueBubblesIngressFingerprint({
-        chatJid,
-        message,
-      }),
-      Date.now(),
-    );
+    const messageTimestampMs = Date.parse(message.timestamp);
+    if (!Number.isFinite(messageTimestampMs)) return;
+    const fingerprint = buildBlueBubblesIngressFingerprint({
+      chatJid,
+      message,
+    });
+    this.recentIngressFingerprints.set(fingerprint, [
+      ...(this.recentIngressFingerprints.get(fingerprint) || []),
+      {
+        observedAtMs: Date.now(),
+        messageTimestampMs,
+      },
+    ]);
   }
 
   private noteIgnoredWebhook(
