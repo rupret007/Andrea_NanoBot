@@ -1,10 +1,101 @@
 # Andrea Final Reset Handoff
 
-Snapshot date: 2026-07-14. The live transport certification pass began from
-`24371f1139504bde57df536f8af4139ee1c8c28f`. The latest code-bearing runtime
-used for the BlueBubbles drill was `3a02430c`; use
-`git rev-parse origin/main` and `npm run services:status` for the final
-documentation/release SHA and serving provenance.
+Snapshot date: 2026-07-14. Use `git rev-parse origin/main` and
+`npm run services:status` for the current release SHA and serving provenance;
+the sections below retain the exact baseline SHA for each bounded pass.
+
+## Synthetic life-thread certification
+
+Label: `SYNTHETIC LIFE-THREAD CERTIFICATION`
+
+The pass began from clean, synchronized `main` at
+`41304345970b67e619de36ce59592a40c2d0993d`. Run ID
+`ANDREA-LIFETHREAD-20260714T160100Z-A7C4D2E1` used a disposable SQLite file
+opened through `_initTestDatabaseAtPath`, a unique synthetic group/chat
+namespace, an offline Calendar fake, and no external provider destination.
+It did not open Jeff's production database for writes.
+
+The fixture represented Maya Ellis in `America/Chicago` and created bounded
+life-thread records for the Northstar proposal, air filters, a tentative
+pottery idea, insurance paperwork waiting on another person, a plumbing
+inspection, an expense report, a cancelled repair meeting, and a fictional
+verification phrase. Later turns corrected and paraphrased Northstar, completed
+the expense report, cancelled the repair meeting, reloaded the durable test
+database, and attempted selective forgetting. Every stored summary included
+the run ID.
+
+### Scenario results
+
+| # | Scenario | Baseline | Post-change | Machine evidence |
+| --- | --- | --- | --- | --- |
+| 1 | Initial proactive recall | `PARTIAL` | `PARTIAL` | Eight active items; concise three-line response; no verification-phrase leak, but recency chose the repair meeting instead of the urgent proposal. |
+| 2 | Completion suppression | `FAIL` | `PASS` | Natural completion changed the expense thread from active to closed, cleared follow-through fields, and added one explicit terminal signal. |
+| 3 | Cancellation suppression | `FAIL` | `PASS` | Natural cancellation changed the repair-meeting thread from active to closed and added one explicit cancellation signal. |
+| 4 | Temporal supersession | `FAIL` | `FAIL` | The latest summary says Friday at noon, but `nextAction` still contains Thursday at 5:00 PM. |
+| 5 | Semantic deduplication | `PASS` | `PASS` | Three Northstar signals remain attached to one underlying thread. |
+| 6 | Waiting state | `PARTIAL` | `PARTIAL` | The Jordan blocker text is retained, but waiting is not a structured life-thread state. |
+| 7 | Tentative versus committed | `FAIL` | `FAIL` | A tentative idea is still stored as an active obligation. |
+| 8 | Privacy and relevance | `PASS` | `PASS` | Proactive recall stayed concise and did not expose `ORCHID-LANTERN`. |
+| 9 | Restart recovery | `FAIL` | `FAIL` | Durable reopen now preserves completion/cancellation suppression and one deduplicated Northstar thread, but the stale deadline still controls `nextAction`. |
+| 10 | Selective forgetting | `FAIL` | `FAIL` | One multi-target natural forget request is not handled; unrelated active state remains intact. |
+
+Aggregate lifecycle evidence moved from 2 `PASS`, 2 `PARTIAL`, and 6 `FAIL`
+to 4 `PASS`, 2 `PARTIAL`, and 4 `FAIL`. This is synthetic certification, not
+real adoption, an owner review, or a learning baseline.
+
+### Selected defect and correction
+
+The one selected defect was terminal life-thread state loss: natural reports
+that an obligation was completed or cancelled did not reach the life-thread
+state machine, so finished work remained active and resurfaced after context
+reload. The underlying handler only supported explicit close/archive commands.
+
+The correction recognizes bounded completion/cancellation language, resolves
+the target from a unique lexical match or sufficient prior thread context,
+fails open to the normal assistant path when the target is ambiguous, closes
+the matching thread, clears active follow-through fields, and retains an
+explicit historical terminal signal. It contains no synthetic names or fixture
+phrases in production logic.
+
+Held-out completion (`That task is taken care of now`) and cancellation (`We
+are not doing the Friday contractor meeting anymore`) both pass. Ambiguous
+`I finished it` without context closes nothing. The held-out Northstar deadline
+correction, tentative photography idea, and alternate recall query remain
+failing; the held-out duplicate remains one thread. Those failures were not
+folded into a second production change.
+
+### Validation and cleanup
+
+- Focused life-thread/context suite: 7 files / 166 tests passed.
+- AGI memory, episodic, knowledge-graph, and deterministic-replay subset:
+  4 files / 20 tests passed.
+- Full primary suite: 638 suites / 2,720 tests passed.
+- Root and AGI typechecks, formatting, lint (zero errors; 649 existing
+  warnings), and production build passed.
+- The certification harness created a cleanup manifest before seeding. Its 13
+  entries covered the isolated database, manifest, and all life threads with
+  cascading signals. Threads/signals were deleted, the database/WAL/SHM and
+  manifest were unlinked, and an independent read-only production search found
+  zero run-ID, namespace, or created-ID residue.
+- Independent generic-name searches found zero production observations for
+  Maya Ellis, Northstar, Priya, Jordan, and `ORCHID-LANTERN`. One uncorrelated
+  pre-existing `Leo` observation remains in real state; it has no certification
+  run ID, namespace, or created artifact ID and was not read, changed, or
+  deleted by this pass.
+- No synthetic messages, provider sends, scheduled jobs, pending actions,
+  conversations, or runtime files remain. No real user state was changed.
+- Intentionally retained immutable evidence is limited to the generalized
+  certification harness, sanitized regression fixtures, and this summary; no
+  synthetic runtime database or transcript was retained.
+
+### Next full-reset priorities
+
+1. Make newer deadline corrections atomically supersede active planning fields
+   while retaining historical provenance.
+2. Add bounded structured `waiting` and `tentative` semantics, then rank urgent
+   obligations above scheduled facts and low-urgency ideas.
+3. Support scoped multi-item forgetting and route held-out proactive-recall
+   paraphrases through the same local loose-ends behavior.
 
 ## Latest live transport pass
 

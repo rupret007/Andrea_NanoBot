@@ -26,7 +26,7 @@ uncommitted candidate changes.
 
 ## Verified Repository Gates
 
-- Primary suite: 229 files / 2,712 tests.
+- Primary suite: 638 suites / 2,720 tests.
 - AGI suite: 28 files / 282 tests.
 - Deterministic sweep: 93/93 selected commands passed from an inventory of 108;
   the other 15 are explicitly excluded live, interactive, aggregate, or
@@ -35,6 +35,46 @@ uncommitted candidate changes.
 - Container runner install, typecheck, build, policy contracts, image canary,
   nested read-only mount canary, signature flows, documentation checks, and
   root/runner dependency audits passed on the released tree.
+
+## Synthetic Life-Thread Certification — 2026-07-14
+
+This is synthetic offline evidence, not real user adoption. The pass began from
+clean, synchronized SHA `41304345970b67e619de36ce59592a40c2d0993d` and used
+run `ANDREA-LIFETHREAD-20260714T160100Z-A7C4D2E1` in a disposable SQLite
+database with an offline Calendar fake. It did not write to live memory,
+messages, Calendar, contacts, providers, or Jeff's production state.
+
+The ten-scenario lifecycle improved from 2 `PASS`, 2 `PARTIAL`, and 6 `FAIL`
+to 4 `PASS`, 2 `PARTIAL`, and 4 `FAIL`. The single production correction makes
+natural completion and cancellation updates close the uniquely identified or
+context-bound life thread, clear active follow-through, retain historical
+evidence, and remain suppressed after a durable database reopen. Ambiguous
+terminal language without a target closes nothing.
+
+Confirmed strengths:
+
+- one underlying Northstar thread retained multiple paraphrased signals;
+- proactive recall stayed concise and did not expose the fictional
+  verification phrase;
+- completion and cancellation suppression survived database close/reopen;
+- all 13 cleanup-manifest entries were removed, the isolated database/WAL/SHM
+  and manifest no longer exist, and independent production searches found zero
+  run-bound residue.
+
+Measured limitations intentionally left for later rounds:
+
+- a corrected deadline updates the summary but not the stale active
+  `nextAction`;
+- waiting and tentative intent are not structured life-thread states;
+- urgent, scheduled, low-urgency, and tentative items are not ranked strongly
+  enough;
+- a scoped multi-item forget request and the held-out phrasing `Is there
+  anything important I'm dropping?` are not handled by the local path.
+
+Run `npm run certify:life-thread` for a fresh isolated lifecycle. The command
+creates its cleanup manifest before seeding and exits nonzero if independent
+cleanup verification fails. Full evidence and scenario details are retained in
+`docs/ANDREA_FINAL_RESET_HANDOFF.md`.
 
 ## Live Transport Certification — 2026-07-14
 

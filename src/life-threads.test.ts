@@ -465,4 +465,176 @@ describe('life threads', () => {
       snoozed.id,
     );
   });
+
+  it('closes a uniquely identified obligation when the user reports completion', () => {
+    const expense = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:100000001',
+      text: 'save this under the expense report thread',
+      replyText: 'Submit the expense report by Tuesday.',
+      now: new Date('2026-04-04T09:00:00.000Z'),
+    }).referencedThread!;
+    const unrelated = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:100000001',
+      text: 'save this under the air filters thread',
+      replyText: 'Buy replacement air filters this month.',
+      now: new Date('2026-04-04T09:01:00.000Z'),
+    }).referencedThread!;
+
+    const result = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:100000001',
+      text: 'I submitted the expense report. Mark that done.',
+      now: new Date('2026-04-04T10:00:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(getLifeThread(expense.id)).toMatchObject({
+      status: 'closed',
+      nextAction: null,
+      nextFollowupAt: null,
+      followthroughMode: 'off',
+    });
+    expect(getLifeThread(unrelated.id)?.status).toBe('active');
+    expect(listLifeThreadSignals(expense.id, 5)[0]?.summaryText).toContain(
+      'completed:',
+    );
+    expect(
+      buildLifeThreadSnapshot({ groupFolder: 'main' }).activeThreads.map(
+        (thread) => thread.id,
+      ),
+    ).not.toContain(expense.id);
+  });
+
+  it('uses sufficient prior context for a held-out completion paraphrase', () => {
+    const saved = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:100000001',
+      text: 'save this under the vendor renewal thread',
+      replyText: 'Finish the vendor renewal paperwork.',
+      now: new Date('2026-04-04T09:00:00.000Z'),
+    }).referencedThread!;
+
+    const result = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:100000001',
+      text: 'That task is taken care of now.',
+      priorContext: {
+        summaryText: saved.summary,
+        usedThreadIds: [saved.id],
+        usedThreadTitles: [saved.title],
+        usedThreadReasons: ['it was the active thread in the last answer'],
+        threadSummaryLines: [`${saved.title}: ${saved.summary}`],
+      },
+      now: new Date('2026-04-04T10:00:00.000Z'),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(getLifeThread(saved.id)?.status).toBe('closed');
+  });
+
+  it('closes cancelled plans for exact and held-out semantic variants without touching unrelated work', () => {
+    const exact = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:100000001',
+      text: 'save this under the kitchen repair meeting thread',
+      replyText: 'Meet Leo about the kitchen repair Friday afternoon.',
+      now: new Date('2026-04-04T09:00:00.000Z'),
+    }).referencedThread!;
+    const heldOut = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:100000001',
+      text: 'save this under the contractor meeting thread',
+      replyText: 'Attend the Friday contractor meeting.',
+      now: new Date('2026-04-04T09:01:00.000Z'),
+    }).referencedThread!;
+    const unrelated = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:100000001',
+      text: 'save this under the client proposal thread',
+      replyText: 'Finish the client proposal.',
+      now: new Date('2026-04-04T09:02:00.000Z'),
+    }).referencedThread!;
+
+    const exactResult = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'The meeting with Leo was cancelled.',
+      now: new Date('2026-04-04T10:00:00.000Z'),
+    });
+    const heldOutResult = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'We are not doing the Friday contractor meeting anymore.',
+      now: new Date('2026-04-04T10:01:00.000Z'),
+    });
+
+    expect(exactResult.handled).toBe(true);
+    expect(heldOutResult.handled).toBe(true);
+    expect(getLifeThread(exact.id)?.status).toBe('closed');
+    expect(getLifeThread(heldOut.id)?.status).toBe('closed');
+    expect(getLifeThread(unrelated.id)?.status).toBe('active');
+    expect(listLifeThreadSignals(exact.id, 5)[0]?.summaryText).toContain(
+      'cancelled:',
+    );
+  });
+
+  it('does not close an obligation when explicit target terms conflict with unrelated context', () => {
+    const first = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'save this under the first follow-up thread',
+      replyText: 'Finish the first follow-up.',
+      now: new Date('2026-04-04T09:00:00.000Z'),
+    }).referencedThread!;
+    const second = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'save this under the second follow-up thread',
+      replyText: 'Finish the second follow-up.',
+      now: new Date('2026-04-04T09:01:00.000Z'),
+    }).referencedThread!;
+    const unrelated = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'save this under the client proposal thread',
+      replyText: 'Finish the client proposal.',
+      now: new Date('2026-04-04T09:02:00.000Z'),
+    }).referencedThread!;
+
+    const referentialResult = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'I finished it.',
+      now: new Date('2026-04-04T09:59:00.000Z'),
+    });
+    const result = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'I finished the follow-up.',
+      priorContext: {
+        summaryText: unrelated.summary,
+        usedThreadIds: [unrelated.id],
+        usedThreadTitles: [unrelated.title],
+        usedThreadReasons: ['it was the active thread in the last answer'],
+        threadSummaryLines: [`${unrelated.title}: ${unrelated.summary}`],
+      },
+      now: new Date('2026-04-04T10:00:00.000Z'),
+    });
+
+    expect(referentialResult.handled).toBe(false);
+    expect(result.handled).toBe(false);
+    expect(getLifeThread(first.id)?.status).toBe('active');
+    expect(getLifeThread(second.id)?.status).toBe('active');
+    expect(getLifeThread(unrelated.id)?.status).toBe('active');
+  });
 });

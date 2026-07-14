@@ -552,6 +552,150 @@ function resolveContextThread(params: {
   return undefined;
 }
 
+type LifeThreadTerminalOutcome = 'completed' | 'cancelled';
+
+const TERMINAL_TARGET_STOP_WORDS = new Set([
+  'ahead',
+  'are',
+  'about',
+  'again',
+  'andrea',
+  'anymore',
+  'cancel',
+  'canceled',
+  'cancelled',
+  'care',
+  'check',
+  'complete',
+  'completed',
+  'doing',
+  'done',
+  'finished',
+  'going',
+  'into',
+  'not',
+  'later',
+  'lifethread',
+  'mark',
+  'need',
+  'needs',
+  'now',
+  'save',
+  'saved',
+  'submitted',
+  'synthetic',
+  'taken',
+  'task',
+  'that',
+  'the',
+  'this',
+  'thread',
+  'with',
+  'was',
+  'were',
+]);
+
+function inferLifeThreadTerminalOutcome(
+  value: string,
+): LifeThreadTerminalOutcome | null {
+  const normalized = normalizeText(value).toLowerCase();
+  if (
+    !normalized ||
+    /\bnot (?:cancelled|canceled|done|complete)\b/.test(normalized)
+  ) {
+    return null;
+  }
+  if (
+    /\b(?:cancelled|canceled|called off)\b/.test(normalized) ||
+    /\b(?:we|i) (?:are|am) not (?:doing|going ahead with)\b.*\banymore\b/.test(
+      normalized,
+    )
+  ) {
+    return 'cancelled';
+  }
+  if (
+    /\b(?:mark|check) (?:that|this|it) (?:done|off)\b/.test(normalized) ||
+    /\b(?:task|item|thing) (?:is |was )?(?:taken care of|done|complete|completed)\b/.test(
+      normalized,
+    ) ||
+    /\b(?:i|we) (?:submitted|sent|finished|completed|handled|resolved|paid|bought|booked)\b/.test(
+      normalized,
+    )
+  ) {
+    return 'completed';
+  }
+  return null;
+}
+
+function terminalTargetTokens(value: string): string[] {
+  return [
+    ...new Set(
+      normalizeText(value)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .split(/\s+/)
+        .filter(
+          (token) =>
+            token.length >= 3 &&
+            !/\d/.test(token) &&
+            !TERMINAL_TARGET_STOP_WORDS.has(token),
+        ),
+    ),
+  ];
+}
+
+function resolveTerminalLifeThread(params: {
+  groupFolder: string;
+  text: string;
+  contextThread?: LifeThread;
+}): LifeThread | undefined {
+  const activeThreads = listLifeThreadsForGroup(params.groupFolder, ['active']);
+  const tokens = terminalTargetTokens(params.text);
+  const scored = activeThreads
+    .map((candidate) => {
+      const titleTokens = new Set(terminalTargetTokens(candidate.title));
+      const detailTokens = new Set(
+        terminalTargetTokens(
+          `${candidate.summary} ${candidate.nextAction || ''} ${candidate.contextTags.join(' ')}`,
+        ),
+      );
+      const titleMatches = tokens.filter((token) => titleTokens.has(token));
+      const detailMatches = tokens.filter(
+        (token) => detailTokens.has(token) && !titleTokens.has(token),
+      );
+      return {
+        candidate,
+        score: titleMatches.length * 4 + detailMatches.length,
+        titleMatches: titleMatches.length,
+        distinctMatches: new Set([...titleMatches, ...detailMatches]).size,
+      };
+    })
+    .filter(
+      (entry) =>
+        entry.score >= 4 &&
+        (entry.titleMatches > 0 || entry.distinctMatches >= 2),
+    )
+    .sort((left, right) => right.score - left.score);
+
+  if (scored[0] && (!scored[1] || scored[0].score > scored[1].score)) {
+    return scored[0].candidate;
+  }
+  if (
+    params.contextThread &&
+    params.contextThread.status === 'active' &&
+    params.contextThread.groupFolder === params.groupFolder &&
+    (scored.length === 0 ||
+      scored.some(
+        (entry) =>
+          entry.score === scored[0]?.score &&
+          entry.candidate.id === params.contextThread?.id,
+      ))
+  ) {
+    return params.contextThread;
+  }
+  return undefined;
+}
+
 function upsertExplicitLifeThread(params: {
   groupFolder: string;
   title: string;
@@ -1160,6 +1304,43 @@ export function handleLifeThreadCommand(
     priorContext: input.priorContext,
     now,
   });
+
+  const terminalOutcome = inferLifeThreadTerminalOutcome(raw);
+  if (terminalOutcome) {
+    const terminalThread = resolveTerminalLifeThread({
+      groupFolder: input.groupFolder,
+      text: raw,
+      contextThread: thread,
+    });
+    if (!terminalThread) return { handled: false };
+    updateLifeThread(terminalThread.id, {
+      status: 'closed',
+      nextAction: null,
+      nextFollowupAt: null,
+      followthroughMode: 'off',
+      lastUpdatedAt: now.toISOString(),
+      lastUsedAt: now.toISOString(),
+    });
+    upsertLifeThreadSignal({
+      id: crypto.randomUUID(),
+      threadId: terminalThread.id,
+      groupFolder: input.groupFolder,
+      sourceKind: 'explicit',
+      summaryText: `${terminalOutcome}: ${clipSummary(raw)}`,
+      chatJid: input.chatJid || null,
+      confidenceKind: 'explicit',
+      createdAt: now.toISOString(),
+    });
+    const updated = getLifeThread(terminalThread.id) || terminalThread;
+    return {
+      handled: true,
+      responseText:
+        terminalOutcome === 'completed'
+          ? `Okay. I marked ${terminalThread.title} done and removed it from active follow-through.`
+          : `Okay. I marked ${terminalThread.title} cancelled and removed it from active follow-through.`,
+      referencedThread: updated,
+    };
+  }
 
   const renameMatch = raw.match(/^rename (?:that|this|the)? ?thread to (.+)$/i);
   if (renameMatch) {
