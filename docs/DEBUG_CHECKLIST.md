@@ -26,10 +26,15 @@ NanoClaw now defaults `IDLE_TIMEOUT` to 5 minutes and clamps idle timers so `_cl
 # Rancher Desktop
 rdctl set --kubernetes-enabled=false
 
-# Then rebuild and verify the container image
-npm run build:container
-npm run check:container-canary
+# Then rebuild the production runtime image and rerun verification
+npm run setup -- --step container
+npm run setup -- --step verify
 ```
+
+`npm run build:container` intentionally tags `nanoclaw-agent:canary` for the
+isolated release canaries. Production assistant execution defaults to
+`nanoclaw-agent:latest`, which is built and smoke-tested by the setup step
+above. A passing canary does not replace the production image.
 
 **Diagnosis**: Check the k3s log for image GC activity:
 

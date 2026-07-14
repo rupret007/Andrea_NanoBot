@@ -40,6 +40,18 @@ npm run check:container-canary
 npm run check:container-mounts
 ```
 
+That matrix intentionally builds `nanoclaw-agent:canary`. To install or repair
+the production image used by normal assistant execution, run:
+
+```bash
+npm run setup -- --step container
+npm run setup -- --step verify
+```
+
+The production setup step builds and smoke-tests `nanoclaw-agent:latest`; the
+canary tag is kept separate so release isolation checks cannot silently replace
+the serving image.
+
 The mount canary is isolated from production data and external networking. It
 proves immutable controls, canonical runner compilation, writable session-state
 continuity, and restart continuity.
