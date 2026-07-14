@@ -37,8 +37,9 @@ second task ledger or widening authority.
 - [x] Documentation command validation passed for all 68 Markdown files. The
       current-status snapshot now records healthy host disk pressure rather
       than the pre-cleanup low-space condition.
-- [ ] Complete final diff/secret review, then publish only this coherent
-      candidate to `main`.
+- [x] Final diff/secret review found no whitespace errors or credential
+      material. The coherent candidate was committed and published to `main`;
+      release runtime verification remains the next step.
 - [x] Restore disk headroom before the release build. The latest checked host
       status reports healthy pressure with 21 GiB available; recheck before
       the restart because this is time-sensitive.
