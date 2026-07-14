@@ -2,6 +2,9 @@
 
 Snapshot date: 2026-07-14. The pushed baseline inspected for this pass was
 `9dd2b1e7` on `main`, aligned with `origin/main` before the change below.
+The completed code-bearing pass was pushed as `d74b8191` (`Require Alexa
+calendar confirmation`). A later handoff-only commit may contain this line;
+use `git rev-parse origin/main` for the repository's current documentary HEAD.
 
 ## Surgical improvement
 
