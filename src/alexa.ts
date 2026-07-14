@@ -186,6 +186,7 @@ import {
   advancePendingGoogleCalendarCreate,
   buildGoogleCalendarSchedulingContextState,
   buildPendingGoogleCalendarCreateState,
+  getGoogleCalendarCreateConfirmationActionId,
   isExplicitGoogleCalendarCreateRequest,
   planGoogleCalendarCreate,
   type GoogleCalendarSchedulingContextState,
@@ -3184,6 +3185,19 @@ export function createAlexaSkill(
     return `Which calendar should I use for ${state.draft.title}? Say the calendar name or number.`;
   };
 
+  const buildAlexaCalendarCreatePromptSpeech = (
+    state: PendingGoogleCalendarCreateState,
+  ): string => {
+    if (state.step === 'choose_calendar') {
+      return buildAlexaCalendarCreateChoiceSpeech(state);
+    }
+    const selectedCalendar = state.calendars.find(
+      (calendar) => calendar.id === state.selectedCalendarId,
+    );
+    const confirmation = getGoogleCalendarCreateConfirmationActionId(state);
+    return `Ready to add ${state.draft.title} to ${selectedCalendar?.summary || 'your calendar'} ${formatAlexaCalendarWhen(state.draft)}. Say ${confirmation} to create it, or cancel.`;
+  };
+
   const buildAlexaCalendarActionPromptSpeech = (
     state: PendingGoogleCalendarEventActionState,
   ): string => {
@@ -3824,29 +3838,7 @@ export function createAlexaSkill(
             now,
           });
         }
-        if (
-          pendingCreate.step === 'choose_calendar' &&
-          continued.state.step === 'confirm_create' &&
-          continued.state.selectedCalendarId
-        ) {
-          return executeAlexaCalendarCreate({
-            linked: input.linked,
-            conversationState: input.conversationState,
-            draft: continued.state.draft,
-            calendarId: continued.state.selectedCalendarId,
-            calendars: continued.state.calendars.map((calendar) => ({
-              ...calendar,
-              accessRole: 'owner',
-              writable: true,
-              selected: true,
-            })),
-            now,
-          });
-        }
-        const speech =
-          continued.state.step === 'choose_calendar'
-            ? buildAlexaCalendarCreateChoiceSpeech(continued.state)
-            : shapeAlexaSpeech(continued.message) || continued.message;
+        const speech = buildAlexaCalendarCreatePromptSpeech(continued.state);
         persistPendingCreate(continued.state, speech);
         return { speech };
       }
@@ -4057,23 +4049,13 @@ export function createAlexaSkill(
           (calendars.writableCalendars.length === 1
             ? calendars.writableCalendars[0]?.id
             : null);
-        if (selectedCalendarId) {
-          return executeAlexaCalendarCreate({
-            linked: input.linked,
-            conversationState: input.conversationState,
-            draft: createPlan.draft,
-            calendarId: selectedCalendarId,
-            calendars: calendars.writableCalendars,
-            now,
-          });
-        }
         const pendingState = buildPendingGoogleCalendarCreateState({
           draft: createPlan.draft,
           writableCalendars: calendars.writableCalendars,
-          selectedCalendarId: createPlan.selectedCalendarId,
+          selectedCalendarId,
           now,
         });
-        const speech = buildAlexaCalendarCreateChoiceSpeech(pendingState);
+        const speech = buildAlexaCalendarCreatePromptSpeech(pendingState);
         persistPendingCreate(pendingState, speech);
         return { speech };
       } catch (error) {
@@ -7050,12 +7032,30 @@ export function createAlexaSkill(
         pendingConversationCreate?.step === 'confirm_create' &&
         pendingConversationCreate.selectedCalendarId
       ) {
+        const continued = advancePendingGoogleCalendarCreate(
+          'yes',
+          pendingConversationCreate,
+        );
+        if (continued.kind !== 'confirmed') {
+          const speech = buildAlexaCalendarCreatePromptSpeech(
+            pendingConversationCreate,
+          );
+          recordHandledRequest(handlerInput.requestEnvelope, {
+            responseSource: 'local_companion',
+            linked: true,
+            groupFolder: linked.account.groupFolder,
+          });
+          return handlerInput.responseBuilder
+            .speak(speech)
+            .reprompt(DEFAULT_ALEXA_REPROMPT)
+            .getResponse();
+        }
         const result = await executeAlexaCalendarCreate({
           linked,
           conversationState,
-          draft: pendingConversationCreate.draft,
-          calendarId: pendingConversationCreate.selectedCalendarId,
-          calendars: pendingConversationCreate.calendars.map((calendar) => ({
+          draft: continued.state.draft,
+          calendarId: continued.calendarId,
+          calendars: continued.state.calendars.map((calendar) => ({
             ...calendar,
             accessRole: 'owner',
             writable: true,

@@ -930,7 +930,7 @@ describe('createAlexaSkill', () => {
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
-  it('creates a clear calendar event directly from a natural assistant-style request', async () => {
+  it('requires fresh confirmation before creating a natural-language calendar event', async () => {
     mockedListGoogleCalendars.mockResolvedValue([
       {
         id: 'primary',
@@ -953,10 +953,17 @@ describe('createAlexaSkill', () => {
     });
 
     const skill = createAlexaSkill(buildConfig());
-    const response = await skill.invoke(
+    const draftResponse = await skill.invoke(
       buildIntentEnvelope('SaveRemindHandoffIntent', {
         calendarCreateText: 'dinner with Candace tomorrow at 6:30 PM',
       }),
+    );
+
+    expect(mockedCreateGoogleCalendarEvent).not.toHaveBeenCalled();
+    expect(extractSpeechText(draftResponse)).toContain('Say yes to create it');
+
+    const response = await skill.invoke(
+      buildIntentEnvelope('AMAZON.YesIntent'),
     );
 
     expect(mockedCreateGoogleCalendarEvent).toHaveBeenCalledWith(
@@ -973,7 +980,7 @@ describe('createAlexaSkill', () => {
     expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
   });
 
-  it('creates a calendar event directly from structured Alexa dialog slots', async () => {
+  it('requires fresh confirmation for structured Alexa calendar slots', async () => {
     mockedListGoogleCalendars.mockResolvedValue([
       {
         id: 'primary',
@@ -996,13 +1003,20 @@ describe('createAlexaSkill', () => {
     });
 
     const skill = createAlexaSkill(buildConfig());
-    const response = await skill.invoke(
+    const draftResponse = await skill.invoke(
       buildIntentEnvelope('CalendarCreateIntent', {
         eventTitle: 'lunch with Sam',
         targetDate: '2026-04-04',
         targetTime: 'AF',
         calendarReference: 'main calendar',
       }),
+    );
+
+    expect(mockedCreateGoogleCalendarEvent).not.toHaveBeenCalled();
+    expect(extractSpeechText(draftResponse)).toContain('Say yes to create it');
+
+    const response = await skill.invoke(
+      buildIntentEnvelope('AMAZON.YesIntent'),
     );
 
     expect(mockedCreateGoogleCalendarEvent).toHaveBeenCalledWith(
@@ -1016,6 +1030,63 @@ describe('createAlexaSkill', () => {
     );
     expect(extractSpeechText(response)).toContain('added');
     expect(extractSpeechText(response)).toContain('Lunch with Sam');
+  });
+
+  it('selects a calendar without treating the choice as write approval', async () => {
+    mockedListGoogleCalendars.mockResolvedValue([
+      {
+        id: 'primary',
+        summary: 'Personal',
+        primary: true,
+        accessRole: 'owner',
+        writable: true,
+        selected: true,
+      },
+      {
+        id: 'family',
+        summary: 'Family',
+        primary: false,
+        accessRole: 'writer',
+        writable: true,
+        selected: true,
+      },
+    ]);
+    mockedCreateGoogleCalendarEvent.mockResolvedValue({
+      id: 'evt-family-1',
+      title: 'Dinner with Candace',
+      startIso: '2026-04-04T23:30:00.000Z',
+      endIso: '2026-04-05T00:30:00.000Z',
+      allDay: false,
+      calendarId: 'family',
+      calendarName: 'Family',
+      htmlLink: null,
+    });
+
+    const skill = createAlexaSkill(buildConfig());
+    const chooseResponse = await skill.invoke(
+      buildIntentEnvelope('SaveRemindHandoffIntent', {
+        calendarCreateText: 'dinner with Candace tomorrow at 6:30 PM',
+      }),
+    );
+    expect(extractSpeechText(chooseResponse)).toContain('Personal or Family');
+    expect(mockedCreateGoogleCalendarEvent).not.toHaveBeenCalled();
+
+    const confirmResponse = await skill.invoke(
+      buildIntentEnvelope('SaveRemindHandoffIntent', {
+        calendarCreateText: 'Family',
+      }),
+    );
+    expect(extractSpeechText(confirmResponse)).toContain(
+      'Say yes to create it',
+    );
+    expect(mockedCreateGoogleCalendarEvent).not.toHaveBeenCalled();
+
+    await skill.invoke(buildIntentEnvelope('AMAZON.YesIntent'));
+    expect(mockedCreateGoogleCalendarEvent).toHaveBeenCalledTimes(1);
+    expect(mockedCreateGoogleCalendarEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ calendarId: 'family' }),
+      expect.anything(),
+    );
   });
 
   it('uses structured move slots to keep the active calendar event in frame', async () => {
