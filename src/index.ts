@@ -19512,6 +19512,31 @@ async function main(): Promise<void> {
           },
         );
         if (companionIngressDecision.kind === 'explicit_ask') {
+          const selfThreadOpenClawRoute = resolveOpenClawDelegationRoute({
+            rawMessage: rawTrimmed,
+            mainControlChat: isOpenClawOwnerControlSurface({
+              mainControlChat: false,
+              channelName: 'bluebubbles',
+              blueBubblesSelfThread: isBlueBubblesSelfThreadAliasJid(chatJid),
+            }),
+            delegationEnabled: isOpenClawDelegationEnabled(),
+          });
+          if (selfThreadOpenClawRoute.action === 'delegate') {
+            lastAgentTimestamp[chatJid] = msg.timestamp;
+            saveState();
+            handleOpenClawDelegation(
+              chatJid,
+              selfThreadOpenClawRoute.request.prompt,
+              msg,
+              selfThreadOpenClawRoute.request.command,
+            ).catch((err) =>
+              logger.error(
+                { err, chatJid },
+                'BlueBubbles self-thread OpenClaw delegation error',
+              ),
+            );
+            return;
+          }
           try {
             const primed = await primeBlueBubblesChatHistory(
               blueBubblesConfig,

@@ -154,6 +154,31 @@ describe('helper boundary wiring', () => {
     );
   });
 
+  it('routes private BlueBubbles self-thread OpenClaw asks before the companion container queue', () => {
+    const source = readRepoFile('src/index.ts');
+    const ingressIndex = source.indexOf(
+      "if (companionIngressDecision.kind === 'explicit_ask') {",
+    );
+    const openClawRouteIndex = source.indexOf(
+      'const selfThreadOpenClawRoute = resolveOpenClawDelegationRoute({',
+      ingressIndex,
+    );
+    const companionQueueIndex = source.indexOf(
+      'queue.enqueueMessageCheck(chatJid);',
+      openClawRouteIndex,
+    );
+
+    expect(ingressIndex).toBeGreaterThan(-1);
+    expect(openClawRouteIndex).toBeGreaterThan(ingressIndex);
+    expect(companionQueueIndex).toBeGreaterThan(openClawRouteIndex);
+    expect(source).toContain(
+      'blueBubblesSelfThread: isBlueBubblesSelfThreadAliasJid(chatJid)',
+    );
+    expect(source).toContain(
+      "'BlueBubbles self-thread OpenClaw delegation error'",
+    );
+  });
+
   it('reconciles work-cockpit current-work panels against the visible lane state before clearing selection', () => {
     const source = readRepoFile('src/index.ts');
 
