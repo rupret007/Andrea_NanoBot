@@ -200,6 +200,12 @@ describe('helper boundary wiring', () => {
     );
     expect(durableRouteSource).not.toContain('replyToMessageId:');
     expect(durableRouteSource).not.toContain('Asking OpenClaw…');
+    expect(source).toContain(
+      'Skipped mirrored BlueBubbles self-thread messages',
+    );
+    expect(source).toContain(
+      'hasStoredMessage(canonicalSelfThreadJid, message.id)',
+    );
   });
 
   it('reconciles work-cockpit current-work panels against the visible lane state before clearing selection', () => {

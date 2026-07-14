@@ -80,6 +80,7 @@ import {
   listRecentResponseFeedback,
   getMessagesSince,
   getNewMessages,
+  hasStoredMessage,
   getRouterState,
   getRuntimeBackendCardContext,
   getRuntimeBackendChatSelection,
@@ -4101,7 +4102,7 @@ async function prepareOpenClawDelegationResponse(params: {
   prompt: string;
   message?: NewMessage;
   command: OpenClawDelegationCommand;
-}): Promise<{ responseText: string; ok: boolean }> {
+}): Promise<{ responseText: string; ok: boolean; detail: string }> {
   const mediaAttachmentIds = (params.message?.attachments || [])
     .filter((attachment) => ['image', 'video'].includes(attachment.kind))
     .map((attachment) => attachment.attachmentId);
@@ -4140,6 +4141,7 @@ async function prepareOpenClawDelegationResponse(params: {
       params.command === 'mention' ? 'mention' : 'operator',
     ),
     ok: result.ok,
+    detail: result.detail,
   };
 }
 
@@ -4161,7 +4163,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const isMainGroup = group.isMain === true;
 
-  const missedMessages = getMessagesSince(
+  let missedMessages = getMessagesSince(
     chatJid,
     getOrRecoverCursor(chatJid),
     ASSISTANT_NAME,
@@ -4169,6 +4171,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
 
   if (missedMessages.length === 0) return true;
+
+  const latestObservedTimestamp = missedMessages.at(-1)!.timestamp;
+  const canonicalSelfThreadJid = canonicalizeBlueBubblesSelfThreadJid(chatJid);
+  if (
+    canonicalSelfThreadJid &&
+    canonicalSelfThreadJid !== chatJid &&
+    isBlueBubblesSelfThreadAliasJid(chatJid)
+  ) {
+    const uniqueMessages = missedMessages.filter(
+      (message) => !hasStoredMessage(canonicalSelfThreadJid, message.id),
+    );
+    if (uniqueMessages.length !== missedMessages.length) {
+      logger.info(
+        {
+          chatJid,
+          canonicalChatJid: canonicalSelfThreadJid,
+          duplicateCount: missedMessages.length - uniqueMessages.length,
+        },
+        'Skipped mirrored BlueBubbles self-thread messages',
+      );
+      missedMessages = uniqueMessages;
+      if (missedMessages.length === 0) {
+        lastAgentTimestamp[chatJid] = latestObservedTimestamp;
+        saveState();
+        return true;
+      }
+    }
+  }
 
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
@@ -4194,7 +4224,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   });
   if (queuedOpenClawRoute.action === 'delegate' && queuedLatestMessage) {
     const startedAt = Date.now();
-    lastAgentTimestamp[chatJid] = queuedLatestMessage.timestamp;
+    lastAgentTimestamp[chatJid] = latestObservedTimestamp;
     saveState();
     logger.info(
       {
@@ -4219,6 +4249,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           chatJid,
           command: queuedOpenClawRoute.request.command,
           ok: prepared.ok,
+          detail: prepared.detail,
           ingress: 'durable_queue',
         },
         'OpenClaw delegation prepared for same-chat delivery',
@@ -4328,8 +4359,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
+  lastAgentTimestamp[chatJid] = latestObservedTimestamp;
   inFlightCursorRollbacks.begin(chatJid, previousCursor);
   saveState();
 
