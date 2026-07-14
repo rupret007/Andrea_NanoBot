@@ -7,12 +7,14 @@ import {
   getRitualProfileByType,
   getTaskById,
   listRitualProfilesForGroup,
-  updateLifeThread,
   updateTask,
   upsertRitualProfile,
 } from './db.js';
 import { handlePersonalizationCommand } from './assistant-personalization.js';
-import { handleLifeThreadCommand } from './life-threads.js';
+import {
+  handleLifeThreadCommand,
+  scheduleLifeThreadCommitment,
+} from './life-threads.js';
 import type {
   RitualProfile,
   RitualScope,
@@ -418,15 +420,18 @@ function pinCurrentContextToEveningReset(input: RitualCommandInput): string {
   const referencedThreadId = input.priorContext?.usedThreadIds?.[0] || null;
   if (referencedThreadId) {
     const thread = getLifeThread(referencedThreadId);
-    if (thread) {
-      updateLifeThread(thread.id, {
-        followthroughMode: 'important_only',
-        nextFollowupAt: inferTonightAnchor(now),
-        snoozedUntil: null,
-        lastUpdatedAt: now.toISOString(),
-        lastUsedAt: now.toISOString(),
+    if (thread?.groupFolder === input.groupFolder) {
+      const scheduled = scheduleLifeThreadCommitment({
+        threadId: thread.id,
+        groupFolder: input.groupFolder,
+        dueAt: inferTonightAnchor(now),
+        now,
+        sourceKind: 'daily_companion',
+        reason: 'Carry this commitment into the evening reset.',
       });
-      return `Okay. I will keep ${thread.title} in your evening reset until it clears.`;
+      if (scheduled) {
+        return `Okay. I will keep ${thread.title} in your evening reset until it clears.`;
+      }
     }
   }
 
@@ -441,12 +446,13 @@ function pinCurrentContextToEveningReset(input: RitualCommandInput): string {
     now,
   });
   if (saved.handled && saved.referencedThread) {
-    updateLifeThread(saved.referencedThread.id, {
-      followthroughMode: 'important_only',
-      nextFollowupAt: inferTonightAnchor(now),
-      snoozedUntil: null,
-      lastUpdatedAt: now.toISOString(),
-      lastUsedAt: now.toISOString(),
+    scheduleLifeThreadCommitment({
+      threadId: saved.referencedThread.id,
+      groupFolder: input.groupFolder,
+      dueAt: inferTonightAnchor(now),
+      now,
+      sourceKind: 'daily_companion',
+      reason: 'Carry this commitment into the evening reset.',
     });
     return `Okay. I will keep ${saved.referencedThread.title} in your evening reset until it clears.`;
   }

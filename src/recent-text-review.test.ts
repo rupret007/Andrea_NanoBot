@@ -14,6 +14,7 @@ import {
   reviewRecentTexts,
   validateRecentTextReviewFollowupFreshness,
 } from './recent-text-review.js';
+import { interpretLifeThreadCommitment } from './life-thread-commitment.js';
 import {
   listCommunicationThreadsForGroup,
   reconcileRecentTextSelfSubjectLinks,
@@ -585,7 +586,6 @@ describe('recent text review', () => {
   it('redacts identifiers from provider prompt inputs', () => {
     const prompt = buildRecentTextReviewProviderPrompt({
       windowLabel: 'today',
-      learnedContext: ['Call +14695550123 about dinner'],
       items: [
         {
           itemId: 'item-1',
@@ -633,6 +633,193 @@ describe('recent text review', () => {
     expect(redactRecentTextReviewText('Reach me at +14695550123')).toContain(
       '[redacted number]',
     );
+  });
+
+  it('withholds global profile and life-thread memory from cloud review prompts', async () => {
+    const now = '2026-04-15T17:00:00.000Z';
+    const candace = {
+      id: 'subject-candace-provider-privacy',
+      groupFolder: 'main',
+      kind: 'person' as const,
+      canonicalName: 'candace',
+      displayName: 'Candace',
+      createdAt: now,
+      updatedAt: now,
+    };
+    const bob = {
+      id: 'subject-bob-provider-privacy',
+      groupFolder: 'main',
+      kind: 'person' as const,
+      canonicalName: 'bob',
+      displayName: 'Bob',
+      createdAt: now,
+      updatedAt: now,
+    };
+    upsertProfileSubject(candace);
+    upsertProfileSubject(bob);
+    upsertProfileFact({
+      id: 'fact-provider-privacy-canary',
+      groupFolder: 'main',
+      subjectId: candace.id,
+      category: 'preferences',
+      factKey: 'provider-privacy-canary',
+      valueJson: JSON.stringify({
+        value: 'PRIVATE-PROFILE-FACT-CANARY',
+      }),
+      state: 'accepted',
+      sourceChannel: 'telegram',
+      sourceSummary: 'PRIVATE-PROFILE-FACT-CANARY',
+      createdAt: now,
+      updatedAt: now,
+      decidedAt: now,
+    });
+
+    const seedThread = (params: {
+      id: string;
+      canary: string;
+      relatedSubjectIds?: string[];
+      sensitivity?: 'normal' | 'sensitive';
+      surfaceMode?: 'default' | 'manual_only';
+      followthroughMode?:
+        | 'off'
+        | 'manual_only'
+        | 'important_only'
+        | 'scheduled';
+      snoozedUntil?: string | null;
+      commitment?: Parameters<typeof upsertLifeThread>[0]['commitment'];
+    }) => {
+      upsertLifeThread({
+        id: params.id,
+        groupFolder: 'main',
+        title: params.canary,
+        category: 'relationship',
+        status: 'active',
+        scope: 'personal',
+        relatedSubjectIds: params.relatedSubjectIds || [],
+        contextTags: ['provider-privacy'],
+        summary: params.canary,
+        nextAction: params.canary,
+        nextFollowupAt: null,
+        sourceKind: 'explicit',
+        confidenceKind: 'explicit',
+        commitment: params.commitment || null,
+        userConfirmed: true,
+        sensitivity: params.sensitivity || 'normal',
+        surfaceMode: params.surfaceMode || 'default',
+        followthroughMode: params.followthroughMode || 'important_only',
+        lastSurfacedAt: null,
+        snoozedUntil: params.snoozedUntil || null,
+        linkedTaskId: null,
+        mergedIntoThreadId: null,
+        createdAt: now,
+        lastUpdatedAt: now,
+        lastUsedAt: null,
+      });
+    };
+
+    const waiting = interpretLifeThreadCommitment({
+      threadId: 'thread-provider-waiting',
+      title: 'Waiting for Candace',
+      text: 'I sent Candace the note and am waiting for her response.',
+      now: new Date(now),
+      timeZone: 'America/Chicago',
+      sourceKind: 'explicit',
+      sourceRef: 'provider-privacy-test',
+      knownSubjects: [candace, bob],
+    });
+    expect(waiting?.state.operationalState).toBe('waiting');
+
+    seedThread({
+      id: 'thread-provider-sensitive',
+      canary: 'PRIVATE-SENSITIVE-CONTEXT-CANARY',
+      relatedSubjectIds: [candace.id],
+      sensitivity: 'sensitive',
+    });
+    seedThread({
+      id: 'thread-provider-manual',
+      canary: 'PRIVATE-MANUAL-CONTEXT-CANARY',
+      relatedSubjectIds: [candace.id],
+      surfaceMode: 'manual_only',
+      followthroughMode: 'manual_only',
+    });
+    seedThread({
+      id: 'thread-provider-off',
+      canary: 'PRIVATE-OFF-CONTEXT-CANARY',
+      relatedSubjectIds: [candace.id],
+      followthroughMode: 'off',
+    });
+    seedThread({
+      id: 'thread-provider-snoozed',
+      canary: 'PRIVATE-SNOOZED-CONTEXT-CANARY',
+      relatedSubjectIds: [candace.id],
+      snoozedUntil: '2026-04-20T17:00:00.000Z',
+    });
+    seedThread({
+      id: 'thread-provider-waiting',
+      canary: 'PRIVATE-WAITING-CONTEXT-CANARY',
+      relatedSubjectIds: [candace.id],
+      commitment: waiting!.state,
+    });
+    seedThread({
+      id: 'thread-provider-unrelated',
+      canary: 'PRIVATE-UNRELATED-CONTEXT-CANARY',
+    });
+    seedThread({
+      id: 'thread-provider-cross-recipient',
+      canary: 'PRIVATE-CROSS-RECIPIENT-CANARY',
+      relatedSubjectIds: [bob.id],
+    });
+
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:10:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'provider-privacy-message',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Can you confirm if dinner still works tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    let providerBody = '';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      providerBody = String(init?.body || '');
+      return new Response(JSON.stringify({ output_text: '{"items":[]}' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    const result = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date(now),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'auto',
+    });
+
+    expect(result.providerUsed).toBe('openai');
+    expect(providerBody).toContain('dinner still works tonight');
+    for (const canary of [
+      'PRIVATE-PROFILE-FACT-CANARY',
+      'PRIVATE-SENSITIVE-CONTEXT-CANARY',
+      'PRIVATE-MANUAL-CONTEXT-CANARY',
+      'PRIVATE-OFF-CONTEXT-CANARY',
+      'PRIVATE-SNOOZED-CONTEXT-CANARY',
+      'PRIVATE-WAITING-CONTEXT-CANARY',
+      'PRIVATE-UNRELATED-CONTEXT-CANARY',
+      'PRIVATE-CROSS-RECIPIENT-CANARY',
+    ]) {
+      expect(providerBody).not.toContain(canary);
+    }
   });
 
   it('stores privacy-safe review seeds that resolve through communication threads', async () => {

@@ -213,17 +213,39 @@ Practical user prompts:
 - `Don't bring this up automatically`
 - `Actually, the deadline moved to Monday at noon`
 - `Push that to Tuesday morning`
+- `I might submit it Friday`
+- `I committed to finishing it Friday`
+- `I sent it and I'm waiting for Brandon`
+- `I can't move forward until the permit office responds`
+- `Chris has this one`
+- `Shelve that until after vacation`
 
-Important limits:
+Important limits and current behavior:
 
-- no proactive nagging in this pass
+- one canonical commitment state distinguishes speculative, tentative,
+  intended, committed, and explicitly requested work from waiting, blocked,
+  delegated, deferred, completed, cancelled, and superseded work
+- ranking and proactive recall are conservative: tentative/speculative work,
+  unresolved waiting/blocking, future deferrals, low-confidence inference, and
+  manual-only or snoozed items are suppressed
 - explicit save/track phrasing creates or updates threads directly
 - inferred thread suggestions stay confirmation-first
 - sensitive topics are not silently persisted just because they were mentioned once
+- delegation transfers current ownership without pretending the work is done;
+  an unambiguous later correction can return ownership to the user
+- conditional follow-up stays on the original waiting thread rather than
+  creating an unrelated duplicate
 - temporal corrections require a uniquely identified or sufficiently
   context-bound thread; ambiguous corrections ask for the target
 - the accepted profile timezone controls relative dates, while superseded
   values remain historical evidence and cannot drive active follow-through
+- an explicit reminder can assign Andrea the reminder action, but commitment
+  ownership never grants permission for a send, calendar write, purchase,
+  deploy, deletion, or other approval-bound effect
+
+The complete schema, transition, persistence, migration, ranking, privacy, and
+certification contract is in
+[COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
 
 ## Shared Capability Graph And Research Orchestrator
 

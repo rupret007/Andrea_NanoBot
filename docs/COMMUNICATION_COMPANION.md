@@ -42,7 +42,9 @@ Andrea stores analyzed state and references, not a second full copy of the raw c
 - Memory/profile facts:
   durable facts and preferences about the user or people
 - Life threads:
-  broader ongoing matters like Candace, the band, the house, or family logistics
+  broader ongoing matters like Candace, the band, the house, or family
+  logistics; their canonical commitment state records ownership, waiting,
+  delegation, blockers, deferral, and conditional follow-up
 - Reminders:
   concrete future nudges
 - Knowledge library:
@@ -51,6 +53,14 @@ Andrea stores analyzed state and references, not a second full copy of the raw c
   explicit conversation-level follow-through about who said what, what still needs a reply, and what next action makes sense
 
 Andrea can connect these systems, but they stay distinct.
+
+When a message completes one user action and starts a wait—for example, `I sent
+Brandon the file and now I'm waiting`—communication companion must use the
+life thread's canonical waiting state. It must not keep recommending the send.
+A later `follow up Friday if he has not replied` remains connected to the same
+thread. Clear delegation changes current ownership without marking the
+conversation complete; ambiguous ownership changes ask for clarification.
+See [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
 
 ## Current Scope
 
@@ -176,6 +186,15 @@ BlueBubbles:
 - no auto-reply
 - communication tracking can be turned manual-only or disabled
 - `mark that handled` and `stop tracking that` are first-class controls
+- a life thread may support a draft only when it is explicitly carried into the
+  conversation, topically relevant, recipient-safe, normal-sensitivity,
+  confirmed, actionable, and not suppressed; shared people alone are not enough
+- accepted profile facts may select only a closed style such as `short`,
+  `warmer`, or `direct`; their text is never copied into a draft or provider
+  payload
+- sensitive or legacy planning titles are replaced before persistence and are
+  omitted from provider prompts; the optional recent-text cloud pass does not
+  receive unrelated profile or life-thread memory
 
 For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md).
 

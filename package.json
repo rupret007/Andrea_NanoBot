@@ -238,6 +238,7 @@
     "test:memory-distillation": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-memory-distillation.ts",
     "certify:life-thread": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/certify-life-thread-memory.ts",
     "certify:temporal-truth": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/certify-temporal-truth.ts",
+    "certify:commitment-intelligence": "node scripts/run-with-pinned-node.mjs --import=tsx scripts/run-commitment-certification.ts",
     "test:skill-library": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-skill-library.ts",
     "test:learning-controls": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-learning-controls.ts",
     "test:learning-privacy": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-learning-privacy.ts",

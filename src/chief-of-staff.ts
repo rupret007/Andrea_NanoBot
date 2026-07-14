@@ -24,7 +24,11 @@ import {
   upsertProfileSubject,
 } from './db.js';
 import { searchKnowledgeLibrary } from './knowledge-library.js';
-import { buildLifeThreadSnapshot } from './life-threads.js';
+import {
+  buildLifeThreadSnapshot,
+  resolveLifeThreadTimeZone,
+} from './life-threads.js';
+import { describeLifeThreadCommitment } from './life-thread-commitment.js';
 import {
   buildPersonalContextGraph,
   type PersonalContextGraphReport,
@@ -94,7 +98,10 @@ function normalizeText(value: string | undefined): string {
 function normalizeLifeThreadDetail(value: string | null | undefined): string {
   const trimmed = normalizeText(value || '');
   if (!trimmed) return '';
-  const normalized = trimmed
+  const ownedAction = trimmed.match(
+    /^(?:you own|[^:]{1,80} owns) the next action(?: for .*?)?:\s+(.+)$/i,
+  )?.[1];
+  const normalized = (ownedAction || trimmed)
     .replace(
       /^(?:the first fixed point in your day is|the next grounded thing is|the clearest next anchor is|the next thing that still needs attention is|the thing most likely to slip is|one carryover to keep in sight is|the thing worth closing tonight is|the thing still most likely to slip tonight is)\s+/i,
       '',
@@ -428,12 +435,17 @@ function buildReminderSignal(
 function buildLifeThreadSignal(
   thread: LifeThread | null,
   kind: ChiefOfStaffSignalKind,
+  now: Date,
 ): ChiefOfStaffSignal | null {
   if (!thread) return null;
   const scope = thread.scope as import('./types.js').ChiefOfStaffScope;
   const summaryText =
     normalizeLifeThreadDetail(
-      thread.nextAction || thread.summary || thread.title,
+      describeLifeThreadCommitment(
+        thread,
+        now,
+        resolveLifeThreadTimeZone(thread.groupFolder),
+      ),
     ) || thread.title;
   const displayTitle = /^(?:follow[- ]?up|thread|carryover|open loops?)$/i.test(
     normalizeText(thread.title),
@@ -1051,16 +1063,19 @@ export async function buildChiefOfStaffSnapshot(
   const dueThreadSignal = buildLifeThreadSignal(
     lifeThreadSnapshot.dueFollowups[0] || null,
     'pressure_point',
+    now,
   );
   const slippingSignal = buildLifeThreadSignal(
     lifeThreadSnapshot.slippingThreads[0] || null,
     'slip_risk',
+    now,
   );
   const carryoverSignal = buildLifeThreadSignal(
     lifeThreadSnapshot.recommendedNextThread ||
       lifeThreadSnapshot.householdCarryover ||
       null,
     'open_loop',
+    now,
   );
   const communicationSignal = buildCommunicationSignal(communicationCandidate);
   const followThroughOutcomeSignal = buildFollowThroughOutcomeSignal(

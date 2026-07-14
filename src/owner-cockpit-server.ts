@@ -9,7 +9,6 @@ import {
   listOutcomesForGroup,
   listVerifiedDeepWorkPackets,
   updateHierarchicalGoalStatus,
-  updateLifeThread,
 } from './db.js';
 import {
   assessDeepWorkSkillPromotion,
@@ -21,6 +20,14 @@ import {
 } from './deep-work-apprenticeship.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import {
+  deferLifeThreadCommitment,
+  reactivateLifeThreadCommitment,
+} from './life-threads.js';
+import {
+  projectEffectiveLifeThread,
+  shouldProactivelySurfaceCommitment,
+} from './life-thread-commitment.js';
 import {
   buildAssistantMetricSnapshot,
   buildReviewedOutcomeProgress,
@@ -290,9 +297,11 @@ export class OwnerCockpitServer {
       groupFolder: this.config.groupFolder,
       now: this.now(),
     });
-    const activeThread = threads.find(
-      (item) => item.status === 'active' && item.nextAction,
-    );
+    const snapshotNow = new Date(generatedAt);
+    const activeThread = threads
+      .filter((item) => shouldProactivelySurfaceCommitment(item, snapshotNow))
+      .map((item) => projectEffectiveLifeThread(item, snapshotNow))
+      .find((item) => item.status === 'active' && item.nextAction);
     const activeGoal = goals.find(
       (item) => item.status === 'active' && item.nextAction,
     );
@@ -504,10 +513,22 @@ export class OwnerCockpitServer {
       const body = JSON.parse(await readBody(req)) as Record<string, string>;
       const ok =
         body.kind === 'thread' && ['active', 'paused'].includes(body.state)
-          ? updateLifeThread(body.id, {
-              status: body.state as 'active' | 'paused',
-              lastUpdatedAt: this.now().toISOString(),
-            })
+          ? Boolean(
+              body.state === 'paused'
+                ? deferLifeThreadCommitment({
+                    threadId: body.id,
+                    groupFolder: this.config.groupFolder,
+                    now: this.now(),
+                    sourceKind: 'action_layer',
+                    reason: 'The owner paused this commitment in the cockpit.',
+                  })
+                : reactivateLifeThreadCommitment({
+                    threadId: body.id,
+                    groupFolder: this.config.groupFolder,
+                    now: this.now(),
+                    reason: 'The owner resumed this commitment in the cockpit.',
+                  }),
+            )
           : body.kind === 'goal' && ['active', 'paused'].includes(body.state)
             ? updateHierarchicalGoalStatus(
                 body.id,

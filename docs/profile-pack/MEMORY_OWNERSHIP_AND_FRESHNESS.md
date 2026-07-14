@@ -15,7 +15,9 @@
 ## Update triggers
 
 - Profile facts: on accepted preference/person/context updates.
-- Life threads: on creation, signal changes, next-follow-up changes, and closure.
+- Life threads: on creation and every canonical commitment transition,
+  including strength, owner, waiting, blocker, delegation, deferral,
+  reactivation, follow-up, completion, cancellation, or supersession.
 - Knowledge library: on save, import, reindex, disable, delete, or last-used updates.
 - Rituals: on configuration or execution-state changes.
 - Outcome reviews: when a completed loop produces a stable rule worth keeping.
@@ -34,3 +36,9 @@ The platform should not store:
 - raw private notes
 - raw personal facts beyond already-approved product-layer storage
 - whole message histories as “memory” just because they were seen once
+
+Commitment-transition evidence remains in the Andrea product layer as bounded,
+source-scoped provenance. A historical state is not another active memory item,
+and an inferred owner or commitment does not become cross-channel truth without
+the life thread's existing scope and confirmation rules. See
+[../COMMITMENT_INTELLIGENCE.md](../COMMITMENT_INTELLIGENCE.md).

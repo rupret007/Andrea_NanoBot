@@ -118,11 +118,11 @@ approval packet/version/scope binding; the cockpit may summarize whether that
 binding is present but must not expose a token or infer authority from a receipt
 count alone. Focused adversarial checks cover per-node completion, lease
 freshness, checkpoint monotonicity, malformed-state handling, unknown action
-classes, and mismatched action/effect pairs. The final local exact-tree release
-matrix and exact-SHA hosted gates pass. Production is healthy but currently
-serves the preceding application commit because the final `main` commit was a
-CI-only workflow/test correction; the cockpit must report that SHA mismatch
-instead of presenting the running process as aligned with workspace `HEAD`.
+classes, and mismatched action/effect pairs. Release and runtime alignment are
+time-sensitive: use `npm run services:status` and [CURRENT_STATUS.md](CURRENT_STATUS.md)
+for the current exact-tree, hosted-CI, and serving-SHA result. The cockpit must
+report any SHA mismatch instead of presenting a responsive older process as
+aligned with workspace `HEAD`.
 
 The cockpit also does not merge container transcripts. Direct-assistant,
 protected, control, and execution sessions remain separate capability lanes

@@ -14,6 +14,7 @@ import {
   getMessageAction,
   upsertMessageAction,
   getOutcomeBySource,
+  listLifeThreadsForGroup,
   listOutcomesForGroup,
   replaceMissionSteps,
   upsertCommunicationThread,
@@ -34,6 +35,7 @@ import {
   syncOutcomeFromReminderTask,
   upsertOutcomeRecord,
 } from './outcome-reviews.js';
+import { handleLifeThreadCommand } from './life-threads.js';
 import type {
   CommunicationThreadRecord,
   LifeThread,
@@ -374,6 +376,48 @@ describe('outcome reviews', () => {
       'usual reminder rule',
     );
     expect(presentation.text).toContain('usual reminder rule');
+  });
+
+  it('attaches a reminder to its validated canonical thread without duplicating it', () => {
+    const now = new Date('2026-04-08T20:05:00.000Z');
+    const created = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      messageId: 'linked-thread-origin',
+      text: 'I need to submit the permit application.',
+      now,
+    }).referencedThread!;
+    const beforeCount = listLifeThreadsForGroup('main').length;
+    const task = {
+      id: 'linked-reminder-task',
+      group_folder: 'main',
+      chat_jid: 'tg:main',
+      prompt: 'Submit the permit application.',
+      status: 'active',
+      next_run: '2026-04-09T14:00:00.000Z',
+    } as const;
+    const outcome = syncOutcomeFromReminderTask(task, {
+      linkedRefs: { threadId: created.id },
+      now,
+    });
+    expect(listLifeThreadsForGroup('main')).toHaveLength(beforeCount);
+    expect(getLifeThread(created.id)).toMatchObject({
+      linkedTaskId: task.id,
+      nextFollowupAt: task.next_run,
+    });
+    expect(JSON.parse(outcome.linkedRefsJson || '{}')).toMatchObject({
+      reminderTaskId: task.id,
+      threadId: created.id,
+    });
+
+    expect(() =>
+      syncOutcomeFromReminderTask(
+        { ...task, id: 'wrong-group-task', group_folder: 'other' },
+        { linkedRefs: { threadId: created.id }, now },
+      ),
+    ).toThrow('does not match its scoped life thread');
+    expect(listLifeThreadsForGroup('other')).toEqual([]);
   });
 
   it('renders follow-through outcome states without raw identifiers', () => {
@@ -765,6 +809,24 @@ describe('outcome reviews', () => {
       getOutcomeBySource('main', 'life_thread', 'thread-remind')
         ?.showInDailyReview,
     ).toBe(false);
+  });
+
+  it('retains speculative outcomes without turning them into review obligations', () => {
+    const now = new Date('2026-04-08T20:30:00.000Z');
+    const created = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'synthetic:outcome-speculation',
+      text: 'I might reorganize the garage someday.',
+      now,
+    });
+    const thread = getLifeThread(created.referencedThread!.id)!;
+
+    const outcome = syncOutcomeFromLifeThreadRecord(thread, now);
+
+    expect(outcome.status).toBe('partial');
+    expect(outcome.showInDailyReview).toBe(false);
+    expect(outcome.showInWeeklyReview).toBe(false);
   });
 
   it('tracks delivered handoffs as deferred until someone acts on them', async () => {

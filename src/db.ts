@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import fs from 'fs';
 import path from 'path';
 
@@ -7,6 +8,16 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { redactCouncilText } from './council-safety.js';
 import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import {
+  buildLegacyLifeThreadCommitment,
+  buildStructuredLifeThreadCommitmentTransition,
+  getLifeThreadCommitment,
+  isLifeThreadCommitmentState,
+  isLifeThreadCommitmentTransitionRecord,
+  parseLifeThreadCommitmentJson,
+  projectLifeThreadCommitment,
+  redactLifeThreadCommitmentText,
+} from './life-thread-commitment.js';
 import { pruneMediaCache } from './media-cache.js';
 import {
   assertDurableActionEffectPolicy,
@@ -159,6 +170,8 @@ import {
   KnowledgeSensitivity,
   KnowledgeSourceRecord,
   LifeThread,
+  LifeThreadCommitmentState,
+  LifeThreadCommitmentTransitionRecord,
   LifeThreadSignal,
   CouncilOutcomeSignal,
   CouncilRunLedgerRecord,
@@ -1188,6 +1201,7 @@ function createSchema(database: Database.Database): void {
       last_surfaced_at TEXT,
       snoozed_until TEXT,
       linked_task_id TEXT,
+      commitment_state_json TEXT NOT NULL DEFAULT '{}',
       merged_into_thread_id TEXT,
       created_at TEXT NOT NULL,
       last_updated_at TEXT NOT NULL,
@@ -1209,6 +1223,7 @@ function createSchema(database: Database.Database): void {
       calendar_event_id TEXT,
       profile_fact_id TEXT,
       confidence_kind TEXT NOT NULL,
+      commitment_transition_json TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (thread_id) REFERENCES life_threads(id) ON DELETE CASCADE
     );
@@ -5652,6 +5667,125 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  for (const statement of [
+    `ALTER TABLE life_threads ADD COLUMN commitment_state_json TEXT NOT NULL DEFAULT '{}'`,
+    `ALTER TABLE life_thread_signals ADD COLUMN commitment_transition_json TEXT`,
+  ]) {
+    try {
+      database.exec(statement);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !/duplicate column name/i.test(error.message)
+      ) {
+        throw error;
+      }
+    }
+  }
+
+  // Every released life-thread row receives a canonical commitment snapshot.
+  // The projection is deterministic and uses only the row's already-durable
+  // fields, so reopening an existing database is safe and idempotent.
+  const backfillCommitment = database.prepare(
+    `
+      UPDATE life_threads
+      SET commitment_state_json = ?,
+          title = ?,
+          summary = ?,
+          next_action = ?
+      WHERE id = ?
+        AND commitment_state_json IS ?
+    `,
+  );
+  database.transaction(() => {
+    const legacyCommitmentRows = database
+      .prepare(
+        `
+          SELECT *
+          FROM life_threads
+        `,
+      )
+      .all() as Array<Record<string, unknown>>;
+    for (const raw of legacyCommitmentRows) {
+      const row = raw as {
+        id: string;
+        title: string;
+        summary: string;
+        status: LifeThread['status'];
+        next_action: string | null;
+        next_followup_at: string | null;
+        source_kind: LifeThread['sourceKind'];
+        confidence_kind: LifeThread['confidenceKind'];
+        user_confirmed: number;
+        created_at: string;
+        last_updated_at: string;
+        commitment_state_json: string | null;
+      };
+      const rawCommitment = row.commitment_state_json;
+      if (rawCommitment !== null && rawCommitment.trim() !== '{}') {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(rawCommitment);
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error;
+          throw new Error(
+            `Life thread ${row.id} has malformed canonical commitment state.`,
+            { cause: error },
+          );
+        }
+        if (isLifeThreadCommitmentState(parsed)) continue;
+        throw new Error(
+          `Life thread ${row.id} has unsupported canonical commitment state.`,
+        );
+      }
+      const redactedTitle = redactLifeThreadCommitmentText(row.title);
+      const redactedSummary = redactLifeThreadCommitmentText(row.summary);
+      const redactedNextAction = row.next_action
+        ? redactLifeThreadCommitmentText(row.next_action)
+        : null;
+      let state = buildLegacyLifeThreadCommitment({
+        id: row.id,
+        title: redactedTitle,
+        summary: redactedSummary,
+        status: row.status,
+        nextAction: redactedNextAction,
+        nextFollowupAt: row.next_followup_at,
+        sourceKind: row.source_kind,
+        confidenceKind: row.confidence_kind,
+        userConfirmed: row.user_confirmed === 1,
+        createdAt: row.created_at,
+        lastUpdatedAt: row.last_updated_at,
+      });
+      if (row.status === 'closed') {
+        const latestSignal = database
+          .prepare(
+            `
+              SELECT summary_text
+              FROM life_thread_signals
+              WHERE thread_id = ?
+              ORDER BY created_at DESC
+              LIMIT 1
+            `,
+          )
+          .get(row.id) as { summary_text: string } | undefined;
+        if (/^cancelled:/i.test(latestSignal?.summary_text || '')) {
+          state = {
+            ...state,
+            operationalState: 'cancelled',
+          };
+        }
+      }
+      backfillCommitment.run(
+        JSON.stringify(state),
+        redactedTitle,
+        redactedSummary,
+        redactedNextAction,
+        row.id,
+        row.commitment_state_json,
+      );
+    }
+  })();
 
   try {
     database.exec(
@@ -34399,25 +34533,51 @@ function mapLifeThreadRow(row: {
   last_surfaced_at: string | null;
   snoozed_until: string | null;
   linked_task_id: string | null;
+  commitment_state_json: string;
   merged_into_thread_id: string | null;
   created_at: string;
   last_updated_at: string;
   last_used_at: string | null;
 }): LifeThread {
+  // Compatibility columns can predate the commitment migration or come from a
+  // restored database. Keep the read boundary safe even before a reviewed
+  // repair rewrites those legacy bytes durably.
+  const title = redactLifeThreadCommitmentText(row.title);
+  const summary = redactLifeThreadCommitmentText(row.summary);
+  const nextAction = row.next_action
+    ? redactLifeThreadCommitmentText(row.next_action)
+    : null;
+  const fallback = {
+    id: row.id,
+    title,
+    summary,
+    status: row.status,
+    nextAction,
+    nextFollowupAt: row.next_followup_at,
+    sourceKind: row.source_kind,
+    confidenceKind: row.confidence_kind,
+    userConfirmed: row.user_confirmed === 1,
+    createdAt: row.created_at,
+    lastUpdatedAt: row.last_updated_at,
+  };
   return {
     id: row.id,
     groupFolder: row.group_folder,
-    title: row.title,
+    title,
     category: row.category,
     status: row.status,
     scope: row.scope,
     relatedSubjectIds: parseStringArrayJson(row.related_subject_ids_json),
     contextTags: parseStringArrayJson(row.context_tags_json),
-    summary: row.summary,
-    nextAction: row.next_action,
+    summary,
+    nextAction,
     nextFollowupAt: row.next_followup_at,
     sourceKind: row.source_kind,
     confidenceKind: row.confidence_kind,
+    commitment: parseLifeThreadCommitmentJson({
+      value: row.commitment_state_json,
+      fallback,
+    }),
     userConfirmed: row.user_confirmed === 1,
     sensitivity: row.sensitivity,
     surfaceMode: row.surface_mode,
@@ -34434,6 +34594,32 @@ function mapLifeThreadRow(row: {
 
 export function upsertLifeThread(record: LifeThread): void {
   assertValidGroupFolder(record.groupFolder);
+  const existingCommitment = db
+    .prepare(
+      `SELECT commitment_state_json FROM life_threads WHERE id = ? LIMIT 1`,
+    )
+    .get(record.id) as { commitment_state_json: string } | undefined;
+  const commitment =
+    record.commitment ||
+    (existingCommitment
+      ? parseLifeThreadCommitmentJson({
+          value: existingCommitment.commitment_state_json,
+          fallback: record,
+        })
+      : buildLegacyLifeThreadCommitment(record));
+  const projection = projectLifeThreadCommitment(
+    commitment,
+    new Date(record.lastUpdatedAt),
+  );
+  const followthroughMode =
+    record.followthroughMode === 'off' ||
+    record.followthroughMode === 'manual_only'
+      ? record.followthroughMode
+      : projection.followthroughMode;
+  const commitmentJson = JSON.stringify(commitment);
+  if (redactLifeThreadCommitmentText(commitmentJson) !== commitmentJson) {
+    throw new Error('Life-thread commitment contains unredacted credentials.');
+  }
   db.prepare(
     `
       INSERT INTO life_threads (
@@ -34457,11 +34643,12 @@ export function upsertLifeThread(record: LifeThread): void {
         last_surfaced_at,
         snoozed_until,
         linked_task_id,
+        commitment_state_json,
         merged_into_thread_id,
         created_at,
         last_updated_at,
         last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         group_folder = excluded.group_folder,
         title = excluded.title,
@@ -34482,6 +34669,7 @@ export function upsertLifeThread(record: LifeThread): void {
         last_surfaced_at = excluded.last_surfaced_at,
         snoozed_until = excluded.snoozed_until,
         linked_task_id = excluded.linked_task_id,
+        commitment_state_json = excluded.commitment_state_json,
         merged_into_thread_id = excluded.merged_into_thread_id,
         created_at = excluded.created_at,
         last_updated_at = excluded.last_updated_at,
@@ -34490,29 +34678,158 @@ export function upsertLifeThread(record: LifeThread): void {
   ).run(
     record.id,
     record.groupFolder,
-    record.title,
+    redactLifeThreadCommitmentText(record.title),
     record.category,
-    record.status,
+    projection.status,
     record.scope,
     JSON.stringify(record.relatedSubjectIds || []),
     JSON.stringify(record.contextTags || []),
-    record.summary,
-    record.nextAction || null,
-    record.nextFollowupAt || null,
+    redactLifeThreadCommitmentText(record.summary),
+    projection.nextAction
+      ? redactLifeThreadCommitmentText(projection.nextAction)
+      : null,
+    projection.nextFollowupAt,
     record.sourceKind,
     record.confidenceKind,
     record.userConfirmed ? 1 : 0,
     record.sensitivity,
     record.surfaceMode,
-    record.followthroughMode,
+    followthroughMode,
     record.lastSurfacedAt || null,
-    record.snoozedUntil || null,
+    record.snoozedUntil || projection.snoozedUntil,
     record.linkedTaskId || null,
+    commitmentJson,
     record.mergedIntoThreadId || null,
     record.createdAt,
     record.lastUpdatedAt,
     record.lastUsedAt || null,
   );
+}
+
+function assertCommitmentTransitionCoherence(params: {
+  state: LifeThreadCommitmentState;
+  transition: LifeThreadCommitmentTransitionRecord;
+  signal: LifeThreadSignal;
+  initial?: boolean;
+}): void {
+  const { state, transition, signal } = params;
+  const before = transition.beforeState;
+  if (
+    !isLifeThreadCommitmentState(state) ||
+    !isLifeThreadCommitmentState(transition.afterState) ||
+    !isDeepStrictEqual(transition.afterState, state) ||
+    signal.id !== transition.eventId ||
+    signal.createdAt !== transition.observedAt ||
+    state.lastTransitionId !== transition.eventId ||
+    state.updatedAt !== transition.observedAt ||
+    transition.toRevision !== state.revision ||
+    transition.toState !== state.operationalState ||
+    transition.toStrength !== state.strength ||
+    (signal.commitmentTransition !== undefined &&
+      signal.commitmentTransition !== null &&
+      !isDeepStrictEqual(signal.commitmentTransition, transition))
+  ) {
+    throw new Error(
+      'Commitment transition provenance does not match its state.',
+    );
+  }
+  if (params.initial) {
+    if (
+      before !== null ||
+      transition.fromRevision !== 0 ||
+      transition.toRevision !== 1
+    ) {
+      throw new Error('Initial commitment origin is not revision zero.');
+    }
+    return;
+  }
+  if (
+    !before ||
+    !isLifeThreadCommitmentState(before) ||
+    before.revision !== transition.fromRevision ||
+    before.operationalState !== transition.fromState ||
+    before.strength !== transition.fromStrength
+  ) {
+    throw new Error('Commitment transition before-state is inconsistent.');
+  }
+}
+
+/** Insert the first canonical snapshot and its immutable origin together. */
+export function createLifeThreadWithInitialCommitment(params: {
+  thread: LifeThread & { commitment: LifeThreadCommitmentState };
+  signal: LifeThreadSignal & {
+    commitmentTransition: LifeThreadCommitmentTransitionRecord;
+  };
+}): 'created' | 'duplicate' {
+  assertCommitmentTransitionCoherence({
+    state: params.thread.commitment,
+    transition: params.signal.commitmentTransition,
+    signal: params.signal,
+    initial: true,
+  });
+  if (
+    params.signal.threadId !== params.thread.id ||
+    params.signal.groupFolder !== params.thread.groupFolder ||
+    params.signal.id !== params.thread.commitment.lastTransitionId ||
+    params.signal.id !== params.signal.commitmentTransition.eventId ||
+    params.thread.commitment.revision !== 1 ||
+    params.signal.commitmentTransition.fromRevision !== 0 ||
+    params.signal.commitmentTransition.toRevision !== 1
+  ) {
+    throw new Error(
+      'Initial commitment origin does not match its life thread.',
+    );
+  }
+  const create = db.transaction(() => {
+    const existing = db
+      .prepare(
+        `SELECT id, group_folder, commitment_state_json FROM life_threads WHERE id = ? LIMIT 1`,
+      )
+      .get(params.thread.id) as
+      | {
+          id: string;
+          group_folder: string;
+          commitment_state_json: string;
+        }
+      | undefined;
+    if (existing) {
+      const signal = db
+        .prepare(
+          `SELECT thread_id, group_folder, commitment_transition_json FROM life_thread_signals WHERE id = ? LIMIT 1`,
+        )
+        .get(params.signal.id) as
+        | {
+            thread_id: string;
+            group_folder: string;
+            commitment_transition_json: string | null;
+          }
+        | undefined;
+      const storedState = parseLifeThreadCommitmentJson({
+        value: existing.commitment_state_json,
+        fallback: params.thread,
+      });
+      const storedTransition = parseLifeThreadCommitmentTransition(
+        signal?.commitment_transition_json || null,
+      );
+      if (
+        existing.group_folder === params.thread.groupFolder &&
+        signal?.thread_id === params.thread.id &&
+        signal.group_folder === params.thread.groupFolder &&
+        storedTransition &&
+        isDeepStrictEqual(storedState, params.thread.commitment) &&
+        isDeepStrictEqual(storedTransition.afterState, params.thread.commitment)
+      ) {
+        return 'duplicate' as const;
+      }
+      throw new Error(
+        'Initial commitment identity conflicts with existing data.',
+      );
+    }
+    upsertLifeThread(params.thread);
+    upsertLifeThreadSignal(params.signal);
+    return 'created' as const;
+  });
+  return create.immediate();
 }
 
 export function getLifeThread(id: string): LifeThread | undefined {
@@ -34547,6 +34864,7 @@ export function getLifeThread(id: string): LifeThread | undefined {
         last_surfaced_at: string | null;
         snoozed_until: string | null;
         linked_task_id: string | null;
+        commitment_state_json: string;
         merged_into_thread_id: string | null;
         created_at: string;
         last_updated_at: string;
@@ -34611,6 +34929,7 @@ export function listLifeThreadsForGroup(
     last_surfaced_at: string | null;
     snoozed_until: string | null;
     linked_task_id: string | null;
+    commitment_state_json: string;
     merged_into_thread_id: string | null;
     created_at: string;
     last_updated_at: string;
@@ -34627,13 +34946,10 @@ export function updateLifeThread(
       LifeThread,
       | 'title'
       | 'category'
-      | 'status'
       | 'scope'
       | 'relatedSubjectIds'
       | 'contextTags'
       | 'summary'
-      | 'nextAction'
-      | 'nextFollowupAt'
       | 'sourceKind'
       | 'confidenceKind'
       | 'userConfirmed'
@@ -34653,15 +34969,11 @@ export function updateLifeThread(
   const values: unknown[] = [];
   if (updates.title !== undefined) {
     fields.push('title = ?');
-    values.push(updates.title);
+    values.push(redactLifeThreadCommitmentText(updates.title));
   }
   if (updates.category !== undefined) {
     fields.push('category = ?');
     values.push(updates.category);
-  }
-  if (updates.status !== undefined) {
-    fields.push('status = ?');
-    values.push(updates.status);
   }
   if (updates.scope !== undefined) {
     fields.push('scope = ?');
@@ -34677,15 +34989,7 @@ export function updateLifeThread(
   }
   if (updates.summary !== undefined) {
     fields.push('summary = ?');
-    values.push(updates.summary);
-  }
-  if (updates.nextAction !== undefined) {
-    fields.push('next_action = ?');
-    values.push(updates.nextAction || null);
-  }
-  if (updates.nextFollowupAt !== undefined) {
-    fields.push('next_followup_at = ?');
-    values.push(updates.nextFollowupAt || null);
+    values.push(redactLifeThreadCommitmentText(updates.summary));
   }
   if (updates.sourceKind !== undefined) {
     fields.push('source_kind = ?');
@@ -34760,18 +35064,206 @@ export function supersedeLifeThreadTemporalState(params: {
     throw new Error('Temporal supersession signal does not match its thread.');
   }
 
-  return db.transaction(() => {
-    const thread = db
-      .prepare(
-        `SELECT id FROM life_threads WHERE id = ? AND group_folder = ? LIMIT 1`,
-      )
-      .get(params.threadId, params.groupFolder);
-    if (!thread) return 'missing' as const;
+  const thread = getLifeThread(params.threadId);
+  if (!thread || thread.groupFolder !== params.groupFolder) return 'missing';
+  const current = getLifeThreadCommitment(thread);
+  const interpretation = buildStructuredLifeThreadCommitmentTransition({
+    thread,
+    text: params.signal.summaryText,
+    now: new Date(params.lastUpdatedAt),
+    timeZone: 'UTC',
+    sourceKind: params.signal.sourceKind,
+    sourceRef: params.signal.id,
+    eventId: params.signal.id,
+    kind: 'strengthened',
+    reason: 'A temporal correction superseded the prior active date.',
+    evidenceKinds: ['temporal', 'correction', 'state_transition'],
+    confidenceKind: 'explicit',
+    patch: {
+      strength:
+        current.strength === 'speculative' || current.strength === 'tentative'
+          ? 'intended'
+          : current.strength,
+      operationalState: 'active',
+      readiness: 'actionable_now',
+      currentAction: params.nextAction,
+      downstreamAction: null,
+      dueAt: params.nextFollowupAt,
+      reactivateAt: null,
+      reactivateCondition: null,
+    },
+  });
+  const result = applyLifeThreadCommitmentTransition({
+    threadId: params.threadId,
+    groupFolder: params.groupFolder,
+    state: interpretation.state,
+    transition: interpretation.transition,
+    summary: params.summary,
+    sourceKind: 'explicit',
+    confidenceKind: 'explicit',
+    userConfirmed: true,
+    signal: {
+      ...params.signal,
+      commitmentTransition: interpretation.transition,
+    },
+  });
+  return result === 'stale' ? 'duplicate' : result;
+}
 
+export type LifeThreadCommitmentApplyResult =
+  | 'applied'
+  | 'duplicate'
+  | 'stale'
+  | 'missing';
+
+function opaqueCommitmentSignalRef(
+  kind: 'chat' | 'message',
+  value: string | null | undefined,
+): string | null {
+  if (!value) return null;
+  return `commitment-${kind}:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function derivedCommitmentSignalSummary(
+  transition: LifeThreadCommitmentTransitionRecord,
+): string {
+  return redactLifeThreadCommitmentText(
+    `commitment_transition:${transition.toState}; ${transition.reason}`,
+  ).slice(0, 600);
+}
+
+/**
+ * Append one immutable transition event and advance canonical current truth in
+ * the same SQLite transaction. Older or replayed events are retained as
+ * provenance but can never reactivate superseded state.
+ */
+export function applyLifeThreadCommitmentTransition(params: {
+  threadId: string;
+  groupFolder: string;
+  state: LifeThreadCommitmentState;
+  transition: LifeThreadCommitmentTransitionRecord;
+  signal: LifeThreadSignal;
+  summary?: string;
+  sourceKind?: LifeThread['sourceKind'];
+  confidenceKind?: LifeThread['confidenceKind'];
+  userConfirmed?: boolean;
+}): LifeThreadCommitmentApplyResult {
+  assertValidGroupFolder(params.groupFolder);
+  const stateJson = JSON.stringify(params.state);
+  const transitionJson = JSON.stringify(params.transition);
+  if (
+    redactLifeThreadCommitmentText(stateJson) !== stateJson ||
+    redactLifeThreadCommitmentText(transitionJson) !== transitionJson
+  ) {
+    throw new Error('Commitment transition contains unredacted credentials.');
+  }
+  assertCommitmentTransitionCoherence({
+    state: params.state,
+    transition: params.transition,
+    signal: params.signal,
+  });
+  if (
+    params.signal.threadId !== params.threadId ||
+    params.signal.groupFolder !== params.groupFolder ||
+    params.signal.id !== params.transition.eventId ||
+    params.state.lastTransitionId !== params.transition.eventId ||
+    params.transition.toRevision !== params.state.revision ||
+    params.transition.toState !== params.state.operationalState ||
+    params.transition.toStrength !== params.state.strength ||
+    params.state.updatedAt !== params.transition.observedAt ||
+    params.transition.afterState?.lastTransitionId !== params.transition.eventId
+  ) {
+    throw new Error(
+      'Commitment transition provenance does not match its thread.',
+    );
+  }
+
+  const apply = db.transaction(() => {
+    const existingSignal = db
+      .prepare(
+        `
+          SELECT thread_id, group_folder, message_id, commitment_transition_json
+          FROM life_thread_signals
+          WHERE id = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.signal.id) as
+      | {
+          thread_id: string;
+          group_folder: string;
+          message_id: string | null;
+          commitment_transition_json: string | null;
+        }
+      | undefined;
+    if (existingSignal) {
+      const existingTransition = parseLifeThreadCommitmentTransition(
+        existingSignal.commitment_transition_json,
+      );
+      const eventEvidenceIdentity = (state: LifeThreadCommitmentState) =>
+        state.evidence
+          .filter((item) => item.eventId === params.transition.eventId)
+          .map((item) => ({
+            sourceKind: item.sourceKind,
+            sourceRef: item.sourceRef || null,
+            reasonKinds: [...(item.reasonKinds || [item.kind])].sort(),
+          }));
+      if (
+        existingSignal.thread_id !== params.threadId ||
+        existingSignal.group_folder !== params.groupFolder ||
+        existingSignal.message_id !==
+          opaqueCommitmentSignalRef('message', params.signal.messageId) ||
+        !existingTransition ||
+        existingTransition.eventId !== params.transition.eventId ||
+        existingTransition.toState !== params.transition.toState ||
+        existingTransition.toStrength !== params.transition.toStrength ||
+        !existingTransition.afterState ||
+        !isDeepStrictEqual(
+          eventEvidenceIdentity(existingTransition.afterState),
+          eventEvidenceIdentity(params.state),
+        )
+      ) {
+        throw new Error(
+          'Commitment transition identity conflicts with another signal.',
+        );
+      }
+      return 'duplicate' as const;
+    }
+
+    const currentThread = getLifeThread(params.threadId);
+    if (!currentThread || currentThread.groupFolder !== params.groupFolder) {
+      return 'missing' as const;
+    }
+    const current =
+      currentThread.commitment ||
+      buildLegacyLifeThreadCommitment(currentThread);
+    const observedMs = Date.parse(params.transition.observedAt);
+    const currentMs = Date.parse(current.updatedAt);
+    const isStale =
+      params.transition.fromRevision < current.revision ||
+      (Number.isFinite(observedMs) &&
+        Number.isFinite(currentMs) &&
+        observedMs < currentMs);
+    if (
+      !isStale &&
+      (params.transition.fromRevision !== current.revision ||
+        params.state.revision !== current.revision + 1 ||
+        params.transition.fromState !== current.operationalState ||
+        params.transition.fromStrength !== current.strength)
+    ) {
+      throw new Error(
+        'Commitment transition revision conflicts with current truth.',
+      );
+    }
+
+    const recordedTransition: LifeThreadCommitmentTransitionRecord = {
+      ...params.transition,
+      disposition: isStale ? 'stale' : 'applied',
+    };
     const inserted = db
       .prepare(
         `
-          INSERT OR IGNORE INTO life_thread_signals (
+          INSERT INTO life_thread_signals (
             id,
             thread_id,
             group_folder,
@@ -34783,8 +35275,9 @@ export function supersedeLifeThreadTemporalState(params: {
             calendar_event_id,
             profile_fact_id,
             confidence_kind,
+            commitment_transition_json,
             created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
@@ -34792,63 +35285,94 @@ export function supersedeLifeThreadTemporalState(params: {
         params.signal.threadId,
         params.signal.groupFolder,
         params.signal.sourceKind,
-        params.signal.summaryText,
-        params.signal.chatJid || null,
-        params.signal.messageId || null,
+        derivedCommitmentSignalSummary(recordedTransition),
+        opaqueCommitmentSignalRef('chat', params.signal.chatJid),
+        opaqueCommitmentSignalRef('message', params.signal.messageId),
         params.signal.taskId || null,
         params.signal.calendarEventId || null,
         params.signal.profileFactId || null,
         params.signal.confidenceKind,
+        JSON.stringify(recordedTransition),
         params.signal.createdAt,
       );
-    if (inserted.changes === 0) {
-      const existingSignal = db
-        .prepare(
-          `SELECT thread_id, group_folder FROM life_thread_signals WHERE id = ? LIMIT 1`,
-        )
-        .get(params.signal.id) as
-        | { thread_id: string; group_folder: string }
-        | undefined;
-      if (
-        existingSignal?.thread_id !== params.threadId ||
-        existingSignal.group_folder !== params.groupFolder
-      ) {
-        throw new Error(
-          'Temporal correction identity conflicts with another signal.',
-        );
-      }
-      return 'duplicate' as const;
+    if (inserted.changes !== 1) {
+      throw new Error('Commitment transition provenance was not appended.');
     }
+    if (isStale) return 'stale' as const;
 
+    const projection = projectLifeThreadCommitment(
+      params.state,
+      new Date(params.transition.observedAt),
+    );
+    const preserveManualControl =
+      (currentThread.surfaceMode === 'manual_only' ||
+        currentThread.followthroughMode === 'manual_only' ||
+        currentThread.followthroughMode === 'off') &&
+      !['completed', 'cancelled', 'superseded'].includes(
+        params.state.operationalState,
+      );
+    const currentSnoozeMs = currentThread.snoozedUntil
+      ? Date.parse(currentThread.snoozedUntil)
+      : Number.NaN;
+    const transitionMs = Date.parse(params.transition.observedAt);
+    const preserveFutureSnooze =
+      projection.status === 'active' &&
+      Number.isFinite(currentSnoozeMs) &&
+      Number.isFinite(transitionMs) &&
+      currentSnoozeMs > transitionMs;
     const updated = db
       .prepare(
         `
           UPDATE life_threads
-          SET summary = ?,
+          SET commitment_state_json = ?,
+              status = ?,
+              summary = ?,
               next_action = ?,
               next_followup_at = ?,
-              source_kind = 'explicit',
-              confidence_kind = 'explicit',
-              user_confirmed = 1,
+              snoozed_until = ?,
+              followthrough_mode = ?,
+              source_kind = ?,
+              confidence_kind = ?,
+              user_confirmed = ?,
               last_updated_at = ?,
               last_used_at = ?
           WHERE id = ? AND group_folder = ?
         `,
       )
       .run(
-        params.summary,
-        params.nextAction,
-        params.nextFollowupAt,
-        params.lastUpdatedAt,
-        params.lastUpdatedAt,
+        stateJson,
+        projection.status,
+        redactLifeThreadCommitmentText(params.summary || currentThread.summary),
+        projection.nextAction
+          ? redactLifeThreadCommitmentText(projection.nextAction)
+          : null,
+        projection.nextFollowupAt,
+        preserveFutureSnooze
+          ? currentThread.snoozedUntil
+          : projection.snoozedUntil,
+        preserveManualControl
+          ? currentThread.followthroughMode
+          : projection.followthroughMode,
+        params.sourceKind || params.signal.sourceKind,
+        params.confidenceKind || params.signal.confidenceKind,
+        params.userConfirmed === undefined
+          ? currentThread.userConfirmed
+            ? 1
+            : 0
+          : params.userConfirmed
+            ? 1
+            : 0,
+        params.state.updatedAt,
+        params.state.updatedAt,
         params.threadId,
         params.groupFolder,
       );
     if (updated.changes !== 1) {
-      throw new Error('Temporal supersession lost its target thread.');
+      throw new Error('Commitment transition lost its target thread.');
     }
     return 'applied' as const;
-  })();
+  });
+  return apply.immediate();
 }
 
 export function deleteLifeThread(id: string): boolean {
@@ -34859,8 +35383,59 @@ export function deleteLifeThread(id: string): boolean {
 
 export function upsertLifeThreadSignal(record: LifeThreadSignal): void {
   assertValidGroupFolder(record.groupFolder);
-  db.prepare(
-    `
+  if (record.commitmentTransition) {
+    const inserted = db
+      .prepare(
+        `
+          INSERT OR IGNORE INTO life_thread_signals (
+            id, thread_id, group_folder, source_kind, summary_text, chat_jid,
+            message_id, task_id, calendar_event_id, profile_fact_id,
+            confidence_kind, commitment_transition_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        record.id,
+        record.threadId,
+        record.groupFolder,
+        record.sourceKind,
+        derivedCommitmentSignalSummary(record.commitmentTransition),
+        opaqueCommitmentSignalRef('chat', record.chatJid),
+        opaqueCommitmentSignalRef('message', record.messageId),
+        record.taskId || null,
+        record.calendarEventId || null,
+        record.profileFactId || null,
+        record.confidenceKind,
+        JSON.stringify(record.commitmentTransition),
+        record.createdAt,
+      );
+    if (inserted.changes === 0) {
+      const existing = db
+        .prepare(
+          `SELECT thread_id, group_folder, commitment_transition_json FROM life_thread_signals WHERE id = ?`,
+        )
+        .get(record.id) as
+        | {
+            thread_id: string;
+            group_folder: string;
+            commitment_transition_json: string | null;
+          }
+        | undefined;
+      if (
+        existing?.thread_id !== record.threadId ||
+        existing.group_folder !== record.groupFolder ||
+        !existing.commitment_transition_json
+      ) {
+        throw new Error(
+          'Commitment signal identity conflicts with existing provenance.',
+        );
+      }
+    }
+    return;
+  }
+  const result = db
+    .prepare(
+      `
       INSERT INTO life_thread_signals (
         id,
         thread_id,
@@ -34873,8 +35448,9 @@ export function upsertLifeThreadSignal(record: LifeThreadSignal): void {
         calendar_event_id,
         profile_fact_id,
         confidence_kind,
+        commitment_transition_json,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         thread_id = excluded.thread_id,
         group_folder = excluded.group_folder,
@@ -34886,22 +35462,44 @@ export function upsertLifeThreadSignal(record: LifeThreadSignal): void {
         calendar_event_id = excluded.calendar_event_id,
         profile_fact_id = excluded.profile_fact_id,
         confidence_kind = excluded.confidence_kind,
+        commitment_transition_json = excluded.commitment_transition_json,
         created_at = excluded.created_at
+      WHERE life_thread_signals.commitment_transition_json IS NULL
     `,
-  ).run(
-    record.id,
-    record.threadId,
-    record.groupFolder,
-    record.sourceKind,
-    record.summaryText,
-    record.chatJid || null,
-    record.messageId || null,
-    record.taskId || null,
-    record.calendarEventId || null,
-    record.profileFactId || null,
-    record.confidenceKind,
-    record.createdAt,
-  );
+    )
+    .run(
+      record.id,
+      record.threadId,
+      record.groupFolder,
+      record.sourceKind,
+      redactLifeThreadCommitmentText(record.summaryText),
+      record.chatJid || null,
+      record.messageId || null,
+      record.taskId || null,
+      record.calendarEventId || null,
+      record.profileFactId || null,
+      record.confidenceKind,
+      null,
+      record.createdAt,
+    );
+  if (result.changes === 0) {
+    throw new Error(
+      'Ordinary signal cannot overwrite immutable commitment provenance.',
+    );
+  }
+}
+
+function parseLifeThreadCommitmentTransition(
+  value: string | null,
+): LifeThreadCommitmentTransitionRecord | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isLifeThreadCommitmentTransitionRecord(parsed) ? parsed : null;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return null;
+  }
 }
 
 export function listLifeThreadSignals(
@@ -34930,6 +35528,7 @@ export function listLifeThreadSignals(
     calendar_event_id: string | null;
     profile_fact_id: string | null;
     confidence_kind: LifeThreadSignal['confidenceKind'];
+    commitment_transition_json: string | null;
     created_at: string;
   }>;
   return rows.map((row) => ({
@@ -34944,6 +35543,9 @@ export function listLifeThreadSignals(
     calendarEventId: row.calendar_event_id,
     profileFactId: row.profile_fact_id,
     confidenceKind: row.confidence_kind,
+    commitmentTransition: parseLifeThreadCommitmentTransition(
+      row.commitment_transition_json,
+    ),
     createdAt: row.created_at,
   }));
 }
@@ -34958,10 +35560,94 @@ export function reassignLifeThreadSignals(
         UPDATE life_thread_signals
         SET thread_id = ?
         WHERE thread_id = ?
+          AND commitment_transition_json IS NULL
       `,
     )
     .run(toThreadId, fromThreadId);
   return result.changes;
+}
+
+/**
+ * Merge all mutable linkage and the source thread's terminal provenance in one
+ * immediate transaction. Immutable transition history remains attached to the
+ * source commitment; only ordinary contextual signals move to the target.
+ */
+export function mergeLifeThreadsAtomically(params: {
+  fromThreadId: string;
+  toThreadId: string;
+  groupFolder: string;
+  state: LifeThreadCommitmentState;
+  transition: LifeThreadCommitmentTransitionRecord;
+  signal: LifeThreadSignal;
+  summary: string;
+  now: string;
+}): LifeThreadCommitmentApplyResult {
+  assertValidGroupFolder(params.groupFolder);
+  if (params.fromThreadId === params.toThreadId) {
+    throw new Error('A life thread cannot be merged into itself.');
+  }
+  const merge = db.transaction(() => {
+    const rows = db
+      .prepare(`SELECT id, group_folder FROM life_threads WHERE id IN (?, ?)`)
+      .all(params.fromThreadId, params.toThreadId) as Array<{
+      id: string;
+      group_folder: string;
+    }>;
+    if (
+      rows.length !== 2 ||
+      rows.some((row) => row.group_folder !== params.groupFolder)
+    ) {
+      return 'missing' as const;
+    }
+
+    db.prepare(
+      `
+        UPDATE life_thread_signals
+        SET thread_id = ?
+        WHERE thread_id = ?
+          AND group_folder = ?
+          AND commitment_transition_json IS NULL
+      `,
+    ).run(params.toThreadId, params.fromThreadId, params.groupFolder);
+
+    const result = applyLifeThreadCommitmentTransition({
+      threadId: params.fromThreadId,
+      groupFolder: params.groupFolder,
+      state: params.state,
+      transition: params.transition,
+      signal: params.signal,
+      summary: params.summary,
+      sourceKind: params.signal.sourceKind,
+      confidenceKind: params.signal.confidenceKind,
+      userConfirmed: true,
+    });
+    if (result === 'missing' || result === 'stale') {
+      throw new Error('Life-thread merge lost its canonical source state.');
+    }
+    const sourceUpdate = db
+      .prepare(
+        `
+          UPDATE life_threads
+          SET merged_into_thread_id = ?
+          WHERE id = ? AND group_folder = ?
+        `,
+      )
+      .run(params.toThreadId, params.fromThreadId, params.groupFolder);
+    const targetUpdate = db
+      .prepare(
+        `
+          UPDATE life_threads
+          SET last_updated_at = ?, last_used_at = ?
+          WHERE id = ? AND group_folder = ?
+        `,
+      )
+      .run(params.now, params.now, params.toThreadId, params.groupFolder);
+    if (sourceUpdate.changes !== 1 || targetUpdate.changes !== 1) {
+      throw new Error('Life-thread merge lost one of its scoped records.');
+    }
+    return result;
+  });
+  return merge.immediate();
 }
 
 export interface CommunitySkillRecord {

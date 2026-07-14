@@ -19,7 +19,13 @@ import {
 import {
   findLifeThreadForExplicitLookup,
   handleLifeThreadCommand,
+  resolveLifeThreadTimeZone,
 } from './life-threads.js';
+import {
+  describeLifeThreadCommitment,
+  getLifeThreadCommitment,
+  shouldProactivelySurfaceCommitment,
+} from './life-thread-commitment.js';
 import { planContextualReminder } from './local-reminder.js';
 import {
   syncOutcomeFromCommunicationThreadRecord,
@@ -130,6 +136,150 @@ function normalizeText(value: string | undefined): string {
     .trim();
 }
 
+const DRAFT_SUPPORT_STOP_WORDS = new Set([
+  'about',
+  'after',
+  'again',
+  'before',
+  'could',
+  'follow',
+  'followup',
+  'later',
+  'need',
+  'needs',
+  'still',
+  'their',
+  'there',
+  'these',
+  'they',
+  'this',
+  'thread',
+  'today',
+  'tomorrow',
+  'tonight',
+  'want',
+  'wants',
+  'whether',
+  'with',
+  'would',
+]);
+
+function draftSupportTokens(
+  value: string,
+  linkedSubjects: ProfileSubject[],
+): Set<string> {
+  const subjectTokens = new Set(
+    linkedSubjects.flatMap((subject) =>
+      subject.displayName.toLowerCase().split(/[^a-z0-9]+/),
+    ),
+  );
+  return new Set(
+    value
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(
+        (token) =>
+          token.length >= 4 &&
+          !DRAFT_SUPPORT_STOP_WORDS.has(token) &&
+          !subjectTokens.has(token),
+      ),
+  );
+}
+
+function isLifeThreadSafeForDraftUse(thread: LifeThread, now: Date): boolean {
+  if (
+    thread.sensitivity !== 'normal' ||
+    thread.surfaceMode === 'manual_only' ||
+    thread.followthroughMode === 'manual_only' ||
+    thread.followthroughMode === 'off' ||
+    !shouldProactivelySurfaceCommitment(thread, now)
+  ) {
+    return false;
+  }
+  const commitment = getLifeThreadCommitment(thread);
+  return (
+    commitment.strength !== 'speculative' &&
+    commitment.strength !== 'tentative' &&
+    commitment.operationalState === 'active'
+  );
+}
+
+function hasUnsafeLifeThreadContext(threads: LifeThread[], now: Date): boolean {
+  return threads.some((thread) => !isLifeThreadSafeForDraftUse(thread, now));
+}
+
+function linkedLifeThreadsForCommunicationInput(
+  input: CommunicationContextInput,
+  additionalIds: string[] = [],
+): LifeThread[] {
+  const existing = input.priorContext?.communicationThreadId
+    ? getCommunicationThread(input.priorContext.communicationThreadId)
+    : undefined;
+  const ids = new Set([
+    ...(input.priorContext?.communicationLifeThreadIds || []),
+    ...(existing?.linkedLifeThreadIds || []),
+    ...additionalIds,
+  ]);
+  if (ids.size === 0) return [];
+  return listLifeThreadsForGroup(input.groupFolder).filter((thread) =>
+    ids.has(thread.id),
+  );
+}
+
+/**
+ * Life-thread context is private planning state, not outbound draft material.
+ * It may support a draft only when the active conversation explicitly carries
+ * that thread, the topic overlaps, every related person is an intended
+ * recipient, and the thread is safe to surface. Merely sharing a person's
+ * profile subject is never enough.
+ */
+function selectRecipientSafeDraftLifeThreads(params: {
+  input: CommunicationContextInput;
+  analysis: CommunicationAnalysisResult;
+}): LifeThread[] {
+  const explicitIds = new Set(
+    params.input.priorContext?.communicationLifeThreadIds || [],
+  );
+  const explicitTitle = normalizeText(params.input.priorContext?.threadTitle);
+  const recipientIds = new Set(
+    params.analysis.linkedSubjects.map((subject) => subject.id),
+  );
+  const conversationTokens = draftSupportTokens(
+    [
+      params.analysis.messageText,
+      params.analysis.summaryText,
+      params.input.replyText,
+      extractExplicitDraftTopicFromPrompt(params.input.text || ''),
+    ]
+      .filter(Boolean)
+      .join(' '),
+    params.analysis.linkedSubjects,
+  );
+  const now = params.input.now || new Date();
+
+  return params.analysis.linkedLifeThreads.filter((thread) => {
+    const explicitlySelected =
+      explicitIds.has(thread.id) ||
+      (Boolean(explicitTitle) &&
+        normalizeText(thread.title).toLowerCase() ===
+          explicitTitle.toLowerCase());
+    if (!explicitlySelected || !isLifeThreadSafeForDraftUse(thread, now)) {
+      return false;
+    }
+    if (
+      thread.relatedSubjectIds.length === 0 ||
+      thread.relatedSubjectIds.some((subjectId) => !recipientIds.has(subjectId))
+    ) {
+      return false;
+    }
+    const threadTokens = draftSupportTokens(
+      [thread.title, thread.summary, ...(thread.contextTags || [])].join(' '),
+      params.analysis.linkedSubjects,
+    );
+    return [...threadTokens].some((token) => conversationTokens.has(token));
+  });
+}
+
 function clipText(value: string, max = 180): string {
   const normalized = value.trim().replace(/\s+/g, ' ');
   if (normalized.length <= max) return normalized;
@@ -212,6 +362,7 @@ function normalizeCommunicationFocus(value: string): string {
 
 function normalizeCommunicationSupportLine(value: string): string {
   return value
+    .replace(/^(?:you own|[^:]{1,80} owns) the next action[^:]*:\s*/i, '')
     .replace(
       /^save this (?:note )?to my library(?: (?:as|titled))?\s+[^:]+:\s*/i,
       '',
@@ -610,7 +761,7 @@ function normalizeUsableCommunicationSummary(
 }
 
 function findFallbackCommunicationThread(
-  input: Pick<CommunicationContextInput, 'groupFolder' | 'chatJid' | 'text'>,
+  input: CommunicationContextInput,
 ): CommunicationThreadRecord | undefined {
   if (!isCommandOnlyCommunicationPrompt(input.text || '')) {
     return undefined;
@@ -629,6 +780,18 @@ function findFallbackCommunicationThread(
   );
 
   if (threads.length === 0) return undefined;
+
+  if (input.chatJid) {
+    return threads.find((thread) => thread.channelChatJid === input.chatJid);
+  }
+  if (
+    input.priorContext?.personName ||
+    input.priorContext?.communicationSubjectIds?.length ||
+    input.priorContext?.communicationLifeThreadIds?.length ||
+    input.priorContext?.threadTitle
+  ) {
+    return undefined;
+  }
 
   const sameChatWithContext = threads.find(
     (thread) =>
@@ -655,7 +818,9 @@ function buildCommandOnlyCommunicationFallbackSummary(params: {
   existing?: CommunicationThreadRecord;
   linkedLifeThreads: LifeThread[];
   linkedSubjects: ProfileSubject[];
+  explicitLifeThreadIds?: string[];
   rawText?: string;
+  now: Date;
 }): string | null {
   const existingSummary = normalizeText(
     params.existing?.lastInboundSummary || '',
@@ -664,15 +829,31 @@ function buildCommandOnlyCommunicationFallbackSummary(params: {
     existingSummary &&
     !looksLikeMalformedCommunicationSummary(existingSummary) &&
     !isMeaninglessCommunicationBody(existingSummary) &&
-    !looksGenericCommandOnlyCommunicationSummary(existingSummary)
+    !looksGenericCommandOnlyCommunicationSummary(existingSummary) &&
+    !hasUnsafeLifeThreadContext(params.linkedLifeThreads, params.now)
   ) {
     return existingSummary;
   }
 
+  const explicitIds = new Set(params.explicitLifeThreadIds || []);
+  const fallbackThread = hasUnsafeLifeThreadContext(
+    params.linkedLifeThreads,
+    params.now,
+  )
+    ? undefined
+    : params.linkedLifeThreads.find(
+        (thread) =>
+          explicitIds.has(thread.id) &&
+          isLifeThreadSafeForDraftUse(thread, params.now),
+      );
   const lifeThreadSummary = normalizeText(
-    params.linkedLifeThreads[0]?.nextAction ||
-      params.linkedLifeThreads[0]?.summary ||
-      '',
+    fallbackThread
+      ? describeLifeThreadCommitment(
+          fallbackThread,
+          params.now,
+          resolveLifeThreadTimeZone(fallbackThread.groupFolder),
+        )
+      : '',
   );
   if (lifeThreadSummary) {
     return clipText(lifeThreadSummary, 140);
@@ -706,45 +887,87 @@ function repairCommandOnlyDraftInput(
   const existing = input.priorContext?.communicationThreadId
     ? getCommunicationThread(input.priorContext.communicationThreadId)
     : undefined;
+  const expectedSubjectIds = new Set(
+    input.priorContext?.communicationSubjectIds || [],
+  );
+  const existingMatchesScope = Boolean(
+    existing?.groupFolder === input.groupFolder &&
+    (!input.chatJid ||
+      !existing.channelChatJid ||
+      existing.channelChatJid === input.chatJid) &&
+    (expectedSubjectIds.size > 0
+      ? existing.linkedSubjectIds.length === expectedSubjectIds.size &&
+        existing.linkedSubjectIds.every((id) => expectedSubjectIds.has(id))
+      : !input.priorContext?.personName),
+  );
+  const linkedLifeThreads = linkedLifeThreadsForCommunicationInput(input);
+  const unsafePersistedContext = hasUnsafeLifeThreadContext(
+    linkedLifeThreads,
+    input.now || new Date(),
+  );
+  const safeInput: CommunicationContextInput = unsafePersistedContext
+    ? {
+        ...input,
+        conversationSummary: undefined,
+        priorContext: input.priorContext
+          ? {
+              ...input.priorContext,
+              communicationThreadId: undefined,
+              lastCommunicationSummary: undefined,
+              lastAnswerSummary: undefined,
+            }
+          : undefined,
+      }
+    : input;
   const summaryCandidate =
-    normalizeText(input.priorContext?.lastCommunicationSummary || '') ||
-    normalizeText(input.conversationSummary || '') ||
-    normalizeText(existing?.lastInboundSummary || '');
+    normalizeText(safeInput.priorContext?.lastCommunicationSummary || '') ||
+    normalizeText(safeInput.conversationSummary || '') ||
+    normalizeText(
+      (existingMatchesScope ? existing?.lastInboundSummary : '') || '',
+    );
   if (
     summaryCandidate &&
     !looksLikeMalformedCommunicationSummary(summaryCandidate)
   ) {
-    return input;
+    return safeInput;
   }
 
-  const lifeThreadIds = [
-    ...(input.priorContext?.communicationLifeThreadIds || []),
-    ...(existing?.linkedLifeThreadIds || []),
-  ];
-  if (lifeThreadIds.length === 0) {
-    return input;
+  const lifeThreadIds =
+    safeInput.priorContext?.communicationLifeThreadIds || [];
+  if (lifeThreadIds.length === 0 || unsafePersistedContext) {
+    return safeInput;
   }
 
   const fallbackThread = listLifeThreadsForGroup(input.groupFolder, [
     'active',
     'paused',
-  ]).find((thread) => lifeThreadIds.includes(thread.id));
+  ]).find(
+    (thread) =>
+      lifeThreadIds.includes(thread.id) &&
+      isLifeThreadSafeForDraftUse(thread, safeInput.now || new Date()),
+  );
   const repairedSummary = normalizeText(
-    fallbackThread?.nextAction || fallbackThread?.summary || '',
+    fallbackThread
+      ? describeLifeThreadCommitment(
+          fallbackThread,
+          safeInput.now,
+          resolveLifeThreadTimeZone(fallbackThread.groupFolder),
+        )
+      : '',
   );
   if (!repairedSummary) {
-    return input;
+    return safeInput;
   }
 
   return {
-    ...input,
+    ...safeInput,
     conversationSummary: repairedSummary,
     priorContext: {
-      ...input.priorContext,
-      threadTitle: input.priorContext?.threadTitle || fallbackThread?.title,
+      ...safeInput.priorContext,
+      threadTitle: safeInput.priorContext?.threadTitle || fallbackThread?.title,
       communicationLifeThreadIds: Array.from(
         new Set([
-          ...(input.priorContext?.communicationLifeThreadIds || []),
+          ...(safeInput.priorContext?.communicationLifeThreadIds || []),
           ...lifeThreadIds,
         ]),
       ),
@@ -762,6 +985,11 @@ function extractMessageText(input: CommunicationContextInput): {
   const rawInputText = input.text || '';
   const cleanedInputText = cleanMessageBody(rawInputText);
   const commandOnlyPrompt = isCommandOnlyCommunicationFollowup(input);
+  const linkedLifeThreads = linkedLifeThreadsForCommunicationInput(input);
+  const persistedContextIsUnsafe = hasUnsafeLifeThreadContext(
+    linkedLifeThreads,
+    input.now || new Date(),
+  );
   const quotedDirect = extractQuotedCommunicationPromptBody(input.text);
   if (!isMeaninglessCommunicationBody(quotedDirect)) {
     return { text: quotedDirect, source: 'direct' };
@@ -787,7 +1015,8 @@ function extractMessageText(input: CommunicationContextInput): {
   }
   if (
     !isMeaninglessCommunicationBody(prior) &&
-    looksLikeCommunicationContextText(prior)
+    looksLikeCommunicationContextText(prior) &&
+    !persistedContextIsUnsafe
   ) {
     return { text: prior, source: 'prior' };
   }
@@ -795,12 +1024,20 @@ function extractMessageText(input: CommunicationContextInput): {
     return { ...sameChat, source: 'chat' };
   }
   if (fallbackThread?.lastInboundSummary) {
-    return {
-      text: fallbackThread.lastInboundSummary,
-      messageId: fallbackThread.lastMessageId || undefined,
-      timestamp: fallbackThread.lastContactAt || undefined,
-      source: 'prior',
-    };
+    const fallbackLifeThreads = linkedLifeThreadsForCommunicationInput(
+      input,
+      fallbackThread.linkedLifeThreadIds,
+    );
+    if (
+      !hasUnsafeLifeThreadContext(fallbackLifeThreads, input.now || new Date())
+    ) {
+      return {
+        text: fallbackThread.lastInboundSummary,
+        messageId: fallbackThread.lastMessageId || undefined,
+        timestamp: fallbackThread.lastContactAt || undefined,
+        source: 'prior',
+      };
+    }
   }
   const siblingBlueBubblesContext =
     input.channel === 'bluebubbles'
@@ -917,6 +1154,13 @@ function resolveLifeThreads(
   ]);
   const subjectIds = new Set(linkedSubjects.map((subject) => subject.id));
   const matched = new Map<string, LifeThread>();
+  const communicationTokens = draftSupportTokens(
+    [input.text, input.replyText, input.conversationSummary]
+      .filter(Boolean)
+      .join(' '),
+    linkedSubjects,
+  );
+  const now = input.now || new Date();
 
   for (const threadId of input.priorContext?.communicationLifeThreadIds || []) {
     const thread = threads.find((item) => item.id === threadId);
@@ -927,9 +1171,16 @@ function resolveLifeThreads(
 
   for (const thread of threads) {
     if (
-      thread.relatedSubjectIds.some((subjectId) => subjectIds.has(subjectId))
+      thread.relatedSubjectIds.some((subjectId) => subjectIds.has(subjectId)) &&
+      isLifeThreadSafeForDraftUse(thread, now)
     ) {
-      matched.set(thread.id, thread);
+      const threadTokens = draftSupportTokens(
+        [thread.title, thread.summary, ...(thread.contextTags || [])].join(' '),
+        linkedSubjects,
+      );
+      if ([...threadTokens].some((token) => communicationTokens.has(token))) {
+        matched.set(thread.id, thread);
+      }
     }
   }
 
@@ -1162,6 +1413,33 @@ function buildThreadTitle(
   return 'Communication follow-up';
 }
 
+const COMMUNICATION_STYLE_HINTS = new Set<CommunicationDraftResult['style']>([
+  'balanced',
+  'warmer',
+  'direct',
+  'short',
+]);
+
+function normalizeCommunicationStyleHints(
+  values: readonly string[],
+): CommunicationDraftResult['style'][] {
+  return values.filter((value): value is CommunicationDraftResult['style'] =>
+    COMMUNICATION_STYLE_HINTS.has(value as CommunicationDraftResult['style']),
+  );
+}
+
+function classifyCommunicationStyleFact(
+  fact: ProfileFactWithSubject,
+): CommunicationDraftResult['style'] | null {
+  if (fact.category !== 'conversational_style') return null;
+  const value = normalizeText(`${fact.valueJson} ${fact.sourceSummary}`);
+  if (/\b(?:short|brief|concise)\b/i.test(value)) return 'short';
+  if (/\b(?:warm|warmer|friendly|gentle)\b/i.test(value)) return 'warmer';
+  if (/\b(?:direct|blunt|straightforward)\b/i.test(value)) return 'direct';
+  if (/\b(?:balanced|neutral)\b/i.test(value)) return 'balanced';
+  return null;
+}
+
 function buildToneHints(
   facts: ProfileFactWithSubject[],
   linkedSubjects: ProfileSubject[],
@@ -1171,15 +1449,8 @@ function buildToneHints(
   for (const fact of facts) {
     if (fact.state !== 'accepted') continue;
     if (!linkedIds.has(fact.subjectId) && fact.subjectKind !== 'self') continue;
-    const value = normalizeText(fact.sourceSummary);
-    if (!value) continue;
-    if (
-      fact.category === 'conversational_style' ||
-      fact.category === 'relationships' ||
-      fact.category === 'people'
-    ) {
-      hints.add(clipText(value, 80));
-    }
+    const style = classifyCommunicationStyleFact(fact);
+    if (style) hints.add(style);
   }
   return [...hints].slice(0, 3);
 }
@@ -1199,7 +1470,23 @@ function resolveExistingThread(
       existing.linkedLifeThreadIds.length === 0 &&
       (/^Communication follow-up$/i.test(existing.title) ||
         looksLikeMalformedCommunicationSummary(existing.lastInboundSummary));
-    if (existing && !shouldBypassGenericPriorThread) {
+    const linkedSubjectIds = new Set(
+      linkedSubjects.map((subject) => subject.id),
+    );
+    const matchesExplicitRecipient =
+      linkedSubjectIds.size === 0 ||
+      (existing?.linkedSubjectIds.length === linkedSubjectIds.size &&
+        existing.linkedSubjectIds.every((id) => linkedSubjectIds.has(id)));
+    const matchesExplicitChat =
+      !input.chatJid ||
+      !existing?.channelChatJid ||
+      existing.channelChatJid === input.chatJid;
+    if (
+      existing?.groupFolder === input.groupFolder &&
+      !shouldBypassGenericPriorThread &&
+      matchesExplicitRecipient &&
+      matchesExplicitChat
+    ) {
       return existing;
     }
   }
@@ -1207,14 +1494,12 @@ function resolveExistingThread(
   if (!subjectId) {
     return findFallbackCommunicationThread(input);
   }
-  return (
-    listCommunicationThreadsForGroup({
-      groupFolder: input.groupFolder,
-      subjectId,
-      includeDisabled: false,
-      limit: 1,
-    })[0] || findFallbackCommunicationThread(input)
-  );
+  return listCommunicationThreadsForGroup({
+    groupFolder: input.groupFolder,
+    subjectId,
+    includeDisabled: false,
+    limit: 1,
+  })[0];
 }
 
 function upsertThreadFromAnalysis(input: {
@@ -1225,6 +1510,7 @@ function upsertThreadFromAnalysis(input: {
   messageId?: string;
   linkedSubjects: ProfileSubject[];
   linkedLifeThreads: LifeThread[];
+  titleLifeThreads: LifeThread[];
   summaryText: string;
   followupState: CommunicationFollowupState;
   urgency: CommunicationUrgency;
@@ -1234,12 +1520,18 @@ function upsertThreadFromAnalysis(input: {
   now: string;
   inferenceState: CommunicationInferenceState;
 }): CommunicationThreadRecord {
+  const generatedTitle = buildThreadTitle(
+    input.linkedSubjects,
+    input.titleLifeThreads,
+  );
+  const title =
+    input.existing?.title === generatedTitle
+      ? input.existing.title
+      : generatedTitle;
   const next: CommunicationThreadRecord = {
     id: input.existing?.id || randomUUID(),
     groupFolder: input.groupFolder,
-    title:
-      input.existing?.title ||
-      buildThreadTitle(input.linkedSubjects, input.linkedLifeThreads),
+    title,
     linkedSubjectIds: input.linkedSubjects.map((subject) => subject.id),
     linkedLifeThreadIds: input.linkedLifeThreads.map((thread) => thread.id),
     channel: input.sourceChannel,
@@ -1253,7 +1545,7 @@ function upsertThreadFromAnalysis(input: {
         ? input.now
         : input.existing?.followupDueAt || null,
     suggestedNextAction: input.suggestedAction || null,
-    toneStyleHints: input.toneHints,
+    toneStyleHints: normalizeCommunicationStyleHints(input.toneHints),
     lastContactAt: input.lastContactAt,
     lastMessageId: input.messageId || input.existing?.lastMessageId || null,
     linkedTaskId: input.existing?.linkedTaskId || null,
@@ -1303,17 +1595,21 @@ function buildRelationshipAwareDraft(input: {
   linkedSubjects: ProfileSubject[];
   linkedLifeThreads: LifeThread[];
   toneHints: string[];
-  profileFacts: ProfileFactWithSubject[];
   summaryText: string;
   messageText: string;
   followupState?: CommunicationFollowupState;
   style: CommunicationDraftResult['style'];
+  now: Date;
 }): string {
+  const effectiveStyle =
+    input.style === 'balanced'
+      ? normalizeCommunicationStyleHints(input.toneHints)[0] || input.style
+      : input.style;
   const personName = normalizeSpokenPersonName(
     input.linkedSubjects[0]?.displayName,
   );
   const opener =
-    input.style === 'direct'
+    effectiveStyle === 'direct'
       ? personName
         ? `${personName},`
         : ''
@@ -1335,7 +1631,7 @@ function buildRelationshipAwareDraft(input: {
             )
           ) {
             return [
-              input.style === 'warmer'
+              effectiveStyle === 'warmer'
                 ? 'Sounds good to me too.'
                 : 'Sounds good.',
               seeYouPhrase
@@ -1355,14 +1651,17 @@ function buildRelationshipAwareDraft(input: {
     ? opener
       ? `can you let me know ${draftTopic}?`
       : `Can you let me know ${draftTopic}?`
-    : input.style === 'direct'
+    : effectiveStyle === 'direct'
       ? `On my side, ${draftTopic}.`
       : `I wanted to circle back on ${draftTopic}.`;
   const rawSupportLine =
-    input.linkedLifeThreads[0]?.nextAction ||
-    input.linkedLifeThreads[0]?.summary ||
-    input.toneHints[0] ||
-    '';
+    (input.linkedLifeThreads[0]
+      ? describeLifeThreadCommitment(
+          input.linkedLifeThreads[0],
+          input.now,
+          resolveLifeThreadTimeZone(input.linkedLifeThreads[0].groupFolder),
+        )
+      : '') || '';
   const normalizedSupportLine =
     normalizeCommunicationSupportLine(rawSupportLine);
   const supportLine =
@@ -1377,9 +1676,9 @@ function buildRelationshipAwareDraft(input: {
       : '') || '';
   const closer = draftTopic.startsWith('whether ')
     ? ''
-    : input.style === 'short'
+    : effectiveStyle === 'short'
       ? 'Let me know.'
-      : input.style === 'warmer'
+      : effectiveStyle === 'warmer'
         ? 'No rush, but let me know what feels right.'
         : 'Let me know what works for you.';
 
@@ -1469,6 +1768,17 @@ export function analyzeCommunicationMessage(
             availableLifeThreads.find((thread) => thread.id === threadId),
           )
           .filter((thread): thread is LifeThread => Boolean(thread));
+  const trustedPersistedContext = !hasUnsafeLifeThreadContext(
+    effectiveLinkedLifeThreads,
+    now,
+  );
+  if (existing && !trustedPersistedContext) {
+    updateCommunicationThread(existing.id, {
+      title: buildThreadTitle(effectiveLinkedSubjects, []),
+      toneStyleHints: [],
+    });
+  }
+  const trustedExisting = trustedPersistedContext ? existing : undefined;
   const profileFacts = listProfileFactsForGroup(input.groupFolder, [
     'accepted',
   ]);
@@ -1477,10 +1787,12 @@ export function analyzeCommunicationMessage(
     commandOnlyPrompt &&
     (!messageText || looksLikeMalformedCommunicationSummary(messageText))
       ? buildCommandOnlyCommunicationFallbackSummary({
-          existing,
+          existing: trustedExisting,
           linkedLifeThreads: effectiveLinkedLifeThreads,
           linkedSubjects: effectiveLinkedSubjects,
+          explicitLifeThreadIds: input.priorContext?.communicationLifeThreadIds,
           rawText: input.text,
+          now,
         })
       : null;
   if (!messageText && recoveredSummary) {
@@ -1496,9 +1808,13 @@ export function analyzeCommunicationMessage(
       !looksLikeCommunicationMessageBody(messageText));
   const preservedCommandSummary = shouldForceCommandContext
     ? [
-        normalizeText(input.priorContext?.lastCommunicationSummary || ''),
-        normalizeText(input.conversationSummary || ''),
-        normalizeText(existing?.lastInboundSummary || ''),
+        ...(trustedPersistedContext
+          ? [
+              normalizeText(input.priorContext?.lastCommunicationSummary || ''),
+              normalizeText(input.conversationSummary || ''),
+              normalizeText(trustedExisting?.lastInboundSummary || ''),
+            ]
+          : []),
         normalizeText(recoveredSummary || ''),
       ].find(
         (candidate) =>
@@ -1522,14 +1838,14 @@ export function analyzeCommunicationMessage(
   );
   const shouldReuseExistingPriorState =
     extracted.source === 'prior' &&
-    existing &&
+    trustedExisting &&
     !recoveredSummary &&
-    !looksLikeMalformedCommunicationSummary(existing.lastInboundSummary);
+    !looksLikeMalformedCommunicationSummary(trustedExisting.lastInboundSummary);
   const urgency = shouldReuseExistingPriorState
-    ? existing.urgency
+    ? trustedExisting!.urgency
     : inferUrgency(effectiveMessageText, now, extracted.timestamp);
   const followupState = shouldReuseExistingPriorState
-    ? existing.followupState
+    ? trustedExisting!.followupState
     : inferFollowupState(effectiveMessageText, urgency);
   const suggestedActions = pickSuggestedActions(
     followupState,
@@ -1539,8 +1855,8 @@ export function analyzeCommunicationMessage(
     commandOnlyPrompt &&
     looksLikeCommunicationContextText(effectiveMessageText);
   const summaryText =
-    shouldReuseExistingPriorState && existing?.lastInboundSummary
-      ? existing.lastInboundSummary
+    shouldReuseExistingPriorState && trustedExisting?.lastInboundSummary
+      ? trustedExisting.lastInboundSummary
       : preservedCommandSummary ||
         recoveredSummary ||
         (shouldPreserveEffectiveSummary ? effectiveMessageText : null) ||
@@ -1549,14 +1865,28 @@ export function analyzeCommunicationMessage(
           effectiveLinkedSubjects,
           followupState,
         );
+  const titleLifeThreads = selectRecipientSafeDraftLifeThreads({
+    input,
+    analysis: {
+      ok: true,
+      messageText: effectiveMessageText,
+      summaryText,
+      followupState,
+      urgency,
+      suggestedActions,
+      linkedLifeThreads: effectiveLinkedLifeThreads,
+      linkedSubjects: effectiveLinkedSubjects,
+    },
+  });
   const thread = upsertThreadFromAnalysis({
-    existing,
+    existing: trustedExisting,
     sourceChannel: toSignalChannel(input.channel),
     groupFolder: input.groupFolder,
     chatJid: input.chatJid,
     messageId: extracted.messageId,
     linkedSubjects: effectiveLinkedSubjects,
     linkedLifeThreads: effectiveLinkedLifeThreads,
+    titleLifeThreads,
     summaryText,
     followupState,
     urgency,
@@ -1624,7 +1954,9 @@ function repairCommandOnlyAnalysisResult(
     existing: analysis.thread,
     linkedLifeThreads: analysis.linkedLifeThreads,
     linkedSubjects: analysis.linkedSubjects,
+    explicitLifeThreadIds: input.priorContext?.communicationLifeThreadIds,
     rawText: input.text,
+    now: input.now || new Date(),
   });
   if (!fallbackSummary) {
     return analysis;
@@ -1651,7 +1983,7 @@ function repairCommandOnlyAnalysisResult(
 
 function stabilizeCommunicationDraftAnalysis(
   analysis: CommunicationAnalysisResult,
-  rawText?: string,
+  input: CommunicationContextInput,
 ): CommunicationAnalysisResult {
   if (!analysis.ok) {
     return analysis;
@@ -1671,7 +2003,9 @@ function stabilizeCommunicationDraftAnalysis(
     existing: analysis.thread,
     linkedLifeThreads: analysis.linkedLifeThreads,
     linkedSubjects: analysis.linkedSubjects,
-    rawText,
+    explicitLifeThreadIds: input.priorContext?.communicationLifeThreadIds,
+    rawText: input.text,
+    now: input.now || new Date(),
   });
   if (!fallbackSummary) {
     return analysis;
@@ -1741,21 +2075,25 @@ function finalizeCommunicationDraftResult(input: {
 
 function buildDeterministicCommunicationDraft(input: {
   analysis: CommunicationAnalysisResult;
+  baseInput: CommunicationContextInput;
   groupFolder: string;
   style: CommunicationDraftResult['style'];
 }): string {
-  const profileFacts = listProfileFactsForGroup(input.groupFolder, [
-    'accepted',
-  ]);
+  const recipientSafeLifeThreads = selectRecipientSafeDraftLifeThreads({
+    input: input.baseInput,
+    analysis: input.analysis,
+  });
   return buildRelationshipAwareDraft({
     linkedSubjects: input.analysis.linkedSubjects,
-    linkedLifeThreads: input.analysis.linkedLifeThreads,
-    toneHints: input.analysis.thread?.toneStyleHints || [],
-    profileFacts,
+    linkedLifeThreads: recipientSafeLifeThreads,
+    toneHints: normalizeCommunicationStyleHints(
+      input.analysis.thread?.toneStyleHints || [],
+    ),
     summaryText: input.analysis.summaryText || '',
     messageText: input.analysis.messageText || input.analysis.summaryText || '',
     followupState: input.analysis.followupState,
     style: input.style,
+    now: input.baseInput.now || new Date(),
   });
 }
 
@@ -1779,7 +2117,7 @@ export function draftCommunicationReply(
       repairedInput,
       analyzeCommunicationMessage(repairedInput),
     ),
-    repairedInput.text,
+    repairedInput,
   );
   if (!analysis.ok || !analysis.summaryText) {
     return {
@@ -1799,6 +2137,7 @@ export function draftCommunicationReply(
     style,
     draftText: buildDeterministicCommunicationDraft({
       analysis,
+      baseInput: repairedInput,
       groupFolder: repairedInput.groupFolder,
       style,
     }),
@@ -1826,7 +2165,7 @@ export async function draftCommunicationReplyWithChannelFluidity(
       repairedInput,
       analyzeCommunicationMessage(repairedInput),
     ),
-    repairedInput.text,
+    repairedInput,
   );
   if (!analysis.ok || !analysis.summaryText) {
     return {
@@ -1842,6 +2181,7 @@ export async function draftCommunicationReplyWithChannelFluidity(
 
   const deterministicDraft = buildDeterministicCommunicationDraft({
     analysis,
+    baseInput: repairedInput,
     groupFolder: repairedInput.groupFolder,
     style,
   });
@@ -1856,10 +2196,18 @@ export async function draftCommunicationReplyWithChannelFluidity(
     });
   }
 
+  const recipientSafeLifeThreads = selectRecipientSafeDraftLifeThreads({
+    input: repairedInput,
+    analysis,
+  });
   const linkedLifeThreadSummary = normalizeCommunicationSupportLine(
-    analysis.linkedLifeThreads[0]?.nextAction ||
-      analysis.linkedLifeThreads[0]?.summary ||
-      '',
+    recipientSafeLifeThreads[0]
+      ? describeLifeThreadCommitment(
+          recipientSafeLifeThreads[0],
+          repairedInput.now,
+          resolveLifeThreadTimeZone(recipientSafeLifeThreads[0].groupFolder),
+        )
+      : '',
   );
   const modelDraft = await draftBlueBubblesCommunicationReply({
     messageText:
@@ -1870,8 +2218,13 @@ export async function draftCommunicationReplyWithChannelFluidity(
     summaryText: analysis.summaryText,
     style,
     personName: analysis.linkedSubjects[0]?.displayName,
-    threadTitle: analysis.thread?.title,
-    toneHints: analysis.thread?.toneStyleHints || [],
+    threadTitle:
+      analysis.linkedSubjects.length > 0 || recipientSafeLifeThreads.length > 0
+        ? buildThreadTitle(analysis.linkedSubjects, recipientSafeLifeThreads)
+        : undefined,
+    toneHints: normalizeCommunicationStyleHints(
+      analysis.thread?.toneStyleHints || [],
+    ),
     linkedLifeThreadSummary: isUsefulCommunicationSupportLine(
       linkedLifeThreadSummary,
     )

@@ -76,6 +76,14 @@ function tailLines(value: string, count = 80): string {
   return value.split('\n').slice(-count).join('\n').trim();
 }
 
+function isNetworkGuardPreloadArgument(argument: string): boolean {
+  const normalized = argument.replace(/\\/g, '/');
+  return (
+    normalized.startsWith('--import=') &&
+    normalized.endsWith('/scripts/test-network-guard.mjs')
+  );
+}
+
 function deterministicCommandArgs(script: TestScript): string[] {
   if (
     !script.command.startsWith('node ') ||
@@ -91,6 +99,12 @@ function deterministicCommandArgs(script: TestScript): string[] {
       `Deterministic script ${script.name} has no executable Node target.`,
     );
   }
+  // buildHermeticTestEnv installs the portable file: preload through
+  // NODE_OPTIONS. Remove every command-local copy so the guarded child imports
+  // it exactly once; direct npm invocation retains its own explicit guard.
+  for (let index = tokens.length - 1; index >= 0; index -= 1) {
+    if (isNetworkGuardPreloadArgument(tokens[index]!)) tokens.splice(index, 1);
+  }
   if (
     tokens[1] === 'scripts/run-with-pinned-node.mjs' &&
     tokens[2] === './node_modules/tsx/dist/cli.mjs' &&
@@ -100,6 +114,17 @@ function deterministicCommandArgs(script: TestScript): string[] {
     // through Node's registered tsx import instead so the guarded process
     // never needs to delegate control to another loader-bearing child.
     return ['--import=tsx', ...tokens.slice(3)];
+  }
+  if (
+    tokens[1] === 'scripts/run-with-pinned-node.mjs' &&
+    tokens[2] === '--import=tsx' &&
+    tokens.length >= 4
+  ) {
+    // This is the equivalent pinned launcher used by certification scripts.
+    // The sweep already runs on the pinned executable, so unwrap exactly this
+    // trusted form. Otherwise the guard-preloaded wrapper would try to spawn a
+    // second Node process with a loader flag, which the guard correctly denies.
+    return tokens.slice(2);
   }
   return tokens.slice(1);
 }
@@ -112,6 +137,16 @@ for (const [name, command] of Object.entries(packageJson.scripts || {})) {
   const reason = exclusionReason(name, command);
   if (reason) excluded.push({ name, command, reason });
   else selected.push({ name, command });
+}
+
+for (const name of ['certify:commitment-intelligence']) {
+  const command = packageJson.scripts?.[name];
+  if (!command) {
+    throw new Error(
+      `Missing required deterministic certification script ${name}.`,
+    );
+  }
+  selected.push({ name, command });
 }
 
 if (listOnly) {

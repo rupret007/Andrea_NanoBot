@@ -504,7 +504,6 @@ function buildLearnedContextHints(input: {
   subjectIds: string[];
   lifeThreadIds: string[];
   whyHints: string[];
-  providerContext: string[];
   existingThreadId?: string | null;
   confidence: RecentTextReviewContextConfidence;
   confidenceReason: string;
@@ -734,38 +733,11 @@ function buildLearnedContextHints(input: {
     ambiguousIdentity,
     toneStyleHints,
     whyHints: [
-      ...subjectNames.map(
-        (name) => `known person: ${sanitizeSnippet(name, 48)}`,
-      ),
-      ...matchedLifeThreads.map(
-        (thread) => `linked thread: ${sanitizeSnippet(thread.title, 64)}`,
-      ),
+      ...subjectNames.map(() => 'known person'),
+      ...matchedLifeThreads.map(() => 'linked thread: active life context'),
       existingThread ? 'existing communication thread' : null,
       ...matchedGraphInsights.map(
-        (insight) => `graph insight: ${sanitizeSnippet(insight.title, 64)}`,
-      ),
-    ].filter(Boolean) as string[],
-    providerContext: [
-      ...subjectNames.map(
-        (name) => `Known person: ${sanitizeSnippet(name, 48)}`,
-      ),
-      ...matchedLifeThreads.map(
-        (thread) =>
-          `Life thread: ${sanitizeSnippet(thread.title, 64)} - ${sanitizeSnippet(thread.summary, 120)}`,
-      ),
-      ...facts.map(
-        (fact) =>
-          `Profile fact about ${sanitizeSnippet(fact.subjectDisplayName, 48)}: ${sanitizeSnippet(fact.sourceSummary || fact.factKey, 120)}`,
-      ),
-      existingThread?.lastInboundSummary
-        ? `Previous communication note: ${sanitizeSnippet(existingThread.lastInboundSummary, 120)}`
-        : null,
-      input.context.contextGraph.coverage.memoryFacts > 0
-        ? `Context graph coverage: ${input.context.contextGraph.coverage.memoryFacts} memory facts, ${input.context.contextGraph.coverage.lifeThreads} life threads`
-        : null,
-      ...matchedGraphInsights.map(
-        (insight) =>
-          `Daily graph insight: ${sanitizeSnippet(insight.title, 64)} - ${sanitizeSnippet(insight.nextAction, 100)}`,
+        (insight) => `graph insight: ${insight.kind.replace(/_/g, ' ')}`,
       ),
     ].filter(Boolean) as string[],
   };
@@ -1252,7 +1224,6 @@ function normalizeSuggestedReplies(
 export function buildRecentTextReviewProviderPrompt(input: {
   windowLabel: string;
   items: RecentTextReviewItem[];
-  learnedContext: string[];
 }): string {
   const sanitizedItems = input.items
     .slice(0, MAX_PROVIDER_ITEMS)
@@ -1279,20 +1250,18 @@ export function buildRecentTextReviewProviderPrompt(input: {
     'You are Andrea reviewing recent synced Messages interactions for the user.',
     'Return JSON only with key items.',
     'Do not include phone numbers, JIDs, raw identifiers, secrets, or private transcript bodies beyond the sanitized snippets provided.',
-    'Stay grounded in the provided snippets and learned context summaries; do not invent commitments or availability.',
+    'Stay grounded in the provided review items and snippets; do not invent commitments or availability.',
     'Each item may include summaryText, whyText, recommendedAction, suggestedReply, suggestedReplies, and section.',
     'summaryText should be a fuller recap of the recent exchange and current state, not just one activity stat.',
     'suggestedReplies should contain 2-3 grounded options with labels like warm, direct, brief, or careful.',
     'Suggested replies must be safe suggestions only, not sendable actions, and must not imply the user approved sending.',
     `Window: ${sanitizeSnippet(input.windowLabel, 80)}`,
-    `Learned context summaries: ${JSON.stringify(input.learnedContext.map((line) => sanitizeSnippet(line, 180)).slice(0, 10))}`,
     `Review items: ${JSON.stringify(sanitizedItems)}`,
   ].join('\n');
 }
 
 async function enhanceWithProvider(input: {
   result: RecentTextReviewResult;
-  learnedContext: string[];
   cloudAnalysisMode: 'auto' | 'disabled';
 }): Promise<RecentTextReviewResult> {
   if (
@@ -1308,7 +1277,6 @@ async function enhanceWithProvider(input: {
   const prompt = buildRecentTextReviewProviderPrompt({
     windowLabel: input.result.window.label,
     items: input.result.items,
-    learnedContext: input.learnedContext,
   });
   const modelCandidates = buildOpenAiModelCandidates('standard', {
     simpleModel: openAi.simpleModel,
@@ -1573,20 +1541,6 @@ export async function reviewRecentTexts(
         item.section !== 'no_reply_needed' || index < MAX_REVIEW_ITEMS,
     )
     .slice(0, MAX_REVIEW_ITEMS);
-  const learnedContext = [
-    ...context.lifeThreads
-      .slice(0, 8)
-      .map(
-        (thread) =>
-          `Life thread: ${sanitizeSnippet(thread.title, 64)} - ${sanitizeSnippet(thread.summary, 120)}`,
-      ),
-    ...context.facts
-      .slice(0, 8)
-      .map(
-        (fact) =>
-          `Profile fact about ${sanitizeSnippet(fact.subjectDisplayName, 48)}: ${sanitizeSnippet(fact.sourceSummary || fact.factKey, 120)}`,
-      ),
-  ];
   const local = buildResultFromItems({
     window,
     items,
@@ -1595,7 +1549,6 @@ export async function reviewRecentTexts(
   });
   return enhanceWithProvider({
     result: local,
-    learnedContext,
     cloudAnalysisMode: input.cloudAnalysisMode || 'disabled',
   });
 }

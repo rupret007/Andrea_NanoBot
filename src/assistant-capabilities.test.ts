@@ -24,6 +24,7 @@ import {
   upsertProfileSubject,
 } from './db.js';
 import { planSimpleReminder } from './local-reminder.js';
+import { handleLifeThreadCommand } from './life-threads.js';
 import { cacheInboundMediaBytes } from './media-cache.js';
 import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
 import type {
@@ -1293,6 +1294,30 @@ describe('assistant capabilities', () => {
     expect(result.capabilityId).toBe('daily.loose_ends');
     expect(result.trace?.responseSource).toBe('local_companion');
     expect(result.dailyResponse?.context.subjectData).toBeDefined();
+  });
+
+  it('does not append speculative life threads as current follow-through', async () => {
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'synthetic:capability-speculation',
+      text: 'I might reorganize the garage someday.',
+      now: new Date('2026-04-05T09:00:00.000Z'),
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'daily.loose_ends',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-05T09:00:00.000Z'),
+      },
+      input: { canonicalText: 'what am I forgetting' },
+    });
+
+    expect(result.replyText).not.toContain('reorganize the garage');
+    expect(result.replyText).not.toContain('Still open right now');
   });
 
   it('runs everyday capture execution and carries list continuation context forward', async () => {

@@ -16,6 +16,7 @@ import {
   formatSetupCompletenessStatus,
   handleMemoryActivationCommand,
 } from './memory-activation.js';
+import { handleLifeThreadCommand } from './life-threads.js';
 import { upsertOutcomeRecord } from './outcome-reviews.js';
 import type { OperatingProfilePlan } from './types.js';
 
@@ -282,6 +283,38 @@ describe('memory activation', () => {
       (fact) => fact.id === accepted.id,
     );
     expect(stillAccepted?.valueJson).toContain('"freshness":"current"');
+  });
+
+  it('does not promote a speculative life thread into a recurring-priority learning candidate', () => {
+    seedSelf();
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'synthetic:memory-speculation',
+      text: 'I might reorganize the archive this weekend.',
+      now,
+    });
+    handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'synthetic:memory-commitment',
+      text: "I'll file the signed permit today.",
+      now,
+    });
+
+    handleMemoryActivationCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      text: 'daily learning review',
+      now,
+    });
+
+    const lifeThreadFacts = listProfileFactsForGroup('main', [
+      'proposed',
+    ]).filter((fact) => fact.factKey.startsWith('learning.life_thread.'));
+    expect(lifeThreadFacts).toHaveLength(1);
+    expect(lifeThreadFacts[0]?.sourceSummary).toContain('signed permit');
+    expect(lifeThreadFacts[0]?.sourceSummary).not.toContain('possibility');
   });
 
   it('proposes memory from repeated follow-through outcomes without auto-accepting sensitive patterns', () => {

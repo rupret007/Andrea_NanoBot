@@ -440,10 +440,26 @@ Useful thread prompts:
 - `Forget that thread`
 - `Actually, the deadline moved to Monday at noon`
 - `Push that to Tuesday morning`
+- `I might submit it Friday`
+- `Actually, I committed to finishing it Friday`
+- `I sent Brandon the file and I'm waiting for his response`
+- `I can't finish the deck until Luke sends the numbers`
+- `Candace is booking the cabin`
+- `Actually, I'll handle it myself`
+- `Let's revisit that next month`
 
 Important trust rules:
 
 - explicit save/track requests create or update a thread directly
+- an idea, tentative plan, firm commitment, and explicit reminder request are
+  not treated as the same strength of obligation
+- Andrea tracks who owns the next action; delegated work remains open but is
+  not presented as the user's immediate task
+- a completed action that starts a waiting period is not repeated; any
+  conditional follow-up stays attached to the original thread
+- blockers preserve the downstream objective without recommending an
+  impossible action, and deferrals suppress premature recall without
+  cancelling the thread
 - sensitive topics are not silently persisted just because they came up in conversation
 - inferred thread suggestions are confirmation-first
 - `forget that thread` deletes the thread; `close` or `pause` keeps history without surfacing it as active
@@ -452,6 +468,16 @@ Important trust rules:
   when two active obligations are plausible
 - relative corrections use the accepted profile timezone, and the prior value
   is retained only as explicitly superseded history
+- exact replay is idempotent, stale evidence cannot revive newer truth, and an
+  ambiguous `that` or ownership change asks for clarification instead of
+  guessing or creating a duplicate
+
+Commitment tracking does not grant Andrea new authority. A request such as
+`remind me to submit it` can make Andrea responsible for the reminder; it does
+not authorize Andrea to submit, send, purchase, change a calendar, or perform
+another external action without the approval that action already requires.
+See [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md) for the complete
+model and its current certification status.
 
 ## What To Expect From `/cursor_status`
 

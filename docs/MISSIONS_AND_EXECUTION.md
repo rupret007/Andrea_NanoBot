@@ -178,13 +178,13 @@ silently become control- or direct-assistant context. Mutable group
 plugins remain read-only trusted views.
 
 Focused adversarial, hard-kill, held-out, repository-content, and legacy
-projection checks pass on the released tree. The deterministic
-inventory contains 108 commands: 93 selected by the release sweep and 15
-explicitly excluded; all 93 selected commands pass. The complete local release
-matrix and exact-SHA hosted gates pass. Production currently serves the prior
-application commit because the final `main` commit changed CI workflow/test
-code only, so the running SHA and workspace `HEAD` remain honestly reported as
-different. Local fixtures are not a deployed recovery claim.
+projection checks pass on the released baseline. The current deterministic
+inventory contains 109 commands: 94 selected by the release sweep and 15
+explicitly excluded. Re-run the sweep after any script change rather than
+carrying those counts forward. Exact-SHA hosted gates and production alignment
+are release-specific; use `npm run services:status` and
+[CURRENT_STATUS.md](CURRENT_STATUS.md) for current evidence. Local fixtures are
+not a deployed recovery claim.
 
 ## Channel Shape
 

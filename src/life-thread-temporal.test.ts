@@ -17,7 +17,10 @@ import {
   buildLifeThreadSnapshot,
   handleLifeThreadCommand,
 } from './life-threads.js';
-import { parseLifeThreadTemporalState } from './life-thread-temporal.js';
+import {
+  parseLifeThreadTemporalState,
+  shiftLifeThreadLocalDate,
+} from './life-thread-temporal.js';
 import type { LifeThread } from './types.js';
 
 const reference = new Date('2026-07-14T09:00:00-05:00');
@@ -86,12 +89,18 @@ function contextFor(thread: LifeThread) {
 
 function correct(
   text: string,
-  options: { at?: Date; context?: LifeThread; chatJid?: string } = {},
+  options: {
+    at?: Date;
+    context?: LifeThread;
+    chatJid?: string;
+    messageId?: string;
+  } = {},
 ) {
   return handleLifeThreadCommand({
     groupFolder: 'temporal',
     channel: 'telegram',
     chatJid: options.chatJid,
+    messageId: options.messageId,
     text,
     priorContext: options.context ? contextFor(options.context) : null,
     now: options.at || new Date('2026-07-14T10:00:00-05:00'),
@@ -99,6 +108,37 @@ function correct(
 }
 
 describe('life-thread temporal truth', () => {
+  it('uses calendar quarter boundaries and future month targets', () => {
+    expect(
+      shiftLifeThreadLocalDate({
+        now: new Date('2026-11-15T09:00:00-06:00'),
+        timeZone: 'America/Chicago',
+        quarters: 1,
+        day: 1,
+        hour: 9,
+      }),
+    ).toBe('2027-01-01T15:00:00.000Z');
+    expect(
+      shiftLifeThreadLocalDate({
+        now: reference,
+        timeZone: 'America/Chicago',
+        targetMonthName: 'July',
+        day: 1,
+        hour: 9,
+      }),
+    ).toBe('2027-07-01T14:00:00.000Z');
+  });
+
+  it('iterates local calendar days safely across daylight-saving changes', () => {
+    expect(
+      shiftLifeThreadLocalDate({
+        now: new Date('2026-10-30T09:00:00-05:00'),
+        timeZone: 'America/Chicago',
+        days: 3,
+        hour: 9,
+      }),
+    ).toBe('2026-11-02T15:00:00.000Z');
+  });
   it('gives this-Friday and next-Friday deterministic, distinct meanings', () => {
     expect(
       parseLifeThreadTemporalState({
@@ -140,12 +180,15 @@ describe('life-thread temporal truth', () => {
     );
     expect(current.nextAction).toBe(current.summary);
     expect(current.nextAction).not.toMatch(/Friday|3:00 PM/);
-    expect(signals[0]?.summaryText).toContain('temporal_supersession:');
-    expect(signals[0]?.summaryText).toContain(
-      'superseded=2026-07-17T20:00:00.000Z',
+    expect(signals[0]?.summaryText).toContain('commitment_transition:active');
+    expect(signals[0]?.commitmentTransition?.reason).toContain(
+      'corrected the active temporal truth',
     );
-    expect(signals[0]?.summaryText).toContain(
-      'active=2026-07-20T17:00:00.000Z',
+    expect(
+      signals[0]?.commitmentTransition?.afterState?.evidence.at(-1)
+        ?.reasonKinds,
+    ).toEqual(
+      expect.arrayContaining(['temporal', 'correction', 'state_transition']),
     );
     expect(listLifeThreadsForGroup('temporal')).toHaveLength(1);
   });
@@ -268,10 +311,15 @@ describe('life-thread temporal truth', () => {
       'permit application',
       'The permit application is due Thursday at 5:00 PM.',
     );
-    const first = correct('The permit deadline moved to Friday at noon.');
+    const first = correct('The permit deadline moved to Friday at noon.', {
+      messageId: 'correction-event-one',
+    });
     const afterFirst = getLifeThread(permit.id)!;
     const signalCount = listLifeThreadSignals(permit.id, 20).length;
-    const second = correct('The permit deadline moved to Friday at noon.');
+    const second = correct('The permit deadline moved to Friday at noon.', {
+      messageId: 'correction-event-one',
+      at: new Date('2026-07-14T10:01:00-05:00'),
+    });
 
     expect(first.temporalResolution).toBe('applied');
     expect(second.temporalResolution).toBe('duplicate');
@@ -280,6 +328,59 @@ describe('life-thread temporal truth', () => {
       lastUpdatedAt: afterFirst.lastUpdatedAt,
     });
     expect(listLifeThreadSignals(permit.id, 20)).toHaveLength(signalCount);
+    const distinctOccurrence = correct(
+      'The permit deadline moved to Friday at noon.',
+      {
+        messageId: 'correction-event-two',
+        at: new Date('2026-07-14T10:02:00-05:00'),
+      },
+    );
+    expect(distinctOccurrence.temporalResolution).toBe('applied');
+    expect(listLifeThreadSignals(permit.id, 20)).toHaveLength(signalCount + 1);
+  });
+
+  it('deduplicates a semantic replay without a transport id but permits a later reversion', () => {
+    const permit = save(
+      'permit application',
+      'The permit application is due Thursday at 5:00 PM.',
+    );
+    const fridayText = 'The permit deadline moved to Friday at noon.';
+    const first = correct(fridayText, {
+      context: permit,
+      at: new Date('2026-07-14T10:00:00-05:00'),
+    });
+    const afterFirst = getLifeThread(permit.id)!;
+    const afterFirstSignals = listLifeThreadSignals(permit.id, 20).length;
+    const replay = correct(fridayText, {
+      context: afterFirst,
+      at: new Date('2026-07-14T10:01:00-05:00'),
+    });
+
+    expect(first.temporalResolution).toBe('applied');
+    expect(replay.temporalResolution).toBe('duplicate');
+    expect(getLifeThread(permit.id)?.lastUpdatedAt).toBe(
+      afterFirst.lastUpdatedAt,
+    );
+    expect(listLifeThreadSignals(permit.id, 20)).toHaveLength(
+      afterFirstSignals,
+    );
+
+    const monday = correct('Move the permit deadline to Monday at noon.', {
+      context: getLifeThread(permit.id),
+      at: new Date('2026-07-14T10:02:00-05:00'),
+    });
+    const revert = correct(fridayText, {
+      context: getLifeThread(permit.id),
+      at: new Date('2026-07-14T10:03:00-05:00'),
+    });
+    expect(monday.temporalResolution).toBe('applied');
+    expect(revert.temporalResolution).toBe('applied');
+    expect(getLifeThread(permit.id)?.nextFollowupAt).toBe(
+      '2026-07-17T17:00:00.000Z',
+    );
+    expect(listLifeThreadSignals(permit.id, 20)).toHaveLength(
+      afterFirstSignals + 2,
+    );
   });
 
   it('survives two durable close/reopen cycles and accepts a newer correction after restart', () => {

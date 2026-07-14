@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _initTestDatabase,
+  getCommunicationThread,
   getAllTasks,
   listCommunicationThreadsForGroup,
   storeChatMetadata,
   storeMessageDirect,
   updateCommunicationThread,
   upsertLifeThread,
+  upsertProfileFact,
   upsertProfileSubject,
 } from './db.js';
 import {
@@ -37,6 +39,74 @@ function seedCandace(): ProfileSubject {
   };
   upsertProfileSubject(subject);
   return subject;
+}
+
+function seedSelf(): ProfileSubject {
+  const subject: ProfileSubject = {
+    id: 'subject-self',
+    groupFolder: 'main',
+    kind: 'self',
+    canonicalName: 'self',
+    displayName: 'Jeff',
+    createdAt: '2026-04-06T08:00:00.000Z',
+    updatedAt: '2026-04-06T08:00:00.000Z',
+    disabledAt: null,
+  };
+  upsertProfileSubject(subject);
+  return subject;
+}
+
+function seedCommunicationStyleFact(params: {
+  id: string;
+  subjectId: string;
+  canary: string;
+  style: string;
+}): void {
+  upsertProfileFact({
+    id: params.id,
+    groupFolder: 'main',
+    subjectId: params.subjectId,
+    category: 'conversational_style',
+    factKey: `style-${params.id}`,
+    valueJson: JSON.stringify({
+      note: `${params.canary} ${params.style}`,
+    }),
+    state: 'accepted',
+    sourceChannel: 'telegram',
+    sourceSummary: `${params.canary} prefers a ${params.style} response`,
+    createdAt: '2026-04-06T08:00:00.000Z',
+    updatedAt: '2026-04-06T08:00:00.000Z',
+    decidedAt: '2026-04-06T08:00:00.000Z',
+  });
+}
+
+function seedSensitiveTitleLifeThread(id: string, title: string): void {
+  upsertLifeThread({
+    id,
+    groupFolder: 'main',
+    title,
+    category: 'relationship',
+    status: 'active',
+    scope: 'personal',
+    relatedSubjectIds: [],
+    contextTags: ['private'],
+    summary: 'Private planning context that is not outbound message content.',
+    nextAction: 'Review the private plan.',
+    nextFollowupAt: null,
+    sourceKind: 'explicit',
+    confidenceKind: 'explicit',
+    userConfirmed: true,
+    sensitivity: 'sensitive',
+    surfaceMode: 'default',
+    followthroughMode: 'important_only',
+    lastSurfacedAt: null,
+    snoozedUntil: null,
+    linkedTaskId: null,
+    mergedIntoThreadId: null,
+    createdAt: '2026-04-06T08:00:00.000Z',
+    lastUpdatedAt: '2026-04-06T08:00:00.000Z',
+    lastUsedAt: null,
+  });
 }
 
 describe('communication companion', () => {
@@ -628,6 +698,381 @@ describe('communication companion', () => {
     expect(result.fallbackNote).toBeUndefined();
   });
 
+  it('uses profile facts only as closed style choices without exposing self or recipient facts', async () => {
+    seedCandace();
+    seedSelf();
+    seedCommunicationStyleFact({
+      id: 'self-private-style',
+      subjectId: 'subject-self',
+      canary: 'PRIVATE-PROFILE-CANARY-SELF',
+      style: 'warm',
+    });
+    seedCommunicationStyleFact({
+      id: 'recipient-private-style',
+      subjectId: 'subject-candace',
+      canary: 'PRIVATE-PROFILE-CANARY-RECIPIENT',
+      style: 'direct',
+    });
+
+    const deterministic = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+    expect(JSON.stringify(deterministic)).not.toContain(
+      'PRIVATE-PROFILE-CANARY',
+    );
+    expect(deterministic.thread?.toneStyleHints).toEqual(
+      expect.arrayContaining(['warmer', 'direct']),
+    );
+
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    let providerBody = '';
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      providerBody = String(init?.body || '');
+      return new Response(
+        JSON.stringify({
+          output_text:
+            '{"draftText":"Hey Candace, dinner still works for me."}',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+    const modelDraft = await draftCommunicationReplyWithChannelFluidity({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:self',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-06T09:01:00.000Z'),
+    });
+    expect(modelDraft.ok).toBe(true);
+    expect(providerBody).not.toContain('PRIVATE-PROFILE-CANARY');
+    expect(providerBody).not.toContain('prefers a');
+  });
+
+  it('keeps a newly linked sensitive life-thread title out of provider input', async () => {
+    const canary = 'PRIVATE-THREAD-TITLE-CANARY-NEW';
+    seedSensitiveTitleLifeThread('private-title-new', canary);
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    let providerBody = '';
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      providerBody = String(init?.body || '');
+      return new Response(
+        JSON.stringify({
+          output_text:
+            '{"draftText":"Hey, can you confirm whether dinner still works tonight?"}',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const result = await draftCommunicationReplyWithChannelFluidity({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:self',
+      text: 'Draft this reply: Can you confirm whether dinner still works tonight?',
+      priorContext: {
+        communicationLifeThreadIds: ['private-title-new'],
+      },
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.thread?.title).toBe('Communication follow-up');
+    expect(providerBody).not.toContain(canary);
+  });
+
+  it('purges a legacy sensitive life-thread title before BlueBubbles provider use', async () => {
+    const canary = 'PRIVATE-THREAD-TITLE-CANARY-LEGACY';
+    seedSensitiveTitleLifeThread('private-title-legacy', canary);
+    const seeded = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'Can you confirm whether dinner still works tonight?',
+      priorContext: {
+        communicationLifeThreadIds: ['private-title-legacy'],
+      },
+      now: new Date('2026-04-06T08:30:00.000Z'),
+    });
+    updateCommunicationThread(seeded.thread!.id, {
+      title: `${canary} conversation`,
+      toneStyleHints: [`${canary} raw style`],
+    });
+
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    let providerBody = '';
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      providerBody = String(init?.body || '');
+      return new Response(
+        JSON.stringify({
+          output_text:
+            '{"draftText":"Hey, can you confirm whether dinner still works tonight?"}',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+    const result = await draftCommunicationReplyWithChannelFluidity({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:self',
+      text: 'Draft this reply: Can you confirm whether dinner still works tonight?',
+      priorContext: {
+        communicationThreadId: seeded.thread!.id,
+        communicationLifeThreadIds: ['private-title-legacy'],
+      },
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(providerBody).not.toContain(canary);
+    expect(getCommunicationThread(seeded.thread!.id)?.title).toBe(
+      'Communication follow-up',
+    );
+    expect(getCommunicationThread(seeded.thread!.id)?.toneStyleHints).toEqual(
+      [],
+    );
+  });
+
+  it('keeps sensitive cross-topic life-thread context out of drafts and provider payloads', async () => {
+    seedCandace();
+    upsertLifeThread({
+      id: 'thread-candace-private-legal',
+      groupFolder: 'main',
+      title: 'Confidential divorce plan',
+      category: 'relationship',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: ['subject-candace'],
+      contextTags: ['legal', 'private'],
+      summary: 'Confidential divorce plan.',
+      nextAction: 'Call the lawyer before Candace sees the filing.',
+      nextFollowupAt: null,
+      sourceKind: 'explicit',
+      confidenceKind: 'explicit',
+      userConfirmed: true,
+      sensitivity: 'sensitive',
+      surfaceMode: 'default',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+      mergedIntoThreadId: null,
+      createdAt: '2026-04-06T08:00:00.000Z',
+      lastUpdatedAt: '2026-04-06T08:00:00.000Z',
+      lastUsedAt: null,
+    });
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    let providerBody = '';
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      providerBody = String(init?.body || '');
+      return new Response(
+        JSON.stringify({
+          output_text:
+            '{"draftText":"Hey Candace, can you let me know whether dinner still works tonight?"}',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const result = await draftCommunicationReplyWithChannelFluidity({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:self',
+      text: 'what should I say back',
+      conversationSummary:
+        'Candace wants a follow-up about whether dinner still works tonight.',
+      priorContext: {
+        personName: 'Candace',
+        communicationSubjectIds: ['subject-candace'],
+        communicationLifeThreadIds: ['thread-candace-private-legal'],
+        lastCommunicationSummary:
+          'Candace wants a follow-up about whether dinner still works tonight.',
+      },
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toContain('dinner still works tonight');
+    expect(result.draftText).not.toContain('divorce');
+    expect(result.draftText).not.toContain('lawyer');
+    expect(providerBody).not.toContain('Confidential divorce plan');
+    expect(providerBody).not.toContain('Call the lawyer');
+    expect(providerBody).not.toContain('filing');
+  });
+
+  it('does not promote sensitive life-thread text into a command-only draft topic', () => {
+    seedCandace();
+    upsertLifeThread({
+      id: 'thread-candace-command-private',
+      groupFolder: 'main',
+      title: 'Confidential divorce plan',
+      category: 'relationship',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: ['subject-candace'],
+      contextTags: ['legal', 'private'],
+      summary: 'Confidential divorce plan.',
+      nextAction: 'Call the lawyer before Candace sees the filing.',
+      nextFollowupAt: null,
+      sourceKind: 'explicit',
+      confidenceKind: 'explicit',
+      userConfirmed: true,
+      sensitivity: 'sensitive',
+      surfaceMode: 'default',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+      mergedIntoThreadId: null,
+      createdAt: '2026-04-06T08:00:00.000Z',
+      lastUpdatedAt: '2026-04-06T08:00:00.000Z',
+      lastUsedAt: null,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what should I say back',
+      priorContext: {
+        personName: 'Candace',
+        communicationSubjectIds: ['subject-candace'],
+        communicationLifeThreadIds: ['thread-candace-command-private'],
+      },
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).not.toContain('divorce');
+    expect(result.draftText).not.toContain('lawyer');
+    expect(result.draftText).not.toContain('filing');
+    expect(result.summaryText).not.toContain('divorce');
+  });
+
+  it('does not reuse a legacy summary linked to unsafe private planning state', () => {
+    seedCandace();
+    upsertLifeThread({
+      id: 'thread-candace-legacy-private',
+      groupFolder: 'main',
+      title: 'Confidential divorce plan',
+      category: 'relationship',
+      status: 'active',
+      scope: 'personal',
+      relatedSubjectIds: ['subject-candace'],
+      contextTags: ['legal', 'private'],
+      summary: 'Confidential divorce plan.',
+      nextAction: 'Call the secret lawyer.',
+      nextFollowupAt: null,
+      sourceKind: 'explicit',
+      confidenceKind: 'explicit',
+      userConfirmed: true,
+      sensitivity: 'sensitive',
+      surfaceMode: 'default',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+      mergedIntoThreadId: null,
+      createdAt: '2026-04-06T08:00:00.000Z',
+      lastUpdatedAt: '2026-04-06T08:00:00.000Z',
+      lastUsedAt: null,
+    });
+    const seeded = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:candace',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      priorContext: {
+        communicationSubjectIds: ['subject-candace'],
+        communicationLifeThreadIds: ['thread-candace-legacy-private'],
+      },
+      now: new Date('2026-04-06T08:30:00.000Z'),
+    });
+    const contaminated =
+      'Candace wants a follow-up about ULTRA-PRIVATE-LEGACY-DIVORCE and the secret lawyer.';
+    updateCommunicationThread(seeded.thread!.id, {
+      lastInboundSummary: contaminated,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what should I say back',
+      priorContext: {
+        personName: 'Candace',
+        communicationThreadId: seeded.thread!.id,
+        communicationSubjectIds: ['subject-candace'],
+        communicationLifeThreadIds: ['thread-candace-legacy-private'],
+        lastCommunicationSummary: contaminated,
+      },
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.summaryText).not.toContain('ULTRA-PRIVATE');
+    expect(result.draftText).not.toContain('ULTRA-PRIVATE');
+    expect(result.draftText).not.toContain('lawyer');
+    expect(getCommunicationThread(seeded.thread!.id)?.lastInboundSummary).toBe(
+      contaminated,
+    );
+  });
+
+  it('never borrows another recipient communication thread as fallback', () => {
+    seedCandace();
+    upsertProfileSubject({
+      id: 'subject-bob',
+      groupFolder: 'main',
+      kind: 'person',
+      canonicalName: 'bob',
+      displayName: 'Bob',
+      createdAt: '2026-04-06T08:00:00.000Z',
+      updatedAt: '2026-04-06T08:00:00.000Z',
+      disabledAt: null,
+    });
+    const bob = analyzeCommunicationMessage({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'tg:bob',
+      text: 'Bob: Can you answer me about BOB-PRIVATE-DIAGNOSIS-CANARY?',
+      now: new Date('2026-04-06T08:30:00.000Z'),
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'what should I say back',
+      priorContext: {
+        personName: 'Candace',
+        communicationSubjectIds: ['subject-candace'],
+      },
+      now: new Date('2026-04-06T09:00:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.summaryText).not.toContain('BOB-PRIVATE');
+    expect(result.draftText).not.toContain('BOB-PRIVATE');
+    expect(result.thread?.id).not.toBe(bob.thread?.id);
+    expect(result.linkedSubjects.map((subject) => subject.id)).toEqual([
+      'subject-candace',
+    ]);
+  });
+
   it('falls back honestly when the richer Messages draft lane is unavailable', async () => {
     seedCandace();
     vi.unstubAllEnvs();
@@ -757,7 +1202,7 @@ describe('communication companion', () => {
       sourceKind: 'explicit',
       confidenceKind: 'high',
       userConfirmed: true,
-      sensitivity: 'sensitive',
+      sensitivity: 'normal',
       surfaceMode: 'default',
       followthroughMode: 'important_only',
       lastSurfacedAt: null,
@@ -776,6 +1221,7 @@ describe('communication companion', () => {
       conversationSummary:
         'Candace wants a follow-up about whether dinner still works tonight.',
       priorContext: {
+        communicationLifeThreadIds: ['thread-candace-dinner-proof'],
         lastCommunicationSummary:
           'Candace wants a follow-up about whether dinner still works tonight.',
       },

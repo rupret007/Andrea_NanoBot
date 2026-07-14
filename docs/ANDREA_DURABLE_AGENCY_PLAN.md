@@ -36,7 +36,7 @@ and other external effects remain fresh-approval-only.
   episodic context stay separate internally and compile only cited, bounded
   context for a turn.
 - Google Calendar uses a same-thread draft and explicit confirmation. The
-  current candidate gives every pending approved create a stable private
+  released implementation gives every pending approved create a stable private
   provider event identity, records an accepted event before outbound delivery,
   and reconciles a retry instead of creating a second event.
 - A compound Calendar + research request splits into an approval-gated calendar
@@ -67,14 +67,14 @@ and other external effects remain fresh-approval-only.
 
 ## Work Packages And Acceptance
 
-| Package | Scope | Acceptance evidence |
-| --- | --- | --- |
-| Durable execution | Checkpoint, lease, receipt, recovery, and postcondition invariants | hard-kill and held-out continuity proofs; stale/unknown effects never replay |
-| Everyday actions | Calendar, reminders, drafts, and follow-through use stable pending state and preserve approval boundaries | focused domain tests; provider failure and delivery failure recovery tests |
-| Context and identity | Explicit opt-in provenance, source isolation, expiry, revoke/forget, contradiction handling, and cited retrieval | deterministic packet/privacy/retrieval tests; no raw message archive |
-| Research and deep work | Bounded task packets with sources, artifacts, checks, risks, and next decision | routing and deep-work tests; research cannot block an already-delivered primary response |
-| Learning | Owner-reviewed outcomes, routine/skill promotion gates, and regression fixtures | five genuine, distinct owner reviews before baseline review; no synthetic promotion |
-| Recovery and operations | Startup reconciliation, health classification, safe retries, and restart proof | service status/provenance checks after a committed release; external proof debt remains explicit |
+| Package                 | Scope                                                                                                            | Acceptance evidence                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Durable execution       | Checkpoint, lease, receipt, recovery, and postcondition invariants                                               | hard-kill and held-out continuity proofs; stale/unknown effects never replay                     |
+| Everyday actions        | Calendar, reminders, drafts, and follow-through use stable pending state and preserve approval boundaries        | focused domain tests; provider failure and delivery failure recovery tests                       |
+| Context and identity    | Explicit opt-in provenance, source isolation, expiry, revoke/forget, contradiction handling, and cited retrieval | deterministic packet/privacy/retrieval tests; no raw message archive                             |
+| Research and deep work  | Bounded task packets with sources, artifacts, checks, risks, and next decision                                   | routing and deep-work tests; research cannot block an already-delivered primary response         |
+| Learning                | Owner-reviewed outcomes, routine/skill promotion gates, and regression fixtures                                  | five genuine, distinct owner reviews before baseline review; no synthetic promotion              |
+| Recovery and operations | Startup reconciliation, health classification, safe retries, and restart proof                                   | service status/provenance checks after a committed release; external proof debt remains explicit |
 
 ## Evidence Rules
 
@@ -89,10 +89,10 @@ and other external effects remain fresh-approval-only.
 - A baseline needs five distinct owner-reviewed outcomes. Do not create empty
   baselines or count repeated review, drills, or synthetic work.
 
-## Current Candidate And Next Proof
+## Released Compound Boundary And Next Proof
 
-The released calendar-plus-research correction remains the baseline. The
-current worktree adds a reminder-plus-research recovery candidate: an inbound
+Released code includes both the calendar-plus-research correction and the
+reminder-plus-research recovery path: an inbound
 channel operation creates a deterministic reminder task identity, the task is
 the durable receipt before acknowledgement, and retries converge on the same
 task. Its read-only research sidecar has a separate persisted status; a
@@ -110,11 +110,11 @@ does not attach a bare timing answer to an arbitrary draft: it asks for an
 explicit target (for example, `call the pharmacy: Friday afternoon`) and leaves
 the other pending reminder intact.
 
-Before this candidate can be described as released, run the full repository
-validation matrix, review the complete diff for privacy and approval
-regressions, then commit and publish the coherent candidate. A real user turn
-may later prove the compound journey; that proof must not be manufactured by
-creating a reminder or paid/live research solely for testing.
+The repository release gates for that compound boundary passed in its dated
+round. A real user turn remains the next proof and must not be manufactured by
+creating a reminder or paid/live research solely for testing. Current release
+status belongs in [CURRENT_STATUS.md](CURRENT_STATUS.md); the present candidate
+is Commitment Intelligence, not another compound-workflow implementation.
 
 Remaining architectural work is deliberately incremental: migrate ordinary
 action surfaces into the existing durable/action ledgers where evidence shows a

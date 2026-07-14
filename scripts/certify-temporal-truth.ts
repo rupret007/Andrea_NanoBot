@@ -249,15 +249,15 @@ async function main(): Promise<void> {
     });
     const beforeRestart = getLifeThread(permit.id)!;
     const firstSignals = listLifeThreadSignals(permit.id, 20);
+    const firstTransition = firstSignals[0]?.commitmentTransition;
     result(
       results,
       'Deadline supersession before restart',
       first.temporalResolution === 'applied' &&
         beforeRestart.nextFollowupAt === '2026-07-20T17:00:00.000Z' &&
         !/Friday|3:00 PM/.test(beforeRestart.nextAction || '') &&
-        firstSignals[0]?.summaryText.includes(
-          'superseded=2026-07-17T20:00:00.000Z',
-        ) === true,
+        firstTransition?.beforeState?.dueAt === '2026-07-17T20:00:00.000Z' &&
+        firstTransition.afterState?.dueAt === '2026-07-20T17:00:00.000Z',
       `resolution=${first.temporalResolution}; active=${beforeRestart.nextFollowupAt}; next=${beforeRestart.nextAction}; provenance=${firstSignals[0]?.summaryText}`,
     );
 

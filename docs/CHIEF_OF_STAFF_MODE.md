@@ -77,13 +77,22 @@ Chief-of-staff mode does **not**:
 
 Those systems stay canonical:
 
-- life threads = ongoing matters
+- life threads = ongoing matters plus the canonical commitment state that says
+  whether the next action is real, who owns it, and whether it is actionable,
+  waiting, blocked, delegated, deferred, or terminal
 - communication threads = people and reply follow-through
 - missions = explicit multi-step plans and bounded execution state
 - reminders = concrete nudges
 - rituals = timing and surfacing behavior
 - knowledge library = saved source material
 - current work = immediate execution focus
+
+Chief-of-staff synthesis consumes that current commitment state. It must not
+promote a speculative idea into a priority, repeat a completed send while the
+thread is waiting, tell the user to perform delegated work, or rank an
+impossible blocked action above comparable actionable work. The explanation
+should name the useful real-world reason rather than expose internal enum
+labels. See [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
 
 ## Channel Shape
 

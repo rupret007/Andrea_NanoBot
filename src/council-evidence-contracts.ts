@@ -121,7 +121,7 @@ export function buildCouncilEvidenceContract(
     sourcePriority: sourceAttribution.sourcePriority,
     citationLabel: sourceAttribution.citationLabel,
     availableToCouncil:
-      card.sensitivity !== 'sensitive' || card.summary.trim().length > 0,
+      card.availableToCouncil ?? card.sensitivity !== 'sensitive',
     conflictGroup: card.conflictGroup || null,
     conflictsWithEvidenceIds: card.conflictsWithEvidenceIds || [],
     sourceAttribution,

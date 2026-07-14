@@ -294,6 +294,12 @@ Practical meaning:
 The actual ongoing matters still live in life threads.
 The ritual layer only decides how and when Andrea should surface them.
 
+Each life thread's canonical Commitment Intelligence state—not historical
+signals or a stale compatibility field—determines strength, ownership,
+readiness, waiting, blocking, delegation, deferral, and terminal truth. The
+ritual capability only controls when a currently eligible item is surfaced.
+See [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
+
 ## Bounded Research Orchestrator
 
 Andrea now has a bounded research orchestrator in [src/research-orchestrator.ts](../src/research-orchestrator.ts).

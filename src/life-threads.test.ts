@@ -9,6 +9,7 @@ import {
   storeMessage,
   updateLifeThread,
 } from './db.js';
+import { buildCognitiveWorldSnapshot } from './cognitive-executive.js';
 import {
   buildLifeThreadSnapshot,
   findLifeThreadForExplicitLookup,
@@ -17,6 +18,7 @@ import {
   isAutomaticSurfaceWorthyLifeThread,
   maybeCreatePendingLifeThreadSuggestion,
 } from './life-threads.js';
+import { getLifeThreadCommitment } from './life-thread-commitment.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -198,7 +200,12 @@ describe('life threads', () => {
     const communitySignals = listLifeThreadSignals(community.id, 10);
     expect(merged.responseText).toContain('merged Band into Community');
     expect(archivedBand?.status).toBe('archived');
-    expect(communitySignals).toHaveLength(2);
+    expect(communitySignals).toHaveLength(1);
+    expect(
+      listLifeThreadSignals(band.id, 10).filter(
+        (signal) => signal.commitmentTransition,
+      ),
+    ).toHaveLength(2);
   });
 
   it('keeps inferred thread suggestions pending until the user confirms them', () => {
@@ -324,6 +331,75 @@ describe('life threads', () => {
     );
   });
 
+  it('keeps manual, disabled, snoozed, and non-actionable commitments out of Cognitive Executive focus', () => {
+    const now = new Date('2026-04-04T09:00:00.000Z');
+    const create = (title: string, detail: string, minute: number) =>
+      handleLifeThreadCommand({
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: `tg:cognitive-${title}`,
+        messageId: `message:cognitive-${title}`,
+        text: `save this under the ${title} thread`,
+        replyText: detail,
+        now: new Date(now.getTime() + minute * 60_000),
+      }).referencedThread!;
+    const manual = create(
+      'manual focus',
+      'Review the private manual packet.',
+      0,
+    );
+    const disabled = create('disabled focus', 'Review the disabled packet.', 1);
+    const snoozed = create('snoozed focus', 'Review the snoozed packet.', 2);
+    const speculative = handleLifeThreadCommand({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:cognitive-speculative',
+      messageId: 'message:cognitive-speculative',
+      text: 'I might review the speculative archive someday.',
+      now: new Date(now.getTime() + 3 * 60_000),
+    }).referencedThread!;
+
+    updateLifeThread(manual.id, {
+      surfaceMode: 'manual_only',
+      followthroughMode: 'manual_only',
+    });
+    updateLifeThread(disabled.id, { followthroughMode: 'off' });
+    updateLifeThread(snoozed.id, {
+      snoozedUntil: '2026-04-10T14:00:00.000Z',
+    });
+
+    const world = buildCognitiveWorldSnapshot({
+      groupFolder: 'main',
+      intentFamily: 'next_action',
+      now: new Date('2026-04-04T18:00:00.000Z'),
+      persist: false,
+    });
+    const suppressedIds = [manual.id, disabled.id, snoozed.id, speculative.id];
+
+    const automaticallyFocusedLifeThreadIds = world.items
+      .filter((item) => item.itemKind === 'life_thread')
+      .map((item) => item.sourceId);
+    expect(
+      suppressedIds.filter((id) =>
+        automaticallyFocusedLifeThreadIds.includes(id),
+      ),
+    ).toEqual([]);
+    expect(world.snapshot.currentFocus).not.toMatch(
+      /private manual|disabled packet|snoozed packet|speculative archive/i,
+    );
+    expect(world.snapshot.nextAction).not.toMatch(
+      /private manual|disabled packet|snoozed packet|speculative archive/i,
+    );
+    for (const title of ['manual focus', 'disabled focus', 'snoozed focus']) {
+      expect(
+        findLifeThreadForExplicitLookup({
+          groupFolder: 'main',
+          query: title,
+        })?.title.toLowerCase(),
+      ).toBe(title);
+    }
+  });
+
   it('keeps low-value placeholder threads out of automatic recommendations', () => {
     handleLifeThreadCommand({
       groupFolder: 'main',
@@ -373,7 +449,10 @@ describe('life threads', () => {
     expect(result.responseText).toContain('Candace');
     expect(thread?.followthroughMode).toBe('scheduled');
     expect(thread?.nextFollowupAt).toBeTruthy();
-    expect(thread?.nextAction).toContain('Talk to Candace');
+    expect(thread?.nextAction).toBeNull();
+    expect(getLifeThreadCommitment(thread!).downstreamAction).toContain(
+      'Talk to Candace',
+    );
   });
 
   it('uses the clean summary line when save-for-later context includes a draft block', () => {
@@ -501,7 +580,7 @@ describe('life threads', () => {
     });
     expect(getLifeThread(unrelated.id)?.status).toBe('active');
     expect(listLifeThreadSignals(expense.id, 5)[0]?.summaryText).toContain(
-      'completed:',
+      'commitment_transition:completed',
     );
     expect(
       buildLifeThreadSnapshot({ groupFolder: 'main' }).activeThreads.map(
@@ -584,11 +663,11 @@ describe('life threads', () => {
     expect(getLifeThread(heldOut.id)?.status).toBe('closed');
     expect(getLifeThread(unrelated.id)?.status).toBe('active');
     expect(listLifeThreadSignals(exact.id, 5)[0]?.summaryText).toContain(
-      'cancelled:',
+      'commitment_transition:cancelled',
     );
   });
 
-  it('does not close an obligation when explicit target terms conflict with unrelated context', () => {
+  it('asks for clarification without mutation when target terms conflict with unrelated context', () => {
     const first = handleLifeThreadCommand({
       groupFolder: 'main',
       channel: 'telegram',
@@ -632,7 +711,8 @@ describe('life threads', () => {
     });
 
     expect(referentialResult.handled).toBe(false);
-    expect(result.handled).toBe(false);
+    expect(result.handled).toBe(true);
+    expect(result.responseText).toContain('more than one open commitment');
     expect(getLifeThread(first.id)?.status).toBe('active');
     expect(getLifeThread(second.id)?.status).toBe('active');
     expect(getLifeThread(unrelated.id)?.status).toBe('active');

@@ -1,5 +1,15 @@
-import { listLifeThreadsForGroup, listProfileFactsForGroup } from './db.js';
+import {
+  listLifeThreadsForGroup,
+  listPersonalMemoryPolicies,
+  listProfileFactsForGroup,
+} from './db.js';
 import { buildIntegrationDoctorReport } from './integration-doctor.js';
+import { resolveLifeThreadTimeZone } from './life-threads.js';
+import {
+  describeLifeThreadCommitment,
+  getLifeThreadCommitment,
+  shouldProactivelySurfaceCommitment,
+} from './life-thread-commitment.js';
 import { searchKnowledgeLibrary } from './knowledge-library.js';
 import type {
   CouncilEvidenceCard,
@@ -7,6 +17,7 @@ import type {
   CouncilEvidencePack,
   CouncilEvidenceScorecard,
 } from './council-contracts.js';
+import type { LifeThreadSourceKind, PersonalMemorySource } from './types.js';
 import { redactCouncilText } from './council-safety.js';
 import type { PlatformTaskFamily } from './andrea-platform-bridge.js';
 import {
@@ -24,12 +35,51 @@ export interface BuildCouncilEvidencePackInput {
   metadata?: Record<string, string>;
   correlationId?: string | null;
   providerHealthSnapshots?: ProviderHealthSnapshot[];
+  /**
+   * Source classes the owner explicitly approved for provider-visible council
+   * snippets in this request. Local memory opt-in is necessary but is not, by
+   * itself, provider-egress consent.
+   */
+  providerConsentedSources?: PersonalMemorySource[];
+  now?: Date;
+}
+
+function lifeThreadPersonalMemorySource(
+  sourceKind: LifeThreadSourceKind,
+): PersonalMemorySource | null {
+  // Calendar is the only life-thread origin currently preserved with enough
+  // precision to bind it to a memory-source policy. `explicit`, `reminder`,
+  // `draft`, and derived sources may originate on several channels, so they
+  // fail closed until durable per-thread source provenance exists.
+  return sourceKind === 'calendar' ? 'calendar' : null;
+}
+
+function hasProviderVisibleLifeThreadConsent(input: {
+  source: PersonalMemorySource | null;
+  providerConsentedSources: PersonalMemorySource[];
+  policies: ReturnType<typeof listPersonalMemoryPolicies>;
+}): boolean {
+  if (!input.source || !input.providerConsentedSources.includes(input.source)) {
+    return false;
+  }
+  const policy = input.policies.find(
+    (candidate) => candidate.source === input.source,
+  );
+  return Boolean(
+    policy?.enabled &&
+    policy.allowDerivedFacts &&
+    policy.consentedAt &&
+    !policy.revokedAt,
+  );
 }
 
 export function buildCouncilEvidencePack(
   input: BuildCouncilEvidencePackInput,
 ): CouncilEvidencePack {
   const groupFolder = input.groupFolder || 'main';
+  const now = input.now || new Date();
+  const rawContentPolicy = input.rawContentPolicy || 'sanitized_snippets';
+  const metadataIntent = `Intent metadata: task_family=${input.taskFamily}, characters=${input.goal.length}, correlation=${input.correlationId || 'local'}.`;
   const includePersonalContext = [
     'assistant',
     'calendar',
@@ -48,7 +98,11 @@ export function buildCouncilEvidencePack(
       evidenceGrade: 'partial',
       freshness: 'fresh',
       sensitivity: 'private',
-      summary: `Sanitized user goal: ${redactCouncilText(input.goal, 320)}`,
+      summary:
+        rawContentPolicy === 'sanitized_snippets'
+          ? `Sanitized user goal: ${redactCouncilText(input.goal, 320)}`
+          : metadataIntent,
+      availableToCouncil: rawContentPolicy !== 'local_only',
     },
     {
       evidenceId: `policy:${input.rawContentPolicy || 'sanitized_snippets'}`,
@@ -62,19 +116,30 @@ export function buildCouncilEvidencePack(
   const gaps: string[] = [];
 
   if (input.metadata && Object.keys(input.metadata).length > 0) {
+    const metadataEntries = Object.entries(input.metadata).slice(0, 8);
     cards.push({
       evidenceId: `metadata:${input.correlationId || 'local'}`,
       sourceClass: 'runtime',
       evidenceGrade: 'partial',
       freshness: 'fresh',
       sensitivity: 'normal',
-      summary: redactCouncilText(
-        Object.entries(input.metadata)
-          .slice(0, 8)
-          .map(([key, value]) => `${key}=${value}`)
-          .join(', '),
-        360,
-      ),
+      summary:
+        rawContentPolicy === 'sanitized_snippets'
+          ? redactCouncilText(
+              metadataEntries
+                .map(([key, value]) => `${key}=${value}`)
+                .join(', '),
+              360,
+            )
+          : `Runtime metadata keys: ${
+              metadataEntries
+                .map(([key]) =>
+                  key.replace(/[^a-zA-Z0-9_.:-]/g, '').slice(0, 48),
+                )
+                .filter(Boolean)
+                .join(', ') || 'none'
+            }. Values withheld by policy.`,
+      availableToCouncil: rawContentPolicy !== 'local_only',
     });
   }
 
@@ -88,10 +153,12 @@ export function buildCouncilEvidencePack(
           evidenceGrade: 'partial' as const,
           freshness: 'unknown' as const,
           sensitivity: 'private' as const,
-          summary: redactCouncilText(
-            `${fact.subjectDisplayName} ${fact.category}/${fact.factKey}: ${fact.sourceSummary || fact.valueJson}`,
-            320,
-          ),
+          // Profile facts do not yet carry a per-record sensitivity/consent
+          // classification. Keep their values local and expose only bounded
+          // metadata until that contract exists; regex redaction is not a
+          // semantic privacy boundary.
+          summary: `Accepted profile-fact metadata: id=${fact.id}, category=${fact.category}, updated=${fact.updatedAt}.`,
+          availableToCouncil: rawContentPolicy !== 'local_only',
         }));
       cards.push(...profileFacts);
       if (profileFacts.length === 0) gaps.push('no_profile_facts');
@@ -100,24 +167,56 @@ export function buildCouncilEvidencePack(
     }
 
     try {
+      const memoryPolicies = listPersonalMemoryPolicies(groupFolder);
+      const providerConsentedSources = Array.from(
+        new Set(input.providerConsentedSources || []),
+      );
       const lifeThreads = listLifeThreadsForGroup(groupFolder, ['active'])
         .slice(0, 3)
-        .map((thread) => ({
-          evidenceId: `life_thread:${thread.id}`,
-          sourceClass: 'local_memory' as const,
-          evidenceGrade: 'partial' as const,
-          freshness: thread.lastUpdatedAt
-            ? ('fresh' as const)
-            : ('unknown' as const),
-          sensitivity:
-            thread.sensitivity === 'sensitive'
-              ? ('sensitive' as const)
-              : ('private' as const),
-          summary: redactCouncilText(
-            `${thread.title}: ${thread.summary || thread.nextAction || 'active thread'}`,
-            320,
-          ),
-        }));
+        .map((thread) => {
+          const commitment = getLifeThreadCommitment(thread);
+          const source = lifeThreadPersonalMemorySource(thread.sourceKind);
+          const sourceConsented = hasProviderVisibleLifeThreadConsent({
+            source,
+            providerConsentedSources,
+            policies: memoryPolicies,
+          });
+          const stateRequiresMetadataOnly = [
+            'waiting',
+            'blocked',
+            'delegated',
+            'deferred',
+          ].includes(commitment.operationalState);
+          const metadataOnly =
+            rawContentPolicy !== 'sanitized_snippets' ||
+            thread.sensitivity === 'sensitive' ||
+            !sourceConsented ||
+            stateRequiresMetadataOnly ||
+            !shouldProactivelySurfaceCommitment(thread, now);
+          return {
+            evidenceId: `life_thread:${thread.id}`,
+            sourceClass: 'local_memory' as const,
+            evidenceGrade: 'partial' as const,
+            freshness: thread.lastUpdatedAt
+              ? ('fresh' as const)
+              : ('unknown' as const),
+            sensitivity:
+              thread.sensitivity === 'sensitive'
+                ? ('sensitive' as const)
+                : ('private' as const),
+            summary: metadataOnly
+              ? `Life-thread metadata: id=${thread.id}, state=${commitment.operationalState}, owner=${commitment.owner.kind}, strength=${commitment.strength}, updated=${thread.lastUpdatedAt}.`
+              : redactCouncilText(
+                  `${thread.title}: ${describeLifeThreadCommitment(
+                    thread,
+                    now,
+                    resolveLifeThreadTimeZone(thread.groupFolder),
+                  )}`,
+                  320,
+                ),
+            availableToCouncil: rawContentPolicy !== 'local_only',
+          };
+        });
       cards.push(...lifeThreads);
       if (lifeThreads.length === 0) gaps.push('no_active_life_threads');
     } catch {
@@ -131,23 +230,31 @@ export function buildCouncilEvidencePack(
       query: input.goal,
       limit: 3,
     });
-    const knowledgeCards = knowledge.hits.slice(0, 3).map((hit) => ({
-      evidenceId: `knowledge:${hit.sourceId}:${hit.chunkId}`,
-      sourceClass: 'knowledge' as const,
-      evidenceGrade:
-        hit.retrievalScore >= 0.5 ? ('partial' as const) : ('weak' as const),
-      freshness: 'unknown' as const,
-      sensitivity:
-        hit.sensitivity === 'sensitive'
-          ? ('sensitive' as const)
-          : hit.sensitivity === 'private'
-            ? ('private' as const)
-            : ('normal' as const),
-      summary: redactCouncilText(
-        `${hit.sourceTitle}: ${hit.excerpt} (${hit.matchReason})`,
-        360,
-      ),
-    }));
+    const knowledgeCards = knowledge.hits.slice(0, 3).map((hit) => {
+      const metadataOnly =
+        rawContentPolicy !== 'sanitized_snippets' ||
+        hit.sensitivity === 'sensitive';
+      return {
+        evidenceId: `knowledge:${hit.sourceId}:${hit.chunkId}`,
+        sourceClass: 'knowledge' as const,
+        evidenceGrade:
+          hit.retrievalScore >= 0.5 ? ('partial' as const) : ('weak' as const),
+        freshness: 'unknown' as const,
+        sensitivity:
+          hit.sensitivity === 'sensitive'
+            ? ('sensitive' as const)
+            : hit.sensitivity === 'private'
+              ? ('private' as const)
+              : ('normal' as const),
+        summary: metadataOnly
+          ? `Knowledge-hit metadata: source=${hit.sourceId}, chunk=${hit.chunkId}, sensitivity=${hit.sensitivity}, score_band=${hit.retrievalScore >= 0.5 ? 'relevant' : 'weak'}.`
+          : redactCouncilText(
+              `${hit.sourceTitle}: ${hit.excerpt} (${hit.matchReason})`,
+              360,
+            ),
+        availableToCouncil: rawContentPolicy !== 'local_only',
+      };
+    });
     cards.push(...knowledgeCards);
     if (knowledgeCards.length === 0) gaps.push('no_saved_knowledge_hits');
   } catch {

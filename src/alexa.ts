@@ -4393,6 +4393,7 @@ export function createAlexaSkill(
       groupFolder: linked.account.groupFolder,
       channel: 'alexa',
       text,
+      sourceRef: `alexa:${handlerInput.requestEnvelope.request.requestId}`,
       conversationSummary: conversationState?.summaryText,
       priorContext: priorCompanionContext,
     });

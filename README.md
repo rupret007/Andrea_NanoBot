@@ -708,6 +708,17 @@ Notes:
 Andrea now has a bounded **life thread** layer for ongoing matters like Candace, family logistics, band follow-ups, home errands, health routines, or work continuity.
 
 - threads track what is still open across days
+- each thread now has one canonical commitment state that distinguishes an
+  idea, tentative intent, firm commitment, explicit request, waiting, blocked,
+  delegated, deferred, completed, cancelled, and superseded work
+- ownership is explicit: Andrea does not assign the user's action to them when
+  another person owns the next step, and delegation does not mean completion
+- waiting and blocked threads preserve the downstream objective without
+  repeating a completed or currently impossible action
+- a conditional follow-up stays attached to its original thread and becomes
+  actionable only when its evidence and time condition warrant it
+- speculative and tentative items remain available in relevant context but do
+  not become firm overdue obligations or automatic reminders
 - threads are not the same thing as long-term memory facts
 - reminders are still the place for a specific future nudge
 - current work is still the immediate execution focus in the cockpit
@@ -719,8 +730,18 @@ Andrea now has a bounded **life thread** layer for ongoing matters like Candace,
 - relative corrections use the accepted profile timezone, exact correction
   replay is idempotent, and an ambiguous `move it` request asks which active
   obligation to update instead of guessing
+- commitment transitions use stable identities and revisions: duplicate replay
+  is a no-op, stale evidence cannot revive superseded truth, and ambiguous
+  ownership or targets mutate nothing
 - `don't bring this up automatically` moves a thread into manual-only use without deleting it
 - `forget that thread` is the explicit hard-delete path
+
+See
+[docs/COMMITMENT_INTELLIGENCE.md](docs/COMMITMENT_INTELLIGENCE.md) for the
+canonical model, transitions, ranking, privacy, migration, certification, and
+intentional limits. Repository, hosted-CI, runtime, and live-channel evidence
+remain separately recorded in
+[docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md).
 
 ### Research And Knowledge Work
 
@@ -890,6 +911,9 @@ Use the docs based on what you are trying to do:
   for Alexa v1 setup, account-linking rules, Node 22 validation requirements, and the final live-acceptance runbook
 - [docs/KNOWLEDGE_LIBRARY.md](docs/KNOWLEDGE_LIBRARY.md)
   for the Knowledge Library model, explicit save/import rules, lexical-first retrieval, and source-grounded answer behavior
+- [docs/COMMITMENT_INTELLIGENCE.md](docs/COMMITMENT_INTELLIGENCE.md)
+  for commitment strength, ownership, waiting/blocking/delegation, ranking,
+  persistence, migration, privacy, and strict certification
 - [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md)
   for the live BlueBubbles companion channel scope, config, safety model, and current limits
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)

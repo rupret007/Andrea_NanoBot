@@ -117,7 +117,45 @@ This is a meaningful security improvement because it removes ambient tool reach
 from ordinary chat and limits higher-trust tools to the route that justified
 them.
 
-### 7. Command Surface Gating
+### 7. Commitment-State Trust Boundary
+
+Commitment Intelligence changes planning truth, not action authority. A life
+thread can say the user, another subject, both, Andrea, or an unresolved party
+owns the next step. That ownership field must never be interpreted as approval
+to perform an external effect.
+
+Security and privacy rules for commitment state:
+
+- an explicit request may assign Andrea a bounded reminder or local-save step,
+  but sends, calendar writes, purchases, deployments, repository changes,
+  migrations, dependency changes, and deletions keep their existing fresh
+  approval and target-binding rules;
+- vague references, competing targets, and unclear ownership fail without a
+  state mutation;
+- exact replay is idempotent and older evidence cannot reactivate a newer
+  completed, cancelled, deferred, or superseded state;
+- the canonical state and its compatibility projection update atomically, so
+  an older active field cannot continue authorizing or recommending work;
+- transition evidence is bounded to a derived transition type and reason,
+  source kind, confidence, timestamp, event identity, and one-way-hashed source
+  reference; raw message text, raw channel identifiers, credentials, and
+  secret-like values are redacted rather than copied into the commitment
+  ledger, API responses, logs, or diagnostics;
+- group, subject, sensitivity, manual-only, snooze, and source-consent
+  boundaries remain in force for every consumer;
+- communication drafts and provider payloads may use only recipient-safe,
+  topically relevant commitment context; sensitive planning titles and profile
+  fact text never becomes draft support, a conversation title, or provider
+  content; an accepted fact may select only a closed local style label;
+- council evidence keeps `local_only` cards unavailable and withholds semantic
+  values from `metadata_only` cards, including accepted profile facts and
+  sensitive life threads;
+- destructive selective multi-item forgetting is not exposed by this round.
+
+The full state and migration contract is documented in
+[COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
+
+### 8. Command Surface Gating
 
 The public Telegram command menu is intentionally smaller than the total codebase surface.
 
@@ -181,4 +219,7 @@ When changing behavior, keep these rules intact:
 - do not turn route-policy misses into silently broad tool access without a conscious decision
 - do not mount or copy host Codex home/auth/config into agent containers
 - do not treat degraded environment credential inheritance as equivalent to OneCLI isolation
+- do not let commitment ownership, strength, confidence, or model output stand
+  in for action approval
+- do not store a raw conversation merely to justify a commitment transition
 - do not document a feature as baseline if it still depends on same-day validation

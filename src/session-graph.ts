@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 
 import { redactCouncilText } from './council-safety.js';
+import { describeLifeThreadCommitment } from './life-thread-commitment.js';
+import { resolveLifeThreadTimeZone } from './life-threads.js';
 import {
   getAllAgentThreads,
   getAllSessions,
@@ -992,6 +994,7 @@ function collectCommunicationNodes(
   groupFolders: string[],
 ): NodeDraft[] {
   const nodes: NodeDraft[] = [];
+  const snapshotNow = new Date(generatedAt);
   for (const groupFolder of groupFolders) {
     if (!isValidGroupFolder(groupFolder)) continue;
     for (const thread of listCommunicationThreadsForGroup({
@@ -1062,7 +1065,11 @@ function collectCommunicationNodes(
               ? `life:${lifeThread.mergedIntoThreadId}`
               : null,
           ],
-          semanticText: `${lifeThread.title} ${lifeThread.summary} ${lifeThread.nextAction || ''}`,
+          semanticText: `${lifeThread.title} ${describeLifeThreadCommitment(
+            lifeThread,
+            snapshotNow,
+            resolveLifeThreadTimeZone(lifeThread.groupFolder),
+          )}`,
         }),
       );
     }

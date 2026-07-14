@@ -25,6 +25,17 @@ texts/messages, goals/priorities, and reminders/tasks without a provider call.
 Profile memory, the Knowledge Library, and episodic/context-graph state remain
 separate stores even though the packet presents one bounded view.
 
+Life-thread context resolves through one canonical Commitment Intelligence
+state before entering the packet or context graph. That state distinguishes
+possibility, intent, commitment, explicit request, current owner, waiting,
+blocking, delegation, deferral, and terminal truth. Historical transitions
+remain provenance; they are not additional active obligations. This prevents
+active perception and daily guidance from repeating a completed action,
+assigning delegated work back to the user, or escalating a tentative idea.
+Commitment evidence remains bounded and source-scoped, and commitment
+ownership never grants execution authority. See
+[COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
+
 Meaningful production turns now compile one packet and reuse it across the turn
 harness and Cognitive Executive. Remote deliberation receives counts, conflict
 state, and citation coverage only. Local planning receives the bounded cited

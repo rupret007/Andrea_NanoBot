@@ -206,6 +206,43 @@ node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/r
 npm run debug:rituals
 ```
 
+### Commitment Intelligence
+
+Whenever commitment strength, ownership, waiting/blocking/delegation,
+deferral, ranking, life-thread persistence, or a life-thread consumer changes,
+run the focused production path first:
+
+```bash
+npm test -- --run src/life-thread-commitment.test.ts src/life-thread-temporal.test.ts src/life-threads.test.ts src/outcome-reviews.test.ts src/rituals.test.ts src/daily-companion.test.ts src/memory-activation.test.ts src/communication-companion.test.ts src/chief-of-staff.test.ts
+npm run certify:commitment-intelligence
+npm run certify:temporal-truth
+npm run certify:life-thread
+```
+
+`certify:commitment-intelligence` is the strict release gate for the new model.
+Acceptance requires:
+
+- 24/24 primary scenarios and 15/15 structurally different held-out cases
+  reported as `PASS`; `PARTIAL`, skipped, or silently omitted cases fail;
+- a disposable datastore, deterministic clock and timezone, synthetic
+  identities, provider-environment suppression, and process-level non-loopback
+  network denial;
+- at least two full database close/reopen cycles through the production path,
+  including transitions between restarts;
+- exact duplicate replay as a no-op and older out-of-order evidence classified
+  stale without reactivating superseded truth;
+- atomic current state plus legacy projection, immutable transition
+  provenance, deterministic ranking, ambiguity refusal, privacy isolation, and
+  authority preservation;
+- cleanup of the synthetic records, database, WAL, SHM, and manifest, followed
+  by an independent production-database residue search.
+
+The older life-thread certification remains valuable regression and before-
+state evidence; it is not a substitute for the 24+15 commitment matrix. A
+serialization-only test or an in-memory reopen is not durable-restart proof.
+See [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md) for the model and
+transition contract.
+
 For personalized setup, groceries, errands, bills, meals, pills, and lightweight list management changes, add:
 
 ```bash
@@ -564,11 +601,11 @@ npm run test:deterministic:sweep
 
 This continues through independent `test:*` scripts, reports all failures at the end, and intentionally excludes interactive, aggregate, live, baseline-writing, and cloud-provider council tiers.
 
-On the current 2026-07-13 candidate tree, the sweep inventories **108** scripts:
-**93 selected** deterministic commands and **15 explicitly excluded** commands.
+On the current 2026-07-14 tree, the sweep inventories **109** scripts:
+**94 selected** deterministic commands and **15 explicitly excluded** commands.
 Those counts are derived from the current package inventory and must be
 regenerated after script changes. Final evidence for this tree must distinguish
-the 93/93 selected result from the 108-command inventory; the 90/91 counts in
+the 94/94 selected result from the 109-command inventory; the 90/91 counts in
 older modernization snapshots are historical and must not be reused.
 
 The deterministic runner is hermetic at both external boundaries: it suppresses
@@ -1566,6 +1603,7 @@ npm run test:real-world-intelligence:heldout
 npm run test:stability
 npm run test:deterministic:sweep -- --list
 npm run test:deterministic:sweep
+npm run certify:commitment-intelligence
 npm run certify:life-thread
 npm run certify:temporal-truth
 npm run agi:scorecard -- --no-write --no-dogfood
@@ -1580,7 +1618,7 @@ git status --short
 ```
 
 The focused durable and containment suites above are additional required gates;
-the deterministic sweep's 108-script inventory does not substitute for AGI
+the deterministic sweep's 109-script inventory does not substitute for AGI
 tests, container canaries, audits, or hosted scanners. Review `git status`
 manually for generated artifacts, unexpected files, and secret-like values.
 

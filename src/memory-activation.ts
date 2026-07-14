@@ -18,6 +18,12 @@ import {
   formatAgiLeapReadinessReport,
 } from './agi-leap-readiness.js';
 import { exportRedactedOnboardingProfilePack } from './onboarding-profile-pack.js';
+import { resolveLifeThreadTimeZone } from './life-threads.js';
+import {
+  describeLifeThreadCommitment,
+  getLifeThreadCommitment,
+  shouldProactivelySurfaceCommitment,
+} from './life-thread-commitment.js';
 import type {
   CommunicationThreadRecord,
   LifeThread,
@@ -413,10 +419,30 @@ function candidateFromCommunication(
   };
 }
 
-function candidateFromLifeThread(thread: LifeThread): LearningCandidate | null {
+function candidateFromLifeThread(
+  thread: LifeThread,
+  now: Date,
+): LearningCandidate | null {
   if (thread.status !== 'active') return null;
+  const commitment = getLifeThreadCommitment(thread);
+  if (
+    ['completed', 'cancelled', 'superseded'].includes(
+      commitment.operationalState,
+    )
+  ) {
+    return null;
+  }
+  // A contextual possibility remains available in the life-thread store, but
+  // it must not be proposed as a durable recurring priority. Reuse the same
+  // authority-neutral surfacing contract that filters manual, snoozed,
+  // speculative, tentative, blocked, waiting, and prematurely scheduled work.
+  if (!shouldProactivelySurfaceCommitment(thread, now)) return null;
   const summary = redactMemoryActivationText(
-    thread.nextAction || thread.summary || thread.title,
+    describeLifeThreadCommitment(
+      thread,
+      now,
+      resolveLifeThreadTimeZone(thread.groupFolder),
+    ),
   );
   return {
     category: 'recurring_priorities',
@@ -427,6 +453,8 @@ function candidateFromLifeThread(thread: LifeThread): LearningCandidate | null {
       title: redactMemoryActivationText(thread.title, 90),
       category: thread.category,
       scope: thread.scope,
+      commitmentState: commitment.operationalState,
+      ownerKind: commitment.owner.kind,
       summary,
     },
     sourceSummary: summary,
@@ -560,7 +588,8 @@ function upsertLearningCandidate(params: {
 }
 
 function refreshLearningCandidates(input: MemoryActivationCommandInput): void {
-  const nowIso = (input.now || new Date()).toISOString();
+  const now = input.now || new Date();
+  const nowIso = now.toISOString();
   const self = ensureSelfSubject(input.groupFolder, nowIso);
   const communication = listCommunicationThreadsForGroup({
     groupFolder: input.groupFolder,
@@ -573,7 +602,7 @@ function refreshLearningCandidates(input: MemoryActivationCommandInput): void {
     'active',
     'paused',
   ])
-    .map(candidateFromLifeThread)
+    .map((thread) => candidateFromLifeThread(thread, now))
     .filter(Boolean) as LearningCandidate[];
   const tasks = getTasksForGroup(input.groupFolder)
     .map(candidateFromTask)

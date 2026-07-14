@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 
 import {
+  applyLifeThreadCommitmentTransition,
+  createLifeThreadWithInitialCommitment,
   deleteLifeThread,
   deleteRouterState,
   getLifeThread,
@@ -11,9 +13,8 @@ import {
   listProfileFactsForGroup,
   listProfileSubjectsForGroup,
   listRecentMessagesForChat,
-  reassignLifeThreadSignals,
+  mergeLifeThreadsAtomically,
   setRouterState,
-  supersedeLifeThreadTemporalState,
   updateLifeThread,
   upsertLifeThread,
   upsertLifeThreadSignal,
@@ -36,6 +37,22 @@ import {
   normalizeLifeThreadTimeZone,
   parseLifeThreadTemporalState,
 } from './life-thread-temporal.js';
+import {
+  buildMatureDeferredCommitment,
+  buildOpaqueLifeThreadCommitmentSourceRef,
+  buildLifeThreadCommitmentReactivationPatch,
+  buildStructuredLifeThreadCommitmentTransition,
+  compareLifeThreadCommitmentPriority,
+  describeLifeThreadCommitment,
+  getLifeThreadCommitment,
+  interpretLifeThreadCommitment,
+  isLifeThreadCommitmentLanguage,
+  projectEffectiveLifeThread,
+  redactLifeThreadCommitmentText,
+  resumableLifeThreadCommitmentState,
+  shouldProactivelySurfaceCommitment,
+  type CommitmentInterpretation,
+} from './life-thread-commitment.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
 
 export interface LifeThreadContextReference {
@@ -51,6 +68,11 @@ export interface LifeThreadCommandInput {
   channel: LifeThreadCommandChannel;
   text: string;
   chatJid?: string;
+  sourceKind?: LifeThread['sourceKind'];
+  /** Stable inbound event identity, such as a channel message ID. */
+  sourceRef?: string | null;
+  messageId?: string | null;
+  userConfirmed?: boolean;
   replyText?: string;
   conversationSummary?: string;
   priorContext?: LifeThreadContextReference | null;
@@ -61,7 +83,7 @@ export interface LifeThreadCommandResult {
   handled: boolean;
   responseText?: string;
   referencedThread?: LifeThread | null;
-  temporalResolution?: 'applied' | 'duplicate' | 'ambiguous';
+  temporalResolution?: 'applied' | 'duplicate' | 'stale' | 'ambiguous';
 }
 
 const PENDING_THREAD_SUGGESTION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -166,6 +188,15 @@ export function getLastReferencedLifeThread(
     deleteRouterState(getLastReferencedThreadKey(chatJid));
     return null;
   }
+  const safeTitle = redactLifeThreadCommitmentText(parsed.title);
+  if (safeTitle !== parsed.title) {
+    const safeState = { ...parsed, title: safeTitle };
+    setRouterState(
+      getLastReferencedThreadKey(chatJid),
+      JSON.stringify(safeState),
+    );
+    return safeState;
+  }
   return parsed;
 }
 
@@ -179,7 +210,7 @@ export function setLastReferencedLifeThread(
     JSON.stringify({
       version: 1,
       threadId: thread.id,
-      title: thread.title,
+      title: redactLifeThreadCommitmentText(thread.title),
       createdAt: now.toISOString(),
     } satisfies LastReferencedLifeThreadState),
   );
@@ -371,9 +402,12 @@ function extractRelatedSubjectIds(
   return [];
 }
 
-function formatThreadSummaryLine(thread: LifeThread): string {
-  const main = thread.nextAction || thread.summary;
-  return `${thread.title}: ${main}`;
+function formatThreadSummaryLine(thread: LifeThread, now: Date): string {
+  return `${thread.title}: ${describeLifeThreadCommitment(
+    thread,
+    now,
+    lifeThreadTimeZone(thread.groupFolder),
+  )}`;
 }
 
 function inferFollowupAnchor(rawText: string, now: Date): string | null {
@@ -399,12 +433,15 @@ function inferFollowupAnchor(rawText: string, now: Date): string | null {
   return null;
 }
 
-function formatThreadReference(thread: LifeThread): string {
-  const detail = thread.nextAction || thread.summary;
-  return `${thread.title} is ${thread.status}, and the main thing in it is ${detail}.`;
+function formatThreadReference(thread: LifeThread, now: Date): string {
+  return `${thread.title} is ${thread.status}. ${describeLifeThreadCommitment(
+    thread,
+    now,
+    lifeThreadTimeZone(thread.groupFolder),
+  )}`;
 }
 
-function formatThreadListTelegram(threads: LifeThread[]): string {
+function formatThreadListTelegram(threads: LifeThread[], now: Date): string {
   if (threads.length === 0) {
     return 'You do not have any active life threads right now.';
   }
@@ -420,12 +457,12 @@ function formatThreadListTelegram(threads: LifeThread[]): string {
           },
         )}`
       : '';
-    return `- ${formatThreadSummaryLine(thread)} (${thread.scope}, ${thread.status})${followup}`;
+    return `- ${formatThreadSummaryLine(thread, now)} (${thread.scope}, ${thread.status})${followup}`;
   });
   return ['Active life threads:', ...lines].join('\n');
 }
 
-function formatThreadListAlexa(threads: LifeThread[]): string {
+function formatThreadListAlexa(threads: LifeThread[], now: Date): string {
   if (threads.length === 0) {
     return 'You do not have any active life threads right now.';
   }
@@ -433,8 +470,8 @@ function formatThreadListAlexa(threads: LifeThread[]): string {
   return buildVoiceReply({
     summary: `You have ${threads.length} active life ${threads.length === 1 ? 'thread' : 'threads'}.`,
     details: [
-      formatThreadSummaryLine(first),
-      threads[1] ? formatThreadSummaryLine(threads[1]) : null,
+      formatThreadSummaryLine(first, now),
+      threads[1] ? formatThreadSummaryLine(threads[1], now) : null,
     ],
     maxDetails: 2,
   });
@@ -449,6 +486,24 @@ function findThreadByTitle(
   return listLifeThreadsForGroup(groupFolder, statuses).find(
     (thread) => normalizeTitleKey(thread.title) === titleKey,
   );
+}
+
+function findSemanticallyEquivalentThread(
+  groupFolder: string,
+  title: string,
+  summary: string,
+  statuses: LifeThread['status'][] = ['active', 'paused', 'closed', 'archived'],
+): LifeThread | undefined {
+  const titleKey = normalizeTitleKey(title);
+  const summaryKey = normalizeText(summary).toLowerCase();
+  return listLifeThreadsForGroup(groupFolder, statuses).find((thread) => {
+    if (normalizeTitleKey(thread.title) !== titleKey) return false;
+    const current = getLifeThreadCommitment(thread);
+    return (
+      normalizeText(thread.summary).toLowerCase() === summaryKey ||
+      normalizeText(current.objective).toLowerCase() === summaryKey
+    );
+  });
 }
 
 function findThreadByPersonName(
@@ -824,7 +879,7 @@ function resolveTemporalLifeThread(params: {
   return undefined;
 }
 
-function lifeThreadTimeZone(groupFolder: string): string {
+export function resolveLifeThreadTimeZone(groupFolder: string): string {
   const fact = listProfileFactsForGroup(groupFolder, ['accepted']).find(
     (candidate) => candidate.factKey.toLowerCase() === 'timezone',
   );
@@ -848,10 +903,52 @@ function lifeThreadTimeZone(groupFolder: string): string {
   return normalizeLifeThreadTimeZone(process.env.TZ);
 }
 
-function temporalCorrectionSignalId(threadId: string, text: string): string {
+const lifeThreadTimeZone = resolveLifeThreadTimeZone;
+
+function hashLifeThreadCommandSourceRef(durableIdentity: string): string {
+  return `life-thread-source:${crypto
+    .createHash('sha256')
+    .update(durableIdentity)
+    .digest('hex')}`;
+}
+
+function stableLifeThreadCommandSourceRef(
+  input: LifeThreadCommandInput,
+): string | null {
+  const durableIdentity =
+    input.sourceRef?.trim() ||
+    (input.messageId?.trim() ? `message:${input.messageId.trim()}` : null);
+  return durableIdentity
+    ? hashLifeThreadCommandSourceRef(durableIdentity)
+    : null;
+}
+
+function lifeThreadCommandSourceRef(
+  input: LifeThreadCommandInput,
+  now: Date,
+): string {
+  return (
+    stableLifeThreadCommandSourceRef(input) ||
+    hashLifeThreadCommandSourceRef(
+      `${input.chatJid || input.channel}:${now.toISOString()}:${normalizeText(input.text)}`,
+    )
+  );
+}
+
+function temporalCorrectionSignalId(
+  threadId: string,
+  text: string,
+  activeAt: string,
+  priorActiveAt: string,
+  sourceRef?: string | null,
+): string {
   const digest = crypto
     .createHash('sha256')
-    .update(`${threadId}\n${normalizeText(text).toLowerCase()}`)
+    .update(
+      sourceRef
+        ? `${threadId}\nsource:${sourceRef}`
+        : `${threadId}\ntext:${normalizeText(text).toLowerCase()}\ntarget:${activeAt}\nprior:${priorActiveAt}`,
+    )
     .digest('hex');
   return `life-thread-temporal:${digest}`;
 }
@@ -861,9 +958,11 @@ function applyTemporalCorrection(params: {
   text: string;
   groupFolder: string;
   chatJid?: string;
+  sourceRef?: string | null;
+  messageId?: string | null;
   now: Date;
 }): {
-  status: 'applied' | 'duplicate' | 'not_temporal';
+  status: 'applied' | 'duplicate' | 'stale' | 'not_temporal';
   thread: LifeThread;
 } {
   const timeZone = lifeThreadTimeZone(params.groupFolder);
@@ -891,14 +990,54 @@ function applyTemporalCorrection(params: {
   });
   const oldTruth =
     params.thread.nextFollowupAt || inferredCurrent || 'unparsed';
-  const signalId = temporalCorrectionSignalId(params.thread.id, params.text);
-  const result = supersedeLifeThreadTemporalState({
+  if (!params.sourceRef && oldTruth === temporal.activeAt) {
+    return { status: 'duplicate', thread: params.thread };
+  }
+  const signalId = temporalCorrectionSignalId(
+    params.thread.id,
+    params.text,
+    temporal.activeAt,
+    oldTruth,
+    params.sourceRef,
+  );
+  const current = getLifeThreadCommitment(params.thread);
+  const interpretation = buildStructuredLifeThreadCommitmentTransition({
+    thread: params.thread,
+    text: params.text,
+    now: params.now,
+    timeZone,
+    sourceKind: 'explicit',
+    sourceRef: params.sourceRef || params.chatJid || null,
+    eventId: signalId,
+    kind: 'strengthened',
+    reason: `The user corrected the active temporal truth from ${oldTruth} to ${temporal.activeAt}.`,
+    evidenceKinds: [
+      'direct_language',
+      'temporal',
+      'correction',
+      'state_transition',
+    ],
+    patch: {
+      strength:
+        current.strength === 'speculative' || current.strength === 'tentative'
+          ? 'intended'
+          : current.strength,
+      operationalState: 'active',
+      readiness:
+        temporal.kind === 'scheduled' ? 'actionable_at_time' : 'actionable_now',
+      currentAction: activeTruth,
+      downstreamAction: null,
+      dueAt: temporal.activeAt,
+      reactivateAt: null,
+      reactivateCondition: null,
+    },
+  });
+  const result = applyLifeThreadCommitmentTransition({
     threadId: params.thread.id,
     groupFolder: params.groupFolder,
+    state: interpretation.state,
+    transition: interpretation.transition,
     summary: activeTruth,
-    nextAction: activeTruth,
-    nextFollowupAt: temporal.activeAt,
-    lastUpdatedAt: params.now.toISOString(),
     signal: {
       id: signalId,
       threadId: params.thread.id,
@@ -909,7 +1048,9 @@ function applyTemporalCorrection(params: {
         600,
       ),
       chatJid: params.chatJid || null,
+      messageId: params.messageId || null,
       confidenceKind: 'explicit',
+      commitmentTransition: interpretation.transition,
       createdAt: params.now.toISOString(),
     },
   });
@@ -922,6 +1063,338 @@ function applyTemporalCorrection(params: {
   };
 }
 
+function persistCommitmentInterpretation(params: {
+  thread: LifeThread;
+  interpretation: CommitmentInterpretation;
+  groupFolder: string;
+  text: string;
+  signalText?: string;
+  chatJid?: string;
+  sourceKind?: LifeThread['sourceKind'];
+  userConfirmed?: boolean;
+  messageId?: string | null;
+}): {
+  status: 'applied' | 'duplicate' | 'stale';
+  thread: LifeThread;
+} {
+  const result = applyLifeThreadCommitmentTransition({
+    threadId: params.thread.id,
+    groupFolder: params.groupFolder,
+    state: params.interpretation.state,
+    transition: params.interpretation.transition,
+    summary: clipSummary(params.text),
+    sourceKind: params.sourceKind || 'explicit',
+    confidenceKind: params.interpretation.state.confidenceKind,
+    userConfirmed: params.userConfirmed,
+    signal: {
+      id: params.interpretation.eventId,
+      threadId: params.thread.id,
+      groupFolder: params.groupFolder,
+      sourceKind: params.sourceKind || 'explicit',
+      summaryText: clipSummary(params.signalText || params.text, 600),
+      chatJid: params.chatJid || null,
+      messageId: params.messageId || null,
+      confidenceKind: params.interpretation.state.confidenceKind,
+      commitmentTransition: params.interpretation.transition,
+      createdAt: params.interpretation.state.updatedAt,
+    },
+  });
+  if (result === 'missing') {
+    throw new Error('Commitment target disappeared before commit.');
+  }
+  return {
+    status: result,
+    thread: getLifeThread(params.thread.id) || params.thread,
+  };
+}
+
+export function scheduleLifeThreadCommitment(params: {
+  threadId: string;
+  groupFolder: string;
+  dueAt: string;
+  now?: Date;
+  sourceKind?: LifeThread['sourceKind'];
+  reason?: string;
+}): LifeThread | null {
+  const thread = getLifeThread(params.threadId);
+  if (!thread || thread.groupFolder !== params.groupFolder) return null;
+  const now = params.now || new Date();
+  const current = getLifeThreadCommitment(thread);
+  if (
+    ['completed', 'cancelled', 'superseded'].includes(current.operationalState)
+  ) {
+    return thread;
+  }
+  if (!Number.isFinite(Date.parse(params.dueAt))) {
+    throw new Error('Commitment schedule requires a valid timestamp.');
+  }
+  const sourceKind = params.sourceKind || 'action_layer';
+  const interpretation = buildStructuredLifeThreadCommitmentTransition({
+    thread,
+    text: params.reason || `Schedule follow-through for ${params.dueAt}`,
+    now,
+    timeZone: lifeThreadTimeZone(thread.groupFolder),
+    sourceKind,
+    sourceRef: `schedule:${params.dueAt}`,
+    kind: 'strengthened',
+    reason: params.reason || 'A bounded workflow scheduled follow-through.',
+    evidenceKinds: ['temporal', 'state_transition'],
+    confidenceKind: current.confidenceKind,
+    patch:
+      current.operationalState === 'waiting' ||
+      current.operationalState === 'blocked' ||
+      current.operationalState === 'delegated'
+        ? {
+            followUp: {
+              action:
+                current.followUp?.action || `Follow up on ${thread.title}`,
+              condition:
+                current.followUp?.condition ||
+                'the dependency remains unresolved',
+              dependencyIds: current.dependencies.map(
+                (dependency) => dependency.id,
+              ),
+              dueAt: params.dueAt,
+            },
+          }
+        : {
+            dueAt: params.dueAt,
+            readiness: 'actionable_at_time',
+          },
+  });
+  return persistCommitmentInterpretation({
+    thread,
+    interpretation,
+    groupFolder: thread.groupFolder,
+    text: params.reason || `Scheduled for ${params.dueAt}`,
+    sourceKind,
+    userConfirmed: thread.userConfirmed,
+  }).thread;
+}
+
+export function deferLifeThreadCommitment(params: {
+  threadId: string;
+  groupFolder: string;
+  until?: string | null;
+  now?: Date;
+  sourceKind?: LifeThread['sourceKind'];
+  reason?: string;
+}): LifeThread | null {
+  const thread = getLifeThread(params.threadId);
+  if (!thread || thread.groupFolder !== params.groupFolder) return null;
+  const now = params.now || new Date();
+  const current = getLifeThreadCommitment(thread);
+  if (
+    ['completed', 'cancelled', 'superseded'].includes(current.operationalState)
+  ) {
+    return thread;
+  }
+  if (params.until && !Number.isFinite(Date.parse(params.until))) {
+    throw new Error('Commitment deferral requires a valid timestamp.');
+  }
+  const sourceKind = params.sourceKind || 'action_layer';
+  const interpretation = buildStructuredLifeThreadCommitmentTransition({
+    thread,
+    text: params.reason || 'Defer this commitment.',
+    now,
+    timeZone: lifeThreadTimeZone(thread.groupFolder),
+    sourceKind,
+    sourceRef: `defer:${params.until || now.toISOString()}`,
+    kind: 'deferred',
+    reason: params.reason || 'A bounded workflow deferred this commitment.',
+    evidenceKinds: ['temporal', 'state_transition'],
+    confidenceKind: current.confidenceKind,
+    patch: {
+      operationalState: 'deferred',
+      readiness: params.until ? 'actionable_at_time' : 'non_actionable',
+      currentAction: null,
+      downstreamAction:
+        current.downstreamAction || current.currentAction || current.objective,
+      reactivateAt: params.until || null,
+      reactivateCondition: params.until
+        ? 'the deferral time arrives'
+        : 'the user explicitly resumes it',
+      deferredFrom:
+        current.operationalState === 'deferred'
+          ? current.deferredFrom || null
+          : resumableLifeThreadCommitmentState(current.operationalState),
+    },
+  });
+  return persistCommitmentInterpretation({
+    thread,
+    interpretation,
+    groupFolder: thread.groupFolder,
+    text: params.reason || 'Deferred commitment.',
+    sourceKind,
+    userConfirmed: thread.userConfirmed,
+  }).thread;
+}
+
+export function completeLifeThreadCommitment(params: {
+  threadId: string;
+  groupFolder: string;
+  now?: Date;
+  sourceKind?: LifeThread['sourceKind'];
+  reason?: string;
+}): LifeThread | null {
+  const thread = getLifeThread(params.threadId);
+  if (!thread || thread.groupFolder !== params.groupFolder) return null;
+  const now = params.now || new Date();
+  const current = getLifeThreadCommitment(thread);
+  if (
+    ['completed', 'cancelled', 'superseded'].includes(current.operationalState)
+  ) {
+    return thread;
+  }
+  const sourceKind = params.sourceKind || 'action_layer';
+  const interpretation = buildStructuredLifeThreadCommitmentTransition({
+    thread,
+    text: params.reason || 'Mark this commitment handled.',
+    now,
+    timeZone: lifeThreadTimeZone(thread.groupFolder),
+    sourceKind,
+    sourceRef: `complete:${now.toISOString()}`,
+    kind: 'completed',
+    reason: params.reason || 'A user-confirmed workflow marked this handled.',
+    patch: {
+      operationalState: 'completed',
+      readiness: 'non_actionable',
+      currentAction: null,
+      downstreamAction: null,
+      dueAt: null,
+      reactivateAt: null,
+      reactivateCondition: null,
+      deferredFrom: null,
+      dependencies: [],
+      dependencyResolution: null,
+      followUp: null,
+    },
+  });
+  return persistCommitmentInterpretation({
+    thread,
+    interpretation,
+    groupFolder: thread.groupFolder,
+    text: params.reason || 'Commitment handled.',
+    sourceKind,
+    userConfirmed: true,
+  }).thread;
+}
+
+export function reactivateLifeThreadCommitment(params: {
+  threadId: string;
+  groupFolder: string;
+  now?: Date;
+  reason?: string;
+}): LifeThread | null {
+  const thread = getLifeThread(params.threadId);
+  if (!thread || thread.groupFolder !== params.groupFolder) return null;
+  const now = params.now || new Date();
+  const current = getLifeThreadCommitment(thread);
+  if (current.operationalState !== 'deferred') return null;
+  const interpretation = buildStructuredLifeThreadCommitmentTransition({
+    thread,
+    text: params.reason || 'Resume this commitment.',
+    now,
+    timeZone: lifeThreadTimeZone(thread.groupFolder),
+    sourceKind: 'action_layer',
+    sourceRef: `resume:${now.toISOString()}`,
+    kind: 'reactivated',
+    reason: params.reason || 'The user explicitly resumed this commitment.',
+    patch: buildLifeThreadCommitmentReactivationPatch(current),
+  });
+  return persistCommitmentInterpretation({
+    thread,
+    interpretation,
+    groupFolder: thread.groupFolder,
+    text: params.reason || 'Commitment resumed.',
+    sourceKind: 'action_layer',
+    userConfirmed: true,
+  }).thread;
+}
+
+function resolveCommitmentMutationTarget(params: {
+  groupFolder: string;
+  text: string;
+  contextThread?: LifeThread;
+}): { thread: LifeThread | null; ambiguous: boolean } {
+  const candidates = listLifeThreadsForGroup(params.groupFolder, [
+    'active',
+    'paused',
+  ]);
+  const tokens = terminalTargetTokens(params.text);
+  const scored = candidates
+    .map((candidate) => {
+      const titleTokens = new Set(terminalTargetTokens(candidate.title));
+      const detailTokens = new Set(
+        terminalTargetTokens(
+          `${candidate.summary} ${candidate.nextAction || ''} ${getLifeThreadCommitment(candidate).objective}`,
+        ),
+      );
+      const titleMatches = tokens.filter((token) => titleTokens.has(token));
+      const detailMatches = tokens.filter(
+        (token) => detailTokens.has(token) && !titleTokens.has(token),
+      );
+      return {
+        candidate,
+        score: titleMatches.length * 5 + detailMatches.length,
+      };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        left.candidate.id.localeCompare(right.candidate.id),
+    );
+  if (scored[0] && (!scored[1] || scored[0].score > scored[1].score)) {
+    return { thread: scored[0].candidate, ambiguous: false };
+  }
+  if (
+    params.contextThread &&
+    params.contextThread.groupFolder === params.groupFolder &&
+    ['active', 'paused'].includes(params.contextThread.status) &&
+    (scored.length === 0 ||
+      scored.some(
+        (entry) =>
+          entry.score === scored[0]?.score &&
+          entry.candidate.id === params.contextThread?.id,
+      ))
+  ) {
+    return { thread: params.contextThread, ambiguous: false };
+  }
+  if (scored.length > 1 && scored[0]?.score === scored[1]?.score) {
+    return { thread: null, ambiguous: true };
+  }
+  if (
+    candidates.length === 1 &&
+    /\b(?:it|that|this|they|them)\b/i.test(params.text)
+  ) {
+    return { thread: candidates[0]!, ambiguous: false };
+  }
+  return { thread: null, ambiguous: false };
+}
+
+function deriveCommitmentTitle(text: string): string {
+  const personAction = text.match(
+    /\b(call|email|send|submit|finish|book|schedule|pay|review|contact)\s+([A-Z][a-z'-]+|the\s+[a-z][a-z -]{2,30})/,
+  );
+  if (personAction) {
+    return humanizeThreadTitle(`${personAction[1]} ${personAction[2]}`);
+  }
+  const derived = deriveTitleFromSummary(text);
+  if (derived !== 'Follow-up') return derived;
+  return humanizeThreadTitle(
+    text
+      .replace(
+        /^(?:actually,?\s*)?(?:i|we)\s+(?:might|may|will|'ll|am|are|need to|plan to|intend to|was going to)\s+/i,
+        '',
+      )
+      .split(/\b(?:by|on|at|tomorrow|today|this|next)\b/i)[0]
+      .split(/\s+/)
+      .slice(0, 6)
+      .join(' '),
+  );
+}
+
 function upsertExplicitLifeThread(params: {
   groupFolder: string;
   title: string;
@@ -931,11 +1404,21 @@ function upsertExplicitLifeThread(params: {
   nextAction?: string | null;
   nextFollowupAt?: string | null;
   chatJid?: string;
+  sourceRef?: string;
+  messageId?: string | null;
+  reuseMode?: 'title' | 'semantic' | 'source';
   now: Date;
 }): LifeThread {
-  const title = humanizeThreadTitle(params.title);
-  const summary = clipSummary(params.summary);
-  const defaultNextAction = summary || null;
+  const title = redactLifeThreadCommitmentText(
+    humanizeThreadTitle(redactLifeThreadCommitmentText(params.title)),
+  );
+  const summary = clipSummary(redactLifeThreadCommitmentText(params.summary));
+  const nextAction = params.nextAction
+    ? clipSummary(redactLifeThreadCommitmentText(params.nextAction), 360)
+    : null;
+  const sourceKind = params.sourceKind || 'explicit';
+  const nowIso = params.now.toISOString();
+  const timeZone = lifeThreadTimeZone(params.groupFolder);
   const inferred = inferCategoryScope({
     title,
     summary,
@@ -946,105 +1429,227 @@ function upsertExplicitLifeThread(params: {
     summary,
     params.now,
   );
-  const existing = findThreadByTitle(params.groupFolder, title);
+  const titleMatches = listLifeThreadsForGroup(params.groupFolder).filter(
+    (thread) => normalizeTitleKey(thread.title) === normalizeTitleKey(title),
+  );
+  const reminderTaskId = params.sourceRef?.startsWith('reminder:')
+    ? params.sourceRef.slice('reminder:'.length)
+    : null;
+  const sourceMatch = params.sourceRef
+    ? listLifeThreadsForGroup(params.groupFolder).find((thread) =>
+        reminderTaskId && thread.linkedTaskId === reminderTaskId
+          ? true
+          : getLifeThreadCommitment(thread).evidence.some(
+              (item) =>
+                item.sourceRef ===
+                buildOpaqueLifeThreadCommitmentSourceRef(params.sourceRef!),
+            ),
+      )
+    : undefined;
+  const reuseMode = params.reuseMode || 'title';
+  const existing =
+    sourceMatch ||
+    (reuseMode === 'title'
+      ? titleMatches[0]
+      : reuseMode === 'semantic'
+        ? findSemanticallyEquivalentThread(params.groupFolder, title, summary)
+        : undefined);
   if (existing && isLifeThreadTemporalCorrection(summary)) {
     const correction = applyTemporalCorrection({
       thread: existing,
       text: summary,
       groupFolder: params.groupFolder,
       chatJid: params.chatJid,
+      sourceRef: params.sourceRef,
+      messageId: params.messageId,
       now: params.now,
     });
     if (correction.status !== 'not_temporal') return correction.thread;
   }
-  const inferredInitialTemporal = !existing
-    ? parseLifeThreadTemporalState({
-        text: summary,
-        now: params.now,
-        timeZone: lifeThreadTimeZone(params.groupFolder),
-      })
-    : null;
-  const record: LifeThread = existing
-    ? {
-        ...existing,
-        title,
-        summary,
-        nextAction:
-          params.nextAction !== undefined
-            ? params.nextAction
-            : existing.nextAction || defaultNextAction,
-        nextFollowupAt:
-          params.nextFollowupAt !== undefined
-            ? params.nextFollowupAt
-            : existing.nextFollowupAt ||
-              inferredInitialTemporal?.activeAt ||
-              null,
-        category: inferred.category,
-        scope: inferred.scope,
-        relatedSubjectIds:
-          relatedSubjectIds.length > 0
-            ? relatedSubjectIds
-            : existing.relatedSubjectIds,
-        contextTags: [
-          ...new Set([...existing.contextTags, ...inferred.contextTags]),
-        ],
-        sourceKind: params.sourceKind || 'explicit',
-        confidenceKind: 'explicit',
-        userConfirmed: true,
-        sensitivity: inferred.sensitivity,
-        surfaceMode: existing.surfaceMode || 'default',
-        followthroughMode: existing.followthroughMode || 'important_only',
-        lastSurfacedAt: existing.lastSurfacedAt || null,
-        snoozedUntil: existing.snoozedUntil || null,
-        linkedTaskId: existing.linkedTaskId || null,
-        status: 'active',
-        mergedIntoThreadId: null,
-        lastUpdatedAt: params.now.toISOString(),
-        lastUsedAt: params.now.toISOString(),
-      }
-    : {
-        id: crypto.randomUUID(),
-        groupFolder: params.groupFolder,
-        title,
-        category: inferred.category,
-        status: 'active',
-        scope: inferred.scope,
-        relatedSubjectIds,
-        contextTags: inferred.contextTags,
-        summary,
-        nextAction:
-          params.nextAction !== undefined
-            ? params.nextAction
-            : defaultNextAction,
-        nextFollowupAt:
-          params.nextFollowupAt || inferredInitialTemporal?.activeAt || null,
-        sourceKind: params.sourceKind || 'explicit',
-        confidenceKind: 'explicit',
-        userConfirmed: true,
-        sensitivity: inferred.sensitivity,
-        surfaceMode: 'default',
-        followthroughMode: 'important_only',
-        lastSurfacedAt: null,
-        snoozedUntil: null,
-        linkedTaskId: null,
-        mergedIntoThreadId: null,
-        createdAt: params.now.toISOString(),
-        lastUpdatedAt: params.now.toISOString(),
-        lastUsedAt: params.now.toISOString(),
-      };
-
-  upsertLifeThread(record);
-  upsertLifeThreadSignal({
-    id: crypto.randomUUID(),
-    threadId: record.id,
-    groupFolder: params.groupFolder,
-    sourceKind: params.sourceKind || 'explicit',
-    summaryText: summary,
-    chatJid: params.chatJid || null,
-    confidenceKind: 'explicit',
-    createdAt: params.now.toISOString(),
+  const threadId = existing?.id || crypto.randomUUID();
+  const sourceRef =
+    params.sourceRef || `${params.chatJid || params.channel}:${nowIso}`;
+  let interpretation = interpretLifeThreadCommitment({
+    threadId,
+    title,
+    text: summary,
+    now: params.now,
+    timeZone,
+    sourceKind,
+    sourceRef,
+    current: existing ? getLifeThreadCommitment(existing) : null,
+    knownSubjects: listProfileSubjectsForGroup(params.groupFolder),
+    explicitRequest: sourceKind === 'reminder',
+    fallbackStrength: !existing ? 'intended' : undefined,
   });
-  return record;
+
+  if (
+    existing &&
+    ['completed', 'cancelled', 'superseded'].includes(
+      getLifeThreadCommitment(existing).operationalState,
+    ) &&
+    interpretation &&
+    !/\b(?:reopen|restart|take (?:it|this|that) back|do (?:it|this|that) after all)\b/i.test(
+      summary,
+    )
+  ) {
+    interpretation = null;
+  }
+
+  if (!existing) {
+    if (!interpretation) {
+      throw new Error('New life thread lacks a canonical commitment origin.');
+    }
+    const record: LifeThread & {
+      commitment: NonNullable<LifeThread['commitment']>;
+    } = {
+      id: threadId,
+      groupFolder: params.groupFolder,
+      title,
+      category: inferred.category,
+      status: 'active',
+      scope: inferred.scope,
+      relatedSubjectIds,
+      contextTags: inferred.contextTags,
+      summary,
+      nextAction,
+      nextFollowupAt: params.nextFollowupAt ?? null,
+      sourceKind,
+      confidenceKind: interpretation.state.confidenceKind,
+      commitment: interpretation.state,
+      userConfirmed: true,
+      sensitivity: inferred.sensitivity,
+      surfaceMode: 'default',
+      followthroughMode: 'important_only',
+      lastSurfacedAt: null,
+      snoozedUntil: null,
+      linkedTaskId: null,
+      mergedIntoThreadId: null,
+      createdAt: nowIso,
+      lastUpdatedAt: nowIso,
+      lastUsedAt: nowIso,
+    };
+    createLifeThreadWithInitialCommitment({
+      thread: record,
+      signal: {
+        id: interpretation.eventId,
+        threadId,
+        groupFolder: params.groupFolder,
+        sourceKind,
+        summaryText: summary,
+        chatJid: params.chatJid || null,
+        messageId: params.messageId || null,
+        confidenceKind: interpretation.state.confidenceKind,
+        commitmentTransition: interpretation.transition,
+        createdAt: nowIso,
+      },
+    });
+    return getLifeThread(threadId) || record;
+  }
+
+  if (interpretation) {
+    const result = applyLifeThreadCommitmentTransition({
+      threadId,
+      groupFolder: params.groupFolder,
+      state: interpretation.state,
+      transition: interpretation.transition,
+      summary,
+      sourceKind,
+      confidenceKind: interpretation.state.confidenceKind,
+      userConfirmed: true,
+      signal: {
+        id: interpretation.eventId,
+        threadId,
+        groupFolder: params.groupFolder,
+        sourceKind,
+        summaryText: summary,
+        chatJid: params.chatJid || null,
+        messageId: params.messageId || null,
+        confidenceKind: interpretation.state.confidenceKind,
+        commitmentTransition: interpretation.transition,
+        createdAt: nowIso,
+      },
+    });
+    if (result === 'missing') {
+      throw new Error('Commitment target disappeared before commit.');
+    }
+    if (result === 'duplicate' || result === 'stale') {
+      return getLifeThread(threadId) || existing;
+    }
+  } else {
+    upsertLifeThreadSignal({
+      id: crypto.randomUUID(),
+      threadId,
+      groupFolder: params.groupFolder,
+      sourceKind,
+      summaryText: summary,
+      chatJid: params.chatJid || null,
+      messageId: params.messageId || null,
+      confidenceKind: 'explicit',
+      createdAt: nowIso,
+    });
+  }
+
+  const current = getLifeThread(threadId) || existing;
+  upsertLifeThread({
+    ...current,
+    title,
+    // Existing rows can predate commitment-safe ingestion. Preserve their
+    // meaning while removing any credential-like value before they are ever
+    // returned by a current command again.
+    summary: clipSummary(redactLifeThreadCommitmentText(current.summary)),
+    category: inferred.category,
+    scope: inferred.scope,
+    relatedSubjectIds:
+      relatedSubjectIds.length > 0
+        ? relatedSubjectIds
+        : current.relatedSubjectIds,
+    contextTags: [
+      ...new Set([...current.contextTags, ...inferred.contextTags]),
+    ],
+    sensitivity: inferred.sensitivity,
+    lastUpdatedAt: nowIso,
+    lastUsedAt: nowIso,
+  });
+  return getLifeThread(threadId) || current;
+}
+
+export function syncLifeThreadFromReminderTask(params: {
+  taskId: string;
+  groupFolder: string;
+  chatJid?: string | null;
+  prompt: string;
+  nextRun?: string | null;
+  now?: Date;
+}): LifeThread {
+  const now = params.now || new Date();
+  const prompt = clipSummary(params.prompt, 280);
+  const thread = upsertExplicitLifeThread({
+    groupFolder: params.groupFolder,
+    title: deriveCommitmentTitle(prompt),
+    summary: `Remind me to ${prompt}`,
+    channel: 'telegram',
+    sourceKind: 'reminder',
+    chatJid: params.chatJid || undefined,
+    sourceRef: `reminder:${params.taskId}`,
+    reuseMode: 'source',
+    now,
+  });
+  const scheduled = params.nextRun
+    ? scheduleLifeThreadCommitment({
+        threadId: thread.id,
+        groupFolder: params.groupFolder,
+        dueAt: params.nextRun,
+        now,
+        sourceKind: 'reminder',
+        reason: `Reminder ${params.taskId} is scheduled.`,
+      }) || thread
+    : thread;
+  updateLifeThread(scheduled.id, {
+    linkedTaskId: params.taskId,
+    lastUpdatedAt: scheduled.lastUpdatedAt,
+  });
+  return getLifeThread(scheduled.id) || scheduled;
 }
 
 function deriveTitleFromSummary(summary: string): string {
@@ -1149,7 +1754,27 @@ export function buildLifeThreadSnapshot(params: {
 }): LifeThreadSnapshot {
   const now = params.now || new Date();
   const nowMs = now.getTime();
+  for (const deferred of listLifeThreadsForGroup(params.groupFolder, [
+    'paused',
+  ])) {
+    const matured = buildMatureDeferredCommitment({
+      thread: deferred,
+      now,
+      sourceKind: 'daily_companion',
+    });
+    if (matured) {
+      persistCommitmentInterpretation({
+        thread: deferred,
+        interpretation: matured,
+        groupFolder: params.groupFolder,
+        text: 'The saved deferral horizon elapsed.',
+        sourceKind: 'daily_companion',
+        userConfirmed: deferred.userConfirmed,
+      });
+    }
+  }
   const activeThreads = listLifeThreadsForGroup(params.groupFolder, ['active'])
+    .map((thread) => projectEffectiveLifeThread(thread, now))
     .filter((thread) => {
       if (thread.surfaceMode === 'manual_only') return false;
       if (
@@ -1166,32 +1791,14 @@ export function buildLifeThreadSnapshot(params: {
       }
       return true;
     })
-    .sort((left, right) => {
-      const followthroughPriority = (thread: LifeThread): number => {
-        switch (thread.followthroughMode) {
-          case 'scheduled':
-            return 0;
-          case 'important_only':
-            return 1;
-          default:
-            return 2;
-        }
-      };
-      const leftPriority = followthroughPriority(left);
-      const rightPriority = followthroughPriority(right);
-      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
-      const leftDue = left.nextFollowupAt
-        ? Date.parse(left.nextFollowupAt)
-        : Number.MAX_SAFE_INTEGER;
-      const rightDue = right.nextFollowupAt
-        ? Date.parse(right.nextFollowupAt)
-        : Number.MAX_SAFE_INTEGER;
-      if (leftDue !== rightDue) return leftDue - rightDue;
-      return Date.parse(right.lastUpdatedAt) - Date.parse(left.lastUpdatedAt);
-    });
+    .sort((left, right) =>
+      compareLifeThreadCommitmentPriority(left, right, now),
+    );
 
   const automaticThreads = activeThreads.filter(
-    isAutomaticSurfaceWorthyLifeThread,
+    (thread) =>
+      isAutomaticSurfaceWorthyLifeThread(thread) &&
+      shouldProactivelySurfaceCommitment(thread, now),
   );
 
   const dueFollowups = automaticThreads.filter((thread) => {
@@ -1251,11 +1858,16 @@ export function buildLifeThreadSnapshot(params: {
 function buildThreadDetailReply(
   channel: LifeThreadCommandChannel,
   thread: LifeThread,
+  now: Date,
 ): string {
   const signals = listLifeThreadSignals(thread.id, 3);
   const detailLines = [
     `Summary: ${thread.summary}`,
-    thread.nextAction ? `Next action: ${thread.nextAction}` : null,
+    `Commitment: ${describeLifeThreadCommitment(
+      thread,
+      now,
+      lifeThreadTimeZone(thread.groupFolder),
+    )}`,
     thread.nextFollowupAt
       ? `Next follow-up: ${new Date(thread.nextFollowupAt).toLocaleString(
           'en-US',
@@ -1272,7 +1884,7 @@ function buildThreadDetailReply(
 
   if (channel === 'alexa') {
     return buildVoiceReply({
-      summary: formatThreadReference(thread),
+      summary: formatThreadReference(thread, now),
       details: [detailLines[1] || null, detailLines[2] || null],
       maxDetails: 2,
     });
@@ -1286,13 +1898,14 @@ function buildThreadDetailReply(
 function buildWhyStillOpenReply(
   channel: LifeThreadCommandChannel,
   thread: LifeThread,
+  now: Date,
 ): string {
   const latestSignals = listLifeThreadSignals(thread.id, 2);
-  const reason =
-    thread.nextAction ||
-    thread.nextFollowupAt ||
-    latestSignals[0]?.summaryText ||
-    thread.summary;
+  const reason = describeLifeThreadCommitment(
+    thread,
+    now,
+    lifeThreadTimeZone(thread.groupFolder),
+  );
   if (channel === 'alexa') {
     return buildVoiceReply({
       summary: `I still treat ${thread.title} as open because ${reason}.`,
@@ -1342,14 +1955,15 @@ function buildSaveConfirmation(
   thread: LifeThread,
   summary: string,
 ): string {
+  const safeSummary = redactLifeThreadCommitmentText(summary);
   if (channel === 'alexa') {
     return buildVoiceReply({
       summary: `Okay. I saved that under ${thread.title}.`,
-      details: [summary],
+      details: [safeSummary],
       maxDetails: 1,
     });
   }
-  return `Okay. I saved that under the ${thread.title} thread.\n- ${summary}`;
+  return `Okay. I saved that under the ${thread.title} thread.\n- ${safeSummary}`;
 }
 
 function normalizeLifeThreadSummaryLine(value: string): string {
@@ -1409,6 +2023,8 @@ function confirmPendingSuggestion(
     sourceKind: 'explicit',
     nextAction: pending.nextAction || null,
     chatJid: input.chatJid,
+    sourceRef: lifeThreadCommandSourceRef(input, input.now || new Date()),
+    messageId: input.messageId,
     now: input.now || new Date(),
   });
   if (input.chatJid) {
@@ -1473,8 +2089,8 @@ export function handleLifeThreadCommand(
       handled: true,
       responseText:
         input.channel === 'alexa'
-          ? formatThreadListAlexa(threads)
-          : formatThreadListTelegram(threads),
+          ? formatThreadListAlexa(threads, now)
+          : formatThreadListTelegram(threads, now),
       referencedThread: threads[0] || null,
     };
   }
@@ -1487,7 +2103,7 @@ export function handleLifeThreadCommand(
     return {
       handled: true,
       responseText: thread
-        ? buildThreadDetailReply(input.channel, thread)
+        ? buildThreadDetailReply(input.channel, thread, now)
         : `I do not have an active ${stillOpenMatch[2]} thread yet.`,
       referencedThread: thread || null,
     };
@@ -1507,7 +2123,7 @@ export function handleLifeThreadCommand(
     return {
       handled: true,
       responseText: thread
-        ? buildThreadDetailReply(input.channel, thread)
+        ? buildThreadDetailReply(input.channel, thread, now)
         : 'I do not have an active house thread right now.',
       referencedThread: thread || null,
     };
@@ -1526,17 +2142,53 @@ export function handleLifeThreadCommand(
         referencedThread: null,
       };
     }
-    reassignLifeThreadSignals(fromThread.id, toThread.id);
-    updateLifeThread(fromThread.id, {
-      status: 'archived',
-      mergedIntoThreadId: toThread.id,
-      lastUpdatedAt: now.toISOString(),
-      lastUsedAt: now.toISOString(),
+    const supersession = buildStructuredLifeThreadCommitmentTransition({
+      thread: fromThread,
+      text: raw,
+      now,
+      timeZone: lifeThreadTimeZone(input.groupFolder),
+      sourceKind: 'explicit',
+      sourceRef: lifeThreadCommandSourceRef(input, now),
+      kind: 'superseded',
+      reason: `The user merged this commitment into ${toThread.title}.`,
+      patch: {
+        operationalState: 'superseded',
+        readiness: 'non_actionable',
+        currentAction: null,
+        downstreamAction: null,
+        dueAt: null,
+        reactivateAt: null,
+        reactivateCondition: null,
+        deferredFrom: null,
+        dependencies: [],
+        dependencyResolution: null,
+        followUp: null,
+      },
     });
-    updateLifeThread(toThread.id, {
-      lastUpdatedAt: now.toISOString(),
-      lastUsedAt: now.toISOString(),
+    const mergeResult = mergeLifeThreadsAtomically({
+      fromThreadId: fromThread.id,
+      toThreadId: toThread.id,
+      groupFolder: input.groupFolder,
+      state: supersession.state,
+      transition: supersession.transition,
+      summary: raw,
+      now: now.toISOString(),
+      signal: {
+        id: supersession.eventId,
+        threadId: fromThread.id,
+        groupFolder: input.groupFolder,
+        sourceKind: 'explicit',
+        summaryText: raw,
+        chatJid: input.chatJid || null,
+        messageId: input.messageId || null,
+        confidenceKind: supersession.state.confidenceKind,
+        commitmentTransition: supersession.transition,
+        createdAt: supersession.state.updatedAt,
+      },
     });
+    if (mergeResult === 'missing') {
+      throw new Error('Life-thread merge target disappeared before commit.');
+    }
     return {
       handled: true,
       responseText: `Okay. I merged ${fromThread.title} into ${toThread.title}.`,
@@ -1551,6 +2203,138 @@ export function handleLifeThreadCommand(
     now,
   });
 
+  if (isLifeThreadCommitmentLanguage(raw)) {
+    const standalone = interpretLifeThreadCommitment({
+      threadId: 'unpersisted-classification',
+      title: deriveCommitmentTitle(raw),
+      text: raw,
+      now,
+      timeZone: lifeThreadTimeZone(input.groupFolder),
+      sourceKind: 'explicit',
+      sourceRef: 'classification-only',
+      knownSubjects: listProfileSubjectsForGroup(input.groupFolder),
+    });
+    const referential =
+      /\b(?:it|that|this|they|them)\b/i.test(raw) &&
+      !/^this is (?:critical|important|high priority)\b/i.test(raw);
+    const initialExact =
+      standalone?.kind === 'initial'
+        ? findSemanticallyEquivalentThread(
+            input.groupFolder,
+            deriveCommitmentTitle(raw),
+            raw,
+            ['active', 'paused'],
+          ) || null
+        : null;
+    const target =
+      standalone?.kind === 'initial'
+        ? {
+            thread: initialExact || (referential ? thread || null : null),
+            ambiguous: false,
+          }
+        : resolveCommitmentMutationTarget({
+            groupFolder: input.groupFolder,
+            text: raw,
+            contextThread: thread,
+          });
+    if (target.ambiguous) {
+      return {
+        handled: true,
+        responseText:
+          'I found more than one open commitment that could match that. Which one do you mean?',
+        referencedThread: null,
+      };
+    }
+    if (target.thread) {
+      const interpretation = interpretLifeThreadCommitment({
+        threadId: target.thread.id,
+        title: target.thread.title,
+        text: raw,
+        now,
+        timeZone: lifeThreadTimeZone(input.groupFolder),
+        sourceKind: 'explicit',
+        sourceRef: lifeThreadCommandSourceRef(input, now),
+        current: getLifeThreadCommitment(target.thread),
+        knownSubjects: listProfileSubjectsForGroup(input.groupFolder),
+      });
+      if (interpretation) {
+        const persisted = persistCommitmentInterpretation({
+          thread: target.thread,
+          interpretation,
+          groupFolder: input.groupFolder,
+          text: raw,
+          signalText:
+            interpretation.kind === 'completed' ||
+            interpretation.kind === 'cancelled'
+              ? `${interpretation.kind}: ${raw}`
+              : raw,
+          chatJid: input.chatJid,
+          messageId: input.messageId,
+        });
+        if (input.chatJid) {
+          setLastReferencedLifeThread(input.chatJid, persisted.thread, now);
+        }
+        return {
+          handled: true,
+          responseText:
+            persisted.status === 'duplicate'
+              ? `That commitment update is already recorded for ${persisted.thread.title}.`
+              : persisted.status === 'stale'
+                ? `I kept the newer state for ${persisted.thread.title}; that older update was retained only as history.`
+                : `${persisted.thread.title}: ${describeLifeThreadCommitment(
+                    persisted.thread,
+                    now,
+                    lifeThreadTimeZone(input.groupFolder),
+                  )}`,
+          referencedThread: persisted.thread,
+        };
+      }
+    } else if (
+      !inferLifeThreadTerminalOutcome(raw) ||
+      /\b(?:waiting|hear back|response|reply|follow up|check back|ball is in)\b/i.test(
+        raw,
+      )
+    ) {
+      if (
+        /\b(?:it|that|this|they|them)\b/i.test(raw) &&
+        !/^this is (?:critical|important|high priority)\b/i.test(raw) &&
+        listLifeThreadsForGroup(input.groupFolder, ['active', 'paused'])
+          .length > 1
+      ) {
+        return {
+          handled: true,
+          responseText:
+            'I cannot safely tell which commitment that refers to. Which one do you mean?',
+          referencedThread: null,
+        };
+      }
+      const saved = upsertExplicitLifeThread({
+        groupFolder: input.groupFolder,
+        title: deriveCommitmentTitle(raw),
+        summary: raw,
+        channel: input.channel,
+        sourceKind: 'explicit',
+        reuseMode: 'semantic',
+        chatJid: input.chatJid,
+        sourceRef: lifeThreadCommandSourceRef(input, now),
+        messageId: input.messageId,
+        now,
+      });
+      if (input.chatJid) {
+        setLastReferencedLifeThread(input.chatJid, saved, now);
+      }
+      return {
+        handled: true,
+        responseText: `Okay. I saved the ${saved.title} thread. ${describeLifeThreadCommitment(
+          saved,
+          now,
+          lifeThreadTimeZone(input.groupFolder),
+        )}`,
+        referencedThread: saved,
+      };
+    }
+  }
+
   const terminalOutcome = inferLifeThreadTerminalOutcome(raw);
   if (terminalOutcome) {
     const terminalThread = resolveTerminalLifeThread({
@@ -1559,25 +2343,41 @@ export function handleLifeThreadCommand(
       contextThread: thread,
     });
     if (!terminalThread) return { handled: false };
-    updateLifeThread(terminalThread.id, {
-      status: 'closed',
-      nextAction: null,
-      nextFollowupAt: null,
-      followthroughMode: 'off',
-      lastUpdatedAt: now.toISOString(),
-      lastUsedAt: now.toISOString(),
-    });
-    upsertLifeThreadSignal({
-      id: crypto.randomUUID(),
-      threadId: terminalThread.id,
-      groupFolder: input.groupFolder,
+    const interpretation = buildStructuredLifeThreadCommitmentTransition({
+      thread: terminalThread,
+      text: raw,
+      now,
+      timeZone: lifeThreadTimeZone(input.groupFolder),
       sourceKind: 'explicit',
-      summaryText: `${terminalOutcome}: ${clipSummary(raw)}`,
-      chatJid: input.chatJid || null,
-      confidenceKind: 'explicit',
-      createdAt: now.toISOString(),
+      sourceRef: lifeThreadCommandSourceRef(input, now),
+      kind: terminalOutcome,
+      reason: `The user explicitly marked this commitment ${terminalOutcome}.`,
+      evidenceKinds: [
+        'direct_language',
+        ...(terminalOutcome === 'cancelled' ? (['negation'] as const) : []),
+        'state_transition',
+      ],
+      patch: {
+        operationalState: terminalOutcome,
+        readiness: 'non_actionable',
+        currentAction: null,
+        downstreamAction: null,
+        dueAt: null,
+        reactivateAt: null,
+        reactivateCondition: null,
+        dependencies: [],
+        dependencyResolution: null,
+        followUp: null,
+      },
     });
-    const updated = getLifeThread(terminalThread.id) || terminalThread;
+    const updated = persistCommitmentInterpretation({
+      thread: terminalThread,
+      interpretation,
+      groupFolder: input.groupFolder,
+      text: `${terminalOutcome}: ${clipSummary(raw)}`,
+      chatJid: input.chatJid,
+      messageId: input.messageId,
+    }).thread;
     return {
       handled: true,
       responseText:
@@ -1614,6 +2414,8 @@ export function handleLifeThreadCommand(
       text: raw,
       groupFolder: input.groupFolder,
       chatJid: input.chatJid,
+      messageId: input.messageId,
+      sourceRef: stableLifeThreadCommandSourceRef(input),
       now,
     });
     if (correction.status !== 'not_temporal') {
@@ -1640,7 +2442,10 @@ export function handleLifeThreadCommand(
         responseText: 'I need the thread first before I can rename it.',
       };
     }
-    const nextTitle = clipSummary(renameMatch[1], 60);
+    const nextTitle = clipSummary(
+      redactLifeThreadCommitmentText(renameMatch[1]),
+      60,
+    );
     updateLifeThread(thread.id, {
       title: nextTitle,
       lastUpdatedAt: now.toISOString(),
@@ -1668,15 +2473,45 @@ export function handleLifeThreadCommand(
       };
     }
     const nextStatus = normalized.includes('archive') ? 'archived' : 'closed';
-    updateLifeThread(thread.id, {
-      status: nextStatus,
-      lastUpdatedAt: now.toISOString(),
-      lastUsedAt: now.toISOString(),
+    const lifecycle = buildStructuredLifeThreadCommitmentTransition({
+      thread,
+      text: raw,
+      now,
+      timeZone: lifeThreadTimeZone(input.groupFolder),
+      sourceKind: 'explicit',
+      sourceRef: lifeThreadCommandSourceRef(input, now),
+      kind: nextStatus === 'archived' ? 'superseded' : 'completed',
+      reason:
+        nextStatus === 'archived'
+          ? 'The user archived this commitment.'
+          : 'The user closed this commitment.',
+      patch: {
+        operationalState:
+          nextStatus === 'archived' ? 'superseded' : 'completed',
+        readiness: 'non_actionable',
+        currentAction: null,
+        downstreamAction: null,
+        dueAt: null,
+        reactivateAt: null,
+        reactivateCondition: null,
+        deferredFrom: null,
+        dependencies: [],
+        dependencyResolution: null,
+        followUp: null,
+      },
     });
+    const closed = persistCommitmentInterpretation({
+      thread,
+      interpretation: lifecycle,
+      groupFolder: input.groupFolder,
+      text: raw,
+      chatJid: input.chatJid,
+      messageId: input.messageId,
+    }).thread;
     return {
       handled: true,
       responseText: `Okay. ${thread.title} is ${nextStatus}.`,
-      referencedThread: getLifeThread(thread.id) || thread,
+      referencedThread: closed,
     };
   }
 
@@ -1687,15 +2522,45 @@ export function handleLifeThreadCommand(
         responseText: 'I need the thread first before I can pause it.',
       };
     }
-    updateLifeThread(thread.id, {
-      status: 'paused',
-      lastUpdatedAt: now.toISOString(),
-      lastUsedAt: now.toISOString(),
+    const currentCommitment = getLifeThreadCommitment(thread);
+    const pause = buildStructuredLifeThreadCommitmentTransition({
+      thread,
+      text: raw,
+      now,
+      timeZone: lifeThreadTimeZone(input.groupFolder),
+      sourceKind: 'explicit',
+      sourceRef: lifeThreadCommandSourceRef(input, now),
+      kind: 'deferred',
+      reason: 'The user paused this commitment until an explicit resume.',
+      patch: {
+        operationalState: 'deferred',
+        readiness: 'non_actionable',
+        currentAction: null,
+        downstreamAction:
+          currentCommitment.downstreamAction ||
+          currentCommitment.currentAction ||
+          null,
+        reactivateAt: null,
+        reactivateCondition: 'the user resumes this commitment',
+        deferredFrom:
+          currentCommitment.operationalState === 'deferred'
+            ? currentCommitment.deferredFrom || null
+            : resumableLifeThreadCommitmentState(
+                currentCommitment.operationalState,
+              ),
+      },
     });
+    const paused = persistCommitmentInterpretation({
+      thread,
+      interpretation: pause,
+      groupFolder: input.groupFolder,
+      text: raw,
+      chatJid: input.chatJid,
+    }).thread;
     return {
       handled: true,
       responseText: `Okay. I paused ${thread.title}.`,
-      referencedThread: getLifeThread(thread.id) || thread,
+      referencedThread: paused,
     };
   }
 
@@ -1739,7 +2604,7 @@ export function handleLifeThreadCommand(
     return {
       handled: true,
       responseText: thread
-        ? buildThreadDetailReply(input.channel, thread)
+        ? buildThreadDetailReply(input.channel, thread, now)
         : 'I do not have a single thread in context for that yet.',
       referencedThread: thread || null,
     };
@@ -1749,7 +2614,7 @@ export function handleLifeThreadCommand(
     return {
       handled: true,
       responseText: thread
-        ? buildWhyStillOpenReply(input.channel, thread)
+        ? buildWhyStillOpenReply(input.channel, thread, now)
         : 'I am not holding onto a specific thread strongly enough for that.',
       referencedThread: thread || null,
     };
@@ -1795,12 +2660,14 @@ export function handleLifeThreadCommand(
       handled: true,
       responseText:
         input.channel === 'alexa'
-          ? formatThreadListAlexa(threads.slice(0, 3))
+          ? formatThreadListAlexa(threads.slice(0, 3), now)
           : [
               'Follow-through right now:',
               ...threads
                 .slice(0, 5)
-                .map((candidate) => `- ${formatThreadSummaryLine(candidate)}`),
+                .map(
+                  (candidate) => `- ${formatThreadSummaryLine(candidate, now)}`,
+                ),
             ].join('\n'),
       referencedThread: threads[0] || null,
     };
@@ -1830,7 +2697,8 @@ export function handleLifeThreadCommand(
                 ...threads
                   .slice(0, 4)
                   .map(
-                    (candidate) => `- ${formatThreadSummaryLine(candidate)}`,
+                    (candidate) =>
+                      `- ${formatThreadSummaryLine(candidate, now)}`,
                   ),
               ].join('\n'),
       referencedThread: threads[0] || null,
@@ -1856,6 +2724,8 @@ export function handleLifeThreadCommand(
       channel: input.channel,
       sourceKind: 'explicit',
       chatJid: input.chatJid,
+      sourceRef: lifeThreadCommandSourceRef(input, now),
+      messageId: input.messageId,
       now,
     });
     return {
@@ -1888,6 +2758,8 @@ export function handleLifeThreadCommand(
       sourceKind: 'explicit',
       nextAction: `Talk to ${personName} about ${summaryBase}`,
       chatJid: input.chatJid,
+      sourceRef: lifeThreadCommandSourceRef(input, now),
+      messageId: input.messageId,
       now,
     });
     return {
@@ -1918,6 +2790,8 @@ export function handleLifeThreadCommand(
       sourceKind: 'explicit',
       nextAction: summary,
       chatJid: input.chatJid,
+      sourceRef: lifeThreadCommandSourceRef(input, now),
+      messageId: input.messageId,
       now,
     });
     return {
@@ -1947,22 +2821,28 @@ export function handleLifeThreadCommand(
       title: personName,
       summary: summaryBase,
       channel: input.channel,
-      sourceKind: 'explicit',
+      sourceKind: 'reminder',
       nextAction: `Talk to ${personName} about ${summaryBase}`,
       nextFollowupAt: followupAt,
       chatJid: input.chatJid,
+      sourceRef: lifeThreadCommandSourceRef(input, now),
+      messageId: input.messageId,
       now,
     });
-    updateLifeThread(savedThread.id, {
-      followthroughMode: 'scheduled',
-      nextFollowupAt: followupAt,
-      lastUpdatedAt: now.toISOString(),
-      lastUsedAt: now.toISOString(),
-    });
+    const scheduledThread = followupAt
+      ? scheduleLifeThreadCommitment({
+          threadId: savedThread.id,
+          groupFolder: input.groupFolder,
+          dueAt: followupAt,
+          now,
+          sourceKind: 'reminder',
+          reason: `The user requested follow-through for ${savedThread.title}.`,
+        }) || savedThread
+      : savedThread;
     return {
       handled: true,
       responseText: `Okay. I will keep that in the ${savedThread.title} thread${followupAt ? ' and keep it in view for later.' : '.'}`,
-      referencedThread: getLifeThread(savedThread.id) || savedThread,
+      referencedThread: getLifeThread(scheduledThread.id) || scheduledThread,
     };
   }
 
@@ -1986,22 +2866,28 @@ export function handleLifeThreadCommand(
       title,
       summary: summaryBase,
       channel: input.channel,
-      sourceKind: 'explicit',
+      sourceKind: 'reminder',
       nextAction: summaryBase,
       nextFollowupAt: followupAt,
       chatJid: input.chatJid,
+      sourceRef: lifeThreadCommandSourceRef(input, now),
+      messageId: input.messageId,
       now,
     });
-    updateLifeThread(savedThread.id, {
-      followthroughMode: 'important_only',
-      nextFollowupAt: followupAt,
-      lastUpdatedAt: now.toISOString(),
-      lastUsedAt: now.toISOString(),
-    });
+    const scheduledThread = followupAt
+      ? scheduleLifeThreadCommitment({
+          threadId: savedThread.id,
+          groupFolder: input.groupFolder,
+          dueAt: followupAt,
+          now,
+          sourceKind: 'reminder',
+          reason: `The user requested follow-through for ${savedThread.title}.`,
+        }) || savedThread
+      : savedThread;
     return {
       handled: true,
       responseText: `Okay. I will keep ${savedThread.title} in view so it does not slip.`,
-      referencedThread: getLifeThread(savedThread.id) || savedThread,
+      referencedThread: getLifeThread(scheduledThread.id) || scheduledThread,
     };
   }
 

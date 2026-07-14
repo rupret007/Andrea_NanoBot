@@ -27,6 +27,18 @@ import {
   upsertOutcome,
 } from './db.js';
 import { planContextualReminder } from './local-reminder.js';
+import {
+  completeLifeThreadCommitment,
+  deferLifeThreadCommitment,
+  resolveLifeThreadTimeZone,
+  scheduleLifeThreadCommitment,
+  syncLifeThreadFromReminderTask,
+} from './life-threads.js';
+import {
+  describeLifeThreadCommitment,
+  getLifeThreadCommitment,
+  shouldProactivelySurfaceCommitment,
+} from './life-thread-commitment.js';
 import { buildSignatureFlowText } from './signature-flows.js';
 import type {
   ActionBundleRelatedRefs,
@@ -924,20 +936,43 @@ export function syncOutcomeFromLifeThreadRecord(
   thread: LifeThread,
   now = new Date(),
 ): OutcomeRecord {
+  const commitment = getLifeThreadCommitment(thread);
   const dueAt = thread.nextFollowupAt || thread.snoozedUntil || null;
+  const terminal = ['completed', 'cancelled', 'superseded'].includes(
+    commitment.operationalState,
+  );
+  const weakIdea =
+    commitment.operationalState === 'proposed' ||
+    commitment.strength === 'speculative' ||
+    commitment.strength === 'tentative';
+  const operatorSuppressed =
+    thread.surfaceMode === 'manual_only' ||
+    thread.followthroughMode === 'manual_only' ||
+    thread.followthroughMode === 'off';
+  const dailyReviewEligible =
+    terminal || shouldProactivelySurfaceCommitment(thread, now);
+  const weeklyReviewEligible = terminal || (!weakIdea && !operatorSuppressed);
   const status: OutcomeStatus =
-    thread.status === 'closed' || thread.status === 'archived'
-      ? 'completed'
-      : thread.status === 'paused' || Boolean(thread.snoozedUntil)
-        ? 'deferred'
-        : 'partial';
+    commitment.operationalState === 'cancelled' ||
+    commitment.operationalState === 'superseded'
+      ? 'skipped'
+      : commitment.operationalState === 'completed'
+        ? 'completed'
+        : commitment.operationalState === 'deferred' ||
+            Boolean(thread.snoozedUntil)
+          ? 'deferred'
+          : 'partial';
   return upsertOutcomeRecord({
     groupFolder: thread.groupFolder,
     sourceType: 'life_thread',
     sourceKey: thread.id,
     status,
     completionSummary: buildLifeThreadSummary(thread),
-    nextFollowupText: thread.nextAction || thread.summary,
+    nextFollowupText: describeLifeThreadCommitment(
+      thread,
+      now,
+      resolveLifeThreadTimeZone(thread.groupFolder),
+    ),
     dueAt,
     reviewHorizon: dueAt ? reviewHorizonFromDueAt(dueAt, now) : 'later',
     linkedRefs: {
@@ -945,6 +980,8 @@ export function syncOutcomeFromLifeThreadRecord(
       reminderTaskId: thread.linkedTaskId || undefined,
     },
     userConfirmed: thread.userConfirmed,
+    showInDailyReview: dailyReviewEligible,
+    showInWeeklyReview: weeklyReviewEligible,
     now,
   });
 }
@@ -954,6 +991,47 @@ export function syncOutcomeFromReminderTask(
   options: ReminderSyncOptions = {},
 ): OutcomeRecord {
   const now = options.now || new Date();
+  const linkedThreadId = options.linkedRefs?.threadId;
+  let reminderThread: LifeThread | null = null;
+  if (linkedThreadId) {
+    const linkedThread = getLifeThread(linkedThreadId);
+    if (!linkedThread || linkedThread.groupFolder !== task.group_folder) {
+      throw new Error(
+        'Reminder linkage does not match its scoped life thread.',
+      );
+    }
+    const scheduledThread = task.next_run
+      ? scheduleLifeThreadCommitment({
+          threadId: linkedThread.id,
+          groupFolder: task.group_folder,
+          dueAt: task.next_run,
+          now,
+          sourceKind: 'reminder',
+          reason: `Reminder ${task.id} is scheduled for the linked commitment.`,
+        }) || linkedThread
+      : linkedThread;
+    reminderThread = scheduledThread;
+    updateLifeThread(linkedThread.id, {
+      linkedTaskId: task.id,
+      lastUpdatedAt: scheduledThread.lastUpdatedAt,
+    });
+    reminderThread = getLifeThread(linkedThread.id) || reminderThread;
+  } else if (
+    task.status !== 'completed' &&
+    !options.linkedRefs?.communicationThreadId &&
+    !options.linkedRefs?.missionId &&
+    !options.linkedRefs?.actionBundleId &&
+    !options.linkedRefs?.messageActionId
+  ) {
+    reminderThread = syncLifeThreadFromReminderTask({
+      taskId: task.id,
+      groupFolder: task.group_folder,
+      chatJid: task.chat_jid,
+      prompt: task.prompt,
+      nextRun: task.next_run,
+      now,
+    });
+  }
   return upsertOutcomeRecord({
     groupFolder: task.group_folder,
     sourceType: 'reminder',
@@ -974,6 +1052,7 @@ export function syncOutcomeFromReminderTask(
       : 'later',
     linkedRefs: {
       reminderTaskId: task.id,
+      threadId: options.linkedRefs?.threadId || reminderThread?.id,
       ...(options.linkedRefs || {}),
     },
     showInDailyReview: options.showInDailyReview,
@@ -2010,11 +2089,17 @@ export function applyOutcomeReviewControl(params: {
     if (linkedRefs.threadId) {
       const thread = getLifeThread(linkedRefs.threadId);
       if (thread) {
+        const deferred = deferLifeThreadCommitment({
+          threadId: thread.id,
+          groupFolder: thread.groupFolder,
+          until: planned.task.next_run,
+          now,
+          sourceKind: 'action_layer',
+          reason: 'The owner asked to revisit this tomorrow morning.',
+        });
         updateLifeThread(thread.id, {
           linkedTaskId: planned.task.id,
-          snoozedUntil: planned.task.next_run,
-          status: 'paused',
-          lastUpdatedAt: now.toISOString(),
+          lastUpdatedAt: deferred?.lastUpdatedAt || now.toISOString(),
         });
         const updatedThread = getLifeThread(thread.id);
         if (updatedThread) syncOutcomeFromLifeThreadRecord(updatedThread, now);
@@ -2074,10 +2159,12 @@ export function applyOutcomeReviewControl(params: {
     } else if (linkedRefs.threadId) {
       const thread = getLifeThread(linkedRefs.threadId);
       if (thread) {
-        updateLifeThread(thread.id, {
-          status: 'closed',
-          lastUpdatedAt: now.toISOString(),
-          lastUsedAt: now.toISOString(),
+        completeLifeThreadCommitment({
+          threadId: thread.id,
+          groupFolder: thread.groupFolder,
+          now,
+          sourceKind: 'action_layer',
+          reason: 'The owner marked this outcome handled.',
         });
         const updated = getLifeThread(thread.id);
         if (updated) syncOutcomeFromLifeThreadRecord(updated, now);

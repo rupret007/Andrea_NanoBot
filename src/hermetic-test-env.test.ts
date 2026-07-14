@@ -530,7 +530,6 @@ describe('hermetic deterministic test environment', () => {
       });
       child.once('message', (message) => {
         finish('fork:' + message);
-        child.disconnect();
       });
       cluster.setupPrimary({ exec: fixture, execArgv: [] });
       const worker = cluster.fork({
@@ -539,7 +538,6 @@ describe('hermetic deterministic test environment', () => {
       });
       worker.once('message', (message) => {
         finish('cluster:' + message);
-        worker.disconnect();
       });
       setTimeout(() => {
         process.stderr.write('fork/cluster guard test timed out');
@@ -595,10 +593,37 @@ describe('hermetic deterministic test environment', () => {
       path.join(process.cwd(), 'scripts', 'test-deterministic-sweep.ts'),
       'utf8',
     );
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'),
+    ) as { scripts?: Record<string, string> };
+    const commitmentLauncher = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'run-commitment-certification.ts'),
+      'utf8',
+    );
 
     expect(source).not.toContain('networkGuardPath');
     expect(source).toContain("return ['--import=tsx', ...tokens.slice(3)]");
+    expect(source).toContain("tokens[2] === '--import=tsx'");
+    expect(source).toContain('return tokens.slice(2)');
     expect(source).not.toContain('--import=./scripts/test-network-guard.mjs');
+    expect(source).toContain('isNetworkGuardPreloadArgument');
+    expect(source).toContain('for (let index = tokens.length - 1');
+    expect(source).toContain('tokens.splice(index, 1)');
+    expect(
+      packageJson.scripts?.['certify:commitment-intelligence'],
+    ).not.toContain('--import=./scripts/test-network-guard.mjs');
+    expect(packageJson.scripts?.['certify:commitment-intelligence']).toContain(
+      'scripts/run-commitment-certification.ts',
+    );
+    expect(commitmentLauncher).toContain('buildHermeticTestEnv(process.env');
+    expect(commitmentLauncher).toContain('isolateStorage: false');
+    expect(commitmentLauncher).toContain(
+      "ANDREA_COMMITMENT_CERT_HERMETIC_PARENT: '1'",
+    );
+    expect(commitmentLauncher).toContain(
+      "new URL('./test-network-guard.mjs', import.meta.url)",
+    );
+    expect(commitmentLauncher).toContain('await import(networkGuardUrl.href)');
     expect(source).not.toContain("spawnSync('npm'");
     expect(source).toContain(
       'spawnSync(process.execPath, deterministicCommandArgs(script)',

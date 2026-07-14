@@ -25,6 +25,12 @@ import type {
   ProfileSubject,
   ScheduledTask,
 } from './types.js';
+import { resolveLifeThreadTimeZone } from './life-threads.js';
+import {
+  describeLifeThreadCommitment,
+  projectEffectiveLifeThread,
+  shouldProactivelySurfaceCommitment,
+} from './life-thread-commitment.js';
 
 export type PersonalContextNodeKind =
   | 'operating_profile'
@@ -382,6 +388,7 @@ function addLifeThreadNodes(params: {
   edges: PersonalContextGraphEdge[];
   lifeThreads: LifeThread[];
   subjectNodeIds: Map<string, string>;
+  now: Date;
 }): Map<string, string> {
   const map = new Map<string, string>();
   for (const thread of params.lifeThreads) {
@@ -393,7 +400,13 @@ function addLifeThreadNodes(params: {
       label: redactPersonalContextText(thread.title),
       status: thread.status,
       updatedAt: thread.lastUpdatedAt,
-      summary: redactPersonalContextText(thread.summary),
+      summary: redactPersonalContextText(
+        describeLifeThreadCommitment(
+          thread,
+          params.now,
+          resolveLifeThreadTimeZone(thread.groupFolder),
+        ),
+      ),
       refs: {
         category: thread.category,
         scope: thread.scope,
@@ -522,6 +535,7 @@ function buildFollowthroughCandidates(params: {
   plan: OperatingProfilePlan;
   lifeThreads: LifeThread[];
   communicationThreads: CommunicationThreadRecord[];
+  now: Date;
 }): FollowthroughCandidate[] {
   const candidates: FollowthroughCandidate[] = [];
   const add = (candidate: FollowthroughCandidate): void => {
@@ -573,7 +587,14 @@ function buildFollowthroughCandidates(params: {
   for (const thread of params.lifeThreads.slice(0, 8)) {
     if (thread.status !== 'active') continue;
     if (thread.followthroughMode === 'manual_only') continue;
-    const nextAction = normalizeText(thread.nextAction || thread.summary);
+    if (!shouldProactivelySurfaceCommitment(thread, params.now)) continue;
+    const nextAction = normalizeText(
+      describeLifeThreadCommitment(
+        thread,
+        params.now,
+        resolveLifeThreadTimeZone(thread.groupFolder),
+      ),
+    );
     if (!nextAction) continue;
     add({
       id: `life:${thread.id}`,
@@ -896,13 +917,22 @@ function buildGraphInsights(params: {
   tasks: ScheduledTask[];
   followthroughCandidates: FollowthroughCandidate[];
   followthroughOutcomes: OutcomeRecord[];
+  now: Date;
 }): PersonalContextGraphInsight[] {
   const insights: PersonalContextGraphInsight[] = [];
   const displayThreadDetail = (thread: LifeThread): string => {
-    const rawSummary =
-      normalizeText(thread.nextAction || thread.summary || thread.title) ||
-      'Follow-up';
-    const summary = rawSummary
+    const described =
+      normalizeText(
+        describeLifeThreadCommitment(
+          thread,
+          params.now,
+          resolveLifeThreadTimeZone(thread.groupFolder),
+        ),
+      ) || 'Follow-up';
+    const ownedAction = described.match(
+      /^(?:you own|[^:]{1,80} owns) the next action(?: for .*?)?:\s+(.+)$/i,
+    )?.[1];
+    const summary = (ownedAction || described)
       .replace(
         /^(?:the first fixed point in your day is|the next grounded thing is|the clearest next anchor is|the next thing that still needs attention is|the thing most likely to slip is|one carryover to keep in sight is|the thing worth closing tonight is|the thing still most likely to slip tonight is)\s+/i,
         '',
@@ -1054,10 +1084,9 @@ function buildGraphInsights(params: {
   for (const thread of params.lifeThreads.slice(0, 20)) {
     if (thread.status !== 'active') continue;
     if (thread.followthroughMode === 'manual_only') continue;
+    if (!shouldProactivelySurfaceCommitment(thread, params.now)) continue;
     const detail = displayThreadDetail(thread);
-    const hasNextAction = Boolean(
-      normalizeText(thread.nextAction || thread.summary),
-    );
+    const hasNextAction = Boolean(normalizeText(thread.nextAction || ''));
     addInsight(insights, {
       insightId: insightId('slipping', thread.id),
       kind: 'slipping',
@@ -1180,7 +1209,8 @@ export function buildPersonalContextGraph(params: {
   groupFolder: string;
   now?: Date;
 }): PersonalContextGraphReport {
-  const generatedAt = (params.now || new Date()).toISOString();
+  const now = params.now || new Date();
+  const generatedAt = now.toISOString();
   const nodes = new Map<string, PersonalContextGraphNode>();
   const edges: PersonalContextGraphEdge[] = [];
   const activeProfile = getActiveOperatingProfile(params.groupFolder) || null;
@@ -1191,7 +1221,7 @@ export function buildPersonalContextGraph(params: {
   const lifeThreads = listLifeThreadsForGroup(params.groupFolder, [
     'active',
     'paused',
-  ]);
+  ]).map((thread) => projectEffectiveLifeThread(thread, now));
   const communicationThreads = listCommunicationThreadsForGroup({
     groupFolder: params.groupFolder,
     limit: 80,
@@ -1256,6 +1286,7 @@ export function buildPersonalContextGraph(params: {
     plan,
     lifeThreads,
     communicationThreads,
+    now,
   });
   const groups = listEverydayListGroups(params.groupFolder).filter(
     (group) => !group.archivedAt,
@@ -1268,6 +1299,7 @@ export function buildPersonalContextGraph(params: {
     edges,
     lifeThreads,
     subjectNodeIds,
+    now,
   });
   addCommunicationNodes({
     nodes,
@@ -1348,6 +1380,7 @@ export function buildPersonalContextGraph(params: {
     tasks,
     followthroughCandidates,
     followthroughOutcomes,
+    now,
   });
 
   return {

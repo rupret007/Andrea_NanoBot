@@ -113,6 +113,21 @@ This lets Andrea track things like:
 The thread remains the canonical object.
 The ritual layer only controls when Andrea should surface it.
 
+Commitment Intelligence controls whether the thread is eligible:
+
+- speculative and tentative possibilities are not firm overdue obligations;
+- waiting, blocked, or delegated work stays quiet until a user follow-up is
+  genuinely actionable;
+- deferred work stays quiet until its reactivation horizon;
+- completed, cancelled, and superseded work never return as active
+  follow-through;
+- manual-only, disabled, and snoozed controls still win.
+
+Rituals consume the effective canonical state and a human-readable reason.
+They must not reconstruct commitment truth from historical signal text or
+legacy next-action fields. See
+[COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
+
 ## Ritual Inputs
 
 Rituals can draw from:

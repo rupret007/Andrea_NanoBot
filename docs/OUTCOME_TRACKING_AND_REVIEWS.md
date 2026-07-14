@@ -231,6 +231,14 @@ That matters for trust:
 
 Those systems stay distinct on purpose.
 
+For a linked life thread, outcome projection follows canonical commitment
+truth: `completed` is handled, `cancelled` or `superseded` is skipped rather
+than successful, and `deferred` remains open for later. A waiting or delegated
+thread is not complete merely because the user's immediate action ended. The
+review layer must use the commitment description and transition helper instead
+of independently rewriting legacy status or next-action fields. See
+[COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
+
 ## Testing And Demo Flow
 
 For repo-side validation, run:

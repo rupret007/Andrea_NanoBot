@@ -1,5 +1,198 @@
 # Modernization Plan
 
+Only the first dated section is current. Every later dated section is retained
+as historical implementation and release evidence unless its heading
+explicitly says otherwise; older uses of “candidate” or “authoritative” do not
+override the first section.
+
+## Commitment Intelligence Engine — 2026-07-14 (release candidate)
+
+This is the authoritative section for the coherent release candidate that began
+from released baseline `0a71d4bcb4308d49ae057473356af03c0d0465fb`.
+Repository-controlled local gates are complete. Commit, push, exact-SHA hosted
+CI, rebuild, the requested service restart, runtime provenance, and passive
+live proof remain separate release evidence until recorded below.
+
+### Root architectural finding
+
+- [x] The released life-thread layer preserved open topics, temporal truth,
+      completion, cancellation, and signals, but strength, ownership,
+      waiting/blocking/delegation/deferral, readiness, and conditional
+      follow-up had no canonical typed current state.
+- [x] Legacy `status`, `nextAction`, `nextFollowupAt`, snooze, follow-through,
+      and free-text signals could not safely distinguish a possibility from a
+      promise, a completed send from a wait, or user work from delegated work.
+- [x] The pre-change broader certification measured 6 `PASS`, 2 `PARTIAL`, and
+      2 `FAIL`; tentative intent and selective forgetting remained failures.
+      That result is before-state evidence, not a promotion baseline.
+
+### Implemented candidate
+
+- [x] Add one versioned canonical commitment state with five strengths, nine
+      operational states, seven readiness classes, three coarse explicit
+      importance bands, typed owners, typed dependencies, `all`/`any`
+      resolution, conditional follow-up, bounded derived evidence, confidence,
+      revision, and transition identity.
+- [x] Add deterministic interpretation for speculation, tentative intent,
+      committed/self-owned action, explicit reminder request, waiting after a
+      completed action, blockers, delegation/take-back, deferral/reactivation,
+      strengthening/weakening, completion, cancellation, and supersession.
+- [x] Keep ambiguity safe: unclear references or competing targets preserve
+      existing state and request clarification instead of guessing or creating
+      a duplicate.
+- [x] Make replay safe: deterministic event identity makes exact replay a
+      no-op; revision/coherence checks classify older evidence stale rather
+      than reactivating superseded current truth.
+- [x] Add canonical deterministic ordering from actionability, explicit
+      importance, urgency, strength, confidence, recency, and stable identity.
+      Suppress speculative, tentative, terminal, prematurely deferred,
+      unresolved waiting/blocked/delegated, low-confidence, manual-only, off,
+      and snoozed items from automatic surfacing.
+- [x] Store canonical state in `life_threads.commitment_state_json` and
+      append-only transition provenance in
+      `life_thread_signals.commitment_transition_json`; update active state and
+      legacy compatibility fields in one immediate transaction.
+- [x] Add an additive, idempotent, conservative migration for legacy records.
+      Only the exact released `{}`/null sentinel is backfilled. Terminal/paused
+      truth survives; an active legacy record without a real action stays
+      non-actionable. Nonempty malformed or unsupported future canonical bytes
+      are preserved and startup fails closed instead of overwriting truth.
+- [x] Update life-thread ingestion/snapshot, reminder synchronization, outcome
+      review, rituals, cockpit controls, personal-context graph, Cognitive
+      Executive, memory activation, council/session evidence, communication
+      companion, chief-of-staff, and daily guidance consumers to use effective
+      canonical truth.
+- [x] Preserve authority boundaries. Commitment ownership never authorizes a
+      send, calendar write, purchase, repository change, deploy, migration,
+      dependency change, deletion, or another fresh-approval action.
+- [x] Preserve stable identities and provenance needed for a future scoped
+      forgetting design without exposing destructive multi-item forgetting.
+- [x] Keep transition provenance derived and bounded: canonical state and
+      commitment signal rows contain typed reasons plus opaque source/message
+      references, not copied raw message bodies or channel identifiers.
+- [x] Make same-group merge and state mutation transactional and group-bound;
+      injected failures roll back signal movement, supersession, links, and
+      target updates together.
+- [x] Prevent private planning context from leaking into outbound drafts or
+      council prompts. Draft support is explicit, relevant, recipient-safe,
+      normal-sensitivity, and actionable; raw profile-fact text cannot become
+      draft support, a title, or provider content, although an accepted fact may
+      select one closed local style label; sensitive and legacy thread titles
+      are withheld.
+      Metadata/local-only council policies remain enforced after contract
+      enrichment, and semantic snippets additionally require source-memory plus
+      per-request provider-egress consent. The optional recent-text cloud pass
+      receives no unrelated profile or life-thread memory.
+- [x] Close two final independent-audit findings. Sentinel legacy migration now
+      redacts compatibility title, summary, and next-action text in the same
+      transaction as canonical backfill, and reads sanitize those fields even
+      for a restored valid-canonical row. Cognitive Executive automatic focus
+      excludes manual-only, disabled, future-snoozed, speculative, and other
+      non-actionable threads while explicit lookup remains available.
+
+### Documentation and developer experience
+
+- [x] Add the authoritative
+      [Commitment Intelligence](docs/COMMITMENT_INTELLIGENCE.md) guide.
+- [x] Update README, user/setup guides, documentation index, capability graph,
+      rituals, chief-of-staff, communication, outcomes, personal intelligence,
+      privacy/security, command reference, testing runbook, current status, and
+      final handoff truth.
+- [x] Distinguish implemented candidate behavior from verified repository,
+      hosted-CI, runtime, and live-channel evidence. Historical temporal and
+      life-thread results remain labeled as before-state evidence.
+
+### Required certification and release evidence
+
+- [x] Focused commitment, life-thread, temporal, outcome, reminder, ritual,
+      daily-companion, context, cognitive, communication, ranking, migration,
+      privacy, and restart tests pass with no weakened or skipped assertion:
+      the final combined affected matrix is 16 files / 256 tests.
+- [x] `npm run certify:commitment-intelligence` passes all 24 primary and 15
+      held-out scenarios with deterministic time, provider suppression,
+      non-loopback network denial, two durable close/reopen cycles, duplicate
+      and out-of-order replay, strict nonzero failure, cleanup manifest, and
+      independent zero-residue production search. Final run
+      `ANDREA-COMMITMENT-B8A5438A-BC9C-448B-BB02-5C5EB164800D` also passed 3/3
+      boundary invariants and 18/18 durable reopens with zero provider calls,
+      external writes, isolated residue, or production residue.
+- [x] Existing temporal certification remains passing: final run
+      `ANDREA-TEMPORAL-20260714T202649623Z-5D75F95B` passed 13/13 with two
+      durable restarts and zero production residue. The broader historical
+      life-thread harness remains honestly 6 `PASS`, 2 `PARTIAL`, and 2
+      `FAIL`; its remaining tentative/selective-forget gaps are not relabeled.
+- [x] Root format, typecheck, full primary tests/build, runner contracts, AGI
+      typecheck/tests, three stability rounds, held-out truth, offline zero-cost
+      scorecard, signature flows, docs checks, audits, and final whitespace
+      review pass. Lint has zero errors and the unchanged configured warning
+      backlog is 649. The post-fix deterministic sweep passed all 94 selected
+      commands from the 109-command inventory in 271.6 seconds; its nested
+      204.0-second stability gate passed all three rounds.
+- [x] Record repository evidence in this plan and `docs/CURRENT_STATUS.md`:
+      231 primary files / 2,790 tests; 28 AGI files / 282 tests; three complete
+      stability rounds; 24/24 commitment primary, 15/15 held-out, 3/3 boundary,
+      and 18/18 durable-reopen checks; 100% A+ offline scorecard at $0; six
+      signature flows; 70 documentation files; zero root or runner audit
+      vulnerabilities; and passing container build, policy, image, and mount
+      canaries.
+- [x] Diagnose the preliminary deterministic sweep's sole failure rather than
+      misclassifying it as a scenario regression. The sweep placed its network
+      guard on the pinned-node wrapper, which then correctly refused to spawn a
+      second Node process with `--import=tsx`. The sweep now unwraps only that
+      trusted pinned launcher onto its already-pinned executable; focused guard
+      tests and direct strict certification pass while network denial remains
+      active. The complete post-fix sweep passed 94/94 and the certification
+      boundary failure did not recur.
+- [ ] Fetch immediately before release and require non-diverged `main` with
+      unchanged remote ancestry. Stage only the coherent candidate, commit
+      intentionally, push `main`, and prove local/remote SHA equality plus a
+      clean worktree.
+- [ ] Require exact-final-SHA Ubuntu, Windows, container, AGI, CodeQL,
+      dependency-audit, secret-scan, and Semgrep checks.
+- [ ] Rebuild from the final clean commit. Restart OpenClaw in dependency order
+      when required by the complete requested restart, prove stable RPC and
+      11/11 bridge tools with no direct-send exposure, then restart Andrea and
+      prove changed process identity, healthy status, artifact provenance, and
+      serving SHA equal to final `main`.
+- [ ] Run non-destructive passive integration/runtime smoke checks. Do not
+      fabricate or manufacture a Telegram, BlueBubbles, Alexa, owner-review,
+      calendar, or paid-provider result merely to close proof debt.
+
+### Intentionally unchanged and honest debt
+
+- No second task database, generative-model dependency for deterministic
+  interpretation, broad memory rewrite, autonomous workflow engine, authority
+  expansion, destructive migration, or destructive selective multi-item
+  forgetting belongs in this round.
+- The canonical comparator has only coarse `normal`/`important`/`critical`
+  importance derived from explicit priority language. It does not invent a
+  consequence score or precise user-priority number from weak context.
+- Ambiguous pronouns, unresolved ownership, and condition-only future events
+  may still require user clarification.
+- Synthetic fixtures prove repository behavior, not genuine owner acceptance,
+  a learning baseline, or live transport behavior.
+- Fresh Telegram life-thread, BlueBubbles same-thread action, and Alexa signed
+  intent evidence remain operator proof unless safely refreshed. Native
+  Windows restart remains environment proof debt; hosted Windows CI proves the
+  shared artifact and launcher contract only.
+
+### Release evidence
+
+- Final implementation SHA: **pending**
+- Exact-SHA hosted CI: **pending**
+- Commitment primary/held-out matrix: **24/24 primary, 15/15 held-out, 3/3
+  boundaries, 18/18 durable reopens; strict final run passed**
+- Repository matrix: **231/231 primary files, 2,790/2,790 tests; 28/28 AGI
+  files, 282/282 AGI tests; three stability rounds; 94/94 selected deterministic
+  commands from 109 total with 15 explicit exclusions**
+- Other local gates: **100% A+ offline scorecard at $0; 6/6 signature flows;
+  70/70 documentation files; container runner/image/mount checks passed; root
+  and runner production/full audits report 0 vulnerabilities**
+- Cleanup and production-residue search: **passed; 0 isolated / 0 production
+  residue; disposable database and manifest removed**
+- OpenClaw/Andrea restart, PID, serving SHA, and health: **pending**
+- Live proofs refreshed: **pending; never infer from configuration**
+
 ## Temporal truth and durable restart release — 2026-07-14 (released)
 
 This focused reliability release starts from clean, synchronized, and serving
@@ -68,7 +261,7 @@ tentative, selective multi-forget, general recall-paraphrase, or authority work.
 - Structured waiting/tentative semantics, selective multi-forget, broader
   proactive recall, and real owner-reviewed learning evidence remain later work.
 
-## Reminder-plus-research recovery candidate — 2026-07-14 (current worktree)
+## Reminder-plus-research recovery — 2026-07-14 (released history)
 
 This candidate extends the released Calendar + research flow without adding a
 second task ledger or widening authority.
@@ -236,7 +429,7 @@ evidence. It does not describe the current reminder-plus-research candidate.
 - Historical modernization sections remain dated evidence and are not rewritten
   to match current counts.
 
-## Release closure — 2026-07-13 (authoritative)
+## Release closure — 2026-07-13 (historical)
 
 This section supersedes every older status snapshot below. Those dated sections
 are preserved as **historical implementation evidence** and may describe a
@@ -302,9 +495,9 @@ release or runtime truth unless the authoritative section above restates it.
 
 ## Durable cognitive continuity candidate — 2026-07-13
 
-### Authoritative recovery and release state
+### Historical recovery and release state
 
-This is the newest candidate-truth section. The work is on
+At the time of this dated section, this was the newest candidate truth. The work was on
 `codex/andrea-durable-cognitive-continuity-v1`, based on `adbc5fb4`; at the
 documentation audit that commit still matched `origin/main` with zero
 ahead/behind divergence. The complete workspace also contains the preserved
@@ -537,7 +730,7 @@ OpenClaw and external integrations are not restarted by this round.
 
 ## Container authority and cross-platform release truth — 2026-07-13
 
-### Authoritative pre-release state
+### Historical pre-release state
 
 This preserved release-truth section records the container-authority candidate
 that the newer continuity section carries forward. At its round-start safe

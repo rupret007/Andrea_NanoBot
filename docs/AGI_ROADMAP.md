@@ -67,10 +67,10 @@ that the subsystems compose reliably in ordinary use.
 - The current latency sample is small and slow. Route, provider, tool,
   orchestration, delivery, and post-delivery time need clearer attribution
   before Andrea can feel consistently immediate.
-- The current candidate adds the first conservative compound-intent path for a
-  calendar draft followed by explicit research. It has deterministic planner
-  and sequencing coverage, but it is not release/runtime proof and does not yet
-  generalize to reminder-plus-research or arbitrary multi-action requests.
+- Released code supports bounded calendar-plus-research and
+  reminder-plus-research paths with deterministic planning and sequencing.
+  Neither is arbitrary multi-action orchestration, and a genuine user journey
+  remains separate runtime evidence.
 - The council and model router have strong deterministic coverage but need more
   current, cost-bounded, provenance-rich live comparisons before promotion
   decisions can rely on them.
@@ -87,16 +87,16 @@ that the subsystems compose reliably in ordinary use.
 
 ## Near-Term Priorities
 
-### 1. Finish And Prove Multi-Intent Assistance
+### 1. Prove And Carefully Extend Multi-Intent Assistance
 
-The current candidate starts with conservative, typed calendar-plus-research
-decomposition. Finish its release proof before extending the same pattern to
-reminder-plus-research turns.
+Released code has conservative typed decomposition for both
+calendar-plus-research and reminder-plus-research. Prove a genuine user journey
+before extending the pattern to another action class.
 
 - Preserve each original clause and its target instead of passing the whole
-  utterance to one parser. The calendar candidate now does this.
+  utterance to one parser. The released compound paths do this.
 - Start independent read-only work promptly without holding the primary turn
-  open. The candidate confirms calendar-response delivery, then starts one
+  open. The released calendar path confirms response delivery, then starts one
   caught background research leg so an immediate confirmation is not queued
   behind provider latency.
 - Keep approval scoped to the exact state-changing action. Calendar writes

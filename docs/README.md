@@ -19,18 +19,30 @@ Start with exactly one document based on your role:
 snapshot. Do not copy host paths, personal channel identifiers, or a proof
 label from this page into release notes; refresh the operator commands below.
 
-The July 13, 2026 snapshot is deliberately conservative:
+The dated snapshot is deliberately conservative. Commitment Intelligence may
+be newer than the runtime serving on a development host; repository, hosted-CI,
+restart, and live proof remain distinct in
+[CURRENT_STATUS.md](CURRENT_STATUS.md). Do not infer deployment from source
+files or this index.
 
-- **canonical Mac mini runtime**: the host process is running, but disk pressure
-  is a warning with about 6.4 GiB free at snapshot capture
-- the released `main` SHA passed the exact-SHA hosted gates; the running build
-  is one CI-only commit behind and must not be described as SHA-aligned
-- Telegram transport is healthy, but its user-session roundtrip proof is stale
-- BlueBubbles transport is ready, but the host is
-  `degraded_but_usable`/`needs_proof` until a fresh canonical same-thread
-  `message_action` proof is recorded
+The latest released host snapshot records:
+
+- **canonical Mac mini runtime**: the service was aligned with the published
+  baseline before the current release candidate; do not describe newer behavior
+  as deployed until its final clean commit is rebuilt, restarted, and
+  serving-SHA verified
+- every release needs its own exact-SHA hosted result; a prior green SHA does
+  not certify a later commit
+- the latest dated status recorded enough disk headroom for a normal
+  build/restart, but disk proof is time-sensitive and must be remeasured before
+  container-heavy work
+- Telegram transport and its last recorded `/ping` roundtrip are healthy in
+  the dated status; refresh them rather than carrying the label into a release
+- BlueBubbles transport is reachable, while a same-thread action proof can age
+  independently and must remain explicit in the dated status
 - **manual live proof still pending**: Alexa needs a fresh signed handled
-  custom-skill `IntentRequest`, and BlueBubbles needs the action proof above
+  custom-skill `IntentRequest`; any aged Telegram, BlueBubbles, or life-thread
+  proof must remain operator debt rather than repository failure
 - Google Calendar is live-proven; configured provider entries are not live
   health claims unless a current probe or verified-use record says so
 - flagship journey proofs can age out separately from integration health
@@ -117,6 +129,7 @@ Use these when you are enabling or validating specific capabilities:
 | Messaging Trust Ladder / Live Delivery | [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md) |
 | Outcome Tracking / Reviews             | [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md)                         |
 | Knowledge Library                      | [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md)                                               |
+| Commitment Intelligence                | [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md)                                   |
 | Cursor Cloud API keys                  | [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md)                                                   |
 | Cursor desktop machine access          | [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md)                                       |
 | Alexa Companion Mode                   | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                                   |
@@ -126,6 +139,7 @@ Use these when you are enabling or validating specific capabilities:
 For the productized flagship-flow view specifically:
 
 - daily orientation and open-loops recovery: [CHIEF_OF_STAFF_MODE.md](CHIEF_OF_STAFF_MODE.md) + [PROACTIVE_RITUALS.md](PROACTIVE_RITUALS.md)
+- commitment strength, ownership, waiting/blocking, ranking, and restart truth: [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md)
 - Candace / people follow-through: [COMMUNICATION_COMPANION.md](COMMUNICATION_COMPANION.md)
 - plan creation and execution: [MISSIONS_AND_EXECUTION.md](MISSIONS_AND_EXECUTION.md)
 - approval and partial execution: [ACTION_BUNDLES.md](ACTION_BUNDLES.md)
@@ -219,12 +233,12 @@ Only read these when changing core runtime behavior:
 These documents describe the intelligence goal without turning experimental
 modules or synthetic scores into production claims:
 
-| Topic                                                       | Read this                              |
-| ----------------------------------------------------------- | -------------------------------------- |
-| Grounded intelligence and verified-agency direction         | [AGI_ROADMAP.md](AGI_ROADMAP.md)       |
-| Evaluation classes and what each result can prove           | [AGI_EVALUATION.md](AGI_EVALUATION.md) |
-| Intelligence-layer security and production trust boundaries | [AGI_SECURITY.md](AGI_SECURITY.md)     |
-| Durable agency contract, invariants, and proof requirements  | [ANDREA_DURABLE_AGENCY_PLAN.md](ANDREA_DURABLE_AGENCY_PLAN.md) |
+| Topic                                                       | Read this                                                      |
+| ----------------------------------------------------------- | -------------------------------------------------------------- |
+| Grounded intelligence and verified-agency direction         | [AGI_ROADMAP.md](AGI_ROADMAP.md)                               |
+| Evaluation classes and what each result can prove           | [AGI_EVALUATION.md](AGI_EVALUATION.md)                         |
+| Intelligence-layer security and production trust boundaries | [AGI_SECURITY.md](AGI_SECURITY.md)                             |
+| Durable agency contract, invariants, and proof requirements | [ANDREA_DURABLE_AGENCY_PLAN.md](ANDREA_DURABLE_AGENCY_PLAN.md) |
 
 Use [CURRENT_STATUS.md](CURRENT_STATUS.md) for the dated host/release snapshot
 and [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md) for the

@@ -36,6 +36,70 @@ uncommitted candidate changes.
   nested read-only mount canary, signature flows, documentation checks, and
   root/runner dependency audits passed on the released tree.
 
+## Commitment Intelligence — Repository Gates Complete
+
+The current release candidate adds Commitment Intelligence above the released
+temporal-truth baseline. Its repository-controlled local gates are complete.
+Exact-SHA hosted CI, publication, serving provenance, restart health, and
+passive integration proof remain separate until the release steps finish.
+
+Implemented and locally verified:
+
+- one versioned canonical commitment state per life thread, with strength,
+  operational state, readiness, coarse explicit importance, typed owner,
+  dependencies, conditional follow-up, confidence, derived evidence, revision,
+  and transition identity;
+- append-only commitment-transition provenance alongside atomic compatibility
+  projection for released life-thread consumers;
+- structured waiting, blocking, delegation, deferral, strengthening,
+  weakening, completion, cancellation, reactivation, and supersession;
+- deterministic coarse ranking and conservative proactive-surfacing rules;
+- idempotent exact replay, stale-evidence refusal, and ambiguity-safe targeting;
+- additive sentinel-only legacy migration that fails closed on nonempty invalid
+  canonical bytes, plus commitment-aware snapshots, daily guidance, rituals,
+  context, cognitive, communication, outcome, and cockpit consumers;
+- recipient-safe outbound drafting and policy-enforced council evidence that do
+  not expose sensitive/manual/disabled/waiting planning context or raw values
+  under metadata/local-only policies;
+- transactional legacy-field redaction plus an independent read-boundary
+  sanitizer, and Cognitive Executive focus filtering that honors manual-only,
+  disabled, snoozed, speculative, and non-actionable state without weakening
+  explicit lookup.
+
+Final local evidence from this documentation review:
+
+- primary gate: 231/231 files and 2,790/2,790 tests, with format, root
+  typecheck, production build, and zero-error lint; the unchanged configured
+  warning backlog is 649;
+- AGI gate: typecheck plus 28/28 files and 282/282 tests;
+- three-round stability gate: every round repeated format, typecheck, lint,
+  2,790 tests, and build without a failure or skipped test;
+- deterministic sweep: 94/94 selected commands passed from the 109-command
+  inventory in 271.6 seconds; all 15 exclusions were reported, and the nested
+  three-round stability gate took 204.0 seconds;
+- strict commitment run
+  `ANDREA-COMMITMENT-B8A5438A-BC9C-448B-BB02-5C5EB164800D`: 24/24 primary,
+  15/15 held-out, 3/3 boundary invariants, 18/18 durable reopens, no provider
+  calls or external writes, and zero isolated or production residue;
+- temporal run `ANDREA-TEMPORAL-20260714T202649623Z-5D75F95B`: 13/13, two
+  durable restarts, and zero production residue. The broader historical harness
+  remains 6 `PASS`, 2 `PARTIAL`, and 2 `FAIL` rather than inflating legacy gaps;
+- offline scorecard: 100% A+, all nine dimensions at 100%, network denied,
+  isolated storage, no regression, and $0 cost;
+- 6/6 signature flows, 70/70 documentation files, zero root or runner audit
+  vulnerabilities, and passing container runner build/contracts plus image and
+  nested read-only mount canaries.
+
+Still required for release truth: commit and push to non-diverged `main`,
+exact-final-SHA Ubuntu, Windows, container, AGI, CodeQL, dependency-audit,
+secret-scan, and Semgrep results, followed by a clean rebuild, full service
+restart, serving-SHA alignment, and read-only runtime/integration verification.
+
+The historical `certify:life-thread` results below remain useful before-state
+evidence. They do not certify the new model. The authoritative design and new
+acceptance contract are in
+[COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
+
 ## Temporal Truth And Durable Restart Certification — 2026-07-14
 
 This is synthetic, isolated repository evidence, not a real user outcome or a
@@ -58,7 +122,7 @@ mutate nothing.
 Run `npm run certify:temporal-truth` for the isolated certification. Run
 `ANDREA_TEMPORAL_RUN_ID=... npm run certify:temporal-truth` to provide a fixed
 correlation ID. The final pre-release run was
-`ANDREA-TEMPORAL-20260714T173200Z-9F3C7A2D`. The harness creates its cleanup
+`ANDREA-TEMPORAL-20260714T202649623Z-5D75F95B`. The harness creates its cleanup
 manifest before seeding, uses a disposable SQLite datastore through Andrea's
 production initialization path, performs two complete close/reopen cycles with
 a correction between them, and exits nonzero on a scenario or cleanup failure.
@@ -72,8 +136,8 @@ permit thread, three lifecycle signals, zero scheduled-task duplicates, one
 active snapshot record, and zero production residue after cleanup.
 
 The existing broader life-thread harness was also rerun as
-`ANDREA-LIFETHREAD-20260714T173200Z-9F3C7A2D`. It improved from the prior round's
-4 `PASS`, 2 `PARTIAL`, 4 `FAIL` to 6 `PASS`, 2 `PARTIAL`, 2 `FAIL`: temporal
+`ANDREA-LIFETHREAD-20260714T202651604Z-B88DB9A8`. It retained the prior round's
+improvement at 6 `PASS`, 2 `PARTIAL`, 2 `FAIL`: temporal
 supersession and restart recovery are now passing, while the intentionally
 out-of-scope tentative-state and selective-forget cases remain failing. Its
 held-out completion, cancellation, temporal correction, and deduplication cases
@@ -108,9 +172,14 @@ Measured limitations from that earlier certification, with later status:
 
 - the stale active deadline and restart-recovery defects are resolved by the
   later temporal-truth certification above;
-- waiting and tentative intent are not structured life-thread states;
-- urgent, scheduled, low-urgency, and tentative items are not ranked strongly
-  enough;
+- waiting, tentative intent, ownership, blockers, delegation, and deferral were
+  not structured states in the released baseline. Commitment Intelligence adds
+  them and the strict local certification passes; publication and runtime proof
+  remain separate;
+- the released baseline did not rank urgent, scheduled, low-urgency, and
+  tentative items strongly enough. Commitment Intelligence uses deterministic
+  actionability, explicit importance, urgency, strength, confidence, recency,
+  and identity bands, with focused and strict local ranking evidence passing;
 - a scoped multi-item forget request and the held-out phrasing `Is there
 anything important I'm dropping?` are not handled by the local path.
 
@@ -118,6 +187,10 @@ Run `npm run certify:life-thread` for a fresh isolated lifecycle. The command
 creates its cleanup manifest before seeding and exits nonzero if independent
 cleanup verification fails. Full evidence and scenario details are retained in
 `docs/ANDREA_FINAL_RESET_HANDOFF.md`.
+
+For this release decision, `npm run certify:commitment-intelligence` is the
+strict gate. The final local run passed every required primary, held-out,
+boundary, restart, replay, cleanup, and residue assertion listed above.
 
 ## Live Transport Certification — 2026-07-14
 

@@ -63,6 +63,12 @@ import type {
   NewMessage,
   PersonalContextPacket,
 } from './types.js';
+import {
+  describeLifeThreadCommitment,
+  projectEffectiveLifeThread,
+  shouldProactivelySurfaceCommitment,
+} from './life-thread-commitment.js';
+import { resolveLifeThreadTimeZone } from './life-threads.js';
 
 export interface BeginCognitiveExecutiveInput {
   rawAsk: string;
@@ -521,6 +527,7 @@ export function buildCognitiveWorldSnapshot(input: {
   personalContextPacket?: PersonalContextPacket | null;
 }): { snapshot: CognitiveWorldSnapshot; items: CognitiveWorldSnapshotItem[] } {
   const createdAt = nowIso(input.now);
+  const snapshotNow = input.now || new Date(createdAt);
   const snapshotId = hashId(
     'cogexec:snapshot',
     `${input.groupFolder}|${createdAt}|${input.intentFamily || 'general'}`,
@@ -659,18 +666,24 @@ export function buildCognitiveWorldSnapshot(input: {
   }
 
   for (const thread of safeList(() =>
-    listLifeThreadsForGroup(input.groupFolder, ['active', 'paused']).slice(
-      0,
-      5,
-    ),
+    listLifeThreadsForGroup(input.groupFolder, ['active', 'paused'])
+      .map((candidate) => projectEffectiveLifeThread(candidate, snapshotNow))
+      .filter((candidate) =>
+        shouldProactivelySurfaceCommitment(candidate, snapshotNow),
+      )
+      .slice(0, 5),
   )) {
     items.push(
       makeItem({
         snapshotId,
         itemKind: 'life_thread',
         sourceId: thread.id,
-        summary: `${thread.title}: ${thread.nextAction || thread.status}.`,
-        priority: thread.nextAction ? 0.76 : 0.48,
+        summary: `${thread.title}: ${describeLifeThreadCommitment(
+          thread,
+          snapshotNow,
+          resolveLifeThreadTimeZone(thread.groupFolder),
+        )}`,
+        priority: 0.76,
         freshness: 'recent',
         reasonUsed: 'life thread may be the current focus',
       }),

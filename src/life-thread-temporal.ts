@@ -129,6 +129,54 @@ function localDateTimeToUtc(
   return new Date(candidate);
 }
 
+export function shiftLifeThreadLocalDate(params: {
+  now: Date;
+  timeZone: string;
+  days?: number;
+  months?: number;
+  quarters?: number;
+  targetMonthName?: string;
+  day?: number;
+  hour?: number;
+  minute?: number;
+}): string | null {
+  const timeZone = normalizeLifeThreadTimeZone(params.timeZone);
+  const current = localParts(params.now, timeZone);
+  let year = current.year;
+  let month = current.month;
+  const day = params.day ?? current.day;
+  const targetMonth = params.targetMonthName
+    ? MONTHS.get(params.targetMonthName.toLowerCase())
+    : undefined;
+  if (targetMonth) {
+    if (targetMonth < current.month) year += 1;
+    month = targetMonth;
+  } else {
+    const quarterBase = params.quarters
+      ? Math.floor((month - 1) / 3) * 3
+      : month - 1;
+    const monthDelta = (params.months || 0) + (params.quarters || 0) * 3;
+    const shifted = new Date(Date.UTC(year, quarterBase + monthDelta, 1, 12));
+    year = shifted.getUTCFullYear();
+    month = shifted.getUTCMonth() + 1;
+  }
+  let target: LocalDateTimeParts = {
+    year,
+    month,
+    day,
+    hour: params.hour ?? 9,
+    minute: params.minute ?? 0,
+  };
+  if (params.days) target = addLocalDays(target, params.days);
+  if (!validCalendarDate(target)) return null;
+  let resolved = localDateTimeToUtc(target, timeZone);
+  if (targetMonth && resolved && resolved.getTime() <= params.now.getTime()) {
+    target = { ...target, year: target.year + 1 };
+    resolved = localDateTimeToUtc(target, timeZone);
+  }
+  return resolved?.toISOString() || null;
+}
+
 function addLocalDays(
   parts: LocalDateTimeParts,
   days: number,
@@ -329,6 +377,13 @@ export function parseLifeThreadTemporalState(params: {
     timeWasExplicit = true;
   }
 
+  if (!dateWasExplicit && timeWasExplicit && /\btonight\b/.test(text)) {
+    target.year = nowParts.year;
+    target.month = nowParts.month;
+    target.day = nowParts.day;
+    dateWasExplicit = true;
+  }
+
   if (!dateWasExplicit && !timeWasExplicit) return null;
   if (!validCalendarDate(target)) return null;
 
@@ -341,6 +396,11 @@ export function parseLifeThreadTemporalState(params: {
 
   let converted = localDateTimeToUtc(target, timeZone);
   if (!converted) return null;
+  if (/\btonight\b/.test(text) && converted.getTime() <= params.now.getTime()) {
+    target = addLocalDays(target, 1);
+    converted = localDateTimeToUtc(target, timeZone);
+    if (!converted) return null;
+  }
   if (
     dateWasExplicit &&
     /\b(?:this\s+)?(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/.test(

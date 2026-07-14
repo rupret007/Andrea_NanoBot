@@ -4,6 +4,52 @@ Snapshot date: 2026-07-14. Use `git rev-parse origin/main` and
 `npm run services:status` for the current release SHA and serving provenance;
 the sections below retain the exact baseline SHA for each bounded pass.
 
+## Commitment Intelligence Handoff — Repository Evidence Complete
+
+This is the current candidate above released baseline
+`0a71d4bcb4308d49ae057473356af03c0d0465fb`. The older temporal and
+life-thread sections below remain historical before-state evidence. They must
+not be read as proof of the new commitment model.
+
+The candidate introduces one canonical versioned state for commitment
+strength, operational state, readiness, typed ownership, dependencies,
+conditional follow-up, bounded evidence, confidence, revision, and transition
+identity. Atomic state transitions synchronize the compatibility projection
+while retaining append-only provenance. Deterministic ranking favors useful
+actionable work; speculative/tentative, unresolved waiting/blocked/delegated,
+prematurely deferred, terminal, low-confidence, manual-only, disabled, and
+snoozed work is suppressed from automatic recall. Duplicate replay is
+idempotent, older evidence cannot revive superseded truth, and ambiguous target
+or ownership changes mutate nothing.
+
+The full model, migration, privacy, authority, consumer, and certification
+contract is in
+[COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md). The authoritative
+work checklist is the first section of [MODERNIZATION_PLAN.md](../MODERNIZATION_PLAN.md).
+
+| Evidence                                  | Current state                                                                                                                                              |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Baseline broader life-thread matrix       | 6 `PASS`, 2 `PARTIAL`, 2 `FAIL`; retained as historical before-state evidence                                                                              |
+| Commitment primary / held-out matrix      | 24/24 primary, 15/15 held-out, 3/3 boundary invariants                                                                                                     |
+| Durable restart/replay/cleanup            | 18/18 durable reopens; exact/stale replay covered; 0 isolated and 0 production residue; final run `ANDREA-COMMITMENT-B8A5438A-BC9C-448B-BB02-5C5EB164800D` |
+| Temporal durable truth                    | 13/13, two restarts, zero production residue; run `ANDREA-TEMPORAL-20260714T202649623Z-5D75F95B`                                                           |
+| Root/AGI/build/stability                  | 231 files / 2,790 tests; 28 AGI files / 282 tests; three complete stability rounds                                                                         |
+| Scorecard/signatures/docs/audits          | 100% A+ and $0; 6/6; 70/70; zero root or runner vulnerabilities                                                                                            |
+| Container proof                           | Runner install/typecheck/build/contracts, image canary, and nested read-only mount canary passed                                                           |
+| Deterministic sweep                       | 94/94 selected from 109 total with 15 exclusions, 271.6 seconds; nested three-round stability passed in 204.0 seconds                                      |
+| Final commit/hosted CI/restart/provenance | Pending release steps; never infer them from the local tree                                                                                                |
+| Live Telegram/BlueBubbles/Alexa proof     | Pending or explicit operator debt; never synthetic                                                                                                         |
+
+Repository proof is not a deployment claim. Publication, exact-SHA hosted
+checks, clean rebuild, service restart, serving provenance, and passive live
+checks remain explicit release steps.
+
+The final audit also closed two defects before publication: legacy
+compatibility fields are redacted transactionally during sentinel migration
+and sanitized again on read, and suppressed/non-actionable commitments cannot
+be selected as automatic Cognitive Executive focus. Explicit owner lookup is
+unchanged.
+
 ## Temporal truth and durable restart certification
 
 Label: `ANDREA TEMPORAL TRUTH AND DURABLE RESTART CERTIFICATION`
@@ -17,10 +63,10 @@ active `nextAction` still said Thursday at 5:00 PM, and restart recovery was
 active value.
 
 The final isolated run was
-`ANDREA-TEMPORAL-20260714T173200Z-9F3C7A2D`: 13 `PASS`, 0 `FAIL`, 14 cleanup
+`ANDREA-TEMPORAL-20260714T202649623Z-5D75F95B`: 13 `PASS`, 0 `FAIL`, cleanup
 entries removed, zero production residue, and no retained database, WAL, SHM,
 directory, or manifest. The companion broader lifecycle run was
-`ANDREA-LIFETHREAD-20260714T173200Z-9F3C7A2D`: 6 `PASS`, 2 `PARTIAL`, 2 `FAIL`;
+`ANDREA-LIFETHREAD-20260714T202651604Z-B88DB9A8`: 6 `PASS`, 2 `PARTIAL`, 2 `FAIL`;
 the two remaining failures are the explicitly out-of-scope tentative-state and
 multi-target-forget scenarios.
 
@@ -74,9 +120,12 @@ unlinks the database directory, WAL/SHM, and manifest, then independently opens
 the production database read-only and requires zero run-ID, namespace, or
 created-ID residue. A scenario or cleanup failure makes the command fail.
 
-This round intentionally does not implement structured tentative/waiting
-states, scoped multi-item forgetting, or general proactive-recall paraphrase
-expansion. Those earlier measured limitations remain honest future work.
+At the time of this historical temporal round, structured tentative/waiting
+states, scoped multi-item forgetting, and general proactive-recall paraphrase
+expansion were intentionally unimplemented. The current candidate above adds
+structured commitment/waiting state and its repository certification passes;
+publication and runtime proof remain separate. Scoped destructive multi-item
+forgetting remains intentionally unimplemented.
 
 ### Repository validation
 

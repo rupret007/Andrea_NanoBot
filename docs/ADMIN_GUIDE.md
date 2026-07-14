@@ -47,7 +47,9 @@ Andrea now has a bounded rituals layer for day rhythm and carryover guidance.
 Operator truth:
 
 - rituals define assistant timing and surfacing behavior
-- life threads remain the canonical ongoing matters
+- life threads remain the canonical ongoing matters; their versioned
+  Commitment Intelligence state is the source of current strength, owner,
+  readiness, waiting/blocking/delegation/deferral, and terminal truth
 - reminders remain the concrete future nudges
 - Telegram is the only scheduled ritual surface in this pass
 - Alexa stays on-demand only
@@ -57,6 +59,14 @@ Current operator checks:
 
 - `npm run debug:rituals`
 - `node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/rituals.test.ts src/life-threads.test.ts src/daily-companion.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts`
+- after a commitment-state or persistence change, run the focused matrix and
+  strict `npm run certify:commitment-intelligence` gate in
+  [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md)
+
+Do not repair noisy follow-through by rewriting a legacy `nextAction` directly.
+Use the canonical commitment transition path so the active state, compatibility
+fields, and append-only provenance stay coherent. An owner field describes who
+owes the next action; it never grants Andrea permission to execute that action.
 
 Useful user-facing control turns:
 
@@ -479,11 +489,11 @@ Recommended flow:
 
 1. `npm run telegram:user:auth`
 2. `npm run telegram:user:smoke`
-2. `npm run telegram:user:send -- "<message>"`
-3. `npm run telegram:user:tap -- <message_id> <button>`
-4. `npm run telegram:user:send -- --reply-to <message_id> "<message>"`
-5. `npm run telegram:user:batch`
-6. `npm run telegram:user:runtime`
+3. `npm run telegram:user:send -- "<message>"`
+4. `npm run telegram:user:tap -- <message_id> <button>`
+5. `npm run telegram:user:send -- --reply-to <message_id> "<message>"`
+6. `npm run telegram:user:batch`
+7. `npm run telegram:user:runtime`
 
 Keep this tooling operator-only and pointed at your own DM or a dedicated test chat only.
 

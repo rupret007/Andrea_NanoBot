@@ -7592,6 +7592,147 @@ export type LifeThreadSourceKind =
 
 export type LifeThreadConfidenceKind = 'explicit' | 'high' | 'medium' | 'low';
 
+export type LifeThreadCommitmentStrength =
+  | 'speculative'
+  | 'tentative'
+  | 'intended'
+  | 'committed'
+  | 'explicitly_requested';
+
+export type LifeThreadCommitmentOperationalState =
+  | 'proposed'
+  | 'active'
+  | 'waiting'
+  | 'blocked'
+  | 'delegated'
+  | 'deferred'
+  | 'completed'
+  | 'cancelled'
+  | 'superseded';
+
+export type LifeThreadCommitmentReadiness =
+  | 'actionable_now'
+  | 'actionable_at_time'
+  | 'waiting_on_person'
+  | 'waiting_on_external_event'
+  | 'blocked_known_dependency'
+  | 'blocked_unresolved_dependency'
+  | 'non_actionable';
+
+export type LifeThreadCommitmentImportance =
+  | 'normal'
+  | 'important'
+  | 'critical';
+
+export type LifeThreadCommitmentOwnerKind =
+  | 'self'
+  | 'subject'
+  | 'shared'
+  | 'andrea'
+  | 'unknown';
+
+export interface LifeThreadCommitmentOwner {
+  kind: LifeThreadCommitmentOwnerKind;
+  subjectIds: string[];
+  displayNames: string[];
+}
+
+export type LifeThreadCommitmentDependencyKind =
+  | 'person_response'
+  | 'person_delivery'
+  | 'approval'
+  | 'document'
+  | 'external_event'
+  | 'unresolved';
+
+export interface LifeThreadCommitmentDependency {
+  id: string;
+  kind: LifeThreadCommitmentDependencyKind;
+  description: string;
+  owner: LifeThreadCommitmentOwner;
+  resolutionCondition: string;
+  satisfied: boolean;
+  satisfiedAt?: string | null;
+}
+
+export interface LifeThreadCommitmentFollowUp {
+  action: string;
+  condition: string;
+  dependencyIds: string[];
+  dueAt?: string | null;
+}
+
+export type LifeThreadCommitmentEvidenceKind =
+  | 'direct_language'
+  | 'conversation_context'
+  | 'reminder_request'
+  | 'named_owner'
+  | 'dependency'
+  | 'temporal'
+  | 'correction'
+  | 'negation'
+  | 'state_transition';
+
+export interface LifeThreadCommitmentEvidence {
+  eventId: string;
+  kind: LifeThreadCommitmentEvidenceKind;
+  /** Typed classifier reasons represented by this single derived event. */
+  reasonKinds?: LifeThreadCommitmentEvidenceKind[];
+  summary: string;
+  sourceKind: LifeThreadSourceKind;
+  confidenceKind: LifeThreadConfidenceKind;
+  observedAt: string;
+  sourceRef?: string | null;
+}
+
+/**
+ * Canonical current commitment truth for a life thread. Legacy life-thread
+ * fields remain synchronized projections for older consumers and migrations;
+ * state transitions and ranking use this record as the source of truth.
+ */
+export interface LifeThreadCommitmentState {
+  version: 1;
+  revision: number;
+  strength: LifeThreadCommitmentStrength;
+  operationalState: LifeThreadCommitmentOperationalState;
+  owner: LifeThreadCommitmentOwner;
+  readiness: LifeThreadCommitmentReadiness;
+  importance: LifeThreadCommitmentImportance;
+  objective: string;
+  currentAction?: string | null;
+  downstreamAction?: string | null;
+  dueAt?: string | null;
+  reactivateAt?: string | null;
+  reactivateCondition?: string | null;
+  deferredFrom?: Exclude<
+    LifeThreadCommitmentOperationalState,
+    'deferred' | 'completed' | 'cancelled' | 'superseded'
+  > | null;
+  dependencies: LifeThreadCommitmentDependency[];
+  dependencyResolution: 'all' | 'any' | null;
+  followUp?: LifeThreadCommitmentFollowUp | null;
+  confidenceKind: LifeThreadConfidenceKind;
+  evidence: LifeThreadCommitmentEvidence[];
+  lastTransitionId: string;
+  updatedAt: string;
+}
+
+export interface LifeThreadCommitmentTransitionRecord {
+  version: 1;
+  eventId: string;
+  disposition: 'applied' | 'duplicate' | 'stale' | 'ambiguous';
+  fromRevision: number;
+  toRevision: number;
+  fromState: LifeThreadCommitmentOperationalState;
+  toState: LifeThreadCommitmentOperationalState;
+  fromStrength: LifeThreadCommitmentStrength;
+  toStrength: LifeThreadCommitmentStrength;
+  observedAt: string;
+  reason: string;
+  beforeState?: LifeThreadCommitmentState | null;
+  afterState?: LifeThreadCommitmentState | null;
+}
+
 export type LifeThreadSensitivity = 'normal' | 'sensitive';
 
 export type LifeThreadSurfaceMode = 'default' | 'manual_only';
@@ -7618,6 +7759,7 @@ export interface LifeThread {
   nextFollowupAt?: string | null;
   sourceKind: LifeThreadSourceKind;
   confidenceKind: LifeThreadConfidenceKind;
+  commitment?: LifeThreadCommitmentState | null;
   userConfirmed: boolean;
   sensitivity: LifeThreadSensitivity;
   surfaceMode: LifeThreadSurfaceMode;
@@ -7643,6 +7785,7 @@ export interface LifeThreadSignal {
   calendarEventId?: string | null;
   profileFactId?: string | null;
   confidenceKind: LifeThreadConfidenceKind;
+  commitmentTransition?: LifeThreadCommitmentTransitionRecord | null;
   createdAt: string;
 }
 

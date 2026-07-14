@@ -990,6 +990,7 @@ async function runLifeThreadCapability(
     groupFolder: context.groupFolder,
     channel: context.channel,
     chatJid: context.chatJid,
+    messageId: context.currentMessageId,
     text: input.canonicalText || input.text || '',
     replyText: context.replyText,
     conversationSummary: context.conversationSummary,
@@ -1257,7 +1258,9 @@ async function runRitualFollowthroughCapability(
   const followthroughLines = (
     threadSnapshot.dueFollowups.length
       ? threadSnapshot.dueFollowups
-      : threadSnapshot.activeThreads
+      : threadSnapshot.recommendedNextThread
+        ? [threadSnapshot.recommendedNextThread]
+        : []
   )
     .slice(0, context.channel === 'telegram' ? 3 : 2)
     .map((thread) => thread.nextAction || thread.summary || thread.title)
@@ -4571,6 +4574,7 @@ async function runMissionCapability(
     const threadResult = handleLifeThreadCommand({
       groupFolder: context.groupFolder,
       channel: context.channel,
+      messageId: context.currentMessageId,
       text: threadTitle
         ? `track this under ${threadTitle} thread`
         : 'save this for later',
