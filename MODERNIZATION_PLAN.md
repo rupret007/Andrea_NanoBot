@@ -5,13 +5,14 @@ as historical implementation and release evidence unless its heading
 explicitly says otherwise; older uses of “candidate” or “authoritative” do not
 override the first section.
 
-## Commitment Intelligence Engine — 2026-07-14 (release candidate)
+## Commitment Intelligence Engine — 2026-07-14 (released)
 
-This is the authoritative section for the coherent release candidate that began
-from released baseline `0a71d4bcb4308d49ae057473356af03c0d0465fb`.
-Repository-controlled local gates are complete. Commit, push, exact-SHA hosted
-CI, rebuild, the requested service restart, runtime provenance, and passive
-live proof remain separate release evidence until recorded below.
+This is the authoritative section for the release that began from baseline
+`0a71d4bcb4308d49ae057473356af03c0d0465fb`. Implementation commit
+`ac72ede1017a9956941b1305aae7075d976fcbc1` is published on `main`, passed the
+complete local and exact-SHA hosted matrices, and was rebuilt and restarted on
+the canonical Mac runtime. Genuine user/channel proof remains separate from
+repository and transport health.
 
 ### Root architectural finding
 
@@ -26,7 +27,7 @@ live proof remain separate release evidence until recorded below.
       2 `FAIL`; tentative intent and selective forgetting remained failures.
       That result is before-state evidence, not a promotion baseline.
 
-### Implemented candidate
+### Released implementation
 
 - [x] Add one versioned canonical commitment state with five strengths, nine
       operational states, seven readiness classes, three coarse explicit
@@ -98,7 +99,7 @@ live proof remain separate release evidence until recorded below.
       rituals, chief-of-staff, communication, outcomes, personal intelligence,
       privacy/security, command reference, testing runbook, current status, and
       final handoff truth.
-- [x] Distinguish implemented candidate behavior from verified repository,
+- [x] Distinguish implemented behavior from verified repository,
       hosted-CI, runtime, and live-channel evidence. Historical temporal and
       life-thread results remain labeled as before-state evidence.
 
@@ -143,18 +144,27 @@ live proof remain separate release evidence until recorded below.
       tests and direct strict certification pass while network denial remains
       active. The complete post-fix sweep passed 94/94 and the certification
       boundary failure did not recur.
-- [ ] Fetch immediately before release and require non-diverged `main` with
+- [x] Fetch immediately before release and require non-diverged `main` with
       unchanged remote ancestry. Stage only the coherent candidate, commit
       intentionally, push `main`, and prove local/remote SHA equality plus a
-      clean worktree.
-- [ ] Require exact-final-SHA Ubuntu, Windows, container, AGI, CodeQL,
-      dependency-audit, secret-scan, and Semgrep checks.
-- [ ] Rebuild from the final clean commit. Restart OpenClaw in dependency order
+      clean worktree. The implementation push advanced `main` from `0a71d4bc`
+      to `ac72ede1` without divergence.
+- [x] Require exact-implementation-SHA Ubuntu, Windows, container, AGI, CodeQL,
+      dependency-audit, secret-scan, and Semgrep checks. Runs `29366417237`,
+      `29366417072`, and `29366425715` all passed for `ac72ede1`.
+- [x] Rebuild from the final clean commit. Restart OpenClaw in dependency order
       when required by the complete requested restart, prove stable RPC and
       11/11 bridge tools with no direct-send exposure, then restart Andrea and
       prove changed process identity, healthy status, artifact provenance, and
-      serving SHA equal to final `main`.
-- [ ] Run non-destructive passive integration/runtime smoke checks. Do not
+      serving SHA equal to final `main`. OpenClaw changed from PID 49107 to
+      42778; Andrea changed from PID 52446 to 43464 and reported
+      `running_ready`, verified provenance, zero build-dirty paths, and serving
+      SHA `ac72ede1`.
+- [x] Run non-destructive passive integration/runtime smoke checks. OpenClaw
+      RPC and 11/11 bridge tools passed with no direct-send exposure;
+      BlueBubbles transport, Google Calendar, research, image generation,
+      configured provider health, Brave Search, and self-repair were healthy.
+      Do not
       fabricate or manufacture a Telegram, BlueBubbles, Alexa, owner-review,
       calendar, or paid-provider result merely to close proof debt.
 
@@ -178,8 +188,9 @@ live proof remain separate release evidence until recorded below.
 
 ### Release evidence
 
-- Final implementation SHA: **pending**
-- Exact-SHA hosted CI: **pending**
+- Final implementation SHA: **`ac72ede1017a9956941b1305aae7075d976fcbc1`**
+- Exact-SHA hosted CI: **Ubuntu, Windows, container, AGI, CodeQL,
+  dependency-audit, verified-secret-scan, and Semgrep all passed**
 - Commitment primary/held-out matrix: **24/24 primary, 15/15 held-out, 3/3
   boundaries, 18/18 durable reopens; strict final run passed**
 - Repository matrix: **231/231 primary files, 2,790/2,790 tests; 28/28 AGI
@@ -190,8 +201,13 @@ live proof remain separate release evidence until recorded below.
   and runner production/full audits report 0 vulnerabilities**
 - Cleanup and production-residue search: **passed; 0 isolated / 0 production
   residue; disposable database and manifest removed**
-- OpenClaw/Andrea restart, PID, serving SHA, and health: **pending**
-- Live proofs refreshed: **pending; never infer from configuration**
+- OpenClaw/Andrea restart, PID, serving SHA, and health: **passed; OpenClaw
+  42778, Andrea 43464, `running_ready`, verified clean artifact, serving
+  `ac72ede1`**
+- Passive integration truth: **9 healthy, BlueBubbles transport healthy but
+  same-thread action proof stale/missing, Telegram transport healthy but proof
+  stale, Alexa signed proof stale, and host disk at warning with about 11 GiB
+  free; no proof was fabricated**
 
 ## Temporal truth and durable restart release — 2026-07-14 (released)
 

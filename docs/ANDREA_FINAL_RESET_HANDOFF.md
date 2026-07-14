@@ -4,14 +4,14 @@ Snapshot date: 2026-07-14. Use `git rev-parse origin/main` and
 `npm run services:status` for the current release SHA and serving provenance;
 the sections below retain the exact baseline SHA for each bounded pass.
 
-## Commitment Intelligence Handoff — Repository Evidence Complete
+## Commitment Intelligence Handoff — Released
 
-This is the current candidate above released baseline
+This is the released implementation above baseline
 `0a71d4bcb4308d49ae057473356af03c0d0465fb`. The older temporal and
 life-thread sections below remain historical before-state evidence. They must
 not be read as proof of the new commitment model.
 
-The candidate introduces one canonical versioned state for commitment
+The implementation introduces one canonical versioned state for commitment
 strength, operational state, readiness, typed ownership, dependencies,
 conditional follow-up, bounded evidence, confidence, revision, and transition
 identity. Atomic state transitions synchronize the compatibility projection
@@ -37,12 +37,13 @@ work checklist is the first section of [MODERNIZATION_PLAN.md](../MODERNIZATION_
 | Scorecard/signatures/docs/audits          | 100% A+ and $0; 6/6; 70/70; zero root or runner vulnerabilities                                                                                            |
 | Container proof                           | Runner install/typecheck/build/contracts, image canary, and nested read-only mount canary passed                                                           |
 | Deterministic sweep                       | 94/94 selected from 109 total with 15 exclusions, 271.6 seconds; nested three-round stability passed in 204.0 seconds                                      |
-| Final commit/hosted CI/restart/provenance | Pending release steps; never infer them from the local tree                                                                                                |
-| Live Telegram/BlueBubbles/Alexa proof     | Pending or explicit operator debt; never synthetic                                                                                                         |
+| Final commit/hosted CI/restart/provenance | Implementation `ac72ede1`; all exact-SHA jobs green; OpenClaw PID 42778; Andrea PID 43464; clean verified artifact serving `ac72ede1`                      |
+| Live Telegram/BlueBubbles/Alexa proof     | Transport/status-only checks completed; aged or missing user-action proofs remain explicit operator debt and never synthetic                               |
 
-Repository proof is not a deployment claim. Publication, exact-SHA hosted
-checks, clean rebuild, service restart, serving provenance, and passive live
-checks remain explicit release steps.
+Repository proof and runtime proof remain distinct. For this release, the
+implementation was published, exact-SHA hosted checks passed, the clean artifact
+was rebuilt, OpenClaw and Andrea restarted, serving provenance aligned, and
+passive status checks completed.
 
 The final audit also closed two defects before publication: legacy
 compatibility fields are redacted transactionally during sentinel migration

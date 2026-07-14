@@ -14,21 +14,24 @@ uncommitted candidate changes.
   `npm run integrations:status -- --json` as the authoritative source for the
   active commit and runtime provenance; this document does not pin a serving
   SHA that will become stale after the next release.
-- Pull request #6 and its release-closure changes are on `main`.
+- Commitment Intelligence implementation
+  `ac72ede1017a9956941b1305aae7075d976fcbc1` is published on `main`. Pull
+  request #6 remains earlier release history, not the source of this direct
+  implementation commit.
 - Exact-SHA Ubuntu, Windows, container, AGI, CodeQL, dependency-audit,
   verified-secret-scan, and Semgrep checks are green.
-- The Mac host reports `running_ready` and healthy disk pressure. The latest
-  checked status had 14 GiB available (5.95% free), retaining enough headroom
-  for the normal build and restart sequence. Recheck before a disk-heavy
-  container build because this value is deliberately not treated as durable
-  release evidence.
-- OpenClaw is live and all 11/11 Andrea bridge tools are available.
+- The Mac host reports `running_ready` at implementation commit `ac72ede1`,
+  with verified build provenance and zero dirty build paths. Disk pressure is a
+  warning at about 11 GiB / 4.81% free; this is usable for the completed release
+  but should be improved before another container-heavy round.
+- OpenClaw is live at PID 42778, Andrea is live at PID 43464, and all 11/11
+  Andrea bridge tools are available with no direct-send exposure.
 
 ## Verified Repository Gates
 
-- Primary suite: 230 files / 2,727 tests.
+- Primary suite: 231 files / 2,790 tests.
 - AGI suite: 28 files / 282 tests.
-- Deterministic sweep: 93/93 selected commands passed from an inventory of 108;
+- Deterministic sweep: 94/94 selected commands passed from an inventory of 109;
   the other 15 are explicitly excluded live, interactive, aggregate, or
   state-writing commands, not silent passes.
 - Offline scorecard: 100% A+, isolated storage, network denied, zero live cost.
@@ -36,12 +39,14 @@ uncommitted candidate changes.
   nested read-only mount canary, signature flows, documentation checks, and
   root/runner dependency audits passed on the released tree.
 
-## Commitment Intelligence — Repository Gates Complete
+## Commitment Intelligence — Published And Serving
 
-The current release candidate adds Commitment Intelligence above the released
-temporal-truth baseline. Its repository-controlled local gates are complete.
-Exact-SHA hosted CI, publication, serving provenance, restart health, and
-passive integration proof remain separate until the release steps finish.
+Commitment Intelligence is published on `main` in application-bearing commit
+`ac72ede1`. Its repository gates, exact-SHA hosted checks, clean rebuild,
+dependency-ordered service restart, serving provenance, and passive integration
+checks passed. A later documentation-only closure commit may advance `main`;
+use the commands above for current identity rather than treating a PID or short
+SHA in this snapshot as permanent.
 
 Implemented and locally verified:
 
@@ -90,10 +95,21 @@ Final local evidence from this documentation review:
   vulnerabilities, and passing container runner build/contracts plus image and
   nested read-only mount canaries.
 
-Still required for release truth: commit and push to non-diverged `main`,
-exact-final-SHA Ubuntu, Windows, container, AGI, CodeQL, dependency-audit,
-secret-scan, and Semgrep results, followed by a clean rebuild, full service
-restart, serving-SHA alignment, and read-only runtime/integration verification.
+Exact-SHA runs `29366417237`, `29366417072`, and `29366425715` passed Ubuntu,
+Windows, container, AGI, CodeQL, dependency audit, verified-secret scan, and
+Semgrep for `ac72ede1`. The clean artifact was rebuilt from that commit;
+OpenClaw restarted from PID 49107 to 42778, Andrea restarted from PID 52446 to
+43464, and the host reported serving/workspace alignment with verified
+provenance and zero dirty paths.
+
+Passive status after restart reported 9 healthy integrations. Google Calendar,
+research, image generation, configured cloud-provider health, Brave Search,
+self-repair, BlueBubbles transport, and OpenClaw were operational. Remaining
+truth is proof debt rather than a repository regression: Telegram transport is
+healthy but its roundtrip proof is aged; BlueBubbles transport is healthy but
+its same-thread action proof is stale/missing; Alexa's signed handled intent is
+stale; the life-thread journey still needs a genuine user turn; and host disk
+pressure is warning at about 11 GiB free.
 
 The historical `certify:life-thread` results below remain useful before-state
 evidence. They do not certify the new model. The authoritative design and new

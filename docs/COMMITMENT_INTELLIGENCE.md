@@ -2,9 +2,8 @@
 
 This document is the authoritative product and engineering contract for how
 Andrea represents a human commitment inside a life thread. It describes the
-locally verified release-candidate implementation. Publication, exact-SHA
-hosted CI, runtime, and live-channel proof remain separate until the release
-steps pass the gates in
+released implementation. Repository, exact-SHA hosted CI, runtime, and genuine
+live-channel proof remain distinct evidence classes governed by
 [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md).
 
 ## Why This Exists

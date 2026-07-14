@@ -19,23 +19,22 @@ Start with exactly one document based on your role:
 snapshot. Do not copy host paths, personal channel identifiers, or a proof
 label from this page into release notes; refresh the operator commands below.
 
-The dated snapshot is deliberately conservative. Commitment Intelligence may
-be newer than the runtime serving on a development host; repository, hosted-CI,
-restart, and live proof remain distinct in
+The dated snapshot is deliberately conservative. Commitment Intelligence is
+published and serving on the canonical Mac host, while repository, hosted-CI,
+runtime, and genuine live proof remain distinct in
 [CURRENT_STATUS.md](CURRENT_STATUS.md). Do not infer deployment from source
 files or this index.
 
 The latest released host snapshot records:
 
-- **canonical Mac mini runtime**: the service was aligned with the published
-  baseline before the current release candidate; do not describe newer behavior
-  as deployed until its final clean commit is rebuilt, restarted, and
-  serving-SHA verified
+- **canonical Mac mini runtime**: Commitment Intelligence implementation
+  `ac72ede1` was rebuilt with verified clean provenance and served after fresh
+  OpenClaw and Andrea process identities
 - every release needs its own exact-SHA hosted result; a prior green SHA does
   not certify a later commit
-- the latest dated status recorded enough disk headroom for a normal
-  build/restart, but disk proof is time-sensitive and must be remeasured before
-  container-heavy work
+- the latest dated status records disk pressure as warning at about 11 GiB free;
+  the release completed, but headroom should be improved before another
+  container-heavy round
 - Telegram transport and its last recorded `/ping` roundtrip are healthy in
   the dated status; refresh them rather than carrying the label into a release
 - BlueBubbles transport is reachable, while a same-thread action proof can age
