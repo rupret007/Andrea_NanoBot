@@ -3,6 +3,8 @@ import http, { type IncomingMessage, type ServerResponse } from 'http';
 
 import {
   approveCognitiveApprovalPacketCAS,
+  getCapabilityOwnerReviewForRun,
+  listCapabilityAcquisitions,
   listCognitiveApprovalPackets,
   listHierarchicalGoals,
   listLifeThreadsForGroup,
@@ -18,6 +20,10 @@ import {
   reviewDeepWorkMission,
   selectDeepWorkReviewCandidate,
 } from './deep-work-apprenticeship.js';
+import {
+  durableScopeHash,
+  type DurableWorkBindingInput,
+} from './durable-work-continuity.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import {
@@ -32,7 +38,22 @@ import {
   buildAssistantMetricSnapshot,
   buildReviewedOutcomeProgress,
 } from './personal-assistant-metrics.js';
-import type { VerifiedDeepWorkPacket } from './types.js';
+import {
+  applyCapabilityOwnerControl,
+  authorizeApprovedCapabilityActivation,
+  getCapabilityApprenticeshipStatus,
+  issueCapabilityControlTokenForAuthenticatedCockpit,
+  issueCapabilityReviewTokenForAuthenticatedCockpit,
+  recordCapabilityOwnerVerdict,
+  stageCapabilityActivation,
+} from './production-capability-apprenticeship.js';
+import type {
+  CapabilityAcquisitionRecord,
+  CapabilityOwnerReviewVerdict,
+  CapabilityProductionRunRecord,
+  CapabilityProductionRunStatus,
+  VerifiedDeepWorkPacket,
+} from './types.js';
 import {
   OWNER_COCKPIT_CSS,
   OWNER_COCKPIT_HTML,
@@ -56,6 +77,39 @@ interface Session {
 
 const COOKIE_NAME = 'andrea_owner_session';
 const MAX_BODY_BYTES = 16 * 1024;
+const MAX_CAPABILITY_ACQUISITIONS = 20;
+const MAX_CAPABILITY_RUNS = 20;
+const MAX_CAPABILITY_EVIDENCE_IDS = 40;
+const OWNER_COCKPIT_OWNER_ID = 'owner';
+const OWNER_COCKPIT_CHAT_ID = 'cockpit';
+const OWNER_COCKPIT_CHANNEL = 'owner_cockpit';
+const OWNER_COCKPIT_ACTIVATION_WORKER_ID = 'owner-cockpit-activation';
+const CAPABILITY_REVIEW_VERDICTS = [
+  'verified',
+  'helpful',
+  'partial',
+  'blocked',
+  'corrected',
+  'rejected',
+] as const satisfies readonly CapabilityOwnerReviewVerdict[];
+const CAPABILITY_REVIEWABLE_RUN_STATUSES = [
+  'awaiting_owner_review',
+  'owner_reviewed',
+  'awaiting_activation_approval',
+  'active',
+  'monitoring',
+  'partial',
+  'blocked',
+  'paused',
+] as const satisfies readonly CapabilityProductionRunStatus[];
+const CAPABILITY_CONTROL_ACTIONS = [
+  'pause',
+  'revoke',
+  'retire',
+  'show_evidence',
+] as const;
+
+type CapabilityControlAction = (typeof CAPABILITY_CONTROL_ACTIONS)[number];
 
 function parseBool(value: string | undefined): boolean {
   return ['1', 'true', 'yes'].includes((value || '').trim().toLowerCase());
@@ -176,6 +230,281 @@ function safeText(
 ): string {
   const normalized = (value || '').replace(/\s+/g, ' ').trim();
   return (normalized || fallback).slice(0, max);
+}
+
+function safeRouteId(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const decoded = decodeURIComponent(value);
+    return decoded &&
+      decoded.length <= 240 &&
+      !decoded.includes('/') &&
+      !decoded.includes('\\')
+      ? decoded
+      : null;
+  } catch (error) {
+    if (error instanceof URIError) return null;
+    throw error;
+  }
+}
+
+function isEvidenceId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 240 &&
+    /^[a-zA-Z0-9][a-zA-Z0-9:._-]*$/.test(value)
+  );
+}
+
+function storedEvidenceIds(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter(isEvidenceId) : [];
+  } catch (error) {
+    if (error instanceof SyntaxError) return [];
+    throw error;
+  }
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null;
+}
+
+function isCapabilityStateConflict(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (/^(Capability|Canary) (owner|run|review|acquisition|production|control|is|has|activation)/i.test(
+      error.message,
+    ) ||
+      /^(The exact capability approval packet is not approved|Only a verified exact owner verdict can precede activation|Activation proposal cannot broaden canary scope|Activation lease acquisition failed|Activation durable work disappeared)/i.test(
+        error.message,
+      ))
+  );
+}
+
+function exactTargetScopeKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  const hasControlCharacter = [...trimmed].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+  return trimmed === value &&
+    trimmed.length > 0 &&
+    trimmed.length <= 240 &&
+    !hasControlCharacter
+    ? trimmed
+    : null;
+}
+
+function ownerCockpitActivationBinding(
+  run: CapabilityProductionRunRecord,
+  groupFolder: string,
+  targetScopeKey: string,
+): DurableWorkBindingInput | null {
+  const binding: DurableWorkBindingInput = {
+    ownerId: OWNER_COCKPIT_OWNER_ID,
+    chatId: OWNER_COCKPIT_CHAT_ID,
+    groupId: groupFolder,
+    channel: OWNER_COCKPIT_CHANNEL,
+    targetScopeKey,
+  };
+  return run.groupFolder === groupFolder &&
+    run.authorizedSurface === OWNER_COCKPIT_CHANNEL &&
+    run.channel === OWNER_COCKPIT_CHANNEL &&
+    run.ownerScopeHash === durableScopeHash('owner', binding.ownerId) &&
+    run.chatScopeHash === durableScopeHash('chat', binding.chatId) &&
+    run.groupScopeHash === durableScopeHash('group', binding.groupId) &&
+    run.targetScopeHash === durableScopeHash('target', binding.targetScopeKey)
+    ? binding
+    : null;
+}
+
+function uniqueEvidenceIds(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.filter(isEvidenceId))]
+    .sort()
+    .slice(0, MAX_CAPABILITY_EVIDENCE_IDS);
+}
+
+function capabilityRunEvidenceIds(
+  run: CapabilityProductionRunRecord,
+): string[] {
+  return uniqueEvidenceIds([
+    run.workId,
+    run.checkpointId,
+    run.invocationId,
+    run.canaryApprovalPacketId,
+    run.canaryGrantId,
+    run.canaryLeaseId,
+    run.executionGrantId,
+    run.executionLeaseId,
+    run.activationApprovalPacketId,
+    run.activationGrantId,
+    run.activationLeaseId,
+    run.activationWorkId,
+    run.activationCheckpointId,
+    run.activationInvocationId,
+    run.outcomeId,
+    run.ownerReviewId,
+    run.healthEvidenceSetDigest,
+    run.postconditionFingerprint,
+  ]);
+}
+
+function capabilityAcquisitionEvidenceIds(
+  acquisition: CapabilityAcquisitionRecord,
+  runs: CapabilityProductionRunRecord[],
+): string[] {
+  return uniqueEvidenceIds([
+    ...storedEvidenceIds(acquisition.outcomeIdsJson),
+    ...runs.flatMap(capabilityRunEvidenceIds),
+  ]);
+}
+
+function isOwnerCockpitReviewableRun(
+  run: CapabilityProductionRunRecord,
+): boolean {
+  return Boolean(
+    CAPABILITY_REVIEWABLE_RUN_STATUSES.includes(
+      run.status as (typeof CAPABILITY_REVIEWABLE_RUN_STATUSES)[number],
+    ) &&
+    run.outcomeId &&
+    run.authorizedSurface === 'owner_cockpit' &&
+    run.channel === 'owner_cockpit',
+  );
+}
+
+function capabilityRunView(run: CapabilityProductionRunRecord) {
+  const review = getCapabilityOwnerReviewForRun(run.runId);
+  return {
+    id: run.runId,
+    kind: run.runKind,
+    status: run.status,
+    revision: run.revision,
+    contractVersion: run.contractVersion,
+    taskFamily: run.taskFamily,
+    actionClass: run.actionClass,
+    channel: run.channel,
+    authorizedSurface: run.authorizedSurface,
+    updatedAt: run.updatedAt,
+    completedAt: run.completedAt || null,
+    expiresAt: run.expiresAt,
+    reviewEligible: isOwnerCockpitReviewableRun(run),
+    metrics: {
+      resourceDiscoveryCalls: run.resourceDiscoveryCalls,
+      candidateDesignCalls: run.candidateDesignCalls,
+      toolSelectionCalls: run.toolSelectionCalls,
+      executionCalls: run.executionCalls,
+      evaluatorCalls: run.evaluatorCalls,
+      providerCalls: run.providerCalls,
+      latencyMs: run.latencyMs,
+      costUsd: run.costUsd,
+      matchConfidence: run.matchConfidence ?? null,
+    },
+    review: review
+      ? {
+          verdict: review.verdict,
+          revision: review.revision,
+          updatedAt: review.updatedAt,
+        }
+      : null,
+    evidenceIds: capabilityRunEvidenceIds(run),
+  };
+}
+
+export function buildOwnerCockpitApprenticeshipView(groupFolder: string) {
+  const statuses = listCapabilityAcquisitions({
+    groupFolder,
+    limit: MAX_CAPABILITY_ACQUISITIONS,
+  })
+    .filter((acquisition) => acquisition.groupFolder === groupFolder)
+    .map((acquisition) =>
+      getCapabilityApprenticeshipStatus(acquisition.acquisitionId),
+    );
+  const acquisitions = statuses.map((status) => {
+    const runs = status.runs
+      .filter((run) => run.groupFolder === groupFolder)
+      .slice(0, MAX_CAPABILITY_RUNS);
+    const runViews = runs.map(capabilityRunView);
+    const latestRun = runs[0];
+    const reviewRun = runs.find(isOwnerCockpitReviewableRun);
+    const ownerReview = reviewRun
+      ? getCapabilityOwnerReviewForRun(reviewRun.runId)
+      : undefined;
+    const latestOwnerReview = latestRun
+      ? getCapabilityOwnerReviewForRun(latestRun.runId)
+      : undefined;
+    const controlsAvailable =
+      latestRun?.authorizedSurface === 'owner_cockpit' &&
+      latestRun.channel === 'owner_cockpit';
+    return {
+      id: status.acquisition.acquisitionId,
+      state: status.acquisition.state,
+      recordVersion: status.acquisition.recordVersion,
+      taskFamily: status.acquisition.taskFamily,
+      gapKind: status.acquisition.gapKind,
+      riskLevel: status.acquisition.riskLevel,
+      evidenceOrigin: status.acquisition.evidenceOrigin,
+      confidence: status.acquisition.confidence,
+      updatedAt: status.acquisition.updatedAt,
+      expiresAt: status.acquisition.expiresAt || null,
+      revalidateAfterAt: status.acquisition.revalidateAfterAt || null,
+      correctionCount: status.acquisition.correctionCount,
+      negativeOutcomeCount: status.acquisition.negativeOutcomeCount,
+      pendingAction: status.pendingAction,
+      ownerReviewRunId: reviewRun?.runId || null,
+      ownerReviewVerdict: ownerReview?.verdict || null,
+      ownerReviewRevision: ownerReview?.revision || null,
+      activationProposalRunId:
+        status.acquisition.state === 'canary_ready' &&
+        latestRun?.runKind === 'canary' &&
+        latestRun?.status === 'owner_reviewed' &&
+        latestOwnerReview?.verdict === 'verified'
+          ? latestRun.runId
+          : null,
+      activationRunId:
+        status.acquisition.state === 'canary_ready' &&
+        latestRun?.runKind === 'canary' &&
+        latestRun?.status === 'awaiting_activation_approval' &&
+        latestRun.activationApprovalPacketId
+          ? latestRun.runId
+          : null,
+      controlsAvailable: Boolean(controlsAvailable),
+      runs: runViews,
+      evidenceIds: capabilityAcquisitionEvidenceIds(status.acquisition, runs),
+    };
+  });
+  const runs = acquisitions.flatMap((acquisition) => acquisition.runs);
+  return {
+    acquisitions,
+    metrics: {
+      acquisitionCount: acquisitions.length,
+      runCount: runs.length,
+      pendingOwnerReviewCount: runs.filter(
+        (run) => run.reviewEligible && run.status === 'awaiting_owner_review',
+      ).length,
+      reviewableRunCount: runs.filter((run) => run.reviewEligible).length,
+      totalLatencyMs: runs.reduce(
+        (total, run) => total + run.metrics.latencyMs,
+        0,
+      ),
+      totalProviderCalls: runs.reduce(
+        (total, run) => total + run.metrics.providerCalls,
+        0,
+      ),
+      totalCostUsd: runs.reduce((total, run) => total + run.metrics.costUsd, 0),
+    },
+  };
 }
 
 export function selectOwnerCockpitMission(
@@ -382,6 +711,9 @@ export class OwnerCockpitServer {
           this.now(),
         ),
       },
+      apprenticeship: buildOwnerCockpitApprenticeshipView(
+        this.config.groupFolder,
+      ),
       intelligence: {
         reviewedOutcomeCount: assistantMetrics.reviewedOutcomeCount,
         requiredOutcomeCount: 5,
@@ -546,6 +878,421 @@ export class OwnerCockpitServer {
     const missionReviewMatch = url.pathname.match(
       /^\/api\/v1\/deep-work\/([^/]+)\/review$/,
     );
+    const capabilityReviewMatch = url.pathname.match(
+      /^\/api\/v1\/capability-apprenticeship\/acquisitions\/([^/]+)\/runs\/([^/]+)\/review$/,
+    );
+    const capabilityControlMatch = url.pathname.match(
+      /^\/api\/v1\/capability-apprenticeship\/acquisitions\/([^/]+)\/(pause|revoke|retire|show-evidence)$/,
+    );
+    const capabilityActivationProposalMatch = url.pathname.match(
+      /^\/api\/v1\/capability-apprenticeship\/acquisitions\/([^/]+)\/runs\/([^/]+)\/activation-proposal$/,
+    );
+    const capabilityActivationMatch = url.pathname.match(
+      /^\/api\/v1\/capability-apprenticeship\/acquisitions\/([^/]+)\/runs\/([^/]+)\/activate$/,
+    );
+    if (req.method === 'POST' && capabilityActivationProposalMatch) {
+      if (!this.requireMutationAuth(req, res)) return;
+      const acquisitionId = safeRouteId(capabilityActivationProposalMatch[1]);
+      const runId = safeRouteId(capabilityActivationProposalMatch[2]);
+      if (!acquisitionId || !runId) {
+        return json(res, 400, { error: 'Capability identity is invalid.' });
+      }
+      const body = parseJsonObject(await readBody(req));
+      const targetScopeKey = exactTargetScopeKey(body?.targetScopeKey);
+      if (
+        !body ||
+        Object.keys(body).some(
+          (key) => !['confirmation', 'targetScopeKey'].includes(key),
+        ) ||
+        body.confirmation !== 'PROPOSE_ACTIVATION' ||
+        !targetScopeKey
+      ) {
+        return json(res, 400, {
+          error: 'Confirm the exact activation proposal and target scope.',
+        });
+      }
+      let status: ReturnType<typeof getCapabilityApprenticeshipStatus>;
+      try {
+        status = getCapabilityApprenticeshipStatus(acquisitionId);
+      } catch (error) {
+        if (isCapabilityStateConflict(error)) {
+          return json(res, 409, {
+            error: 'This activation proposal is stale or no longer available.',
+          });
+        }
+        throw error;
+      }
+      const run = status.runs[0];
+      const binding = run
+        ? ownerCockpitActivationBinding(
+            run,
+            this.config.groupFolder,
+            targetScopeKey,
+          )
+        : null;
+      if (
+        status.acquisition.groupFolder !== this.config.groupFolder ||
+        status.acquisition.state !== 'canary_ready' ||
+        !run ||
+        run.runId !== runId ||
+        run.runKind !== 'canary' ||
+        run.status !== 'owner_reviewed' ||
+        !run.ownerReviewId ||
+        !binding
+      ) {
+        return json(res, 409, {
+          error:
+            'Only this exact verified owner-reviewed canary can be proposed for activation.',
+        });
+      }
+      try {
+        const actionAt = this.now();
+        const staged = stageCapabilityActivation({
+          runId,
+          expectedAcquisitionVersion: status.acquisition.recordVersion,
+          expectedRunRevision: run.revision,
+          authorizedSurface: 'owner_cockpit',
+          binding,
+          now: actionAt,
+        });
+        return json(res, 200, {
+          ok: true,
+          action: 'activation_proposed',
+          acquisition: {
+            id: acquisitionId,
+            state: status.acquisition.state,
+            recordVersion: status.acquisition.recordVersion,
+          },
+          run: {
+            id: staged.run.runId,
+            status: staged.run.status,
+            revision: staged.run.revision,
+          },
+          approval: {
+            id: staged.approval.approvalPacketId,
+            status: staged.approval.status,
+            actionClass: staged.approval.actionClass,
+            approvalVersion: staged.approval.approvalVersion || 1,
+            scopeDigest: staged.approval.scopeDigest || null,
+            expiresAt: staged.approval.expiresAt || null,
+          },
+          evidenceIds: capabilityRunEvidenceIds(staged.run),
+        });
+      } catch (error) {
+        if (isCapabilityStateConflict(error)) {
+          return json(res, 409, {
+            error:
+              'The verified canary changed before activation could be proposed.',
+          });
+        }
+        throw error;
+      }
+    }
+    if (req.method === 'POST' && capabilityActivationMatch) {
+      if (!this.requireMutationAuth(req, res)) return;
+      const acquisitionId = safeRouteId(capabilityActivationMatch[1]);
+      const runId = safeRouteId(capabilityActivationMatch[2]);
+      if (!acquisitionId || !runId) {
+        return json(res, 400, { error: 'Capability identity is invalid.' });
+      }
+      const body = parseJsonObject(await readBody(req));
+      const targetScopeKey = exactTargetScopeKey(body?.targetScopeKey);
+      if (
+        !body ||
+        Object.keys(body).some(
+          (key) => !['confirmation', 'targetScopeKey'].includes(key),
+        ) ||
+        body.confirmation !== 'ACTIVATE_APPROVED_CAPABILITY' ||
+        !targetScopeKey
+      ) {
+        return json(res, 400, {
+          error: 'Confirm the exact approved activation and target scope.',
+        });
+      }
+      let status: ReturnType<typeof getCapabilityApprenticeshipStatus>;
+      try {
+        status = getCapabilityApprenticeshipStatus(acquisitionId);
+      } catch (error) {
+        if (isCapabilityStateConflict(error)) {
+          return json(res, 409, {
+            error: 'This activation is stale or no longer available.',
+          });
+        }
+        throw error;
+      }
+      const run = status.runs[0];
+      const binding = run
+        ? ownerCockpitActivationBinding(
+            run,
+            this.config.groupFolder,
+            targetScopeKey,
+          )
+        : null;
+      const awaitingApprovedPacket =
+        status.acquisition.state === 'canary_ready' &&
+        run?.status === 'awaiting_activation_approval' &&
+        Boolean(run.activationApprovalPacketId);
+      const idempotentReplay =
+        ['active', 'monitoring'].includes(status.acquisition.state) &&
+        run?.status === 'active';
+      if (
+        status.acquisition.groupFolder !== this.config.groupFolder ||
+        !run ||
+        run.runId !== runId ||
+        run.runKind !== 'canary' ||
+        !binding ||
+        (!awaitingApprovedPacket && !idempotentReplay)
+      ) {
+        return json(res, 409, {
+          error:
+            'This exact activation is not awaiting separate approval consumption.',
+        });
+      }
+      try {
+        const actionAt = this.now();
+        const result = authorizeApprovedCapabilityActivation({
+          runId,
+          expectedAcquisitionVersion: status.acquisition.recordVersion,
+          expectedRunRevision: run.revision,
+          authorizedSurface: 'owner_cockpit',
+          binding,
+          workerId: OWNER_COCKPIT_ACTIVATION_WORKER_ID,
+          now: actionAt,
+        });
+        return json(res, 200, {
+          ok: true,
+          action: 'activated',
+          idempotentReplay,
+          acquisition: {
+            id: result.acquisition.acquisitionId,
+            state: result.acquisition.state,
+            recordVersion: result.acquisition.recordVersion,
+          },
+          run: {
+            id: result.run.runId,
+            status: result.run.status,
+            revision: result.run.revision,
+          },
+          evidenceIds: uniqueEvidenceIds([
+            ...capabilityAcquisitionEvidenceIds(result.acquisition, [
+              result.run,
+            ]),
+            result.receipt.receiptId,
+          ]),
+        });
+      } catch (error) {
+        if (isCapabilityStateConflict(error)) {
+          return json(res, 409, {
+            error:
+              'The separate activation approval is missing, stale, or already consumed by a competing run.',
+          });
+        }
+        throw error;
+      }
+    }
+    if (req.method === 'POST' && capabilityReviewMatch) {
+      if (!this.requireMutationAuth(req, res)) return;
+      const acquisitionId = safeRouteId(capabilityReviewMatch[1]);
+      const runId = safeRouteId(capabilityReviewMatch[2]);
+      if (!acquisitionId || !runId) {
+        return json(res, 400, { error: 'Capability identity is invalid.' });
+      }
+      let body: Record<string, unknown>;
+      try {
+        const parsed = parseJsonObject(await readBody(req));
+        if (!parsed) {
+          return json(res, 400, { error: 'Capability review is invalid.' });
+        }
+        body = parsed;
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          return json(res, 400, { error: 'Capability review is invalid.' });
+        }
+        throw error;
+      }
+      if (
+        Object.keys(body).some(
+          (key) => !['verdict', 'confirmation'].includes(key),
+        ) ||
+        body.confirmation !== 'REVIEW_CANARY' ||
+        !CAPABILITY_REVIEW_VERDICTS.includes(
+          body.verdict as (typeof CAPABILITY_REVIEW_VERDICTS)[number],
+        )
+      ) {
+        return json(res, 400, {
+          error: 'Choose an exact canary verdict and review it again.',
+        });
+      }
+      let status: ReturnType<typeof getCapabilityApprenticeshipStatus>;
+      try {
+        status = getCapabilityApprenticeshipStatus(acquisitionId);
+      } catch (error) {
+        if (isCapabilityStateConflict(error)) {
+          return json(res, 409, {
+            error: 'This canary review is stale or no longer available.',
+          });
+        }
+        throw error;
+      }
+      const run = status.runs.find((item) => item.runId === runId);
+      if (
+        status.acquisition.groupFolder !== this.config.groupFolder ||
+        !run ||
+        run.groupFolder !== this.config.groupFolder ||
+        !CAPABILITY_REVIEWABLE_RUN_STATUSES.includes(
+          run.status as (typeof CAPABILITY_REVIEWABLE_RUN_STATUSES)[number],
+        ) ||
+        !run.outcomeId ||
+        run.authorizedSurface !== 'owner_cockpit' ||
+        run.channel !== 'owner_cockpit'
+      ) {
+        return json(res, 409, {
+          error: 'This canary review is stale or belongs to another surface.',
+        });
+      }
+      try {
+        const actionAt = this.now();
+        const token = issueCapabilityReviewTokenForAuthenticatedCockpit({
+          runId,
+          now: actionAt,
+        });
+        const result = recordCapabilityOwnerVerdict({
+          token,
+          verdict: body.verdict as (typeof CAPABILITY_REVIEW_VERDICTS)[number],
+          now: actionAt,
+        });
+        return json(res, 200, {
+          ok: true,
+          verdict: body.verdict,
+          acquisition: {
+            id: result.acquisition.acquisitionId,
+            state: result.acquisition.state,
+            recordVersion: result.acquisition.recordVersion,
+          },
+          run: {
+            id: result.run.runId,
+            status: result.run.status,
+            revision: result.run.revision,
+          },
+          evidenceIds: uniqueEvidenceIds([
+            ...capabilityAcquisitionEvidenceIds(result.acquisition, [
+              result.run,
+            ]),
+            result.receipt.receiptId,
+          ]),
+        });
+      } catch (error) {
+        if (isCapabilityStateConflict(error)) {
+          return json(res, 409, {
+            error: 'The canary changed before the verdict could be recorded.',
+          });
+        }
+        throw error;
+      }
+    }
+    if (req.method === 'POST' && capabilityControlMatch) {
+      if (!this.requireMutationAuth(req, res)) return;
+      const acquisitionId = safeRouteId(capabilityControlMatch[1]);
+      const routeAction = capabilityControlMatch[2] as
+        | 'pause'
+        | 'revoke'
+        | 'retire'
+        | 'show-evidence';
+      const actionKind: CapabilityControlAction =
+        routeAction === 'show-evidence' ? 'show_evidence' : routeAction;
+      if (!acquisitionId || !CAPABILITY_CONTROL_ACTIONS.includes(actionKind)) {
+        return json(res, 400, { error: 'Capability control is invalid.' });
+      }
+      let body: Record<string, unknown>;
+      try {
+        const parsed = parseJsonObject(await readBody(req));
+        if (!parsed) {
+          return json(res, 400, { error: 'Capability control is invalid.' });
+        }
+        body = parsed;
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          return json(res, 400, { error: 'Capability control is invalid.' });
+        }
+        throw error;
+      }
+      if (
+        Object.keys(body).some((key) => key !== 'confirmation') ||
+        body.confirmation !== actionKind.toUpperCase()
+      ) {
+        return json(res, 400, {
+          error: 'Confirm this exact capability control and try again.',
+        });
+      }
+      let status: ReturnType<typeof getCapabilityApprenticeshipStatus>;
+      try {
+        status = getCapabilityApprenticeshipStatus(acquisitionId);
+      } catch (error) {
+        if (isCapabilityStateConflict(error)) {
+          return json(res, 409, {
+            error: 'This capability control is stale or no longer available.',
+          });
+        }
+        throw error;
+      }
+      const latestRun = status.runs[0];
+      if (
+        status.acquisition.groupFolder !== this.config.groupFolder ||
+        !latestRun ||
+        latestRun.groupFolder !== this.config.groupFolder ||
+        latestRun.authorizedSurface !== 'owner_cockpit' ||
+        latestRun.channel !== 'owner_cockpit'
+      ) {
+        return json(res, 409, {
+          error:
+            'This capability control is stale or belongs to another surface.',
+        });
+      }
+      try {
+        const actionAt = this.now();
+        const token = issueCapabilityControlTokenForAuthenticatedCockpit({
+          acquisitionId,
+          actionKind,
+          now: actionAt,
+        });
+        const result = applyCapabilityOwnerControl({
+          token,
+          now: actionAt,
+        });
+        const evidenceIds = uniqueEvidenceIds([
+          ...capabilityAcquisitionEvidenceIds(
+            result.acquisition,
+            result.run ? [result.run] : [],
+          ),
+          result.receipt?.receiptId,
+        ]);
+        return json(res, 200, {
+          ok: true,
+          action: actionKind,
+          acquisition: {
+            id: result.acquisition.acquisitionId,
+            state: result.acquisition.state,
+            recordVersion: result.acquisition.recordVersion,
+          },
+          run: result.run
+            ? {
+                id: result.run.runId,
+                status: result.run.status,
+                revision: result.run.revision,
+              }
+            : null,
+          evidenceIds,
+        });
+      } catch (error) {
+        if (isCapabilityStateConflict(error)) {
+          return json(res, 409, {
+            error:
+              'The capability changed before the control could be applied.',
+          });
+        }
+        throw error;
+      }
+    }
     if (req.method === 'POST' && missionReviewMatch) {
       if (!this.requireMutationAuth(req, res)) return;
       const body = JSON.parse(await readBody(req)) as Record<string, string>;

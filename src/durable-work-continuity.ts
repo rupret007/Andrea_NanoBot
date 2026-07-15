@@ -1216,6 +1216,11 @@ export function recordDurableEffect(input: {
     resultCode?: string;
     idempotencyKeyHash?: string;
     source?: string;
+    recoveryOfReceiptId?: string;
+    verifiedPostconditionHashesJson?: string;
+    providerCalls?: string;
+    costUsd?: string;
+    latencyMs?: string;
   };
   now?: Date | string;
 }): DurableEffectReceipt {
@@ -1338,6 +1343,14 @@ export function recordDurableEffect(input: {
       existing?.approvalVersion || grant?.approvalVersion || null,
     approvalScopeHash:
       existing?.approvalScopeHash || grant?.approvalScopeHash || null,
+    leaseId:
+      existing?.leaseId ||
+      (input.leaseId ? safeId(input.leaseId, 'lease ID') : null),
+    processGeneration:
+      existing?.processGeneration ||
+      (input.processGeneration
+        ? safeId(input.processGeneration, 'process generation')
+        : null),
     preStateFingerprint: input.preStateFingerprint
       ? safeId(input.preStateFingerprint, 'pre-state fingerprint')
       : null,
@@ -1393,6 +1406,26 @@ export function releaseDurableLease(input: {
   now?: Date | string;
 }): boolean {
   return releaseDurableWorkLease({
+    leaseId: safeId(input.leaseId, 'lease ID'),
+    processGeneration: safeId(
+      input.processGeneration || PROCESS_GENERATION,
+      'process generation',
+    ),
+    now: iso(input.now),
+  });
+}
+
+/**
+ * Reconciles one exact expired lease without treating unrelated worker
+ * generations as abandoned. This is the safe cleanup path when an async
+ * verifier returns after its bounded lease has naturally expired.
+ */
+export function reconcileExpiredDurableLease(input: {
+  leaseId: string;
+  processGeneration?: string;
+  now?: Date | string;
+}): ReturnType<typeof reconcileExpiredDurableWorkLeases> {
+  return reconcileExpiredDurableWorkLeases({
     leaseId: safeId(input.leaseId, 'lease ID'),
     processGeneration: safeId(
       input.processGeneration || PROCESS_GENERATION,

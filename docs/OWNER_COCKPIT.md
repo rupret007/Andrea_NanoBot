@@ -97,6 +97,52 @@ CSRF verification.
 If an approval looks stale or unexpected, do not confirm it. Return to chat and
 ask Andrea to explain or recreate the proposed action.
 
+## Capability apprenticeship
+
+The capability-apprenticeship card is a bounded metadata view of canonical
+acquisitions—including clearly labeled synthetic preproduction preparation—and
+real production runs when they exist. It shows state, evidence origin,
+confidence, correction and negative-outcome counts, run
+latency/provider/cost metrics, per-run owner-review eligibility and revision,
+and opaque evidence identifiers. The summary counts pending and reviewable
+runs rather than collapsing several outcomes into one acquisition-level action.
+It does not
+show raw requests, tool output, credentials, target-scope values, or hidden
+reasoning. An empty card is truthful: deterministic certification does not
+create a real canary, owner verdict, activation, or reusable authority.
+
+For every cockpit-bound canary or monitored reuse with a canonical outcome, the
+cockpit offers six explicit verdicts on that exact run:
+`verified`, `helpful`, `partial`, `blocked`, `corrected`, and `rejected`. These
+buttons use the authenticated canary-review route and an exact confirmation;
+the ordinary Helpful feedback control elsewhere in Andrea is not a capability
+review. Helpful means the result was useful but not verified, and therefore
+cannot qualify the capability for activation. A later explicit re-review
+updates the same review record at a new revision instead of creating another
+learning sample. A non-verified re-review can pause active use; a verified
+re-review never resumes or activates a capability automatically.
+
+The card also exposes exact `show evidence`, `pause`, `revoke`, and `retire`
+controls where the current run belongs to the authenticated cockpit surface.
+Show evidence returns only bounded identifiers. Pause, revoke, and retire are
+separate confirmed controls; they do not share a button or request with review
+or activation.
+
+Activation remains a three-step owner decision:
+
+1. Enter the exact target-scope key used by the verified canary and choose
+   **Propose activation**. The server hashes and compares that value against the
+   canary binding. It does not return the value in snapshots.
+2. Review the newly staged exact packet under **Waiting for approval** and
+   approve it separately.
+3. Re-enter the same exact target scope and choose **Activate approved
+   capability**. This consumes only the already approved, exact-scope packet.
+
+Only an explicit `verified` canary verdict can reach step 1. Each step is
+same-origin/CSRF protected and stale state fails closed. Activation improves
+matching and planning only; protected effects retain their normal fresh
+approval requirements.
+
 ## Continuity view
 
 The durable continuity report is a metadata-only recovery view. It can show the

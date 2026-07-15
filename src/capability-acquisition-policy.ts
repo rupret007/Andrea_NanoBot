@@ -71,9 +71,10 @@ const LEGAL_TRANSITIONS: Readonly<
     'retired',
   ],
   canary_ready: ['canary_ready', 'active', 'paused', 'quarantined', 'retired'],
-  active: ['monitoring', 'paused', 'quarantined', 'retired'],
+  active: ['active', 'monitoring', 'paused', 'quarantined', 'retired'],
   monitoring: ['active', 'monitoring', 'paused', 'quarantined', 'retired'],
   paused: [
+    'paused',
     'scoped',
     'resource_discovery',
     'candidate_designed',
@@ -233,6 +234,18 @@ export function assertCapabilityCandidateContract(
     contract.outputSchemaJson,
     'contract.outputSchemaJson',
   );
+  if (
+    contract.successPostconditions.length < 1 ||
+    contract.successPostconditions.length > 12 ||
+    contract.successPostconditions.some(
+      (postcondition) =>
+        typeof postcondition !== 'string' || !postcondition.trim(),
+    )
+  ) {
+    throw new Error(
+      'Capability candidate success postconditions must be a bounded non-empty string set.',
+    );
+  }
   if (
     !inputSchema ||
     typeof inputSchema !== 'object' ||

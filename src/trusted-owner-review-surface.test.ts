@@ -1,0 +1,150 @@
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
+import { isTrustedOwnerReviewSurface } from './trusted-owner-review-surface.js';
+import type { RegisteredGroup } from './types.js';
+
+const mainGroup: RegisteredGroup = {
+  name: 'Main',
+  folder: 'main',
+  trigger: '@Andrea',
+  added_at: '2026-07-15T00:00:00.000Z',
+  requiresTrigger: false,
+  isMain: true,
+};
+
+const companionGroup: RegisteredGroup = {
+  ...mainGroup,
+  name: 'BlueBubbles (Main)',
+  isMain: false,
+};
+
+describe('trusted owner review surface', () => {
+  const originalDisable = process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE;
+  const originalCanonical = process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+  const originalAliases = process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
+
+  afterEach(() => {
+    if (originalDisable == null) {
+      delete process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE;
+    } else {
+      process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = originalDisable;
+    }
+    if (originalCanonical == null) {
+      delete process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+    } else {
+      process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID = originalCanonical;
+    }
+    if (originalAliases == null) {
+      delete process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
+    } else {
+      process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS = originalAliases;
+    }
+  });
+
+  it('trusts only the registered main Telegram group', () => {
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:main',
+        group: mainGroup,
+      }),
+    ).toBe(true);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:other',
+        group: { ...mainGroup, isMain: false },
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects cross-channel identifiers and status-like channel names', () => {
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'bb:iMessage;-;owner@example.invalid',
+        group: mainGroup,
+      }),
+    ).toBe(false);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram_status',
+        chatJid: 'tg:main',
+        group: mainGroup,
+      }),
+    ).toBe(false);
+
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;owner@example.invalid';
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'bluebubbles',
+        chatJid: 'iMessage;-;owner@example.invalid',
+        group: companionGroup,
+      }),
+    ).toBe(false);
+  });
+
+  it('does not trust reserved BlueBubbles fallback aliases', () => {
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+    delete process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+    delete process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
+
+    expect(
+      isConfiguredBlueBubblesSelfThreadAliasJid('bb:iMessage;-;+12025550101'),
+    ).toBe(false);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'bluebubbles',
+        chatJid: 'bb:iMessage;-;+12025550101',
+        group: companionGroup,
+      }),
+    ).toBe(false);
+
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;+12025550101';
+    expect(
+      isConfiguredBlueBubblesSelfThreadAliasJid('bb:iMessage;-;+12025550101'),
+    ).toBe(false);
+  });
+
+  it('trusts the explicitly configured BlueBubbles self-thread and aliases', () => {
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;owner@example.invalid';
+    process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS =
+      'SMS;-;+12025550109,iMessage;-;owner@example.invalid';
+
+    for (const chatJid of [
+      'bb:iMessage;-;owner@example.invalid',
+      'bb:SMS;-;+12025550109',
+    ]) {
+      expect(
+        isTrustedOwnerReviewSurface({
+          channelName: 'bluebubbles',
+          chatJid,
+          group: companionGroup,
+        }),
+      ).toBe(true);
+    }
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'bluebubbles',
+        chatJid: 'bb:iMessage;-;someone-else@example.invalid',
+        group: companionGroup,
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects an owner-looking surface without a resolved group scope', () => {
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:main',
+        group: null,
+      }),
+    ).toBe(false);
+  });
+});

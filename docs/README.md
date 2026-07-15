@@ -25,17 +25,18 @@ runtime, and genuine live proof remain distinct in
 [CURRENT_STATUS.md](CURRENT_STATUS.md). Do not infer deployment from source
 files or this index.
 
-The latest released host snapshot records:
+The latest dated host snapshot records:
 
-- **canonical Mac mini runtime**: Commitment Intelligence implementation
-  `ac72ede1` was rebuilt with verified clean provenance and served after fresh
-  OpenClaw and Andrea process identities
+- **canonical Mac mini runtime**: use `npm run services:status` to refresh the
+  exact committed, built, and serving SHA plus current OpenClaw and Andrea
+  process identities; this index deliberately does not pin a release SHA
 - every release needs its own exact-SHA hosted result; a prior green SHA does
   not certify a later commit
-- the latest dated status records about 60 GiB available after a bounded cleanup
-  of regenerable caches and unused Docker images/cache; active containers,
-  volumes, models, messages, session history, and repository artifacts were
-  preserved, and free space must still be rechecked before release
+- the latest bounded cleanup reclaimed about 3 GiB of regenerable package and
+  compile caches; active containers, Docker images and volumes, models,
+  messages, session history, repository dependencies, build output, and live
+  Andrea data were preserved, and free space must still be rechecked before
+  release
 - Telegram transport is healthy; the last recorded `/ping` roundtrip at
   `2026-07-14T15:10:07.618Z` is aged and needs a genuine user-path refresh
 - BlueBubbles transport is reachable, while a same-thread action proof can age
@@ -131,6 +132,7 @@ Use these when you are enabling or validating specific capabilities:
 | Knowledge Library                      | [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md)                                               |
 | Commitment Intelligence                | [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md)                                   |
 | Verified capability acquisition        | [VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md)                   |
+| Verified production apprenticeship     | [VERIFIED_PRODUCTION_APPRENTICESHIP.md](VERIFIED_PRODUCTION_APPRENTICESHIP.md)             |
 | Cursor Cloud API keys                  | [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md)                                                   |
 | Cursor desktop machine access          | [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md)                                       |
 | Alexa Companion Mode                   | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                                   |
@@ -145,6 +147,10 @@ For the productized flagship-flow view specifically:
   bindings, canonical durable sandbox proof, synthetic `sandbox_verified` limit,
   and authority boundaries:
   [VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md)
+- implemented canonical canary, exact owner-review, separate activation,
+  monitored narrow reuse, quarantine, and revocation contract; 22/22 synthetic
+  certification with genuine owner/live proof still pending:
+  [VERIFIED_PRODUCTION_APPRENTICESHIP.md](VERIFIED_PRODUCTION_APPRENTICESHIP.md)
 - Candace / people follow-through: [COMMUNICATION_COMPANION.md](COMMUNICATION_COMPANION.md)
 - plan creation and execution: [MISSIONS_AND_EXECUTION.md](MISSIONS_AND_EXECUTION.md)
 - approval and partial execution: [ACTION_BUNDLES.md](ACTION_BUNDLES.md)
@@ -238,12 +244,13 @@ Only read these when changing core runtime behavior:
 These documents describe the intelligence goal without turning experimental
 modules or synthetic scores into production claims:
 
-| Topic                                                       | Read this                                                      |
-| ----------------------------------------------------------- | -------------------------------------------------------------- |
-| Grounded intelligence and verified-agency direction         | [AGI_ROADMAP.md](AGI_ROADMAP.md)                               |
-| Evaluation classes and what each result can prove           | [AGI_EVALUATION.md](AGI_EVALUATION.md)                         |
-| Intelligence-layer security and production trust boundaries | [AGI_SECURITY.md](AGI_SECURITY.md)                             |
-| Durable agency contract, invariants, and proof requirements | [ANDREA_DURABLE_AGENCY_PLAN.md](ANDREA_DURABLE_AGENCY_PLAN.md) |
+| Topic                                                               | Read this                                                                      |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Grounded intelligence and verified-agency direction                 | [AGI_ROADMAP.md](AGI_ROADMAP.md)                                               |
+| Evaluation classes and what each result can prove                   | [AGI_EVALUATION.md](AGI_EVALUATION.md)                                         |
+| Intelligence-layer security and production trust boundaries         | [AGI_SECURITY.md](AGI_SECURITY.md)                                             |
+| Durable agency contract, invariants, and proof requirements         | [ANDREA_DURABLE_AGENCY_PLAN.md](ANDREA_DURABLE_AGENCY_PLAN.md)                 |
+| Implemented sandbox-to-production apprenticeship and proof boundary | [VERIFIED_PRODUCTION_APPRENTICESHIP.md](VERIFIED_PRODUCTION_APPRENTICESHIP.md) |
 
 Use [CURRENT_STATUS.md](CURRENT_STATUS.md) for the dated host/release snapshot
 and [TESTING_AND_RELEASE_RUNBOOK.md](TESTING_AND_RELEASE_RUNBOOK.md) for the

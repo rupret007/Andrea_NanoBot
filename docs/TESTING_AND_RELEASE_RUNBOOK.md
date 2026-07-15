@@ -297,8 +297,8 @@ Acceptance also requires:
 - synthetic and replay evidence cannot activate a skill or manufacture an
   owner review;
 - caller-asserted live canary, activation, and production outcome identifiers
-  fail closed until an atomic canonical durable-work/outcome/owner-review/
-  fresh-health/exact-approval join exists;
+  fail closed; only the production apprenticeship's canonical durable-work/
+  outcome/owner-review/fresh-health/exact-approval joins may advance them;
 - stale versions, missing input, missing approval, uncertain effects,
   dependency degradation, negative outcomes, and safety/privacy failures stop
   or quarantine the candidate without false success;
@@ -309,6 +309,67 @@ The strict command is part of the hermetic deterministic sweep and is also an
 explicit Ubuntu and Windows CI step. Hosted Windows proves cross-platform
 repository behavior, not a native service restart or live integration. See
 [VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md).
+
+For Verified Production Apprenticeship changes, run the focused production
+lifecycle coverage plus both strict certification commands:
+
+```bash
+npm test -- \
+  src/production-capability-apprenticeship.test.ts \
+  src/production-capability-apprenticeship-hard-kill.test.ts \
+  src/capability-canary-cli.integration.test.ts \
+  src/capability-canary-cli.test.ts \
+  src/release-readiness-candidate-preparation.test.ts \
+  src/release-readiness-active-reuse.test.ts \
+  src/capability-apprenticeship-chat.test.ts \
+  src/owner-cockpit-apprenticeship.test.ts \
+  src/owner-cockpit-ui.test.ts \
+  src/telegram-learning-scope.test.ts \
+  src/bluebubbles-self-thread.test.ts \
+  src/trusted-owner-review-surface.test.ts
+npm run test:production-capability-apprenticeship:certification-gate
+npm run certify:production-capability-apprenticeship
+```
+
+The certification must report exactly 22/22 A-V scenarios and remain
+`deterministic_offline` / `certification_synthetic`. Accept only zero provider
+calls, cost, network escapes, external effects, production and production-metric
+writes, unauthorized or duplicate effects, privacy leaks, genuine owner
+evidence, live children, and isolated or production residue. Parent and child
+non-loopback denial, provider-environment suppression, metadata-only output,
+synthetic owner-fixture labeling, benchmark isolation, and cleanup are hard
+gates. This is repository behavior proof, not evidence that a real canary,
+owner review, activation, semantic reuse, provider call, deployment, or service
+restart occurred.
+
+The operator surfaces have different authority:
+
+- `npm run capability:prepare-release-readiness` writes only synthetic
+  preproduction acquisition evidence under provider suppression and network
+  denial. It must report all live-canary, owner-review, and activation flags
+  false.
+- `npm run capability:canary` is read-only inspection unless exactly one
+  explicit mutation phase is selected. `--stage`, `--authorize-canary`,
+  `--run-canary`, `--stage-activation`, and `--activate` are separate
+  invocations bound to expected acquisition/run heads, the exact owner/chat/
+  group/channel/target scope, normalized input, and fresh health observations.
+- The CLI never approves a cognitive packet and never records an owner verdict.
+  Canary and activation packets use the normal approval surface. A verdict is
+  canonical only from the registered main Telegram chat, configured Messages
+  self-thread, or authenticated owner cockpit. Activation is available only
+  after an exact `verified` verdict and consumes a second approved packet.
+- Guided execution is restricted to the bundled read-only, zero-egress
+  Release-Readiness Brief. After genuine activation, live semantic dispatch is
+  deliberately limited to narrow release-readiness questions on the exact
+  trusted owner chat and target. Every reuse must revalidate contract identity,
+  scope, resource version and health, lease ownership, receipts, and the
+  independent postcondition.
+
+Do not run a production preparation or mutation command merely to satisfy a
+release test. Genuine canary, verdict, activation, and reuse are operator proof
+and must remain absent unless the owner intentionally performs each decision.
+See
+[VERIFIED_PRODUCTION_APPRENTICESHIP.md](VERIFIED_PRODUCTION_APPRENTICESHIP.md).
 
 For personalized setup, groceries, errands, bills, meals, pills, and lightweight list management changes, add:
 
@@ -1669,11 +1730,13 @@ npm run test:continuity:hard-kill
 npm run test:continuity:heldout
 npm run test:real-world-intelligence:heldout
 npm run test:novel-capability:certification-gate
+npm run test:production-capability-apprenticeship:certification-gate
 npm run test:stability
 npm run test:deterministic:sweep -- --list
 npm run test:deterministic:sweep
 npm run certify:commitment-intelligence
 npm run certify:novel-capability-mastery
+npm run certify:production-capability-apprenticeship
 npm run certify:life-thread
 npm run certify:temporal-truth
 npm run agi:scorecard -- --no-write --no-dogfood
@@ -1688,7 +1751,7 @@ git status --short
 ```
 
 The focused durable and containment suites above are additional required gates;
-the deterministic sweep's 111-script inventory does not substitute for AGI
+the deterministic sweep's 112-script inventory does not substitute for AGI
 tests, container canaries, audits, or hosted scanners. Review `git status`
 manually for generated artifacts, unexpected files, and secret-like values.
 
@@ -1698,7 +1761,8 @@ Before pushing a release:
 2. The runner typecheck/build/tests, host container contract, image canary, and
    isolated mount canary pass.
 3. AGI typecheck/tests, deterministic sweep and stability rounds, held-out
-   execution truth, offline scorecard, signature flows, docs checks, and
+   execution truth, the production-apprenticeship certification when that
+   lifecycle changes, offline scorecard, signature flows, docs checks, and
    dependency audits pass.
 4. Docs and help surfaces match the changed behavior, and final diff,
    whitespace, generated-artifact, and secret reviews are clean.

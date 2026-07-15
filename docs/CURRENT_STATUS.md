@@ -1,6 +1,6 @@
 # Andrea Current Status
 
-Local operator and repository snapshot from 2026-07-14. Runtime and integration
+Local operator and repository snapshot updated 2026-07-15. Runtime and integration
 proof is time-sensitive; rerun `npm run debug:status`,
 `npm run services:status`, and `npm run integrations:status -- --json` before a
 release or demo. The release facts below describe their recorded tree; they do
@@ -17,29 +17,75 @@ not replace current Git, hosted-check, or runtime provenance.
   `48aaf2dcb56f77ec98028cf5ba945597727d456a` is published on `main` and includes
   the earlier Commitment Intelligence release. Pull request #6 remains earlier
   history, not the source of this direct implementation commit.
+- The current working tree adds Verified Production Apprenticeship but is not
+  release evidence: at this documentation checkpoint it is an uncommitted local
+  candidate. Its complete repository-controlled local release matrix passed,
+  but exact-SHA hosted checks, commit/push, and a clean Mac rebuild/restart have
+  not occurred. Do not infer publication or runtime deployment from source
+  presence.
 - Exact-SHA CI run `29387639718`, AGI/CodeQL run `29387639663`, and Security run
   `29387653200` passed Ubuntu, Windows, container, AGI, CodeQL,
   dependency-audit, verified-secret-scan, and Semgrep gates.
-- The Mac host reports `running_ready` at application commit `48aaf2dc`, with
-  verified build provenance, zero dirty build paths, and serving/build/workspace
-  alignment. Bounded cleanup restored about 69 GiB of available host space. It removed only
-  regenerable caches and unused Docker images/cache while preserving Docker
-  volumes, active containers, model data, messages, session history, and
-  repository dependencies/build output.
-- OpenClaw is live at PID 11235, Andrea is live at PID 12975, and all 11/11
-  Andrea bridge tools are available with no direct-send exposure.
+- The last released Mac artifact remains older than this uncommitted candidate.
+  Use `npm run services:status` for its current process, build, and serving SHA;
+  the release must replace it only after exact-SHA hosted checks pass. The
+  bounded 2026-07-15 cleanup removed about 3 GiB of regenerable npm, pnpm,
+  Homebrew, Node, and TypeScript caches while preserving Docker volumes and
+  images, Codex state, model data, messages, sessions, repository dependencies,
+  build output, and Andrea's live database.
+- OpenClaw and Andrea remain live during local validation. Their exact PIDs,
+  11/11 bridge-tool proof, direct-send exclusion, and serving provenance must be
+  refreshed after the dependency-ordered release restart rather than copied
+  from an older snapshot.
 
 ## Verified Repository Gates
 
-- Primary suite: 238 files / 2,881 tests.
+- Primary suite: 249 files / 3,006 tests, plus a successful production build.
 - AGI suite: 28 files / 286 tests.
-- Deterministic sweep: 96/96 selected commands passed from an inventory of 111;
+- Deterministic sweep: 97/97 selected commands passed from an inventory of 112;
   the other 15 are explicitly excluded live, interactive, aggregate, or
-  state-writing commands, not silent passes.
+  state-writing commands, not silent passes. Its nested three-round stability
+  gate passed in 260.8 seconds; the full sweep completed in 348.0 seconds.
 - Offline scorecard: 100% A+, isolated storage, network denied, zero live cost.
-- Container runner install, typecheck, build, policy contracts, image canary,
-  nested read-only mount canary, signature flows, documentation checks, and
-  root/runner dependency audits passed on the released tree.
+- Production-apprenticeship certification passed 22/22 scenarios and its gate
+  rejected 120 mutations; the real process-death suite passed all four
+  `SIGKILL` boundaries without replay or residue.
+- Container runner typecheck/build, 13 runner tests, 132 host contract tests,
+  pinned image canary, nested read-only mount canary, signature flows, 72-file
+  documentation checks, and root/runner production and full dependency audits
+  passed on the local candidate.
+
+## Verified Production Apprenticeship — Working-Tree Candidate
+
+The working tree implements the canonical production bridge above Verified
+Capability Acquisition: bounded canary staging, consumption of a separately
+approved exact canary packet, durable read-only execution, independent
+postcondition verification, canonical outcome, exact private owner verdict,
+separate activation proposal and approval, monitored active reuse, and owner
+pause/revoke/retire controls. Disconnected identifiers, stale heads, scope or
+version mismatches, stale health, approval/lease mismatches, negative evidence,
+and authority violations fail closed.
+
+The only guided executable contract is the bundled zero-egress Andrea
+Release-Readiness Brief. `npm run capability:prepare-release-readiness` creates
+or reuses only synthetic preproduction acquisition evidence; it creates no live
+canary, approval, owner verdict, provider call, external effect, or activation.
+`npm run capability:canary` is a multi-invocation operator guide. It never
+approves a packet or records an owner verdict. Reviews come only from the
+registered main Telegram chat, configured Messages self-thread, or authenticated
+owner cockpit; activation requires a new exact approval after a verified
+verdict. Runtime semantic reuse is deliberately limited to narrow read-only
+release-readiness questions on the same trusted owner chat and scope.
+
+Local deterministic proof passed all 22/22 A-V scenarios. It was offline,
+network-denied, provider-suppressed, disposable, metadata-only, and explicitly
+`certification_synthetic`, with zero provider calls, cost, external effects,
+production writes, genuine owner evidence, privacy leaks, or cleanup residue.
+The companion gate rejected 120 mutations across all 22 failure codes. That is
+repository certification only. No real release-readiness canary, owner
+verdict, activation, or active reuse is recorded or claimed here. The complete
+local matrix passed; exact-SHA hosted checks, push, rebuild, restart, and
+runtime-provenance gates remain release work for this candidate.
 
 ## Verified Capability Acquisition
 
@@ -51,9 +97,11 @@ offline certification with ten primary and fifteen held-out scenarios. External
 documentation remains untrusted data, synthetic evidence stops at
 `sandbox_verified`, and acquisition grants no new authority. The certification
 uses trusted test-authored adapters and is not an OS isolation boundary.
-Caller-asserted live
-canary, activation, and production-outcome paths fail closed pending an atomic
-canonical durable-work/outcome/owner-review/health/approval join.
+The released acquisition foundation's caller-asserted live canary, activation,
+and production-outcome paths fail closed. The local Verified Production
+Apprenticeship candidate implements the required canonical durable-work,
+outcome, owner-review, health, approval, lease, and receipt joins; its presence
+is still not evidence that any genuine canary or activation occurred.
 
 Application commit `48aaf2dc` is published and was rebuilt and restarted on the
 canonical Mac host; source presence alone is still not deployment evidence. The local
@@ -338,10 +386,15 @@ status commands above instead of carrying these point-in-time states forward.
    intent, and life-thread proofs through genuine user interactions.
 4. Collect five distinct owner reviews before presenting a baseline, and
    complete the ten-working-day reviewed dogfood sequence.
-5. Provision OneCLI only through an explicit operator decision, and rotate any
+5. After releasing the apprenticeship implementation, run one genuine,
+   explicitly owner-authorized Release-Readiness Brief canary; record the exact
+   owner verdict; obtain a separate activation decision; and prove one later
+   same-scope semantic reuse. Do not backfill any of those from the 22/22
+   synthetic certification.
+6. Provision OneCLI only through an explicit operator decision, and rotate any
    credential previously pasted into chat, logs, issues, or diagnostics,
    including the previously exposed Brave credential.
-6. Obtain native Windows host/service proof when a Windows machine is
+7. Obtain native Windows host/service proof when a Windows machine is
    available; hosted Windows CI proves the shared artifact and launcher
    contract, not a native restart.
 

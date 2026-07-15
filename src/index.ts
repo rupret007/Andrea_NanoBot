@@ -248,6 +248,12 @@ import {
   expandBlueBubblesLogicalSelfThreadJids,
   isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
+import { isTrustedOwnerReviewSurface } from './trusted-owner-review-surface.js';
+import { dispatchCapabilityApprenticeshipOwnerAction } from './capability-apprenticeship-chat.js';
+import {
+  dispatchActiveReleaseReadinessReuse,
+  isReleaseReadinessActiveReuseRequest,
+} from './release-readiness-active-reuse.js';
 import { interpretBlueBubblesDirectTurn } from './messages-fluidity.js';
 import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
 import {
@@ -4453,10 +4459,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
   const shouldHandleDurableContinuityLocally =
     isDurableContinuityNaturalRequest(lastContent);
+  const shouldHandleReleaseReadinessReuseLocally =
+    isReleaseReadinessActiveReuseRequest(lastContent);
   const turnHarnessStartedAt = Date.now();
   const turnAgentHarness: TurnAgentHarnessContext | null =
     shouldHandleOutcomeReviewLocally ||
     shouldHandleDurableContinuityLocally ||
+    shouldHandleReleaseReadinessReuseLocally ||
     Boolean(compoundCalendarResearchPlan || compoundReminderResearchPlan)
       ? null
       : await beginTurnAgentHarness({
@@ -4524,6 +4533,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     Boolean(
       quickReply ||
       shouldHandleDurableContinuityLocally ||
+      shouldHandleReleaseReadinessReuseLocally ||
       currentMessageCapabilityMatch ||
       shouldDeferPlatformHoldForLocalCalendarLookup ||
       shouldDeferPlatformHoldForLocalMessageAction ||
@@ -4585,9 +4595,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const shouldRecordFeedback =
       params.allowFeedback !== false &&
       replyText.length > 0 &&
-      ((channel.name === 'telegram' && isMainControlChat(group)) ||
-        (channel.name === 'bluebubbles' &&
-          isBlueBubblesSelfThreadAliasJid(chatJid)));
+      isTrustedOwnerReviewSurface({
+        channelName: channel.name,
+        chatJid,
+        group,
+      });
     const shouldAttachFeedbackButtons =
       shouldRecordFeedback && channel.name === 'telegram';
     const feedbackId = shouldRecordFeedback ? randomUUID() : null;
@@ -6553,10 +6565,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               channel: conversationChannel,
               groupFolder: group.folder,
               chatJid,
-              ownerReviewAllowed:
-                isMainGroup &&
-                (conversationChannel === 'telegram' ||
-                  isBlueBubblesSelfThreadAliasJid(chatJid)),
+              ownerReviewAllowed: isTrustedOwnerReviewSurface({
+                channelName: conversationChannel,
+                chatJid,
+                group,
+              }),
               currentMessageId: latestUserMessage?.id,
               now,
               conversationSummary:
@@ -8611,10 +8624,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           channel: conversationChannel,
           groupFolder: group.folder,
           chatJid,
-          ownerReviewAllowed:
-            isMainGroup &&
-            (conversationChannel === 'telegram' ||
-              isBlueBubblesSelfThreadAliasJid(chatJid)),
+          ownerReviewAllowed: isTrustedOwnerReviewSurface({
+            channelName: conversationChannel,
+            chatJid,
+            group,
+          }),
           currentMessageId: latestUserMessage?.id,
           currentAttachmentIds,
           now,
@@ -9411,12 +9425,65 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   };
 
+  const tryHandleCapabilityApprenticeshipOwnerAction =
+    async (): Promise<boolean> => {
+      const result = dispatchCapabilityApprenticeshipOwnerAction({
+        text: lastContent,
+        channelName: channel.name,
+        chatJid,
+        group,
+        messageId: latestUserMessage?.id || null,
+        now,
+      });
+      if (!result.handled || !result.text) return false;
+      await sendAssistantReplyWithFeedback({
+        text: result.text,
+        routeKey: `learning.capability_apprenticeship.${result.action || 'status'}`,
+        capabilityId: 'memory.status',
+        handlerKind: 'local_capability_apprenticeship_owner_action',
+        responseSource: 'local_companion',
+        traceReason:
+          'resolved an exact private capability apprenticeship action through canonical token binding',
+        allowFeedback: false,
+        preserveStructuredText: true,
+        latencyTargetClass: 'local_command',
+      });
+      clearSharedAssistantCapabilitySeed(chatJid);
+      return true;
+    };
+
+  const tryHandleActiveReleaseReadinessReuse = async (): Promise<boolean> => {
+    const result = await dispatchActiveReleaseReadinessReuse({
+      text: lastContent,
+      channelName: channel.name,
+      chatJid,
+      group,
+      now,
+    });
+    if (!result.handled || !result.text) return false;
+    await sendAssistantReplyWithFeedback({
+      text: result.text,
+      routeKey: `capabilities.release_readiness.active_reuse.${result.action || 'status'}`,
+      capabilityId: 'cognition.status',
+      handlerKind: 'local_release_readiness_active_reuse',
+      responseSource: 'local_companion',
+      traceReason:
+        'resolved an exact release-readiness request through active contract matching, fresh health, and independent verification',
+      allowFeedback: result.action === 'verified',
+      preserveStructuredText: true,
+      latencyTargetClass: 'local_command',
+    });
+    clearSharedAssistantCapabilitySeed(chatJid);
+    return true;
+  };
+
   const tryHandleLearningStatus = async (): Promise<boolean> => {
     if (isResponseFeedbackReviewQueueRequest(lastContent)) {
-      const privateReviewSurface =
-        (channel.name === 'telegram' && isMainControlChat(group)) ||
-        (channel.name === 'bluebubbles' &&
-          isBlueBubblesSelfThreadAliasJid(chatJid));
+      const privateReviewSurface = isTrustedOwnerReviewSurface({
+        channelName: channel.name,
+        chatJid,
+        group,
+      });
       if (!privateReviewSurface) {
         await sendAssistantReplyWithFeedback({
           text: 'Outcome review is private to your registered main Telegram chat or configured Messages self-thread. I did not load or record any review candidate here.',
@@ -9484,7 +9551,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         lastContent,
       )
     ) {
-      const skills = buildSkillLibraryReport({ refresh: false });
+      const skills = buildSkillLibraryReport({
+        groupFolder: group.folder,
+        refresh: false,
+      });
       const target =
         skills.recentRuns[0]?.skillId ||
         skills.active[0]?.skillId ||
@@ -9569,8 +9639,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     const text = /\b(skill|skills)\b/i.test(lastContent)
-      ? formatSkillLibraryReport()
-      : `${formatLearningDistillationReport()}\n\n${formatReviewedOutcomeProgress(
+      ? formatSkillLibraryReport(
+          buildSkillLibraryReport({
+            groupFolder: group.folder,
+            refresh: false,
+          }),
+        )
+      : `${formatLearningDistillationReport({
+          ...buildLearningDistillationReport({
+            groupFolder: group.folder,
+            persist: false,
+          }),
+          // Reflection signals predate group ownership and cannot safely be
+          // attributed here. Keep cross-group aggregates out of chat.
+          repeatedFriction: [],
+        })}\n\n${formatReviewedOutcomeProgress(
           buildReviewedOutcomeProgress({
             groupFolder: group.folder,
             now,
@@ -9838,6 +9921,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (await tryHandleCouncilDoctor()) {
       return true;
     }
+    if (await tryHandleActiveReleaseReadinessReuse()) {
+      return true;
+    }
+    if (await tryHandleCapabilityApprenticeshipOwnerAction()) {
+      return true;
+    }
     if (await tryHandleLearningStatus()) {
       return true;
     }
@@ -10053,10 +10142,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             channel: conversationChannel,
             groupFolder: group.folder,
             chatJid,
-            ownerReviewAllowed:
-              isMainGroup &&
-              (conversationChannel === 'telegram' ||
-                isBlueBubblesSelfThreadAliasJid(chatJid)),
+            ownerReviewAllowed: isTrustedOwnerReviewSurface({
+              channelName: conversationChannel,
+              chatJid,
+              group,
+            }),
             currentMessageId: latestUserMessage?.id,
             now,
           },
@@ -13356,10 +13446,11 @@ async function main(): Promise<void> {
     const reviewSource = options.reviewSource || 'inline_action';
     const channel = findChannel(channels, chatJid);
     const group = resolveCompanionBinding(chatJid)?.group;
-    const authorizedFeedbackSurface =
-      Boolean(group && isMainControlChat(group)) ||
-      (channel?.name === 'bluebubbles' &&
-        isBlueBubblesSelfThreadAliasJid(chatJid));
+    const authorizedFeedbackSurface = isTrustedOwnerReviewSurface({
+      channelName: channel?.name,
+      chatJid,
+      group,
+    });
     if (!channel || !group || !authorizedFeedbackSurface) {
       return true;
     }
@@ -18524,10 +18615,11 @@ async function main(): Promise<void> {
       // private-surface response. Mixed action language is rejected by the
       // resolver, so feedback can never become send/deploy/purchase approval.
       const naturalVerdictChannel = findChannel(channels, chatJid);
-      const naturalVerdictSurface =
-        mainControlChat ||
-        (naturalVerdictChannel?.name === 'bluebubbles' &&
-          isBlueBubblesSelfThreadAliasJid(chatJid));
+      const naturalVerdictSurface = isTrustedOwnerReviewSurface({
+        channelName: naturalVerdictChannel?.name,
+        chatJid,
+        group: resolveCompanionBinding(chatJid)?.group,
+      });
       if (naturalVerdictSurface) {
         const candidateChatJids =
           naturalVerdictChannel?.name === 'bluebubbles'

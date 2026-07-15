@@ -86,6 +86,34 @@ export function isBlueBubblesSelfThreadAliasJid(
   return getBlueBubblesSelfThreadAliasJids().includes(normalized);
 }
 
+/**
+ * Owner-review authority requires an explicitly configured self-thread. The
+ * reserved fallback aliases are useful deterministic fixtures, but they must
+ * never become a production trust grant merely because an inbound JID happens
+ * to equal one of them.
+ */
+export function isConfiguredBlueBubblesSelfThreadAliasJid(
+  chatJid: string | null | undefined,
+  env = process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE === '1'
+    ? {}
+    : readEnvFile(SELF_THREAD_ENV_KEYS),
+): boolean {
+  const configuredCanonical = normalizeBlueBubblesSelfThreadJid(
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID ||
+      env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+  );
+  const normalized = normalizeBlueBubblesSelfThreadJid(chatJid);
+  if (
+    !configuredCanonical ||
+    configuredCanonical ===
+      UNCONFIGURED_BLUEBUBBLES_CANONICAL_SELF_THREAD_JID ||
+    !normalized
+  ) {
+    return false;
+  }
+  return resolveBlueBubblesSelfThreadConfig(env).aliasJids.includes(normalized);
+}
+
 export function canonicalizeBlueBubblesSelfThreadJid(
   chatJid: string | null | undefined,
 ): string | null {

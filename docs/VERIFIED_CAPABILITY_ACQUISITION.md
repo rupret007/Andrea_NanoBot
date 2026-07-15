@@ -3,10 +3,12 @@
 Andrea's capability-acquisition layer is a fail-closed way to record a real
 capability gap, compare resources already available to the application, compile
 a bounded candidate, and prove its bounded sandbox behavior. The
-current production boundary intentionally stops before live promotion: no
-caller-asserted canary, activation, or production outcome can make a candidate
-active. It is not a claim of AGI, unrestricted self-improvement, or permission
-to install and run arbitrary instructions.
+released acquisition foundation alone intentionally stops before live
+promotion: no caller-asserted canary, activation, or production outcome can
+make a candidate active. Verified Production Apprenticeship adds the canonical
+live path above that foundation, while preserving the same fail-closed joins
+and separate owner decisions. Neither layer is a claim of AGI, unrestricted
+self-improvement, or permission to install and run arbitrary instructions.
 
 ## What It Does
 
@@ -47,10 +49,13 @@ states. A quarantined candidate can only retire; remediation requires a new
 reviewable contract instead of silently rehabilitating the old one.
 
 `canary_ready`, `active`, and `monitoring` are reserved lifecycle states, not a
-statement that a production promotion path is currently open. Synthetic or
-replay evidence stops at `sandbox_verified`. Even held-out success can advance
-only to `owner_review_required`; the database rejects `canary_ready` without a
-future canonical live/owner/durable/outcome/health/approval evidence join.
+statement that a real promotion has occurred. Certification sandbox and replay
+evidence stop at `sandbox_verified`. The separately labeled synthetic
+preproduction preparation command may advance its canonical local candidate to
+`owner_review_required` for inspection, but it creates no live canary, owner
+verdict, approval, activation, or production-use evidence. The production
+apprenticeship permits later real states only through its canonical
+live/owner/durable/outcome/health/approval joins.
 
 ## Resource Broker And Research Boundary
 
@@ -120,23 +125,33 @@ Promotion remains evidence- and owner-gated:
 1. deterministic sandbox execution must verify its postcondition with
    non-loopback network denial and no unauthorized or duplicate effects;
 2. independently authored held-out cases must pass every safety invariant;
-3. a future real canary must use fresh dependency health and completed canonical
+3. a real canary must use fresh dependency health and completed canonical
    durable-work receipts;
 4. a confirmed canonical outcome, exact owner-review signal, and exact-scope
    activation approval must be joined atomically before activation.
 
-Steps 3 and 4 are deliberately not open production paths yet. APIs that accept
-only caller-supplied durable-work, outcome, review, health, or approval
-identifiers reject the request. Live canary, activation, and production
-learning remain closed until one atomic database-backed join verifies completed
-work, the outcome and owner-review identities, current dependency health, and a
-consumed exact-scope approval grant with active lease.
+Steps 3 and 4 are implemented by the Verified Production Apprenticeship as
+canonical database-backed joins. APIs still reject caller-supplied evidence
+that is disconnected, stale, cross-scope, cross-version, unapproved, or missing
+its active lease. The deterministic apprenticeship proof uses labeled synthetic
+owner fixtures and cannot create genuine owner evidence or a live activation.
 
-Synthetic or replay evidence can exercise repository behavior but cannot
-activate a capability, create an owner-reviewed outcome, or count as a live
-learning baseline. Negative owner outcomes quarantine a candidate according to
-the production policy, and any safety, privacy, stale-state, approval, or
-verification violation blocks promotion.
+The production bridge is specified in
+[Verified Production Apprenticeship](VERIFIED_PRODUCTION_APPRENTICESHIP.md).
+It keeps exact canary authorization, the owner's verdict on the
+completed canary, and later activation approval as three distinct decisions;
+defines the canonical evidence join and monitored-reuse boundary; and requires
+pause, quarantine, revocation, and historical negative evidence to remain
+enforceable. Its 22/22 synthetic certification is repository evidence, not a
+claim that any of those production states occurred through real owner use.
+
+Isolated certification fixtures can exercise the full repository state machine,
+including synthetic owner-review and activation branches, but remain labeled,
+disposable, and incapable of activating a production capability, creating a
+genuine owner-reviewed outcome, or counting as a live learning baseline.
+Negative owner outcomes quarantine a candidate according to the production
+policy, and any safety, privacy, stale-state, approval, or verification
+violation blocks promotion.
 
 ## Authority And Privacy
 
@@ -212,11 +227,16 @@ not proof that Andrea autonomously generalizes to every unfamiliar task.
 - No arbitrary package installation, code execution, provider enrollment, or
   credential acquisition is implied.
 - No model may synthesize a binding or verifier from untrusted prose.
-- No candidate becomes active from synthetic evidence or an automatic review;
-  the current synthetic maximum is `sandbox_verified`.
-- Live canary, activation, and production learning fail closed until their
-  canonical atomic evidence join exists.
-- Any future active capability must remain within its compiled action, network,
+- No production candidate becomes active from synthetic evidence or an
+  automatic review. Certification sandbox/replay evidence stops at
+  `sandbox_verified`; the labeled preproduction preparation path may stop at
+  `owner_review_required` but supplies no genuine review or later authority.
+- Live canary, activation, and production learning fail closed unless their
+  canonical atomic evidence join verifies every required record.
+- The release-readiness-brief implementation and deterministic certification
+  exist; its genuine owner canary, verdict, activation approval, and monitored
+  semantic reuse remain operator proof debt, not current live evidence.
+- Any active capability must remain within its compiled action, network,
   data-egress, approval, version, and declared identity/version-digest
   boundaries.
 - Synthetic resource freshness comes from the canonical fixture resource-

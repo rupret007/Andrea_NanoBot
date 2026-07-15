@@ -29,7 +29,10 @@ import {
   buildThinkingStatusText,
 } from '../thinking-controls.js';
 import { formatLearningDistillationReport } from '../memory-distillation.js';
-import { formatSkillLibraryReport } from '../skill-library.js';
+import {
+  buildSkillLibraryReport,
+  formatSkillLibraryReport,
+} from '../skill-library.js';
 import { buildTelegramCouncilStatusText } from '../council-quality.js';
 import { buildTelegramCognitionStatusText } from '../cognitive-kernel.js';
 import {
@@ -165,12 +168,14 @@ export function buildTelegramMemoryText(
 
 export function buildTelegramLearningText(
   assistantName = ASSISTANT_NAME,
+  groupFolder?: string | null,
 ): string {
-  return [
-    buildLearningStatusText(assistantName),
-    '',
-    formatSkillLibraryReport(),
-  ].join('\n');
+  const scopedSkills = groupFolder
+    ? formatSkillLibraryReport(
+        buildSkillLibraryReport({ groupFolder, refresh: false }),
+      )
+    : 'Skill details were not loaded because this chat has no registered group scope.';
+  return [buildLearningStatusText(assistantName), '', scopedSkills].join('\n');
 }
 
 export function buildTelegramForgetText(): string {
@@ -1187,9 +1192,11 @@ export class TelegramChannel implements Channel {
     });
 
     this.bot.command('learning', (ctx) => {
+      const groupFolder =
+        this.opts.registeredGroups()[`tg:${ctx.chat.id}`]?.folder || null;
       return replyAndTrack(
         ctx,
-        buildTelegramLearningText(),
+        buildTelegramLearningText(ASSISTANT_NAME, groupFolder),
         { parse_mode: 'Markdown' },
         'Observed a Telegram /learning roundtrip.',
       );

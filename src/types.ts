@@ -4112,7 +4112,9 @@ export interface DurableWorkLink {
     | 'outcome'
     | 'skill_candidate'
     | 'capability_acquisition'
-    | 'capability_acquisition_execution';
+    | 'capability_acquisition_execution'
+    | 'capability_production_run'
+    | 'capability_activation';
   linkedId: string;
   createdAt: string;
   privacyJson: string;
@@ -4219,6 +4221,8 @@ export interface DurableEffectReceipt {
   approvalPacketId?: string | null;
   approvalVersion?: number | null;
   approvalScopeHash?: string | null;
+  leaseId?: string | null;
+  processGeneration?: string | null;
   preStateFingerprint?: string | null;
   postStateFingerprint?: string | null;
   verificationFingerprint?: string | null;
@@ -8402,6 +8406,209 @@ export interface CapabilityAcquisitionTransitionRecord {
   idempotencyKey: string;
   transitionDigest: string;
   resultingSnapshotJson: string;
+  privacyJson: string;
+}
+
+export type CapabilityProductionRunKind = 'canary' | 'active_reuse';
+
+export type CapabilityProductionRunStatus =
+  | 'proposed'
+  | 'awaiting_canary_approval'
+  | 'canary_ready'
+  | 'running'
+  | 'awaiting_owner_review'
+  | 'owner_reviewed'
+  | 'awaiting_activation_approval'
+  | 'active'
+  | 'monitoring'
+  | 'verified'
+  | 'partial'
+  | 'blocked'
+  | 'failed'
+  | 'indeterminate'
+  | 'paused'
+  | 'quarantined'
+  | 'revoked'
+  | 'retired';
+
+export type CapabilityOwnerReviewVerdict =
+  | 'verified'
+  | 'helpful'
+  | 'partial'
+  | 'corrected'
+  | 'rejected'
+  | 'blocked';
+
+/**
+ * Canonical metadata-only identity for one real canary or active reuse.
+ * Durable work, approvals, leases, effects, outcomes, reviews, and health
+ * remain authoritative in their existing ledgers; this record binds them.
+ */
+export interface CapabilityProductionRunRecord {
+  runId: string;
+  acquisitionId: string;
+  createdAt: string;
+  updatedAt: string;
+  runKind: CapabilityProductionRunKind;
+  status: CapabilityProductionRunStatus;
+  revision: number;
+  candidateFingerprint: string;
+  contractVersion: number;
+  contractDigest: string;
+  taskFamily: string;
+  groupFolder: string;
+  ownerScopeHash: string;
+  chatScopeHash: string;
+  groupScopeHash: string;
+  channel: string;
+  authorizedSurface: string;
+  targetScopeHash: string;
+  inputDigest: string;
+  actionClass: DurableActionClass;
+  workId: string;
+  workVersion: number;
+  planVersion: number;
+  checkpointId: string;
+  invocationId: string;
+  canaryApprovalPacketId?: string | null;
+  canaryApprovalVersion?: number | null;
+  canaryApprovalScopeDigest?: string | null;
+  canaryGrantId?: string | null;
+  canaryLeaseId?: string | null;
+  executionGrantId?: string | null;
+  executionLeaseId?: string | null;
+  activationApprovalPacketId?: string | null;
+  activationApprovalVersion?: number | null;
+  activationApprovalScopeDigest?: string | null;
+  activationGrantId?: string | null;
+  activationLeaseId?: string | null;
+  activationWorkId?: string | null;
+  activationWorkVersion?: number | null;
+  activationPlanVersion?: number | null;
+  activationCheckpointId?: string | null;
+  activationInvocationId?: string | null;
+  outcomeId?: string | null;
+  ownerReviewId?: string | null;
+  healthEvidenceSetDigest?: string | null;
+  postconditionFingerprint?: string | null;
+  resourceDiscoveryCalls: number;
+  candidateDesignCalls: number;
+  toolSelectionCalls: number;
+  executionCalls: number;
+  evaluatorCalls: number;
+  latencyMs: number;
+  providerCalls: number;
+  costUsd: number;
+  matchConfidence?: number | null;
+  expiresAt: string;
+  completedAt?: string | null;
+  nextSafeAction: string;
+  privacyJson: string;
+}
+
+export interface CapabilityProductionStepRecord {
+  runId: string;
+  stepId: string;
+  createdAt: string;
+  receiptId: string;
+  nodeId: string;
+  invocationId: string;
+  bindingId: string;
+  operationId: string;
+  evaluatorId: string;
+  resourceId: string;
+  resourceVersion: string;
+  executorImplementationDigest: string;
+  evaluatorImplementationDigest: string;
+  actionClass: DurableActionClass;
+  inputDigest: string;
+  independentVerification: boolean;
+  privacyJson: string;
+}
+
+export interface CapabilityOwnerReviewRecord {
+  reviewId: string;
+  acquisitionId: string;
+  runId: string;
+  outcomeId: string;
+  candidateFingerprint: string;
+  contractVersion: number;
+  ownerScopeHash: string;
+  chatScopeHash: string;
+  groupScopeHash: string;
+  channel: string;
+  authorizedSurface: string;
+  verdict: CapabilityOwnerReviewVerdict;
+  revision: number;
+  sourceMessageHash?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  supersededAt?: string | null;
+  privacyJson: string;
+}
+
+export interface CapabilityHealthEvidenceRecord {
+  runId: string;
+  resourceId: string;
+  resourceVersion: string;
+  subjectId: string;
+  observationId: string;
+  observedAt: string;
+  expiresAt: string;
+  evidenceDigest: string;
+  privacyJson: string;
+}
+
+export type CapabilityProductionTransitionKind =
+  | 'canary_authorized'
+  | 'canary_completed'
+  | 'owner_reviewed'
+  | 'activated'
+  | 'reuse_completed'
+  | 'paused'
+  | 'quarantined'
+  | 'revoked'
+  | 'retired';
+
+export interface CapabilityProductionTransitionReceipt {
+  receiptId: string;
+  acquisitionId: string;
+  runId: string;
+  transitionKind: CapabilityProductionTransitionKind;
+  expectedAcquisitionVersion: number;
+  resultingAcquisitionVersion: number;
+  expectedRunRevision: number;
+  resultingRunRevision: number;
+  evidenceDigest: string;
+  createdAt: string;
+  privacyJson: string;
+}
+
+export interface CapabilityOwnerActionTokenRecord {
+  tokenHash: string;
+  actionKind:
+    | 'approve_canary'
+    | 'review_canary'
+    | 'approve_activation'
+    | 'pause'
+    | 'revoke'
+    | 'retire'
+    | 'show_evidence';
+  acquisitionId: string;
+  runId?: string | null;
+  candidateFingerprint: string;
+  contractVersion: number;
+  expectedAcquisitionVersion: number;
+  expectedRunRevision?: number | null;
+  ownerScopeHash: string;
+  chatScopeHash: string;
+  groupScopeHash: string;
+  channel: string;
+  authorizedSurface: string;
+  messageHash?: string | null;
+  createdAt: string;
+  expiresAt: string;
+  consumedAt?: string | null;
   privacyJson: string;
 }
 

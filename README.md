@@ -76,17 +76,38 @@ byte-level attestation of callback code. External research is untrusted data,
 not executable instruction.
 
 Sandbox proof is bound to canonical durable work, a checkpoint, scope hashes,
-and started/terminal effect receipts. The offline certification runs ten named
-primary scenarios plus fifteen structurally separate held-out scenarios and can
-advance synthetic evidence no farther than `sandbox_verified`. It uses trusted
-test-authored adapters inside a network-denied disposable certification process;
-it is not an OS isolation boundary or proof of universal autonomous learning.
-Caller-asserted live
-canary, activation, and production outcome evidence currently fail closed while
-the atomic durable-work/outcome/owner-review/health/approval join is unfinished.
-Acquisition grants no new authority, so protected actions retain their existing
-fresh approval. See
-[Verified Capability Acquisition](docs/VERIFIED_CAPABILITY_ACQUISITION.md).
+and started/terminal effect receipts. The acquisition certification runs ten
+named primary scenarios plus fifteen structurally separate held-out scenarios
+and can advance synthetic acquisition evidence no farther than
+`sandbox_verified`. The production apprenticeship then implements the
+database-backed canary, exact owner-review, separate activation, monitored
+reuse, pause, quarantine, revoke, and retire lifecycle. Its own deterministic
+certification passes 22/22 synthetic scenarios with provider calls, cost,
+external effects, production writes, and genuine owner evidence all at zero.
+Neither certification is an OS-isolation boundary, live canary, owner verdict,
+live or production activation, deployment, or proof of universal autonomous
+learning. Isolated fixtures do exercise the synthetic activation branch.
+
+`npm run capability:prepare-release-readiness` writes labeled synthetic
+preproduction records for the bundled read-only, zero-egress release-readiness
+candidate to Andrea's canonical local ledger; it creates no live canary or
+approval. Plain `npm run capability:canary` is read-only inspection. Its
+explicit flags expose separate stage, approved-canary consumption, execution,
+activation-proposal, and approved-activation phases. The command never approves
+its own packet or records an owner verdict. Reviews are accepted only through
+the registered main Telegram chat, configured Messages self-thread, or
+authenticated owner cockpit. Capability review uses six explicit verdicts
+(`verified`, `helpful`, `partial`, `blocked`, `corrected`, or `rejected`);
+ordinary Helpful feedback is not a capability verdict. Re-review revises the
+same canonical sample, and only `verified` can make a separate activation
+proposal eligible. Activation still requires a second exact approval.
+One deliberately narrow chat route can reuse the release-readiness contract
+only after that exact contract is genuinely active and freshly healthy. No
+such real canary, review, activation, or reuse is claimed by repository tests.
+Acquisition still grants no new authority, so protected actions retain their
+existing fresh approval. See
+[Verified Capability Acquisition](docs/VERIFIED_CAPABILITY_ACQUISITION.md) and
+[Verified Production Apprenticeship](docs/VERIFIED_PRODUCTION_APPRENTICESHIP.md).
 
 Andrea also includes an opt-in private owner cockpit: a calm, responsive view of
 today's focus, open loops, goals, staged approvals, and verified outcomes. It
@@ -105,6 +126,7 @@ route. See [the owner cockpit runbook](docs/OWNER_COCKPIT.md).
   <a href="docs/DELEGATION_RULES_AND_SAFE_AUTOMATION.md">Delegation Rules</a>&nbsp; | &nbsp;
   <a href="docs/PERSONAL_INTELLIGENCE_AND_VERIFIED_AGENCY.md">Verified Agency</a>&nbsp; | &nbsp;
   <a href="docs/VERIFIED_CAPABILITY_ACQUISITION.md">Capability Acquisition</a>&nbsp; | &nbsp;
+  <a href="docs/VERIFIED_PRODUCTION_APPRENTICESHIP.md">Production Apprenticeship</a>&nbsp; | &nbsp;
   <a href="docs/MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md">Messaging Trust Ladder</a>&nbsp; | &nbsp;
   <a href="docs/OUTCOME_TRACKING_AND_REVIEWS.md">Reviews</a>&nbsp; | &nbsp;
   <a href="docs/CHIEF_OF_STAFF_MODE.md">Chief-of-Staff Mode</a>&nbsp; | &nbsp;

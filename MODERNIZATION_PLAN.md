@@ -5,6 +5,141 @@ as historical implementation and release evidence unless its heading
 explicitly says otherwise; older uses of “candidate” or “authoritative” do not
 override the first section.
 
+## Verified Production Apprenticeship — 2026-07-15 (current local candidate)
+
+This is the authoritative section for the current working-tree round. It
+extends the released Verified Capability Acquisition foundation into a bounded
+production lifecycle without treating deterministic fixtures as real owner or
+runtime evidence. At this documentation checkpoint the implementation is local
+and uncommitted. The complete repository-controlled local release matrix has
+passed, but exact-SHA hosted checks, commit/push, a clean rebuild, service
+restart, and serving-provenance proof have not occurred. The released
+application and runtime facts remain in the next historical section until this
+candidate is actually delivered.
+
+### Implemented lifecycle
+
+- [x] Add canonical production-run, health-binding, owner-review, transition-
+      receipt, and atomic reconciliation records subordinate to the existing
+      acquisition, durable-work, checkpoint, effect, outcome, approval, grant,
+      lease, and reliability ledgers. Caller IDs identify records to inspect;
+      they do not assert that evidence is valid.
+- [x] Stage a canary only from the exact current `owner_review_required`
+      acquisition, trusted owner/chat/group/channel/target binding, normalized
+      input, candidate version, and fresh canonical health observations.
+- [x] Keep three owner decisions separate. The canary packet must be approved
+      before authorization; a completed independently verified outcome must
+      receive an exact private owner verdict; activation then requires another
+      exact approved packet. The guided CLI cannot approve either packet or
+      record the verdict.
+- [x] Restrict guided execution to the bundled Andrea Release-Readiness Brief:
+      one read-only, zero-egress local lookup with a registered independent
+      evaluator. Provider calls, external sends/writes, repository mutation,
+      deployment, installation, purchase, deletion, and every other protected
+      effect remain outside this canary.
+- [x] Accept owner verdicts only from the registered main Telegram chat,
+      configured BlueBubbles/Messages self-thread, or authenticated owner
+      cockpit. Exact run/scope/revision binding, ambiguity refusal, and
+      metadata-only evidence views prevent generic Helpful text, mixed requests,
+      another chat, or stale feedback from becoming promotion evidence.
+- [x] Add separate authenticated cockpit routes for review, activation proposal,
+      approved activation, evidence display, pause, revoke, and retire. Negative
+      outcomes and owner controls remain durable and block later matches.
+- [x] Add active contract matching and monitored durable reuse with exact task
+      family, inputs, intended postconditions, owner/chat/group/channel/target
+      scope, contract fingerprint, resource versions, fresh health, lease,
+      receipts, and independent verification. Protected contracts still require
+      their normal fresh action approval.
+- [x] Wire only a deliberately narrow family of read-only release-readiness
+      questions into live Telegram/BlueBubbles dispatch after the exact bundled
+      contract is genuinely active. Imperative push, deploy, release, mixed-
+      action, untrusted-surface, ambiguous, stale, and version-drift cases stop
+      without execution or authority expansion.
+- [x] Add `npm run capability:prepare-release-readiness`. It runs with provider
+      suppression and non-loopback denial and writes only synthetic
+      preproduction candidate/sandbox/held-out/resource-health evidence to the
+      canonical local ledger. It explicitly creates no live canary, approval,
+      owner verdict, activation, provider call, external effect, or live proof.
+- [x] Add `npm run capability:canary` as a guided multi-invocation surface for
+      inspection, stage, already-approved canary authorization, bounded canary
+      execution, activation proposal, and already-approved activation. Every
+      mutation binds explicit expected acquisition/run heads, trusted scope,
+      normalized inputs, and health observations; inspection remains read-only.
+
+### Deterministic certification truth
+
+- [x] Add a strict A-V production-apprenticeship inventory covering atomic
+      readiness, naked/cross-acquisition/cross-version evidence rejection,
+      health/approval/lease failures, interruption recovery, owner-review
+      binding, activation separation, exact activation, active reuse, reuse
+      efficiency, negative/safety outcomes, version drift, revocation,
+      concurrent activation, privacy, and authority.
+- [x] `npm run certify:production-capability-apprenticeship` passes 22/22
+      scenarios with `mode=deterministic_offline`,
+      `evidenceOrigin=certification_synthetic`, and implementation status
+      `complete`.
+- [x] `npm run test:production-capability-apprenticeship:certification-gate`
+      passes its valid baseline plus 120 evidence mutations spanning all 22
+      fail-closed report failure codes.
+- [x] The accepted run records zero provider calls, cost, network escapes,
+      external effects, production writes, production-metric writes,
+      unauthorized or duplicate effects, privacy leaks, and genuine owner
+      evidence. Parent/child network denial, provider-environment suppression,
+      metadata-only output, synthetic owner-fixture labels, manifest/fixture
+      cleanup, zero residue, zero live children, and benchmark isolation pass.
+- [x] Keep this proof bounded. The 22/22 result does not prove a real owner
+      canary, verdict, activation, active semantic reuse, provider health,
+      deployment, running SHA, improvement in user value, or AGI.
+
+### Local release evidence and remaining proof
+
+- [x] Complete focused production-apprenticeship tests, four real `SIGKILL`
+      crash-boundary tests, and the 120-mutation gate; root format, zero-error
+      lint with 658 configured warnings retained, typecheck,
+      249-file/3,006-test primary suite, and production build;
+      container-runner typecheck/build, 13 runner tests, 132 host contract tests,
+      pinned image canary, and nested read-only mount canary; AGI typecheck and
+      28-file/286-test suite; all 97 selected deterministic commands including
+      the 260.8-second three-round stability gate; 100% A+ zero-cost offline
+      scorecard; signature flows; 72-file docs check; and zero-vulnerability
+      root/runner production and full dependency audits. Final formatting,
+      whitespace, generated-artifact, file-mode, scope, diff, and secret review
+      is repeated after this documentation reconciliation.
+- [ ] Fetch immediately before delivery and prove non-diverged `main`. Commit
+      and push only the coherent candidate, require every exact-SHA Ubuntu,
+      Windows, container, AGI, CodeQL, dependency-audit, secret-scan, and
+      Semgrep job, then rebuild and restart in dependency order and prove the
+      serving/build/workspace SHA and artifact provenance match.
+- [ ] After release, the owner may intentionally authorize one exact read-only
+      Release-Readiness Brief canary on a trusted surface. Require durable
+      completion, complete receipts, independent evaluation, and one canonical
+      outcome before asking for a verdict.
+- [ ] Record the owner's real verdict for that exact outcome. Only `verified`
+      may lead to a separately proposed activation; `partial`, `corrected`, or
+      `rejected` remain non-promotion evidence. Do not substitute terminal
+      input, fixtures, generic Helpful feedback, or agent-authored review.
+- [ ] If the owner separately approves activation, prove one later same-scope
+      narrow semantic reuse with fresh health, exact versions, monitored
+      correctness, honest failure behavior, zero providers/cost, and no
+      authority expansion.
+- [ ] Preserve all other elapsed-use/operator debt: five genuine owner-reviewed
+      assistant outcomes before baseline review, ten reviewed working-day
+      missions, and fresh Telegram, BlueBubbles same-thread, Alexa signed-intent,
+      life-thread, and native-Windows host evidence where applicable.
+
+### Intentionally unchanged
+
+- No autonomous package installation, code/dependency mutation, credential
+  acquisition, passive archive, general workflow engine, automatic deployment,
+  automatic owner review, synthetic learning baseline, or authority expansion.
+- Activation recognizes one exact contract for matching and planning. External
+  sends, calendar writes, purchases, repository changes, deploys, migrations,
+  dependency changes, installation, deletion, and other protected effects keep
+  their normal fresh exact-scope approval.
+- Synthetic preparation and certification never count as production usage,
+  owner acceptance, learning, or readiness. If the owner does not perform the
+  canary/review/activation sequence, the honest state remains pending.
+
 ## Universal Task Mastery and verified capability acquisition — 2026-07-14 (released)
 
 This is the authoritative section for the capability-acquisition round that

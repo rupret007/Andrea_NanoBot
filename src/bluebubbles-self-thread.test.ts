@@ -4,6 +4,7 @@ import {
   canonicalizeBlueBubblesSelfThreadJid,
   expandBlueBubblesLogicalSelfThreadJids,
   getBlueBubblesCanonicalSelfThreadJid,
+  isConfiguredBlueBubblesSelfThreadAliasJid,
   isBlueBubblesSelfThreadAliasJid,
   resolveBlueBubblesSelfThreadConfig,
 } from './bluebubbles-self-thread.js';
@@ -38,6 +39,12 @@ describe('BlueBubbles self-thread resolver', () => {
         'bb:iMessage;-;owner@example.com',
       ],
     });
+    expect(
+      isConfiguredBlueBubblesSelfThreadAliasJid(
+        'bb:iMessage;-;+12025550101',
+        {},
+      ),
+    ).toBe(false);
   });
 
   it('lets environment configuration override the sentinel and canonicalizes aliases', () => {
@@ -60,6 +67,12 @@ describe('BlueBubbles self-thread resolver', () => {
     expect(
       expandBlueBubblesLogicalSelfThreadJids('bb:SMS;-;+12025550109'),
     ).not.toContain('bb:iMessage;-;+12025550101');
+    expect(
+      isConfiguredBlueBubblesSelfThreadAliasJid(
+        'bb:iMessage;-;alias@example.invalid',
+        {},
+      ),
+    ).toBe(true);
   });
 
   it('does not blend fallback aliases into a canonical-only environment override', () => {

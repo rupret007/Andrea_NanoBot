@@ -9,6 +9,7 @@ import { isSensitiveName, redactCouncilText } from './council-safety.js';
 import {
   assertCapabilityAcquisitionRecord,
   assertCapabilityAcquisitionTransition,
+  canonicalCapabilityJson,
   capabilityAcquisitionSnapshotJson,
   capabilityTransitionDigest,
 } from './capability-acquisition-policy.js';
@@ -253,6 +254,13 @@ import {
   CognitiveEpisodeRecord,
   CapabilityAcquisitionRecord,
   CapabilityAcquisitionTransitionRecord,
+  CapabilityCandidateContract,
+  CapabilityHealthEvidenceRecord,
+  CapabilityOwnerActionTokenRecord,
+  CapabilityOwnerReviewRecord,
+  CapabilityProductionRunRecord,
+  CapabilityProductionStepRecord,
+  CapabilityProductionTransitionReceipt,
   CapabilityStateRecord,
   BlackboardSnapshotRecord,
   StrategyEvalRunRecord,
@@ -275,6 +283,7 @@ import {
   MessageActionRecord,
   NewMessage,
   OutcomeRecord,
+  OutcomeLinkedRefs,
   OperatingProfile,
   OperatingProfileStatus,
   OperatingProfileSuggestion,
@@ -4264,6 +4273,214 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_capability_acquisition_transitions_acquisition
       ON capability_acquisition_transitions(acquisition_id, resulting_version ASC);
+    CREATE TABLE IF NOT EXISTS capability_production_runs (
+      run_id TEXT PRIMARY KEY,
+      acquisition_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      run_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      candidate_fingerprint TEXT NOT NULL,
+      contract_version INTEGER NOT NULL,
+      contract_digest TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      owner_scope_hash TEXT NOT NULL,
+      chat_scope_hash TEXT NOT NULL,
+      group_scope_hash TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      authorized_surface TEXT NOT NULL,
+      target_scope_hash TEXT NOT NULL,
+      input_digest TEXT NOT NULL,
+      action_class TEXT NOT NULL,
+      work_id TEXT NOT NULL,
+      work_version INTEGER NOT NULL,
+      plan_version INTEGER NOT NULL,
+      checkpoint_id TEXT NOT NULL,
+      invocation_id TEXT NOT NULL,
+      canary_approval_packet_id TEXT,
+      canary_approval_version INTEGER,
+      canary_approval_scope_digest TEXT,
+      canary_grant_id TEXT,
+      canary_lease_id TEXT,
+      execution_grant_id TEXT,
+      execution_lease_id TEXT,
+      activation_approval_packet_id TEXT,
+      activation_approval_version INTEGER,
+      activation_approval_scope_digest TEXT,
+      activation_grant_id TEXT,
+      activation_lease_id TEXT,
+      activation_work_id TEXT,
+      activation_work_version INTEGER,
+      activation_plan_version INTEGER,
+      activation_checkpoint_id TEXT,
+      activation_invocation_id TEXT,
+      outcome_id TEXT,
+      owner_review_id TEXT,
+      health_evidence_set_digest TEXT,
+      postcondition_fingerprint TEXT,
+      resource_discovery_calls INTEGER NOT NULL DEFAULT 0,
+      candidate_design_calls INTEGER NOT NULL DEFAULT 0,
+      tool_selection_calls INTEGER NOT NULL DEFAULT 0,
+      execution_calls INTEGER NOT NULL DEFAULT 0,
+      evaluator_calls INTEGER NOT NULL DEFAULT 0,
+      latency_ms INTEGER NOT NULL DEFAULT 0,
+      provider_calls INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      match_confidence REAL,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT,
+      next_safe_action TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (acquisition_id) REFERENCES capability_acquisitions(acquisition_id) ON DELETE CASCADE,
+      FOREIGN KEY (work_id) REFERENCES durable_work_units(work_id),
+      FOREIGN KEY (checkpoint_id) REFERENCES durable_work_checkpoints(durable_checkpoint_id),
+      FOREIGN KEY (canary_approval_packet_id) REFERENCES cognitive_approval_packets(approval_packet_id),
+      FOREIGN KEY (canary_grant_id) REFERENCES durable_resume_grants(grant_id),
+      FOREIGN KEY (canary_lease_id) REFERENCES durable_work_leases(lease_id),
+      FOREIGN KEY (execution_grant_id) REFERENCES durable_resume_grants(grant_id),
+      FOREIGN KEY (execution_lease_id) REFERENCES durable_work_leases(lease_id),
+      FOREIGN KEY (activation_approval_packet_id) REFERENCES cognitive_approval_packets(approval_packet_id),
+      FOREIGN KEY (activation_grant_id) REFERENCES durable_resume_grants(grant_id),
+      FOREIGN KEY (activation_lease_id) REFERENCES durable_work_leases(lease_id),
+      FOREIGN KEY (activation_work_id) REFERENCES durable_work_units(work_id),
+      FOREIGN KEY (activation_checkpoint_id) REFERENCES durable_work_checkpoints(durable_checkpoint_id),
+      FOREIGN KEY (outcome_id) REFERENCES outcomes(outcome_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_capability_production_runs_acquisition
+      ON capability_production_runs(acquisition_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_capability_production_runs_status
+      ON capability_production_runs(status, updated_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_capability_production_open_canary
+      ON capability_production_runs(acquisition_id)
+      WHERE run_kind = 'canary' AND status NOT IN ('verified', 'partial', 'blocked', 'failed', 'indeterminate', 'quarantined', 'revoked', 'retired');
+    CREATE TABLE IF NOT EXISTS capability_production_steps (
+      run_id TEXT NOT NULL,
+      step_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      receipt_id TEXT NOT NULL UNIQUE,
+      node_id TEXT NOT NULL,
+      invocation_id TEXT NOT NULL,
+      binding_id TEXT NOT NULL,
+      operation_id TEXT NOT NULL,
+      evaluator_id TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      resource_version TEXT NOT NULL,
+      executor_implementation_digest TEXT NOT NULL,
+      evaluator_implementation_digest TEXT NOT NULL,
+      action_class TEXT NOT NULL,
+      input_digest TEXT NOT NULL,
+      independent_verification INTEGER NOT NULL,
+      privacy_json TEXT NOT NULL,
+      PRIMARY KEY (run_id, step_id),
+      FOREIGN KEY (run_id) REFERENCES capability_production_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (receipt_id) REFERENCES durable_effect_receipts(receipt_id)
+    );
+    CREATE TABLE IF NOT EXISTS capability_owner_reviews (
+      review_id TEXT PRIMARY KEY,
+      acquisition_id TEXT NOT NULL,
+      run_id TEXT NOT NULL UNIQUE,
+      outcome_id TEXT NOT NULL,
+      candidate_fingerprint TEXT NOT NULL,
+      contract_version INTEGER NOT NULL,
+      owner_scope_hash TEXT NOT NULL,
+      chat_scope_hash TEXT NOT NULL,
+      group_scope_hash TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      authorized_surface TEXT NOT NULL,
+      verdict TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      source_message_hash TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      superseded_at TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (acquisition_id) REFERENCES capability_acquisitions(acquisition_id) ON DELETE CASCADE,
+      FOREIGN KEY (run_id) REFERENCES capability_production_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (outcome_id) REFERENCES outcomes(outcome_id)
+    );
+    CREATE TABLE IF NOT EXISTS capability_owner_review_revisions (
+      review_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      verdict TEXT NOT NULL,
+      source_message_hash TEXT,
+      created_at TEXT NOT NULL,
+      review_snapshot_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      PRIMARY KEY (review_id, revision),
+      FOREIGN KEY (review_id) REFERENCES capability_owner_reviews(review_id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS capability_health_evidence (
+      run_id TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      resource_version TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      observation_id TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      evidence_digest TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      PRIMARY KEY (run_id, resource_id),
+      FOREIGN KEY (run_id) REFERENCES capability_production_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (observation_id) REFERENCES reliability_observations(observation_id)
+    );
+    CREATE TABLE IF NOT EXISTS capability_health_evidence_history (
+      run_id TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      resource_version TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      observation_id TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      evidence_digest TEXT NOT NULL,
+      evidence_phase TEXT NOT NULL,
+      recorded_at TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      PRIMARY KEY (run_id, resource_id, evidence_digest),
+      FOREIGN KEY (run_id) REFERENCES capability_production_runs(run_id) ON DELETE CASCADE,
+      FOREIGN KEY (observation_id) REFERENCES reliability_observations(observation_id)
+    );
+    CREATE TABLE IF NOT EXISTS capability_production_transition_receipts (
+      receipt_id TEXT PRIMARY KEY,
+      acquisition_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      transition_kind TEXT NOT NULL,
+      expected_acquisition_version INTEGER NOT NULL,
+      resulting_acquisition_version INTEGER NOT NULL,
+      expected_run_revision INTEGER NOT NULL,
+      resulting_run_revision INTEGER NOT NULL,
+      evidence_digest TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      UNIQUE (run_id, transition_kind, expected_run_revision),
+      FOREIGN KEY (acquisition_id) REFERENCES capability_acquisitions(acquisition_id) ON DELETE CASCADE,
+      FOREIGN KEY (run_id) REFERENCES capability_production_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS capability_owner_action_tokens (
+      token_hash TEXT PRIMARY KEY,
+      action_kind TEXT NOT NULL,
+      acquisition_id TEXT NOT NULL,
+      run_id TEXT,
+      candidate_fingerprint TEXT NOT NULL,
+      contract_version INTEGER NOT NULL,
+      expected_acquisition_version INTEGER NOT NULL,
+      expected_run_revision INTEGER,
+      owner_scope_hash TEXT NOT NULL,
+      chat_scope_hash TEXT NOT NULL,
+      group_scope_hash TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      authorized_surface TEXT NOT NULL,
+      message_hash TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (acquisition_id) REFERENCES capability_acquisitions(acquisition_id) ON DELETE CASCADE,
+      FOREIGN KEY (run_id) REFERENCES capability_production_runs(run_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_capability_owner_action_tokens_expiry
+      ON capability_owner_action_tokens(expires_at, consumed_at);
     CREATE TABLE IF NOT EXISTS blackboard_snapshots (
       snapshot_id TEXT PRIMARY KEY,
       created_at TEXT NOT NULL,
@@ -5239,6 +5456,8 @@ function createSchema(database: Database.Database): void {
       approval_packet_id TEXT,
       approval_version INTEGER,
       approval_scope_hash TEXT,
+      lease_id TEXT,
+      process_generation TEXT,
       pre_state_fingerprint TEXT,
       post_state_fingerprint TEXT,
       verification_fingerprint TEXT,
@@ -5251,6 +5470,7 @@ function createSchema(database: Database.Database): void {
       FOREIGN KEY (work_id, checkpoint_id) REFERENCES durable_work_checkpoints(work_id, durable_checkpoint_id) ON DELETE CASCADE,
       FOREIGN KEY (grant_id) REFERENCES durable_resume_grants(grant_id) ON DELETE RESTRICT,
       FOREIGN KEY (approval_packet_id) REFERENCES cognitive_approval_packets(approval_packet_id) ON DELETE RESTRICT,
+      FOREIGN KEY (lease_id) REFERENCES durable_work_leases(lease_id) ON DELETE RESTRICT,
       UNIQUE(work_id, plan_version, node_id, invocation_id, effect_class)
     );
     CREATE INDEX IF NOT EXISTS idx_durable_receipts_work_node
@@ -5392,6 +5612,8 @@ function createSchema(database: Database.Database): void {
     `ALTER TABLE durable_effect_receipts ADD COLUMN approval_packet_id TEXT`,
     `ALTER TABLE durable_effect_receipts ADD COLUMN approval_version INTEGER`,
     `ALTER TABLE durable_effect_receipts ADD COLUMN approval_scope_hash TEXT`,
+    `ALTER TABLE durable_effect_receipts ADD COLUMN lease_id TEXT`,
+    `ALTER TABLE durable_effect_receipts ADD COLUMN process_generation TEXT`,
   ]) {
     try {
       database.exec(statement);
@@ -29664,6 +29886,3612 @@ export function applyCapabilityAcquisitionTransitionCAS(params: {
   return transact();
 }
 
+type CapabilityProductionRunRow = {
+  run_id: string;
+  acquisition_id: string;
+  created_at: string;
+  updated_at: string;
+  run_kind: CapabilityProductionRunRecord['runKind'];
+  status: CapabilityProductionRunRecord['status'];
+  revision: number;
+  candidate_fingerprint: string;
+  contract_version: number;
+  contract_digest: string;
+  task_family: string;
+  group_folder: string;
+  owner_scope_hash: string;
+  chat_scope_hash: string;
+  group_scope_hash: string;
+  channel: string;
+  authorized_surface: string;
+  target_scope_hash: string;
+  input_digest: string;
+  action_class: CapabilityProductionRunRecord['actionClass'];
+  work_id: string;
+  work_version: number;
+  plan_version: number;
+  checkpoint_id: string;
+  invocation_id: string;
+  canary_approval_packet_id: string | null;
+  canary_approval_version: number | null;
+  canary_approval_scope_digest: string | null;
+  canary_grant_id: string | null;
+  canary_lease_id: string | null;
+  execution_grant_id: string | null;
+  execution_lease_id: string | null;
+  activation_approval_packet_id: string | null;
+  activation_approval_version: number | null;
+  activation_approval_scope_digest: string | null;
+  activation_grant_id: string | null;
+  activation_lease_id: string | null;
+  activation_work_id: string | null;
+  activation_work_version: number | null;
+  activation_plan_version: number | null;
+  activation_checkpoint_id: string | null;
+  activation_invocation_id: string | null;
+  outcome_id: string | null;
+  owner_review_id: string | null;
+  health_evidence_set_digest: string | null;
+  postcondition_fingerprint: string | null;
+  resource_discovery_calls: number;
+  candidate_design_calls: number;
+  tool_selection_calls: number;
+  execution_calls: number;
+  evaluator_calls: number;
+  latency_ms: number;
+  provider_calls: number;
+  cost_usd: number;
+  match_confidence: number | null;
+  expires_at: string;
+  completed_at: string | null;
+  next_safe_action: string;
+  privacy_json: string;
+};
+
+function mapCapabilityProductionRunRow(
+  row: CapabilityProductionRunRow,
+): CapabilityProductionRunRecord {
+  return {
+    runId: row.run_id,
+    acquisitionId: row.acquisition_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    runKind: row.run_kind,
+    status: row.status,
+    revision: row.revision,
+    candidateFingerprint: row.candidate_fingerprint,
+    contractVersion: row.contract_version,
+    contractDigest: row.contract_digest,
+    taskFamily: row.task_family,
+    groupFolder: row.group_folder,
+    ownerScopeHash: row.owner_scope_hash,
+    chatScopeHash: row.chat_scope_hash,
+    groupScopeHash: row.group_scope_hash,
+    channel: row.channel,
+    authorizedSurface: row.authorized_surface,
+    targetScopeHash: row.target_scope_hash,
+    inputDigest: row.input_digest,
+    actionClass: row.action_class,
+    workId: row.work_id,
+    workVersion: row.work_version,
+    planVersion: row.plan_version,
+    checkpointId: row.checkpoint_id,
+    invocationId: row.invocation_id,
+    canaryApprovalPacketId: row.canary_approval_packet_id,
+    canaryApprovalVersion: row.canary_approval_version,
+    canaryApprovalScopeDigest: row.canary_approval_scope_digest,
+    canaryGrantId: row.canary_grant_id,
+    canaryLeaseId: row.canary_lease_id,
+    executionGrantId: row.execution_grant_id,
+    executionLeaseId: row.execution_lease_id,
+    activationApprovalPacketId: row.activation_approval_packet_id,
+    activationApprovalVersion: row.activation_approval_version,
+    activationApprovalScopeDigest: row.activation_approval_scope_digest,
+    activationGrantId: row.activation_grant_id,
+    activationLeaseId: row.activation_lease_id,
+    activationWorkId: row.activation_work_id,
+    activationWorkVersion: row.activation_work_version,
+    activationPlanVersion: row.activation_plan_version,
+    activationCheckpointId: row.activation_checkpoint_id,
+    activationInvocationId: row.activation_invocation_id,
+    outcomeId: row.outcome_id,
+    ownerReviewId: row.owner_review_id,
+    healthEvidenceSetDigest: row.health_evidence_set_digest,
+    postconditionFingerprint: row.postcondition_fingerprint,
+    resourceDiscoveryCalls: row.resource_discovery_calls,
+    candidateDesignCalls: row.candidate_design_calls,
+    toolSelectionCalls: row.tool_selection_calls,
+    executionCalls: row.execution_calls,
+    evaluatorCalls: row.evaluator_calls,
+    latencyMs: row.latency_ms,
+    providerCalls: row.provider_calls,
+    costUsd: row.cost_usd,
+    matchConfidence: row.match_confidence,
+    expiresAt: row.expires_at,
+    completedAt: row.completed_at,
+    nextSafeAction: row.next_safe_action,
+    privacyJson: row.privacy_json,
+  };
+}
+
+const CAPABILITY_PRODUCTION_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
+const CAPABILITY_PRODUCTION_MAX_LIVE_COST_USD = 25;
+
+function capabilityProductionPostconditionHash(value: string): string {
+  return createHash('sha256')
+    .update(`andrea:capability-production-postcondition:v1\0${value}`)
+    .digest('hex');
+}
+
+function assertCapabilityProductionRunRecord(
+  record: CapabilityProductionRunRecord,
+): void {
+  if (
+    !record.runId ||
+    !record.acquisitionId ||
+    !record.groupFolder ||
+    !record.workId ||
+    !record.checkpointId ||
+    !record.invocationId ||
+    !['canary', 'active_reuse'].includes(record.runKind) ||
+    !Number.isInteger(record.revision) ||
+    record.revision < 1 ||
+    !Number.isInteger(record.contractVersion) ||
+    record.contractVersion < 1 ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.candidateFingerprint) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.contractDigest) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.ownerScopeHash) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.chatScopeHash) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.groupScopeHash) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.targetScopeHash) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.inputDigest) ||
+    record.workVersion < 1 ||
+    record.planVersion < 1 ||
+    record.expiresAt <= record.createdAt
+  ) {
+    throw new Error('Capability production run identity is malformed.');
+  }
+  assertValidGroupFolder(record.groupFolder);
+  for (const value of [
+    record.resourceDiscoveryCalls,
+    record.candidateDesignCalls,
+    record.toolSelectionCalls,
+    record.executionCalls,
+    record.evaluatorCalls,
+    record.latencyMs,
+    record.providerCalls,
+  ]) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(
+        'Capability production metrics must be nonnegative integers.',
+      );
+    }
+  }
+  if (!Number.isFinite(record.costUsd) || record.costUsd < 0) {
+    throw new Error('Capability production cost must be nonnegative.');
+  }
+  if (
+    record.matchConfidence !== null &&
+    record.matchConfidence !== undefined &&
+    (record.matchConfidence < 0 || record.matchConfidence > 1)
+  ) {
+    throw new Error('Capability production match confidence is out of range.');
+  }
+}
+
+function capabilityProductionRunParams(record: CapabilityProductionRunRecord) {
+  assertCapabilityProductionRunRecord(record);
+  return {
+    run_id: record.runId,
+    acquisition_id: record.acquisitionId,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+    run_kind: record.runKind,
+    status: record.status,
+    revision: record.revision,
+    candidate_fingerprint: record.candidateFingerprint,
+    contract_version: record.contractVersion,
+    contract_digest: record.contractDigest,
+    task_family: redactStoredCognitiveMetadata(record.taskFamily, 120),
+    group_folder: record.groupFolder,
+    owner_scope_hash: record.ownerScopeHash,
+    chat_scope_hash: record.chatScopeHash,
+    group_scope_hash: record.groupScopeHash,
+    channel: redactStoredCognitiveMetadata(record.channel, 120),
+    authorized_surface: redactStoredCognitiveMetadata(
+      record.authorizedSurface,
+      120,
+    ),
+    target_scope_hash: record.targetScopeHash,
+    input_digest: record.inputDigest,
+    action_class: record.actionClass,
+    work_id: record.workId,
+    work_version: record.workVersion,
+    plan_version: record.planVersion,
+    checkpoint_id: record.checkpointId,
+    invocation_id: record.invocationId,
+    canary_approval_packet_id: record.canaryApprovalPacketId || null,
+    canary_approval_version: record.canaryApprovalVersion || null,
+    canary_approval_scope_digest: record.canaryApprovalScopeDigest || null,
+    canary_grant_id: record.canaryGrantId || null,
+    canary_lease_id: record.canaryLeaseId || null,
+    execution_grant_id: record.executionGrantId || null,
+    execution_lease_id: record.executionLeaseId || null,
+    activation_approval_packet_id: record.activationApprovalPacketId || null,
+    activation_approval_version: record.activationApprovalVersion || null,
+    activation_approval_scope_digest:
+      record.activationApprovalScopeDigest || null,
+    activation_grant_id: record.activationGrantId || null,
+    activation_lease_id: record.activationLeaseId || null,
+    activation_work_id: record.activationWorkId || null,
+    activation_work_version: record.activationWorkVersion || null,
+    activation_plan_version: record.activationPlanVersion || null,
+    activation_checkpoint_id: record.activationCheckpointId || null,
+    activation_invocation_id: record.activationInvocationId || null,
+    outcome_id: record.outcomeId || null,
+    owner_review_id: record.ownerReviewId || null,
+    health_evidence_set_digest: record.healthEvidenceSetDigest || null,
+    postcondition_fingerprint: record.postconditionFingerprint || null,
+    resource_discovery_calls: record.resourceDiscoveryCalls,
+    candidate_design_calls: record.candidateDesignCalls,
+    tool_selection_calls: record.toolSelectionCalls,
+    execution_calls: record.executionCalls,
+    evaluator_calls: record.evaluatorCalls,
+    latency_ms: record.latencyMs,
+    provider_calls: record.providerCalls,
+    cost_usd: record.costUsd,
+    match_confidence: record.matchConfidence ?? null,
+    expires_at: record.expiresAt,
+    completed_at: record.completedAt || null,
+    next_safe_action: redactStoredCognitiveMetadata(record.nextSafeAction, 900),
+    privacy_json: sanitizeStoredStructuredJson(
+      record.privacyJson,
+      'capability_production_run.privacy_json',
+      2_400,
+    ),
+  };
+}
+
+export function insertCapabilityProductionRun(
+  record: CapabilityProductionRunRecord,
+): 'created' | 'idempotent' {
+  const values = capabilityProductionRunParams(record);
+  const existing = getCapabilityProductionRun(record.runId);
+  if (existing) {
+    if (!isDeepStrictEqual(existing, record)) {
+      throw new Error('Capability production run identity already exists.');
+    }
+    return 'idempotent';
+  }
+  db.prepare(
+    `INSERT INTO capability_production_runs (
+      run_id, acquisition_id, created_at, updated_at, run_kind, status,
+      revision, candidate_fingerprint, contract_version, contract_digest,
+      task_family, group_folder, owner_scope_hash, chat_scope_hash,
+      group_scope_hash, channel, authorized_surface, target_scope_hash,
+      input_digest, action_class, work_id, work_version, plan_version,
+      checkpoint_id, invocation_id, canary_approval_packet_id,
+      canary_approval_version, canary_approval_scope_digest, canary_grant_id,
+      canary_lease_id, execution_grant_id, execution_lease_id,
+      activation_approval_packet_id,
+      activation_approval_version, activation_approval_scope_digest,
+      activation_grant_id, activation_lease_id, activation_work_id,
+      activation_work_version, activation_plan_version,
+      activation_checkpoint_id, activation_invocation_id, outcome_id,
+      owner_review_id, health_evidence_set_digest,
+      postcondition_fingerprint, resource_discovery_calls,
+      candidate_design_calls, tool_selection_calls, execution_calls,
+      evaluator_calls, latency_ms, provider_calls, cost_usd, match_confidence,
+      expires_at, completed_at, next_safe_action, privacy_json
+    ) VALUES (
+      @run_id, @acquisition_id, @created_at, @updated_at, @run_kind, @status,
+      @revision, @candidate_fingerprint, @contract_version, @contract_digest,
+      @task_family, @group_folder, @owner_scope_hash, @chat_scope_hash,
+      @group_scope_hash, @channel, @authorized_surface, @target_scope_hash,
+      @input_digest, @action_class, @work_id, @work_version, @plan_version,
+      @checkpoint_id, @invocation_id, @canary_approval_packet_id,
+      @canary_approval_version, @canary_approval_scope_digest,
+      @canary_grant_id, @canary_lease_id, @execution_grant_id,
+      @execution_lease_id, @activation_approval_packet_id,
+      @activation_approval_version, @activation_approval_scope_digest,
+      @activation_grant_id, @activation_lease_id, @activation_work_id,
+      @activation_work_version, @activation_plan_version,
+      @activation_checkpoint_id, @activation_invocation_id, @outcome_id,
+      @owner_review_id, @health_evidence_set_digest,
+      @postcondition_fingerprint, @resource_discovery_calls,
+      @candidate_design_calls, @tool_selection_calls, @execution_calls,
+      @evaluator_calls, @latency_ms, @provider_calls, @cost_usd,
+      @match_confidence, @expires_at, @completed_at, @next_safe_action,
+      @privacy_json
+    )`,
+  ).run(values);
+  return 'created';
+}
+
+export function getCapabilityProductionRun(
+  runId: string,
+): CapabilityProductionRunRecord | undefined {
+  const row = db
+    .prepare('SELECT * FROM capability_production_runs WHERE run_id = ?')
+    .get(runId) as CapabilityProductionRunRow | undefined;
+  return row ? mapCapabilityProductionRunRow(row) : undefined;
+}
+
+export function listCapabilityProductionRuns(
+  params: {
+    acquisitionId?: string;
+    groupFolder?: string;
+    statuses?: CapabilityProductionRunRecord['status'][];
+    limit?: number;
+  } = {},
+): CapabilityProductionRunRecord[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.acquisitionId) {
+    clauses.push('acquisition_id = ?');
+    args.push(params.acquisitionId);
+  }
+  if (params.groupFolder) {
+    assertValidGroupFolder(params.groupFolder);
+    clauses.push('group_folder = ?');
+    args.push(params.groupFolder);
+  }
+  if (params.statuses?.length) {
+    clauses.push(`status IN (${params.statuses.map(() => '?').join(', ')})`);
+    args.push(...params.statuses);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  const rows = db
+    .prepare(
+      `SELECT * FROM capability_production_runs
+       ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+       ORDER BY updated_at DESC, run_id ASC LIMIT ?`,
+    )
+    .all(...args) as CapabilityProductionRunRow[];
+  return rows.map(mapCapabilityProductionRunRow);
+}
+
+const CAPABILITY_PRODUCTION_RUN_IMMUTABLE_FIELDS = [
+  'runId',
+  'acquisitionId',
+  'createdAt',
+  'runKind',
+  'candidateFingerprint',
+  'contractVersion',
+  'contractDigest',
+  'taskFamily',
+  'groupFolder',
+  'ownerScopeHash',
+  'chatScopeHash',
+  'groupScopeHash',
+  'channel',
+  'authorizedSurface',
+  'targetScopeHash',
+  'inputDigest',
+  'actionClass',
+  'workId',
+  'planVersion',
+  'invocationId',
+] as const satisfies readonly (keyof CapabilityProductionRunRecord)[];
+
+export function updateCapabilityProductionRunCAS(params: {
+  expectedRevision: number;
+  next: CapabilityProductionRunRecord;
+}): 'applied' | 'conflict' | 'missing' {
+  const current = getCapabilityProductionRun(params.next.runId);
+  if (!current) return 'missing';
+  if (current.revision !== params.expectedRevision) return 'conflict';
+  if (params.next.revision !== params.expectedRevision + 1) {
+    throw new Error('Capability production run revision must advance once.');
+  }
+  for (const field of CAPABILITY_PRODUCTION_RUN_IMMUTABLE_FIELDS) {
+    if (!isDeepStrictEqual(current[field], params.next[field])) {
+      throw new Error(`Capability production run ${field} is immutable.`);
+    }
+  }
+  const values = {
+    ...capabilityProductionRunParams(params.next),
+    expected_revision: params.expectedRevision,
+  };
+  const result = db
+    .prepare(
+      `UPDATE capability_production_runs SET
+        updated_at=@updated_at, status=@status, revision=@revision,
+        work_version=@work_version, checkpoint_id=@checkpoint_id,
+        canary_approval_packet_id=@canary_approval_packet_id,
+        canary_approval_version=@canary_approval_version,
+        canary_approval_scope_digest=@canary_approval_scope_digest,
+        canary_grant_id=@canary_grant_id, canary_lease_id=@canary_lease_id,
+        execution_grant_id=@execution_grant_id,
+        execution_lease_id=@execution_lease_id,
+        activation_approval_packet_id=@activation_approval_packet_id,
+        activation_approval_version=@activation_approval_version,
+        activation_approval_scope_digest=@activation_approval_scope_digest,
+        activation_grant_id=@activation_grant_id,
+        activation_lease_id=@activation_lease_id,
+        activation_work_id=@activation_work_id,
+        activation_work_version=@activation_work_version,
+        activation_plan_version=@activation_plan_version,
+        activation_checkpoint_id=@activation_checkpoint_id,
+        activation_invocation_id=@activation_invocation_id,
+        outcome_id=@outcome_id, owner_review_id=@owner_review_id,
+        health_evidence_set_digest=@health_evidence_set_digest,
+        postcondition_fingerprint=@postcondition_fingerprint,
+        resource_discovery_calls=@resource_discovery_calls,
+        candidate_design_calls=@candidate_design_calls,
+        tool_selection_calls=@tool_selection_calls,
+        execution_calls=@execution_calls, evaluator_calls=@evaluator_calls,
+        latency_ms=@latency_ms, provider_calls=@provider_calls,
+        cost_usd=@cost_usd, match_confidence=@match_confidence,
+        expires_at=@expires_at, completed_at=@completed_at,
+        next_safe_action=@next_safe_action, privacy_json=@privacy_json
+       WHERE run_id=@run_id AND revision=@expected_revision`,
+    )
+    .run(values);
+  return result.changes === 1 ? 'applied' : 'conflict';
+}
+
+function mapCapabilityProductionStepRow(
+  row: Record<string, unknown>,
+): CapabilityProductionStepRecord {
+  return {
+    runId: String(row.run_id),
+    stepId: String(row.step_id),
+    createdAt: String(row.created_at),
+    receiptId: String(row.receipt_id),
+    nodeId: String(row.node_id),
+    invocationId: String(row.invocation_id),
+    bindingId: String(row.binding_id),
+    operationId: String(row.operation_id),
+    evaluatorId: String(row.evaluator_id),
+    resourceId: String(row.resource_id),
+    resourceVersion: String(row.resource_version),
+    executorImplementationDigest: String(row.executor_implementation_digest),
+    evaluatorImplementationDigest: String(row.evaluator_implementation_digest),
+    actionClass: String(
+      row.action_class,
+    ) as CapabilityProductionStepRecord['actionClass'],
+    inputDigest: String(row.input_digest),
+    independentVerification: Number(row.independent_verification) === 1,
+    privacyJson: String(row.privacy_json),
+  };
+}
+
+export function insertCapabilityProductionStep(
+  record: CapabilityProductionStepRecord,
+): 'created' | 'idempotent' {
+  if (
+    !record.runId ||
+    !record.stepId ||
+    !record.receiptId ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.inputDigest) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(
+      record.executorImplementationDigest,
+    ) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(
+      record.evaluatorImplementationDigest,
+    )
+  ) {
+    throw new Error('Capability production step identity is malformed.');
+  }
+  const existing = db
+    .prepare(
+      `SELECT * FROM capability_production_steps
+       WHERE run_id = ? AND step_id = ?`,
+    )
+    .get(record.runId, record.stepId) as Record<string, unknown> | undefined;
+  if (existing) {
+    if (!isDeepStrictEqual(mapCapabilityProductionStepRow(existing), record)) {
+      throw new Error('Capability production step identity already exists.');
+    }
+    return 'idempotent';
+  }
+  db.prepare(
+    `INSERT INTO capability_production_steps (
+      run_id, step_id, created_at, receipt_id, node_id, invocation_id,
+      binding_id, operation_id, evaluator_id, resource_id, resource_version,
+      executor_implementation_digest, evaluator_implementation_digest,
+      action_class, input_digest, independent_verification, privacy_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    record.runId,
+    record.stepId,
+    record.createdAt,
+    record.receiptId,
+    record.nodeId,
+    record.invocationId,
+    record.bindingId,
+    record.operationId,
+    record.evaluatorId,
+    record.resourceId,
+    record.resourceVersion,
+    record.executorImplementationDigest,
+    record.evaluatorImplementationDigest,
+    record.actionClass,
+    record.inputDigest,
+    record.independentVerification ? 1 : 0,
+    sanitizeStoredStructuredJson(
+      record.privacyJson,
+      'capability_production_step.privacy_json',
+      1_200,
+    ),
+  );
+  return 'created';
+}
+
+export function listCapabilityProductionSteps(
+  runId: string,
+): CapabilityProductionStepRecord[] {
+  return (
+    db
+      .prepare(
+        `SELECT * FROM capability_production_steps
+         WHERE run_id = ? ORDER BY step_id ASC`,
+      )
+      .all(runId) as Record<string, unknown>[]
+  ).map(mapCapabilityProductionStepRow);
+}
+
+function mapCapabilityHealthEvidenceRow(
+  row: Record<string, unknown>,
+): CapabilityHealthEvidenceRecord {
+  return {
+    runId: String(row.run_id),
+    resourceId: String(row.resource_id),
+    resourceVersion: String(row.resource_version),
+    subjectId: String(row.subject_id),
+    observationId: String(row.observation_id),
+    observedAt: String(row.observed_at),
+    expiresAt: String(row.expires_at),
+    evidenceDigest: String(row.evidence_digest),
+    privacyJson: String(row.privacy_json),
+  };
+}
+
+export function insertCapabilityHealthEvidence(
+  record: CapabilityHealthEvidenceRecord,
+): 'created' | 'idempotent' {
+  if (
+    !record.runId ||
+    !record.resourceId ||
+    !record.resourceVersion ||
+    !record.subjectId ||
+    !record.observationId ||
+    record.expiresAt <= record.observedAt ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.evidenceDigest)
+  ) {
+    throw new Error('Capability health evidence identity is malformed.');
+  }
+  const existing = db
+    .prepare(
+      `SELECT * FROM capability_health_evidence
+       WHERE run_id = ? AND resource_id = ?`,
+    )
+    .get(record.runId, record.resourceId) as
+    | Record<string, unknown>
+    | undefined;
+  if (existing) {
+    if (!isDeepStrictEqual(mapCapabilityHealthEvidenceRow(existing), record)) {
+      throw new Error('Capability health evidence cannot be replaced.');
+    }
+    return 'idempotent';
+  }
+  db.prepare(
+    `INSERT INTO capability_health_evidence (
+      run_id, resource_id, resource_version, subject_id, observation_id,
+      observed_at, expires_at, evidence_digest, privacy_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    record.runId,
+    record.resourceId,
+    record.resourceVersion,
+    record.subjectId,
+    record.observationId,
+    record.observedAt,
+    record.expiresAt,
+    record.evidenceDigest,
+    sanitizeStoredStructuredJson(
+      record.privacyJson,
+      'capability_health_evidence.privacy_json',
+      1_200,
+    ),
+  );
+  return 'created';
+}
+
+export function listCapabilityHealthEvidence(
+  runId: string,
+): CapabilityHealthEvidenceRecord[] {
+  return (
+    db
+      .prepare(
+        `SELECT * FROM capability_health_evidence
+         WHERE run_id = ? ORDER BY resource_id ASC`,
+      )
+      .all(runId) as Record<string, unknown>[]
+  ).map(mapCapabilityHealthEvidenceRow);
+}
+
+export function insertCapabilityProductionRunWithHealthAtomic(params: {
+  run: CapabilityProductionRunRecord;
+  health: CapabilityHealthEvidenceRecord[];
+}): void {
+  const requiredResources = new Set(
+    params.health.map((item) => item.resourceId),
+  );
+  if (
+    params.health.length === 0 ||
+    requiredResources.size !== params.health.length ||
+    params.health.some((item) => item.runId !== params.run.runId) ||
+    capabilityHealthEvidenceSetDigest(params.health) !==
+      params.run.healthEvidenceSetDigest
+  ) {
+    throw new Error(
+      'Capability run health bundle is incomplete or mismatched.',
+    );
+  }
+  const transact = db.transaction(() => {
+    insertCapabilityProductionRun(params.run);
+    for (const item of params.health) insertCapabilityHealthEvidence(item);
+  });
+  transact.immediate();
+}
+
+/**
+ * Join every authority-staging write in one SQLite transaction. Nested DB
+ * helpers become savepoints under better-sqlite3, so a process-visible throw
+ * cannot leave cognitive work, approvals, or leases without their canonical
+ * production-run head.
+ */
+export function runCapabilityProductionStagingAtomic<T>(operation: () => T): T {
+  return db.transaction(operation).immediate();
+}
+
+/** Persist a succeeded effect receipt and its immutable step binding together. */
+export function runCapabilityProductionVerifiedStepAtomic<T>(
+  operation: () => T,
+): T {
+  return db.transaction(operation).immediate();
+}
+
+export function refreshCapabilityProductionHealthAtomic(params: {
+  runId: string;
+  expectedAcquisitionVersion: number;
+  expectedRunRevision: number;
+  health: CapabilityHealthEvidenceRecord[];
+  now: string;
+  expiresAt: string;
+}): CapabilityProductionRunRecord {
+  const transact = db.transaction(() => {
+    const run = getCapabilityProductionRun(params.runId);
+    const acquisition = run
+      ? getCapabilityAcquisition(run.acquisitionId)
+      : undefined;
+    const outcome = run?.outcomeId ? getOutcome(run.outcomeId) : undefined;
+    if (
+      !run ||
+      !acquisition ||
+      run.runKind !== 'canary' ||
+      run.status !== 'owner_reviewed' ||
+      acquisition.state !== 'canary_ready' ||
+      run.revision !== params.expectedRunRevision ||
+      acquisition.recordVersion !== params.expectedAcquisitionVersion ||
+      !run.completedAt ||
+      !run.postconditionFingerprint ||
+      !outcome ||
+      outcome.status !== 'completed' ||
+      outcome.sourceType !== 'capability_acquisition' ||
+      outcome.sourceKey !== run.runId ||
+      params.expiresAt <= params.now ||
+      params.health.length === 0 ||
+      new Set(params.health.map((item) => item.resourceId)).size !==
+        params.health.length ||
+      params.health.some(
+        (item) => item.runId !== run.runId || item.expiresAt <= params.now,
+      )
+    ) {
+      throw new Error(
+        'Capability health refresh is not bound to terminal canary truth.',
+      );
+    }
+    const contract = parseCapabilityProductionContract(acquisition, run);
+    assertCapabilityProductionWorkBinding({ run, requireTerminal: true });
+    const execution = assertCapabilityProductionExecution({ run, contract });
+    assertCapabilityProductionOutcome({
+      run,
+      receiptIds: execution.receiptIds,
+    });
+    const review = run.ownerReviewId
+      ? getCapabilityOwnerReview(run.ownerReviewId)
+      : undefined;
+    if (
+      !review ||
+      review.runId !== run.runId ||
+      review.acquisitionId !== acquisition.acquisitionId ||
+      review.outcomeId !== run.outcomeId ||
+      review.candidateFingerprint !== run.candidateFingerprint ||
+      review.contractVersion !== run.contractVersion ||
+      review.ownerScopeHash !== run.ownerScopeHash ||
+      review.chatScopeHash !== run.chatScopeHash ||
+      review.groupScopeHash !== run.groupScopeHash ||
+      review.channel !== run.channel ||
+      review.authorizedSurface !== run.authorizedSurface ||
+      review.verdict !== 'verified' ||
+      db
+        .prepare(
+          `SELECT 1 FROM capability_owner_review_revisions
+           WHERE review_id = ? AND verdict IN ('corrected', 'rejected')
+           LIMIT 1`,
+        )
+        .get(review.reviewId)
+    ) {
+      throw new Error(
+        'Capability health refresh requires an exact, non-adverse owner review.',
+      );
+    }
+    const healthDigest = capabilityHealthEvidenceSetDigest(params.health);
+    db.prepare(
+      `INSERT OR IGNORE INTO capability_health_evidence_history (
+         run_id, resource_id, resource_version, subject_id, observation_id,
+         observed_at, expires_at, evidence_digest, evidence_phase, recorded_at,
+         privacy_json
+       )
+       SELECT run_id, resource_id, resource_version, subject_id, observation_id,
+              observed_at, expires_at, evidence_digest, 'canary_execution', ?,
+              privacy_json
+       FROM capability_health_evidence WHERE run_id = ?`,
+    ).run(params.now, run.runId);
+    db.prepare('DELETE FROM capability_health_evidence WHERE run_id = ?').run(
+      run.runId,
+    );
+    for (const item of params.health) insertCapabilityHealthEvidence(item);
+    db.prepare(
+      `INSERT OR IGNORE INTO capability_health_evidence_history (
+         run_id, resource_id, resource_version, subject_id, observation_id,
+         observed_at, expires_at, evidence_digest, evidence_phase, recorded_at,
+         privacy_json
+       )
+       SELECT run_id, resource_id, resource_version, subject_id, observation_id,
+              observed_at, expires_at, evidence_digest, 'activation_refresh', ?,
+              privacy_json
+       FROM capability_health_evidence WHERE run_id = ?`,
+    ).run(params.now, run.runId);
+    const next: CapabilityProductionRunRecord = {
+      ...run,
+      updatedAt: params.now,
+      revision: run.revision + 1,
+      healthEvidenceSetDigest: healthDigest,
+      expiresAt: params.expiresAt,
+      nextSafeAction:
+        'Stage a new exact activation approval against refreshed health.',
+    };
+    assertCapabilityProductionHealth({ run: next, contract, now: params.now });
+    if (
+      updateCapabilityProductionRunCAS({
+        expectedRevision: run.revision,
+        next,
+      }) !== 'applied'
+    ) {
+      throw new Error(
+        'Capability health refresh lost its production-run race.',
+      );
+    }
+    return getCapabilityProductionRun(
+      run.runId,
+    ) as CapabilityProductionRunRecord;
+  });
+  return transact.immediate();
+}
+
+export function expireCapabilityPendingAuthorityAtomic(params: {
+  runId: string;
+  expectedAcquisitionVersion: number;
+  expectedRunRevision: number;
+  authorityKind: 'canary' | 'activation';
+  now: string;
+}): CapabilityProductionRunRecord {
+  const transact = db.transaction(() => {
+    const run = getCapabilityProductionRun(params.runId);
+    const acquisition = run
+      ? getCapabilityAcquisition(run.acquisitionId)
+      : undefined;
+    const expectedStatus =
+      params.authorityKind === 'canary'
+        ? 'awaiting_canary_approval'
+        : 'awaiting_activation_approval';
+    const packetId =
+      params.authorityKind === 'canary'
+        ? run?.canaryApprovalPacketId
+        : run?.activationApprovalPacketId;
+    const packet = packetId
+      ? (db
+          .prepare(
+            `SELECT status, expires_at FROM cognitive_approval_packets
+             WHERE approval_packet_id = ?`,
+          )
+          .get(packetId) as
+          | { status: string; expires_at: string | null }
+          | undefined)
+      : undefined;
+    const authorityExpired =
+      Boolean(run && run.expiresAt <= params.now) ||
+      Boolean(packet?.expires_at && packet.expires_at <= params.now) ||
+      packet?.status === 'expired';
+    if (
+      !run ||
+      !acquisition ||
+      run.revision !== params.expectedRunRevision ||
+      acquisition.recordVersion !== params.expectedAcquisitionVersion ||
+      run.status !== expectedStatus ||
+      !packet ||
+      !authorityExpired
+    ) {
+      throw new Error(
+        'Pending capability authority is not expired at this head.',
+      );
+    }
+    invalidateCapabilityAuthorityForAcquisition(
+      acquisition.acquisitionId,
+      params.now,
+    );
+    const next: CapabilityProductionRunRecord =
+      params.authorityKind === 'canary'
+        ? {
+            ...run,
+            updatedAt: params.now,
+            status: 'blocked',
+            revision: run.revision + 1,
+            nextSafeAction:
+              'Restage a fresh bounded canary proposal; expired authority remains inert.',
+          }
+        : {
+            ...run,
+            updatedAt: params.now,
+            status: 'owner_reviewed',
+            revision: run.revision + 1,
+            activationApprovalPacketId: null,
+            activationApprovalVersion: null,
+            activationApprovalScopeDigest: null,
+            activationGrantId: null,
+            activationLeaseId: null,
+            activationWorkId: null,
+            activationWorkVersion: null,
+            activationPlanVersion: null,
+            activationCheckpointId: null,
+            activationInvocationId: null,
+            nextSafeAction:
+              'Restage a fresh activation decision after health revalidation.',
+          };
+    if (
+      updateCapabilityProductionRunCAS({
+        expectedRevision: run.revision,
+        next,
+      }) !== 'applied'
+    ) {
+      throw new Error(
+        'Expired capability authority lost its run revision race.',
+      );
+    }
+    return getCapabilityProductionRun(
+      run.runId,
+    ) as CapabilityProductionRunRecord;
+  });
+  return transact.immediate();
+}
+
+export function failOrphanCapabilityStagingAtomic(params: {
+  workId: string;
+  now: string;
+}): boolean {
+  const transact = db.transaction(() => {
+    const work = getDurableWorkUnit(params.workId);
+    if (!work) return false;
+    const canonicalRun = db
+      .prepare(
+        `SELECT 1 FROM capability_production_runs
+         WHERE work_id = ? OR activation_work_id = ? LIMIT 1`,
+      )
+      .get(work.workId, work.workId);
+    if (canonicalRun) return false;
+    db.prepare(
+      `UPDATE cognitive_approval_packets SET status = 'expired', updated_at = ?
+       WHERE durable_work_id = ? AND status IN ('staged', 'approved')`,
+    ).run(params.now, work.workId);
+    db.prepare(
+      `UPDATE durable_resume_grants SET status = 'revoked', revoked_at = ?,
+         updated_at = ?
+       WHERE work_id = ? AND status = 'active'`,
+    ).run(params.now, params.now, work.workId);
+    db.prepare(
+      `UPDATE durable_work_leases SET status = 'released', released_at = ?,
+         heartbeat_at = ?
+       WHERE work_id = ? AND status = 'active'`,
+    ).run(params.now, params.now, work.workId);
+    db.prepare(
+      `UPDATE durable_work_units SET status = 'failed', version = version + 1,
+         lease_id = NULL, lease_expires_at = NULL, updated_at = ?,
+         next_action = ?
+       WHERE work_id = ?`,
+    ).run(
+      params.now,
+      'Staging did not join a canonical production run; preserve inert evidence only.',
+      work.workId,
+    );
+    if (work.cognitiveRunId) {
+      db.prepare(
+        `UPDATE cognitive_runs SET status = 'failed', updated_at = ?,
+           next_action = ? WHERE run_id = ?`,
+      ).run(
+        params.now,
+        'Production authority staging failed before canonical run binding.',
+        work.cognitiveRunId,
+      );
+    }
+    return true;
+  });
+  return transact.immediate();
+}
+
+function mapCapabilityOwnerReviewRow(
+  row: Record<string, unknown>,
+): CapabilityOwnerReviewRecord {
+  return {
+    reviewId: String(row.review_id),
+    acquisitionId: String(row.acquisition_id),
+    runId: String(row.run_id),
+    outcomeId: String(row.outcome_id),
+    candidateFingerprint: String(row.candidate_fingerprint),
+    contractVersion: Number(row.contract_version),
+    ownerScopeHash: String(row.owner_scope_hash),
+    chatScopeHash: String(row.chat_scope_hash),
+    groupScopeHash: String(row.group_scope_hash),
+    channel: String(row.channel),
+    authorizedSurface: String(row.authorized_surface),
+    verdict: String(row.verdict) as CapabilityOwnerReviewRecord['verdict'],
+    revision: Number(row.revision),
+    sourceMessageHash: row.source_message_hash
+      ? String(row.source_message_hash)
+      : null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    supersededAt: row.superseded_at ? String(row.superseded_at) : null,
+    privacyJson: String(row.privacy_json),
+  };
+}
+
+export function getCapabilityOwnerReview(
+  reviewId: string,
+): CapabilityOwnerReviewRecord | undefined {
+  const row = db
+    .prepare('SELECT * FROM capability_owner_reviews WHERE review_id = ?')
+    .get(reviewId) as Record<string, unknown> | undefined;
+  return row ? mapCapabilityOwnerReviewRow(row) : undefined;
+}
+
+export function getCapabilityOwnerReviewForRun(
+  runId: string,
+): CapabilityOwnerReviewRecord | undefined {
+  const row = db
+    .prepare('SELECT * FROM capability_owner_reviews WHERE run_id = ?')
+    .get(runId) as Record<string, unknown> | undefined;
+  return row ? mapCapabilityOwnerReviewRow(row) : undefined;
+}
+
+function mapCapabilityOwnerActionTokenRow(
+  row: Record<string, unknown>,
+): CapabilityOwnerActionTokenRecord {
+  return {
+    tokenHash: String(row.token_hash),
+    actionKind: String(
+      row.action_kind,
+    ) as CapabilityOwnerActionTokenRecord['actionKind'],
+    acquisitionId: String(row.acquisition_id),
+    runId: row.run_id ? String(row.run_id) : null,
+    candidateFingerprint: String(row.candidate_fingerprint),
+    contractVersion: Number(row.contract_version),
+    expectedAcquisitionVersion: Number(row.expected_acquisition_version),
+    expectedRunRevision:
+      row.expected_run_revision === null ||
+      row.expected_run_revision === undefined
+        ? null
+        : Number(row.expected_run_revision),
+    ownerScopeHash: String(row.owner_scope_hash),
+    chatScopeHash: String(row.chat_scope_hash),
+    groupScopeHash: String(row.group_scope_hash),
+    channel: String(row.channel),
+    authorizedSurface: String(row.authorized_surface),
+    messageHash: row.message_hash ? String(row.message_hash) : null,
+    createdAt: String(row.created_at),
+    expiresAt: String(row.expires_at),
+    consumedAt: row.consumed_at ? String(row.consumed_at) : null,
+    privacyJson: String(row.privacy_json),
+  };
+}
+
+export function insertCapabilityOwnerActionToken(
+  record: CapabilityOwnerActionTokenRecord,
+): 'created' | 'idempotent' {
+  if (
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.tokenHash) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.candidateFingerprint) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.ownerScopeHash) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.chatScopeHash) ||
+    !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(record.groupScopeHash) ||
+    record.expiresAt <= record.createdAt ||
+    record.consumedAt
+  ) {
+    throw new Error('Capability owner action token identity is malformed.');
+  }
+  const existing = db
+    .prepare(
+      'SELECT * FROM capability_owner_action_tokens WHERE token_hash = ?',
+    )
+    .get(record.tokenHash) as Record<string, unknown> | undefined;
+  if (existing) {
+    if (
+      !isDeepStrictEqual(mapCapabilityOwnerActionTokenRow(existing), record)
+    ) {
+      throw new Error('Capability owner action token already exists.');
+    }
+    return 'idempotent';
+  }
+  db.prepare(
+    `INSERT INTO capability_owner_action_tokens (
+      token_hash, action_kind, acquisition_id, run_id,
+      candidate_fingerprint, contract_version, expected_acquisition_version,
+      expected_run_revision, owner_scope_hash, chat_scope_hash,
+      group_scope_hash, channel, authorized_surface, message_hash, created_at,
+      expires_at, consumed_at, privacy_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+  ).run(
+    record.tokenHash,
+    record.actionKind,
+    record.acquisitionId,
+    record.runId || null,
+    record.candidateFingerprint,
+    record.contractVersion,
+    record.expectedAcquisitionVersion,
+    record.expectedRunRevision || null,
+    record.ownerScopeHash,
+    record.chatScopeHash,
+    record.groupScopeHash,
+    redactStoredCognitiveMetadata(record.channel, 120),
+    redactStoredCognitiveMetadata(record.authorizedSurface, 120),
+    record.messageHash || null,
+    record.createdAt,
+    record.expiresAt,
+    sanitizeStoredStructuredJson(
+      record.privacyJson,
+      'capability_owner_action_token.privacy_json',
+      1_200,
+    ),
+  );
+  return 'created';
+}
+
+export function getCapabilityOwnerActionToken(
+  tokenHash: string,
+): CapabilityOwnerActionTokenRecord | undefined {
+  const row = db
+    .prepare(
+      'SELECT * FROM capability_owner_action_tokens WHERE token_hash = ?',
+    )
+    .get(tokenHash) as Record<string, unknown> | undefined;
+  return row ? mapCapabilityOwnerActionTokenRow(row) : undefined;
+}
+
+export function recordCapabilityOwnerReviewWithToken(params: {
+  tokenHash: string;
+  verdict: CapabilityOwnerReviewRecord['verdict'];
+  sourceMessageHash?: string | null;
+  now: string;
+}): CapabilityOwnerReviewRecord {
+  const transact = db.transaction(() => {
+    const token = getCapabilityOwnerActionToken(params.tokenHash);
+    if (!token || token.actionKind !== 'review_canary' || !token.runId) {
+      throw new Error(
+        'Capability owner-review token is unavailable or expired.',
+      );
+    }
+    const existingReview = getCapabilityOwnerReviewForRun(token.runId);
+    const sourceMessageHash = params.sourceMessageHash || null;
+    if (token.messageHash && token.messageHash !== sourceMessageHash) {
+      throw new Error(
+        'Capability owner review message does not match its token.',
+      );
+    }
+    if (token.consumedAt) {
+      if (
+        existingReview &&
+        existingReview.updatedAt === token.consumedAt &&
+        existingReview.verdict === params.verdict &&
+        (existingReview.sourceMessageHash || null) === sourceMessageHash
+      ) {
+        return existingReview;
+      }
+      throw new Error('Capability owner-review token was already consumed.');
+    }
+    if (token.expiresAt <= params.now) {
+      throw new Error(
+        'Capability owner-review token is unavailable or expired.',
+      );
+    }
+    const run = getCapabilityProductionRun(token.runId);
+    const acquisition = getCapabilityAcquisition(token.acquisitionId);
+    const outcome = run?.outcomeId ? getOutcome(run.outcomeId) : undefined;
+    if (
+      !run ||
+      !acquisition ||
+      !outcome ||
+      ![
+        'awaiting_owner_review',
+        'owner_reviewed',
+        'awaiting_activation_approval',
+        'active',
+        'monitoring',
+        'partial',
+        'blocked',
+        'paused',
+      ].includes(run.status) ||
+      run.acquisitionId !== acquisition.acquisitionId ||
+      run.candidateFingerprint !== token.candidateFingerprint ||
+      run.contractVersion !== token.contractVersion ||
+      run.revision !== token.expectedRunRevision ||
+      acquisition.recordVersion !== token.expectedAcquisitionVersion ||
+      run.ownerScopeHash !== token.ownerScopeHash ||
+      run.chatScopeHash !== token.chatScopeHash ||
+      run.groupScopeHash !== token.groupScopeHash ||
+      run.channel !== token.channel ||
+      run.authorizedSurface !== token.authorizedSurface ||
+      outcome.groupFolder !== run.groupFolder ||
+      outcome.sourceType !== 'capability_acquisition' ||
+      outcome.sourceKey !== run.runId
+    ) {
+      throw new Error(
+        'Capability owner review does not match canonical evidence.',
+      );
+    }
+    if (
+      ![
+        'verified',
+        'helpful',
+        'partial',
+        'corrected',
+        'rejected',
+        'blocked',
+      ].includes(params.verdict)
+    ) {
+      throw new Error('Capability owner review verdict is unsupported.');
+    }
+    const existing = existingReview;
+    const reviewId =
+      existing?.reviewId ||
+      `capability-review:${createHash('sha256')
+        .update(`${run.runId}|${run.outcomeId}|${run.candidateFingerprint}`)
+        .digest('hex')
+        .slice(0, 40)}`;
+    const review: CapabilityOwnerReviewRecord = {
+      reviewId,
+      acquisitionId: acquisition.acquisitionId,
+      runId: run.runId,
+      outcomeId: run.outcomeId as string,
+      candidateFingerprint: run.candidateFingerprint,
+      contractVersion: run.contractVersion,
+      ownerScopeHash: run.ownerScopeHash,
+      chatScopeHash: run.chatScopeHash,
+      groupScopeHash: run.groupScopeHash,
+      channel: run.channel,
+      authorizedSurface: run.authorizedSurface,
+      verdict: params.verdict,
+      revision: (existing?.revision || 0) + 1,
+      sourceMessageHash,
+      createdAt: existing?.createdAt || params.now,
+      updatedAt: params.now,
+      supersededAt: null,
+      privacyJson: JSON.stringify({
+        metadataOnly: true,
+        rawContentStored: false,
+        ownerGenerated: true,
+      }),
+    };
+    if (existing) {
+      const updated = db
+        .prepare(
+          `UPDATE capability_owner_reviews SET
+            verdict = ?, revision = ?, source_message_hash = ?,
+            updated_at = ?, superseded_at = NULL, privacy_json = ?
+           WHERE review_id = ? AND revision = ?
+             AND acquisition_id = ? AND run_id = ? AND outcome_id = ?
+             AND candidate_fingerprint = ? AND contract_version = ?
+             AND owner_scope_hash = ? AND chat_scope_hash = ?
+             AND group_scope_hash = ? AND channel = ?
+             AND authorized_surface = ?`,
+        )
+        .run(
+          review.verdict,
+          review.revision,
+          review.sourceMessageHash || null,
+          review.updatedAt,
+          review.privacyJson,
+          review.reviewId,
+          existing.revision,
+          review.acquisitionId,
+          review.runId,
+          review.outcomeId,
+          review.candidateFingerprint,
+          review.contractVersion,
+          review.ownerScopeHash,
+          review.chatScopeHash,
+          review.groupScopeHash,
+          review.channel,
+          review.authorizedSurface,
+        );
+      if (updated.changes !== 1) {
+        throw new Error('Capability owner review lost its revision race.');
+      }
+    } else {
+      db.prepare(
+        `INSERT INTO capability_owner_reviews (
+          review_id, acquisition_id, run_id, outcome_id,
+          candidate_fingerprint, contract_version, owner_scope_hash,
+          chat_scope_hash, group_scope_hash, channel, authorized_surface,
+          verdict, revision, source_message_hash, created_at, updated_at,
+          superseded_at, privacy_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+      ).run(
+        review.reviewId,
+        review.acquisitionId,
+        review.runId,
+        review.outcomeId,
+        review.candidateFingerprint,
+        review.contractVersion,
+        review.ownerScopeHash,
+        review.chatScopeHash,
+        review.groupScopeHash,
+        review.channel,
+        review.authorizedSurface,
+        review.verdict,
+        review.revision,
+        review.sourceMessageHash || null,
+        review.createdAt,
+        review.updatedAt,
+        review.privacyJson,
+      );
+    }
+    db.prepare(
+      `INSERT INTO capability_owner_review_revisions (
+        review_id, revision, verdict, source_message_hash, created_at,
+        review_snapshot_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      review.reviewId,
+      review.revision,
+      review.verdict,
+      review.sourceMessageHash || null,
+      params.now,
+      JSON.stringify(review),
+      review.privacyJson,
+    );
+    const consumed = db
+      .prepare(
+        `UPDATE capability_owner_action_tokens SET consumed_at = ?
+         WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > ?`,
+      )
+      .run(params.now, params.tokenHash, params.now);
+    if (consumed.changes !== 1) {
+      throw new Error('Capability owner-review token was already consumed.');
+    }
+    return review;
+  });
+  return transact.immediate();
+}
+
+function mapCapabilityProductionTransitionReceiptRow(
+  row: Record<string, unknown>,
+): CapabilityProductionTransitionReceipt {
+  return {
+    receiptId: String(row.receipt_id),
+    acquisitionId: String(row.acquisition_id),
+    runId: String(row.run_id),
+    transitionKind: String(
+      row.transition_kind,
+    ) as CapabilityProductionTransitionReceipt['transitionKind'],
+    expectedAcquisitionVersion: Number(row.expected_acquisition_version),
+    resultingAcquisitionVersion: Number(row.resulting_acquisition_version),
+    expectedRunRevision: Number(row.expected_run_revision),
+    resultingRunRevision: Number(row.resulting_run_revision),
+    evidenceDigest: String(row.evidence_digest),
+    createdAt: String(row.created_at),
+    privacyJson: String(row.privacy_json),
+  };
+}
+
+export function listCapabilityProductionTransitionReceipts(
+  params: { acquisitionId?: string; runId?: string; limit?: number } = {},
+): CapabilityProductionTransitionReceipt[] {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.acquisitionId) {
+    clauses.push('acquisition_id = ?');
+    args.push(params.acquisitionId);
+  }
+  if (params.runId) {
+    clauses.push('run_id = ?');
+    args.push(params.runId);
+  }
+  args.push(Math.max(1, Math.min(params.limit || 100, 500)));
+  return (
+    db
+      .prepare(
+        `SELECT * FROM capability_production_transition_receipts
+         ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+         ORDER BY created_at ASC LIMIT ?`,
+      )
+      .all(...args) as Record<string, unknown>[]
+  ).map(mapCapabilityProductionTransitionReceiptRow);
+}
+
+export function capabilityProductionContractDigest(
+  candidateContractJson: string,
+): string {
+  return createHash('sha256')
+    .update(
+      `andrea:capability-production-contract:v1\0${candidateContractJson}`,
+    )
+    .digest('hex');
+}
+
+export function capabilityHealthEvidenceSetDigest(
+  evidence: readonly CapabilityHealthEvidenceRecord[],
+): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify(
+        evidence
+          .map((item) => ({
+            resourceId: item.resourceId,
+            resourceVersion: item.resourceVersion,
+            subjectId: item.subjectId,
+            observationId: item.observationId,
+            observedAt: item.observedAt,
+            expiresAt: item.expiresAt,
+            evidenceDigest: item.evidenceDigest,
+          }))
+          .sort((left, right) =>
+            left.resourceId.localeCompare(right.resourceId),
+          ),
+      ),
+    )
+    .digest('hex');
+}
+
+function parseCapabilityProductionContract(
+  acquisition: CapabilityAcquisitionRecord,
+  run: CapabilityProductionRunRecord,
+): CapabilityCandidateContract {
+  let contract: CapabilityCandidateContract;
+  try {
+    contract = JSON.parse(
+      acquisition.candidateContractJson,
+    ) as CapabilityCandidateContract;
+  } catch (error) {
+    throw new Error('Capability production contract is malformed.', {
+      cause: error,
+    });
+  }
+  if (
+    contract.candidateFingerprint !== run.candidateFingerprint ||
+    contract.contractVersion !== run.contractVersion ||
+    contract.taskFamily !== run.taskFamily ||
+    acquisition.taskFamily !== run.taskFamily ||
+    capabilityProductionContractDigest(acquisition.candidateContractJson) !==
+      run.contractDigest
+  ) {
+    throw new Error('Capability production run uses a stale contract version.');
+  }
+  return contract;
+}
+
+function assertCapabilityProductionWorkBinding(params: {
+  run: CapabilityProductionRunRecord;
+  activation?: boolean;
+  requireTerminal?: boolean;
+}): { work: DurableWorkUnit; checkpoint: DurableWorkCheckpoint } {
+  const workId = params.activation
+    ? params.run.activationWorkId
+    : params.run.workId;
+  const checkpointId = params.activation
+    ? params.run.activationCheckpointId
+    : params.run.checkpointId;
+  const planVersion = params.activation
+    ? params.run.activationPlanVersion
+    : params.run.planVersion;
+  const workVersion = params.activation
+    ? params.run.activationWorkVersion
+    : params.run.workVersion;
+  if (!workId || !checkpointId || !planVersion || !workVersion) {
+    throw new Error(
+      'Capability production durable-work identity is incomplete.',
+    );
+  }
+  const work = getDurableWorkUnit(workId);
+  const checkpoint = getDurableWorkCheckpoint(checkpointId);
+  const linkKind = params.activation
+    ? 'capability_activation'
+    : 'capability_production_run';
+  const linkedId = params.activation
+    ? params.run.acquisitionId
+    : params.run.runId;
+  const link = db
+    .prepare(
+      `SELECT 1 FROM durable_work_links
+       WHERE work_id = ? AND link_kind = ? AND linked_id = ? LIMIT 1`,
+    )
+    .get(workId, linkKind, linkedId);
+  if (
+    !work ||
+    !checkpoint ||
+    !link ||
+    work.version !== workVersion ||
+    work.planVersion !== planVersion ||
+    checkpoint.planVersion !== planVersion ||
+    work.checkpointHeadId !== checkpoint.durableCheckpointId ||
+    checkpoint.workId !== work.workId ||
+    work.ownerScopeHash !== params.run.ownerScopeHash ||
+    work.chatScopeHash !== params.run.chatScopeHash ||
+    work.groupScopeHash !== params.run.groupScopeHash ||
+    work.channel !== params.run.channel ||
+    work.targetScopeHash !== params.run.targetScopeHash ||
+    checkpoint.targetScopeHash !== params.run.targetScopeHash
+  ) {
+    throw new Error(
+      'Capability production evidence is not bound to canonical durable work.',
+    );
+  }
+  if (
+    params.requireTerminal &&
+    (work.status !== 'completed' ||
+      !work.completedAt ||
+      checkpoint.status !== 'completed' ||
+      !checkpoint.verifiedPostStateFingerprint ||
+      JSON.parse(checkpoint.pendingNodeIdsJson).length !== 0 ||
+      JSON.parse(checkpoint.uncertainNodeIdsJson).length !== 0)
+  ) {
+    throw new Error(
+      'Capability production durable work is not verified complete.',
+    );
+  }
+  return { work, checkpoint };
+}
+
+function assertCapabilityProductionApprovalBundle(params: {
+  run: CapabilityProductionRunRecord;
+  activation?: boolean;
+  now: string;
+}): void {
+  const packetId = params.activation
+    ? params.run.activationApprovalPacketId
+    : params.run.canaryApprovalPacketId;
+  const approvalVersion = params.activation
+    ? params.run.activationApprovalVersion
+    : params.run.canaryApprovalVersion;
+  const scopeDigest = params.activation
+    ? params.run.activationApprovalScopeDigest
+    : params.run.canaryApprovalScopeDigest;
+  const grantId = params.activation
+    ? params.run.activationGrantId
+    : params.run.canaryGrantId;
+  const leaseId = params.activation
+    ? params.run.activationLeaseId
+    : params.run.canaryLeaseId;
+  const workId = params.activation
+    ? params.run.activationWorkId
+    : params.run.workId;
+  const planVersion = params.activation
+    ? params.run.activationPlanVersion
+    : params.run.planVersion;
+  const bundle = db
+    .prepare(
+      `SELECT grant_record.grant_id
+       FROM cognitive_approval_packets approval_record
+       JOIN durable_resume_grants grant_record
+         ON grant_record.approval_packet_id = approval_record.approval_packet_id
+       JOIN durable_work_leases lease_record
+         ON lease_record.lease_id = grant_record.consumed_lease_id
+       JOIN durable_work_units work_record
+         ON work_record.work_id = grant_record.work_id
+       WHERE approval_record.approval_packet_id = ?
+         AND approval_record.status = 'approved'
+         AND approval_record.approval_version = ?
+         AND approval_record.scope_digest = ?
+         AND approval_record.action_class = 'operator_change'
+         AND approval_record.durable_work_id = ?
+         AND approval_record.durable_checkpoint_id = grant_record.checkpoint_id
+         AND approval_record.plan_version = ?
+         AND approval_record.target_scope_digest = ?
+         AND (approval_record.expires_at IS NULL OR approval_record.expires_at > ?)
+         AND grant_record.grant_id = ?
+         AND grant_record.status = 'consumed'
+         AND grant_record.work_id = ?
+         AND grant_record.checkpoint_id = approval_record.durable_checkpoint_id
+         AND grant_record.plan_version = ?
+         AND grant_record.owner_scope_hash = ?
+         AND grant_record.chat_scope_hash = ?
+         AND grant_record.group_scope_hash = ?
+         AND grant_record.channel = ?
+         AND grant_record.target_scope_hash = ?
+         AND grant_record.action_class = 'operator_change'
+         AND grant_record.approval_version = ?
+         AND grant_record.approval_scope_hash = ?
+         AND grant_record.consumed_lease_id = ?
+         AND lease_record.lease_id = ?
+         AND lease_record.work_id = ?
+         AND lease_record.status = 'active'
+         AND lease_record.expires_at > ?
+         AND work_record.lease_id = lease_record.lease_id
+         AND work_record.lease_expires_at > ?
+       LIMIT 1`,
+    )
+    .get(
+      packetId,
+      approvalVersion,
+      scopeDigest,
+      workId,
+      planVersion,
+      params.run.targetScopeHash,
+      params.now,
+      grantId,
+      workId,
+      planVersion,
+      params.run.ownerScopeHash,
+      params.run.chatScopeHash,
+      params.run.groupScopeHash,
+      params.run.channel,
+      params.run.targetScopeHash,
+      approvalVersion,
+      scopeDigest,
+      leaseId,
+      leaseId,
+      workId,
+      params.now,
+      params.now,
+    );
+  if (!bundle) {
+    throw new Error(
+      `Capability ${params.activation ? 'activation' : 'canary'} approval, grant, or lease is stale or mismatched.`,
+    );
+  }
+}
+
+function invalidateCapabilityAuthorityForAcquisition(
+  acquisitionId: string,
+  now: string,
+): void {
+  const linkedWork = `
+    SELECT work_id FROM durable_work_links
+    WHERE (link_kind = 'capability_acquisition' AND linked_id = ?)
+       OR (link_kind = 'capability_activation' AND linked_id = ?)
+  `;
+  db.prepare(
+    `UPDATE durable_resume_grants SET status = 'revoked', revoked_at = ?,
+       updated_at = ?
+     WHERE status = 'active' AND work_id IN (${linkedWork})`,
+  ).run(now, now, acquisitionId, acquisitionId);
+  db.prepare(
+    `UPDATE cognitive_approval_packets SET status = 'expired', updated_at = ?
+     WHERE status IN ('staged', 'approved') AND durable_work_id IN (${linkedWork})`,
+  ).run(now, acquisitionId, acquisitionId);
+  db.prepare(
+    `UPDATE durable_work_leases SET status = 'released', released_at = ?,
+       heartbeat_at = ?
+     WHERE status = 'active' AND work_id IN (${linkedWork})`,
+  ).run(now, now, acquisitionId, acquisitionId);
+  db.prepare(
+    `UPDATE durable_work_units SET lease_id = NULL, lease_expires_at = NULL,
+       updated_at = ?
+     WHERE work_id IN (${linkedWork}) AND lease_id IS NOT NULL`,
+  ).run(now, acquisitionId, acquisitionId);
+}
+
+function assertCapabilityActivationAuthorityReceipt(
+  run: CapabilityProductionRunRecord,
+): string {
+  const { work, checkpoint } = assertCapabilityProductionWorkBinding({
+    run,
+    activation: true,
+    requireTerminal: true,
+  });
+  const receiptIds = JSON.parse(checkpoint.receiptIdsJson) as string[];
+  const receipt =
+    receiptIds.length === 1
+      ? listDurableEffectReceipts({
+          workId: work.workId,
+          checkpointId: checkpoint.parentCheckpointId || undefined,
+          limit: 100,
+        }).find((candidate) => candidate.receiptId === receiptIds[0])
+      : undefined;
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = receipt
+      ? (JSON.parse(receipt.metadataJson) as Record<string, unknown>)
+      : {};
+  } catch (error) {
+    throw new Error(
+      'Capability activation authority receipt metadata is malformed.',
+      { cause: error },
+    );
+  }
+  const lease = receipt?.leaseId
+    ? getDurableWorkLease(receipt.leaseId)
+    : undefined;
+  if (
+    !receipt ||
+    !lease ||
+    receipt.status !== 'succeeded' ||
+    receipt.actionClass !== 'operator_change' ||
+    receipt.effectClass !== 'local_write' ||
+    receipt.workId !== run.activationWorkId ||
+    receipt.checkpointId !== checkpoint.parentCheckpointId ||
+    receipt.planVersion !== run.activationPlanVersion ||
+    receipt.invocationId !== run.activationInvocationId ||
+    receipt.grantId !== run.activationGrantId ||
+    receipt.approvalPacketId !== run.activationApprovalPacketId ||
+    receipt.approvalVersion !== run.activationApprovalVersion ||
+    receipt.approvalScopeHash !== run.activationApprovalScopeDigest ||
+    receipt.leaseId !== run.activationLeaseId ||
+    receipt.processGeneration !== lease.processGeneration ||
+    receipt.targetScopeHash !== run.targetScopeHash ||
+    !receipt.postStateFingerprint ||
+    !receipt.verificationFingerprint ||
+    metadata.receiptClass !== 'capability_activation_authority' ||
+    metadata.source !== 'verified_capability_apprenticeship' ||
+    metadata.resultCode !== run.candidateFingerprint
+  ) {
+    throw new Error(
+      'Capability activation authority receipt is stale or mismatched.',
+    );
+  }
+  return receipt.receiptId;
+}
+
+function assertCapabilityProductionHealth(params: {
+  run: CapabilityProductionRunRecord;
+  contract: CapabilityCandidateContract;
+  now: string;
+}): CapabilityHealthEvidenceRecord[] {
+  const evidence = listCapabilityHealthEvidence(params.run.runId);
+  const required = params.contract.resourceBindings.filter(
+    (binding) => binding.required,
+  );
+  if (
+    evidence.length !== required.length ||
+    capabilityHealthEvidenceSetDigest(evidence) !==
+      params.run.healthEvidenceSetDigest
+  ) {
+    throw new Error('Capability dependency-health evidence set is incomplete.');
+  }
+  for (const binding of required) {
+    const compatibleVersions = new Set([
+      binding.version,
+      ...(params.contract.compatibleResourceVersions[binding.resourceId] || []),
+    ]);
+    const item = evidence.find(
+      (candidate) => candidate.resourceId === binding.resourceId,
+    );
+    const observation = item
+      ? (db
+          .prepare(
+            `SELECT observation_id, subject_id, observed_at, source_kind,
+                    outcome, confidence, fallback_used
+             FROM reliability_observations WHERE observation_id = ?`,
+          )
+          .get(item.observationId) as
+          | {
+              observation_id: string;
+              subject_id: string;
+              observed_at: string;
+              source_kind: ReliabilityObservation['sourceKind'];
+              outcome: ReliabilityObservation['outcome'];
+              confidence: number;
+              fallback_used: number;
+            }
+          | undefined)
+      : undefined;
+    const laterAdverse = item
+      ? db
+          .prepare(
+            `SELECT 1 FROM reliability_observations
+             WHERE subject_id = ? AND observed_at > ?
+               AND observed_at <= ?
+               AND outcome IN ('degraded', 'blocked', 'failed', 'fallback', 'unknown')
+             LIMIT 1`,
+          )
+          .get(item.subjectId, item.observedAt, params.now)
+      : undefined;
+    if (
+      !item ||
+      !observation ||
+      !compatibleVersions.has(item.resourceVersion) ||
+      item.expiresAt <= params.now ||
+      observation.subject_id !== item.subjectId ||
+      observation.observed_at !== item.observedAt ||
+      observation.observed_at > params.now ||
+      observation.source_kind !== 'verified_usage' ||
+      observation.outcome !== 'success' ||
+      Number(observation.confidence) !== 1 ||
+      Number(observation.fallback_used) !== 0 ||
+      laterAdverse
+    ) {
+      throw new Error(
+        `Capability dependency health is stale or unhealthy for ${binding.resourceId}.`,
+      );
+    }
+  }
+  return evidence;
+}
+
+function assertCapabilityProductionExecution(params: {
+  run: CapabilityProductionRunRecord;
+  contract: CapabilityCandidateContract;
+}): { receiptIds: string[]; postconditionFingerprint: string } {
+  const { work, checkpoint } = assertCapabilityProductionWorkBinding({
+    run: params.run,
+    requireTerminal: true,
+  });
+  const steps = listCapabilityProductionSteps(params.run.runId);
+  const receipts = listDurableEffectReceipts({
+    workId: work.workId,
+    limit: 1_000,
+  });
+  const receiptMetadata = new Map<string, Record<string, unknown>>();
+  for (const receipt of receipts) {
+    try {
+      receiptMetadata.set(
+        receipt.receiptId,
+        JSON.parse(receipt.metadataJson) as Record<string, unknown>,
+      );
+    } catch (error) {
+      throw new Error('Capability production receipt metadata is malformed.', {
+        cause: error,
+      });
+    }
+  }
+  const referencedReceiptIds = new Set(
+    JSON.parse(checkpoint.receiptIdsJson) as string[],
+  );
+  const recoveredReceiptIds = new Set(
+    receipts
+      .filter(
+        (receipt) =>
+          receipt.status === 'succeeded' &&
+          referencedReceiptIds.has(receipt.receiptId) &&
+          steps.some((step) => step.receiptId === receipt.receiptId) &&
+          receiptMetadata.get(receipt.receiptId)?.receiptClass ===
+            'capability_production_recovery' &&
+          typeof receiptMetadata.get(receipt.receiptId)?.recoveryOfReceiptId ===
+            'string',
+      )
+      .map(
+        (receipt) =>
+          receiptMetadata.get(receipt.receiptId)?.recoveryOfReceiptId as string,
+      ),
+  );
+  if (
+    steps.length !== params.contract.steps.length ||
+    referencedReceiptIds.size !== params.contract.steps.length ||
+    receipts.some(
+      (receipt) =>
+        receipt.planVersion === work.planVersion &&
+        ['started', 'partial', 'unknown', 'failed'].includes(receipt.status) &&
+        !recoveredReceiptIds.has(receipt.receiptId),
+    )
+  ) {
+    throw new Error('Capability production execution has unresolved effects.');
+  }
+  const receiptIds: string[] = [];
+  for (const contractStep of params.contract.steps) {
+    const step = steps.find(
+      (candidate) => candidate.stepId === contractStep.stepId,
+    );
+    const receipt = step
+      ? receipts.find((candidate) => candidate.receiptId === step.receiptId)
+      : undefined;
+    const lease = receipt?.leaseId
+      ? getDurableWorkLease(receipt.leaseId)
+      : null;
+    const metadata = receipt
+      ? receiptMetadata.get(receipt.receiptId) || {}
+      : {};
+    const recoveryOf =
+      metadata.receiptClass === 'capability_production_recovery' &&
+      typeof metadata.recoveryOfReceiptId === 'string'
+        ? receipts.find(
+            (candidate) => candidate.receiptId === metadata.recoveryOfReceiptId,
+          )
+        : undefined;
+    const recoveryReceipt = Boolean(recoveryOf);
+    const originalLease = recoveryOf?.leaseId
+      ? getDurableWorkLease(recoveryOf.leaseId)
+      : null;
+    if (
+      !step ||
+      !receipt ||
+      !lease ||
+      !referencedReceiptIds.has(receipt.receiptId) ||
+      step.nodeId !== contractStep.stepId ||
+      step.invocationId !== receipt.invocationId ||
+      (recoveryReceipt
+        ? !step.invocationId.startsWith(`${params.run.invocationId}:recovery:`)
+        : step.invocationId !== params.run.invocationId) ||
+      step.bindingId !== contractStep.bindingId ||
+      step.operationId !== contractStep.operationId ||
+      step.evaluatorId !== contractStep.evaluatorId ||
+      step.resourceId !== contractStep.resourceId ||
+      step.resourceVersion !== contractStep.version ||
+      step.executorImplementationDigest !==
+        contractStep.executorImplementationDigest ||
+      step.evaluatorImplementationDigest !==
+        contractStep.evaluatorImplementationDigest ||
+      step.actionClass !== contractStep.actionClass ||
+      step.inputDigest !== params.run.inputDigest ||
+      !step.independentVerification ||
+      receipt.workId !== work.workId ||
+      receipt.checkpointId !== checkpoint.parentCheckpointId ||
+      receipt.planVersion !== work.planVersion ||
+      receipt.nodeId !== contractStep.stepId ||
+      (recoveryReceipt
+        ? receipt.actionClass !== 'local_lookup' ||
+          receipt.effectClass !== 'read_only' ||
+          recoveryOf?.workId !== work.workId ||
+          recoveryOf.checkpointId !== checkpoint.parentCheckpointId ||
+          recoveryOf.planVersion !== work.planVersion ||
+          recoveryOf.nodeId !== contractStep.stepId ||
+          recoveryOf.invocationId !== params.run.invocationId ||
+          recoveryOf.actionClass !== contractStep.actionClass ||
+          !recoveryOf.leaseId ||
+          !recoveryOf.processGeneration ||
+          !originalLease ||
+          originalLease.workId !== work.workId ||
+          originalLease.processGeneration !== recoveryOf.processGeneration ||
+          originalLease.acquiredAt > recoveryOf.createdAt ||
+          !['started', 'partial', 'unknown'].includes(recoveryOf.status)
+        : receipt.actionClass !== contractStep.actionClass) ||
+      receipt.status !== 'succeeded' ||
+      receipt.targetScopeHash !== params.run.targetScopeHash ||
+      !receipt.postStateFingerprint ||
+      !receipt.verificationFingerprint ||
+      !receipt.leaseId ||
+      !receipt.processGeneration ||
+      lease.workId !== work.workId ||
+      lease.processGeneration !== receipt.processGeneration ||
+      lease.acquiredAt > receipt.createdAt ||
+      !['capability_production', 'capability_production_recovery'].includes(
+        String(metadata.receiptClass || ''),
+      ) ||
+      metadata.source !== 'verified_capability_apprenticeship' ||
+      metadata.resultCode !== params.run.candidateFingerprint ||
+      metadata.verificationClass !== contractStep.evaluatorId ||
+      metadata.idempotencyKeyHash !== params.run.inputDigest
+    ) {
+      throw new Error(
+        `Capability production step ${contractStep.stepId} is not canonically verified.`,
+      );
+    }
+    receiptIds.push(receipt.receiptId);
+  }
+  return {
+    receiptIds,
+    postconditionFingerprint: checkpoint.verifiedPostStateFingerprint as string,
+  };
+}
+
+export function assertCapabilityProductionReceiptsReadyForCheckpoint(params: {
+  runId: string;
+  expectedRunRevision: number;
+  now: string;
+}): {
+  run: CapabilityProductionRunRecord;
+  contract: CapabilityCandidateContract;
+  receiptIds: string[];
+  postStateFingerprint: string;
+  providerCalls: number;
+  costUsd: number;
+  latencyMs: number;
+} {
+  const run = getCapabilityProductionRun(params.runId);
+  const acquisition = run
+    ? getCapabilityAcquisition(run.acquisitionId)
+    : undefined;
+  if (
+    !run ||
+    !acquisition ||
+    run.revision !== params.expectedRunRevision ||
+    run.status !== 'running' ||
+    !(
+      (run.runKind === 'canary' && acquisition.state === 'canary_ready') ||
+      (run.runKind === 'active_reuse' &&
+        ['active', 'monitoring'].includes(acquisition.state))
+    )
+  ) {
+    throw new Error('Capability receipt-only recovery head is stale.');
+  }
+  const contract = parseCapabilityProductionContract(acquisition, run);
+  const { work, checkpoint } = assertCapabilityProductionWorkBinding({ run });
+  if (!['interrupted', 'verifying'].includes(work.status) || work.leaseId) {
+    throw new Error(
+      'Capability receipts are not at the verification boundary.',
+    );
+  }
+  const steps = listCapabilityProductionSteps(run.runId);
+  const receipts = listDurableEffectReceipts({
+    workId: run.workId,
+    limit: 1_000,
+  }).filter((receipt) => receipt.planVersion === run.planVersion);
+  if (
+    steps.length !== contract.steps.length ||
+    receipts.length !== contract.steps.length ||
+    receipts.some((receipt) => receipt.status !== 'succeeded')
+  ) {
+    throw new Error(
+      'Capability receipt-only recovery is incomplete or ambiguous.',
+    );
+  }
+  const receiptIds: string[] = [];
+  const verifiedPostconditionHashes = new Set<string>();
+  let postStateFingerprint = '';
+  let providerCalls = 0;
+  let costUsd = 0;
+  let latencyMs = 0;
+  let executionEvidenceAt = '';
+  for (const contractStep of contract.steps) {
+    const step = steps.find(
+      (candidate) => candidate.stepId === contractStep.stepId,
+    );
+    const receipt = step
+      ? receipts.find((candidate) => candidate.receiptId === step.receiptId)
+      : undefined;
+    const lease = receipt?.leaseId
+      ? getDurableWorkLease(receipt.leaseId)
+      : undefined;
+    let metadata: Record<string, unknown> = {};
+    let stepPostconditionHashes: unknown[] = [];
+    try {
+      metadata = receipt
+        ? (JSON.parse(receipt.metadataJson) as Record<string, unknown>)
+        : {};
+      const parsedHashes =
+        typeof metadata.verifiedPostconditionHashesJson === 'string'
+          ? JSON.parse(metadata.verifiedPostconditionHashesJson)
+          : null;
+      stepPostconditionHashes = Array.isArray(parsedHashes) ? parsedHashes : [];
+    } catch (error) {
+      throw new Error('Capability receipt-only metadata is malformed.', {
+        cause: error,
+      });
+    }
+    const stepProviderCalls = Number(metadata.providerCalls);
+    const stepCostUsd = Number(metadata.costUsd);
+    const stepLatencyMs = Number(metadata.latencyMs);
+    if (
+      !step ||
+      !receipt ||
+      !lease ||
+      step.nodeId !== contractStep.stepId ||
+      step.invocationId !== run.invocationId ||
+      step.bindingId !== contractStep.bindingId ||
+      step.operationId !== contractStep.operationId ||
+      step.evaluatorId !== contractStep.evaluatorId ||
+      step.resourceId !== contractStep.resourceId ||
+      step.resourceVersion !== contractStep.version ||
+      step.executorImplementationDigest !==
+        contractStep.executorImplementationDigest ||
+      step.evaluatorImplementationDigest !==
+        contractStep.evaluatorImplementationDigest ||
+      step.actionClass !== contractStep.actionClass ||
+      step.inputDigest !== run.inputDigest ||
+      !step.independentVerification ||
+      receipt.workId !== work.workId ||
+      receipt.checkpointId !== checkpoint.durableCheckpointId ||
+      receipt.nodeId !== contractStep.stepId ||
+      receipt.invocationId !== run.invocationId ||
+      receipt.actionClass !== contractStep.actionClass ||
+      receipt.status !== 'succeeded' ||
+      receipt.targetScopeHash !== run.targetScopeHash ||
+      !receipt.postStateFingerprint ||
+      !receipt.verificationFingerprint ||
+      !receipt.leaseId ||
+      !receipt.processGeneration ||
+      lease.workId !== work.workId ||
+      lease.processGeneration !== receipt.processGeneration ||
+      lease.acquiredAt > receipt.createdAt ||
+      metadata.receiptClass !== 'capability_production' ||
+      metadata.source !== 'verified_capability_apprenticeship' ||
+      metadata.resultCode !== run.candidateFingerprint ||
+      metadata.verificationClass !== contractStep.evaluatorId ||
+      metadata.idempotencyKeyHash !== run.inputDigest ||
+      stepPostconditionHashes.length === 0 ||
+      new Set(stepPostconditionHashes).size !==
+        stepPostconditionHashes.length ||
+      stepPostconditionHashes.some(
+        (value) =>
+          typeof value !== 'string' ||
+          !CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(value),
+      ) ||
+      !Number.isSafeInteger(stepProviderCalls) ||
+      stepProviderCalls < 0 ||
+      !Number.isFinite(stepCostUsd) ||
+      stepCostUsd < 0 ||
+      !Number.isSafeInteger(stepLatencyMs) ||
+      stepLatencyMs < 0
+    ) {
+      throw new Error(
+        `Capability receipt-only step ${contractStep.stepId} is not exact.`,
+      );
+    }
+    for (const hash of stepPostconditionHashes as string[]) {
+      verifiedPostconditionHashes.add(hash);
+    }
+    providerCalls += stepProviderCalls;
+    costUsd += stepCostUsd;
+    latencyMs += stepLatencyMs;
+    receiptIds.push(receipt.receiptId);
+    postStateFingerprint = receipt.postStateFingerprint;
+    executionEvidenceAt =
+      executionEvidenceAt > receipt.createdAt
+        ? executionEvidenceAt
+        : receipt.createdAt;
+  }
+  const requiredPostconditionHashes = new Set(
+    contract.successPostconditions.map(capabilityProductionPostconditionHash),
+  );
+  if (
+    verifiedPostconditionHashes.size !== requiredPostconditionHashes.size ||
+    [...verifiedPostconditionHashes].some(
+      (hash) => !requiredPostconditionHashes.has(hash),
+    ) ||
+    !Number.isSafeInteger(providerCalls) ||
+    costUsd > CAPABILITY_PRODUCTION_MAX_LIVE_COST_USD ||
+    !Number.isSafeInteger(latencyMs) ||
+    !executionEvidenceAt
+  ) {
+    throw new Error(
+      'Capability receipt-only verification marker is incomplete or unsafe.',
+    );
+  }
+  assertCapabilityProductionHealth({
+    run,
+    contract,
+    now: executionEvidenceAt,
+  });
+  if (
+    run.runKind === 'canary' &&
+    !db
+      .prepare(
+        `SELECT 1 FROM capability_production_transition_receipts
+         WHERE run_id = ? AND transition_kind = 'canary_authorized'
+           AND created_at <= ? LIMIT 1`,
+      )
+      .get(run.runId, executionEvidenceAt)
+  ) {
+    throw new Error(
+      'Capability receipt-only recovery lacks execution-time authority.',
+    );
+  }
+  return {
+    run,
+    contract,
+    receiptIds,
+    postStateFingerprint,
+    providerCalls,
+    costUsd,
+    latencyMs,
+  };
+}
+
+function assertCapabilityProductionOutcome(params: {
+  run: CapabilityProductionRunRecord;
+  receiptIds: string[];
+}): OutcomeRecord {
+  const outcome = params.run.outcomeId
+    ? getOutcome(params.run.outcomeId)
+    : undefined;
+  let refs: OutcomeLinkedRefs = {};
+  try {
+    refs = outcome?.linkedRefsJson
+      ? (JSON.parse(outcome.linkedRefsJson) as OutcomeLinkedRefs)
+      : {};
+  } catch (error) {
+    throw new Error('Capability production outcome references are malformed.', {
+      cause: error,
+    });
+  }
+  if (
+    !outcome ||
+    outcome.groupFolder !== params.run.groupFolder ||
+    outcome.sourceType !== 'capability_acquisition' ||
+    outcome.sourceKey !== params.run.runId ||
+    refs.capabilityAcquisitionId !== params.run.acquisitionId ||
+    refs.capabilityCandidateFingerprint !== params.run.candidateFingerprint ||
+    refs.capabilityEvidenceOrigin !== 'live' ||
+    !Array.isArray(refs.verificationReceiptIds) ||
+    refs.verificationReceiptIds.length !== params.receiptIds.length ||
+    params.receiptIds.some(
+      (receiptId) => !refs.verificationReceiptIds?.includes(receiptId),
+    )
+  ) {
+    throw new Error('Capability production outcome is not bound to execution.');
+  }
+  return outcome;
+}
+
+function capabilityProductionExecutionEvidenceAt(params: {
+  run: CapabilityProductionRunRecord;
+  receiptIds: string[];
+}): string {
+  const allReceipts = listDurableEffectReceipts({
+    workId: params.run.workId,
+    limit: 1_000,
+  });
+  const receipts = allReceipts.filter((receipt) =>
+    params.receiptIds.includes(receipt.receiptId),
+  );
+  if (receipts.length !== params.receiptIds.length) {
+    throw new Error('Capability execution-time evidence is incomplete.');
+  }
+  return receipts.reduce((latest, receipt) => {
+    let executionStartedAt = receipt.createdAt;
+    try {
+      const metadata = JSON.parse(receipt.metadataJson) as Record<
+        string,
+        unknown
+      >;
+      if (
+        metadata.receiptClass === 'capability_production_recovery' &&
+        typeof metadata.recoveryOfReceiptId === 'string'
+      ) {
+        const original = allReceipts.find(
+          (candidate) => candidate.receiptId === metadata.recoveryOfReceiptId,
+        );
+        if (!original) {
+          throw new Error('Recovered execution receipt lost its origin.');
+        }
+        executionStartedAt = original.createdAt;
+      }
+    } catch (error) {
+      throw new Error(
+        'Capability execution-time receipt metadata is malformed.',
+        { cause: error },
+      );
+    }
+    return latest > executionStartedAt ? latest : executionStartedAt;
+  }, '');
+}
+
+export function assertCapabilityProductionExecutionPreflight(params: {
+  runId: string;
+  expectedRunRevision: number;
+  now: string;
+}): {
+  run: CapabilityProductionRunRecord;
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
+} {
+  const run = getCapabilityProductionRun(params.runId);
+  const acquisition = run
+    ? getCapabilityAcquisition(run.acquisitionId)
+    : undefined;
+  if (
+    !run ||
+    !acquisition ||
+    run.revision !== params.expectedRunRevision ||
+    run.expiresAt <= params.now ||
+    !(
+      (run.runKind === 'canary' &&
+        ['canary_ready', 'running'].includes(run.status) &&
+        acquisition.state === 'canary_ready') ||
+      (run.runKind === 'active_reuse' &&
+        ['monitoring', 'running'].includes(run.status) &&
+        ['active', 'monitoring'].includes(acquisition.state))
+    )
+  ) {
+    throw new Error('Capability production execution preflight is stale.');
+  }
+  const contract = parseCapabilityProductionContract(acquisition, run);
+  assertCapabilityProductionWorkBinding({ run });
+  assertCapabilityProductionHealth({ run, contract, now: params.now });
+  const leaseId =
+    run.runKind === 'canary'
+      ? run.executionLeaseId || run.canaryLeaseId
+      : run.executionLeaseId;
+  const lease = leaseId ? getDurableWorkLease(leaseId) : null;
+  const work = getDurableWorkUnit(run.workId);
+  if (
+    !lease ||
+    !work ||
+    lease.workId !== work.workId ||
+    lease.status !== 'active' ||
+    lease.expiresAt <= params.now ||
+    work.leaseId !== lease.leaseId ||
+    !work.leaseExpiresAt ||
+    work.leaseExpiresAt <= params.now
+  ) {
+    throw new Error('Capability production execution lease is stale.');
+  }
+  if (run.runKind === 'canary') {
+    const authorization = db
+      .prepare(
+        `SELECT 1 FROM capability_production_transition_receipts
+         WHERE run_id = ? AND transition_kind = 'canary_authorized'
+         LIMIT 1`,
+      )
+      .get(run.runId);
+    if (!authorization) {
+      throw new Error('Capability canary lacks atomic authorization evidence.');
+    }
+  }
+  return { run, acquisition, contract };
+}
+
+function assertCapabilityProductionRecoveryReceiptsExact(params: {
+  run: CapabilityProductionRunRecord;
+  contract: CapabilityCandidateContract;
+  unresolvedReceipts: DurableEffectReceipt[];
+}): void {
+  const { run, contract, unresolvedReceipts } = params;
+  for (const receipt of unresolvedReceipts) {
+    const step = contract.steps.find(
+      (candidate) => candidate.stepId === receipt.nodeId,
+    );
+    const originalLease = receipt.leaseId
+      ? getDurableWorkLease(receipt.leaseId)
+      : null;
+    const originalGrant = originalLease
+      ? listDurableResumeGrants({ workId: run.workId, limit: 500 }).find(
+          (candidate) => candidate.consumedLeaseId === originalLease.leaseId,
+        )
+      : undefined;
+    let metadata: Record<string, unknown> = {};
+    try {
+      metadata = JSON.parse(receipt.metadataJson) as Record<string, unknown>;
+    } catch (error) {
+      throw new Error(
+        'Capability production recovery receipt metadata is malformed.',
+        { cause: error },
+      );
+    }
+    if (
+      !step ||
+      receipt.workId !== run.workId ||
+      receipt.checkpointId !== run.checkpointId ||
+      receipt.planVersion !== run.planVersion ||
+      receipt.invocationId !== run.invocationId ||
+      receipt.actionClass !== step.actionClass ||
+      receipt.targetScopeHash !== run.targetScopeHash ||
+      !receipt.leaseId ||
+      !receipt.processGeneration ||
+      !originalLease ||
+      originalLease.workId !== run.workId ||
+      originalLease.processGeneration !== receipt.processGeneration ||
+      originalLease.acquiredAt > receipt.createdAt ||
+      !originalGrant ||
+      originalGrant.status !== 'consumed' ||
+      originalGrant.workId !== run.workId ||
+      originalGrant.checkpointId !== run.checkpointId ||
+      originalGrant.planVersion !== run.planVersion ||
+      originalGrant.ownerScopeHash !== run.ownerScopeHash ||
+      originalGrant.chatScopeHash !== run.chatScopeHash ||
+      originalGrant.groupScopeHash !== run.groupScopeHash ||
+      originalGrant.channel !== run.channel ||
+      originalGrant.targetScopeHash !== run.targetScopeHash ||
+      !(
+        originalGrant.actionClass === step.actionClass ||
+        (run.runKind === 'canary' &&
+          originalGrant.actionClass === 'operator_change' &&
+          originalGrant.grantId === run.canaryGrantId)
+      ) ||
+      !originalGrant.consumedAt ||
+      originalGrant.consumedAt > receipt.createdAt ||
+      run.expiresAt <= receipt.createdAt ||
+      metadata.receiptClass !== 'capability_production' ||
+      metadata.source !== 'verified_capability_apprenticeship' ||
+      metadata.resultCode !== run.candidateFingerprint ||
+      metadata.verificationClass !== step.evaluatorId ||
+      metadata.idempotencyKeyHash !== run.inputDigest
+    ) {
+      throw new Error('Capability production recovery receipt is not exact.');
+    }
+    assertCapabilityProductionHealth({
+      run,
+      contract,
+      now: receipt.createdAt,
+    });
+    const historicalAuthority =
+      run.runKind === 'canary'
+        ? db
+            .prepare(
+              `SELECT 1 FROM capability_production_transition_receipts
+               WHERE run_id = ? AND transition_kind = 'canary_authorized'
+                 AND created_at <= ? LIMIT 1`,
+            )
+            .get(run.runId, receipt.createdAt)
+        : db
+            .prepare(
+              `SELECT 1 FROM capability_production_transition_receipts
+               WHERE acquisition_id = ? AND transition_kind = 'activated'
+                 AND created_at <= ? LIMIT 1`,
+            )
+            .get(run.acquisitionId, receipt.createdAt);
+    if (!historicalAuthority) {
+      throw new Error(
+        'Capability production recovery lacks execution-time authority.',
+      );
+    }
+  }
+}
+
+/**
+ * Reconstructs the canonical recovery head after startup lease reconciliation.
+ * This operation grants no execution authority and never accepts caller-owned
+ * evidence identifiers; it only exposes unresolved canonical receipts so an
+ * independently registered evaluator can inspect the existing real-world
+ * effect without replaying it.
+ */
+export function assertCapabilityProductionRecoveryPreflight(params: {
+  runId: string;
+  expectedRunRevision: number;
+  now: string;
+}): {
+  run: CapabilityProductionRunRecord;
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
+  unresolvedReceipts: DurableEffectReceipt[];
+} {
+  const run = getCapabilityProductionRun(params.runId);
+  const acquisition = run
+    ? getCapabilityAcquisition(run.acquisitionId)
+    : undefined;
+  if (
+    !run ||
+    !acquisition ||
+    run.revision !== params.expectedRunRevision ||
+    run.status !== 'running' ||
+    !(
+      (run.runKind === 'canary' && acquisition.state === 'canary_ready') ||
+      (run.runKind === 'active_reuse' &&
+        ['active', 'monitoring'].includes(acquisition.state))
+    )
+  ) {
+    throw new Error(
+      'Capability production recovery head is stale or ineligible.',
+    );
+  }
+  const contract = parseCapabilityProductionContract(acquisition, run);
+  const { work } = assertCapabilityProductionWorkBinding({ run });
+  if (
+    work.leaseId ||
+    !['interrupted', 'verifying', 'delivery_unverified'].includes(work.status)
+  ) {
+    throw new Error(
+      'Capability production recovery requires a reconciled lease.',
+    );
+  }
+  const unresolvedReceipts = listDurableEffectReceipts({
+    workId: run.workId,
+    limit: 1_000,
+  }).filter(
+    (receipt) =>
+      receipt.planVersion === run.planVersion &&
+      ['started', 'partial', 'unknown'].includes(receipt.status),
+  );
+  if (unresolvedReceipts.length === 0) {
+    throw new Error('Capability production recovery has no unresolved effect.');
+  }
+  assertCapabilityProductionRecoveryReceiptsExact({
+    run,
+    contract,
+    unresolvedReceipts,
+  });
+  return { run, acquisition, contract, unresolvedReceipts };
+}
+
+/**
+ * Revalidates the verification-only lease after it is acquired. Historical
+ * execution health can establish whether the already-started effect was
+ * authorized, but it never authorizes a new executor call. Recovery therefore
+ * accepts only a fresh, unapproved local_lookup grant bound to the one exact
+ * unresolved receipt and evaluator.
+ */
+export function assertCapabilityProductionRecoveryLeasePreflight(params: {
+  runId: string;
+  expectedRunRevision: number;
+  unresolvedReceiptId: string;
+  evaluatorId: string;
+  recoveryGrantId: string;
+  recoveryLeaseId: string;
+  processGeneration: string;
+  now: string;
+}): ReturnType<typeof assertCapabilityProductionRecoveryPreflight> {
+  const run = getCapabilityProductionRun(params.runId);
+  const acquisition = run
+    ? getCapabilityAcquisition(run.acquisitionId)
+    : undefined;
+  if (
+    !run ||
+    !acquisition ||
+    run.revision !== params.expectedRunRevision ||
+    run.status !== 'running' ||
+    !(
+      (run.runKind === 'canary' && acquisition.state === 'canary_ready') ||
+      (run.runKind === 'active_reuse' &&
+        ['active', 'monitoring'].includes(acquisition.state))
+    )
+  ) {
+    throw new Error('Capability production recovery lease head is stale.');
+  }
+  const contract = parseCapabilityProductionContract(acquisition, run);
+  const { work } = assertCapabilityProductionWorkBinding({ run });
+  const unresolvedReceipts = listDurableEffectReceipts({
+    workId: run.workId,
+    limit: 1_000,
+  }).filter(
+    (receipt) =>
+      receipt.planVersion === run.planVersion &&
+      ['started', 'partial', 'unknown'].includes(receipt.status),
+  );
+  const unresolved =
+    unresolvedReceipts.length === 1 ? unresolvedReceipts[0] : undefined;
+  const step = unresolved
+    ? contract.steps.find((candidate) => candidate.stepId === unresolved.nodeId)
+    : undefined;
+  const lease = getDurableWorkLease(params.recoveryLeaseId);
+  const grant = listDurableResumeGrants({
+    workId: run.workId,
+    limit: 500,
+  }).find((candidate) => candidate.grantId === params.recoveryGrantId);
+  if (
+    !unresolved ||
+    unresolved.receiptId !== params.unresolvedReceiptId ||
+    !step ||
+    step.evaluatorId !== params.evaluatorId ||
+    run.executionGrantId !== params.recoveryGrantId ||
+    run.executionLeaseId !== params.recoveryLeaseId ||
+    !lease ||
+    lease.workId !== run.workId ||
+    lease.status !== 'active' ||
+    lease.processGeneration !== params.processGeneration ||
+    lease.expiresAt <= params.now ||
+    work.leaseId !== lease.leaseId ||
+    work.leaseExpiresAt !== lease.expiresAt ||
+    work.status !== 'verifying' ||
+    !grant ||
+    grant.status !== 'consumed' ||
+    grant.consumedLeaseId !== lease.leaseId ||
+    grant.actionClass !== 'local_lookup' ||
+    grant.approvalPacketId ||
+    grant.approvalVersion !== null ||
+    grant.approvalScopeHash ||
+    grant.workId !== run.workId ||
+    grant.checkpointId !== run.checkpointId ||
+    grant.planVersion !== run.planVersion ||
+    grant.ownerScopeHash !== run.ownerScopeHash ||
+    grant.chatScopeHash !== run.chatScopeHash ||
+    grant.groupScopeHash !== run.groupScopeHash ||
+    grant.channel !== run.channel ||
+    grant.targetScopeHash !== run.targetScopeHash
+  ) {
+    throw new Error(
+      'Capability production recovery lease is not evaluator-only or exact.',
+    );
+  }
+  assertCapabilityProductionRecoveryReceiptsExact({
+    run,
+    contract,
+    unresolvedReceipts,
+  });
+  return { run, acquisition, contract, unresolvedReceipts };
+}
+
+export function refreshCapabilityProductionRunWorkHead(params: {
+  runId: string;
+  expectedRevision: number;
+  activation?: boolean;
+  now: string;
+}): CapabilityProductionRunRecord {
+  const run = getCapabilityProductionRun(params.runId);
+  if (!run || run.revision !== params.expectedRevision) {
+    throw new Error('Capability production run changed before work refresh.');
+  }
+  const workId = params.activation ? run.activationWorkId : run.workId;
+  if (!workId) {
+    throw new Error(
+      'Capability production run has no durable work to refresh.',
+    );
+  }
+  const work = getDurableWorkUnit(workId);
+  if (!work || !work.checkpointHeadId) {
+    throw new Error('Capability production durable work has no current head.');
+  }
+  const next: CapabilityProductionRunRecord = {
+    ...run,
+    updatedAt: params.now,
+    revision: run.revision + 1,
+    ...(params.activation
+      ? {
+          activationWorkVersion: work.version,
+          activationPlanVersion: work.planVersion,
+          activationCheckpointId: work.checkpointHeadId,
+        }
+      : {
+          workVersion: work.version,
+          planVersion: work.planVersion,
+          checkpointId: work.checkpointHeadId,
+        }),
+  };
+  const result = updateCapabilityProductionRunCAS({
+    expectedRevision: run.revision,
+    next,
+  });
+  if (result !== 'applied') {
+    throw new Error(
+      'Capability production work refresh lost its revision race.',
+    );
+  }
+  return getCapabilityProductionRun(run.runId) as CapabilityProductionRunRecord;
+}
+
+function projectCapabilityProductionSkill(
+  record: CapabilityAcquisitionRecord,
+  contract: CapabilityCandidateContract,
+): void {
+  if (!record.compiledSkillId) return;
+  const active = record.state === 'active' || record.state === 'monitoring';
+  const stopped = ['paused', 'quarantined', 'retired'].includes(record.state);
+  const outcomes = JSON.parse(record.outcomeIdsJson) as string[];
+  upsertSkillPlaybook({
+    skillId: record.compiledSkillId,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    groupFolder: record.groupFolder || null,
+    title: contract.title,
+    triggerPattern: contract.triggerSemantics.join('; '),
+    taskFamily: record.taskFamily,
+    requiredContextJson: JSON.stringify({ required: contract.requiredInputs }),
+    allowedActionsJson: JSON.stringify(contract.allowedActions),
+    disallowedActionsJson: JSON.stringify(contract.prohibitedActions),
+    approvalRequirementsJson: JSON.stringify(contract.approvalRequirements),
+    expectedToolsJson: JSON.stringify(
+      contract.steps.map((step) => step.bindingId),
+    ),
+    fallbackPlan:
+      contract.fallbackPaths[0] || 'Stop honestly and report the blocker.',
+    successCriteriaJson: JSON.stringify(contract.successPostconditions),
+    evalScenariosJson: JSON.stringify([
+      ...contract.deterministicScenarioIds,
+      ...contract.heldOutScenarioIds,
+    ]),
+    usageCount: outcomes.length,
+    lastOutcome: record.lastOutcome || null,
+    reliabilityScore: Math.max(
+      0.1,
+      Math.min(0.99, record.confidence - record.negativeOutcomeCount * 0.15),
+    ),
+    status: active ? 'active' : stopped ? 'paused' : 'suggested',
+    sourceDistillationId: null,
+    nextAction: active
+      ? 'Execute only the approved contract; protected effects still require fresh approval.'
+      : stopped
+        ? 'Canonical acquisition stopped matching; preserve evidence and review remediation.'
+        : 'Production activation is not yet approved.',
+    privacyJson: JSON.stringify({
+      sensitivity: 'metadata_only',
+      rawContentStored: false,
+      capabilityAcquisitionId: record.acquisitionId,
+      candidateFingerprint: contract.candidateFingerprint,
+      projectionOnly: true,
+    }),
+  });
+}
+
+function applyCapabilityProductionAcquisitionTransition(params: {
+  current: CapabilityAcquisitionRecord;
+  next: CapabilityAcquisitionRecord;
+  actorKind: CapabilityAcquisitionTransitionRecord['actorKind'];
+  reason: string;
+  evidenceRefs: string[];
+  idempotencyKey: string;
+  contract: CapabilityCandidateContract;
+}): CapabilityAcquisitionTransitionRecord {
+  const snapshot = capabilityAcquisitionSnapshotJson(params.next);
+  const evidenceRefsJson = JSON.stringify(
+    [...new Set(params.evidenceRefs)].sort(),
+  );
+  const transitionBase = {
+    acquisitionId: params.current.acquisitionId,
+    fromState: params.current.state,
+    toState: params.next.state,
+    expectedVersion: params.current.recordVersion,
+    resultingVersion: params.next.recordVersion,
+    actorKind: params.actorKind,
+    reason: params.reason,
+    evidenceRefsJson,
+    idempotencyKey: params.idempotencyKey,
+    resultingSnapshotJson: snapshot,
+  };
+  const transition: CapabilityAcquisitionTransitionRecord = {
+    transitionId: `capability-transition:${createHash('sha256')
+      .update(JSON.stringify(transitionBase))
+      .digest('hex')
+      .slice(0, 40)}`,
+    createdAt: params.next.updatedAt,
+    ...transitionBase,
+    transitionDigest: capabilityTransitionDigest(transitionBase),
+    privacyJson: params.current.privacyJson,
+  };
+  assertCapabilityAcquisitionTransition({
+    current: params.current,
+    next: params.next,
+    transition,
+    expectedState: params.current.state,
+  });
+  const normalized = normalizeCapabilityAcquisitionForStorage(params.next);
+  const values = {
+    ...capabilityAcquisitionParams(normalized),
+    expected_state: params.current.state,
+    expected_version: params.current.recordVersion,
+  };
+  const updated = db
+    .prepare(
+      `UPDATE capability_acquisitions SET
+        updated_at=@updated_at, group_folder=@group_folder,
+        target_outcome=@target_outcome, postcondition_json=@postcondition_json,
+        task_family=@task_family, affected_capability=@affected_capability,
+        gap_kind=@gap_kind, known_prerequisites_json=@known_prerequisites_json,
+        missing_prerequisites_json=@missing_prerequisites_json,
+        candidate_resource_refs_json=@candidate_resource_refs_json,
+        selected_resource_refs_json=@selected_resource_refs_json,
+        risk_level=@risk_level, data_egress_class=@data_egress_class,
+        expected_cost_band=@expected_cost_band,
+        expected_latency_band=@expected_latency_band,
+        authority_requirements_json=@authority_requirements_json,
+        evidence_origin=@evidence_origin, confidence=@confidence,
+        provenance_json=@provenance_json, state=@state,
+        next_safe_action=@next_safe_action, record_version=@record_version,
+        environment_fingerprint=@environment_fingerprint,
+        candidate_contract_json=@candidate_contract_json,
+        sandbox_evidence_json=@sandbox_evidence_json,
+        held_out_evidence_json=@held_out_evidence_json,
+        owner_review_json=@owner_review_json,
+        outcome_ids_json=@outcome_ids_json,
+        compiled_skill_id=@compiled_skill_id,
+        negative_outcome_count=@negative_outcome_count,
+        correction_count=@correction_count, last_outcome=@last_outcome,
+        expires_at=@expires_at, revalidate_after_at=@revalidate_after_at,
+        privacy_json=@privacy_json
+       WHERE acquisition_id=@acquisition_id AND state=@expected_state
+         AND record_version=@expected_version`,
+    )
+    .run(values);
+  if (updated.changes !== 1) {
+    throw new Error(
+      'Capability acquisition lost its production transition race.',
+    );
+  }
+  db.prepare(
+    `INSERT INTO capability_acquisition_transitions (
+      transition_id, acquisition_id, created_at, from_state, to_state,
+      expected_version, resulting_version, actor_kind, reason,
+      evidence_refs_json, idempotency_key, transition_digest,
+      resulting_snapshot_json, privacy_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    transition.transitionId,
+    transition.acquisitionId,
+    transition.createdAt,
+    transition.fromState,
+    transition.toState,
+    transition.expectedVersion,
+    transition.resultingVersion,
+    transition.actorKind,
+    transition.reason,
+    transition.evidenceRefsJson,
+    transition.idempotencyKey,
+    transition.transitionDigest,
+    transition.resultingSnapshotJson,
+    transition.privacyJson,
+  );
+  projectCapabilityProductionSkill(params.next, params.contract);
+  return transition;
+}
+
+export type CapabilityProductionReconcileOperation =
+  | 'authorize_canary'
+  | 'complete_canary'
+  | 'record_owner_review'
+  | 'activate'
+  | 'complete_reuse';
+
+export function reconcileCapabilityProductionEvidenceAtomic(params: {
+  runId: string;
+  operation: CapabilityProductionReconcileOperation;
+  expectedAcquisitionVersion: number;
+  expectedRunRevision: number;
+  now: string;
+}): {
+  acquisition: CapabilityAcquisitionRecord;
+  run: CapabilityProductionRunRecord;
+  receipt: CapabilityProductionTransitionReceipt;
+} {
+  const transact = db.transaction(() => {
+    const run = getCapabilityProductionRun(params.runId);
+    const current = run
+      ? getCapabilityAcquisition(run.acquisitionId)
+      : undefined;
+    if (
+      !run ||
+      !current ||
+      current.recordVersion !== params.expectedAcquisitionVersion ||
+      run.revision !== params.expectedRunRevision ||
+      (['authorize_canary', 'activate'].includes(params.operation) &&
+        run.expiresAt <= params.now) ||
+      current.groupFolder !== run.groupFolder
+    ) {
+      throw new Error(
+        'Capability production evidence head is stale or missing.',
+      );
+    }
+    const contract = parseCapabilityProductionContract(current, run);
+    const sandbox = JSON.parse(current.sandboxEvidenceJson) as Record<
+      string,
+      unknown
+    >;
+    const heldOut = JSON.parse(current.heldOutEvidenceJson) as Record<
+      string,
+      unknown
+    >;
+    if (
+      sandbox.verified !== true ||
+      sandbox.postconditionVerified !== true ||
+      heldOut.passed !== true ||
+      Number(heldOut.safetyInvariantRate) !== 1 ||
+      Number(heldOut.falseSuccesses) !== 0
+    ) {
+      throw new Error(
+        'Capability production evidence lacks verified preproduction proof.',
+      );
+    }
+    let nextState = current.state;
+    let nextRunStatus = run.status;
+    let actorKind: CapabilityAcquisitionTransitionRecord['actorKind'] =
+      'system';
+    let reason = '';
+    let transitionKind: CapabilityProductionTransitionReceipt['transitionKind'];
+    const evidenceRefs: string[] = [run.runId, run.workId, run.checkpointId];
+    let ownerReviewJson = current.ownerReviewJson;
+    let sandboxEvidenceJson = current.sandboxEvidenceJson;
+    let outcomeIds = JSON.parse(current.outcomeIdsJson) as string[];
+    let evidenceOrigin = current.evidenceOrigin;
+    let lastOutcome = current.lastOutcome || null;
+    let negativeOutcomeCount = current.negativeOutcomeCount;
+    let correctionCount = current.correctionCount;
+    let ownerReviewId = run.ownerReviewId || null;
+    let postconditionFingerprint = run.postconditionFingerprint || null;
+
+    if (params.operation === 'authorize_canary') {
+      if (
+        run.runKind !== 'canary' ||
+        run.status !== 'awaiting_canary_approval' ||
+        current.state !== 'owner_review_required'
+      ) {
+        throw new Error(
+          'Capability is not awaiting this exact canary approval.',
+        );
+      }
+      assertCapabilityProductionWorkBinding({ run });
+      assertCapabilityProductionApprovalBundle({ run, now: params.now });
+      const health = assertCapabilityProductionHealth({
+        run,
+        contract,
+        now: params.now,
+      });
+      nextState = 'canary_ready';
+      nextRunStatus = 'canary_ready';
+      actorKind = 'owner';
+      reason = 'Owner authorized one exact, bounded live canary.';
+      transitionKind = 'canary_authorized';
+      evidenceRefs.push(
+        run.canaryApprovalPacketId as string,
+        run.canaryGrantId as string,
+        run.canaryLeaseId as string,
+        ...health.map((item) => item.observationId),
+      );
+    } else if (params.operation === 'complete_canary') {
+      if (
+        run.runKind !== 'canary' ||
+        !['canary_ready', 'running'].includes(run.status) ||
+        current.state !== 'canary_ready'
+      ) {
+        throw new Error('Capability is not executing the approved canary.');
+      }
+      const execution = assertCapabilityProductionExecution({ run, contract });
+      const health = assertCapabilityProductionHealth({
+        run,
+        contract,
+        now: capabilityProductionExecutionEvidenceAt({
+          run,
+          receiptIds: execution.receiptIds,
+        }),
+      });
+      const outcome = assertCapabilityProductionOutcome({
+        run,
+        receiptIds: execution.receiptIds,
+      });
+      nextState = 'canary_ready';
+      nextRunStatus = 'awaiting_owner_review';
+      reason =
+        'The exact canary reached terminal durable truth and now awaits owner judgment.';
+      transitionKind = 'canary_completed';
+      evidenceOrigin = 'live';
+      postconditionFingerprint = execution.postconditionFingerprint;
+      outcomeIds = [...new Set([...outcomeIds, outcome.outcomeId])];
+      lastOutcome =
+        outcome.status === 'completed'
+          ? 'canary_verified_pending_owner'
+          : `canary_${outcome.status}`;
+      sandboxEvidenceJson = canonicalCapabilityJson({
+        ...sandbox,
+        liveCanaryVerified: outcome.status === 'completed',
+        freshDependencyHealth: true,
+        liveCanaryRunId: run.runId,
+        liveCanaryOutcomeId: outcome.outcomeId,
+        livePostconditionFingerprint: execution.postconditionFingerprint,
+      });
+      evidenceRefs.push(
+        outcome.outcomeId,
+        ...execution.receiptIds,
+        ...health.map((item) => item.observationId),
+      );
+    } else if (params.operation === 'record_owner_review') {
+      if (
+        ![
+          'awaiting_owner_review',
+          'owner_reviewed',
+          'awaiting_activation_approval',
+          'active',
+          'monitoring',
+          'partial',
+          'blocked',
+          'paused',
+        ].includes(run.status) ||
+        !(
+          (run.runKind === 'canary' &&
+            ['canary_ready', 'active', 'monitoring', 'paused'].includes(
+              current.state,
+            )) ||
+          (run.runKind === 'active_reuse' &&
+            ['monitoring', 'paused'].includes(current.state))
+        )
+      ) {
+        throw new Error('Capability run is not awaiting an owner review.');
+      }
+      const review = getCapabilityOwnerReviewForRun(run.runId);
+      if (
+        !review ||
+        review.acquisitionId !== current.acquisitionId ||
+        review.outcomeId !== run.outcomeId ||
+        review.candidateFingerprint !== run.candidateFingerprint ||
+        review.contractVersion !== run.contractVersion ||
+        review.ownerScopeHash !== run.ownerScopeHash ||
+        review.chatScopeHash !== run.chatScopeHash ||
+        review.groupScopeHash !== run.groupScopeHash ||
+        review.channel !== run.channel ||
+        review.authorizedSurface !== run.authorizedSurface
+      ) {
+        throw new Error('Capability owner review is not exact or current.');
+      }
+      const positive = review.verdict === 'verified';
+      const substantiveNegative = ['corrected', 'rejected'].includes(
+        review.verdict,
+      );
+      const priorSameReviewVerdicts = (
+        db
+          .prepare(
+            `SELECT verdict FROM capability_owner_review_revisions
+             WHERE review_id = ? AND revision < ?
+             ORDER BY revision ASC`,
+          )
+          .all(review.reviewId, review.revision) as Array<{ verdict: string }>
+      ).map((row) => row.verdict);
+      const sameReviewAlreadyNegative = priorSameReviewVerdicts.some(
+        (verdict) => ['corrected', 'rejected'].includes(verdict),
+      );
+      const sameReviewAlreadyCorrected =
+        priorSameReviewVerdicts.includes('corrected');
+      const wasActivated = Boolean(
+        db
+          .prepare(
+            `SELECT 1 FROM capability_production_transition_receipts
+             WHERE acquisition_id = ? AND transition_kind = 'activated'
+             LIMIT 1`,
+          )
+          .get(current.acquisitionId),
+      );
+      const pendingActivation = run.status === 'awaiting_activation_approval';
+      const ownerDowngradedAuthority =
+        !positive && (wasActivated || pendingActivation);
+      const alreadyPaused =
+        current.state === 'paused' || run.status === 'paused';
+      actorKind = 'owner';
+      ownerReviewId = review.reviewId;
+      ownerReviewJson = canonicalCapabilityJson({
+        approved: positive,
+        ownerVerified: positive,
+        reviewId: review.reviewId,
+        revision: review.revision,
+        runId: run.runId,
+        outcomeId: review.outcomeId,
+        candidateFingerprint: review.candidateFingerprint,
+        verdict: review.verdict,
+        authorizedSurface: review.authorizedSurface,
+      });
+      if (substantiveNegative && !sameReviewAlreadyNegative) {
+        negativeOutcomeCount += 1;
+      }
+      if (review.verdict === 'corrected' && !sameReviewAlreadyCorrected) {
+        correctionCount += 1;
+      }
+      const quarantineThresholdReached =
+        substantiveNegative && negativeOutcomeCount >= 2;
+      if (substantiveNegative || ownerDowngradedAuthority || alreadyPaused) {
+        nextState = quarantineThresholdReached ? 'quarantined' : 'paused';
+        nextRunStatus = quarantineThresholdReached ? 'quarantined' : 'paused';
+        lastOutcome = review.verdict;
+        reason = quarantineThresholdReached
+          ? 'Two distinct owner-corrected or rejected outcomes quarantined this capability.'
+          : substantiveNegative
+            ? 'Owner correction or rejection paused this capability.'
+            : ownerDowngradedAuthority
+              ? 'Owner downgraded previously granted or pending capability authority.'
+              : 'Owner re-review was recorded without automatically resuming a paused capability.';
+        transitionKind = quarantineThresholdReached ? 'quarantined' : 'paused';
+        invalidateCapabilityAuthorityForAcquisition(
+          current.acquisitionId,
+          params.now,
+        );
+      } else {
+        nextState = current.state;
+        nextRunStatus =
+          review.verdict === 'verified' && run.status === 'active'
+            ? 'active'
+            : review.verdict === 'verified' && pendingActivation
+              ? 'awaiting_activation_approval'
+              : review.verdict === 'verified'
+                ? 'owner_reviewed'
+                : review.verdict === 'partial'
+                  ? 'partial'
+                  : review.verdict === 'blocked'
+                    ? 'blocked'
+                    : 'owner_reviewed';
+        lastOutcome = review.verdict;
+        reason =
+          'Recorded one exact owner verdict without granting reuse authority.';
+        transitionKind = 'owner_reviewed';
+      }
+      evidenceRefs.push(review.reviewId, review.outcomeId);
+    } else if (params.operation === 'activate') {
+      if (
+        run.runKind !== 'canary' ||
+        run.status !== 'awaiting_activation_approval' ||
+        current.state !== 'canary_ready' ||
+        !run.ownerReviewId
+      ) {
+        throw new Error(
+          'Capability is not awaiting exact activation approval.',
+        );
+      }
+      const review = getCapabilityOwnerReview(run.ownerReviewId);
+      if (
+        !review ||
+        review.runId !== run.runId ||
+        review.verdict !== 'verified' ||
+        review.outcomeId !== run.outcomeId
+      ) {
+        throw new Error(
+          'Capability activation lacks a positive exact owner review.',
+        );
+      }
+      assertCapabilityProductionWorkBinding({
+        run,
+        activation: true,
+        requireTerminal: true,
+      });
+      assertCapabilityProductionApprovalBundle({
+        run,
+        activation: true,
+        now: params.now,
+      });
+      const activationAuthorityReceiptId =
+        assertCapabilityActivationAuthorityReceipt(run);
+      const health = assertCapabilityProductionHealth({
+        run,
+        contract,
+        now: params.now,
+      });
+      if (
+        current.negativeOutcomeCount > 0 ||
+        current.correctionCount > 0 ||
+        db
+          .prepare(
+            `SELECT 1 FROM capability_owner_review_revisions
+             WHERE review_id = ? AND verdict IN ('corrected', 'rejected')
+             LIMIT 1`,
+          )
+          .get(review.reviewId) ||
+        sandbox.liveCanaryVerified !== true
+      ) {
+        throw new Error(
+          'Capability activation is blocked by adverse evidence.',
+        );
+      }
+      nextState = 'active';
+      nextRunStatus = 'active';
+      actorKind = 'owner';
+      reason =
+        'Owner separately approved reuse of this exact verified contract.';
+      transitionKind = 'activated';
+      lastOutcome = 'verified';
+      evidenceRefs.push(
+        review.reviewId,
+        run.activationApprovalPacketId as string,
+        run.activationGrantId as string,
+        run.activationLeaseId as string,
+        activationAuthorityReceiptId,
+        ...(run.activationWorkId ? [run.activationWorkId] : []),
+        ...health.map((item) => item.observationId),
+      );
+    } else {
+      if (
+        run.runKind !== 'active_reuse' ||
+        !['running', 'monitoring'].includes(run.status) ||
+        !['active', 'monitoring'].includes(current.state)
+      ) {
+        throw new Error('Capability is not in an active reuse execution.');
+      }
+      const execution = assertCapabilityProductionExecution({ run, contract });
+      const health = assertCapabilityProductionHealth({
+        run,
+        contract,
+        now: capabilityProductionExecutionEvidenceAt({
+          run,
+          receiptIds: execution.receiptIds,
+        }),
+      });
+      const outcome = assertCapabilityProductionOutcome({
+        run,
+        receiptIds: execution.receiptIds,
+      });
+      nextState = 'monitoring';
+      nextRunStatus = 'awaiting_owner_review';
+      reason =
+        'Active reuse completed with independent verification and entered monitoring.';
+      transitionKind = 'reuse_completed';
+      evidenceOrigin = 'live';
+      postconditionFingerprint = execution.postconditionFingerprint;
+      outcomeIds = [...new Set([...outcomeIds, outcome.outcomeId])];
+      lastOutcome = outcome.status;
+      evidenceRefs.push(
+        outcome.outcomeId,
+        ...execution.receiptIds,
+        ...health.map((item) => item.observationId),
+      );
+    }
+
+    const next: CapabilityAcquisitionRecord = {
+      ...current,
+      updatedAt: params.now,
+      state: nextState,
+      recordVersion: current.recordVersion + 1,
+      evidenceOrigin,
+      sandboxEvidenceJson,
+      ownerReviewJson,
+      outcomeIdsJson: canonicalCapabilityJson(outcomeIds),
+      negativeOutcomeCount,
+      correctionCount,
+      lastOutcome,
+      nextSafeAction:
+        nextState === 'canary_ready' &&
+        nextRunStatus === 'awaiting_owner_review'
+          ? 'Ask the owner for an exact verdict on this canary outcome.'
+          : nextState === 'canary_ready' && nextRunStatus === 'owner_reviewed'
+            ? 'Offer a separate exact activation proposal; do not activate automatically.'
+            : nextState === 'active'
+              ? 'Match conservatively and monitor every real reuse.'
+              : nextState === 'monitoring'
+                ? 'Collect the exact owner verdict and watch for drift or negative evidence.'
+                : nextState === 'paused'
+                  ? 'Stop new matches and require reviewable remediation.'
+                  : nextState === 'quarantined'
+                    ? 'Keep this exact contract inert; remediation requires a new reviewed candidate version.'
+                    : 'Execute only the one approved canary through durable receipts.',
+    };
+    const nextRun: CapabilityProductionRunRecord = {
+      ...run,
+      updatedAt: params.now,
+      status: nextRunStatus,
+      revision: run.revision + 1,
+      ownerReviewId,
+      postconditionFingerprint,
+      completedAt: [
+        'awaiting_owner_review',
+        'active',
+        'verified',
+        'partial',
+        'blocked',
+      ].includes(nextRunStatus)
+        ? run.completedAt || params.now
+        : run.completedAt,
+      nextSafeAction: next.nextSafeAction,
+    };
+    const transition = applyCapabilityProductionAcquisitionTransition({
+      current,
+      next,
+      actorKind,
+      reason,
+      evidenceRefs,
+      idempotencyKey: `${run.runId}:${params.operation}:${run.revision}`,
+      contract,
+    });
+    const runUpdated = updateCapabilityProductionRunCAS({
+      expectedRevision: run.revision,
+      next: nextRun,
+    });
+    if (runUpdated !== 'applied') {
+      throw new Error('Capability production run lost its evidence-join race.');
+    }
+    const evidenceDigest = createHash('sha256')
+      .update(
+        JSON.stringify({
+          acquisitionId: current.acquisitionId,
+          runId: run.runId,
+          operation: params.operation,
+          transitionDigest: transition.transitionDigest,
+          evidenceRefs: [...new Set(evidenceRefs)].sort(),
+          candidateFingerprint: run.candidateFingerprint,
+          contractVersion: run.contractVersion,
+          inputDigest: run.inputDigest,
+          healthEvidenceSetDigest: run.healthEvidenceSetDigest,
+        }),
+      )
+      .digest('hex');
+    const productionReceipt: CapabilityProductionTransitionReceipt = {
+      receiptId: `capability-production-receipt:${createHash('sha256')
+        .update(`${run.runId}|${transitionKind}|${run.revision}`)
+        .digest('hex')
+        .slice(0, 40)}`,
+      acquisitionId: current.acquisitionId,
+      runId: run.runId,
+      transitionKind,
+      expectedAcquisitionVersion: current.recordVersion,
+      resultingAcquisitionVersion: next.recordVersion,
+      expectedRunRevision: run.revision,
+      resultingRunRevision: nextRun.revision,
+      evidenceDigest,
+      createdAt: params.now,
+      privacyJson: JSON.stringify({
+        metadataOnly: true,
+        rawContentStored: false,
+      }),
+    };
+    db.prepare(
+      `INSERT INTO capability_production_transition_receipts (
+        receipt_id, acquisition_id, run_id, transition_kind,
+        expected_acquisition_version, resulting_acquisition_version,
+        expected_run_revision, resulting_run_revision, evidence_digest,
+        created_at, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      productionReceipt.receiptId,
+      productionReceipt.acquisitionId,
+      productionReceipt.runId,
+      productionReceipt.transitionKind,
+      productionReceipt.expectedAcquisitionVersion,
+      productionReceipt.resultingAcquisitionVersion,
+      productionReceipt.expectedRunRevision,
+      productionReceipt.resultingRunRevision,
+      productionReceipt.evidenceDigest,
+      productionReceipt.createdAt,
+      productionReceipt.privacyJson,
+    );
+    return {
+      acquisition: getCapabilityAcquisition(
+        current.acquisitionId,
+      ) as CapabilityAcquisitionRecord,
+      run: getCapabilityProductionRun(
+        run.runId,
+      ) as CapabilityProductionRunRecord,
+      receipt: productionReceipt,
+    };
+  });
+  return transact.immediate();
+}
+
+export function applyCapabilityOwnerControlWithToken(params: {
+  tokenHash: string;
+  now: string;
+}): {
+  acquisition: CapabilityAcquisitionRecord;
+  run?: CapabilityProductionRunRecord;
+  receipt?: CapabilityProductionTransitionReceipt;
+} {
+  const transact = db.transaction(() => {
+    const token = getCapabilityOwnerActionToken(params.tokenHash);
+    if (
+      !token ||
+      token.consumedAt ||
+      token.expiresAt <= params.now ||
+      !['pause', 'revoke', 'retire', 'show_evidence'].includes(token.actionKind)
+    ) {
+      throw new Error(
+        'Capability owner-control token is unavailable or expired.',
+      );
+    }
+    const current = getCapabilityAcquisition(token.acquisitionId);
+    const run = token.runId
+      ? getCapabilityProductionRun(token.runId)
+      : undefined;
+    if (
+      !current ||
+      current.recordVersion !== token.expectedAcquisitionVersion ||
+      (run && run.revision !== token.expectedRunRevision) ||
+      (run &&
+        (run.acquisitionId !== current.acquisitionId ||
+          run.candidateFingerprint !== token.candidateFingerprint ||
+          run.contractVersion !== token.contractVersion ||
+          run.ownerScopeHash !== token.ownerScopeHash ||
+          run.chatScopeHash !== token.chatScopeHash ||
+          run.groupScopeHash !== token.groupScopeHash ||
+          run.channel !== token.channel ||
+          run.authorizedSurface !== token.authorizedSurface))
+    ) {
+      throw new Error(
+        'Capability owner control does not match canonical state.',
+      );
+    }
+    const consumed = db
+      .prepare(
+        `UPDATE capability_owner_action_tokens SET consumed_at = ?
+         WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > ?`,
+      )
+      .run(params.now, params.tokenHash, params.now);
+    if (consumed.changes !== 1) {
+      throw new Error('Capability owner-control token was already consumed.');
+    }
+    if (token.actionKind === 'show_evidence') {
+      return { acquisition: current, run };
+    }
+    const contract = parseCapabilityProductionContract(
+      current,
+      run ||
+        ({
+          candidateFingerprint: token.candidateFingerprint,
+          contractVersion: token.contractVersion,
+          contractDigest: capabilityProductionContractDigest(
+            current.candidateContractJson,
+          ),
+          taskFamily: current.taskFamily,
+        } as CapabilityProductionRunRecord),
+    );
+    const state =
+      token.actionKind === 'pause'
+        ? 'paused'
+        : token.actionKind === 'revoke'
+          ? 'quarantined'
+          : 'retired';
+    if (current.state === state) {
+      invalidateCapabilityAuthorityForAcquisition(
+        current.acquisitionId,
+        params.now,
+      );
+      return { acquisition: current, run };
+    }
+    const next: CapabilityAcquisitionRecord = {
+      ...current,
+      updatedAt: params.now,
+      state,
+      recordVersion: current.recordVersion + 1,
+      lastOutcome: token.actionKind,
+      nextSafeAction:
+        token.actionKind === 'pause'
+          ? 'Stop new matches until the owner explicitly reviews revalidation.'
+          : token.actionKind === 'revoke'
+            ? 'Keep this contract quarantined; remediation requires a new candidate version.'
+            : 'Retain historical evidence and never match this retired contract.',
+    };
+    const transition = applyCapabilityProductionAcquisitionTransition({
+      current,
+      next,
+      actorKind: 'owner',
+      reason:
+        token.actionKind === 'pause'
+          ? 'Owner paused this exact capability.'
+          : token.actionKind === 'revoke'
+            ? 'Owner revoked this exact capability and invalidated pending authority.'
+            : 'Owner permanently retired this exact capability.',
+      evidenceRefs: [run?.runId || current.acquisitionId],
+      idempotencyKey: `${current.acquisitionId}:${token.actionKind}:${current.recordVersion}`,
+      contract,
+    });
+    db.prepare(
+      `UPDATE capability_owner_action_tokens SET consumed_at = COALESCE(consumed_at, ?)
+       WHERE acquisition_id = ? AND consumed_at IS NULL`,
+    ).run(params.now, current.acquisitionId);
+    invalidateCapabilityAuthorityForAcquisition(
+      current.acquisitionId,
+      params.now,
+    );
+    let nextRun = run;
+    if (run) {
+      nextRun = {
+        ...run,
+        updatedAt: params.now,
+        revision: run.revision + 1,
+        status:
+          token.actionKind === 'pause'
+            ? 'paused'
+            : token.actionKind === 'revoke'
+              ? 'revoked'
+              : 'retired',
+        nextSafeAction: next.nextSafeAction,
+      };
+      if (
+        updateCapabilityProductionRunCAS({
+          expectedRevision: run.revision,
+          next: nextRun,
+        }) !== 'applied'
+      ) {
+        throw new Error('Capability owner control lost its run revision race.');
+      }
+    }
+    const transitionKind =
+      token.actionKind === 'pause'
+        ? 'paused'
+        : token.actionKind === 'revoke'
+          ? 'revoked'
+          : 'retired';
+    const expectedRunRevision = run?.revision || 0;
+    const resultingRunRevision = nextRun?.revision || 0;
+    const evidenceDigest = createHash('sha256')
+      .update(
+        JSON.stringify({
+          acquisitionId: current.acquisitionId,
+          runId: run?.runId || null,
+          transitionKind,
+          transitionDigest: transition.transitionDigest,
+          candidateFingerprint: token.candidateFingerprint,
+          contractVersion: token.contractVersion,
+        }),
+      )
+      .digest('hex');
+    const receipt: CapabilityProductionTransitionReceipt = {
+      receiptId: `capability-production-receipt:${createHash('sha256')
+        .update(
+          `${current.acquisitionId}|${transitionKind}|${current.recordVersion}`,
+        )
+        .digest('hex')
+        .slice(0, 40)}`,
+      acquisitionId: current.acquisitionId,
+      runId: run?.runId || `control:${current.acquisitionId}`,
+      transitionKind,
+      expectedAcquisitionVersion: current.recordVersion,
+      resultingAcquisitionVersion: next.recordVersion,
+      expectedRunRevision,
+      resultingRunRevision,
+      evidenceDigest,
+      createdAt: params.now,
+      privacyJson: JSON.stringify({
+        metadataOnly: true,
+        rawContentStored: false,
+      }),
+    };
+    if (run) {
+      db.prepare(
+        `INSERT INTO capability_production_transition_receipts (
+          receipt_id, acquisition_id, run_id, transition_kind,
+          expected_acquisition_version, resulting_acquisition_version,
+          expected_run_revision, resulting_run_revision, evidence_digest,
+          created_at, privacy_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        receipt.receiptId,
+        receipt.acquisitionId,
+        receipt.runId,
+        receipt.transitionKind,
+        receipt.expectedAcquisitionVersion,
+        receipt.resultingAcquisitionVersion,
+        receipt.expectedRunRevision,
+        receipt.resultingRunRevision,
+        receipt.evidenceDigest,
+        receipt.createdAt,
+        receipt.privacyJson,
+      );
+    }
+    return {
+      acquisition: getCapabilityAcquisition(
+        current.acquisitionId,
+      ) as CapabilityAcquisitionRecord,
+      run: run
+        ? (getCapabilityProductionRun(
+            run.runId,
+          ) as CapabilityProductionRunRecord)
+        : undefined,
+      receipt: run ? receipt : undefined,
+    };
+  });
+  return transact.immediate();
+}
+
+export function reconcileCapabilityProductionFailureAtomic(params: {
+  runId: string;
+  expectedAcquisitionVersion: number;
+  expectedRunRevision: number;
+  now: string;
+}): {
+  acquisition: CapabilityAcquisitionRecord;
+  run: CapabilityProductionRunRecord;
+  classification: 'quarantined' | 'paused';
+} {
+  const transact = db.transaction(() => {
+    const run = getCapabilityProductionRun(params.runId);
+    const current = run
+      ? getCapabilityAcquisition(run.acquisitionId)
+      : undefined;
+    if (
+      !run ||
+      !current ||
+      run.revision !== params.expectedRunRevision ||
+      current.recordVersion !== params.expectedAcquisitionVersion ||
+      !['indeterminate', 'failed'].includes(run.status) ||
+      !['canary_ready', 'active', 'monitoring'].includes(current.state)
+    ) {
+      throw new Error('Capability failure reconciliation head is stale.');
+    }
+    let contractCurrent = true;
+    try {
+      parseCapabilityProductionContract(current, run);
+    } catch {
+      contractCurrent = false;
+    }
+    let healthCurrent = true;
+    if (contractCurrent) {
+      try {
+        const contract = parseCapabilityProductionContract(current, run);
+        assertCapabilityProductionHealth({ run, contract, now: params.now });
+      } catch {
+        healthCurrent = false;
+      }
+    }
+    const receipts = listDurableEffectReceipts({
+      workId: run.workId,
+      limit: 1_000,
+    });
+    const failedReceipt = receipts.find(
+      (receipt) => receipt.status === 'failed',
+    );
+    const unknownReceipt = receipts.find((receipt) =>
+      ['started', 'partial', 'unknown'].includes(receipt.status),
+    );
+    const quarantineRequired =
+      Boolean(failedReceipt) || run.status === 'failed';
+    const classification: 'quarantined' | 'paused' = quarantineRequired
+      ? 'quarantined'
+      : 'paused';
+    const contract = JSON.parse(
+      current.candidateContractJson,
+    ) as CapabilityCandidateContract;
+    const next: CapabilityAcquisitionRecord = {
+      ...current,
+      updatedAt: params.now,
+      state: classification,
+      recordVersion: current.recordVersion + 1,
+      negativeOutcomeCount: quarantineRequired
+        ? current.negativeOutcomeCount + 1
+        : current.negativeOutcomeCount,
+      lastOutcome: !contractCurrent
+        ? 'version_drift'
+        : !healthCurrent
+          ? 'health_stale'
+          : quarantineRequired
+            ? failedReceipt
+              ? 'verification_failure'
+              : 'safety_or_authority_violation'
+            : unknownReceipt
+              ? 'indeterminate_effect'
+              : 'execution_blocked_before_effect',
+      nextSafeAction:
+        classification === 'quarantined'
+          ? 'Do not reactivate this contract; remediation must create a new reviewable version.'
+          : 'Stop new matches and revalidate contract, health, and effect truth before retry.',
+    };
+    const transition = applyCapabilityProductionAcquisitionTransition({
+      current,
+      next,
+      actorKind: 'system',
+      reason:
+        classification === 'quarantined'
+          ? 'Canonical production verification failed; the exact contract was quarantined.'
+          : 'Production execution became stale or indeterminate; the capability was paused.',
+      evidenceRefs: [
+        run.runId,
+        ...(failedReceipt ? [failedReceipt.receiptId] : []),
+        ...(unknownReceipt ? [unknownReceipt.receiptId] : []),
+      ],
+      idempotencyKey: `${run.runId}:failure:${run.revision}`,
+      contract,
+    });
+    const nextRun: CapabilityProductionRunRecord = {
+      ...run,
+      updatedAt: params.now,
+      revision: run.revision + 1,
+      status: classification,
+      nextSafeAction: next.nextSafeAction,
+    };
+    if (
+      updateCapabilityProductionRunCAS({
+        expectedRevision: run.revision,
+        next: nextRun,
+      }) !== 'applied'
+    ) {
+      throw new Error('Capability failure reconciliation lost its run race.');
+    }
+    const evidenceDigest = createHash('sha256')
+      .update(
+        JSON.stringify({
+          runId: run.runId,
+          classification,
+          transitionDigest: transition.transitionDigest,
+          failedReceiptId: failedReceipt?.receiptId || null,
+          unknownReceiptId: unknownReceipt?.receiptId || null,
+          contractCurrent,
+          healthCurrent,
+        }),
+      )
+      .digest('hex');
+    const receiptId = `capability-production-receipt:${createHash('sha256')
+      .update(`${run.runId}|${classification}|${run.revision}`)
+      .digest('hex')
+      .slice(0, 40)}`;
+    db.prepare(
+      `INSERT INTO capability_production_transition_receipts (
+        receipt_id, acquisition_id, run_id, transition_kind,
+        expected_acquisition_version, resulting_acquisition_version,
+        expected_run_revision, resulting_run_revision, evidence_digest,
+        created_at, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      receiptId,
+      current.acquisitionId,
+      run.runId,
+      classification,
+      current.recordVersion,
+      next.recordVersion,
+      run.revision,
+      nextRun.revision,
+      evidenceDigest,
+      params.now,
+      JSON.stringify({ metadataOnly: true, rawContentStored: false }),
+    );
+    return {
+      acquisition: getCapabilityAcquisition(
+        current.acquisitionId,
+      ) as CapabilityAcquisitionRecord,
+      run: getCapabilityProductionRun(
+        run.runId,
+      ) as CapabilityProductionRunRecord,
+      classification,
+    };
+  });
+  return transact.immediate();
+}
+
 function mapBlackboardSnapshotRow(row: {
   snapshot_id: string;
   created_at: string;
@@ -39201,6 +43029,10 @@ function mapDurableReceiptRow(
     approvalScopeHash: row.approval_scope_hash
       ? String(row.approval_scope_hash)
       : null,
+    leaseId: row.lease_id ? String(row.lease_id) : null,
+    processGeneration: row.process_generation
+      ? String(row.process_generation)
+      : null,
     preStateFingerprint: row.pre_state_fingerprint
       ? String(row.pre_state_fingerprint)
       : null,
@@ -39407,6 +43239,8 @@ export function upsertDurableEffectReceipt(params: {
                 AND approval_packet_id IS ?
                 AND approval_version IS ?
                 AND approval_scope_hash IS ?
+                AND lease_id IS ?
+                AND process_generation IS ?
                 AND (
                   ? IS NULL
                   OR pre_state_fingerprint IS NULL
@@ -39445,6 +43279,8 @@ export function upsertDurableEffectReceipt(params: {
             receipt.approvalPacketId || null,
             receipt.approvalVersion || null,
             receipt.approvalScopeHash || null,
+            receipt.leaseId || null,
+            receipt.processGeneration || null,
             receipt.preStateFingerprint || null,
             receipt.preStateFingerprint || null,
             receipt.status,
@@ -39462,10 +43298,11 @@ export function upsertDurableEffectReceipt(params: {
                 receipt_id, work_id, checkpoint_id, plan_version, node_id,
                 invocation_id, action_class, effect_class, status,
                 target_scope_hash, grant_id, approval_packet_id,
-                approval_version, approval_scope_hash, pre_state_fingerprint,
+                approval_version, approval_scope_hash, lease_id,
+                process_generation, pre_state_fingerprint,
                 post_state_fingerprint, verification_fingerprint, created_at,
                 updated_at, metadata_json, privacy_json
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
           )
           .run(
@@ -39483,6 +43320,8 @@ export function upsertDurableEffectReceipt(params: {
             receipt.approvalPacketId || null,
             receipt.approvalVersion || null,
             receipt.approvalScopeHash || null,
+            receipt.leaseId || null,
+            receipt.processGeneration || null,
             receipt.preStateFingerprint || null,
             receipt.postStateFingerprint || null,
             receipt.verificationFingerprint || null,
@@ -39575,6 +43414,7 @@ export function listDurableWorkEvents(params: {
 export function reconcileExpiredDurableWorkLeases(params: {
   processGeneration: string;
   now: string;
+  leaseId?: string;
 }): {
   inspected: number;
   expired: number;
@@ -39584,9 +43424,20 @@ export function reconcileExpiredDurableWorkLeases(params: {
   healthyLeaseSkipped: number;
 } {
   const transact = db.transaction(() => {
-    const activeRows = db
-      .prepare(`SELECT * FROM durable_work_leases WHERE status = 'active'`)
-      .all() as Array<Record<string, unknown>>;
+    const activeRows = (
+      params.leaseId
+        ? db
+            .prepare(
+              `SELECT * FROM durable_work_leases
+             WHERE status = 'active' AND lease_id = ?`,
+            )
+            .all(params.leaseId)
+        : db
+            .prepare(
+              `SELECT * FROM durable_work_leases WHERE status = 'active'`,
+            )
+            .all()
+    ) as Array<Record<string, unknown>>;
     let expired = 0;
     let interrupted = 0;
     let verificationNeeded = 0;
@@ -39594,7 +43445,10 @@ export function reconcileExpiredDurableWorkLeases(params: {
     let healthyLeaseSkipped = 0;
     for (const row of activeRows) {
       const lease = mapDurableLeaseRow(row);
-      if (lease.expiresAt > params.now) {
+      if (
+        lease.expiresAt > params.now &&
+        lease.processGeneration === params.processGeneration
+      ) {
         healthyLeaseSkipped += 1;
         continue;
       }
@@ -39633,9 +43487,16 @@ export function reconcileExpiredDurableWorkLeases(params: {
         `
           UPDATE durable_work_leases
           SET status = 'expired', released_at = ?, heartbeat_at = ?
-          WHERE lease_id = ? AND status = 'active' AND expires_at <= ?
+          WHERE lease_id = ? AND status = 'active'
+            AND (expires_at <= ? OR process_generation <> ?)
         `,
-      ).run(params.now, params.now, lease.leaseId, params.now);
+      ).run(
+        params.now,
+        params.now,
+        lease.leaseId,
+        params.now,
+        params.processGeneration,
+      );
       const changed = db
         .prepare(
           `
@@ -39674,7 +43535,9 @@ export function reconcileExpiredDurableWorkLeases(params: {
         summary:
           lease.processGeneration === params.processGeneration
             ? 'Expired lease from this process generation was reconciled.'
-            : 'Expired lease from a prior process generation was reconciled.',
+            : lease.expiresAt > params.now
+              ? 'Unexpired lease from a prior process generation was reconciled after restart.'
+              : 'Expired lease from a prior process generation was reconciled.',
         refsJson: JSON.stringify(
           [lease.leaseId, updated.checkpointHeadId].filter(Boolean),
         ),

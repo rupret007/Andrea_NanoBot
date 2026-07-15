@@ -165,11 +165,11 @@ run and a redacted per-run token. The inbox is read-only inside the runner, and
 unsigned, altered, cross-run, or replayed messages fail closed. Direct,
 protected, and control guidance is host-constant; only execution may consume
 the mutable group `CLAUDE.md`. Runner source, settings, enabled skills, and
-plugins remain read-only trusted views. Final real-container and full-suite
-validation, the exact-SHA hosted gates, and release publication are complete.
-Production currently serves the preceding application commit because the final
-`main` commit changed CI workflow/test code only; that running/workspace SHA
-mismatch remains explicit rather than being treated as deployed proof.
+plugins remain read-only trusted views. Real-container, full-suite, exact-SHA
+hosted, publication, and serving-provenance evidence remain separate release
+gates. Use `npm run services:status` and the current dated status document for
+the active repository/build/runtime alignment; this design guide does not pin a
+serving SHA or preserve a transient mismatch as current truth.
 
 ## Evaluation and improvement
 
@@ -483,23 +483,34 @@ digest, and independent evaluator declared identity/version digest. These pin
 registry identity and do not attest to callback bytes. Sandbox proof is attached to
 canonical durable work, a committed checkpoint, complete-plan preflight, and
 started/terminal receipts with exact scope and verification fingerprints. The
-strict offline gate runs ten primary and fifteen separate held-out scenarios;
-synthetic evidence stops at `sandbox_verified` and cannot create
-`canary_ready`, activate a skill, or count as owner learning. Quarantine, pause, external blockers, failed verification,
-and indeterminate effects stay explicit.
+acquisition gate runs ten primary and fifteen separate held-out scenarios;
+synthetic acquisition evidence stops at `sandbox_verified` and cannot count as
+owner learning. The production apprenticeship implements the later canary,
+exact owner-review, separate activation, monitored reuse, and owner-control
+joins. Its 22/22 deterministic certification uses labeled synthetic owner
+fixtures, network-denied disposable storage, zero providers and cost, no
+external or production writes, and zero genuine owner evidence. Quarantine,
+pause, external blockers, failed verification, and indeterminate effects stay
+explicit.
 
-Live canary, activation, and production-outcome APIs currently fail closed when
-given caller-asserted identifiers. They remain closed until an atomic canonical
-join proves completed durable work, a confirmed outcome, an exact owner-review
-signal, fresh dependency health, and a consumed exact-scope approval grant with
-an active lease.
+Caller-asserted identifiers still fail closed. Canary readiness requires the
+exact candidate, binding, normalized input, fresh canonical health, durable
+work, checkpoint, separately approved packet, grant, and lease. Only the
+bundled read-only, zero-egress Release-Readiness Brief is exposed for guided
+execution. Its outcome verdict is accepted only through a registered owner chat
+or authenticated cockpit; activation requires a second exact approval. Narrow
+semantic reuse is wired only after genuine activation, and every reuse repeats
+scope, version, health, lease, receipt, and independent-verification checks.
+Repository certification does not claim that any real canary, verdict,
+activation, or reuse occurred.
 
 Acquisition grants no authority. Existing fresh approvals for external sends,
 calendar writes, purchases, canonical repository changes, deploys, migrations,
 dependency changes, and deletions remain mandatory regardless of candidate
 state or reliability. See
-[VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md) for the
-complete lifecycle and strict offline certification.
+[VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md) and
+[VERIFIED_PRODUCTION_APPRENTICESHIP.md](VERIFIED_PRODUCTION_APPRENTICESHIP.md)
+for the complete lifecycle and strict proof boundary.
 
 ## Validation
 
@@ -517,6 +528,8 @@ npm run test:continuity:hard-kill
 npm run test:continuity:heldout
 npm run test:novel-capability:certification-gate
 npm run certify:novel-capability-mastery
+npm run test:production-capability-apprenticeship:certification-gate
+npm run certify:production-capability-apprenticeship
 npm run agi:scorecard -- --no-write --no-dogfood
 ```
 

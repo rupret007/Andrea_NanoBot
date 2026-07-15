@@ -4,6 +4,18 @@ Snapshot date: 2026-07-14. Use `git rev-parse origin/main` and
 `npm run services:status` for the current release SHA and serving provenance;
 the sections below retain the exact baseline SHA for each bounded pass.
 
+Working-tree addendum, 2026-07-15: Verified Production Apprenticeship is now an
+implemented but unreleased local candidate. Its strict offline certification
+passes 22/22 synthetic scenarios with zero provider calls, cost, external
+effects, production writes, genuine owner evidence, privacy leaks, or residue.
+The complete local release matrix has passed: 249 primary files / 3,006 tests,
+28 AGI files / 286 tests, 97/97 deterministic commands with three stability
+rounds, 100% A+ zero-cost offline scorecard, container image/mount canaries,
+signature/docs checks, and zero-vulnerability dependency audits. Exact-SHA
+hosted checks, commit/push, rebuild, restart, and runtime alignment have not yet
+been recorded for this candidate. The released capability-acquisition facts
+below remain historical release truth.
+
 ## Verified Capability-Acquisition Note
 
 The tree containing this handoff includes the capability-acquisition layer
@@ -15,14 +27,18 @@ the deterministic lab uses declared identity/version-digest-pinned independent
 executor and evaluator bindings plus canonical durable work, checkpoints, exact-scope
 started/terminal receipts, and independent postcondition evidence.
 
-The strict offline design covers ten primary and fifteen structurally separate
+The released acquisition design covers ten primary and fifteen structurally separate
 held-out scenarios through a trusted in-process harness, with synthetic progress
 capped at `sandbox_verified`. It is not an OS isolation boundary.
-Caller-asserted live canary, activation, and production outcomes fail closed
-until one atomic canonical join proves completed durable work, a confirmed
-outcome, exact owner review, fresh dependency health, and consumed exact-scope
-approval with an active lease. Nothing in this note claims that the candidate
-is serving, production-activated, or AGI merely because its source is present.
+The current working tree adds the canonical database-backed canary, outcome,
+exact owner review, fresh-health, exact-approval, lease, activation, monitored
+reuse, and owner-control joins. Caller-asserted or disconnected identifiers
+still fail closed. The guided executable surface is restricted to the bundled
+read-only, zero-egress Release-Readiness Brief; its CLI cannot approve packets
+or record owner verdicts, and activation requires a separate exact approval.
+Nothing in this note claims that a genuine canary ran, the owner reviewed it, a
+capability was activated or reused, the candidate is serving, or Andrea is AGI
+merely because its source and synthetic certification are present.
 Use the first
 section of [MODERNIZATION_PLAN.md](../MODERNIZATION_PLAN.md) for its current
 validation and release state; the remaining handoff sections are preserved as

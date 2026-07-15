@@ -8,6 +8,7 @@ import {
   DurableEffectExecutionClaimConflictError,
   getCapabilityAcquisition,
   getCapabilityAcquisitionByCompiledSkillId,
+  getCapabilityProductionRun,
   getDurableWorkCheckpoint,
   getDurableWorkLease,
   getDurableWorkUnit,
@@ -30,6 +31,7 @@ import {
   linkDurableWorkProjection,
   recordDurableEffect,
   transitionDurableWork,
+  type DurableWorkBindingInput,
 } from './durable-work-continuity.js';
 import {
   capabilityResourceDescriptorDigest,
@@ -68,6 +70,10 @@ import type {
   CapabilityResourceDescriptor,
   SkillPlaybookRecord,
 } from './types.js';
+import {
+  runCapabilityProductionExecution,
+  type ProductionCapabilityBindingRegistry,
+} from './production-capability-apprenticeship.js';
 
 const PRIVACY = Object.freeze({
   metadataOnly: true,
@@ -2613,6 +2619,10 @@ export interface ActiveCapabilityExecutionResult {
 export async function executeActiveCapability(params: {
   acquisitionId: string;
   executionId: string;
+  binding?: DurableWorkBindingInput;
+  workerId?: string;
+  values?: Record<string, unknown>;
+  registry?: ProductionCapabilityBindingRegistry;
 }): Promise<ActiveCapabilityExecutionResult> {
   const current = getCapabilityAcquisition(params.acquisitionId);
   if (
@@ -2628,17 +2638,47 @@ export async function executeActiveCapability(params: {
     'candidateContractJson',
   );
   assertCapabilityCandidateContract(contract);
+  const run = getCapabilityProductionRun(params.executionId);
+  if (
+    !params.values ||
+    !params.binding ||
+    !params.workerId ||
+    !run ||
+    run.acquisitionId !== current.acquisitionId ||
+    run.runKind !== 'active_reuse'
+  ) {
+    return {
+      status: 'blocked',
+      acquisitionId: current.acquisitionId,
+      candidateFingerprint: contract.candidateFingerprint,
+      results: [],
+      evidenceRefs: [],
+      receiptIds: [],
+      providerCalls: 0,
+      costUsd: 0,
+      reason:
+        'active execution requires one canonically staged production reuse run, exact input digest, fresh health, and a bound lease',
+    };
+  }
+  const result = await runCapabilityProductionExecution({
+    runId: run.runId,
+    expectedAcquisitionVersion: current.recordVersion,
+    expectedRunRevision: run.revision,
+    binding: params.binding,
+    workerId: params.workerId,
+    values: params.values,
+    registry: params.registry,
+  });
   return {
-    status: 'blocked',
+    status: result.status,
     acquisitionId: current.acquisitionId,
     candidateFingerprint: contract.candidateFingerprint,
-    results: [],
-    evidenceRefs: [],
-    receiptIds: [],
-    providerCalls: 0,
-    costUsd: 0,
-    reason:
-      'canonical_live_execution_work_and_owner_activation_are_not_yet_available',
+    results: result.results,
+    evidenceRefs: result.evidenceRefs,
+    receiptIds: result.receiptIds,
+    providerCalls: result.providerCalls,
+    costUsd: result.costUsd,
+    reason: result.reason,
   };
 }
 

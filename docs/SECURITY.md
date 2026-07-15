@@ -5,13 +5,14 @@ It is intentionally practical: trust boundaries first, product claims second.
 
 ## Trust Model
 
-| Entity                | Trust Level | Why                                                  |
-| --------------------- | ----------- | ---------------------------------------------------- |
-| Main control chat     | Trusted     | Private operator/admin surface                       |
-| Non-main chats        | Untrusted   | Messages may be malicious or prompt-injecting        |
-| Host process          | Trusted     | Owns routing, authorization, mounts, and credentials |
-| Container agents      | Sandboxed   | Isolated execution environment                       |
-| External integrations | Conditional | Safe only when explicitly configured and validated   |
+| Entity                           | Trust Level | Why                                                           |
+| -------------------------------- | ----------- | ------------------------------------------------------------- |
+| Main control chat                | Trusted     | Private operator/admin surface                                |
+| Registered owner review surfaces | Trusted     | Exact main Telegram, Messages self-thread, or cockpit binding |
+| All other/unregistered chats     | Untrusted   | Messages may be malicious or prompt-injecting                 |
+| Host process                     | Trusted     | Owns routing, authorization, mounts, and credentials          |
+| Container agents                 | Sandboxed   | Isolated execution environment                                |
+| External integrations            | Conditional | Safe only when explicitly configured and validated            |
 
 ## Primary Security Boundaries
 
@@ -155,7 +156,42 @@ Security and privacy rules for commitment state:
 The full state and migration contract is documented in
 [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
 
-### 8. Command Surface Gating
+### 8. Production Apprenticeship Trust Boundary
+
+Capability acquisition and production apprenticeship change which exact
+bounded method Andrea may recognize and reuse; they do not grant action
+authority. The only bundled first candidate is the read-only, zero-egress
+Release-Readiness Brief.
+
+Security rules for that lifecycle:
+
+- synthetic preparation writes only labeled preproduction records to the
+  canonical local ledger; it cannot create a live canary, owner verdict,
+  activation, provider call, external effect, or production-use proof;
+- canary approval, the owner's verdict on the independently verified canary
+  outcome, and activation approval are three separate decisions bound to exact
+  acquisition, run, revision, contract, scope, owner, chat, group, channel,
+  target, health, lease, checkpoint, receipt, and outcome records;
+- owner verdicts are accepted only from the registered main Telegram chat, the
+  configured BlueBubbles/Messages self-thread, or the authenticated loopback
+  owner cockpit; cockpit mutations also retain its authentication and CSRF
+  boundary;
+- generic Helpful feedback, another chat, a stale token, a mixed request, an
+  ambiguous target, a disconnected identifier, or a synthetic fixture cannot
+  become genuine promotion evidence;
+- active reuse revalidates the exact contract, intended postconditions,
+  versions, health, owner scope, lease, receipts, and independent evaluator on
+  every run; pause, quarantine, revoke, retire, and negative history remain
+  authoritative;
+- external sends, calendar writes, purchases, repository changes, deployments,
+  migrations, dependency changes, installations, and deletion retain their
+  normal fresh exact-scope approvals even if a capability is active.
+
+The deterministic certification may exercise synthetic owner-review and active
+branches in an isolated disposable database. That proves repository behavior,
+not a real owner decision, live activation, authority, or production use.
+
+### 9. Command Surface Gating
 
 The public Telegram command menu is intentionally smaller than the total codebase surface.
 

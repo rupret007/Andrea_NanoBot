@@ -921,6 +921,43 @@ describe('durable cognitive continuity', () => {
     expect(getDurableWorkUnit(work.workId)?.status).toBe('delivery_unverified');
   });
 
+  it('reconciles an unexpired lease owned by a prior process generation', () => {
+    const { work } = readyWork();
+    const issued = issueDurableResumeGrant({
+      workId: work.workId,
+      binding,
+      actionClass: 'repository_read',
+      now: NOW,
+    });
+    const consumed = consumeResumeGrantAndAcquireLease({
+      token: issued.token,
+      binding,
+      actionClass: 'repository_read',
+      workerId: 'worker-before-restart',
+      processGeneration: 'process:before-restart',
+      leaseTtlMs: 60_000,
+      now: NOW,
+    });
+    expect(consumed.status).toBe('consumed');
+
+    const result = reconcileDurableWorkOnStartup({
+      processGeneration: 'process:after-restart',
+      now: '2026-07-13T12:00:01.000Z',
+    });
+
+    expect(result).toMatchObject({
+      inspected: 1,
+      expired: 1,
+      interrupted: 1,
+      healthyLeaseSkipped: 0,
+    });
+    expect(getDurableWorkUnit(work.workId)).toMatchObject({
+      status: 'interrupted',
+      leaseId: null,
+      leaseExpiresAt: null,
+    });
+  });
+
   it('keeps effect receipts monotonic after a verified success', () => {
     const { work, checkpoint } = readyWork();
     const common = {
