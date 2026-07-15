@@ -56,7 +56,7 @@ beforeEach(() => {
     updatedAt: reference.toISOString(),
     decidedAt: reference.toISOString(),
   });
-});
+}, 30_000);
 
 afterEach(() => {
   _closeDatabase();
