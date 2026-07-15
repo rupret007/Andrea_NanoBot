@@ -13,26 +13,27 @@ not replace current Git, hosted-check, or runtime provenance.
   `npm run integrations:status -- --json` as the authoritative source for the
   active commit and runtime provenance; this document does not pin a serving
   SHA that will become stale after the next release.
-- Commitment Intelligence implementation
-  `ac72ede1017a9956941b1305aae7075d976fcbc1` is published on `main`. Pull
-  request #6 remains earlier release history, not the source of this direct
-  implementation commit.
-- Exact-SHA Ubuntu, Windows, container, AGI, CodeQL, dependency-audit,
-  verified-secret-scan, and Semgrep checks are green.
-- The Mac host reports `running_ready` at implementation commit `ac72ede1`,
-  with verified build provenance and zero dirty build paths. A later bounded
-  cleanup restored about 69 GiB of available host space. It removed only
+- Verified Capability Acquisition application commit
+  `48aaf2dcb56f77ec98028cf5ba945597727d456a` is published on `main` and includes
+  the earlier Commitment Intelligence release. Pull request #6 remains earlier
+  history, not the source of this direct implementation commit.
+- Exact-SHA CI run `29387639718`, AGI/CodeQL run `29387639663`, and Security run
+  `29387653200` passed Ubuntu, Windows, container, AGI, CodeQL,
+  dependency-audit, verified-secret-scan, and Semgrep gates.
+- The Mac host reports `running_ready` at application commit `48aaf2dc`, with
+  verified build provenance, zero dirty build paths, and serving/build/workspace
+  alignment. Bounded cleanup restored about 69 GiB of available host space. It removed only
   regenerable caches and unused Docker images/cache while preserving Docker
   volumes, active containers, model data, messages, session history, and
   repository dependencies/build output.
-- OpenClaw is live at PID 42778, Andrea is live at PID 43464, and all 11/11
+- OpenClaw is live at PID 11235, Andrea is live at PID 12975, and all 11/11
   Andrea bridge tools are available with no direct-send exposure.
 
 ## Verified Repository Gates
 
-- Primary suite: 231 files / 2,790 tests.
-- AGI suite: 28 files / 282 tests.
-- Deterministic sweep: 94/94 selected commands passed from an inventory of 109;
+- Primary suite: 238 files / 2,881 tests.
+- AGI suite: 28 files / 286 tests.
+- Deterministic sweep: 96/96 selected commands passed from an inventory of 111;
   the other 15 are explicitly excluded live, interactive, aggregate, or
   state-writing commands, not silent passes.
 - Offline scorecard: 100% A+, isolated storage, network denied, zero live cost.
@@ -54,7 +55,8 @@ Caller-asserted live
 canary, activation, and production-outcome paths fail closed pending an atomic
 canonical durable-work/outcome/owner-review/health/approval join.
 
-Do not infer publication or runtime activation from source presence. The local
+Application commit `48aaf2dc` is published and was rebuilt and restarted on the
+canonical Mac host; source presence alone is still not deployment evidence. The local
 round passed 238 primary files / 2,881 tests, 28 AGI files / 286 tests, 96/96
 selected deterministic commands from 111 total with 15 explicit exclusions,
 three stability rounds, a 100% A+ zero-cost offline scorecard, 6/6 signature

@@ -5,7 +5,7 @@ as historical implementation and release evidence unless its heading
 explicitly says otherwise; older uses of “candidate” or “authoritative” do not
 override the first section.
 
-## Universal Task Mastery and verified capability acquisition — 2026-07-14
+## Universal Task Mastery and verified capability acquisition — 2026-07-14 (released)
 
 This is the authoritative section for the capability-acquisition round that
 began from clean, synchronized `main` at
@@ -14,6 +14,12 @@ local repository evidence, exact-SHA hosted evidence, and runtime evidence
 separate. Source presence is not deployment evidence; use `git status --branch`,
 the exact-SHA GitHub checks, and `npm run services:status` for current release
 truth.
+
+Application-bearing commit `48aaf2dcb56f77ec98028cf5ba945597727d456a`
+is published on `main`, passed the complete local and exact-SHA hosted matrices,
+and was rebuilt and restarted on the canonical Mac runtime. A later
+documentation-only closure commit may advance `main`; use the commands above
+for current repository and serving identity.
 
 ### Root architectural finding
 
@@ -158,13 +164,38 @@ truth.
       staged-diff, whitespace, file-mode, generated-artifact, and secret review
       passed before commit; realistic secret-shaped test sentinels were replaced
       with explicit invalid fixture values.
-- [ ] Ubuntu and Windows CI run the focused policy gate and strict
-      certification for the exact candidate SHA. Container, AGI, CodeQL,
-      dependency-audit, secret-scan, and Semgrep exact-SHA checks also pass.
-- [ ] Fetch immediately before release and require non-diverged `main` with
+- [x] Ubuntu and Windows CI ran the focused policy gate and strict
+      certification for exact application SHA `48aaf2dc`. Container, AGI,
+      CodeQL, dependency-audit, verified secret-scan, and Semgrep also passed.
+      Exact-SHA workflow runs: CI `29387639718`, AGI/CodeQL `29387639663`, and
+      Security `29387653200`.
+- [x] Fetch immediately before release and require non-diverged `main` with
       unchanged remote ancestry. Commit and push only the coherent candidate,
       rebuild from that clean commit, restart canonical services in dependency
       order, and prove serving SHA, build provenance, health, and integrations.
+      Application commit `48aaf2dc` was pushed from a clean, one-commit-ahead
+      branch after a `0/0` divergence check. The clean build recorded 2,228
+      files, zero dirty paths, and artifact digest
+      `8cb93f9d1321ba6d0257f16126694161a1830e541defe1d2569af6933c256847`.
+      OpenClaw restarted from PID 60493 to 11235, Andrea restarted from PID
+      61477 to 12975, and post-release status reported `running_ready`, aligned
+      serving/build/workspace SHA `48aaf2dc`, 11/11 bridge tools, and no direct-
+      send exposure.
+
+### Release evidence
+
+- Application commit: **`48aaf2dcb56f77ec98028cf5ba945597727d456a`**
+- Exact-SHA hosted checks: **Ubuntu, Windows, container, AGI, CodeQL,
+  dependency audit, verified secret scan, and Semgrep passed**
+- Runtime: **clean verified artifact, zero dirty paths, serving SHA aligned,
+  OpenClaw PID 11235, Andrea PID 12975**
+- Passive integrations: **10 healthy; BlueBubbles and Telegram transports
+  healthy; Brave Search and configured cloud providers healthy; stale or
+  missing BlueBubbles same-thread, Telegram roundtrip, Alexa signed intent, and
+  life-thread user proofs remain explicitly classified rather than fabricated**
+- Host cleanup: **about 69 GiB available; only regenerable temp/cache/image data
+  removed; active containers, volumes, models, messages, Codex state, and
+  repository dependencies/build output preserved**
 
 ### Intentionally unchanged and honest limits
 

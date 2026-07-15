@@ -28,6 +28,15 @@ section of [MODERNIZATION_PLAN.md](../MODERNIZATION_PLAN.md) for its current
 validation and release state; the remaining handoff sections are preserved as
 historical release evidence.
 
+Application-bearing commit `48aaf2dcb56f77ec98028cf5ba945597727d456a`
+is published on `main`. Ubuntu, Windows, container, AGI, CodeQL, dependency
+audit, verified secret scan, and Semgrep passed for that exact SHA. The clean
+artifact was rebuilt with zero dirty paths; OpenClaw restarted to PID 11235 and
+Andrea to PID 12975; post-release status reported `running_ready`, aligned
+serving/build/workspace identity, 11/11 bridge tools, and no direct-send
+exposure. A documentation-only closure commit may advance `main`; use the
+commands at the top for current identity.
+
 ## Commitment Intelligence Handoff — Released
 
 This is the released implementation above baseline
