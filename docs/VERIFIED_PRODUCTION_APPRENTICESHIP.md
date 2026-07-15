@@ -1,16 +1,15 @@
 # Verified Production Apprenticeship
 
-> **Status: repository implementation complete; genuine production evidence
-> pending.** Andrea implements the canonical canary, exact owner-review,
+> **Status: released implementation; genuine canary evidence pending.** Andrea
+> implements the canonical canary, exact owner-review,
 > separate activation, monitored reuse, pause, quarantine, revoke, and retire
 > path described here. Its deterministic certification passes 22/22 scenarios,
 > but that proof is synthetic, offline, network-denied, and disposable. It
 > created zero provider calls, cost, external effects, production writes, or
-> genuine owner evidence. The complete local release matrix passed, but the
-> candidate is still uncommitted and has not passed exact-SHA hosted checks or
-> been rebuilt into the Mac service. This document therefore does **not** claim
-> that a real canary ran, the owner reviewed one, a capability was activated or
-> reused, or the running service contains this working-tree candidate.
+> genuine owner evidence. Application commit `3dbfae9c` passed the complete
+> local and exact-SHA hosted matrices and was rebuilt into the Mac service with
+> verified provenance. This document therefore does **not** claim that a real
+> canary ran, the owner reviewed one, or a capability was activated or reused.
 
 Verified Production Apprenticeship is the implemented bridge between a bounded
 method proved in Andrea's trusted certification sandbox and the same exact
@@ -407,18 +406,24 @@ Its exact contract, resource, deterministic preparation path, executor,
 independent evaluator, guided lifecycle, and narrow active-reuse dispatch are
 implemented. Preparation can create synthetic preproduction acquisition state
 at `owner_review_required`; that state is not a real canary and cannot supply an
-owner verdict. The current certification deliberately created no production
-write or genuine owner evidence.
+owner verdict. The post-release guarded preparation command recorded this
+labeled synthetic state in the canonical ledger without creating a live
+canary, approval, owner verdict, activation, provider call, or external effect.
 
-Genuine production proof remains pending until the final repository candidate
-is released and the owner supplies normal operator evidence. Proof debt is:
+Genuine production proof now depends on the owner supplying normal operator
+evidence. Proof debt is:
 
 - one exact owner-authorized read-only canary on a trusted owner surface;
 - canonical durable completion, receipts, independent evaluation and outcome;
 - the owner's exact verdict for that outcome;
 - a separate exact activation decision;
 - one later semantic reuse with monitored correctness and efficiency evidence;
-- current dependency-health and runtime/release provenance for the exact SHA.
+
+Repository release evidence is complete for application commit `3dbfae9c`: CI
+run `29434979875`, AGI/CodeQL run `29434979968`, and Security run `29435006959`
+passed; the clean Mac artifact was rebuilt and restarted with aligned serving,
+build, and workspace provenance. That evidence does not satisfy any item in the
+genuine owner-proof list above.
 
 Terminal input or fixtures supplied by the implementing agent cannot satisfy
 owner proof. Until canonical evidence exists, status must remain

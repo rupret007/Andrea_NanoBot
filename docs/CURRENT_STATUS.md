@@ -13,30 +13,28 @@ not replace current Git, hosted-check, or runtime provenance.
   `npm run integrations:status -- --json` as the authoritative source for the
   active commit and runtime provenance; this document does not pin a serving
   SHA that will become stale after the next release.
-- Verified Capability Acquisition application commit
-  `48aaf2dcb56f77ec98028cf5ba945597727d456a` is published on `main` and includes
-  the earlier Commitment Intelligence release. Pull request #6 remains earlier
-  history, not the source of this direct implementation commit.
-- The current working tree adds Verified Production Apprenticeship but is not
-  release evidence: at this documentation checkpoint it is an uncommitted local
-  candidate. Its complete repository-controlled local release matrix passed,
-  but exact-SHA hosted checks, commit/push, and a clean Mac rebuild/restart have
-  not occurred. Do not infer publication or runtime deployment from source
-  presence.
-- Exact-SHA CI run `29387639718`, AGI/CodeQL run `29387639663`, and Security run
-  `29387653200` passed Ubuntu, Windows, container, AGI, CodeQL,
+- Verified Production Apprenticeship application commit
+  `3dbfae9c9165be73a5cf06eaed4040d3e68b7457` is published on `main` and
+  includes Verified Capability Acquisition and Commitment Intelligence. A
+  documentation-only closure may advance `main`; source presence still does
+  not substitute for the status commands above.
+- Exact-SHA CI run `29434979875`, AGI/CodeQL run `29434979968`, and Security run
+  `29435006959` passed Ubuntu, Windows, container, AGI, CodeQL,
   dependency-audit, verified-secret-scan, and Semgrep gates.
-- The last released Mac artifact remains older than this uncommitted candidate.
-  Use `npm run services:status` for its current process, build, and serving SHA;
-  the release must replace it only after exact-SHA hosted checks pass. The
-  bounded 2026-07-15 cleanup removed about 3 GiB of regenerable npm, pnpm,
+- A clean 2,308-file Mac artifact was built from `3dbfae9c` with SHA-256
+  `43b62d4457b0e316e525acc8c70e93df98b80ee1fb0b4d0f4a031be14f97da61`.
+  OpenClaw restarted from PID 11235 to 36162, and Andrea restarted from PID
+  23216 to 36929 with boot ID `host-76461-1780389249797`; serving, build, and
+  workspace SHAs aligned with zero dirty paths. The bounded 2026-07-15 cleanup
+  removed about 3 GiB of regenerable npm, pnpm,
   Homebrew, Node, and TypeScript caches while preserving Docker volumes and
   images, Codex state, model data, messages, sessions, repository dependencies,
   build output, and Andrea's live database.
-- OpenClaw and Andrea remain live during local validation. Their exact PIDs,
-  11/11 bridge-tool proof, direct-send exclusion, and serving provenance must be
-  refreshed after the dependency-ordered release restart rather than copied
-  from an older snapshot.
+- Post-restart OpenClaw connectivity, 11/11 bridge tools, direct-send exclusion,
+  local Alexa health/OAuth endpoints, BlueBubbles transport/webhook, Telegram
+  transport, Google Calendar, research, image generation, cached provider
+  health, and Brave Search status all passed. No new error-class log entry or
+  false Brave-down transition was found.
 
 ## Verified Repository Gates
 
@@ -53,11 +51,11 @@ not replace current Git, hosted-check, or runtime provenance.
 - Container runner typecheck/build, 13 runner tests, 132 host contract tests,
   pinned image canary, nested read-only mount canary, signature flows, 72-file
   documentation checks, and root/runner production and full dependency audits
-  passed on the local candidate.
+  passed on the released application tree.
 
-## Verified Production Apprenticeship — Working-Tree Candidate
+## Verified Production Apprenticeship — Released Implementation
 
-The working tree implements the canonical production bridge above Verified
+The released application implements the canonical production bridge above Verified
 Capability Acquisition: bounded canary staging, consumption of a separately
 approved exact canary packet, durable read-only execution, independent
 postcondition verification, canonical outcome, exact private owner verdict,
@@ -82,10 +80,11 @@ network-denied, provider-suppressed, disposable, metadata-only, and explicitly
 `certification_synthetic`, with zero provider calls, cost, external effects,
 production writes, genuine owner evidence, privacy leaks, or cleanup residue.
 The companion gate rejected 120 mutations across all 22 failure codes. That is
-repository certification only. No real release-readiness canary, owner
-verdict, activation, or active reuse is recorded or claimed here. The complete
-local matrix passed; exact-SHA hosted checks, push, rebuild, restart, and
-runtime-provenance gates remain release work for this candidate.
+repository certification only. No real release-readiness canary, owner verdict,
+activation, or active reuse is recorded or claimed here. The guarded
+post-release preparation created only a labeled synthetic
+`owner_review_required` record. Local, hosted, rebuild, restart, and runtime-
+provenance gates passed; genuine owner evidence remains the next separate step.
 
 ## Verified Capability Acquisition
 
@@ -98,8 +97,8 @@ documentation remains untrusted data, synthetic evidence stops at
 `sandbox_verified`, and acquisition grants no new authority. The certification
 uses trusted test-authored adapters and is not an OS isolation boundary.
 The released acquisition foundation's caller-asserted live canary, activation,
-and production-outcome paths fail closed. The local Verified Production
-Apprenticeship candidate implements the required canonical durable-work,
+and production-outcome paths fail closed. The released Verified Production
+Apprenticeship implementation adds the required canonical durable-work,
 outcome, owner-review, health, approval, lease, and receipt joins; its presence
 is still not evidence that any genuine canary or activation occurred.
 

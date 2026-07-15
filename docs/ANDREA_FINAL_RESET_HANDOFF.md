@@ -4,17 +4,21 @@ Snapshot date: 2026-07-14. Use `git rev-parse origin/main` and
 `npm run services:status` for the current release SHA and serving provenance;
 the sections below retain the exact baseline SHA for each bounded pass.
 
-Working-tree addendum, 2026-07-15: Verified Production Apprenticeship is now an
-implemented but unreleased local candidate. Its strict offline certification
+Release addendum, 2026-07-15: Verified Production Apprenticeship is released in
+application commit `3dbfae9c9165be73a5cf06eaed4040d3e68b7457`. Its strict offline certification
 passes 22/22 synthetic scenarios with zero provider calls, cost, external
 effects, production writes, genuine owner evidence, privacy leaks, or residue.
 The complete local release matrix has passed: 249 primary files / 3,006 tests,
 28 AGI files / 286 tests, 97/97 deterministic commands with three stability
 rounds, 100% A+ zero-cost offline scorecard, container image/mount canaries,
-signature/docs checks, and zero-vulnerability dependency audits. Exact-SHA
-hosted checks, commit/push, rebuild, restart, and runtime alignment have not yet
-been recorded for this candidate. The released capability-acquisition facts
-below remain historical release truth.
+signature/docs checks, and zero-vulnerability dependency audits. Exact-SHA CI
+run `29434979875`, AGI/CodeQL run `29434979968`, and Security run `29435006959`
+passed. The clean artifact was rebuilt and Andrea restarted at PID 36929 with
+serving/build/workspace alignment; OpenClaw restarted at PID 36162 with 11/11
+bridge tools and no direct-send exposure. Guarded preparation created only
+labeled synthetic `owner_review_required` evidence. Genuine canary, owner
+verdict, activation, and reuse evidence remain pending; the capability-
+acquisition facts below remain historical release truth.
 
 ## Verified Capability-Acquisition Note
 

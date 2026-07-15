@@ -5,17 +5,17 @@ as historical implementation and release evidence unless its heading
 explicitly says otherwise; older uses of “candidate” or “authoritative” do not
 override the first section.
 
-## Verified Production Apprenticeship — 2026-07-15 (current local candidate)
+## Verified Production Apprenticeship — 2026-07-15 (released; genuine canary pending)
 
-This is the authoritative section for the current working-tree round. It
-extends the released Verified Capability Acquisition foundation into a bounded
-production lifecycle without treating deterministic fixtures as real owner or
-runtime evidence. At this documentation checkpoint the implementation is local
-and uncommitted. The complete repository-controlled local release matrix has
-passed, but exact-SHA hosted checks, commit/push, a clean rebuild, service
-restart, and serving-provenance proof have not occurred. The released
-application and runtime facts remain in the next historical section until this
-candidate is actually delivered.
+This is the authoritative section for the current release. It extends Verified
+Capability Acquisition into a bounded production lifecycle without treating
+deterministic fixtures as real owner or runtime evidence. Application-bearing
+commit `3dbfae9c9165be73a5cf06eaed4040d3e68b7457` is published on `main`, passed
+the complete local and exact-SHA hosted matrices, and was rebuilt and restarted
+on the canonical Mac host. This documentation-only closure may advance `main`;
+use `git status --branch` and `npm run services:status` for the final repository
+and serving SHA. Genuine canary, owner-verdict, activation, and reuse evidence
+remain intentionally pending.
 
 ### Implemented lifecycle
 
@@ -105,11 +105,22 @@ candidate is actually delivered.
       root/runner production and full dependency audits. Final formatting,
       whitespace, generated-artifact, file-mode, scope, diff, and secret review
       is repeated after this documentation reconciliation.
-- [ ] Fetch immediately before delivery and prove non-diverged `main`. Commit
-      and push only the coherent candidate, require every exact-SHA Ubuntu,
-      Windows, container, AGI, CodeQL, dependency-audit, secret-scan, and
-      Semgrep job, then rebuild and restart in dependency order and prove the
-      serving/build/workspace SHA and artifact provenance match.
+- [x] Fetch immediately before delivery and prove non-diverged `main`. The
+      coherent application commit `3dbfae9c` passed exact-SHA CI run
+      `29434979875`, AGI/CodeQL run `29434979968`, and Security run
+      `29435006959`, including Ubuntu, Windows, container, AGI, CodeQL,
+      dependency-audit, verified-secret-scan, and Semgrep. A clean 2,308-file
+      artifact with digest
+      `43b62d4457b0e316e525acc8c70e93df98b80ee1fb0b4d0f4a031be14f97da61`
+      was built from that commit. OpenClaw restarted from PID 11235 to 36162;
+      Andrea restarted from PID 23216 to 36929 with boot ID
+      `host-76461-1780389249797`; serving, build, and workspace SHAs aligned
+      with zero dirty paths. The bridge remained live with 11/11 tools and no
+      direct-send exposure.
+- [x] Run the guarded Release-Readiness preparation command after restart. It
+      recorded only labeled synthetic `owner_review_required` evidence for the
+      read-only, zero-egress contract; it created no live canary, approval,
+      owner verdict, activation, provider call, or external effect.
 - [ ] After release, the owner may intentionally authorize one exact read-only
       Release-Readiness Brief canary on a trusted surface. Require durable
       completion, complete receipts, independent evaluation, and one canonical
