@@ -333,7 +333,7 @@ npm run certify:production-capability-apprenticeship
 ```
 
 The released baseline certification reported exactly 22/22 A-V scenarios. The
-current action-authority candidate has rerun and re-earned the same complete
+current action-authority implementation has rerun and re-earned the same complete
 22/22 result; focused CLI/chat/cockpit tests alone would not substitute. It must
 remain
 `deterministic_offline` / `certification_synthetic`. Accept only zero provider

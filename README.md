@@ -85,8 +85,8 @@ protected plan, exact owner review, separate activation, monitored reuse,
 pause, quarantine, revoke, and retire lifecycle. The released baseline's
 deterministic certification passed 22/22 synthetic scenarios with provider
 calls, cost, external effects, production writes, and genuine owner evidence
-all at zero. The action-authority release candidate has passed formatting,
-typecheck, build, 250 primary files / 3,076 tests, the focused acquisition,
+all at zero. The action-authority implementation has passed formatting,
+typecheck, build, 250 primary files / 3,079 tests, the focused acquisition,
 production/hard-kill, cockpit/chat, and continuity suites, container runner and
 real-container canaries, plus AGI typecheck and 28 files / 286 tests. All 97
 selected deterministic commands pass from the 112-command inventory, including

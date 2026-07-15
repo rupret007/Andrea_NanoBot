@@ -1,17 +1,16 @@
 # Verified Production Apprenticeship
 
-> **Status: locally validated authority-boundary release candidate; query Git
-> and service status for publication and runtime identity.** The released
-> baseline implements the canonical canary,
-> owner verdict, activation, monitored reuse, and owner controls. This working
-> tree additionally requires a separate action-specific approval before a
-> protected canary or reuse may execute. The combined candidate passes its
+> **Status: validated authority-boundary implementation; query Git and service
+> status for publication and runtime identity.** The implementation provides
+> the canonical canary, owner verdict, activation, monitored reuse, and owner
+> controls. It separately requires an action-specific approval before a
+> protected canary or reuse may execute. The combined tree passes its
 > primary, focused acquisition/production/continuity, container, AGI,
 > deterministic, stability, certification, offline-scorecard, signature,
 > documentation, and dependency-audit gates. Hosted CI, publication, rebuild,
 > restart, and serving provenance are separate time-sensitive proof. The
-> prior `3dbfae9c` application and `51c3f886` documentation
-> evidence remains historical baseline evidence only. Nothing here claims a
+> prior `3dbfae9c` application and `51c3f886` documentation evidence remains
+> historical baseline evidence only. Nothing here claims a
 > genuine canary, protected action approval, owner verdict, activation, or
 > reuse.
 
@@ -380,8 +379,8 @@ verdict, live or production activation, active runtime reuse, or improved
 real-world usefulness. Isolated certification fixtures do exercise the
 synthetic activation branch.
 
-The combined action-authority candidate has re-earned the bounded offline
-certification. The validated tree passes 250 primary files / 3,076
+The combined action-authority implementation has re-earned the bounded offline
+certification. The validated tree passes 250 primary files / 3,079
 tests; 95/95 focused acquisition tests; 188/188 focused
 production/cockpit/chat tests including 6/6 hard-kill cases; 142/142 continuity
 tests; runner/container contracts and real canaries; and 28 AGI files / 286

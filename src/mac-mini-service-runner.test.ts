@@ -29,5 +29,7 @@ describe('mac mini service runner', () => {
     expect(script).toContain('dist/mac-service-readiness.js');
     expect(script).toContain('ANDREA_MAC_READY_TIMEOUT_SECONDS');
     expect(script).toContain('git -C "$PROJECT_ROOT" rev-parse HEAD');
+    expect(script).toContain('restart_previous_boot_id="$(current_boot_id)"');
+    expect(script).toContain('start_service "$restart_previous_boot_id"');
   });
 });

@@ -32,7 +32,7 @@ only, hides chat-bound capability packets from generic approval, and cannot
 activate or relabel them. Production rollback bindings remain unsupported and
 fail closed; the trusted in-process synthetic sandbox is not OS isolation or a
 generalized rollback engine. Focused validation and the primary/container/AGI
-gates now pass: 250 primary files / 3,076 tests,
+gates now pass: 250 primary files / 3,079 tests,
 95/95 acquisition, 188/188 production/cockpit/chat including 6/6 hard-kill,
 142/142 continuity, runner/container contracts and canaries, and 28 AGI files /
 286 tests. All 97 selected deterministic commands pass from the 112-command

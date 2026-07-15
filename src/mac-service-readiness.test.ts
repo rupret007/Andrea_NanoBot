@@ -96,6 +96,21 @@ describe('mac service readiness', () => {
     );
   });
 
+  it('rejects a reused boot id even when all other release evidence matches', () => {
+    const projectRoot = root();
+    writeReadyState(projectRoot, 'commit-new', 'boot-reused');
+
+    const result = inspectMacServiceReadiness({
+      projectRoot,
+      previousBootId: 'boot-reused',
+      expectedCommit: 'commit-new',
+      processExists: () => true,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.reasons).toEqual(['new_boot_not_observed']);
+  });
+
   it('waits for delayed authoritative readiness instead of accepting stale state', async () => {
     const projectRoot = root();
     writeReadyState(projectRoot, 'commit-old', 'boot-old');

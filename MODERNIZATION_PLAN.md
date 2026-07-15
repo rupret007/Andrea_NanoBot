@@ -5,10 +5,10 @@ as historical implementation and release evidence unless its heading
 explicitly says otherwise; older uses of “candidate” or “authoritative” do not
 override the first section.
 
-## Production Action Authority And Guided UX — 2026-07-15 (release-candidate snapshot)
+## Production Action Authority And Guided UX — 2026-07-15 (validated snapshot)
 
 This is the authoritative implementation and local-validation section for this
-candidate. It closes a trust-boundary gap between permission to run a canary
+tree. It closes a trust-boundary gap between permission to run a canary
 and permission to perform the canary's protected plan. Publication, hosted-CI,
 and serving state are intentionally not frozen in this source document; query
 Git and service status for those time-sensitive facts. Do not borrow a prior
@@ -62,11 +62,17 @@ release's SHA, test counts, runtime provenance, or proof labels.
       binding plans are rejected rather than interpreted as a generalized
       rollback engine. Unknown or partial effects remain indeterminate and are
       never replayed merely because a rollback description exists.
+- [x] Make host process generations authoritative across restarts. A newly
+      started process rotates stale boot identity and start time, repeated
+      readiness writes from the same process preserve them, and the Windows
+      launcher's prewritten `starting` generation survives its PID handoff.
+      The Mac restart runner captures the prior boot ID before shutdown so a
+      cleared ready marker cannot bypass the new-generation assertion.
 
 ### Validation and release state
 
-- [x] The settled local candidate passes formatting, root typecheck, production
-      build, and the complete primary suite at 250 files / 3,076 tests. Lint
+- [x] The settled local tree passes formatting, root typecheck, production
+      build, and the complete primary suite at 250 files / 3,079 tests. Lint
       reports zero errors and 664 existing warnings; those warnings are not
       represented as newly clean work.
 - [x] Focused validation passes 95/95 acquisition tests, 188/188
@@ -82,7 +88,15 @@ release's SHA, test counts, runtime provenance, or proof labels.
       suite also pass.
 - [x] The reconciled documentation passes the 72-file documentation checker,
       and the combined working tree passes `git diff --check`.
-- [x] The exact-candidate deterministic sweep passes all 97 selected commands
+- [x] Exact-SHA hosted validation of the initial application commit exposed a
+      Windows-only database setup timeout rather than a product assertion
+      failure. The focused hook now has 30 seconds of setup headroom and its
+      replacement exact-SHA Windows job passed. Runtime verification then
+      exposed stale boot-ID reuse; the process-generation correction above and
+      its stale-process, same-process, Windows-handoff, runner-contract, and
+      readiness-refusal tests pass locally. A later published SHA must earn its
+      own hosted and runtime proof.
+- [x] The exact-tree deterministic sweep passes all 97 selected commands
       from 112 inventoried, with 15 live, interactive, aggregate, or state-
       writing commands explicitly excluded. Its nested one-command stability
       gate passes 3/3 rounds. The network-denied hard-kill and held-out recovery

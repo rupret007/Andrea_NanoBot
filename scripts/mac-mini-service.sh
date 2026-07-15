@@ -99,7 +99,10 @@ wait_for_service_ready() {
 
 install_service() {
   local previous_boot_id
-  previous_boot_id="$(current_boot_id)"
+  previous_boot_id="${1:-}"
+  if [[ -z "$previous_boot_id" ]]; then
+    previous_boot_id="$(current_boot_id)"
+  fi
   mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR" "$STATE_DIR" "$PROJECT_ROOT/data/run"
   render_plist > "$PLIST"
   plutil -lint "$PLIST" >/dev/null
@@ -123,12 +126,15 @@ uninstall_service() {
 }
 
 start_service() {
+  local previous_boot_id
+  previous_boot_id="${1:-}"
   if [[ ! -f "$PLIST" ]]; then
-    install_service
+    install_service "$previous_boot_id"
     return
   fi
-  local previous_boot_id
-  previous_boot_id="$(current_boot_id)"
+  if [[ -z "$previous_boot_id" ]]; then
+    previous_boot_id="$(current_boot_id)"
+  fi
   launchctl enable "$(service_target)" >/dev/null 2>&1 || true
   if ! is_bootstrapped; then
     launchctl bootstrap "$(domain)" "$PLIST"
@@ -185,8 +191,9 @@ case "${1:-}" in
   start) start_service ;;
   stop) stop_service ;;
   restart)
+    restart_previous_boot_id="$(current_boot_id)"
     stop_service
-    start_service
+    start_service "$restart_previous_boot_id"
     ;;
   status) status_service ;;
   logs)

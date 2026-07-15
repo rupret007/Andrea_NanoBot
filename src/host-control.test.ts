@@ -80,6 +80,12 @@ describe('host control state', () => {
     expect(ready.bootId).toBe('boot-123');
     expect(ready.pid).toBe(process.pid);
     expect(fs.existsSync(getReadyStatePath())).toBe(true);
+
+    const repeatedReady = writeAssistantReadyState('1.2.42');
+    expect(repeatedReady.bootId).toBe('boot-123');
+    expect(readHostControlSnapshot().hostState?.startedAt).toBe(
+      '2026-04-02T00:00:00.000Z',
+    );
   });
 
   it('creates a self-hosted ready marker when no launcher host state exists', () => {
@@ -91,6 +97,80 @@ describe('host control state', () => {
     if (process.platform !== 'win32') {
       expect(snapshot.hostState?.phase).toBe('running_ready');
       expect(snapshot.hostState?.pid).toBe(process.pid);
+    }
+  });
+
+  it('rotates stale self-hosted identity from a prior process generation', () => {
+    persistNanoclawHostState({
+      bootId: 'boot-stale-generation',
+      phase: 'running_ready',
+      pid: process.pid + 1,
+      installMode: 'manual_host_control',
+      nodePath: process.execPath,
+      nodeVersion: process.version,
+      startedAt: '2026-04-02T00:00:00.000Z',
+      readyAt: '2026-04-02T00:00:05.000Z',
+      lastError: '',
+      dependencyState: 'ok',
+      dependencyError: '',
+      stdoutLogPath: path.join(tempDir, 'logs', 'nanoclaw.log'),
+      stderrLogPath: path.join(tempDir, 'logs', 'nanoclaw.error.log'),
+      hostLogPath: path.join(tempDir, 'logs', 'nanoclaw.host.log'),
+    });
+
+    const ready = writeAssistantReadyState('1.2.42');
+    const snapshot = readHostControlSnapshot();
+
+    expect(ready.bootId).toMatch(/^host-/);
+    expect(ready.bootId).not.toBe('boot-stale-generation');
+    if (process.platform !== 'win32') {
+      expect(snapshot.hostState?.bootId).toBe(ready.bootId);
+      expect(snapshot.hostState?.pid).toBe(process.pid);
+      expect(snapshot.hostState?.startedAt).not.toBe(
+        '2026-04-02T00:00:00.000Z',
+      );
+    }
+  });
+
+  it('preserves a prewritten Windows launcher generation before its pid update', () => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(
+      process,
+      'platform',
+    );
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: 'win32',
+    });
+    try {
+      persistNanoclawHostState({
+        bootId: 'boot-windows-launcher',
+        phase: 'starting',
+        pid: null,
+        installMode: 'scheduled_task',
+        nodePath: 'C:\\node.exe',
+        nodeVersion: '22.22.2',
+        startedAt: '2026-04-02T00:00:00.000Z',
+        readyAt: null,
+        lastError: '',
+        dependencyState: 'unknown',
+        dependencyError: '',
+        stdoutLogPath: path.join(tempDir, 'logs', 'nanoclaw.log'),
+        stderrLogPath: path.join(tempDir, 'logs', 'nanoclaw.error.log'),
+        hostLogPath: path.join(tempDir, 'logs', 'nanoclaw.host.log'),
+      });
+
+      const ready = writeAssistantReadyState('1.2.42');
+      const snapshot = readHostControlSnapshot();
+
+      expect(ready.bootId).toBe('boot-windows-launcher');
+      expect(ready.pid).toBe(process.pid);
+      expect(snapshot.hostState?.phase).toBe('starting');
+      expect(snapshot.hostState?.pid).toBeNull();
+      expect(snapshot.hostState?.startedAt).toBe('2026-04-02T00:00:00.000Z');
+    } finally {
+      if (platformDescriptor) {
+        Object.defineProperty(process, 'platform', platformDescriptor);
+      }
     }
   });
 

@@ -445,7 +445,9 @@ and control joins. The released baseline's 22/22 deterministic proof uses
 labeled synthetic owner fixtures and creates no live owner or production
 evidence. The combined forward-fix passes its primary, focused, container, AGI,
 deterministic, certification, scorecard, signature, documentation, and audit
-gates; publication, exact-SHA hosted checks, and runtime proof remain pending.
+gates. Publication, exact-SHA hosted checks, and runtime proof are time-sensitive
+and must be read from Git, GitHub, and service status; genuine owner/live proof
+remains pending.
 Caller-supplied identifiers still cannot open any
 transition. A stale projected playbook cannot bypass canonical state, and
 matching or previewing one does not claim execution, increment verified usage,

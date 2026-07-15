@@ -19,12 +19,11 @@ Start with exactly one document based on your role:
 snapshot. Do not copy host paths, personal channel identifiers, or a proof
 label from this page into release notes; refresh the operator commands below.
 
-The dated snapshot is deliberately conservative. The previously released
-Production Apprenticeship is serving on the canonical Mac host, while the
-action-authority release-candidate snapshot has
-primary, focused, container, AGI, deterministic, certification, scorecard,
-signature, documentation, and dependency-audit gates pass. Hosted CI,
-publication, and runtime proof are time-sensitive and must be queried. The Release-Readiness candidate
+The dated snapshot is deliberately conservative. The action-authority tree has
+passed its primary, focused, container, AGI, deterministic, certification,
+scorecard, signature, documentation, and dependency-audit gates. Publication,
+hosted CI, and the exact version serving on the canonical Mac host are
+time-sensitive and must be queried rather than inferred from this index. The Release-Readiness candidate
 has only labeled synthetic
 `owner_review_required` evidence: no real canary, protected action decision,
 owner verdict, activation, or reuse is claimed. Repository, hosted-CI, runtime,
@@ -158,8 +157,9 @@ For the productized flagship-flow view specifically:
   review, separate activation, monitored narrow reuse, quarantine, and
   revocation contract; current 22/22 synthetic certification plus focused
   forward-fix validation; the primary, container, AGI, deterministic,
-  scorecard, signature, documentation, and audit gates pass while hosted,
-  publication, runtime, and genuine owner/live proof are still pending:
+  scorecard, signature, documentation, and audit gates pass; query Git,
+  GitHub, and service status for current publication, hosted, and runtime
+  evidence, while genuine owner/live proof remains pending:
   [VERIFIED_PRODUCTION_APPRENTICESHIP.md](VERIFIED_PRODUCTION_APPRENTICESHIP.md)
 - Candace / people follow-through: [COMMUNICATION_COMPANION.md](COMMUNICATION_COMPANION.md)
 - plan creation and execution: [MISSIONS_AND_EXECUTION.md](MISSIONS_AND_EXECUTION.md)

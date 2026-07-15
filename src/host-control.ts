@@ -1155,13 +1155,19 @@ export function writeAssistantReadyState(
 ): NanoclawReadyState {
   const hostState = readNanoclawHostState(projectRoot);
   const readyAt = new Date().toISOString();
+  const preservesWindowsLauncherGeneration =
+    process.platform === 'win32' &&
+    hostState?.phase === 'starting' &&
+    hostState.pid === null;
+  const preservesProcessGeneration =
+    Boolean(hostState?.bootId) &&
+    (hostState?.pid === process.pid || preservesWindowsLauncherGeneration);
   const shouldPersistSelfHostedState =
     process.platform !== 'win32' &&
-    (!hostState ||
-      !hostState.bootId ||
-      hostState.pid !== process.pid ||
-      hostState.phase !== 'running_ready');
-  const bootId = hostState?.bootId || `host-${process.pid}-${Date.now()}`;
+    (!preservesProcessGeneration || hostState?.phase !== 'running_ready');
+  const bootId = preservesProcessGeneration
+    ? hostState?.bootId || `host-${process.pid}-${Date.now()}`
+    : `host-${process.pid}-${Date.now()}`;
 
   if (shouldPersistSelfHostedState) {
     const paths = resolveHostControlPaths(projectRoot);
@@ -1175,7 +1181,9 @@ export function writeAssistantReadyState(
         installMode: hostState?.installMode || 'manual_host_control',
         nodePath: process.execPath,
         nodeVersion: process.version,
-        startedAt: hostState?.startedAt || readyAt,
+        startedAt: preservesProcessGeneration
+          ? hostState?.startedAt || readyAt
+          : readyAt,
         readyAt,
         lastError: '',
         dependencyState: preserveDegradedDependency ? 'degraded' : 'ok',

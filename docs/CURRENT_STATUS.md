@@ -6,9 +6,9 @@ proof is time-sensitive; rerun `npm run debug:status`,
 release or demo. The release facts below describe their recorded tree; they do
 not replace current Git, hosted-check, or runtime provenance.
 
-## Current Candidate Validation Snapshot
+## Current Validation Snapshot
 
-- The action-authority candidate contains apprenticeship authority and guided-UX
+- The action-authority tree contains apprenticeship authority and guided-UX
   forward-fixes. Its primary, focused, container, AGI, deterministic,
   certification, scorecard, signature, documentation, and dependency-audit
   gates have passed. Publication, exact-SHA hosted checks, rebuild, restart, and
@@ -32,7 +32,7 @@ not replace current Git, hosted-check, or runtime provenance.
   Explicit older acquisition/run IDs use exact lookup rather than the bounded
   20-item overview.
 - Current local evidence is: formatting, root typecheck, production build, and
-  250 primary files / 3,076 tests passed; lint has zero errors and 664 existing
+  250 primary files / 3,079 tests passed; lint has zero errors and 664 existing
   warnings. Focused acquisition is 95/95, production/cockpit/chat is 188/188
   including all 6/6 real-process hard-kill cases, and durable continuity is
   142/142. Container install, runner typecheck/build, 13/13 runner tests,
