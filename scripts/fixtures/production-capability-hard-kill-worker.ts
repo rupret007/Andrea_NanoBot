@@ -62,10 +62,15 @@ type WorkerKind =
   | 'inspect_and_retry_canary'
   | 'crash_activation_stage'
   | 'inspect_and_retry_activation'
+  | 'crash_activation_authority_before_run'
+  | 'crash_activation_run_before_reconcile'
+  | 'inspect_and_retry_activation_authorization'
   | 'crash_active_reuse_stage'
   | 'inspect_and_retry_active_reuse'
   | 'crash_after_receipts'
-  | 'recover_after_receipts';
+  | 'recover_after_receipts'
+  | 'prepare_activation_race'
+  | 'race_activation';
 
 interface WorkerCommand {
   kind: WorkerKind;
@@ -73,6 +78,8 @@ interface WorkerCommand {
   markerPath: string;
   statePath: string;
   effectCounterPath: string;
+  barrierPath?: string;
+  workerId?: string;
 }
 
 interface FixtureState {
@@ -547,10 +554,12 @@ function stageActiveReuse(
   const match = matchActiveCapability({
     groupFolder: GROUP,
     taskFamily: contract.taskFamily,
+    triggerText: 'verify a hard-kill production fixture',
     inputs: values,
     intendedPostconditions: contract.successPostconditions,
     binding,
     currentResourceVersions,
+    now: at(12),
   });
   if (match.status !== 'matched') {
     throw new Error(`Active hard-kill fixture did not match: ${match.status}.`);
@@ -558,6 +567,7 @@ function stageActiveReuse(
   return stageActiveCapabilityReuse({
     match,
     taskFamily: contract.taskFamily,
+    triggerText: 'verify a hard-kill production fixture',
     intendedPostconditions: contract.successPostconditions,
     binding,
     normalizedInputs: values,
@@ -619,6 +629,83 @@ function failClosed(error: unknown): void {
 
 async function execute(command: WorkerCommand): Promise<void> {
   _initTestDatabaseAtPath(command.databasePath);
+  if (command.kind === 'prepare_activation_race') {
+    const prepared = await prepareReviewedCanary(command.effectCounterPath);
+    const run = getCapabilityProductionRun(prepared.staged.run.runId);
+    if (!run) throw new Error('Activation-race canary disappeared.');
+    const staged = stageCapabilityActivation({
+      runId: run.runId,
+      ...productionHeads(run.runId),
+      binding,
+      now: at(9),
+    });
+    approve(staged.approval, at(10));
+    writeState(command.statePath, {
+      acquisitionId: prepared.acquisition.acquisitionId,
+      runId: run.runId,
+    });
+    sendAndExit({
+      type: 'activation_race_prepared',
+      acquisitionId: prepared.acquisition.acquisitionId,
+      runId: run.runId,
+    });
+    return;
+  }
+
+  if (command.kind === 'race_activation') {
+    if (!command.barrierPath || !command.workerId) {
+      throw new Error('Activation-race worker binding is incomplete.');
+    }
+    const state = readState(command.statePath);
+    if (!state.runId) throw new Error('Activation-race run is missing.');
+    // Both processes load the same immutable head before the parent releases
+    // the barrier. This is a real two-process SQLite race, not two promises on
+    // one event loop.
+    const heads = productionHeads(state.runId);
+    process.send?.({
+      type: 'activation_race_ready',
+      workerId: command.workerId,
+      expectedAcquisitionVersion: heads.expectedAcquisitionVersion,
+      expectedRunRevision: heads.expectedRunRevision,
+    });
+    const deadline = Date.now() + 30_000;
+    while (!fs.existsSync(command.barrierPath)) {
+      if (Date.now() >= deadline) {
+        throw new Error('Activation-race barrier timed out.');
+      }
+      Atomics.wait(hold, 0, 0, 10);
+    }
+    try {
+      const activated = authorizeApprovedCapabilityActivation({
+        runId: state.runId,
+        ...heads,
+        binding,
+        workerId: command.workerId,
+        now: at(11),
+      });
+      sendAndExit({
+        type: 'activation_race_result',
+        workerId: command.workerId,
+        success: true,
+        receiptId: activated.receipt.receiptId,
+      });
+    } catch (error) {
+      sendAndExit({
+        type: 'activation_race_result',
+        workerId: command.workerId,
+        success: false,
+        failureClass:
+          error instanceof Error &&
+          /head|revision|approval|lease|active|changed|locked|busy/i.test(
+            error.message,
+          )
+            ? 'stale_or_consumed_authority'
+            : 'unexpected_activation_failure',
+      });
+    }
+    return;
+  }
+
   if (command.kind === 'crash_canary_stage') {
     const acquisition = await prepareCandidate();
     seedHealth();
@@ -701,6 +788,87 @@ async function execute(command: WorkerCommand): Promise<void> {
     return;
   }
 
+  if (
+    command.kind === 'crash_activation_authority_before_run' ||
+    command.kind === 'crash_activation_run_before_reconcile'
+  ) {
+    const prepared = await prepareReviewedCanary(command.effectCounterPath);
+    const run = getCapabilityProductionRun(prepared.staged.run.runId);
+    if (!run) throw new Error('Reviewed activation canary disappeared.');
+    const staged = stageCapabilityActivation({
+      runId: run.runId,
+      ...productionHeads(run.runId),
+      binding,
+      now: at(9),
+    });
+    approve(staged.approval, at(10));
+    writeState(command.statePath, {
+      acquisitionId: prepared.acquisition.acquisitionId,
+      runId: run.runId,
+      baseline: artifactCounts(prepared.acquisition.acquisitionId),
+    });
+    const boundary =
+      command.kind === 'crash_activation_authority_before_run'
+        ? 'after_activation_authority_before_run'
+        : 'after_activation_run_before_reconcile';
+    installHardKillBoundary(boundary, command.markerPath);
+    authorizeApprovedCapabilityActivation({
+      runId: run.runId,
+      ...productionHeads(run.runId),
+      binding,
+      workerId: `hard-kill-${boundary}`,
+      now: at(11),
+    });
+    throw new Error(`Activation authorization passed ${boundary}.`);
+  }
+
+  if (command.kind === 'inspect_and_retry_activation_authorization') {
+    const state = readState(command.statePath);
+    if (!state.runId) {
+      throw new Error('Activation authorization run identity is missing.');
+    }
+    const beforeRetry = artifactCounts(state.acquisitionId);
+    const beforeRun = getCapabilityProductionRun(state.runId);
+    if (!beforeRun)
+      throw new Error('Activation authorization run disappeared.');
+    const approval = listCognitiveApprovalPackets({
+      groupFolder: GROUP,
+      limit: 1_000,
+    }).find(
+      (packet) =>
+        packet.approvalPacketId === beforeRun.activationApprovalPacketId,
+    );
+    const activated = authorizeApprovedCapabilityActivation({
+      runId: state.runId,
+      ...productionHeads(state.runId),
+      binding,
+      workerId: 'hard-kill-activation-retry-worker',
+      // This is beyond the 60-second lease that the killed authorization
+      // would have held if SQLite had committed any of its partial writes.
+      now: at(80),
+    });
+    const afterRetry = artifactCounts(state.acquisitionId);
+    const activatedTransitions = listCapabilityProductionTransitionReceipts({
+      runId: state.runId,
+      limit: 100,
+    }).filter((receipt) => receipt.transitionKind === 'activated').length;
+    sendAndExit({
+      type: 'activation_authorization_rollback_verified',
+      baseline: state.baseline,
+      beforeRetry,
+      afterRetry,
+      runStatusBeforeRetry: beforeRun.status,
+      activationGrantBeforeRetry: beforeRun.activationGrantId,
+      activationLeaseBeforeRetry: beforeRun.activationLeaseId,
+      approvalStatusBeforeRetry: approval?.status || null,
+      runStatusAfterRetry: activated.run.status,
+      acquisitionStateAfterRetry: activated.acquisition.state,
+      activatedTransitions,
+      retryAt: at(80).toISOString(),
+    });
+    return;
+  }
+
   if (command.kind === 'crash_active_reuse_stage') {
     const prepared = await prepareActivatedCanary(command.effectCounterPath);
     writeState(command.statePath, {
@@ -771,8 +939,10 @@ async function execute(command: WorkerCommand): Promise<void> {
     binding,
     workerId: 'hard-kill-recovery-worker-1',
     registry: liveRegistry(command.effectCounterPath),
-    now: at(7),
-    clock: () => at(7),
+    // A different process must not steal an in-flight effect while the
+    // persisted executor lease is still valid. Recover only after its TTL.
+    now: at(70),
+    clock: () => at(70),
   });
   const runAfterFirst = getCapabilityProductionRun(state.runId);
   if (!runAfterFirst) throw new Error('Recovered run disappeared.');
@@ -801,8 +971,8 @@ async function execute(command: WorkerCommand): Promise<void> {
     binding,
     workerId: 'hard-kill-recovery-worker-2',
     registry: liveRegistry(command.effectCounterPath),
-    now: at(8),
-    clock: () => at(8),
+    now: at(71),
+    clock: () => at(71),
   });
   const runAfterSecond = getCapabilityProductionRun(state.runId);
   if (!runAfterSecond)

@@ -15,6 +15,9 @@ type WorkerKind =
   | 'inspect_and_retry_canary'
   | 'crash_activation_stage'
   | 'inspect_and_retry_activation'
+  | 'crash_activation_authority_before_run'
+  | 'crash_activation_run_before_reconcile'
+  | 'inspect_and_retry_activation_authorization'
   | 'crash_active_reuse_stage'
   | 'inspect_and_retry_active_reuse'
   | 'crash_after_receipts'
@@ -204,6 +207,47 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+async function proveActivationAuthorizationRollback(params: {
+  label: string;
+  crashKind:
+    | 'crash_activation_authority_before_run'
+    | 'crash_activation_run_before_reconcile';
+  boundary:
+    | 'after_activation_authority_before_run'
+    | 'after_activation_run_before_reconcile';
+}): Promise<void> {
+  const fixture = createFixture(params.label);
+  const crashing = spawnWorker(fixture, params.crashKind);
+  await waitForBoundary(fixture, params.boundary, crashing);
+  await hardKill(crashing);
+
+  const proof = await runWorker(
+    fixture,
+    'inspect_and_retry_activation_authorization',
+  );
+  expect(proof.type).toBe('activation_authorization_rollback_verified');
+  expect(record(proof.beforeRetry)).toEqual(record(proof.baseline));
+  expect(proof.runStatusBeforeRetry).toBe('awaiting_activation_approval');
+  expect(proof.activationGrantBeforeRetry).toBeNull();
+  expect(proof.activationLeaseBeforeRetry).toBeNull();
+  expect(proof.approvalStatusBeforeRetry).toBe('approved');
+  expect(proof.runStatusAfterRetry).toBe('active');
+  expect(proof.acquisitionStateAfterRetry).toBe('active');
+  expect(proof.activatedTransitions).toBe(1);
+  expect(proof.retryAt).toBe('2026-07-15T12:01:20.000Z');
+  const before = record(proof.beforeRetry);
+  const after = record(proof.afterRetry);
+  expect(after.productionRuns).toBe(before.productionRuns);
+  expect(after.durableWorks).toBe(before.durableWorks);
+  expect(after.approvals).toBe(before.approvals);
+  expect(after.cognitiveRuns).toBe(before.cognitiveRuns);
+  expect(after.durableLinks).toBe(before.durableLinks);
+  expect(after.durableCheckpoints).toBe(Number(before.durableCheckpoints) + 1);
+  expect(after.resumeGrants).toBe(Number(before.resumeGrants) + 1);
+  expect(after.activeWorkLeases).toBe(before.activeWorkLeases);
+  assertDatabaseHealthy(fixture.databasePath);
+}
+
 afterEach(() => {
   for (const worker of workers) {
     if (worker.child.exitCode === null && worker.child.signalCode === null) {
@@ -274,6 +318,22 @@ describe('production capability apprenticeship hard-kill recovery', () => {
       Number(before.durableLinks),
     );
     assertDatabaseHealthy(fixture.databasePath);
+  }, 60_000);
+
+  it('rolls back consumed activation authority when the process dies before run binding', async () => {
+    await proveActivationAuthorizationRollback({
+      label: 'activation-authority',
+      crashKind: 'crash_activation_authority_before_run',
+      boundary: 'after_activation_authority_before_run',
+    });
+  }, 60_000);
+
+  it('rolls back a bound activation when the process dies before reconciliation and retries after lease expiry', async () => {
+    await proveActivationAuthorizationRollback({
+      label: 'activation-reconcile',
+      crashKind: 'crash_activation_run_before_reconcile',
+      boundary: 'after_activation_run_before_reconcile',
+    });
   }, 60_000);
 
   it('rolls back active-reuse work, grant, and lease rows after a real process death', async () => {

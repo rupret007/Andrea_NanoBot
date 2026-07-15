@@ -7,6 +7,7 @@ import {
   _closeDatabase,
   _initTestDatabaseAtPath,
   approveCognitiveApprovalPacketCAS,
+  getDurableWorkLease,
   getDurableWorkUnit,
   isDatabaseInitialized,
   listCognitiveApprovalPackets,
@@ -34,6 +35,7 @@ import {
   type DurableWorkBindingInput,
 } from '../../src/durable-work-continuity.js';
 import type {
+  CognitiveApprovalPacket,
   DurableEffectReceipt,
   DurableWorkCheckpoint,
   DurableWorkUnit,
@@ -60,6 +62,7 @@ const binding: DurableWorkBindingInput = {
 };
 
 let pendingConsume: WorkerConfig | null = null;
+let pendingGrantIssue: WorkerConfig | null = null;
 let workerPhase = 'idle';
 
 function at(seconds: number): string {
@@ -241,6 +244,7 @@ function seedApproval(
   prefix: string,
   work: DurableWorkUnit,
   now = at(1),
+  ttlMs = Math.max(1, Date.parse(at(300)) - Date.parse(now)),
 ): {
   packetId: string;
   version: number;
@@ -251,9 +255,14 @@ function seedApproval(
         (packet) => packet.approvalPacketId === work.approvalPacketId,
       )
     : null;
+  const currentPacketSpent = currentPacket
+    ? approvalGrantWasSpent(work, currentPacket)
+    : false;
   if (
     currentPacket?.status === 'approved' &&
-    currentPacket.approvalVersion === work.approvalVersion
+    currentPacket.approvalVersion === work.approvalVersion &&
+    (!currentPacket.expiresAt || currentPacket.expiresAt > now) &&
+    !currentPacketSpent
   ) {
     return {
       packetId: currentPacket.approvalPacketId,
@@ -299,7 +308,7 @@ function seedApproval(
     actionClass: 'repository_write',
     summary,
     checkpointId: work.checkpointHeadId,
-    ttlMs: Math.max(1, Date.parse(at(300)) - Date.parse(now)),
+    ttlMs,
     now,
   });
   const staged = listCognitiveApprovalPackets({
@@ -328,6 +337,25 @@ function seedApproval(
     version: approved.approvalVersion,
     checkpoint: stagedResult.checkpoint,
   };
+}
+
+function approvalGrantWasSpent(
+  work: DurableWorkUnit,
+  packet: CognitiveApprovalPacket,
+): boolean {
+  const grant = listDurableResumeGrants({
+    workId: work.workId,
+    limit: 100,
+  }).find(
+    (candidate) =>
+      candidate.approvalPacketId === packet.approvalPacketId &&
+      candidate.approvalVersion === packet.approvalVersion,
+  );
+  if (!grant) return false;
+  if (['expired', 'revoked'].includes(grant.status)) return true;
+  if (grant.status !== 'consumed' || !grant.consumedLeaseId) return false;
+  const lease = getDurableWorkLease(grant.consumedLeaseId);
+  return Boolean(lease && lease.status !== 'active');
 }
 
 function createBaseWork(now = at(0)): DurableWorkUnit {
@@ -673,9 +701,43 @@ function recoverBoundary(config: WorkerConfig): Record<string, unknown> {
     checkpoint = committed.checkpoint;
   }
 
+  let originalApprovalUnexpiredAtRecovery = false;
+  let originalApprovalSpentAtRecovery = false;
+  let freshRecoveryApprovalUsed = false;
+
   if (work.status !== 'completed') {
     workerPhase = 'recovery_approval';
+    const originalGrant = listDurableResumeGrants({
+      workId: work.workId,
+      limit: 100,
+    }).find(
+      (grant) => grant.approvalPacketId && grant.approvalVersion !== null,
+    );
+    const originalApprovalPacketId =
+      work.approvalPacketId || originalGrant?.approvalPacketId || null;
+    const originalApprovalVersion =
+      work.approvalVersion || originalGrant?.approvalVersion || null;
+    const originalApproval = originalApprovalPacketId
+      ? listCognitiveApprovalPackets({
+          groupFolder: binding.groupId,
+          limit: 100,
+        }).find(
+          (packet) => packet.approvalPacketId === originalApprovalPacketId,
+        )
+      : null;
+    originalApprovalUnexpiredAtRecovery = Boolean(
+      originalApproval?.status === 'approved' &&
+      originalApproval.approvalVersion === originalApprovalVersion &&
+      (!originalApproval.expiresAt || originalApproval.expiresAt > at(31)),
+    );
+    originalApprovalSpentAtRecovery = Boolean(
+      originalApproval && approvalGrantWasSpent(work, originalApproval),
+    );
     const approval = seedApproval('recovery', work, at(31));
+    freshRecoveryApprovalUsed = Boolean(
+      originalApproval &&
+      approval.packetId !== originalApproval.approvalPacketId,
+    );
     work = getDurableWorkUnit(work.workId)!;
     checkpoint = approval.checkpoint;
     workerPhase = 'recovery_grant';
@@ -883,6 +945,21 @@ function recoverBoundary(config: WorkerConfig): Record<string, unknown> {
     applyEffect(config.workspacePath, 'learning-record');
   }
   work = getDurableWorkUnit(work.workId)!;
+  const approvals = listCognitiveApprovalPackets({
+    groupFolder: binding.groupId,
+    limit: 100,
+  }).filter((packet) => packet.durableWorkId === work.workId);
+  const grants = listDurableResumeGrants({
+    workId: work.workId,
+    limit: 100,
+  });
+  const approvalGrantPairCount = new Set(
+    grants
+      .filter(
+        (grant) => grant.approvalPacketId && grant.approvalVersion !== null,
+      )
+      .map((grant) => `${grant.approvalPacketId}:${grant.approvalVersion}`),
+  ).size;
   return {
     type: 'recovered',
     boundary: config.boundary,
@@ -896,6 +973,14 @@ function recoverBoundary(config: WorkerConfig): Record<string, unknown> {
       workId: work.workId,
       limit: 100,
     }).length,
+    approvalPacketCount: approvals.length,
+    approvalBoundGrantCount: grants.filter(
+      (grant) => grant.approvalPacketId && grant.approvalVersion !== null,
+    ).length,
+    approvalGrantPairCount,
+    originalApprovalUnexpiredAtRecovery,
+    originalApprovalSpentAtRecovery,
+    freshRecoveryApprovalUsed,
     reconciliation,
     repositoryEditAttempts: effectAttempts(
       config.workspacePath,
@@ -926,6 +1011,65 @@ function setupConcurrency(config: WorkerConfig): Record<string, unknown> {
     token: issued.token,
     workId: committed.work.workId,
   };
+}
+
+function setupGrantRace(config: WorkerConfig): Record<string, unknown> {
+  _initTestDatabaseAtPath(config.databasePath);
+  const work = createBaseWork();
+  const committed = commitDurableCheckpointCAS({
+    workId: work.workId,
+    expectedWorkVersion: work.version,
+    completedNodeIds: ['inspect'],
+    pendingNodeIds: ['edit', 'verify'],
+    executorScopeKey: 'grant-race-executor',
+    targetScopeKey: binding.targetScopeKey,
+    preStateFingerprint: 'sha256:grant-race-prestate',
+    verificationRequirementIds: ['grant-race-verification'],
+    recoveryPolicy: 'inspect_then_resume',
+    nextSafeAction: 'Issue exactly one approval-bound grant.',
+    now: at(1),
+  });
+  const approval = seedApproval('grant-race', committed.work, at(2));
+  return {
+    type: 'grant_race_setup',
+    workId: committed.work.workId,
+    approvalPacketId: approval.packetId,
+    approvalVersion: approval.version,
+  };
+}
+
+function issueGrantOnce(config: WorkerConfig): Record<string, unknown> {
+  _initTestDatabaseAtPath(config.databasePath);
+  const work = createBaseWork(at(3));
+  const approval = seedApproval('grant-race', work, at(3));
+  try {
+    const issued = issueDurableResumeGrant({
+      workId: work.workId,
+      binding,
+      actionClass: 'repository_write',
+      approvalPacketId: approval.packetId,
+      approvalVersion: approval.version,
+      now: at(4),
+    });
+    return {
+      type: 'grant_issue_result',
+      status: 'issued',
+      grantId: issued.grant.grantId,
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      /approval packet\/version can authorize only one resume grant/i.test(
+        error.message,
+      )
+    ) {
+      return {
+        type: 'grant_issue_result',
+        status: 'duplicate_rejected',
+      };
+    }
+    throw error;
+  }
 }
 
 function consumeOnce(config: WorkerConfig): Record<string, unknown> {
@@ -993,6 +1137,15 @@ async function dispatch(config: WorkerConfig): Promise<void> {
     finish(result);
     return;
   }
+  if (config.kind === 'setup_grant_race') {
+    finish(setupGrantRace(config));
+    return;
+  }
+  if (config.kind === 'prepare_grant_issue') {
+    pendingGrantIssue = config;
+    send({ type: 'ready' });
+    return;
+  }
   if (config.kind === 'prepare_consume') {
     pendingConsume = config;
     send({ type: 'ready' });
@@ -1015,6 +1168,16 @@ process.on('message', (value) => {
       finish(consumeOnce(config));
     } catch {
       failClosed();
+    }
+    return;
+  }
+  if (message.kind === 'go' && pendingGrantIssue) {
+    const config = pendingGrantIssue;
+    pendingGrantIssue = null;
+    try {
+      finish(issueGrantOnce(config));
+    } catch (error) {
+      failClosed(error);
     }
     return;
   }

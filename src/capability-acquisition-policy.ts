@@ -660,6 +660,13 @@ function assertCapabilityTransitionEvidenceGates(params: {
       next.sandboxEvidenceJson,
       'sandboxEvidenceJson',
     );
+    const contract = parseCapabilityJson<CapabilityCandidateContract>(
+      next.candidateContractJson,
+      'candidateContractJson',
+    );
+    const cleanupStepCount = contract.steps.filter(
+      (step) => !step.readOnly,
+    ).length;
     if (
       evidence.verified !== true ||
       evidence.postconditionVerified !== true ||
@@ -669,7 +676,9 @@ function assertCapabilityTransitionEvidenceGates(params: {
       Number(evidence.duplicateEffects) !== 0 ||
       Number(evidence.falseSuccesses) !== 0 ||
       !Array.isArray(evidence.verificationReceiptIds) ||
-      evidence.verificationReceiptIds.length === 0
+      evidence.verificationReceiptIds.length === 0 ||
+      !Array.isArray(evidence.cleanupReceiptIds) ||
+      evidence.cleanupReceiptIds.length !== cleanupStepCount
     ) {
       throw new Error('Sandbox verification evidence is incomplete.');
     }

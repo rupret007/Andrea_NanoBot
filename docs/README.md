@@ -19,9 +19,16 @@ Start with exactly one document based on your role:
 snapshot. Do not copy host paths, personal channel identifiers, or a proof
 label from this page into release notes; refresh the operator commands below.
 
-The dated snapshot is deliberately conservative. Commitment Intelligence is
-published and serving on the canonical Mac host, while repository, hosted-CI,
-runtime, and genuine live proof remain distinct in
+The dated snapshot is deliberately conservative. The previously released
+Production Apprenticeship is serving on the canonical Mac host, while the
+action-authority release-candidate snapshot has
+primary, focused, container, AGI, deterministic, certification, scorecard,
+signature, documentation, and dependency-audit gates pass. Hosted CI,
+publication, and runtime proof are time-sensitive and must be queried. The Release-Readiness candidate
+has only labeled synthetic
+`owner_review_required` evidence: no real canary, protected action decision,
+owner verdict, activation, or reuse is claimed. Repository, hosted-CI, runtime,
+and genuine live proof remain distinct in
 [CURRENT_STATUS.md](CURRENT_STATUS.md). Do not infer deployment from source
 files or this index.
 
@@ -147,9 +154,12 @@ For the productized flagship-flow view specifically:
   bindings, canonical durable sandbox proof, synthetic `sandbox_verified` limit,
   and authority boundaries:
   [VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md)
-- implemented canonical canary, exact owner-review, separate activation,
-  monitored narrow reuse, quarantine, and revocation contract; 22/22 synthetic
-  certification with genuine owner/live proof still pending:
+- implemented canonical canary, separate protected-action approval, exact owner
+  review, separate activation, monitored narrow reuse, quarantine, and
+  revocation contract; current 22/22 synthetic certification plus focused
+  forward-fix validation; the primary, container, AGI, deterministic,
+  scorecard, signature, documentation, and audit gates pass while hosted,
+  publication, runtime, and genuine owner/live proof are still pending:
   [VERIFIED_PRODUCTION_APPRENTICESHIP.md](VERIFIED_PRODUCTION_APPRENTICESHIP.md)
 - Candace / people follow-through: [COMMUNICATION_COMPANION.md](COMMUNICATION_COMPANION.md)
 - plan creation and execution: [MISSIONS_AND_EXECUTION.md](MISSIONS_AND_EXECUTION.md)

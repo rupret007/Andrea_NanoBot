@@ -9,6 +9,7 @@ import { isSensitiveName, redactCouncilText } from './council-safety.js';
 import {
   assertCapabilityAcquisitionRecord,
   assertCapabilityAcquisitionTransition,
+  assertCapabilityCandidateContract,
   canonicalCapabilityJson,
   capabilityAcquisitionSnapshotJson,
   capabilityTransitionDigest,
@@ -495,6 +496,102 @@ export interface CursorMessageContextRecord {
   agent_id: string | null;
   payload_json: string | null;
   created_at: string;
+}
+
+function normalizeSqlDefinition(value: unknown): string {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function assertDurableGrantSchemaIdentity(database: Database.Database): void {
+  const expectedIndexSql = normalizeSqlDefinition(`
+    CREATE UNIQUE INDEX idx_durable_resume_approval_once
+      ON durable_resume_grants(approval_packet_id, approval_version)
+      WHERE approval_packet_id IS NOT NULL AND approval_version IS NOT NULL
+  `);
+  const index = (
+    database.pragma('index_list(durable_resume_grants)') as Array<{
+      name: string;
+      unique: number;
+      partial: number;
+    }>
+  ).find((candidate) => candidate.name === 'idx_durable_resume_approval_once');
+  const columns = index
+    ? (
+        database.pragma(
+          'index_info(idx_durable_resume_approval_once)',
+        ) as Array<{ seqno: number; name: string }>
+      ).sort((left, right) => left.seqno - right.seqno)
+    : [];
+  const indexRow = database
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`)
+    .get('idx_durable_resume_approval_once') as { sql: string } | undefined;
+  const indexSql = normalizeSqlDefinition(indexRow?.sql);
+  if (
+    !index ||
+    index.unique !== 1 ||
+    index.partial !== 1 ||
+    columns.map((column) => column.name).join('|') !==
+      'approval_packet_id|approval_version' ||
+    indexSql !== expectedIndexSql
+  ) {
+    throw new Error(
+      'Durable approval grant uniqueness schema is missing or mismatched.',
+    );
+  }
+  const triggerRequirements = new Map([
+    [
+      'trg_durable_grant_approval_pair_insert',
+      normalizeSqlDefinition(`
+        CREATE TRIGGER trg_durable_grant_approval_pair_insert
+          BEFORE INSERT ON durable_resume_grants
+          FOR EACH ROW
+          WHEN (NEW.approval_packet_id IS NULL) <> (NEW.approval_version IS NULL)
+          BEGIN
+            SELECT RAISE(ABORT, 'durable grant approval identity must be complete');
+          END
+      `),
+    ],
+    [
+      'trg_durable_grant_approval_pair_update',
+      normalizeSqlDefinition(`
+        CREATE TRIGGER trg_durable_grant_approval_pair_update
+          BEFORE UPDATE OF approval_packet_id, approval_version ON durable_resume_grants
+          FOR EACH ROW
+          WHEN (NEW.approval_packet_id IS NULL) <> (NEW.approval_version IS NULL)
+          BEGIN
+            SELECT RAISE(ABORT, 'durable grant approval identity must be complete');
+          END
+      `),
+    ],
+  ]);
+  for (const [name, expectedSql] of triggerRequirements) {
+    const row = database
+      .prepare(
+        `SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name = ?`,
+      )
+      .get(name) as { tbl_name: string; sql: string } | undefined;
+    const sql = normalizeSqlDefinition(row?.sql);
+    if (row?.tbl_name !== 'durable_resume_grants' || sql !== expectedSql) {
+      throw new Error(
+        'Durable approval grant pairing schema is missing or mismatched.',
+      );
+    }
+  }
+  const incomplete = database
+    .prepare(
+      `SELECT grant_id FROM durable_resume_grants
+       WHERE (approval_packet_id IS NULL) <> (approval_version IS NULL)
+       LIMIT 1`,
+    )
+    .get();
+  if (incomplete) {
+    throw new Error(
+      'Durable resume grant approval identity is incomplete; startup is blocked without rewriting legacy evidence.',
+    );
+  }
 }
 
 function createSchema(database: Database.Database): void {
@@ -5423,6 +5520,9 @@ function createSchema(database: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_resume_inbound_once
       ON durable_resume_grants(work_id, inbound_message_hash)
       WHERE inbound_message_hash IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_resume_approval_once
+      ON durable_resume_grants(approval_packet_id, approval_version)
+      WHERE approval_packet_id IS NOT NULL AND approval_version IS NOT NULL;
     CREATE TABLE IF NOT EXISTS durable_work_leases (
       lease_id TEXT PRIMARY KEY,
       work_id TEXT NOT NULL,
@@ -5512,6 +5612,20 @@ function createSchema(database: Database.Database): void {
       )
       BEGIN
         SELECT RAISE(ABORT, 'durable grant checkpoint scope mismatch');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_grant_approval_pair_insert
+      BEFORE INSERT ON durable_resume_grants
+      FOR EACH ROW
+      WHEN (NEW.approval_packet_id IS NULL) <> (NEW.approval_version IS NULL)
+      BEGIN
+        SELECT RAISE(ABORT, 'durable grant approval identity must be complete');
+      END;
+    CREATE TRIGGER IF NOT EXISTS trg_durable_grant_approval_pair_update
+      BEFORE UPDATE OF approval_packet_id, approval_version ON durable_resume_grants
+      FOR EACH ROW
+      WHEN (NEW.approval_packet_id IS NULL) <> (NEW.approval_version IS NULL)
+      BEGIN
+        SELECT RAISE(ABORT, 'durable grant approval identity must be complete');
       END;
     CREATE TRIGGER IF NOT EXISTS trg_durable_receipt_checkpoint_scope_insert
       BEFORE INSERT ON durable_effect_receipts
@@ -5927,6 +6041,8 @@ function createSchema(database: Database.Database): void {
         SELECT RAISE(ABORT, 'durable mutating receipt current authority mismatch');
       END;
   `);
+
+  assertDurableGrantSchemaIdentity(database);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
   try {
@@ -15924,6 +16040,25 @@ export function listCognitiveApprovalPackets(
   return rows.map((row) => mapCognitiveApprovalPacketRow(row));
 }
 
+export function getCognitiveApprovalPacketForGroup(params: {
+  approvalPacketId: string;
+  groupFolder: string;
+}): CognitiveApprovalPacket | undefined {
+  assertValidGroupFolder(params.groupFolder);
+  const row = db
+    .prepare(
+      `SELECT cap.*
+       FROM cognitive_approval_packets AS cap
+       JOIN cognitive_runs AS run ON run.run_id = cap.run_id
+       WHERE cap.approval_packet_id = ? AND run.group_folder = ?
+       LIMIT 1`,
+    )
+    .get(params.approvalPacketId, params.groupFolder) as
+    | Parameters<typeof mapCognitiveApprovalPacketRow>[0]
+    | undefined;
+  return row ? mapCognitiveApprovalPacketRow(row) : undefined;
+}
+
 export type CognitiveApprovalCASStatus =
   | 'approved'
   | 'not_found_or_scope_mismatch'
@@ -15957,6 +16092,17 @@ export function approveCognitiveApprovalPacketCAS(params: {
         })
       | undefined;
     if (!row) return { status: 'not_found_or_scope_mismatch' as const };
+    const capabilityBinding = getCapabilityProductionApprovalBinding({
+      approvalPacketId: params.approvalPacketId,
+      groupFolder: params.groupFolder,
+    });
+    if (
+      capabilityBinding?.ambiguous ||
+      (capabilityBinding &&
+        capabilityBinding.authorizedSurface !== params.approvalChannel)
+    ) {
+      return { status: 'not_found_or_scope_mismatch' as const };
+    }
     if (row.status !== 'staged') {
       return { status: 'already_decided' as const };
     }
@@ -29535,6 +29681,7 @@ export type CapabilityAcquisitionCanonicalEvidenceGuard = {
   checkpointId: string;
   candidateFingerprint: string;
   receiptIds: string[];
+  cleanupReceiptIds: string[];
 };
 
 function assertCapabilityAcquisitionCanonicalEvidence(params: {
@@ -29566,6 +29713,7 @@ function assertCapabilityAcquisitionCanonicalEvidence(params: {
         stepId?: unknown;
         actionClass?: unknown;
         evaluatorId?: unknown;
+        readOnly?: unknown;
       }>;
     };
     if (
@@ -29628,9 +29776,15 @@ function assertCapabilityAcquisitionCanonicalEvidence(params: {
       );
     }
     const guardedReceiptIds = new Set(guard.receiptIds);
+    const guardedCleanupReceiptIds = new Set(guard.cleanupReceiptIds);
+    const cleanupStepCount = contract.steps.filter(
+      (step) => step.readOnly !== true,
+    ).length;
     if (
       guardedReceiptIds.size !== guard.receiptIds.length ||
-      guardedReceiptIds.size !== contract.steps.length
+      guardedReceiptIds.size !== contract.steps.length ||
+      guardedCleanupReceiptIds.size !== guard.cleanupReceiptIds.length ||
+      guardedCleanupReceiptIds.size !== cleanupStepCount
     ) {
       throw new Error(
         'Sandbox completion requires one unique receipt per candidate step.',
@@ -29649,6 +29803,9 @@ function assertCapabilityAcquisitionCanonicalEvidence(params: {
     const guardedReceipts = receipts.filter((receipt) =>
       guardedReceiptIds.has(receipt.receiptId),
     );
+    const guardedCleanupReceipts = receipts.filter((receipt) =>
+      guardedCleanupReceiptIds.has(receipt.receiptId),
+    );
     const receiptByNode = new Map(
       guardedReceipts.map((receipt) => [receipt.nodeId, receipt]),
     );
@@ -29656,11 +29813,16 @@ function assertCapabilityAcquisitionCanonicalEvidence(params: {
       expectedStepIds.size !== contract.steps.length ||
       guardedReceipts.length !== contract.steps.length ||
       receiptByNode.size !== contract.steps.length ||
-      checkpointReceiptIds.size !== guardedReceiptIds.size ||
+      guardedCleanupReceipts.length !== cleanupStepCount ||
+      checkpointReceiptIds.size !==
+        guardedReceiptIds.size + guardedCleanupReceiptIds.size ||
       [...guardedReceiptIds].some(
         (receiptId) => !checkpointReceiptIds.has(receiptId),
       ) ||
-      !guardedReceipts.some(
+      [...guardedCleanupReceiptIds].some(
+        (receiptId) => !checkpointReceiptIds.has(receiptId),
+      ) ||
+      ![...guardedReceipts, ...guardedCleanupReceipts].some(
         (receipt) =>
           receipt.postStateFingerprint ===
           checkpoint.verifiedPostStateFingerprint,
@@ -29689,6 +29851,75 @@ function assertCapabilityAcquisitionCanonicalEvidence(params: {
           cause: error,
         });
       }
+      const actionClass = String(step.actionClass || '');
+      const effectPolicy = durableActionPolicy(actionClass);
+      const approvalRequired = durableActionRequiresApproval(actionClass);
+      const protectedSimulation =
+        approvalRequired && metadata.sandboxSimulation === 'true';
+      let protectedAuthorityExact = !approvalRequired;
+      if (approvalRequired) {
+        const grant = receipt?.grantId
+          ? listDurableResumeGrants({ workId: work.workId, limit: 500 }).find(
+              (candidate) => candidate.grantId === receipt.grantId,
+            )
+          : undefined;
+        const approval = receipt?.approvalPacketId
+          ? listCognitiveApprovalPackets({
+              groupFolder: current.groupFolder || undefined,
+              limit: 1_000,
+            }).find(
+              (candidate) =>
+                candidate.approvalPacketId === receipt.approvalPacketId,
+            )
+          : undefined;
+        const lease = receipt?.leaseId
+          ? getDurableWorkLease(receipt.leaseId)
+          : undefined;
+        protectedAuthorityExact = Boolean(
+          protectedSimulation &&
+          receipt &&
+          receipt.grantId &&
+          receipt.approvalPacketId &&
+          receipt.approvalVersion &&
+          receipt.approvalScopeHash &&
+          receipt.leaseId &&
+          receipt.processGeneration &&
+          grant &&
+          approval &&
+          lease &&
+          grant.status === 'consumed' &&
+          grant.consumedAt &&
+          grant.consumedAt <= receipt.createdAt &&
+          grant.consumedLeaseId === receipt.leaseId &&
+          grant.workId === work.workId &&
+          grant.checkpointId === receipt.checkpointId &&
+          grant.planVersion === work.planVersion &&
+          grant.ownerScopeHash === work.ownerScopeHash &&
+          grant.chatScopeHash === work.chatScopeHash &&
+          grant.groupScopeHash === work.groupScopeHash &&
+          grant.channel === work.channel &&
+          grant.targetScopeHash === work.targetScopeHash &&
+          grant.actionClass === actionClass &&
+          grant.approvalPacketId === receipt.approvalPacketId &&
+          grant.approvalVersion === receipt.approvalVersion &&
+          grant.approvalScopeHash === receipt.approvalScopeHash &&
+          approval.status === 'approved' &&
+          approval.updatedAt <= receipt.createdAt &&
+          (!approval.expiresAt || approval.expiresAt > receipt.createdAt) &&
+          approval.approvalChannel === work.channel &&
+          approval.actionClass === actionClass &&
+          approval.durableWorkId === work.workId &&
+          approval.durableCheckpointId === receipt.checkpointId &&
+          approval.planVersion === work.planVersion &&
+          approval.targetScopeDigest === work.targetScopeHash &&
+          approval.approvalVersion === receipt.approvalVersion &&
+          approval.scopeDigest === receipt.approvalScopeHash &&
+          lease.workId === work.workId &&
+          lease.processGeneration === receipt.processGeneration &&
+          lease.acquiredAt <= receipt.createdAt &&
+          lease.expiresAt > receipt.createdAt,
+        );
+      }
       if (
         !receipt ||
         !guardedReceiptIds.has(receipt.receiptId) ||
@@ -29698,11 +29929,14 @@ function assertCapabilityAcquisitionCanonicalEvidence(params: {
         receipt.status !== 'succeeded' ||
         receipt.planVersion !== work.planVersion ||
         receipt.targetScopeHash !== work.targetScopeHash ||
-        receipt.actionClass !== String(step.actionClass || '') ||
-        receipt.effectClass !==
-          (String(step.actionClass || '') === 'sandbox_repository_write'
-            ? 'sandbox_repository_write'
-            : 'read_only') ||
+        receipt.actionClass !== actionClass ||
+        !effectPolicy?.allowedEffects.includes(receipt.effectClass) ||
+        !(
+          receipt.effectClass === 'read_only' ||
+          receipt.effectClass === 'sandbox_repository_write' ||
+          protectedSimulation
+        ) ||
+        !protectedAuthorityExact ||
         !receipt.postStateFingerprint ||
         !receipt.verificationFingerprint ||
         metadata.receiptClass !== 'capability_acquisition' ||
@@ -29715,6 +29949,62 @@ function assertCapabilityAcquisitionCanonicalEvidence(params: {
         throw new Error(
           'Sandbox completion is missing an exact verified canonical receipt.',
         );
+      }
+      if (step.readOnly !== true) {
+        const cleanupIdentity = createHash('sha256')
+          .update(`${stepId}|${receipt.receiptId}`)
+          .digest('hex')
+          .slice(0, 24);
+        const cleanupNodeId = `cleanup-${cleanupIdentity}`;
+        const cleanupInvocationId = `${receipt.invocationId}:cleanup:${cleanupIdentity}`;
+        const cleanup = guardedCleanupReceipts.find(
+          (candidate) => candidate.nodeId === cleanupNodeId,
+        );
+        let cleanupMetadata: Record<string, unknown> = {};
+        try {
+          cleanupMetadata = cleanup
+            ? (JSON.parse(cleanup.metadataJson) as Record<string, unknown>)
+            : {};
+        } catch (error) {
+          throw new Error('Sandbox cleanup receipt metadata is malformed.', {
+            cause: error,
+          });
+        }
+        if (
+          !cleanup ||
+          !guardedCleanupReceiptIds.has(cleanup.receiptId) ||
+          !checkpointReceiptIds.has(cleanup.receiptId) ||
+          !transitionEvidence.has(cleanup.receiptId) ||
+          cleanup.checkpointId !== checkpoint.parentCheckpointId ||
+          cleanup.invocationId !== cleanupInvocationId ||
+          cleanup.status !== 'succeeded' ||
+          cleanup.planVersion !== work.planVersion ||
+          cleanup.targetScopeHash !== work.targetScopeHash ||
+          cleanup.actionClass !== actionClass ||
+          cleanup.effectClass !== receipt.effectClass ||
+          cleanup.createdAt < receipt.createdAt ||
+          cleanup.preStateFingerprint !== receipt.postStateFingerprint ||
+          cleanup.postStateFingerprint !== cleanup.verificationFingerprint ||
+          cleanup.grantId !== receipt.grantId ||
+          cleanup.approvalPacketId !== receipt.approvalPacketId ||
+          cleanup.approvalVersion !== receipt.approvalVersion ||
+          cleanup.approvalScopeHash !== receipt.approvalScopeHash ||
+          cleanup.leaseId !== receipt.leaseId ||
+          cleanup.processGeneration !== receipt.processGeneration ||
+          !cleanup.postStateFingerprint ||
+          !cleanup.verificationFingerprint ||
+          cleanupMetadata.receiptClass !== 'capability_acquisition_cleanup' ||
+          cleanupMetadata.resultCode !== contract.candidateFingerprint ||
+          cleanupMetadata.source !== 'verified_capability_acquisition' ||
+          cleanupMetadata.verificationClass !==
+            String(step.evaluatorId || '') ||
+          typeof cleanupMetadata.idempotencyKeyHash !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(cleanupMetadata.idempotencyKeyHash)
+        ) {
+          throw new Error(
+            'Sandbox completion lacks independently verified durable cleanup evidence.',
+          );
+        }
       }
     }
   }
@@ -30077,6 +30367,11 @@ function assertCapabilityProductionRunRecord(
   ) {
     throw new Error('Capability production match confidence is out of range.');
   }
+  if (Boolean(record.executionGrantId) !== Boolean(record.executionLeaseId)) {
+    throw new Error(
+      'Capability production execution grant and lease must be bound together.',
+    );
+  }
 }
 
 function capabilityProductionRunParams(record: CapabilityProductionRunRecord) {
@@ -30215,6 +30510,67 @@ export function getCapabilityProductionRun(
     .prepare('SELECT * FROM capability_production_runs WHERE run_id = ?')
     .get(runId) as CapabilityProductionRunRow | undefined;
   return row ? mapCapabilityProductionRunRow(row) : undefined;
+}
+
+export function getCapabilityProductionApprovalBinding(params: {
+  approvalPacketId: string;
+  groupFolder: string;
+}): {
+  run: CapabilityProductionRunRecord | null;
+  authorizedSurface: string;
+  trustedChatSurface: 'telegram' | 'bluebubbles' | null;
+  ambiguous: boolean;
+} | null {
+  assertValidGroupFolder(params.groupFolder);
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT production.*
+       FROM capability_production_runs AS production
+       LEFT JOIN durable_work_units AS work
+         ON work.work_id = production.work_id
+       WHERE production.group_folder = ?
+         AND (
+           production.canary_approval_packet_id = ?
+           OR production.activation_approval_packet_id = ?
+           OR work.approval_packet_id = ?
+         )
+       ORDER BY production.updated_at DESC, production.run_id ASC`,
+    )
+    .all(
+      params.groupFolder,
+      params.approvalPacketId,
+      params.approvalPacketId,
+      params.approvalPacketId,
+    ) as CapabilityProductionRunRow[];
+  if (rows.length === 0) return null;
+  const surfaces = new Set(rows.map((row) => String(row.authorized_surface)));
+  const trustedChatSurface = surfaces.has('telegram')
+    ? 'telegram'
+    : surfaces.has('bluebubbles')
+      ? 'bluebubbles'
+      : null;
+  return {
+    run: rows.length === 1 ? mapCapabilityProductionRunRow(rows[0]) : null,
+    authorizedSurface: surfaces.size === 1 ? [...surfaces][0] : 'ambiguous',
+    trustedChatSurface,
+    ambiguous: rows.length !== 1 || surfaces.size !== 1,
+  };
+}
+
+/**
+ * Resolve whether an approval packet belongs to a capability run whose
+ * authority is bound to a trusted executable chat. This lookup is deliberately
+ * database-backed and unbounded by cockpit presentation limits: UI pagination
+ * must never make an older Telegram or BlueBubbles packet approvable from a
+ * different surface.
+ */
+export function getCapabilityProductionApprovalTrustedChatSurface(params: {
+  approvalPacketId: string;
+  groupFolder: string;
+}): 'telegram' | 'bluebubbles' | null {
+  return (
+    getCapabilityProductionApprovalBinding(params)?.trustedChatSurface || null
+  );
 }
 
 export function listCapabilityProductionRuns(
@@ -30554,6 +30910,13 @@ export function runCapabilityProductionVerifiedStepAtomic<T>(
   return db.transaction(operation).immediate();
 }
 
+/** Join terminal work, outcome, run metrics, and acquisition evidence once. */
+export function runCapabilityProductionTerminalAtomic<T>(
+  operation: () => T,
+): T {
+  return db.transaction(operation).immediate();
+}
+
 export function refreshCapabilityProductionHealthAtomic(params: {
   runId: string;
   expectedAcquisitionVersion: number;
@@ -30771,6 +31134,71 @@ export function expireCapabilityPendingAuthorityAtomic(params: {
       throw new Error(
         'Expired capability authority lost its run revision race.',
       );
+    }
+    return getCapabilityProductionRun(
+      run.runId,
+    ) as CapabilityProductionRunRecord;
+  });
+  return transact.immediate();
+}
+
+export function burnFailedCapabilityCanaryAuthorityAtomic(params: {
+  runId: string;
+  expectedRunRevision: number;
+  approvalPacketId: string;
+  grantId: string;
+  leaseId: string;
+  now: string;
+}): CapabilityProductionRunRecord {
+  const transact = db.transaction(() => {
+    const run = getCapabilityProductionRun(params.runId);
+    if (
+      !run ||
+      run.status !== 'awaiting_canary_approval' ||
+      run.revision !== params.expectedRunRevision ||
+      run.canaryApprovalPacketId !== params.approvalPacketId ||
+      run.canaryGrantId !== params.grantId ||
+      run.canaryLeaseId !== params.leaseId
+    ) {
+      throw new Error(
+        'Failed canary authority no longer matches the exact production-run head.',
+      );
+    }
+    db.prepare(
+      `UPDATE cognitive_approval_packets
+       SET status = 'expired', updated_at = ?
+       WHERE approval_packet_id = ? AND status IN ('staged', 'approved')`,
+    ).run(params.now, params.approvalPacketId);
+    db.prepare(
+      `UPDATE durable_work_leases
+       SET status = 'released', released_at = ?, heartbeat_at = ?
+       WHERE lease_id = ? AND work_id = ? AND status = 'active'`,
+    ).run(params.now, params.now, params.leaseId, run.workId);
+    db.prepare(
+      `UPDATE durable_work_units
+       SET lease_id = NULL, lease_expires_at = NULL, updated_at = ?
+       WHERE work_id = ? AND lease_id = ?`,
+    ).run(params.now, run.workId, params.leaseId);
+    const next: CapabilityProductionRunRecord = {
+      ...run,
+      updatedAt: params.now,
+      status: 'blocked',
+      revision: run.revision + 1,
+      canaryApprovalPacketId: null,
+      canaryApprovalVersion: null,
+      canaryApprovalScopeDigest: null,
+      canaryGrantId: null,
+      canaryLeaseId: null,
+      nextSafeAction:
+        'Restage a fresh bounded canary proposal and approval; the failed authorization remains permanently consumed.',
+    };
+    if (
+      updateCapabilityProductionRunCAS({
+        expectedRevision: run.revision,
+        next,
+      }) !== 'applied'
+    ) {
+      throw new Error('Failed canary authority lost its run revision race.');
     }
     return getCapabilityProductionRun(
       run.runId,
@@ -31630,6 +32058,97 @@ function assertCapabilityProductionHealth(params: {
   return evidence;
 }
 
+/**
+ * Resolves the one consumed grant which authorized the run's current execution
+ * lease. Canary authorization may itself supply that grant; every later lease
+ * must be named explicitly on the run. Callers may validate the authority at
+ * execution time or historically at the creation time of a durable receipt.
+ */
+function assertCapabilityProductionExecutionAuthority(params: {
+  run: CapabilityProductionRunRecord;
+  at: string;
+  requireActive: boolean;
+  receiptLeaseId?: string;
+  expectedActionClass?: string;
+}): void {
+  const usingCanaryAuthority =
+    params.run.runKind === 'canary' && !params.run.executionGrantId;
+  const grantId = usingCanaryAuthority
+    ? params.run.canaryGrantId
+    : params.run.executionGrantId;
+  const leaseId = usingCanaryAuthority
+    ? params.run.canaryLeaseId
+    : params.run.executionLeaseId;
+  if (
+    !grantId ||
+    !leaseId ||
+    (params.receiptLeaseId !== undefined && params.receiptLeaseId !== leaseId)
+  ) {
+    throw new Error(
+      'Capability production execution authority is incomplete or mismatched.',
+    );
+  }
+  const grant = listDurableResumeGrants({
+    workId: params.run.workId,
+    limit: 500,
+  }).find((candidate) => candidate.grantId === grantId);
+  const lease = getDurableWorkLease(leaseId);
+  const work = getDurableWorkUnit(params.run.workId);
+  const checkpoint = getDurableWorkCheckpoint(params.run.checkpointId);
+  const authorityCheckpointIds = new Set(
+    [params.run.checkpointId, checkpoint?.parentCheckpointId].filter(
+      (value): value is string => Boolean(value),
+    ),
+  );
+  const expectedActionClass =
+    params.expectedActionClass ||
+    (usingCanaryAuthority ? 'operator_change' : params.run.actionClass);
+  const mismatches = [
+    [!grant, 'grant-missing'],
+    [!lease, 'lease-missing'],
+    [!work, 'work-missing'],
+    [!checkpoint, 'checkpoint-missing'],
+    [grant?.status !== 'consumed', 'grant-status'],
+    [grant?.consumedLeaseId !== lease?.leaseId, 'grant-lease'],
+    [grant?.workId !== params.run.workId, 'grant-work'],
+    [
+      !grant || !authorityCheckpointIds.has(grant.checkpointId),
+      'grant-checkpoint',
+    ],
+    [grant?.planVersion !== params.run.planVersion, 'grant-plan'],
+    [
+      !grant ||
+        (params.requireActive
+          ? grant.workVersion !== (work?.version || 0) - 1
+          : grant.workVersion >= (work?.version || 0)),
+      'grant-work-version',
+    ],
+    [grant?.ownerScopeHash !== params.run.ownerScopeHash, 'grant-owner'],
+    [grant?.chatScopeHash !== params.run.chatScopeHash, 'grant-chat'],
+    [grant?.groupScopeHash !== params.run.groupScopeHash, 'grant-group'],
+    [grant?.channel !== params.run.channel, 'grant-channel'],
+    [grant?.targetScopeHash !== params.run.targetScopeHash, 'grant-target'],
+    [grant?.actionClass !== expectedActionClass, 'grant-action'],
+    [!grant?.consumedAt || grant.consumedAt > params.at, 'grant-time'],
+    [lease?.workId !== params.run.workId, 'lease-work'],
+    [!lease || lease.acquiredAt > params.at, 'lease-acquired'],
+    [!lease || lease.expiresAt <= params.at, 'lease-expired'],
+    [params.requireActive && lease?.status !== 'active', 'lease-inactive'],
+    [params.requireActive && work?.leaseId !== lease?.leaseId, 'work-lease'],
+    [
+      params.requireActive && work?.leaseExpiresAt !== lease?.expiresAt,
+      'work-lease-expiry',
+    ],
+  ]
+    .filter(([failed]) => failed)
+    .map(([, label]) => label as string);
+  if (mismatches.length > 0) {
+    throw new Error(
+      `Capability production execution authority is not exact (${mismatches.join(', ')}).`,
+    );
+  }
+}
+
 function assertCapabilityProductionExecution(params: {
   run: CapabilityProductionRunRecord;
   contract: CapabilityCandidateContract;
@@ -31713,6 +32232,19 @@ function assertCapabilityProductionExecution(params: {
     const originalLease = recoveryOf?.leaseId
       ? getDurableWorkLease(recoveryOf.leaseId)
       : null;
+    if (receipt?.leaseId) {
+      assertCapabilityProductionExecutionAuthority({
+        run: params.run,
+        at: receipt.createdAt,
+        requireActive: false,
+        receiptLeaseId: receipt.leaseId,
+        expectedActionClass: recoveryReceipt
+          ? 'local_lookup'
+          : params.run.executionGrantId
+            ? contractStep.actionClass
+            : undefined,
+      });
+    }
     if (
       !step ||
       !receipt ||
@@ -32117,6 +32649,15 @@ export function assertCapabilityProductionExecutionPreflight(params: {
   ) {
     throw new Error('Capability production execution lease is stale.');
   }
+  assertCapabilityProductionExecutionAuthority({
+    run,
+    at: params.now,
+    requireActive: true,
+    receiptLeaseId: lease.leaseId,
+    expectedActionClass: run.executionGrantId
+      ? contract.steps[0]?.actionClass || run.actionClass
+      : undefined,
+  });
   if (run.runKind === 'canary') {
     const authorization = db
       .prepare(
@@ -32601,6 +33142,87 @@ function applyCapabilityProductionAcquisitionTransition(params: {
   );
   projectCapabilityProductionSkill(params.next, params.contract);
   return transition;
+}
+
+/**
+ * Fail-closes an active capability when authoritative resource or health truth
+ * can no longer support reuse. The state transition, projection update, run
+ * pauses, and authority invalidation share one immediate transaction so no
+ * stale lease or grant can survive a visible pause.
+ */
+export function pauseCapabilityForRevalidationAtomic(params: {
+  acquisitionId: string;
+  expectedAcquisitionVersion: number;
+  reason: 'version_drift' | 'health_stale';
+  evidenceDigest: string;
+  now: string;
+}): CapabilityAcquisitionRecord {
+  if (!CAPABILITY_PRODUCTION_DIGEST_PATTERN.test(params.evidenceDigest)) {
+    throw new Error('Capability revalidation evidence digest is malformed.');
+  }
+  const transact = db.transaction(() => {
+    const current = getCapabilityAcquisition(params.acquisitionId);
+    if (
+      !current ||
+      current.recordVersion !== params.expectedAcquisitionVersion ||
+      !['active', 'monitoring'].includes(current.state)
+    ) {
+      throw new Error('Capability revalidation pause head is stale.');
+    }
+    const contract = JSON.parse(
+      current.candidateContractJson,
+    ) as CapabilityCandidateContract;
+    assertCapabilityCandidateContract(contract);
+    const next: CapabilityAcquisitionRecord = {
+      ...current,
+      updatedAt: params.now,
+      state: 'paused',
+      recordVersion: current.recordVersion + 1,
+      lastOutcome: params.reason,
+      nextSafeAction:
+        'Stop all matches and require a new reviewed health and resource-version proof before reuse.',
+    };
+    applyCapabilityProductionAcquisitionTransition({
+      current,
+      next,
+      actorKind: 'system',
+      reason:
+        params.reason === 'version_drift'
+          ? 'Authoritative resource-version drift paused this exact capability.'
+          : 'Authoritative dependency health became stale or unhealthy.',
+      evidenceRefs: [`capability-revalidation:${params.evidenceDigest}`],
+      idempotencyKey: `${current.acquisitionId}:revalidate:${current.recordVersion}:${params.reason}:${params.evidenceDigest}`,
+      contract,
+    });
+    const affectedRuns = listCapabilityProductionRuns({
+      acquisitionId: current.acquisitionId,
+      statuses: ['active', 'monitoring', 'running'],
+      limit: 500,
+    });
+    for (const run of affectedRuns) {
+      const result = updateCapabilityProductionRunCAS({
+        expectedRevision: run.revision,
+        next: {
+          ...run,
+          updatedAt: params.now,
+          revision: run.revision + 1,
+          status: 'paused',
+          nextSafeAction: next.nextSafeAction,
+        },
+      });
+      if (result !== 'applied') {
+        throw new Error('Capability revalidation pause lost its run race.');
+      }
+    }
+    invalidateCapabilityAuthorityForAcquisition(
+      current.acquisitionId,
+      params.now,
+    );
+    return getCapabilityAcquisition(
+      current.acquisitionId,
+    ) as CapabilityAcquisitionRecord;
+  });
+  return transact.immediate();
 }
 
 export type CapabilityProductionReconcileOperation =
@@ -41721,6 +42343,36 @@ export function stageDurableWorkApprovalPacketAtomic(params: {
     ) {
       throw new Error('Durable approval checkpoint scope does not match.');
     }
+    db.prepare(
+      `
+        UPDATE durable_resume_grants
+        SET status = 'expired', updated_at = ?
+        WHERE work_id = ? AND status = 'active' AND expires_at <= ?
+      `,
+    ).run(packet.createdAt, work.workId, packet.createdAt);
+    const activeGrant = db
+      .prepare(
+        `
+          SELECT grant_id FROM durable_resume_grants
+          WHERE work_id = ? AND status = 'active'
+          LIMIT 1
+        `,
+      )
+      .get(work.workId);
+    const activeLease = db
+      .prepare(
+        `
+          SELECT lease_id FROM durable_work_leases
+          WHERE work_id = ? AND status = 'active'
+          LIMIT 1
+        `,
+      )
+      .get(work.workId);
+    if (activeGrant || activeLease) {
+      throw new Error(
+        'Active durable authority must be reconciled before restaging approval.',
+      );
+    }
     let replacedApprovalId: string | null = null;
     if (work.approvalPacketId || work.approvalVersion) {
       const prior = work.approvalPacketId
@@ -41735,9 +42387,47 @@ export function stageDurableWorkApprovalPacketAtomic(params: {
       const elapsed = Boolean(
         prior?.expires_at && prior.expires_at <= packet.createdAt,
       );
+      const priorGrant = prior
+        ? (db
+            .prepare(
+              `
+                SELECT status, consumed_lease_id
+                FROM durable_resume_grants
+                WHERE approval_packet_id = ? AND approval_version = ?
+                LIMIT 1
+              `,
+            )
+            .get(prior.approval_packet_id, prior.approval_version) as
+            | { status: string; consumed_lease_id: string | null }
+            | undefined)
+        : undefined;
+      const consumedLease = priorGrant?.consumed_lease_id
+        ? (db
+            .prepare(
+              `SELECT status FROM durable_work_leases WHERE lease_id = ? LIMIT 1`,
+            )
+            .get(priorGrant.consumed_lease_id) as
+            | { status: string }
+            | undefined)
+        : undefined;
+      const grantTerminal = Boolean(
+        priorGrant &&
+        (['expired', 'revoked'].includes(priorGrant.status) ||
+          (priorGrant.status === 'consumed' &&
+            consumedLease &&
+            consumedLease.status !== 'active')),
+      );
+      const packetTerminal = Boolean(
+        prior && (['expired', 'rejected'].includes(prior.status) || elapsed),
+      );
+      const spent = Boolean(
+        prior &&
+        ((packetTerminal && (!priorGrant || grantTerminal)) ||
+          (prior.status === 'approved' && grantTerminal)),
+      );
       if (
         !prior ||
-        (!['expired', 'rejected'].includes(prior.status) && !elapsed) ||
+        !spent ||
         prior.durable_work_id !== work.workId ||
         Number(prior.approval_version) !== work.approvalVersion
       ) {
@@ -41745,7 +42435,10 @@ export function stageDurableWorkApprovalPacketAtomic(params: {
           'An active durable approval must be decided before restaging.',
         );
       }
-      if (elapsed && !['expired', 'rejected'].includes(prior.status)) {
+      if (
+        (elapsed || spent) &&
+        !['expired', 'rejected'].includes(prior.status)
+      ) {
         db.prepare(
           `
             UPDATE cognitive_approval_packets
@@ -42469,7 +43162,22 @@ export function insertDurableResumeGrant(params: {
     );
     insertDurableEventRow(params.event);
   });
-  transact.immediate();
+  try {
+    transact.immediate();
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      /unique constraint failed:\s*durable_resume_grants\.approval_packet_id,\s*durable_resume_grants\.approval_version/i.test(
+        error.message,
+      )
+    ) {
+      throw new Error(
+        'A durable approval packet/version can authorize only one resume grant.',
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
 export function listDurableResumeGrants(
@@ -43445,10 +44153,10 @@ export function reconcileExpiredDurableWorkLeases(params: {
     let healthyLeaseSkipped = 0;
     for (const row of activeRows) {
       const lease = mapDurableLeaseRow(row);
-      if (
-        lease.expiresAt > params.now &&
-        lease.processGeneration === params.processGeneration
-      ) {
+      // A process-generation mismatch proves only that another process owns
+      // the lease; it does not prove that process is dead. Startup therefore
+      // respects every unexpired lease and recovers only after its durable TTL.
+      if (lease.expiresAt > params.now) {
         healthyLeaseSkipped += 1;
         continue;
       }
@@ -43488,15 +44196,9 @@ export function reconcileExpiredDurableWorkLeases(params: {
           UPDATE durable_work_leases
           SET status = 'expired', released_at = ?, heartbeat_at = ?
           WHERE lease_id = ? AND status = 'active'
-            AND (expires_at <= ? OR process_generation <> ?)
+            AND expires_at <= ?
         `,
-      ).run(
-        params.now,
-        params.now,
-        lease.leaseId,
-        params.now,
-        params.processGeneration,
-      );
+      ).run(params.now, params.now, lease.leaseId, params.now);
       const changed = db
         .prepare(
           `
@@ -43535,9 +44237,7 @@ export function reconcileExpiredDurableWorkLeases(params: {
         summary:
           lease.processGeneration === params.processGeneration
             ? 'Expired lease from this process generation was reconciled.'
-            : lease.expiresAt > params.now
-              ? 'Unexpired lease from a prior process generation was reconciled after restart.'
-              : 'Expired lease from a prior process generation was reconciled.',
+            : 'Expired lease from a prior process generation was reconciled.',
         refsJson: JSON.stringify(
           [lease.leaseId, updated.checkpointHeadId].filter(Boolean),
         ),

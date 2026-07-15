@@ -1,15 +1,19 @@
 # Verified Production Apprenticeship
 
-> **Status: released implementation; genuine canary evidence pending.** Andrea
-> implements the canonical canary, exact owner-review,
-> separate activation, monitored reuse, pause, quarantine, revoke, and retire
-> path described here. Its deterministic certification passes 22/22 scenarios,
-> but that proof is synthetic, offline, network-denied, and disposable. It
-> created zero provider calls, cost, external effects, production writes, or
-> genuine owner evidence. Application commit `3dbfae9c` passed the complete
-> local and exact-SHA hosted matrices and was rebuilt into the Mac service with
-> verified provenance. This document therefore does **not** claim that a real
-> canary ran, the owner reviewed one, or a capability was activated or reused.
+> **Status: locally validated authority-boundary release candidate; query Git
+> and service status for publication and runtime identity.** The released
+> baseline implements the canonical canary,
+> owner verdict, activation, monitored reuse, and owner controls. This working
+> tree additionally requires a separate action-specific approval before a
+> protected canary or reuse may execute. The combined candidate passes its
+> primary, focused acquisition/production/continuity, container, AGI,
+> deterministic, stability, certification, offline-scorecard, signature,
+> documentation, and dependency-audit gates. Hosted CI, publication, rebuild,
+> restart, and serving provenance are separate time-sensitive proof. The
+> prior `3dbfae9c` application and `51c3f886` documentation
+> evidence remains historical baseline evidence only. Nothing here claims a
+> genuine canary, protected action approval, owner verdict, activation, or
+> reuse.
 
 Verified Production Apprenticeship is the implemented bridge between a bounded
 method proved in Andrea's trusted certification sandbox and the same exact
@@ -43,6 +47,10 @@ Current repository behavior:
 - canary authorization consumes only the separately approved exact packet, and
   guided execution is exposed only for the bundled read-only, zero-egress
   Andrea Release-Readiness Brief contract;
+- a protected plan requires another action-specific packet after canary
+  authorization (and on every protected reuse); only its separate same-chat
+  approval may be consumed into one exact grant and lease, and neither staging
+  nor consumption executes the plan;
 - a canonical verdict can come only from a trusted owner chat or authenticated
   cockpit, and verified outcome review remains separate from activation;
 - activation consumes another exact approved packet and grants no new action
@@ -66,6 +74,7 @@ sandbox_verified
   -> owner_review_required
   -> exact canary authorization
   -> canary_ready
+  -> [if protected] exact action approval and one bounded execution lease
   -> one bounded canary and verified outcome
   -> exact owner verdict
   -> separate exact activation approval
@@ -79,7 +88,7 @@ and canary. They are not additional success states that can be inferred from
 tool text. A capability remains non-active until the complete activation join
 commits.
 
-## The Three Separate Owner Decisions
+## The Separate Authority And Evidence Decisions
 
 The production bridge must never collapse these decisions into one generic
 approval or Helpful response.
@@ -98,7 +107,32 @@ The owner authorizes one exact real-world experiment. The proposal must show:
 This authorization permits only that canary. It does not activate general
 reuse or waive approval for any protected effect.
 
-### 2. Canary verdict
+### 2. Protected action approval, when required
+
+Canary authorization answers whether one bounded experiment may proceed. It
+does not authorize a protected effect inside that experiment. Before a
+protected canary or protected active reuse, Andrea stages a new packet bound to
+the exact durable work, checkpoint, plan version, action class, contract,
+inputs, fresh health, and owner/chat/group/channel/target scope. The owner must
+approve that packet on the same trusted chat. Only then may a distinct
+authorization step consume it into one bounded grant and lease.
+
+The staging surface shows the packet's reviewable summary, staged version,
+scope digest, summary digest, and the only accepted chat decision form:
+`approve capability packet <packet-id> version <n> scope <64hex> summary <64hex>`.
+The handler loads that exact packet and production binding from canonical
+storage, requires the same registered chat/channel/group and current run
+boundary, and then invokes the canonical compare-and-set with that surface.
+Incomplete or conversational approval language is not parsed as capability
+authority; a replay returns current truth and does not execute the action.
+
+The canary packet, an activation packet, terminal input, a cockpit inspection,
+or a prior approval cannot substitute. Staging grants no authority; consuming
+the packet does not execute the protected plan. Any stale head, changed scope,
+wrong channel, expired packet, missing health, or approval mismatch fails
+closed before effect.
+
+### 3. Canary verdict
 
 After durable work and independent verification finish, the owner judges the
 same recorded outcome. Supported meanings remain distinct:
@@ -124,13 +158,15 @@ A non-verified re-review pauses active use and invalidates linked authority; a
 later verified re-review never resumes, activates, or reauthorizes it
 automatically.
 
-Only the registered main Telegram chat, configured BlueBubbles self-thread, or
-private owner cockpit may provide an activation-eligible verdict. Another user,
-another chat, stale feedback, a mixed request, a question, or a generic Helpful
-response cannot verify a protected canary. Andrea must never generate its own
-owner review.
+Only the exact registered Telegram chat or configured BlueBubbles self-thread
+bound to a guided run may provide its activation-eligible verdict. The cockpit
+may review only a canonically cockpit-bound historical or separately created
+run and has no activation/reuse lane; it cannot relabel another surface's
+verdict. Another user, another chat, stale feedback, a mixed request, a
+question, or a generic Helpful response cannot verify a protected canary.
+Andrea must never generate its own owner review.
 
-### 3. Activation approval
+### 4. Activation approval
 
 A positive verdict answers, "Did the canary work?" Activation approval answers,
 "May Andrea reuse this exact capability?" It must be a new decision made after
@@ -205,14 +241,28 @@ copy those systems into an independent truth ledger.
 - dependencies are freshly healthy and required credentials are available
   without entering records, arguments, or diagnostics;
 - durable work and its checkpoint are staged;
-- any required single-use grant can be consumed;
+- for a protected plan, a separate current action packet has been approved on
+  the exact bound chat and consumed into a single-use grant;
 - exactly one valid lease can own execution.
+
+`canary_ready` records exact canary authorization; it is not permission to
+execute a protected plan. Such a run moves to `awaiting_action_approval` until
+the second packet is approved and consumed. Canary authority and action
+authority are never interchangeable.
 
 Before each effect, the runner must revalidate acquisition state, target,
 health, approval, lease, input and candidate version, then record `started`.
 Afterward it must record exact terminal truth, run the independent evaluator,
 and preserve an unknown or indeterminate result. It must never blindly replay an
 effect whose outcome is uncertain.
+
+Production apprenticeship is not a generalized rollback engine. A contract
+with non-empty rollback binding IDs is unsupported and fails closed before
+production staging or execution. A textual rollback description grants no
+authority and cannot turn an unknown or partial effect into success. The
+trusted synthetic sandbox may prove independently verified cleanup through its
+own durable receipts; that fixture behavior is not production rollback or OS
+isolation.
 
 A completed canary requires completed durable work, receipts covering the
 immutable plan, a verified postcondition, successful cleanup, and a canonical
@@ -271,8 +321,16 @@ the acquisition or unrelated skills merely to improve readiness scores.
 
 ## Owner-Facing Evidence
 
-The private cockpit and trusted owner chats should eventually show the same
-authoritative vocabulary and evidence:
+The private cockpit and trusted owner chats use the same authoritative
+vocabulary, but they do not have the same execution authority. Guided canary,
+action-approval, activation, and reuse decisions stay on the exact registered
+Telegram or configured BlueBubbles conversation. The cockpit is an
+authenticated evidence/control surface with no active-reuse request lane. It
+must hide chat-bound capability packets from its generic approval queue, reject
+attempts to relabel them as cockpit approvals, and show their opaque IDs only
+as evidence metadata.
+
+The bounded views include:
 
 - observed gaps, resource discovery, candidate and sandbox status;
 - exact proposed canary and its authority/egress boundaries;
@@ -310,7 +368,7 @@ npm run test:production-capability-apprenticeship:certification-gate
 npm run certify:production-capability-apprenticeship
 ```
 
-Current local result: 22/22 required scenarios passed. Provider calls, cost,
+Released-baseline local result: 22/22 required scenarios passed. Provider calls, cost,
 external effects, production writes, production metric writes, unauthorized or
 duplicate effects, privacy leaks, genuine owner evidence, and cleanup residue
 were all zero. The companion gate also rejected 120 report mutations spanning
@@ -321,6 +379,17 @@ not prove a deployed SHA, a live provider, an owner-authorized canary, an owner
 verdict, live or production activation, active runtime reuse, or improved
 real-world usefulness. Isolated certification fixtures do exercise the
 synthetic activation branch.
+
+The combined action-authority candidate has re-earned the bounded offline
+certification. The validated tree passes 250 primary files / 3,076
+tests; 95/95 focused acquisition tests; 188/188 focused
+production/cockpit/chat tests including 6/6 hard-kill cases; 142/142 continuity
+tests; runner/container contracts and real canaries; and 28 AGI files / 286
+tests. It also passes all 97 selected deterministic commands, the nested 3/3
+stability gate, 22/22 production certification, the 100.0% A+ zero-cost offline
+scorecard, signature flows, documentation checks, and zero-vulnerability
+dependency audits. Publication and exact-SHA hosted/runtime proof remain
+separate time-sensitive evidence queried outside this document.
 
 The guided operator command exposes inspection plus explicit, separate lifecycle
 operations:
@@ -351,21 +420,35 @@ The mutation phases are deliberately separate invocations:
 1. `--stage` requires the exact acquisition head, group, owner/chat/channel,
    authorized surface, target, normalized input, and fresh health bindings. It
    creates only a bounded canary proposal and staged approval packet.
+   Its output includes the reviewable summary and digest-bound same-chat
+   approval command; the terminal itself still cannot approve the packet.
 2. `--authorize-canary` consumes only that already-approved, current packet and
    exact run/acquisition revisions. The CLI cannot approve it.
-3. `--run-canary` executes only the bundled read-only, zero-external-egress
+3. `--stage-action-approval`, when a protected plan is eligible, creates only
+   its exact action-specific packet and stops. The packet must be approved on
+   the same bound trusted chat.
+4. `--authorize-action` consumes only that separately approved current packet
+   into one bounded grant and lease and stops without executing the plan.
+5. `--run-canary` executes only the bundled read-only, zero-external-egress
    contract and
    records durable receipts, independent verification, and one canonical
    outcome. It makes no provider or external-state mutation.
-4. The owner records `verified`, `helpful`, `partial`, `blocked`, `corrected`,
+6. The owner records `verified`, `helpful`, `partial`, `blocked`, `corrected`,
    or `rejected` only in a
-   registered main Telegram chat, configured Messages self-thread, or the
-   authenticated owner cockpit. The CLI cannot issue itself a trusted verdict;
+   registered main Telegram chat or configured Messages self-thread for guided
+   runs. The cockpit may review only a canonically cockpit-bound run; it cannot
+   relabel a chat-bound run. The CLI cannot issue itself a trusted verdict;
    generic Helpful text and mixed requests do not count.
-5. `--stage-activation` is available only after the exact verified owner review
+7. `--stage-activation` is available only after the exact verified owner review
    and creates a new activation packet. `--activate` consumes only that
    separately approved packet. Activation neither executes the capability nor
    approves any protected effect.
+
+Capability overviews remain capped at 20 records. When the owner supplies an
+exact acquisition or run identifier, the trusted-chat dispatcher resolves it
+directly from canonical storage instead of treating absence from that overview
+as nonexistence. An older exact run can be inspected or reviewed, but it is not
+promoted to the implicit lifecycle-control target.
 
 Every mutation requires explicit expected acquisition and run revisions and
 revalidates scope, health, contract identity, versions, approvals, and the
@@ -382,7 +465,13 @@ Andrea when a target is ambiguous:
   or `retire capability <acquisition-id>`.
 
 Omitting the identifier is accepted only when exactly one canonical candidate
-is eligible. These chat forms cannot approve a canary or activation packet.
+is eligible. These chat forms cannot approve a canary, action, or activation
+packet. Bounded questions such as `What are you learning?`,
+`show capability status`, or
+`is capability <acquisition-id> ready for a canary?` may explain
+`canary_staging`, `canary_approval`, `action_approval`, owner review, or
+monitoring state. They never stage, approve, consume, review, activate, or
+execute anything.
 
 `npm run capability:prepare-release-readiness` is a separate, explicit
 preparation command. It uses network denial and provider suppression while
@@ -409,6 +498,9 @@ at `owner_review_required`; that state is not a real canary and cannot supply an
 owner verdict. The post-release guarded preparation command recorded this
 labeled synthetic state in the canonical ledger without creating a live
 canary, approval, owner verdict, activation, provider call, or external effect.
+The prior recorded read-only inspection reported one eligible Release-Readiness acquisition
+at synthetic `owner_review_required` and zero open production runs. That is the
+candidate's genuine current state; it does not imply that a canary was staged.
 
 Genuine production proof now depends on the owner supplying normal operator
 evidence. Proof debt is:
@@ -424,6 +516,12 @@ run `29434979875`, AGI/CodeQL run `29434979968`, and Security run `29435006959`
 passed; the clean Mac artifact was rebuilt and restarted with aligned serving,
 build, and workspace provenance. That evidence does not satisfy any item in the
 genuine owner-proof list above.
+
+Documentation closure `51c3f886` separately passed CI run `29435964758`,
+AGI/CodeQL run `29435964770`, and Security run `29435974616`. The audited host
+served that closure with verified provenance and zero dirty paths. These are
+repository/runtime release facts only; they still do not satisfy any genuine
+owner-proof item.
 
 Terminal input or fixtures supplied by the implementing agent cannot satisfy
 owner proof. Until canonical evidence exists, status must remain

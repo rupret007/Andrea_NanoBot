@@ -80,6 +80,10 @@ CSRF verification.
   approval version, and scope digest shown in the snapshot; the database
   compare-and-set rejects a stale, changed, cross-group, or already decided
   packet.
+- Capability canary, protected-action, and activation packets bound to Telegram
+  or BlueBubbles are excluded even when they share the configured group. They
+  remain decidable only on their exact trusted chat and appear in the cockpit
+  solely as opaque apprenticeship evidence.
 - A durable fresh-approval action additionally requires that packet to name the
   exact durable work ID, current checkpoint ID, plan version,
   target-scope digest, and action class. Approval staging atomically creates the
@@ -111,8 +115,8 @@ show raw requests, tool output, credentials, target-scope values, or hidden
 reasoning. An empty card is truthful: deterministic certification does not
 create a real canary, owner verdict, activation, or reusable authority.
 
-For every cockpit-bound canary or monitored reuse with a canonical outcome, the
-cockpit offers six explicit verdicts on that exact run:
+For a canonically cockpit-bound canary or monitored reuse with an outcome, the
+cockpit may offer six explicit verdicts on that exact run:
 `verified`, `helpful`, `partial`, `blocked`, `corrected`, and `rejected`. These
 buttons use the authenticated canary-review route and an exact confirmation;
 the ordinary Helpful feedback control elsewhere in Andrea is not a capability
@@ -123,25 +127,37 @@ learning sample. A non-verified re-review can pause active use; a verified
 re-review never resumes or activates a capability automatically.
 
 The card also exposes exact `show evidence`, `pause`, `revoke`, and `retire`
-controls where the current run belongs to the authenticated cockpit surface.
+controls only where the current run belongs to the authenticated cockpit surface.
 Show evidence returns only bounded identifiers. Pause, revoke, and retire are
 separate confirmed controls; they do not share a button or request with review
 or activation.
 
-Activation remains a three-step owner decision:
+Guided production canaries are intentionally bound to an executable registered
+Telegram chat or configured BlueBubbles self-thread, not to the cockpit. For
+those runs the cockpit is evidence/control only:
 
-1. Enter the exact target-scope key used by the verified canary and choose
-   **Propose activation**. The server hashes and compares that value against the
-   canary binding. It does not return the value in snapshots.
-2. Review the newly staged exact packet under **Waiting for approval** and
-   approve it separately.
-3. Re-enter the same exact target scope and choose **Activate approved
-   capability**. This consumes only the already approved, exact-scope packet.
+- it shows `canary_approval`, `action_approval`, owner-review, activation, and
+  monitoring state plus bounded evidence IDs;
+- it does not show review or lifecycle controls that would change a run bound
+  to another surface;
+- it hides the run's canary, protected-action, and activation packets from the
+  generic **Waiting for approval** queue and rejects a forged direct confirm,
+  because a cockpit decision would falsify the packet's exact chat provenance;
+- it never renders **Propose activation** or **Activate approved capability**.
 
-Only an explicit `verified` canary verdict can reach step 1. Each step is
-same-origin/CSRF protected and stale state fails closed. Activation improves
-matching and planning only; protected effects retain their normal fresh
-approval requirements.
+The owner completes those decisions on the same trusted chat that can execute
+and later reuse the exact contract. Canary authorization, any protected-action
+approval, outcome verdict, and activation remain separate. The cockpit may
+explain that separation and show opaque evidence metadata, but it cannot stage,
+approve, consume, activate, or execute on the chat's behalf.
+
+The CLI staging result supplies the reviewable summary and exact decision text
+for that conversation:
+`approve capability packet <packet-id> version <n> scope <64hex> summary <64hex>`.
+The chat handler accepts no abbreviated capability-approval phrase and
+revalidates the exact stored packet, run, current boundary, and conversation
+before recording the decision. Sending the command approves only the packet;
+it does not consume its grant or execute the capability action.
 
 ## Continuity view
 

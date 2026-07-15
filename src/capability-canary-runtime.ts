@@ -3,6 +3,7 @@ import {
   capabilityProductionContractDigest,
   getCapabilityOwnerReviewForRun,
   getCapabilityProductionRun,
+  getDurableWorkUnit,
   getRegisteredGroup,
   listCapabilityAcquisitions,
   listCapabilityHealthEvidence,
@@ -12,6 +13,7 @@ import {
 } from './db.js';
 import {
   authorizeApprovedCapabilityActivation,
+  authorizeApprovedCapabilityProductionAction,
   authorizeApprovedCapabilityCanary,
   buildReleaseReadinessCandidateContract,
   getCapabilityApprenticeshipStatus,
@@ -19,6 +21,7 @@ import {
   runCapabilityProductionExecution,
   stageCapabilityActivation,
   stageCapabilityCanary,
+  stageCapabilityProductionActionApproval,
 } from './production-capability-apprenticeship.js';
 import type { CapabilityCanaryCliDependencies } from './capability-canary-cli.js';
 import { isTrustedOwnerReviewSurface } from './trusted-owner-review-surface.js';
@@ -33,6 +36,21 @@ export function capabilityCanaryCliDependencies(): CapabilityCanaryCliDependenci
     listReliabilityObservations,
     getRun: getCapabilityProductionRun,
     getOwnerReview: getCapabilityOwnerReviewForRun,
+    getCurrentActionApproval(run) {
+      const approvalPacketId = getDurableWorkUnit(run.workId)?.approvalPacketId;
+      if (
+        !approvalPacketId ||
+        approvalPacketId === run.canaryApprovalPacketId ||
+        approvalPacketId === run.activationApprovalPacketId
+      ) {
+        return undefined;
+      }
+      const packet = listCognitiveApprovalPackets({
+        groupFolder: run.groupFolder,
+        limit: 500,
+      }).find((packet) => packet.approvalPacketId === approvalPacketId);
+      return packet?.actionClass === run.actionClass ? packet : undefined;
+    },
     getStatus: getCapabilityApprenticeshipStatus,
     contractDigest: capabilityProductionContractDigest,
     healthEvidenceSetDigest: capabilityHealthEvidenceSetDigest,
@@ -61,6 +79,8 @@ export function capabilityCanaryCliDependencies(): CapabilityCanaryCliDependenci
     },
     stageCanary: stageCapabilityCanary,
     authorizeCanary: authorizeApprovedCapabilityCanary,
+    stageActionApproval: stageCapabilityProductionActionApproval,
+    authorizeAction: authorizeApprovedCapabilityProductionAction,
     executeCanary: runCapabilityProductionExecution,
     stageActivation: stageCapabilityActivation,
     authorizeActivation: authorizeApprovedCapabilityActivation,

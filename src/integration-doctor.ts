@@ -72,6 +72,12 @@ export interface IntegrationDoctorReport {
     actionNeeded: number;
     needsProof: number;
     manualOrExternal: number;
+    /**
+     * Exhaustive, mutually exclusive classification of every status row.
+     * The convenience counters above intentionally answer overlapping
+     * operator questions and therefore must not be added together.
+     */
+    stateCounts?: Record<IntegrationDoctorState, number>;
   };
   statuses: IntegrationStatus[];
   secretsRedacted: true;
@@ -537,19 +543,36 @@ function normalizeSelfRepair(
 function summarize(
   statuses: IntegrationStatus[],
 ): IntegrationDoctorReport['summary'] {
+  const stateCounts = Object.fromEntries(
+    (
+      [
+        'healthy',
+        'near_live_only',
+        'degraded_but_usable',
+        'externally_blocked',
+        'needs_auth',
+        'needs_proof',
+        'manual_action_required',
+        'repo_fix_available',
+      ] satisfies IntegrationDoctorState[]
+    ).map((state) => [
+      state,
+      statuses.filter((status) => status.state === state).length,
+    ]),
+  ) as Record<IntegrationDoctorState, number>;
   return {
     total: statuses.length,
-    healthy: statuses.filter((status) => status.state === 'healthy').length,
+    healthy: stateCounts.healthy,
     actionNeeded: statuses.filter((status) =>
       ACTION_NEEDED_STATES.has(status.state),
     ).length,
-    needsProof: statuses.filter((status) => status.state === 'needs_proof')
-      .length,
+    needsProof: stateCounts.needs_proof,
     manualOrExternal: statuses.filter((status) =>
       ['manual_action_required', 'externally_blocked', 'needs_auth'].includes(
         status.state,
       ),
     ).length,
+    stateCounts,
   };
 }
 
@@ -652,6 +675,12 @@ export function formatIntegrationDoctorReport(
   mode: 'status' | 'doctor' = 'status',
 ): string {
   const sorted = sortStatuses(report.statuses);
+  const stateCounts =
+    report.summary.stateCounts || summarize(report.statuses).stateCounts!;
+  const stateSummary = Object.entries(stateCounts)
+    .filter(([, count]) => count > 0)
+    .map(([state, count]) => `${state}=${count}`)
+    .join(', ');
   const actionNeeded = sorted.filter((status) =>
     ACTION_NEEDED_STATES.has(status.state),
   );
@@ -665,7 +694,7 @@ export function formatIntegrationDoctorReport(
     mode === 'doctor'
       ? 'Andrea integration doctor'
       : 'Andrea integration status',
-    `Summary: ${report.summary.healthy}/${report.summary.total} healthy, ${report.summary.actionNeeded} action-needed, ${report.summary.needsProof} proof-needed. Secrets are redacted.`,
+    `Summary: ${report.summary.healthy}/${report.summary.total} healthy; exact states: ${stateSummary}. ${report.summary.actionNeeded} action-needed, ${report.summary.needsProof} proof-needed. Secrets are redacted.`,
   ];
   if (actionNeeded.length > 0) {
     lines.push('', 'Action needed');

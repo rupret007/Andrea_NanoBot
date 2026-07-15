@@ -32,6 +32,7 @@ import type {
 const OPEN_RUN_STATUSES: CapabilityProductionRunRecord['status'][] = [
   'proposed',
   'awaiting_canary_approval',
+  'awaiting_action_approval',
   'canary_ready',
   'running',
   'awaiting_owner_review',
@@ -60,6 +61,8 @@ export type CapabilityCanaryCliOperation =
   | 'inspect'
   | 'stage'
   | 'authorize_canary'
+  | 'stage_action_approval'
+  | 'authorize_action'
   | 'run_canary'
   | 'stage_activation'
   | 'activate';
@@ -70,6 +73,8 @@ export interface CapabilityCanaryCliOptions {
   releaseReadiness: boolean;
   stage: boolean;
   authorizeCanary: boolean;
+  stageActionApproval: boolean;
+  authorizeAction: boolean;
   runCanary: boolean;
   stageActivation: boolean;
   activate: boolean;
@@ -111,6 +116,9 @@ export interface CapabilityCanaryCliDependencies {
   }): ReliabilityObservation[];
   getRun(runId: string): CapabilityProductionRunRecord | undefined;
   getOwnerReview(runId: string): CapabilityOwnerReviewRecord | undefined;
+  getCurrentActionApproval(
+    run: CapabilityProductionRunRecord,
+  ): CognitiveApprovalPacket | undefined;
   getStatus(acquisitionId: string): CapabilityApprenticeshipStatus;
   contractDigest(candidateContractJson: string): string;
   healthEvidenceSetDigest(
@@ -137,6 +145,25 @@ export interface CapabilityCanaryCliDependencies {
     acquisition: CapabilityAcquisitionRecord;
     run: CapabilityProductionRunRecord;
     receipt: CapabilityProductionTransitionReceipt;
+  };
+  stageActionApproval(input: {
+    runId: string;
+    expectedAcquisitionVersion: number;
+    expectedRunRevision: number;
+    binding: DurableWorkBindingInput;
+  }): {
+    run: CapabilityProductionRunRecord;
+    approval: CognitiveApprovalPacket;
+  };
+  authorizeAction(input: {
+    runId: string;
+    expectedAcquisitionVersion: number;
+    expectedRunRevision: number;
+    binding: DurableWorkBindingInput;
+    workerId: string;
+  }): {
+    run: CapabilityProductionRunRecord;
+    approval: CognitiveApprovalPacket;
   };
   executeCanary(input: {
     runId: string;
@@ -186,6 +213,9 @@ interface CapabilityApprovalPresentation {
   channel: string | null;
   expiresAt: string | null;
   scopeDigest: string | null;
+  summary: string;
+  summaryDigest: string | null;
+  approvalCommand: string | null;
   targetScopeDigest: string | null;
 }
 
@@ -226,7 +256,9 @@ export interface CapabilityCanaryAcquisitionPresentation {
   expectedCostBand: string;
   expectedLatencyBand: string;
   nextSafeAction: string;
-  pendingAction: CapabilityApprenticeshipStatus['pendingAction'];
+  pendingAction:
+    | CapabilityApprenticeshipStatus['pendingAction']
+    | 'canary_staging';
 }
 
 export interface CapabilityCanaryRunPresentation {
@@ -258,6 +290,7 @@ export interface CapabilityCanaryRunPresentation {
   expiresAt: string;
   nextSafeAction: string;
   canaryApproval: CapabilityApprovalPresentation | null;
+  actionApproval: CapabilityApprovalPresentation | null;
   activationApproval: CapabilityApprovalPresentation | null;
   health: Array<{
     resourceId: string;
@@ -313,6 +346,10 @@ export interface CapabilityCanaryCliReport {
     approvalPacketId: string;
     approvalVersion: number;
     approvalStatus: string;
+    approvalSummary: string;
+    approvalScopeDigest: string;
+    approvalSummaryDigest: string;
+    approvalCommand: string;
     nextSafeAction: string;
   };
   action: null | {
@@ -327,6 +364,10 @@ export interface CapabilityCanaryCliReport {
     approvalPacketId: string | null;
     approvalVersion: number | null;
     approvalStatus: CognitiveApprovalPacket['status'] | null;
+    approvalSummary: string | null;
+    approvalScopeDigest: string | null;
+    approvalSummaryDigest: string | null;
+    approvalCommand: string | null;
     executionStatus: CapabilityProductionExecutionResult['status'] | null;
     executionReceiptIds: string[];
     evidenceRefs: string[];
@@ -445,6 +486,8 @@ export function parseCapabilityCanaryArgs(
     releaseReadiness: false,
     stage: false,
     authorizeCanary: false,
+    stageActionApproval: false,
+    authorizeAction: false,
     runCanary: false,
     stageActivation: false,
     activate: false,
@@ -487,6 +530,12 @@ export function parseCapabilityCanaryArgs(
         break;
       case '--authorize-canary':
         options.authorizeCanary = true;
+        break;
+      case '--stage-action-approval':
+        options.stageActionApproval = true;
+        break;
+      case '--authorize-action':
+        options.authorizeAction = true;
         break;
       case '--run-canary':
         options.runCanary = true;
@@ -598,6 +647,8 @@ export function parseCapabilityCanaryArgs(
   const selectedOperations: CapabilityCanaryCliOperation[] = [
     options.stage && 'stage',
     options.authorizeCanary && 'authorize_canary',
+    options.stageActionApproval && 'stage_action_approval',
+    options.authorizeAction && 'authorize_action',
     options.runCanary && 'run_canary',
     options.stageActivation && 'stage_activation',
     options.activate && 'activate',
@@ -639,7 +690,7 @@ export function parseCapabilityCanaryArgs(
     if (!options.expectedRunRevision) missing.push('--expected-run-revision');
   }
   if (
-    ['authorize_canary', 'run_canary', 'activate'].includes(
+    ['authorize_canary', 'authorize_action', 'run_canary', 'activate'].includes(
       options.operation,
     ) &&
     !options.workerId
@@ -653,16 +704,26 @@ export function parseCapabilityCanaryArgs(
   }
   if (
     options.workerId &&
-    !['authorize_canary', 'run_canary', 'activate'].includes(options.operation)
+    ![
+      'authorize_canary',
+      'authorize_action',
+      'run_canary',
+      'activate',
+    ].includes(options.operation)
   ) {
     throw new Error(
-      '--worker-id is accepted only by --authorize-canary, --run-canary, or --activate.',
+      '--worker-id is accepted only by --authorize-canary, --authorize-action, --run-canary, or --activate.',
     );
   }
-  const allowedSurfaces = new Set(['owner_cockpit', 'telegram', 'bluebubbles']);
+  const allowedSurfaces = new Set(['telegram', 'bluebubbles']);
   if (!allowedSurfaces.has(options.authorizedSurface as string)) {
     throw new Error(
-      '--authorized-surface must be owner_cockpit, telegram, or bluebubbles.',
+      '--authorized-surface must be an executable trusted chat surface: telegram or bluebubbles. The owner cockpit can review evidence but has no active-reuse route.',
+    );
+  }
+  if (options.ownerId !== 'owner') {
+    throw new Error(
+      '--owner-id must be the canonical owner identity "owner" for this bundled capability.',
     );
   }
   if (options.channel !== options.authorizedSurface) {
@@ -718,7 +779,7 @@ function parseAuthority(acquisition: CapabilityAcquisitionRecord): unknown {
 
 function presentAcquisition(
   acquisition: CapabilityAcquisitionRecord,
-  pendingAction: CapabilityApprenticeshipStatus['pendingAction'],
+  pendingAction: CapabilityCanaryAcquisitionPresentation['pendingAction'],
 ): CapabilityCanaryAcquisitionPresentation {
   const contract = parseCapabilityJson<CapabilityCandidateContract>(
     acquisition.candidateContractJson,
@@ -766,10 +827,59 @@ function presentAcquisition(
   };
 }
 
+function presentationPendingAction(
+  status: CapabilityApprenticeshipStatus,
+): CapabilityCanaryAcquisitionPresentation['pendingAction'] {
+  return status.acquisition.state === 'owner_review_required' &&
+    status.pendingAction === 'none'
+    ? 'canary_staging'
+    : status.pendingAction;
+}
+
+function exactApprovalDecision(packet: CognitiveApprovalPacket): {
+  summary: string;
+  scopeDigest: string;
+  summaryDigest: string;
+  command: string;
+} {
+  const version = packet.approvalVersion || 0;
+  const scopeDigest = packet.scopeDigest || '';
+  const summaryDigest = packet.summaryDigest || '';
+  if (
+    packet.status !== 'staged' ||
+    !Number.isSafeInteger(version) ||
+    version < 1 ||
+    !/^[a-f0-9]{64}$/.test(scopeDigest) ||
+    !/^[a-f0-9]{64}$/.test(summaryDigest)
+  ) {
+    throw new Error(
+      'The staged approval packet lacks an exact reviewable version or digest.',
+    );
+  }
+  return {
+    summary: packet.summary,
+    scopeDigest,
+    summaryDigest,
+    command: `approve capability packet ${packet.approvalPacketId} version ${version} scope ${scopeDigest} summary ${summaryDigest}`,
+  };
+}
+
+function approvalCommandOrNull(packet: CognitiveApprovalPacket): string | null {
+  const version = packet.approvalVersion || 0;
+  return packet.status === 'staged' &&
+    Number.isSafeInteger(version) &&
+    version > 0 &&
+    /^[a-f0-9]{64}$/.test(packet.scopeDigest || '') &&
+    /^[a-f0-9]{64}$/.test(packet.summaryDigest || '')
+    ? exactApprovalDecision(packet).command
+    : null;
+}
+
 function presentRun(
   run: CapabilityProductionRunRecord,
   health: CapabilityHealthEvidenceRecord[],
   approvalById: ReadonlyMap<string, CognitiveApprovalPacket>,
+  currentActionApproval: CognitiveApprovalPacket | undefined,
 ): CapabilityCanaryRunPresentation {
   const approvalPresentation = (
     approvalPacketId: string | null | undefined,
@@ -785,6 +895,9 @@ function presentRun(
           channel: approval.approvalChannel || null,
           expiresAt: approval.expiresAt || null,
           scopeDigest: approval.scopeDigest || null,
+          summary: approval.summary,
+          summaryDigest: approval.summaryDigest || null,
+          approvalCommand: approvalCommandOrNull(approval),
           targetScopeDigest: approval.targetScopeDigest || null,
         }
       : null;
@@ -818,6 +931,9 @@ function presentRun(
     expiresAt: run.expiresAt,
     nextSafeAction: run.nextSafeAction,
     canaryApproval: approvalPresentation(run.canaryApprovalPacketId),
+    actionApproval: approvalPresentation(
+      currentActionApproval?.approvalPacketId,
+    ),
     activationApproval: approvalPresentation(run.activationApprovalPacketId),
     health: health.map((item) => ({
       resourceId: item.resourceId,
@@ -912,6 +1028,15 @@ function assertTrustedBinding(
 ): DurableWorkBindingInput {
   const binding = mutationBinding(options);
   if (
+    binding.ownerId !== 'owner' ||
+    !['telegram', 'bluebubbles'].includes(options.authorizedSurface || '') ||
+    binding.channel !== options.authorizedSurface
+  ) {
+    throw new Error(
+      'Guided canary mutations require canonical owner identity and one exact executable Telegram or BlueBubbles binding.',
+    );
+  }
+  if (
     !dependencies.isTrustedBinding({
       binding,
       authorizedSurface: options.authorizedSurface as string,
@@ -931,7 +1056,9 @@ function assertRunHead(params: {
   options: CapabilityCanaryCliOptions;
   dependencies: CapabilityCanaryCliDependencies;
   generatedAt: string;
-  expectedStatus: CapabilityProductionRunRecord['status'];
+  expectedStatus:
+    | CapabilityProductionRunRecord['status']
+    | CapabilityProductionRunRecord['status'][];
 }): CapabilityProductionRunRecord {
   const { run, acquisition, contract, options, dependencies, generatedAt } =
     params;
@@ -951,9 +1078,12 @@ function assertRunHead(params: {
       `Production-run head changed: expected r${options.expectedRunRevision}, current r${run.revision}.`,
     );
   }
-  if (run.status !== params.expectedStatus) {
+  const expectedStatuses = Array.isArray(params.expectedStatus)
+    ? params.expectedStatus
+    : [params.expectedStatus];
+  if (!expectedStatuses.includes(run.status)) {
     throw new Error(
-      `Production run must be ${params.expectedStatus}; current status is ${run.status}.`,
+      `Production run must be ${expectedStatuses.join(' or ')}; current status is ${run.status}.`,
     );
   }
   if (
@@ -1401,6 +1531,33 @@ function assertApprovedPacket(params: {
   return packet;
 }
 
+function assertApprovedActionPacket(params: {
+  run: CapabilityProductionRunRecord;
+  packet: CognitiveApprovalPacket | undefined;
+  generatedAt: string;
+}): CognitiveApprovalPacket {
+  const { run, packet } = params;
+  if (
+    !packet ||
+    packet.status !== 'approved' ||
+    !packet.approvalVersion ||
+    !packet.scopeDigest ||
+    packet.actionClass !== run.actionClass ||
+    packet.approvalChannel !== run.authorizedSurface ||
+    packet.durableWorkId !== run.workId ||
+    packet.durableCheckpointId !== run.checkpointId ||
+    packet.planVersion !== run.planVersion ||
+    packet.targetScopeDigest !== run.targetScopeHash ||
+    !packet.expiresAt ||
+    packet.expiresAt <= params.generatedAt
+  ) {
+    throw new Error(
+      'The exact current production action packet is not canonically approved and current.',
+    );
+  }
+  return packet;
+}
+
 function assertVerifiedOwnerReview(
   run: CapabilityProductionRunRecord,
   acquisition: CapabilityAcquisitionRecord,
@@ -1433,17 +1590,22 @@ function stageCommandTemplate(
   acquisitionId: string,
   groupFolder: string,
   acquisitionVersion: number,
+  surface: 'telegram' | 'bluebubbles',
 ): string {
+  const chatId =
+    surface === 'telegram'
+      ? 'REGISTERED_TELEGRAM_CHAT_ID'
+      : 'CONFIGURED_BLUEBUBBLES_SELF_THREAD_ID';
   return [
     'npm run capability:canary -- --stage',
     `--acquisition ${shellQuote(acquisitionId)}`,
     `--group ${shellQuote(groupFolder)}`,
     `--expected-acquisition-version ${acquisitionVersion}`,
-    '--owner-id OWNER_ID',
-    '--chat-id CHAT_ID',
-    '--channel owner_cockpit',
-    '--authorized-surface owner_cockpit',
-    '--target-scope TARGET_SCOPE',
+    '--owner-id owner',
+    `--chat-id ${shellQuote(chatId)}`,
+    `--channel ${surface}`,
+    `--authorized-surface ${surface}`,
+    `--target-scope ${shellQuote('TARGET_SCOPE')}`,
     `--inputs-json '{"targetScopeKey":"TARGET_SCOPE"}'`,
     `--health-json '[{"resourceId":"RESOURCE_ID","observationId":"OBSERVATION_ID","expiresAt":"ISO_8601"}]'`,
   ].join(' ');
@@ -1464,14 +1626,19 @@ export function buildCapabilityCanaryUsage(): string {
     '  npm run capability:canary -- --release-readiness',
     '',
     'Explicit multi-invocation operations:',
-    '  npm run capability:canary -- --stage --acquisition ACQUISITION_ID --group GROUP --expected-acquisition-version N --owner-id OWNER_ID --chat-id CHAT_ID --channel owner_cockpit --authorized-surface owner_cockpit --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
-    '  npm run capability:canary -- --authorize-canary --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id OWNER_ID --chat-id CHAT_ID --channel owner_cockpit --authorized-surface owner_cockpit --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
-    '  npm run capability:canary -- --run-canary --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id OWNER_ID --chat-id CHAT_ID --channel owner_cockpit --authorized-surface owner_cockpit --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
-    '  npm run capability:canary -- --stage-activation --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --owner-id OWNER_ID --chat-id CHAT_ID --channel owner_cockpit --authorized-surface owner_cockpit --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
-    '  npm run capability:canary -- --activate --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id OWNER_ID --chat-id CHAT_ID --channel owner_cockpit --authorized-surface owner_cockpit --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  Choose exactly one executable trusted surface (telegram or bluebubbles), use --owner-id owner, shell-quote the actual chat/scope values, and preserve that exact surface and chat ID through every invocation.',
+    '  npm run capability:canary -- --stage --acquisition ACQUISITION_ID --group GROUP --expected-acquisition-version N --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --authorize-canary --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --stage-action-approval --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --authorize-action --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --run-canary --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --stage-activation --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --activate --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
     '',
     'Staging creates only a bounded pending canary proposal and approval packet.',
     'Authorization consumes only an already-approved exact packet. Execution is restricted to the bundled read-only zero-egress canary.',
+    'Protected plans require a separate action-specific packet: stage it, approve that exact packet on the same trusted chat, then consume it with --authorize-action. Neither action phase approves or executes the plan.',
+    'Each staging phase prints its reviewable summary and exact digest-bound chat command: approve capability packet <id> version <n> scope <64hex> summary <64hex>. Abbreviated approval language is not authority.',
     'Owner review occurs only through a canonical trusted surface; this CLI never approves packets or records verdicts.',
     'Activation is proposed and approved separately. No operation calls providers or mutates external systems.',
   ].join('\n');
@@ -1536,7 +1703,11 @@ export async function runCapabilityCanaryCli(
       throw new Error('A selected acquisition is required for mutation.');
     }
     const contract = assertAcquisitionHead(selected, options);
-    assertBundledReadOnlyCanary(selected, contract, dependencies);
+    if (
+      !['stage_action_approval', 'authorize_action'].includes(options.operation)
+    ) {
+      assertBundledReadOnlyCanary(selected, contract, dependencies);
+    }
     const binding = assertTrustedBinding(options, dependencies);
     if (options.operation === 'stage') {
       if (!selected || selected.state !== 'owner_review_required') {
@@ -1560,6 +1731,7 @@ export async function runCapabilityCanaryCli(
       });
       const after = dependencies.getStatus(selected.acquisitionId);
       statusByAcquisition.set(selected.acquisitionId, after);
+      const approvalDecision = exactApprovalDecision(result.approval);
       staged = {
         acquisitionId: selected.acquisitionId,
         runId: result.run.runId,
@@ -1568,15 +1740,27 @@ export async function runCapabilityCanaryCli(
         approvalPacketId: result.approval.approvalPacketId,
         approvalVersion: result.approval.approvalVersion || 1,
         approvalStatus: result.approval.status,
+        approvalSummary: approvalDecision.summary,
+        approvalScopeDigest: approvalDecision.scopeDigest,
+        approvalSummaryDigest: approvalDecision.summaryDigest,
+        approvalCommand: approvalDecision.command,
         nextSafeAction: result.run.nextSafeAction,
       };
     } else {
-      const expectedStatus = {
-        authorize_canary: 'awaiting_canary_approval',
-        run_canary: 'canary_ready',
-        stage_activation: 'owner_reviewed',
-        activate: 'awaiting_activation_approval',
-      }[options.operation] as CapabilityProductionRunRecord['status'];
+      const expectedStatus:
+        | CapabilityProductionRunRecord['status']
+        | CapabilityProductionRunRecord['status'][] =
+        options.operation === 'authorize_canary'
+          ? 'awaiting_canary_approval'
+          : options.operation === 'stage_action_approval'
+            ? ['canary_ready', 'monitoring']
+            : options.operation === 'authorize_action'
+              ? 'awaiting_action_approval'
+              : options.operation === 'run_canary'
+                ? 'canary_ready'
+                : options.operation === 'stage_activation'
+                  ? 'owner_reviewed'
+                  : 'awaiting_activation_approval';
       const run = assertRunHead({
         run: dependencies.getRun(options.runId as string),
         acquisition: selected,
@@ -1599,6 +1783,7 @@ export async function runCapabilityCanaryCli(
       let transitionReceiptId: string | null = null;
       let execution: CapabilityProductionExecutionResult | null = null;
       let activationProposal: CognitiveApprovalPacket | null = null;
+      let actionProposal: CognitiveApprovalPacket | null = null;
       if (options.operation === 'authorize_canary') {
         approvalPacket = assertApprovedPacket({
           run,
@@ -1615,6 +1800,27 @@ export async function runCapabilityCanaryCli(
           workerId: options.workerId as string,
         });
         transitionReceiptId = result.receipt.receiptId;
+      } else if (options.operation === 'stage_action_approval') {
+        const result = dependencies.stageActionApproval({
+          runId: run.runId,
+          expectedAcquisitionVersion: selected.recordVersion,
+          expectedRunRevision: run.revision,
+          binding,
+        });
+        actionProposal = result.approval;
+      } else if (options.operation === 'authorize_action') {
+        approvalPacket = assertApprovedActionPacket({
+          run,
+          packet: dependencies.getCurrentActionApproval(run),
+          generatedAt,
+        });
+        dependencies.authorizeAction({
+          runId: run.runId,
+          expectedAcquisitionVersion: selected.recordVersion,
+          expectedRunRevision: run.revision,
+          binding,
+          workerId: options.workerId as string,
+        });
       } else if (options.operation === 'run_canary') {
         execution = await dependencies.executeCanary({
           runId: run.runId,
@@ -1676,6 +1882,28 @@ export async function runCapabilityCanaryCli(
           'Verified canary did not stop at the canonical owner-review boundary.',
         );
       }
+      if (
+        options.operation === 'stage_action_approval' &&
+        afterRun.status !== 'awaiting_action_approval'
+      ) {
+        throw new Error(
+          'Protected production action did not stop at the exact approval boundary.',
+        );
+      }
+      if (
+        options.operation === 'authorize_action' &&
+        (!['canary_ready', 'monitoring'].includes(afterRun.status) ||
+          !afterRun.executionGrantId ||
+          !afterRun.executionLeaseId)
+      ) {
+        throw new Error(
+          'Approved production action did not bind one exact execution grant and lease.',
+        );
+      }
+      const stagedApproval = activationProposal || actionProposal;
+      const approvalDecision = stagedApproval
+        ? exactApprovalDecision(stagedApproval)
+        : null;
       action = {
         operation: options.operation,
         acquisitionId: selected.acquisitionId,
@@ -1687,14 +1915,23 @@ export async function runCapabilityCanaryCli(
         transitionReceiptId,
         approvalPacketId:
           activationProposal?.approvalPacketId ||
+          actionProposal?.approvalPacketId ||
           approvalPacket?.approvalPacketId ||
           null,
         approvalVersion:
           activationProposal?.approvalVersion ||
+          actionProposal?.approvalVersion ||
           approvalPacket?.approvalVersion ||
           null,
         approvalStatus:
-          activationProposal?.status || approvalPacket?.status || null,
+          activationProposal?.status ||
+          actionProposal?.status ||
+          approvalPacket?.status ||
+          null,
+        approvalSummary: approvalDecision?.summary || null,
+        approvalScopeDigest: approvalDecision?.scopeDigest || null,
+        approvalSummaryDigest: approvalDecision?.summaryDigest || null,
+        approvalCommand: approvalDecision?.command || null,
         executionStatus: execution?.status || null,
         executionReceiptIds: execution?.receiptIds || [],
         evidenceRefs: execution?.evidenceRefs || [],
@@ -1722,25 +1959,45 @@ export async function runCapabilityCanaryCli(
       ? [selected]
       : []
     : eligible;
-  const nextCommands = commandCandidates.map((acquisition) =>
+  const nextCommands = commandCandidates.flatMap((acquisition) => [
+    `Choose exactly one registered trusted chat for ${acquisition.acquisitionId}; replace only that route's chat-ID placeholder and the evidence/input placeholders:`,
     stageCommandTemplate(
       acquisition.acquisitionId,
       options.groupFolder,
       acquisition.recordVersion,
+      'telegram',
     ),
-  );
+    stageCommandTemplate(
+      acquisition.acquisitionId,
+      options.groupFolder,
+      acquisition.recordVersion,
+      'bluebubbles',
+    ),
+  ]);
   if (staged) {
     nextCommands.splice(
       0,
       nextCommands.length,
       `npm run capability:canary -- --group ${shellQuote(options.groupFolder)} --acquisition ${shellQuote(staged.acquisitionId)}`,
-      'Review the exact pending approval on its trusted owner surface; this CLI cannot approve it.',
+      `Review the summary and digests, then send this exact command on the bound trusted chat: ${staged.approvalCommand}`,
     );
   } else if (action?.operation === 'authorize_canary') {
     nextCommands.splice(
       0,
       nextCommands.length,
       'Run --run-canary only with the returned acquisition version and run revision plus the same exact binding, input, and health evidence.',
+    );
+  } else if (action?.operation === 'stage_action_approval') {
+    nextCommands.splice(
+      0,
+      nextCommands.length,
+      `Review and approve only the returned action-specific packet on the same exact trusted chat by sending this digest-bound command: ${action.approvalCommand}. After canonical approval, consume the current packet with --authorize-action and the returned run/acquisition heads plus unchanged binding, input, and health evidence.`,
+    );
+  } else if (action?.operation === 'authorize_action') {
+    nextCommands.splice(
+      0,
+      nextCommands.length,
+      'The exact action packet is consumed into one bounded grant and lease. Continue only the already-planned production execution with the returned run/acquisition heads; this command did not execute the protected action.',
     );
   } else if (action?.operation === 'run_canary') {
     nextCommands.splice(
@@ -1752,7 +2009,7 @@ export async function runCapabilityCanaryCli(
     nextCommands.splice(
       0,
       nextCommands.length,
-      'Review the separate exact activation packet on its trusted owner surface; this CLI cannot approve it.',
+      `Review the separate activation summary and digests, then send this exact command on the same bound trusted chat: ${action.approvalCommand}. This CLI did not approve or activate it.`,
     );
   } else if (action?.operation === 'activate') {
     nextCommands.splice(
@@ -1762,7 +2019,18 @@ export async function runCapabilityCanaryCli(
     );
   } else if (options.releaseReadiness) {
     nextCommands.push(
-      'First create and verify a canonical acquisition through the normal acquisition lifecycle; this presentation does not synthesize one.',
+      commandCandidates.length > 0
+        ? 'A canonical release-readiness acquisition already exists. Use exactly one trusted-chat staging command above; this presentation did not create, approve, or run another candidate.'
+        : 'No canonical release-readiness acquisition exists in this group. Create and verify one through the normal acquisition lifecycle; this presentation does not synthesize one.',
+    );
+  }
+  if (
+    !staged &&
+    !action &&
+    openRuns.some((run) => run.status === 'awaiting_action_approval')
+  ) {
+    nextCommands.push(
+      'A protected plan is awaiting an action-specific decision. Approve only its exact current packet on the same bound trusted chat, then use --authorize-action with current heads and the unchanged binding. Inspection does not approve or consume it.',
     );
   }
   return {
@@ -1773,19 +2041,28 @@ export async function runCapabilityCanaryCli(
     selectedAcquisition: selected
       ? presentAcquisition(
           selected,
-          statusByAcquisition.get(selected.acquisitionId)?.pendingAction ||
-            'none',
+          statusByAcquisition.has(selected.acquisitionId)
+            ? presentationPendingAction(
+                statusByAcquisition.get(selected.acquisitionId)!,
+              )
+            : 'none',
         )
       : null,
     eligibleAcquisitions: eligible.map((acquisition) =>
       presentAcquisition(
         acquisition,
-        statusByAcquisition.get(acquisition.acquisitionId)?.pendingAction ||
-          'none',
+        presentationPendingAction(
+          statusByAcquisition.get(acquisition.acquisitionId)!,
+        ),
       ),
     ),
     openRuns: openRuns.map((run) =>
-      presentRun(run, dependencies.listRunHealth(run.runId), approvalById),
+      presentRun(
+        run,
+        dependencies.listRunHealth(run.runId),
+        approvalById,
+        dependencies.getCurrentActionApproval(run),
+      ),
     ),
     recentHealthObservations: observations,
     releaseReadinessCandidate: options.releaseReadiness
@@ -1799,6 +2076,7 @@ export async function runCapabilityCanaryCli(
       'Every mutation requires explicit current acquisition/run heads, exact scope and input, trusted-surface binding, and current canonical health evidence.',
       'Staging does not authorize or execute the canary.',
       'Authorization consumes only an already-approved exact canonical packet; this CLI never approves a packet.',
+      'Protected execution requires a separate action-specific packet approved on the same trusted chat and consumed in a distinct invocation.',
       'The execution phase is limited to the exact bundled, read-only, zero-egress release-readiness binding and stops awaiting canonical owner review.',
       'This CLI never issues owner-review tokens or records owner verdicts.',
       'Activation staging and activation consumption are separate invocations; protected actions retain fresh approval.',
@@ -1877,12 +2155,20 @@ export function formatCapabilityCanaryReport(
     );
     for (const [kind, approval] of [
       ['canary', run.canaryApproval],
+      ['action', run.actionApproval],
       ['activation', run.activationApproval],
     ] as const) {
       if (!approval) continue;
       lines.push(
         `      ${kind} approval ${approval.approvalPacketId} v${approval.version}: ${approval.status}; channel=${approval.channel || 'none'}; scope=${approval.scopeDigest ? shortDigest(approval.scopeDigest) : 'missing'}; target=${approval.targetScopeDigest ? shortDigest(approval.targetScopeDigest) : 'missing'}; expires=${approval.expiresAt || 'none'}`,
       );
+      if (approval.approvalCommand) {
+        lines.push(
+          `        Review: ${approval.summary}`,
+          `        Summary digest: ${approval.summaryDigest}`,
+          `        Exact same-chat decision: ${approval.approvalCommand}`,
+        );
+      }
     }
     for (const health of run.health) {
       lines.push(
@@ -1922,6 +2208,10 @@ export function formatCapabilityCanaryReport(
       `  Run status: ${report.staged.runStatus}`,
       `  Acquisition state: ${report.staged.acquisitionState}`,
       `  Approval packet: ${report.staged.approvalPacketId} v${report.staged.approvalVersion} (${report.staged.approvalStatus})`,
+      `  Review: ${report.staged.approvalSummary}`,
+      `  Scope digest: ${report.staged.approvalScopeDigest}`,
+      `  Summary digest: ${report.staged.approvalSummaryDigest}`,
+      `  Exact same-chat decision: ${report.staged.approvalCommand}`,
       `  Next: ${report.staged.nextSafeAction}`,
       '  No approval or execution occurred.',
     );
@@ -1942,6 +2232,14 @@ export function formatCapabilityCanaryReport(
         `  Exact approval packet: ${action.approvalPacketId} v${action.approvalVersion} (${action.approvalStatus})`,
       );
     }
+    if (action.approvalCommand) {
+      lines.push(
+        `  Review: ${action.approvalSummary}`,
+        `  Scope digest: ${action.approvalScopeDigest}`,
+        `  Summary digest: ${action.approvalSummaryDigest}`,
+        `  Exact same-chat decision: ${action.approvalCommand}`,
+      );
+    }
     if (action.executionStatus) {
       lines.push(
         `  Execution: ${action.executionStatus}; receipts=${action.executionReceiptIds.length}; evidence=${action.evidenceRefs.length}; providers=${action.providerCalls}; cost=$${action.costUsd.toFixed(4)}; latency=${action.latencyMs}ms`,
@@ -1956,6 +2254,14 @@ export function formatCapabilityCanaryReport(
     } else if (action.operation === 'stage_activation') {
       lines.push(
         '  No activation occurred. The separate exact activation packet still needs canonical owner approval.',
+      );
+    } else if (action.operation === 'stage_action_approval') {
+      lines.push(
+        '  No approval or protected execution occurred. Decide the exact action packet on the same bound trusted chat.',
+      );
+    } else if (action.operation === 'authorize_action') {
+      lines.push(
+        '  The approved packet was consumed into one bounded grant and lease; the protected action was not executed by this phase.',
       );
     }
   }

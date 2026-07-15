@@ -102,6 +102,28 @@ function feedback(
 }
 
 describe('integration doctor', () => {
+  it('classifies every status exactly once in exhaustive state buckets', () => {
+    const report = buildIntegrationDoctorReport({
+      now: new Date('2026-05-04T12:00:00.000Z'),
+      truth: truth(),
+      providers: [],
+      recentFeedback: [],
+    });
+
+    const stateCounts = report.summary.stateCounts;
+    expect(stateCounts).toBeDefined();
+    expect(
+      Object.values(stateCounts || {}).reduce((sum, count) => sum + count, 0),
+    ).toBe(report.summary.total);
+    for (const status of report.statuses) {
+      expect(stateCounts?.[status.state]).toBeGreaterThan(0);
+    }
+
+    const formatted = formatIntegrationDoctorReport(report);
+    expect(formatted).toContain('exact states:');
+    expect(formatted).toContain(`healthy=${report.summary.healthy}`);
+  });
+
   it('keeps Telegram transport healthy when only live-proof freshness is stale', () => {
     const lastSuccess = '2026-05-04T10:00:00.000Z';
     const report = buildIntegrationDoctorReport({

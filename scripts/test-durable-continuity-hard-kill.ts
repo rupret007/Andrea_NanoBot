@@ -33,6 +33,18 @@ const boundaries: DurableContinuityBoundary[] = [
   'during_replan',
 ];
 
+const boundariesRequiringFreshRecoveryApproval =
+  new Set<DurableContinuityBoundary>([
+    'after_lease_acquisition',
+    'before_tool_invocation',
+    'after_tool_start',
+    'after_effect_before_receipt',
+    'after_receipt_before_checkpoint',
+    'after_final_write_before_verification',
+    'after_verification_before_completion',
+    'during_replan',
+  ]);
+
 function numeric(message: Record<string, unknown>, key: string): number {
   const value = message[key];
   if (typeof value !== 'number') {
@@ -121,6 +133,38 @@ async function crashAtBoundary(boundary: DurableContinuityBoundary) {
       1,
       `${boundary} repeated post-delivery learning`,
     );
+    if (boundariesRequiringFreshRecoveryApproval.has(boundary)) {
+      assert.equal(
+        recovery.message.originalApprovalUnexpiredAtRecovery,
+        true,
+        `${boundary} did not preserve the production-like approval TTL through recovery`,
+      );
+      assert.equal(
+        recovery.message.originalApprovalSpentAtRecovery,
+        true,
+        `${boundary} did not prove the original grant and lease were spent`,
+      );
+      assert.equal(
+        recovery.message.freshRecoveryApprovalUsed,
+        true,
+        `${boundary} reused unexpired but spent approval authority`,
+      );
+      assert.equal(
+        numeric(recovery.message, 'approvalPacketCount'),
+        2,
+        `${boundary} did not stage one fresh synthetic recovery approval`,
+      );
+      assert.equal(
+        numeric(recovery.message, 'approvalBoundGrantCount'),
+        2,
+        `${boundary} did not retain exactly one grant per approval`,
+      );
+      assert.equal(
+        numeric(recovery.message, 'approvalGrantPairCount'),
+        2,
+        `${boundary} reused an approval packet/version for recovery`,
+      );
+    }
     databaseHealth(fixture.databasePath);
     return {
       boundary,

@@ -5,6 +5,114 @@ as historical implementation and release evidence unless its heading
 explicitly says otherwise; older uses of “candidate” or “authoritative” do not
 override the first section.
 
+## Production Action Authority And Guided UX — 2026-07-15 (release-candidate snapshot)
+
+This is the authoritative implementation and local-validation section for this
+candidate. It closes a trust-boundary gap between permission to run a canary
+and permission to perform the canary's protected plan. Publication, hosted-CI,
+and serving state are intentionally not frozen in this source document; query
+Git and service status for those time-sensitive facts. Do not borrow a prior
+release's SHA, test counts, runtime provenance, or proof labels.
+
+### Implemented in the working tree
+
+- [x] Keep canary authorization, protected action approval, owner outcome
+      verdict, and activation/reuse as separate boundaries. Canary approval
+      authorizes one bounded experiment; it cannot authorize a repository
+      write or any other protected effect.
+- [x] For a protected canary or protected active reuse, stage a second
+      action-specific packet bound to the exact durable work, checkpoint, plan,
+      action class, owner/chat/group/channel/target scope, contract, inputs, and
+      fresh health. Only the separately approved current packet can be consumed
+      into one bounded grant and lease. Staging and consumption do not execute
+      the protected action.
+- [x] Add explicit guided CLI phases: read-only inspection, `--stage`,
+      `--authorize-canary`, `--stage-action-approval`, `--authorize-action`,
+      `--run-canary`, `--stage-activation`, and `--activate`. Every mutation
+      requires current acquisition/run heads and the unchanged canonical owner,
+      trusted chat, target, input, and health binding. The CLI never approves a
+      packet or records an owner verdict.
+- [x] Restrict guided production mutations to canonical owner identity on an
+      executable registered Telegram chat or configured BlueBubbles self-thread.
+      The owner cockpit is evidence/control only because it has no active-reuse
+      request lane. It neither creates an unusable cockpit-bound activation nor
+      relabels a Telegram/BlueBubbles canary, action, or activation packet as a
+      cockpit decision.
+- [x] Project `awaiting_action_approval` and its current packet as bounded
+      evidence metadata. Natural trusted-chat status questions may explain the
+      pending boundary, but they cannot stage, approve, consume, review,
+      activate, or execute it. Ordinary chat bypasses apprenticeship mutation.
+- [x] Close the missing owner-decision lane without accepting conversational
+      ambiguity. Each canary, protected-action, and activation staging result
+      exposes its reviewable summary plus exact staged version, scope digest,
+      summary digest, and the only accepted same-chat command:
+      `approve capability packet <id> version <n> scope <64hex> summary <64hex>`.
+      The trusted-chat handler exact-queries packet and production binding,
+      rechecks group/chat/channel/current boundary/expiry, and uses the canonical
+      compare-and-set. Generic approval language remains non-mutating.
+- [x] Keep 20-item capability overviews bounded while resolving an explicitly
+      named acquisition or run by its exact database identity. Older exact
+      records can therefore be inspected or reviewed without making an old run
+      the implicit lifecycle-control target.
+- [x] Preserve the acquisition sandbox as a trusted in-process certification
+      harness over disposable state with provider suppression and non-loopback
+      denial. It is not OS isolation and must not run hostile callbacks.
+- [x] Fail closed on unsupported production authority. Credentials, broadened
+      egress or cost, mixed/unapproved action classes, and non-empty rollback
+      binding plans are rejected rather than interpreted as a generalized
+      rollback engine. Unknown or partial effects remain indeterminate and are
+      never replayed merely because a rollback description exists.
+
+### Validation and release state
+
+- [x] The settled local candidate passes formatting, root typecheck, production
+      build, and the complete primary suite at 250 files / 3,076 tests. Lint
+      reports zero errors and 664 existing warnings; those warnings are not
+      represented as newly clean work.
+- [x] Focused validation passes 95/95 acquisition tests, 188/188
+      production/cockpit/chat tests (including all 6/6 real-process hard-kill
+      cases), and 142/142 durable-continuity tests. The exact-decision and
+      pagination cases include persisted Telegram and BlueBubbles packets older
+      than 20 newer acquisitions/runs: they remain absent from the bounded
+      cockpit snapshot, direct cockpit approval returns `409`, and the staged
+      decision remains unchanged.
+- [x] Container dependency installation, runner typecheck/build, 13/13 runner
+      tests, 132/132 host contract tests, pinned image build/canary, and nested
+      read-only mount canary pass. AGI typecheck and the 28-file / 286-test AGI
+      suite also pass.
+- [x] The reconciled documentation passes the 72-file documentation checker,
+      and the combined working tree passes `git diff --check`.
+- [x] The exact-candidate deterministic sweep passes all 97 selected commands
+      from 112 inventoried, with 15 live, interactive, aggregate, or state-
+      writing commands explicitly excluded. Its nested one-command stability
+      gate passes 3/3 rounds. The network-denied hard-kill and held-out recovery
+      gates pass 12/12 and 10/10; novel-capability runtime certification passes
+      25/25; production-apprenticeship certification passes 22/22; Commitment
+      Intelligence passes 24/24 primary, 15/15 held-out, and 3/3 invariants.
+- [x] The isolated offline scorecard is 100.0% A+ across every bounded suite at
+      $0 with no regression. Signature flows, documentation checks, and root
+      and container production/full dependency audits pass; all four dependency
+      audits report zero vulnerabilities. Legacy `certify:life-thread` remains
+      an explicitly historical before-state at 6 pass / 2 partial / 2 fail and
+      is superseded by the green Commitment Intelligence certification rather
+      than relabeled as a passing current gate.
+- Release invariant: review the combined diff, fetch remote metadata, publish
+  only a coherent non-diverged candidate, then require exact-SHA hosted checks,
+  rebuild/restart, and verified serving provenance. Use `git status --branch`
+  and `npm run services:status` for the current result; prior evidence never
+  certifies a later tree.
+- [ ] Collect genuine evidence only through later owner use: one exact canary,
+      any required protected-action decision, a verified outcome and explicit
+      owner verdict, a separate activation decision, and a later monitored
+      same-scope reuse. No fixture, terminal command, cockpit inspection, or
+      documentation update satisfies those steps.
+
+No genuine canary, protected action approval, owner verdict, activation, or
+active reuse was created by this round. The local primary, focused, container,
+AGI, deterministic, certification, scorecard, signature, documentation, and
+audit gates above are complete. Publication and runtime identity remain
+time-sensitive operator facts rather than claims frozen in this document.
+
 ## Verified Production Apprenticeship — 2026-07-15 (released; genuine canary pending)
 
 This is the authoritative section for the current release. It extends Verified
@@ -12,10 +120,13 @@ Capability Acquisition into a bounded production lifecycle without treating
 deterministic fixtures as real owner or runtime evidence. Application-bearing
 commit `3dbfae9c9165be73a5cf06eaed4040d3e68b7457` is published on `main`, passed
 the complete local and exact-SHA hosted matrices, and was rebuilt and restarted
-on the canonical Mac host. This documentation-only closure may advance `main`;
+on the canonical Mac host. Documentation-only closure
+`51c3f886a496e5036a93c6a1c6c12190a7a3f4bd` subsequently advanced `main`,
+passed its own exact-SHA hosted matrix, and was rebuilt and restarted with
+aligned serving provenance. Any later forward-fix is a new release candidate;
 use `git status --branch` and `npm run services:status` for the final repository
-and serving SHA. Genuine canary, owner-verdict, activation, and reuse evidence
-remain intentionally pending.
+and serving SHA rather than borrowing this snapshot. Genuine canary,
+owner-verdict, activation, and reuse evidence remain intentionally pending.
 
 ### Implemented lifecycle
 
@@ -27,11 +138,13 @@ remain intentionally pending.
 - [x] Stage a canary only from the exact current `owner_review_required`
       acquisition, trusted owner/chat/group/channel/target binding, normalized
       input, candidate version, and fresh canonical health observations.
-- [x] Keep three owner decisions separate. The canary packet must be approved
-      before authorization; a completed independently verified outcome must
+- [x] Keep the canary decision, any action-specific approval for a protected
+      plan, the outcome verdict, and activation separate. The canary packet must
+      be approved before authorization; protected execution requires its own
+      later current packet; a completed independently verified outcome must
       receive an exact private owner verdict; activation then requires another
-      exact approved packet. The guided CLI cannot approve either packet or
-      record the verdict.
+      exact approved packet. The guided CLI cannot approve a packet or record
+      the verdict.
 - [x] Restrict guided execution to the bundled Andrea Release-Readiness Brief:
       one read-only, zero-egress local lookup with a registered independent
       evaluator. Provider calls, external sends/writes, repository mutation,
@@ -42,9 +155,12 @@ remain intentionally pending.
       cockpit. Exact run/scope/revision binding, ambiguity refusal, and
       metadata-only evidence views prevent generic Helpful text, mixed requests,
       another chat, or stale feedback from becoming promotion evidence.
-- [x] Add separate authenticated cockpit routes for review, activation proposal,
-      approved activation, evidence display, pause, revoke, and retire. Negative
-      outcomes and owner controls remain durable and block later matches.
+- [x] The released baseline added authenticated cockpit review, activation,
+      evidence, pause, revoke, and retire routes. The current forward-fix
+      supersedes cockpit activation for guided chat-bound runs: the cockpit is
+      evidence/control only, exposes no activation control, and rejects
+      relabeling exact Telegram/BlueBubbles packets. Negative outcomes and
+      owner controls remain durable and block later matches.
 - [x] Add active contract matching and monitored durable reuse with exact task
       family, inputs, intended postconditions, owner/chat/group/channel/target
       scope, contract fingerprint, resource versions, fresh health, lease,
@@ -61,8 +177,9 @@ remain intentionally pending.
       canonical local ledger. It explicitly creates no live canary, approval,
       owner verdict, activation, provider call, external effect, or live proof.
 - [x] Add `npm run capability:canary` as a guided multi-invocation surface for
-      inspection, stage, already-approved canary authorization, bounded canary
-      execution, activation proposal, and already-approved activation. Every
+      inspection, stage, already-approved canary authorization, separate
+      protected-action packet staging/consumption, bounded canary execution,
+      activation proposal, and already-approved activation. Every
       mutation binds explicit expected acquisition/run heads, trusted scope,
       normalized inputs, and health observations; inspection remains read-only.
 
@@ -91,6 +208,40 @@ remain intentionally pending.
       canary, verdict, activation, active semantic reuse, provider health,
       deployment, running SHA, improvement in user value, or AGI.
 
+### Independent adversarial-audit corrections
+
+- [x] Revalidate the original run lifetime, health, consumed grant, lease,
+      canary authority, and activation authority at the recorded effect-start
+      time before recovering an unresolved effect. Recovery receives only a
+      fresh evaluator-scoped local-lookup lease; it never reacquires executor
+      authority or blindly repeats the effect.
+- [x] Make active-reuse staging one database transaction across canonical
+      match/read, durable work, links, checkpoint, grant, lease, health, and run
+      creation. A fourth real-process `SIGKILL` boundary proves that death after
+      the reuse lease but before the run leaves no partial rows and permits one
+      clean retry.
+- [x] Permit an expired health observation to refresh only through the exact
+      pinned Release-Readiness local verifier. The refresh is bounded,
+      zero-provider, zero-cost, network-denied, stable-HEAD-only, and grants no
+      lifecycle authority.
+- [x] Count owner-review revisions against the prior revision of the same
+      review identity. Re-reviewing one run remains one sample; two distinct
+      corrected or rejected monitored runs count independently and the second
+      adverse outcome quarantines the contract.
+- [x] Re-read time after recovery evaluation and fail closed if the exact
+      evaluator lease expired while verification was running. Only that lease
+      and generation may be reconciled; unrelated expired leases remain
+      untouched, the executor count stays one, and a later verifier-only retry
+      may complete.
+- [x] Make integration-status classification arithmetically auditable. The
+      canonical report now includes mutually exclusive counts for every
+      `IntegrationDoctorState`; legacy convenience counters remain explicitly
+      overlapping and are no longer the only machine-readable bucket view.
+
+These corrections are covered by named production-apprenticeship, hard-kill,
+active-reuse, and integration-doctor regression tests. They are not evidence
+that a genuine canary or owner review occurred.
+
 ### Local release evidence and remaining proof
 
 - [x] Complete focused production-apprenticeship tests, four real `SIGKILL`
@@ -117,6 +268,15 @@ remain intentionally pending.
       `host-76461-1780389249797`; serving, build, and workspace SHAs aligned
       with zero dirty paths. The bridge remained live with 11/11 tools and no
       direct-send exposure.
+- [x] Close the documentation-only release separately. Commit `51c3f886`
+      passed exact-SHA CI run `29435964758`, AGI/CodeQL run `29435964770`, and
+      Security run `29435974616`, including Ubuntu, Windows, container, AGI,
+      CodeQL, dependency audit, full-history verified-secret scan, and Semgrep.
+      The audited host then reported `running_ready`; OpenClaw PID `46626`
+      started before Andrea PID `47348`, serving/build/workspace SHA all equaled
+      `51c3f886`, build provenance was verified, and both build and workspace
+      dirty-path counts were zero. This is the exact pre-forward-fix snapshot,
+      not evidence for a later commit.
 - [x] Run the guarded Release-Readiness preparation command after restart. It
       recorded only labeled synthetic `owner_review_required` evidence for the
       read-only, zero-egress contract; it created no live canary, approval,

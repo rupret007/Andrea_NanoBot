@@ -419,6 +419,7 @@ describe('active release-readiness semantic reuse', () => {
     expect(setup.match).toHaveBeenCalledWith({
       groupFolder: 'main',
       taskFamily: 'release_readiness',
+      triggerText: 'Is Andrea ready to release?',
       inputs: { targetScopeKey: 'release-readiness' },
       intendedPostconditions: [
         'brief reports repository and serving provenance truth',
@@ -435,6 +436,7 @@ describe('active release-readiness semantic reuse', () => {
       currentResourceVersions: {
         'andrea.release_readiness_truth': '1.0.0',
       },
+      now: NOW,
     });
     expect(setup.listHealth).toHaveBeenCalledWith({
       subjectId: 'capability-resource:andrea.release_readiness_truth',
@@ -443,6 +445,7 @@ describe('active release-readiness semantic reuse', () => {
     expect(setup.stage).toHaveBeenCalledWith(
       expect.objectContaining({
         taskFamily: 'release_readiness',
+        triggerText: 'Is Andrea ready to release?',
         intendedPostconditions: [
           'brief reports repository and serving provenance truth',
           'brief reports runtime, bridge, integration, proof, and disk truth',
@@ -475,6 +478,63 @@ describe('active release-readiness semantic reuse', () => {
         values: { targetScopeKey: 'release-readiness' },
       }),
     );
+  });
+
+  it('reports deterministic bounded match, health, stage, execute, and total timing', async () => {
+    const setup = successfulDependencies({
+      channel: 'telegram',
+      chatJid: TELEGRAM_CHAT,
+    });
+    const ticks = [0, 5, 15, 25, 35, 50];
+    const monotonicNow = vi.fn(() => ticks.shift() as number);
+
+    const result = await dispatchActiveReleaseReadinessReuse(
+      {
+        text: 'Is Andrea ready to release?',
+        channelName: 'telegram',
+        chatJid: TELEGRAM_CHAT,
+        group: mainGroup,
+        now: NOW,
+      },
+      { ...setup.dependencies, monotonicNow },
+    );
+
+    expect(result.timings).toEqual({
+      matchMs: 10,
+      healthMs: 10,
+      stageMs: 10,
+      executeMs: 15,
+      totalMs: 50,
+    });
+    expect(result.text).toContain(
+      'Dispatch timing (local): match 10 ms · health 10 ms · stage 10 ms · execute 15 ms · total 50 ms.',
+    );
+    expect(monotonicNow).toHaveBeenCalledTimes(6);
+  });
+
+  it('does not enter matching, health, staging, or execution for ordinary chat', async () => {
+    const setup = successfulDependencies({
+      channel: 'telegram',
+      chatJid: TELEGRAM_CHAT,
+    });
+    const result = await dispatchActiveReleaseReadinessReuse(
+      {
+        text: 'Help me summarize this ordinary note.',
+        channelName: 'telegram',
+        chatJid: TELEGRAM_CHAT,
+        group: mainGroup,
+        now: NOW,
+      },
+      setup.dependencies,
+    );
+
+    expect(result.handled).toBe(false);
+    expect(setup.match).not.toHaveBeenCalled();
+    expect(setup.getStatus).not.toHaveBeenCalled();
+    expect(setup.listHealth).not.toHaveBeenCalled();
+    expect(setup.refreshHealth).not.toHaveBeenCalled();
+    expect(setup.stage).not.toHaveBeenCalled();
+    expect(setup.execute).not.toHaveBeenCalled();
   });
 
   it('executes only on an explicitly configured BlueBubbles self-thread', async () => {

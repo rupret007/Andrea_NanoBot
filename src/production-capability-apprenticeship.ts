@@ -9,6 +9,7 @@ import {
   assertCapabilityProductionRecoveryLeasePreflight,
   assertCapabilityProductionRecoveryPreflight,
   applyCapabilityOwnerControlWithToken,
+  burnFailedCapabilityCanaryAuthorityAtomic,
   getCapabilityAcquisition,
   getCapabilityOwnerReviewForRun,
   getCapabilityProductionRun,
@@ -30,14 +31,18 @@ import {
   listCapabilityAcquisitions,
   listCognitiveApprovalPackets,
   listDurableEffectReceipts,
+  listDurableResumeGrants,
   listReliabilityObservations,
+  listSkillPlaybooks,
   listToolReliabilitySubjects,
+  pauseCapabilityForRevalidationAtomic,
   reconcileCapabilityProductionEvidenceAtomic,
   recordCapabilityOwnerReviewWithToken,
   refreshCapabilityProductionHealthAtomic,
   reconcileCapabilityProductionFailureAtomic,
   refreshCapabilityProductionRunWorkHead,
   runCapabilityProductionStagingAtomic,
+  runCapabilityProductionTerminalAtomic,
   runCapabilityProductionVerifiedStepAtomic,
   updateCapabilityProductionRunCAS,
   upsertCognitiveRun,
@@ -69,6 +74,8 @@ import type {
   DurableActionClass,
   DurablePolicyEffectClass,
 } from './durable-action-policy.js';
+import { durableActionRequiresApproval } from './durable-action-policy.js';
+import { redactCouncilText } from './council-safety.js';
 import { isTrustedOwnerReviewSurface } from './trusted-owner-review-surface.js';
 import {
   buildRuntimeCommitTruth,
@@ -129,6 +136,20 @@ class ProductionCapabilityIndeterminateError extends Error {
   }
 }
 
+class ActiveCapabilityRevalidationRequiredError extends Error {
+  constructor(
+    readonly acquisitionId: string,
+    readonly expectedAcquisitionVersion: number,
+    readonly reason: 'version_drift' | 'health_stale',
+    readonly evidenceDigest: string,
+    readonly observedAt: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ActiveCapabilityRevalidationRequiredError';
+  }
+}
+
 export type ProductionCapabilityApprenticeshipBoundary =
   | 'after_effect_before_outcome'
   | 'after_checkpoint_before_outcome'
@@ -137,6 +158,8 @@ export type ProductionCapabilityApprenticeshipBoundary =
   | 'after_active_reuse_lease_before_run'
   | 'after_canary_stage_before_run'
   | 'after_activation_stage_before_run'
+  | 'after_activation_authority_before_run'
+  | 'after_activation_run_before_reconcile'
   | 'after_receipts_before_checkpoint';
 
 type ProductionCapabilityApprenticeshipTestHook = (event: {
@@ -218,12 +241,167 @@ function iso(value?: Date | string): string {
   return parsed.toISOString();
 }
 
+/**
+ * Production authority decisions use the host clock. An injected wall time is
+ * accepted only with the repository's isolated test database so deterministic
+ * certification cannot turn a production caller into a time authority.
+ */
+function productionAuthorityTime(testTime?: Date | string): string {
+  return isIsolatedTestDatabase() && testTime !== undefined
+    ? iso(testTime)
+    : iso();
+}
+
+function createProductionBoundaryClock(params: {
+  testInitialTime?: Date | string;
+  testClock?: () => Date | string;
+}): () => string {
+  const isolated = isIsolatedTestDatabase();
+  if (params.testClock && !isolated) {
+    throw new Error(
+      'Production boundary-clock injection requires an isolated test database.',
+    );
+  }
+  const injectedInitial =
+    isolated && params.testInitialTime !== undefined
+      ? Date.parse(iso(params.testInitialTime))
+      : undefined;
+  let lastObservedMs =
+    injectedInitial !== undefined ? injectedInitial - 1 : Date.now() - 1;
+  return () => {
+    const rawObservedMs =
+      isolated && params.testClock
+        ? Date.parse(iso(params.testClock()))
+        : injectedInitial !== undefined
+          ? lastObservedMs + 1
+          : Date.now();
+    if (!Number.isFinite(rawObservedMs)) {
+      throw new Error('Production boundary clock returned an invalid time.');
+    }
+    // Date.now() and deterministic clocks can repeat within one millisecond.
+    // Every authority boundary must nevertheless advance monotonically.
+    lastObservedMs = Math.max(rawObservedMs, lastObservedMs + 1);
+    return new Date(lastObservedMs).toISOString();
+  };
+}
+
 function plusMs(value: string, milliseconds: number): string {
   return new Date(Date.parse(value) + milliseconds).toISOString();
 }
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+const CAPABILITY_TRIGGER_ARTICLES = new Set(['a', 'an', 'the']);
+const CAPABILITY_TRIGGER_WRAPPERS = new Set(['andrea', 'please']);
+
+const CAPABILITY_TRIGGER_TOKEN_ALIASES: Readonly<Record<string, string>> = {
+  blocking: 'block',
+  blocks: 'block',
+  readiness: 'ready',
+  shipping: 'release',
+  ship: 'release',
+};
+
+function normalizedCapabilityTrigger(value: string): {
+  normalizedText: string;
+  semanticKey: string;
+} | null {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 640) {
+    return null;
+  }
+  const normalizedText = value
+    .normalize('NFKC')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/what['’]s/gi, 'what is')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalizedText) return null;
+  // Trigger semantics are an explicitly enumerated, ordered phrase contract.
+  // Preserve both order and repetition: sorting/deduplicating turns inverse or
+  // repeated instructions into the same authority-bearing intent. Only remove
+  // articles and an address/politeness wrapper; relationship, role, sequencing,
+  // and negation words must remain part of the exact semantic key.
+  const aliasedTokens = normalizedText
+    .split(' ')
+    .map((token) => CAPABILITY_TRIGGER_TOKEN_ALIASES[token] || token);
+  while (
+    aliasedTokens.length > 0 &&
+    CAPABILITY_TRIGGER_WRAPPERS.has(aliasedTokens[0])
+  ) {
+    aliasedTokens.shift();
+  }
+  while (
+    aliasedTokens.length > 0 &&
+    aliasedTokens[aliasedTokens.length - 1] === 'please'
+  ) {
+    aliasedTokens.pop();
+  }
+  const semanticTokens = aliasedTokens.filter(
+    (token) => token && !CAPABILITY_TRIGGER_ARTICLES.has(token),
+  );
+  if (semanticTokens.length === 0) return null;
+  return { normalizedText, semanticKey: semanticTokens.join(' ') };
+}
+
+function capabilityInputEvidenceDigest(
+  contract: CapabilityCandidateContract,
+  inputs: Record<string, unknown>,
+): string | null {
+  const declaredRoles = [
+    ...new Set([...contract.requiredInputs, ...contract.optionalInputs]),
+  ];
+  const declaredRoleSet = new Set(declaredRoles);
+  if (Object.keys(inputs).some((role) => !declaredRoleSet.has(role))) {
+    return null;
+  }
+  const boundRoles = Object.fromEntries(
+    declaredRoles
+      .filter((role) => Object.hasOwn(inputs, role))
+      .map((role) => [role, inputs[role]]),
+  );
+  return sha256(
+    canonicalCapabilityJson({
+      requiredRoles: contract.requiredInputs,
+      optionalRoles: contract.optionalInputs,
+      boundRoles,
+    }),
+  );
+}
+
+function capabilityTriggerEvidence(
+  contract: CapabilityCandidateContract,
+  triggerText: string,
+  inputs: Record<string, unknown>,
+): {
+  evidenceDigest: string;
+  semanticDigest: string;
+  inputEvidenceDigest: string;
+} | null {
+  const observed = normalizedCapabilityTrigger(triggerText);
+  const inputEvidenceDigest = capabilityInputEvidenceDigest(contract, inputs);
+  if (!observed || !inputEvidenceDigest) return null;
+  const matched = contract.triggerSemantics
+    .map((semantic) => normalizedCapabilityTrigger(semantic))
+    .find((semantic) => semantic?.semanticKey === observed.semanticKey);
+  if (!matched) return null;
+  const semanticDigest = sha256(matched.semanticKey);
+  return {
+    semanticDigest,
+    evidenceDigest: sha256(
+      canonicalCapabilityJson({
+        candidateFingerprint: contract.candidateFingerprint,
+        contractVersion: contract.contractVersion,
+        normalizedTriggerDigest: sha256(observed.normalizedText),
+        semanticDigest,
+        inputEvidenceDigest,
+      }),
+    ),
+    inputEvidenceDigest,
+  };
 }
 
 function productionPostconditionHash(value: string): string {
@@ -516,24 +694,271 @@ function acquisitionPlanningMetrics(
   };
 }
 
+function assertSupportedProductionPolicy(
+  acquisition: CapabilityAcquisitionRecord,
+  contract: CapabilityCandidateContract,
+): void {
+  const authority = parseCapabilityJson<unknown[]>(
+    acquisition.authorityRequirementsJson,
+    'authorityRequirementsJson',
+  );
+  if (
+    acquisition.dataEgressClass !== contract.dataEgressClass ||
+    !['none', 'local_only'].includes(contract.dataEgressClass) ||
+    contract.credentialRequirements.length !== 0 ||
+    acquisition.expectedCostBand !== 'zero' ||
+    new Set(contract.steps.map((step) => step.actionClass)).size !== 1 ||
+    !Array.isArray(authority) ||
+    authority.some((item) => typeof item !== 'string') ||
+    contract.steps.some(
+      (step) =>
+        step.approvalRequired &&
+        !authority.some((requirement) =>
+          String(requirement).includes(step.actionClass),
+        ),
+    ) ||
+    contract.rollbackBindingIds.length !== 0
+  ) {
+    throw new ProductionCapabilityQuarantineError(
+      'Production policy cannot enforce this credential, egress, cost, authority, or rollback contract without expansion.',
+    );
+  }
+}
+
+function protectedProductionActionClass(
+  contract: CapabilityCandidateContract,
+): DurableActionClass | null {
+  const protectedSteps = contract.steps.filter((step) => step.approvalRequired);
+  if (protectedSteps.length === 0) return null;
+  const actionClasses = new Set(protectedSteps.map((step) => step.actionClass));
+  if (
+    actionClasses.size !== 1 ||
+    protectedSteps.length !== contract.steps.length ||
+    protectedSteps.some(
+      (step) => !durableActionRequiresApproval(step.actionClass),
+    )
+  ) {
+    throw new ProductionCapabilityQuarantineError(
+      'A protected production plan must use one approval-bound action class for every step.',
+    );
+  }
+  return protectedSteps[0].actionClass;
+}
+
+function approvalLiteral(value: string, maxLength?: number): string {
+  const redacted = redactCouncilText(String(value || ''), 12_000)
+    .normalize('NFKC')
+    .split('')
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127 ? ' ' : character;
+    })
+    .join('')
+    .replace(/\b(?:https?|ftp):\/\/[^\s;,]+/gi, '[redacted-url]')
+    .replace(
+      /(^|[\s("'=])(?:~[/\\]|\/(?:Users|home|private|tmp|var|opt|etc|Volumes|mnt|srv|root)(?:[/\\]|$)|[A-Za-z]:[/\\]|\\\\[^\s\\/]+[/\\][^\s\\/]+(?:[/\\]|$)|\.\.?[/\\]|[A-Za-z0-9_.-]+[/\\])[^\s;,"')\]}]*/g,
+      '$1[redacted-path]',
+    )
+    .replace(
+      /\b(?:argv|workingDirectory|absolutePath|canonicalPath)\b/gi,
+      '[redacted-field]',
+    )
+    .replace(/\bcommand\s*[:=]\s*[^\s;,]+/gi, '[redacted-command]')
+    .replace(/[;|]+/g, ',')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const safe = redacted || 'unspecified';
+  if (maxLength !== undefined && safe.length > maxLength) {
+    throw new Error(
+      'Capability approval text cannot be rendered fully within its field bound.',
+    );
+  }
+  return safe;
+}
+
+function approvalIdentifier(value: string, label: string): string {
+  const normalized = String(value || '')
+    .normalize('NFKC')
+    .trim();
+  const rendered = approvalLiteral(normalized, 120);
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,119}$/.test(normalized) ||
+    rendered !== normalized
+  ) {
+    throw new Error(
+      `Capability ${label} cannot be rendered safely within the approval bound.`,
+    );
+  }
+  return rendered;
+}
+
+function approvalHumanSummaryParts(params: {
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
+}): string[] {
+  const resourceAliases = new Map<string, string>();
+  const resources = params.contract.resourceBindings
+    .map((resource, index) => {
+      const alias = `r${index + 1}`;
+      resourceAliases.set(resource.resourceId, alias);
+      return `${alias}=${approvalIdentifier(resource.resourceId, 'resource ID')}@${approvalIdentifier(resource.version, 'resource version')}[${approvalIdentifier(resource.bindingKind, 'resource binding kind')}${resource.required ? '|required' : '|optional'}]`;
+    })
+    .join(',');
+  const steps = params.contract.steps
+    .map(
+      (candidate) =>
+        `${approvalIdentifier(candidate.stepId, 'step ID')}=${approvalIdentifier(candidate.operationId, 'operation ID')}>${resourceAliases.get(candidate.resourceId) || approvalIdentifier(candidate.resourceId, 'resource ID')}[${approvalIdentifier(candidate.actionClass, 'action class')}]`,
+    )
+    .join(',');
+  const requiredInputs = params.contract.requiredInputs
+    .map((input) => approvalIdentifier(input, 'required input'))
+    .join(',');
+  const postconditions = params.contract.successPostconditions
+    .map(
+      (postcondition, index) =>
+        `${index + 1}:"${approvalLiteral(postcondition)}"`,
+    )
+    .join('|');
+  return [
+    `steps=${steps}`,
+    `in=${requiredInputs || 'none'}`,
+    `res=${resources || 'none'}`,
+    `post=${postconditions}`,
+    `policy=risk:${params.acquisition.riskLevel},egress:${params.contract.dataEgressClass},external:no,creds:${params.contract.credentialRequirements.length ? 'named-only' : 'none'},cost:$0,rollback:${params.contract.rollbackBindingIds.length ? 'bound' : 'none'}`,
+  ];
+}
+
+const PRODUCTION_APPROVAL_SUMMARY_MAX = 640;
+
+function exactProductionApprovalSummary(params: {
+  decision: 'canary' | 'activation';
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
+  contractDigest: string;
+  scopeDigest: string;
+  inputDigest: string;
+  targetDigest: string;
+}): string {
+  const protectedActions = [
+    ...new Set(
+      params.contract.steps
+        .filter((step) => step.approvalRequired)
+        .map((step) => step.actionClass),
+    ),
+  ];
+  const postconditionDigest = sha256(
+    canonicalCapabilityJson(params.contract.successPostconditions),
+  );
+  const exactDigest = sha256(
+    canonicalCapabilityJson({
+      decision: params.decision,
+      candidateFingerprint: params.contract.candidateFingerprint,
+      contractVersion: params.contract.contractVersion,
+      contractDigest: params.contractDigest,
+      scopeDigest: params.scopeDigest,
+      inputDigest: params.inputDigest,
+      postconditionDigest,
+      stepDigest: sha256(canonicalCapabilityJson(params.contract.steps)),
+      resourceDigest: sha256(
+        canonicalCapabilityJson(params.contract.resourceBindings),
+      ),
+    }),
+  );
+  const summary = [
+    `${params.decision === 'canary' ? 'CANARY' : 'ACTIVATE'};${approvalHumanSummaryParts(params).join(';')}`,
+    params.decision === 'canary'
+      ? `authority=canary-only/fresh-exact-action,protected:${protectedActions.join(',') || 'none'}`
+      : `authority=reuse-only/no-new-actions,protected:${protectedActions.join(',') || 'none'}`,
+    // The full exact digest binds every full candidate, contract, scope,
+    // input, step, resource, and postcondition digest in the canonical
+    // envelope above. The private target is intentionally not rendered.
+    `target=${params.targetDigest.slice(0, 12)};exact=${exactDigest}`,
+  ].join(';');
+  if (summary.length > PRODUCTION_APPROVAL_SUMMARY_MAX) {
+    throw new Error(
+      'Exact capability approval summary exceeds the reviewable bound.',
+    );
+  }
+  return summary;
+}
+
+/** @internal Isolated reviewability tests only. */
+export function _renderProductionApprovalSummaryForTest(params: {
+  decision: 'canary' | 'activation';
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
+  contractDigest: string;
+  scopeDigest: string;
+  inputDigest: string;
+  targetDigest: string;
+}): string {
+  if (!isIsolatedTestDatabase()) {
+    throw new Error(
+      'Approval-summary test rendering requires an isolated database.',
+    );
+  }
+  return exactProductionApprovalSummary(params);
+}
+
 function canaryApprovalSummary(
   acquisition: CapabilityAcquisitionRecord,
   contract: CapabilityCandidateContract,
-  targetScopeHash: string,
+  params: {
+    contractDigest: string;
+    scopeDigest: string;
+    inputDigest: string;
+    targetDigest: string;
+  },
 ): string {
-  const protectedActions = contract.steps
-    .filter((step) => step.approvalRequired)
-    .map((step) => step.actionClass);
-  return [
-    `Approve one canary: ${contract.title} v${contract.contractVersion}.`,
-    `Task family: ${contract.taskFamily}.`,
-    `Target: ${targetScopeHash.slice(0, 16)} (hashed).`,
-    `Operations: ${contract.steps.map((step) => step.operationId).join(', ')}.`,
-    `Resources: ${contract.resourceBindings.map((item) => `${item.resourceId}@${item.version}`).join(', ')}.`,
-    `Data egress: ${acquisition.dataEgressClass}.`,
-    `Protected actions: ${protectedActions.length ? protectedActions.join(', ') : 'none'}.`,
-    'This authorizes only this canary; it does not activate future reuse.',
-  ].join(' ');
+  return exactProductionApprovalSummary({
+    decision: 'canary',
+    acquisition,
+    contract,
+    ...params,
+  });
+}
+
+function productionActionApprovalSummary(params: {
+  acquisition: CapabilityAcquisitionRecord;
+  run: CapabilityProductionRunRecord;
+  contract: CapabilityCandidateContract;
+  actionClass: DurableActionClass;
+}): string {
+  const exactScope = {
+    owner: params.run.ownerScopeHash,
+    chat: params.run.chatScopeHash,
+    group: params.run.groupScopeHash,
+    channel: params.run.channel,
+    authorizedSurface: params.run.authorizedSurface,
+    target: params.run.targetScopeHash,
+  };
+  const stepDigest = sha256(canonicalCapabilityJson(params.contract.steps));
+  const exactEnvelope = {
+    acquisitionId: params.acquisition.acquisitionId,
+    runId: params.run.runId,
+    candidateFingerprint: params.run.candidateFingerprint,
+    contractDigest: params.run.contractDigest,
+    contractVersion: params.run.contractVersion,
+    inputDigest: params.run.inputDigest,
+    stepDigest,
+    stepCount: params.contract.steps.length,
+    healthEvidenceSetDigest: params.run.healthEvidenceSetDigest,
+    scope: exactScope,
+    network: `${params.contract.dataEgressClass}/external-denied`,
+    cost: `${params.acquisition.expectedCostBand}/$0`,
+    planVersion: params.run.planVersion,
+    actionClass: params.actionClass,
+  };
+  const summary = [
+    `ACTION class=${params.actionClass}; ${approvalHumanSummaryParts(params).join('; ')}`,
+    // The full exact digest binds the complete action envelope, including the
+    // target hash. Raw target path/content is deliberately not displayed.
+    `authority=fresh-action-only;target=${params.run.targetScopeHash.slice(0, 12)};exact=${sha256(canonicalCapabilityJson(exactEnvelope))}`,
+  ].join('; ');
+  if (summary.length > PRODUCTION_APPROVAL_SUMMARY_MAX) {
+    throw new Error('Exact production action approval exceeds its bound.');
+  }
+  return summary;
 }
 
 export function stageCapabilityCanary(input: StageCapabilityCanaryInput): {
@@ -551,7 +976,12 @@ function stageCapabilityCanaryWithinTransaction(
   run: CapabilityProductionRunRecord;
   approval: CognitiveApprovalPacket;
 } {
-  const now = iso(input.now);
+  const now = productionAuthorityTime(input.now);
+  if (input.authorizedSurface !== input.binding.channel) {
+    throw new Error(
+      'Canary approval surface must equal its canonical execution channel.',
+    );
+  }
   const acquisition = getCapabilityAcquisition(input.acquisitionId);
   if (
     !acquisition ||
@@ -562,6 +992,7 @@ function stageCapabilityCanaryWithinTransaction(
     );
   }
   const contract = assertProductionCandidate(acquisition);
+  assertSupportedProductionPolicy(acquisition, contract);
   if (acquisition?.groupFolder !== input.binding.groupId) {
     throw new Error('Canary owner group does not match the acquisition scope.');
   }
@@ -570,6 +1001,7 @@ function stageCapabilityCanaryWithinTransaction(
     statuses: [
       'proposed',
       'awaiting_canary_approval',
+      'awaiting_action_approval',
       'canary_ready',
       'running',
       'awaiting_owner_review',
@@ -605,6 +1037,7 @@ function stageCapabilityCanaryWithinTransaction(
       statuses: [
         'proposed',
         'awaiting_canary_approval',
+        'awaiting_action_approval',
         'canary_ready',
         'running',
         'awaiting_owner_review',
@@ -624,6 +1057,19 @@ function stageCapabilityCanaryWithinTransaction(
     input.binding.targetScopeKey,
   );
   const inputDigest = sha256(canonicalCapabilityJson(input.normalizedInputs));
+  const contractDigest = capabilityProductionContractDigest(
+    acquisition.candidateContractJson,
+  );
+  const approvalScopeDigest = sha256(
+    canonicalCapabilityJson({
+      owner: durableScopeHash('owner', input.binding.ownerId),
+      chat: durableScopeHash('chat', input.binding.chatId),
+      group: durableScopeHash('group', input.binding.groupId),
+      channel: input.binding.channel,
+      target: targetScopeHash,
+      authorizedSurface: input.authorizedSurface,
+    }),
+  );
   // All caller-controlled and freshness-sensitive evidence must validate
   // before any cognitive run, durable work, checkpoint, or approval packet is
   // written. A rejected proposal must leave no partial authority artifacts.
@@ -732,7 +1178,12 @@ function stageCapabilityCanaryWithinTransaction(
       expectedWorkVersion: work.version,
       cognitiveRunId,
       actionClass: 'operator_change',
-      summary: canaryApprovalSummary(acquisition, contract, targetScopeHash),
+      summary: canaryApprovalSummary(acquisition, contract, {
+        contractDigest,
+        scopeDigest: approvalScopeDigest,
+        inputDigest,
+        targetDigest: targetScopeHash,
+      }),
       checkpointId: initialCheckpoint.checkpoint.durableCheckpointId,
       now,
     });
@@ -747,9 +1198,7 @@ function stageCapabilityCanaryWithinTransaction(
       revision: 1,
       candidateFingerprint: contract.candidateFingerprint,
       contractVersion: contract.contractVersion,
-      contractDigest: capabilityProductionContractDigest(
-        acquisition.candidateContractJson,
-      ),
+      contractDigest,
       taskFamily: contract.taskFamily,
       groupFolder: input.binding.groupId,
       ownerScopeHash: work.ownerScopeHash,
@@ -828,7 +1277,9 @@ function approvedPacketForRun(
     packet.status !== 'approved' ||
     !packet.scopeDigest ||
     !packet.approvalVersion ||
-    packet.actionClass !== 'operator_change'
+    packet.actionClass !== 'operator_change' ||
+    run.channel !== run.authorizedSurface ||
+    packet.approvalChannel !== run.channel
   ) {
     throw new Error('The exact capability approval packet is not approved.');
   }
@@ -844,8 +1295,8 @@ export function authorizeApprovedCapabilityCanary(params: {
   workerId: string;
   now?: Date | string;
 }): ReturnType<typeof reconcileCapabilityProductionEvidenceAtomic> {
-  const now = iso(params.now);
-  let run = getCapabilityProductionRun(params.runId);
+  const now = productionAuthorityTime(params.now);
+  const run = getCapabilityProductionRun(params.runId);
   const expectedAcquisition = run
     ? getCapabilityAcquisition(run.acquisitionId)
     : undefined;
@@ -903,8 +1354,18 @@ export function authorizeApprovedCapabilityCanary(params: {
       lease.expiresAt <= now ||
       work.leaseId !== lease.leaseId
     ) {
+      if (run.canaryApprovalPacketId) {
+        burnFailedCapabilityCanaryAuthorityAtomic({
+          runId: run.runId,
+          expectedRunRevision: run.revision,
+          approvalPacketId: run.canaryApprovalPacketId,
+          grantId: run.canaryGrantId,
+          leaseId: run.canaryLeaseId,
+          now,
+        });
+      }
       throw new Error(
-        'Bound canary authorization became stale before reconciliation.',
+        'Bound canary authorization became stale and was burned; restage a fresh canary approval.',
       );
     }
     try {
@@ -925,89 +1386,101 @@ export function authorizeApprovedCapabilityCanary(params: {
       if (
         failedBinding?.status === 'awaiting_canary_approval' &&
         failedBinding.canaryGrantId === run.canaryGrantId &&
-        failedBinding.canaryLeaseId === lease.leaseId
+        failedBinding.canaryLeaseId === lease.leaseId &&
+        failedBinding.canaryApprovalPacketId
       ) {
-        updateCapabilityProductionRunCAS({
-          expectedRevision: failedBinding.revision,
-          next: {
-            ...failedBinding,
-            updatedAt: now,
-            revision: failedBinding.revision + 1,
-            canaryGrantId: null,
-            canaryLeaseId: null,
-            nextSafeAction:
-              'Revalidate the exact canary approval and acquire a fresh lease.',
-          },
+        burnFailedCapabilityCanaryAuthorityAtomic({
+          runId: failedBinding.runId,
+          expectedRunRevision: failedBinding.revision,
+          approvalPacketId: failedBinding.canaryApprovalPacketId,
+          grantId: run.canaryGrantId,
+          leaseId: lease.leaseId,
+          now,
         });
       }
       throw error;
     }
   }
-  const packet = approvedPacketForRun(run, run.canaryApprovalPacketId);
-  const issued = issueDurableResumeGrant({
-    workId: run.workId,
-    binding: params.binding,
-    actionClass: 'operator_change',
-    approvalPacketId: packet.approvalPacketId,
-    approvalVersion: packet.approvalVersion,
-    now,
-  });
-  const consumed = consumeResumeGrantAndAcquireLease({
-    token: issued.token,
-    binding: params.binding,
-    actionClass: 'operator_change',
-    workerId: params.workerId,
-    now,
-  });
-  if (consumed.status !== 'consumed' || !consumed.lease) {
-    throw new Error(`Canary lease acquisition failed: ${consumed.status}.`);
-  }
-  const work = getDurableWorkUnit(run.workId);
-  if (!work || !work.checkpointHeadId) {
-    releaseDurableLease({
-      leaseId: consumed.lease.leaseId,
-      processGeneration: consumed.lease.processGeneration,
+  const expectedRun = run;
+  return runCapabilityProductionStagingAtomic(() => {
+    const currentRun = getCapabilityProductionRun(expectedRun.runId);
+    if (
+      !currentRun ||
+      currentRun.status !== 'awaiting_canary_approval' ||
+      currentRun.revision !== expectedRun.revision ||
+      currentRun.canaryApprovalPacketId !== expectedRun.canaryApprovalPacketId
+    ) {
+      throw new Error('Capability canary changed before atomic authorization.');
+    }
+    let run = currentRun;
+    const packet = approvedPacketForRun(run, run.canaryApprovalPacketId);
+    const issued = issueDurableResumeGrant({
+      workId: run.workId,
+      binding: params.binding,
+      actionClass: 'operator_change',
+      approvalPacketId: packet.approvalPacketId,
+      approvalVersion: packet.approvalVersion,
       now,
     });
-    throw new Error('Canary durable work disappeared after lease acquisition.');
-  }
-  const next: CapabilityProductionRunRecord = {
-    ...run,
-    updatedAt: now,
-    revision: run.revision + 1,
-    workVersion: work.version,
-    planVersion: work.planVersion,
-    checkpointId: work.checkpointHeadId,
-    canaryApprovalVersion: packet.approvalVersion,
-    canaryApprovalScopeDigest: packet.scopeDigest,
-    canaryGrantId: issued.grant.grantId,
-    canaryLeaseId: consumed.lease.leaseId,
-    nextSafeAction: 'Atomically authorize only this exact canary.',
-  };
-  if (
-    updateCapabilityProductionRunCAS({
-      expectedRevision: run.revision,
-      next,
-    }) !== 'applied'
-  ) {
-    releaseDurableLease({
-      leaseId: consumed.lease.leaseId,
-      processGeneration: consumed.lease.processGeneration,
+    const consumed = consumeResumeGrantAndAcquireLease({
+      token: issued.token,
+      binding: params.binding,
+      actionClass: 'operator_change',
+      workerId: params.workerId,
       now,
     });
-    throw new Error('Canary approval binding lost its revision race.');
-  }
-  run = getCapabilityProductionRun(run.runId) as CapabilityProductionRunRecord;
-  const acquisition = getCapabilityAcquisition(run.acquisitionId);
-  if (!acquisition) {
-    releaseDurableLease({
-      leaseId: consumed.lease.leaseId,
-      processGeneration: consumed.lease.processGeneration,
-      now,
-    });
-    throw new Error('Capability acquisition disappeared.');
-  }
-  try {
+    if (consumed.status !== 'consumed' || !consumed.lease) {
+      throw new Error(`Canary lease acquisition failed: ${consumed.status}.`);
+    }
+    const work = getDurableWorkUnit(run.workId);
+    if (!work || !work.checkpointHeadId) {
+      releaseDurableLease({
+        leaseId: consumed.lease.leaseId,
+        processGeneration: consumed.lease.processGeneration,
+        now,
+      });
+      throw new Error(
+        'Canary durable work disappeared after lease acquisition.',
+      );
+    }
+    const next: CapabilityProductionRunRecord = {
+      ...run,
+      updatedAt: now,
+      revision: run.revision + 1,
+      workVersion: work.version,
+      planVersion: work.planVersion,
+      checkpointId: work.checkpointHeadId,
+      canaryApprovalVersion: packet.approvalVersion,
+      canaryApprovalScopeDigest: packet.scopeDigest,
+      canaryGrantId: issued.grant.grantId,
+      canaryLeaseId: consumed.lease.leaseId,
+      nextSafeAction: 'Atomically authorize only this exact canary.',
+    };
+    if (
+      updateCapabilityProductionRunCAS({
+        expectedRevision: run.revision,
+        next,
+      }) !== 'applied'
+    ) {
+      releaseDurableLease({
+        leaseId: consumed.lease.leaseId,
+        processGeneration: consumed.lease.processGeneration,
+        now,
+      });
+      throw new Error('Canary approval binding lost its revision race.');
+    }
+    run = getCapabilityProductionRun(
+      run.runId,
+    ) as CapabilityProductionRunRecord;
+    const acquisition = getCapabilityAcquisition(run.acquisitionId);
+    if (!acquisition) {
+      releaseDurableLease({
+        leaseId: consumed.lease.leaseId,
+        processGeneration: consumed.lease.processGeneration,
+        now,
+      });
+      throw new Error('Capability acquisition disappeared.');
+    }
     return reconcileCapabilityProductionEvidenceAtomic({
       runId: run.runId,
       operation: 'authorize_canary',
@@ -1015,33 +1488,372 @@ export function authorizeApprovedCapabilityCanary(params: {
       expectedRunRevision: run.revision,
       now,
     });
-  } catch (error) {
-    releaseDurableLease({
-      leaseId: consumed.lease.leaseId,
-      processGeneration: consumed.lease.processGeneration,
+  });
+}
+
+export interface CapabilityProductionActionApprovalStage {
+  run: CapabilityProductionRunRecord;
+  approval: CognitiveApprovalPacket;
+}
+
+function currentProductionActionApproval(
+  run: CapabilityProductionRunRecord,
+): CognitiveApprovalPacket | undefined {
+  const work = getDurableWorkUnit(run.workId);
+  if (!work?.approvalPacketId) return undefined;
+  return listCognitiveApprovalPackets({
+    groupFolder: run.groupFolder,
+    limit: 500,
+  }).find((candidate) => candidate.approvalPacketId === work.approvalPacketId);
+}
+
+function assertProductionActionStageEligibility(params: {
+  run: CapabilityProductionRunRecord;
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
+  binding: DurableWorkBindingInput;
+  now: string;
+}): DurableActionClass {
+  assertSupportedProductionPolicy(params.acquisition, params.contract);
+  const actionClass = protectedProductionActionClass(params.contract);
+  if (!actionClass) {
+    throw new Error('This production contract has no protected action.');
+  }
+  assertExecutionBinding(params.run, params.binding);
+  const eligible =
+    (params.run.runKind === 'canary' &&
+      params.run.status === 'canary_ready' &&
+      params.acquisition.state === 'canary_ready') ||
+    (params.run.runKind === 'active_reuse' &&
+      params.run.status === 'monitoring' &&
+      ['active', 'monitoring'].includes(params.acquisition.state));
+  if (!eligible) {
+    throw new Error(
+      'Production action approval cannot be staged from this canonical state.',
+    );
+  }
+  if (listCapabilityProductionSteps(params.run.runId).length > 0) {
+    throw new ProductionCapabilityIndeterminateError(
+      'A protected completed prefix cannot be replayed; verify or resolve it first.',
+    );
+  }
+  assertFreshBoundProductionHealth({
+    run: params.run,
+    contract: params.contract,
+    now: params.now,
+  });
+  return actionClass;
+}
+
+function stageCapabilityProductionActionApprovalWithinTransaction(params: {
+  runId: string;
+  expectedAcquisitionVersion: number;
+  expectedRunRevision: number;
+  binding: DurableWorkBindingInput;
+  now: string;
+}): CapabilityProductionActionApprovalStage {
+  let run = getCapabilityProductionRun(params.runId);
+  const acquisition = run
+    ? getCapabilityAcquisition(run.acquisitionId)
+    : undefined;
+  if (
+    !run ||
+    !acquisition ||
+    run.revision !== params.expectedRunRevision ||
+    acquisition.recordVersion !== params.expectedAcquisitionVersion
+  ) {
+    throw new Error('Production action-approval head changed.');
+  }
+  const contract = parseCapabilityJson<CapabilityCandidateContract>(
+    acquisition.candidateContractJson,
+    'candidateContractJson',
+  );
+  assertCapabilityCandidateContract(contract);
+
+  if (run.status === 'awaiting_action_approval') {
+    assertExecutionBinding(run, params.binding);
+    const actionClass = protectedProductionActionClass(contract);
+    const approval = currentProductionActionApproval(run);
+    if (
+      actionClass &&
+      approval &&
+      ['staged', 'approved'].includes(approval.status) &&
+      (!approval.expiresAt || approval.expiresAt > params.now) &&
+      approval.actionClass === actionClass &&
+      approval.summary ===
+        productionActionApprovalSummary({
+          acquisition,
+          run,
+          contract,
+          actionClass,
+        })
+    ) {
+      return { run, approval };
+    }
+    throw new Error(
+      'The existing production action approval is stale; restaging requires explicit reconciliation.',
+    );
+  }
+
+  const actionClass = assertProductionActionStageEligibility({
+    run,
+    acquisition,
+    contract,
+    binding: params.binding,
+    now: params.now,
+  });
+  const priorLeaseId = run.executionLeaseId || run.canaryLeaseId;
+  if (priorLeaseId) {
+    releaseDurableLease({ leaseId: priorLeaseId, now: params.now });
+  }
+  let work = getDurableWorkUnit(run.workId);
+  if (work?.status === 'executing' && !work.leaseId) {
+    work = transitionDurableWork({
+      workId: work.workId,
+      expectedVersion: work.version,
+      toStatus: 'interrupted',
+      nextAction:
+        'Stage a fresh exact action approval before protected execution.',
+      now: params.now,
+    });
+  }
+  if (work?.approvalPacketId && work.checkpointHeadId && !work.leaseId) {
+    const prior = getDurableWorkCheckpoint(work.checkpointHeadId);
+    if (!prior) {
+      throw new Error('Production action approval lost its prior checkpoint.');
+    }
+    const worldSignals = JSON.parse(prior.worldSignalStateJson) as {
+      fresh?: string[];
+      stale?: string[];
+      missing?: string[];
+    };
+    work = commitDurableCheckpointCAS({
+      workId: work.workId,
+      expectedWorkVersion: work.version,
+      runtimeCheckpointId: prior.runtimeCheckpointId,
+      completedNodeIds: JSON.parse(prior.completedNodeIdsJson) as string[],
+      pendingNodeIds: JSON.parse(prior.pendingNodeIdsJson) as string[],
+      uncertainNodeIds: JSON.parse(prior.uncertainNodeIdsJson) as string[],
+      dependencyIds: JSON.parse(prior.dependencyIdsJson) as string[],
+      worldSignals,
+      executorScopeKey: run.candidateFingerprint,
+      targetScopeKey: params.binding.targetScopeKey,
+      preStateFingerprint: prior.preStateFingerprint,
+      verifiedPostStateFingerprint: prior.verifiedPostStateFingerprint,
+      receiptIds: JSON.parse(prior.receiptIdsJson) as string[],
+      verificationRequirementIds: JSON.parse(
+        prior.verificationRequirementsJson,
+      ) as string[],
+      retryBudget: prior.retryBudget,
+      attemptsUsed: prior.attemptsUsed,
+      stopConditionIds: JSON.parse(prior.stopConditionsJson) as string[],
+      recoveryPolicy: 'approval_required',
+      nextSafeAction:
+        'Bind the protected plan to a new action-specific approval.',
+      now: params.now,
+    }).work;
+  }
+  if (!work || !work.checkpointHeadId || !work.cognitiveRunId || work.leaseId) {
+    throw new Error(
+      'Production action approval requires unleased canonical durable work.',
+    );
+  }
+  const staged = stageDurableWorkApproval({
+    workId: work.workId,
+    expectedWorkVersion: work.version,
+    cognitiveRunId: work.cognitiveRunId,
+    actionClass,
+    summary: productionActionApprovalSummary({
+      acquisition,
+      run,
+      contract,
+      actionClass,
+    }),
+    checkpointId: work.checkpointHeadId,
+    now: params.now,
+  });
+  const next: CapabilityProductionRunRecord = {
+    ...run,
+    updatedAt: params.now,
+    status: 'awaiting_action_approval',
+    revision: run.revision + 1,
+    workVersion: staged.work.version,
+    checkpointId: staged.checkpoint.durableCheckpointId,
+    executionGrantId: null,
+    executionLeaseId: null,
+    nextSafeAction:
+      'Wait for exact fresh action approval; canary or activation authority cannot substitute.',
+  };
+  if (
+    updateCapabilityProductionRunCAS({
+      expectedRevision: run.revision,
+      next,
+    }) !== 'applied'
+  ) {
+    throw new Error('Production action approval lost its run revision race.');
+  }
+  run = getCapabilityProductionRun(run.runId) as CapabilityProductionRunRecord;
+  return { run, approval: staged.packet };
+}
+
+/**
+ * Stages one plan-level, action-specific packet after generic canary authority
+ * (or during active reuse). This grants no execution authority.
+ */
+export function stageCapabilityProductionActionApproval(params: {
+  runId: string;
+  expectedAcquisitionVersion: number;
+  expectedRunRevision: number;
+  binding: DurableWorkBindingInput;
+  now?: Date | string;
+}): CapabilityProductionActionApprovalStage {
+  const now = productionAuthorityTime(params.now);
+  return runCapabilityProductionStagingAtomic(() =>
+    stageCapabilityProductionActionApprovalWithinTransaction({
+      ...params,
+      now,
+    }),
+  );
+}
+
+function approvedProductionActionPacket(params: {
+  run: CapabilityProductionRunRecord;
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
+  actionClass: DurableActionClass;
+  now: string;
+}): CognitiveApprovalPacket {
+  const work = getDurableWorkUnit(params.run.workId);
+  const packet = currentProductionActionApproval(params.run);
+  const expectedSummary = productionActionApprovalSummary(params);
+  if (
+    !work ||
+    !packet ||
+    packet.status !== 'approved' ||
+    !packet.scopeDigest ||
+    !packet.approvalVersion ||
+    packet.actionClass !== params.actionClass ||
+    params.run.channel !== params.run.authorizedSurface ||
+    packet.approvalChannel !== params.run.channel ||
+    packet.summary !== expectedSummary ||
+    (packet.expiresAt && packet.expiresAt <= params.now) ||
+    work.approvalPacketId !== packet.approvalPacketId ||
+    work.approvalVersion !== packet.approvalVersion ||
+    packet.durableWorkId !== work.workId ||
+    packet.durableCheckpointId !== work.checkpointHeadId ||
+    packet.planVersion !== work.planVersion ||
+    packet.targetScopeDigest !== params.run.targetScopeHash
+  ) {
+    throw new Error(
+      'The exact current production action packet is not approved.',
+    );
+  }
+  return packet;
+}
+
+/** Consumes the exact action packet into one grant/lease and nothing else. */
+export function authorizeApprovedCapabilityProductionAction(params: {
+  runId: string;
+  expectedAcquisitionVersion: number;
+  expectedRunRevision: number;
+  binding: DurableWorkBindingInput;
+  workerId: string;
+  now?: Date | string;
+}): CapabilityProductionActionApprovalStage {
+  const now = productionAuthorityTime(params.now);
+  return runCapabilityProductionStagingAtomic(() => {
+    const run = getCapabilityProductionRun(params.runId);
+    const acquisition = run
+      ? getCapabilityAcquisition(run.acquisitionId)
+      : undefined;
+    if (
+      !run ||
+      !acquisition ||
+      run.status !== 'awaiting_action_approval' ||
+      run.revision !== params.expectedRunRevision ||
+      acquisition.recordVersion !== params.expectedAcquisitionVersion
+    ) {
+      throw new Error('Production action approval head is stale.');
+    }
+    const contract = parseCapabilityJson<CapabilityCandidateContract>(
+      acquisition.candidateContractJson,
+      'candidateContractJson',
+    );
+    assertCapabilityCandidateContract(contract);
+    assertSupportedProductionPolicy(acquisition, contract);
+    assertExecutionBinding(run, params.binding);
+    assertFreshBoundProductionHealth({ run, contract, now });
+    const actionClass = protectedProductionActionClass(contract);
+    if (!actionClass) {
+      throw new Error('Production action approval has no protected action.');
+    }
+    const stateEligible =
+      (run.runKind === 'canary' && acquisition.state === 'canary_ready') ||
+      (run.runKind === 'active_reuse' &&
+        ['active', 'monitoring'].includes(acquisition.state));
+    if (!stateEligible) {
+      throw new Error('Production action authority was revoked or paused.');
+    }
+    const packet = approvedProductionActionPacket({
+      run,
+      acquisition,
+      contract,
+      actionClass,
       now,
     });
-    const failedBinding = getCapabilityProductionRun(run.runId);
-    if (
-      failedBinding?.status === 'awaiting_canary_approval' &&
-      failedBinding.canaryGrantId === issued.grant.grantId &&
-      failedBinding.canaryLeaseId === consumed.lease.leaseId
-    ) {
-      updateCapabilityProductionRunCAS({
-        expectedRevision: failedBinding.revision,
-        next: {
-          ...failedBinding,
-          updatedAt: now,
-          revision: failedBinding.revision + 1,
-          canaryGrantId: null,
-          canaryLeaseId: null,
-          nextSafeAction:
-            'Revalidate the exact canary approval and acquire a fresh lease.',
-        },
-      });
+    const issued = issueDurableResumeGrant({
+      workId: run.workId,
+      binding: params.binding,
+      actionClass,
+      approvalPacketId: packet.approvalPacketId,
+      approvalVersion: packet.approvalVersion,
+      now,
+    });
+    const consumed = consumeResumeGrantAndAcquireLease({
+      token: issued.token,
+      binding: params.binding,
+      actionClass,
+      workerId: params.workerId,
+      now,
+    });
+    if (consumed.status !== 'consumed' || !consumed.lease) {
+      throw new Error(
+        `Production action lease acquisition failed: ${consumed.status}.`,
+      );
     }
-    throw error;
-  }
+    const work = getDurableWorkUnit(run.workId);
+    if (!work || !work.checkpointHeadId) {
+      throw new Error('Production action work disappeared after consumption.');
+    }
+    const next: CapabilityProductionRunRecord = {
+      ...run,
+      updatedAt: now,
+      status: run.runKind === 'canary' ? 'canary_ready' : 'monitoring',
+      revision: run.revision + 1,
+      workVersion: work.version,
+      checkpointId: work.checkpointHeadId,
+      executionGrantId: issued.grant.grantId,
+      executionLeaseId: consumed.lease.leaseId,
+      nextSafeAction:
+        'Execute only the exact approved protected plan under this lease.',
+    };
+    if (
+      updateCapabilityProductionRunCAS({
+        expectedRevision: run.revision,
+        next,
+      }) !== 'applied'
+    ) {
+      throw new Error(
+        'Production action authority lost its run revision race.',
+      );
+    }
+    return {
+      run: getCapabilityProductionRun(
+        run.runId,
+      ) as CapabilityProductionRunRecord,
+      approval: packet,
+    };
+  });
 }
 
 function ownerActionTokenRecord(params: {
@@ -1229,21 +2041,28 @@ export function recordCapabilityOwnerVerdict(params: {
 }
 
 function activationApprovalSummary(
+  acquisition: CapabilityAcquisitionRecord,
   contract: CapabilityCandidateContract,
+  run: CapabilityProductionRunRecord,
 ): string {
-  return [
-    `Activate only ${contract.title} v${contract.contractVersion}.`,
-    `Task family: ${contract.taskFamily}.`,
-    `Triggers: ${contract.triggerSemantics.join(', ')}.`,
-    `Required inputs: ${contract.requiredInputs.join(', ') || 'none'}.`,
-    `Allowed operations: ${contract.steps.map((step) => step.operationId).join(', ')}.`,
-    `Tools: ${contract.steps.map((step) => step.bindingId).join(', ')}.`,
-    `Approval rules: ${contract.approvalRequirements.join(', ') || 'none beyond activation'}.`,
-    `Data egress: ${contract.dataEgressClass}.`,
-    `Expected postcondition: ${contract.successPostconditions.join('; ')}.`,
-    `Fallback: ${contract.fallbackPaths[0] || 'stop and report the blocker'}.`,
-    'Every protected effect still needs its normal fresh approval. Monitoring, pause, revoke, and retirement remain available.',
-  ].join(' ');
+  return exactProductionApprovalSummary({
+    decision: 'activation',
+    acquisition,
+    contract,
+    contractDigest: run.contractDigest,
+    scopeDigest: sha256(
+      canonicalCapabilityJson({
+        owner: run.ownerScopeHash,
+        chat: run.chatScopeHash,
+        group: run.groupScopeHash,
+        channel: run.channel,
+        target: run.targetScopeHash,
+        authorizedSurface: run.authorizedSurface,
+      }),
+    ),
+    inputDigest: run.inputDigest,
+    targetDigest: run.targetScopeHash,
+  });
 }
 
 export function stageCapabilityActivation(params: {
@@ -1267,7 +2086,12 @@ function stageCapabilityActivationWithinTransaction(params: {
   binding: DurableWorkBindingInput;
   now?: Date | string;
 }): { run: CapabilityProductionRunRecord; approval: CognitiveApprovalPacket } {
-  const now = iso(params.now);
+  const now = productionAuthorityTime(params.now);
+  if (params.authorizedSurface !== params.binding.channel) {
+    throw new Error(
+      'Activation approval surface must equal its canonical execution channel.',
+    );
+  }
   let run = getCapabilityProductionRun(params.runId);
   let expectedRunRevision = params.expectedRunRevision;
   const acquisition = run
@@ -1330,6 +2154,7 @@ function stageCapabilityActivationWithinTransaction(params: {
     'candidateContractJson',
   );
   assertCapabilityCandidateContract(contract);
+  assertSupportedProductionPolicy(acquisition, contract);
   if (
     durableScopeHash('owner', params.binding.ownerId) !== run.ownerScopeHash ||
     durableScopeHash('chat', params.binding.chatId) !== run.chatScopeHash ||
@@ -1448,7 +2273,7 @@ function stageCapabilityActivationWithinTransaction(params: {
       expectedWorkVersion: work.version,
       cognitiveRunId,
       actionClass: 'operator_change',
-      summary: activationApprovalSummary(contract),
+      summary: activationApprovalSummary(acquisition, contract, run),
       checkpointId: initial.checkpoint.durableCheckpointId,
       now,
     });
@@ -1508,8 +2333,8 @@ export function authorizeApprovedCapabilityActivation(params: {
   workerId: string;
   now?: Date | string;
 }): ReturnType<typeof reconcileCapabilityProductionEvidenceAtomic> {
-  const now = iso(params.now);
-  let run = getCapabilityProductionRun(params.runId);
+  const now = productionAuthorityTime(params.now);
+  const run = getCapabilityProductionRun(params.runId);
   const expectedAcquisition = run
     ? getCapabilityAcquisition(run.acquisitionId)
     : undefined;
@@ -1616,214 +2441,218 @@ export function authorizeApprovedCapabilityActivation(params: {
       });
     }
   }
-  const packet = approvedPacketForRun(run, run.activationApprovalPacketId);
-  const issued = issueDurableResumeGrant({
-    workId: run.activationWorkId,
-    binding: params.binding,
-    actionClass: 'operator_change',
-    approvalPacketId: packet.approvalPacketId,
-    approvalVersion: packet.approvalVersion,
-    now,
-  });
-  const consumed = consumeResumeGrantAndAcquireLease({
-    token: issued.token,
-    binding: params.binding,
-    actionClass: 'operator_change',
-    workerId: params.workerId,
-    now,
-  });
-  if (consumed.status !== 'consumed' || !consumed.lease) {
-    throw new Error(`Activation lease acquisition failed: ${consumed.status}.`);
-  }
-  try {
-    let work = getDurableWorkUnit(run.activationWorkId);
-    if (!work || !work.checkpointHeadId) {
+  const expectedRun = run;
+  return runCapabilityProductionStagingAtomic(() => {
+    const currentRun = getCapabilityProductionRun(expectedRun.runId);
+    const activationWorkId = currentRun?.activationWorkId;
+    const currentAcquisition = currentRun
+      ? getCapabilityAcquisition(currentRun.acquisitionId)
+      : undefined;
+    if (
+      !currentRun ||
+      !activationWorkId ||
+      !currentAcquisition ||
+      currentRun.status !== 'awaiting_activation_approval' ||
+      currentRun.revision !== expectedRun.revision ||
+      currentAcquisition.recordVersion !== expectedAcquisition.recordVersion ||
+      currentRun.activationApprovalPacketId !==
+        expectedRun.activationApprovalPacketId ||
+      currentRun.activationWorkId !== expectedRun.activationWorkId ||
+      currentRun.authorizedSurface !== params.authorizedSurface
+    ) {
       throw new Error(
-        'Activation durable work disappeared after lease acquisition.',
+        'Capability activation changed before atomic authorization.',
       );
     }
-    const nodeId = `activate:${run.candidateFingerprint.slice(0, 32)}`;
-    const activationFingerprint = sha256(
-      canonicalCapabilityJson({
-        acquisitionId: run.acquisitionId,
-        runId: run.runId,
-        candidateFingerprint: run.candidateFingerprint,
-        contractVersion: run.contractVersion,
-        ownerReviewId: run.ownerReviewId,
-        activationApprovalPacketId: packet.approvalPacketId,
-        activationApprovalVersion: packet.approvalVersion,
-        healthEvidenceSetDigest: run.healthEvidenceSetDigest,
-        targetScopeHash: run.targetScopeHash,
-      }),
-    );
-    recordDurableEffect({
-      workId: work.workId,
-      checkpointId: work.checkpointHeadId,
-      planVersion: work.planVersion,
-      nodeId,
-      invocationId: run.activationInvocationId as string,
+    let run = currentRun;
+    const packet = approvedPacketForRun(run, run.activationApprovalPacketId);
+    const issued = issueDurableResumeGrant({
+      workId: activationWorkId,
+      binding: params.binding,
       actionClass: 'operator_change',
-      authorizationGrantId: issued.grant.grantId,
-      leaseId: consumed.lease.leaseId,
-      processGeneration: consumed.lease.processGeneration,
-      effectClass: 'local_write',
-      status: 'started',
-      claimExecution: true,
-      targetScopeKey: params.binding.targetScopeKey,
-      metadata: {
-        receiptClass: 'capability_activation_authority',
-        resultCode: run.candidateFingerprint,
-        source: 'verified_capability_apprenticeship',
-      },
+      approvalPacketId: packet.approvalPacketId,
+      approvalVersion: packet.approvalVersion,
       now,
     });
-    const verified = recordDurableEffect({
-      workId: work.workId,
-      checkpointId: work.checkpointHeadId,
-      planVersion: work.planVersion,
-      nodeId,
-      invocationId: run.activationInvocationId as string,
+    const consumed = consumeResumeGrantAndAcquireLease({
+      token: issued.token,
+      binding: params.binding,
       actionClass: 'operator_change',
-      authorizationGrantId: issued.grant.grantId,
-      leaseId: consumed.lease.leaseId,
-      processGeneration: consumed.lease.processGeneration,
-      effectClass: 'local_write',
-      status: 'succeeded',
-      targetScopeKey: params.binding.targetScopeKey,
-      preStateFingerprint: activationFingerprint,
-      postStateFingerprint: activationFingerprint,
-      verificationFingerprint: activationFingerprint,
-      metadata: {
-        receiptClass: 'capability_activation_authority',
-        resultCode: run.candidateFingerprint,
-        source: 'verified_capability_apprenticeship',
-      },
+      workerId: params.workerId,
       now,
     });
-    const completed = commitDurableCheckpointCAS({
-      workId: work.workId,
-      expectedWorkVersion: work.version,
-      completedNodeIds: [nodeId],
-      pendingNodeIds: [],
-      uncertainNodeIds: [],
-      dependencyIds: [
-        run.runId,
-        run.ownerReviewId as string,
-        packet.approvalPacketId,
-        run.healthEvidenceSetDigest as string,
-      ],
-      worldSignals: { fresh: [run.healthEvidenceSetDigest as string] },
-      executorScopeKey: run.candidateFingerprint,
-      targetScopeKey: params.binding.targetScopeKey,
-      verifiedPostStateFingerprint: activationFingerprint,
-      receiptIds: [verified.receiptId],
-      verificationRequirementIds: [
-        'exact-owner-review',
-        'separate-activation-approval',
-        'fresh-health',
-      ],
-      retryBudget: 0,
-      attemptsUsed: 0,
-      stopConditionIds: [
-        'owner_review_changed',
-        'candidate_changed',
-        'scope_changed',
-        'health_stale',
-      ],
-      recoveryPolicy: 'approval_required',
-      nextSafeAction: 'Atomically join exact activation evidence.',
-      status: 'completed',
-      now,
-    });
-    work = completed.work;
-    work = transitionDurableWork({
-      workId: work.workId,
-      expectedVersion: work.version,
-      toStatus: 'verifying',
-      nextAction: 'Verify the exact activation evidence bundle.',
-      now,
-    });
-    work = transitionDurableWork({
-      workId: work.workId,
-      expectedVersion: work.version,
-      toStatus: 'completed',
-      nextAction: 'Activation preconditions are durably verified.',
-      now,
-    });
-    const next: CapabilityProductionRunRecord = {
-      ...run,
-      updatedAt: now,
-      revision: run.revision + 1,
-      activationApprovalVersion: packet.approvalVersion,
-      activationApprovalScopeDigest: packet.scopeDigest,
-      activationGrantId: issued.grant.grantId,
-      activationLeaseId: consumed.lease.leaseId,
-      activationWorkVersion: work.version,
-      activationPlanVersion: work.planVersion,
-      activationCheckpointId: completed.checkpoint.durableCheckpointId,
-      nextSafeAction:
-        'Atomically join activation authority and verified canary evidence.',
-    };
-    if (
-      updateCapabilityProductionRunCAS({
-        expectedRevision: run.revision,
-        next,
-      }) !== 'applied'
-    ) {
-      throw new Error('Capability activation binding lost its revision race.');
+    if (consumed.status !== 'consumed' || !consumed.lease) {
+      throw new Error(
+        `Activation lease acquisition failed: ${consumed.status}.`,
+      );
     }
-    run = getCapabilityProductionRun(
-      run.runId,
-    ) as CapabilityProductionRunRecord;
-    const acquisition = getCapabilityAcquisition(run.acquisitionId);
-    if (!acquisition) throw new Error('Capability acquisition disappeared.');
-    return reconcileCapabilityProductionEvidenceAtomic({
-      runId: run.runId,
-      operation: 'activate',
-      expectedAcquisitionVersion: acquisition.recordVersion,
-      expectedRunRevision: run.revision,
-      now,
-    });
-  } catch (error) {
-    const failedBinding = getCapabilityProductionRun(run.runId);
-    if (
-      failedBinding?.status === 'awaiting_activation_approval' &&
-      failedBinding.activationWorkId === run.activationWorkId &&
-      (!failedBinding.activationGrantId ||
-        failedBinding.activationGrantId === issued.grant.grantId) &&
-      (!failedBinding.activationLeaseId ||
-        failedBinding.activationLeaseId === consumed.lease.leaseId)
-    ) {
-      updateCapabilityProductionRunCAS({
-        expectedRevision: failedBinding.revision,
-        next: {
-          ...failedBinding,
-          updatedAt: now,
-          status: 'owner_reviewed',
-          revision: failedBinding.revision + 1,
-          activationApprovalPacketId: null,
-          activationApprovalVersion: null,
-          activationApprovalScopeDigest: null,
-          activationGrantId: null,
-          activationLeaseId: null,
-          activationWorkId: null,
-          activationWorkVersion: null,
-          activationPlanVersion: null,
-          activationCheckpointId: null,
-          activationInvocationId: null,
-          nextSafeAction:
-            'Restage activation only after exact health and owner authority are revalidated.',
+    try {
+      let work = getDurableWorkUnit(activationWorkId);
+      if (!work || !work.checkpointHeadId) {
+        throw new Error(
+          'Activation durable work disappeared after lease acquisition.',
+        );
+      }
+      const nodeId = `activate:${run.candidateFingerprint.slice(0, 32)}`;
+      const activationFingerprint = sha256(
+        canonicalCapabilityJson({
+          acquisitionId: run.acquisitionId,
+          runId: run.runId,
+          candidateFingerprint: run.candidateFingerprint,
+          contractVersion: run.contractVersion,
+          ownerReviewId: run.ownerReviewId,
+          activationApprovalPacketId: packet.approvalPacketId,
+          activationApprovalVersion: packet.approvalVersion,
+          healthEvidenceSetDigest: run.healthEvidenceSetDigest,
+          targetScopeHash: run.targetScopeHash,
+        }),
+      );
+      recordDurableEffect({
+        workId: work.workId,
+        checkpointId: work.checkpointHeadId,
+        planVersion: work.planVersion,
+        nodeId,
+        invocationId: run.activationInvocationId as string,
+        actionClass: 'operator_change',
+        authorizationGrantId: issued.grant.grantId,
+        leaseId: consumed.lease.leaseId,
+        processGeneration: consumed.lease.processGeneration,
+        effectClass: 'local_write',
+        status: 'started',
+        claimExecution: true,
+        targetScopeKey: params.binding.targetScopeKey,
+        metadata: {
+          receiptClass: 'capability_activation_authority',
+          resultCode: run.candidateFingerprint,
+          source: 'verified_capability_apprenticeship',
         },
+        now,
+      });
+      const verified = recordDurableEffect({
+        workId: work.workId,
+        checkpointId: work.checkpointHeadId,
+        planVersion: work.planVersion,
+        nodeId,
+        invocationId: run.activationInvocationId as string,
+        actionClass: 'operator_change',
+        authorizationGrantId: issued.grant.grantId,
+        leaseId: consumed.lease.leaseId,
+        processGeneration: consumed.lease.processGeneration,
+        effectClass: 'local_write',
+        status: 'succeeded',
+        targetScopeKey: params.binding.targetScopeKey,
+        preStateFingerprint: activationFingerprint,
+        postStateFingerprint: activationFingerprint,
+        verificationFingerprint: activationFingerprint,
+        metadata: {
+          receiptClass: 'capability_activation_authority',
+          resultCode: run.candidateFingerprint,
+          source: 'verified_capability_apprenticeship',
+        },
+        now,
+      });
+      emitProductionCapabilityBoundarySync({
+        boundary: 'after_activation_authority_before_run',
+        runId: run.runId,
+      });
+      const completed = commitDurableCheckpointCAS({
+        workId: work.workId,
+        expectedWorkVersion: work.version,
+        completedNodeIds: [nodeId],
+        pendingNodeIds: [],
+        uncertainNodeIds: [],
+        dependencyIds: [
+          run.runId,
+          run.ownerReviewId as string,
+          packet.approvalPacketId,
+          run.healthEvidenceSetDigest as string,
+        ],
+        worldSignals: { fresh: [run.healthEvidenceSetDigest as string] },
+        executorScopeKey: run.candidateFingerprint,
+        targetScopeKey: params.binding.targetScopeKey,
+        verifiedPostStateFingerprint: activationFingerprint,
+        receiptIds: [verified.receiptId],
+        verificationRequirementIds: [
+          'exact-owner-review',
+          'separate-activation-approval',
+          'fresh-health',
+        ],
+        retryBudget: 0,
+        attemptsUsed: 0,
+        stopConditionIds: [
+          'owner_review_changed',
+          'candidate_changed',
+          'scope_changed',
+          'health_stale',
+        ],
+        recoveryPolicy: 'approval_required',
+        nextSafeAction: 'Atomically join exact activation evidence.',
+        status: 'completed',
+        now,
+      });
+      work = completed.work;
+      work = transitionDurableWork({
+        workId: work.workId,
+        expectedVersion: work.version,
+        toStatus: 'verifying',
+        nextAction: 'Verify the exact activation evidence bundle.',
+        now,
+      });
+      work = transitionDurableWork({
+        workId: work.workId,
+        expectedVersion: work.version,
+        toStatus: 'completed',
+        nextAction: 'Activation preconditions are durably verified.',
+        now,
+      });
+      const next: CapabilityProductionRunRecord = {
+        ...run,
+        updatedAt: now,
+        revision: run.revision + 1,
+        activationApprovalVersion: packet.approvalVersion,
+        activationApprovalScopeDigest: packet.scopeDigest,
+        activationGrantId: issued.grant.grantId,
+        activationLeaseId: consumed.lease.leaseId,
+        activationWorkVersion: work.version,
+        activationPlanVersion: work.planVersion,
+        activationCheckpointId: completed.checkpoint.durableCheckpointId,
+        nextSafeAction:
+          'Atomically join activation authority and verified canary evidence.',
+      };
+      if (
+        updateCapabilityProductionRunCAS({
+          expectedRevision: run.revision,
+          next,
+        }) !== 'applied'
+      ) {
+        throw new Error(
+          'Capability activation binding lost its revision race.',
+        );
+      }
+      run = getCapabilityProductionRun(
+        run.runId,
+      ) as CapabilityProductionRunRecord;
+      emitProductionCapabilityBoundarySync({
+        boundary: 'after_activation_run_before_reconcile',
+        runId: run.runId,
+      });
+      const acquisition = getCapabilityAcquisition(run.acquisitionId);
+      if (!acquisition) throw new Error('Capability acquisition disappeared.');
+      return reconcileCapabilityProductionEvidenceAtomic({
+        runId: run.runId,
+        operation: 'activate',
+        expectedAcquisitionVersion: acquisition.recordVersion,
+        expectedRunRevision: run.revision,
+        now,
+      });
+    } finally {
+      releaseDurableLease({
+        leaseId: consumed.lease.leaseId,
+        processGeneration: consumed.lease.processGeneration,
+        now,
       });
     }
-    throw error;
-  } finally {
-    releaseDurableLease({
-      leaseId: consumed.lease.leaseId,
-      processGeneration: consumed.lease.processGeneration,
-      now,
-    });
-  }
+  });
 }
 
 export interface ProductionCapabilityBindingResult {
@@ -2134,6 +2963,51 @@ function assertExecutionBinding(
   }
 }
 
+function assertCurrentProtectedProductionAuthority(params: {
+  run: CapabilityProductionRunRecord;
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
+  now: string;
+}): void {
+  const actionClass = protectedProductionActionClass(params.contract);
+  if (!actionClass) return;
+  const packet = approvedProductionActionPacket({
+    ...params,
+    actionClass,
+  });
+  const work = getDurableWorkUnit(params.run.workId);
+  const lease = params.run.executionLeaseId
+    ? getDurableWorkLease(params.run.executionLeaseId)
+    : undefined;
+  const grant = params.run.executionGrantId
+    ? listDurableResumeGrants({
+        workId: params.run.workId,
+        limit: 500,
+      }).find((candidate) => candidate.grantId === params.run.executionGrantId)
+    : undefined;
+  if (
+    !work ||
+    !lease ||
+    !grant ||
+    lease.status !== 'active' ||
+    lease.expiresAt <= params.now ||
+    work.leaseId !== lease.leaseId ||
+    grant.status !== 'consumed' ||
+    grant.consumedLeaseId !== lease.leaseId ||
+    grant.actionClass !== actionClass ||
+    grant.approvalPacketId !== packet.approvalPacketId ||
+    grant.approvalVersion !== packet.approvalVersion ||
+    grant.approvalScopeHash !== packet.scopeDigest ||
+    grant.checkpointId !== params.run.checkpointId ||
+    grant.planVersion !== params.run.planVersion ||
+    grant.targetScopeHash !== params.run.targetScopeHash
+  ) {
+    throw new Error(
+      'Protected production authority is expired, revoked, or mismatched.',
+    );
+  }
+}
+
 function ensureCapabilityProductionExecutionLease(params: {
   run: CapabilityProductionRunRecord;
   acquisition: CapabilityAcquisitionRecord;
@@ -2176,8 +3050,9 @@ function ensureCapabilityProductionExecutionLease(params: {
       throw new Error('Production work head disappeared after refresh.');
     }
   }
-  const existingLeaseId =
-    run.runKind === 'canary'
+  const existingLeaseId = protectedProductionActionClass(params.contract)
+    ? run.executionLeaseId
+    : run.runKind === 'canary'
       ? run.executionLeaseId || run.canaryLeaseId
       : run.executionLeaseId;
   const existingLease = existingLeaseId
@@ -2191,11 +3066,25 @@ function ensureCapabilityProductionExecutionLease(params: {
     work.leaseExpiresAt &&
     work.leaseExpiresAt > params.now
   ) {
+    try {
+      assertCapabilityProductionExecutionPreflight({
+        runId: run.runId,
+        expectedRunRevision: run.revision,
+        now: params.now,
+      });
+    } catch (error) {
+      releaseDurableLease({
+        leaseId: existingLease.leaseId,
+        processGeneration,
+        now: params.now,
+      });
+      throw error;
+    }
     return run;
   }
-  if (params.contract.steps.some((step) => step.approvalRequired)) {
+  if (protectedProductionActionClass(params.contract)) {
     throw new ProductionCapabilityQuarantineError(
-      'Protected production steps require their normal fresh action approval.',
+      'Protected production steps require a consumed exact action approval.',
     );
   }
   const actionClass = params.contract.steps[0]?.actionClass || 'local_lookup';
@@ -2266,10 +3155,15 @@ export async function runCapabilityProductionExecution(params: {
   values: Record<string, unknown>;
   registry?: ProductionCapabilityBindingRegistry;
   now?: Date | string;
+  /** @internal Isolated deterministic tests only. */
+  clock?: () => Date | string;
 }): Promise<CapabilityProductionExecutionResult> {
   const startedAt = Date.now();
-  const now = iso(params.now);
-  const executionTime = () => (params.now ? now : iso());
+  const executionTime = createProductionBoundaryClock({
+    testInitialTime: params.now,
+    testClock: params.clock,
+  });
+  const now = executionTime();
   let run = getCapabilityProductionRun(params.runId);
   const acquisition = run
     ? getCapabilityAcquisition(run.acquisitionId)
@@ -2293,6 +3187,33 @@ export async function runCapabilityProductionExecution(params: {
     'candidateContractJson',
   );
   assertCapabilityCandidateContract(contract);
+  assertSupportedProductionPolicy(acquisition, contract);
+  const protectedActionClass = protectedProductionActionClass(contract);
+  if (protectedActionClass && run.status === 'awaiting_action_approval') {
+    throw new Error(
+      'Production execution is waiting for exact fresh action approval.',
+    );
+  }
+  if (protectedActionClass && !run.executionGrantId) {
+    const staged = stageCapabilityProductionActionApproval({
+      runId: run.runId,
+      expectedAcquisitionVersion: acquisition.recordVersion,
+      expectedRunRevision: run.revision,
+      binding: params.binding,
+      now,
+    });
+    throw new Error(
+      `Production execution stopped before effect and staged ${staged.approval.approvalPacketId}.`,
+    );
+  }
+  if (
+    protectedActionClass &&
+    listCapabilityProductionSteps(run.runId).length > 0
+  ) {
+    throw new ProductionCapabilityIndeterminateError(
+      'Protected execution has a completed prefix and will not replay it.',
+    );
+  }
   run = ensureCapabilityProductionExecutionLease({
     run,
     acquisition,
@@ -2339,22 +3260,25 @@ export async function runCapabilityProductionExecution(params: {
   const processGeneration = durableProcessGeneration();
   try {
     for (const step of preflight.contract.steps) {
+      const stepAuthorityTime = executionTime();
       preflight = assertCapabilityProductionExecutionPreflight({
         runId: run.runId,
         expectedRunRevision: run.revision,
-        now: executionTime(),
+        now: stepAuthorityTime,
       });
-      if (step.approvalRequired) {
-        throw new ProductionCapabilityQuarantineError(
-          `Protected step ${step.stepId} requires its normal fresh action approval; activation does not supply it.`,
-        );
-      }
+      assertCurrentProtectedProductionAuthority({
+        run,
+        acquisition: preflight.acquisition,
+        contract: preflight.contract,
+        now: stepAuthorityTime,
+      });
       const binding = registry.resolveExecutor(step);
       const evaluator = registry.resolveEvaluator(step);
       if (
         costUsd + binding.maximumCostUsd > MAX_LIVE_COST_USD ||
-        (binding.networkAccess === 'external' &&
-          preflight.acquisition.dataEgressClass !== 'approved_content')
+        binding.networkAccess === 'external' ||
+        !['none', 'loopback'].includes(binding.networkAccess) ||
+        binding.maximumCostUsd !== 0
       ) {
         throw new ProductionCapabilityQuarantineError(
           'Production binding exceeds its approved cost or egress boundary.',
@@ -2370,6 +3294,7 @@ export async function runCapabilityProductionExecution(params: {
         nodeId: step.stepId,
         invocationId: run.invocationId,
         actionClass: step.actionClass,
+        authorizationGrantId: run.executionGrantId,
         leaseId,
         processGeneration,
         effectClass: binding.effectClass,
@@ -2383,7 +3308,7 @@ export async function runCapabilityProductionExecution(params: {
           idempotencyKeyHash: run.inputDigest,
           source: 'verified_capability_apprenticeship',
         },
-        now,
+        now: stepAuthorityTime,
       });
       const stepStartedAt = Date.now();
       const result = await binding.execute({
@@ -2395,9 +3320,20 @@ export async function runCapabilityProductionExecution(params: {
         runId: run.runId,
         stepId: step.stepId,
       });
-      providerCalls += result.providerCalls || 0;
-      costUsd += result.costUsd || 0;
-      if (costUsd > MAX_LIVE_COST_USD || result.effectStatus === 'unknown') {
+      const postEffectAuthorityTime = executionTime();
+      try {
+        preflight = assertCapabilityProductionExecutionPreflight({
+          runId: run.runId,
+          expectedRunRevision: run.revision,
+          now: postEffectAuthorityTime,
+        });
+        assertCurrentProtectedProductionAuthority({
+          run,
+          acquisition: preflight.acquisition,
+          contract: preflight.contract,
+          now: postEffectAuthorityTime,
+        });
+      } catch {
         recordDurableEffect({
           workId: run.workId,
           checkpointId: run.checkpointId,
@@ -2405,6 +3341,49 @@ export async function runCapabilityProductionExecution(params: {
           nodeId: step.stepId,
           invocationId: run.invocationId,
           actionClass: step.actionClass,
+          authorizationGrantId: run.executionGrantId,
+          leaseId,
+          processGeneration,
+          effectClass: binding.effectClass,
+          status: 'unknown',
+          targetScopeKey: params.values.targetScopeKey as string,
+          preStateFingerprint: result.preStateFingerprint,
+          postStateFingerprint: result.postStateFingerprint,
+          metadata: {
+            receiptClass: 'capability_production',
+            verificationClass: step.evaluatorId,
+            resultCode: run.candidateFingerprint,
+            idempotencyKeyHash: run.inputDigest,
+            source: 'verified_capability_apprenticeship',
+          },
+          now: postEffectAuthorityTime,
+        });
+        throw new ProductionCapabilityIndeterminateError(
+          'Production authority or dependency health expired after the effect; the result is indeterminate.',
+        );
+      }
+      const resultProviderCalls = result.providerCalls ?? 0;
+      const resultCostUsd = result.costUsd ?? 0;
+      providerCalls += resultProviderCalls;
+      costUsd += resultCostUsd;
+      if (
+        result.effectClass !== binding.effectClass ||
+        !Number.isSafeInteger(resultProviderCalls) ||
+        resultProviderCalls < 0 ||
+        !Number.isFinite(resultCostUsd) ||
+        resultCostUsd < 0 ||
+        resultCostUsd > binding.maximumCostUsd ||
+        costUsd > MAX_LIVE_COST_USD ||
+        result.effectStatus === 'unknown'
+      ) {
+        recordDurableEffect({
+          workId: run.workId,
+          checkpointId: run.checkpointId,
+          planVersion: run.planVersion,
+          nodeId: step.stepId,
+          invocationId: run.invocationId,
+          actionClass: step.actionClass,
+          authorizationGrantId: run.executionGrantId,
           leaseId,
           processGeneration,
           effectClass: binding.effectClass,
@@ -2430,6 +3409,48 @@ export async function runCapabilityProductionExecution(params: {
         result,
         requiredPostconditions: preflight.contract.successPostconditions,
       });
+      const postVerificationAuthorityTime = executionTime();
+      try {
+        preflight = assertCapabilityProductionExecutionPreflight({
+          runId: run.runId,
+          expectedRunRevision: run.revision,
+          now: postVerificationAuthorityTime,
+        });
+        assertCurrentProtectedProductionAuthority({
+          run,
+          acquisition: preflight.acquisition,
+          contract: preflight.contract,
+          now: postVerificationAuthorityTime,
+        });
+      } catch {
+        recordDurableEffect({
+          workId: run.workId,
+          checkpointId: run.checkpointId,
+          planVersion: run.planVersion,
+          nodeId: step.stepId,
+          invocationId: run.invocationId,
+          actionClass: step.actionClass,
+          authorizationGrantId: run.executionGrantId,
+          leaseId,
+          processGeneration,
+          effectClass: binding.effectClass,
+          status: 'unknown',
+          targetScopeKey: params.values.targetScopeKey as string,
+          preStateFingerprint: result.preStateFingerprint,
+          postStateFingerprint: result.postStateFingerprint,
+          metadata: {
+            receiptClass: 'capability_production',
+            verificationClass: step.evaluatorId,
+            resultCode: run.candidateFingerprint,
+            idempotencyKeyHash: run.inputDigest,
+            source: 'verified_capability_apprenticeship',
+          },
+          now: postVerificationAuthorityTime,
+        });
+        throw new ProductionCapabilityIndeterminateError(
+          'Production authority or dependency health expired during verification; the effect is indeterminate.',
+        );
+      }
       if (
         !verification.verified ||
         !verification.postconditionFingerprint ||
@@ -2442,6 +3463,7 @@ export async function runCapabilityProductionExecution(params: {
           nodeId: step.stepId,
           invocationId: run.invocationId,
           actionClass: step.actionClass,
+          authorizationGrantId: run.executionGrantId,
           leaseId,
           processGeneration,
           effectClass: binding.effectClass,
@@ -2456,7 +3478,7 @@ export async function runCapabilityProductionExecution(params: {
             idempotencyKeyHash: run.inputDigest,
             source: 'verified_capability_apprenticeship',
           },
-          now: executionTime(),
+          now: postVerificationAuthorityTime,
         });
         throw new ProductionCapabilityQuarantineError(
           `Independent evaluator rejected ${step.stepId}.`,
@@ -2474,6 +3496,7 @@ export async function runCapabilityProductionExecution(params: {
           nodeId: step.stepId,
           invocationId: exactRun.invocationId,
           actionClass: step.actionClass,
+          authorizationGrantId: exactRun.executionGrantId,
           leaseId,
           processGeneration,
           effectClass: binding.effectClass,
@@ -2501,7 +3524,7 @@ export async function runCapabilityProductionExecution(params: {
             costUsd: String(result.costUsd || 0),
             latencyMs: String(Math.max(0, Date.now() - stepStartedAt)),
           },
-          now: executionTime(),
+          now: postVerificationAuthorityTime,
         });
         insertCapabilityProductionStep({
           runId: exactRun.runId,
@@ -2533,6 +3556,18 @@ export async function runCapabilityProductionExecution(params: {
       lastPostStateFingerprint = result.postStateFingerprint;
       void started;
     }
+    const terminalAuthorityTime = executionTime();
+    preflight = assertCapabilityProductionExecutionPreflight({
+      runId: run.runId,
+      expectedRunRevision: run.revision,
+      now: terminalAuthorityTime,
+    });
+    assertCurrentProtectedProductionAuthority({
+      run,
+      acquisition: preflight.acquisition,
+      contract: preflight.contract,
+      now: terminalAuthorityTime,
+    });
     const missing = preflight.contract.successPostconditions.filter(
       (postcondition) => !verifiedPostconditions.has(postcondition),
     );
@@ -2543,7 +3578,33 @@ export async function runCapabilityProductionExecution(params: {
     }
     let work = getDurableWorkUnit(run.workId);
     if (!work) throw new Error('Production durable work disappeared.');
-    releaseDurableLease({ leaseId, processGeneration, now: executionTime() });
+    await emitProductionCapabilityBoundary({
+      boundary: 'after_receipts_before_checkpoint',
+      runId: run.runId,
+    });
+    const postBoundaryAuthorityTime = executionTime();
+    preflight = assertCapabilityProductionExecutionPreflight({
+      runId: run.runId,
+      expectedRunRevision: run.revision,
+      now: postBoundaryAuthorityTime,
+    });
+    assertCurrentProtectedProductionAuthority({
+      run,
+      acquisition: preflight.acquisition,
+      contract: preflight.contract,
+      now: postBoundaryAuthorityTime,
+    });
+    if (
+      !releaseDurableLease({
+        leaseId,
+        processGeneration,
+        now: postBoundaryAuthorityTime,
+      })
+    ) {
+      throw new ProductionCapabilityIndeterminateError(
+        'Production execution lease changed before terminal checkpoint commit.',
+      );
+    }
     work = getDurableWorkUnit(run.workId);
     if (!work)
       throw new Error(
@@ -2558,10 +3619,6 @@ export async function runCapabilityProductionExecution(params: {
         now: executionTime(),
       });
     }
-    await emitProductionCapabilityBoundary({
-      boundary: 'after_receipts_before_checkpoint',
-      runId: run.runId,
-    });
     const completed = commitDurableCheckpointCAS({
       workId: work.workId,
       expectedWorkVersion: work.version,
@@ -2598,112 +3655,57 @@ export async function runCapabilityProductionExecution(params: {
       now: executionTime(),
     });
     let terminalWork = completed.work;
-    if (terminalWork.status !== 'verifying') {
+    if (terminalWork.status !== 'completed') {
+      if (terminalWork.status !== 'verifying') {
+        terminalWork = transitionDurableWork({
+          workId: terminalWork.workId,
+          expectedVersion: terminalWork.version,
+          toStatus: 'verifying',
+          nextAction: 'Verify the completed production checkpoint.',
+          now: executionTime(),
+        });
+      }
       terminalWork = transitionDurableWork({
         workId: terminalWork.workId,
         expectedVersion: terminalWork.version,
-        toStatus: 'verifying',
-        nextAction: 'Verify the completed production checkpoint.',
+        toStatus: 'completed',
+        nextAction: 'Production postcondition is durably verified.',
         now: executionTime(),
       });
     }
-    terminalWork = transitionDurableWork({
-      workId: terminalWork.workId,
-      expectedVersion: terminalWork.version,
-      toStatus: 'completed',
-      nextAction: 'Production postcondition is durably verified.',
-      now: executionTime(),
-    });
-    releaseDurableLease({ leaseId, processGeneration, now: executionTime() });
     await emitProductionCapabilityBoundary({
       boundary: 'after_checkpoint_before_outcome',
       runId: run.runId,
     });
-    const outcomeId = `outcome:capability:${sha256(`${run.runId}|${run.inputDigest}`).slice(0, 40)}`;
-    upsertOutcome({
-      outcomeId,
-      groupFolder: run.groupFolder,
-      sourceType: 'capability_acquisition',
-      sourceKey: run.runId,
-      linkedRefsJson: JSON.stringify({
-        capabilityAcquisitionId: run.acquisitionId,
-        capabilityCandidateFingerprint: run.candidateFingerprint,
-        capabilityEvidenceOrigin: 'live',
-        verificationReceiptIds: receiptIds,
-      }),
-      status: 'completed',
-      completionSummary:
-        'The registered capability reached its independently verified postcondition.',
-      nextFollowupText: 'Request an exact owner verdict on this outcome.',
-      blockerText: null,
-      dueAt: null,
-      reviewHorizon: 'today',
-      lastCheckedAt: executionTime(),
-      userConfirmed: false,
-      showInDailyReview: false,
-      showInWeeklyReview: false,
-      reviewSuppressedUntil: null,
-      createdAt: executionTime(),
-      updatedAt: executionTime(),
+    const outcomeStaged = stageCapabilityProductionOutcomeForTerminalJoin({
+      runId: run.runId,
+      receiptIds,
+      now: executionTime(),
     });
+    if (!outcomeStaged) {
+      return finishRecoveredProductionRun({
+        runId: run.runId,
+        results,
+        evidenceRefs,
+        providerCalls,
+        costUsd,
+        latencyMs: Date.now() - startedAt,
+        now: executionTime(),
+      });
+    }
     await emitProductionCapabilityBoundary({
       boundary: 'after_outcome_before_reconcile',
       runId: run.runId,
     });
-    run = getCapabilityProductionRun(
-      run.runId,
-    ) as CapabilityProductionRunRecord;
-    const finished: CapabilityProductionRunRecord = {
-      ...run,
-      updatedAt: executionTime(),
-      revision: run.revision + 1,
-      workVersion: terminalWork.version,
-      checkpointId: completed.checkpoint.durableCheckpointId,
-      outcomeId,
-      postconditionFingerprint: lastPostStateFingerprint,
-      executionCalls: run.executionCalls + preflight.contract.steps.length,
-      evaluatorCalls: run.evaluatorCalls + preflight.contract.steps.length,
-      latencyMs: Date.now() - startedAt,
-      providerCalls: run.providerCalls + providerCalls,
-      costUsd: run.costUsd + costUsd,
-      nextSafeAction:
-        'Atomically join the verified outcome, then ask the owner.',
-    };
-    if (
-      updateCapabilityProductionRunCAS({
-        expectedRevision: run.revision,
-        next: finished,
-      }) !== 'applied'
-    ) {
-      throw new Error('Production execution lost its terminal revision race.');
-    }
-    run = getCapabilityProductionRun(
-      run.runId,
-    ) as CapabilityProductionRunRecord;
-    const acquisition = getCapabilityAcquisition(run.acquisitionId);
-    if (!acquisition) throw new Error('Capability acquisition disappeared.');
-    reconcileCapabilityProductionEvidenceAtomic({
+    return finishRecoveredProductionRun({
       runId: run.runId,
-      operation:
-        run.runKind === 'canary' ? 'complete_canary' : 'complete_reuse',
-      expectedAcquisitionVersion: acquisition.recordVersion,
-      expectedRunRevision: run.revision,
-      now: executionTime(),
-    });
-    return {
-      status: 'verified',
-      runId: run.runId,
-      acquisitionId: run.acquisitionId,
       results,
-      receiptIds,
-      evidenceRefs: [...new Set(evidenceRefs)],
-      postconditionFingerprint: lastPostStateFingerprint,
+      evidenceRefs,
       providerCalls,
       costUsd,
       latencyMs: Date.now() - startedAt,
-      reason:
-        'Every contract step and the final postcondition were independently verified.',
-    };
+      now: executionTime(),
+    });
   } catch (error) {
     if (error instanceof ProductionCapabilitySimulatedCrashError) {
       throw error;
@@ -2759,7 +3761,81 @@ export async function runCapabilityProductionExecution(params: {
   }
 }
 
-async function finishRecoveredProductionRun(params: {
+function upsertCanonicalProductionOutcomeWithinTransaction(params: {
+  run: CapabilityProductionRunRecord;
+  receiptIds: string[];
+  now: string;
+}): string {
+  const outcomeId = `outcome:capability:${sha256(`${params.run.runId}|${params.run.inputDigest}`).slice(0, 40)}`;
+  const existingOutcome = getOutcomeBySource(
+    params.run.groupFolder,
+    'capability_acquisition',
+    params.run.runId,
+  );
+  if (existingOutcome && existingOutcome.outcomeId !== outcomeId) {
+    throw new Error('Recovered canonical outcome identity changed.');
+  }
+  const updatedAt =
+    existingOutcome && existingOutcome.updatedAt > params.now
+      ? existingOutcome.updatedAt
+      : params.now;
+  upsertOutcome({
+    outcomeId,
+    groupFolder: params.run.groupFolder,
+    sourceType: 'capability_acquisition',
+    sourceKey: params.run.runId,
+    linkedRefsJson: JSON.stringify({
+      capabilityAcquisitionId: params.run.acquisitionId,
+      capabilityCandidateFingerprint: params.run.candidateFingerprint,
+      capabilityEvidenceOrigin: 'live',
+      verificationReceiptIds: params.receiptIds,
+    }),
+    status: 'completed',
+    completionSummary:
+      'The registered capability reached its independently verified postcondition.',
+    nextFollowupText: 'Request an exact owner verdict on this outcome.',
+    blockerText: null,
+    dueAt: null,
+    reviewHorizon: 'today',
+    lastCheckedAt: updatedAt,
+    userConfirmed: false,
+    showInDailyReview: false,
+    showInWeeklyReview: false,
+    reviewSuppressedUntil: null,
+    createdAt: existingOutcome?.createdAt || params.now,
+    updatedAt,
+  });
+  return outcomeId;
+}
+
+function stageCapabilityProductionOutcomeForTerminalJoin(params: {
+  runId: string;
+  receiptIds: string[];
+  now: string;
+}): boolean {
+  return runCapabilityProductionTerminalAtomic(() => {
+    const run = getCapabilityProductionRun(params.runId);
+    if (!run)
+      throw new Error('Production run disappeared before outcome join.');
+    const completedTransition = listCapabilityProductionTransitionReceipts({
+      runId: run.runId,
+      limit: 100,
+    }).some((receipt) =>
+      run.runKind === 'canary'
+        ? receipt.transitionKind === 'canary_completed'
+        : receipt.transitionKind === 'reuse_completed',
+    );
+    if (completedTransition) return false;
+    upsertCanonicalProductionOutcomeWithinTransaction({
+      run,
+      receiptIds: params.receiptIds,
+      now: params.now,
+    });
+    return true;
+  });
+}
+
+function finishRecoveredProductionRun(params: {
   runId: string;
   results: unknown[];
   evidenceRefs: string[];
@@ -2767,7 +3843,81 @@ async function finishRecoveredProductionRun(params: {
   costUsd: number;
   latencyMs: number;
   now: string;
-}): Promise<CapabilityProductionExecutionResult> {
+}): CapabilityProductionExecutionResult {
+  return runCapabilityProductionTerminalAtomic(() =>
+    finishRecoveredProductionRunWithinTransaction(params),
+  );
+}
+
+function canonicalProductionReceiptMetrics(
+  run: CapabilityProductionRunRecord,
+  steps: ReturnType<typeof listCapabilityProductionSteps>,
+): { providerCalls: number; costUsd: number; latencyMs: number } {
+  const receipts = new Map(
+    listDurableEffectReceipts({ workId: run.workId, limit: 1_000 }).map(
+      (receipt) => [receipt.receiptId, receipt],
+    ),
+  );
+  let providerCalls = 0;
+  let costUsd = 0;
+  let latencyMs = 0;
+  for (const step of steps) {
+    const receipt = receipts.get(step.receiptId);
+    let metadata: Record<string, unknown>;
+    try {
+      metadata = receipt
+        ? (JSON.parse(receipt.metadataJson) as Record<string, unknown>)
+        : {};
+    } catch (error) {
+      throw new Error('Capability terminal receipt metadata is malformed.', {
+        cause: error,
+      });
+    }
+    if (!receipt || receipt.status !== 'succeeded') {
+      throw new Error('Capability terminal metrics lack a succeeded receipt.');
+    }
+    if (metadata.receiptClass === 'capability_production_recovery') {
+      continue;
+    }
+    if (metadata.receiptClass !== 'capability_production') {
+      throw new Error('Capability terminal receipt class is unsupported.');
+    }
+    const stepProviderCalls = Number(metadata.providerCalls);
+    const stepCostUsd = Number(metadata.costUsd);
+    const stepLatencyMs = Number(metadata.latencyMs);
+    if (
+      !Number.isSafeInteger(stepProviderCalls) ||
+      stepProviderCalls < 0 ||
+      !Number.isFinite(stepCostUsd) ||
+      stepCostUsd < 0 ||
+      !Number.isSafeInteger(stepLatencyMs) ||
+      stepLatencyMs < 0
+    ) {
+      throw new Error('Capability terminal receipt metrics are malformed.');
+    }
+    providerCalls += stepProviderCalls;
+    costUsd += stepCostUsd;
+    latencyMs += stepLatencyMs;
+  }
+  if (
+    !Number.isSafeInteger(providerCalls) ||
+    !Number.isSafeInteger(latencyMs) ||
+    costUsd > MAX_LIVE_COST_USD
+  ) {
+    throw new Error('Capability terminal receipt metrics exceed their bounds.');
+  }
+  return { providerCalls, costUsd, latencyMs };
+}
+
+function finishRecoveredProductionRunWithinTransaction(params: {
+  runId: string;
+  results: unknown[];
+  evidenceRefs: string[];
+  providerCalls: number;
+  costUsd: number;
+  latencyMs: number;
+  now: string;
+}): CapabilityProductionExecutionResult {
   let run = getCapabilityProductionRun(params.runId);
   if (!run) throw new Error('Recovered production run disappeared.');
   const completedTransition = listCapabilityProductionTransitionReceipts({
@@ -2778,12 +3928,7 @@ async function finishRecoveredProductionRun(params: {
       ? receipt.transitionKind === 'canary_completed'
       : receipt.transitionKind === 'reuse_completed',
   );
-  if (
-    completedTransition &&
-    run.outcomeId &&
-    run.postconditionFingerprint &&
-    run.status === 'awaiting_owner_review'
-  ) {
+  if (completedTransition && run.outcomeId && run.postconditionFingerprint) {
     const receiptIds = listCapabilityProductionSteps(run.runId).map(
       (step) => step.receiptId,
     );
@@ -2822,43 +3967,13 @@ async function finishRecoveredProductionRun(params: {
       'Recovered production work has no canonical step receipts.',
     );
   }
-  const outcomeId = `outcome:capability:${sha256(`${run.runId}|${run.inputDigest}`).slice(0, 40)}`;
-  const existingOutcome = getOutcomeBySource(
-    run.groupFolder,
-    'capability_acquisition',
-    run.runId,
-  );
-  if (existingOutcome && existingOutcome.outcomeId !== outcomeId) {
-    throw new Error('Recovered canonical outcome identity changed.');
-  }
-  upsertOutcome({
-    outcomeId,
-    groupFolder: run.groupFolder,
-    sourceType: 'capability_acquisition',
-    sourceKey: run.runId,
-    linkedRefsJson: JSON.stringify({
-      capabilityAcquisitionId: run.acquisitionId,
-      capabilityCandidateFingerprint: run.candidateFingerprint,
-      capabilityEvidenceOrigin: 'live',
-      verificationReceiptIds: receiptIds,
-    }),
-    status: 'completed',
-    completionSummary:
-      'The registered capability reached its independently verified postcondition.',
-    nextFollowupText: 'Request an exact owner verdict on this outcome.',
-    blockerText: null,
-    dueAt: null,
-    reviewHorizon: 'today',
-    lastCheckedAt: params.now,
-    userConfirmed: false,
-    showInDailyReview: false,
-    showInWeeklyReview: false,
-    reviewSuppressedUntil: null,
-    createdAt: existingOutcome?.createdAt || params.now,
-    updatedAt: params.now,
+  const canonicalMetrics = canonicalProductionReceiptMetrics(run, steps);
+  const outcomeId = upsertCanonicalProductionOutcomeWithinTransaction({
+    run,
+    receiptIds,
+    now: params.now,
   });
   run = getCapabilityProductionRun(run.runId) as CapabilityProductionRunRecord;
-  const alreadyLinked = run.outcomeId === outcomeId;
   const next: CapabilityProductionRunRecord = {
     ...run,
     updatedAt: params.now,
@@ -2868,16 +3983,18 @@ async function finishRecoveredProductionRun(params: {
     checkpointId: checkpoint.durableCheckpointId,
     outcomeId,
     postconditionFingerprint: checkpoint.verifiedPostStateFingerprint,
-    executionCalls: alreadyLinked
-      ? run.executionCalls
-      : Math.max(run.executionCalls, steps.length),
-    evaluatorCalls: alreadyLinked
-      ? run.evaluatorCalls
-      : Math.max(run.evaluatorCalls, steps.length),
-    latencyMs: Math.max(run.latencyMs, params.latencyMs),
-    providerCalls:
-      run.providerCalls + (alreadyLinked ? 0 : params.providerCalls),
-    costUsd: run.costUsd + (alreadyLinked ? 0 : params.costUsd),
+    executionCalls: Math.max(run.executionCalls, steps.length),
+    evaluatorCalls: Math.max(run.evaluatorCalls, steps.length),
+    latencyMs: Math.max(
+      run.latencyMs,
+      params.latencyMs,
+      canonicalMetrics.latencyMs,
+    ),
+    // Metrics are reconstructed from immutable receipts. Using maxima rather
+    // than additive updates makes a recovery/original-executor terminal race a
+    // single idempotent join instead of double-counting the same execution.
+    providerCalls: Math.max(run.providerCalls, canonicalMetrics.providerCalls),
+    costUsd: Math.max(run.costUsd, canonicalMetrics.costUsd),
     nextSafeAction:
       'Atomically join recovered terminal truth; never replay the effect.',
   };
@@ -2936,21 +4053,11 @@ export async function recoverCapabilityProductionRun(params: {
   clock?: () => Date | string;
 }): Promise<CapabilityProductionExecutionResult> {
   const startedAt = Date.now();
-  const now = iso(params.now);
-  if (params.now && !params.clock) {
-    throw new Error(
-      'Production recovery with an injected initial time requires an explicit clock.',
-    );
-  }
-  let latestRecoveryTime = now;
-  const readFreshRecoveryTime = (): string => {
-    const observedAt = iso(params.clock ? params.clock() : new Date());
-    if (observedAt < latestRecoveryTime) {
-      throw new Error('Production recovery clock moved backwards.');
-    }
-    latestRecoveryTime = observedAt;
-    return observedAt;
-  };
+  const readFreshRecoveryTime = createProductionBoundaryClock({
+    testInitialTime: params.now,
+    testClock: params.clock,
+  });
+  const now = readFreshRecoveryTime();
   let run = getCapabilityProductionRun(params.runId);
   if (
     !run ||
@@ -3070,6 +4177,16 @@ export async function recoverCapabilityProductionRun(params: {
     });
     let terminalWork = committed.work;
     if (terminalWork.status !== 'completed') {
+      if (terminalWork.status !== 'verifying') {
+        terminalWork = transitionDurableWork({
+          workId: terminalWork.workId,
+          expectedVersion: terminalWork.version,
+          toStatus: 'verifying',
+          nextAction:
+            'Verify receipt-only recovery before terminal completion.',
+          now,
+        });
+      }
       terminalWork = transitionDurableWork({
         workId: terminalWork.workId,
         expectedVersion: terminalWork.version,
@@ -3423,6 +4540,9 @@ export interface ActiveCapabilityMatch {
   confidence: number;
   candidateIds: string[];
   resourceVersionDigest?: string;
+  triggerEvidenceDigest?: string;
+  triggerSemanticDigest?: string;
+  inputEvidenceDigest?: string;
   clarification?: string;
   reason: string;
 }
@@ -3430,14 +4550,43 @@ export interface ActiveCapabilityMatch {
 export function matchActiveCapability(params: {
   groupFolder: string;
   taskFamily: string;
+  triggerText: string;
   inputs: Record<string, unknown>;
   intendedPostconditions: string[];
   binding: DurableWorkBindingInput;
   currentResourceVersions: Record<string, string>;
+  now?: Date | string;
 }): ActiveCapabilityMatch {
+  return matchActiveCapabilityInternal(params, true);
+}
+
+function matchActiveCapabilityInternal(
+  params: {
+    groupFolder: string;
+    taskFamily: string;
+    triggerText: string;
+    inputs: Record<string, unknown>;
+    intendedPostconditions: string[];
+    binding: DurableWorkBindingInput;
+    currentResourceVersions: Record<string, string>;
+    now?: Date | string;
+  },
+  pauseOnRevalidationFailure: boolean,
+): ActiveCapabilityMatch {
   const resourceVersionDigest = sha256(
     canonicalCapabilityJson(params.currentResourceVersions),
   );
+  const observedAt = productionAuthorityTime(params.now);
+  const playbooks = listSkillPlaybooks({
+    groupFolder: params.groupFolder,
+    statuses: ['active'],
+    limit: 500,
+  });
+  const revalidationFailures: Array<{
+    acquisition: CapabilityAcquisitionRecord;
+    reason: 'version_drift' | 'health_stale';
+    evidenceDigest: string;
+  }> = [];
   const candidates = listCapabilityAcquisitions({
     groupFolder: params.groupFolder,
     states: ['active', 'monitoring'],
@@ -3449,11 +4598,39 @@ export function matchActiveCapability(params: {
       'candidateContractJson',
     );
     assertCapabilityCandidateContract(contract);
+    try {
+      assertSupportedProductionPolicy(acquisition, contract);
+    } catch {
+      return [];
+    }
+    const triggerEvidence = capabilityTriggerEvidence(
+      contract,
+      params.triggerText,
+      params.inputs,
+    );
+    if (!triggerEvidence) return [];
     const activeCanary = listCapabilityProductionRuns({
       acquisitionId: acquisition.acquisitionId,
       statuses: ['active', 'monitoring'],
       limit: 20,
     }).find((run) => run.runKind === 'canary');
+    const activeProjection = acquisition.compiledSkillId
+      ? playbooks.find(
+          (playbook) =>
+            playbook.skillId === acquisition.compiledSkillId &&
+            playbook.status === 'active' &&
+            playbook.taskFamily === acquisition.taskFamily,
+        )
+      : undefined;
+    const ownerReview = activeCanary
+      ? getCapabilityOwnerReviewForRun(activeCanary.runId)
+      : undefined;
+    const activationEvidence = activeCanary
+      ? listCapabilityProductionTransitionReceipts({
+          runId: activeCanary.runId,
+          limit: 100,
+        }).some((receipt) => receipt.transitionKind === 'activated')
+      : false;
     const requiredPresent = contract.requiredInputs.every(
       (name) =>
         Object.hasOwn(params.inputs, name) && params.inputs[name] !== undefined,
@@ -3488,6 +4665,35 @@ export function matchActiveCapability(params: {
     const postconditionCoverage = postconditionsCovered
       ? intendedPostconditions.size
       : 0;
+    const contractAndAuthorityCurrent = Boolean(
+      activeCanary &&
+      activeProjection &&
+      acquisition.dataEgressClass === contract.dataEgressClass &&
+      acquisition.negativeOutcomeCount === 0 &&
+      acquisition.correctionCount === 0 &&
+      acquisition.taskFamily === contract.taskFamily &&
+      contract.taskFamily === params.taskFamily &&
+      activeCanary.candidateFingerprint === contract.candidateFingerprint &&
+      activeCanary.contractVersion === contract.contractVersion &&
+      activeCanary.contractDigest ===
+        capabilityProductionContractDigest(acquisition.candidateContractJson) &&
+      ownerReview?.verdict === 'verified' &&
+      ownerReview.outcomeId === activeCanary.outcomeId &&
+      Boolean(activeCanary.postconditionFingerprint) &&
+      activationEvidence,
+    );
+    const baseMatch =
+      contractAndAuthorityCurrent &&
+      requiredPresent &&
+      targetMatches &&
+      channelMatches &&
+      ownerMatches &&
+      chatMatches &&
+      groupMatches &&
+      postconditionsCovered;
+    const versionsPresent = contract.resourceBindings.every((resource) =>
+      Boolean(params.currentResourceVersions[resource.resourceId]),
+    );
     const resourceVersionsCurrent = contract.resourceBindings.every(
       (resource) => {
         const current = params.currentResourceVersions[resource.resourceId];
@@ -3500,23 +4706,52 @@ export function matchActiveCapability(params: {
         );
       },
     );
-    if (
-      !activeCanary ||
-      !requiredPresent ||
-      !targetMatches ||
-      !channelMatches ||
-      !ownerMatches ||
-      !chatMatches ||
-      !groupMatches ||
-      !resourceVersionsCurrent ||
-      !postconditionsCovered
-    ) {
+    let healthCurrent = true;
+    if (baseMatch && resourceVersionsCurrent && activeCanary) {
+      try {
+        assertFreshBoundProductionHealth({
+          run: activeCanary,
+          contract,
+          now: observedAt,
+        });
+      } catch {
+        healthCurrent = false;
+        revalidationFailures.push({
+          acquisition,
+          reason: 'health_stale',
+          evidenceDigest: sha256(
+            canonicalCapabilityJson({
+              acquisitionId: acquisition.acquisitionId,
+              candidateFingerprint: contract.candidateFingerprint,
+              healthEvidenceSetDigest:
+                activeCanary.healthEvidenceSetDigest || null,
+              observedAt,
+            }),
+          ),
+        });
+      }
+    }
+    if (baseMatch && versionsPresent && !resourceVersionsCurrent) {
+      revalidationFailures.push({
+        acquisition,
+        reason: 'version_drift',
+        evidenceDigest: sha256(
+          canonicalCapabilityJson({
+            acquisitionId: acquisition.acquisitionId,
+            candidateFingerprint: contract.candidateFingerprint,
+            resourceVersionDigest,
+          }),
+        ),
+      });
+    }
+    if (!baseMatch || !resourceVersionsCurrent || !healthCurrent) {
       return [];
     }
     return [
       {
         acquisition,
         contract,
+        triggerEvidence,
         confidence: Math.min(
           1,
           0.65 +
@@ -3526,6 +4761,30 @@ export function matchActiveCapability(params: {
       },
     ];
   });
+  if (pauseOnRevalidationFailure) {
+    for (const failure of revalidationFailures) {
+      try {
+        pauseCapabilityForRevalidationAtomic({
+          acquisitionId: failure.acquisition.acquisitionId,
+          expectedAcquisitionVersion: failure.acquisition.recordVersion,
+          reason: failure.reason,
+          evidenceDigest: failure.evidenceDigest,
+          now: observedAt || iso(),
+        });
+      } catch (error) {
+        const current = getCapabilityAcquisition(
+          failure.acquisition.acquisitionId,
+        );
+        if (
+          current &&
+          ['active', 'monitoring'].includes(current.state) &&
+          current.recordVersion === failure.acquisition.recordVersion
+        ) {
+          throw error;
+        }
+      }
+    }
+  }
   candidates.sort(
     (left, right) =>
       right.confidence - left.confidence ||
@@ -3540,7 +4799,7 @@ export function matchActiveCapability(params: {
       candidateIds: [],
       resourceVersionDigest,
       reason:
-        'No active contract matches task family, inputs, postcondition, target, channel, and current resource versions.',
+        'No active contract has exact authority, projection, owner evidence, scope, input, postcondition, health, and compatible current resource versions.',
     };
   }
   if (
@@ -3565,14 +4824,18 @@ export function matchActiveCapability(params: {
     confidence: candidates[0].confidence,
     candidateIds: [candidates[0].acquisition.acquisitionId],
     resourceVersionDigest,
+    triggerEvidenceDigest: candidates[0].triggerEvidence.evidenceDigest,
+    triggerSemanticDigest: candidates[0].triggerEvidence.semanticDigest,
+    inputEvidenceDigest: candidates[0].triggerEvidence.inputEvidenceDigest,
     reason:
-      'Exact active contract matched by task family, inputs, postcondition, target, and channel.',
+      'Exact active contract matched by bound trigger semantics, inputs, postcondition, target, and channel.',
   };
 }
 
 export function stageActiveCapabilityReuse(params: {
   match: ActiveCapabilityMatch;
   taskFamily: string;
+  triggerText: string;
   intendedPostconditions: string[];
   binding: DurableWorkBindingInput;
   normalizedInputs: Record<string, unknown>;
@@ -3581,14 +4844,32 @@ export function stageActiveCapabilityReuse(params: {
   workerId: string;
   now?: Date | string;
 }): CapabilityProductionRunRecord {
-  return runCapabilityProductionStagingAtomic(() =>
-    stageActiveCapabilityReuseWithinTransaction(params),
-  );
+  try {
+    return runCapabilityProductionStagingAtomic(() =>
+      stageActiveCapabilityReuseWithinTransaction(params),
+    );
+  } catch (error) {
+    if (error instanceof ActiveCapabilityRevalidationRequiredError) {
+      pauseCapabilityForRevalidationAtomic({
+        acquisitionId: error.acquisitionId,
+        expectedAcquisitionVersion: error.expectedAcquisitionVersion,
+        reason: error.reason,
+        evidenceDigest: error.evidenceDigest,
+        now: error.observedAt,
+      });
+      throw new Error(
+        'Active capability was atomically paused for authoritative revalidation.',
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
 function stageActiveCapabilityReuseWithinTransaction(params: {
   match: ActiveCapabilityMatch;
   taskFamily: string;
+  triggerText: string;
   intendedPostconditions: string[];
   binding: DurableWorkBindingInput;
   normalizedInputs: Record<string, unknown>;
@@ -3597,7 +4878,7 @@ function stageActiveCapabilityReuseWithinTransaction(params: {
   workerId: string;
   now?: Date | string;
 }): CapabilityProductionRunRecord {
-  const now = iso(params.now);
+  const now = productionAuthorityTime(params.now);
   if (
     params.match.status !== 'matched' ||
     !params.match.acquisition ||
@@ -3608,25 +4889,23 @@ function stageActiveCapabilityReuseWithinTransaction(params: {
   const acquisition = getCapabilityAcquisition(
     params.match.acquisition.acquisitionId,
   );
-  const contract = params.match.contract;
-  const recomputed = matchActiveCapability({
-    groupFolder: params.binding.groupId,
-    taskFamily: params.taskFamily,
-    inputs: params.normalizedInputs,
-    intendedPostconditions: params.intendedPostconditions,
-    binding: params.binding,
-    currentResourceVersions: params.currentResourceVersions,
-  });
-  if (
-    !acquisition ||
-    !['active', 'monitoring'].includes(acquisition.state) ||
-    acquisition.recordVersion !== params.match.acquisition.recordVersion ||
-    recomputed.status !== 'matched' ||
-    recomputed.acquisition?.acquisitionId !== acquisition.acquisitionId ||
-    recomputed.contract?.candidateFingerprint !== contract.candidateFingerprint
-  ) {
-    throw new Error('Active capability changed before reuse staging.');
+  const contract = acquisition
+    ? parseCapabilityJson<CapabilityCandidateContract>(
+        acquisition.candidateContractJson,
+        'candidateContractJson',
+      )
+    : params.match.contract;
+  assertCapabilityCandidateContract(contract);
+  if (acquisition) {
+    assertSupportedProductionPolicy(acquisition, contract);
   }
+  const activeCanary = acquisition
+    ? listCapabilityProductionRuns({
+        acquisitionId: acquisition.acquisitionId,
+        statuses: ['active', 'monitoring'],
+        limit: 20,
+      }).find((run) => run.runKind === 'canary')
+    : undefined;
   const currentVersionDigest = sha256(
     canonicalCapabilityJson(params.currentResourceVersions),
   );
@@ -3644,38 +4923,170 @@ function stageActiveCapabilityReuseWithinTransaction(params: {
       );
     })
   ) {
-    throw new Error(
+    throw new ActiveCapabilityRevalidationRequiredError(
+      params.match.acquisition.acquisitionId,
+      params.match.acquisition.recordVersion,
+      'version_drift',
+      sha256(
+        canonicalCapabilityJson({
+          acquisitionId: params.match.acquisition.acquisitionId,
+          candidateFingerprint: contract.candidateFingerprint,
+          previousResourceVersionDigest: params.match.resourceVersionDigest,
+          currentVersionDigest,
+        }),
+      ),
+      now,
       'Active capability resource versions changed after matching.',
     );
   }
-  if (contract.steps.some((step) => step.approvalRequired)) {
-    throw new Error(
-      'This active contract contains protected effects; stage their normal fresh action approval before execution.',
-    );
+  const recomputed = matchActiveCapabilityInternal(
+    {
+      groupFolder: params.binding.groupId,
+      taskFamily: params.taskFamily,
+      triggerText: params.triggerText,
+      inputs: params.normalizedInputs,
+      intendedPostconditions: params.intendedPostconditions,
+      binding: params.binding,
+      currentResourceVersions: params.currentResourceVersions,
+      now,
+    },
+    false,
+  );
+  if (recomputed.status !== 'matched' && acquisition && activeCanary) {
+    try {
+      resolveHealthEvidence({
+        runId: activeCanary.runId,
+        contract,
+        bindings: latestVerifiedHealthBindings(contract, now),
+        currentResourceVersions: params.currentResourceVersions,
+        now,
+      });
+    } catch {
+      throw new ActiveCapabilityRevalidationRequiredError(
+        acquisition.acquisitionId,
+        acquisition.recordVersion,
+        'health_stale',
+        sha256(
+          canonicalCapabilityJson({
+            acquisitionId: acquisition.acquisitionId,
+            candidateFingerprint: contract.candidateFingerprint,
+            healthEvidenceSetDigest:
+              activeCanary.healthEvidenceSetDigest || null,
+            observedAt: now,
+          }),
+        ),
+        now,
+        'Active capability dependency health is stale or unhealthy.',
+      );
+    }
   }
-  const activeCanary = listCapabilityProductionRuns({
-    acquisitionId: acquisition.acquisitionId,
-    statuses: ['active', 'monitoring'],
-    limit: 20,
-  }).find((run) => run.runKind === 'canary');
+  if (
+    !acquisition ||
+    !['active', 'monitoring'].includes(acquisition.state) ||
+    acquisition.recordVersion !== params.match.acquisition.recordVersion ||
+    recomputed.status !== 'matched' ||
+    recomputed.acquisition?.acquisitionId !== acquisition.acquisitionId ||
+    recomputed.contract?.candidateFingerprint !==
+      contract.candidateFingerprint ||
+    !params.match.triggerEvidenceDigest ||
+    params.match.triggerEvidenceDigest !== recomputed.triggerEvidenceDigest ||
+    params.match.triggerSemanticDigest !== recomputed.triggerSemanticDigest ||
+    !params.match.inputEvidenceDigest ||
+    params.match.inputEvidenceDigest !== recomputed.inputEvidenceDigest
+  ) {
+    throw new Error('Active capability changed before reuse staging.');
+  }
   if (!activeCanary)
     throw new Error('Active capability lacks activation evidence.');
   const runId = `capability-run:${randomUUID()}`;
   const inputDigest = sha256(canonicalCapabilityJson(params.normalizedInputs));
-  const health = resolveHealthEvidence({
-    runId,
-    contract,
-    bindings: params.health,
-    currentResourceVersions: params.currentResourceVersions,
-    now,
-  });
+  let health: CapabilityHealthEvidenceRecord[];
+  try {
+    health = resolveHealthEvidence({
+      runId,
+      contract,
+      bindings: params.health,
+      currentResourceVersions: params.currentResourceVersions,
+      now,
+    });
+  } catch (error) {
+    try {
+      resolveHealthEvidence({
+        runId,
+        contract,
+        bindings: latestVerifiedHealthBindings(contract, now),
+        currentResourceVersions: params.currentResourceVersions,
+        now,
+      });
+    } catch {
+      throw new ActiveCapabilityRevalidationRequiredError(
+        acquisition.acquisitionId,
+        acquisition.recordVersion,
+        'health_stale',
+        sha256(
+          canonicalCapabilityJson({
+            acquisitionId: acquisition.acquisitionId,
+            candidateFingerprint: contract.candidateFingerprint,
+            healthEvidenceSetDigest:
+              activeCanary.healthEvidenceSetDigest || null,
+            observedAt: now,
+          }),
+        ),
+        now,
+        'Active capability dependency health is stale or unhealthy.',
+      );
+    }
+    throw error;
+  }
+  const actionClass = contract.steps[0]?.actionClass || 'local_lookup';
+  const protectedActionClass = protectedProductionActionClass(contract);
+  const cognitiveRunId = protectedActionClass
+    ? `cognitive:capability-action:${randomUUID()}`
+    : null;
+  if (cognitiveRunId) {
+    upsertCognitiveRun({
+      runId: cognitiveRunId,
+      createdAt: now,
+      updatedAt: now,
+      groupFolder: params.binding.groupId,
+      channel: params.binding.channel,
+      taskFamily: contract.taskFamily,
+      turnId: null,
+      runOrigin: 'live',
+      goalSummary: `Authorize protected reuse of ${contract.title}.`,
+      selectedSkillId: contract.skillId,
+      status: 'awaiting_approval',
+      autonomyLevel: 'none',
+      cognitiveMode: 'approval_staged',
+      taskGraphJson: canonicalCapabilityJson({
+        acquisitionId: acquisition.acquisitionId,
+        runId,
+        candidateFingerprint: contract.candidateFingerprint,
+        stepIds: contract.steps.map((step) => step.stepId),
+      }),
+      evidenceContractJson: canonicalCapabilityJson({
+        postconditions: contract.successPostconditions,
+        verifierBindingIds: contract.verifierBindingIds,
+      }),
+      providerUsabilityJson: '{}',
+      councilRunId: null,
+      verificationJson: '{}',
+      outcomeScore: 0,
+      nextAction: 'Wait for exact action-specific owner approval.',
+      privacyJson: PRODUCTION_PRIVACY,
+      linkedSkillCardId: null,
+    });
+  }
   let work = createOrLoadDurableWork({
     originTurnId: runId,
     authorizedSurface: activeCanary.authorizedSurface,
     binding: params.binding,
     goalSummary: `Reuse verified capability ${contract.title}.`,
     status: 'ready',
-    nextAction: 'Execute only the active contract with fresh health.',
+    cognitiveRunId,
+    nextAction: protectedActionClass
+      ? 'Stage exact action approval before any protected effect.'
+      : 'Execute only the active contract with fresh health.',
     now,
   }).work;
   linkDurableWorkProjection(
@@ -3694,15 +5105,21 @@ function stageActiveCapabilityReuseWithinTransaction(params: {
     workId: work.workId,
     expectedWorkVersion: work.version,
     pendingNodeIds: contract.steps.map((step) => step.stepId),
-    dependencyIds: contract.resourceBindings.map(
-      (resource) =>
-        `capability-resource:${sha256(resource.resourceId).slice(0, 32)}`,
-    ),
-    worldSignals: {
-      fresh: contract.resourceBindings.map(
+    dependencyIds: [
+      ...contract.resourceBindings.map(
         (resource) =>
-          `resource-health:${sha256(resource.resourceId).slice(0, 32)}`,
+          `capability-resource:${sha256(resource.resourceId).slice(0, 32)}`,
       ),
+      `capability-trigger:${recomputed.triggerEvidenceDigest}`,
+    ],
+    worldSignals: {
+      fresh: [
+        ...contract.resourceBindings.map(
+          (resource) =>
+            `resource-health:${sha256(resource.resourceId).slice(0, 32)}`,
+        ),
+        `capability-trigger:${recomputed.triggerEvidenceDigest}`,
+      ],
     },
     executorScopeKey: contract.candidateFingerprint,
     targetScopeKey: params.binding.targetScopeKey,
@@ -3717,34 +5134,43 @@ function stageActiveCapabilityReuseWithinTransaction(params: {
       'version_drift',
       'scope_mismatch',
     ],
-    recoveryPolicy: 'inspect_then_resume',
-    nextSafeAction: 'Acquire one execution lease for this reuse only.',
+    recoveryPolicy: protectedActionClass
+      ? 'approval_required'
+      : 'inspect_then_resume',
+    nextSafeAction: protectedActionClass
+      ? 'Stage exact action approval for this plan only.'
+      : 'Acquire one execution lease for this reuse only.',
     now,
   });
   work = checkpoint.work;
-  const actionClass = contract.steps[0]?.actionClass || 'local_lookup';
-  const issued = issueDurableResumeGrant({
-    workId: work.workId,
-    binding: params.binding,
-    actionClass,
-    now,
-  });
-  const consumed = consumeResumeGrantAndAcquireLease({
-    token: issued.token,
-    binding: params.binding,
-    actionClass,
-    workerId: params.workerId,
-    now,
-  });
-  if (consumed.status !== 'consumed' || !consumed.lease) {
-    throw new Error(
-      `Active reuse lease acquisition failed: ${consumed.status}.`,
-    );
+  let executionGrantId: string | null = null;
+  let executionLeaseId: string | null = null;
+  if (!protectedActionClass) {
+    const issued = issueDurableResumeGrant({
+      workId: work.workId,
+      binding: params.binding,
+      actionClass,
+      now,
+    });
+    const consumed = consumeResumeGrantAndAcquireLease({
+      token: issued.token,
+      binding: params.binding,
+      actionClass,
+      workerId: params.workerId,
+      now,
+    });
+    if (consumed.status !== 'consumed' || !consumed.lease) {
+      throw new Error(
+        `Active reuse lease acquisition failed: ${consumed.status}.`,
+      );
+    }
+    executionGrantId = issued.grant.grantId;
+    executionLeaseId = consumed.lease.leaseId;
+    emitProductionCapabilityBoundarySync({
+      boundary: 'after_active_reuse_lease_before_run',
+      runId,
+    });
   }
-  emitProductionCapabilityBoundarySync({
-    boundary: 'after_active_reuse_lease_before_run',
-    runId,
-  });
   work = getDurableWorkUnit(work.workId) as NonNullable<
     ReturnType<typeof getDurableWorkUnit>
   >;
@@ -3773,8 +5199,8 @@ function stageActiveCapabilityReuseWithinTransaction(params: {
     canaryApprovalScopeDigest: null,
     canaryGrantId: null,
     canaryLeaseId: null,
-    executionGrantId: issued.grant.grantId,
-    executionLeaseId: consumed.lease.leaseId,
+    executionGrantId,
+    executionLeaseId,
     activationApprovalPacketId: null,
     activationApprovalVersion: null,
     activationApprovalScopeDigest: null,
@@ -3800,11 +5226,21 @@ function stageActiveCapabilityReuseWithinTransaction(params: {
     matchConfidence: params.match.confidence,
     expiresAt: plusMs(now, DEFAULT_RUN_TTL_MS),
     completedAt: null,
-    nextSafeAction:
-      'Execute the exact active contract and monitor its outcome.',
+    nextSafeAction: protectedActionClass
+      ? 'Stage exact fresh action approval before protected reuse.'
+      : 'Execute the exact active contract and monitor its outcome.',
     privacyJson: PRODUCTION_PRIVACY,
   };
   insertCapabilityProductionRunWithHealthAtomic({ run, health });
+  if (protectedActionClass) {
+    return stageCapabilityProductionActionApprovalWithinTransaction({
+      runId,
+      expectedAcquisitionVersion: acquisition.recordVersion,
+      expectedRunRevision: 1,
+      binding: params.binding,
+      now,
+    }).run;
+  }
   return getCapabilityProductionRun(runId) as CapabilityProductionRunRecord;
 }
 
@@ -3902,6 +5338,7 @@ export interface CapabilityApprenticeshipStatus {
   runs: CapabilityProductionRunRecord[];
   pendingAction:
     | 'canary_approval'
+    | 'action_approval'
     | 'canary_execution'
     | 'owner_review'
     | 'activation_approval'
@@ -3921,15 +5358,17 @@ export function getCapabilityApprenticeshipStatus(
   const pendingAction =
     latest?.status === 'awaiting_canary_approval'
       ? 'canary_approval'
-      : latest?.status === 'canary_ready'
-        ? 'canary_execution'
-        : latest?.status === 'awaiting_owner_review'
-          ? 'owner_review'
-          : latest?.status === 'awaiting_activation_approval'
-            ? 'activation_approval'
-            : ['active', 'monitoring'].includes(acquisition.state)
-              ? 'monitoring'
-              : 'none';
+      : latest?.status === 'awaiting_action_approval'
+        ? 'action_approval'
+        : latest?.status === 'canary_ready'
+          ? 'canary_execution'
+          : latest?.status === 'awaiting_owner_review'
+            ? 'owner_review'
+            : latest?.status === 'awaiting_activation_approval'
+              ? 'activation_approval'
+              : ['active', 'monitoring'].includes(acquisition.state)
+                ? 'monitoring'
+                : 'none';
   return {
     acquisition,
     runs,

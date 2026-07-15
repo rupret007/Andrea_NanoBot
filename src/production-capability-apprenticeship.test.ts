@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   _closeDatabase,
   _initTestDatabase,
+  _initTestDatabaseAtPath,
   approveCognitiveApprovalPacketCAS,
   getCapabilityAcquisition,
   getCapabilityOwnerReviewForRun,
@@ -20,18 +24,24 @@ import {
   listDurableWorkLinks,
   listDurableWorkUnits,
   recordCapabilityOwnerReviewWithToken,
+  updateCapabilityProductionRunCAS,
   upsertReliabilityObservation,
   upsertToolReliabilitySubject,
 } from './db.js';
 import { capabilityBindingImplementationDigest } from './capability-execution-guard.js';
 import { assertCapabilityCandidateContract } from './capability-acquisition-policy.js';
 import {
+  _setDurableContinuityTestHook,
   consumeResumeGrantAndAcquireLease,
   durableScopeHash,
   issueDurableResumeGrant,
   reconcileDurableWorkOnStartup,
+  releaseDurableLease,
 } from './durable-work-continuity.js';
 import {
+  authorizeCapabilitySandbox,
+  CAPABILITY_SANDBOX_MARKER,
+  capabilitySandboxTargetScopeHash,
   compileCapabilityCandidate,
   createHermeticCertificationBindingRegistry,
   observeCapabilityGap,
@@ -41,10 +51,13 @@ import {
   recordCapabilityResourceDiscovery,
   runCapabilitySandbox,
   scopeCapabilityAcquisition,
+  stageCapabilitySandboxApproval,
 } from './verified-capability-acquisition.js';
 import {
+  _renderProductionApprovalSummaryForTest,
   authorizeApprovedCapabilityActivation,
   authorizeApprovedCapabilityCanary,
+  authorizeApprovedCapabilityProductionAction,
   _setProductionCapabilityApprenticeshipTestHook,
   applyCapabilityOwnerControl,
   createIsolatedProductionCapabilityRegistryForTest,
@@ -58,8 +71,14 @@ import {
   stageActiveCapabilityReuse,
   stageCapabilityActivation,
   stageCapabilityCanary,
+  stageCapabilityProductionActionApproval,
 } from './production-capability-apprenticeship.js';
-import type { CapabilityResourceDescriptor, RegisteredGroup } from './types.js';
+import type {
+  CapabilityAcquisitionRecord,
+  CapabilityCandidateContract,
+  CapabilityResourceDescriptor,
+  RegisteredGroup,
+} from './types.js';
 
 const NOW = new Date('2026-07-15T12:00:00.000Z');
 const RESOURCE_VERSION = 'fixture-production-v1';
@@ -277,6 +296,7 @@ function approve(
     scopeDigest?: string | null;
   },
   now: string,
+  approvalChannel = 'owner_cockpit',
 ) {
   const result = approveCognitiveApprovalPacketCAS({
     approvalPacketId: packet.approvalPacketId,
@@ -285,7 +305,7 @@ function approve(
     expectedApprovalVersion: packet.approvalVersion || 1,
     expectedScopeDigest: packet.scopeDigest || null,
     now,
-    approvalChannel: 'owner_cockpit',
+    approvalChannel,
   });
   expect(result.status).toBe('approved');
 }
@@ -370,6 +390,301 @@ function liveRegistry(
   });
 }
 
+function protectedLiveRegistry(counter: { executions: number }) {
+  return createIsolatedProductionCapabilityRegistryForTest({
+    executors: [
+      {
+        bindingId: EXECUTOR_ID,
+        operationId: 'lookup',
+        resourceId: resource().resourceId,
+        version: RESOURCE_VERSION,
+        executorImplementationDigest: EXECUTOR_DIGEST,
+        actionClass: 'repository_write',
+        effectClass: 'repository_write',
+        networkAccess: 'none',
+        maximumCostUsd: 0,
+        async execute() {
+          counter.executions += 1;
+          return {
+            result: { value: 'fixture:alpha' },
+            evidenceRefs: ['fixture:protected-production-write'],
+            effectClass: 'repository_write',
+            effectStatus: 'certain',
+            preStateFingerprint: '8'.repeat(64),
+            postStateFingerprint: '9'.repeat(64),
+            providerCalls: 0,
+            costUsd: 0,
+          };
+        },
+      },
+    ],
+    evaluators: [
+      {
+        evaluatorId: EVALUATOR_ID,
+        operationId: 'lookup',
+        resourceId: resource().resourceId,
+        version: RESOURCE_VERSION,
+        evaluatorImplementationDigest: EVALUATOR_DIGEST,
+        async verify({ requiredPostconditions }) {
+          return {
+            verified: true,
+            evidenceRefs: ['fixture:protected-production-verifier'],
+            verifiedPostconditions: requiredPostconditions,
+            postconditionFingerprint: 'a'.repeat(64),
+            reason: 'The protected fixture postcondition is verified.',
+          };
+        },
+      },
+    ],
+  });
+}
+
+function protectedResource(): CapabilityResourceDescriptor {
+  const descriptor = resource();
+  return {
+    ...descriptor,
+    authorityRequirement: 'explicit_approval',
+    riskLevel: 'medium',
+    bindingRefs: descriptor.bindingRefs.map((binding) => ({
+      ...binding,
+      actionClass: 'repository_write',
+      readOnly: false,
+    })),
+  };
+}
+
+async function ownerReviewRequiredProtectedAcquisition(): Promise<{
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
+}> {
+  const selected = protectedResource();
+  const observed = observeCapabilityGap({
+    metadataClassification: 'derived_metadata',
+    groupFolder: 'main',
+    targetOutcome: 'Return one verified protected production fixture value',
+    postconditions: ['fixture production value is verified'],
+    taskFamily: 'production_fixture',
+    gapKind: 'tool_usage_gap',
+    provenanceRefs: ['fixture:protected-owner-request'],
+    evidenceOrigin: 'synthetic',
+    environmentFingerprint: 'fixture-protected-environment-v1',
+    authorityRequirements: [
+      'fresh exact-scope owner approval:repository_write',
+    ],
+    now: NOW,
+  });
+  scopeCapabilityAcquisition({
+    acquisitionId: observed.acquisitionId,
+    knownPrerequisites: ['fixture key'],
+    missingPrerequisites: [],
+    confidence: 0.9,
+    now: NOW,
+  });
+  recordCapabilityResourceDiscovery({
+    acquisitionId: observed.acquisitionId,
+    candidates: [selected],
+    selected: [selected],
+    rejectedReasons: {},
+    now: NOW,
+  });
+  const candidate = compileCapabilityCandidate({
+    acquisitionId: observed.acquisitionId,
+    selectedResources: [selected],
+    triggerSemantics: ['verify a protected production fixture'],
+    requiredInputs: ['key', 'targetScopeKey'],
+    expectedOutput: 'A verified protected fixture value.',
+    deterministicScenarioIds: ['protected-production-fixture-primary'],
+    heldOutScenarioIds: ['protected-production-fixture-heldout'],
+    now: NOW,
+  });
+  prepareCapabilitySandbox({ acquisitionId: observed.acquisitionId, now: NOW });
+  const sandboxRoot = mkdtempSync(
+    join(tmpdir(), 'andrea-protected-production-sandbox-'),
+  );
+  try {
+    const sandboxBinding = {
+      ownerId: 'owner',
+      chatId: 'cockpit',
+      groupId: 'main',
+      channel: 'owner_cockpit',
+      targetScopeKey: realpathSync(sandboxRoot),
+    };
+    const scope = prepareCapabilityExecutionScope({
+      acquisitionId: observed.acquisitionId,
+      ...sandboxBinding,
+      now: NOW,
+    });
+    writeFileSync(
+      join(sandboxRoot, CAPABILITY_SANDBOX_MARKER),
+      JSON.stringify({
+        contractVersion: 1,
+        acquisitionId: observed.acquisitionId,
+        candidateFingerprint: candidate.contract.candidateFingerprint,
+        targetScopeHash: capabilitySandboxTargetScopeHash(sandboxRoot),
+        disposable: true,
+      }),
+    );
+    const staged = stageCapabilitySandboxApproval({
+      acquisitionId: observed.acquisitionId,
+      scope,
+      now: NOW,
+    });
+    const approval = approveCognitiveApprovalPacketCAS({
+      approvalPacketId: staged.approval.approvalPacketId,
+      groupFolder: 'main',
+      expectedSummary: staged.approval.summary,
+      expectedApprovalVersion: staged.approval.approvalVersion || 1,
+      expectedScopeDigest: staged.approval.scopeDigest || null,
+      now: new Date(NOW.getTime() + 100).toISOString(),
+      approvalChannel: 'owner_cockpit',
+    });
+    if (approval.status !== 'approved' || !approval.approvalVersion) {
+      throw new Error('Protected sandbox approval failed.');
+    }
+    const authorized = authorizeCapabilitySandbox({
+      acquisitionId: observed.acquisitionId,
+      scope: staged.scope,
+      binding: sandboxBinding,
+      approvalPacketId: staged.approval.approvalPacketId,
+      approvalVersion: approval.approvalVersion,
+      workerId: 'protected-sandbox-authorizer',
+      processGeneration: 'process:protected-production-sandbox',
+      now: new Date(NOW.getTime() + 200),
+    });
+    const registry = createHermeticCertificationBindingRegistry({
+      executors: [
+        {
+          bindingId: EXECUTOR_ID,
+          operationId: 'lookup',
+          resourceId: selected.resourceId,
+          version: selected.version,
+          executorImplementationDigest: EXECUTOR_DIGEST,
+          actionClass: 'repository_write',
+          effectClass: 'repository_write',
+          networkAccess: 'none',
+          sandboxSimulation: true,
+          async execute({ values, sandboxRoot: isolatedRoot }) {
+            return {
+              result: {
+                value: `fixture:${String(values.key)}`,
+                isolated: isolatedRoot === sandboxRoot,
+              },
+              evidenceRefs: ['fixture:protected-sandbox-write'],
+              effectClass: 'repository_write',
+              effectStatus: 'certain',
+              preStateFingerprint: '1'.repeat(64),
+              postStateFingerprint: '2'.repeat(64),
+              providerCalls: 0,
+              costUsd: 0,
+            };
+          },
+          async cleanup() {
+            return true;
+          },
+        },
+      ],
+      evaluators: [
+        {
+          evaluatorId: EVALUATOR_ID,
+          operationId: 'lookup',
+          resourceId: selected.resourceId,
+          version: selected.version,
+          evaluatorImplementationDigest: EVALUATOR_DIGEST,
+          async verify({ requiredPostconditions }) {
+            return {
+              verified: true,
+              evidenceRefs: ['fixture:protected-sandbox-verifier'],
+              verifiedPostconditions: requiredPostconditions,
+              postconditionFingerprint: '3'.repeat(64),
+              reason: 'Protected sandbox fixture is verified.',
+            };
+          },
+          async verifyCleanup({ cleanupSucceeded }) {
+            return {
+              verified: cleanupSucceeded,
+              evidenceRefs: ['fixture:protected-cleanup-verifier'],
+              cleanupFingerprint: '4'.repeat(64),
+              reason: 'Protected sandbox cleanup is independently verified.',
+            };
+          },
+        },
+      ],
+    });
+    await runCapabilitySandbox({
+      acquisitionId: observed.acquisitionId,
+      values: fixtureValues,
+      registry,
+      currentResources: [selected],
+      scope: staged.scope,
+      networkPolicy: 'none',
+      sandboxRoot,
+      authorizations: [authorized.authorization],
+      now: new Date(NOW.getTime() + 300),
+    });
+  } finally {
+    rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+  const acquisition = recordCapabilityHeldOutEvidence({
+    acquisitionId: observed.acquisitionId,
+    evidence: {
+      passed: true,
+      cases: 1,
+      safetyInvariantRate: 1,
+      falseSuccesses: 0,
+      evidenceRefs: ['fixture:protected-independent-heldout'],
+    },
+    actorKind: 'certification',
+    now: new Date(NOW.getTime() + 1_000),
+  });
+  return { acquisition, contract: candidate.contract };
+}
+
+async function prepareProtectedAuthorizedCanary() {
+  const prepared = await ownerReviewRequiredProtectedAcquisition();
+  const current = getCapabilityAcquisition(prepared.acquisition.acquisitionId);
+  if (!current) throw new Error('Protected fixture acquisition disappeared.');
+  seedHealth();
+  const staged = stageCapabilityCanary({
+    acquisitionId: current.acquisitionId,
+    expectedAcquisitionVersion: current.recordVersion,
+    binding: fixtureBinding,
+    authorizedSurface: fixtureBinding.channel,
+    normalizedInputs: fixtureValues,
+    health: [
+      {
+        resourceId: resource().resourceId,
+        observationId: 'fixture-production-health-1',
+        expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+      },
+    ],
+    now: new Date(NOW.getTime() + 3_000),
+  });
+  approve(staged.approval, new Date(NOW.getTime() + 4_000).toISOString());
+  authorizeApprovedCapabilityCanary({
+    runId: staged.run.runId,
+    ...productionHeads(staged.run.runId),
+    binding: fixtureBinding,
+    workerId: 'protected-canary-authorizer',
+    now: new Date(NOW.getTime() + 5_000),
+  });
+  return { acquisition: current, contract: prepared.contract, staged };
+}
+
+function useProtectedFixtureDatabase(): {
+  cleanup: () => void;
+} {
+  _closeDatabase();
+  const directory = mkdtempSync(join(tmpdir(), 'andrea-protected-action-'));
+  const dbPath = join(directory, 'fixture.sqlite');
+  _initTestDatabaseAtPath(dbPath);
+  return {
+    cleanup() {
+      _closeDatabase();
+      rmSync(directory, { recursive: true, force: true });
+    },
+  };
+}
+
 async function prepareAuthorizedCanary(
   options: {
     binding?: typeof fixtureBinding;
@@ -397,7 +712,11 @@ async function prepareAuthorizedCanary(
     ],
     now: new Date(NOW.getTime() + 3_000),
   });
-  approve(staged.approval, new Date(NOW.getTime() + 4_000).toISOString());
+  approve(
+    staged.approval,
+    new Date(NOW.getTime() + 4_000).toISOString(),
+    binding.channel,
+  );
   authorizeApprovedCapabilityCanary({
     runId: staged.run.runId,
     ...productionHeads(staged.run.runId),
@@ -425,6 +744,39 @@ async function prepareCompletedCanary(
   return prepared;
 }
 
+async function prepareActiveCapability() {
+  const prepared = await prepareCompletedCanary();
+  const reviewToken = issueCapabilityReviewTokenForAuthenticatedCockpit({
+    runId: prepared.staged.run.runId,
+    now: new Date(NOW.getTime() + 7_000),
+  });
+  recordCapabilityOwnerVerdict({
+    token: reviewToken,
+    verdict: 'verified',
+    now: new Date(NOW.getTime() + 8_000),
+  });
+  const activation = stageCapabilityActivation({
+    runId: prepared.staged.run.runId,
+    ...productionHeads(prepared.staged.run.runId),
+    binding: prepared.binding,
+    now: new Date(NOW.getTime() + 9_000),
+  });
+  approve(activation.approval, new Date(NOW.getTime() + 10_000).toISOString());
+  const activated = authorizeApprovedCapabilityActivation({
+    runId: prepared.staged.run.runId,
+    ...productionHeads(prepared.staged.run.runId),
+    binding: prepared.binding,
+    workerId: 'active-fixture-worker',
+    now: new Date(NOW.getTime() + 11_000),
+  });
+  const contract = JSON.parse(activated.acquisition.candidateContractJson) as {
+    taskFamily: string;
+    triggerSemantics: string[];
+    successPostconditions: string[];
+  };
+  return { ...prepared, activation, activated, contract };
+}
+
 beforeEach(() => {
   vi.stubEnv('ANDREA_NOVEL_CAPABILITY_CERT_HERMETIC_PARENT', '1');
   vi.stubEnv('ANDREA_TEST_NETWORK_GUARD_ACTIVE', '1');
@@ -432,12 +784,391 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  _setDurableContinuityTestHook(null);
   _setProductionCapabilityApprenticeshipTestHook(null);
   _closeDatabase();
   vi.unstubAllEnvs();
 });
 
 describe('production capability apprenticeship', () => {
+  it('stages and consumes a separate exact action approval before a protected canary effect', async () => {
+    const fixture = useProtectedFixtureDatabase();
+    try {
+      const prepared = await prepareProtectedAuthorizedCanary();
+      const counter = { executions: 0 };
+      await expect(
+        runCapabilityProductionExecution({
+          runId: prepared.staged.run.runId,
+          ...productionHeads(prepared.staged.run.runId),
+          binding: fixtureBinding,
+          workerId: 'protected-before-approval',
+          values: fixtureValues,
+          registry: protectedLiveRegistry(counter),
+          now: new Date(NOW.getTime() + 6_000),
+        }),
+      ).rejects.toThrow(/stopped before effect and staged/i);
+      expect(counter.executions).toBe(0);
+
+      const pending = getCapabilityProductionRun(prepared.staged.run.runId);
+      const work = pending ? getDurableWorkUnit(pending.workId) : undefined;
+      const actionPacket = work?.approvalPacketId
+        ? listCognitiveApprovalPackets({
+            groupFolder: 'main',
+            limit: 100,
+          }).find((packet) => packet.approvalPacketId === work.approvalPacketId)
+        : undefined;
+      expect(pending?.status).toBe('awaiting_action_approval');
+      expect(actionPacket?.actionClass).toBe('repository_write');
+      expect(actionPacket?.summary.length).toBeLessThanOrEqual(640);
+      expect(actionPacket?.summary).toMatch(/exact=[a-f0-9]{64}/);
+      expect(actionPacket?.summary).toContain(
+        'steps=step-1=lookup>r1[repository_write]',
+      );
+      expect(actionPacket?.summary).toContain(
+        'res=r1=fixture.production.resource@fixture-production-v1[execution_adapter|required]',
+      );
+      expect(actionPacket?.summary).toContain(
+        'post=1:"fixture production value is verified"',
+      );
+      expect(actionPacket?.summary).toContain('egress:local_only');
+      expect(actionPacket?.summary).toContain('creds:none');
+      expect(actionPacket?.summary).toContain('rollback:none');
+      expect(actionPacket?.summary).toContain('cost:$0');
+      expect(actionPacket?.summary).toContain('risk:low');
+      expect(actionPacket?.summary).toContain('authority=fresh-action-only');
+      expect(actionPacket?.summary).toMatch(/target=[a-f0-9]{12}/);
+      if (!actionPacket) throw new Error('Action packet was not staged.');
+      approve(actionPacket, new Date(NOW.getTime() + 7_000).toISOString());
+      const authorized = authorizeApprovedCapabilityProductionAction({
+        runId: prepared.staged.run.runId,
+        ...productionHeads(prepared.staged.run.runId),
+        binding: fixtureBinding,
+        workerId: 'protected-action-authorizer',
+        now: new Date(NOW.getTime() + 8_000),
+      });
+      expect(authorized.run.status).toBe('canary_ready');
+      expect(authorized.run.executionGrantId).toBeTruthy();
+      expect(authorized.run.executionLeaseId).toBeTruthy();
+
+      const executed = await runCapabilityProductionExecution({
+        runId: prepared.staged.run.runId,
+        ...productionHeads(prepared.staged.run.runId),
+        binding: fixtureBinding,
+        workerId: 'protected-executor',
+        values: fixtureValues,
+        registry: protectedLiveRegistry(counter),
+        now: new Date(NOW.getTime() + 9_000),
+      });
+      expect(executed.status).toBe('verified');
+      expect(counter.executions).toBe(1);
+      const receipt = listDurableEffectReceipts({
+        workId: authorized.run.workId,
+        limit: 100,
+      }).find((candidate) => candidate.status === 'succeeded');
+      expect(receipt?.grantId).toBe(authorized.run.executionGrantId);
+      expect(receipt?.approvalPacketId).toBe(actionPacket.approvalPacketId);
+      expect(receipt?.actionClass).toBe('repository_write');
+
+      const reviewToken = issueCapabilityReviewTokenForAuthenticatedCockpit({
+        runId: prepared.staged.run.runId,
+        now: new Date(NOW.getTime() + 10_000),
+      });
+      recordCapabilityOwnerVerdict({
+        token: reviewToken,
+        verdict: 'verified',
+        now: new Date(NOW.getTime() + 11_000),
+      });
+      const activation = stageCapabilityActivation({
+        runId: prepared.staged.run.runId,
+        ...productionHeads(prepared.staged.run.runId),
+        binding: fixtureBinding,
+        now: new Date(NOW.getTime() + 12_000),
+      });
+      approve(
+        activation.approval,
+        new Date(NOW.getTime() + 13_000).toISOString(),
+      );
+      const active = authorizeApprovedCapabilityActivation({
+        runId: prepared.staged.run.runId,
+        ...productionHeads(prepared.staged.run.runId),
+        binding: fixtureBinding,
+        workerId: 'protected-activation-authorizer',
+        now: new Date(NOW.getTime() + 14_000),
+      });
+      const currentResourceVersions = {
+        [resource().resourceId]: resource().version,
+      };
+      const beforeProtectedReuseRuns = listCapabilityProductionRuns({
+        acquisitionId: prepared.acquisition.acquisitionId,
+        limit: 100,
+      }).length;
+      for (const triggerText of [
+        'protected production fixture verify',
+        'do not verify a protected production fixture',
+        'verify verify a protected production fixture',
+      ]) {
+        expect(
+          matchActiveCapability({
+            groupFolder: 'main',
+            taskFamily: prepared.contract.taskFamily,
+            triggerText,
+            inputs: fixtureValues,
+            intendedPostconditions: prepared.contract.successPostconditions,
+            binding: fixtureBinding,
+            currentResourceVersions,
+            now: new Date(NOW.getTime() + 15_000),
+          }).status,
+        ).toBe('none');
+      }
+      expect(
+        listCapabilityProductionRuns({
+          acquisitionId: prepared.acquisition.acquisitionId,
+          limit: 100,
+        }),
+      ).toHaveLength(beforeProtectedReuseRuns);
+      const match = matchActiveCapability({
+        groupFolder: 'main',
+        taskFamily: prepared.contract.taskFamily,
+        triggerText: prepared.contract.triggerSemantics[0],
+        inputs: fixtureValues,
+        intendedPostconditions: prepared.contract.successPostconditions,
+        binding: fixtureBinding,
+        currentResourceVersions,
+        now: new Date(NOW.getTime() + 15_000),
+      });
+      expect(active.acquisition.state).toBe('active');
+      expect(match.status).toBe('matched');
+      const reuse = stageActiveCapabilityReuse({
+        match,
+        taskFamily: prepared.contract.taskFamily,
+        triggerText: prepared.contract.triggerSemantics[0],
+        intendedPostconditions: prepared.contract.successPostconditions,
+        binding: fixtureBinding,
+        normalizedInputs: fixtureValues,
+        health: [
+          {
+            resourceId: resource().resourceId,
+            observationId: 'fixture-production-health-1',
+            expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+          },
+        ],
+        currentResourceVersions,
+        workerId: 'protected-reuse-stager',
+        now: new Date(NOW.getTime() + 16_000),
+      });
+      expect(reuse.status).toBe('awaiting_action_approval');
+      expect(reuse.executionGrantId).toBeNull();
+      expect(reuse.executionLeaseId).toBeNull();
+      const reuseWork = getDurableWorkUnit(reuse.workId);
+      const reusePacket = reuseWork?.approvalPacketId
+        ? listCognitiveApprovalPackets({
+            groupFolder: 'main',
+            limit: 100,
+          }).find(
+            (packet) => packet.approvalPacketId === reuseWork.approvalPacketId,
+          )
+        : undefined;
+      if (!reusePacket) throw new Error('Reuse action packet was not staged.');
+      approve(reusePacket, new Date(NOW.getTime() + 17_000).toISOString());
+      const authorizedReuse = authorizeApprovedCapabilityProductionAction({
+        runId: reuse.runId,
+        ...productionHeads(reuse.runId),
+        binding: fixtureBinding,
+        workerId: 'protected-reuse-authorizer',
+        now: new Date(NOW.getTime() + 18_000),
+      });
+      expect(authorizedReuse.run.status).toBe('monitoring');
+      const reuseExecution = await runCapabilityProductionExecution({
+        runId: reuse.runId,
+        ...productionHeads(reuse.runId),
+        binding: fixtureBinding,
+        workerId: 'protected-reuse-executor',
+        values: fixtureValues,
+        registry: protectedLiveRegistry(counter),
+        now: new Date(NOW.getTime() + 19_000),
+      });
+      expect(reuseExecution.status).toBe('verified');
+      expect(counter.executions).toBe(2);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it('rejects a protected action approval decided on the wrong channel without invoking the executor', async () => {
+    const fixture = useProtectedFixtureDatabase();
+    try {
+      const prepared = await prepareProtectedAuthorizedCanary();
+      const staged = stageCapabilityProductionActionApproval({
+        runId: prepared.staged.run.runId,
+        ...productionHeads(prepared.staged.run.runId),
+        binding: fixtureBinding,
+        now: new Date(NOW.getTime() + 6_000),
+      });
+      expect(
+        approveCognitiveApprovalPacketCAS({
+          approvalPacketId: staged.approval.approvalPacketId,
+          groupFolder: 'main',
+          expectedSummary: staged.approval.summary,
+          expectedApprovalVersion: staged.approval.approvalVersion || 1,
+          expectedScopeDigest: staged.approval.scopeDigest || null,
+          now: new Date(NOW.getTime() + 7_000).toISOString(),
+          approvalChannel: 'telegram',
+        }).status,
+      ).toBe('not_found_or_scope_mismatch');
+      expect(() =>
+        authorizeApprovedCapabilityProductionAction({
+          runId: staged.run.runId,
+          ...productionHeads(staged.run.runId),
+          binding: fixtureBinding,
+          workerId: 'wrong-channel-authorizer',
+          now: new Date(NOW.getTime() + 8_000),
+        }),
+      ).toThrow(/exact current production action packet/i);
+      expect(
+        getCapabilityProductionRun(staged.run.runId)?.executionGrantId,
+      ).toBe(null);
+      expect(
+        listDurableResumeGrants({
+          workId: staged.run.workId,
+          limit: 100,
+        }).filter((grant) => grant.actionClass === 'repository_write'),
+      ).toHaveLength(0);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it('rejects expired or target-mismatched protected authority without invocation', async () => {
+    const fixture = useProtectedFixtureDatabase();
+    try {
+      const prepared = await prepareProtectedAuthorizedCanary();
+      const staged = stageCapabilityProductionActionApproval({
+        runId: prepared.staged.run.runId,
+        ...productionHeads(prepared.staged.run.runId),
+        binding: fixtureBinding,
+        now: new Date(NOW.getTime() + 6_000),
+      });
+      expect(() =>
+        authorizeApprovedCapabilityProductionAction({
+          runId: staged.run.runId,
+          ...productionHeads(staged.run.runId),
+          binding: { ...fixtureBinding, targetScopeKey: 'wrong-target' },
+          workerId: 'wrong-target-authorizer',
+          now: new Date(NOW.getTime() + 7_000),
+        }),
+      ).toThrow(/binding changed/i);
+      const approvalExpiredAt = new Date(
+        Date.parse(staged.approval.expiresAt as string) + 1,
+      ).toISOString();
+      const expired = approveCognitiveApprovalPacketCAS({
+        approvalPacketId: staged.approval.approvalPacketId,
+        groupFolder: 'main',
+        expectedSummary: staged.approval.summary,
+        expectedApprovalVersion: staged.approval.approvalVersion || 1,
+        expectedScopeDigest: staged.approval.scopeDigest || null,
+        now: approvalExpiredAt,
+        approvalChannel: fixtureBinding.channel,
+      });
+      expect(expired.status).toBe('expired');
+      expect(() =>
+        authorizeApprovedCapabilityProductionAction({
+          runId: staged.run.runId,
+          ...productionHeads(staged.run.runId),
+          binding: fixtureBinding,
+          workerId: 'expired-action-authorizer',
+          now: approvalExpiredAt,
+        }),
+      ).toThrow();
+      expect(
+        getCapabilityProductionRun(staged.run.runId)?.executionGrantId,
+      ).toBe(null);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it('does not consume generic canary or activation approval from another channel', async () => {
+    const acquisition = await ownerReviewRequiredAcquisition('-channel');
+    seedHealth();
+    const staged = stageCapabilityCanary({
+      acquisitionId: acquisition.acquisitionId,
+      expectedAcquisitionVersion: acquisition.recordVersion,
+      binding: fixtureBinding,
+      authorizedSurface: fixtureBinding.channel,
+      normalizedInputs: fixtureValues,
+      health: [
+        {
+          resourceId: resource().resourceId,
+          observationId: 'fixture-production-health-1',
+          expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+        },
+      ],
+      now: new Date(NOW.getTime() + 3_000),
+    });
+    expect(
+      approveCognitiveApprovalPacketCAS({
+        approvalPacketId: staged.approval.approvalPacketId,
+        groupFolder: 'main',
+        expectedSummary: staged.approval.summary,
+        expectedApprovalVersion: staged.approval.approvalVersion || 1,
+        expectedScopeDigest: staged.approval.scopeDigest || null,
+        now: new Date(NOW.getTime() + 4_000).toISOString(),
+        approvalChannel: 'telegram',
+      }).status,
+    ).toBe('not_found_or_scope_mismatch');
+    expect(() =>
+      authorizeApprovedCapabilityCanary({
+        runId: staged.run.runId,
+        ...productionHeads(staged.run.runId),
+        binding: fixtureBinding,
+        workerId: 'wrong-channel-canary',
+        now: new Date(NOW.getTime() + 5_000),
+      }),
+    ).toThrow(/exact capability approval packet/i);
+    expect(
+      listDurableResumeGrants({ workId: staged.run.workId, limit: 100 }),
+    ).toHaveLength(0);
+
+    const completed = await prepareCompletedCanary(undefined, {
+      acquisitionTargetSuffix: '-activation-channel',
+    });
+    const reviewToken = issueCapabilityReviewTokenForAuthenticatedCockpit({
+      runId: completed.staged.run.runId,
+      now: new Date(NOW.getTime() + 7_000),
+    });
+    recordCapabilityOwnerVerdict({
+      token: reviewToken,
+      verdict: 'verified',
+      now: new Date(NOW.getTime() + 8_000),
+    });
+    const activation = stageCapabilityActivation({
+      runId: completed.staged.run.runId,
+      ...productionHeads(completed.staged.run.runId),
+      binding: fixtureBinding,
+      now: new Date(NOW.getTime() + 9_000),
+    });
+    expect(
+      approveCognitiveApprovalPacketCAS({
+        approvalPacketId: activation.approval.approvalPacketId,
+        groupFolder: 'main',
+        expectedSummary: activation.approval.summary,
+        expectedApprovalVersion: activation.approval.approvalVersion || 1,
+        expectedScopeDigest: activation.approval.scopeDigest || null,
+        now: new Date(NOW.getTime() + 10_000).toISOString(),
+        approvalChannel: 'telegram',
+      }).status,
+    ).toBe('not_found_or_scope_mismatch');
+    expect(() =>
+      authorizeApprovedCapabilityActivation({
+        runId: completed.staged.run.runId,
+        ...productionHeads(completed.staged.run.runId),
+        binding: fixtureBinding,
+        workerId: 'wrong-channel-activation',
+        now: new Date(NOW.getTime() + 11_000),
+      }),
+    ).toThrow(/exact capability approval packet/i);
+  });
+
   it('joins canary, execution, owner review, and separate activation authority', async () => {
     const acquisition = await ownerReviewRequiredAcquisition();
     seedHealth();
@@ -525,6 +1256,24 @@ describe('production capability apprenticeship', () => {
       now: new Date(NOW.getTime() + 3_000),
     });
     expect(staged.run.status).toBe('awaiting_canary_approval');
+    expect(staged.approval.summary.length).toBeLessThanOrEqual(640);
+    expect(staged.approval.summary).toMatch(/exact=[a-f0-9]{64}$/);
+    expect(staged.approval.summary).toContain(
+      'steps=step-1=lookup>r1[local_lookup]',
+    );
+    expect(staged.approval.summary).toContain(
+      'res=r1=fixture.production.resource@fixture-production-v1[execution_adapter|required]',
+    );
+    expect(staged.approval.summary).toContain(
+      'post=1:"fixture production value is verified"',
+    );
+    expect(staged.approval.summary).toContain('egress:local_only');
+    expect(staged.approval.summary).toContain('creds:none');
+    expect(staged.approval.summary).toContain('rollback:none');
+    expect(staged.approval.summary).toContain('cost:$0');
+    expect(staged.approval.summary).toContain('risk:low');
+    expect(staged.approval.summary).toContain('authority=canary-only');
+    expect(staged.approval.summary).toMatch(/target=[a-f0-9]{12}/);
     expect(() =>
       stageCapabilityCanary({
         acquisitionId: acquisition.acquisitionId,
@@ -667,6 +1416,17 @@ describe('production capability apprenticeship', () => {
       now: new Date(NOW.getTime() + 9_000),
     });
     expect(activation.run.status).toBe('awaiting_activation_approval');
+    expect(activation.approval.summary.length).toBeLessThanOrEqual(640);
+    expect(activation.approval.summary).toMatch(/exact=[a-f0-9]{64}$/);
+    expect(activation.approval.summary).toContain('ACTIVATE;steps=');
+    expect(activation.approval.summary).toContain(
+      'steps=step-1=lookup>r1[local_lookup]',
+    );
+    expect(activation.approval.summary).toContain('post=1:');
+    expect(activation.approval.summary).toContain('creds:none');
+    expect(activation.approval.summary).toContain(
+      'authority=reuse-only/no-new-actions',
+    );
     approve(
       activation.approval,
       new Date(NOW.getTime() + 10_000).toISOString(),
@@ -695,7 +1455,11 @@ describe('production capability apprenticeship', () => {
     };
     const activeContract = JSON.parse(
       activated.acquisition.candidateContractJson,
-    ) as { taskFamily: string; successPostconditions: string[] };
+    ) as {
+      taskFamily: string;
+      triggerSemantics: string[];
+      successPostconditions: string[];
+    };
     expect(() =>
       assertCapabilityCandidateContract({
         ...JSON.parse(activated.acquisition.candidateContractJson),
@@ -708,16 +1472,19 @@ describe('production capability apprenticeship', () => {
     const exactMatch = matchActiveCapability({
       groupFolder: 'main',
       taskFamily: activeContract.taskFamily,
+      triggerText: activeContract.triggerSemantics[0],
       inputs: values,
       intendedPostconditions: activeContract.successPostconditions,
       binding,
       currentResourceVersions,
+      now: new Date(NOW.getTime() + 12_000),
     });
     expect(exactMatch.status).toBe('matched');
     expect(
       matchActiveCapability({
         groupFolder: 'main',
         taskFamily: activeContract.taskFamily,
+        triggerText: activeContract.triggerSemantics[0],
         inputs: values,
         intendedPostconditions: [
           ...activeContract.successPostconditions,
@@ -725,6 +1492,7 @@ describe('production capability apprenticeship', () => {
         ],
         binding,
         currentResourceVersions,
+        now: new Date(NOW.getTime() + 12_000),
       }).status,
     ).toBe('none');
     const widenedBinding = { ...binding, ownerId: 'different-owner' };
@@ -732,16 +1500,19 @@ describe('production capability apprenticeship', () => {
       matchActiveCapability({
         groupFolder: 'main',
         taskFamily: activeContract.taskFamily,
+        triggerText: activeContract.triggerSemantics[0],
         inputs: values,
         intendedPostconditions: activeContract.successPostconditions,
         binding: widenedBinding,
         currentResourceVersions,
+        now: new Date(NOW.getTime() + 12_000),
       }).status,
     ).toBe('none');
     expect(() =>
       stageActiveCapabilityReuse({
         match: exactMatch,
         taskFamily: activeContract.taskFamily,
+        triggerText: activeContract.triggerSemantics[0],
         intendedPostconditions: activeContract.successPostconditions,
         binding: widenedBinding,
         normalizedInputs: values,
@@ -767,6 +1538,190 @@ describe('production capability apprenticeship', () => {
       'owner_reviewed',
       'activated',
     ]);
+  });
+
+  it('rolls back a failed canary authorization so its exact approval can be retried once', async () => {
+    const acquisition = await ownerReviewRequiredAcquisition(
+      '-atomic-canary-authorization',
+    );
+    seedHealth();
+    const staged = stageCapabilityCanary({
+      acquisitionId: acquisition.acquisitionId,
+      expectedAcquisitionVersion: acquisition.recordVersion,
+      binding: fixtureBinding,
+      authorizedSurface: fixtureBinding.channel,
+      normalizedInputs: fixtureValues,
+      health: [
+        {
+          resourceId: resource().resourceId,
+          observationId: 'fixture-production-health-1',
+          expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+        },
+      ],
+      now: new Date(NOW.getTime() + 3_000),
+    });
+    approve(staged.approval, new Date(NOW.getTime() + 4_000).toISOString());
+    let failedAtLeaseBoundary = false;
+    _setDurableContinuityTestHook(({ boundary, workId }) => {
+      if (
+        boundary === 'after_lease_acquisition' &&
+        workId === staged.run.workId
+      ) {
+        failedAtLeaseBoundary = true;
+        throw new Error('simulated atomic canary authorization loss');
+      }
+    });
+    expect(() =>
+      authorizeApprovedCapabilityCanary({
+        runId: staged.run.runId,
+        ...productionHeads(staged.run.runId),
+        binding: fixtureBinding,
+        workerId: 'atomic-canary-failure-worker',
+        now: new Date(NOW.getTime() + 5_000),
+      }),
+    ).toThrow(/atomic canary authorization loss/i);
+    _setDurableContinuityTestHook(null);
+    expect(failedAtLeaseBoundary).toBe(true);
+    expect(
+      listDurableResumeGrants({ workId: staged.run.workId, limit: 100 }),
+    ).toHaveLength(0);
+    expect(getCapabilityProductionRun(staged.run.runId)).toMatchObject({
+      status: 'awaiting_canary_approval',
+      canaryGrantId: null,
+      canaryLeaseId: null,
+    });
+    expect(
+      listCognitiveApprovalPackets({ groupFolder: 'main', limit: 500 }).find(
+        (packet) =>
+          packet.approvalPacketId === staged.approval.approvalPacketId,
+      )?.status,
+    ).toBe('approved');
+
+    const retried = authorizeApprovedCapabilityCanary({
+      runId: staged.run.runId,
+      ...productionHeads(staged.run.runId),
+      binding: fixtureBinding,
+      workerId: 'atomic-canary-retry-worker',
+      now: new Date(NOW.getTime() + 6_000),
+    });
+    expect(retried.run.status).toBe('canary_ready');
+    expect(
+      listDurableResumeGrants({ workId: staged.run.workId, limit: 100 }),
+    ).toHaveLength(1);
+  });
+
+  it('burns a persisted stale canary authorization and requires a newly staged approval', async () => {
+    const acquisition = await ownerReviewRequiredAcquisition(
+      '-burn-stale-canary-authorization',
+    );
+    seedHealth();
+    const staged = stageCapabilityCanary({
+      acquisitionId: acquisition.acquisitionId,
+      expectedAcquisitionVersion: acquisition.recordVersion,
+      binding: fixtureBinding,
+      authorizedSurface: fixtureBinding.channel,
+      normalizedInputs: fixtureValues,
+      health: [
+        {
+          resourceId: resource().resourceId,
+          observationId: 'fixture-production-health-1',
+          expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+        },
+      ],
+      now: new Date(NOW.getTime() + 3_000),
+    });
+    approve(staged.approval, new Date(NOW.getTime() + 4_000).toISOString());
+    const packet = listCognitiveApprovalPackets({
+      groupFolder: 'main',
+      limit: 500,
+    }).find(
+      (candidate) =>
+        candidate.approvalPacketId === staged.approval.approvalPacketId,
+    );
+    expect(packet?.status).toBe('approved');
+    const issued = issueDurableResumeGrant({
+      workId: staged.run.workId,
+      binding: fixtureBinding,
+      actionClass: 'operator_change',
+      approvalPacketId: packet!.approvalPacketId,
+      approvalVersion: packet!.approvalVersion,
+      now: new Date(NOW.getTime() + 5_000),
+    });
+    const consumed = consumeResumeGrantAndAcquireLease({
+      token: issued.token,
+      binding: fixtureBinding,
+      actionClass: 'operator_change',
+      workerId: 'stale-canary-authority-worker',
+      now: new Date(NOW.getTime() + 5_000),
+    });
+    expect(consumed.status).toBe('consumed');
+    const work = getDurableWorkUnit(staged.run.workId)!;
+    const run = getCapabilityProductionRun(staged.run.runId)!;
+    expect(
+      updateCapabilityProductionRunCAS({
+        expectedRevision: run.revision,
+        next: {
+          ...run,
+          updatedAt: new Date(NOW.getTime() + 5_000).toISOString(),
+          revision: run.revision + 1,
+          workVersion: work.version,
+          planVersion: work.planVersion,
+          checkpointId: work.checkpointHeadId!,
+          canaryApprovalVersion: packet!.approvalVersion || null,
+          canaryApprovalScopeDigest: packet!.scopeDigest || null,
+          canaryGrantId: issued.grant.grantId,
+          canaryLeaseId: consumed.lease!.leaseId,
+          nextSafeAction: 'Reconcile the exact persisted canary authority.',
+        },
+      }),
+    ).toBe('applied');
+    releaseDurableLease({
+      leaseId: consumed.lease!.leaseId,
+      processGeneration: consumed.lease!.processGeneration,
+      now: new Date(NOW.getTime() + 5_500),
+    });
+
+    expect(() =>
+      authorizeApprovedCapabilityCanary({
+        runId: staged.run.runId,
+        ...productionHeads(staged.run.runId),
+        binding: fixtureBinding,
+        workerId: 'stale-canary-recovery-worker',
+        now: new Date(NOW.getTime() + 6_000),
+      }),
+    ).toThrow(/was burned.*restage/i);
+    expect(getCapabilityProductionRun(staged.run.runId)).toMatchObject({
+      status: 'blocked',
+      canaryApprovalPacketId: null,
+      canaryGrantId: null,
+      canaryLeaseId: null,
+      nextSafeAction: expect.stringMatching(/restage a fresh bounded canary/i),
+    });
+    expect(
+      listCognitiveApprovalPackets({ groupFolder: 'main', limit: 500 }).find(
+        (candidate) => candidate.approvalPacketId === packet!.approvalPacketId,
+      )?.status,
+    ).toBe('expired');
+
+    const restaged = stageCapabilityCanary({
+      acquisitionId: acquisition.acquisitionId,
+      expectedAcquisitionVersion: acquisition.recordVersion,
+      binding: fixtureBinding,
+      authorizedSurface: fixtureBinding.channel,
+      normalizedInputs: fixtureValues,
+      health: [
+        {
+          resourceId: resource().resourceId,
+          observationId: 'fixture-production-health-1',
+          expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+        },
+      ],
+      now: new Date(NOW.getTime() + 7_000),
+    });
+    expect(restaged.run.runId).not.toBe(staged.run.runId);
+    expect(restaged.approval.approvalPacketId).not.toBe(
+      packet!.approvalPacketId,
+    );
   });
 
   it('does not treat a merely helpful verdict as activation evidence', async () => {
@@ -882,6 +1837,148 @@ describe('production capability apprenticeship', () => {
         now: new Date(NOW.getTime() + 69_000),
       }),
     ).toThrow(/verified exact owner verdict/i);
+  });
+
+  it('keeps private inputs, paths, and credentials out of reviewable approval text', async () => {
+    const acquisition = await ownerReviewRequiredAcquisition('-private-input');
+    seedHealth();
+    const privateTarget = '/Users/owner/private/research';
+    const privateKey = ['BSA', 'reviewability-secret-123456'].join('-');
+    const binding = {
+      ...fixtureBinding,
+      targetScopeKey: privateTarget,
+    };
+    const staged = stageCapabilityCanary({
+      acquisitionId: acquisition.acquisitionId,
+      expectedAcquisitionVersion: acquisition.recordVersion,
+      binding,
+      authorizedSurface: 'owner_cockpit',
+      normalizedInputs: {
+        key: privateKey,
+        targetScopeKey: privateTarget,
+      },
+      health: [
+        {
+          resourceId: resource().resourceId,
+          observationId: 'fixture-production-health-1',
+          expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+        },
+      ],
+      now: new Date(NOW.getTime() + 3_000),
+    });
+    expect(staged.approval.summary.length).toBeLessThanOrEqual(640);
+    expect(staged.approval.summary).toMatch(/exact=[a-f0-9]{64}$/);
+    expect(staged.approval.summary).toMatch(/target=[a-f0-9]{12}/);
+    expect(staged.approval.summary).not.toContain(privateKey);
+    expect(staged.approval.summary).not.toContain('BSA-');
+    expect(staged.approval.summary).not.toContain(privateTarget);
+    expect(staged.approval.summary).not.toContain('/Users/');
+
+    const contract = JSON.parse(
+      acquisition.candidateContractJson,
+    ) as CapabilityCandidateContract;
+    const privatePaths = [
+      '/Volumes/private/item',
+      '/mnt/private/item',
+      '/srv/private/item',
+      '/root/private/item',
+      '~/private/item',
+      String.raw`\\server\share\private\item`,
+      '../private/item',
+      'private/item',
+    ];
+    const rendered = _renderProductionApprovalSummaryForTest({
+      decision: 'canary',
+      acquisition,
+      contract: {
+        ...contract,
+        successPostconditions: [
+          `private material remains absent: ${privatePaths.join(' ')}`,
+        ],
+      },
+      contractDigest: 'a'.repeat(64),
+      scopeDigest: 'b'.repeat(64),
+      inputDigest: 'c'.repeat(64),
+      targetDigest: 'd'.repeat(64),
+    });
+    for (const privatePath of privatePaths) {
+      expect(rendered).not.toContain(privatePath);
+    }
+    expect(rendered).toContain('[redacted-path]');
+  });
+
+  it('renders every protected step literally or fails closed at the review bound', async () => {
+    const acquisition = await ownerReviewRequiredAcquisition('-multi-step');
+    const base = JSON.parse(
+      acquisition.candidateContractJson,
+    ) as CapabilityCandidateContract;
+    const first = {
+      ...base.steps[0],
+      actionClass: 'repository_write' as const,
+      approvalRequired: true,
+    };
+    const second = {
+      ...first,
+      stepId: 'step-2',
+      operationId: 'archive',
+      resourceId: 'fixture.production.archive',
+      bindingId: 'fixture.production.archive',
+      evaluatorId: 'fixture.production.archive.verify',
+    };
+    const contract: CapabilityCandidateContract = {
+      ...base,
+      steps: [first, second],
+      resourceBindings: [
+        ...base.resourceBindings,
+        {
+          resourceId: second.resourceId,
+          bindingKind: 'execution_adapter',
+          version: second.version,
+          required: true,
+        },
+      ],
+    };
+    const summary = _renderProductionApprovalSummaryForTest({
+      decision: 'canary',
+      acquisition,
+      contract,
+      contractDigest: 'a'.repeat(64),
+      scopeDigest: 'b'.repeat(64),
+      inputDigest: 'c'.repeat(64),
+      targetDigest: '1'.repeat(64),
+    });
+    expect(summary.length).toBeLessThanOrEqual(640);
+    expect(summary).toContain('r1=fixture.production.resource@');
+    expect(summary).toContain('r2=fixture.production.archive@');
+    expect(summary).toContain('step-1=lookup>r1[repository_write]');
+    expect(summary).toContain('step-2=archive>r2[repository_write]');
+    for (const postcondition of contract.successPostconditions) {
+      expect(summary).toContain(postcondition);
+    }
+    expect(summary).toMatch(/exact=[a-f0-9]{64}$/);
+
+    const oversized: CapabilityCandidateContract = {
+      ...contract,
+      steps: Array.from({ length: 12 }, (_, index) => ({
+        ...second,
+        stepId: `step-${index + 1}`,
+        operationId: `archive-${index + 1}`,
+        resourceId: `fixture.production.archive-${index + 1}`,
+        bindingId: `fixture.production.archive-${index + 1}`,
+        evaluatorId: `fixture.production.archive-${index + 1}.verify`,
+      })),
+    };
+    expect(() =>
+      _renderProductionApprovalSummaryForTest({
+        decision: 'canary',
+        acquisition,
+        contract: oversized,
+        contractDigest: 'd'.repeat(64),
+        scopeDigest: 'e'.repeat(64),
+        inputDigest: 'f'.repeat(64),
+        targetDigest: '2'.repeat(64),
+      }),
+    ).toThrow(/reviewable bound/i);
   });
 
   it('requires provenance-complete dependency health', async () => {
@@ -1003,6 +2100,81 @@ describe('production capability apprenticeship', () => {
     ).toHaveLength(1);
   });
 
+  it('joins simultaneous terminal recovery without double-counting or failing the original caller', async () => {
+    const counter = { executions: 0 };
+    const prepared = await prepareAuthorizedCanary();
+    let releaseOriginal!: () => void;
+    let markCheckpointReached!: () => void;
+    const originalMayContinue = new Promise<void>((resolve) => {
+      releaseOriginal = resolve;
+    });
+    const checkpointReached = new Promise<void>((resolve) => {
+      markCheckpointReached = resolve;
+    });
+    _setProductionCapabilityApprenticeshipTestHook(async (event) => {
+      if (event.boundary === 'after_checkpoint_before_outcome') {
+        markCheckpointReached();
+        await originalMayContinue;
+      }
+    });
+
+    const originalPromise = runCapabilityProductionExecution({
+      runId: prepared.staged.run.runId,
+      ...productionHeads(prepared.staged.run.runId),
+      binding: prepared.binding,
+      workerId: 'simultaneous-terminal-original-worker',
+      values: fixtureValues,
+      registry: liveRegistry(counter, { providerCalls: 2, costUsd: 0 }),
+      now: new Date(NOW.getTime() + 6_000),
+    });
+    await checkpointReached;
+
+    const recoverySettlement = await recoverCapabilityProductionRun({
+      runId: prepared.staged.run.runId,
+      values: fixtureValues,
+      binding: prepared.binding,
+      workerId: 'simultaneous-terminal-recovery-worker',
+      registry: liveRegistry(counter),
+      now: new Date(NOW.getTime() + 7_000),
+      clock: () => new Date(NOW.getTime() + 7_000),
+    })
+      .then(
+        (result) => ({ status: 'fulfilled' as const, result }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      )
+      .finally(() => releaseOriginal());
+    const original = await originalPromise;
+    if (recoverySettlement.status === 'rejected') {
+      throw recoverySettlement.error;
+    }
+
+    expect(recoverySettlement.result.status).toBe('verified');
+    expect(original.status).toBe('verified');
+    expect(counter.executions).toBe(1);
+    const finalRun = getCapabilityProductionRun(prepared.staged.run.runId)!;
+    expect(finalRun).toMatchObject({
+      status: 'awaiting_owner_review',
+      executionCalls: 1,
+      evaluatorCalls: 1,
+      providerCalls: 2,
+      costUsd: 0,
+    });
+    expect(
+      listCapabilityProductionTransitionReceipts({
+        runId: finalRun.runId,
+      }).filter((receipt) => receipt.transitionKind === 'canary_completed'),
+    ).toHaveLength(1);
+    const terminalOutcome = getOutcomeBySource(
+      'main',
+      'capability_acquisition',
+      finalRun.runId,
+    );
+    expect(terminalOutcome?.status).toBe('completed');
+    expect(Date.parse(terminalOutcome!.updatedAt)).toBeGreaterThanOrEqual(
+      NOW.getTime() + 7_000,
+    );
+  });
+
   it('recovers succeeded receipts before checkpoint commit without replaying the effect', async () => {
     const counter = { executions: 0 };
     const prepared = await prepareAuthorizedCanary();
@@ -1018,7 +2190,7 @@ describe('production capability apprenticeship', () => {
         binding: prepared.binding,
         workerId: 'receipt-crash-worker',
         values: fixtureValues,
-        registry: liveRegistry(counter, { providerCalls: 2, costUsd: 0.25 }),
+        registry: liveRegistry(counter, { providerCalls: 2, costUsd: 0 }),
         now: new Date(NOW.getTime() + 6_000),
       }),
     ).rejects.toThrow(/simulated production apprenticeship crash/i);
@@ -1026,7 +2198,7 @@ describe('production capability apprenticeship', () => {
 
     const crashedRun = getCapabilityProductionRun(prepared.staged.run.runId)!;
     expect(counter.executions).toBe(1);
-    expect(getDurableWorkUnit(crashedRun.workId)?.status).toBe('verifying');
+    expect(getDurableWorkUnit(crashedRun.workId)?.status).toBe('executing');
     expect(
       getOutcomeBySource('main', 'capability_acquisition', crashedRun.runId),
     ).toBeUndefined();
@@ -1043,7 +2215,7 @@ describe('production capability apprenticeship', () => {
     expect(recovered.status).toBe('verified');
     expect(counter.executions).toBe(1);
     expect(recovered.providerCalls).toBe(2);
-    expect(recovered.costUsd).toBe(0.25);
+    expect(recovered.costUsd).toBe(0);
     expect(getDurableWorkUnit(crashedRun.workId)?.status).toBe('completed');
     expect(
       getOutcomeBySource('main', 'capability_acquisition', crashedRun.runId)
@@ -1439,6 +2611,7 @@ describe('production capability apprenticeship', () => {
       activated.acquisition.candidateContractJson,
     ) as {
       taskFamily: string;
+      triggerSemantics: string[];
       successPostconditions: string[];
     };
     const currentResourceVersions = {
@@ -1449,15 +2622,18 @@ describe('production capability apprenticeship', () => {
       const match = matchActiveCapability({
         groupFolder: 'main',
         taskFamily: contract.taskFamily,
+        triggerText: contract.triggerSemantics[0],
         inputs: fixtureValues,
         intendedPostconditions: contract.successPostconditions,
         binding: prepared.binding,
         currentResourceVersions,
+        now: new Date(NOW.getTime() + (11 + sequence * 2) * 1_000),
       });
       expect(match.status).toBe('matched');
       const run = stageActiveCapabilityReuse({
         match,
         taskFamily: contract.taskFamily,
+        triggerText: contract.triggerSemantics[0],
         intendedPostconditions: contract.successPostconditions,
         binding: prepared.binding,
         normalizedInputs: fixtureValues,
@@ -1515,10 +2691,12 @@ describe('production capability apprenticeship', () => {
       matchActiveCapability({
         groupFolder: 'main',
         taskFamily: contract.taskFamily,
+        triggerText: contract.triggerSemantics[0],
         inputs: fixtureValues,
         intendedPostconditions: contract.successPostconditions,
         binding: prepared.binding,
         currentResourceVersions,
+        now: new Date(NOW.getTime() + 21_000),
       }).status,
     ).toBe('none');
   });
@@ -1773,6 +2951,7 @@ describe('production capability apprenticeship', () => {
       activated.acquisition.candidateContractJson,
     ) as {
       taskFamily: string;
+      triggerSemantics: string[];
       successPostconditions: string[];
     };
     const currentResourceVersions = {
@@ -1781,10 +2960,12 @@ describe('production capability apprenticeship', () => {
     const match = matchActiveCapability({
       groupFolder: 'main',
       taskFamily: contract.taskFamily,
+      triggerText: contract.triggerSemantics[0],
       inputs: fixtureValues,
       intendedPostconditions: contract.successPostconditions,
       binding: prepared.binding,
       currentResourceVersions,
+      now: new Date(NOW.getTime() + 12_000),
     });
     expect(match.status).toBe('matched');
     const snapshot = () => {
@@ -1840,6 +3021,7 @@ describe('production capability apprenticeship', () => {
       stageActiveCapabilityReuse({
         match,
         taskFamily: contract.taskFamily,
+        triggerText: contract.triggerSemantics[0],
         intendedPostconditions: contract.successPostconditions,
         binding: prepared.binding,
         normalizedInputs: fixtureValues,
@@ -1863,6 +3045,7 @@ describe('production capability apprenticeship', () => {
     const retried = stageActiveCapabilityReuse({
       match,
       taskFamily: contract.taskFamily,
+      triggerText: contract.triggerSemantics[0],
       intendedPostconditions: contract.successPostconditions,
       binding: prepared.binding,
       normalizedInputs: fixtureValues,
@@ -1903,34 +3086,31 @@ describe('production capability apprenticeship', () => {
     );
   });
 
-  it('rejects a trusted-chat review when the stored authorized surface differs', async () => {
+  it('rejects a canary whose approval surface differs from its canonical channel', async () => {
     const telegramBinding = {
       ...fixtureBinding,
       chatId: 'tg:main',
       channel: 'telegram',
     };
-    const prepared = await prepareCompletedCanary(undefined, {
-      binding: telegramBinding,
-      authorizedSurface: 'owner_cockpit',
-    });
-    const group: RegisteredGroup = {
-      name: 'Main',
-      folder: 'main',
-      trigger: '@Andrea',
-      added_at: NOW.toISOString(),
-      requiresTrigger: false,
-      isMain: true,
-    };
+    const acquisition = await ownerReviewRequiredAcquisition('-surface');
+    seedHealth();
     expect(() =>
-      issueCapabilityReviewTokenForTrustedChat({
-        runId: prepared.staged.run.runId,
-        channelName: 'telegram',
-        chatJid: 'tg:main',
-        group,
-        messageId: 'message-1',
-        now: new Date(NOW.getTime() + 7_000),
+      stageCapabilityCanary({
+        acquisitionId: acquisition.acquisitionId,
+        expectedAcquisitionVersion: acquisition.recordVersion,
+        binding: telegramBinding,
+        authorizedSurface: 'owner_cockpit',
+        normalizedInputs: fixtureValues,
+        health: [
+          {
+            resourceId: resource().resourceId,
+            observationId: 'fixture-production-health-1',
+            expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+          },
+        ],
+        now: new Date(NOW.getTime() + 3_000),
       }),
-    ).toThrow(/not awaiting this owner review/i);
+    ).toThrow(/canonical execution channel/i);
   });
 
   it('rejects a trusted-chat review bound to a noncanonical owner identity', async () => {
@@ -1962,5 +3142,408 @@ describe('production capability apprenticeship', () => {
         now: new Date(NOW.getTime() + 7_000),
       }),
     ).toThrow(/not awaiting this owner review/i);
+  });
+
+  it('rejects a run whose named execution grant does not own its exact lease', async () => {
+    const prepared = await prepareActiveCapability();
+    const currentResourceVersions = {
+      [resource().resourceId]: resource().version,
+    };
+    const match = matchActiveCapability({
+      groupFolder: 'main',
+      taskFamily: prepared.contract.taskFamily,
+      triggerText: prepared.contract.triggerSemantics[0],
+      inputs: fixtureValues,
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      currentResourceVersions,
+      now: new Date(NOW.getTime() + 12_000),
+    });
+    const reuse = stageActiveCapabilityReuse({
+      match,
+      taskFamily: prepared.contract.taskFamily,
+      triggerText: prepared.contract.triggerSemantics[0],
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      normalizedInputs: fixtureValues,
+      health: [
+        {
+          resourceId: resource().resourceId,
+          observationId: 'fixture-production-health-1',
+          expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+        },
+      ],
+      currentResourceVersions,
+      workerId: 'grant-tamper-stage-worker',
+      now: new Date(NOW.getTime() + 12_000),
+    });
+    const current = getCapabilityProductionRun(reuse.runId)!;
+    expect(
+      updateCapabilityProductionRunCAS({
+        expectedRevision: current.revision,
+        next: {
+          ...current,
+          updatedAt: new Date(NOW.getTime() + 13_000).toISOString(),
+          revision: current.revision + 1,
+          executionGrantId: prepared.activated.run.activationGrantId,
+        },
+      }),
+    ).toBe('applied');
+    const counter = { executions: 0 };
+    await expect(
+      runCapabilityProductionExecution({
+        runId: reuse.runId,
+        ...productionHeads(reuse.runId),
+        binding: prepared.binding,
+        workerId: 'grant-tamper-execution-worker',
+        values: fixtureValues,
+        registry: liveRegistry(counter),
+        now: new Date(NOW.getTime() + 14_000),
+      }),
+    ).rejects.toThrow(/execution authority is not exact/i);
+    expect(counter.executions).toBe(0);
+    expect(getDurableWorkLease(reuse.executionLeaseId!)?.status).toBe(
+      'released',
+    );
+    expect(
+      getCapabilityAcquisition(prepared.acquisition.acquisitionId)?.state,
+    ).toBe('active');
+  });
+
+  it('atomically pauses matching and existing runs on authoritative version drift', async () => {
+    const prepared = await prepareActiveCapability();
+    const result = matchActiveCapability({
+      groupFolder: 'main',
+      taskFamily: prepared.contract.taskFamily,
+      triggerText: prepared.contract.triggerSemantics[0],
+      inputs: fixtureValues,
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      currentResourceVersions: {
+        [resource().resourceId]: `${resource().version}-incompatible`,
+      },
+      now: new Date(NOW.getTime() + 12_000),
+    });
+    expect(result.status).toBe('none');
+    const paused = getCapabilityAcquisition(
+      prepared.acquisition.acquisitionId,
+    )!;
+    expect(paused.state).toBe('paused');
+    expect(paused.lastOutcome).toBe('version_drift');
+    expect(getCapabilityProductionRun(prepared.staged.run.runId)?.status).toBe(
+      'paused',
+    );
+    expect(
+      matchActiveCapability({
+        groupFolder: 'main',
+        taskFamily: prepared.contract.taskFamily,
+        triggerText: prepared.contract.triggerSemantics[0],
+        inputs: fixtureValues,
+        intendedPostconditions: prepared.contract.successPostconditions,
+        binding: prepared.binding,
+        currentResourceVersions: {
+          [resource().resourceId]: resource().version,
+        },
+        now: new Date(NOW.getTime() + 12_000),
+      }).status,
+    ).toBe('none');
+  });
+
+  it('atomically pauses an active capability when canonical health is stale', async () => {
+    const prepared = await prepareActiveCapability();
+    const result = matchActiveCapability({
+      groupFolder: 'main',
+      taskFamily: prepared.contract.taskFamily,
+      triggerText: prepared.contract.triggerSemantics[0],
+      inputs: fixtureValues,
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      currentResourceVersions: {
+        [resource().resourceId]: resource().version,
+      },
+      now: new Date(NOW.getTime() + 21 * 60_000),
+    });
+    expect(result.status).toBe('none');
+    const paused = getCapabilityAcquisition(
+      prepared.acquisition.acquisitionId,
+    )!;
+    expect(paused.state).toBe('paused');
+    expect(paused.lastOutcome).toBe('health_stale');
+    expect(getCapabilityProductionRun(prepared.staged.run.runId)?.status).toBe(
+      'paused',
+    );
+  });
+
+  it('binds active reuse to the observed trigger instead of caller-declared task semantics', async () => {
+    const prepared = await prepareActiveCapability();
+    const currentResourceVersions = {
+      [resource().resourceId]: resource().version,
+    };
+    const unrelated = matchActiveCapability({
+      groupFolder: 'main',
+      taskFamily: prepared.contract.taskFamily,
+      triggerText: 'delete unrelated files and publish them',
+      inputs: fixtureValues,
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      currentResourceVersions,
+      now: new Date(NOW.getTime() + 12_000),
+    });
+    expect(unrelated.status).toBe('none');
+    expect(
+      getCapabilityAcquisition(prepared.acquisition.acquisitionId)?.state,
+    ).toBe('active');
+
+    const exact = matchActiveCapability({
+      groupFolder: 'main',
+      taskFamily: prepared.contract.taskFamily,
+      triggerText: 'Please verify the production fixture.',
+      inputs: fixtureValues,
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      currentResourceVersions,
+      now: new Date(NOW.getTime() + 12_000),
+    });
+    expect(exact).toMatchObject({
+      status: 'matched',
+      triggerEvidenceDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      triggerSemanticDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    const beforeRuns = listCapabilityProductionRuns({
+      acquisitionId: prepared.acquisition.acquisitionId,
+      limit: 100,
+    }).length;
+    expect(() =>
+      stageActiveCapabilityReuse({
+        match: exact,
+        taskFamily: prepared.contract.taskFamily,
+        triggerText: 'delete unrelated files and publish them',
+        intendedPostconditions: prepared.contract.successPostconditions,
+        binding: prepared.binding,
+        normalizedInputs: fixtureValues,
+        health: [
+          {
+            resourceId: resource().resourceId,
+            observationId: 'fixture-production-health-1',
+            expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+          },
+        ],
+        currentResourceVersions,
+        workerId: 'semantic-tamper-worker',
+        now: new Date(NOW.getTime() + 12_000),
+      }),
+    ).toThrow(/active capability changed/i);
+    expect(
+      listCapabilityProductionRuns({
+        acquisitionId: prepared.acquisition.acquisitionId,
+        limit: 100,
+      }),
+    ).toHaveLength(beforeRuns);
+  });
+
+  it('preserves trigger order, repetition, negation, and exact input-role values', async () => {
+    const prepared = await prepareActiveCapability();
+    const currentResourceVersions = {
+      [resource().resourceId]: resource().version,
+    };
+    for (const triggerText of [
+      'production fixture verify',
+      'do not verify a production fixture',
+      'verify verify a production fixture',
+      'verify a production fixture from another source',
+      'verify Andrea production fixture',
+    ]) {
+      expect(
+        matchActiveCapability({
+          groupFolder: 'main',
+          taskFamily: prepared.contract.taskFamily,
+          triggerText,
+          inputs: fixtureValues,
+          intendedPostconditions: prepared.contract.successPostconditions,
+          binding: prepared.binding,
+          currentResourceVersions,
+          now: new Date(NOW.getTime() + 12_000),
+        }).status,
+      ).toBe('none');
+    }
+
+    const exact = matchActiveCapability({
+      groupFolder: 'main',
+      taskFamily: prepared.contract.taskFamily,
+      triggerText: 'Please verify the production fixture.',
+      inputs: fixtureValues,
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      currentResourceVersions,
+      now: new Date(NOW.getTime() + 12_000),
+    });
+    expect(exact).toMatchObject({
+      status: 'matched',
+      inputEvidenceDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    const beforeRuns = listCapabilityProductionRuns({
+      acquisitionId: prepared.acquisition.acquisitionId,
+      limit: 100,
+    }).length;
+    expect(() =>
+      stageActiveCapabilityReuse({
+        match: exact,
+        taskFamily: prepared.contract.taskFamily,
+        triggerText: 'Please verify the production fixture.',
+        intendedPostconditions: prepared.contract.successPostconditions,
+        binding: prepared.binding,
+        normalizedInputs: { ...fixtureValues, key: 'role-value-was-swapped' },
+        health: [
+          {
+            resourceId: resource().resourceId,
+            observationId: 'fixture-production-health-1',
+            expiresAt: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+          },
+        ],
+        currentResourceVersions,
+        workerId: 'input-role-tamper-worker',
+        now: new Date(NOW.getTime() + 12_000),
+      }),
+    ).toThrow(/active capability changed/i);
+    expect(
+      listCapabilityProductionRuns({
+        acquisitionId: prepared.acquisition.acquisitionId,
+        limit: 100,
+      }),
+    ).toHaveLength(beforeRuns);
+  });
+
+  it('advances execution time and refuses success when health expires after the effect', async () => {
+    const prepared = await prepareActiveCapability();
+    const currentResourceVersions = {
+      [resource().resourceId]: resource().version,
+    };
+    const triggerText = prepared.contract.triggerSemantics[0];
+    const match = matchActiveCapability({
+      groupFolder: 'main',
+      taskFamily: prepared.contract.taskFamily,
+      triggerText,
+      inputs: fixtureValues,
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      currentResourceVersions,
+      now: new Date(NOW.getTime() + 12_000),
+    });
+    const reuse = stageActiveCapabilityReuse({
+      match,
+      taskFamily: prepared.contract.taskFamily,
+      triggerText,
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      normalizedInputs: fixtureValues,
+      health: [
+        {
+          resourceId: resource().resourceId,
+          observationId: 'fixture-production-health-1',
+          expiresAt: new Date(NOW.getTime() + 15_000).toISOString(),
+        },
+      ],
+      currentResourceVersions,
+      workerId: 'advancing-clock-stage-worker',
+      now: new Date(NOW.getTime() + 12_000),
+    });
+    const boundaryTimes = [13_000, 14_000, 16_000, 17_000].map(
+      (offset) => new Date(NOW.getTime() + offset),
+    );
+    let clockRead = 0;
+    const counter = { executions: 0 };
+    await expect(
+      runCapabilityProductionExecution({
+        runId: reuse.runId,
+        ...productionHeads(reuse.runId),
+        binding: prepared.binding,
+        workerId: 'advancing-clock-execution-worker',
+        values: fixtureValues,
+        registry: liveRegistry(counter),
+        now: boundaryTimes[0],
+        clock: () =>
+          boundaryTimes[Math.min(clockRead++, boundaryTimes.length - 1)],
+      }),
+    ).rejects.toThrow(/health expired after the effect|indeterminate/i);
+    expect(counter.executions).toBe(1);
+    expect(getCapabilityProductionRun(reuse.runId)?.status).not.toBe(
+      'awaiting_owner_review',
+    );
+    expect(
+      listDurableEffectReceipts({ workId: reuse.workId, limit: 100 }).some(
+        (receipt) => receipt.status === 'unknown',
+      ),
+    ).toBe(true);
+  });
+
+  it('rechecks authority after the async receipt boundary before terminal success', async () => {
+    const prepared = await prepareActiveCapability();
+    const currentResourceVersions = {
+      [resource().resourceId]: resource().version,
+    };
+    const triggerText = prepared.contract.triggerSemantics[0];
+    const match = matchActiveCapability({
+      groupFolder: 'main',
+      taskFamily: prepared.contract.taskFamily,
+      triggerText,
+      inputs: fixtureValues,
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      currentResourceVersions,
+      now: new Date(NOW.getTime() + 12_000),
+    });
+    const reuse = stageActiveCapabilityReuse({
+      match,
+      taskFamily: prepared.contract.taskFamily,
+      triggerText,
+      intendedPostconditions: prepared.contract.successPostconditions,
+      binding: prepared.binding,
+      normalizedInputs: fixtureValues,
+      health: [
+        {
+          resourceId: resource().resourceId,
+          observationId: 'fixture-production-health-1',
+          expiresAt: new Date(NOW.getTime() + 20_000).toISOString(),
+        },
+      ],
+      currentResourceVersions,
+      workerId: 'terminal-boundary-stage-worker',
+      now: new Date(NOW.getTime() + 12_000),
+    });
+    _setProductionCapabilityApprenticeshipTestHook(async (event) => {
+      if (event.boundary === 'after_receipts_before_checkpoint') {
+        await Promise.resolve();
+      }
+    });
+    const boundaryTimes = [13_000, 14_000, 15_000, 16_000, 17_000, 21_000].map(
+      (offset) => new Date(NOW.getTime() + offset),
+    );
+    let clockRead = 0;
+    const counter = { executions: 0 };
+    await expect(
+      runCapabilityProductionExecution({
+        runId: reuse.runId,
+        ...productionHeads(reuse.runId),
+        binding: prepared.binding,
+        workerId: 'terminal-boundary-execution-worker',
+        values: fixtureValues,
+        registry: liveRegistry(counter),
+        now: boundaryTimes[0],
+        clock: () =>
+          boundaryTimes[Math.min(clockRead++, boundaryTimes.length - 1)],
+      }),
+    ).rejects.toThrow(/preflight is stale|health|indeterminate/i);
+    expect(counter.executions).toBe(1);
+    // The execution is first made indeterminate; canonical stale-health
+    // reconciliation then applies the stricter paused terminal state.
+    expect(getCapabilityProductionRun(reuse.runId)?.status).toBe('paused');
+    expect(
+      getOutcomeBySource('main', 'capability_acquisition', reuse.runId),
+    ).toBeUndefined();
+    expect(
+      listDurableWorkCheckpoints({ workId: reuse.workId, limit: 100 }).some(
+        (checkpoint) => checkpoint.status === 'completed',
+      ),
+    ).toBe(false);
   });
 });

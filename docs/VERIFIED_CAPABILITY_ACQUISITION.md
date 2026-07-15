@@ -138,8 +138,9 @@ owner fixtures and cannot create genuine owner evidence or a live activation.
 
 The production bridge is specified in
 [Verified Production Apprenticeship](VERIFIED_PRODUCTION_APPRENTICESHIP.md).
-It keeps exact canary authorization, the owner's verdict on the
-completed canary, and later activation approval as three distinct decisions;
+It keeps exact canary authorization, an action-specific approval before any
+protected production plan, the owner's verdict on the completed canary, and
+later activation approval as distinct decisions;
 defines the canonical evidence join and monitored-reuse boundary; and requires
 pause, quarantine, revocation, and historical negative evidence to remain
 enforceable. Its 22/22 synthetic certification is repository evidence, not a
@@ -164,6 +165,13 @@ approval requirements. The only unapproved file-write class is a certification
 sandbox write inside an exactly marked disposable root under the system
 temporary directory; it cannot target the canonical repository or become a
 production action.
+
+The certification sandbox is trusted in-process infrastructure, not OS
+isolation. Its independently verified durable cleanup receipts prove fixture
+cleanup only. Production contracts with non-empty rollback binding IDs are
+rejected fail-closed; Andrea does not infer or execute a generalized rollback
+from descriptive text, and an unknown or partial effect is never relabeled as
+success because a rollback was proposed.
 
 Durable records keep bounded metadata, opaque references, hashes, and redacted
 structured evidence. They do not store raw research bodies, messages, prompts,

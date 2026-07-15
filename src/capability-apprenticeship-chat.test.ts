@@ -11,6 +11,7 @@ import type {
   CapabilityAcquisitionRecord,
   CapabilityProductionRunRecord,
   CapabilityProductionTransitionReceipt,
+  CognitiveApprovalPacket,
   RegisteredGroup,
 } from './types.js';
 
@@ -180,11 +181,49 @@ function receipt(
   };
 }
 
+function approvalPacket(
+  run: CapabilityProductionRunRecord,
+  overrides: Partial<CognitiveApprovalPacket> = {},
+): CognitiveApprovalPacket {
+  return {
+    approvalPacketId: run.canaryApprovalPacketId as string,
+    createdAt: '2026-07-15T12:00:00.000Z',
+    updatedAt: '2026-07-15T12:00:00.000Z',
+    runId: 'cognitive:capability-approval-fixture',
+    toolId: 'durable:operator_change',
+    actionClass: 'operator_change',
+    status: 'staged',
+    summary: 'Approve one exact bounded canary.',
+    approvalChannel: null,
+    approvalKey: 'capability-approval-fixture',
+    expiresAt: '2026-07-15T13:00:00.000Z',
+    approvalVersion: 1,
+    scopeDigest: '1'.repeat(64),
+    summaryDigest: '2'.repeat(64),
+    durableWorkId: run.workId,
+    durableCheckpointId: run.checkpointId,
+    planVersion: run.planVersion,
+    targetScopeDigest: run.targetScopeHash,
+    decisionJson: '{}',
+    privacyJson: '{"metadataOnly":true}',
+    ...overrides,
+  };
+}
+
+function approvalCommand(packet: CognitiveApprovalPacket): string {
+  return `approve capability packet ${packet.approvalPacketId} version ${packet.status === 'approved' ? (packet.approvalVersion || 1) - 1 : packet.approvalVersion} scope ${packet.scopeDigest} summary ${packet.summaryDigest}`;
+}
+
 function dependencies(
   statuses: CapabilityApprenticeshipStatus[],
 ): CapabilityChatDispatcherDependencies & {
   listAcquisitions: ReturnType<typeof vi.fn>;
+  getAcquisition: ReturnType<typeof vi.fn>;
+  getRun: ReturnType<typeof vi.fn>;
   getStatus: ReturnType<typeof vi.fn>;
+  getApprovalPacket: ReturnType<typeof vi.fn>;
+  getApprovalBinding: ReturnType<typeof vi.fn>;
+  approvePacket: ReturnType<typeof vi.fn>;
   issueReviewToken: ReturnType<typeof vi.fn>;
   recordVerdict: ReturnType<typeof vi.fn>;
   issueControlToken: ReturnType<typeof vi.fn>;
@@ -195,11 +234,21 @@ function dependencies(
   );
   const first = statuses[0]!;
   const firstRun = first.runs[0]!;
+  const runById = new Map(
+    statuses.flatMap((item) =>
+      item.runs.map((run) => [run.runId, run] as const),
+    ),
+  );
   return {
     listAcquisitions: vi.fn(() => statuses.map((item) => item.acquisition)),
+    getAcquisition: vi.fn((id: string) => byId.get(id)?.acquisition),
+    getRun: vi.fn((id: string) => runById.get(id)),
     getStatus: vi.fn(
       (id: string) => byId.get(id) as CapabilityApprenticeshipStatus,
     ),
+    getApprovalPacket: vi.fn(() => undefined),
+    getApprovalBinding: vi.fn(() => null),
+    approvePacket: vi.fn(() => ({ status: 'not_found_or_scope_mismatch' })),
     issueReviewToken: vi.fn(() => 'private-review-token'),
     recordVerdict: vi.fn(() => ({
       acquisition: { ...first.acquisition, state: 'canary_ready' },
@@ -221,7 +270,12 @@ function dependencies(
     })),
   } as CapabilityChatDispatcherDependencies & {
     listAcquisitions: ReturnType<typeof vi.fn>;
+    getAcquisition: ReturnType<typeof vi.fn>;
+    getRun: ReturnType<typeof vi.fn>;
     getStatus: ReturnType<typeof vi.fn>;
+    getApprovalPacket: ReturnType<typeof vi.fn>;
+    getApprovalBinding: ReturnType<typeof vi.fn>;
+    approvePacket: ReturnType<typeof vi.fn>;
     issueReviewToken: ReturnType<typeof vi.fn>;
     recordVerdict: ReturnType<typeof vi.fn>;
     issueControlToken: ReturnType<typeof vi.fn>;
@@ -264,7 +318,7 @@ afterEach(() => {
 });
 
 describe('capability apprenticeship trusted-chat actions', () => {
-  it('parses only explicit capability verdicts and controls', () => {
+  it('parses only explicit capability verdicts, controls, and bounded status intents', () => {
     for (const verdict of [
       'verified',
       'helpful',
@@ -304,14 +358,62 @@ describe('capability apprenticeship trusted-chat actions', () => {
       actionKind: 'show_evidence',
       reference: 'capability-acquisition:fixture',
     });
+    expect(parseCapabilityChatOwnerAction('What are you learning?')).toEqual({
+      kind: 'status',
+      queryKind: 'learning',
+      reference: null,
+    });
+    expect(
+      parseCapabilityChatOwnerAction(
+        'is capability capability-acquisition:fixture ready for a canary?',
+      ),
+    ).toEqual({
+      kind: 'status',
+      queryKind: 'canary_readiness',
+      reference: 'capability-acquisition:fixture',
+    });
+    expect(
+      parseCapabilityChatOwnerAction('what capability needs review?'),
+    ).toEqual({
+      kind: 'status',
+      queryKind: 'review_needed',
+      reference: null,
+    });
+    expect(parseCapabilityChatOwnerAction('show capability status')).toEqual({
+      kind: 'status',
+      queryKind: 'current_state',
+      reference: null,
+    });
+    expect(
+      parseCapabilityChatOwnerAction(
+        'activate capability capability-acquisition:fixture exact version',
+      ),
+    ).toEqual({
+      kind: 'status',
+      queryKind: 'activate_exact_version',
+      reference: 'capability-acquisition:fixture',
+    });
+    expect(
+      parseCapabilityChatOwnerAction(
+        `approve capability packet capability-approval:fixture version 1 scope ${'1'.repeat(64)} summary ${'2'.repeat(64)}`,
+      ),
+    ).toEqual({
+      kind: 'approval',
+      approvalPacketId: 'capability-approval:fixture',
+      approvalVersion: 1,
+      scopeDigest: '1'.repeat(64),
+      summaryDigest: '2'.repeat(64),
+    });
     for (const text of [
       'Helpful',
       'that was helpful',
       'blocked',
       'verified',
-      'show capability status',
       'activate capability',
       'approve the capability',
+      'approve the production action',
+      `approve capability packet capability-approval:fixture version 1 scope ${'1'.repeat(63)} summary ${'2'.repeat(64)}`,
+      `approve capability packet capability-approval:fixture version 1 scope ${'1'.repeat(64)} summary ${'2'.repeat(64)} please`,
       'pause that skill',
       'capability verdict: unsupported',
     ]) {
@@ -346,6 +448,180 @@ describe('capability apprenticeship trusted-chat actions', () => {
     expect(result.text).toContain('Activation was not proposed or approved');
     expect(result.text).not.toContain('private-review-token');
     expect(result.text).not.toContain('PRIVATE');
+  });
+
+  it('approves one exact current packet on its bound Telegram conversation', () => {
+    const record = acquisition('capability-acquisition:approval');
+    const run = productionRun({
+      acquisition: record,
+      runId: 'capability-run:approval',
+      status: 'awaiting_canary_approval',
+    });
+    let packet = approvalPacket(run);
+    const deps = dependencies([status(record, run)]);
+    deps.getApprovalPacket.mockImplementation(() => packet);
+    deps.getApprovalBinding.mockReturnValue({
+      run,
+      authorizedSurface: 'telegram',
+      trustedChatSurface: 'telegram',
+      ambiguous: false,
+    });
+    deps.approvePacket.mockImplementation(() => {
+      packet = {
+        ...packet,
+        status: 'approved',
+        approvalVersion: 2,
+        approvalChannel: 'telegram',
+      };
+      return { status: 'approved', approvalVersion: 2 };
+    });
+
+    const result = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(approvalCommand(packet)),
+      deps,
+    );
+
+    expect(result).toMatchObject({ handled: true, action: 'approval' });
+    expect(result.text).toContain('Approved exact capability packet');
+    expect(result.text).toContain('no capability action was executed');
+    expect(deps.approvePacket).toHaveBeenCalledWith({
+      approvalPacketId: packet.approvalPacketId,
+      groupFolder: 'main',
+      expectedSummary: packet.summary,
+      expectedApprovalVersion: 1,
+      expectedScopeDigest: '1'.repeat(64),
+      now: '2026-07-15T12:07:00.000Z',
+      approvalChannel: 'telegram',
+    });
+  });
+
+  it.each([
+    ['version', { approvalVersion: 2 }],
+    ['scope', { scopeDigest: '3'.repeat(64) }],
+    ['summary', { summaryDigest: '4'.repeat(64) }],
+  ] as const)(
+    'refuses a command with the wrong exact %s binding',
+    (_label, commandOverride) => {
+      const record = acquisition('capability-acquisition:mismatch');
+      const run = productionRun({
+        acquisition: record,
+        runId: 'capability-run:mismatch',
+        status: 'awaiting_canary_approval',
+      });
+      const packet = approvalPacket(run);
+      const commandPacket = { ...packet, ...commandOverride };
+      const deps = dependencies([status(record, run)]);
+      deps.getApprovalPacket.mockReturnValue(packet);
+      deps.getApprovalBinding.mockReturnValue({
+        run,
+        authorizedSurface: 'telegram',
+        trustedChatSurface: 'telegram',
+        ambiguous: false,
+      });
+
+      const result = dispatchCapabilityApprenticeshipOwnerAction(
+        telegramInput(approvalCommand(commandPacket)),
+        deps,
+      );
+
+      expect(result.action).toBe('approval');
+      expect(result.text).toContain('no longer matches canonical truth');
+      expect(deps.approvePacket).not.toHaveBeenCalled();
+    },
+  );
+
+  it('refuses a wrong chat, wrong channel binding, and ambiguous packet without CAS', () => {
+    const record = acquisition('capability-acquisition:surface');
+    const run = productionRun({
+      acquisition: record,
+      runId: 'capability-run:surface',
+      status: 'awaiting_canary_approval',
+    });
+    const packet = approvalPacket(run);
+    const deps = dependencies([status(record, run)]);
+    deps.getApprovalPacket.mockReturnValue(packet);
+    deps.getApprovalBinding.mockReturnValue({
+      run,
+      authorizedSurface: 'telegram',
+      trustedChatSurface: 'telegram',
+      ambiguous: false,
+    });
+
+    const wrongChat = dispatchCapabilityApprenticeshipOwnerAction(
+      { ...telegramInput(approvalCommand(packet)), chatJid: 'tg:other' },
+      deps,
+    );
+    expect(wrongChat.action).toBe('restricted');
+
+    deps.getApprovalBinding.mockReturnValueOnce({
+      run,
+      authorizedSurface: 'bluebubbles',
+      trustedChatSurface: 'bluebubbles',
+      ambiguous: false,
+    });
+    const wrongChannel = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(approvalCommand(packet)),
+      deps,
+    );
+    expect(wrongChannel.action).toBe('restricted');
+
+    deps.getApprovalBinding.mockReturnValueOnce({
+      run: null,
+      authorizedSurface: 'ambiguous',
+      trustedChatSurface: 'telegram',
+      ambiguous: true,
+    });
+    const ambiguous = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(approvalCommand(packet)),
+      deps,
+    );
+    expect(ambiguous.text).toContain(
+      'No one exact canonical capability packet',
+    );
+    expect(deps.approvePacket).not.toHaveBeenCalled();
+  });
+
+  it('reports expiration and idempotent replay from current packet truth', () => {
+    const record = acquisition('capability-acquisition:decision-truth');
+    const run = productionRun({
+      acquisition: record,
+      runId: 'capability-run:decision-truth',
+      status: 'awaiting_canary_approval',
+    });
+    let packet = approvalPacket(run);
+    const deps = dependencies([status(record, run)]);
+    deps.getApprovalPacket.mockImplementation(() => packet);
+    deps.getApprovalBinding.mockReturnValue({
+      run,
+      authorizedSurface: 'telegram',
+      trustedChatSurface: 'telegram',
+      ambiguous: false,
+    });
+    deps.approvePacket.mockImplementation(() => {
+      packet = { ...packet, status: 'expired' };
+      return { status: 'expired' };
+    });
+
+    const expired = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(approvalCommand(packet)),
+      deps,
+    );
+    expect(expired.text).toContain('is expired');
+    expect(deps.approvePacket).toHaveBeenCalledTimes(1);
+
+    packet = {
+      ...approvalPacket(run),
+      status: 'approved',
+      approvalVersion: 2,
+      approvalChannel: 'telegram',
+    };
+    deps.approvePacket.mockClear();
+    const replay = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(approvalCommand(packet)),
+      deps,
+    );
+    expect(replay.text).toContain('already approved on this exact telegram');
+    expect(deps.approvePacket).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -478,6 +754,76 @@ describe('capability apprenticeship trusted-chat actions', () => {
     );
   });
 
+  it('resolves an explicit acquisition and run outside the 20-item overview window', () => {
+    const statuses = Array.from({ length: 21 }, (_, index) => {
+      const record = acquisition(
+        `capability-acquisition:page-${index}`,
+        'active',
+      );
+      const run = productionRun({
+        acquisition: record,
+        runId: `capability-run:page-${index}`,
+        status: 'active',
+      });
+      return status(record, run);
+    });
+    const target = statuses[20]!;
+    const targetRun = target.runs[0]!;
+    const deps = dependencies(statuses);
+    deps.listAcquisitions.mockReturnValue(
+      statuses.slice(0, 20).map((item) => item.acquisition),
+    );
+
+    const byAcquisition = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(
+        `is capability ${target.acquisition.acquisitionId} active?`,
+      ),
+      deps,
+    );
+    expect(byAcquisition.text).toContain(
+      `Capability ${target.acquisition.acquisitionId} is active`,
+    );
+
+    const byRun = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(`capability verdict: helpful ${targetRun.runId}`),
+      deps,
+    );
+    expect(byRun.action).toBe('review');
+    expect(deps.issueReviewToken).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: targetRun.runId }),
+    );
+    expect(deps.listAcquisitions).not.toHaveBeenCalled();
+  });
+
+  it('does not retarget lifecycle control from an exact older run to the latest run', () => {
+    const record = acquisition('capability-acquisition:old-run', 'active');
+    const latest = productionRun({
+      acquisition: record,
+      runId: 'capability-run:latest',
+      status: 'active',
+    });
+    const older = {
+      ...productionRun({
+        acquisition: record,
+        runId: 'capability-run:older-than-window',
+        status: 'active',
+      }),
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    };
+    const deps = dependencies([status(record, latest)]);
+    deps.getRun.mockImplementation((id: string) =>
+      id === older.runId ? older : id === latest.runId ? latest : undefined,
+    );
+
+    const result = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(`pause capability ${older.runId}`),
+      deps,
+    );
+
+    expect(result.action).toBe('disambiguation');
+    expect(deps.issueControlToken).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['pause capability', 'pause'],
     ['revoke that canary', 'revoke'],
@@ -586,11 +932,216 @@ describe('capability apprenticeship trusted-chat actions', () => {
     expect(alias.action).toBe('restricted');
   });
 
-  it('leaves generic Helpful and status requests to their existing handlers', () => {
+  it('approves only on the configured BlueBubbles self-thread binding', () => {
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;owner@example.invalid';
+    const chatJid = 'bb:iMessage;-;owner@example.invalid';
+    const record = acquisition('capability-acquisition:bb-approval');
+    const run = productionRun({
+      acquisition: record,
+      channel: 'bluebubbles',
+      chatJid,
+      status: 'awaiting_canary_approval',
+    });
+    let packet = approvalPacket(run);
+    const deps = dependencies([status(record, run)]);
+    deps.getApprovalPacket.mockImplementation(() => packet);
+    deps.getApprovalBinding.mockReturnValue({
+      run,
+      authorizedSurface: 'bluebubbles',
+      trustedChatSurface: 'bluebubbles',
+      ambiguous: false,
+    });
+    deps.approvePacket.mockImplementation(() => {
+      packet = {
+        ...packet,
+        status: 'approved',
+        approvalVersion: 2,
+        approvalChannel: 'bluebubbles',
+      };
+      return { status: 'approved', approvalVersion: 2 };
+    });
+
+    const result = dispatchCapabilityApprenticeshipOwnerAction(
+      {
+        text: approvalCommand(packet),
+        channelName: 'bluebubbles',
+        chatJid,
+        group: blueBubblesGroup,
+        now: '2026-07-15T12:07:00.000Z',
+      },
+      deps,
+    );
+    expect(result.text).toContain('this bluebubbles conversation');
+    expect(deps.approvePacket).toHaveBeenCalledWith(
+      expect.objectContaining({ approvalChannel: 'bluebubbles' }),
+    );
+  });
+
+  it('reports bounded learning and truthful pre-canary staging state without mutation', () => {
+    const record = acquisition(
+      'capability-acquisition:pre-canary',
+      'owner_review_required',
+    );
+    const candidateStatus: CapabilityApprenticeshipStatus = {
+      acquisition: record,
+      runs: [],
+      pendingAction: 'none',
+      stateLabel: 'owner_review_required',
+      ownerControlSummary: 'Metadata only.',
+    };
+    const deps = dependencies([candidateStatus]);
+    let tick = 100;
+    deps.monotonicNow = vi.fn(() => {
+      const value = tick;
+      tick += 7.5;
+      return value;
+    });
+
+    const learning = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput('What are you learning?'),
+      deps,
+    );
+    expect(learning).toMatchObject({ handled: true, action: 'status' });
+    expect(learning.text).toContain('pending canary_staging');
+    expect(learning.timings).toEqual({ totalMs: 7.5 });
+    expect(learning.text).toContain('Status lookup timing (local): 7.5 ms.');
+    expect(learning.text).not.toContain('PRIVATE');
+
+    const ready = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(
+        `is capability ${record.acquisitionId} ready for a canary?`,
+      ),
+      deps,
+    );
+    expect(ready.text).toContain(
+      'canonical candidate exists; ready for exact trusted-chat canary staging',
+    );
+    expect(deps.issueReviewToken).not.toHaveBeenCalled();
+    expect(deps.recordVerdict).not.toHaveBeenCalled();
+    expect(deps.issueControlToken).not.toHaveBeenCalled();
+  });
+
+  it('explains a pending action-specific approval without approving or consuming it', () => {
+    const record = acquisition('capability-acquisition:protected');
+    const run = productionRun({
+      acquisition: record,
+      runId: 'capability-run:protected',
+      status: 'awaiting_action_approval',
+    });
+    const deps = dependencies([
+      {
+        acquisition: record,
+        runs: [run],
+        pendingAction: 'action_approval',
+        stateLabel: record.state,
+        ownerControlSummary: 'Metadata only.',
+      },
+    ]);
+
+    const result = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(
+        `is capability ${record.acquisitionId} ready for a canary?`,
+      ),
+      deps,
+    );
+
+    expect(result).toMatchObject({ handled: true, action: 'status' });
+    expect(result.text).toContain(
+      'awaiting a separate action-specific approval on this exact trusted chat',
+    );
+    expect(result.text).toContain(
+      'canary or activation approval cannot substitute',
+    );
+    expect(deps.issueReviewToken).not.toHaveBeenCalled();
+    expect(deps.recordVerdict).not.toHaveBeenCalled();
+    expect(deps.issueControlToken).not.toHaveBeenCalled();
+    expect(deps.applyControl).not.toHaveBeenCalled();
+  });
+
+  it('reports review, active, and pause truth without fabricating state', () => {
+    const paused = {
+      ...acquisition('capability-acquisition:paused', 'paused'),
+      correctionCount: 1,
+      negativeOutcomeCount: 1,
+    };
+    const pausedRun = productionRun({
+      acquisition: paused,
+      runId: 'capability-run:paused',
+      status: 'paused',
+    });
+    const review = acquisition('capability-acquisition:review');
+    const reviewRun = productionRun({
+      acquisition: review,
+      runId: 'capability-run:review',
+      status: 'awaiting_owner_review',
+    });
+    const deps = dependencies([
+      status(paused, pausedRun),
+      status(review, reviewRun),
+    ]);
+
+    const needsReview = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput('what capability needs review?'),
+      deps,
+    );
+    expect(needsReview.text).toContain(reviewRun.runId);
+    expect(needsReview.text).not.toContain(pausedRun.runId);
+
+    const why = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(`why is capability ${paused.acquisitionId} paused?`),
+      deps,
+    );
+    expect(why.text).toContain('Recorded correction count: 1');
+    expect(why.text).toContain('negative outcome count: 1');
+    expect(why.text).toContain('does not invent a pause reason');
+
+    const ambiguous = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput('is that capability active?'),
+      deps,
+    );
+    expect(ambiguous.action).toBe('disambiguation');
+    expect(deps.issueReviewToken).not.toHaveBeenCalled();
+    expect(deps.issueControlToken).not.toHaveBeenCalled();
+  });
+
+  it('treats canary-only and exact-version activation language as safe lifecycle guidance', () => {
+    const record = acquisition();
+    const run = productionRun({
+      acquisition: record,
+      status: 'owner_reviewed',
+    });
+    const deps = dependencies([status(record, run)]);
+
+    const canaryOnly = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(`keep capability ${record.acquisitionId} canary-only`),
+      deps,
+    );
+    expect(canaryOnly).toMatchObject({ handled: true, action: 'status' });
+    expect(canaryOnly.text).toContain('I did not activate it');
+
+    const activate = dispatchCapabilityApprenticeshipOwnerAction(
+      telegramInput(
+        `activate capability ${record.acquisitionId} exact version`,
+      ),
+      deps,
+    );
+    expect(activate.text).toContain('Exact activation request recognized');
+    expect(activate.text).toContain(
+      'I did not activate it, stage an approval, approve a packet, or invent an owner review',
+    );
+    expect(deps.issueReviewToken).not.toHaveBeenCalled();
+    expect(deps.recordVerdict).not.toHaveBeenCalled();
+    expect(deps.issueControlToken).not.toHaveBeenCalled();
+    expect(deps.applyControl).not.toHaveBeenCalled();
+  });
+
+  it('leaves ordinary non-apprenticeship chat with its existing handler', () => {
     const record = acquisition();
     const run = productionRun({ acquisition: record });
     const deps = dependencies([status(record, run)]);
-    for (const text of ['Helpful', 'show capability status']) {
+    for (const text of ['Helpful', 'Help me summarize this ordinary note.']) {
       expect(
         dispatchCapabilityApprenticeshipOwnerAction(telegramInput(text), deps),
       ).toEqual({ handled: false });

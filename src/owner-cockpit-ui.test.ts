@@ -52,14 +52,20 @@ function snapshot() {
           confidence: 0.94,
           correctionCount: 0,
           negativeOutcomeCount: 0,
-          pendingAction: 'owner_review',
+          pendingAction: 'action_approval',
           ownerReviewRunId: 'capability-run:fixture',
           ownerReviewVerdict: 'verified',
           ownerReviewRevision: 2,
-          activationProposalRunId: 'capability-run:fixture',
+          activationProposalRunId: null,
           activationRunId: null,
+          activationAvailable: false,
+          activationGuidance:
+            'The cockpit cannot activate capabilities because it has no active-reuse request lane.',
           controlsAvailable: true,
-          evidenceIds: ['capability-outcome:fixture'],
+          evidenceIds: [
+            'approval:trusted-chat-action',
+            'capability-outcome:fixture',
+          ],
           runs: [
             {
               id: 'capability-run:fixture',
@@ -67,6 +73,7 @@ function snapshot() {
               status: 'owner_reviewed',
               revision: 7,
               actionClass: 'local_lookup',
+              authorizedSurface: 'owner_cockpit',
               reviewEligible: true,
               metrics: { latencyMs: 125, providerCalls: 0, costUsd: 0 },
               review: {
@@ -82,6 +89,7 @@ function snapshot() {
               status: 'awaiting_owner_review',
               revision: 3,
               actionClass: 'local_lookup',
+              authorizedSurface: 'owner_cockpit',
               reviewEligible: true,
               metrics: { latencyMs: 75, providerCalls: 0, costUsd: 0 },
               review: null,
@@ -214,13 +222,17 @@ describe('owner cockpit capability apprenticeship UI', () => {
     const html = harness.elements.get('apprenticeship')?.innerHTML || '';
     expect(html).toContain('Capability apprenticeship metrics');
     expect(html).toContain('capability-outcome:fixture');
+    expect(html).toContain('approval:trusted-chat-action');
+    expect(html).toContain('Pending action: action approval');
     expect(html).toContain('Owner review: Verified');
+    expect(html).toContain('bound to owner_cockpit');
     expect(html).toContain('Helpful (not verified)');
     expect(html).toContain('current revision 2');
     expect(
       html.match(/aria-label="Review this exact capability run"/g),
     ).toHaveLength(2);
-    expect(html).toContain('<label for="capability-target-0">');
+    expect(html).toContain('Activation stays on the executable trusted chat');
+    expect(html).toContain('no active-reuse request lane');
     for (const verdict of [
       'verified',
       'helpful',
@@ -235,8 +247,9 @@ describe('owner cockpit capability apprenticeship UI', () => {
     expect(html).toContain('data-capability-control="pause"');
     expect(html).toContain('data-capability-control="revoke"');
     expect(html).toContain('data-capability-control="retire"');
-    expect(html).toContain('data-capability-propose=');
-    expect(html.match(/data-capability-propose=/g)).toHaveLength(1);
+    expect(html).not.toContain('data-capability-propose=');
+    expect(html).not.toContain('data-capability-activate=');
+    expect(html).not.toContain('<label for="capability-target-0">');
     expect(html).toContain('data-capability-run="capability-run:older-reuse"');
     expect(html).not.toContain('PRIVATE');
   });
@@ -293,7 +306,7 @@ describe('owner cockpit capability apprenticeship UI', () => {
     ]);
   });
 
-  it('keeps evidence, control, proposal, approval, and activation actions separate', async () => {
+  it('keeps evidence and lifecycle controls separate without exposing cockpit activation', async () => {
     const harness = cockpitHarness();
     await vi.waitFor(() =>
       expect(harness.elements.get('apprenticeship')?.innerHTML).toContain(
@@ -317,14 +330,6 @@ describe('owner cockpit capability apprenticeship UI', () => {
       capabilityControl: 'retire',
       capabilityId: 'capability-acquisition:fixture',
     });
-    await harness.click({
-      capabilityPropose: 'capability-acquisition:fixture',
-      capabilityRun: 'capability-run:fixture',
-    });
-    await harness.click({
-      capabilityActivate: 'capability-acquisition:fixture',
-      capabilityRun: 'capability-run:fixture',
-    });
 
     expect(harness.posts).toEqual([
       {
@@ -342,20 +347,6 @@ describe('owner cockpit capability apprenticeship UI', () => {
       {
         path: '/api/v1/capability-apprenticeship/acquisitions/capability-acquisition%3Afixture/retire',
         body: { confirmation: 'RETIRE' },
-      },
-      {
-        path: '/api/v1/capability-apprenticeship/acquisitions/capability-acquisition%3Afixture/runs/capability-run%3Afixture/activation-proposal',
-        body: {
-          confirmation: 'PROPOSE_ACTIVATION',
-          targetScopeKey: 'fixture-target',
-        },
-      },
-      {
-        path: '/api/v1/capability-apprenticeship/acquisitions/capability-acquisition%3Afixture/runs/capability-run%3Afixture/activate',
-        body: {
-          confirmation: 'ACTIVATE_APPROVED_CAPABILITY',
-          targetScopeKey: 'fixture-target',
-        },
       },
     ]);
   });

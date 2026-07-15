@@ -8414,6 +8414,7 @@ export type CapabilityProductionRunKind = 'canary' | 'active_reuse';
 export type CapabilityProductionRunStatus =
   | 'proposed'
   | 'awaiting_canary_approval'
+  | 'awaiting_action_approval'
   | 'canary_ready'
   | 'running'
   | 'awaiting_owner_review'

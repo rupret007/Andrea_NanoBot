@@ -38,6 +38,12 @@ jobs:
       - name: Novel capability mastery certification
         run: npm run certify:novel-capability-mastery
 
+      - name: Production apprenticeship certification policy
+        run: npm run test:production-capability-apprenticeship:certification-gate
+
+      - name: Production apprenticeship certification
+        run: npm run certify:production-capability-apprenticeship
+
       - name: Verify real Git content-state continuity
         if: runner.os == 'Linux'
         run: npm run check:repository-state-content

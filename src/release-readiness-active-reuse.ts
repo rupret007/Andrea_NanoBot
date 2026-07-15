@@ -72,6 +72,15 @@ export interface ReleaseReadinessActiveReuseResult {
   text?: string;
   action?: ReleaseReadinessActiveReuseAction;
   runId?: string;
+  timings?: ReleaseReadinessActiveReuseTimings;
+}
+
+export interface ReleaseReadinessActiveReuseTimings {
+  matchMs: number;
+  healthMs: number;
+  stageMs: number;
+  executeMs: number;
+  totalMs: number;
 }
 
 export interface ReleaseReadinessActiveReuseDependencies {
@@ -88,16 +97,19 @@ export interface ReleaseReadinessActiveReuseDependencies {
   match: (params: {
     groupFolder: string;
     taskFamily: string;
+    triggerText: string;
     inputs: Record<string, unknown>;
     intendedPostconditions: string[];
     binding: DurableWorkBindingInput;
     currentResourceVersions: Record<string, string>;
+    now?: Date | string;
   }) => ActiveCapabilityMatch;
   stage: typeof stageActiveCapabilityReuse;
   execute: typeof runCapabilityProductionExecution;
   createRegistry: () => ProductionCapabilityBindingRegistry;
   buildContract: () => CapabilityCandidateContract;
   getResource: () => CapabilityResourceDescriptor;
+  monotonicNow: () => number;
 }
 
 const DEFAULT_DEPENDENCIES: ReleaseReadinessActiveReuseDependencies = {
@@ -110,7 +122,56 @@ const DEFAULT_DEPENDENCIES: ReleaseReadinessActiveReuseDependencies = {
   createRegistry: () => ProductionCapabilityBindingRegistry.createBundled(),
   buildContract: buildReleaseReadinessCandidateContract,
   getResource: releaseReadinessCapabilityResource,
+  monotonicNow: () => performance.now(),
 };
+
+type ActiveReuseTimedStage = 'matchMs' | 'healthMs' | 'stageMs' | 'executeMs';
+
+function boundedElapsed(startedAt: number, finishedAt: number): number {
+  if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt)) return 0;
+  return Math.max(0, Math.round((finishedAt - startedAt) * 100) / 100);
+}
+
+function activeReuseTimer(monotonicNow: () => number) {
+  const startedAt = monotonicNow();
+  const timings: ReleaseReadinessActiveReuseTimings = {
+    matchMs: 0,
+    healthMs: 0,
+    stageMs: 0,
+    executeMs: 0,
+    totalMs: 0,
+  };
+  let activeStage: ActiveReuseTimedStage | null = null;
+  let activeStageStartedAt = startedAt;
+  const closeActiveStage = (finishedAt: number) => {
+    if (!activeStage) return;
+    timings[activeStage] = boundedElapsed(activeStageStartedAt, finishedAt);
+    activeStage = null;
+  };
+  return {
+    begin(stage: ActiveReuseTimedStage) {
+      const at = monotonicNow();
+      closeActiveStage(at);
+      activeStage = stage;
+      activeStageStartedAt = at;
+    },
+    finish(
+      result: Omit<ReleaseReadinessActiveReuseResult, 'timings'>,
+    ): ReleaseReadinessActiveReuseResult {
+      const finishedAt = monotonicNow();
+      closeActiveStage(finishedAt);
+      timings.totalMs = boundedElapsed(startedAt, finishedAt);
+      const timingText = `Dispatch timing (local): match ${timings.matchMs} ms · health ${timings.healthMs} ms · stage ${timings.stageMs} ms · execute ${timings.executeMs} ms · total ${timings.totalMs} ms.`;
+      return {
+        ...result,
+        ...(result.handled && result.text
+          ? { text: `${result.text}\n\n${timingText}` }
+          : {}),
+        timings: { ...timings },
+      };
+    },
+  };
+}
 
 interface ActiveReleaseReadinessHealthRefreshDependencies {
   getAcquisition: typeof getCapabilityAcquisition;
@@ -598,26 +659,28 @@ export async function dispatchActiveReleaseReadinessReuse(
   input: ReleaseReadinessActiveReuseInput,
   dependencies: Partial<ReleaseReadinessActiveReuseDependencies> = {},
 ): Promise<ReleaseReadinessActiveReuseResult> {
+  const deps = { ...DEFAULT_DEPENDENCIES, ...dependencies };
+  const timer = activeReuseTimer(deps.monotonicNow);
   if (!isReleaseReadinessActiveReuseRequest(input.text)) {
-    return { handled: false };
+    return timer.finish({ handled: false });
   }
   if (!isTrustedOwnerReviewSurface(input)) {
-    return {
+    return timer.finish({
       handled: true,
       action: 'restricted',
       text: 'The active release-readiness capability is restricted to your registered main Telegram chat or configured Messages self-thread. I did not inspect or execute it here.',
-    };
+    });
   }
 
-  const deps = { ...DEFAULT_DEPENDENCIES, ...dependencies };
   const now = iso(input.now);
+  timer.begin('matchMs');
   const resource = deps.getResource();
   if (!exactBundledResource(resource)) {
-    return {
+    return timer.finish({
       handled: true,
       action: 'version_gap',
       text: 'The bundled release-readiness resource is unavailable, unhealthy, or no longer matches its read-only zero-egress contract. I did not execute it.',
-    };
+    });
   }
   const presentationContract = deps.buildContract();
   const values = { targetScopeKey: RELEASE_READINESS_TARGET_SCOPE };
@@ -632,25 +695,27 @@ export async function dispatchActiveReleaseReadinessReuse(
   const match = deps.match({
     groupFolder: input.group.folder,
     taskFamily: RELEASE_READINESS_TASK_FAMILY,
+    triggerText: input.text,
     inputs: values,
     intendedPostconditions: [...RELEASE_READINESS_POSTCONDITIONS],
     binding,
     currentResourceVersions,
+    now,
   });
   if (match.status === 'none') {
-    return {
+    return timer.finish({
       handled: true,
       action: 'not_active',
       text: 'No active exact release-readiness capability is bound to this chat and target, so I did not execute one or change its lifecycle.',
-    };
+    });
   }
   if (match.status === 'ambiguous') {
     const ids = safeCandidateIds(match.candidateIds);
-    return {
+    return timer.finish({
       handled: true,
       action: 'ambiguous',
       text: `More than one active release-readiness contract matches this request${ids ? ` (${ids})` : ''}. I did not choose or execute one automatically.`,
-    };
+    });
   }
   if (
     !match.acquisition ||
@@ -662,11 +727,11 @@ export async function dispatchActiveReleaseReadinessReuse(
     }) ||
     !exactBundledContract(match.contract, presentationContract, resource)
   ) {
-    return {
+    return timer.finish({
       handled: true,
       action: 'version_gap',
       text: 'The active match is not the exact current bundled release-readiness contract. I did not execute or upgrade it automatically.',
-    };
+    });
   }
   const status = deps.getStatus(match.acquisition.acquisitionId);
   if (
@@ -678,12 +743,13 @@ export async function dispatchActiveReleaseReadinessReuse(
       channelName: input.channelName,
     })
   ) {
-    return {
+    return timer.finish({
       handled: true,
       action: 'scope_mismatch',
       text: 'The active release-readiness canary is not bound to this exact owner chat, group, channel, and target. I did not execute it.',
-    };
+    });
   }
+  timer.begin('healthMs');
   const subjectId = `capability-resource:${resource.resourceId}`;
   let health = freshHealthBinding({
     observations: deps.listHealth({ subjectId, limit: 100 }),
@@ -698,18 +764,20 @@ export async function dispatchActiveReleaseReadinessReuse(
     });
   }
   if (!health) {
-    return {
+    return timer.finish({
       handled: true,
       action: 'freshness_gap',
       text: 'The active release-readiness capability lacks a fresh successful health proof, and its bounded local verifier could not refresh one. I did not stage or execute the capability.',
-    };
+    });
   }
 
   let run: CapabilityProductionRunRecord;
+  timer.begin('stageMs');
   try {
     run = deps.stage({
       match,
       taskFamily: RELEASE_READINESS_TASK_FAMILY,
+      triggerText: input.text,
       intendedPostconditions: [...RELEASE_READINESS_POSTCONDITIONS],
       binding,
       normalizedInputs: values,
@@ -720,14 +788,15 @@ export async function dispatchActiveReleaseReadinessReuse(
     });
   } catch (error) {
     if (!isExpectedReuseRace(error)) throw error;
-    return {
+    return timer.finish({
       handled: true,
       action: 'freshness_gap',
       text: 'The active release-readiness evidence changed while I was preparing the read-only run. Nothing was executed; ask again after health and version evidence are current.',
-    };
+    });
   }
 
   let execution: CapabilityProductionExecutionResult;
+  timer.begin('executeMs');
   try {
     execution = await deps.execute({
       runId: run.runId,
@@ -741,26 +810,26 @@ export async function dispatchActiveReleaseReadinessReuse(
     });
   } catch (error) {
     if (!isExpectedReuseRace(error)) throw error;
-    return {
+    return timer.finish({
       handled: true,
       action: 'execution_failed',
       runId: run.runId,
       text: 'The bounded release-readiness lookup or its independent verifier did not complete successfully. I recorded no success claim and did not retry or broaden authority.',
-    };
+    });
   }
   const brief = verifiedBrief(execution);
   if (!brief) {
-    return {
+    return timer.finish({
       handled: true,
       action: 'execution_failed',
       runId: run.runId,
       text: 'The release-readiness run did not return one verified, zero-cost, zero-provider brief. I recorded no success claim.',
-    };
+    });
   }
-  return {
+  return timer.finish({
     handled: true,
     action: 'verified',
     runId: run.runId,
     text: `${brief}\n\nVerified through the exact active read-only capability contract; independent postcondition check passed; provider calls: 0; cost: $0.`,
-  };
+  });
 }

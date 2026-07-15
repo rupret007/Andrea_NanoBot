@@ -10,6 +10,7 @@ import {
 } from './capability-acquisition-policy.js';
 import {
   buildCapabilityCanaryUsage,
+  formatCapabilityCanaryReport,
   parseCapabilityCanaryArgs,
   runCapabilityCanaryCli,
   type CapabilityCanaryCliDependencies,
@@ -253,10 +254,10 @@ function run(): CapabilityProductionRunRecord {
     taskFamily: contract.taskFamily,
     groupFolder: 'main',
     ownerScopeHash: durableScopeHash('owner', 'owner'),
-    chatScopeHash: durableScopeHash('chat', 'cockpit'),
+    chatScopeHash: durableScopeHash('chat', 'tg:owner'),
     groupScopeHash: durableScopeHash('group', 'main'),
-    channel: 'owner_cockpit',
-    authorizedSurface: 'owner_cockpit',
+    channel: 'telegram',
+    authorizedSurface: 'telegram',
     targetScopeHash: durableScopeHash('target', 'release-readiness'),
     inputDigest: sha256(canonicalCapabilityJson(INPUTS)),
     actionClass: 'operator_change',
@@ -395,6 +396,7 @@ function dependencies(
     listReliabilityObservations: vi.fn(() => observations),
     getRun: vi.fn(() => undefined),
     getOwnerReview: vi.fn(() => undefined),
+    getCurrentActionApproval: vi.fn(() => undefined),
     getStatus: vi.fn(() => status),
     contractDigest: vi.fn(() => 'c'.repeat(64)),
     healthEvidenceSetDigest: vi.fn(() => '4'.repeat(64)),
@@ -408,6 +410,14 @@ function dependencies(
       acquisition: record,
       run: run(),
       receipt: transitionReceipt('canary_authorized'),
+    })),
+    stageActionApproval: vi.fn(() => ({
+      run: run(),
+      approval: approval(),
+    })),
+    authorizeAction: vi.fn(() => ({
+      run: run(),
+      approval: approval(),
     })),
     executeCanary: vi.fn(async () => ({
       status: 'verified' as const,
@@ -435,6 +445,8 @@ function dependencies(
 function mutationArgs(
   operation:
     | '--authorize-canary'
+    | '--stage-action-approval'
+    | '--authorize-action'
     | '--run-canary'
     | '--stage-activation'
     | '--activate',
@@ -452,17 +464,22 @@ function mutationArgs(
     String(versions.acquisition),
     '--expected-run-revision',
     String(versions.run),
-    ...(['--authorize-canary', '--run-canary', '--activate'].includes(operation)
+    ...([
+      '--authorize-canary',
+      '--authorize-action',
+      '--run-canary',
+      '--activate',
+    ].includes(operation)
       ? ['--worker-id', 'guided-worker']
       : []),
     '--owner-id',
     'owner',
     '--chat-id',
-    'cockpit',
+    'tg:owner',
     '--channel',
-    'owner_cockpit',
+    'telegram',
     '--authorized-surface',
-    'owner_cockpit',
+    'telegram',
     '--target-scope',
     'release-readiness',
     '--inputs-json',
@@ -484,11 +501,11 @@ function stagingArgs(): string[] {
     '--owner-id',
     'owner',
     '--chat-id',
-    'cockpit',
+    'tg:owner',
     '--channel',
-    'owner_cockpit',
+    'telegram',
     '--authorized-surface',
-    'owner_cockpit',
+    'telegram',
     '--target-scope',
     'release-readiness',
     '--inputs-json',
@@ -502,7 +519,7 @@ function approvedCanaryPacket(): CognitiveApprovalPacket {
   return {
     ...approval(),
     status: 'approved',
-    approvalChannel: 'owner_cockpit',
+    approvalChannel: 'telegram',
     approvalVersion: 2,
   };
 }
@@ -514,12 +531,77 @@ function activationPacket(
     ...approval(),
     approvalPacketId: 'approval-activation',
     status,
-    approvalChannel: status === 'approved' ? 'owner_cockpit' : null,
+    approvalChannel: status === 'approved' ? 'telegram' : null,
     approvalVersion: status === 'approved' ? 2 : 1,
     scopeDigest: '9'.repeat(64),
     durableWorkId: 'activation-work',
     durableCheckpointId: 'activation-checkpoint',
     planVersion: 1,
+  };
+}
+
+function protectedContract(): CapabilityCandidateContract {
+  const contract = compiledReleaseReadinessContract();
+  contract.steps = contract.steps.map((step) => ({
+    ...step,
+    actionClass: 'repository_write',
+    readOnly: false,
+    approvalRequired: true,
+  }));
+  contract.allowedActions = ['repository_write'];
+  contract.approvalRequirements = [
+    'fresh exact action approval for repository_write',
+  ];
+  return refingerprint(contract);
+}
+
+function protectedAcquisition(): CapabilityAcquisitionRecord {
+  const contract = protectedContract();
+  return acquisitionWithContract(contract, {
+    state: 'canary_ready',
+    authorityRequirementsJson: '["repository_write"]',
+    nextSafeAction: 'Stage one exact action-specific approval.',
+  });
+}
+
+function protectedRun(
+  status: CapabilityProductionRunRecord['status'],
+  overrides: Partial<CapabilityProductionRunRecord> = {},
+): CapabilityProductionRunRecord {
+  const contract = protectedContract();
+  return {
+    ...run(),
+    status,
+    candidateFingerprint: contract.candidateFingerprint,
+    contractVersion: contract.contractVersion,
+    taskFamily: contract.taskFamily,
+    actionClass: 'repository_write',
+    canaryApprovalVersion: 2,
+    canaryGrantId: 'grant-canary',
+    canaryLeaseId: null,
+    nextSafeAction: 'Stage one exact action-specific approval.',
+    ...overrides,
+  };
+}
+
+function actionPacket(
+  productionRun: CapabilityProductionRunRecord,
+  status: CognitiveApprovalPacket['status'] = 'staged',
+): CognitiveApprovalPacket {
+  return {
+    ...approval(),
+    approvalPacketId: 'approval-production-action',
+    actionClass: 'repository_write',
+    status,
+    approvalChannel: status === 'approved' ? 'telegram' : null,
+    approvalVersion: status === 'approved' ? 2 : 1,
+    scopeDigest: '5'.repeat(64),
+    durableWorkId: productionRun.workId,
+    durableCheckpointId: productionRun.checkpointId,
+    planVersion: productionRun.planVersion,
+    targetScopeDigest: productionRun.targetScopeHash,
+    expiresAt: '2026-07-15T12:20:00.000Z',
+    summary: 'Approve one exact repository-write production plan.',
   };
 }
 
@@ -576,10 +658,48 @@ describe('capability canary CLI parser', () => {
       .split('\n')
       .find((line) => line.includes('--run-canary'));
     expect(runLine).toContain('--worker-id WORKER_ID');
+    expect(usage).toContain('--stage-action-approval');
+    expect(usage).toContain('--authorize-action --acquisition ACQUISITION_ID');
+    expect(usage).toContain(
+      'approve that exact packet on the same trusted chat',
+    );
     expect(() =>
       parseCapabilityCanaryArgs([...stagingArgs(), '--worker-id', 'worker']),
     ).toThrow(
-      '--worker-id is accepted only by --authorize-canary, --run-canary, or --activate',
+      '--worker-id is accepted only by --authorize-canary, --authorize-action, --run-canary, or --activate',
+    );
+  });
+
+  it('parses explicit action staging and requires a worker only for consumption', () => {
+    expect(
+      parseCapabilityCanaryArgs(
+        mutationArgs('--stage-action-approval', {
+          acquisition: 8,
+          run: 3,
+        }),
+      ),
+    ).toMatchObject({
+      operation: 'stage_action_approval',
+      stageActionApproval: true,
+      workerId: null,
+    });
+    expect(
+      parseCapabilityCanaryArgs(
+        mutationArgs('--authorize-action', { acquisition: 8, run: 4 }),
+      ),
+    ).toMatchObject({
+      operation: 'authorize_action',
+      authorizeAction: true,
+      workerId: 'guided-worker',
+    });
+
+    const missingWorker = mutationArgs('--authorize-action', {
+      acquisition: 8,
+      run: 4,
+    });
+    missingWorker.splice(missingWorker.indexOf('--worker-id'), 2);
+    expect(() => parseCapabilityCanaryArgs(missingWorker)).toThrow(
+      '--authorize-action requires explicit --worker-id',
     );
   });
 
@@ -595,11 +715,11 @@ describe('capability canary CLI parser', () => {
       '--owner-id',
       'owner',
       '--chat-id',
-      'cockpit',
+      'tg:owner',
       '--channel',
-      'owner_cockpit',
+      'telegram',
       '--authorized-surface',
-      'owner_cockpit',
+      'telegram',
       '--target-scope',
       'release-readiness',
       '--inputs-json',
@@ -611,7 +731,7 @@ describe('capability canary CLI parser', () => {
       stage: true,
       groupWasExplicit: true,
       acquisitionId: 'acq-release-readiness',
-      authorizedSurface: 'owner_cockpit',
+      authorizedSurface: 'telegram',
       normalizedInputs: { targetScopeKey: 'release-readiness' },
     });
     expect(options.health).toEqual([
@@ -651,6 +771,22 @@ describe('capability canary CLI parser', () => {
       'channel and authorized surface must match',
     );
   });
+
+  it('rejects non-executable cockpit binding and noncanonical owner identity', () => {
+    const cockpitArgs = stagingArgs();
+    cockpitArgs[cockpitArgs.indexOf('--channel') + 1] = 'owner_cockpit';
+    cockpitArgs[cockpitArgs.indexOf('--authorized-surface') + 1] =
+      'owner_cockpit';
+    expect(() => parseCapabilityCanaryArgs(cockpitArgs)).toThrow(
+      'owner cockpit can review evidence but has no active-reuse route',
+    );
+
+    const wrongOwnerArgs = stagingArgs();
+    wrongOwnerArgs[wrongOwnerArgs.indexOf('--owner-id') + 1] = 'operator';
+    expect(() => parseCapabilityCanaryArgs(wrongOwnerArgs)).toThrow(
+      'canonical owner identity "owner"',
+    );
+  });
 });
 
 describe('capability canary CLI effects', () => {
@@ -665,9 +801,20 @@ describe('capability canary CLI effects', () => {
     expect(report.eligibleAcquisitions).toHaveLength(1);
     expect(report.eligibleAcquisitions[0]).toMatchObject({
       state: 'owner_review_required',
+      pendingAction: 'canary_staging',
       taskFamily: 'release_readiness',
       dataEgress: { acquisition: 'none', contract: 'none' },
     });
+    expect(report.nextCommands).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('--owner-id owner'),
+        expect.stringContaining('--channel telegram'),
+        expect.stringMatching(
+          /--chat-id 'CONFIGURED_BLUEBUBBLES_SELF_THREAD_ID'.*--channel bluebubbles/,
+        ),
+      ]),
+    );
+    expect(report.nextCommands.join('\n')).not.toContain('owner_cockpit');
     expect(report.staged).toBeNull();
     expect(deps.stageCanary).not.toHaveBeenCalled();
     expect(deps.isTrustedBinding).not.toHaveBeenCalled();
@@ -693,6 +840,19 @@ describe('capability canary CLI effects', () => {
     expect(deps.isTrustedBinding).not.toHaveBeenCalled();
   });
 
+  it('does not tell the owner to create a duplicate release-readiness acquisition', async () => {
+    const report = await runCapabilityCanaryCli(
+      parseCapabilityCanaryArgs(['--release-readiness']),
+      dependencies(),
+    );
+    expect(report.nextCommands).toContain(
+      'A canonical release-readiness acquisition already exists. Use exactly one trusted-chat staging command above; this presentation did not create, approve, or run another candidate.',
+    );
+    expect(report.nextCommands.join('\n')).not.toContain(
+      'First create and verify a canonical acquisition',
+    );
+  });
+
   it('shows canonical approval state for an open run without consuming it', async () => {
     const deps = dependencies({ listRuns: vi.fn(() => [run()]) });
     const report = await runCapabilityCanaryCli(
@@ -708,6 +868,36 @@ describe('capability canary CLI effects', () => {
     expect(deps.stageCanary).not.toHaveBeenCalled();
   });
 
+  it('presents an awaiting action packet and same-chat consumption guidance without mutation', async () => {
+    const pendingRun = protectedRun('awaiting_action_approval', {
+      revision: 4,
+    });
+    const packet = actionPacket(pendingRun);
+    const deps = dependencies({
+      listRuns: vi.fn(() => [pendingRun]),
+      listApprovals: vi.fn(() => [approvedCanaryPacket(), packet]),
+      getCurrentActionApproval: vi.fn(() => packet),
+    });
+    const report = await runCapabilityCanaryCli(
+      parseCapabilityCanaryArgs([]),
+      deps,
+    );
+
+    expect(report.openRuns[0]).toMatchObject({
+      status: 'awaiting_action_approval',
+      actionApproval: {
+        approvalPacketId: packet.approvalPacketId,
+        status: 'staged',
+        channel: null,
+      },
+    });
+    expect(report.nextCommands.join(' ')).toContain(
+      'Approve only its exact current packet on the same bound trusted chat',
+    );
+    expect(deps.stageActionApproval).not.toHaveBeenCalled();
+    expect(deps.authorizeAction).not.toHaveBeenCalled();
+  });
+
   it('stages only after complete explicit trusted metadata', async () => {
     const deps = dependencies();
     const options = parseCapabilityCanaryArgs([
@@ -721,11 +911,11 @@ describe('capability canary CLI effects', () => {
       '--owner-id',
       'owner',
       '--chat-id',
-      'cockpit',
+      'tg:owner',
       '--channel',
-      'owner_cockpit',
+      'telegram',
       '--authorized-surface',
-      'owner_cockpit',
+      'telegram',
       '--target-scope',
       'release-readiness',
       '--inputs-json',
@@ -739,12 +929,12 @@ describe('capability canary CLI effects', () => {
     expect(deps.stageCanary).toHaveBeenCalledWith(
       expect.objectContaining({
         acquisitionId: 'acq-release-readiness',
-        authorizedSurface: 'owner_cockpit',
+        authorizedSurface: 'telegram',
         binding: {
           ownerId: 'owner',
-          chatId: 'cockpit',
+          chatId: 'tg:owner',
           groupId: 'main',
-          channel: 'owner_cockpit',
+          channel: 'telegram',
           targetScopeKey: 'release-readiness',
         },
       }),
@@ -753,7 +943,14 @@ describe('capability canary CLI effects', () => {
       runStatus: 'awaiting_canary_approval',
       acquisitionState: 'owner_review_required',
       approvalStatus: 'staged',
+      approvalSummary: 'Approve one exact release-readiness canary.',
+      approvalScopeDigest: '3'.repeat(64),
+      approvalSummaryDigest: '6'.repeat(64),
+      approvalCommand: `approve capability packet approval-release-readiness version 1 scope ${'3'.repeat(64)} summary ${'6'.repeat(64)}`,
     });
+    expect(formatCapabilityCanaryReport(report)).toContain(
+      'Exact same-chat decision: approve capability packet',
+    );
     expect(report.guardrails).toContain(
       'Staging does not authorize or execute the canary.',
     );
@@ -914,6 +1111,21 @@ describe('capability canary CLI effects', () => {
     expect(deps.stageCanary).not.toHaveBeenCalled();
   });
 
+  it('enforces executable binding again at the effect boundary', async () => {
+    const deps = dependencies({ isTrustedBinding: vi.fn(() => true) });
+    const options = {
+      ...parseCapabilityCanaryArgs(stagingArgs()),
+      ownerId: 'operator',
+      channel: 'owner_cockpit',
+      authorizedSurface: 'owner_cockpit',
+    };
+    await expect(runCapabilityCanaryCli(options, deps)).rejects.toThrow(
+      'canonical owner identity and one exact executable Telegram or BlueBubbles binding',
+    );
+    expect(deps.isTrustedBinding).not.toHaveBeenCalled();
+    expect(deps.stageCanary).not.toHaveBeenCalled();
+  });
+
   it('rejects inputs that do not satisfy the immutable contract', async () => {
     const deps = dependencies();
     const options = parseCapabilityCanaryArgs([
@@ -927,11 +1139,11 @@ describe('capability canary CLI effects', () => {
       '--owner-id',
       'owner',
       '--chat-id',
-      'cockpit',
+      'tg:owner',
       '--channel',
-      'owner_cockpit',
+      'telegram',
       '--authorized-surface',
-      'owner_cockpit',
+      'telegram',
       '--target-scope',
       'release-readiness',
       '--inputs-json',
@@ -960,11 +1172,11 @@ describe('capability canary CLI effects', () => {
       '--owner-id',
       'owner',
       '--chat-id',
-      'cockpit',
+      'tg:owner',
       '--channel',
-      'owner_cockpit',
+      'telegram',
       '--authorized-surface',
-      'owner_cockpit',
+      'telegram',
       '--target-scope',
       'release-readiness',
       '--inputs-json',
@@ -1038,6 +1250,173 @@ describe('capability canary CLI effects', () => {
       approvalStatus: 'approved',
       transitionReceiptId: 'receipt-canary_authorized',
     });
+    expect(deps.executeCanary).not.toHaveBeenCalled();
+  });
+
+  it('stages an action-specific packet and stops without approving or executing it', async () => {
+    const record = protectedAcquisition();
+    const beforeRun = protectedRun('canary_ready', { revision: 3 });
+    const afterRun = {
+      ...beforeRun,
+      status: 'awaiting_action_approval' as const,
+      revision: 4,
+      nextSafeAction: 'Wait for exact fresh action approval.',
+    };
+    const packet = actionPacket(afterRun);
+    let acted = false;
+    const stageActionApproval = vi.fn(() => {
+      acted = true;
+      return { run: afterRun, approval: packet };
+    });
+    const deps = dependencies({
+      listAcquisitions: vi.fn(() => [record]),
+      listRuns: vi.fn(() => [acted ? afterRun : beforeRun]),
+      listRunHealth: vi.fn(() => [healthEvidence()]),
+      getRun: vi.fn(() => (acted ? afterRun : beforeRun)),
+      getStatus: vi.fn(
+        (): CapabilityApprenticeshipStatus => ({
+          acquisition: record,
+          runs: [acted ? afterRun : beforeRun],
+          pendingAction: acted ? 'action_approval' : 'canary_execution',
+          stateLabel: record.state,
+          ownerControlSummary: 'Owner control remains separate.',
+        }),
+      ),
+      stageActionApproval,
+    });
+
+    const report = await runCapabilityCanaryCli(
+      parseCapabilityCanaryArgs(
+        mutationArgs('--stage-action-approval', {
+          acquisition: 8,
+          run: 3,
+        }),
+      ),
+      deps,
+    );
+
+    expect(stageActionApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: beforeRun.runId,
+        expectedAcquisitionVersion: 8,
+        expectedRunRevision: 3,
+        binding: expect.objectContaining({
+          ownerId: 'owner',
+          chatId: 'tg:owner',
+          channel: 'telegram',
+        }),
+      }),
+    );
+    expect(report.action).toMatchObject({
+      operation: 'stage_action_approval',
+      runStatus: 'awaiting_action_approval',
+      approvalPacketId: packet.approvalPacketId,
+      approvalStatus: 'staged',
+      approvalSummary: packet.summary,
+      approvalScopeDigest: packet.scopeDigest,
+      approvalSummaryDigest: packet.summaryDigest,
+      approvalCommand: `approve capability packet ${packet.approvalPacketId} version 1 scope ${packet.scopeDigest} summary ${packet.summaryDigest}`,
+      executionStatus: null,
+    });
+    expect(report.nextCommands.join(' ')).toContain(
+      'approve only the returned action-specific packet on the same exact trusted chat',
+    );
+    expect(deps.authorizeAction).not.toHaveBeenCalled();
+    expect(deps.executeCanary).not.toHaveBeenCalled();
+  });
+
+  it('consumes only the approved current action packet into a bounded grant and lease', async () => {
+    const record = protectedAcquisition();
+    const beforeRun = protectedRun('awaiting_action_approval', {
+      revision: 4,
+    });
+    const packet = actionPacket(beforeRun, 'approved');
+    const afterRun = {
+      ...beforeRun,
+      status: 'canary_ready' as const,
+      revision: 5,
+      executionGrantId: 'grant-production-action',
+      executionLeaseId: 'lease-production-action',
+      nextSafeAction: 'Execute only the exact approved protected plan.',
+    };
+    let acted = false;
+    const authorizeAction = vi.fn(() => {
+      acted = true;
+      return { run: afterRun, approval: packet };
+    });
+    const deps = dependencies({
+      listAcquisitions: vi.fn(() => [record]),
+      listRuns: vi.fn(() => [acted ? afterRun : beforeRun]),
+      listRunHealth: vi.fn(() => [healthEvidence()]),
+      getRun: vi.fn(() => (acted ? afterRun : beforeRun)),
+      getCurrentActionApproval: vi.fn(() => packet),
+      getStatus: vi.fn(
+        (): CapabilityApprenticeshipStatus => ({
+          acquisition: record,
+          runs: [acted ? afterRun : beforeRun],
+          pendingAction: acted ? 'canary_execution' : 'action_approval',
+          stateLabel: record.state,
+          ownerControlSummary: 'Owner control remains separate.',
+        }),
+      ),
+      authorizeAction,
+    });
+
+    const report = await runCapabilityCanaryCli(
+      parseCapabilityCanaryArgs(
+        mutationArgs('--authorize-action', { acquisition: 8, run: 4 }),
+      ),
+      deps,
+    );
+
+    expect(authorizeAction).toHaveBeenCalledOnce();
+    expect(report.action).toMatchObject({
+      operation: 'authorize_action',
+      runStatus: 'canary_ready',
+      approvalPacketId: packet.approvalPacketId,
+      approvalStatus: 'approved',
+      executionStatus: null,
+    });
+    expect(report.nextCommands.join(' ')).toContain(
+      'did not execute the protected action',
+    );
+    expect(deps.executeCanary).not.toHaveBeenCalled();
+  });
+
+  it('rejects action consumption before the exact current packet is approved', async () => {
+    const record = protectedAcquisition();
+    const pendingRun = protectedRun('awaiting_action_approval', {
+      revision: 4,
+    });
+    const stagedPacket = actionPacket(pendingRun, 'staged');
+    const deps = dependencies({
+      listAcquisitions: vi.fn(() => [record]),
+      listRuns: vi.fn(() => [pendingRun]),
+      listRunHealth: vi.fn(() => [healthEvidence()]),
+      getRun: vi.fn(() => pendingRun),
+      getCurrentActionApproval: vi.fn(() => stagedPacket),
+      getStatus: vi.fn(
+        (): CapabilityApprenticeshipStatus => ({
+          acquisition: record,
+          runs: [pendingRun],
+          pendingAction: 'action_approval',
+          stateLabel: record.state,
+          ownerControlSummary: 'Owner control remains separate.',
+        }),
+      ),
+    });
+
+    await expect(
+      runCapabilityCanaryCli(
+        parseCapabilityCanaryArgs(
+          mutationArgs('--authorize-action', { acquisition: 8, run: 4 }),
+        ),
+        deps,
+      ),
+    ).rejects.toThrow(
+      'exact current production action packet is not canonically approved',
+    );
+    expect(deps.authorizeAction).not.toHaveBeenCalled();
     expect(deps.executeCanary).not.toHaveBeenCalled();
   });
 
@@ -1185,6 +1564,10 @@ describe('capability canary CLI effects', () => {
       runStatus: 'awaiting_activation_approval',
       approvalPacketId: 'approval-activation',
       approvalStatus: 'staged',
+      approvalSummary: activationPacket().summary,
+      approvalScopeDigest: '9'.repeat(64),
+      approvalSummaryDigest: activationPacket().summaryDigest,
+      approvalCommand: `approve capability packet approval-activation version 1 scope ${'9'.repeat(64)} summary ${activationPacket().summaryDigest}`,
     });
     expect(deps.authorizeActivation).not.toHaveBeenCalled();
   });
@@ -1355,6 +1738,8 @@ describe('capability canary CLI effects', () => {
       .join('\n');
     expect(source).toContain('stageCapabilityCanary');
     expect(source).toContain('authorizeApprovedCapabilityCanary');
+    expect(source).toContain('stageCapabilityProductionActionApproval');
+    expect(source).toContain('authorizeApprovedCapabilityProductionAction');
     expect(source).toContain('runCapabilityProductionExecution');
     expect(source).toContain('stageCapabilityActivation');
     expect(source).toContain('authorizeApprovedCapabilityActivation');

@@ -3,7 +3,9 @@ import http, { type IncomingMessage, type ServerResponse } from 'http';
 
 import {
   approveCognitiveApprovalPacketCAS,
+  getCapabilityProductionApprovalTrustedChatSurface,
   getCapabilityOwnerReviewForRun,
+  getDurableWorkUnit,
   listCapabilityAcquisitions,
   listCognitiveApprovalPackets,
   listHierarchicalGoals,
@@ -20,10 +22,6 @@ import {
   reviewDeepWorkMission,
   selectDeepWorkReviewCandidate,
 } from './deep-work-apprenticeship.js';
-import {
-  durableScopeHash,
-  type DurableWorkBindingInput,
-} from './durable-work-continuity.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import {
@@ -80,9 +78,6 @@ const MAX_BODY_BYTES = 16 * 1024;
 const MAX_CAPABILITY_ACQUISITIONS = 20;
 const MAX_CAPABILITY_RUNS = 20;
 const MAX_CAPABILITY_EVIDENCE_IDS = 40;
-const OWNER_COCKPIT_OWNER_ID = 'owner';
-const OWNER_COCKPIT_CHAT_ID = 'cockpit';
-const OWNER_COCKPIT_CHANNEL = 'owner_cockpit';
 const OWNER_COCKPIT_ACTIVATION_WORKER_ID = 'owner-cockpit-activation';
 const CAPABILITY_REVIEW_VERDICTS = [
   'verified',
@@ -311,23 +306,15 @@ function ownerCockpitActivationBinding(
   run: CapabilityProductionRunRecord,
   groupFolder: string,
   targetScopeKey: string,
-): DurableWorkBindingInput | null {
-  const binding: DurableWorkBindingInput = {
-    ownerId: OWNER_COCKPIT_OWNER_ID,
-    chatId: OWNER_COCKPIT_CHAT_ID,
-    groupId: groupFolder,
-    channel: OWNER_COCKPIT_CHANNEL,
-    targetScopeKey,
-  };
-  return run.groupFolder === groupFolder &&
-    run.authorizedSurface === OWNER_COCKPIT_CHANNEL &&
-    run.channel === OWNER_COCKPIT_CHANNEL &&
-    run.ownerScopeHash === durableScopeHash('owner', binding.ownerId) &&
-    run.chatScopeHash === durableScopeHash('chat', binding.chatId) &&
-    run.groupScopeHash === durableScopeHash('group', binding.groupId) &&
-    run.targetScopeHash === durableScopeHash('target', binding.targetScopeKey)
-    ? binding
-    : null;
+): null {
+  // The cockpit is an authenticated review/control surface, not a conversation
+  // lane. Activating a cockpit-bound canary would create a capability that no
+  // live request dispatcher can reuse. Keep this fail-closed until a bounded,
+  // authenticated cockpit reuse route exists and is independently verified.
+  void run;
+  void groupFolder;
+  void targetScopeKey;
+  return null;
 }
 
 function uniqueEvidenceIds(values: Array<string | null | undefined>): string[] {
@@ -339,10 +326,12 @@ function uniqueEvidenceIds(values: Array<string | null | undefined>): string[] {
 function capabilityRunEvidenceIds(
   run: CapabilityProductionRunRecord,
 ): string[] {
+  const work = getDurableWorkUnit(run.workId);
   return uniqueEvidenceIds([
     run.workId,
     run.checkpointId,
     run.invocationId,
+    work?.approvalPacketId,
     run.canaryApprovalPacketId,
     run.canaryGrantId,
     run.canaryLeaseId,
@@ -369,6 +358,37 @@ function capabilityAcquisitionEvidenceIds(
     ...storedEvidenceIds(acquisition.outcomeIdsJson),
     ...runs.flatMap(capabilityRunEvidenceIds),
   ]);
+}
+
+function trustedChatCapabilityApprovalSurfaces(
+  groupFolder: string,
+): Map<string, 'telegram' | 'bluebubbles'> {
+  const surfaces = new Map<string, 'telegram' | 'bluebubbles'>();
+  for (const acquisition of listCapabilityAcquisitions({
+    groupFolder,
+    limit: MAX_CAPABILITY_ACQUISITIONS,
+  })) {
+    if (acquisition.groupFolder !== groupFolder) continue;
+    const status = getCapabilityApprenticeshipStatus(acquisition.acquisitionId);
+    for (const run of status.runs.slice(0, MAX_CAPABILITY_RUNS)) {
+      if (
+        run.groupFolder !== groupFolder ||
+        run.channel !== run.authorizedSurface ||
+        !['telegram', 'bluebubbles'].includes(run.authorizedSurface)
+      ) {
+        continue;
+      }
+      const surface = run.authorizedSurface as 'telegram' | 'bluebubbles';
+      for (const approvalPacketId of [
+        run.canaryApprovalPacketId,
+        run.activationApprovalPacketId,
+        getDurableWorkUnit(run.workId)?.approvalPacketId,
+      ]) {
+        if (approvalPacketId) surfaces.set(approvalPacketId, surface);
+      }
+    }
+  }
+  return surfaces;
 }
 
 function isOwnerCockpitReviewableRun(
@@ -441,9 +461,6 @@ export function buildOwnerCockpitApprenticeshipView(groupFolder: string) {
     const ownerReview = reviewRun
       ? getCapabilityOwnerReviewForRun(reviewRun.runId)
       : undefined;
-    const latestOwnerReview = latestRun
-      ? getCapabilityOwnerReviewForRun(latestRun.runId)
-      : undefined;
     const controlsAvailable =
       latestRun?.authorizedSurface === 'owner_cockpit' &&
       latestRun.channel === 'owner_cockpit';
@@ -461,24 +478,19 @@ export function buildOwnerCockpitApprenticeshipView(groupFolder: string) {
       revalidateAfterAt: status.acquisition.revalidateAfterAt || null,
       correctionCount: status.acquisition.correctionCount,
       negativeOutcomeCount: status.acquisition.negativeOutcomeCount,
-      pendingAction: status.pendingAction,
+      pendingAction:
+        status.acquisition.state === 'owner_review_required' &&
+        status.pendingAction === 'none'
+          ? 'canary_staging'
+          : status.pendingAction,
       ownerReviewRunId: reviewRun?.runId || null,
       ownerReviewVerdict: ownerReview?.verdict || null,
       ownerReviewRevision: ownerReview?.revision || null,
-      activationProposalRunId:
-        status.acquisition.state === 'canary_ready' &&
-        latestRun?.runKind === 'canary' &&
-        latestRun?.status === 'owner_reviewed' &&
-        latestOwnerReview?.verdict === 'verified'
-          ? latestRun.runId
-          : null,
-      activationRunId:
-        status.acquisition.state === 'canary_ready' &&
-        latestRun?.runKind === 'canary' &&
-        latestRun?.status === 'awaiting_activation_approval' &&
-        latestRun.activationApprovalPacketId
-          ? latestRun.runId
-          : null,
+      activationProposalRunId: null,
+      activationRunId: null,
+      activationAvailable: false,
+      activationGuidance:
+        'The cockpit cannot activate capabilities because it has no active-reuse request lane. Preserve one exact registered Telegram or configured BlueBubbles self-thread binding through canary and activation.',
       controlsAvailable: Boolean(controlsAvailable),
       runs: runViews,
       evidenceIds: capabilityAcquisitionEvidenceIds(status.acquisition, runs),
@@ -602,11 +614,27 @@ export class OwnerCockpitServer {
       statuses: ['active', 'blocked', 'paused'],
       limit: 8,
     });
+    const trustedChatApprovalSurfaces = trustedChatCapabilityApprovalSurfaces(
+      this.config.groupFolder,
+    );
     const approvals = listCognitiveApprovalPackets({
       groupFolder: this.config.groupFolder,
       status: 'staged',
-      limit: 8,
-    }).filter((item) => !item.expiresAt || item.expiresAt > generatedAt);
+      // Filter capability packets on their exact authority surface before the
+      // presentation limit so hidden chat-bound packets cannot starve valid
+      // cockpit approvals from the bounded queue.
+      limit: 500,
+    })
+      .filter(
+        (item) =>
+          (!item.expiresAt || item.expiresAt > generatedAt) &&
+          !trustedChatApprovalSurfaces.has(item.approvalPacketId) &&
+          !getCapabilityProductionApprovalTrustedChatSurface({
+            approvalPacketId: item.approvalPacketId,
+            groupFolder: this.config.groupFolder,
+          }),
+      )
+      .slice(0, 8);
     const outcomes = listOutcomesForGroup({
       groupFolder: this.config.groupFolder,
       statuses: ['completed', 'partial', 'failed'],
@@ -942,7 +970,7 @@ export class OwnerCockpitServer {
       ) {
         return json(res, 409, {
           error:
-            'Only this exact verified owner-reviewed canary can be proposed for activation.',
+            'The owner cockpit cannot activate capabilities because it has no active-reuse route. Preserve the exact Telegram or BlueBubbles canary binding and complete activation on that same trusted surface.',
         });
       }
       try {
@@ -1045,7 +1073,7 @@ export class OwnerCockpitServer {
       ) {
         return json(res, 409, {
           error:
-            'This exact activation is not awaiting separate approval consumption.',
+            'The owner cockpit cannot activate capabilities because it has no active-reuse route. Preserve the exact Telegram or BlueBubbles canary binding and complete activation on that same trusted surface.',
         });
       }
       try {
@@ -1320,6 +1348,20 @@ export class OwnerCockpitServer {
     }
     if (req.method === 'POST' && approvalMatch) {
       if (!this.requireMutationAuth(req, res)) return;
+      const approvalPacketId = decodeURIComponent(approvalMatch[1]!);
+      const trustedChatSurface =
+        trustedChatCapabilityApprovalSurfaces(this.config.groupFolder).get(
+          approvalPacketId,
+        ) ||
+        getCapabilityProductionApprovalTrustedChatSurface({
+          approvalPacketId,
+          groupFolder: this.config.groupFolder,
+        });
+      if (trustedChatSurface) {
+        return json(res, 409, {
+          error: `This capability approval is bound to the exact ${trustedChatSurface} conversation. The cockpit cannot relabel that decision; approve it on the same trusted chat.`,
+        });
+      }
       const body = JSON.parse(await readBody(req)) as Record<string, unknown>;
       if (
         body.confirmation !== 'APPROVE' ||
@@ -1333,7 +1375,7 @@ export class OwnerCockpitServer {
           error: 'The action summary changed. Review it again.',
         });
       const result = approveCognitiveApprovalPacketCAS({
-        approvalPacketId: decodeURIComponent(approvalMatch[1]!),
+        approvalPacketId,
         groupFolder: this.config.groupFolder,
         expectedSummary: body.summary,
         expectedApprovalVersion: body.approvalVersion,

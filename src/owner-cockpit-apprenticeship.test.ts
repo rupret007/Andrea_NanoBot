@@ -25,7 +25,16 @@ vi.mock('./production-capability-apprenticeship.js', () => ({
   stageCapabilityActivation: apprenticeship.stageActivation,
 }));
 
-import { _closeDatabase, _initTestDatabase } from './db.js';
+import {
+  _closeDatabase,
+  _initTestDatabase,
+  insertCapabilityProductionRun,
+  insertDurableWorkCheckpoint,
+  insertDurableWorkUnit,
+  listCognitiveApprovalPackets,
+  upsertCognitiveApprovalPacket,
+  upsertCognitiveRun,
+} from './db.js';
 import { durableScopeHash } from './durable-work-continuity.js';
 import {
   createOwnerCockpitHttpServer,
@@ -34,6 +43,9 @@ import {
 import type {
   CapabilityAcquisitionRecord,
   CapabilityProductionRunRecord,
+  DurableWorkCheckpoint,
+  DurableWorkEvent,
+  DurableWorkUnit,
 } from './types.js';
 import { observeCapabilityGap } from './verified-capability-acquisition.js';
 
@@ -203,6 +215,182 @@ function seedCapability() {
   return { acquisition, run };
 }
 
+function insertCurrentActionWork(
+  run: CapabilityProductionRunRecord,
+  approvalPacketId: string,
+): void {
+  const work: DurableWorkUnit = {
+    workId: run.workId,
+    createdAt: '2026-07-15T12:00:00.000Z',
+    updatedAt: '2026-07-15T12:00:00.000Z',
+    status: 'awaiting_approval',
+    version: run.workVersion,
+    planVersion: run.planVersion,
+    originTurnHash: '4'.repeat(64),
+    authorizedSurface: run.authorizedSurface,
+    ownerScopeHash: run.ownerScopeHash,
+    chatScopeHash: run.chatScopeHash,
+    groupScopeHash: run.groupScopeHash,
+    channel: run.channel,
+    goalSummary: 'Approve one exact protected plan.',
+    missionId: null,
+    goalId: null,
+    runtimeRunId: null,
+    agentOSEpisodeId: null,
+    trajectoryId: null,
+    cognitiveRunId: 'cognitive:trusted-chat-action',
+    deepWorkPacketId: null,
+    approvalPacketId,
+    approvalVersion: 1,
+    checkpointHeadId: run.checkpointId,
+    planId: null,
+    targetScopeHash: run.targetScopeHash,
+    executionEvidenceRefsJson: '[]',
+    deliveryState: 'not_started',
+    ownerReviewId: null,
+    skillCandidateId: null,
+    leaseId: null,
+    leaseExpiresAt: null,
+    attemptCount: 0,
+    expiresAt: null,
+    interruptedAt: null,
+    completedAt: null,
+    nextAction: 'Wait for the exact trusted-chat decision.',
+    privacyJson: '{"metadataOnly":true}',
+  };
+  const createdEvent: DurableWorkEvent = {
+    eventId: 'durable:event:trusted-chat-action',
+    workId: run.workId,
+    createdAt: '2026-07-15T12:00:00.000Z',
+    eventKind: 'created',
+    fromStatus: null,
+    toStatus: 'awaiting_approval',
+    workVersion: run.workVersion,
+    planVersion: run.planVersion,
+    summary: 'Created action-approval fixture work.',
+    refsJson: '[]',
+    privacyJson: '{"metadataOnly":true}',
+  };
+  insertDurableWorkUnit({ record: work, createdEvent });
+}
+
+function insertProductionRunDurableState(
+  run: CapabilityProductionRunRecord,
+): void {
+  const initialWorkVersion = run.workVersion - 1;
+  if (initialWorkVersion < 1) {
+    throw new Error(
+      'Production-run fixture requires a post-checkpoint version.',
+    );
+  }
+  const createdAt = run.createdAt;
+  const work: DurableWorkUnit = {
+    workId: run.workId,
+    createdAt,
+    updatedAt: createdAt,
+    status: 'planned',
+    version: initialWorkVersion,
+    planVersion: run.planVersion,
+    originTurnHash: durableScopeHash('origin', run.runId),
+    authorizedSurface: run.authorizedSurface,
+    ownerScopeHash: run.ownerScopeHash,
+    chatScopeHash: run.chatScopeHash,
+    groupScopeHash: run.groupScopeHash,
+    channel: run.channel,
+    goalSummary: 'Persist one bounded cockpit pagination fixture.',
+    missionId: null,
+    goalId: null,
+    runtimeRunId: null,
+    agentOSEpisodeId: null,
+    trajectoryId: null,
+    cognitiveRunId: null,
+    deepWorkPacketId: null,
+    approvalPacketId: null,
+    approvalVersion: null,
+    checkpointHeadId: null,
+    planId: null,
+    targetScopeHash: run.targetScopeHash,
+    executionEvidenceRefsJson: '[]',
+    deliveryState: 'not_started',
+    ownerReviewId: null,
+    skillCandidateId: null,
+    leaseId: null,
+    leaseExpiresAt: null,
+    attemptCount: 0,
+    expiresAt: null,
+    interruptedAt: null,
+    completedAt: null,
+    nextAction: 'Preserve the exact persisted approval boundary.',
+    privacyJson: '{"metadataOnly":true}',
+  };
+  insertDurableWorkUnit({
+    record: work,
+    createdEvent: {
+      eventId: `durable:event:created:${run.runId}`,
+      workId: run.workId,
+      createdAt,
+      eventKind: 'created',
+      fromStatus: null,
+      toStatus: work.status,
+      workVersion: initialWorkVersion,
+      planVersion: run.planVersion,
+      summary: 'Created persisted pagination fixture work.',
+      refsJson: '[]',
+      privacyJson: '{"metadataOnly":true}',
+    },
+  });
+  const checkpoint: DurableWorkCheckpoint = {
+    durableCheckpointId: run.checkpointId,
+    workId: run.workId,
+    runtimeCheckpointId: null,
+    parentCheckpointId: null,
+    createdAt,
+    updatedAt: run.updatedAt,
+    status: 'open',
+    workVersion: run.workVersion,
+    planVersion: run.planVersion,
+    sequence: 1,
+    completedNodeIdsJson: '[]',
+    pendingNodeIdsJson: '[]',
+    uncertainNodeIdsJson: '[]',
+    dependencyIdsJson: '[]',
+    worldSignalStateJson: '{"fresh":[],"stale":[],"missing":[]}',
+    approvalScopeJson: '{}',
+    executorScopeHash: durableScopeHash('executor', run.runId),
+    targetScopeHash: run.targetScopeHash,
+    preStateFingerprint: null,
+    verifiedPostStateFingerprint: null,
+    receiptIdsJson: '[]',
+    verificationRequirementsJson: '[]',
+    retryBudget: 1,
+    attemptsUsed: 0,
+    stopConditionsJson: '[]',
+    recoveryPolicy: 'approval_required',
+    nextSafeAction: 'Wait for the exact owner decision.',
+    privacyJson: '{"metadataOnly":true}',
+  };
+  const committed = insertDurableWorkCheckpoint({
+    checkpoint,
+    expectedWorkVersion: initialWorkVersion,
+    event: {
+      eventId: `durable:event:checkpoint:${run.runId}`,
+      workId: run.workId,
+      createdAt: run.updatedAt,
+      eventKind: 'checkpoint',
+      fromStatus: work.status,
+      toStatus: work.status,
+      workVersion: run.workVersion,
+      planVersion: run.planVersion,
+      summary: 'Committed persisted pagination fixture checkpoint.',
+      refsJson: JSON.stringify([run.checkpointId]),
+      privacyJson: '{"metadataOnly":true}',
+    },
+  });
+  if (!committed) {
+    throw new Error('Could not commit production-run fixture checkpoint.');
+  }
+}
+
 beforeEach(() => {
   _initTestDatabase();
   vi.clearAllMocks();
@@ -241,6 +429,7 @@ async function authenticate(base: string) {
   const snapshot = (await response.json()) as {
     csrfToken: string;
     apprenticeship: unknown;
+    approvals: Array<{ id: string }>;
   };
   return { cookie, snapshot };
 }
@@ -284,6 +473,12 @@ describe('owner cockpit production capability apprenticeship', () => {
         {
           taskFamily: 'cockpit_fixture',
           pendingAction: 'owner_review',
+          activationProposalRunId: null,
+          activationRunId: null,
+          activationAvailable: false,
+          activationGuidance: expect.stringContaining(
+            'no active-reuse request lane',
+          ),
           ownerReviewRunId: run.runId,
           runs: [
             {
@@ -304,6 +499,315 @@ describe('owner cockpit production capability apprenticeship', () => {
     expect(serialized).not.toContain('private-review-token');
     expect(serialized).toContain('capability-outcome:fixture');
   });
+
+  it('shows truthful canary staging as the next action for a prepared acquisition', async () => {
+    const { acquisition } = seedCapability();
+    apprenticeship.getStatus.mockReturnValue({
+      acquisition: {
+        ...acquisition,
+        state: 'owner_review_required',
+      },
+      runs: [],
+      pendingAction: 'none',
+      stateLabel: 'owner_review_required',
+      ownerControlSummary: 'Metadata only.',
+    });
+    const base = await start();
+    const { snapshot } = await authenticate(base);
+
+    expect(snapshot.apprenticeship).toMatchObject({
+      acquisitions: [
+        {
+          state: 'owner_review_required',
+          pendingAction: 'canary_staging',
+          activationAvailable: false,
+        },
+      ],
+    });
+  });
+
+  it('keeps a trusted-chat action packet as evidence metadata and never relabels it', async () => {
+    const { acquisition, run } = seedCapability();
+    const approvalPacketId = 'approval:trusted-chat-action';
+    const cognitiveRunId = 'cognitive:trusted-chat-action';
+    const chatRun = {
+      ...run,
+      status: 'awaiting_action_approval' as const,
+      channel: 'telegram',
+      authorizedSurface: 'telegram',
+      chatScopeHash: durableScopeHash('chat', 'tg:owner'),
+      outcomeId: null,
+    };
+    apprenticeship.getStatus.mockReturnValue({
+      acquisition,
+      runs: [chatRun],
+      pendingAction: 'action_approval',
+      stateLabel: acquisition.state,
+      ownerControlSummary: 'Metadata only.',
+    });
+    upsertCognitiveRun({
+      runId: cognitiveRunId,
+      createdAt: '2026-07-15T12:00:00.000Z',
+      updatedAt: '2026-07-15T12:00:00.000Z',
+      groupFolder: 'main',
+      channel: 'telegram',
+      taskFamily: 'release_readiness',
+      turnId: null,
+      runOrigin: 'live',
+      goalSummary: 'Approve one bounded protected action.',
+      selectedSkillId: 'protected-action',
+      status: 'awaiting_approval',
+      autonomyLevel: 'none',
+      cognitiveMode: 'approval_staged',
+      taskGraphJson: '{}',
+      evidenceContractJson: '{}',
+      providerUsabilityJson: '{}',
+      councilRunId: null,
+      verificationJson: '{}',
+      outcomeScore: 0,
+      nextAction: 'Wait for exact Telegram approval.',
+      privacyJson: '{"metadataOnly":true}',
+      linkedSkillCardId: null,
+    });
+    insertCurrentActionWork(chatRun, approvalPacketId);
+    upsertCognitiveApprovalPacket({
+      approvalPacketId,
+      createdAt: '2026-07-15T12:00:00.000Z',
+      updatedAt: '2026-07-15T12:00:00.000Z',
+      runId: cognitiveRunId,
+      toolId: 'durable:operator_change',
+      actionClass: 'operator_change',
+      status: 'staged',
+      summary: 'Approve the exact trusted-chat action.',
+      approvalChannel: null,
+      approvalKey: 'trusted-chat-action',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      approvalVersion: 1,
+      scopeDigest: '5'.repeat(64),
+      durableWorkId: chatRun.workId,
+      durableCheckpointId: chatRun.checkpointId,
+      planVersion: chatRun.planVersion,
+      targetScopeDigest: chatRun.targetScopeHash,
+      decisionJson: '{}',
+      privacyJson: '{"metadataOnly":true}',
+    });
+
+    const base = await start();
+    const { cookie, snapshot } = await authenticate(base);
+    expect(snapshot.approvals.map((approval) => approval.id)).not.toContain(
+      approvalPacketId,
+    );
+    expect(JSON.stringify(snapshot.apprenticeship)).toContain(approvalPacketId);
+    expect(snapshot.apprenticeship).toMatchObject({
+      acquisitions: [
+        {
+          pendingAction: 'action_approval',
+          runs: [
+            {
+              status: 'awaiting_action_approval',
+              evidenceIds: expect.arrayContaining([approvalPacketId]),
+            },
+          ],
+        },
+      ],
+    });
+
+    const response = await post({
+      base,
+      cookie,
+      csrfToken: snapshot.csrfToken,
+      path: `/api/v1/approvals/${encodeURIComponent(approvalPacketId)}/confirm`,
+      body: {
+        confirmation: 'APPROVE',
+        summary: 'Approve the exact trusted-chat action.',
+        approvalVersion: 1,
+        scopeDigest: '5'.repeat(64),
+      },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: expect.stringContaining('exact telegram conversation'),
+    });
+    expect(
+      listCognitiveApprovalPackets({ groupFolder: 'main', limit: 20 }).find(
+        (packet) => packet.approvalPacketId === approvalPacketId,
+      )?.status,
+    ).toBe('staged');
+  });
+
+  it.each(['telegram', 'bluebubbles'] as const)(
+    'protects an older persisted %s packet outside the 20-acquisition cockpit window',
+    async (surface) => {
+      const statuses = new Map<
+        string,
+        ReturnType<typeof apprenticeship.getStatus>
+      >();
+      const olderAcquisition = observeCapabilityGap({
+        metadataClassification: 'derived_metadata',
+        groupFolder: 'main',
+        targetOutcome: `Older ${surface} approval remains surface-bound.`,
+        postconditions: ['The exact approval surface remains unchanged.'],
+        taskFamily: `older_${surface}_approval`,
+        gapKind: 'tool_usage_gap',
+        provenanceRefs: [`fixture:${surface}:older`],
+        evidenceOrigin: 'synthetic',
+        environmentFingerprint: `fixture:${surface}:older`,
+        now: new Date('2026-07-15T10:00:00.000Z'),
+      });
+      const approvalPacketId = `approval:outside-window:${surface}`;
+      const chatJid =
+        surface === 'telegram'
+          ? 'tg:outside-window-owner'
+          : 'bb:iMessage;-;outside-window-owner@example.invalid';
+      const olderRun = productionRun(olderAcquisition, {
+        runId: `capability-run:outside-window:${surface}`,
+        createdAt: '2026-07-15T10:01:00.000Z',
+        updatedAt: '2026-07-15T10:02:00.000Z',
+        status: 'awaiting_canary_approval',
+        channel: surface,
+        authorizedSurface: surface,
+        chatScopeHash: durableScopeHash('chat', chatJid),
+        workId: `durable-work:outside-window:${surface}`,
+        checkpointId: `durable-checkpoint:outside-window:${surface}`,
+        invocationId: `capability-invocation:outside-window:${surface}`,
+        canaryApprovalPacketId: approvalPacketId,
+        outcomeId: null,
+      });
+      const cognitiveRunId = `cognitive:outside-window:${surface}`;
+      upsertCognitiveRun({
+        runId: cognitiveRunId,
+        createdAt: '2026-07-15T10:00:00.000Z',
+        updatedAt: '2026-07-15T10:00:00.000Z',
+        groupFolder: 'main',
+        channel: surface,
+        taskFamily: olderAcquisition.taskFamily,
+        turnId: null,
+        runOrigin: 'live',
+        goalSummary: 'Preserve the exact trusted-chat approval surface.',
+        selectedSkillId: 'outside-window-approval',
+        status: 'awaiting_approval',
+        autonomyLevel: 'none',
+        cognitiveMode: 'approval_staged',
+        taskGraphJson: '{}',
+        evidenceContractJson: '{}',
+        providerUsabilityJson: '{}',
+        councilRunId: null,
+        verificationJson: '{}',
+        outcomeScore: 0,
+        nextAction: 'Wait for the same-chat owner decision.',
+        privacyJson: '{"metadataOnly":true}',
+        linkedSkillCardId: null,
+      });
+      upsertCognitiveApprovalPacket({
+        approvalPacketId,
+        createdAt: '2026-07-15T10:00:00.000Z',
+        updatedAt: '2026-07-15T10:00:00.000Z',
+        runId: cognitiveRunId,
+        toolId: 'durable:operator_change',
+        actionClass: 'operator_change',
+        status: 'staged',
+        summary: `Approve the older exact ${surface} canary.`,
+        approvalChannel: null,
+        approvalKey: `outside-window:${surface}`,
+        expiresAt: '2099-01-01T00:00:00.000Z',
+        approvalVersion: 1,
+        scopeDigest: olderRun.canaryApprovalScopeDigest,
+        durableWorkId: null,
+        durableCheckpointId: null,
+        planVersion: null,
+        targetScopeDigest: olderRun.targetScopeHash,
+        decisionJson: '{}',
+        privacyJson: '{"metadataOnly":true}',
+      });
+      insertProductionRunDurableState(olderRun);
+      insertCapabilityProductionRun(olderRun);
+      statuses.set(olderAcquisition.acquisitionId, {
+        acquisition: olderAcquisition,
+        runs: [olderRun],
+        pendingAction: 'canary_approval',
+        stateLabel: olderAcquisition.state,
+        ownerControlSummary: 'Metadata only.',
+      });
+
+      for (let index = 0; index < 21; index += 1) {
+        const newerAcquisition = observeCapabilityGap({
+          metadataClassification: 'derived_metadata',
+          groupFolder: 'main',
+          targetOutcome: `Newer cockpit fixture ${index}.`,
+          postconditions: [`Newer fixture ${index} remains bounded.`],
+          taskFamily: `newer_cockpit_fixture_${index}`,
+          gapKind: 'tool_usage_gap',
+          provenanceRefs: [`fixture:newer:${index}`],
+          evidenceOrigin: 'synthetic',
+          environmentFingerprint: `fixture:newer:${index}`,
+          now: new Date(
+            Date.parse('2026-07-15T11:00:00.000Z') + index * 60_000,
+          ),
+        });
+        const newerRun = productionRun(newerAcquisition, {
+          runId: `capability-run:newer:${index}`,
+          createdAt: '2026-07-15T11:30:00.000Z',
+          updatedAt: new Date(
+            Date.parse('2026-07-15T11:31:00.000Z') + index * 60_000,
+          ).toISOString(),
+          workId: `durable-work:newer:${index}`,
+          checkpointId: `durable-checkpoint:newer:${index}`,
+          invocationId: `capability-invocation:newer:${index}`,
+          canaryApprovalPacketId: null,
+          canaryApprovalVersion: null,
+          canaryApprovalScopeDigest: null,
+          outcomeId: null,
+        });
+        insertProductionRunDurableState(newerRun);
+        insertCapabilityProductionRun(newerRun);
+        statuses.set(newerAcquisition.acquisitionId, {
+          acquisition: newerAcquisition,
+          runs: [newerRun],
+          pendingAction: 'owner_review',
+          stateLabel: newerAcquisition.state,
+          ownerControlSummary: 'Metadata only.',
+        });
+      }
+      apprenticeship.getStatus.mockImplementation((acquisitionId: string) =>
+        statuses.get(acquisitionId),
+      );
+      const persistedPacket = listCognitiveApprovalPackets({
+        groupFolder: 'main',
+        limit: 500,
+      }).find((packet) => packet.approvalPacketId === approvalPacketId)!;
+
+      const base = await start();
+      const { cookie, snapshot } = await authenticate(base);
+      expect(snapshot.approvals.map((approval) => approval.id)).not.toContain(
+        approvalPacketId,
+      );
+      expect(JSON.stringify(snapshot.apprenticeship)).not.toContain(
+        olderAcquisition.acquisitionId,
+      );
+
+      const response = await post({
+        base,
+        cookie,
+        csrfToken: snapshot.csrfToken,
+        path: `/api/v1/approvals/${encodeURIComponent(approvalPacketId)}/confirm`,
+        body: {
+          confirmation: 'APPROVE',
+          summary: persistedPacket.summary,
+          approvalVersion: persistedPacket.approvalVersion,
+          scopeDigest: persistedPacket.scopeDigest,
+        },
+      });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        error: expect.stringContaining(`exact ${surface} conversation`),
+      });
+      expect(
+        listCognitiveApprovalPackets({ groupFolder: 'main', limit: 500 }).find(
+          (packet) => packet.approvalPacketId === approvalPacketId,
+        )?.status,
+      ).toBe('staged');
+    },
+  );
 
   it('projects every eligible run for review and counts pending runs, not acquisitions', async () => {
     const { acquisition, run } = seedCapability();
@@ -530,7 +1034,7 @@ describe('owner cockpit production capability apprenticeship', () => {
     expect(apprenticeship.issueControlToken).not.toHaveBeenCalled();
   });
 
-  it('keeps activation proposal and approved-packet consumption separate and exact-bound', async () => {
+  it('keeps cockpit-bound activation unavailable because there is no cockpit reuse route', async () => {
     const { acquisition, run } = seedCapability();
     const readyAcquisition = {
       ...acquisition,
@@ -575,30 +1079,12 @@ describe('owner cockpit production capability apprenticeship', () => {
         targetScopeKey: 'fixture-target',
       },
     });
-    expect(proposed.status).toBe(200);
-    expect(apprenticeship.stageActivation).toHaveBeenCalledWith({
-      runId: run.runId,
-      expectedAcquisitionVersion: readyAcquisition.recordVersion,
-      expectedRunRevision: reviewedRun.revision,
-      authorizedSurface: 'owner_cockpit',
-      binding: {
-        ownerId: 'owner',
-        chatId: 'cockpit',
-        groupId: 'main',
-        channel: 'owner_cockpit',
-        targetScopeKey: 'fixture-target',
-      },
-      now: expect.any(Date),
-    });
+    expect(proposed.status).toBe(409);
+    expect(apprenticeship.stageActivation).not.toHaveBeenCalled();
     expect(apprenticeship.authorizeActivation).not.toHaveBeenCalled();
     const proposedPayload = await proposed.json();
     expect(proposedPayload).toMatchObject({
-      action: 'activation_proposed',
-      approval: {
-        id: 'capability-activation-approval:fixture',
-        status: 'staged',
-        actionClass: 'operator_change',
-      },
+      error: expect.stringContaining('no active-reuse route'),
     });
     expect(JSON.stringify(proposedPayload)).not.toContain('PRIVATE');
     expect(JSON.stringify(proposedPayload)).not.toContain('summary');
@@ -627,7 +1113,7 @@ describe('owner cockpit production capability apprenticeship', () => {
       },
     });
     expect(duplicateProposal.status).toBe(409);
-    expect(apprenticeship.stageActivation).toHaveBeenCalledTimes(1);
+    expect(apprenticeship.stageActivation).not.toHaveBeenCalled();
 
     const activated = await post({
       base,
@@ -639,23 +1125,12 @@ describe('owner cockpit production capability apprenticeship', () => {
         targetScopeKey: 'fixture-target',
       },
     });
-    expect(activated.status).toBe(200);
-    expect(apprenticeship.authorizeActivation).toHaveBeenCalledWith({
-      runId: run.runId,
-      expectedAcquisitionVersion: readyAcquisition.recordVersion,
-      expectedRunRevision: awaitingRun.revision,
-      authorizedSurface: 'owner_cockpit',
-      binding: {
-        ownerId: 'owner',
-        chatId: 'cockpit',
-        groupId: 'main',
-        channel: 'owner_cockpit',
-        targetScopeKey: 'fixture-target',
-      },
-      workerId: 'owner-cockpit-activation',
-      now: expect.any(Date),
+    expect(activated.status).toBe(409);
+    expect(await activated.json()).toMatchObject({
+      error: expect.stringContaining('no active-reuse route'),
     });
-    expect(apprenticeship.stageActivation).toHaveBeenCalledTimes(1);
+    expect(apprenticeship.authorizeActivation).not.toHaveBeenCalled();
+    expect(apprenticeship.stageActivation).not.toHaveBeenCalled();
   });
 
   it('rejects wrong targets, mixed actions, and non-positive owner review', async () => {
@@ -790,7 +1265,7 @@ describe('owner cockpit production capability apprenticeship', () => {
       },
     });
     expect(unapproved.status).toBe(409);
-    expect(apprenticeship.stageActivation).toHaveBeenCalledTimes(1);
+    expect(apprenticeship.stageActivation).not.toHaveBeenCalled();
 
     apprenticeship.authorizeActivation.mockImplementationOnce(() => {
       throw new Error('Capability activation binding lost its revision race.');
@@ -820,7 +1295,7 @@ describe('owner cockpit production capability apprenticeship', () => {
     expect(staleRun.status).toBe(409);
   });
 
-  it('allows only exact-bound idempotent replay after canonical activation', async () => {
+  it('rejects cockpit idempotent activation replay as an unusable binding', async () => {
     const { acquisition, run } = seedCapability();
     const activeAcquisition = {
       ...acquisition,
@@ -863,13 +1338,12 @@ describe('owner cockpit production capability apprenticeship', () => {
           targetScopeKey: 'fixture-target',
         },
       });
-      expect(replay.status).toBe(200);
+      expect(replay.status).toBe(409);
       expect(await replay.json()).toMatchObject({
-        action: 'activated',
-        idempotentReplay: true,
+        error: expect.stringContaining('no active-reuse route'),
       });
     }
-    expect(apprenticeship.authorizeActivation).toHaveBeenCalledTimes(2);
+    expect(apprenticeship.authorizeActivation).not.toHaveBeenCalled();
     expect(apprenticeship.stageActivation).not.toHaveBeenCalled();
   });
 

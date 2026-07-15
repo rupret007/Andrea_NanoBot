@@ -20,6 +20,29 @@ labeled synthetic `owner_review_required` evidence. Genuine canary, owner
 verdict, activation, and reuse evidence remain pending; the capability-
 acquisition facts below remain historical release truth.
 
+Candidate addendum, 2026-07-15: the action-authority candidate adds a
+separate action-specific approval boundary before any protected production
+canary or reuse. The guided CLI now separates `--stage`,
+`--authorize-canary`, `--stage-action-approval`, `--authorize-action`,
+`--run-canary`, `--stage-activation`, and `--activate`; it never approves a
+packet, records a verdict, or executes a protected plan during the two action
+approval phases. Guided mutations remain bound to canonical owner identity on
+the exact Telegram or BlueBubbles conversation. The cockpit is evidence/control
+only, hides chat-bound capability packets from generic approval, and cannot
+activate or relabel them. Production rollback bindings remain unsupported and
+fail closed; the trusted in-process synthetic sandbox is not OS isolation or a
+generalized rollback engine. Focused validation and the primary/container/AGI
+gates now pass: 250 primary files / 3,076 tests,
+95/95 acquisition, 188/188 production/cockpit/chat including 6/6 hard-kill,
+142/142 continuity, runner/container contracts and canaries, and 28 AGI files /
+286 tests. All 97 selected deterministic commands pass from the 112-command
+inventory, including the nested 3/3 stability gate; the 100.0% A+ offline
+scorecard remains network-denied and $0, and certification, signature,
+documentation, and dependency-audit gates pass. Publication, exact-SHA hosted
+checks, rebuild, restart, and serving proof are time-sensitive and must be
+queried from GitHub and the service status commands. No
+genuine canary, action approval, verdict, activation, or reuse was created.
+
 ## Verified Capability-Acquisition Note
 
 The tree containing this handoff includes the capability-acquisition layer
@@ -34,12 +57,14 @@ started/terminal receipts, and independent postcondition evidence.
 The released acquisition design covers ten primary and fifteen structurally separate
 held-out scenarios through a trusted in-process harness, with synthetic progress
 capped at `sandbox_verified`. It is not an OS isolation boundary.
-The current working tree adds the canonical database-backed canary, outcome,
-exact owner review, fresh-health, exact-approval, lease, activation, monitored
-reuse, and owner-control joins. Caller-asserted or disconnected identifiers
-still fail closed. The guided executable surface is restricted to the bundled
-read-only, zero-egress Release-Readiness Brief; its CLI cannot approve packets
-or record owner verdicts, and activation requires a separate exact approval.
+The released production-apprenticeship tree adds the canonical database-backed
+canary, outcome, exact owner review, fresh-health, exact-approval, lease,
+activation, monitored reuse, and owner-control joins. Caller-asserted or
+disconnected identifiers still fail closed. The guided execution surface is
+restricted to the bundled read-only, zero-egress Release-Readiness Brief; the
+CLI additionally exposes non-executing stage/consume phases for a protected
+plan's separate action-specific packet. It cannot approve packets or record
+owner verdicts, and activation requires another separate exact approval.
 Nothing in this note claims that a genuine canary ran, the owner reviewed it, a
 capability was activated or reused, the candidate is serving, or Andrea is AGI
 merely because its source and synthetic certification are present.

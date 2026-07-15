@@ -439,23 +439,30 @@ Sandbox execution uses canonical durable work, a committed checkpoint, complete
 plan preflight, exact-scope receipts, independent postcondition evaluation, and
 cleanup. Acquired skill projections remain suggestions: acquisition-only
 synthetic certification can reach only `sandbox_verified`. The production
-apprenticeship now implements the separate canonical canary, exact owner
-review, activation, monitoring, and control joins. Its own 22/22 deterministic
-proof uses labeled synthetic owner fixtures and creates no live owner or
-production evidence. Caller-supplied identifiers still cannot open any
+apprenticeship now implements the separate canonical canary, action-specific
+approval before any protected plan, exact owner review, activation, monitoring,
+and control joins. The released baseline's 22/22 deterministic proof uses
+labeled synthetic owner fixtures and creates no live owner or production
+evidence. The combined forward-fix passes its primary, focused, container, AGI,
+deterministic, certification, scorecard, signature, documentation, and audit
+gates; publication, exact-SHA hosted checks, and runtime proof remain pending.
+Caller-supplied identifiers still cannot open any
 transition. A stale projected playbook cannot bypass canonical state, and
 matching or previewing one does not claim execution, increment verified usage,
 or improve reliability.
 
-Activation does not expand the underlying action classes. The exact
-existing approval policy is derived from each compiled binding and remains
-independently enforced. The strict offline gate covers ten primary and fifteen
+Activation does not expand the underlying action classes. Canary approval and
+activation approval cannot substitute for the separate current packet required
+by a protected execution. The exact existing approval policy is derived from
+each compiled binding and remains independently enforced. Non-empty production
+rollback bindings fail closed; the trusted in-process sandbox is not OS
+isolation or a generalized rollback engine. The strict offline gate covers ten primary and fifteen
 held-out acquisition cases, while the apprenticeship gate covers 22 synthetic
 production-lifecycle cases; neither is genuine production activation evidence. See
 [VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md) for the
 implemented fail-closed foundation and
 [VERIFIED_PRODUCTION_APPRENTICESHIP.md](VERIFIED_PRODUCTION_APPRENTICESHIP.md)
-for the implemented canonical canary, owner-review, activation, monitored
+for the implemented canonical canary, protected-action approval, owner review, activation, monitored
 release-readiness reuse, quarantine, and revocation contract. Repository proof
 does not claim a genuine canary, owner verdict, activation, or reuse.
 

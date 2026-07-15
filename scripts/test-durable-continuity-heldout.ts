@@ -163,6 +163,8 @@ function seedApproval(
   actionClass: string,
   work: DurableWorkUnit,
   expiresAt = at(300),
+  stagedAt = at(1),
+  approvedAt = at(2),
 ): FixtureApproval {
   const runId = work.cognitiveRunId;
   if (!runId) throw new Error('Held-out approval requires a cognitive run.');
@@ -170,7 +172,7 @@ function seedApproval(
   upsertCognitiveRun({
     runId,
     createdAt: at(1),
-    updatedAt: at(1),
+    updatedAt: stagedAt,
     groupFolder: 'main',
     channel: 'operator',
     taskFamily: 'operator',
@@ -191,26 +193,6 @@ function seedApproval(
     privacyJson: '{"metadataOnly":true}',
     linkedSkillCardId: null,
   });
-  const currentPacket = work.approvalPacketId
-    ? listCognitiveApprovalPackets({ runId, limit: 100 }).find(
-        (packet) => packet.approvalPacketId === work.approvalPacketId,
-      )
-    : null;
-  if (
-    currentPacket?.status === 'approved' &&
-    currentPacket.approvalVersion === work.approvalVersion
-  ) {
-    return {
-      seedId: id,
-      actionClass,
-      expiresAt,
-      packetId: currentPacket.approvalPacketId,
-      version: currentPacket.approvalVersion || 1,
-      checkpoint: work.checkpointHeadId
-        ? getDurableWorkCheckpoint(work.checkpointHeadId)
-        : null,
-    };
-  }
   if (!work.checkpointHeadId) {
     return {
       seedId: id,
@@ -228,8 +210,8 @@ function seedApproval(
     actionClass,
     summary,
     checkpointId: work.checkpointHeadId,
-    ttlMs: Math.max(1, Date.parse(expiresAt) - Date.parse(at(1))),
-    now: at(1),
+    ttlMs: Math.max(1, Date.parse(expiresAt) - Date.parse(stagedAt)),
+    now: stagedAt,
   });
   const staged = listCognitiveApprovalPackets({
     groupFolder: 'main',
@@ -246,7 +228,7 @@ function seedApproval(
     expectedSummary: summary,
     expectedApprovalVersion: staged.approvalVersion || 1,
     expectedScopeDigest: staged.scopeDigest || null,
-    now: at(2),
+    now: approvedAt,
     approvalChannel: 'owner_cockpit',
   });
   assert.equal(approved.status, 'approved');
@@ -411,21 +393,33 @@ function setupMission(input: {
 function reopenAndAcquire(input: {
   fixture: ContinuityFixture;
   setup: MissionSetup;
-  approval?: { packetId: string; version: number } | null;
+  approval?: { seedId: string; expiresAt?: string } | null;
 }) {
   _initTestDatabaseAtPath(input.fixture.databasePath);
   const reconciliation = reconcileDurableWorkOnStartup({
     processGeneration: `process:${input.setup.actionClass}:recovery`,
     now: at(20),
   });
-  const work = getDurableWorkUnit(input.setup.work.workId);
+  let work = getDurableWorkUnit(input.setup.work.workId);
+  assert.ok(work);
+  const approval = input.approval
+    ? seedApproval(
+        input.approval.seedId,
+        input.setup.actionClass,
+        work!,
+        input.approval.expiresAt || at(300),
+        at(20.1),
+        at(20.2),
+      )
+    : null;
+  work = getDurableWorkUnit(input.setup.work.workId);
   assert.ok(work);
   const issued = issueDurableResumeGrant({
     workId: work!.workId,
     binding: input.setup.binding,
     actionClass: input.setup.actionClass,
-    approvalPacketId: input.approval?.packetId,
-    approvalVersion: input.approval?.version,
+    approvalPacketId: approval?.packetId,
+    approvalVersion: approval?.version,
     inboundMessageId: `message-${input.setup.actionClass}-recovery`,
     now: at(21),
   });
@@ -452,7 +446,7 @@ function reopenAndAcquire(input: {
 async function orchestrate(input: {
   fixture: ContinuityFixture;
   setup: MissionSetup;
-  approval?: { packetId: string; version: number } | null;
+  approval?: { seedId: string; expiresAt?: string } | null;
   callbacks: HeldoutOrchestrationCallbacks;
 }) {
   const resumed = reopenAndAcquire(input);
@@ -527,20 +521,10 @@ async function codingAfterEdit(): Promise<ScenarioOutcome> {
       );
     });
     closeDatabase();
-    const recoveryApproval = (() => {
-      _initTestDatabaseAtPath(fixture.databasePath);
-      const value = seedApproval(
-        `${id}-recovery`,
-        'repository_write',
-        setup.work,
-      );
-      closeDatabase();
-      return value;
-    })();
     const recovery = await orchestrate({
       fixture,
       setup,
-      approval: recoveryApproval,
+      approval: { seedId: `${id}-recovery` },
       callbacks: {
         revalidateNode: defaultRevalidation,
         executeNode: () => {
@@ -678,13 +662,10 @@ async function messageBeforeSend(): Promise<ScenarioOutcome> {
       approval: initialApproval,
     });
     closeDatabase();
-    _initTestDatabaseAtPath(fixture.databasePath);
-    const recoveryApproval = seedApproval(`${id}-recovery`, 'send', setup.work);
-    closeDatabase();
     const recovery = await orchestrate({
       fixture,
       setup,
-      approval: recoveryApproval,
+      approval: { seedId: `${id}-recovery` },
       callbacks: {
         revalidateNode: defaultRevalidation,
         authorizeExternalEffect: () => true,
@@ -770,13 +751,10 @@ async function messageTransportUnknown(): Promise<ScenarioOutcome> {
       now: at(6),
     });
     closeDatabase();
-    _initTestDatabaseAtPath(fixture.databasePath);
-    const recoveryApproval = seedApproval(`${id}-recovery`, 'send', setup.work);
-    closeDatabase();
     const recovery = await orchestrate({
       fixture,
       setup,
-      approval: recoveryApproval,
+      approval: { seedId: `${id}-recovery` },
       callbacks: {
         revalidateNode: defaultRevalidation,
         authorizeExternalEffect: () => true,

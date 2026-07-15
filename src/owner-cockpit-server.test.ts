@@ -92,9 +92,10 @@ function seedApproval(input: {
   groupFolder: string;
   summary: string;
   expiresAt?: string | null;
+  updatedAt?: string;
 }) {
   const runId = `run-${input.approvalPacketId}`;
-  const updatedAt = '2026-07-13T12:00:00.000Z';
+  const updatedAt = input.updatedAt || '2026-07-13T12:00:00.000Z';
   upsertCognitiveRun({
     runId,
     createdAt: '2026-07-13T12:00:00.000Z',
@@ -398,6 +399,31 @@ describe('owner cockpit security', () => {
     expect(
       listCognitiveApprovalPackets({ runId, limit: 1 })[0]?.status,
     ).not.toBe('approved');
+  });
+
+  it('filters hidden approvals before applying the bounded cockpit queue limit', async () => {
+    for (let index = 0; index < 8; index += 1) {
+      seedApproval({
+        approvalPacketId: `approval-expired-newer-${index}`,
+        groupFolder: 'main',
+        summary: `Expired action ${index}.`,
+        expiresAt: '2020-01-01T00:00:00.000Z',
+        updatedAt: `2026-07-13T12:${String(index + 10).padStart(2, '0')}:00.000Z`,
+      });
+    }
+    seedApproval({
+      approvalPacketId: 'approval-visible-after-filter',
+      groupFolder: 'main',
+      summary: 'Review the visible cockpit action.',
+      updatedAt: '2026-07-13T11:00:00.000Z',
+    });
+
+    const base = await start();
+    const { snapshot } = await authenticate(base);
+
+    expect(snapshot.approvals).toEqual([
+      expect.objectContaining({ id: 'approval-visible-after-filter' }),
+    ]);
   });
 
   it('rejects a snapshot after the staged approval is decided elsewhere', async () => {

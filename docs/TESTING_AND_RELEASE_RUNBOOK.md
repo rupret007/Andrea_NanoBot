@@ -319,6 +319,7 @@ npm test -- \
   src/production-capability-apprenticeship-hard-kill.test.ts \
   src/capability-canary-cli.integration.test.ts \
   src/capability-canary-cli.test.ts \
+  src/owner-cockpit-server.test.ts \
   src/release-readiness-candidate-preparation.test.ts \
   src/release-readiness-active-reuse.test.ts \
   src/capability-apprenticeship-chat.test.ts \
@@ -331,7 +332,10 @@ npm run test:production-capability-apprenticeship:certification-gate
 npm run certify:production-capability-apprenticeship
 ```
 
-The certification must report exactly 22/22 A-V scenarios and remain
+The released baseline certification reported exactly 22/22 A-V scenarios. The
+current action-authority candidate has rerun and re-earned the same complete
+22/22 result; focused CLI/chat/cockpit tests alone would not substitute. It must
+remain
 `deterministic_offline` / `certification_synthetic`. Accept only zero provider
 calls, cost, network escapes, external effects, production and production-metric
 writes, unauthorized or duplicate effects, privacy leaks, genuine owner
@@ -342,6 +346,12 @@ gates. This is repository behavior proof, not evidence that a real canary,
 owner review, activation, semantic reuse, provider call, deployment, or service
 restart occurred.
 
+Both production-apprenticeship commands are explicit Ubuntu and Windows CI
+steps. Scenario T uses two independent child processes that snapshot one
+activation head before a parent-owned barrier, then race the same isolated
+SQLite database; two promises serialized on one JavaScript event loop are not
+accepted as concurrency evidence.
+
 The operator surfaces have different authority:
 
 - `npm run capability:prepare-release-readiness` writes only synthetic
@@ -350,20 +360,36 @@ The operator surfaces have different authority:
   false.
 - `npm run capability:canary` is read-only inspection unless exactly one
   explicit mutation phase is selected. `--stage`, `--authorize-canary`,
-  `--run-canary`, `--stage-activation`, and `--activate` are separate
+  `--stage-action-approval`, `--authorize-action`, `--run-canary`,
+  `--stage-activation`, and `--activate` are separate
   invocations bound to expected acquisition/run heads, the exact owner/chat/
   group/channel/target scope, normalized input, and fresh health observations.
 - The CLI never approves a cognitive packet and never records an owner verdict.
-  Canary and activation packets use the normal approval surface. A verdict is
-  canonical only from the registered main Telegram chat, configured Messages
-  self-thread, or authenticated owner cockpit. Activation is available only
-  after an exact `verified` verdict and consumes a second approved packet.
+  A protected plan stages a separate action-specific packet after canary
+  authorization. Review the returned summary, version, scope digest, and
+  summary digest, then send the returned exact
+  `approve capability packet <id> version <n> scope <64hex> summary <64hex>`
+  command on the same trusted chat before consuming it with
+  `--authorize-action`. The chat handler must exact-query the canonical packet
+  and run, reject wrong chat/channel/version/scope/summary/expiry or ambiguous
+  bindings, and treat a repeat as an idempotent status response. Neither action
+  phase nor the approval command executes the protected plan, and
+  canary or activation authority cannot substitute. A verdict for a guided run
+  is canonical only from its registered main Telegram chat or configured
+  Messages self-thread. The owner cockpit is evidence/control only and rejects
+  relabeling a chat-bound packet. Activation is available only after an exact
+  `verified` verdict and consumes another separately approved packet.
 - Guided execution is restricted to the bundled read-only, zero-egress
   Release-Readiness Brief. After genuine activation, live semantic dispatch is
   deliberately limited to narrow release-readiness questions on the exact
   trusted owner chat and target. Every reuse must revalidate contract identity,
   scope, resource version and health, lease ownership, receipts, and the
   independent postcondition.
+
+Production contracts with credentials, unsupported egress/cost, mixed
+authority, or non-empty rollback binding IDs must fail closed. The trusted
+in-process synthetic sandbox is not OS isolation or a production rollback
+engine; durable cleanup receipts prove only its disposable fixture cleanup.
 
 Do not run a production preparation or mutation command merely to satisfy a
 release test. Genuine canary, verdict, activation, and reuse are operator proof
@@ -712,7 +738,9 @@ and operator authorization.
 npm run test:stability
 ```
 
-Use this when you want release confidence, not just a single clean pass.
+Use this when you want release confidence, not just a single clean pass. One
+invocation performs all three stability rounds; do not run the command three
+times and describe that as three additional gates.
 
 For live environments where credential/runtime probes should be exercised each round:
 
@@ -729,13 +757,14 @@ npm run test:deterministic:sweep
 
 This continues through independent `test:*` scripts, reports all failures at the end, and intentionally excludes interactive, aggregate, live, baseline-writing, and cloud-provider council tiers.
 
-On the current 2026-07-14 tree, the sweep inventories **111** scripts:
-**96 selected** deterministic commands and **15 explicitly excluded** commands.
+On the current 2026-07-15 tree, the sweep inventories **112** scripts:
+**97 selected** deterministic commands and **15 explicitly excluded** commands.
 Those counts are derived from the current package inventory and must be
 regenerated after script changes. Final evidence for this tree must distinguish
-the 96/96 selected result from the 111-command inventory; the 90/91 and 94/94
-counts in
-older modernization snapshots are historical and must not be reused.
+the 97 selected commands from the 112-command inventory. The exact candidate
+passes 97/97, including the nested one-command 3/3 stability gate. The 90/91,
+94/94, and 96/96 counts in older modernization snapshots are historical and
+must not be reused.
 
 The deterministic runner is hermetic at both external boundaries: it suppresses
 provider environment fallback, denies non-loopback network requests, and forces
@@ -1396,6 +1425,11 @@ Status-led closeout rules:
 - Read `npm run services:status`, `npm run integrations:status -- --json`, and
   the integration-specific debug command immediately before making a live
   claim. Documentation is not a durable proof ledger.
+- In the JSON integration report, `summary.stateCounts` is the exhaustive,
+  mutually exclusive arithmetic over all status rows and must sum to
+  `summary.total`. `actionNeeded`, `needsProof`, and `manualOrExternal` are
+  overlapping operator convenience counters; never add them together or use
+  their sum as a readiness denominator.
 - A healthy Telegram transport is not an end-to-end reply proof; run
   `npm run telegram:user:smoke` only when a real `/ping` send to the registered
   Telegram chat is authorized.

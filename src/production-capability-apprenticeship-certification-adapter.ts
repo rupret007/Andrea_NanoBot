@@ -63,6 +63,7 @@ import {
   type CapabilityProductionExecutionResult,
   type ProductionCapabilityExecutorBinding,
 } from './production-capability-apprenticeship.js';
+import { runProductionCapabilityActivationRace } from './production-capability-activation-race-harness.js';
 import {
   PRODUCTION_APPRENTICESHIP_SCENARIOS,
   type ProductionApprenticeshipCertificationEvidence,
@@ -116,6 +117,7 @@ interface CanaryFixture extends CandidateFixture {
 interface ScenarioExecutionContext {
   id: ProductionApprenticeshipScenarioId;
   databasePath: string;
+  fixtureRoot: string;
   counters: ScenarioCounters;
   ownerFixtureCounter: { value: number };
   evidenceOrigin: 'certification_synthetic';
@@ -1289,12 +1291,14 @@ async function runReuse(
   const match = matchActiveCapability({
     groupFolder: GROUP,
     taskFamily: activated.contract.taskFamily,
+    triggerText: activated.contract.triggerSemantics[0],
     inputs: values,
     intendedPostconditions: [...activated.contract.successPostconditions],
     binding: activated.binding,
     currentResourceVersions: {
       [activated.resource.resourceId]: activated.resource.version,
     },
+    now: at(nowBase),
   });
   const observationId = seedHealth(
     activated.resource,
@@ -1304,6 +1308,7 @@ async function runReuse(
   const run = stageActiveCapabilityReuse({
     match,
     taskFamily: activated.contract.taskFamily,
+    triggerText: activated.contract.triggerSemantics[0],
     intendedPostconditions: [...activated.contract.successPostconditions],
     binding: activated.binding,
     normalizedInputs: values,
@@ -1406,37 +1411,71 @@ async function scenarioO(context: ScenarioExecutionContext) {
 }
 
 async function scenarioP(context: ScenarioExecutionContext) {
-  let fixture = stageCanary(await prepareCandidate('P-negative-outcome'));
-  approve(fixture.approval);
-  fixture = authorizeCanary(fixture);
-  fixture = (await execute(fixture, context)).fixture;
-  fixture = review(fixture, context, 'corrected');
+  const activated = await activatedFixture('P-negative-outcome', context);
+  const firstReuse = await runReuse(activated, context, 'P-first-negative', 20);
+  const secondReuse = await runReuse(
+    activated,
+    context,
+    'P-second-negative',
+    30,
+  );
+  const firstReviewed = review(
+    {
+      ...activated,
+      acquisition: getCapabilityAcquisition(
+        activated.acquisition.acquisitionId,
+      )!,
+      run: firstReuse.run,
+    },
+    context,
+    'corrected',
+    at(33),
+  );
+  const secondReviewed = review(
+    {
+      ...activated,
+      acquisition: firstReviewed.acquisition,
+      run: secondReuse.run,
+    },
+    context,
+    'rejected',
+    at(35),
+  );
   const canonical = getCapabilityAcquisition(
-    fixture.acquisition.acquisitionId,
+    activated.acquisition.acquisitionId,
   )!;
   const match = matchActiveCapability({
     groupFolder: GROUP,
-    taskFamily: fixture.contract.taskFamily,
-    inputs: fixture.values,
-    intendedPostconditions: [...fixture.contract.successPostconditions],
-    binding: fixture.binding,
+    taskFamily: activated.contract.taskFamily,
+    triggerText: activated.contract.triggerSemantics[0],
+    inputs: activated.values,
+    intendedPostconditions: [...activated.contract.successPostconditions],
+    binding: activated.binding,
     currentResourceVersions: {
-      [fixture.resource.resourceId]: fixture.resource.version,
+      [activated.resource.resourceId]: activated.resource.version,
     },
+    now: at(36),
   });
   return result(
     context,
     {
       corrected_or_rejected_prevented_promotion:
-        canonical.state === 'paused' && match.status === 'none',
+        ['paused', 'quarantined'].includes(canonical.state) &&
+        match.status === 'none',
       negative_evidence_preserved:
-        canonical.negativeOutcomeCount === 1 &&
+        canonical.negativeOutcomeCount === 2 &&
         canonical.correctionCount === 1 &&
-        canonical.lastOutcome === 'corrected',
-      repeated_negative_paused_or_quarantined: canonical.state === 'paused',
+        canonical.lastOutcome === 'rejected',
+      repeated_negative_paused_or_quarantined:
+        canonical.state === 'quarantined' &&
+        firstReviewed.acquisition.state === 'paused' &&
+        secondReviewed.run.status === 'quarantined',
     },
-    evidenceIdsForRun(fixture.run.runId),
-    'The policy conservatively paused after the first substantive correction, before a second could occur.',
+    [
+      ...evidenceIdsForRun(firstReuse.run.runId),
+      ...evidenceIdsForRun(secondReuse.run.runId),
+    ].slice(0, 8),
+    'One exact correction paused the capability; a distinct rejected monitored outcome raised the preserved negative count to two and quarantined it.',
   );
 }
 
@@ -1449,10 +1488,12 @@ async function scenarioQ(context: ScenarioExecutionContext) {
   const match = matchActiveCapability({
     groupFolder: GROUP,
     taskFamily: activated.contract.taskFamily,
+    triggerText: activated.contract.triggerSemantics[0],
     inputs: values,
     intendedPostconditions: [...activated.contract.successPostconditions],
     binding: activated.binding,
     currentResourceVersions: versions,
+    now: at(20),
   });
   const observationId = seedHealth(
     activated.resource,
@@ -1462,6 +1503,7 @@ async function scenarioQ(context: ScenarioExecutionContext) {
   const run = stageActiveCapabilityReuse({
     match,
     taskFamily: activated.contract.taskFamily,
+    triggerText: activated.contract.triggerSemantics[0],
     intendedPostconditions: [...activated.contract.successPostconditions],
     binding: activated.binding,
     normalizedInputs: values,
@@ -1495,10 +1537,12 @@ async function scenarioQ(context: ScenarioExecutionContext) {
   const laterMatch = matchActiveCapability({
     groupFolder: GROUP,
     taskFamily: activated.contract.taskFamily,
+    triggerText: activated.contract.triggerSemantics[0],
     inputs: values,
     intendedPostconditions: [...activated.contract.successPostconditions],
     binding: activated.binding,
     currentResourceVersions: versions,
+    now: at(23),
   });
   const activationReceipts = listCapabilityProductionTransitionReceipts({
     acquisitionId: activated.acquisition.acquisitionId,
@@ -1527,18 +1571,22 @@ async function scenarioR(context: ScenarioExecutionContext) {
   const exactMatch = matchActiveCapability({
     groupFolder: GROUP,
     taskFamily: activated.contract.taskFamily,
+    triggerText: activated.contract.triggerSemantics[0],
     inputs: activated.values,
     intendedPostconditions: [...activated.contract.successPostconditions],
     binding: activated.binding,
     currentResourceVersions: exactVersions,
+    now: at(20),
   });
   const driftedMatch = matchActiveCapability({
     groupFolder: GROUP,
     taskFamily: activated.contract.taskFamily,
+    triggerText: activated.contract.triggerSemantics[0],
     inputs: activated.values,
     intendedPostconditions: [...activated.contract.successPostconditions],
     binding: activated.binding,
     currentResourceVersions: driftedVersions,
+    now: at(20),
   });
   const observationId = seedHealth(
     activated.resource,
@@ -1549,6 +1597,7 @@ async function scenarioR(context: ScenarioExecutionContext) {
     stageActiveCapabilityReuse({
       match: exactMatch,
       taskFamily: activated.contract.taskFamily,
+      triggerText: activated.contract.triggerSemantics[0],
       intendedPostconditions: [...activated.contract.successPostconditions],
       binding: activated.binding,
       normalizedInputs: activated.values,
@@ -1590,12 +1639,14 @@ async function scenarioS(context: ScenarioExecutionContext) {
   const match = matchActiveCapability({
     groupFolder: GROUP,
     taskFamily: activated.contract.taskFamily,
+    triggerText: activated.contract.triggerSemantics[0],
     inputs: activated.values,
     intendedPostconditions: [...activated.contract.successPostconditions],
     binding: activated.binding,
     currentResourceVersions: {
       [activated.resource.resourceId]: activated.resource.version,
     },
+    now: at(14),
   });
   return result(
     context,
@@ -1620,60 +1671,22 @@ async function scenarioS(context: ScenarioExecutionContext) {
 }
 
 async function scenarioT(context: ScenarioExecutionContext) {
-  let fixture = stageCanary(await prepareCandidate('T-concurrent-activation'));
-  approve(fixture.approval);
-  fixture = authorizeCanary(fixture);
-  fixture = (await execute(fixture, context)).fixture;
-  fixture = review(fixture, context, 'verified');
-  const staged = stageCapabilityActivation({
-    runId: fixture.run.runId,
-    ...productionHeads(fixture.run.runId),
-    binding: fixture.binding,
-    now: at(9),
+  const race = await runProductionCapabilityActivationRace({
+    fixtureRoot: context.fixtureRoot,
   });
-  approve(staged.approval, at(10));
-  const concurrentHeads = productionHeads(fixture.run.runId);
-  const attempts = await Promise.allSettled([
-    Promise.resolve().then(() =>
-      authorizeApprovedCapabilityActivation({
-        runId: fixture.run.runId,
-        ...concurrentHeads,
-        binding: fixture.binding,
-        workerId: 'certification-racer-a',
-        now: at(11),
-      }),
-    ),
-    Promise.resolve().then(() =>
-      authorizeApprovedCapabilityActivation({
-        runId: fixture.run.runId,
-        ...concurrentHeads,
-        binding: fixture.binding,
-        workerId: 'certification-racer-b',
-        now: at(11),
-      }),
-    ),
-  ]);
-  const successes = attempts.filter(
-    (attempt) => attempt.status === 'fulfilled',
-  );
-  const activationReceipts = listCapabilityProductionTransitionReceipts({
-    runId: fixture.run.runId,
-  }).filter((receipt) => receipt.transitionKind === 'activated');
-  const activeSkills = listSkillPlaybooks({
-    groupFolder: GROUP,
-    statuses: ['active'],
-    limit: 100,
-  }).filter((skill) => skill.skillId === fixture.contract.skillId);
   return result(
     context,
     {
-      activation_race_exercised: attempts.length === 2,
+      activation_race_exercised:
+        race.readyConsumers === 2 && race.attemptedConsumers === 2,
       exactly_one_transition_succeeded:
-        successes.length >= 1 && activationReceipts.length === 1,
-      exactly_one_projection_created: activeSkills.length === 1,
+        race.successfulConsumers === 1 &&
+        race.staleOrConsumedFailures === 1 &&
+        race.activationReceiptCount === 1,
+      exactly_one_projection_created: race.activeProjectionCount === 1,
     },
-    [fixture.run.runId, activationReceipts[0]!.receiptId],
-    'Two activation consumers raced; canonical CAS admitted one transition and projection.',
+    race.evidenceIds,
+    'Two independent processes loaded one activation head, crossed a parent-owned barrier, and raced SQLite; canonical CAS admitted one transition and projection.',
   );
 }
 
@@ -1755,12 +1768,14 @@ async function scenarioV(context: ScenarioExecutionContext) {
     const match = matchActiveCapability({
       groupFolder: GROUP,
       taskFamily: activated.contract.taskFamily,
+      triggerText: activated.contract.triggerSemantics[0],
       inputs: values,
       intendedPostconditions: [...activated.contract.successPostconditions],
       binding: activated.binding,
       currentResourceVersions: {
         [activated.resource.resourceId]: activated.resource.version,
       },
+      now: at(20 + index * 3),
     });
     const observationId = seedHealth(
       activated.resource,
@@ -1770,6 +1785,7 @@ async function scenarioV(context: ScenarioExecutionContext) {
     const run = stageActiveCapabilityReuse({
       match,
       taskFamily: activated.contract.taskFamily,
+      triggerText: activated.contract.triggerSemantics[0],
       intendedPostconditions: [...activated.contract.successPostconditions],
       binding: activated.binding,
       normalizedInputs: values,
@@ -1917,6 +1933,7 @@ export const runProductionCapabilityApprenticeshipCertificationCases: RunProduct
           await executeScenario({
             id,
             databasePath,
+            fixtureRoot: certificationContext.fixtureRoot,
             counters,
             ownerFixtureCounter,
             evidenceOrigin: certificationContext.evidenceOrigin,

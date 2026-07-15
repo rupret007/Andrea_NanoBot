@@ -6,6 +6,51 @@ proof is time-sensitive; rerun `npm run debug:status`,
 release or demo. The release facts below describe their recorded tree; they do
 not replace current Git, hosted-check, or runtime provenance.
 
+## Current Candidate Validation Snapshot
+
+- The action-authority candidate contains apprenticeship authority and guided-UX
+  forward-fixes. Its primary, focused, container, AGI, deterministic,
+  certification, scorecard, signature, documentation, and dependency-audit
+  gates have passed. Publication, exact-SHA hosted checks, rebuild, restart, and
+  serving provenance are time-sensitive; refresh them with the commands at the
+  top rather than treating this dated snapshot as current release identity.
+- Canary authorization no longer stands in for protected execution authority.
+  A protected canary or protected reuse stages a separate action-specific
+  packet; only its same-chat approval may be consumed into one exact grant and
+  lease. `--stage-action-approval` and `--authorize-action` are distinct CLI
+  phases and neither executes the protected plan.
+- Guided capability mutations use canonical owner identity on the exact
+  registered Telegram chat or configured BlueBubbles self-thread. The owner
+  cockpit is evidence/control only, exposes chat-bound action packets only as
+  opaque evidence IDs, and rejects attempts to approve or relabel them.
+- Canary, protected-action, and activation staging now return a reviewable
+  summary plus exact packet version, scope digest, summary digest, and one
+  complete same-chat approval command. The chat route accepts only that exact
+  command, rechecks the current packet/run/conversation binding, rejects wrong,
+  stale, expired, ambiguous, or conversational approval text, and reports an
+  already-decided packet idempotently without executing the capability action.
+  Explicit older acquisition/run IDs use exact lookup rather than the bounded
+  20-item overview.
+- Current local evidence is: formatting, root typecheck, production build, and
+  250 primary files / 3,076 tests passed; lint has zero errors and 664 existing
+  warnings. Focused acquisition is 95/95, production/cockpit/chat is 188/188
+  including all 6/6 real-process hard-kill cases, and durable continuity is
+  142/142. Container install, runner typecheck/build, 13/13 runner tests,
+  132/132 host contracts, pinned image/canary, and nested mount canary passed.
+  AGI typecheck and 28 files / 286 tests passed. The reconciled docs pass the
+  72-file documentation check, and the combined tree passes `git diff --check`.
+- The current deterministic sweep passes all 97 selected commands from the
+  112-command inventory; the other 15 are explicitly excluded. Its nested
+  one-command stability gate passes 3/3 rounds. Hard-kill recovery passes
+  12/12, held-out recovery 10/10, novel-capability runtime certification 25/25,
+  production-apprenticeship certification 22/22, and Commitment Intelligence
+  24/24 primary plus 15/15 held-out and 3/3 invariants. The isolated scorecard
+  is 100.0% A+ at $0 with network denial and no regression; signature flows and
+  all four dependency audits pass with zero vulnerabilities. Exact-SHA hosted
+  and runtime provenance must be queried separately for the published commit.
+- No genuine canary, protected action decision, owner verdict, activation, or
+  active reuse was created by this work.
+
 ## Repository And Release
 
 - Release state is intentionally time-sensitive. Before a release or demo,
@@ -21,6 +66,11 @@ not replace current Git, hosted-check, or runtime provenance.
 - Exact-SHA CI run `29434979875`, AGI/CodeQL run `29434979968`, and Security run
   `29435006959` passed Ubuntu, Windows, container, AGI, CodeQL,
   dependency-audit, verified-secret-scan, and Semgrep gates.
+- Documentation-only closure `51c3f886a496e5036a93c6a1c6c12190a7a3f4bd`
+  is also published on `main`. Its exact-SHA CI run `29435964758`, AGI/CodeQL
+  run `29435964770`, and Security run `29435974616` passed the same hosted
+  platform and security gates. This is the audited release baseline before any
+  later reporting forward-fix; a newer commit must earn its own evidence.
 - A clean 2,308-file Mac artifact was built from `3dbfae9c` with SHA-256
   `43b62d4457b0e316e525acc8c70e93df98b80ee1fb0b4d0f4a031be14f97da61`.
   OpenClaw restarted from PID 11235 to 36162, and Andrea restarted from PID
@@ -30,13 +80,20 @@ not replace current Git, hosted-check, or runtime provenance.
   Homebrew, Node, and TypeScript caches while preserving Docker volumes and
   images, Codex state, model data, messages, sessions, repository dependencies,
   build output, and Andrea's live database.
+- After the documentation closure, the host was rebuilt and restarted again.
+  The audited status reported `running_ready`, verified artifact provenance,
+  zero build/workspace dirty paths, and serving/build/workspace SHA all equal to
+  `51c3f886`. OpenClaw PID `46626` started before Andrea PID `47348`; the bridge
+  exposed all 11 required tools and no direct-send authority. Current process
+  identities remain time-sensitive and must be refreshed with the commands
+  above.
 - Post-restart OpenClaw connectivity, 11/11 bridge tools, direct-send exclusion,
   local Alexa health/OAuth endpoints, BlueBubbles transport/webhook, Telegram
   transport, Google Calendar, research, image generation, cached provider
   health, and Brave Search status all passed. No new error-class log entry or
   false Brave-down transition was found.
 
-## Verified Repository Gates
+## Verified Repository Gates — Released Baseline
 
 - Primary suite: 249 files / 3,006 tests, plus a successful production build.
 - AGI suite: 28 files / 286 tests.
@@ -55,9 +112,10 @@ not replace current Git, hosted-check, or runtime provenance.
 
 ## Verified Production Apprenticeship — Released Implementation
 
-The released application implements the canonical production bridge above Verified
+The working tree implements the canonical production bridge above Verified
 Capability Acquisition: bounded canary staging, consumption of a separately
-approved exact canary packet, durable read-only execution, independent
+approved exact canary packet, a distinct action-specific approval before any
+protected plan, durable execution under its exact grant/lease, independent
 postcondition verification, canonical outcome, exact private owner verdict,
 separate activation proposal and approval, monitored active reuse, and owner
 pause/revoke/retire controls. Disconnected identifiers, stale heads, scope or
@@ -70,8 +128,9 @@ or reuses only synthetic preproduction acquisition evidence; it creates no live
 canary, approval, owner verdict, provider call, external effect, or activation.
 `npm run capability:canary` is a multi-invocation operator guide. It never
 approves a packet or records an owner verdict. Reviews come only from the
-registered main Telegram chat, configured Messages self-thread, or authenticated
-owner cockpit; activation requires a new exact approval after a verified
+registered main Telegram chat or configured Messages self-thread for guided
+runs. The cockpit is evidence/control only and cannot activate or relabel a
+chat-bound packet; activation requires a new exact approval after a verified
 verdict. Runtime semantic reuse is deliberately limited to narrow read-only
 release-readiness questions on the same trusted owner chat and scope.
 
@@ -329,10 +388,10 @@ status commands above instead of carrying these point-in-time states forward.
   `/ping` roundtrip was recorded at `2026-07-14T15:10:07.618Z`; it is now aged
   and needs a genuine user-path refresh.
 - BlueBubbles: transport is reachable and usable; current readiness is degraded
-  because a fresh canonical same-thread `message_action` proof is missing. The
-  OpenClaw status drill reached the tool path, but its exactly-once
-  certification failed on alias duplication; the repo fix is tested and awaits
-  one future live recertification.
+  because a fresh canonical same-thread `message_action` proof is missing.
+  OpenClaw currently reports 11/11 bridge tools, a healthy local transport and
+  webhook, and no direct-send exposure; none of those substitutes for the
+  missing owner-path decision.
 - Alexa: listener/public setup may be available, but the signed
   `IntentRequest` proof is stale and requires a fresh real-device or
   authenticated-simulator turn.
@@ -346,8 +405,9 @@ status commands above instead of carrying these point-in-time states forward.
 
 ## Learning Evidence
 
-- One genuine owner-reviewed outcome exists; the five-outcome minimum for the
-  first reviewed baseline has not been met, and no baseline has been saved.
+- Zero genuine owner-reviewed outcomes exist in the current canonical evidence;
+  the five-outcome minimum for the first reviewed baseline has not been met,
+  and no baseline has been saved.
 - The latency ledger has four valid comparable samples: average 10,994 ms,
   p50 7,328 ms, and p95 26,353 ms. The calendar route currently meets its
   target; one direct-assistant container sample remains over the ten-second
@@ -385,7 +445,7 @@ status commands above instead of carrying these point-in-time states forward.
    intent, and life-thread proofs through genuine user interactions.
 4. Collect five distinct owner reviews before presenting a baseline, and
    complete the ten-working-day reviewed dogfood sequence.
-5. After releasing the apprenticeship implementation, run one genuine,
+5. Using the released apprenticeship implementation, run one genuine,
    explicitly owner-authorized Release-Readiness Brief canary; record the exact
    owner verdict; obtain a separate activation decision; and prove one later
    same-scope semantic reuse. Do not backfill any of those from the 22/22

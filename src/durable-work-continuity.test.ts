@@ -576,6 +576,305 @@ describe('durable cognitive continuity', () => {
     ).toBe('consumed');
   });
 
+  it('permits only one durable grant for an exact approval packet version', () => {
+    const { work } = readyWork();
+    const approval = seedApprovedPacket(work.workId);
+    issueDurableResumeGrant({
+      workId: work.workId,
+      binding,
+      actionClass: 'repository_write',
+      approvalPacketId: approval.approvalPacketId,
+      approvalVersion: approval.approvalVersion,
+      now: '2026-07-13T12:02:00.000Z',
+    });
+
+    expect(() =>
+      issueDurableResumeGrant({
+        workId: work.workId,
+        binding,
+        actionClass: 'repository_write',
+        approvalPacketId: approval.approvalPacketId,
+        approvalVersion: approval.approvalVersion,
+        now: '2026-07-13T12:02:01.000Z',
+      }),
+    ).toThrow(/approval packet\/version can authorize only one resume grant/i);
+    expect(listDurableResumeGrants({ workId: work.workId })).toHaveLength(1);
+  });
+
+  it('rejects restaging an elapsed approval while its issued grant remains active', () => {
+    const { work } = readyWork();
+    const approval = seedApprovedPacket(
+      work.workId,
+      'repository_write',
+      120_000,
+    );
+    issueDurableResumeGrant({
+      workId: work.workId,
+      binding,
+      actionClass: 'repository_write',
+      approvalPacketId: approval.approvalPacketId,
+      approvalVersion: approval.approvalVersion,
+      now: '2026-07-13T12:01:05.000Z',
+    });
+    const current = getDurableWorkUnit(work.workId)!;
+
+    expect(() =>
+      stageDurableWorkApproval({
+        workId: current.workId,
+        expectedWorkVersion: current.version,
+        cognitiveRunId: current.cognitiveRunId!,
+        actionClass: 'repository_write',
+        summary: 'Do not supersede an approval with a still-active grant.',
+        checkpointId: current.checkpointHeadId,
+        now: '2026-07-13T12:02:01.000Z',
+      }),
+    ).toThrow(/active durable authority/i);
+    expect(listDurableResumeGrants({ workId: work.workId })).toMatchObject([
+      { status: 'active', approvalPacketId: approval.approvalPacketId },
+    ]);
+  });
+
+  it('expires a lost issued grant at TTL before staging fresh approval', () => {
+    const { work } = readyWork();
+    const firstApproval = seedApprovedPacket(work.workId);
+    issueDurableResumeGrant({
+      workId: work.workId,
+      binding,
+      actionClass: 'repository_write',
+      approvalPacketId: firstApproval.approvalPacketId,
+      approvalVersion: firstApproval.approvalVersion,
+      ttlMs: 1_000,
+      now: '2026-07-13T12:01:05.000Z',
+    });
+    const stageReplacement = (now: string) => {
+      const current = getDurableWorkUnit(work.workId)!;
+      return stageDurableWorkApproval({
+        workId: current.workId,
+        expectedWorkVersion: current.version,
+        cognitiveRunId: current.cognitiveRunId!,
+        actionClass: 'repository_write',
+        summary: 'Approve a fresh grant after the lost token expires.',
+        checkpointId: current.checkpointHeadId,
+        now,
+      });
+    };
+
+    expect(() => stageReplacement('2026-07-13T12:01:05.999Z')).toThrow(
+      /active durable authority/i,
+    );
+    const replacement = stageReplacement('2026-07-13T12:01:06.000Z');
+    expect(listDurableResumeGrants({ workId: work.workId })).toMatchObject([
+      { status: 'expired', approvalPacketId: firstApproval.approvalPacketId },
+    ]);
+    expect(() =>
+      issueDurableResumeGrant({
+        workId: work.workId,
+        binding,
+        actionClass: 'repository_write',
+        approvalPacketId: replacement.packet.approvalPacketId,
+        approvalVersion: replacement.packet.approvalVersion!,
+        now: '2026-07-13T12:01:06.500Z',
+      }),
+    ).toThrow(/current exact-scope approval/i);
+    const approved = approveCognitiveApprovalPacketCAS({
+      approvalPacketId: replacement.packet.approvalPacketId,
+      groupFolder: 'main',
+      expectedSummary: replacement.packet.summary,
+      expectedApprovalVersion: replacement.packet.approvalVersion || 1,
+      expectedScopeDigest: replacement.packet.scopeDigest || null,
+      now: '2026-07-13T12:01:07.000Z',
+      approvalChannel: 'owner_cockpit',
+    });
+    expect(approved.status).toBe('approved');
+    expect(
+      issueDurableResumeGrant({
+        workId: work.workId,
+        binding,
+        actionClass: 'repository_write',
+        approvalPacketId: replacement.packet.approvalPacketId,
+        approvalVersion: approved.approvalVersion!,
+        now: '2026-07-13T12:01:08.000Z',
+      }).grant.approvalPacketId,
+    ).toBe(replacement.packet.approvalPacketId);
+  });
+
+  it('rejects restaging while verifying under an active consumed-grant lease', () => {
+    const { work } = readyWork();
+    const approval = seedApprovedPacket(
+      work.workId,
+      'repository_write',
+      120_000,
+    );
+    const issued = issueDurableResumeGrant({
+      workId: work.workId,
+      binding,
+      actionClass: 'repository_write',
+      approvalPacketId: approval.approvalPacketId,
+      approvalVersion: approval.approvalVersion,
+      now: '2026-07-13T12:01:05.000Z',
+    });
+    const consumed = consumeResumeGrantAndAcquireLease({
+      token: issued.token,
+      binding,
+      actionClass: 'repository_write',
+      workerId: 'writer-verifying-active-lease',
+      processGeneration: 'process:verifying-active-lease',
+      leaseTtlMs: 180_000,
+      now: '2026-07-13T12:01:06.000Z',
+    });
+    expect(consumed.status).toBe('consumed');
+    const verifying = transitionDurableWork({
+      workId: work.workId,
+      expectedVersion: consumed.work!.version,
+      toStatus: 'verifying',
+      nextAction: 'Verify the in-flight repository effect.',
+      now: '2026-07-13T12:01:07.000Z',
+    });
+
+    expect(() =>
+      stageDurableWorkApproval({
+        workId: verifying.workId,
+        expectedWorkVersion: verifying.version,
+        cognitiveRunId: verifying.cognitiveRunId!,
+        actionClass: 'repository_write',
+        summary: 'Do not restage while the verification lease is active.',
+        checkpointId: verifying.checkpointHeadId,
+        now: '2026-07-13T12:02:01.000Z',
+      }),
+    ).toThrow(/active durable authority/i);
+    expect(consumed.lease).toMatchObject({ status: 'active' });
+  });
+
+  it('rejects restaging around an unrelated active lease on the same work', () => {
+    const { work } = readyWork();
+    seedApprovedPacket(work.workId, 'repository_write', 120_000);
+    const issued = issueDurableResumeGrant({
+      workId: work.workId,
+      binding,
+      actionClass: 'repository_read',
+      now: '2026-07-13T12:01:05.000Z',
+    });
+    expect(issued.grant.approvalPacketId).toBeNull();
+    const consumed = consumeResumeGrantAndAcquireLease({
+      token: issued.token,
+      binding,
+      actionClass: 'repository_read',
+      workerId: 'reader-unrelated-active-lease',
+      processGeneration: 'process:unrelated-active-lease',
+      leaseTtlMs: 180_000,
+      now: '2026-07-13T12:01:06.000Z',
+    });
+    expect(consumed.status).toBe('consumed');
+    const verifying = transitionDurableWork({
+      workId: work.workId,
+      expectedVersion: consumed.work!.version,
+      toStatus: 'verifying',
+      nextAction: 'Finish the unrelated read verification first.',
+      now: '2026-07-13T12:01:07.000Z',
+    });
+
+    expect(() =>
+      stageDurableWorkApproval({
+        workId: verifying.workId,
+        expectedWorkVersion: verifying.version,
+        cognitiveRunId: verifying.cognitiveRunId!,
+        actionClass: 'repository_write',
+        summary: 'Do not restage around another active work lease.',
+        checkpointId: verifying.checkpointHeadId,
+        now: '2026-07-13T12:02:01.000Z',
+      }),
+    ).toThrow(/active durable authority/i);
+    expect(consumed.lease).toMatchObject({ status: 'active' });
+  });
+
+  it('restages fresh approval only after a consumed grant lease is reconciled', () => {
+    const { work } = readyWork();
+    const firstApproval = seedApprovedPacket(work.workId);
+    const firstGrant = issueDurableResumeGrant({
+      workId: work.workId,
+      binding,
+      actionClass: 'repository_write',
+      approvalPacketId: firstApproval.approvalPacketId,
+      approvalVersion: firstApproval.approvalVersion,
+      now: '2026-07-13T12:01:05.000Z',
+    });
+    const consumed = consumeResumeGrantAndAcquireLease({
+      token: firstGrant.token,
+      binding,
+      actionClass: 'repository_write',
+      workerId: 'writer-before-restart',
+      processGeneration: 'process:before-restart',
+      leaseTtlMs: 1_000,
+      now: '2026-07-13T12:01:06.000Z',
+    });
+    expect(consumed.status).toBe('consumed');
+
+    const stageFreshApproval = (now: string) => {
+      const current = getDurableWorkUnit(work.workId)!;
+      return stageDurableWorkApproval({
+        workId: current.workId,
+        expectedWorkVersion: current.version,
+        cognitiveRunId: current.cognitiveRunId!,
+        actionClass: 'repository_write',
+        summary: 'Approve one fresh repository write after crash recovery.',
+        checkpointId: current.checkpointHeadId,
+        now,
+      });
+    };
+
+    expect(() => stageFreshApproval('2026-07-13T12:01:06.500Z')).toThrow(
+      /work identity|active durable approval/i,
+    );
+    expect(
+      reconcileDurableWorkOnStartup({
+        processGeneration: 'process:after-restart',
+        now: '2026-07-13T12:01:08.000Z',
+      }),
+    ).toMatchObject({ expired: 1, interrupted: 1 });
+
+    const second = stageFreshApproval('2026-07-13T12:01:09.000Z');
+    expect(second.packet.approvalPacketId).not.toBe(
+      firstApproval.approvalPacketId,
+    );
+    expect(
+      listCognitiveApprovalPackets({ runId: second.work.cognitiveRunId! }).find(
+        (packet) => packet.approvalPacketId === firstApproval.approvalPacketId,
+      )?.status,
+    ).toBe('expired');
+    expect(() =>
+      issueDurableResumeGrant({
+        workId: work.workId,
+        binding,
+        actionClass: 'repository_write',
+        approvalPacketId: second.packet.approvalPacketId,
+        approvalVersion: second.packet.approvalVersion!,
+        now: '2026-07-13T12:01:09.500Z',
+      }),
+    ).toThrow(/current exact-scope approval/i);
+    const approved = approveCognitiveApprovalPacketCAS({
+      approvalPacketId: second.packet.approvalPacketId,
+      groupFolder: 'main',
+      expectedSummary: second.packet.summary,
+      expectedApprovalVersion: second.packet.approvalVersion || 1,
+      expectedScopeDigest: second.packet.scopeDigest || null,
+      now: '2026-07-13T12:01:10.000Z',
+      approvalChannel: 'owner_cockpit',
+    });
+    expect(approved.status).toBe('approved');
+    const secondGrant = issueDurableResumeGrant({
+      workId: work.workId,
+      binding,
+      actionClass: 'repository_write',
+      approvalPacketId: second.packet.approvalPacketId,
+      approvalVersion: approved.approvalVersion!,
+      now: '2026-07-13T12:01:11.000Z',
+    });
+    expect(secondGrant.grant.approvalPacketId).toBe(
+      second.packet.approvalPacketId,
+    );
+    expect(listDurableResumeGrants({ workId: work.workId })).toHaveLength(2);
+  });
+
   it('enforces approval-bound local operator changes through receipt updates', () => {
     const { work } = readyWork();
     const approval = seedApprovedPacket(
@@ -921,7 +1220,7 @@ describe('durable cognitive continuity', () => {
     expect(getDurableWorkUnit(work.workId)?.status).toBe('delivery_unverified');
   });
 
-  it('reconciles an unexpired lease owned by a prior process generation', () => {
+  it('does not steal an unexpired lease from another process generation and recovers after expiry', () => {
     const { work } = readyWork();
     const issued = issueDurableResumeGrant({
       workId: work.workId,
@@ -940,12 +1239,28 @@ describe('durable cognitive continuity', () => {
     });
     expect(consumed.status).toBe('consumed');
 
-    const result = reconcileDurableWorkOnStartup({
+    const skipped = reconcileDurableWorkOnStartup({
       processGeneration: 'process:after-restart',
       now: '2026-07-13T12:00:01.000Z',
     });
 
-    expect(result).toMatchObject({
+    expect(skipped).toMatchObject({
+      inspected: 1,
+      expired: 0,
+      interrupted: 0,
+      healthyLeaseSkipped: 1,
+    });
+    expect(getDurableWorkUnit(work.workId)).toMatchObject({
+      status: 'executing',
+      leaseId: consumed.lease?.leaseId,
+      leaseExpiresAt: '2026-07-13T12:01:00.000Z',
+    });
+
+    const recovered = reconcileDurableWorkOnStartup({
+      processGeneration: 'process:after-restart',
+      now: '2026-07-13T12:01:00.001Z',
+    });
+    expect(recovered).toMatchObject({
       inspected: 1,
       expired: 1,
       interrupted: 1,

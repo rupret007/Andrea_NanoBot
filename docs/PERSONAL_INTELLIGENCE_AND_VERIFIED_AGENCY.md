@@ -486,8 +486,9 @@ started/terminal receipts with exact scope and verification fingerprints. The
 acquisition gate runs ten primary and fifteen separate held-out scenarios;
 synthetic acquisition evidence stops at `sandbox_verified` and cannot count as
 owner learning. The production apprenticeship implements the later canary,
-exact owner-review, separate activation, monitored reuse, and owner-control
-joins. Its 22/22 deterministic certification uses labeled synthetic owner
+separate action-specific approval before any protected plan, exact owner
+review, separate activation, monitored reuse, and owner-control joins. The
+released baseline's 22/22 deterministic certification uses labeled synthetic owner
 fixtures, network-denied disposable storage, zero providers and cost, no
 external or production writes, and zero genuine owner evidence. Quarantine,
 pause, external blockers, failed verification, and indeterminate effects stay
@@ -495,10 +496,13 @@ explicit.
 
 Caller-asserted identifiers still fail closed. Canary readiness requires the
 exact candidate, binding, normalized input, fresh canonical health, durable
-work, checkpoint, separately approved packet, grant, and lease. Only the
+work, checkpoint, and separately approved canary packet. A protected plan then
+requires another exact same-chat action packet, grant, and lease before effect;
+canary and activation authority cannot substitute. Only the
 bundled read-only, zero-egress Release-Readiness Brief is exposed for guided
-execution. Its outcome verdict is accepted only through a registered owner chat
-or authenticated cockpit; activation requires a second exact approval. Narrow
+execution. Its guided verdict and later activation remain on the registered
+Telegram or configured BlueBubbles conversation; the cockpit is evidence/control
+only for those chat-bound runs. Activation requires another exact approval. Narrow
 semantic reuse is wired only after genuine activation, and every reuse repeats
 scope, version, health, lease, receipt, and independent-verification checks.
 Repository certification does not claim that any real canary, verdict,
@@ -507,7 +511,9 @@ activation, or reuse occurred.
 Acquisition grants no authority. Existing fresh approvals for external sends,
 calendar writes, purchases, canonical repository changes, deploys, migrations,
 dependency changes, and deletions remain mandatory regardless of candidate
-state or reliability. See
+state or reliability. Production rollback bindings are unsupported and fail
+closed; the trusted in-process synthetic sandbox is neither OS isolation nor a
+generalized rollback executor. See
 [VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md) and
 [VERIFIED_PRODUCTION_APPRENTICESHIP.md](VERIFIED_PRODUCTION_APPRENTICESHIP.md)
 for the complete lifecycle and strict proof boundary.

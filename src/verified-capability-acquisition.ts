@@ -20,16 +20,23 @@ import {
   listDurableResumeGrants,
   listCapabilityAcquisitions,
   listCapabilityAcquisitionTransitions,
+  upsertCognitiveRun,
   upsertDurableWorkLink,
   upsertSkillPlaybook,
   type CapabilityAcquisitionCanonicalEvidenceGuard,
 } from './db.js';
 import {
   commitDurableCheckpointCAS,
+  consumeResumeGrantAndAcquireLease,
   createOrLoadDurableWork,
   durableScopeHash,
+  issueDurableResumeGrant,
   linkDurableWorkProjection,
   recordDurableEffect,
+  reconcileExpiredDurableLease,
+  releaseDurableLease,
+  revokeDurableGrant,
+  stageDurableWorkApproval,
   transitionDurableWork,
   type DurableWorkBindingInput,
 } from './durable-work-continuity.js';
@@ -68,6 +75,8 @@ import type {
   CapabilityGapKind,
   CapabilityImplementationKind,
   CapabilityResourceDescriptor,
+  CognitiveApprovalPacket,
+  DurableEffectReceipt,
   SkillPlaybookRecord,
 } from './types.js';
 import {
@@ -84,6 +93,13 @@ const PRIVACY = Object.freeze({
   credentialsStored: false,
   secretsRedacted: true,
 });
+
+// A durable `started` receipt proves that an executor may have crossed the
+// effect boundary, but it cannot prove that the originating process is still
+// alive. This process-local set is deliberately not persisted: after a
+// restart, an unresolved receipt therefore fails closed instead of being
+// mistaken for an execution that this process can join.
+const activeCapabilitySandboxReceiptIds = new Set<string>();
 
 const PROHIBITED_ACTIONS = Object.freeze([
   'send without exact fresh approval',
@@ -662,6 +678,30 @@ function implementationKind(
   return 'existing_capability';
 }
 
+function exactProtectedSandboxActionClass(
+  contract: CapabilityCandidateContract,
+): DurableActionClass | null {
+  const protectedSteps = contract.steps.filter((step) => step.approvalRequired);
+  const actionClasses = new Set(protectedSteps.map((step) => step.actionClass));
+  if (actionClasses.size > 1) {
+    throw new Error(
+      'One candidate contract may contain only one approval-bound action class.',
+    );
+  }
+  const actionClass = [...actionClasses][0] || null;
+  if (
+    actionClass &&
+    (!durableActionRequiresApproval(actionClass) ||
+      protectedSteps.some((step) => step.actionClass !== actionClass) ||
+      contract.steps.some((step) => step.actionClass !== actionClass))
+  ) {
+    throw new Error(
+      'A protected sandbox contract must contain only one closed approval-bound action class.',
+    );
+  }
+  return actionClass;
+}
+
 export function compileCapabilityCandidate(params: {
   acquisitionId: string;
   selectedResources: CapabilityResourceDescriptor[];
@@ -758,6 +798,25 @@ export function compileCapabilityCandidate(params: {
   );
   if (!bindings.length) {
     throw new Error('Selected resources do not expose a compile-time binding.');
+  }
+  const protectedActionClasses = new Set(
+    bindings
+      .map((item) => item.binding.actionClass)
+      .filter((actionClass) => durableActionRequiresApproval(actionClass)),
+  );
+  if (protectedActionClasses.size > 1) {
+    throw new Error(
+      'One candidate contract may contain only one approval-bound action class.',
+    );
+  }
+  const protectedActionClass = [...protectedActionClasses][0];
+  if (
+    protectedActionClass &&
+    bindings.some((item) => item.binding.actionClass !== protectedActionClass)
+  ) {
+    throw new Error(
+      'A protected sandbox contract cannot mix approval-bound and other action classes.',
+    );
   }
   const capabilityId = safeId(
     'acquired-capability',
@@ -1069,6 +1128,13 @@ export interface CapabilityVerificationResult {
   reason: string;
 }
 
+export interface CapabilityCleanupVerificationResult {
+  verified: boolean;
+  evidenceRefs: string[];
+  cleanupFingerprint?: string;
+  reason: string;
+}
+
 export interface CapabilityExecutorBinding {
   bindingId: string;
   operationId: string;
@@ -1078,6 +1144,8 @@ export interface CapabilityExecutorBinding {
   actionClass: DurableActionClass;
   effectClass: DurablePolicyEffectClass;
   networkAccess: 'none' | 'loopback' | 'external';
+  /** Certification-only fake: simulates the declared protected effect in a marked temp root. */
+  sandboxSimulation?: boolean;
   execute(input: {
     values: Record<string, unknown>;
     idempotencyKey: string;
@@ -1102,6 +1170,20 @@ export interface CapabilityEvaluatorBinding {
     requiredPostconditions: string[];
     recovery: boolean;
   }): Promise<CapabilityVerificationResult>;
+  verifyCleanup?(input: {
+    values: Record<string, unknown>;
+    result?: CapabilityBindingResult;
+    cleanupSucceeded: boolean;
+    sandboxRoot?: string;
+  }): Promise<CapabilityCleanupVerificationResult>;
+}
+
+function capabilityCleanupRequired(
+  binding: CapabilityExecutorBinding,
+): boolean {
+  return (
+    binding.effectClass !== 'read_only' || binding.sandboxSimulation === true
+  );
 }
 
 const CAPABILITY_IMPLEMENTATION_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
@@ -1149,6 +1231,16 @@ export class VerifiedCapabilityBindingRegistry {
         throw new Error('Duplicate capability binding identity.');
       }
       assertDurableActionEffectPolicy(binding.actionClass, binding.effectClass);
+      if (
+        binding.sandboxSimulation === true &&
+        (!durableActionRequiresApproval(binding.actionClass) ||
+          binding.networkAccess !== 'none' ||
+          typeof binding.cleanup !== 'function')
+      ) {
+        throw new Error(
+          'Protected sandbox simulations require an approval-bound action, no network, and cleanup verification.',
+        );
+      }
       if (
         binding.effectClass === 'sandbox_repository_write' &&
         typeof binding.cleanup !== 'function'
@@ -1251,6 +1343,7 @@ export function createHermeticCertificationBindingRegistry(input: {
 
 export interface CapabilityExecutionReceipt {
   receiptId: string;
+  invocationId: string;
   idempotencyKey: string;
   bindingId: string;
   actionClass: DurableActionClass;
@@ -1259,6 +1352,14 @@ export interface CapabilityExecutionReceipt {
   preStateFingerprint?: string;
   postStateFingerprint?: string;
   verificationFingerprint?: string;
+  grantId?: string | null;
+  approvalPacketId?: string | null;
+  approvalVersion?: number | null;
+  approvalScopeHash?: string | null;
+  leaseId?: string | null;
+  processGeneration?: string | null;
+  createdAt: string;
+  updatedAt: string;
   evidenceRefs: string[];
 }
 
@@ -1310,10 +1411,61 @@ export function prepareCapabilityExecutionScope(params: {
     channel: safeText(params.channel, 120),
     targetScopeHash: durableScopeHash('target', params.targetScopeKey),
   };
+  const protectedActionClass = exactProtectedSandboxActionClass(contract);
+  const cognitiveRunId = protectedActionClass
+    ? safeId(
+        'cognitive:capability-sandbox',
+        canonicalCapabilityJson({
+          acquisitionId: acquisition.acquisitionId,
+          candidateFingerprint: contract.candidateFingerprint,
+          ...expectedBinding,
+        }),
+      )
+    : null;
   let work = getDurableWorkUnitForCapabilityAcquisition(
     acquisition.acquisitionId,
   );
   if (!work) {
+    if (protectedActionClass && acquisition.state !== 'owner_review_required') {
+      throw new Error(
+        'Protected capability execution scope may be created only after sandbox owner review is staged.',
+      );
+    }
+    if (cognitiveRunId) {
+      const createdAt = iso(params.now);
+      upsertCognitiveRun({
+        runId: cognitiveRunId,
+        createdAt,
+        updatedAt: createdAt,
+        groupFolder: params.groupId,
+        channel: params.channel,
+        taskFamily: contract.taskFamily,
+        turnId: acquisition.acquisitionId,
+        runOrigin: acquisition.evidenceOrigin,
+        goalSummary: `Authorize one hermetic sandbox simulation for ${contract.title}.`,
+        selectedSkillId: contract.skillId,
+        status: 'awaiting_approval',
+        autonomyLevel: 'none',
+        cognitiveMode: 'approval_staged',
+        taskGraphJson: capabilityMetadataJson({
+          acquisitionId: acquisition.acquisitionId,
+          candidateFingerprint: contract.candidateFingerprint,
+          protectedActionClass,
+          stepIds: contract.steps.map((step) => step.stepId),
+        }),
+        evidenceContractJson: capabilityMetadataJson({
+          postconditions: contract.successPostconditions,
+          sandboxOnly: true,
+        }),
+        providerUsabilityJson: '{}',
+        councilRunId: null,
+        verificationJson: '{}',
+        outcomeScore: 0,
+        nextAction: 'Wait for exact owner approval of this sandbox simulation.',
+        privacyJson: capabilityMetadataJson(PRIVACY),
+        linkedSkillCardId: null,
+      });
+    }
     const created = createOrLoadDurableWork({
       originTurnId: acquisition.acquisitionId,
       authorizedSurface: 'capability_acquisition',
@@ -1326,6 +1478,7 @@ export function prepareCapabilityExecutionScope(params: {
       },
       goalSummary: `Verify capability acquisition ${acquisition.acquisitionId}.`,
       status: 'ready',
+      cognitiveRunId,
       nextAction:
         'Execute only the candidate contract through canonical receipts.',
       now: params.now,
@@ -1336,6 +1489,11 @@ export function prepareCapabilityExecutionScope(params: {
       'capability_acquisition_execution',
       acquisition.acquisitionId,
       params.now,
+    );
+  }
+  if (protectedActionClass && work.cognitiveRunId !== cognitiveRunId) {
+    throw new Error(
+      'Protected capability sandbox work lacks its exact cognitive approval identity.',
     );
   }
   if (
@@ -1409,6 +1567,283 @@ export function prepareCapabilityExecutionScope(params: {
   };
 }
 
+function capabilitySandboxApprovalSummary(params: {
+  acquisition: CapabilityAcquisitionRecord;
+  acquisitionVersion: number;
+  contract: CapabilityCandidateContract;
+  scope: CapabilityExecutionScope;
+  parentCheckpointId: string;
+  actionClass: DurableActionClass;
+}): string {
+  const protectedSteps = params.contract.steps
+    .filter((step) => step.approvalRequired)
+    .map((step) => ({
+      stepId: step.stepId,
+      bindingId: step.bindingId,
+      operationId: step.operationId,
+      actionClass: step.actionClass,
+      version: step.version,
+      executorImplementationDigest: step.executorImplementationDigest,
+    }));
+  const planDigest = sha256(
+    canonicalCapabilityJson({
+      sandboxSimulationOnly: true,
+      networkPolicy: 'none',
+      acquisitionId: params.acquisition.acquisitionId,
+      acquisitionVersion: params.acquisitionVersion,
+      contractVersion: params.contract.contractVersion,
+      candidateFingerprint: params.contract.candidateFingerprint,
+      planVersion: params.scope.planVersion,
+      parentCheckpointId: params.parentCheckpointId,
+      ownerScopeHash: params.scope.ownerScopeHash,
+      chatScopeHash: params.scope.chatScopeHash,
+      groupScopeHash: params.scope.groupScopeHash,
+      channel: params.scope.channel,
+      targetScopeHash: params.scope.targetScopeHash,
+      actionClass: params.actionClass,
+      protectedSteps,
+    }),
+  );
+  return [
+    'Approve one hermetic sandbox simulation only',
+    `acquisition=${params.acquisition.acquisitionId}`,
+    `recordVersion=${params.acquisitionVersion}`,
+    `candidate=${params.contract.candidateFingerprint}`,
+    `planVersion=${params.scope.planVersion}`,
+    `actionClass=${params.actionClass}`,
+    `protectedSteps=${protectedSteps.length}`,
+    'cleanup=required; cleanupVerification=independent',
+    `target=${params.scope.targetScopeHash}`,
+    `planDigest=${planDigest}`,
+    'network=none; productionActivation=false',
+  ].join('; ');
+}
+
+function sandboxApprovalPacket(params: {
+  acquisition: CapabilityAcquisitionRecord;
+  acquisitionVersion: number;
+  contract: CapabilityCandidateContract;
+  scope: CapabilityExecutionScope;
+  actionClass: DurableActionClass;
+  approvalPacketId: string;
+  expectedStatus?: CognitiveApprovalPacket['status'];
+  now: string;
+}): CognitiveApprovalPacket {
+  const checkpoint = getDurableWorkCheckpoint(params.scope.checkpointId);
+  const parentCheckpointId = checkpoint?.parentCheckpointId;
+  const approval = listCognitiveApprovalPackets({ limit: 500 }).find(
+    (candidate) => candidate.approvalPacketId === params.approvalPacketId,
+  );
+  const expectedSummary = parentCheckpointId
+    ? capabilitySandboxApprovalSummary({
+        ...params,
+        parentCheckpointId,
+      })
+    : '';
+  if (
+    !checkpoint ||
+    !parentCheckpointId ||
+    !approval ||
+    (params.expectedStatus && approval.status !== params.expectedStatus) ||
+    approval.summary !== expectedSummary ||
+    approval.runId !==
+      getDurableWorkUnit(params.scope.workId)?.cognitiveRunId ||
+    approval.actionClass !== params.actionClass ||
+    approval.durableWorkId !== params.scope.workId ||
+    approval.durableCheckpointId !== params.scope.checkpointId ||
+    approval.planVersion !== params.scope.planVersion ||
+    approval.targetScopeDigest !== params.scope.targetScopeHash ||
+    approval.approvalChannel !== params.scope.channel ||
+    (approval.expiresAt && approval.expiresAt <= params.now)
+  ) {
+    throw new Error(
+      'Sandbox approval is missing, expired, or does not match the exact plan, scope, version, action, and channel.',
+    );
+  }
+  return approval;
+}
+
+export function stageCapabilitySandboxApproval(params: {
+  acquisitionId: string;
+  scope: CapabilityExecutionScope;
+  ttlMs?: number;
+  now?: Date;
+}): {
+  approval: CognitiveApprovalPacket;
+  scope: CapabilityExecutionScope;
+} {
+  const acquisition = getCapabilityAcquisition(params.acquisitionId);
+  if (!acquisition || acquisition.state !== 'owner_review_required') {
+    throw new Error(
+      'Protected sandbox approval staging requires owner_review_required state.',
+    );
+  }
+  const contract = parseCapabilityJson<CapabilityCandidateContract>(
+    acquisition.candidateContractJson,
+    'candidateContractJson',
+  );
+  assertCapabilityCandidateContract(contract);
+  const actionClass = exactProtectedSandboxActionClass(contract);
+  if (!actionClass) {
+    throw new Error('This sandbox candidate has no approval-bound action.');
+  }
+  assertCanonicalExecutionScope({ scope: params.scope, contract });
+  const work = getDurableWorkUnit(params.scope.workId);
+  if (
+    !work?.cognitiveRunId ||
+    work.checkpointHeadId !== params.scope.checkpointId ||
+    work.status !== 'ready'
+  ) {
+    throw new Error(
+      'Protected sandbox approval requires fresh ready durable work.',
+    );
+  }
+  const summary = capabilitySandboxApprovalSummary({
+    acquisition,
+    acquisitionVersion: acquisition.recordVersion,
+    contract,
+    scope: params.scope,
+    parentCheckpointId: params.scope.checkpointId,
+    actionClass,
+  });
+  const staged = stageDurableWorkApproval({
+    workId: work.workId,
+    expectedWorkVersion: work.version,
+    cognitiveRunId: work.cognitiveRunId,
+    actionClass,
+    summary,
+    checkpointId: params.scope.checkpointId,
+    ttlMs: params.ttlMs,
+    now: params.now,
+  });
+  return {
+    approval: staged.packet,
+    scope: {
+      ...params.scope,
+      checkpointId: staged.checkpoint.durableCheckpointId,
+      planVersion: staged.work.planVersion,
+    },
+  };
+}
+
+export function authorizeCapabilitySandbox(params: {
+  acquisitionId: string;
+  scope: CapabilityExecutionScope;
+  binding: DurableWorkBindingInput;
+  approvalPacketId: string;
+  approvalVersion: number;
+  workerId: string;
+  processGeneration: string;
+  leaseTtlMs?: number;
+  now?: Date;
+}): {
+  record: CapabilityAcquisitionRecord;
+  authorization: CapabilityExecutionAuthorization;
+} {
+  const acquisition = getCapabilityAcquisition(params.acquisitionId);
+  if (!acquisition || acquisition.state !== 'owner_review_required') {
+    throw new Error(
+      'Sandbox authorization requires the exact pending protected candidate.',
+    );
+  }
+  const contract = parseCapabilityJson<CapabilityCandidateContract>(
+    acquisition.candidateContractJson,
+    'candidateContractJson',
+  );
+  assertCapabilityCandidateContract(contract);
+  const actionClass = exactProtectedSandboxActionClass(contract);
+  if (!actionClass) {
+    throw new Error('This sandbox candidate has no approval-bound action.');
+  }
+  assertCanonicalExecutionScope({ scope: params.scope, contract });
+  const now = iso(params.now);
+  const approval = sandboxApprovalPacket({
+    acquisition,
+    acquisitionVersion: acquisition.recordVersion,
+    contract,
+    scope: params.scope,
+    actionClass,
+    approvalPacketId: params.approvalPacketId,
+    expectedStatus: 'approved',
+    now,
+  });
+  if (approval.approvalVersion !== params.approvalVersion) {
+    throw new Error('Sandbox approval version is stale or mismatched.');
+  }
+  if (
+    listDurableResumeGrants({ workId: params.scope.workId, limit: 500 }).some(
+      (grant) => grant.approvalPacketId === approval.approvalPacketId,
+    )
+  ) {
+    throw new Error(
+      'A sandbox approval packet can authorize only one resume grant.',
+    );
+  }
+  const issued = issueDurableResumeGrant({
+    workId: params.scope.workId,
+    binding: params.binding,
+    actionClass,
+    approvalPacketId: approval.approvalPacketId,
+    approvalVersion: params.approvalVersion,
+    now,
+  });
+  let consumed: ReturnType<typeof consumeResumeGrantAndAcquireLease>;
+  try {
+    consumed = consumeResumeGrantAndAcquireLease({
+      token: issued.token,
+      binding: params.binding,
+      actionClass,
+      workerId: params.workerId,
+      processGeneration: params.processGeneration,
+      leaseTtlMs: params.leaseTtlMs,
+      now,
+    });
+  } catch (error) {
+    revokeDurableGrant({ grantId: issued.grant.grantId, now });
+    throw error;
+  }
+  if (consumed.status !== 'consumed' || !consumed.lease) {
+    revokeDurableGrant({ grantId: issued.grant.grantId, now });
+    throw new Error(
+      'Sandbox approval could not be consumed into one matching execution lease.',
+    );
+  }
+  const authorization: CapabilityExecutionAuthorization = {
+    grantId: issued.grant.grantId,
+    leaseId: consumed.lease.leaseId,
+    processGeneration: params.processGeneration,
+  };
+  try {
+    const record = transitionCapabilityAcquisition({
+      acquisitionId: acquisition.acquisitionId,
+      expectedState: 'owner_review_required',
+      toState: 'sandbox_ready',
+      actorKind: 'system',
+      reason:
+        'One exact owner-approved protected sandbox simulation received a consumed grant and active lease.',
+      evidenceRefs: [
+        approval.approvalPacketId,
+        issued.grant.grantId,
+        consumed.lease.leaseId,
+      ],
+      idempotencyKey: `${acquisition.acquisitionId}:sandbox-authorized:${approval.approvalPacketId}:${params.approvalVersion}`,
+      now: params.now,
+      mutate: () => ({
+        nextSafeAction:
+          'Run only the exact hermetic no-network simulation through the approved lease.',
+      }),
+    });
+    return { record, authorization };
+  } catch (error) {
+    releaseDurableLease({
+      leaseId: consumed.lease.leaseId,
+      processGeneration: params.processGeneration,
+      now,
+    });
+    throw error;
+  }
+}
+
 function parseIdArrayJson(value: string, label: string): string[] {
   const parsed = parseCapabilityJson<unknown>(value, label);
   if (
@@ -1420,11 +1855,110 @@ function parseIdArrayJson(value: string, label: string): string[] {
   return parsed as string[];
 }
 
+function capabilityCleanupIdentity(stepId: string, receiptId: string): string {
+  return sha256(`${stepId}|${receiptId}`).slice(0, 24);
+}
+
+function capabilityCleanupNodeId(stepId: string, receiptId: string): string {
+  return `cleanup-${capabilityCleanupIdentity(stepId, receiptId)}`;
+}
+
+function capabilityCleanupInvocationId(
+  invocationId: string,
+  stepId: string,
+  receiptId: string,
+): string {
+  return `${invocationId}:cleanup:${capabilityCleanupIdentity(stepId, receiptId)}`;
+}
+
+function mapCapabilityExecutionReceipt(params: {
+  receipt: DurableEffectReceipt;
+  bindingId: string;
+}): CapabilityExecutionReceipt {
+  const { receipt } = params;
+  return {
+    receiptId: receipt.receiptId,
+    invocationId: receipt.invocationId,
+    idempotencyKey: receipt.invocationId,
+    bindingId: params.bindingId,
+    actionClass: receipt.actionClass as DurableActionClass,
+    status: receipt.status === 'partial' ? 'unknown' : receipt.status,
+    effectClass: receipt.effectClass,
+    preStateFingerprint: receipt.preStateFingerprint || undefined,
+    postStateFingerprint: receipt.postStateFingerprint || undefined,
+    verificationFingerprint: receipt.verificationFingerprint || undefined,
+    grantId: receipt.grantId,
+    approvalPacketId: receipt.approvalPacketId,
+    approvalVersion: receipt.approvalVersion,
+    approvalScopeHash: receipt.approvalScopeHash,
+    leaseId: receipt.leaseId,
+    processGeneration: receipt.processGeneration,
+    createdAt: receipt.createdAt,
+    updatedAt: receipt.updatedAt,
+    evidenceRefs: [receipt.receiptId],
+  };
+}
+
+function exactCanonicalCleanupReceipt(params: {
+  cleanup: DurableEffectReceipt;
+  main: DurableEffectReceipt;
+  scope: CapabilityExecutionScope;
+  step: CapabilityCandidateContract['steps'][number];
+  bindingId: string;
+  candidateFingerprint: string;
+  inputDigest: string;
+}): CapabilityExecutionReceipt | null {
+  const { cleanup, main, scope, step } = params;
+  let metadata: Record<string, unknown>;
+  try {
+    metadata = JSON.parse(cleanup.metadataJson) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (
+    cleanup.nodeId !== capabilityCleanupNodeId(step.stepId, main.receiptId) ||
+    cleanup.invocationId !==
+      capabilityCleanupInvocationId(
+        main.invocationId,
+        step.stepId,
+        main.receiptId,
+      ) ||
+    cleanup.status !== 'succeeded' ||
+    cleanup.checkpointId !== scope.checkpointId ||
+    cleanup.planVersion !== scope.planVersion ||
+    cleanup.targetScopeHash !== scope.targetScopeHash ||
+    cleanup.actionClass !== step.actionClass ||
+    cleanup.effectClass !== main.effectClass ||
+    cleanup.createdAt < main.createdAt ||
+    !main.postStateFingerprint ||
+    cleanup.preStateFingerprint !== main.postStateFingerprint ||
+    !cleanup.postStateFingerprint ||
+    cleanup.postStateFingerprint !== cleanup.verificationFingerprint ||
+    cleanup.grantId !== main.grantId ||
+    cleanup.approvalPacketId !== main.approvalPacketId ||
+    cleanup.approvalVersion !== main.approvalVersion ||
+    cleanup.approvalScopeHash !== main.approvalScopeHash ||
+    cleanup.leaseId !== main.leaseId ||
+    cleanup.processGeneration !== main.processGeneration ||
+    metadata.receiptClass !== 'capability_acquisition_cleanup' ||
+    metadata.resultCode !== params.candidateFingerprint ||
+    metadata.idempotencyKeyHash !== params.inputDigest ||
+    metadata.verificationClass !== step.evaluatorId ||
+    metadata.source !== 'verified_capability_acquisition'
+  ) {
+    return null;
+  }
+  return mapCapabilityExecutionReceipt({
+    receipt: cleanup,
+    bindingId: params.bindingId,
+  });
+}
+
 function completedCapabilityReceiptIds(params: {
   scope: CapabilityExecutionScope;
   contract: CapabilityCandidateContract;
   values: Record<string, unknown>;
-}): string[] | null {
+}): { receiptIds: string[]; cleanupReceiptIds: string[] } | null {
   const work = getDurableWorkUnit(params.scope.workId);
   const checkpoint = getDurableWorkCheckpoint(params.scope.checkpointId);
   if (
@@ -1451,18 +1985,24 @@ function completedCapabilityReceiptIds(params: {
     workId: work.workId,
     limit: 1_000,
   }).filter((receipt) => referenced.has(receipt.receiptId));
-  if (
-    completed.size !== params.contract.steps.length ||
-    receipts.length !== params.contract.steps.length
-  ) {
+  if (completed.size !== params.contract.steps.length) {
     return null;
   }
   const receiptIds: string[] = [];
+  const cleanupReceiptIds: string[] = [];
   const expectedInputDigest = sha256(canonicalCapabilityJson(params.values));
   for (const step of params.contract.steps) {
-    const receipt = receipts.find(
-      (candidate) => candidate.nodeId === step.stepId,
-    );
+    const receipt = receipts.find((candidate) => {
+      if (candidate.nodeId !== step.stepId) return false;
+      try {
+        return (
+          JSON.parse(candidate.metadataJson).receiptClass ===
+          'capability_acquisition'
+        );
+      } catch {
+        return false;
+      }
+    });
     let metadata: Record<string, unknown> = {};
     try {
       metadata = receipt
@@ -1483,13 +2023,46 @@ function completedCapabilityReceiptIds(params: {
       !receipt.verificationFingerprint ||
       metadata.receiptClass !== 'capability_acquisition' ||
       metadata.resultCode !== params.contract.candidateFingerprint ||
-      metadata.idempotencyKeyHash !== expectedInputDigest
+      metadata.idempotencyKeyHash !== expectedInputDigest ||
+      metadata.verificationClass !== step.evaluatorId ||
+      metadata.source !== 'verified_capability_acquisition'
     ) {
       return null;
     }
     receiptIds.push(receipt.receiptId);
+    if (!step.readOnly) {
+      const cleanup = receipts.find(
+        (candidate) =>
+          candidate.nodeId ===
+          capabilityCleanupNodeId(step.stepId, receipt.receiptId),
+      );
+      if (!cleanup || !checkpoint.parentCheckpointId) {
+        return null;
+      }
+      const exactCleanup = exactCanonicalCleanupReceipt({
+        cleanup,
+        main: receipt,
+        scope: {
+          ...params.scope,
+          checkpointId: checkpoint.parentCheckpointId,
+          planVersion: work.planVersion,
+          targetScopeHash: work.targetScopeHash,
+        },
+        step,
+        bindingId: step.bindingId,
+        candidateFingerprint: params.contract.candidateFingerprint,
+        inputDigest: expectedInputDigest,
+      });
+      if (!exactCleanup) {
+        return null;
+      }
+      cleanupReceiptIds.push(exactCleanup.receiptId);
+    }
   }
-  return receiptIds;
+  if (receipts.length !== receiptIds.length + cleanupReceiptIds.length) {
+    return null;
+  }
+  return { receiptIds, cleanupReceiptIds };
 }
 
 function completeRecoveredCapabilityDurableWork(params: {
@@ -1577,12 +2150,26 @@ function assertCanonicalExecutionScope(params: {
 }
 
 function canonicalAuthorizationForStep(params: {
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
   step: CapabilityCandidateContract['steps'][number];
   scope: CapabilityExecutionScope;
   authorizations?: CapabilityExecutionAuthorization[];
   now: string;
 }): CapabilityExecutionAuthorization | null {
   if (!durableActionRequiresApproval(params.step.actionClass)) return null;
+  const authorizationTransition = listCapabilityAcquisitionTransitions(
+    params.acquisition.acquisitionId,
+  ).find(
+    (transition) =>
+      transition.fromState === 'owner_review_required' &&
+      transition.toState === 'sandbox_ready',
+  );
+  if (!authorizationTransition) {
+    throw new Error(
+      'Protected sandbox execution lacks its canonical authorization transition.',
+    );
+  }
   const grants = listDurableResumeGrants({
     workId: params.scope.workId,
     limit: 100,
@@ -1614,6 +2201,7 @@ function canonicalAuthorizationForStep(params: {
       lease.processGeneration === authorization.processGeneration &&
       lease.expiresAt > params.now &&
       approval?.status === 'approved' &&
+      approval.approvalChannel === params.scope.channel &&
       approval.durableWorkId === params.scope.workId &&
       approval.durableCheckpointId === params.scope.checkpointId &&
       approval.planVersion === params.scope.planVersion &&
@@ -1623,12 +2211,199 @@ function canonicalAuthorizationForStep(params: {
       approval.scopeDigest === grant.approvalScopeHash &&
       (!approval.expiresAt || approval.expiresAt > params.now)
     ) {
+      sandboxApprovalPacket({
+        acquisition: params.acquisition,
+        acquisitionVersion: authorizationTransition.expectedVersion,
+        contract: params.contract,
+        scope: params.scope,
+        actionClass: params.step.actionClass,
+        approvalPacketId: approval.approvalPacketId,
+        expectedStatus: 'approved',
+        now: params.now,
+      });
       return authorization;
     }
   }
   throw new Error(
     'Exact canonical owner approval, consumed grant, and active lease are required.',
   );
+}
+
+function historicalAuthorizationForReceipt(params: {
+  acquisition: CapabilityAcquisitionRecord;
+  contract: CapabilityCandidateContract;
+  step: CapabilityCandidateContract['steps'][number];
+  scope: CapabilityExecutionScope;
+  receipt: CapabilityExecutionReceipt;
+}): CapabilityExecutionAuthorization | null {
+  const { receipt } = params;
+  if (!durableActionRequiresApproval(params.step.actionClass)) {
+    if (
+      receipt.grantId ||
+      receipt.approvalPacketId ||
+      receipt.approvalVersion ||
+      receipt.approvalScopeHash ||
+      receipt.leaseId ||
+      receipt.processGeneration
+    ) {
+      throw new Error(
+        'Unprotected sandbox evidence contains foreign authority.',
+      );
+    }
+    return null;
+  }
+  const authorizationTransition = listCapabilityAcquisitionTransitions(
+    params.acquisition.acquisitionId,
+  ).find(
+    (transition) =>
+      transition.fromState === 'owner_review_required' &&
+      transition.toState === 'sandbox_ready',
+  );
+  if (
+    !authorizationTransition ||
+    !receipt.grantId ||
+    !receipt.approvalPacketId ||
+    !receipt.approvalVersion ||
+    !receipt.approvalScopeHash ||
+    !receipt.leaseId ||
+    !receipt.processGeneration
+  ) {
+    throw new Error(
+      'Protected recovery lacks exact historical authority provenance.',
+    );
+  }
+  const grant = listDurableResumeGrants({
+    workId: params.scope.workId,
+    limit: 500,
+  }).find((candidate) => candidate.grantId === receipt.grantId);
+  const lease = getDurableWorkLease(receipt.leaseId);
+  const approval = listCognitiveApprovalPackets({ limit: 1_000 }).find(
+    (candidate) => candidate.approvalPacketId === receipt.approvalPacketId,
+  );
+  if (
+    !grant ||
+    !lease ||
+    !approval ||
+    grant.status !== 'consumed' ||
+    !grant.consumedAt ||
+    grant.consumedAt > receipt.createdAt ||
+    grant.consumedLeaseId !== receipt.leaseId ||
+    grant.workId !== params.scope.workId ||
+    grant.checkpointId !== params.scope.checkpointId ||
+    grant.planVersion !== params.scope.planVersion ||
+    grant.ownerScopeHash !== params.scope.ownerScopeHash ||
+    grant.chatScopeHash !== params.scope.chatScopeHash ||
+    grant.groupScopeHash !== params.scope.groupScopeHash ||
+    grant.channel !== params.scope.channel ||
+    grant.targetScopeHash !== params.scope.targetScopeHash ||
+    grant.actionClass !== params.step.actionClass ||
+    grant.approvalPacketId !== receipt.approvalPacketId ||
+    grant.approvalVersion !== receipt.approvalVersion ||
+    grant.approvalScopeHash !== receipt.approvalScopeHash ||
+    approval.updatedAt > receipt.createdAt ||
+    approval.approvalVersion !== receipt.approvalVersion ||
+    approval.scopeDigest !== receipt.approvalScopeHash ||
+    lease.workId !== params.scope.workId ||
+    lease.processGeneration !== receipt.processGeneration ||
+    lease.acquiredAt > receipt.createdAt ||
+    lease.expiresAt <= receipt.createdAt
+  ) {
+    throw new Error(
+      'Protected recovery authority does not match the exact receipt-time grant, approval, and lease.',
+    );
+  }
+  sandboxApprovalPacket({
+    acquisition: params.acquisition,
+    acquisitionVersion: authorizationTransition.expectedVersion,
+    contract: params.contract,
+    scope: params.scope,
+    actionClass: params.step.actionClass,
+    approvalPacketId: approval.approvalPacketId,
+    expectedStatus: 'approved',
+    now: receipt.createdAt,
+  });
+  return {
+    grantId: receipt.grantId,
+    leaseId: receipt.leaseId,
+    processGeneration: receipt.processGeneration,
+  };
+}
+
+function receiptHasUnexpiredDurableLease(params: {
+  receipt: DurableEffectReceipt;
+  scope: CapabilityExecutionScope;
+  now: string;
+}): boolean {
+  const { receipt } = params;
+  if (!receipt.grantId || !receipt.leaseId || !receipt.processGeneration) {
+    return false;
+  }
+  const lease = getDurableWorkLease(receipt.leaseId);
+  const grant = listDurableResumeGrants({
+    workId: params.scope.workId,
+    limit: 500,
+  }).find((candidate) => candidate.grantId === receipt.grantId);
+  return Boolean(
+    lease &&
+    grant &&
+    lease.status === 'active' &&
+    lease.workId === params.scope.workId &&
+    lease.processGeneration === receipt.processGeneration &&
+    lease.acquiredAt <= params.now &&
+    lease.expiresAt > params.now &&
+    grant.status === 'consumed' &&
+    grant.workId === params.scope.workId &&
+    grant.checkpointId === receipt.checkpointId &&
+    grant.planVersion === receipt.planVersion &&
+    grant.targetScopeHash === receipt.targetScopeHash &&
+    grant.actionClass === receipt.actionClass &&
+    grant.consumedLeaseId === receipt.leaseId,
+  );
+}
+
+function releaseCapabilityExecutionAuthorizations(params: {
+  authorizations: Array<CapabilityExecutionAuthorization | null>;
+  now: string;
+}): void {
+  const unique = new Map(
+    params.authorizations
+      .filter(
+        (authorization): authorization is CapabilityExecutionAuthorization =>
+          Boolean(authorization),
+      )
+      .map((authorization) => [authorization.leaseId, authorization]),
+  );
+  for (const authorization of unique.values()) {
+    const lease = getDurableWorkLease(authorization.leaseId);
+    if (!lease || lease.processGeneration !== authorization.processGeneration) {
+      throw new Error(
+        'Protected sandbox authorization lease identity changed before release.',
+      );
+    }
+    if (lease.status !== 'active') continue;
+    if (lease.expiresAt <= params.now) {
+      reconcileExpiredDurableLease({
+        leaseId: lease.leaseId,
+        processGeneration: lease.processGeneration,
+        now: params.now,
+      });
+    } else if (
+      !releaseDurableLease({
+        leaseId: lease.leaseId,
+        processGeneration: lease.processGeneration,
+        now: params.now,
+      })
+    ) {
+      throw new Error(
+        'Protected sandbox authorization lease could not be released.',
+      );
+    }
+    if (getDurableWorkLease(lease.leaseId)?.status === 'active') {
+      throw new Error(
+        'Protected sandbox authorization lease remained active after release.',
+      );
+    }
+  }
 }
 
 function capabilityInvocationIdentity(params: {
@@ -1711,18 +2486,74 @@ function findCanonicalCapabilityReceipt(params: {
   ) {
     throw new Error('Canonical capability receipt identity does not match.');
   }
-  return {
-    receiptId: receipt.receiptId,
-    idempotencyKey: params.invocationId,
+  return mapCapabilityExecutionReceipt({
+    receipt,
     bindingId: params.binding.bindingId,
-    actionClass: params.step.actionClass,
-    status: receipt.status === 'partial' ? 'unknown' : receipt.status,
-    effectClass: params.binding.effectClass,
-    preStateFingerprint: receipt.preStateFingerprint || undefined,
-    postStateFingerprint: receipt.postStateFingerprint || undefined,
-    verificationFingerprint: receipt.verificationFingerprint || undefined,
-    evidenceRefs: [receipt.receiptId],
-  };
+  });
+}
+
+function findCanonicalCapabilityCleanupReceipt(params: {
+  scope: CapabilityExecutionScope;
+  step: CapabilityCandidateContract['steps'][number];
+  binding: CapabilityExecutorBinding;
+  main: CapabilityExecutionReceipt;
+  candidateFingerprint: string;
+  inputDigest: string;
+}): CapabilityExecutionReceipt | null {
+  const durableReceipts = listDurableEffectReceipts({
+    workId: params.scope.workId,
+    checkpointId: params.scope.checkpointId,
+    limit: 1_000,
+  });
+  const main = durableReceipts.find(
+    (candidate) => candidate.receiptId === params.main.receiptId,
+  );
+  if (!main) {
+    throw new Error('Canonical cleanup cannot find its main effect receipt.');
+  }
+  const nodeId = capabilityCleanupNodeId(
+    params.step.stepId,
+    params.main.receiptId,
+  );
+  const nodeReceipts = durableReceipts.filter(
+    (candidate) => candidate.nodeId === nodeId,
+  );
+  if (nodeReceipts.some((candidate) => candidate.status === 'started')) {
+    throw new DurableEffectExecutionClaimConflictError();
+  }
+  const expectedInvocationId = capabilityCleanupInvocationId(
+    params.main.invocationId,
+    params.step.stepId,
+    params.main.receiptId,
+  );
+  if (
+    nodeReceipts.some(
+      (candidate) => candidate.invocationId !== expectedInvocationId,
+    )
+  ) {
+    throw new Error(
+      'Cleanup invocation does not match its exact canonical effect receipt.',
+    );
+  }
+  const cleanup = nodeReceipts.find(
+    (candidate) => candidate.invocationId === expectedInvocationId,
+  );
+  if (!cleanup) return null;
+  const exact = exactCanonicalCleanupReceipt({
+    cleanup,
+    main,
+    scope: params.scope,
+    step: params.step,
+    bindingId: params.binding.bindingId,
+    candidateFingerprint: params.candidateFingerprint,
+    inputDigest: params.inputDigest,
+  });
+  if (!exact) {
+    throw new Error(
+      'Canonical cleanup receipt is not causally bound to its exact verified effect.',
+    );
+  }
+  return exact;
 }
 
 function recordCanonicalCapabilityReceipt(params: {
@@ -1763,21 +2594,214 @@ function recordCanonicalCapabilityReceipt(params: {
       verificationClass: params.step.evaluatorId,
       resultCode: params.candidateFingerprint,
       idempotencyKeyHash: params.inputDigest,
+      sandboxSimulation:
+        params.binding.sandboxSimulation === true ? 'true' : undefined,
       source: 'verified_capability_acquisition',
     },
     now: params.now,
   });
-  return {
-    receiptId: receipt.receiptId,
-    idempotencyKey: params.invocationId,
+  return mapCapabilityExecutionReceipt({
+    receipt,
     bindingId: params.binding.bindingId,
+  });
+}
+
+function recordCanonicalCapabilityCleanupReceipt(params: {
+  scope: CapabilityExecutionScope;
+  step: CapabilityCandidateContract['steps'][number];
+  binding: CapabilityExecutorBinding;
+  originalReceiptId: string;
+  invocationId: string;
+  inputDigest: string;
+  candidateFingerprint: string;
+  status: 'started' | 'succeeded' | 'failed' | 'unknown';
+  claimExecution?: boolean;
+  authorization: CapabilityExecutionAuthorization | null;
+  preStateFingerprint?: string;
+  postStateFingerprint?: string;
+  verificationFingerprint?: string;
+  now?: Date;
+}): CapabilityExecutionReceipt {
+  const cleanupIdentity = capabilityCleanupIdentity(
+    params.step.stepId,
+    params.originalReceiptId,
+  );
+  const receipt = recordDurableEffect({
+    workId: params.scope.workId,
+    checkpointId: params.scope.checkpointId,
+    planVersion: params.scope.planVersion,
+    nodeId: `cleanup-${cleanupIdentity}`,
+    invocationId: `${params.invocationId}:cleanup:${cleanupIdentity}`,
     actionClass: params.step.actionClass,
-    status: receipt.status === 'partial' ? 'unknown' : receipt.status,
+    authorizationGrantId: params.authorization?.grantId,
+    leaseId: params.authorization?.leaseId,
+    processGeneration: params.authorization?.processGeneration,
+    executionSurface: 'capability_sandbox',
     effectClass: params.binding.effectClass,
-    preStateFingerprint: receipt.preStateFingerprint || undefined,
-    postStateFingerprint: receipt.postStateFingerprint || undefined,
-    verificationFingerprint: receipt.verificationFingerprint || undefined,
-    evidenceRefs: [receipt.receiptId],
+    status: params.status,
+    claimExecution: params.claimExecution,
+    targetScopeKey: params.scope.targetScopeKey,
+    preStateFingerprint: params.preStateFingerprint,
+    postStateFingerprint: params.postStateFingerprint,
+    verificationFingerprint: params.verificationFingerprint,
+    metadata: {
+      receiptClass: 'capability_acquisition_cleanup',
+      verificationClass: params.step.evaluatorId,
+      resultCode: params.candidateFingerprint,
+      idempotencyKeyHash: params.inputDigest,
+      sandboxSimulation:
+        params.binding.sandboxSimulation === true ? 'true' : undefined,
+      source: 'verified_capability_acquisition',
+    },
+    now: params.now,
+  });
+  return mapCapabilityExecutionReceipt({
+    receipt,
+    bindingId: params.binding.bindingId,
+  });
+}
+
+async function runAndVerifyCapabilityCleanup(params: {
+  scope: CapabilityExecutionScope;
+  step: CapabilityCandidateContract['steps'][number];
+  binding: CapabilityExecutorBinding;
+  evaluator: CapabilityEvaluatorBinding;
+  originalReceiptId: string;
+  invocationId: string;
+  inputDigest: string;
+  candidateFingerprint: string;
+  values: Record<string, unknown>;
+  result?: CapabilityBindingResult;
+  authorization: CapabilityExecutionAuthorization | null;
+  sandboxRoot?: string;
+  now?: Date;
+}): Promise<{
+  required: boolean;
+  verified: boolean;
+  receipt?: CapabilityExecutionReceipt;
+  evidenceRefs: string[];
+  reason: string;
+}> {
+  if (!capabilityCleanupRequired(params.binding)) {
+    return {
+      required: false,
+      verified: true,
+      evidenceRefs: [],
+      reason: 'The binding is read-only and created no cleanup obligation.',
+    };
+  }
+  if (
+    typeof params.binding.cleanup !== 'function' ||
+    typeof params.evaluator.verifyCleanup !== 'function'
+  ) {
+    return {
+      required: true,
+      verified: false,
+      evidenceRefs: [],
+      reason: 'Cleanup or its independent verifier is unavailable.',
+    };
+  }
+  recordCanonicalCapabilityCleanupReceipt({
+    ...params,
+    status: 'started',
+    claimExecution: true,
+    preStateFingerprint: params.result?.postStateFingerprint,
+  });
+  let cleanupSucceeded = false;
+  try {
+    cleanupSucceeded = await params.binding.cleanup({
+      values: params.values,
+      result: params.result,
+      sandboxRoot: params.sandboxRoot,
+    });
+  } catch (error) {
+    const receipt = recordCanonicalCapabilityCleanupReceipt({
+      ...params,
+      status: 'unknown',
+      preStateFingerprint: params.result?.postStateFingerprint,
+    });
+    return {
+      required: true,
+      verified: false,
+      receipt,
+      evidenceRefs: [receipt.receiptId],
+      reason: `Cleanup raised ${error instanceof Error ? error.name : 'unknown_error'}.`,
+    };
+  }
+  if (!cleanupSucceeded) {
+    const receipt = recordCanonicalCapabilityCleanupReceipt({
+      ...params,
+      status: 'failed',
+      preStateFingerprint: params.result?.postStateFingerprint,
+    });
+    return {
+      required: true,
+      verified: false,
+      receipt,
+      evidenceRefs: [receipt.receiptId],
+      reason: 'Cleanup reported failure.',
+    };
+  }
+  let verification: CapabilityCleanupVerificationResult;
+  try {
+    verification = await params.evaluator.verifyCleanup({
+      values: params.values,
+      result: params.result,
+      cleanupSucceeded,
+      sandboxRoot: params.sandboxRoot,
+    });
+  } catch (error) {
+    const receipt = recordCanonicalCapabilityCleanupReceipt({
+      ...params,
+      status: 'unknown',
+      preStateFingerprint: params.result?.postStateFingerprint,
+    });
+    return {
+      required: true,
+      verified: false,
+      receipt,
+      evidenceRefs: [receipt.receiptId],
+      reason: `Cleanup verifier raised ${error instanceof Error ? error.name : 'unknown_error'}.`,
+    };
+  }
+  if (
+    verification.verified !== true ||
+    !verification.cleanupFingerprint ||
+    !CAPABILITY_IMPLEMENTATION_DIGEST_PATTERN.test(
+      verification.cleanupFingerprint,
+    ) ||
+    !Array.isArray(verification.evidenceRefs) ||
+    verification.evidenceRefs.length === 0
+  ) {
+    const receipt = recordCanonicalCapabilityCleanupReceipt({
+      ...params,
+      status: 'failed',
+      preStateFingerprint: params.result?.postStateFingerprint,
+    });
+    return {
+      required: true,
+      verified: false,
+      receipt,
+      evidenceRefs: [receipt.receiptId],
+      reason: 'Independent cleanup verification was incomplete or rejected.',
+    };
+  }
+  const evidenceRefs = verification.evidenceRefs.map((item) =>
+    safeSourceRef(item),
+  );
+  const receipt = recordCanonicalCapabilityCleanupReceipt({
+    ...params,
+    status: 'succeeded',
+    preStateFingerprint: params.result?.postStateFingerprint,
+    postStateFingerprint: verification.cleanupFingerprint,
+    verificationFingerprint: verification.cleanupFingerprint,
+  });
+  return {
+    required: true,
+    verified: true,
+    receipt,
+    evidenceRefs: [receipt.receiptId, ...evidenceRefs],
+    reason: verification.reason,
   };
 }
 
@@ -1815,6 +2839,7 @@ export async function runCapabilitySandbox(params: {
     'candidateContractJson',
   );
   assertCapabilityCandidateContract(contract);
+  const protectedActionClass = exactProtectedSandboxActionClass(contract);
   assertCanonicalExecutionScope({ scope: params.scope, contract });
   const recoveredReceiptIds = completedCapabilityReceiptIds({
     scope: params.scope,
@@ -1841,6 +2866,10 @@ export async function runCapabilitySandbox(params: {
     return initial;
   }
   if (initial.state === 'sandbox_running' && recoveredReceiptIds) {
+    const recoveredEvidenceIds = [
+      ...recoveredReceiptIds.receiptIds,
+      ...recoveredReceiptIds.cleanupReceiptIds,
+    ];
     return transitionCapabilityAcquisition({
       acquisitionId: initial.acquisitionId,
       expectedState: 'sandbox_running',
@@ -1848,14 +2877,15 @@ export async function runCapabilitySandbox(params: {
       actorKind: 'system',
       reason:
         'Recovered sandbox verification from a completed canonical durable checkpoint without replay.',
-      evidenceRefs: recoveredReceiptIds,
+      evidenceRefs: recoveredEvidenceIds,
       idempotencyKey: `${initial.acquisitionId}:sandbox-verified:${contract.candidateFingerprint}`,
       canonicalGuard: {
         kind: 'sandbox_completion',
         durableWorkId: params.scope.workId,
         checkpointId: params.scope.checkpointId,
         candidateFingerprint: contract.candidateFingerprint,
-        receiptIds: recoveredReceiptIds,
+        receiptIds: recoveredReceiptIds.receiptIds,
+        cleanupReceiptIds: recoveredReceiptIds.cleanupReceiptIds,
       },
       now: params.now,
       mutate: () => ({
@@ -1865,10 +2895,11 @@ export async function runCapabilitySandbox(params: {
           falseSuccesses: 0,
           networkDenied: true,
           postconditionVerified: true,
-          receiptIds: recoveredReceiptIds,
+          receiptIds: recoveredReceiptIds.receiptIds,
           recoveredFromDurableCompletion: true,
           unauthorizedEffects: 0,
-          verificationReceiptIds: recoveredReceiptIds,
+          cleanupReceiptIds: recoveredReceiptIds.cleanupReceiptIds,
+          verificationReceiptIds: recoveredEvidenceIds,
           verified: true,
         }),
         lastOutcome: 'sandbox_verified',
@@ -1878,6 +2909,31 @@ export async function runCapabilitySandbox(params: {
     });
   }
   const now = iso(params.now);
+  if (initial.state === 'sandbox_running') {
+    const liveReceipt = listDurableEffectReceipts({
+      workId: params.scope.workId,
+      checkpointId: params.scope.checkpointId,
+      limit: 1_000,
+    }).find(
+      (receipt) =>
+        contract.steps.some((step) => step.stepId === receipt.nodeId) &&
+        (receipt.status === 'started' || receipt.status === 'succeeded') &&
+        (activeCapabilitySandboxReceiptIds.has(receipt.receiptId) ||
+          receiptHasUnexpiredDurableLease({
+            receipt,
+            scope: params.scope,
+            now,
+          })),
+    );
+    if (liveReceipt) {
+      return getCapabilityAcquisition(initial.acquisitionId) || initial;
+    }
+  }
+  const releaseProvidedAuthorizations = (): void =>
+    releaseCapabilityExecutionAuthorizations({
+      authorizations: params.authorizations || [],
+      now,
+    });
   const selected = parseArray(
     initial.selectedResourceRefsJson,
     'selectedResourceRefsJson',
@@ -1928,6 +2984,7 @@ export async function runCapabilitySandbox(params: {
     healthValidation,
   ].find((result) => !result.ok);
   if (firstGuardFailure && !firstGuardFailure.ok) {
+    releaseProvidedAuthorizations();
     return transitionCapabilityAcquisition({
       acquisitionId: initial.acquisitionId,
       expectedState: initial.state,
@@ -1953,6 +3010,7 @@ export async function runCapabilitySandbox(params: {
     (initial.expiresAt && initial.expiresAt <= now) ||
     (initial.revalidateAfterAt && initial.revalidateAfterAt <= now)
   ) {
+    releaseProvidedAuthorizations();
     return transitionCapabilityAcquisition({
       acquisitionId: initial.acquisitionId,
       expectedState: initial.state,
@@ -1982,6 +3040,7 @@ export async function runCapabilitySandbox(params: {
         resource.version,
       )
     ) {
+      releaseProvidedAuthorizations();
       return transitionCapabilityAcquisition({
         acquisitionId: initial.acquisitionId,
         expectedState: initial.state,
@@ -2005,6 +3064,7 @@ export async function runCapabilitySandbox(params: {
   }
   for (const required of contract.requiredInputs) {
     if (!(required in params.values)) {
+      releaseProvidedAuthorizations();
       return transitionCapabilityAcquisition({
         acquisitionId: initial.acquisitionId,
         expectedState: initial.state,
@@ -2025,6 +3085,73 @@ export async function runCapabilitySandbox(params: {
     params.executionId || `sandbox:${contract.candidateFingerprint}`,
     220,
   );
+  const handleExecutionClaimConflict = (
+    current: CapabilityAcquisitionRecord,
+  ): CapabilityAcquisitionRecord => {
+    const unresolvedReceipts = listDurableEffectReceipts({
+      workId: params.scope.workId,
+      checkpointId: params.scope.checkpointId,
+      limit: 1_000,
+    }).filter(
+      (receipt) =>
+        receipt.status === 'started' &&
+        contract.steps.some((step) => step.stepId === receipt.nodeId),
+    );
+    if (
+      unresolvedReceipts.length > 0 &&
+      unresolvedReceipts.every(
+        (receipt) =>
+          activeCapabilitySandboxReceiptIds.has(receipt.receiptId) ||
+          receiptHasUnexpiredDurableLease({
+            receipt,
+            scope: params.scope,
+            now,
+          }),
+      )
+    ) {
+      return getCapabilityAcquisition(current.acquisitionId) || current;
+    }
+    const receiptIds = unresolvedReceipts.map((receipt) => receipt.receiptId);
+    releaseCapabilityExecutionAuthorizations({
+      authorizations: unresolvedReceipts.map((receipt) =>
+        receipt.grantId && receipt.leaseId && receipt.processGeneration
+          ? {
+              grantId: receipt.grantId,
+              leaseId: receipt.leaseId,
+              processGeneration: receipt.processGeneration,
+            }
+          : null,
+      ),
+      now,
+    });
+    return transitionCapabilityAcquisition({
+      acquisitionId: current.acquisitionId,
+      expectedState: current.state,
+      toState: 'quarantined',
+      actorKind: 'system',
+      reason:
+        'An unresolved sandbox execution receipt cannot be joined by this process, and cleanup has no durable independent verification.',
+      evidenceRefs: receiptIds,
+      idempotencyKey: `${current.acquisitionId}:unjoinable-execution:${sha256(receiptIds.sort().join('|') || params.scope.checkpointId).slice(0, 24)}`,
+      now: params.now,
+      mutate: () => ({
+        sandboxEvidenceJson: capabilityMetadataJson({
+          cleanupRequired: unresolvedReceipts.some(
+            (receipt) => receipt.effectClass !== 'read_only',
+          ),
+          cleanupVerified: false,
+          cleanupReceiptIds: [],
+          receiptIds,
+          recoveredFromDurableCompletion: false,
+          replayed: false,
+          verified: false,
+        }),
+        lastOutcome: 'unjoinable_cleanup_unverified',
+        nextSafeAction:
+          'Keep this candidate quarantined and inspect the unresolved effect before creating any new bounded candidate.',
+      }),
+    });
+  };
   let preflight: Array<{
     step: CapabilityCandidateContract['steps'][number];
     binding: CapabilityExecutorBinding;
@@ -2032,6 +3159,7 @@ export async function runCapabilitySandbox(params: {
     authorization: CapabilityExecutionAuthorization | null;
     identity: ReturnType<typeof capabilityInvocationIdentity>;
     existing: CapabilityExecutionReceipt | null;
+    existingCleanup: CapabilityExecutionReceipt | null;
   }>;
   try {
     preflight = contract.steps.map((step) => {
@@ -2056,10 +3184,25 @@ export async function runCapabilitySandbox(params: {
       }
       if (
         binding.effectClass !== 'read_only' &&
-        binding.effectClass !== 'sandbox_repository_write'
+        binding.effectClass !== 'sandbox_repository_write' &&
+        !(
+          step.approvalRequired &&
+          protectedActionClass === step.actionClass &&
+          binding.sandboxSimulation === true &&
+          binding.networkAccess === 'none'
+        )
       ) {
         throw new Error(
-          'Sandbox execution permits only read-only effects or the exact isolated repository effect.',
+          'Sandbox execution permits only read-only effects, the exact isolated repository effect, or an exact approved hermetic simulation.',
+        );
+      }
+      if (
+        capabilityCleanupRequired(binding) &&
+        (typeof binding.cleanup !== 'function' ||
+          typeof evaluator.verifyCleanup !== 'function')
+      ) {
+        throw new Error(
+          'Every effectful sandbox binding requires cleanup plus an independent cleanup verifier.',
         );
       }
       const networkValidation = validateCapabilityNetworkCeiling({
@@ -2093,12 +3236,24 @@ export async function runCapabilitySandbox(params: {
           );
         }
       }
-      const authorization = canonicalAuthorizationForStep({
-        step,
-        scope: params.scope,
-        authorizations: params.authorizations,
-        now,
-      });
+      if (step.approvalRequired) {
+        if (
+          protectedActionClass !== step.actionClass ||
+          binding.sandboxSimulation !== true ||
+          binding.networkAccess !== 'none' ||
+          typeof binding.cleanup !== 'function'
+        ) {
+          throw new Error(
+            'Protected sandbox execution requires the exact no-network simulated binding and cleanup verifier.',
+          );
+        }
+        assertSandboxRepositoryBoundary({
+          sandboxRoot: params.sandboxRoot,
+          acquisitionId: initial.acquisitionId,
+          candidateFingerprint: contract.candidateFingerprint,
+          targetScopeHash: params.scope.targetScopeHash,
+        });
+      }
       const identity = capabilityInvocationIdentity({
         acquisitionId: initial.acquisitionId,
         contract,
@@ -2125,6 +3280,38 @@ export async function runCapabilitySandbox(params: {
           'A prior canonical receipt has uncertain or unverified effects.',
         );
       }
+      const authorization = existing
+        ? historicalAuthorizationForReceipt({
+            acquisition: initial,
+            contract,
+            step,
+            scope: params.scope,
+            receipt: existing,
+          })
+        : canonicalAuthorizationForStep({
+            acquisition: initial,
+            contract,
+            step,
+            scope: params.scope,
+            authorizations: params.authorizations,
+            now,
+          });
+      const existingCleanup =
+        existing && capabilityCleanupRequired(binding)
+          ? findCanonicalCapabilityCleanupReceipt({
+              scope: params.scope,
+              step,
+              binding,
+              main: existing,
+              candidateFingerprint: contract.candidateFingerprint,
+              inputDigest: identity.inputDigest,
+            })
+          : null;
+      if (existing && capabilityCleanupRequired(binding) && !existingCleanup) {
+        throw new Error(
+          'A prior verified effect is missing its exact durable cleanup receipt.',
+        );
+      }
       return {
         step,
         binding,
@@ -2132,17 +3319,19 @@ export async function runCapabilitySandbox(params: {
         authorization,
         identity,
         existing,
+        existingCleanup,
       };
     });
   } catch (error) {
     if (error instanceof DurableEffectExecutionClaimConflictError) {
-      return getCapabilityAcquisition(initial.acquisitionId) || initial;
+      return handleExecutionClaimConflict(initial);
     }
     const receiptIds = listDurableEffectReceipts({
       workId: params.scope.workId,
       checkpointId: params.scope.checkpointId,
       limit: 1_000,
     }).map((receipt) => receipt.receiptId);
+    releaseProvidedAuthorizations();
     return transitionCapabilityAcquisition({
       acquisitionId: initial.acquisitionId,
       expectedState: initial.state,
@@ -2189,19 +3378,123 @@ export async function runCapabilitySandbox(params: {
     });
   }
   const receipts: CapabilityExecutionReceipt[] = [];
+  const cleanupReceipts: CapabilityExecutionReceipt[] = [];
   const verificationReceipts: string[] = [];
   const evidenceRefs: string[] = [];
   const verifiedPostconditionCoverage = new Set<string>();
   let providerCalls = 0;
   let costUsd = 0;
   let cleanupVerified = true;
+  const transitionAfterStepFailure = async (failure: {
+    step: CapabilityCandidateContract['steps'][number];
+    binding: CapabilityExecutorBinding;
+    evaluator: CapabilityEvaluatorBinding;
+    authorization: CapabilityExecutionAuthorization | null;
+    identity: ReturnType<typeof capabilityInvocationIdentity>;
+    started: CapabilityExecutionReceipt;
+    result?: CapabilityBindingResult;
+    state: 'failed' | 'indeterminate';
+    failureClass: string;
+    reason: string;
+    nextSafeAction: string;
+    errorClass?: string;
+  }): Promise<CapabilityAcquisitionRecord> => {
+    const cleanup = await runAndVerifyCapabilityCleanup({
+      scope: params.scope,
+      step: failure.step,
+      binding: failure.binding,
+      evaluator: failure.evaluator,
+      originalReceiptId: failure.started.receiptId,
+      invocationId: failure.identity.invocationId,
+      inputDigest: failure.identity.inputDigest,
+      candidateFingerprint: contract.candidateFingerprint,
+      values: params.values,
+      result: failure.result,
+      authorization: failure.authorization,
+      sandboxRoot: params.sandboxRoot,
+      now: params.now,
+    });
+    if (cleanup.receipt) cleanupReceipts.push(cleanup.receipt);
+    const cleanupFailure = cleanup.required && !cleanup.verified;
+    const effectReconciledByCleanup = cleanup.required && cleanup.verified;
+    let effectReceipt: CapabilityExecutionReceipt;
+    try {
+      effectReceipt = recordCanonicalCapabilityReceipt({
+        scope: params.scope,
+        step: failure.step,
+        binding: failure.binding,
+        invocationId: failure.identity.invocationId,
+        inputDigest: failure.identity.inputDigest,
+        candidateFingerprint: contract.candidateFingerprint,
+        status:
+          cleanupFailure ||
+          (!effectReconciledByCleanup && failure.state === 'indeterminate')
+            ? 'unknown'
+            : 'failed',
+        authorization: failure.authorization,
+        preStateFingerprint: failure.result?.preStateFingerprint,
+        postStateFingerprint: failure.result?.postStateFingerprint,
+        now: params.now,
+      });
+    } finally {
+      activeCapabilitySandboxReceiptIds.delete(failure.started.receiptId);
+    }
+    releaseCapabilityExecutionAuthorizations({
+      authorizations: preflight.map((item) => item.authorization),
+      now,
+    });
+    return transitionCapabilityAcquisition({
+      acquisitionId: running.acquisitionId,
+      expectedState: 'sandbox_running',
+      toState: cleanupFailure
+        ? 'quarantined'
+        : effectReconciledByCleanup
+          ? 'failed'
+          : failure.state,
+      actorKind: 'system',
+      reason: cleanupFailure
+        ? `${failure.reason} Cleanup could not be durably and independently verified.`
+        : failure.reason,
+      evidenceRefs: [effectReceipt.receiptId, ...cleanup.evidenceRefs],
+      idempotencyKey: `${running.acquisitionId}:${failure.failureClass}:${failure.identity.idempotencyKey}`,
+      now: params.now,
+      mutate: () => ({
+        sandboxEvidenceJson: capabilityMetadataJson({
+          cleanupRequired: cleanup.required,
+          cleanupVerified: cleanup.required ? cleanup.verified : true,
+          cleanupReceiptIds: cleanup.receipt ? [cleanup.receipt.receiptId] : [],
+          errorClass: failure.errorClass,
+          receiptIds: [effectReceipt.receiptId],
+          replayed: false,
+          verified: false,
+        }),
+        lastOutcome: cleanupFailure
+          ? 'cleanup_verification_failure'
+          : failure.failureClass,
+        nextSafeAction: cleanupFailure
+          ? 'Keep this candidate quarantined and inspect the isolated effect and cleanup receipts.'
+          : failure.nextSafeAction,
+      }),
+    });
+  };
   for (const item of preflight) {
-    const { step, binding, evaluator, authorization, identity, existing } =
-      item;
+    const {
+      step,
+      binding,
+      evaluator,
+      authorization,
+      identity,
+      existing,
+      existingCleanup,
+    } = item;
     if (existing) {
       receipts.push(existing);
+      if (existingCleanup) cleanupReceipts.push(existingCleanup);
       verificationReceipts.push(existing.receiptId);
-      evidenceRefs.push(existing.receiptId);
+      evidenceRefs.push(
+        existing.receiptId,
+        ...(existingCleanup ? [existingCleanup.receiptId] : []),
+      );
       for (const postcondition of step.expectedEvidence) {
         verifiedPostconditionCoverage.add(postcondition);
       }
@@ -2223,10 +3516,11 @@ export async function runCapabilitySandbox(params: {
       });
     } catch (error) {
       if (error instanceof DurableEffectExecutionClaimConflictError) {
-        return getCapabilityAcquisition(running.acquisitionId) || running;
+        return handleExecutionClaimConflict(running);
       }
       throw error;
     }
+    activeCapabilitySandboxReceiptIds.add(started.receiptId);
     let result: CapabilityBindingResult;
     try {
       result = await binding.execute({
@@ -2235,36 +3529,19 @@ export async function runCapabilitySandbox(params: {
         sandboxRoot: params.sandboxRoot,
       });
     } catch (error) {
-      const unknown = recordCanonicalCapabilityReceipt({
-        scope: params.scope,
+      return transitionAfterStepFailure({
         step,
         binding,
-        invocationId: identity.invocationId,
-        inputDigest: identity.inputDigest,
-        candidateFingerprint: contract.candidateFingerprint,
-        status: 'unknown',
+        evaluator,
         authorization,
-        now: params.now,
-      });
-      return transitionCapabilityAcquisition({
-        acquisitionId: running.acquisitionId,
-        expectedState: 'sandbox_running',
-        toState: 'indeterminate',
-        actorKind: 'system',
+        identity,
+        started,
+        state: 'indeterminate',
+        failureClass: 'executor_unknown',
         reason:
           'The registered executor raised after its started receipt; effect status is unknown and replay is prohibited.',
-        evidenceRefs: [unknown.receiptId],
-        idempotencyKey: `${running.acquisitionId}:executor-unknown:${identity.idempotencyKey}`,
-        now: params.now,
-        mutate: () => ({
-          sandboxEvidenceJson: capabilityMetadataJson({
-            errorClass: error instanceof Error ? error.name : 'unknown_error',
-            receiptIds: [unknown.receiptId],
-            replayed: false,
-          }),
-          lastOutcome: 'indeterminate',
-          nextSafeAction: 'Inspect the prior effect before any retry.',
-        }),
+        nextSafeAction: 'Inspect the prior effect before any retry.',
+        errorClass: error instanceof Error ? error.name : 'unknown_error',
       });
     }
     const resultValidation = validateCapabilityBindingResult({
@@ -2273,37 +3550,21 @@ export async function runCapabilitySandbox(params: {
       value: result,
     });
     if (!resultValidation.ok) {
-      const unknown = recordCanonicalCapabilityReceipt({
-        scope: params.scope,
+      return transitionAfterStepFailure({
         step,
         binding,
-        invocationId: identity.invocationId,
-        inputDigest: identity.inputDigest,
-        candidateFingerprint: contract.candidateFingerprint,
-        status: 'unknown',
+        evaluator,
         authorization,
-        now: params.now,
-      });
-      receipts.push(unknown);
-      return transitionCapabilityAcquisition({
-        acquisitionId: running.acquisitionId,
-        expectedState: 'sandbox_running',
-        toState: 'indeterminate',
-        actorKind: 'system',
+        identity,
+        started,
+        result,
+        state: 'indeterminate',
+        failureClass: 'invalid_effect_result',
         reason:
           'Binding returned an invalid, uncertain, or policy-inconsistent result; retry is prohibited.',
-        evidenceRefs: [unknown.receiptId],
-        idempotencyKey: `${running.acquisitionId}:invalid-effect-result:${identity.idempotencyKey}`,
-        now: params.now,
-        mutate: () => ({
-          sandboxEvidenceJson: capabilityMetadataJson({
-            receiptIds: [unknown.receiptId],
-            guardFailureCode: resultValidation.code,
-            replayed: false,
-          }),
-          nextSafeAction:
-            'Inspect and reconcile the uncertain effect before any retry.',
-        }),
+        nextSafeAction:
+          'Inspect and reconcile the uncertain effect before any retry.',
+        errorClass: resultValidation.code,
       });
     }
     result = {
@@ -2320,39 +3581,21 @@ export async function runCapabilitySandbox(params: {
         recovery: false,
       });
     } catch (error) {
-      const unknown = recordCanonicalCapabilityReceipt({
-        scope: params.scope,
+      return transitionAfterStepFailure({
         step,
         binding,
-        invocationId: identity.invocationId,
-        inputDigest: identity.inputDigest,
-        candidateFingerprint: contract.candidateFingerprint,
-        status: 'unknown',
-        preStateFingerprint: result.preStateFingerprint,
-        postStateFingerprint: result.postStateFingerprint,
+        evaluator,
         authorization,
-        now: params.now,
-      });
-      return transitionCapabilityAcquisition({
-        acquisitionId: running.acquisitionId,
-        expectedState: 'sandbox_running',
-        toState: 'indeterminate',
-        actorKind: 'system',
+        identity,
+        started,
+        result,
+        state: 'indeterminate',
+        failureClass: 'evaluator_unknown',
         reason:
           'The independent evaluator raised after a certain effect; verification is indeterminate.',
-        evidenceRefs: [unknown.receiptId],
-        idempotencyKey: `${running.acquisitionId}:evaluator-unknown:${identity.idempotencyKey}`,
-        now: params.now,
-        mutate: () => ({
-          sandboxEvidenceJson: capabilityMetadataJson({
-            errorClass: error instanceof Error ? error.name : 'unknown_error',
-            receiptIds: [unknown.receiptId],
-            replayed: false,
-          }),
-          lastOutcome: 'indeterminate',
-          nextSafeAction:
-            'Inspect the effect and rerun verification only; do not replay execution.',
-        }),
+        nextSafeAction:
+          'Inspect the effect and rerun verification only; do not replay execution.',
+        errorClass: error instanceof Error ? error.name : 'unknown_error',
       });
     }
     const verificationValidation = validateCapabilityVerificationResult({
@@ -2380,97 +3623,111 @@ export async function runCapabilitySandbox(params: {
       !verification.postconditionFingerprint ||
       verification.evidenceRefs.length === 0
     ) {
-      recordCanonicalCapabilityReceipt({
-        scope: params.scope,
+      return transitionAfterStepFailure({
         step,
         binding,
-        invocationId: identity.invocationId,
-        inputDigest: identity.inputDigest,
-        candidateFingerprint: contract.candidateFingerprint,
-        status: 'failed',
+        evaluator,
         authorization,
-        preStateFingerprint: result.preStateFingerprint,
-        postStateFingerprint: result.postStateFingerprint,
-        now: params.now,
-      });
-      return transitionCapabilityAcquisition({
-        acquisitionId: running.acquisitionId,
-        expectedState: 'sandbox_running',
-        toState: 'failed',
-        actorKind: 'system',
+        identity,
+        started,
+        result,
+        state: 'failed',
+        failureClass: 'verification_failure',
         reason: 'The independent evaluator rejected the postcondition.',
-        evidenceRefs: verification.evidenceRefs,
-        idempotencyKey: `${running.acquisitionId}:verification-failed:${identity.idempotencyKey}`,
-        now: params.now,
-        mutate: () => ({
-          lastOutcome: 'verification_failure',
-          sandboxEvidenceJson: capabilityMetadataJson({
-            cleanupVerified: false,
-            receiptIds: [started.receiptId],
-            verified: false,
-          }),
-          nextSafeAction:
-            'Revise the candidate or evaluator before another sandbox run.',
-        }),
+        nextSafeAction:
+          'Revise the candidate or evaluator before another sandbox run.',
       });
     }
     for (const postcondition of verification.verifiedPostconditions) {
       verifiedPostconditionCoverage.add(postcondition);
     }
-    if (binding.cleanup) {
-      cleanupVerified = await binding.cleanup({
-        values: params.values,
-        result,
-        sandboxRoot: params.sandboxRoot,
+    const cleanup = await runAndVerifyCapabilityCleanup({
+      scope: params.scope,
+      step,
+      binding,
+      evaluator,
+      originalReceiptId: started.receiptId,
+      invocationId: identity.invocationId,
+      inputDigest: identity.inputDigest,
+      candidateFingerprint: contract.candidateFingerprint,
+      values: params.values,
+      result,
+      authorization,
+      sandboxRoot: params.sandboxRoot,
+      now: params.now,
+    });
+    cleanupVerified = cleanupVerified && cleanup.verified;
+    if (cleanup.receipt) cleanupReceipts.push(cleanup.receipt);
+    if (!cleanup.verified) {
+      try {
+        recordCanonicalCapabilityReceipt({
+          scope: params.scope,
+          step,
+          binding,
+          invocationId: identity.invocationId,
+          inputDigest: identity.inputDigest,
+          candidateFingerprint: contract.candidateFingerprint,
+          status: 'failed',
+          authorization,
+          postStateFingerprint: result.postStateFingerprint,
+          now: params.now,
+        });
+      } finally {
+        activeCapabilitySandboxReceiptIds.delete(started.receiptId);
+      }
+      releaseCapabilityExecutionAuthorizations({
+        authorizations: preflight.map((candidate) => candidate.authorization),
+        now,
+      });
+      return transitionCapabilityAcquisition({
+        acquisitionId: running.acquisitionId,
+        expectedState: 'sandbox_running',
+        toState: 'quarantined',
+        actorKind: 'system',
+        reason: 'Sandbox cleanup could not be verified.',
+        evidenceRefs: [started.receiptId, ...cleanup.evidenceRefs],
+        idempotencyKey: `${running.acquisitionId}:cleanup-failed:${identity.idempotencyKey}`,
+        now: params.now,
+        mutate: () => ({
+          sandboxEvidenceJson: capabilityMetadataJson({
+            cleanupRequired: cleanup.required,
+            cleanupVerified: false,
+            cleanupReceiptIds: cleanup.receipt
+              ? [cleanup.receipt.receiptId]
+              : [],
+            receiptIds: [started.receiptId],
+            verified: false,
+          }),
+          lastOutcome: 'cleanup_verification_failure',
+          nextSafeAction:
+            'Inspect and clean the isolated fixture before any retry.',
+        }),
       });
     }
-    if (!cleanupVerified) {
-      recordCanonicalCapabilityReceipt({
+    let succeeded: CapabilityExecutionReceipt;
+    try {
+      succeeded = recordCanonicalCapabilityReceipt({
         scope: params.scope,
         step,
         binding,
         invocationId: identity.invocationId,
         inputDigest: identity.inputDigest,
         candidateFingerprint: contract.candidateFingerprint,
-        status: 'failed',
+        status: 'succeeded',
         authorization,
+        preStateFingerprint: result.preStateFingerprint,
         postStateFingerprint: result.postStateFingerprint,
+        verificationFingerprint: verification.postconditionFingerprint,
         now: params.now,
       });
-      return transitionCapabilityAcquisition({
-        acquisitionId: running.acquisitionId,
-        expectedState: 'sandbox_running',
-        toState: 'failed',
-        actorKind: 'system',
-        reason: 'Sandbox cleanup could not be verified.',
-        evidenceRefs: [started.receiptId],
-        idempotencyKey: `${running.acquisitionId}:cleanup-failed:${identity.idempotencyKey}`,
-        now: params.now,
-        mutate: () => ({
-          lastOutcome: 'cleanup_failure',
-          nextSafeAction:
-            'Inspect and clean the isolated fixture before any retry.',
-        }),
-      });
+    } finally {
+      activeCapabilitySandboxReceiptIds.delete(started.receiptId);
     }
-    const succeeded = recordCanonicalCapabilityReceipt({
-      scope: params.scope,
-      step,
-      binding,
-      invocationId: identity.invocationId,
-      inputDigest: identity.inputDigest,
-      candidateFingerprint: contract.candidateFingerprint,
-      status: 'succeeded',
-      authorization,
-      preStateFingerprint: result.preStateFingerprint,
-      postStateFingerprint: result.postStateFingerprint,
-      verificationFingerprint: verification.postconditionFingerprint,
-      now: params.now,
-    });
     receipts.push(succeeded);
     verificationReceipts.push(succeeded.receiptId);
     evidenceRefs.push(
       succeeded.receiptId,
+      ...cleanup.evidenceRefs,
       ...result.evidenceRefs,
       ...verification.evidenceRefs,
     );
@@ -2481,6 +3738,10 @@ export async function runCapabilitySandbox(params: {
     (postcondition) => !verifiedPostconditionCoverage.has(postcondition),
   );
   if (uncoveredPostconditions.length > 0) {
+    releaseCapabilityExecutionAuthorizations({
+      authorizations: preflight.map((item) => item.authorization),
+      now,
+    });
     return transitionCapabilityAcquisition({
       acquisitionId: running.acquisitionId,
       expectedState: 'sandbox_running',
@@ -2505,8 +3766,14 @@ export async function runCapabilitySandbox(params: {
       }),
     });
   }
+  releaseCapabilityExecutionAuthorizations({
+    authorizations: preflight.map((item) => item.authorization),
+    now,
+  });
   const durableWork = getDurableWorkUnit(params.scope.workId);
-  const terminalPostState = receipts.at(-1)?.postStateFingerprint;
+  const terminalPostState =
+    cleanupReceipts.at(-1)?.postStateFingerprint ||
+    receipts.at(-1)?.postStateFingerprint;
   if (!durableWork || !terminalPostState) {
     throw new Error(
       'Sandbox verification requires canonical durable work and a terminal post-state fingerprint.',
@@ -2532,7 +3799,9 @@ export async function runCapabilitySandbox(params: {
     targetScopeKey: params.scope.targetScopeKey,
     preStateFingerprint: receipts[0]?.preStateFingerprint,
     verifiedPostStateFingerprint: terminalPostState,
-    receiptIds: receipts.map((receipt) => receipt.receiptId),
+    receiptIds: [...receipts, ...cleanupReceipts].map(
+      (receipt) => receipt.receiptId,
+    ),
     verificationRequirementIds: contract.verifierBindingIds.map(
       (verifierId) => `capability-verifier:${sha256(verifierId).slice(0, 32)}`,
     ),
@@ -2581,11 +3850,13 @@ export async function runCapabilitySandbox(params: {
       checkpointId: completedCheckpoint.checkpoint.durableCheckpointId,
       candidateFingerprint: contract.candidateFingerprint,
       receiptIds: receipts.map((item) => item.receiptId),
+      cleanupReceiptIds: cleanupReceipts.map((item) => item.receiptId),
     },
     now: params.now,
     mutate: () => ({
       sandboxEvidenceJson: capabilityMetadataJson({
         cleanupVerified: true,
+        cleanupReceiptIds: cleanupReceipts.map((item) => item.receiptId),
         costUsd,
         duplicateEffects: 0,
         falseSuccesses: 0,
@@ -2701,6 +3972,7 @@ export function prepareCapabilitySandbox(params: {
       'candidateContractJson',
     );
     assertCapabilityCandidateContract(contract);
+    exactProtectedSandboxActionClass(contract);
     if (contract.steps.some((step) => step.approvalRequired)) {
       return transitionCapabilityAcquisition({
         acquisitionId: current.acquisitionId,
@@ -2736,6 +4008,7 @@ export function prepareCapabilitySandbox(params: {
       'candidateContractJson',
     );
     assertCapabilityCandidateContract(contract);
+    exactProtectedSandboxActionClass(contract);
     if (contract.steps.some((step) => step.approvalRequired)) return current;
   }
   throw new Error(

@@ -30,6 +30,12 @@ const SYNTHETIC_CLI_PATH = fileURLToPath(
 const ACQUISITION_WORKER_PATH = fileURLToPath(
   new URL('./acquisition-worker.mjs', import.meta.url),
 );
+const INITIAL_REPOSITORY_ADAPTER = [
+  'export function transform(records) {',
+  '  return { total: records.length };',
+  '}',
+  '',
+].join('\n');
 
 const FORBIDDEN_PUBLIC_KEYS = new Set([
   'certificationscenarioid',
@@ -992,12 +998,7 @@ export class NovelCapabilityFixtureLab {
     );
     fs.writeFileSync(
       path.join(repositoryPath, 'adapter.mjs'),
-      [
-        'export function transform(records) {',
-        '  return { total: records.length };',
-        '}',
-        '',
-      ].join('\n'),
+      INITIAL_REPOSITORY_ADAPTER,
       { encoding: 'utf8', mode: 0o600 },
     );
     fs.writeFileSync(
@@ -1811,6 +1812,24 @@ export class NovelCapabilityFixtureLab {
     }
   }
 
+  repositoryIsolationRestored(): boolean {
+    try {
+      return (
+        this.repositoryHeadUnchanged() &&
+        fs.readFileSync(
+          path.join(this.paths.repositoryPath, 'adapter.mjs'),
+          'utf8',
+        ) === INITIAL_REPOSITORY_ADAPTER
+      );
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'EISDIR' || code === 'ENOENT') {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   resetRepositoryIsolation(): void {
     if (this.liveChildren.size > 0) {
       throw new Error('Cannot reset a repository fixture with live children.');
@@ -1820,16 +1839,13 @@ export class NovelCapabilityFixtureLab {
     });
     fs.writeFileSync(
       path.join(this.paths.repositoryPath, 'adapter.mjs'),
-      [
-        'export function transform(records) {',
-        '  return { total: records.length };',
-        '}',
-        '',
-      ].join('\n'),
+      INITIAL_REPOSITORY_ADAPTER,
       { encoding: 'utf8', mode: 0o600 },
     );
-    if (!this.repositoryHeadUnchanged()) {
-      throw new Error('Repository isolation reset changed the fixture head.');
+    if (!this.repositoryIsolationRestored()) {
+      throw new Error(
+        'Repository isolation reset did not restore the fixture.',
+      );
     }
   }
 

@@ -701,6 +701,9 @@ export class NovelCapabilityProductionCertificationAdapter {
           version: binding.version,
           evaluatorImplementationDigest: binding.evaluatorImplementationDigest,
           verify: binding.verify,
+          ...(binding.verifyCleanup
+            ? { verifyCleanup: binding.verifyCleanup }
+            : {}),
         }))
       : [];
     return createHermeticCertificationBindingRegistry({
@@ -1293,7 +1296,25 @@ export class NovelCapabilityProductionCertificationAdapter {
             : 'Private repository behavioral verifier failed.',
         };
       },
-      cleanup: async () => this.lab.repositoryHeadUnchanged(),
+      cleanup: async () => {
+        this.lab.resetRepositoryIsolation();
+        return this.lab.repositoryIsolationRestored();
+      },
+      verifyCleanup: async ({ cleanupSucceeded }) => {
+        const restored = this.lab.repositoryIsolationRestored();
+        return {
+          verified: cleanupSucceeded && restored,
+          evidenceRefs: [
+            resultEvidence('fixture-repository-cleanup', { restored }),
+          ],
+          cleanupFingerprint: hash({
+            repositoryIsolationRestored: restored,
+          }),
+          reason: restored
+            ? 'The disposable repository adapter and immutable head were restored.'
+            : 'The disposable repository fixture was not restored.',
+        };
+      },
     };
     return { descriptor: productionResource, binding };
   }

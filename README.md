@@ -80,10 +80,20 @@ and started/terminal effect receipts. The acquisition certification runs ten
 named primary scenarios plus fifteen structurally separate held-out scenarios
 and can advance synthetic acquisition evidence no farther than
 `sandbox_verified`. The production apprenticeship then implements the
-database-backed canary, exact owner-review, separate activation, monitored
-reuse, pause, quarantine, revoke, and retire lifecycle. Its own deterministic
-certification passes 22/22 synthetic scenarios with provider calls, cost,
-external effects, production writes, and genuine owner evidence all at zero.
+database-backed canary, a separate action-specific approval before any
+protected plan, exact owner review, separate activation, monitored reuse,
+pause, quarantine, revoke, and retire lifecycle. The released baseline's
+deterministic certification passed 22/22 synthetic scenarios with provider
+calls, cost, external effects, production writes, and genuine owner evidence
+all at zero. The action-authority release candidate has passed formatting,
+typecheck, build, 250 primary files / 3,076 tests, the focused acquisition,
+production/hard-kill, cockpit/chat, and continuity suites, container runner and
+real-container canaries, plus AGI typecheck and 28 files / 286 tests. All 97
+selected deterministic commands pass from the 112-command inventory, including
+the nested 3/3 stability gate; the offline scorecard is 100.0% A+ at $0, and
+certification, signature, documentation, and dependency-audit gates pass.
+Publication, exact-SHA hosted checks, and runtime identity are time-sensitive;
+query GitHub and `npm run services:status` rather than inferring them here.
 Neither certification is an OS-isolation boundary, live canary, owner verdict,
 live or production activation, deployment, or proof of universal autonomous
 learning. Isolated fixtures do exercise the synthetic activation branch.
@@ -92,20 +102,36 @@ learning. Isolated fixtures do exercise the synthetic activation branch.
 preproduction records for the bundled read-only, zero-egress release-readiness
 candidate to Andrea's canonical local ledger; it creates no live canary or
 approval. Plain `npm run capability:canary` is read-only inspection. Its
-explicit flags expose separate stage, approved-canary consumption, execution,
-activation-proposal, and approved-activation phases. The command never approves
-its own packet or records an owner verdict. Reviews are accepted only through
-the registered main Telegram chat, configured Messages self-thread, or
-authenticated owner cockpit. Capability review uses six explicit verdicts
+explicit flags expose separate `--stage`, `--authorize-canary`,
+`--stage-action-approval`, `--authorize-action`, `--run-canary`,
+`--stage-activation`, and `--activate` phases. An action-specific packet is
+required only for a protected plan; canary or activation approval cannot
+substitute for it. Staging grants no authority, consumption requires the
+separately approved current packet, and neither action-approval phase executes
+the protected plan. The command never approves its own packet or records an
+owner verdict. Guided mutations remain bound to the registered main Telegram
+chat or configured Messages self-thread. The owner cockpit is a bounded
+evidence/control view, not an executable reuse lane, and cannot relabel or
+approve those chat-bound capability packets. Capability review uses six explicit verdicts
 (`verified`, `helpful`, `partial`, `blocked`, `corrected`, or `rejected`);
 ordinary Helpful feedback is not a capability verdict. Re-review revises the
 same canonical sample, and only `verified` can make a separate activation
-proposal eligible. Activation still requires a second exact approval.
+proposal eligible. Activation still requires its own later exact approval.
+Every canary, protected-action, or activation staging result prints the
+reviewable packet summary, staged version, scope digest, summary digest, and one
+exact same-chat command:
+`approve capability packet <packet-id> version <n> scope <64hex> summary <64hex>`.
+Only that complete command is an approval intent. Andrea re-queries the packet
+and production binding, requires the same registered Telegram or BlueBubbles
+conversation, and uses the canonical compare-and-set; phrases such as “approve
+the capability” remain ordinary non-mutating chat.
 One deliberately narrow chat route can reuse the release-readiness contract
 only after that exact contract is genuinely active and freshly healthy. No
 such real canary, review, activation, or reuse is claimed by repository tests.
-Acquisition still grants no new authority, so protected actions retain their
-existing fresh approval. See
+Acquisition still grants no new authority. Production plans with credentials,
+unsupported egress/cost, mixed authority, or rollback bindings fail closed;
+the trusted in-process certification harness is not OS isolation or a
+generalized rollback executor. See
 [Verified Capability Acquisition](docs/VERIFIED_CAPABILITY_ACQUISITION.md) and
 [Verified Production Apprenticeship](docs/VERIFIED_PRODUCTION_APPRENTICESHIP.md).
 
@@ -114,6 +140,10 @@ today's focus, open loops, goals, staged approvals, and verified outcomes. It
 reuses the same database and approval lifecycle as chat, binds only to loopback,
 and is intended to be exposed remotely only through a protected Tailscale Serve
 route. See [the owner cockpit runbook](docs/OWNER_COCKPIT.md).
+
+The cockpit's generic approval queue never includes capability packets bound to
+Telegram or BlueBubbles; those remain decidable only on their exact trusted
+conversation and appear in the cockpit as opaque apprenticeship evidence.
 
 <p align="center">
   <a href="docs/USER_GUIDE.md">User Guide</a>&nbsp; | &nbsp;
@@ -193,6 +223,10 @@ free-space value in this README. Before a release or demo:
   as the live status surfaces classify them. Configured transport, stale
   proof, and current end-to-end proof are different claims.
 - Integration status keeps configuration, transport health, and proof freshness separate. For example, an overdue Telegram `/ping` may be `near_live_only` while the configured long-polling transport remains healthy; the stale success timestamp is proof debt, not a transport failure.
+- In `npm run integrations:status -- --json`, `summary.stateCounts` is the
+  exhaustive per-state classification and sums to `summary.total`. The
+  `actionNeeded`, `needsProof`, and `manualOrExternal` counters answer
+  overlapping operator questions and must not be added together.
 - Model-provider configuration is not live health. OpenAI, Anthropic, Gemini,
   MiniMax, and Brave Search remain `unknown` when only configuration is
   present; only a bounded current probe or capped evaluation may promote an

@@ -1221,6 +1221,7 @@ export function recordDurableEffect(input: {
     providerCalls?: string;
     costUsd?: string;
     latencyMs?: string;
+    sandboxSimulation?: string;
   };
   now?: Date | string;
 }): DurableEffectReceipt {
