@@ -32,9 +32,10 @@ The latest released host snapshot records:
   OpenClaw and Andrea process identities
 - every release needs its own exact-SHA hosted result; a prior green SHA does
   not certify a later commit
-- the latest dated status records disk pressure as warning at about 11 GiB free;
-  the release completed, but headroom should be improved before another
-  container-heavy round
+- the latest dated status records about 60 GiB available after a bounded cleanup
+  of regenerable caches and unused Docker images/cache; active containers,
+  volumes, models, messages, session history, and repository artifacts were
+  preserved, and free space must still be rechecked before release
 - Telegram transport is healthy; the last recorded `/ping` roundtrip at
   `2026-07-14T15:10:07.618Z` is aged and needs a genuine user-path refresh
 - BlueBubbles transport is reachable, while a same-thread action proof can age
@@ -129,6 +130,7 @@ Use these when you are enabling or validating specific capabilities:
 | Outcome Tracking / Reviews             | [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md)                         |
 | Knowledge Library                      | [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md)                                               |
 | Commitment Intelligence                | [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md)                                   |
+| Verified capability acquisition        | [VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md)                   |
 | Cursor Cloud API keys                  | [CURSOR_API_KEYS.md](CURSOR_API_KEYS.md)                                                   |
 | Cursor desktop machine access          | [CURSOR_DESKTOP_BRIDGE.md](CURSOR_DESKTOP_BRIDGE.md)                                       |
 | Alexa Companion Mode                   | [ALEXA_VOICE_INTEGRATION.md](ALEXA_VOICE_INTEGRATION.md)                                   |
@@ -139,6 +141,10 @@ For the productized flagship-flow view specifically:
 
 - daily orientation and open-loops recovery: [CHIEF_OF_STAFF_MODE.md](CHIEF_OF_STAFF_MODE.md) + [PROACTIVE_RITUALS.md](PROACTIVE_RITUALS.md)
 - commitment strength, ownership, waiting/blocking, ranking, and restart truth: [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md)
+- metadata-only capability-gap observation, declared identity/version-digest-pinned
+  bindings, canonical durable sandbox proof, synthetic `sandbox_verified` limit,
+  and authority boundaries:
+  [VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md)
 - Candace / people follow-through: [COMMUNICATION_COMPANION.md](COMMUNICATION_COMPANION.md)
 - plan creation and execution: [MISSIONS_AND_EXECUTION.md](MISSIONS_AND_EXECUTION.md)
 - approval and partial execution: [ACTION_BUNDLES.md](ACTION_BUNDLES.md)

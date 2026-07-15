@@ -28,9 +28,10 @@ import {
   upsertDurableWorkLink,
 } from './db.js';
 import {
-  assertDurableActionClass,
   assertDurableActionEffectPolicy,
+  assertDurableActionExecutionSurface,
   durableActionRequiresApproval,
+  type DurableExecutionSurface,
 } from './durable-action-policy.js';
 import type {
   CognitiveApprovalPacket,
@@ -477,7 +478,7 @@ export function stageDurableWorkApproval(input: {
   }
   const cognitiveRunId = safeId(input.cognitiveRunId, 'cognitive run ID');
   const actionClass = safeId(input.actionClass, 'action class');
-  assertDurableActionClass(actionClass);
+  assertDurableActionExecutionSurface(actionClass, 'generic_durable');
   if (!durableActionRequiresApproval(actionClass)) {
     throw new Error(
       'Read-only durable work does not require approval staging.',
@@ -1041,7 +1042,7 @@ export function issueDurableResumeGrant(input: {
   }
   const now = iso(input.now);
   const actionClass = safeId(input.actionClass, 'action class');
-  assertDurableActionClass(actionClass);
+  assertDurableActionExecutionSurface(actionClass, 'generic_durable');
   let approval: CognitiveApprovalPacket | null = null;
   if (durableActionRequiresApproval(actionClass)) {
     if (!input.approvalPacketId || !input.approvalVersion) {
@@ -1126,6 +1127,8 @@ export function consumeResumeGrantAndAcquireLease(input: {
     return { status: 'not_found' };
   }
   const hashes = bindingHashes(input.binding);
+  const actionClass = safeId(input.actionClass, 'action class');
+  assertDurableActionExecutionSurface(actionClass, 'generic_durable');
   const now = iso(input.now);
   const leaseTtlMs = boundedTtl(
     input.leaseTtlMs,
@@ -1151,7 +1154,7 @@ export function consumeResumeGrantAndAcquireLease(input: {
   const result = consumeDurableResumeGrantAtomic({
     tokenHash,
     ...hashes,
-    actionClass: safeId(input.actionClass, 'action class'),
+    actionClass,
     inboundMessageHash: input.inboundMessageId
       ? durableScopeHash('inbound-message', input.inboundMessageId)
       : null,
@@ -1201,6 +1204,8 @@ export function recordDurableEffect(input: {
   leaseAssertionNow?: Date | string;
   effectClass: DurableEffectReceipt['effectClass'];
   status: DurableEffectReceipt['status'];
+  claimExecution?: boolean;
+  executionSurface?: DurableExecutionSurface;
   targetScopeKey: string;
   preStateFingerprint?: string | null;
   postStateFingerprint?: string | null;
@@ -1219,6 +1224,11 @@ export function recordDurableEffect(input: {
       'Durable receipt lease assertion requires both lease and process generation.',
     );
   }
+  if (input.claimExecution && input.status !== 'started') {
+    throw new Error(
+      'A durable execution claim can be acquired only with a started receipt.',
+    );
+  }
   const work = getDurableWorkUnit(input.workId);
   const checkpoint = getDurableWorkCheckpoint(input.checkpointId);
   if (
@@ -1233,6 +1243,10 @@ export function recordDurableEffect(input: {
     );
   }
   const actionClass = safeId(input.actionClass, 'receipt action class');
+  assertDurableActionExecutionSurface(
+    actionClass,
+    input.executionSurface || 'generic_durable',
+  );
   assertDurableActionEffectPolicy(actionClass, input.effectClass);
   const targetScopeHash = durableScopeHash('target', input.targetScopeKey);
   if (
@@ -1343,6 +1357,8 @@ export function recordDurableEffect(input: {
   }
   const stored = upsertDurableEffectReceipt({
     receipt,
+    requireNewExecutionClaim: input.claimExecution,
+    executionSurface: input.executionSurface,
     leaseAssertion:
       input.leaseId && input.processGeneration
         ? {
@@ -1900,6 +1916,7 @@ function validateExecutionPlan(
   }
   const nodes = plan.nodes.map((node) => {
     const actionClass = safeId(node.actionClass, 'node action class');
+    assertDurableActionExecutionSurface(actionClass, 'generic_durable');
     assertDurableActionEffectPolicy(actionClass, node.effectClass);
     return {
       ...node,
@@ -2133,6 +2150,10 @@ export async function orchestrateNextDurableNode<
   const run = async (): Promise<
     Omit<DurableNodeOrchestrationResult, 'leaseReleased'>
   > => {
+    assertDurableActionExecutionSurface(
+      consumedGrant.actionClass,
+      'generic_durable',
+    );
     let work = getDurableWorkUnit(initialWork.workId)!;
     const checkpoint = getDurableWorkCheckpoint(head.durableCheckpointId)!;
     const completed = checkpointIds(

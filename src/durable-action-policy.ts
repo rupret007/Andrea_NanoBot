@@ -1,8 +1,11 @@
 export type DurablePolicyEffectClass =
   | 'read_only'
+  | 'sandbox_repository_write'
   | 'repository_write'
   | 'local_write'
   | 'external_effect';
+
+export type DurableExecutionSurface = 'generic_durable' | 'capability_sandbox';
 
 export interface DurableActionPolicy {
   readonly allowedEffects: readonly DurablePolicyEffectClass[];
@@ -50,6 +53,13 @@ const ACTION_POLICIES = Object.freeze({
   research_synthesis: LOCAL_WRITE,
   local_delivery_record: LOCAL_WRITE,
   draft: LOCAL_WRITE,
+  // This class is executable only through runCapabilitySandbox after the
+  // target has been proven to be a marked disposable root beneath the host
+  // temporary directory. It is rejected by the production execution path.
+  sandbox_repository_write: Object.freeze({
+    allowedEffects: Object.freeze(['sandbox_repository_write'] as const),
+    requiresApproval: false,
+  }),
   repository_write: REPOSITORY_WRITE,
   edit_file: REPOSITORY_WRITE,
   commit: REPOSITORY_WRITE,
@@ -93,6 +103,29 @@ export function durableActionRequiresApproval(actionClass: string): boolean {
 export function assertDurableActionClass(actionClass: string): void {
   if (!durableActionPolicy(actionClass)) {
     throw new Error('Durable action class is not in the closed policy set.');
+  }
+}
+
+export function durableActionAllowedOnSurface(
+  actionClass: string,
+  surface: DurableExecutionSurface,
+): boolean {
+  if (!durableActionPolicy(actionClass)) return false;
+  return (
+    actionClass !== 'sandbox_repository_write' ||
+    surface === 'capability_sandbox'
+  );
+}
+
+export function assertDurableActionExecutionSurface(
+  actionClass: string,
+  surface: DurableExecutionSurface,
+): void {
+  assertDurableActionClass(actionClass);
+  if (!durableActionAllowedOnSurface(actionClass, surface)) {
+    throw new Error(
+      'Sandbox repository writes are capability-sandbox-only and unavailable to generic durable execution.',
+    );
   }
 }
 

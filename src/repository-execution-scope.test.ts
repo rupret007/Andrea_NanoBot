@@ -44,6 +44,7 @@ import {
   repositoryExecutionTargetScopeKey,
   RepositoryExecutionScopeError,
   type RepositoryExecutionContext,
+  type RepositoryExecutionActionClass,
 } from './repository-execution-scope.js';
 import {
   _closeDatabase,
@@ -133,6 +134,22 @@ afterEach(() => {
 });
 
 describe('repository execution scope', () => {
+  it('rejects the capability-only sandbox action at the repository boundary', () => {
+    const root = repository();
+    expectCode(
+      () =>
+        createRepositoryExecutionScope({
+          ...context,
+          repositoryRoot: root,
+          allowedRoot: path.dirname(root),
+          allowedActionClasses: [
+            'sandbox_repository_write' as RepositoryExecutionActionClass,
+          ],
+        }),
+      'invalid_action',
+    );
+  });
+
   it('closes the positive deep-work proof only through an approved, leased, host-bound repository execution', () => {
     const root = repository();
     const now = '2026-07-13T12:00:00.000Z';

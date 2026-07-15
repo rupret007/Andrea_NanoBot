@@ -465,6 +465,42 @@ healthy while an old roundtrip marker becomes `near_live_only`; the report gives
 the last successful timestamp and asks for a fresh proof instead of relabeling
 the transport as failed or copying a success sentence into `lastFailure`.
 
+## Verified capability acquisition
+
+When a real task is not already covered, Andrea can now persist a group-scoped
+capability gap and compare existing resources before proposing a candidate. An
+explicit live capability-learning request or learn-first turn records only
+bounded derived metadata and fingerprints; it does not retain the request body
+or advance beyond observation.
+The resource broker is advisory: it ranks the smallest compatible set under
+input, health, version, privacy, risk, egress, and authority constraints, but it
+does not execute or authorize anything. External documentation remains
+sanitized, provenance-bearing untrusted data and cannot become instructions.
+
+An executable candidate must bind every step to an exact registered resource,
+operation, durable action class, version, executor declared identity/version
+digest, and independent evaluator declared identity/version digest. These pin
+registry identity and do not attest to callback bytes. Sandbox proof is attached to
+canonical durable work, a committed checkpoint, complete-plan preflight, and
+started/terminal receipts with exact scope and verification fingerprints. The
+strict offline gate runs ten primary and fifteen separate held-out scenarios;
+synthetic evidence stops at `sandbox_verified` and cannot create
+`canary_ready`, activate a skill, or count as owner learning. Quarantine, pause, external blockers, failed verification,
+and indeterminate effects stay explicit.
+
+Live canary, activation, and production-outcome APIs currently fail closed when
+given caller-asserted identifiers. They remain closed until an atomic canonical
+join proves completed durable work, a confirmed outcome, an exact owner-review
+signal, fresh dependency health, and a consumed exact-scope approval grant with
+an active lease.
+
+Acquisition grants no authority. Existing fresh approvals for external sends,
+calendar writes, purchases, canonical repository changes, deploys, migrations,
+dependency changes, and deletions remain mandatory regardless of candidate
+state or reliability. See
+[VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md) for the
+complete lifecycle and strict offline certification.
+
 ## Validation
 
 Run the focused proof with:
@@ -479,6 +515,8 @@ npm run check:container-contract
 npm run typecheck
 npm run test:continuity:hard-kill
 npm run test:continuity:heldout
+npm run test:novel-capability:certification-gate
+npm run certify:novel-capability-mastery
 npm run agi:scorecard -- --no-write --no-dogfood
 ```
 

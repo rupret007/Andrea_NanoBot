@@ -201,6 +201,74 @@ describe('durable database lease invariants', () => {
     ).toThrow(/closed policy set/i);
   });
 
+  it('rejects a capability-only sandbox action at low-level grant storage', () => {
+    const created = createOrLoadDurableWork({
+      originTurnId: 'db-sandbox-only-grant-turn',
+      authorizedSurface: 'telegram',
+      binding,
+      goalSummary: 'Reject a generic sandbox repository grant.',
+      status: 'ready',
+      nextAction: 'Commit one bounded checkpoint.',
+      now: '2026-07-13T12:00:00.000Z',
+    });
+    const checkpoint = commitDurableCheckpointCAS({
+      workId: created.work.workId,
+      expectedWorkVersion: created.work.version,
+      pendingNodeIds: ['sandbox-write'],
+      executorScopeKey: 'db-lease-executor',
+      targetScopeKey: binding.targetScopeKey,
+      recoveryPolicy: 'inspect_then_resume',
+      nextSafeAction: 'Keep the capability-only effect out of this surface.',
+      now: '2026-07-13T12:00:10.000Z',
+    });
+    const createdAt = '2026-07-13T12:00:20.000Z';
+    expect(() =>
+      insertDurableResumeGrant({
+        grant: {
+          grantId: 'grant:db-sandbox-only-action',
+          tokenHash: hashDurableResumeToken(
+            'sandbox-only-token-value-1234567890abcdef',
+          ),
+          workId: checkpoint.work.workId,
+          checkpointId: checkpoint.checkpoint.durableCheckpointId,
+          workVersion: checkpoint.work.version,
+          planVersion: checkpoint.work.planVersion,
+          ownerScopeHash: checkpoint.work.ownerScopeHash,
+          chatScopeHash: checkpoint.work.chatScopeHash,
+          groupScopeHash: checkpoint.work.groupScopeHash,
+          channel: checkpoint.work.channel,
+          targetScopeHash: checkpoint.work.targetScopeHash,
+          actionClass: 'sandbox_repository_write',
+          approvalPacketId: null,
+          approvalVersion: null,
+          approvalScopeHash: null,
+          inboundMessageHash: null,
+          status: 'active',
+          createdAt,
+          updatedAt: createdAt,
+          expiresAt: '2026-07-13T12:10:20.000Z',
+          consumedAt: null,
+          revokedAt: null,
+          consumedLeaseId: null,
+          privacyJson,
+        },
+        event: {
+          eventId: 'durable:event:db-sandbox-only-action',
+          workId: checkpoint.work.workId,
+          createdAt,
+          eventKind: 'grant_issued',
+          fromStatus: checkpoint.work.status,
+          toStatus: checkpoint.work.status,
+          workVersion: checkpoint.work.version,
+          planVersion: checkpoint.work.planVersion,
+          summary: 'Attempted one generic capability-only action grant.',
+          refsJson: '[]',
+          privacyJson,
+        },
+      }),
+    ).toThrow(/capability-sandbox-only/i);
+  });
+
   it('rejects a low-level approval-bound grant without exact approved scope', () => {
     const created = createOrLoadDurableWork({
       originTurnId: 'db-unapproved-grant-turn',
@@ -281,6 +349,17 @@ describe('durable database lease invariants', () => {
         event: receiptEvent(fixture, 'mismatched-effect', now),
       }),
     ).toThrow(/closed execution policy/i);
+
+    expect(() =>
+      upsertDurableEffectReceipt({
+        receipt: {
+          ...receipt(fixture, 'sandbox-only', now),
+          actionClass: 'sandbox_repository_write',
+          effectClass: 'sandbox_repository_write',
+        },
+        event: receiptEvent(fixture, 'sandbox-only', now),
+      }),
+    ).toThrow(/capability-sandbox-only/i);
 
     const operatorReceipt: DurableEffectReceipt = {
       ...receipt(fixture, 'operator-change', now),

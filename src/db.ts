@@ -5,7 +5,13 @@ import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { redactCouncilText } from './council-safety.js';
+import { isSensitiveName, redactCouncilText } from './council-safety.js';
+import {
+  assertCapabilityAcquisitionRecord,
+  assertCapabilityAcquisitionTransition,
+  capabilityAcquisitionSnapshotJson,
+  capabilityTransitionDigest,
+} from './capability-acquisition-policy.js';
 import { assertValidGroupFolder, isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -20,10 +26,13 @@ import {
 } from './life-thread-commitment.js';
 import { pruneMediaCache } from './media-cache.js';
 import {
+  assertDurableActionExecutionSurface,
   assertDurableActionEffectPolicy,
   durableApprovalBoundActionClasses,
+  durableActionAllowedOnSurface,
   durableActionPolicy,
   durableActionRequiresApproval,
+  type DurableExecutionSurface,
 } from './durable-action-policy.js';
 import type {
   ListRuntimeJobsRequest,
@@ -242,6 +251,8 @@ import {
   ActionReviewRecord,
   ActionPreflightRecord,
   CognitiveEpisodeRecord,
+  CapabilityAcquisitionRecord,
+  CapabilityAcquisitionTransitionRecord,
   CapabilityStateRecord,
   BlackboardSnapshotRecord,
   StrategyEvalRunRecord,
@@ -352,6 +363,59 @@ export function _getDatabaseConnectionPolicy(): {
 
 function redactStoredCognitiveMetadata(value: string, limit = 12000): string {
   return redactCouncilText(value || '', limit);
+}
+
+function sanitizeStoredStructuredJson(
+  value: string,
+  field: string,
+  limit = 12000,
+): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`${field} must contain valid JSON.`, { cause: error });
+  }
+  const visit = (input: unknown, depth: number): unknown => {
+    if (depth > 16) throw new Error(`${field} exceeds the maximum JSON depth.`);
+    if (Array.isArray(input)) {
+      if (input.length > 500) {
+        throw new Error(`${field} exceeds the maximum array size.`);
+      }
+      return input.map((child) => visit(child, depth + 1));
+    }
+    if (input && typeof input === 'object') {
+      const entries = Object.entries(input as Record<string, unknown>);
+      if (entries.length > 500) {
+        throw new Error(`${field} exceeds the maximum object size.`);
+      }
+      return Object.fromEntries(
+        entries
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, child]) => [
+            key.slice(0, 180),
+            isSensitiveName(key) &&
+            !/(?:requirements?|stored|redacted|state|status|ids?)$/i.test(key)
+              ? '[REDACTED_SECRET]'
+              : visit(child, depth + 1),
+          ]),
+      );
+    }
+    if (typeof input === 'string') return redactCouncilText(input, 2400);
+    if (
+      input === null ||
+      typeof input === 'number' ||
+      typeof input === 'boolean'
+    ) {
+      return input;
+    }
+    return null;
+  };
+  const serialized = JSON.stringify(visit(parsed, 0));
+  if (Buffer.byteLength(serialized, 'utf8') > limit) {
+    throw new Error(`${field} exceeds the ${limit}-byte storage limit.`);
+  }
+  return serialized;
 }
 
 function sanitizeStoredIdArrayJson(value: string, limit = 12000): string {
@@ -4135,6 +4199,71 @@ function createSchema(database: Database.Database): void {
       autonomy_level INTEGER NOT NULL,
       privacy_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS capability_acquisitions (
+      acquisition_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      group_folder TEXT,
+      target_outcome TEXT NOT NULL,
+      postcondition_json TEXT NOT NULL,
+      task_family TEXT NOT NULL,
+      affected_capability TEXT,
+      gap_kind TEXT NOT NULL,
+      known_prerequisites_json TEXT NOT NULL,
+      missing_prerequisites_json TEXT NOT NULL,
+      candidate_resource_refs_json TEXT NOT NULL,
+      selected_resource_refs_json TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      data_egress_class TEXT NOT NULL,
+      expected_cost_band TEXT NOT NULL,
+      expected_latency_band TEXT NOT NULL,
+      authority_requirements_json TEXT NOT NULL,
+      evidence_origin TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      provenance_json TEXT NOT NULL,
+      state TEXT NOT NULL,
+      next_safe_action TEXT NOT NULL,
+      record_version INTEGER NOT NULL,
+      environment_fingerprint TEXT NOT NULL,
+      candidate_contract_json TEXT NOT NULL,
+      sandbox_evidence_json TEXT NOT NULL,
+      held_out_evidence_json TEXT NOT NULL,
+      owner_review_json TEXT NOT NULL,
+      outcome_ids_json TEXT NOT NULL,
+      compiled_skill_id TEXT,
+      negative_outcome_count INTEGER NOT NULL DEFAULT 0,
+      correction_count INTEGER NOT NULL DEFAULT 0,
+      last_outcome TEXT,
+      expires_at TEXT,
+      revalidate_after_at TEXT,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_capability_acquisitions_state
+      ON capability_acquisitions(state, task_family, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_capability_acquisitions_group
+      ON capability_acquisitions(group_folder, state, updated_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_capability_acquisitions_skill
+      ON capability_acquisitions(compiled_skill_id)
+      WHERE compiled_skill_id IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS capability_acquisition_transitions (
+      transition_id TEXT PRIMARY KEY,
+      acquisition_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      from_state TEXT NOT NULL,
+      to_state TEXT NOT NULL,
+      expected_version INTEGER NOT NULL,
+      resulting_version INTEGER NOT NULL,
+      actor_kind TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      transition_digest TEXT NOT NULL,
+      resulting_snapshot_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (acquisition_id) REFERENCES capability_acquisitions(acquisition_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_capability_acquisition_transitions_acquisition
+      ON capability_acquisition_transitions(acquisition_id, resulting_version ASC);
     CREATE TABLE IF NOT EXISTS blackboard_snapshots (
       snapshot_id TEXT PRIMARY KEY,
       created_at TEXT NOT NULL,
@@ -28674,6 +28803,867 @@ export function listCapabilityStates(
   return rows.map((row) => mapCapabilityStateRow(row));
 }
 
+type CapabilityAcquisitionRow = {
+  acquisition_id: string;
+  created_at: string;
+  updated_at: string;
+  group_folder: string | null;
+  target_outcome: string;
+  postcondition_json: string;
+  task_family: string;
+  affected_capability: string | null;
+  gap_kind: CapabilityAcquisitionRecord['gapKind'];
+  known_prerequisites_json: string;
+  missing_prerequisites_json: string;
+  candidate_resource_refs_json: string;
+  selected_resource_refs_json: string;
+  risk_level: CapabilityAcquisitionRecord['riskLevel'];
+  data_egress_class: CapabilityAcquisitionRecord['dataEgressClass'];
+  expected_cost_band: CapabilityAcquisitionRecord['expectedCostBand'];
+  expected_latency_band: CapabilityAcquisitionRecord['expectedLatencyBand'];
+  authority_requirements_json: string;
+  evidence_origin: CapabilityAcquisitionRecord['evidenceOrigin'];
+  confidence: number;
+  provenance_json: string;
+  state: CapabilityAcquisitionRecord['state'];
+  next_safe_action: string;
+  record_version: number;
+  environment_fingerprint: string;
+  candidate_contract_json: string;
+  sandbox_evidence_json: string;
+  held_out_evidence_json: string;
+  owner_review_json: string;
+  outcome_ids_json: string;
+  compiled_skill_id: string | null;
+  negative_outcome_count: number;
+  correction_count: number;
+  last_outcome: string | null;
+  expires_at: string | null;
+  revalidate_after_at: string | null;
+  privacy_json: string;
+};
+
+function mapCapabilityAcquisitionRow(
+  row: CapabilityAcquisitionRow,
+): CapabilityAcquisitionRecord {
+  return {
+    acquisitionId: row.acquisition_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    groupFolder: row.group_folder,
+    targetOutcome: row.target_outcome,
+    postconditionJson: row.postcondition_json,
+    taskFamily: row.task_family,
+    affectedCapability: row.affected_capability,
+    gapKind: row.gap_kind,
+    knownPrerequisitesJson: row.known_prerequisites_json,
+    missingPrerequisitesJson: row.missing_prerequisites_json,
+    candidateResourceRefsJson: row.candidate_resource_refs_json,
+    selectedResourceRefsJson: row.selected_resource_refs_json,
+    riskLevel: row.risk_level,
+    dataEgressClass: row.data_egress_class,
+    expectedCostBand: row.expected_cost_band,
+    expectedLatencyBand: row.expected_latency_band,
+    authorityRequirementsJson: row.authority_requirements_json,
+    evidenceOrigin: row.evidence_origin,
+    confidence: row.confidence,
+    provenanceJson: row.provenance_json,
+    state: row.state,
+    nextSafeAction: row.next_safe_action,
+    recordVersion: row.record_version,
+    environmentFingerprint: row.environment_fingerprint,
+    candidateContractJson: row.candidate_contract_json,
+    sandboxEvidenceJson: row.sandbox_evidence_json,
+    heldOutEvidenceJson: row.held_out_evidence_json,
+    ownerReviewJson: row.owner_review_json,
+    outcomeIdsJson: row.outcome_ids_json,
+    compiledSkillId: row.compiled_skill_id,
+    negativeOutcomeCount: row.negative_outcome_count,
+    correctionCount: row.correction_count,
+    lastOutcome: row.last_outcome,
+    expiresAt: row.expires_at,
+    revalidateAfterAt: row.revalidate_after_at,
+    privacyJson: row.privacy_json,
+  };
+}
+
+function capabilityAcquisitionParams(record: CapabilityAcquisitionRecord) {
+  assertCapabilityAcquisitionRecord(record);
+  if (record.groupFolder) assertValidGroupFolder(record.groupFolder);
+  return {
+    acquisition_id: record.acquisitionId,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+    group_folder: record.groupFolder || null,
+    target_outcome: redactStoredCognitiveMetadata(record.targetOutcome, 900),
+    postcondition_json: sanitizeStoredStructuredJson(
+      record.postconditionJson,
+      'capability_acquisition.postcondition_json',
+      6_000,
+    ),
+    task_family: redactStoredCognitiveMetadata(record.taskFamily, 120),
+    affected_capability: record.affectedCapability
+      ? redactStoredCognitiveMetadata(record.affectedCapability, 220)
+      : null,
+    gap_kind: record.gapKind,
+    known_prerequisites_json: sanitizeStoredStructuredJson(
+      record.knownPrerequisitesJson,
+      'capability_acquisition.known_prerequisites_json',
+      6_000,
+    ),
+    missing_prerequisites_json: sanitizeStoredStructuredJson(
+      record.missingPrerequisitesJson,
+      'capability_acquisition.missing_prerequisites_json',
+      6_000,
+    ),
+    candidate_resource_refs_json: sanitizeStoredStructuredJson(
+      record.candidateResourceRefsJson,
+      'capability_acquisition.candidate_resource_refs_json',
+      8_000,
+    ),
+    selected_resource_refs_json: sanitizeStoredStructuredJson(
+      record.selectedResourceRefsJson,
+      'capability_acquisition.selected_resource_refs_json',
+      8_000,
+    ),
+    risk_level: record.riskLevel,
+    data_egress_class: record.dataEgressClass,
+    expected_cost_band: record.expectedCostBand,
+    expected_latency_band: record.expectedLatencyBand,
+    authority_requirements_json: sanitizeStoredStructuredJson(
+      record.authorityRequirementsJson,
+      'capability_acquisition.authority_requirements_json',
+      4_000,
+    ),
+    evidence_origin: record.evidenceOrigin,
+    confidence: record.confidence,
+    provenance_json: sanitizeStoredStructuredJson(
+      record.provenanceJson,
+      'capability_acquisition.provenance_json',
+      8_000,
+    ),
+    state: record.state,
+    next_safe_action: redactStoredCognitiveMetadata(record.nextSafeAction, 900),
+    record_version: record.recordVersion,
+    environment_fingerprint: redactStoredCognitiveMetadata(
+      record.environmentFingerprint,
+      500,
+    ),
+    candidate_contract_json: sanitizeStoredStructuredJson(
+      record.candidateContractJson,
+      'capability_acquisition.candidate_contract_json',
+      24_000,
+    ),
+    sandbox_evidence_json: sanitizeStoredStructuredJson(
+      record.sandboxEvidenceJson,
+      'capability_acquisition.sandbox_evidence_json',
+      12_000,
+    ),
+    held_out_evidence_json: sanitizeStoredStructuredJson(
+      record.heldOutEvidenceJson,
+      'capability_acquisition.held_out_evidence_json',
+      12_000,
+    ),
+    owner_review_json: sanitizeStoredStructuredJson(
+      record.ownerReviewJson,
+      'capability_acquisition.owner_review_json',
+      6_000,
+    ),
+    outcome_ids_json: sanitizeStoredStructuredJson(
+      record.outcomeIdsJson,
+      'capability_acquisition.outcome_ids_json',
+      6_000,
+    ),
+    compiled_skill_id: record.compiledSkillId || null,
+    negative_outcome_count: record.negativeOutcomeCount,
+    correction_count: record.correctionCount,
+    last_outcome: record.lastOutcome
+      ? redactStoredCognitiveMetadata(record.lastOutcome, 240)
+      : null,
+    expires_at: record.expiresAt || null,
+    revalidate_after_at: record.revalidateAfterAt || null,
+    privacy_json: sanitizeStoredStructuredJson(
+      record.privacyJson,
+      'capability_acquisition.privacy_json',
+      4_000,
+    ),
+  };
+}
+
+function normalizeCapabilityAcquisitionForStorage(
+  record: CapabilityAcquisitionRecord,
+): CapabilityAcquisitionRecord {
+  const normalized = mapCapabilityAcquisitionRow(
+    capabilityAcquisitionParams(record) as CapabilityAcquisitionRow,
+  );
+  if (
+    capabilityAcquisitionSnapshotJson(normalized) !==
+    capabilityAcquisitionSnapshotJson(record)
+  ) {
+    throw new Error(
+      'Capability acquisition metadata must be redacted and normalized before persistence.',
+    );
+  }
+  return normalized;
+}
+
+export function insertCapabilityAcquisition(
+  record: CapabilityAcquisitionRecord,
+): boolean {
+  const transact = db.transaction(() => {
+    if (record.state !== 'observed' || record.recordVersion !== 1) {
+      throw new Error(
+        'A new capability acquisition must begin in observed state at version one.',
+      );
+    }
+    const normalized = normalizeCapabilityAcquisitionForStorage(record);
+    const existing = getCapabilityAcquisition(normalized.acquisitionId);
+    if (existing) {
+      if (
+        capabilityAcquisitionSnapshotJson(existing) ===
+        capabilityAcquisitionSnapshotJson(normalized)
+      ) {
+        return false;
+      }
+      throw new Error('Capability acquisition identity collision.');
+    }
+    const result = db
+      .prepare(
+        `
+        INSERT INTO capability_acquisitions (
+          acquisition_id, created_at, updated_at, group_folder,
+          target_outcome, postcondition_json, task_family, affected_capability,
+          gap_kind, known_prerequisites_json, missing_prerequisites_json,
+          candidate_resource_refs_json, selected_resource_refs_json, risk_level,
+          data_egress_class, expected_cost_band, expected_latency_band,
+          authority_requirements_json, evidence_origin, confidence,
+          provenance_json, state,
+          next_safe_action, record_version, environment_fingerprint,
+          candidate_contract_json, sandbox_evidence_json, held_out_evidence_json,
+          owner_review_json, outcome_ids_json, compiled_skill_id,
+          negative_outcome_count, correction_count, last_outcome, expires_at,
+          revalidate_after_at, privacy_json
+        ) VALUES (
+          @acquisition_id, @created_at, @updated_at, @group_folder,
+          @target_outcome, @postcondition_json, @task_family, @affected_capability,
+          @gap_kind, @known_prerequisites_json, @missing_prerequisites_json,
+          @candidate_resource_refs_json, @selected_resource_refs_json, @risk_level,
+          @data_egress_class, @expected_cost_band, @expected_latency_band,
+          @authority_requirements_json, @evidence_origin, @confidence,
+          @provenance_json, @state,
+          @next_safe_action, @record_version, @environment_fingerprint,
+          @candidate_contract_json, @sandbox_evidence_json, @held_out_evidence_json,
+          @owner_review_json, @outcome_ids_json, @compiled_skill_id,
+          @negative_outcome_count, @correction_count, @last_outcome, @expires_at,
+          @revalidate_after_at, @privacy_json
+        )
+      `,
+      )
+      .run(capabilityAcquisitionParams(normalized));
+    if (result.changes !== 1) {
+      throw new Error('Capability acquisition genesis insert failed.');
+    }
+    const snapshot = capabilityAcquisitionSnapshotJson(normalized);
+    const idempotencyKey = `capability-acquisition:genesis:${normalized.acquisitionId}`;
+    const genesis = {
+      acquisitionId: normalized.acquisitionId,
+      fromState: 'observed' as const,
+      toState: 'observed' as const,
+      expectedVersion: 0,
+      resultingVersion: 1,
+      actorKind: 'system' as const,
+      reason: 'Capability gap observed.',
+      evidenceRefsJson: '[]',
+      idempotencyKey,
+      resultingSnapshotJson: snapshot,
+    };
+    const digest = capabilityTransitionDigest(genesis);
+    db.prepare(
+      `INSERT INTO capability_acquisition_transitions (
+        transition_id, acquisition_id, created_at, from_state, to_state,
+        expected_version, resulting_version, actor_kind, reason,
+        evidence_refs_json, idempotency_key, transition_digest,
+        resulting_snapshot_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      `capability-transition:${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 24)}`,
+      normalized.acquisitionId,
+      normalized.createdAt,
+      genesis.fromState,
+      genesis.toState,
+      genesis.expectedVersion,
+      genesis.resultingVersion,
+      genesis.actorKind,
+      genesis.reason,
+      genesis.evidenceRefsJson,
+      genesis.idempotencyKey,
+      digest,
+      snapshot,
+      normalized.privacyJson,
+    );
+    return true;
+  });
+  return transact();
+}
+
+export function getCapabilityAcquisition(
+  acquisitionId: string,
+): CapabilityAcquisitionRecord | undefined {
+  const row = db
+    .prepare('SELECT * FROM capability_acquisitions WHERE acquisition_id = ?')
+    .get(acquisitionId) as CapabilityAcquisitionRow | undefined;
+  if (!row) return undefined;
+  return verifyCapabilityAcquisitionProjection(
+    mapCapabilityAcquisitionRow(row),
+  );
+}
+
+export function getCapabilityAcquisitionByCompiledSkillId(
+  skillId: string,
+): CapabilityAcquisitionRecord | undefined {
+  const row = db
+    .prepare(
+      'SELECT * FROM capability_acquisitions WHERE compiled_skill_id = ? LIMIT 1',
+    )
+    .get(skillId) as CapabilityAcquisitionRow | undefined;
+  if (!row) return undefined;
+  return verifyCapabilityAcquisitionProjection(
+    mapCapabilityAcquisitionRow(row),
+  );
+}
+
+export function listCapabilityAcquisitions(
+  params: {
+    groupFolder?: string | null;
+    states?: CapabilityAcquisitionRecord['state'][];
+    gapKinds?: CapabilityAcquisitionRecord['gapKind'][];
+    taskFamily?: string;
+    limit?: number;
+  } = {},
+): CapabilityAcquisitionRecord[] {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+  if (params.groupFolder) {
+    assertValidGroupFolder(params.groupFolder);
+    clauses.push('(group_folder = ? OR group_folder IS NULL)');
+    args.push(params.groupFolder);
+  }
+  if (params.states?.length) {
+    clauses.push(`state IN (${params.states.map(() => '?').join(', ')})`);
+    args.push(...params.states);
+  }
+  if (params.gapKinds?.length) {
+    clauses.push(`gap_kind IN (${params.gapKinds.map(() => '?').join(', ')})`);
+    args.push(...params.gapKinds);
+  }
+  if (params.taskFamily) {
+    clauses.push('task_family = ?');
+    args.push(params.taskFamily);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `SELECT * FROM capability_acquisitions
+       ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+       ORDER BY updated_at DESC, acquisition_id ASC
+       LIMIT ?`,
+    )
+    .all(...args) as CapabilityAcquisitionRow[];
+  return rows.map((row) =>
+    verifyCapabilityAcquisitionProjection(mapCapabilityAcquisitionRow(row)),
+  );
+}
+
+type CapabilityAcquisitionTransitionRow = {
+  transition_id: string;
+  acquisition_id: string;
+  created_at: string;
+  from_state: CapabilityAcquisitionTransitionRecord['fromState'];
+  to_state: CapabilityAcquisitionTransitionRecord['toState'];
+  expected_version: number;
+  resulting_version: number;
+  actor_kind: CapabilityAcquisitionTransitionRecord['actorKind'];
+  reason: string;
+  evidence_refs_json: string;
+  idempotency_key: string;
+  transition_digest: string;
+  resulting_snapshot_json: string;
+  privacy_json: string;
+};
+
+function mapCapabilityAcquisitionTransitionRow(
+  row: CapabilityAcquisitionTransitionRow,
+): CapabilityAcquisitionTransitionRecord {
+  return {
+    transitionId: row.transition_id,
+    acquisitionId: row.acquisition_id,
+    createdAt: row.created_at,
+    fromState: row.from_state,
+    toState: row.to_state,
+    expectedVersion: row.expected_version,
+    resultingVersion: row.resulting_version,
+    actorKind: row.actor_kind,
+    reason: row.reason,
+    evidenceRefsJson: row.evidence_refs_json,
+    idempotencyKey: row.idempotency_key,
+    transitionDigest: row.transition_digest,
+    resultingSnapshotJson: row.resulting_snapshot_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+function verifyCapabilityAcquisitionProjection(
+  projection: CapabilityAcquisitionRecord,
+): CapabilityAcquisitionRecord {
+  const rows = db
+    .prepare(
+      `SELECT * FROM capability_acquisition_transitions
+       WHERE acquisition_id = ?
+       ORDER BY resulting_version ASC, created_at ASC`,
+    )
+    .all(projection.acquisitionId) as CapabilityAcquisitionTransitionRow[];
+  if (!rows.length) {
+    throw new Error(
+      'Capability acquisition is missing its canonical genesis revision.',
+    );
+  }
+  let previous: CapabilityAcquisitionRecord | null = null;
+  for (const row of rows) {
+    const transition = mapCapabilityAcquisitionTransitionRow(row);
+    let snapshot: CapabilityAcquisitionRecord;
+    try {
+      snapshot = JSON.parse(
+        transition.resultingSnapshotJson,
+      ) as CapabilityAcquisitionRecord;
+    } catch (error) {
+      throw new Error(
+        'Capability acquisition revision snapshot is malformed.',
+        {
+          cause: error,
+        },
+      );
+    }
+    assertCapabilityAcquisitionRecord(snapshot);
+    const digest = capabilityTransitionDigest({
+      acquisitionId: transition.acquisitionId,
+      fromState: transition.fromState,
+      toState: transition.toState,
+      expectedVersion: transition.expectedVersion,
+      resultingVersion: transition.resultingVersion,
+      actorKind: transition.actorKind,
+      reason: transition.reason,
+      evidenceRefsJson: transition.evidenceRefsJson,
+      idempotencyKey: transition.idempotencyKey,
+      resultingSnapshotJson: transition.resultingSnapshotJson,
+    });
+    if (digest !== transition.transitionDigest) {
+      throw new Error(
+        'Capability acquisition canonical revision digest mismatch.',
+      );
+    }
+    if (!previous) {
+      if (
+        transition.fromState !== 'observed' ||
+        transition.toState !== 'observed' ||
+        transition.expectedVersion !== 0 ||
+        transition.resultingVersion !== 1 ||
+        snapshot.state !== 'observed' ||
+        snapshot.recordVersion !== 1
+      ) {
+        throw new Error('Capability acquisition canonical genesis is invalid.');
+      }
+    } else {
+      assertCapabilityAcquisitionTransition({
+        current: previous,
+        next: snapshot,
+        transition,
+        expectedState: previous.state,
+      });
+    }
+    previous = snapshot;
+  }
+  if (
+    !previous ||
+    capabilityAcquisitionSnapshotJson(previous) !==
+      capabilityAcquisitionSnapshotJson(projection)
+  ) {
+    throw new Error(
+      'Capability acquisition head projection does not match canonical history.',
+    );
+  }
+  return previous;
+}
+
+export function listCapabilityAcquisitionTransitions(
+  acquisitionId: string,
+): CapabilityAcquisitionTransitionRecord[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM capability_acquisition_transitions
+       WHERE acquisition_id = ?
+       ORDER BY resulting_version ASC, created_at ASC`,
+    )
+    .all(acquisitionId) as CapabilityAcquisitionTransitionRow[];
+  return rows.map(mapCapabilityAcquisitionTransitionRow);
+}
+
+export type CapabilityAcquisitionCanonicalEvidenceGuard = {
+  kind: 'sandbox_completion';
+  durableWorkId: string;
+  checkpointId: string;
+  candidateFingerprint: string;
+  receiptIds: string[];
+};
+
+function assertCapabilityAcquisitionCanonicalEvidence(params: {
+  current: CapabilityAcquisitionRecord;
+  next: CapabilityAcquisitionRecord;
+  transition: CapabilityAcquisitionTransitionRecord;
+  guard?: CapabilityAcquisitionCanonicalEvidenceGuard;
+}): void {
+  const { current, next, transition, guard } = params;
+  const sandboxCompletion =
+    current.state === 'sandbox_running' && next.state === 'sandbox_verified';
+  if (sandboxCompletion) {
+    if (
+      current.evidenceOrigin !== 'synthetic' ||
+      next.evidenceOrigin !== 'synthetic'
+    ) {
+      throw new Error(
+        'In-process sandbox completion is restricted to synthetic certification evidence.',
+      );
+    }
+    if (!guard || guard.kind !== 'sandbox_completion') {
+      throw new Error(
+        'Sandbox verification requires canonical durable completion evidence.',
+      );
+    }
+    const contract = JSON.parse(current.candidateContractJson) as {
+      candidateFingerprint?: unknown;
+      steps?: Array<{
+        stepId?: unknown;
+        actionClass?: unknown;
+        evaluatorId?: unknown;
+      }>;
+    };
+    if (
+      typeof contract.candidateFingerprint !== 'string' ||
+      contract.candidateFingerprint !== guard.candidateFingerprint ||
+      !Array.isArray(contract.steps) ||
+      contract.steps.length === 0
+    ) {
+      throw new Error(
+        'Sandbox completion guard does not match the candidate contract.',
+      );
+    }
+    const link = db
+      .prepare(
+        `SELECT 1 FROM durable_work_links
+         WHERE work_id = ? AND link_kind = 'capability_acquisition_execution'
+           AND linked_id = ? LIMIT 1`,
+      )
+      .get(guard.durableWorkId, current.acquisitionId);
+    const work = getDurableWorkUnit(guard.durableWorkId);
+    const checkpoint = getDurableWorkCheckpoint(guard.checkpointId);
+    const completedNodeIds = checkpoint
+      ? (JSON.parse(checkpoint.completedNodeIdsJson) as unknown)
+      : null;
+    const pendingNodeIds = checkpoint
+      ? (JSON.parse(checkpoint.pendingNodeIdsJson) as unknown)
+      : null;
+    const uncertainNodeIds = checkpoint
+      ? (JSON.parse(checkpoint.uncertainNodeIdsJson) as unknown)
+      : null;
+    const expectedStepIds = new Set(
+      contract.steps.map((step) => String(step.stepId || '')),
+    );
+    const completedNodeIdSet = Array.isArray(completedNodeIds)
+      ? new Set(completedNodeIds.map(String))
+      : new Set<string>();
+    if (
+      !link ||
+      !work ||
+      !checkpoint ||
+      work.status !== 'completed' ||
+      !work.completedAt ||
+      work.leaseId ||
+      checkpoint.status !== 'completed' ||
+      checkpoint.workId !== work.workId ||
+      work.checkpointHeadId !== checkpoint.durableCheckpointId ||
+      checkpoint.planVersion !== work.planVersion ||
+      checkpoint.targetScopeHash !== work.targetScopeHash ||
+      !checkpoint.verifiedPostStateFingerprint ||
+      !Array.isArray(completedNodeIds) ||
+      completedNodeIdSet.size !== expectedStepIds.size ||
+      [...expectedStepIds].some((stepId) => !completedNodeIdSet.has(stepId)) ||
+      !Array.isArray(pendingNodeIds) ||
+      pendingNodeIds.length !== 0 ||
+      !Array.isArray(uncertainNodeIds) ||
+      uncertainNodeIds.length !== 0
+    ) {
+      throw new Error(
+        'Sandbox completion evidence is not bound to canonical durable work.',
+      );
+    }
+    const guardedReceiptIds = new Set(guard.receiptIds);
+    if (
+      guardedReceiptIds.size !== guard.receiptIds.length ||
+      guardedReceiptIds.size !== contract.steps.length
+    ) {
+      throw new Error(
+        'Sandbox completion requires one unique receipt per candidate step.',
+      );
+    }
+    const transitionEvidence = new Set(
+      JSON.parse(transition.evidenceRefsJson) as string[],
+    );
+    const checkpointReceiptIds = new Set(
+      JSON.parse(checkpoint.receiptIdsJson) as string[],
+    );
+    const receipts = listDurableEffectReceipts({
+      workId: work.workId,
+      limit: 1_000,
+    });
+    const guardedReceipts = receipts.filter((receipt) =>
+      guardedReceiptIds.has(receipt.receiptId),
+    );
+    const receiptByNode = new Map(
+      guardedReceipts.map((receipt) => [receipt.nodeId, receipt]),
+    );
+    if (
+      expectedStepIds.size !== contract.steps.length ||
+      guardedReceipts.length !== contract.steps.length ||
+      receiptByNode.size !== contract.steps.length ||
+      checkpointReceiptIds.size !== guardedReceiptIds.size ||
+      [...guardedReceiptIds].some(
+        (receiptId) => !checkpointReceiptIds.has(receiptId),
+      ) ||
+      !guardedReceipts.some(
+        (receipt) =>
+          receipt.postStateFingerprint ===
+          checkpoint.verifiedPostStateFingerprint,
+      ) ||
+      receipts.some(
+        (receipt) =>
+          receipt.planVersion === work.planVersion &&
+          expectedStepIds.has(receipt.nodeId) &&
+          ['started', 'partial', 'unknown', 'failed'].includes(receipt.status),
+      )
+    ) {
+      throw new Error(
+        'Sandbox completion contains unresolved or malformed step evidence.',
+      );
+    }
+    for (const step of contract.steps) {
+      const stepId = String(step.stepId || '');
+      const receipt = receiptByNode.get(stepId);
+      let metadata: Record<string, unknown> = {};
+      try {
+        metadata = receipt
+          ? (JSON.parse(receipt.metadataJson) as Record<string, unknown>)
+          : {};
+      } catch (error) {
+        throw new Error('Sandbox receipt metadata is malformed.', {
+          cause: error,
+        });
+      }
+      if (
+        !receipt ||
+        !guardedReceiptIds.has(receipt.receiptId) ||
+        !checkpointReceiptIds.has(receipt.receiptId) ||
+        !transitionEvidence.has(receipt.receiptId) ||
+        receipt.checkpointId !== checkpoint.parentCheckpointId ||
+        receipt.status !== 'succeeded' ||
+        receipt.planVersion !== work.planVersion ||
+        receipt.targetScopeHash !== work.targetScopeHash ||
+        receipt.actionClass !== String(step.actionClass || '') ||
+        receipt.effectClass !==
+          (String(step.actionClass || '') === 'sandbox_repository_write'
+            ? 'sandbox_repository_write'
+            : 'read_only') ||
+        !receipt.postStateFingerprint ||
+        !receipt.verificationFingerprint ||
+        metadata.receiptClass !== 'capability_acquisition' ||
+        metadata.resultCode !== contract.candidateFingerprint ||
+        metadata.source !== 'verified_capability_acquisition' ||
+        metadata.verificationClass !== String(step.evaluatorId || '') ||
+        typeof metadata.idempotencyKeyHash !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(metadata.idempotencyKeyHash)
+      ) {
+        throw new Error(
+          'Sandbox completion is missing an exact verified canonical receipt.',
+        );
+      }
+    }
+  }
+  const appendsLiveOutcome =
+    current.state === 'canary_ready' &&
+    next.state === 'canary_ready' &&
+    (next.evidenceOrigin === 'live' ||
+      next.outcomeIdsJson !== current.outcomeIdsJson);
+  if (appendsLiveOutcome) {
+    throw new Error(
+      'Live canary evidence requires the unavailable atomic durable-work, outcome, owner-review, and health join.',
+    );
+  }
+  if (next.state === 'canary_ready') {
+    throw new Error(
+      'Canary readiness requires the unavailable canonical held-out evidence and owner-review authority join.',
+    );
+  }
+  if (next.state === 'active') {
+    throw new Error(
+      'Capability activation requires the unavailable canonical activation authority join.',
+    );
+  }
+}
+
+export function applyCapabilityAcquisitionTransitionCAS(params: {
+  expectedState: CapabilityAcquisitionRecord['state'];
+  next: CapabilityAcquisitionRecord;
+  transition: CapabilityAcquisitionTransitionRecord;
+  canonicalGuard?: CapabilityAcquisitionCanonicalEvidenceGuard;
+}): 'applied' | 'idempotent' | 'conflict' | 'missing' {
+  const transact = db.transaction(() => {
+    const suppliedDigest = capabilityTransitionDigest({
+      acquisitionId: params.transition.acquisitionId,
+      fromState: params.transition.fromState,
+      toState: params.transition.toState,
+      expectedVersion: params.transition.expectedVersion,
+      resultingVersion: params.transition.resultingVersion,
+      actorKind: params.transition.actorKind,
+      reason: params.transition.reason,
+      evidenceRefsJson: params.transition.evidenceRefsJson,
+      idempotencyKey: params.transition.idempotencyKey,
+      resultingSnapshotJson: params.transition.resultingSnapshotJson,
+    });
+    if (suppliedDigest !== params.transition.transitionDigest) {
+      throw new Error('Capability acquisition transition digest mismatch.');
+    }
+    const duplicate = db
+      .prepare(
+        `SELECT * FROM capability_acquisition_transitions
+         WHERE idempotency_key = ? LIMIT 1`,
+      )
+      .get(params.transition.idempotencyKey) as
+      | CapabilityAcquisitionTransitionRow
+      | undefined;
+    if (duplicate) {
+      return duplicate.acquisition_id === params.next.acquisitionId &&
+        duplicate.transition_digest === params.transition.transitionDigest &&
+        duplicate.resulting_snapshot_json ===
+          params.transition.resultingSnapshotJson
+        ? ('idempotent' as const)
+        : ('conflict' as const);
+    }
+    const current = getCapabilityAcquisition(params.next.acquisitionId);
+    if (!current) return 'missing' as const;
+    assertCapabilityAcquisitionTransition({
+      current,
+      next: params.next,
+      transition: params.transition,
+      expectedState: params.expectedState,
+    });
+    assertCapabilityAcquisitionCanonicalEvidence({
+      current,
+      next: params.next,
+      transition: params.transition,
+      guard: params.canonicalGuard,
+    });
+    const normalizedNext = normalizeCapabilityAcquisitionForStorage(
+      params.next,
+    );
+    const normalizedEvidence = sanitizeStoredStructuredJson(
+      params.transition.evidenceRefsJson,
+      'capability_acquisition_transition.evidence_refs_json',
+      8_000,
+    );
+    const normalizedPrivacy = sanitizeStoredStructuredJson(
+      params.transition.privacyJson,
+      'capability_acquisition_transition.privacy_json',
+      4_000,
+    );
+    const normalizedReason = redactStoredCognitiveMetadata(
+      params.transition.reason,
+      900,
+    );
+    if (
+      normalizedEvidence !== params.transition.evidenceRefsJson ||
+      normalizedPrivacy !== params.transition.privacyJson ||
+      normalizedReason !== params.transition.reason
+    ) {
+      throw new Error(
+        'Capability acquisition transition metadata must be redacted and normalized before persistence.',
+      );
+    }
+    const values = {
+      ...capabilityAcquisitionParams(normalizedNext),
+      expected_state: params.expectedState,
+      expected_version: params.transition.expectedVersion,
+    };
+    const updated = db
+      .prepare(
+        `UPDATE capability_acquisitions SET
+          updated_at=@updated_at, group_folder=@group_folder,
+          target_outcome=@target_outcome, postcondition_json=@postcondition_json,
+          task_family=@task_family, affected_capability=@affected_capability,
+          gap_kind=@gap_kind, known_prerequisites_json=@known_prerequisites_json,
+          missing_prerequisites_json=@missing_prerequisites_json,
+          candidate_resource_refs_json=@candidate_resource_refs_json,
+          selected_resource_refs_json=@selected_resource_refs_json,
+          risk_level=@risk_level, data_egress_class=@data_egress_class,
+          expected_cost_band=@expected_cost_band,
+          expected_latency_band=@expected_latency_band,
+          authority_requirements_json=@authority_requirements_json,
+          evidence_origin=@evidence_origin, confidence=@confidence,
+          provenance_json=@provenance_json,
+          state=@state, next_safe_action=@next_safe_action,
+          record_version=@record_version,
+          environment_fingerprint=@environment_fingerprint,
+          candidate_contract_json=@candidate_contract_json,
+          sandbox_evidence_json=@sandbox_evidence_json,
+          held_out_evidence_json=@held_out_evidence_json,
+          owner_review_json=@owner_review_json,
+          outcome_ids_json=@outcome_ids_json,
+          compiled_skill_id=@compiled_skill_id,
+          negative_outcome_count=@negative_outcome_count,
+          correction_count=@correction_count, last_outcome=@last_outcome,
+          expires_at=@expires_at, revalidate_after_at=@revalidate_after_at,
+          privacy_json=@privacy_json
+         WHERE acquisition_id=@acquisition_id
+           AND state=@expected_state
+           AND record_version=@expected_version`,
+      )
+      .run(values);
+    if (updated.changes !== 1) return 'conflict' as const;
+    db.prepare(
+      `INSERT INTO capability_acquisition_transitions (
+        transition_id, acquisition_id, created_at, from_state, to_state,
+        expected_version, resulting_version, actor_kind, reason,
+        evidence_refs_json, idempotency_key, transition_digest,
+        resulting_snapshot_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      params.transition.transitionId,
+      params.transition.acquisitionId,
+      params.transition.createdAt,
+      params.transition.fromState,
+      params.transition.toState,
+      params.transition.expectedVersion,
+      params.transition.resultingVersion,
+      params.transition.actorKind,
+      params.transition.reason,
+      params.transition.evidenceRefsJson,
+      params.transition.idempotencyKey,
+      params.transition.transitionDigest,
+      params.transition.resultingSnapshotJson,
+      params.transition.privacyJson,
+    );
+    return 'applied' as const;
+  });
+  return transact();
+}
+
 function mapBlackboardSnapshotRow(row: {
   snapshot_id: string;
   created_at: string;
@@ -36808,6 +37798,31 @@ export function getDurableWorkUnit(workId: string): DurableWorkUnit | null {
   return row ? mapDurableWorkUnitRow(row) : null;
 }
 
+export function getDurableWorkUnitForCapabilityAcquisition(
+  acquisitionId: string,
+): DurableWorkUnit | null {
+  const rows = db
+    .prepare(
+      `
+        SELECT work_record.*
+        FROM durable_work_links link_record
+        JOIN durable_work_units work_record
+          ON work_record.work_id = link_record.work_id
+        WHERE link_record.link_kind = 'capability_acquisition_execution'
+          AND link_record.linked_id = ?
+        ORDER BY work_record.created_at ASC
+        LIMIT 2
+      `,
+    )
+    .all(acquisitionId) as Array<Record<string, unknown>>;
+  if (rows.length > 1) {
+    throw new Error(
+      'Capability acquisition is linked to multiple durable work identities.',
+    );
+  }
+  return rows[0] ? mapDurableWorkUnitRow(rows[0]) : null;
+}
+
 export function stageDurableWorkApprovalPacketAtomic(params: {
   packet: CognitiveApprovalPacket;
   expectedWorkVersion: number;
@@ -37489,6 +38504,7 @@ export function insertDurableResumeGrant(params: {
 }): void {
   const transact = db.transaction(() => {
     const grant = params.grant;
+    assertDurableActionExecutionSurface(grant.actionClass, 'generic_durable');
     const policy = durableActionPolicy(grant.actionClass);
     if (!policy) {
       throw new Error(
@@ -37786,7 +38802,10 @@ export function consumeDurableResumeGrantAtomic(params: {
     ) {
       return { status: 'scope_mismatch' as const, grant };
     }
-    if (!durableActionPolicy(grant.actionClass)) {
+    if (
+      !durableActionPolicy(grant.actionClass) ||
+      !durableActionAllowedOnSurface(grant.actionClass, 'generic_durable')
+    ) {
       return { status: 'approval_missing_or_stale' as const, grant };
     }
     const workRow = db
@@ -38198,9 +39217,20 @@ function mapDurableReceiptRow(
   };
 }
 
+export class DurableEffectExecutionClaimConflictError extends Error {
+  readonly code = 'durable_effect_execution_claim_conflict';
+
+  constructor() {
+    super('Durable effect execution claim is already held.');
+    this.name = 'DurableEffectExecutionClaimConflictError';
+  }
+}
+
 export function upsertDurableEffectReceipt(params: {
   receipt: DurableEffectReceipt;
   event: DurableWorkEvent;
+  requireNewExecutionClaim?: boolean;
+  executionSurface?: DurableExecutionSurface;
   leaseAssertion?: {
     leaseId: string;
     processGeneration: string;
@@ -38209,7 +39239,16 @@ export function upsertDurableEffectReceipt(params: {
 }): DurableEffectReceipt {
   const transact = db.transaction(() => {
     const receipt = params.receipt;
+    assertDurableActionExecutionSurface(
+      receipt.actionClass,
+      params.executionSurface || 'generic_durable',
+    );
     assertDurableActionEffectPolicy(receipt.actionClass, receipt.effectClass);
+    if (params.requireNewExecutionClaim && receipt.status !== 'started') {
+      throw new Error(
+        'A durable execution claim can be acquired only with a started receipt.',
+      );
+    }
     if (params.leaseAssertion) {
       const assertedLease = db
         .prepare(
@@ -38322,6 +39361,24 @@ export function upsertDurableEffectReceipt(params: {
       );
     }
     const metadataJson = sanitizeStoredJsonObject(receipt.metadataJson, 3200);
+    const existingNodeClaim = params.requireNewExecutionClaim
+      ? (db
+          .prepare(
+            `SELECT receipt_id FROM durable_effect_receipts
+             WHERE work_id = ? AND checkpoint_id = ? AND plan_version = ?
+               AND node_id = ?
+             LIMIT 1`,
+          )
+          .get(
+            receipt.workId,
+            receipt.checkpointId,
+            receipt.planVersion,
+            receipt.nodeId,
+          ) as { receipt_id: string } | undefined)
+      : undefined;
+    if (existingNodeClaim) {
+      throw new DurableEffectExecutionClaimConflictError();
+    }
     const existing = db
       .prepare(
         `SELECT receipt_id FROM durable_effect_receipts WHERE receipt_id = ?`,
@@ -38333,6 +39390,7 @@ export function upsertDurableEffectReceipt(params: {
             `
               UPDATE durable_effect_receipts
               SET status = ?,
+                  pre_state_fingerprint = COALESCE(pre_state_fingerprint, ?),
                   post_state_fingerprint = COALESCE(?, post_state_fingerprint),
                   verification_fingerprint = COALESCE(?, verification_fingerprint),
                   updated_at = ?, metadata_json = ?
@@ -38349,7 +39407,11 @@ export function upsertDurableEffectReceipt(params: {
                 AND approval_packet_id IS ?
                 AND approval_version IS ?
                 AND approval_scope_hash IS ?
-                AND pre_state_fingerprint IS ?
+                AND (
+                  ? IS NULL
+                  OR pre_state_fingerprint IS NULL
+                  OR pre_state_fingerprint IS ?
+                )
                 AND (
                   (
                     status = ?
@@ -38365,6 +39427,7 @@ export function upsertDurableEffectReceipt(params: {
           )
           .run(
             receipt.status,
+            receipt.preStateFingerprint || null,
             receipt.postStateFingerprint || null,
             receipt.verificationFingerprint || null,
             receipt.updatedAt,
@@ -38382,6 +39445,7 @@ export function upsertDurableEffectReceipt(params: {
             receipt.approvalPacketId || null,
             receipt.approvalVersion || null,
             receipt.approvalScopeHash || null,
+            receipt.preStateFingerprint || null,
             receipt.preStateFingerprint || null,
             receipt.status,
             receipt.postStateFingerprint || null,

@@ -416,6 +416,42 @@ Current truth:
 
 So media is **partly real, but still intentionally narrow**.
 
+## Verified Acquisition Of A Missing Capability
+
+The static capability graph remains the source of known channel actions.
+Andrea's verified capability-acquisition layer complements it when a requested
+postcondition is not covered; it does not mutate this registry from model text.
+Only an explicit live capability-learning request or learn-first turn is
+observed from the turn path, and that observation stores bounded derived
+metadata and fingerprints rather than the request body. It does not scope,
+compile, approve, execute, or promote the candidate.
+
+The resource broker compares graph descriptors, verified active playbooks,
+Agent OS tool cards, reliability evidence, and explicitly supplied resources.
+It rejects an executable candidate unless the selected resource has an exact,
+versioned binding to a registered executor and independent evaluator, including
+both declared identity/version digests. These pin registry declarations rather
+than attesting to callback bytes. Documentation and research may contribute cited
+facts, but they are untrusted data with no execution, tool, approval, or
+credential authority.
+
+Sandbox execution uses canonical durable work, a committed checkpoint, complete
+plan preflight, exact-scope receipts, independent postcondition evaluation, and
+cleanup. Acquired skill projections remain suggestions: synthetic certification
+can reach only `sandbox_verified`; held-out evidence can request owner review,
+but neither can create `canary_ready` or activate a projection. Caller-supplied
+live canary, activation, and production outcome identifiers fail closed until a
+single canonical join proves completed durable work, a confirmed outcome, an
+owner review, fresh health, and exact approval. A stale projected playbook
+cannot bypass canonical state. Matching or previewing a playbook does not claim
+execution, increment verified usage, or improve reliability.
+
+Future activation must not expand the underlying action classes. The exact
+existing approval policy is derived from each compiled binding and remains
+independently enforced. The strict offline gate covers ten primary and fifteen
+held-out cases but is not production activation evidence. See
+[VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md).
+
 ## Testing And Debugging
 
 Focused test files for the shared core:
@@ -433,6 +469,9 @@ Useful pinned-Node debug commands:
 - `npm run debug:research-mode` (read-only status) or
   `npm run debug:research-mode -- --live` (intentional provider-backed proof)
 - `npm run debug:cross-channel-handoffs`
+- `npm run debug:capability-acquisition` (metadata-only ledger inspection)
+- `npm run certify:novel-capability-mastery` (offline, network-denied strict
+  certification)
 
 `debug:shared-capabilities` is the quickest operator-side smoke path for:
 

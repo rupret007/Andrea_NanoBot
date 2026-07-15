@@ -4,6 +4,30 @@ Snapshot date: 2026-07-14. Use `git rev-parse origin/main` and
 `npm run services:status` for the current release SHA and serving provenance;
 the sections below retain the exact baseline SHA for each bounded pass.
 
+## Verified Capability-Acquisition Note
+
+The tree containing this handoff includes the capability-acquisition layer
+above the historical release evidence below. Its explicit live
+capability-learning/learn-first turn integration is metadata-only and
+observation-only: it does not persist the request body, execute a candidate, or
+promote a skill. Candidate execution in
+the deterministic lab uses declared identity/version-digest-pinned independent
+executor and evaluator bindings plus canonical durable work, checkpoints, exact-scope
+started/terminal receipts, and independent postcondition evidence.
+
+The strict offline design covers ten primary and fifteen structurally separate
+held-out scenarios through a trusted in-process harness, with synthetic progress
+capped at `sandbox_verified`. It is not an OS isolation boundary.
+Caller-asserted live canary, activation, and production outcomes fail closed
+until one atomic canonical join proves completed durable work, a confirmed
+outcome, exact owner review, fresh dependency health, and consumed exact-scope
+approval with an active lease. Nothing in this note claims that the candidate
+is serving, production-activated, or AGI merely because its source is present.
+Use the first
+section of [MODERNIZATION_PLAN.md](../MODERNIZATION_PLAN.md) for its current
+validation and release state; the remaining handoff sections are preserved as
+historical release evidence.
+
 ## Commitment Intelligence Handoff — Released
 
 This is the released implementation above baseline

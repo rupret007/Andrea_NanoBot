@@ -963,6 +963,32 @@ describe('durable cognitive continuity', () => {
     );
   });
 
+  it('atomically claims one non-approval local effect invocation', () => {
+    const { work, checkpoint } = readyWork();
+    const claim = {
+      workId: work.workId,
+      checkpointId: checkpoint.durableCheckpointId,
+      planVersion: work.planVersion,
+      nodeId: 'save-local-result',
+      invocationId: 'invoke-local-result-1',
+      actionClass: 'local_save',
+      effectClass: 'local_write' as const,
+      status: 'started' as const,
+      claimExecution: true,
+      targetScopeKey: binding.targetScopeKey,
+      now: NOW,
+    };
+
+    expect(recordDurableEffect(claim).status).toBe('started');
+    expect(() =>
+      recordDurableEffect({
+        ...claim,
+        invocationId: 'invoke-local-result-concurrent',
+      }),
+    ).toThrow(/execution claim is already held/i);
+    expect(listDurableEffectReceipts({ workId: work.workId })).toHaveLength(1);
+  });
+
   it('uses compare-and-set transitions and preserves the last verified checkpoint', () => {
     const { work } = readyWork();
     const verifying = transitionDurableWork({
@@ -1534,6 +1560,67 @@ describe('durable cognitive continuity', () => {
     expect(() =>
       acquireReadLease(work.workId, 'write-alias', 'edit_file'),
     ).toThrow(/fresh approval is required/i);
+    expect(listDurableEffectReceipts({ workId: work.workId })).toEqual([]);
+  });
+
+  it('keeps capability sandbox writes out of generic grants and execution plans', async () => {
+    const { work, checkpoint } = readyWork();
+    expect(() =>
+      issueDurableResumeGrant({
+        workId: work.workId,
+        binding,
+        actionClass: 'sandbox_repository_write',
+        now: '2026-07-13T12:01:00.000Z',
+      }),
+    ).toThrow(/capability-sandbox-only/i);
+    expect(() =>
+      recordDurableEffect({
+        workId: work.workId,
+        checkpointId: checkpoint.durableCheckpointId,
+        planVersion: work.planVersion,
+        nodeId: 'sandbox-write',
+        invocationId: 'invoke:generic-sandbox-write',
+        actionClass: 'sandbox_repository_write',
+        effectClass: 'sandbox_repository_write',
+        status: 'started',
+        targetScopeKey: binding.targetScopeKey,
+        now: '2026-07-13T12:01:00.000Z',
+      }),
+    ).toThrow(/capability-sandbox-only/i);
+
+    const consumed = acquireReadLease(
+      work.workId,
+      'sandbox-plan',
+      'local_save',
+    );
+    const executeNode = vi.fn();
+    const result = await orchestrateNextDurableNode({
+      workId: work.workId,
+      leaseId: consumed.lease.leaseId,
+      processGeneration: 'process:test',
+      executorScopeKey: 'host-executor-1',
+      targetScopeKey: binding.targetScopeKey,
+      callbacks: executionCallbacks({
+        loadPlan: ({ work: current }) => ({
+          ...executionPlan(current.planVersion),
+          nodes: executionPlan(current.planVersion).nodes.map((node) =>
+            node.nodeId === 'edit'
+              ? {
+                  ...node,
+                  actionClass: 'sandbox_repository_write',
+                  effectClass: 'sandbox_repository_write' as const,
+                }
+              : node,
+          ),
+        }),
+        executeNode,
+      }),
+      now: '2026-07-13T12:03:00.000Z',
+    });
+    expect(result.status).toBe('replan_required');
+    expect(result.executed).toBe(false);
+    expect(result.leaseReleased).toBe(true);
+    expect(executeNode).not.toHaveBeenCalled();
     expect(listDurableEffectReceipts({ workId: work.workId })).toEqual([]);
   });
 

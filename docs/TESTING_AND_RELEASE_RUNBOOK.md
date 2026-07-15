@@ -243,6 +243,73 @@ serialization-only test or an in-memory reopen is not durable-restart proof.
 See [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md) for the model and
 transition contract.
 
+### Verified capability acquisition
+
+Whenever the capability-gap ledger, resource broker, acquired-skill projection,
+binding registry, sandbox executor, canary gate, or active executor changes,
+run the focused boundary first:
+
+```bash
+npm test -- --run src/capability-acquisition-ledger.test.ts \
+  src/capability-binding-integrity.test.ts \
+  src/capability-execution-guard.test.ts \
+  src/capability-resource-broker.test.ts \
+  src/turn-capability-acquisition.test.ts \
+  src/verified-capability-acquisition.test.ts \
+  src/council-safety.test.ts
+npm run test:skill-library
+npm run test:novel-capability:certification-gate
+npm run certify:novel-capability-mastery
+npm run debug:capability-acquisition
+```
+
+The certification must use a disposable on-disk database and fixture root,
+provider-environment suppression, and parent/child non-loopback network denial.
+It must run all named primary and held-out cases through production acquisition
+APIs, preserve public-task/private-oracle separation, exercise durable restart,
+and remove the manifest, database, WAL, SHM, fixture root, child processes, and
+loopback servers. Missing, partial, skipped, fabricated, leaking, or residual
+evidence is a failure. The required inventory is ten primary plus fifteen
+structurally separate held-out scenarios. Synthetic execution must stop at
+`sandbox_verified`; held-out evidence may request owner review, but a
+certification that reports `canary_ready`, `active`, or `monitoring` fails.
+The harness is a trusted in-process certification lab over disposable state,
+not an OS isolation boundary. Its test-authored task-family adapters and
+evaluators exercise the production lifecycle APIs; fixture resource freshness
+comes from canonical synthetic resource-discovery observations, not live
+provider-health persistence. The current accepted proof is 25/25 scenarios,
+88 report mutations across 31 failure codes, fresh adapter/worker contract
+rehydration, operation-discovery calls reduced from 2 to 0, total calls reduced
+from 4 to 2, and zero provider calls, cost, network escape, or residue.
+
+Acceptance also requires:
+
+- external documentation remains sanitized untrusted data and never becomes a
+  prompt instruction, executable binding, credential, or approval;
+- every candidate step resolves to the exact compiled resource, operation,
+  action class, version, executor declared identity/version digest, and
+  independent evaluator declared identity/version digest; these are registry
+  identity pins, not callback-byte attestation;
+- sandbox success belongs to canonical durable work and its committed
+  checkpoint, and follows started/terminal effect receipts, exact scope,
+  independent postcondition verification, and cleanup—not the executor's
+  success text;
+- synthetic and replay evidence cannot activate a skill or manufacture an
+  owner review;
+- caller-asserted live canary, activation, and production outcome identifiers
+  fail closed until an atomic canonical durable-work/outcome/owner-review/
+  fresh-health/exact-approval join exists;
+- stale versions, missing input, missing approval, uncertain effects,
+  dependency degradation, negative outcomes, and safety/privacy failures stop
+  or quarantine the candidate without false success;
+- acquisition and promotion grant no authority beyond the existing action
+  policy.
+
+The strict command is part of the hermetic deterministic sweep and is also an
+explicit Ubuntu and Windows CI step. Hosted Windows proves cross-platform
+repository behavior, not a native service restart or live integration. See
+[VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md).
+
 For personalized setup, groceries, errands, bills, meals, pills, and lightweight list management changes, add:
 
 ```bash
@@ -601,11 +668,12 @@ npm run test:deterministic:sweep
 
 This continues through independent `test:*` scripts, reports all failures at the end, and intentionally excludes interactive, aggregate, live, baseline-writing, and cloud-provider council tiers.
 
-On the current 2026-07-14 tree, the sweep inventories **109** scripts:
-**94 selected** deterministic commands and **15 explicitly excluded** commands.
+On the current 2026-07-14 tree, the sweep inventories **111** scripts:
+**96 selected** deterministic commands and **15 explicitly excluded** commands.
 Those counts are derived from the current package inventory and must be
 regenerated after script changes. Final evidence for this tree must distinguish
-the 94/94 selected result from the 109-command inventory; the 90/91 counts in
+the 96/96 selected result from the 111-command inventory; the 90/91 and 94/94
+counts in
 older modernization snapshots are historical and must not be reused.
 
 The deterministic runner is hermetic at both external boundaries: it suppresses
@@ -1600,10 +1668,12 @@ npm run test:agi
 npm run test:continuity:hard-kill
 npm run test:continuity:heldout
 npm run test:real-world-intelligence:heldout
+npm run test:novel-capability:certification-gate
 npm run test:stability
 npm run test:deterministic:sweep -- --list
 npm run test:deterministic:sweep
 npm run certify:commitment-intelligence
+npm run certify:novel-capability-mastery
 npm run certify:life-thread
 npm run certify:temporal-truth
 npm run agi:scorecard -- --no-write --no-dogfood
@@ -1618,7 +1688,7 @@ git status --short
 ```
 
 The focused durable and containment suites above are additional required gates;
-the deterministic sweep's 109-script inventory does not substitute for AGI
+the deterministic sweep's 111-script inventory does not substitute for AGI
 tests, container canaries, audits, or hosted scanners. Review `git status`
 manually for generated artifacts, unexpected files, and secret-like values.
 

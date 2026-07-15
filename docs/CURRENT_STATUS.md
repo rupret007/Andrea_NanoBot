@@ -3,9 +3,8 @@
 Local operator and repository snapshot from 2026-07-14. Runtime and integration
 proof is time-sensitive; rerun `npm run debug:status`,
 `npm run services:status`, and `npm run integrations:status -- --json` before a
-release or demo. The release facts below describe the published tree at
-snapshot capture; they are not a claim that a later development worktree has no
-uncommitted candidate changes.
+release or demo. The release facts below describe their recorded tree; they do
+not replace current Git, hosted-check, or runtime provenance.
 
 ## Repository And Release
 
@@ -21,9 +20,11 @@ uncommitted candidate changes.
 - Exact-SHA Ubuntu, Windows, container, AGI, CodeQL, dependency-audit,
   verified-secret-scan, and Semgrep checks are green.
 - The Mac host reports `running_ready` at implementation commit `ac72ede1`,
-  with verified build provenance and zero dirty build paths. Disk pressure is a
-  warning at about 11 GiB / 4.81% free; this is usable for the completed release
-  but should be improved before another container-heavy round.
+  with verified build provenance and zero dirty build paths. A later bounded
+  cleanup restored about 69 GiB of available host space. It removed only
+  regenerable caches and unused Docker images/cache while preserving Docker
+  volumes, active containers, model data, messages, session history, and
+  repository dependencies/build output.
 - OpenClaw is live at PID 42778, Andrea is live at PID 43464, and all 11/11
   Andrea bridge tools are available with no direct-send exposure.
 
@@ -38,6 +39,32 @@ uncommitted candidate changes.
 - Container runner install, typecheck, build, policy contracts, image canary,
   nested read-only mount canary, signature flows, documentation checks, and
   root/runner dependency audits passed on the released tree.
+
+## Verified Capability Acquisition
+
+The tree containing this section adds a group-scoped transition ledger, a
+resource broker, metadata-only explicit-turn observation, declared identity/
+version-digest-pinned independent executor/evaluator bindings, canonical durable-work
+sandbox receipts and checkpoints, negative-evaluation quarantine, and a strict
+offline certification with ten primary and fifteen held-out scenarios. External
+documentation remains untrusted data, synthetic evidence stops at
+`sandbox_verified`, and acquisition grants no new authority. The certification
+uses trusted test-authored adapters and is not an OS isolation boundary.
+Caller-asserted live
+canary, activation, and production-outcome paths fail closed pending an atomic
+canonical durable-work/outcome/owner-review/health/approval join.
+
+Do not infer publication or runtime activation from source presence. The local
+round passed 238 primary files / 2,881 tests, 28 AGI files / 286 tests, 96/96
+selected deterministic commands from 111 total with 15 explicit exclusions,
+three stability rounds, a 100% A+ zero-cost offline scorecard, 6/6 signature
+flows, 71/71 documentation files, dependency audits with zero vulnerabilities,
+and the strict 10-primary/15-held-out certification plus all 88 policy
+mutations across 31 failure classes. The current acceptance checklist is the
+first section of
+[MODERNIZATION_PLAN.md](../MODERNIZATION_PLAN.md); the lifecycle and boundaries
+are in
+[VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md).
 
 ## Commitment Intelligence — Published And Serving
 
@@ -109,7 +136,8 @@ truth is proof debt rather than a repository regression: Telegram transport is
 healthy but its roundtrip proof is aged; BlueBubbles transport is healthy but
 its same-thread action proof is stale/missing; Alexa's signed handled intent is
 stale; the life-thread journey still needs a genuine user turn; and host disk
-pressure is warning at about 11 GiB free.
+pressure was warning at that restart snapshot. The later bounded cleanup
+supersedes that storage observation and restored about 69 GiB available.
 
 The historical `certify:life-thread` results below remain useful before-state
 evidence. They do not certify the new model. The authoritative design and new
@@ -300,9 +328,9 @@ status commands above instead of carrying these point-in-time states forward.
 ## Open Operator Debt
 
 1. Before rebuilding or restarting a newer release, rerun
-   `npm run services:status` and require adequate measured headroom; defer
-   container-heavy work while disk pressure remains at warning. Never delete
-   owner data or evidence automatically.
+   `npm run services:status` and require adequate measured headroom. The latest
+   bounded cleanup restored about 69 GiB available, but that value is
+   time-sensitive. Never delete owner data or evidence automatically.
 2. After every future release restart, require exact serving-SHA alignment.
 3. Refresh Telegram, BlueBubbles same-thread message-action, Alexa signed
    intent, and life-thread proofs through genuine user interactions.

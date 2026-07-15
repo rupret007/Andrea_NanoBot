@@ -5,6 +5,188 @@ as historical implementation and release evidence unless its heading
 explicitly says otherwise; older uses of “candidate” or “authoritative” do not
 override the first section.
 
+## Universal Task Mastery and verified capability acquisition — 2026-07-14
+
+This is the authoritative section for the capability-acquisition round that
+began from clean, synchronized `main` at
+`b7e87e5759c2b835d0da8dba599baa387e9dd740`. Its checklists keep implementation,
+local repository evidence, exact-SHA hosted evidence, and runtime evidence
+separate. Source presence is not deployment evidence; use `git status --branch`,
+the exact-SHA GitHub checks, and `npm run services:status` for current release
+truth.
+
+### Root architectural finding
+
+- [x] Existing capabilities, active playbooks, Agent OS tool cards, tool
+      reliability, missions, approvals, and outcomes were individually strong,
+      but there was no canonical lifecycle for a genuinely missing capability.
+- [x] A descriptive skill could look executable without an exact registered
+      operation and postcondition evaluator. Previewing a matched playbook could
+      also be confused with successful execution or reliability evidence.
+- [x] Research or external documentation needed a hard data/instruction
+      boundary before it could safely inform resource discovery.
+- [x] Capability promotion needed one durable truth linking gap, resources,
+      candidate contract, sandbox receipts, held-out evidence, canary, owner
+      review, active execution, outcomes, and quarantine without creating new
+      authority.
+
+### Candidate implementation
+
+- [x] Add a group-scoped capability-acquisition record and append-only,
+      digest-verified transition ledger. Genesis is atomic; compare-and-set,
+      idempotency, full snapshot reconstruction, head-projection verification,
+      version checks, legal transitions, and bounded redacted JSON fail closed.
+- [x] Add explicit gap classes and lifecycle states from observation through
+      resource discovery, candidate design, sandbox, owner review, canary,
+      activation, monitoring, pause, quarantine, retirement, external block,
+      failure, and indeterminate outcome.
+- [x] Wire only explicit live capability-learning requests or learn-first turns
+      into observation. Persist bounded derived route/task/scope/resource
+      metadata and fingerprints, not the request body; this turn boundary
+      cannot scope, compile, approve, execute, activate, or record learning.
+- [x] Add a resource broker over existing assistant capabilities, verified
+      active playbooks, Agent OS tool cards, reliability evidence, and supplied
+      resources. Rank under inputs, postconditions, health, exact versions,
+      risk, egress, authority, and maintenance burden; select the smallest
+      sufficient set without executing it.
+- [x] Treat external documentation as sanitized, cited, bounded untrusted data.
+      Reject prompt-injection-like content, store no raw body, and expose no
+      executable binding, credential, approval, or system-instruction path from
+      prose.
+- [x] Compile candidates only from exact registered resource, operation,
+      evaluator, version, action-class, input/output-schema, verification, and
+      cleanup bindings, including independent executor and evaluator declared
+      identity/version digests. Descriptive resources without stable bindings
+      remain non-executable, and a declared identity/version swap fails closed.
+      The digest is a registry identity pin, not callback-byte attestation.
+- [x] Add trusted, in-process deterministic certification sandbox execution
+      over disposable state that revalidates binding identity, declared
+      identity/version digests, resource version and fixture health, network policy,
+      input schema, effect class, idempotency, exact approval, independent
+      postcondition verification, and cleanup. Execution is attached to
+      canonical durable work, a committed checkpoint, complete-plan preflight,
+      exact scope hashes, and started/terminal receipts. Unknown effects are
+      verification-first and never blindly replayed. This is not an OS
+      isolation boundary; the hermetic parent/child network guard and trusted
+      test adapter are explicit parts of the certification trust model.
+- [x] Keep the synthetic path bounded to deterministic sandbox proof,
+      independently authored held-out safety evidence, and
+      `sandbox_verified`. The database rejects `canary_ready` until a future
+      canonical live/owner/durable/outcome/health/approval join exists.
+      Synthetic or replay evidence cannot activate a skill or create an owner
+      learning sample. Caller-asserted live canary, activation, and production
+      outcome paths fail closed pending an atomic canonical durable-work,
+      outcome, owner-review, fresh-health, approval-grant, and lease join.
+- [x] Make acquisition-backed skill projection subordinate to the canonical
+      acquisition state. Matching and previewing never claim execution, usage,
+      verification, or improved reliability; stale projections cannot bypass
+      quarantine or inactive state.
+- [x] Preserve existing authority. Candidate compilation, sandbox success,
+      activation, model confidence, reliability, or promotion cannot authorize
+      an external send, calendar write, purchase, repository change, deploy,
+      migration, dependency change, deletion, or other protected effect.
+- [x] Add a metadata-only operator report and authoritative
+      [Verified Capability Acquisition](docs/VERIFIED_CAPABILITY_ACQUISITION.md)
+      guide. Update the README, capability graph, verified-agency guide,
+      roadmap, docs index, and release runbook without making an AGI claim.
+
+### Independent adversarial-audit corrections
+
+- [x] Bind idempotency and completed-receipt reuse to the exact validated
+      canonical input, not redacted, whitespace-normalized, or truncated
+      metadata. Regression tests reject receipt borrowing across whitespace and
+      long-suffix collisions without storing the raw input.
+- [x] Recover the post-checkpoint crash window before any new preflight. A
+      completed head checkpoint now validates its exact parent-checkpoint
+      receipts, finishes durable verification/completion, and resumes without
+      replay; the boundary test proves one executor call.
+- [x] Include already-succeeded steps in exact postcondition coverage during a
+      partial multi-step resume, and require the completed receipt set to cover
+      the whole immutable candidate contract.
+- [x] Enforce the synthetic evidence origin inside the canonical database
+      sandbox-completion join, not only in the higher-level runner. Direct
+      `canary_ready` transitions remain rejected without canonical promotion
+      evidence.
+- [x] Hash `file:`, POSIX, tilde, Windows-drive, UNC, traversal, relative-path,
+      and unknown-scheme source references. Preserve only allowlisted opaque
+      internal schemes and sanitized HTTP(S) host/port plus a hashed path.
+- [x] Correct documentation overclaims: declared binding digests are registry
+      identity/version pins rather than code attestation; the trusted
+      in-process lab is not an OS isolation boundary; and the bounded randomized
+      lifecycle certification is not universal autonomous task learning.
+- [x] Close the shared-redactor marker-prefix bypass found during final diff
+      review. Sensitive assignments accept only the exact canonical sentinel
+      as already redacted; incomplete or complete markers with an attached
+      suffix are redacted again, with focused regression coverage.
+
+### Required certification and release evidence
+
+- [x] Restore release headroom without deleting owner data. Bounded cleanup of
+      regenerable caches and unused Docker images/cache raised available host
+      space from the critical low-single-digit range to about 69 GiB; active
+      containers, Docker volumes, model data, messages, Codex session history,
+      repository dependencies, and build output remain intact.
+- [x] Focused ledger, broker, policy, binding, sandbox, active-execution,
+      turn-observation, skill-library, privacy, redaction, and negative-
+      evaluation tests pass with no weakened or skipped assertion. “Active-
+      execution” coverage in this round means proving the production path is
+      closed, not manufacturing activation evidence.
+- [x] `npm run test:novel-capability:certification-gate` passes its policy and
+      mutation matrix, and `npm run certify:novel-capability-mastery` passes all
+      10 named primary plus 15 structurally separate held-out scenarios through
+      production acquisition APIs. Partial, missing, skipped, or fabricated
+      evidence must fail. Current exact result: 10 primary plus 15 held-out
+      scenarios passed; the mutation gate passed 88 mutations covering all 31
+      failure codes.
+- [x] The strict certification proves disposable on-disk storage, public
+      task/private oracle separation, provider suppression, parent and child
+      non-loopback network denial, restart continuity, exact version drift,
+      no false success, no unauthorized or duplicate effect, no fabricated
+      owner review, no privacy leak, and zero isolated or production residue.
+      A fresh adapter and worker rehydrated the canonical learned operation;
+      operation discovery fell from 2 calls to 0 and total calls from 4 to 2,
+      with equal correctness and safety and zero provider calls or cost.
+- [x] Root format, lint, typecheck, full primary tests/build, AGI
+      typecheck/tests, all selected deterministic commands including stability,
+      offline scorecard, signature flows, docs checks, and dependency audits
+      pass. Current local evidence: 238 primary files / 2,881 tests; 28 AGI
+      files / 286 tests; 96/96 selected deterministic commands from 111 total
+      with 15 explicit exclusions; three stability rounds; 100% A+ offline at
+      $0; 6/6 signature flows; 71/71 documentation files; zero root or runner
+      audit vulnerabilities; and passing runner contracts, image, and mount
+      canaries. Lint reports zero errors and 652 configured warnings. Final
+      staged-diff, whitespace, file-mode, generated-artifact, and secret review
+      passed before commit; realistic secret-shaped test sentinels were replaced
+      with explicit invalid fixture values.
+- [ ] Ubuntu and Windows CI run the focused policy gate and strict
+      certification for the exact candidate SHA. Container, AGI, CodeQL,
+      dependency-audit, secret-scan, and Semgrep exact-SHA checks also pass.
+- [ ] Fetch immediately before release and require non-diverged `main` with
+      unchanged remote ancestry. Commit and push only the coherent candidate,
+      rebuild from that clean commit, restart canonical services in dependency
+      order, and prove serving SHA, build provenance, health, and integrations.
+
+### Intentionally unchanged and honest limits
+
+- No arbitrary package installation, autonomous code/dependency mutation,
+  credential acquisition, provider enrollment, passive archive, broad workflow
+  rewrite, synthetic learning baseline, or automatic deployment is introduced.
+- Fundamental blockers and missing credentials, permissions, external
+  services, hardware, or human decisions remain external blockers; they are
+  not relabeled as learned capability.
+- A deterministic certification pass is bounded repository evidence. It is not
+  AGI, general tool mastery, a live-provider result, a production-runtime
+  canary, owner acceptance, or authority expansion.
+- Production canary, activation, and capability learning remain intentionally
+  unavailable until one atomic canonical join proves completed durable work,
+  canonical outcome and owner-review identities, fresh dependency health, and
+  a consumed exact-scope approval grant with an active lease. Naked identifiers
+  and caller booleans are not evidence.
+- Real owner-reviewed acquisition outcomes and repeated live reuse remain
+  future evidence after the atomic production join is implemented. They cannot
+  be collected by this release and must never be manufactured by its validation
+  process.
+
 ## Commitment Intelligence Engine — 2026-07-14 (released)
 
 This is the authoritative section for the release that began from baseline

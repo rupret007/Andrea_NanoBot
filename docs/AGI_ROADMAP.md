@@ -44,6 +44,10 @@ primary, AGI, deterministic, security, and container test gates:
 - action preflight, tool reliability, cognitive and runtime evidence, replay
   fixtures, deterministic offline evaluation, and human-governed improvement
   proposals;
+- a fail-closed capability-acquisition lifecycle that can classify an explicit
+  real gap from metadata, rank existing resources, compile only exact
+  declared identity/version-digest-pinned executor/evaluator bindings, and attach sandbox
+  proof to canonical durable work, checkpoints, and receipts;
 - Telegram, BlueBubbles, Alexa, Google Calendar, OpenClaw, and other configured
   integration surfaces, with transport state kept separate from fresh
   end-to-end proof;
@@ -55,6 +59,11 @@ There are also research-oriented modules under `src/agi-core/`, `src/models/`,
 Their presence and unit coverage do not by themselves prove that every module
 is active in the production turn path, that every listed provider or
 integration is configured, or that an end-to-end user workflow is live.
+The capability-acquisition certification likewise proves only ten primary and
+fifteen held-out offline scenarios through a trusted in-process harness.
+Synthetic evidence stops at `sandbox_verified`; live canary, activation, and production learning remain closed
+until the canonical atomic evidence join is implemented. This is not evidence
+of AGI or a production-activated learned capability.
 
 ## Measured Gaps And Proof Debt
 
@@ -80,6 +89,9 @@ that the subsystems compose reliably in ordinary use.
 - Goals, missions, action bundles, cognitive subgoals, and deep-work packets
   exist, but they are not a general autonomous workflow engine. Cross-system
   execution remains deliberately bounded.
+- Capability acquisition can compose only already registered, versioned
+  resources. It cannot learn an arbitrary external tool from prose, acquire a
+  credential, install dependencies, or remove an approval boundary by itself.
 - The repository includes experimental memory, reflection, model, and
   integration implementations that must not be described as production
   learning, nightly autonomous improvement, or universally available tools
@@ -170,6 +182,9 @@ only when they improve evidence, and stop at configured time and cost limits.
   approval, or verification violations.
 - Let promotion improve planning or routing only; it must never grant new
   authority.
+- Dogfood verified acquisition on genuinely unsupported, bounded tasks and
+  measure false-success, reuse, latency, and owner outcomes separately from its
+  offline certification. Do not interpret a synthetic pass as general mastery.
 
 ### 6. Keep The Execution Foundation Healthy
 

@@ -1,3 +1,5 @@
+import type { DurableActionClass } from './durable-action-policy.js';
+
 export interface AdditionalMount {
   hostPath: string; // Absolute path on host (supports ~ for home)
   containerPath?: string; // Optional — defaults to basename of hostPath. Mounted at /workspace/extra/{value}
@@ -1237,7 +1239,8 @@ export type OutcomeSourceType =
   | 'life_thread'
   | 'communication_thread'
   | 'current_work'
-  | 'cross_channel_handoff';
+  | 'cross_channel_handoff'
+  | 'capability_acquisition';
 
 export type OutcomeStatus =
   | 'completed'
@@ -1273,6 +1276,11 @@ export interface OutcomeLinkedRefs {
   delegationExplanation?: string | null;
   followthroughCandidateId?: string;
   agentOSEpisodeId?: string;
+  capabilityAcquisitionId?: string;
+  capabilityCandidateFingerprint?: string;
+  capabilityEvidenceOrigin?: 'synthetic' | 'replay' | 'live';
+  verificationReceiptIds?: string[];
+  ownerReviewId?: string;
 }
 
 export interface OutcomeRecord {
@@ -4102,7 +4110,9 @@ export interface DurableWorkLink {
     | 'approval_packet'
     | 'checkpoint'
     | 'outcome'
-    | 'skill_candidate';
+    | 'skill_candidate'
+    | 'capability_acquisition'
+    | 'capability_acquisition_execution';
   linkedId: string;
   createdAt: string;
   privacyJson: string;
@@ -4199,6 +4209,7 @@ export interface DurableEffectReceipt {
   actionClass: string;
   effectClass:
     | 'read_only'
+    | 'sandbox_repository_write'
     | 'repository_write'
     | 'local_write'
     | 'external_effect';
@@ -8168,6 +8179,229 @@ export interface CapabilityStateRecord {
   fallbackCapabilityId?: string | null;
   confidence: number;
   autonomyLevel: number;
+  privacyJson: string;
+}
+
+export type CapabilityGapKind =
+  | 'known'
+  | 'composable'
+  | 'knowledge_gap'
+  | 'tool_usage_gap'
+  | 'integration_gap'
+  | 'workflow_gap'
+  | 'implementation_gap'
+  | 'authority_gap'
+  | 'credential_or_access_gap'
+  | 'provider_gap'
+  | 'fundamental_or_external_blocker';
+
+export type CapabilityAcquisitionState =
+  | 'observed'
+  | 'scoped'
+  | 'resource_discovery'
+  | 'candidate_designed'
+  | 'sandbox_ready'
+  | 'sandbox_running'
+  | 'sandbox_verified'
+  | 'owner_review_required'
+  | 'canary_ready'
+  | 'active'
+  | 'monitoring'
+  | 'paused'
+  | 'quarantined'
+  | 'retired'
+  | 'externally_blocked'
+  | 'failed'
+  | 'indeterminate';
+
+export type CapabilityResourceKind =
+  | 'assistant_capability'
+  | 'skill_playbook'
+  | 'agent_os_tool'
+  | 'mission_node'
+  | 'openclaw_tool'
+  | 'local_script'
+  | 'trusted_documentation'
+  | 'knowledge_source'
+  | 'provider'
+  | 'container'
+  | 'code_lane'
+  | 'patch_workbench';
+
+export type CapabilityImplementationKind =
+  | 'existing_capability'
+  | 'capability_composition'
+  | 'parameterized_workflow'
+  | 'tool_usage_playbook'
+  | 'research_backed_procedure'
+  | 'local_adapter'
+  | 'bounded_integration'
+  | 'repository_code_change';
+
+export type CapabilityDataEgressClass =
+  | 'none'
+  | 'local_only'
+  | 'sanitized_metadata'
+  | 'approved_content'
+  | 'prohibited';
+
+export type CapabilityCostBand = 'zero' | 'low' | 'medium' | 'high' | 'unknown';
+
+export type CapabilityLatencyBand =
+  | 'instant'
+  | 'interactive'
+  | 'background'
+  | 'long_running'
+  | 'unknown';
+
+export interface CapabilityResourceDescriptor {
+  resourceId: string;
+  kind: CapabilityResourceKind;
+  displayName: string;
+  taskFamilies: string[];
+  capabilityIds: string[];
+  supportedPostconditions: string[];
+  requiredInputs: string[];
+  available: boolean;
+  healthState: 'healthy' | 'degraded' | 'blocked' | 'unknown';
+  verificationStrength: number;
+  reliabilityScore: number;
+  authorityRequirement: 'none' | 'explicit_approval' | 'operator_context';
+  riskLevel: ImprovementRiskLevel;
+  dataEgressClass: CapabilityDataEgressClass;
+  reversible: boolean;
+  expectedCostBand: CapabilityCostBand;
+  expectedLatencyBand: CapabilityLatencyBand;
+  version: string;
+  sourceRefs: string[];
+  maintenanceBurden: 'low' | 'medium' | 'high';
+  bindingRefs: Array<{
+    bindingId: string;
+    operationId: string;
+    evaluatorId: string;
+    executorImplementationDigest: string;
+    evaluatorImplementationDigest: string;
+    actionClass: DurableActionClass;
+    version: string;
+    readOnly: boolean;
+  }>;
+}
+
+export interface CapabilityCandidateContract {
+  contractVersion: number;
+  candidateFingerprint: string;
+  capabilityId: string;
+  skillId: string;
+  title: string;
+  taskFamily: string;
+  triggerSemantics: string[];
+  implementationKind: CapabilityImplementationKind;
+  requiredInputs: string[];
+  optionalInputs: string[];
+  inputSchemaJson: string;
+  outputSchemaJson: string;
+  preconditions: string[];
+  resourceBindings: Array<{
+    resourceId: string;
+    bindingKind:
+      | 'assistant_capability'
+      | 'mission_node'
+      | 'tool_schema'
+      | 'execution_adapter'
+      | 'patch_workbench';
+    version: string;
+    required: boolean;
+  }>;
+  steps: Array<{
+    stepId: string;
+    title: string;
+    resourceId: string;
+    bindingId: string;
+    operationId: string;
+    evaluatorId: string;
+    version: string;
+    executorImplementationDigest: string;
+    evaluatorImplementationDigest: string;
+    actionClass: DurableActionClass;
+    readOnly: boolean;
+    approvalRequired: boolean;
+    idempotencyKeyRequired: boolean;
+    expectedEvidence: string[];
+  }>;
+  fallbackPaths: string[];
+  allowedActions: string[];
+  prohibitedActions: string[];
+  approvalRequirements: string[];
+  credentialRequirements: string[];
+  dataEgressClass: CapabilityDataEgressClass;
+  expectedOutput: string;
+  successPostconditions: string[];
+  verificationProcedure: string[];
+  verifierBindingIds: string[];
+  failureClassifications: string[];
+  rollbackProcedure: string[];
+  rollbackBindingIds: string[];
+  deterministicScenarioIds: string[];
+  heldOutScenarioIds: string[];
+  compatibleResourceVersions: Record<string, string[]>;
+  revalidationRequirements: string[];
+  provenanceRefs: string[];
+}
+
+export interface CapabilityAcquisitionRecord {
+  acquisitionId: string;
+  createdAt: string;
+  updatedAt: string;
+  groupFolder?: string | null;
+  targetOutcome: string;
+  postconditionJson: string;
+  taskFamily: string;
+  affectedCapability?: string | null;
+  gapKind: CapabilityGapKind;
+  knownPrerequisitesJson: string;
+  missingPrerequisitesJson: string;
+  candidateResourceRefsJson: string;
+  selectedResourceRefsJson: string;
+  riskLevel: ImprovementRiskLevel;
+  dataEgressClass: CapabilityDataEgressClass;
+  expectedCostBand: CapabilityCostBand;
+  expectedLatencyBand: CapabilityLatencyBand;
+  authorityRequirementsJson: string;
+  evidenceOrigin: 'synthetic' | 'replay' | 'live';
+  confidence: number;
+  provenanceJson: string;
+  state: CapabilityAcquisitionState;
+  nextSafeAction: string;
+  recordVersion: number;
+  environmentFingerprint: string;
+  candidateContractJson: string;
+  sandboxEvidenceJson: string;
+  heldOutEvidenceJson: string;
+  ownerReviewJson: string;
+  outcomeIdsJson: string;
+  compiledSkillId?: string | null;
+  negativeOutcomeCount: number;
+  correctionCount: number;
+  lastOutcome?: string | null;
+  expiresAt?: string | null;
+  revalidateAfterAt?: string | null;
+  privacyJson: string;
+}
+
+export interface CapabilityAcquisitionTransitionRecord {
+  transitionId: string;
+  acquisitionId: string;
+  createdAt: string;
+  fromState: CapabilityAcquisitionState;
+  toState: CapabilityAcquisitionState;
+  expectedVersion: number;
+  resultingVersion: number;
+  actorKind: 'system' | 'owner' | 'operator' | 'certification';
+  reason: string;
+  evidenceRefsJson: string;
+  idempotencyKey: string;
+  transitionDigest: string;
+  resultingSnapshotJson: string;
   privacyJson: string;
 }
 

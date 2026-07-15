@@ -600,6 +600,14 @@ describe('hermetic deterministic test environment', () => {
       path.join(process.cwd(), 'scripts', 'run-commitment-certification.ts'),
       'utf8',
     );
+    const capabilityLauncher = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        'scripts',
+        'run-novel-capability-certification.ts',
+      ),
+      'utf8',
+    );
 
     expect(source).not.toContain('networkGuardPath');
     expect(source).toContain("return ['--import=tsx', ...tokens.slice(3)]");
@@ -615,6 +623,13 @@ describe('hermetic deterministic test environment', () => {
     expect(packageJson.scripts?.['certify:commitment-intelligence']).toContain(
       'scripts/run-commitment-certification.ts',
     );
+    expect(
+      packageJson.scripts?.['certify:novel-capability-mastery'],
+    ).not.toContain('--import=./scripts/test-network-guard.mjs');
+    expect(packageJson.scripts?.['certify:novel-capability-mastery']).toContain(
+      'scripts/run-novel-capability-certification.ts',
+    );
+    expect(source).toContain("'certify:novel-capability-mastery'");
     expect(commitmentLauncher).toContain('buildHermeticTestEnv(process.env');
     expect(commitmentLauncher).toContain('isolateStorage: false');
     expect(commitmentLauncher).toContain(
@@ -624,6 +639,15 @@ describe('hermetic deterministic test environment', () => {
       "new URL('./test-network-guard.mjs', import.meta.url)",
     );
     expect(commitmentLauncher).toContain('await import(networkGuardUrl.href)');
+    expect(capabilityLauncher).toContain('buildHermeticTestEnv(process.env');
+    expect(capabilityLauncher).toContain('isolateStorage: false');
+    expect(capabilityLauncher).toContain(
+      "ANDREA_NOVEL_CAPABILITY_CERT_HERMETIC_PARENT: '1'",
+    );
+    expect(capabilityLauncher).toContain(
+      "new URL('./test-network-guard.mjs', import.meta.url)",
+    );
+    expect(capabilityLauncher).toContain('await import(networkGuardUrl.href)');
     expect(source).not.toContain("spawnSync('npm'");
     expect(source).toContain(
       'spawnSync(process.execPath, deterministicCommandArgs(script)',

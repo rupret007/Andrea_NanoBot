@@ -4,6 +4,7 @@ import { redactCouncilText } from './council-safety.js';
 import { assessCognitiveSkillPromotion } from './cognitive-kernel.js';
 import { reviewAgentAction } from './critic-agent.js';
 import {
+  getCapabilityAcquisitionByCompiledSkillId,
   isDatabaseInitialized,
   listCognitiveSkillCards,
   listLearningDistillations,
@@ -110,14 +111,156 @@ function privacyJson(): string {
   return safeJson(PRIVACY, 1200);
 }
 
-function parseJsonStringArray(value: string | null | undefined): string[] {
-  if (!value) return [];
+interface ParsedStringList {
+  ok: boolean;
+  values: string[];
+  reason?: string;
+}
+
+function parseJsonStringArray(
+  value: string | null | undefined,
+  fieldName: string,
+): ParsedStringList {
+  if (!value) {
+    return { ok: false, values: [], reason: `${fieldName} is missing` };
+  }
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
-  } catch {
-    return [];
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some(
+        (item) => typeof item !== 'string' || item.trim().length === 0,
+      )
+    ) {
+      return {
+        ok: false,
+        values: [],
+        reason: `${fieldName} must be a JSON array of strings`,
+      };
+    }
+    return {
+      ok: true,
+      values: parsed.map((item) => item.trim()),
+    };
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return { ok: false, values: [], reason: `${fieldName} is malformed JSON` };
   }
+}
+
+function parseRequiredContext(
+  value: string | null | undefined,
+): ParsedStringList {
+  if (!value) {
+    return {
+      ok: false,
+      values: [],
+      reason: 'required context is missing',
+    };
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    const requirements = Array.isArray(parsed)
+      ? parsed
+      : parsed &&
+          typeof parsed === 'object' &&
+          Array.isArray((parsed as { required?: unknown }).required)
+        ? (parsed as { required: unknown[] }).required
+        : null;
+    if (
+      !requirements ||
+      requirements.some(
+        (item) => typeof item !== 'string' || item.trim().length === 0,
+      )
+    ) {
+      return {
+        ok: false,
+        values: [],
+        reason:
+          'required context must be a string array or an evidence contract with a string-array required field',
+      };
+    }
+    return {
+      ok: true,
+      values: requirements.map((item) => item.trim()),
+    };
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return {
+      ok: false,
+      values: [],
+      reason: 'required context is malformed JSON',
+    };
+  }
+}
+
+function isValidJsonObjectOrArray(
+  value: string | null | undefined,
+  fieldName: string,
+): { ok: boolean; value: unknown; reason?: string } {
+  if (!value) {
+    return { ok: false, value: null, reason: `${fieldName} is missing` };
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object') {
+      return {
+        ok: false,
+        value: null,
+        reason: `${fieldName} must be a JSON object or array`,
+      };
+    }
+    return { ok: true, value: parsed };
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return {
+      ok: false,
+      value: null,
+      reason: `${fieldName} is malformed JSON`,
+    };
+  }
+}
+
+function normalizeRequirement(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function requirementIsAvailable(
+  requirement: string,
+  availableContext: Set<string>,
+): boolean {
+  const normalized = normalizeRequirement(requirement);
+  if (!normalized) return false;
+  return availableContext.has(normalized);
+}
+
+function rollupMatchesTool(
+  rollup: ToolReliabilityRollup,
+  expectedTool: string,
+): boolean {
+  const subject = normalizeRequirement(rollup.subjectId);
+  const expected = normalizeRequirement(expectedTool);
+  if (!subject || !expected) return false;
+  return (
+    subject === expected ||
+    subject.endsWith(` ${expected}`) ||
+    subject.split(' ').includes(expected)
+  );
+}
+
+function rollupIsAvailable(rollup: ToolReliabilityRollup, now: Date): boolean {
+  if (
+    rollup.currentHealth === 'blocked' ||
+    rollup.currentHealth === 'unknown'
+  ) {
+    return false;
+  }
+  if (!rollup.cooldownUntil) return true;
+  const cooldownUntil = Date.parse(rollup.cooldownUntil);
+  return Number.isFinite(cooldownUntil) && cooldownUntil <= now.getTime();
 }
 
 function playbookFromDistillation(
@@ -325,9 +468,12 @@ export function matchSkillPlaybook(params: {
   groupFolder?: string | null;
   taskFamily?: string;
   includeSuggested?: boolean;
+  availableContext?: string[];
+  now?: Date;
 }): SkillPlaybookMatch | null {
   if (!isDatabaseInitialized()) return null;
   const text = params.text.toLowerCase();
+  const now = params.now || new Date();
   const playbooks = listSkillPlaybooks({
     groupFolder: params.groupFolder,
     statuses: params.includeSuggested ? ['active', 'suggested'] : ['active'],
@@ -335,8 +481,34 @@ export function matchSkillPlaybook(params: {
     limit: 100,
   });
   const rollups = listToolReliabilityRollups({ limit: 100 });
+  const reviewedDistillationIds = new Set(
+    listLearningDistillations({
+      groupFolder: params.groupFolder,
+      statuses: ['confirmed'],
+      outputKinds: ['skill'],
+      limit: 100,
+    })
+      .filter((item) => {
+        const evidence = parseJsonStringArray(
+          item.evidenceRefsJson,
+          'distillation evidence references',
+        );
+        return evidence.ok && evidence.values.length > 0;
+      })
+      .map((item) => item.distillationId),
+  );
   let best: SkillPlaybookMatch | null = null;
   for (const skill of playbooks) {
+    const acquisition = getCapabilityAcquisitionByCompiledSkillId(
+      skill.skillId,
+    );
+    if (
+      acquisition &&
+      acquisition.state !== 'active' &&
+      acquisition.state !== 'monitoring'
+    ) {
+      continue;
+    }
     const triggerWords = [skill.title, skill.triggerPattern, skill.taskFamily]
       .join(' ')
       .toLowerCase()
@@ -360,13 +532,83 @@ export function matchSkillPlaybook(params: {
         (saveLaterHit || replyHit ? 0.28 : 0),
     );
     if (confidence < 0.35) continue;
-    const expectedTools = parseJsonStringArray(skill.expectedToolsJson);
-    const toolReliability = rollups.filter((rollup) =>
-      expectedTools.some((tool) => rollup.subjectId.includes(tool)),
+    const requiredContext = parseRequiredContext(skill.requiredContextJson);
+    const expectedTools = parseJsonStringArray(
+      skill.expectedToolsJson,
+      'expected tools',
     );
+    const allowedActions = parseJsonStringArray(
+      skill.allowedActionsJson,
+      'allowed actions',
+    );
+    const disallowedActions = parseJsonStringArray(
+      skill.disallowedActionsJson,
+      'disallowed actions',
+    );
+    const approvalRequirements = isValidJsonObjectOrArray(
+      skill.approvalRequirementsJson,
+      'approval requirements',
+    );
+    const successCriteria = parseJsonStringArray(
+      skill.successCriteriaJson,
+      'success criteria',
+    );
+    const evalScenarios = parseJsonStringArray(
+      skill.evalScenariosJson,
+      'evaluation scenarios',
+    );
+    const availableContext = new Set(
+      [
+        ...(params.availableContext || []),
+        params.text.trim() ? 'current request' : '',
+        params.taskFamily ? 'task family' : '',
+        skill.sourceDistillationId &&
+        reviewedDistillationIds.has(skill.sourceDistillationId)
+          ? 'recent outcome evidence'
+          : '',
+      ]
+        .filter(Boolean)
+        .map(normalizeRequirement),
+    );
+    const missingContext = requiredContext.ok
+      ? requiredContext.values.filter(
+          (requirement) =>
+            !requirementIsAvailable(requirement, availableContext),
+        )
+      : [];
+    const toolReliability = rollups.filter((rollup) =>
+      expectedTools.values.some((tool) => rollupMatchesTool(rollup, tool)),
+    );
+    const unavailableTools = expectedTools.ok
+      ? expectedTools.values.filter((tool) => {
+          const matchingRollups = rollups.filter((rollup) =>
+            rollupMatchesTool(rollup, tool),
+          );
+          return (
+            matchingRollups.length === 0 ||
+            !matchingRollups.some((rollup) => rollupIsAvailable(rollup, now))
+          );
+        })
+      : [];
+    const malformedReasons = [
+      requiredContext.reason,
+      expectedTools.reason,
+      allowedActions.reason,
+      disallowedActions.reason,
+      approvalRequirements.reason,
+      successCriteria.reason,
+      evalScenarios.reason,
+    ].filter((reason): reason is string => Boolean(reason));
+    const metadataReady = malformedReasons.length === 0;
+    const requiredContextReady =
+      metadataReady &&
+      missingContext.length === 0 &&
+      unavailableTools.length === 0;
     const approvalRequired =
+      !metadataReady ||
       /approval|required|send|calendar write|delete|commit|push/i.test(
-        skill.approvalRequirementsJson + skill.allowedActionsJson,
+        JSON.stringify(approvalRequirements.value) +
+          JSON.stringify(allowedActions.values),
       );
     const candidate: SkillPlaybookMatch = {
       skill,
@@ -376,8 +618,20 @@ export function matchSkillPlaybook(params: {
         skill.status === 'suggested'
           ? 'suggested skill preview'
           : 'active skill',
+        ...malformedReasons.map((reason) => `blocked: ${reason}`),
+        ...missingContext.map(
+          (requirement) => `blocked: missing context ${requirement}`,
+        ),
+        ...unavailableTools.map(
+          (tool) => `blocked: required tool ${tool} is unavailable`,
+        ),
+        ...(toolReliability.some(
+          (rollup) => rollup.currentHealth === 'degraded',
+        )
+          ? ['required tool health is degraded']
+          : []),
       ],
-      requiredContextReady: true,
+      requiredContextReady,
       approvalRequired,
       toolReliability,
     };
@@ -391,6 +645,7 @@ export function runSkillPlaybook(params: {
   channel: CognitiveExecutiveChannel;
   groupFolder?: string | null;
   taskFamily?: string;
+  availableContext?: string[];
   now?: Date;
   persist?: boolean;
 }): SkillPlaybookRunnerResult {
@@ -400,6 +655,8 @@ export function runSkillPlaybook(params: {
     groupFolder: params.groupFolder,
     taskFamily: params.taskFamily,
     includeSuggested: true,
+    availableContext: params.availableContext,
+    now: params.now,
   });
   if (!matched) {
     return {
@@ -409,23 +666,23 @@ export function runSkillPlaybook(params: {
       replyText: 'No learned skill matched this request yet.',
     };
   }
-  const critic = reviewAgentAction({
-    actor: 'skill_playbook_runner',
-    action: `${matched.skill.title}; allowed=${matched.skill.allowedActionsJson}`,
-    channel: params.channel,
-    evidenceIds: [matched.skill.skillId],
-    allowReadOnly: true,
-    persist: params.persist,
-    now: params.now,
-  });
+  const critic = matched.requiredContextReady
+    ? reviewAgentAction({
+        actor: 'skill_playbook_runner',
+        action: `${matched.skill.title}; allowed=${matched.skill.allowedActionsJson}`,
+        channel: params.channel,
+        evidenceIds: [matched.skill.skillId],
+        allowReadOnly: true,
+        persist: params.persist,
+        now: params.now,
+      })
+    : null;
   const outcome: SkillPlaybookRunRecord['outcome'] =
-    critic.decision === 'block'
+    !matched.requiredContextReady || critic?.decision === 'block'
       ? 'blocked'
-      : critic.approvalRequired
+      : critic?.approvalRequired
         ? 'approval_staged'
-        : matched.skill.status === 'suggested'
-          ? 'proposed'
-          : 'executed_safe_step';
+        : 'proposed';
   const run: SkillPlaybookRunRecord = {
     runId: hashId(
       'skillrun',
@@ -444,38 +701,34 @@ export function runSkillPlaybook(params: {
         score: item.reliabilityScore,
       })),
     ),
-    approvalRequired: critic.approvalRequired,
+    approvalRequired:
+      matched.approvalRequired || Boolean(critic?.approvalRequired),
     outcome,
     summary: safeText(
       outcome === 'proposed'
-        ? `Previewed suggested skill ${matched.skill.title}.`
-        : `Matched skill ${matched.skill.title}; critic=${critic.decision}.`,
+        ? `Previewed matching skill ${matched.skill.title}; no step was executed.`
+        : outcome === 'blocked' && !matched.requiredContextReady
+          ? `Matched skill ${matched.skill.title}, but required context, metadata, or tool health is unavailable.`
+          : `Matched skill ${matched.skill.title}; critic=${critic?.decision || 'not_run'}.`,
     ),
     nextAction:
       outcome === 'approval_staged'
         ? 'Ask for explicit approval before any side effect.'
-        : matched.skill.nextAction,
+        : outcome === 'blocked' && !matched.requiredContextReady
+          ? matched.reasons.find((reason) => reason.startsWith('blocked:')) ||
+            'Repair required context and tool health before reuse.'
+          : matched.skill.nextAction,
     privacyJson: privacyJson(),
   };
   if (params.persist !== false && isDatabaseInitialized()) {
     upsertSkillPlaybookRun(run);
-    upsertSkillPlaybook({
-      ...matched.skill,
-      updatedAt: now,
-      usageCount: matched.skill.usageCount + 1,
-      lastOutcome: outcome,
-      reliabilityScore:
-        outcome === 'blocked'
-          ? Math.max(0.1, matched.skill.reliabilityScore - 0.1)
-          : Math.min(0.99, matched.skill.reliabilityScore + 0.03),
-    });
   }
   const action: SkillPlaybookRunnerResult['action'] =
     outcome === 'blocked'
       ? 'blocked'
       : outcome === 'approval_staged'
         ? 'approval_staged'
-        : outcome === 'proposed'
+        : outcome === 'proposed' && matched.skill.status === 'suggested'
           ? 'preview_suggested_skill'
           : 'safe_step_ready';
   return {
@@ -488,8 +741,14 @@ export function runSkillPlaybook(params: {
         : action === 'approval_staged'
           ? `I can use ${matched.skill.title}, but anything with side effects needs explicit approval first.`
           : action === 'blocked'
-            ? `I matched ${matched.skill.title}, but the critic blocked it: ${critic.nextAction}`
-            : `I matched ${matched.skill.title} and can use its safe read-only steps.`,
+            ? `I matched ${matched.skill.title}, but it is not ready: ${
+                !matched.requiredContextReady
+                  ? matched.reasons.find((reason) =>
+                      reason.startsWith('blocked:'),
+                    ) || 'required evidence is unavailable'
+                  : critic?.nextAction || 'the critic blocked this preview'
+              }`
+            : `I matched ${matched.skill.title}. Its safe read-only path is ready for a separately validated execution; this preview did not execute it.`,
   };
 }
 
@@ -505,6 +764,29 @@ export function applySkillControl(params: {
   });
   const skill = skills.find((item) => item.skillId === params.skillId);
   if (!skill) return { ok: false, message: 'No matching skill was found.' };
+  const acquisition = getCapabilityAcquisitionByCompiledSkillId(skill.skillId);
+  if (acquisition && params.control !== 'activate') {
+    return {
+      ok: false,
+      message:
+        'This skill is a projection of a canonical capability acquisition. Pause, retire, and reset controls are blocked here so the projection cannot diverge from canonical state.',
+      skill,
+    };
+  }
+  if (params.control === 'activate') {
+    const canonicalActive =
+      acquisition &&
+      (acquisition.state === 'active' || acquisition.state === 'monitoring') &&
+      (acquisition.groupFolder || null) === (skill.groupFolder || null);
+    if (!canonicalActive) {
+      return {
+        ok: false,
+        message:
+          'Activation is blocked until the canonical acquisition has a verified live canary, exact owner review, and active or monitoring state.',
+        skill,
+      };
+    }
+  }
   const statusByControl: Record<
     typeof params.control,
     SkillPlaybookRecord['status']

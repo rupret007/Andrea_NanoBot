@@ -17,6 +17,9 @@ const QUOTED_ASSIGNMENT_PATTERN =
 const UNQUOTED_ASSIGNMENT_PATTERN =
   /(["']?)([A-Za-z_][A-Za-z0-9_.-]*)(\1?\s*[:=]\s*)([^"'\s,;}\]\n\r][^,;}\]\n\r]*)/g;
 
+const REDACTED_SENTINEL_SUFFIX_PATTERN =
+  /(["']?)([A-Za-z_][A-Za-z0-9_.-]*)(\1?\s*[:=]\s*)(\[REDACTED_SECRET\])([^,;}\]\n\r]+)/g;
+
 const TOKEN_LITERAL_PATTERNS: readonly RegExp[] = [
   /sk-(?:proj-|ant-api\d*-|api-)?[A-Za-z0-9_-]{16,}/g,
   /AIza[A-Za-z0-9_-]{20,}/g,
@@ -62,6 +65,20 @@ export function redactCouncilText(value: string, limit = 6000): string {
     },
   );
   redacted = redacted.replace(
+    REDACTED_SENTINEL_SUFFIX_PATTERN,
+    (
+      match: string,
+      keyQuote: string,
+      key: string,
+      separator: string,
+      _sentinel: string,
+      suffix: string,
+    ) => {
+      if (!isSensitiveName(key) || !suffix.trim()) return match;
+      return `${keyQuote}${key}${separator}${REDACTED}`;
+    },
+  );
+  redacted = redacted.replace(
     UNQUOTED_ASSIGNMENT_PATTERN,
     (
       match: string,
@@ -71,7 +88,13 @@ export function redactCouncilText(value: string, limit = 6000): string {
       value: string,
     ) => {
       if (!isSensitiveName(key)) return match;
-      if (value === REDACTED || value.startsWith(REDACTED)) return match;
+      // The unquoted matcher stops before a closing `]`, so an already
+      // redacted sentinel may arrive here as "[REDACTED_SECRET" while the
+      // bracket remains outside the match. Treat both forms as canonical to
+      // keep redaction idempotent.
+      if (value === REDACTED || value === REDACTED.slice(0, -1)) {
+        return match;
+      }
       return `${keyQuote}${key}${separator}${REDACTED}`;
     },
   );

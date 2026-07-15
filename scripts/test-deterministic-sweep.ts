@@ -139,7 +139,10 @@ for (const [name, command] of Object.entries(packageJson.scripts || {})) {
   else selected.push({ name, command });
 }
 
-for (const name of ['certify:commitment-intelligence']) {
+for (const name of [
+  'certify:commitment-intelligence',
+  'certify:novel-capability-mastery',
+]) {
   const command = packageJson.scripts?.[name];
   if (!command) {
     throw new Error(

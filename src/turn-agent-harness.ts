@@ -29,6 +29,10 @@ import { planCalendarAssistantLookup } from './calendar-assistant.js';
 import { recordCouncilOutcomeSignal } from './council-quality.js';
 import { isDatabaseInitialized } from './db.js';
 import { buildPersonalContextPacket } from './personal-context-packet.js';
+import {
+  observeTurnCapabilityGap,
+  type TurnCapabilityAcquisitionStatus,
+} from './turn-capability-acquisition.js';
 import { classifyCouncilLearningCandidate } from './council-learning-classifier.js';
 import {
   beginCognitiveKernelRun,
@@ -208,6 +212,7 @@ export interface TurnAgentHarnessContext {
   chatId?: string | null;
   personalContextPacket?: PersonalContextPacket | null;
   verifiedDeepWorkPacket?: VerifiedDeepWorkPacket | null;
+  capabilityAcquisition?: TurnCapabilityAcquisitionStatus | null;
 }
 
 export interface BeginTurnAgentHarnessInput {
@@ -1097,6 +1102,35 @@ export async function beginTurnAgentHarness(
       verifiedDeepWorkPacket.packetId,
     );
   }
+  const capabilityAcquisition = observeTurnCapabilityGap({
+    turnId: input.turnId,
+    channel: input.channel,
+    groupFolder: input.groupFolder,
+    actorId: input.actorId,
+    text: input.text,
+    requestRoute: input.requestRoute,
+    runOrigin,
+    taskFamily,
+    selectedSkillId: contextCompile.selectedSkill.skillId,
+    selectedSkillRisk: contextCompile.selectedSkill.sideEffectRisk,
+    selectedSkillApprovalNeed: contextCompile.selectedSkill.approvalNeed,
+    executionPosture: deliberation?.executionPosture,
+    durableWorkId: runtimeSpine?.durableWork?.workId,
+    deepWorkPacketId: verifiedDeepWorkPacket?.packetId,
+  });
+  if (capabilityAcquisition) {
+    contextCompile.metadata.capability_acquisition_observed = 'true';
+    contextCompile.metadata.capability_acquisition_id =
+      capabilityAcquisition.acquisitionId;
+    contextCompile.metadata.capability_acquisition_state =
+      capabilityAcquisition.state;
+    contextCompile.metadata.capability_gap_kind = capabilityAcquisition.gapKind;
+    contextCompile.metadata.capability_acquisition_privacy = 'metadata_only';
+    contextCompile.metadata.capability_acquisition_raw_content_stored = 'false';
+    contextCompile.metadata.capability_acquisition_durable_work_linked = String(
+      capabilityAcquisition.durableWorkLinked,
+    );
+  }
   return {
     turnId: input.turnId,
     channel: input.channel,
@@ -1118,6 +1152,7 @@ export async function beginTurnAgentHarness(
     chatId: input.chatId,
     personalContextPacket,
     verifiedDeepWorkPacket,
+    capabilityAcquisition,
   };
 }
 

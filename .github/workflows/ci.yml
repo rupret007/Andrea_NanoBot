@@ -32,6 +32,12 @@ jobs:
       - name: Major iteration CI suite
         run: npm run test:major:ci
 
+      - name: Novel capability certification policy
+        run: npm run test:novel-capability:certification-gate
+
+      - name: Novel capability mastery certification
+        run: npm run certify:novel-capability-mastery
+
       - name: Verify real Git content-state continuity
         if: runner.os == 'Linux'
         run: npm run check:repository-state-content

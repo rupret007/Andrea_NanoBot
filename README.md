@@ -63,6 +63,31 @@ checkpoint, plan, target, or action class. The operator can run
 the isolated, network-denied recovery proofs. Deployment and real-owner outcome
 evidence remain separate from those deterministic fixtures.
 
+Andrea also has a fail-closed verified capability-acquisition path for a
+genuinely unsupported task. An explicit live capability-learning or
+learn-first turn records only a bounded metadata-derived gap: the request body
+is neither copied into the ledger nor executed. The direct observation API
+separately requires callers to classify input as `derived_metadata`. Resource
+discovery compares existing resources under health, version, privacy, risk,
+and authority constraints. A candidate can compile only from exact registered
+executor and independent evaluator bindings, including declared implementation
+identity/version digests. Those digests pin registry identity; they are not
+byte-level attestation of callback code. External research is untrusted data,
+not executable instruction.
+
+Sandbox proof is bound to canonical durable work, a checkpoint, scope hashes,
+and started/terminal effect receipts. The offline certification runs ten named
+primary scenarios plus fifteen structurally separate held-out scenarios and can
+advance synthetic evidence no farther than `sandbox_verified`. It uses trusted
+test-authored adapters inside a network-denied disposable certification process;
+it is not an OS isolation boundary or proof of universal autonomous learning.
+Caller-asserted live
+canary, activation, and production outcome evidence currently fail closed while
+the atomic durable-work/outcome/owner-review/health/approval join is unfinished.
+Acquisition grants no new authority, so protected actions retain their existing
+fresh approval. See
+[Verified Capability Acquisition](docs/VERIFIED_CAPABILITY_ACQUISITION.md).
+
 Andrea also includes an opt-in private owner cockpit: a calm, responsive view of
 today's focus, open loops, goals, staged approvals, and verified outcomes. It
 reuses the same database and approval lifecycle as chat, binds only to loopback,
@@ -79,6 +104,7 @@ route. See [the owner cockpit runbook](docs/OWNER_COCKPIT.md).
   <a href="docs/ACTION_BUNDLES.md">Action Bundles</a>&nbsp; | &nbsp;
   <a href="docs/DELEGATION_RULES_AND_SAFE_AUTOMATION.md">Delegation Rules</a>&nbsp; | &nbsp;
   <a href="docs/PERSONAL_INTELLIGENCE_AND_VERIFIED_AGENCY.md">Verified Agency</a>&nbsp; | &nbsp;
+  <a href="docs/VERIFIED_CAPABILITY_ACQUISITION.md">Capability Acquisition</a>&nbsp; | &nbsp;
   <a href="docs/MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md">Messaging Trust Ladder</a>&nbsp; | &nbsp;
   <a href="docs/OUTCOME_TRACKING_AND_REVIEWS.md">Reviews</a>&nbsp; | &nbsp;
   <a href="docs/CHIEF_OF_STAFF_MODE.md">Chief-of-Staff Mode</a>&nbsp; | &nbsp;
@@ -914,6 +940,10 @@ Use the docs based on what you are trying to do:
 - [docs/COMMITMENT_INTELLIGENCE.md](docs/COMMITMENT_INTELLIGENCE.md)
   for commitment strength, ownership, waiting/blocking/delegation, ranking,
   persistence, migration, privacy, and strict certification
+- [docs/VERIFIED_CAPABILITY_ACQUISITION.md](docs/VERIFIED_CAPABILITY_ACQUISITION.md)
+  for metadata-only capability gaps, resource brokering, exact executable
+  bindings, canonical sandbox proof, the synthetic `sandbox_verified` limit,
+  authority boundaries, and certification
 - [docs/BLUEBUBBLES_CHANNEL_PREP.md](docs/BLUEBUBBLES_CHANNEL_PREP.md)
   for the live BlueBubbles companion channel scope, config, safety model, and current limits
 - [docs/ADDONS_AND_FEATURE_MATRIX.md](docs/ADDONS_AND_FEATURE_MATRIX.md)
