@@ -161,7 +161,7 @@ const reminder = runActionPreflight({
 });
 assert.equal(reminder.verdict, 'proceed');
 
-// High-risk verification need forces verify ahead of approval.
+// An open, high-risk action fact still blocks an explicitly approved message.
 upsertRealitySnapshot({
   snapshotId: 'snap_test',
   createdAt: '2026-06-09T20:02:00.000Z',
@@ -207,6 +207,53 @@ const verify = runActionPreflight({
   evidenceIds: ['approval:bluebubbles'],
 });
 assert.equal(verify.verdict, 'verify');
+
+// Isolate the next canary assertion from the intentionally blocking calendar
+// fact above; a resolved action fact no longer participates in preflight.
+upsertRealityVerificationNeed({
+  needId: 'need_test_calendar_auth',
+  snapshotId: 'snap_test',
+  createdAt: '2026-06-09T20:02:00.000Z',
+  updatedAt: '2026-06-09T20:03:00.000Z',
+  question: 'Is calendar auth fresh?',
+  reason: 'synthetic test resolved',
+  neededBeforeAction: true,
+  possibleSourceTool: 'google_calendar_auth_check',
+  riskIfSkipped: 'critical',
+  urgency: 'high',
+  status: 'resolved',
+  evidenceIdsJson: '[]',
+  nextAction: 'none',
+  privacyJson: '{"metadataOnly":true}',
+});
+
+// The BlueBubbles same-thread proof marker is readiness evidence, not an
+// additional send approval.  The canary must be allowed to establish it.
+upsertRealityVerificationNeed({
+  needId: 'need_test_bluebubbles_proof',
+  snapshotId: 'snap_test',
+  createdAt: '2026-06-09T20:02:00.000Z',
+  updatedAt: '2026-06-09T20:02:00.000Z',
+  question: 'What proof is needed for BlueBubbles same-thread message-action proof?',
+  reason: 'BlueBubbles same-thread message-action proof is stale.',
+  neededBeforeAction: true,
+  possibleSourceTool: 'manual proof',
+  riskIfSkipped: 'high',
+  urgency: 'high',
+  status: 'manual_proof',
+  evidenceIdsJson: '[]',
+  nextAction: 'Complete one owner-approved same-thread canary.',
+  privacyJson: '{"metadataOnly":true}',
+});
+const approvedSendCanary = runActionPreflight({
+  actionSummary: 'send the owner-approved BlueBubbles canary to Jeff',
+  actionType: 'message_send',
+  channel: 'bluebubbles',
+  hasExplicitUserApproval: true,
+  approvedCapability: 'messages.send.bluebubbles',
+  evidenceIds: ['approval:bluebubbles', 'canary:bluebubbles'],
+});
+assert.equal(approvedSendCanary.verdict, 'proceed');
 
 // Alexa cannot perform sends — fallback offered.
 const alexaSend = runActionPreflight({

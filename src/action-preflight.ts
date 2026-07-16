@@ -77,6 +77,34 @@ export interface ActionPreflightResult {
   verdict: ActionPreflightVerdict;
 }
 
+/**
+ * Live-proof entries describe readiness evidence, not a second approval gate.
+ * An explicitly approved message send is itself the bounded proof operation:
+ * transport health, recipient binding, delivery verification, and the fresh
+ * send approval still apply.  A stale Alexa/BlueBubbles/Telegram proof marker
+ * must not turn an otherwise valid message into an unrelated global blocker.
+ * Action-specific authentication and contradiction records continue through
+ * the normal high-risk path below.
+ */
+function verificationNeedAppliesToAction(
+  need: {
+    question: string;
+    reason: string;
+    possibleSourceTool: string;
+    status: string;
+  },
+  input: Pick<ActionPreflightInput, 'actionType'>,
+): boolean {
+  // Manual-proof rows are readiness markers produced by the live-proof
+  // gauntlet.  An explicitly approved message send remains a bounded,
+  // receipt-verified way to refresh that evidence; it must not deadlock on
+  // stale Alexa, Telegram, or BlueBubbles proof.  Open/critical action facts
+  // still pass through and can block the send.
+  return !(
+    input.actionType === 'message_send' && need.status === 'manual_proof'
+  );
+}
+
 function nowIso(now?: string): string {
   return now ?? new Date().toISOString();
 }
@@ -159,16 +187,19 @@ export function runActionPreflight(
       status: 'manual_proof',
       limit: 20,
     }).filter((need) => need.neededBeforeAction);
-    const blockingNeeds = [...openNeeds, ...manualNeeds].filter(
+    const actionRelevantNeeds = [...openNeeds, ...manualNeeds].filter((need) =>
+      verificationNeedAppliesToAction(need, input),
+    );
+    const blockingNeeds = actionRelevantNeeds.filter(
       (need) =>
         need.riskIfSkipped === 'high' || need.riskIfSkipped === 'critical',
     );
     if (blockingNeeds.length) {
       realityStatus = 'fail';
       realityDetail = `Verification needed before acting: ${blockingNeeds[0].question}`;
-    } else if (openNeeds.length + manualNeeds.length > 0) {
+    } else if (actionRelevantNeeds.length > 0) {
       realityStatus = 'warn';
-      realityDetail = `${openNeeds.length + manualNeeds.length} open verification need(s), none classified high-risk for this action.`;
+      realityDetail = `${actionRelevantNeeds.length} open verification need(s), none classified high-risk for this action.`;
     }
   } else {
     realityStatus = 'skipped';
