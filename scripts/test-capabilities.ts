@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 
+import '../src/channels/index.js';
+
 import {
   _closeDatabase,
   _initTestDatabase,
@@ -20,7 +22,10 @@ import {
   isCapabilityNaturalRequest,
 } from '../src/capability-self-model.js';
 import type { IntegrationDoctorReport } from '../src/integration-doctor.js';
+import { registerProductionRuntimeCapabilitySurfaces } from '../src/runtime-capability-production-surfaces.js';
+import { runtimeCapabilityRegistry } from '../src/runtime-capability-registry.js';
 
+registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
 _initTestDatabase();
 
 const report = buildCapabilitySelfModel({
@@ -509,7 +514,10 @@ const coreReadyOptionalVoiceReport = buildCapabilitySelfModel({
     secretsRedacted: true,
   },
 });
-assert.equal(getDailyCoreAttentionStates(coreReadyOptionalVoiceReport).length, 0);
+assert.equal(
+  getDailyCoreAttentionStates(coreReadyOptionalVoiceReport).length,
+  0,
+);
 assert.equal(coreReadyOptionalVoiceReport.dailyCore.needsAttention, 0);
 assert.equal(coreReadyOptionalVoiceReport.optionalSurfaces.needsAttention, 1);
 assert.match(

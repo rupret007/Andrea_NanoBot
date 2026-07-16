@@ -369,17 +369,18 @@ Surface shorthand:
 - Alexa stays shorter and voice-first when it is enabled.
 - BlueBubbles is the bounded personal messaging surface and stays mention-required.
 
-From the registered main Telegram chat, you can stage a text to an existing
+From the registered main Telegram chat, you can send a text to an existing
 synced Messages conversation or exact BlueBubbles/macOS contact with
 `Text Travis Story: Dinner is ready.` or
 `Send a text message to Travis Story saying Dinner is ready.` An explicit
-phone/email also works for a first message. Andrea shows the exact recipient and
-body before anything leaves the Mac. Tap `Send now` or say `send it` as a
-separate approval. Unknown names are never guessed; an exact name with multiple
-addresses requires a new request naming one phone/email. Arbitrary Telegram
-chats cannot send through your Messages account.
+phone/email also works for a first message. The explicit send imperative is the
+authorization; Andrea does not ask for the same approval twice. Ask Andrea to
+`draft` or `prepare` the message when you want review controls instead of
+delivery. Unknown or partial names are never guessed; an exact name with
+multiple addresses requires a new request naming one phone/email. Arbitrary
+Telegram chats cannot send through your Messages account.
 For a new recipient, Andrea makes one BlueBubbles chat-creation attempt only
-after approval. If the returned chat or message receipt is incomplete, Andrea
+after explicit authorization. If the returned chat or message receipt is incomplete, Andrea
 will not retry automatically because the text may already have arrived. New
 recipients cannot be scheduled for later until an existing linked conversation
 has been verified.

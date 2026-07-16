@@ -1908,6 +1908,8 @@ export function issueCapabilityReviewTokenForTrustedChat(params: {
   channelName: string;
   chatJid: string;
   group: RegisteredGroup;
+  /** Exact authorship fact from the current inbound platform message. */
+  readonly ownerAuthored?: boolean | null;
   messageId?: string | null;
   now?: Date | string;
 }): string {
@@ -5261,6 +5263,8 @@ export function issueCapabilityControlTokenForTrustedChat(params: {
   channelName: string;
   chatJid: string;
   group: RegisteredGroup;
+  /** Exact authorship fact from the current inbound platform message. */
+  readonly ownerAuthored?: boolean | null;
   messageId?: string | null;
   now?: Date | string;
 }): string {

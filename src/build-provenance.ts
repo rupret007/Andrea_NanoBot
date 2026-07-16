@@ -40,6 +40,38 @@ export interface BuildProvenanceGitState {
   dirtyPathCount: number;
 }
 
+export interface RuntimeArtifactContext {
+  modulePath: string;
+  projectRoot: string;
+  compiledEntryPath: string;
+  isCompiledArtifact: boolean;
+}
+
+/**
+ * Resolve production artifact identity from the running module itself. This
+ * deliberately ignores process.cwd(), which launchd and operators may change.
+ */
+export function resolveRuntimeArtifactContext(
+  moduleUrl: string,
+  compiledBasename: string,
+): RuntimeArtifactContext {
+  if (
+    !compiledBasename ||
+    path.basename(compiledBasename) !== compiledBasename
+  ) {
+    throw new Error('compiledBasename must be a file basename.');
+  }
+  const modulePath = path.resolve(fileURLToPath(moduleUrl));
+  const projectRoot = path.resolve(path.dirname(modulePath), '..');
+  const compiledEntryPath = path.join(projectRoot, 'dist', compiledBasename);
+  return {
+    modulePath,
+    projectRoot,
+    compiledEntryPath,
+    isCompiledArtifact: modulePath === compiledEntryPath,
+  };
+}
+
 function manifestPath(projectRoot: string): string {
   return path.join(projectRoot, 'dist', BUILD_PROVENANCE_FILENAME);
 }
@@ -84,6 +116,24 @@ function readGitValue(projectRoot: string, args: string[]): string {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'ignore'],
   }).trim();
+}
+
+export function readCurrentGitCommit(projectRoot: string): string {
+  let commit = '';
+  try {
+    commit = readGitValue(path.resolve(projectRoot), ['rev-parse', 'HEAD']);
+  } catch (error) {
+    throw new Error(
+      'Current Git commit is required for compiled runtime verification.',
+      { cause: error },
+    );
+  }
+  if (!/^[a-f0-9]{40,64}$/iu.test(commit)) {
+    throw new Error(
+      'Current Git commit is invalid for compiled runtime verification.',
+    );
+  }
+  return commit;
 }
 
 function readGitDirtyPathCount(projectRoot: string): number {
@@ -238,6 +288,44 @@ export function assessBuildProvenance(options?: {
     manifest,
     artifactVerified: true,
   };
+}
+
+/**
+ * Return a runtime build identity only for an artifact built from the exact
+ * clean commit currently checked out. `artifactVerified` alone is
+ * insufficient because stale-commit and dirty-source assessments can still
+ * have a matching artifact digest.
+ */
+export function requireVerifiedRuntimeBuild(options: {
+  projectRoot: string;
+  expectedGitCommit: string;
+  runnerBuildId?: string | null;
+  runtimeName?: string;
+}): string {
+  const runtimeName = options.runtimeName?.trim() || 'Compiled runtime';
+  if (!/^[a-f0-9]{40,64}$/iu.test(options.expectedGitCommit)) {
+    throw new Error(
+      `${runtimeName} requires a valid current Git commit for build verification.`,
+    );
+  }
+  const assessment = assessBuildProvenance({
+    projectRoot: options.projectRoot,
+    expectedGitCommit: options.expectedGitCommit,
+  });
+  const manifest = assessment.manifest;
+  if (!manifest || assessment.state !== 'verified') {
+    throw new Error(
+      `${runtimeName} requires clean exact-commit build provenance (${assessment.state}).`,
+    );
+  }
+  const buildId = `${manifest.gitCommit}:${manifest.artifactSha256}`;
+  const runnerBuildId = options.runnerBuildId?.trim();
+  if (runnerBuildId && runnerBuildId !== buildId) {
+    throw new Error(
+      `${runtimeName} build identity does not match the verified running artifact.`,
+    );
+  }
+  return buildId;
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';

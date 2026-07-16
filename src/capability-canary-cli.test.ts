@@ -787,6 +787,19 @@ describe('capability canary CLI parser', () => {
       'canonical owner identity "owner"',
     );
   });
+
+  it('rejects BlueBubbles CLI metadata because it has no exact current-message authorship fact', () => {
+    const blueBubblesArgs = stagingArgs();
+    blueBubblesArgs[blueBubblesArgs.indexOf('--chat-id') + 1] =
+      'bb:iMessage;-;owner@example.invalid';
+    blueBubblesArgs[blueBubblesArgs.indexOf('--channel') + 1] = 'bluebubbles';
+    blueBubblesArgs[blueBubblesArgs.indexOf('--authorized-surface') + 1] =
+      'bluebubbles';
+
+    expect(() => parseCapabilityCanaryArgs(blueBubblesArgs)).toThrow(
+      'exact current owner-authored inbound message',
+    );
+  });
 });
 
 describe('capability canary CLI effects', () => {
@@ -809,11 +822,9 @@ describe('capability canary CLI effects', () => {
       expect.arrayContaining([
         expect.stringContaining('--owner-id owner'),
         expect.stringContaining('--channel telegram'),
-        expect.stringMatching(
-          /--chat-id 'CONFIGURED_BLUEBUBBLES_SELF_THREAD_ID'.*--channel bluebubbles/,
-        ),
       ]),
     );
+    expect(report.nextCommands.join('\n')).not.toContain('bluebubbles');
     expect(report.nextCommands.join('\n')).not.toContain('owner_cockpit');
     expect(report.staged).toBeNull();
     expect(deps.stageCanary).not.toHaveBeenCalled();
@@ -1120,7 +1131,7 @@ describe('capability canary CLI effects', () => {
       authorizedSurface: 'owner_cockpit',
     };
     await expect(runCapabilityCanaryCli(options, deps)).rejects.toThrow(
-      'canonical owner identity and one exact executable Telegram or BlueBubbles binding',
+      'canonical owner identity and one exact executable registered-main Telegram binding',
     );
     expect(deps.isTrustedBinding).not.toHaveBeenCalled();
     expect(deps.stageCanary).not.toHaveBeenCalled();

@@ -172,12 +172,16 @@ Telegram:
 
 - richest communication surface
 - better for full summaries, structured open loops, and richer draft review
-- can stage a recipient-bound text to an existing synced one-to-one
+- can send or stage a recipient-bound text to an existing synced one-to-one
   BlueBubbles conversation, exact contact, or explicit phone/email from the
   registered main chat
-- always shows the exact recipient and body before a separate send approval;
-  missing or ambiguous recipients fail closed
-- creates a new direct chat in one BlueBubbles request after approval and
+- treats a direct, explicit owner send imperative as the approval required by
+  the runtime capability contract; `draft` or `prepare` wording stays unsent
+- reports success only after binding a provider receipt to the immutable
+  approved recipient/body snapshot; missing, partial, group, or ambiguous
+  recipients fail closed
+- creates a new direct chat in one BlueBubbles request after explicit
+  authorization and
   blocks automatic replay when delivery cannot be verified
 
 BlueBubbles:

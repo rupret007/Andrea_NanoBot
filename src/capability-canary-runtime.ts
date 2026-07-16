@@ -65,6 +65,15 @@ export function capabilityCanaryCliDependencies(): CapabilityCanaryCliDependenci
         // decision remains available only through the authenticated cockpit.
         return true;
       }
+      if (
+        authorizedSurface === 'bluebubbles' ||
+        binding.channel === 'bluebubbles'
+      ) {
+        // The guided CLI carries stored binding metadata, not the immutable
+        // authorship fact from a current inbound BlueBubbles message. It must
+        // not manufacture that missing authority from self-thread membership.
+        return false;
+      }
       const group = getRegisteredGroup(binding.chatId);
       return Boolean(
         group &&

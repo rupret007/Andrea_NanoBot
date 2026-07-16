@@ -34,6 +34,7 @@ import {
   upsertToolReliabilityRollup,
 } from './db.js';
 import type { AgiGauntletResultRecord } from './types.js';
+import { runtimeCapabilityRegistry } from './runtime-capability-registry.js';
 
 // ---------------------------------------------------------------------------
 // v32 AGI-Style Benchmark Gauntlet
@@ -452,6 +453,7 @@ export function runAgiGauntlet(
 
   // --- Scenario 11: The Optional Surface Boundary -------------------------
   {
+    const capabilityRegistry = runtimeCapabilityRegistry;
     const integrationReport: IntegrationDoctorReport = {
       generatedAt,
       summary: {
@@ -537,6 +539,7 @@ export function runAgiGauntlet(
         ALEXA_SKILL_ID: 'set',
       },
       integrationReport,
+      capabilityRegistry,
       providerHealthSnapshots: [
         {
           providerId: 'brave_search',

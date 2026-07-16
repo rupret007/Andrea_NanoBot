@@ -55,7 +55,8 @@ Andrea only evaluates rules while it is already handling a user-visible flow.
 ### Always Requires Fresh Approval
 
 - calendar-event creation
-- sending a message externally
+- sending a message externally (a direct, exact owner send imperative is fresh
+  approval; a suggested or staged draft still needs a later send decision)
 - changing commitments
 - closing or archiving important threads or missions
 - deleting saved context or disabling important tracking
@@ -67,7 +68,10 @@ Andrea only evaluates rules while it is already handling a user-visible flow.
 - destructive privileged operations
 
 The rule engine can reduce friction, but it cannot bypass those safety classes.
-Messaging now uses that boundary explicitly through the Messaging Trust Ladder, including the rule that external send stays approval-first unless an extremely narrow BlueBubbles same-thread safe-send rule is in play.
+Messaging now uses that boundary through the Messaging Trust Ladder and runtime
+capability registry. External sends stay approval-led: either the owner gives a
+direct exact send imperative, or a suggested/staged draft waits for a later send
+decision. Delegation remains limited to the narrow BlueBubbles same-thread rule.
 
 ## Rule Model
 

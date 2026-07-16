@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import '../src/channels/index.js';
+
 import { _initTestDatabase, initDatabase } from '../src/db.js';
 import {
   buildIntelligenceProgressReport,
@@ -18,6 +20,10 @@ import {
   runIntelligenceRegressionHarness,
   type IntelligenceRegressionHarnessReport,
 } from '../src/intelligence-regression-harness.js';
+import { registerProductionRuntimeCapabilitySurfaces } from '../src/runtime-capability-production-surfaces.js';
+import { runtimeCapabilityRegistry } from '../src/runtime-capability-registry.js';
+
+registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
 
 const args = process.argv.slice(2);
 const json = args.includes('--json');

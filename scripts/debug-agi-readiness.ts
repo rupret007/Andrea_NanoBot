@@ -1,3 +1,5 @@
+import '../src/channels/index.js';
+
 import { _initTestDatabase, initDatabase } from '../src/db.js';
 import {
   formatAgiReadinessReport,
@@ -7,6 +9,10 @@ import {
   buildAgiLeapReadinessReport,
   formatAgiLeapReadinessReport,
 } from '../src/agi-leap-readiness.js';
+import { registerProductionRuntimeCapabilitySurfaces } from '../src/runtime-capability-production-surfaces.js';
+import { runtimeCapabilityRegistry } from '../src/runtime-capability-registry.js';
+
+registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
 
 const args = process.argv.slice(2);
 const json = args.includes('--json');

@@ -214,6 +214,40 @@ describe('BlueBubbles recipient directory hydration', () => {
     ).resolves.toEqual({ state: 'missing' });
   });
 
+  it.each([
+    ['invalid JSON', 'not-json'],
+    ['a non-array data field', JSON.stringify({ data: null })],
+  ])(
+    'rejects a successful contact response containing %s',
+    async (_description, responseBody) => {
+      globalThis.fetch = vi.fn(
+        async () => new Response(responseBody, { status: 200 }),
+      ) as typeof fetch;
+
+      await expect(
+        resolveBlueBubblesContactRecipient(
+          { baseUrl: 'http://bluebubbles.test', password: 'test-secret' },
+          'Travis',
+        ),
+      ).rejects.toThrow(
+        'BlueBubbles contact lookup returned an invalid response shape.',
+      );
+    },
+  );
+
+  it('treats a valid empty contact data array as a normal missing result', async () => {
+    globalThis.fetch = vi.fn(
+      async () => new Response(JSON.stringify({ data: [] }), { status: 200 }),
+    ) as typeof fetch;
+
+    await expect(
+      resolveBlueBubblesContactRecipient(
+        { baseUrl: 'http://bluebubbles.test', password: 'test-secret' },
+        'Travis',
+      ),
+    ).resolves.toEqual({ state: 'missing' });
+  });
+
   it('does not overwrite an existing label or choose between conflicting contacts', async () => {
     storeChatMetadata(
       'bb:iMessage;-;+12025550123',

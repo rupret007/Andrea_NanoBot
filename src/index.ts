@@ -115,10 +115,12 @@ import { startIpcWatcher } from './ipc.js';
 import {
   BlueBubblesChannel,
   primeBlueBubblesChatHistory,
-  resolveBlueBubblesContactRecipient,
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
 import { startBlueBubblesControlServer } from './bluebubbles-control-server.js';
+import { recordBlueBubblesOutboundDeliveryEvidence } from './bluebubbles-delivery-recovery.js';
+import { BlueBubblesReceiptInboxConsumer } from './bluebubbles-receipt-inbox-consumer.js';
+import { BlueBubblesReceiptInboxStore } from './bluebubbles-receipt-inbox-store.js';
 import { startOwnerCockpitServer } from './owner-cockpit-server.js';
 import { planSimpleReminder } from './local-reminder.js';
 import { persistReminderOperation } from './reminder-operation.js';
@@ -190,7 +192,11 @@ import {
   writeAssistantHealthState,
   writeAssistantReadyState,
 } from './host-control.js';
-import { assessBuildProvenance } from './build-provenance.js';
+import {
+  assessBuildProvenance,
+  requireVerifiedRuntimeBuild,
+  resolveRuntimeArtifactContext,
+} from './build-provenance.js';
 import {
   emitAndreaPlatformDiagnosis,
   emitAndreaPlatformProofEvent,
@@ -248,6 +254,7 @@ import {
   canonicalizeBlueBubblesSelfThreadJid,
   expandBlueBubblesLogicalSelfThreadJids,
   isBlueBubblesSelfThreadAliasJid,
+  isConfiguredBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
 import { isTrustedOwnerReviewSurface } from './trusted-owner-review-surface.js';
 import { dispatchCapabilityApprenticeshipOwnerAction } from './capability-apprenticeship-chat.js';
@@ -312,16 +319,12 @@ import {
   isMessageActionBoundToPresentationSurface,
   interpretMessageActionFollowup,
   linkMessageActionCognitiveContext,
-  parseExplicitBlueBubblesThreadSendIntent,
-  resolveBlueBubblesThreadTargetByName,
+  reconcileBlueBubblesUnverifiedMessageActions,
   resolveMessageActionForFollowup,
   startBlueBubblesProofDrill,
   type MessageActionOperation,
 } from './message-actions.js';
-import {
-  stageBlueBubblesOutboundRequest,
-  type StageBlueBubblesOutboundRequestParams,
-} from './bluebubbles-outbound-request.js';
+import { executeBlueBubblesOutboundTurn } from './bluebubbles-outbound-turn.js';
 import {
   applyOutcomeReviewControl,
   buildOutcomeReviewResponse,
@@ -617,6 +620,7 @@ import {
   classifyAssistantRequest,
   maybeBuildOpenClawPresenceReply,
 } from './assistant-routing.js';
+import { parseAssistantMessageActionIntent } from './assistant-action-intent.js';
 import {
   analyzeAgentError,
   buildRepeatedAgentErrorMessage,
@@ -872,6 +876,10 @@ import {
 } from './main-chat-audit.js';
 import { bootstrapAgi } from './agi-bootstrap.js';
 import type { AgiRuntime } from './agi-runtime.js';
+import { registerProductionRuntimeCapabilitySurfaces } from './runtime-capability-production-surfaces.js';
+import { runtimeCapabilityRegistry } from './runtime-capability-registry.js';
+
+registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -1006,8 +1014,12 @@ interface DelegationRuleContextState {
   presentationMessageId?: string | null;
 }
 
-const ACTIVE_REPO_ROOT = process.cwd();
-const ACTIVE_ENTRY_PATH = path.resolve(ACTIVE_REPO_ROOT, 'dist', 'index.js');
+const ACTIVE_RUNTIME_ARTIFACT = resolveRuntimeArtifactContext(
+  import.meta.url,
+  'index.js',
+);
+const ACTIVE_REPO_ROOT = ACTIVE_RUNTIME_ARTIFACT.projectRoot;
+const ACTIVE_ENTRY_PATH = ACTIVE_RUNTIME_ARTIFACT.modulePath;
 const ACTIVE_ENV_PATH = path.resolve(ACTIVE_REPO_ROOT, '.env');
 const ACTIVE_STORE_DB_PATH = path.join(STORE_DIR, 'messages.db');
 const ACTIVE_GIT_BRANCH = readGitRef(['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -2228,11 +2240,22 @@ async function applyAndPresentActionBundle(params: {
   chatJid: string;
   bundleId: string;
   operation: ActionBundleOperation;
+  readonly ownerAuthored?: boolean | null;
   now?: Date;
 }): Promise<boolean> {
   const group = resolveCompanionBinding(params.chatJid)?.group;
   const channel = findChannel(channels, params.chatJid);
   if (!group || !channel) return false;
+  if (
+    !isTrustedOwnerReviewSurface({
+      channelName: channel.name,
+      chatJid: params.chatJid,
+      group,
+      ownerAuthored: params.ownerAuthored,
+    })
+  ) {
+    return true;
+  }
   const conversationChannel =
     channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram';
   const result = await applyActionBundleOperation(
@@ -2327,6 +2350,8 @@ async function applyAndPresentMessageAction(params: {
   chatJid: string;
   messageActionId: string;
   operation: MessageActionOperation;
+  /** Exact authorship fact from the current inbound platform message. */
+  readonly ownerAuthored?: boolean | null;
   now?: Date;
 }): Promise<boolean> {
   const group = resolveCompanionBinding(params.chatJid)?.group;
@@ -2343,6 +2368,7 @@ async function applyAndPresentMessageAction(params: {
     channelName: channel.name,
     chatJid: params.chatJid,
     group,
+    ownerAuthored: params.ownerAuthored,
   });
   if (
     !action ||
@@ -2469,11 +2495,22 @@ async function applyAndPresentOutcomeReviewControl(params: {
     | { kind: 'remind_tomorrow' }
     | { kind: 'hide' }
     | { kind: 'show' };
+  readonly ownerAuthored?: boolean | null;
   now?: Date;
 }): Promise<boolean> {
   const group = resolveCompanionBinding(params.chatJid)?.group;
   const channel = findChannel(channels, params.chatJid);
   if (!group || !channel) return false;
+  if (
+    !isTrustedOwnerReviewSurface({
+      channelName: channel.name,
+      chatJid: params.chatJid,
+      group,
+      ownerAuthored: params.ownerAuthored,
+    })
+  ) {
+    return true;
+  }
 
   const result = applyOutcomeReviewControl({
     groupFolder: group.folder,
@@ -2584,11 +2621,22 @@ async function applyAndPresentDelegationRuleCommand(params: {
     | 'why'
     | 'use_here';
   targetId: string;
+  readonly ownerAuthored?: boolean | null;
   now?: Date;
 }): Promise<boolean> {
   const group = resolveCompanionBinding(params.chatJid)?.group;
   const channel = findChannel(channels, params.chatJid);
   if (!group || !channel) return false;
+  if (
+    !isTrustedOwnerReviewSurface({
+      channelName: channel.name,
+      chatJid: params.chatJid,
+      group,
+      ownerAuthored: params.ownerAuthored,
+    })
+  ) {
+    return true;
+  }
   const now = params.now || new Date();
   const context = getDelegationRuleContext(params.chatJid, now);
 
@@ -4252,7 +4300,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     mainControlChat: isOpenClawOwnerControlSurface({
       mainControlChat: false,
       channelName: channel.name,
-      blueBubblesSelfThread: isBlueBubblesSelfThreadAliasJid(chatJid),
+      blueBubblesSelfThread:
+        queuedLatestMessage?.is_from_me === true &&
+        isConfiguredBlueBubblesSelfThreadAliasJid(chatJid),
     }),
     delegationEnabled: isOpenClawDelegationEnabled(),
   });
@@ -4424,6 +4474,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
 
   const latestUserMessage = missedMessages.at(-1);
+  const currentTurnOwnerAuthored = latestUserMessage?.is_from_me === true;
   const rawLastContent = latestUserMessage?.content ?? '';
   let lastContent = chatJid.startsWith('bb:')
     ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
@@ -4555,6 +4606,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
   const shouldDeferPlatformHoldForLocalOutcomeReview =
     shouldHandleOutcomeReviewLocally;
+  const localBlueBubblesOutboundIntent =
+    parseAssistantMessageActionIntent(lastContent);
+  const shouldDeferPlatformHoldForExplicitBlueBubblesExecution = Boolean(
+    localBlueBubblesOutboundIntent?.kind === 'message_send' &&
+    ['execute', 'draft', 'prepare'].includes(
+      localBlueBubblesOutboundIntent.mode,
+    ),
+  );
   const shouldDeferPlatformHoldForLocalUsefulCapability =
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant') &&
@@ -4566,6 +4625,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       shouldDeferPlatformHoldForLocalCalendarLookup ||
       shouldDeferPlatformHoldForLocalMessageAction ||
       shouldDeferPlatformHoldForLocalOutcomeReview ||
+      shouldDeferPlatformHoldForExplicitBlueBubblesExecution ||
       compoundCalendarResearchPlan ||
       compoundReminderResearchPlan,
     );
@@ -4627,6 +4687,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         channelName: channel.name,
         chatJid,
         group,
+        ownerAuthored: currentTurnOwnerAuthored,
       });
     const shouldAttachFeedbackButtons =
       shouldRecordFeedback && channel.name === 'telegram';
@@ -5223,6 +5284,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       chatJid,
       bundleId: snapshot.bundle.bundleId,
       operation,
+      ownerAuthored: currentTurnOwnerAuthored,
       now,
     });
   };
@@ -5273,6 +5335,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           chatJid,
           messageActionId: started.action.messageActionId,
           operation,
+          ownerAuthored: currentTurnOwnerAuthored,
           now,
         });
       }
@@ -5310,6 +5373,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       chatJid,
       messageActionId: messageAction.messageActionId,
       operation,
+      ownerAuthored: currentTurnOwnerAuthored,
       now,
     });
   };
@@ -5320,81 +5384,89 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     ) {
       return false;
     }
-    let recipientResolution: StageBlueBubblesOutboundRequestParams['recipientResolution'];
-    const stageRequest = () =>
-      stageBlueBubblesOutboundRequest({
+    const blueBubblesChannel = channels.find(
+      (candidate): candidate is BlueBubblesChannel =>
+        candidate instanceof BlueBubblesChannel,
+    );
+    const result = await executeBlueBubblesOutboundTurn({
+      groupFolder: group.folder,
+      channel: conversationChannel,
+      chatJid,
+      group,
+      ownerAuthored: currentTurnOwnerAuthored,
+      rawText: lastContent,
+      inboundMessageId: latestUserMessage?.id || null,
+      now,
+      blueBubblesChannel,
+      executionDeps: {
         groupFolder: group.folder,
         channel: conversationChannel,
         chatJid,
-        group,
-        rawText: lastContent,
-        inboundMessageId: latestUserMessage?.id || null,
-        recipientResolution,
-        now,
-      });
-    let staged = stageRequest();
-    if (staged.handled && staged.state === 'missing_target') {
-      const explicitIntent =
-        parseExplicitBlueBubblesThreadSendIntent(lastContent);
-      if (explicitIntent) {
-        try {
-          const contactResolution = await resolveBlueBubblesContactRecipient(
-            resolveBlueBubblesConfig(),
-            explicitIntent.targetLabel,
-          );
-          if (contactResolution.state === 'resolved') {
-            const existingConversation = resolveBlueBubblesThreadTargetByName(
-              contactResolution.target.blueBubblesCreateChatAddress,
-            );
-            recipientResolution =
-              existingConversation.state === 'resolved'
-                ? existingConversation
-                : contactResolution;
-          } else {
-            recipientResolution = contactResolution;
-          }
-          staged = stageRequest();
-          // Contact enrichment is optional; an unavailable local directory
-          // must preserve the explicit fail-closed response rather than turn
-          // the whole Telegram turn into a retry loop.
-          // eslint-disable-next-line no-catch-all/no-catch-all
-        } catch (error) {
-          logger.warn(
-            { component: 'assistant', err: error },
-            'BlueBubbles exact-contact lookup failed; retaining the safe unresolved-target response',
-          );
-        }
-      }
+        currentTime: now,
+        sendToTarget: (targetChannel, targetChatJid, text, options) =>
+          sendCompanionHandoffMessage(
+            targetChannel,
+            targetChatJid,
+            text,
+            options,
+          ),
+      },
+      onRefreshFailure: (error) =>
+        logger.warn(
+          { component: 'assistant', err: error },
+          'BlueBubbles explicit-send transport refresh failed',
+        ),
+      onRecipientLookupFailure: (error) =>
+        logger.warn(
+          { component: 'assistant', err: error },
+          'BlueBubbles exact live-contact validation failed; dispatch blocked',
+        ),
+    });
+    if (!result.handled) return false;
+    if (
+      conversationChannel === 'bluebubbles' &&
+      currentTurnOwnerAuthored !== true &&
+      result.state === 'restricted'
+    ) {
+      logger.info(
+        { chatJid, messageId: latestUserMessage?.id || null },
+        'Ignored non-owner-authored BlueBubbles outbound instruction',
+      );
+      return true;
     }
-    if (!staged.handled) return false;
-    if (staged.state !== 'staged') {
+    if (result.state !== 'staged') {
       await sendAssistantReplyWithFeedback({
-        text: staged.replyText,
-        routeKey: `bluebubbles.outbound.${staged.state}`,
-        capabilityId: 'communication.draft_reply',
+        text: result.replyText,
+        routeKey: `bluebubbles.outbound.${result.state}`,
+        capabilityId: 'messages.send.bluebubbles',
         handlerKind: 'local_bluebubbles_outbound_request',
         responseSource: 'local_companion',
         traceReason:
-          'handled an explicit outbound Messages request without creating or sending an unsafe action',
+          result.state === 'sent'
+            ? 'executed an explicitly authorized BlueBubbles send with a verified provider receipt'
+            : 'grounded the BlueBubbles execution response in the authoritative capability or delivery state',
         allowFeedback: false,
+        ...('action' in result
+          ? { linkedRefs: { messageActionId: result.action.messageActionId } }
+          : {}),
         latencyTargetClass: 'local_command',
       });
       return true;
     }
 
     const sent = await sendAssistantReplyWithFeedback({
-      text: staged.presentation.text,
+      text: result.presentation.text,
       sendOptions:
         conversationChannel === 'telegram'
-          ? { inlineActionRows: staged.presentation.inlineActionRows }
+          ? { inlineActionRows: result.presentation.inlineActionRows }
           : {},
       routeKey: 'bluebubbles.outbound.staged',
       capabilityId: 'communication.draft_reply',
       handlerKind: 'local_bluebubbles_outbound_request',
       responseSource: 'local_companion',
       traceReason:
-        'staged an exact recipient-bound BlueBubbles draft for fresh owner approval',
-      linkedRefs: { messageActionId: staged.action.messageActionId },
+        'staged an exact recipient-bound BlueBubbles draft because the owner asked to draft or prepare rather than execute',
+      linkedRefs: { messageActionId: result.action.messageActionId },
       preserveStructuredText: true,
       latencyTargetClass: 'local_command',
     });
@@ -5402,12 +5474,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       syncBlueBubblesMessageActionPresentation({
         groupFolder: group.folder,
         chatJid,
-        messageActionId: staged.action.messageActionId,
+        messageActionId: result.action.messageActionId,
         platformMessageId: sent.platformMessageId || null,
         now,
       });
     } else {
-      updateMessageAction(staged.action.messageActionId, {
+      updateMessageAction(result.action.messageActionId, {
         presentationMessageId:
           sent.platformMessageId || sent.platformMessageIds?.[0] || null,
         presentationChatJid: chatJid,
@@ -5468,6 +5540,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       chatJid,
       outcomeId: targetOutcomeId,
       control,
+      ownerAuthored: currentTurnOwnerAuthored,
       now,
     });
   };
@@ -5530,6 +5603,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 ? 'why'
                 : 'always_ask',
         targetId: targetRuleId,
+        ownerAuthored: currentTurnOwnerAuthored,
         now,
       });
     }
@@ -6633,6 +6707,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 channelName: conversationChannel,
                 chatJid,
                 group,
+                ownerAuthored: currentTurnOwnerAuthored,
               }),
               currentMessageId: latestUserMessage?.id,
               now,
@@ -8692,6 +8767,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             channelName: conversationChannel,
             chatJid,
             group,
+            ownerAuthored: currentTurnOwnerAuthored,
           }),
           currentMessageId: latestUserMessage?.id,
           currentAttachmentIds,
@@ -8834,6 +8910,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             chatJid,
             messageActionId: result.messageAction.messageActionId,
             operation: { kind: 'send' },
+            ownerAuthored: currentTurnOwnerAuthored,
             now,
           });
         } else {
@@ -9491,14 +9568,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const tryHandleCapabilityApprenticeshipOwnerAction =
     async (): Promise<boolean> => {
-      const result = dispatchCapabilityApprenticeshipOwnerAction({
+      const ownerActionInput = {
         text: lastContent,
         channelName: channel.name,
         chatJid,
         group,
+        ownerAuthored: currentTurnOwnerAuthored,
         messageId: latestUserMessage?.id || null,
         now,
-      });
+      };
+      const result =
+        dispatchCapabilityApprenticeshipOwnerAction(ownerActionInput);
       if (!result.handled || !result.text) return false;
       await sendAssistantReplyWithFeedback({
         text: result.text,
@@ -9517,13 +9597,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     };
 
   const tryHandleActiveReleaseReadinessReuse = async (): Promise<boolean> => {
-    const result = await dispatchActiveReleaseReadinessReuse({
+    const activeReuseInput = {
       text: lastContent,
       channelName: channel.name,
       chatJid,
       group,
+      ownerAuthored: currentTurnOwnerAuthored,
       now,
-    });
+    };
+    const result = await dispatchActiveReleaseReadinessReuse(activeReuseInput);
     if (!result.handled || !result.text) return false;
     await sendAssistantReplyWithFeedback({
       text: result.text,
@@ -9547,6 +9629,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         channelName: channel.name,
         chatJid,
         group,
+        ownerAuthored: currentTurnOwnerAuthored,
       });
       if (!privateReviewSurface) {
         await sendAssistantReplyWithFeedback({
@@ -10210,6 +10293,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               channelName: conversationChannel,
               chatJid,
               group,
+              ownerAuthored: currentTurnOwnerAuthored,
             }),
             currentMessageId: latestUserMessage?.id,
             now,
@@ -11919,6 +12003,16 @@ function emitAndreaPlatformTransportTruths(
 }
 
 async function main(): Promise<void> {
+  if (ACTIVE_RUNTIME_ARTIFACT.isCompiledArtifact) {
+    process.env.ANDREA_BUILD_ID = requireVerifiedRuntimeBuild({
+      projectRoot: ACTIVE_REPO_ROOT,
+      expectedGitCommit: ACTIVE_GIT_COMMIT,
+      runnerBuildId: process.env.ANDREA_BUILD_ID,
+      runtimeName: 'Compiled Andrea runtime',
+    });
+  } else if (!process.env.ANDREA_BUILD_ID?.trim()) {
+    process.env.ANDREA_BUILD_ID = 'development-source';
+  }
   const appVersion = resolveAppVersion();
   const channelHealthByName = new Map<string, ChannelHealthSnapshot>();
   let assistantHealthInterval: ReturnType<typeof setInterval> | null = null;
@@ -12286,6 +12380,9 @@ async function main(): Promise<void> {
   let blueBubblesControlServer: ReturnType<
     typeof startBlueBubblesControlServer
   > = null;
+  let blueBubblesReceiptInboxStore: BlueBubblesReceiptInboxStore | null = null;
+  let blueBubblesReceiptInboxConsumer: BlueBubblesReceiptInboxConsumer | null =
+    null;
   let ownerCockpitServer: ReturnType<typeof startOwnerCockpitServer> = null;
 
   // Graceful shutdown handlers
@@ -12331,6 +12428,25 @@ async function main(): Promise<void> {
       ).catch((err) =>
         logger.warn({ err }, 'BlueBubbles control API shutdown failed'),
       );
+    }
+    if (blueBubblesReceiptInboxConsumer) {
+      await blueBubblesReceiptInboxConsumer
+        .shutdown()
+        .catch((err) =>
+          logger.warn(
+            { err },
+            'BlueBubbles receipt inbox consumer shutdown failed',
+          ),
+        );
+      blueBubblesReceiptInboxConsumer = null;
+    }
+    if (blueBubblesReceiptInboxStore) {
+      try {
+        blueBubblesReceiptInboxStore.close();
+      } catch (err) {
+        logger.warn({ err }, 'BlueBubbles receipt inbox store shutdown failed');
+      }
+      blueBubblesReceiptInboxStore = null;
     }
     if (ownerCockpitServer) {
       await new Promise<void>((resolve) =>
@@ -13514,6 +13630,7 @@ async function main(): Promise<void> {
       channelName: channel?.name,
       chatJid,
       group,
+      ownerAuthored: msg.is_from_me === true,
     });
     if (!channel || !group || !authorizedFeedbackSurface) {
       return true;
@@ -18403,7 +18520,75 @@ async function main(): Promise<void> {
     allowedChatGuid: blueBubblesConfig.allowedChatGuid,
     groupFolder: blueBubblesConfig.groupFolder,
   };
+  if (blueBubblesConfig.receiptInboxEnabled) {
+    try {
+      blueBubblesReceiptInboxStore = new BlueBubblesReceiptInboxStore(
+        blueBubblesConfig.receiptInboxDatabasePath,
+      );
+      blueBubblesReceiptInboxConsumer = new BlueBubblesReceiptInboxConsumer({
+        store: blueBubblesReceiptInboxStore,
+        consumerId: `andrea-main:${process.pid}:${randomUUID()}`,
+        acceptReceipt: (message) => {
+          const groupFolders = [
+            ...new Set(
+              Object.values(registeredGroups)
+                .map((entry) => entry.folder)
+                .filter(Boolean),
+            ),
+          ];
+          const recovery = recordBlueBubblesOutboundDeliveryEvidence({
+            chatJid: message.chat_jid,
+            message,
+            groupFolders,
+          });
+          if (recovery.reconciled > 0) {
+            logger.info(
+              {
+                component: 'bluebubbles_receipt_inbox',
+                providerMessageId: message.id,
+                ...recovery,
+              },
+              'Reconciled delayed BlueBubbles success from the durable receipt inbox',
+            );
+          }
+          writeCurrentRuntimeAuditState();
+          return { accepted: recovery.accepted };
+        },
+        onDrainError: (error) => {
+          logger.warn(
+            { component: 'bluebubbles_receipt_inbox', err: error },
+            'BlueBubbles receipt inbox drain failed; the durable row remains pending',
+          );
+        },
+      });
+      const startupDrain = await blueBubblesReceiptInboxConsumer.drainOnce();
+      blueBubblesReceiptInboxConsumer.start();
+      logger.info(
+        {
+          component: 'bluebubbles_receipt_inbox',
+          databasePath: blueBubblesConfig.receiptInboxDatabasePath,
+          ...startupDrain,
+        },
+        'Started the durable BlueBubbles receipt inbox consumer',
+      );
+    } catch (error) {
+      blueBubblesReceiptInboxConsumer?.stop();
+      blueBubblesReceiptInboxConsumer = null;
+      try {
+        blueBubblesReceiptInboxStore?.close();
+      } catch (_closeError) {
+        // Preserve the startup failure as the actionable error.
+      }
+      blueBubblesReceiptInboxStore = null;
+      logger.error(
+        { component: 'bluebubbles_receipt_inbox', err: error },
+        'Durable BlueBubbles receipt consumer could not start; BlueBubbles sends will remain fail-closed',
+      );
+    }
+  }
   const channelOpts = {
+    isBlueBubblesReceiptConsumerReady: () =>
+      blueBubblesReceiptInboxConsumer?.isRunning() === true,
     onHealthUpdate: (snapshot: ChannelHealthSnapshot) => {
       channelHealthByName.set(snapshot.name, snapshot);
       writeCurrentAssistantHealth();
@@ -18500,6 +18685,14 @@ async function main(): Promise<void> {
       const mainControlChat =
         isMainControlChat(registeredGroups[chatJid]) ||
         getRegisteredMainChat()?.jid === chatJid;
+      const inboundChannel = findChannel(channels, chatJid);
+      const inboundGroup = resolveCompanionBinding(chatJid)?.group;
+      const trustedInboundOwnerSurface = isTrustedOwnerReviewSurface({
+        channelName: inboundChannel?.name,
+        chatJid,
+        group: inboundGroup,
+        ownerAuthored: msg.is_from_me === true,
+      });
 
       const allowlistCfg = loadSenderAllowlist();
       if (
@@ -18573,6 +18766,7 @@ async function main(): Promise<void> {
         /^\/agi-(confirm|decline)\s+(\S+)/i,
       );
       if (agiConfirmMatch) {
+        if (!trustedInboundOwnerSurface) return;
         const channel = findChannel(channels, chatJid);
         if (channel) {
           handleAgiConfirmationCommand({
@@ -18613,7 +18807,10 @@ async function main(): Promise<void> {
         rawTrimmed,
         await refreshRecentResponseFeedbackTruth({ chatJid, limit: 10 }),
       );
-      if (naturalRepairApproval.state === 'ready') {
+      if (
+        naturalRepairApproval.state === 'ready' &&
+        trustedInboundOwnerSurface
+      ) {
         if (naturalRepairApproval.absorbedRecord) {
           const absorbed = naturalRepairApproval.absorbedRecord;
           updateResponseFeedback(naturalRepairApproval.record.feedbackId, {
@@ -18683,6 +18880,7 @@ async function main(): Promise<void> {
         channelName: naturalVerdictChannel?.name,
         chatJid,
         group: resolveCompanionBinding(chatJid)?.group,
+        ownerAuthored: msg.is_from_me === true,
       });
       if (naturalVerdictSurface) {
         const candidateChatJids =
@@ -18757,7 +18955,9 @@ async function main(): Promise<void> {
       const openClawOwnerControlSurface = isOpenClawOwnerControlSurface({
         mainControlChat,
         channelName: openClawChannel?.name,
-        blueBubblesSelfThread: isBlueBubblesSelfThreadAliasJid(chatJid),
+        blueBubblesSelfThread:
+          msg.is_from_me === true &&
+          isConfiguredBlueBubblesSelfThreadAliasJid(chatJid),
       });
       const openClawRoute = resolveOpenClawDelegationRoute({
         rawMessage: rawTrimmed,
@@ -18798,6 +18998,7 @@ async function main(): Promise<void> {
           chatJid,
           bundleId: bundleCommand.bundleId,
           operation: bundleCommand.operation,
+          ownerAuthored: msg.is_from_me === true,
           now: new Date(),
         }).catch((err) =>
           logger.error({ err, chatJid }, 'Follow-through review command error'),
@@ -18811,6 +19012,7 @@ async function main(): Promise<void> {
           chatJid,
           messageActionId: messageActionCommand.messageActionId,
           operation: messageActionCommand.operation,
+          ownerAuthored: msg.is_from_me === true,
           now: new Date(),
         }).catch((err) =>
           logger.error({ err, chatJid }, 'Message action command error'),
@@ -18824,6 +19026,7 @@ async function main(): Promise<void> {
           chatJid,
           outcomeId: reviewCommand.outcomeId,
           control: reviewCommand.control,
+          ownerAuthored: msg.is_from_me === true,
           now: new Date(),
         }).catch((err) =>
           logger.error({ err, chatJid }, 'Outcome review command error'),
@@ -18837,6 +19040,7 @@ async function main(): Promise<void> {
           chatJid,
           command: delegationRuleCommand.command,
           targetId: delegationRuleCommand.targetId,
+          ownerAuthored: msg.is_from_me === true,
           now: new Date(),
         }).catch((err) =>
           logger.error({ err, chatJid }, 'Delegation rule command error'),
@@ -19612,6 +19816,13 @@ async function main(): Promise<void> {
         }
         const companionNow = new Date();
         if (isBlueBubblesProofDrillStartRequest(msg.content)) {
+          if (!trustedInboundOwnerSurface) {
+            logger.info(
+              { chatJid, messageId: msg.id },
+              'Ignored non-owner-authored BlueBubbles proof instruction',
+            );
+            return;
+          }
           const blueBubblesChannel = findChannel(channels, chatJid);
           if (blueBubblesChannel?.name !== 'bluebubbles') {
             logger.warn(
@@ -19786,7 +19997,9 @@ async function main(): Promise<void> {
             mainControlChat: isOpenClawOwnerControlSurface({
               mainControlChat: false,
               channelName: 'bluebubbles',
-              blueBubblesSelfThread: isBlueBubblesSelfThreadAliasJid(chatJid),
+              blueBubblesSelfThread:
+                msg.is_from_me === true &&
+                isConfiguredBlueBubblesSelfThreadAliasJid(chatJid),
             }),
             delegationEnabled: isOpenClawDelegationEnabled(),
           });
@@ -19884,6 +20097,41 @@ async function main(): Promise<void> {
     }
     channels.push(channel);
     await channel.connect();
+  }
+  const blueBubblesChannelForRecovery = channels.find(
+    (channel): channel is BlueBubblesChannel =>
+      channel instanceof BlueBubblesChannel,
+  );
+  if (blueBubblesChannelForRecovery?.isConnected()) {
+    try {
+      await blueBubblesChannelForRecovery.primeRecentHistory({
+        limit: 200,
+        recoverUnacceptedClaims: true,
+      });
+      const groupFolders = [
+        ...new Set(
+          Object.values(registeredGroups)
+            .map((entry) => entry.folder)
+            .filter(Boolean),
+        ),
+      ];
+      for (const groupFolder of groupFolders) {
+        const recovery = reconcileBlueBubblesUnverifiedMessageActions({
+          groupFolder,
+        });
+        if (recovery.inspected > 0) {
+          logger.info(
+            { component: 'bluebubbles_recovery', groupFolder, ...recovery },
+            'Reconciled fenced BlueBubbles message actions from exact recent provider history',
+          );
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        { component: 'bluebubbles_recovery', err: error },
+        'BlueBubbles startup reconciliation was unavailable; fenced actions remain blocked from replay',
+      );
+    }
   }
   blueBubblesControlServer = startBlueBubblesControlServer({
     getChannel: () =>
@@ -20168,9 +20416,7 @@ async function main(): Promise<void> {
 
 // Guard: only run when executed directly, not when imported by tests
 const isDirectRun =
-  process.argv[1] &&
-  new URL(import.meta.url).pathname ===
-    new URL(`file://${process.argv[1]}`).pathname;
+  process.argv[1] && path.resolve(process.argv[1]) === ACTIVE_ENTRY_PATH;
 
 if (isDirectRun) {
   main().catch((err) => {

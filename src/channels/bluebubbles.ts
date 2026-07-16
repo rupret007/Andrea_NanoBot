@@ -4,6 +4,8 @@ import http, {
   type Server,
   type ServerResponse,
 } from 'http';
+import os from 'os';
+import path from 'path';
 
 import {
   type BlueBubblesDetectionState,
@@ -13,6 +15,7 @@ import {
   writeBlueBubblesMonitorState,
 } from '../bluebubbles-monitor-state.js';
 import {
+  associateMessageProviderIdempotencyKey,
   getAllChats,
   getMessageMediaAttachment,
   hasStoredMessage,
@@ -28,8 +31,20 @@ import { hasBlueBubblesAndreaMention } from '../bluebubbles-companion.js';
 import {
   expandBlueBubblesLogicalSelfThreadJids,
   getBlueBubblesCanonicalSelfThreadJid,
+  isConfiguredBlueBubblesSelfThreadAliasJid,
   isBlueBubblesSelfThreadAliasJid,
 } from '../bluebubbles-self-thread.js';
+import {
+  BLUEBUBBLES_RECEIPT_INBOX_PROTOCOL_VERSION,
+  BLUEBUBBLES_RECEIPT_INBOX_SERVICE_KIND,
+  parseBlueBubblesReceiptPayload,
+  resolveBlueBubblesReceiptInboxBuildId,
+} from '../bluebubbles-receipt-inbox-service.js';
+import {
+  buildBlueBubblesReceiptInboxConfigIdentity,
+  BlueBubblesReceiptInboxStore,
+  type CanonicalSelfThreadIngressClaim,
+} from '../bluebubbles-receipt-inbox-store.js';
 import {
   buildBlueBubblesIngressFingerprint,
   isBlueBubblesAndreaBotEcho,
@@ -44,7 +59,11 @@ import {
   MediaCacheLimitError,
   readMediaResponseBytes,
 } from '../media-cache.js';
-import { ChannelDeliveryUnverifiedError } from '../channel-delivery.js';
+import {
+  ChannelDeliveryRejectedBeforeDispatchError,
+  ChannelDeliveryUnverifiedError,
+  isChannelDeliveryUnverifiedError,
+} from '../channel-delivery.js';
 import type {
   BlueBubblesChannelControlSnapshot,
   BlueBubblesReplyGateMode,
@@ -75,6 +94,7 @@ const DEFAULT_BLUEBUBBLES_PORT = 4305;
 const DEFAULT_BLUEBUBBLES_CHAT_SCOPE: BlueBubblesChatScope = 'allowlist';
 const BLUEBUBBLES_OUTBOUND_SENDER_LABEL = 'Andrea:';
 const BLUEBUBBLES_STARTUP_FETCH_TIMEOUT_MS = 5_000;
+const BLUEBUBBLES_SEND_TEXT_TIMEOUT_MS = 15_000;
 const BLUEBUBBLES_CREATE_CHAT_TIMEOUT_MS = 40_000;
 const BLUEBUBBLES_SHADOW_POLL_INTERVAL_MS = 75_000;
 const BLUEBUBBLES_MISSED_INBOUND_GRACE_MS = 2 * 60 * 1_000;
@@ -85,6 +105,55 @@ const BLUEBUBBLES_FALLBACK_COOLDOWN_MS = 6 * 60 * 60 * 1_000;
 const BLUEBUBBLES_FALLBACK_EVIDENCE_THRESHOLD = 2;
 const BLUEBUBBLES_INGRESS_FINGERPRINT_WINDOW_MS = 2 * 60 * 1_000;
 const BLUEBUBBLES_MIRRORED_MESSAGE_TIMESTAMP_TOLERANCE_MS = 2_000;
+const BLUEBUBBLES_RECEIPT_INBOX_HEALTH_TIMEOUT_MS = 2_000;
+const BLUEBUBBLES_HISTORY_FALLBACK_TOTAL_TIMEOUT_MS = 15_000;
+
+export type BlueBubblesReceiptInboxReadinessState =
+  | 'not_required'
+  | 'not_configured'
+  | 'reachable'
+  | 'unreachable';
+
+export interface BlueBubblesReceiptInboxReadiness {
+  state: BlueBubblesReceiptInboxReadinessState;
+  detail: string;
+}
+
+interface BlueBubblesChannelReceiptInboxStore {
+  claimCanonicalSelfThreadIngress(
+    input: Parameters<
+      BlueBubblesReceiptInboxStore['claimCanonicalSelfThreadIngress']
+    >[0],
+  ): CanonicalSelfThreadIngressClaim;
+  resumeCanonicalSelfThreadIngressIfExists(
+    input: Parameters<
+      BlueBubblesReceiptInboxStore['resumeCanonicalSelfThreadIngressIfExists']
+    >[0],
+  ): CanonicalSelfThreadIngressClaim | null;
+  acceptCanonicalSelfThreadIngressClaim(
+    input: Parameters<
+      BlueBubblesReceiptInboxStore['acceptCanonicalSelfThreadIngressClaim']
+    >[0],
+  ): boolean;
+  releaseCanonicalSelfThreadIngressClaim(
+    input: Parameters<
+      BlueBubblesReceiptInboxStore['releaseCanonicalSelfThreadIngressClaim']
+    >[0],
+  ): boolean;
+  persistReceipt: BlueBubblesReceiptInboxStore['persistReceipt'];
+  getHealth: BlueBubblesReceiptInboxStore['getHealth'];
+  close(): void;
+}
+
+export interface BlueBubblesChannelDurabilityDeps {
+  createReceiptInboxStore?: (
+    databasePath: string,
+  ) => BlueBubblesChannelReceiptInboxStore;
+  probeReceiptInbox?: (
+    config: BlueBubblesConfig,
+  ) => Promise<BlueBubblesReceiptInboxReadiness>;
+  historyFetchTimeoutMs?: number;
+}
 
 interface BlueBubblesIngressFingerprintObservation {
   observedAtMs: number;
@@ -105,6 +174,22 @@ function normalizeBaseUrl(value: string | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
   return trimmed.replace(/\/+$/, '');
+}
+
+function resolveHomeAwarePath(value: string): string {
+  const configured = value.trim();
+  if (configured === '~') return os.homedir();
+  if (configured.startsWith('~/')) {
+    return path.resolve(os.homedir(), configured.slice(2));
+  }
+  return path.resolve(configured);
+}
+
+function resolveAndreaStateDirectory(value: string | undefined): string {
+  const configured = value?.trim();
+  return configured
+    ? resolveHomeAwarePath(configured)
+    : path.join(os.homedir(), '.andrea');
 }
 
 function normalizeBaseUrlCandidates(
@@ -327,7 +412,12 @@ export function redactBlueBubblesWebhookUrl(url: string): string {
 }
 
 function isBlueBubblesRoutingConfigured(config: BlueBubblesConfig): boolean {
-  if (!config.baseUrl || !config.password || !config.groupFolder) {
+  if (
+    !config.baseUrl ||
+    !config.password ||
+    !config.groupFolder ||
+    !config.webhookSecret
+  ) {
     return false;
   }
   if (config.chatScope === 'allowlist') {
@@ -444,6 +534,15 @@ export function resolveBlueBubblesConfig(
     'BLUEBUBBLES_WEBHOOK_PATH',
     'BLUEBUBBLES_WEBHOOK_SECRET',
     'BLUEBUBBLES_SEND_ENABLED',
+    'ANDREA_STATE_DIR',
+    'BLUEBUBBLES_RECEIPT_INBOX_ENABLED',
+    'BLUEBUBBLES_RECEIPT_INBOX_DB_PATH',
+    'BLUEBUBBLES_RECEIPT_INBOX_HOST',
+    'BLUEBUBBLES_RECEIPT_INBOX_PORT',
+    'BLUEBUBBLES_RECEIPT_INBOX_BASE_URL',
+    'BLUEBUBBLES_RECEIPT_INBOX_PATH',
+    'BLUEBUBBLES_RECEIPT_INBOX_WEBHOOK_PUBLIC_BASE_URL',
+    'BLUEBUBBLES_RECEIPT_INBOX_HEALTH_PATH',
   ]),
 ): BlueBubblesConfig {
   const enabled = parseBool(
@@ -455,20 +554,61 @@ export function resolveBlueBubblesConfig(
     process.env.BLUEBUBBLES_BASE_URL_CANDIDATES ||
       env.BLUEBUBBLES_BASE_URL_CANDIDATES,
   );
+  const host =
+    process.env.BLUEBUBBLES_HOST ||
+    env.BLUEBUBBLES_HOST ||
+    DEFAULT_BLUEBUBBLES_HOST;
+  const port = parsePort(
+    process.env.BLUEBUBBLES_PORT || env.BLUEBUBBLES_PORT,
+    DEFAULT_BLUEBUBBLES_PORT,
+  );
+  const receiptInboxEnabled = parseBool(
+    process.env.BLUEBUBBLES_RECEIPT_INBOX_ENABLED ||
+      env.BLUEBUBBLES_RECEIPT_INBOX_ENABLED,
+    false,
+  );
+  const receiptInboxPort = parsePort(
+    process.env.BLUEBUBBLES_RECEIPT_INBOX_PORT ||
+      env.BLUEBUBBLES_RECEIPT_INBOX_PORT,
+    port + 1,
+  );
+  const receiptInboxHost =
+    process.env.BLUEBUBBLES_RECEIPT_INBOX_HOST ||
+    env.BLUEBUBBLES_RECEIPT_INBOX_HOST ||
+    DEFAULT_BLUEBUBBLES_HOST;
+  const receiptInboxClientHost = ['0.0.0.0', '::'].includes(receiptInboxHost)
+    ? '127.0.0.1'
+    : receiptInboxHost;
+  const receiptInboxBaseUrl = receiptInboxEnabled
+    ? normalizeBaseUrl(
+        process.env.BLUEBUBBLES_RECEIPT_INBOX_BASE_URL ||
+          env.BLUEBUBBLES_RECEIPT_INBOX_BASE_URL,
+      ) || `http://${receiptInboxClientHost}:${receiptInboxPort}`
+    : null;
+  const receiptInboxHealthPath = normalizeWebhookPath(
+    process.env.BLUEBUBBLES_RECEIPT_INBOX_HEALTH_PATH ||
+      env.BLUEBUBBLES_RECEIPT_INBOX_HEALTH_PATH ||
+      '/health',
+  );
+  const receiptInboxWebhookPath = normalizeWebhookPath(
+    process.env.BLUEBUBBLES_RECEIPT_INBOX_PATH ||
+      env.BLUEBUBBLES_RECEIPT_INBOX_PATH ||
+      '/bluebubbles/receipt-inbox',
+  );
+  const receiptInboxWebhookPublicBaseUrl = receiptInboxEnabled
+    ? normalizeBaseUrl(
+        process.env.BLUEBUBBLES_RECEIPT_INBOX_WEBHOOK_PUBLIC_BASE_URL ||
+          env.BLUEBUBBLES_RECEIPT_INBOX_WEBHOOK_PUBLIC_BASE_URL,
+      ) || receiptInboxBaseUrl
+    : null;
   return {
     enabled,
     baseUrl: baseUrlCandidates[0] || null,
     baseUrlCandidates,
     password:
       process.env.BLUEBUBBLES_PASSWORD || env.BLUEBUBBLES_PASSWORD || null,
-    host:
-      process.env.BLUEBUBBLES_HOST ||
-      env.BLUEBUBBLES_HOST ||
-      DEFAULT_BLUEBUBBLES_HOST,
-    port: parsePort(
-      process.env.BLUEBUBBLES_PORT || env.BLUEBUBBLES_PORT,
-      DEFAULT_BLUEBUBBLES_PORT,
-    ),
+    host,
+    port,
     groupFolder:
       process.env.BLUEBUBBLES_GROUP_FOLDER ||
       env.BLUEBUBBLES_GROUP_FOLDER ||
@@ -515,7 +655,146 @@ export function resolveBlueBubblesConfig(
       process.env.BLUEBUBBLES_SEND_ENABLED || env.BLUEBUBBLES_SEND_ENABLED,
       false,
     ),
+    receiptInboxEnabled,
+    receiptInboxDatabasePath:
+      process.env.BLUEBUBBLES_RECEIPT_INBOX_DB_PATH ||
+      env.BLUEBUBBLES_RECEIPT_INBOX_DB_PATH
+        ? resolveHomeAwarePath(
+            process.env.BLUEBUBBLES_RECEIPT_INBOX_DB_PATH ||
+              env.BLUEBUBBLES_RECEIPT_INBOX_DB_PATH ||
+              '',
+          )
+        : path.join(
+            resolveAndreaStateDirectory(
+              process.env.ANDREA_STATE_DIR || env.ANDREA_STATE_DIR,
+            ),
+            'bluebubbles',
+            'receipt-inbox.sqlite3',
+          ),
+    receiptInboxBaseUrl,
+    receiptInboxWebhookPath,
+    receiptInboxWebhookPublicBaseUrl,
+    receiptInboxWebhookUrl:
+      receiptInboxWebhookPublicBaseUrl &&
+      (process.env.BLUEBUBBLES_WEBHOOK_SECRET || env.BLUEBUBBLES_WEBHOOK_SECRET)
+        ? (() => {
+            const url = new URL(
+              receiptInboxWebhookPath,
+              `${receiptInboxWebhookPublicBaseUrl}/`,
+            );
+            url.searchParams.set(
+              'secret',
+              process.env.BLUEBUBBLES_WEBHOOK_SECRET ||
+                env.BLUEBUBBLES_WEBHOOK_SECRET ||
+                '',
+            );
+            return url.toString();
+          })()
+        : null,
+    receiptInboxHealthPath,
+    receiptInboxHealthUrl: receiptInboxBaseUrl
+      ? new URL(receiptInboxHealthPath, `${receiptInboxBaseUrl}/`).toString()
+      : null,
+    receiptInboxSupervisionRequired: true,
   };
+}
+
+export async function probeBlueBubblesReceiptInbox(
+  config: BlueBubblesConfig,
+): Promise<BlueBubblesReceiptInboxReadiness> {
+  if (!config.receiptInboxSupervisionRequired) {
+    return {
+      state: 'not_required',
+      detail:
+        'receipt inbox supervision is disabled by the injected runtime config',
+    };
+  }
+  if (
+    !config.receiptInboxEnabled ||
+    !config.receiptInboxHealthUrl ||
+    !config.receiptInboxWebhookUrl ||
+    !config.webhookSecret
+  ) {
+    return {
+      state: 'not_configured',
+      detail:
+        'the independently supervised receipt inbox is not fully configured',
+    };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    BLUEBUBBLES_RECEIPT_INBOX_HEALTH_TIMEOUT_MS,
+  );
+  try {
+    const response = await fetch(config.receiptInboxHealthUrl, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${config.webhookSecret}` },
+      signal: controller.signal,
+    });
+    const rawBody = await response.text();
+    if (!response.ok || rawBody.length > 4_096) {
+      return {
+        state: 'unreachable',
+        detail: `receipt inbox health probe returned HTTP ${response.status}`,
+      };
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch (_error) {
+      return {
+        state: 'unreachable',
+        detail: 'receipt inbox health probe returned invalid JSON',
+      };
+    }
+    const record = asRecord(payload);
+    const expectedConfigIdentity = buildBlueBubblesReceiptInboxConfigIdentity({
+      databasePath: config.receiptInboxDatabasePath,
+      webhookPath: config.receiptInboxWebhookPath,
+    });
+    const expectedBuildId = resolveBlueBubblesReceiptInboxBuildId();
+    if (
+      record.status !== 'ok' ||
+      record.serviceKind !== BLUEBUBBLES_RECEIPT_INBOX_SERVICE_KIND ||
+      record.protocolVersion !== BLUEBUBBLES_RECEIPT_INBOX_PROTOCOL_VERSION ||
+      !Number.isInteger(record.pid) ||
+      Number(record.pid) < 1 ||
+      typeof record.startedAt !== 'string' ||
+      !Number.isFinite(Date.parse(record.startedAt)) ||
+      record.buildId !== expectedBuildId ||
+      record.webhookPath !== config.receiptInboxWebhookPath ||
+      record.configIdentity !== expectedConfigIdentity
+    ) {
+      return {
+        state: 'unreachable',
+        detail:
+          'receipt inbox health probe reported a mismatched service, process, build, or queue configuration identity',
+      };
+    }
+    const registration =
+      await inspectBlueBubblesReceiptInboxWebhookRegistration(config);
+    if (registration.state !== 'registered') {
+      return {
+        state: 'unreachable',
+        detail: `receipt inbox service is reachable, but its dedicated BlueBubbles webhook is ${registration.state}: ${registration.detail}`,
+      };
+    }
+    return {
+      state: 'reachable',
+      detail: `independently supervised receipt inbox is reachable; ${registration.detail}`,
+    };
+  } catch (error) {
+    return {
+      state: 'unreachable',
+      detail:
+        error instanceof Error
+          ? `receipt inbox health probe failed: ${error.message}`
+          : 'receipt inbox health probe failed',
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function buildBlueBubblesHealthSnapshot(
@@ -534,8 +813,8 @@ export function buildBlueBubblesHealthSnapshot(
     ? 'BlueBubbles disabled'
     : !configured
       ? config.chatScope === 'allowlist'
-        ? 'BlueBubbles enabled but missing base URL, password, or allowlist chat link'
-        : 'BlueBubbles enabled but missing base URL, password, or shared group binding'
+        ? 'BlueBubbles enabled but missing base URL, password, webhook secret, or allowlist chat link'
+        : 'BlueBubbles enabled but missing base URL, password, webhook secret, or shared group binding'
       : config.sendEnabled
         ? `BlueBubbles listener ready for ${config.chatScope}`
         : 'BlueBubbles listener is configured, but outbound reply-back is disabled';
@@ -650,6 +929,79 @@ async function fetchBlueBubblesWithTimeout(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchBlueBubblesTextResponseWithTimeout(
+  input: string | URL,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ response: Response; responseText: string }> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`BlueBubbles request timed out after ${timeoutMs} ms`));
+    }, timeoutMs);
+  });
+  let responsePromise: Promise<Response>;
+  try {
+    // Calling fetch can throw synchronously for malformed local input. In that
+    // case no HTTP request was started and no provider effect is possible.
+    responsePromise = fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (timeout) clearTimeout(timeout);
+    throw new ChannelDeliveryRejectedBeforeDispatchError(
+      error instanceof Error
+        ? error.message
+        : 'BlueBubbles request was rejected before transport dispatch.',
+      { cause: error },
+    );
+  }
+  try {
+    const response = await Promise.race([responsePromise, timedOut]);
+    const responseText = await Promise.race([response.text(), timedOut]);
+    return { response, responseText };
+  } catch (error) {
+    if (isDefiniteBlueBubblesPreDispatchTransportError(error)) {
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        error instanceof Error
+          ? error.message
+          : 'BlueBubbles transport rejected the request before dispatch.',
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+const BLUEBUBBLES_DEFINITE_PRE_DISPATCH_TRANSPORT_CODES = new Set([
+  'CERT_HAS_EXPIRED',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'ERR_INVALID_PROTOCOL',
+  'ERR_INVALID_URL',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+function isDefiniteBlueBubblesPreDispatchTransportError(
+  error: unknown,
+): boolean {
+  const root = asRecord(error);
+  const cause = asRecord(root.cause);
+  const code = firstString(root.code, cause.code);
+  return Boolean(
+    code && BLUEBUBBLES_DEFINITE_PRE_DISPATCH_TRANSPORT_CODES.has(code),
+  );
 }
 
 async function hydrateBlueBubblesAttachmentCache(
@@ -784,6 +1136,37 @@ function extractBlueBubblesErrorText(status: number, body: string): string {
   );
 }
 
+const BLUEBUBBLES_DEFINITE_PRE_EFFECT_HTTP_STATUSES = new Set([
+  400, 401, 403, 404, 405, 413, 415, 422, 429,
+]);
+
+function isDefiniteBlueBubblesPreEffectHttpRejection(input: {
+  status: number;
+  responseText: string;
+  receiptId: string | null;
+}): boolean {
+  if (input.receiptId) return false;
+  if (!BLUEBUBBLES_DEFINITE_PRE_EFFECT_HTTP_STATUSES.has(input.status)) {
+    return false;
+  }
+  // The server's send-cache rejection means an earlier request with this
+  // tempGuid is still in flight. That is correlated uncertainty, not proof of
+  // rejection, even though the replaying HTTP request itself was rejected.
+  return !/already (?:queued|being sent)|temp(?:orary)?\s*guid.*queued/i.test(
+    input.responseText,
+  );
+}
+
+function blueBubblesRejectedBeforeProviderEffect(
+  status: number,
+  responseText: string,
+): ChannelDeliveryRejectedBeforeDispatchError {
+  return new ChannelDeliveryRejectedBeforeDispatchError(
+    extractBlueBubblesErrorText(status, responseText),
+    { stage: 'provider_pre_effect' },
+  );
+}
+
 function extractBlueBubblesReceiptId(payload: unknown): string | null {
   const root = asRecord(payload);
   const data = asRecord(root.data);
@@ -809,10 +1192,9 @@ function extractBlueBubblesReceiptId(payload: unknown): string | null {
   );
 }
 
-function extractBlueBubblesCreatedChatReceipt(payload: unknown): {
-  chatGuid: string;
-  messageGuid: string;
-} | null {
+function extractBlueBubblesCreatedChatMessageReceiptId(
+  payload: unknown,
+): string | null {
   const root = asRecord(payload);
   const data = asRecord(root.data);
   const chat = asRecord(data.chat);
@@ -821,20 +1203,41 @@ function extractBlueBubblesCreatedChatReceipt(payload: unknown): {
     ...(Array.isArray(chat.messages) ? chat.messages : []),
     ...(Array.isArray(root.messages) ? root.messages : []),
   ].map((item) => asRecord(item));
-  const chatGuid = firstString(data.guid, data.chatGuid, chat.guid);
-  const messageGuid = firstString(
-    messages[0]?.guid,
-    messages[0]?.messageGuid,
-    messages[0]?.id,
+  return (
+    firstString(messages[0]?.guid, messages[0]?.messageGuid, messages[0]?.id) ||
+    null
   );
+}
+
+function extractBlueBubblesCreatedChatReceipt(payload: unknown): {
+  chatGuid: string;
+  messageGuid: string;
+} | null {
+  const root = asRecord(payload);
+  const data = asRecord(root.data);
+  const chat = asRecord(data.chat);
+  const chatGuid = firstString(data.guid, data.chatGuid, chat.guid);
+  const messageGuid = extractBlueBubblesCreatedChatMessageReceiptId(payload);
   return chatGuid && messageGuid ? { chatGuid, messageGuid } : null;
 }
 
-function blueBubblesDeliveryUnverified(): ChannelDeliveryUnverifiedError {
+function blueBubblesDeliveryUnverified(
+  receiptIds: Array<string | null | undefined> = [],
+): ChannelDeliveryUnverifiedError {
+  const confirmedReceiptIds = Array.from(
+    new Set(
+      receiptIds
+        .map((receiptId) => receiptId?.trim())
+        .filter((receiptId): receiptId is string => Boolean(receiptId))
+        .map((receiptId) =>
+          receiptId.startsWith('bb:') ? receiptId : `bb:${receiptId}`,
+        ),
+    ),
+  );
   return new ChannelDeliveryUnverifiedError({
     outcome: 'unknown',
-    confirmedReceiptIds: [],
-    confirmedReceiptCount: 0,
+    confirmedReceiptIds,
+    confirmedReceiptCount: confirmedReceiptIds.length,
   });
 }
 
@@ -958,7 +1361,7 @@ function buildAuthSearchParams(password: string): URLSearchParams {
   return params;
 }
 
-function blueBubblesContactAddressKeys(
+export function blueBubblesContactAddressKeys(
   value: string | null | undefined,
 ): string[] {
   const normalized = value?.trim().toLowerCase();
@@ -973,6 +1376,39 @@ function blueBubblesContactAddressKeys(
     return [...values];
   }
   return [`raw:${normalized}`];
+}
+
+/**
+ * Proves that a provider-created BlueBubbles chat is a one-to-one thread for
+ * the exact phone/email identity that was approved for first contact. The
+ * provider may normalize phone punctuation/country prefix or select SMS
+ * instead of iMessage, but groups, opaque GUIDs, and other recipients fail.
+ */
+export function isBlueBubblesDirectChatJidForAddress(
+  chatJid: string | null | undefined,
+  approvedAddress: string | null | undefined,
+): chatJid is string {
+  const directMatch = chatJid?.match(/^bb:[^;]+;-;(.+)$/);
+  if (!directMatch) return false;
+  const approvedIdentity =
+    normalizeBlueBubblesContactTargetAddress(approvedAddress);
+  const observedIdentity = normalizeBlueBubblesContactTargetAddress(
+    directMatch[1],
+  );
+  if (!approvedIdentity || !observedIdentity) return false;
+
+  const approvedKeys = new Set(
+    blueBubblesContactAddressKeys(approvedIdentity).filter(
+      (key) => key.startsWith('phone:') || key.startsWith('email:'),
+    ),
+  );
+  if (approvedKeys.size === 0) return false;
+
+  return blueBubblesContactAddressKeys(observedIdentity).some(
+    (key) =>
+      (key.startsWith('phone:') || key.startsWith('email:')) &&
+      approvedKeys.has(key),
+  );
 }
 
 function normalizeBlueBubblesContactTargetAddress(
@@ -1094,10 +1530,14 @@ async function queryBlueBubblesContacts(
   if (Buffer.byteLength(responseText, 'utf8') > 2 * 1024 * 1024) {
     throw new Error('BlueBubbles contact lookup response was too large.');
   }
-  const payload = asRecord(parseBlueBubblesJson(responseText));
-  return Array.isArray(payload.data)
-    ? payload.data.slice(0, 2_000).map((item) => asRecord(item))
-    : [];
+  const parsed = parseBlueBubblesJson(responseText);
+  const payload = asRecord(parsed);
+  if (!parsed || !Array.isArray(payload.data)) {
+    throw new Error(
+      'BlueBubbles contact lookup returned an invalid response shape.',
+    );
+  }
+  return payload.data.slice(0, 2_000).map((item) => asRecord(item));
 }
 
 export type BlueBubblesContactRecipientResolution =
@@ -1529,6 +1969,9 @@ export function normalizeBlueBubblesIncomingMessage(
           root.associatedMessageGuid,
         ),
       ),
+      provider_idempotency_key:
+        firstString(message.tempGuid, data.tempGuid, root.tempGuid) ||
+        undefined,
       reaction,
       attachments,
     },
@@ -1596,11 +2039,16 @@ export async function inspectBlueBubblesWebhookRegistration(
     | 'webhookPublicBaseUrl'
   >,
 ): Promise<BlueBubblesWebhookInspection> {
-  if (!config.enabled || !config.baseUrl || !config.password) {
+  if (
+    !config.enabled ||
+    !config.baseUrl ||
+    !config.password ||
+    !config.webhookSecret
+  ) {
     return {
       state: 'not_configured',
       detail:
-        'webhook registration cannot be checked until BlueBubbles is enabled with a base URL and password',
+        'webhook registration cannot be checked until BlueBubbles is enabled with a base URL, password, and webhook secret',
     };
   }
 
@@ -1655,6 +2103,111 @@ export async function inspectBlueBubblesWebhookRegistration(
   }
 }
 
+export async function inspectBlueBubblesReceiptInboxWebhookRegistration(
+  config: Pick<
+    BlueBubblesConfig,
+    | 'enabled'
+    | 'baseUrl'
+    | 'password'
+    | 'host'
+    | 'port'
+    | 'webhookPath'
+    | 'webhookSecret'
+    | 'webhookPublicBaseUrl'
+    | 'receiptInboxEnabled'
+    | 'receiptInboxWebhookUrl'
+  >,
+): Promise<BlueBubblesWebhookInspection> {
+  if (
+    !config.enabled ||
+    !config.receiptInboxEnabled ||
+    !config.baseUrl ||
+    !config.password ||
+    !config.receiptInboxWebhookUrl
+  ) {
+    return {
+      state: 'not_configured',
+      detail:
+        'the dedicated receipt webhook cannot be checked until BlueBubbles and the receipt inbox are fully configured',
+    };
+  }
+
+  const mainWebhookUrl = new URL(buildBlueBubblesWebhookUrl(config));
+  const receiptWebhookUrl = new URL(config.receiptInboxWebhookUrl);
+  if (
+    mainWebhookUrl.origin === receiptWebhookUrl.origin &&
+    mainWebhookUrl.pathname === receiptWebhookUrl.pathname
+  ) {
+    return {
+      state: 'missing',
+      detail:
+        "the receipt inbox webhook must use a distinct origin or path from Andrea's main webhook",
+    };
+  }
+
+  const url = new URL('/api/v1/webhook', config.baseUrl);
+  for (const [key, value] of buildAuthSearchParams(config.password).entries()) {
+    url.searchParams.set(key, value);
+  }
+
+  try {
+    const response = await fetchBlueBubblesWithTimeout(url);
+    const responseText = await response.text();
+    if (response.status === 401 || response.status === 403) {
+      return {
+        state: 'auth_failed',
+        detail: extractBlueBubblesErrorText(response.status, responseText),
+      };
+    }
+    if (!response.ok) {
+      return {
+        state: 'unreachable',
+        detail: extractBlueBubblesErrorText(response.status, responseText),
+      };
+    }
+    const webhooks = normalizeBlueBubblesWebhookList(
+      parseBlueBubblesJson(responseText),
+    );
+    const exactUrl = webhooks.find(
+      (entry) => entry.url === config.receiptInboxWebhookUrl,
+    );
+    if (!exactUrl) {
+      return {
+        state: 'missing',
+        detail:
+          'no exact dedicated receipt inbox webhook URL is registered on the BlueBubbles server',
+      };
+    }
+    const receivesOnlyNewMessages =
+      exactUrl.events.length === 1 &&
+      exactUrl.events[0]?.trim().toLowerCase() === 'new-message';
+    if (!receivesOnlyNewMessages) {
+      return {
+        state: 'missing',
+        detail:
+          'the dedicated receipt inbox webhook must be registered for exactly the new-message event',
+        webhookId: exactUrl.id,
+      };
+    }
+    return {
+      state: 'registered',
+      detail:
+        exactUrl.id != null
+          ? `dedicated receipt webhook ${exactUrl.id} is registered for new-message`
+          : 'dedicated receipt webhook is registered for new-message',
+      webhookId: exactUrl.id,
+    };
+  } catch (error) {
+    return {
+      state: 'unreachable',
+      detail:
+        error instanceof Error
+          ? error.message
+          : 'BlueBubbles receipt webhook registration check failed',
+    };
+  }
+}
+
 function normalizeBlueBubblesHistoryPayload(
   chatGuid: string,
   rawMessage: unknown,
@@ -1703,6 +2256,11 @@ function normalizeBlueBubblesHistoryPayload(
       },
       message: {
         guid: firstString(message.guid, message.messageGuid, message.id),
+        tempGuid: firstString(
+          message.tempGuid,
+          message.tempGUID,
+          message.temporaryGuid,
+        ),
         text: firstString(message.text, message.body, message.message),
         attachments: Array.isArray(message.attachments)
           ? message.attachments
@@ -1845,12 +2403,14 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
     options?: {
       limit?: number;
       candidateChatJids?: string[];
+      timeoutMs?: number;
     },
   ): Promise<NormalizedBlueBubblesHistoryRow[]> {
     return fetchNormalizedBlueBubblesRecentMessages(
       config,
       options?.limit ?? 12,
       options?.candidateChatJids || [],
+      options?.timeoutMs,
     );
   }
 
@@ -1861,11 +2421,12 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
       text: string;
       replyToGuid?: string;
       sendMethod: string;
+      idempotencyKey?: string;
     },
   ): Promise<SendMessageResult> {
     if (!config.baseUrl || !config.password || !request.chatGuid) {
-      throw new Error(
-        'BlueBubbles transport is missing a reachable endpoint, password, or chat target',
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles transport is missing a reachable endpoint, password, or chat target.',
       );
     }
 
@@ -1879,31 +2440,59 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
     const body: Record<string, unknown> = {
       chatGuid: request.chatGuid,
       message: request.text,
-      tempGuid: randomUUID(),
+      tempGuid: request.idempotencyKey || randomUUID(),
       method: request.sendMethod,
     };
     if (request.replyToGuid) {
       body.selectedMessageGuid = request.replyToGuid;
     }
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    const responseText = await response.text();
-    if (!response.ok) {
-      throw new Error(
-        extractBlueBubblesErrorText(response.status, responseText),
-      );
+    let response: Response;
+    let responseText: string;
+    try {
+      ({ response, responseText } =
+        await fetchBlueBubblesTextResponseWithTimeout(
+          url,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+          },
+          BLUEBUBBLES_SEND_TEXT_TIMEOUT_MS,
+        ));
+    } catch (error) {
+      if (error instanceof ChannelDeliveryRejectedBeforeDispatchError) {
+        throw error;
+      }
+      // Once fetch has accepted the POST, a timeout or transport failure does
+      // not prove that Messages rejected it. Never convert that uncertainty
+      // into a retryable failure.
+      throw blueBubblesDeliveryUnverified();
     }
+
     const parsed = parseBlueBubblesJson(responseText);
     const receiptId = extractBlueBubblesReceiptId(parsed);
-    if (!receiptId) {
-      throw new Error('BlueBubbles did not return a delivery receipt.');
+    if (Buffer.byteLength(responseText, 'utf8') > 2 * 1024 * 1024) {
+      throw blueBubblesDeliveryUnverified([receiptId]);
     }
+    if (!response.ok) {
+      if (
+        isDefiniteBlueBubblesPreEffectHttpRejection({
+          status: response.status,
+          responseText,
+          receiptId,
+        })
+      ) {
+        throw blueBubblesRejectedBeforeProviderEffect(
+          response.status,
+          responseText,
+        );
+      }
+      throw blueBubblesDeliveryUnverified([receiptId]);
+    }
+    if (!receiptId) throw blueBubblesDeliveryUnverified();
     return {
       platformMessageId: `bb:${receiptId}`,
     };
@@ -1916,11 +2505,12 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
       text: string;
       sendMethod: string;
       service: 'iMessage' | 'SMS';
+      idempotencyKey?: string;
     },
   ): Promise<SendMessageResult> {
     if (!config.baseUrl || !config.password || !request.address) {
-      throw new Error(
-        'BlueBubbles transport is missing a reachable endpoint, password, or recipient address',
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles transport is missing a reachable endpoint, password, or recipient address.',
       );
     }
 
@@ -1935,49 +2525,67 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
       message: request.text,
       method: request.sendMethod,
       service: request.service,
-      tempGuid: randomUUID(),
+      tempGuid: request.idempotencyKey || randomUUID(),
     };
 
     let response: Response;
+    let responseText: string;
     try {
-      response = await fetchBlueBubblesWithTimeout(
-        url,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        },
-        BLUEBUBBLES_CREATE_CHAT_TIMEOUT_MS,
-      );
-    } catch {
+      ({ response, responseText } =
+        await fetchBlueBubblesTextResponseWithTimeout(
+          url,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+          BLUEBUBBLES_CREATE_CHAT_TIMEOUT_MS,
+        ));
+    } catch (error) {
+      if (error instanceof ChannelDeliveryRejectedBeforeDispatchError) {
+        throw error;
+      }
       // The request may have reached Messages even when its HTTP result did
       // not return. First-contact sends must never retry that uncertainty.
       throw blueBubblesDeliveryUnverified();
     }
 
-    let responseText: string;
-    try {
-      responseText = await response.text();
-    } catch {
-      throw blueBubblesDeliveryUnverified();
-    }
-    if (
-      !response.ok ||
-      Buffer.byteLength(responseText, 'utf8') > 2 * 1024 * 1024
-    ) {
+    const parsed = parseBlueBubblesJson(responseText);
+    const messageReceiptId =
+      extractBlueBubblesCreatedChatMessageReceiptId(parsed);
+    if (Buffer.byteLength(responseText, 'utf8') > 2 * 1024 * 1024) {
       // BlueBubbles can send before completing its chat-verification wait, so
-      // even a non-success response is not evidence that delivery was absent.
-      throw blueBubblesDeliveryUnverified();
+      // an oversized/incomplete result is not evidence that delivery was absent.
+      throw blueBubblesDeliveryUnverified([messageReceiptId]);
     }
-    const receipt = extractBlueBubblesCreatedChatReceipt(
-      parseBlueBubblesJson(responseText),
-    );
+    if (!response.ok) {
+      if (
+        isDefiniteBlueBubblesPreEffectHttpRejection({
+          status: response.status,
+          responseText,
+          receiptId: messageReceiptId,
+        })
+      ) {
+        throw blueBubblesRejectedBeforeProviderEffect(
+          response.status,
+          responseText,
+        );
+      }
+      // BlueBubbles can send before completing its chat-verification wait, so
+      // a server-side failure is not evidence that delivery was absent.
+      throw blueBubblesDeliveryUnverified([messageReceiptId]);
+    }
+    const receipt = extractBlueBubblesCreatedChatReceipt(parsed);
     if (!receipt) {
-      throw blueBubblesDeliveryUnverified();
+      throw blueBubblesDeliveryUnverified([messageReceiptId]);
+    }
+    const threadId = buildBlueBubblesChatJid(receipt.chatGuid);
+    if (!isBlueBubblesDirectChatJidForAddress(threadId, request.address)) {
+      throw blueBubblesDeliveryUnverified([receipt.messageGuid]);
     }
     return {
       platformMessageId: `bb:${receipt.messageGuid}`,
-      threadId: buildBlueBubblesChatJid(receipt.chatGuid),
+      threadId,
     };
   }
 
@@ -2056,6 +2664,7 @@ async function fetchNormalizedBlueBubblesHistoryRows(
   config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
   chatGuid: string,
   limit = 12,
+  timeoutMs = BLUEBUBBLES_STARTUP_FETCH_TIMEOUT_MS,
 ): Promise<NormalizedBlueBubblesHistoryRow[]> {
   if (!chatGuid || !config.baseUrl || !config.password) {
     return [];
@@ -2072,7 +2681,7 @@ async function fetchNormalizedBlueBubblesHistoryRows(
   url.searchParams.set('offset', '0');
   url.searchParams.set('sort', 'DESC');
 
-  const response = await fetch(url);
+  const response = await fetchBlueBubblesWithTimeout(url, undefined, timeoutMs);
   const responseText = await response.text();
   if (!response.ok) {
     throw new Error(extractBlueBubblesErrorText(response.status, responseText));
@@ -2111,6 +2720,7 @@ async function fetchNormalizedBlueBubblesRecentMessages(
   config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
   limit = 12,
   candidateChatJids: string[] = [],
+  timeoutMs = BLUEBUBBLES_STARTUP_FETCH_TIMEOUT_MS,
 ): Promise<NormalizedBlueBubblesHistoryRow[]> {
   if (!config.baseUrl || !config.password) {
     return [];
@@ -2124,7 +2734,7 @@ async function fetchNormalizedBlueBubblesRecentMessages(
   url.searchParams.set('offset', '0');
   url.searchParams.set('sort', 'DESC');
 
-  const response = await fetchBlueBubblesWithTimeout(url);
+  const response = await fetchBlueBubblesWithTimeout(url, undefined, timeoutMs);
   const responseText = await response.text();
   if (!response.ok) {
     const errorText = extractBlueBubblesErrorText(
@@ -2139,6 +2749,7 @@ async function fetchNormalizedBlueBubblesRecentMessages(
       candidateChatJids,
       limit,
       errorText,
+      timeoutMs,
     );
   }
 
@@ -2181,6 +2792,7 @@ async function fetchNormalizedBlueBubblesRecentMessagesFromRecentChats(
   candidateChatJids: string[],
   limit: number,
   originalErrorText: string,
+  requestTimeoutMs: number,
 ): Promise<NormalizedBlueBubblesHistoryRow[]> {
   const uniqueChatJids = [
     ...new Set(
@@ -2189,6 +2801,8 @@ async function fetchNormalizedBlueBubblesRecentMessagesFromRecentChats(
   ];
   const mergedRows = new Map<string, NormalizedBlueBubblesHistoryRow>();
   const errors: string[] = [];
+  const fallbackDeadline =
+    Date.now() + BLUEBUBBLES_HISTORY_FALLBACK_TOTAL_TIMEOUT_MS;
 
   for (const chatJid of uniqueChatJids) {
     const chatGuid = extractBlueBubblesChatGuid(chatJid);
@@ -2196,10 +2810,18 @@ async function fetchNormalizedBlueBubblesRecentMessagesFromRecentChats(
       continue;
     }
     try {
+      const remainingMs = fallbackDeadline - Date.now();
+      if (remainingMs <= 0) {
+        errors.push(
+          `fallback exceeded ${BLUEBUBBLES_HISTORY_FALLBACK_TOTAL_TIMEOUT_MS} ms`,
+        );
+        break;
+      }
       const rows = await fetchNormalizedBlueBubblesHistoryRows(
         config,
         chatGuid,
         Math.min(Math.max(2, limit), 4),
+        Math.min(requestTimeoutMs, remainingMs),
       );
       for (const row of rows) {
         mergedRows.set(row.message.id, row);
@@ -2258,6 +2880,13 @@ export async function primeBlueBubblesChatHistory(
       row.chat.isGroup,
     );
     if (hasStoredMessage(row.chatJid, row.message.id)) {
+      if (row.message.provider_idempotency_key) {
+        associateMessageProviderIdempotencyKey({
+          chatJid: row.chatJid,
+          messageId: row.message.id,
+          providerIdempotencyKey: row.message.provider_idempotency_key,
+        });
+      }
       continue;
     }
     storeMessageDirect({
@@ -2270,6 +2899,8 @@ export async function primeBlueBubblesChatHistory(
       is_from_me: Boolean(row.message.is_from_me),
       is_bot_message: row.message.is_bot_message,
       reply_to_id: row.message.reply_to_id || undefined,
+      provider_idempotency_key:
+        row.message.provider_idempotency_key || undefined,
       attachments: row.message.attachments || [],
     });
     storedCount += 1;
@@ -2378,12 +3009,77 @@ export class BlueBubblesChannel implements Channel {
   private readonly bridgeProvider: AppleMessagesProvider =
     new BlueBubblesMessagesProvider();
 
+  private receiptInboxStore: BlueBubblesChannelReceiptInboxStore | null = null;
+
+  private receiptInboxReadiness: BlueBubblesReceiptInboxReadiness;
+
   constructor(
     private readonly config: BlueBubblesConfig,
     private readonly opts: ChannelOpts,
+    private readonly durabilityDeps: BlueBubblesChannelDurabilityDeps = {},
   ) {
     this.activePort = config.port;
+    this.receiptInboxReadiness = config.receiptInboxSupervisionRequired
+      ? {
+          state: 'not_configured',
+          detail: 'receipt inbox readiness has not been checked',
+        }
+      : {
+          state: 'not_required',
+          detail: 'receipt inbox supervision is disabled by injected config',
+        };
     this.rehydrateRuntimeStateFromMonitor();
+  }
+
+  private getReceiptInboxStore(): BlueBubblesChannelReceiptInboxStore {
+    if (this.receiptInboxStore) return this.receiptInboxStore;
+    if (!this.config.receiptInboxDatabasePath?.trim()) {
+      throw new Error('BlueBubbles receipt inbox database path is missing.');
+    }
+    const createStore =
+      this.durabilityDeps.createReceiptInboxStore ||
+      ((databasePath: string) =>
+        new BlueBubblesReceiptInboxStore(databasePath));
+    const store = createStore(this.config.receiptInboxDatabasePath);
+    store.getHealth();
+    this.receiptInboxStore = store;
+    return store;
+  }
+
+  private isReceiptInboxReadyForSend(): boolean {
+    return (
+      this.receiptInboxReadiness.state === 'reachable' ||
+      this.receiptInboxReadiness.state === 'not_required'
+    );
+  }
+
+  private async refreshReceiptInboxReadiness(): Promise<void> {
+    if (
+      this.config.receiptInboxSupervisionRequired &&
+      this.opts.isBlueBubblesReceiptConsumerReady?.() !== true
+    ) {
+      this.receiptInboxReadiness = {
+        state: 'unreachable',
+        detail:
+          'the main-process durable receipt consumer is not running for this exact queue',
+      };
+      return;
+    }
+    try {
+      this.getReceiptInboxStore().getHealth();
+    } catch (error) {
+      this.receiptInboxReadiness = {
+        state: 'unreachable',
+        detail:
+          error instanceof Error
+            ? `local receipt inbox store is unavailable: ${error.message}`
+            : 'local receipt inbox store is unavailable',
+      };
+      return;
+    }
+    const probe =
+      this.durabilityDeps.probeReceiptInbox || probeBlueBubblesReceiptInbox;
+    this.receiptInboxReadiness = await probe(this.config);
   }
 
   private rehydrateRuntimeStateFromMonitor(): void {
@@ -3137,6 +3833,7 @@ export class BlueBubblesChannel implements Channel {
   private async runShadowMonitorOnce(): Promise<void> {
     const nowMs = Date.now();
     this.pruneRecentEvidence(nowMs);
+    await this.refreshReceiptInboxReadiness();
     try {
       const activeBaseUrl = await this.ensureActiveBaseUrl({
         recheck: true,
@@ -3371,7 +4068,8 @@ export class BlueBubblesChannel implements Channel {
       configured &&
       this.config.sendEnabled &&
       this.transportProbeStatus === 'reachable' &&
-      this.webhookRegistrationStatus === 'registered';
+      this.webhookRegistrationStatus === 'registered' &&
+      this.isReceiptInboxReadyForSend();
     const healthChatJid = this.getRepresentativeHealthChatJid();
     const matchedHealthChat = healthChatJid
       ? getAllChats().find((chat) => chat.jid === healthChatJid)
@@ -3438,6 +4136,14 @@ export class BlueBubblesChannel implements Channel {
         ? `webhook registration ${this.webhookRegistrationDetail}`
         : 'webhook registration not checked yet',
       `webhook registration state ${this.webhookRegistrationStatus}`,
+      `receipt inbox state ${this.receiptInboxReadiness.state}`,
+      `receipt inbox ${this.receiptInboxReadiness.detail}`,
+      `receipt inbox health ${this.config.receiptInboxHealthUrl || 'none'}`,
+      `receipt inbox webhook ${
+        this.config.receiptInboxWebhookUrl
+          ? redactBlueBubblesWebhookUrl(this.config.receiptInboxWebhookUrl)
+          : 'none'
+      }`,
       `transport probe state ${this.transportProbeStatus}`,
       this.transportProbeDetail
         ? `transport ${this.transportProbeDetail}`
@@ -3538,7 +4244,7 @@ export class BlueBubblesChannel implements Channel {
 
   private verifyWebhookSecret(reqUrl: URL): boolean {
     if (!this.config.webhookSecret) {
-      return true;
+      return false;
     }
     const incoming =
       reqUrl.searchParams.get('secret') ||
@@ -3598,6 +4304,39 @@ export class BlueBubblesChannel implements Channel {
       writeResponse(res, 400, 'Malformed BlueBubbles message payload');
       return;
     }
+    // A provider-correlated self-authored row is delivery evidence, not an
+    // inbound conversation turn. Record it before applying inbound chat-scope
+    // gates so an explicitly authorized send to a contact outside the inbound
+    // allowlist can still reconcile its durable dispatch fence.
+    if (
+      normalized.message.is_from_me &&
+      normalized.message.provider_idempotency_key
+    ) {
+      try {
+        const durable = this.getReceiptInboxStore().persistReceipt(
+          parseBlueBubblesReceiptPayload(payload),
+        );
+        writeResponse(
+          res,
+          durable.inserted ? 200 : 202,
+          durable.inserted
+            ? 'Persisted outbound delivery evidence'
+            : 'Ignored duplicate outbound delivery evidence',
+        );
+      } catch (error) {
+        this.lastErrorText =
+          error instanceof Error
+            ? error.message
+            : 'Unknown durable outbound delivery evidence error';
+        this.receiptInboxReadiness = {
+          state: 'unreachable',
+          detail: this.lastErrorText,
+        };
+        this.emitHealth({ state: 'degraded' });
+        writeResponse(res, 503, 'Durable receipt inbox unavailable');
+      }
+      return;
+    }
     if (
       !isBlueBubblesChatEligible(
         this.config,
@@ -3649,10 +4388,82 @@ export class BlueBubblesChannel implements Channel {
       );
       return;
     }
+    let ingressClaim: CanonicalSelfThreadIngressClaim | null = null;
+    if (
+      normalized.message.is_from_me &&
+      isConfiguredBlueBubblesSelfThreadAliasJid(normalized.chatJid)
+    ) {
+      try {
+        ingressClaim =
+          this.getReceiptInboxStore().claimCanonicalSelfThreadIngress({
+            canonicalScope: getBlueBubblesCanonicalSelfThreadJid(),
+            ownerAuthored: true,
+            body: normalized.message.content,
+            providerTimestamp: normalized.message.timestamp,
+          });
+      } catch (error) {
+        this.lastErrorText =
+          error instanceof Error
+            ? error.message
+            : 'Canonical self-thread claim store is unavailable';
+        this.receiptInboxReadiness = {
+          state: 'unreachable',
+          detail: this.lastErrorText,
+        };
+        this.emitHealth({ state: 'degraded' });
+        writeResponse(res, 503, 'Durable ingress claim unavailable');
+        return;
+      }
+      if (!ingressClaim.shouldProcess) {
+        writeResponse(res, 202, 'Ignored durable mirrored delivery');
+        return;
+      }
+      const providerMessageId = normalized.message.id;
+      normalized.message.id = ingressClaim.claimId;
+      normalized.message.provider_message_id = providerMessageId;
+      normalized.message.durable_ingress_claim_id = ingressClaim.claimId;
+    }
+    const durableIdentityJids = ingressClaim
+      ? expandBlueBubblesLogicalSelfThreadJids(normalized.chatJid)
+      : [normalized.chatJid];
+    const alreadyStored = durableIdentityJids.some((chatJid) =>
+      hasStoredMessage(chatJid, normalized.message.id),
+    );
+    if (alreadyStored && ingressClaim?.processingLeaseToken) {
+      try {
+        const accepted =
+          this.getReceiptInboxStore().acceptCanonicalSelfThreadIngressClaim({
+            claimId: ingressClaim.claimId,
+            processingLeaseToken: ingressClaim.processingLeaseToken,
+          });
+        if (!accepted) {
+          throw new Error(
+            'Durable ingress claim acceptance lease no longer matches.',
+          );
+        }
+      } catch (error) {
+        this.receiptInboxReadiness = {
+          state: 'unreachable',
+          detail:
+            error instanceof Error
+              ? error.message
+              : 'Durable ingress claim acceptance failed',
+        };
+        this.emitHealth({ state: 'degraded' });
+        writeResponse(res, 503, 'Durable ingress acceptance unavailable');
+        return;
+      }
+      writeResponse(res, 202, 'Ignored already accepted durable delivery');
+      return;
+    }
     if (
       this.inflightMessageIds.has(normalized.message.id) ||
-      hasStoredMessage(normalized.chatJid, normalized.message.id) ||
-      this.hasRecentIngressFingerprint(normalized.chatJid, normalized.message)
+      alreadyStored ||
+      (!ingressClaim &&
+        this.hasRecentIngressFingerprint(
+          normalized.chatJid,
+          normalized.message,
+        ))
     ) {
       writeResponse(res, 202, 'Ignored duplicate delivery');
       return;
@@ -3675,6 +4486,7 @@ export class BlueBubblesChannel implements Channel {
     this.noteIngressFingerprint(normalized.chatJid, normalized.message);
 
     this.inflightMessageIds.add(normalized.message.id);
+    let ingressClaimAccepted = false;
     try {
       await this.opts.onChatMetadata(
         normalized.chatJid,
@@ -3686,6 +4498,18 @@ export class BlueBubblesChannel implements Channel {
         normalized.chat.isGroup,
       );
       await this.opts.onMessage(normalized.chatJid, normalized.message);
+      if (ingressClaim?.processingLeaseToken) {
+        ingressClaimAccepted =
+          this.getReceiptInboxStore().acceptCanonicalSelfThreadIngressClaim({
+            claimId: ingressClaim.claimId,
+            processingLeaseToken: ingressClaim.processingLeaseToken,
+          });
+        if (!ingressClaimAccepted) {
+          throw new Error(
+            'Durable ingress claim could not be marked accepted after main-store acceptance.',
+          );
+        }
+      }
       this.lastErrorText = null;
       if (!this.lastReadyAt) {
         this.lastReadyAt = new Date().toISOString();
@@ -3693,6 +4517,19 @@ export class BlueBubblesChannel implements Channel {
       this.emitHealth();
       writeResponse(res, 200, 'OK');
     } catch (error) {
+      if (ingressClaim?.processingLeaseToken && !ingressClaimAccepted) {
+        try {
+          this.getReceiptInboxStore().releaseCanonicalSelfThreadIngressClaim({
+            claimId: ingressClaim.claimId,
+            processingLeaseToken: ingressClaim.processingLeaseToken,
+          });
+        } catch (releaseError) {
+          logger.warn(
+            { err: releaseError, claimId: ingressClaim.claimId },
+            'Failed to release a BlueBubbles ingress processing lease after callback failure',
+          );
+        }
+      }
       this.lastErrorText =
         error instanceof Error
           ? error.message
@@ -3708,40 +4545,44 @@ export class BlueBubblesChannel implements Channel {
     chatGuid: string,
     text: string,
     replyToGuid?: string,
+    idempotencyKey?: string,
   ): Promise<SendMessageResult> {
     const activeBaseUrl = await this.ensureActiveBaseUrl({
       recheck: true,
       refreshReadiness: true,
     });
     if (!activeBaseUrl || !this.config.password || !chatGuid) {
-      throw new Error(
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
         this.transportProbeDetail ||
-          'BlueBubbles transport is missing a reachable endpoint, password, or chat target',
+          'BlueBubbles transport is missing a reachable endpoint, password, or chat target.',
       );
     }
+    const request = {
+      chatGuid,
+      text,
+      replyToGuid,
+      sendMethod: this.sendMethod,
+      idempotencyKey,
+    };
     return this.bridgeProvider.sendText(
       this.buildConfigForBaseUrl(activeBaseUrl),
-      {
-        chatGuid,
-        text,
-        replyToGuid,
-        sendMethod: this.sendMethod,
-      },
+      request,
     );
   }
 
   private async postBlueBubblesNewDirectChat(
     address: string,
     text: string,
+    idempotencyKey?: string,
   ): Promise<SendMessageResult> {
     const activeBaseUrl = await this.ensureActiveBaseUrl({
       recheck: true,
       refreshReadiness: true,
     });
     if (!activeBaseUrl || !this.config.password) {
-      throw new Error(
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
         this.transportProbeDetail ||
-          'BlueBubbles transport is missing a reachable endpoint or password',
+          'BlueBubbles transport is missing a reachable endpoint or password.',
       );
     }
     this.lastOutboundTargetKind = 'new_direct_chat_address';
@@ -3749,14 +4590,16 @@ export class BlueBubblesChannel implements Channel {
     this.lastAttemptedTargetSequence = ['new_direct_chat_address'];
     this.monitorState.lastOutboundTargetKind = this.lastOutboundTargetKind;
     this.monitorState.lastOutboundTargetValue = address;
+    const request = {
+      address,
+      text,
+      sendMethod: this.sendMethod,
+      service: 'iMessage' as const,
+      idempotencyKey,
+    };
     return this.bridgeProvider.createDirectChat(
       this.buildConfigForBaseUrl(activeBaseUrl),
-      {
-        address,
-        text,
-        sendMethod: this.sendMethod,
-        service: 'iMessage',
-      },
+      request,
     );
   }
 
@@ -3833,7 +4676,9 @@ export class BlueBubblesChannel implements Channel {
   ): Promise<SendMessageResult> {
     const chatGuid = extractBlueBubblesChatGuid(jid);
     if (!chatGuid) {
-      throw new Error('BlueBubbles target chat is invalid.');
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles target chat is invalid.',
+      );
     }
     const replyToGuid = options?.replyToMessageId?.startsWith('bb:')
       ? options.replyToMessageId.slice(3)
@@ -3841,6 +4686,37 @@ export class BlueBubblesChannel implements Channel {
     this.lastMetadataHydrationSource = 'none';
     this.lastAttemptedTargetSequence = [];
 
+    // Durable approval-bound actions use one exact target and one exact POST.
+    // A target or threading fallback would be a different side effect and can
+    // turn an uncertain first result into a duplicate delivery.
+    if (options?.idempotencyKey) {
+      this.lastAttemptedTargetSequence = ['chat_guid'];
+      this.updateLastOutboundAttempt({ kind: 'chat_guid', chatGuid });
+      try {
+        const result = await this.postBlueBubblesText(
+          chatGuid,
+          text,
+          replyToGuid,
+          options.idempotencyKey,
+        );
+        this.successfulOutboundTargetByJid.set(jid, {
+          kind: 'chat_guid',
+          chatGuid,
+        });
+        this.lastSendErrorDetail = null;
+        return result;
+      } catch (error) {
+        this.lastSendErrorDetail =
+          error instanceof Error
+            ? error.message
+            : 'Unknown BlueBubbles send error';
+        throw error;
+      }
+    }
+
+    // Conversational same-thread replies retain their provider compatibility
+    // fallbacks, but only after a definite rejection. An uncertain POST is
+    // always fenced and never retried.
     if (replyToGuid) {
       try {
         this.updateLastOutboundAttempt({ kind: 'chat_guid', chatGuid });
@@ -3856,6 +4732,7 @@ export class BlueBubblesChannel implements Channel {
         this.lastSendErrorDetail = null;
         return result;
       } catch (error) {
+        if (isChannelDeliveryUnverifiedError(error)) throw error;
         logger.info(
           { err: error, replyToGuid },
           'BlueBubbles reply threading was rejected, retrying without reply metadata',
@@ -3881,6 +4758,7 @@ export class BlueBubblesChannel implements Channel {
         this.lastSendErrorDetail = null;
         return result;
       } catch (error) {
+        if (isChannelDeliveryUnverifiedError(error)) throw error;
         const errorText =
           error instanceof Error
             ? error.message
@@ -3915,9 +4793,7 @@ export class BlueBubblesChannel implements Channel {
           !this.getDirectChatMetadata(jid, chatGuid).isGroup &&
           this.isRetryableDirectTargetError(errorText) &&
           nextCandidateIndex < candidates.length;
-        if (!canRetry) {
-          break;
-        }
+        if (!canRetry) break;
 
         logger.info(
           {
@@ -3973,11 +4849,15 @@ export class BlueBubblesChannel implements Channel {
     });
     await this.probeBlueBubblesTransport();
     await this.refreshBridgeReadiness();
+    await this.refreshReceiptInboxReadiness();
     this.lastErrorText =
       this.transportProbeStatus === 'reachable' &&
-      this.webhookRegistrationStatus === 'registered'
+      this.webhookRegistrationStatus === 'registered' &&
+      this.isReceiptInboxReadyForSend()
         ? null
-        : this.webhookRegistrationDetail || this.transportProbeDetail;
+        : this.receiptInboxReadiness.detail ||
+          this.webhookRegistrationDetail ||
+          this.transportProbeDetail;
     await this.runShadowMonitorOnce().catch((error) => {
       logger.warn(
         { err: error },
@@ -3994,27 +4874,46 @@ export class BlueBubblesChannel implements Channel {
     options?: SendMessageOptions,
   ): Promise<SendMessageResult> {
     if (!this.connected) {
-      throw new Error('BlueBubbles channel is not connected.');
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles channel is not connected.',
+      );
     }
     if (!this.config.sendEnabled) {
-      throw new Error('BlueBubbles outbound send is disabled.');
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles outbound send is disabled.',
+      );
+    }
+    if (!this.config.webhookSecret) {
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles webhook authentication is not configured.',
+      );
+    }
+    await this.refreshReceiptInboxReadiness();
+    if (!this.isReceiptInboxReadyForSend()) {
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        `BlueBubbles durable receipt inbox is not ready: ${this.receiptInboxReadiness.detail}`,
+      );
     }
     const chatGuid = extractBlueBubblesChatGuid(jid);
     if (!chatGuid) {
-      throw new Error('BlueBubbles target chat is not valid.');
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles target chat is not valid.',
+      );
     }
     const requestedFirstContactAddress = options?.blueBubblesCreateChatAddress;
     const firstContactAddress = requestedFirstContactAddress
       ? normalizeBlueBubblesContactTargetAddress(requestedFirstContactAddress)
       : null;
     if (requestedFirstContactAddress && !firstContactAddress) {
-      throw new Error('BlueBubbles first-contact address is not valid.');
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles first-contact address is not valid.',
+      );
     }
     if (
       firstContactAddress &&
       chatGuid !== `iMessage;-;${firstContactAddress}`
     ) {
-      throw new Error(
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
         'BlueBubbles first-contact address does not match the approved target.',
       );
     }
@@ -4022,18 +4921,22 @@ export class BlueBubblesChannel implements Channel {
       firstContactAddress &&
       (options?.threadId || options?.replyToMessageId)
     ) {
-      throw new Error(
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
         'BlueBubbles first-contact delivery cannot include existing-thread metadata.',
       );
     }
-    if (
-      !isBlueBubblesChatEligible(
-        this.config,
-        chatGuid,
-        firstContactAddress ? false : undefined,
-      )
-    ) {
-      throw new Error(
+    const inboundEligible = isBlueBubblesChatEligible(
+      this.config,
+      chatGuid,
+      firstContactAddress ? false : undefined,
+    );
+    const exactApprovalBoundDirectSend =
+      Boolean(options?.idempotencyKey?.trim()) &&
+      options?.suppressSenderLabel === true &&
+      (Boolean(firstContactAddress) ||
+        !this.getDirectChatMetadata(jid, chatGuid).isGroup);
+    if (!inboundEligible && !exactApprovalBoundDirectSend) {
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
         'BlueBubbles can only reply inside the configured chat scope.',
       );
     }
@@ -4048,6 +4951,7 @@ export class BlueBubblesChannel implements Channel {
         ? await this.postBlueBubblesNewDirectChat(
             firstContactAddress,
             renderedText,
+            options?.idempotencyKey,
           )
         : await this.sendBlueBubblesReply(jid, renderedText, options);
       const sentAt = new Date().toISOString();
@@ -4082,6 +4986,7 @@ export class BlueBubblesChannel implements Channel {
         is_from_me: true,
         is_bot_message: isCompanionLabeled,
         reply_to_id: options?.replyToMessageId || undefined,
+        provider_idempotency_key: options?.idempotencyKey,
       });
       this.persistMonitorState();
       this.emitHealth();
@@ -4104,10 +5009,25 @@ export class BlueBubblesChannel implements Channel {
     options: SendArtifactOptions = {},
   ): Promise<SendMessageResult> {
     if (!this.connected) {
-      throw new Error('BlueBubbles channel is not connected.');
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles channel is not connected.',
+      );
     }
     if (!this.config.sendEnabled) {
-      throw new Error('BlueBubbles outbound send is disabled.');
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles outbound send is disabled.',
+      );
+    }
+    if (!this.config.webhookSecret) {
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles webhook authentication is not configured.',
+      );
+    }
+    await this.refreshReceiptInboxReadiness();
+    if (!this.isReceiptInboxReadyForSend()) {
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        `BlueBubbles durable receipt inbox is not ready: ${this.receiptInboxReadiness.detail}`,
+      );
     }
     const chatGuid = extractBlueBubblesChatGuid(jid);
     if (!chatGuid) {
@@ -4147,7 +5067,10 @@ export class BlueBubblesChannel implements Channel {
   }
 
   async primeRecentHistory(
-    options: { limit?: number } = {},
+    options: {
+      limit?: number;
+      recoverUnacceptedClaims?: boolean;
+    } = {},
   ): Promise<{ storedCount: number; totalCount: number }> {
     if (!this.connected) {
       throw new Error('BlueBubbles channel is not connected.');
@@ -4170,14 +5093,18 @@ export class BlueBubblesChannel implements Channel {
         candidateChatJids: getAllChats()
           .map((chat) => chat.jid)
           .filter((jid) => jid.startsWith('bb:')),
+        timeoutMs: this.durabilityDeps.historyFetchTimeoutMs,
       },
     );
-    const eligibleRows = rows.filter((row) =>
-      isBlueBubblesChatEligible(
-        this.config,
-        row.chat.chatGuid,
-        row.chat.isGroup,
-      ),
+    const eligibleRows = rows.filter(
+      (row) =>
+        (Boolean(row.message.is_from_me) &&
+          Boolean(row.message.provider_idempotency_key)) ||
+        isBlueBubblesChatEligible(
+          this.config,
+          row.chat.chatGuid,
+          row.chat.isGroup,
+        ),
     );
     let storedCount = 0;
     for (const row of eligibleRows) {
@@ -4190,9 +5117,191 @@ export class BlueBubblesChannel implements Channel {
         'bluebubbles',
         row.chat.isGroup,
       );
-      if (hasStoredMessage(row.chatJid, row.message.id)) continue;
+      const configuredOwnerHistory =
+        row.message.is_from_me &&
+        !row.message.provider_idempotency_key &&
+        !isBlueBubblesAndreaBotEcho(row.message.content) &&
+        isConfiguredBlueBubblesSelfThreadAliasJid(row.chatJid);
+      const providerIdentityJids = configuredOwnerHistory
+        ? expandBlueBubblesLogicalSelfThreadJids(row.chatJid)
+        : [row.chatJid];
+      if (
+        providerIdentityJids.some((chatJid) =>
+          hasStoredMessage(chatJid, row.message.id),
+        )
+      ) {
+        if (row.message.provider_idempotency_key) {
+          associateMessageProviderIdempotencyKey({
+            chatJid: row.chatJid,
+            messageId: row.message.id,
+            providerIdempotencyKey: row.message.provider_idempotency_key,
+          });
+        }
+        continue;
+      }
+      let durableIngressClaim: CanonicalSelfThreadIngressClaim | null = null;
+      if (configuredOwnerHistory) {
+        durableIngressClaim =
+          this.getReceiptInboxStore().resumeCanonicalSelfThreadIngressIfExists({
+            canonicalScope: getBlueBubblesCanonicalSelfThreadJid(),
+            ownerAuthored: true,
+            body: row.message.content,
+            providerTimestamp: row.message.timestamp,
+          });
+        if (!durableIngressClaim) {
+          continue;
+        }
+        if (
+          !durableIngressClaim.shouldProcess &&
+          !durableIngressClaim.acceptedAt &&
+          options.recoverUnacceptedClaims
+        ) {
+          const leaseExpiresAtMs = Date.parse(
+            durableIngressClaim.processingLeaseExpiresAt || '',
+          );
+          if (!Number.isFinite(leaseExpiresAtMs)) {
+            throw new Error(
+              'BlueBubbles history recovery found an unaccepted ingress claim without a valid lease expiry.',
+            );
+          }
+          const waitMs = Math.max(
+            0,
+            Math.min(35_000, leaseExpiresAtMs - Date.now() + 25),
+          );
+          if (waitMs > 0) {
+            await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+          }
+          durableIngressClaim =
+            this.getReceiptInboxStore().resumeCanonicalSelfThreadIngressIfExists(
+              {
+                canonicalScope: getBlueBubblesCanonicalSelfThreadJid(),
+                ownerAuthored: true,
+                body: row.message.content,
+                providerTimestamp: row.message.timestamp,
+              },
+            );
+          if (!durableIngressClaim) {
+            throw new Error(
+              'BlueBubbles history recovery lost its pre-existing durable ingress claim.',
+            );
+          }
+          if (
+            !durableIngressClaim.shouldProcess &&
+            !durableIngressClaim.acceptedAt
+          ) {
+            throw new Error(
+              'BlueBubbles history recovery could not safely resume the unaccepted ingress claim after its processing lease.',
+            );
+          }
+        }
+        if (!durableIngressClaim.shouldProcess) {
+          continue;
+        }
+      }
+      const messageId = durableIngressClaim?.claimId || row.message.id;
+      const durableIdentityJids = durableIngressClaim
+        ? expandBlueBubblesLogicalSelfThreadJids(row.chatJid)
+        : [row.chatJid];
+      if (
+        durableIdentityJids.some((chatJid) =>
+          hasStoredMessage(chatJid, messageId),
+        )
+      ) {
+        if (
+          durableIngressClaim?.processingLeaseToken &&
+          !this.getReceiptInboxStore().acceptCanonicalSelfThreadIngressClaim({
+            claimId: durableIngressClaim.claimId,
+            processingLeaseToken: durableIngressClaim.processingLeaseToken,
+          })
+        ) {
+          throw new Error(
+            'BlueBubbles history ingress claim could not be accepted for an existing main-store message.',
+          );
+        }
+        if (row.message.provider_idempotency_key) {
+          associateMessageProviderIdempotencyKey({
+            chatJid: row.chatJid,
+            messageId,
+            providerIdempotencyKey: row.message.provider_idempotency_key,
+          });
+        }
+        continue;
+      }
+      if (durableIngressClaim) {
+        if (durableIngressClaim.disposition !== 'resumed') {
+          throw new Error(
+            'BlueBubbles history recovery refused to route an owner command without a resumed pre-existing claim.',
+          );
+        }
+        if (!options.recoverUnacceptedClaims) {
+          if (
+            durableIngressClaim.processingLeaseToken &&
+            !this.getReceiptInboxStore().releaseCanonicalSelfThreadIngressClaim(
+              {
+                claimId: durableIngressClaim.claimId,
+                processingLeaseToken: durableIngressClaim.processingLeaseToken,
+              },
+            )
+          ) {
+            throw new Error(
+              'BlueBubbles history hydration could not release an unprocessed owner-ingress claim.',
+            );
+          }
+          continue;
+        }
+
+        let recoveredIngressAccepted = false;
+        try {
+          const providerMessageId = row.message.id;
+          const recoveredMessage: NewMessage = {
+            ...row.message,
+            id: durableIngressClaim.claimId,
+            chat_jid: row.chatJid,
+            provider_message_id: providerMessageId,
+            durable_ingress_claim_id: durableIngressClaim.claimId,
+          };
+          await this.opts.onChatMetadata(
+            row.chatJid,
+            row.message.timestamp,
+            row.chat.displayName ||
+              (!row.chat.isGroup ? row.contact.displayName : null) ||
+              row.chat.chatGuid,
+            'bluebubbles',
+            row.chat.isGroup,
+          );
+          await this.opts.onMessage(row.chatJid, recoveredMessage);
+          if (!durableIngressClaim.processingLeaseToken) {
+            throw new Error(
+              'BlueBubbles history recovery resumed without an acceptance lease.',
+            );
+          }
+          recoveredIngressAccepted =
+            this.getReceiptInboxStore().acceptCanonicalSelfThreadIngressClaim({
+              claimId: durableIngressClaim.claimId,
+              processingLeaseToken: durableIngressClaim.processingLeaseToken,
+            });
+          if (!recoveredIngressAccepted) {
+            throw new Error(
+              'BlueBubbles history recovery could not mark the normally routed owner ingress accepted.',
+            );
+          }
+          storedCount += 1;
+        } catch (error) {
+          if (
+            durableIngressClaim.processingLeaseToken &&
+            !recoveredIngressAccepted
+          ) {
+            this.getReceiptInboxStore().releaseCanonicalSelfThreadIngressClaim({
+              claimId: durableIngressClaim.claimId,
+              processingLeaseToken: durableIngressClaim.processingLeaseToken,
+            });
+          }
+          throw error;
+        }
+        continue;
+      }
       storeMessageDirect({
-        id: row.message.id,
+        id: messageId,
         chat_jid: row.chatJid,
         sender: row.message.sender,
         sender_name: row.message.sender_name,
@@ -4201,6 +5310,8 @@ export class BlueBubblesChannel implements Channel {
         is_from_me: Boolean(row.message.is_from_me),
         is_bot_message: row.message.is_bot_message,
         reply_to_id: row.message.reply_to_id || undefined,
+        provider_idempotency_key:
+          row.message.provider_idempotency_key || undefined,
         attachments: row.message.attachments || [],
       });
       storedCount += 1;
@@ -4256,7 +5367,10 @@ export class BlueBubblesChannel implements Channel {
       enabled: this.config.enabled,
       groupFolder: this.config.groupFolder,
       chatScope: this.config.chatScope,
-      sendEnabled: this.config.sendEnabled,
+      sendEnabled:
+        this.config.sendEnabled &&
+        Boolean(this.config.webhookSecret) &&
+        this.isReceiptInboxReadyForSend(),
       listenerHost: this.config.host,
       listenerPort: this.activePort,
       configuredBaseUrl: this.config.baseUrl,
@@ -4289,6 +5403,9 @@ export class BlueBubblesChannel implements Channel {
       detectionState: this.monitorState.detectionState,
       detectionDetail: this.monitorState.detectionDetail || 'none',
       detectionNextAction: this.monitorState.detectionNextAction || 'none',
+      receiptInboxState: this.receiptInboxReadiness.state,
+      receiptInboxDetail: this.receiptInboxReadiness.detail,
+      receiptInboxHealthUrl: this.config.receiptInboxHealthUrl,
     };
   }
 
@@ -4300,10 +5417,15 @@ export class BlueBubblesChannel implements Channel {
     }
     if (mode === 'transport' || mode === 'all') {
       await this.probeBlueBubblesTransport();
+      await this.refreshReceiptInboxReadiness();
     }
     if (mode === 'webhook' || mode === 'all') {
       await this.probeBlueBubblesTransport();
       await this.refreshBridgeReadiness();
+      await this.refreshReceiptInboxReadiness();
+    }
+    if (mode === 'shadow') {
+      await this.refreshReceiptInboxReadiness();
     }
     if (mode === 'shadow' || mode === 'all') {
       await this.runShadowMonitorOnce();
@@ -4331,6 +5453,17 @@ export class BlueBubblesChannel implements Channel {
         );
       });
       this.server = undefined;
+    }
+    if (this.receiptInboxStore) {
+      try {
+        this.receiptInboxStore.close();
+      } catch (error) {
+        logger.warn(
+          { err: error },
+          'Failed to close the BlueBubbles receipt inbox store cleanly',
+        );
+      }
+      this.receiptInboxStore = null;
     }
     this.connected = false;
     this.emitHealth({

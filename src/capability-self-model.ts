@@ -18,6 +18,11 @@ import {
 } from './integration-doctor.js';
 import type { CapabilityStateRecord, ControlPlaneChannel } from './types.js';
 import type { ScheduledTask } from './types.js';
+import {
+  resolveRuntimeCapabilitySourceChannels,
+  runtimeCapabilityRegistry,
+  type RuntimeCapabilityRegistry,
+} from './runtime-capability-registry.js';
 
 // ---------------------------------------------------------------------------
 // v32 Capability Self-Model
@@ -38,15 +43,21 @@ const PRIVACY_JSON = JSON.stringify({
   configCheckedByNameOnly: true,
 });
 
+type RuntimeCapabilityRegistryView = Pick<
+  RuntimeCapabilityRegistry,
+  'getRegistrationSnapshot'
+>;
+
 interface CapabilityDefinition {
   capabilityId: string;
+  runtimeCapabilityId?: string;
   displayName: string;
   focusTier: 'daily_core' | 'operator_support' | 'optional_surface';
   requiredConfig: string[];
   requiredConfigAnyOf?: string[][];
   reliabilitySubjectId?: string;
   proofNameHint?: RegExp;
-  allowedChannels: ControlPlaneChannel[];
+  allowedChannels?: ControlPlaneChannel[];
   approvalRequirement: CapabilityStateRecord['approvalRequirement'];
   fallbackCapabilityId?: string;
   autonomyLevel: number;
@@ -70,6 +81,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   },
   {
     capabilityId: 'messages.send.telegram',
+    runtimeCapabilityId: 'messages.send.telegram',
     displayName: 'Send Telegram messages (after approval)',
     focusTier: 'daily_core',
     requiredConfig: ['TELEGRAM_BOT_TOKEN'],
@@ -82,12 +94,12 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   },
   {
     capabilityId: 'messages.send.bluebubbles',
-    displayName: 'Send iMessage via BlueBubbles (after approval)',
+    runtimeCapabilityId: 'messages.send.bluebubbles',
+    displayName: 'Send iMessage via BlueBubbles',
     focusTier: 'daily_core',
     requiredConfig: ['BLUEBUBBLES_BASE_URL'],
     reliabilitySubjectId: 'integration:bluebubbles',
     proofNameHint: /bluebubbles|same.thread/i,
-    allowedChannels: ['bluebubbles'],
     approvalRequirement: 'explicit_approval',
     fallbackCapabilityId: 'messages.draft',
     autonomyLevel: 5,
@@ -106,6 +118,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   },
   {
     capabilityId: 'calendar.read',
+    runtimeCapabilityId: 'calendar.events.google',
     displayName: 'Read Google Calendar',
     focusTier: 'daily_core',
     requiredConfig: ['GOOGLE_CALENDAR_CLIENT_ID'],
@@ -123,6 +136,7 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   },
   {
     capabilityId: 'calendar.write',
+    runtimeCapabilityId: 'calendar.events.google',
     displayName: 'Create Google Calendar events (after approval)',
     focusTier: 'daily_core',
     requiredConfig: ['GOOGLE_CALENDAR_CLIENT_ID'],
@@ -146,23 +160,19 @@ const CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   },
   {
     capabilityId: 'research.web',
+    runtimeCapabilityId: 'research.web',
     displayName: 'Web research',
     focusTier: 'daily_core',
     requiredConfig: [],
     requiredConfigAnyOf: [['BRAVE_API_KEY', 'BRAVE_SEARCH_API_KEY']],
     reliabilitySubjectId: 'provider:brave_search',
-    allowedChannels: [
-      'telegram',
-      'alexa',
-      'bluebubbles',
-      'operator',
-      'internal',
-    ],
+    allowedChannels: ['alexa', 'telegram'],
     approvalRequirement: 'none',
     autonomyLevel: 0,
   },
   {
     capabilityId: 'reminders.internal',
+    runtimeCapabilityId: 'reminders.local',
     displayName: 'Internal reminders and follow-ups',
     focusTier: 'daily_core',
     requiredConfig: [],
@@ -239,7 +249,7 @@ function focusTierForCapability(
 }
 
 function needsAttention(state: CapabilityStateRecord): boolean {
-  return state.proofStatus !== 'live_proven';
+  return !state.enabled || state.proofStatus !== 'live_proven';
 }
 
 function summarizeFocusTier(
@@ -251,7 +261,9 @@ function summarizeFocusTier(
   );
   return {
     total: scoped.length,
-    ready: scoped.filter((state) => state.proofStatus === 'live_proven').length,
+    ready: scoped.filter(
+      (state) => state.enabled && state.proofStatus === 'live_proven',
+    ).length,
     needsAttention: scoped.filter(needsAttention).length,
   };
 }
@@ -335,6 +347,7 @@ export function buildCapabilitySelfModel(
     providerHealthSnapshots?: ProviderHealthSnapshot[];
     integrationReport?: IntegrationDoctorReport;
     projectRoot?: string;
+    capabilityRegistry?: RuntimeCapabilityRegistryView;
   } = {},
 ): CapabilitySelfModelReport {
   const generatedAt = nowIso(params.now);
@@ -361,6 +374,8 @@ export function buildCapabilitySelfModel(
   const integrationReport =
     params.integrationReport ||
     buildIntegrationDoctorReport({ now: new Date(generatedAt) });
+  const capabilityRegistry =
+    params.capabilityRegistry ?? runtimeCapabilityRegistry;
   const states: CapabilityStateRecord[] = [];
 
   for (const definition of CAPABILITY_DEFINITIONS) {
@@ -509,8 +524,29 @@ export function buildCapabilitySelfModel(
           : proofStatus === 'externally_blocked'
             ? Math.min(reliabilityScoreBase, 0.22)
             : reliabilityScoreBase;
-    const enabled =
+    let enabled =
       proofStatus !== 'missing_config' && proofStatus !== 'externally_blocked';
+    const runtimeRegistration = definition.runtimeCapabilityId
+      ? capabilityRegistry.getRegistrationSnapshot(
+          definition.runtimeCapabilityId,
+        )
+      : undefined;
+    if (runtimeRegistration) {
+      const registrationBlocker =
+        runtimeRegistration.state === 'capability_unregistered'
+          ? 'Runtime capability contract is not registered in this process'
+          : !runtimeRegistration.toolRegistered
+            ? `Production surface ${runtimeRegistration.descriptor?.toolRegistration.toolId ?? 'tool'} is not registered in this process`
+            : !runtimeRegistration.toolExposed
+              ? `Production surface ${runtimeRegistration.surface?.toolId ?? runtimeRegistration.binding?.toolId ?? runtimeRegistration.descriptor?.toolRegistration.toolId ?? 'tool'} is not exposed in this process`
+              : null;
+      if (registrationBlocker) {
+        enabled = false;
+        currentBlocker = currentBlocker
+          ? `${registrationBlocker}; ${currentBlocker}`
+          : registrationBlocker;
+      }
+    }
     const confidence = Math.max(
       0.05,
       Math.min(
@@ -542,7 +578,12 @@ export function buildCapabilitySelfModel(
           ),
         ].join(',') || 'none',
       currentBlocker,
-      allowedChannels: definition.allowedChannels.join(','),
+      allowedChannels: (
+        definition.allowedChannels ??
+        (runtimeRegistration
+          ? resolveRuntimeCapabilitySourceChannels(runtimeRegistration)
+          : [])
+      ).join(','),
       approvalRequirement: definition.approvalRequirement,
       fallbackCapabilityId: definition.fallbackCapabilityId ?? null,
       confidence,
@@ -561,12 +602,10 @@ export function buildCapabilitySelfModel(
   return {
     generatedAt,
     states,
-    ready: states.filter((state) => state.proofStatus === 'live_proven').length,
-    blocked: states.filter(
-      (state) =>
-        state.proofStatus === 'externally_blocked' ||
-        state.proofStatus === 'missing_config',
+    ready: states.filter(
+      (state) => state.enabled && state.proofStatus === 'live_proven',
     ).length,
+    blocked: states.filter((state) => !state.enabled).length,
     needsSetup: states.filter((state) => state.proofStatus === 'missing_config')
       .length,
     dailyCore,
@@ -643,11 +682,13 @@ export function formatCapabilityReport(
   );
   for (const state of sortCapabilityStatesForDisplay(report.states)) {
     const flag =
-      state.proofStatus === 'live_proven'
-        ? 'OK'
-        : state.proofStatus === 'missing_config'
-          ? 'SETUP'
-          : state.proofStatus.toUpperCase();
+      state.proofStatus === 'missing_config'
+        ? 'SETUP'
+        : !state.enabled
+          ? 'BLOCKED'
+          : state.proofStatus === 'live_proven'
+            ? 'OK'
+            : state.proofStatus.toUpperCase();
     lines.push(
       `- [${flag}/${focusLabelForCapability(state)}] ${state.displayName} — reliability ${state.reliabilityScore.toFixed(2)}, approval: ${state.approvalRequirement}, autonomy L${state.autonomyLevel}${state.currentBlocker ? ` — blocker: ${state.currentBlocker}` : ''}`,
     );
@@ -661,8 +702,16 @@ export function isCapabilityNaturalRequest(text: string): boolean {
   );
 }
 
-export function formatCapabilityNaturalResponse(text: string): string {
-  const report = buildCapabilitySelfModel({ persist: false });
+export function formatCapabilityNaturalResponse(
+  text: string,
+  options: { capabilityRegistry?: RuntimeCapabilityRegistryView } = {},
+): string {
+  const capabilityRegistry =
+    options.capabilityRegistry ?? runtimeCapabilityRegistry;
+  const report = buildCapabilitySelfModel({
+    persist: false,
+    capabilityRegistry,
+  });
   const ask = text || '';
 
   if (/\bcan you (send|text)\b/i.test(ask)) {
@@ -675,14 +724,47 @@ export function formatCapabilityNaturalResponse(text: string): string {
     const lines = ['Here is where message sending stands:'];
     for (const state of [bluebubbles, telegram]) {
       if (!state) continue;
-      if (state.proofStatus === 'live_proven') {
+      const definition = definitionForCapability(state.capabilityId);
+      if (!definition?.runtimeCapabilityId) continue;
+      const registration = capabilityRegistry.getRegistrationSnapshot(
+        definition.runtimeCapabilityId,
+      );
+      const toolId =
+        registration.surface?.toolId ??
+        registration.binding?.toolId ??
+        registration.descriptor?.toolRegistration.toolId ??
+        'tool';
+      if (registration.state === 'capability_unregistered') {
         lines.push(
-          `- ${state.displayName}: ready. I always draft first and send only with your approval.`,
+          `- ${state.displayName}: unavailable in this process because its runtime capability contract is not registered. I will not claim that I can dispatch it.`,
+        );
+      } else if (!registration.toolRegistered) {
+        lines.push(
+          `- ${state.displayName}: the contract declares ${toolId}, but no live production surface is registered in this process, so sending is unavailable here.`,
+        );
+      } else if (!registration.toolExposed) {
+        lines.push(
+          `- ${state.displayName}: production surface ${toolId} is registered but not exposed in this process, so sending is unavailable here.`,
+        );
+      } else if (registration.toolDispatchable) {
+        const sourceChannels =
+          resolveRuntimeCapabilitySourceChannels(registration);
+        lines.push(
+          `- ${state.displayName}: registry-owned executable binding ${toolId} is registered and exposed for ${sourceChannels.join(', ')}. An explicit send request is the authorization; I check current provider health and write permission immediately before dispatch. Historical proof is ${state.proofStatus.replace(/_/g, ' ')} and is diagnostic, not a capability denial.`,
         );
       } else {
+        const sourceChannels =
+          resolveRuntimeCapabilitySourceChannels(registration);
         lines.push(
-          `- ${state.displayName}: not fully proven right now (${state.proofStatus.replace(/_/g, ' ')})${state.currentBlocker ? ` — ${state.currentBlocker}` : ''}. I can still draft, and we can queue the send for when it is verified.`,
+          `- ${state.displayName}: live production surface ${toolId} is registered and exposed for ${sourceChannels.join(', ')}. Execution remains on its existing host-owned guarded path, not a registry-owned binding; that path remains responsible for authorization and delivery checks. Historical proof is ${state.proofStatus.replace(/_/g, ' ')} and is diagnostic, not a capability denial.`,
         );
+      }
+      if (
+        registration.toolRegistered &&
+        state.currentBlocker &&
+        !state.currentBlocker.includes(toolId)
+      ) {
+        lines.push(`  Current diagnostic: ${state.currentBlocker}.`);
       }
     }
     return lines.join('\n');

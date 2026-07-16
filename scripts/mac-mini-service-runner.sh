@@ -59,5 +59,19 @@ if [[ -z "$PINNED_NODE_PATH" || ! -x "$PINNED_NODE_PATH" ]]; then
   exit 1
 fi
 
+BUILD_PROVENANCE_PATH="$PROJECT_ROOT/dist/build-provenance.json"
+CURRENT_GIT_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD)" || {
+  echo "current Git commit is unavailable for build verification" >&2
+  exit 1
+}
+ANDREA_BUILD_ID="$(
+  "$PINNED_NODE_PATH" scripts/verify-build-manifest-id.mjs \
+    "$BUILD_PROVENANCE_PATH" "$CURRENT_GIT_COMMIT"
+)" || {
+  echo "exact clean build provenance is unavailable at $BUILD_PROVENANCE_PATH" >&2
+  exit 1
+}
+export ANDREA_BUILD_ID
+
 echo "$$" > data/run/mac-mini-service.pid
 exec "$PINNED_NODE_PATH" dist/index.js

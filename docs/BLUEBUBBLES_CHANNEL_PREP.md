@@ -295,8 +295,17 @@ BLUEBUBBLES_CHAT_SCOPE=all_synced
 BLUEBUBBLES_ALLOWED_CHAT_GUIDS=
 BLUEBUBBLES_ALLOWED_CHAT_GUID=
 BLUEBUBBLES_WEBHOOK_PATH=/bluebubbles/webhook
-BLUEBUBBLES_WEBHOOK_SECRET=
+BLUEBUBBLES_WEBHOOK_SECRET=<required-random-secret>
 BLUEBUBBLES_SEND_ENABLED=true
+BLUEBUBBLES_RECEIPT_INBOX_ENABLED=true
+BLUEBUBBLES_RECEIPT_INBOX_HOST=127.0.0.1
+BLUEBUBBLES_RECEIPT_INBOX_PORT=4306
+BLUEBUBBLES_RECEIPT_INBOX_BASE_URL=http://127.0.0.1:4306
+BLUEBUBBLES_RECEIPT_INBOX_WEBHOOK_PUBLIC_BASE_URL=http://127.0.0.1:4306
+BLUEBUBBLES_RECEIPT_INBOX_PATH=/bluebubbles/receipt-inbox
+BLUEBUBBLES_RECEIPT_INBOX_HEALTH_PATH=/health
+# Defaults to ${ANDREA_STATE_DIR:-~/.andrea}/bluebubbles/receipt-inbox.sqlite3
+# BLUEBUBBLES_RECEIPT_INBOX_DB_PATH=~/.andrea/bluebubbles/receipt-inbox.sqlite3
 ```
 
 Meaning:
@@ -311,6 +320,11 @@ Meaning:
 - `BLUEBUBBLES_CHAT_SCOPE=all_synced` allows all synced personal and group chats
 - `BLUEBUBBLES_ALLOWED_CHAT_GUIDS` and `BLUEBUBBLES_ALLOWED_CHAT_GUID` are only for optional allowlist mode
 - `BLUEBUBBLES_SEND_ENABLED=true` is required for real reply-back
+- the receipt-inbox host/path are independent of the main webhook; its listener
+  accepts only `127.0.0.1` or `::1`, never a wildcard or LAN address
+- `BLUEBUBBLES_RECEIPT_INBOX_BASE_URL` is the main process's health-probe base,
+  while `BLUEBUBBLES_RECEIPT_INBOX_WEBHOOK_PUBLIC_BASE_URL` is the provider-facing
+  base used to verify the second BlueBubbles registration
 
 ## Webhook And Send Model
 
@@ -318,10 +332,20 @@ Inbound:
 
 - Andrea listens locally on `http://<host>:<port><webhookPath>`
 - the Mac mini BlueBubbles server can call Andrea's local webhook at `127.0.0.1`
-- if `BLUEBUBBLES_WEBHOOK_SECRET` is set, append it as `?secret=...`
+- `BLUEBUBBLES_WEBHOOK_SECRET` is required; without it the listener is never ready and outbound sending is not exposed as enabled
+- append the configured secret to the BlueBubbles callback URL as `?secret=...`
 - Andrea accepts supported new-message webhook events only
 - messages from chats outside the configured scope are ignored
 - messages from the user that do not explicitly mention `@Andrea` or `@OpenClaw` are stored but do not wake Andrea
+
+BlueBubbles must retain the main callback and have a **second** webhook whose
+URL is exactly
+`http://127.0.0.1:4306/bluebubbles/receipt-inbox?secret=<URL-encoded-secret>`
+and whose only event is **New Messages** (literal API event `new-message`). Do
+not select all events. The provider registration, independently supervised
+LaunchAgent, private SQLite path, login-time limitation, and lifecycle commands
+are specified in
+[BlueBubbles Receipt Inbox LaunchAgent](./BLUEBUBBLES_RECEIPT_INBOX_SERVICE.md).
 
 Outbound:
 

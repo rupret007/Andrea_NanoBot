@@ -1,15 +1,20 @@
 import assert from 'node:assert/strict';
 
+import '../src/channels/index.js';
+
 import { _closeDatabase, _initTestDatabase } from '../src/db.js';
 import {
   formatDogfoodGauntletReport,
   runDogfoodGauntlet,
 } from '../src/dogfood-gauntlet.js';
+import { registerProductionRuntimeCapabilitySurfaces } from '../src/runtime-capability-production-surfaces.js';
+import { runtimeCapabilityRegistry } from '../src/runtime-capability-registry.js';
 import type {
   LiveProofGauntletReport,
   RealityDoctorReport,
 } from '../src/types.js';
 
+registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
 _initTestDatabase();
 
 const generatedAt = '2026-06-10T15:30:00.000Z';

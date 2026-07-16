@@ -4,18 +4,28 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import './channels/index.js';
+
 import { buildCapabilitySelfModel } from './capability-self-model.js';
 import { beginCognitiveKernelRun } from './cognitive-kernel.js';
 import { buildCognitiveBlackboard } from './cognitive-blackboard.js';
 import { _closeDatabase, _initTestDatabase } from './db.js';
 import type { ProviderHealthSnapshot } from './provider-health.js';
 import { writeProviderLiveHealthState } from './provider-live-health-state.js';
+import { registerProductionRuntimeCapabilitySurfaces } from './runtime-capability-production-surfaces.js';
+import {
+  DEFAULT_RUNTIME_CAPABILITY_DESCRIPTORS,
+  RuntimeCapabilityRegistry,
+} from './runtime-capability-registry.js';
 import {
   buildToolReliabilityDoctorReport,
   refreshToolReliabilityFromCurrentTruth,
 } from './tool-reliability.js';
 
 const tempRoots: string[] = [];
+const capabilityRegistry = registerProductionRuntimeCapabilitySurfaces(
+  new RuntimeCapabilityRegistry(DEFAULT_RUNTIME_CAPABILITY_DESCRIPTORS),
+);
 
 function tempRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'provider-current-truth-'));
@@ -87,6 +97,7 @@ describe('fresh provider truth consumers', () => {
       env: { BRAVE_SEARCH_API_KEY: 'configured' },
       envFileValues: {},
       projectRoot: root,
+      capabilityRegistry,
     }).states.find((state) => state.capabilityId === 'research.web');
     expect(capability).toMatchObject({
       proofStatus: 'live_proven',
@@ -145,6 +156,7 @@ describe('fresh provider truth consumers', () => {
       env: { BRAVE_SEARCH_API_KEY: 'configured' },
       envFileValues: {},
       projectRoot: root,
+      capabilityRegistry,
     }).states.find((state) => state.capabilityId === 'research.web');
     expect(capability?.proofStatus).toBe('stale');
 

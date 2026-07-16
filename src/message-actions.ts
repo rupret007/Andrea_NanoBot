@@ -1,7 +1,8 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 import {
   createTask,
+  claimBlueBubblesMessageActionDispatch,
   getAllChats,
   getTaskById,
   getCommunicationThread,
@@ -11,9 +12,11 @@ import {
   findLatestOpenMessageActionForChat,
   listCommunicationThreadsForGroup,
   listMessageActionsForGroup,
+  listMessagesByProviderIdempotencyKey,
   listRecentMessagesForChat,
   updateCommunicationThread,
   updateMessageAction,
+  updateMessageActionIfSendStatus,
   updateTask,
   upsertMessageAction,
 } from './db.js';
@@ -26,6 +29,7 @@ import { handleLifeThreadCommand } from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
 import { runActionPreflight } from './action-preflight.js';
 import {
+  isChannelDeliveryRejectedBeforeDispatchError,
   ChannelDeliveryUnverifiedError,
   isChannelDeliveryUnverifiedError,
   requireCompleteChannelDelivery,
@@ -36,7 +40,10 @@ import {
   syncOutcomeFromMessageActionRecord,
   syncOutcomeFromReminderTask,
 } from './outcome-reviews.js';
-import { resolveBlueBubblesConfig } from './channels/bluebubbles.js';
+import {
+  isBlueBubblesDirectChatJidForAddress,
+  resolveBlueBubblesConfig,
+} from './channels/bluebubbles.js';
 import {
   canonicalizeBlueBubblesSelfThreadJid,
   expandBlueBubblesLogicalSelfThreadJids,
@@ -45,6 +52,11 @@ import {
   isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
 import { rewriteBlueBubblesMessageDraft } from './messages-fluidity.js';
+import { parseAssistantMessageActionIntent } from './assistant-action-intent.js';
+import {
+  formatRuntimeCapabilityOutcome,
+  runtimeCapabilityRegistry,
+} from './runtime-capability-registry.js';
 import type {
   BlueBubblesConversationalEligibility,
   BlueBubblesConversationKind,
@@ -121,6 +133,8 @@ export interface CreateMessageActionFromDraftParams {
     | 'general'
     | null;
   forceApproval?: boolean;
+  /** The current trusted owner utterance explicitly authorizes this action. */
+  explicitApproval?: boolean;
   delegationRuleId?: string | null;
   delegationMode?: MessageActionRecord['delegationMode'];
   delegationExplanation?: string | null;
@@ -504,22 +518,121 @@ function isActionableBlueBubblesDecisionStatus(
   return status === 'drafted' || status === 'approved' || status === 'failed';
 }
 
+function isBlueBubblesDispatchableStatus(
+  status: MessageActionSendStatus,
+): status is 'drafted' | 'approved' | 'deferred' {
+  return status === 'drafted' || status === 'approved' || status === 'deferred';
+}
+
+type MessageActionUpdates = Parameters<typeof updateMessageAction>[1];
+
+interface MessageActionMutationResult {
+  applied: boolean;
+  action: MessageActionRecord;
+}
+
+function nextMessageActionVersion(
+  action: Pick<MessageActionRecord, 'lastUpdatedAt'>,
+  proposedAt: string,
+): string {
+  const previousMs = Date.parse(action.lastUpdatedAt);
+  const proposedMs = Date.parse(proposedAt);
+  if (!Number.isFinite(previousMs)) return proposedAt;
+  if (!Number.isFinite(proposedMs) || proposedMs <= previousMs) {
+    return new Date(previousMs + 1).toISOString();
+  }
+  return proposedAt;
+}
+
+/**
+ * Applies an action mutation from the exact row snapshot the caller acted on.
+ * BlueBubbles rows use a durable status+version CAS and terminal delivery rows
+ * are never eligible. Other channels retain the existing partial-update API.
+ */
+function updateMessageActionFromSnapshot(params: {
+  action: MessageActionRecord;
+  updates: MessageActionUpdates;
+  expectedStatuses?: readonly MessageActionSendStatus[];
+}): MessageActionMutationResult {
+  if (params.action.targetChannel !== 'bluebubbles') {
+    updateMessageAction(params.action.messageActionId, params.updates);
+    return {
+      applied: true,
+      action: getMessageAction(params.action.messageActionId) || params.action,
+    };
+  }
+  if (
+    params.action.sendStatus === 'sent' ||
+    params.action.sendStatus === 'delivery_unverified'
+  ) {
+    return {
+      applied: false,
+      action: getMessageAction(params.action.messageActionId) || params.action,
+    };
+  }
+  const expectedStatuses = params.expectedStatuses || [
+    params.action.sendStatus,
+  ];
+  if (
+    expectedStatuses.includes('sent') ||
+    expectedStatuses.includes('delivery_unverified')
+  ) {
+    return {
+      applied: false,
+      action: getMessageAction(params.action.messageActionId) || params.action,
+    };
+  }
+  const proposedLastUpdatedAt =
+    params.updates.lastUpdatedAt || new Date().toISOString();
+  const applied = updateMessageActionIfSendStatus(
+    params.action.messageActionId,
+    expectedStatuses,
+    params.action.lastUpdatedAt,
+    {
+      ...params.updates,
+      lastUpdatedAt: nextMessageActionVersion(
+        params.action,
+        proposedLastUpdatedAt,
+      ),
+    },
+  );
+  return {
+    applied,
+    action: getMessageAction(params.action.messageActionId) || params.action,
+  };
+}
+
+function staleBlueBubblesMutationReply(
+  action: MessageActionRecord,
+  attemptedAction: string,
+): string {
+  if (action.sendStatus === 'sent') {
+    return `Andrea: That message already went out, so I did not ${attemptedAction}. Create a fresh message action if you want to send something else.`;
+  }
+  if (action.sendStatus === 'delivery_unverified') {
+    return `Andrea: Delivery is unverified, so I did not ${attemptedAction} or change the fenced action. Check the target conversation first; create a fresh message action if another message is needed.`;
+  }
+  return `Andrea: This action changed to ${action.sendStatus} before I could ${attemptedAction}, so I did not apply the stale change. The current status shown here is authoritative.`;
+}
+
 function skipBlueBubblesContinuityAction(
   action: MessageActionRecord,
   now: Date,
 ): MessageActionRecord {
   const nowIso = now.toISOString();
-  updateMessageAction(action.messageActionId, {
-    sendStatus: 'skipped',
-    followupAt: null,
-    scheduledTaskId: null,
-    requiresApproval: false,
-    approvedAt: null,
-    lastActionKind: 'skipped',
-    lastActionAt: nowIso,
-    lastUpdatedAt: nowIso,
-  });
-  const refreshed = getMessageAction(action.messageActionId) || action;
+  const refreshed = updateMessageActionFromSnapshot({
+    action,
+    updates: {
+      sendStatus: 'skipped',
+      followupAt: null,
+      scheduledTaskId: null,
+      requiresApproval: false,
+      approvedAt: null,
+      lastActionKind: 'skipped',
+      lastActionAt: nowIso,
+      lastUpdatedAt: nowIso,
+    },
+  }).action;
   syncOutcomeFromMessageActionRecord(refreshed, now);
   return refreshed;
 }
@@ -793,6 +906,25 @@ function buildDedupeKey(params: {
     .join('|');
 }
 
+function buildInboundMessageActionId(params: {
+  groupFolder: string;
+  sourceType: MessageActionSourceType;
+  sourceKey: string;
+}): string {
+  const digest = createHash('sha256')
+    .update(
+      `${params.groupFolder}\u0000${params.sourceType}\u0000${params.sourceKey}`,
+      'utf8',
+    )
+    .digest('hex');
+  // A stable UUID-shaped provider key lets independent processes converge on
+  // one durable action and one BlueBubbles tempGuid for the same inbound event.
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(
+    13,
+    16,
+  )}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
 export function createOrRefreshMessageActionFromDraft(
   params: CreateMessageActionFromDraftParams,
 ): MessageActionRecord {
@@ -831,27 +963,38 @@ export function createOrRefreshMessageActionFromDraft(
       },
       targetInfo.target,
     );
+  const explicitlyApproved = Boolean(params.explicitApproval);
   const trustLevel: MessageActionTrustLevel = autoSendEligible
     ? 'delegated_safe_send'
     : baseTrustLevel;
-  const requiresApproval = !autoSendEligible;
-  const sendStatus: MessageActionSendStatus = autoSendEligible
-    ? 'approved'
-    : 'drafted';
+  const requiresApproval = !autoSendEligible && !explicitlyApproved;
+  const sendStatus: MessageActionSendStatus =
+    autoSendEligible || explicitlyApproved ? 'approved' : 'drafted';
   const targetConversationJson = JSON.stringify(targetInfo.target);
   const existing = getMessageActionBySource(
     params.groupFolder,
     params.sourceType,
     params.sourceKey,
   );
+  // A retried inbound platform event is the same owner instruction. Preserve
+  // its original recipient, payload, state, and receipt rather than allowing
+  // refreshed directory metadata to create a second external side effect.
+  if (existing && params.sourceKey.includes(':inbound:')) {
+    return existing;
+  }
   const reuseExisting =
     existing &&
     existing.sendStatus !== 'sent' &&
     existing.sendStatus !== 'delivery_unverified' &&
     normalizeText(existing.draftText).toLowerCase() ===
       normalizeText(params.draftText).toLowerCase();
+  const inboundIdentity = params.sourceKey.includes(':inbound:');
   const record: MessageActionRecord = {
-    messageActionId: reuseExisting ? existing!.messageActionId : randomUUID(),
+    messageActionId: reuseExisting
+      ? existing!.messageActionId
+      : inboundIdentity
+        ? buildInboundMessageActionId(params)
+        : randomUUID(),
     groupFolder: params.groupFolder,
     sourceType: params.sourceType,
     sourceKey: params.sourceKey,
@@ -929,8 +1072,40 @@ export function createOrRefreshMessageActionFromDraft(
     lastUpdatedAt: now.toISOString(),
     sentAt: reuseExisting ? existing?.sentAt || null : null,
   };
-  upsertMessageAction(record);
-  const saved = getMessageAction(record.messageActionId) || record;
+  let saved: MessageActionRecord;
+  if (reuseExisting && existing?.targetChannel === 'bluebubbles') {
+    saved = updateMessageActionFromSnapshot({
+      action: existing,
+      updates: {
+        sourceSummary: record.sourceSummary,
+        targetConversationJson: record.targetConversationJson,
+        draftText: record.draftText,
+        trustLevel: record.trustLevel,
+        sendStatus: record.sendStatus,
+        followupAt: record.followupAt,
+        requiresApproval: record.requiresApproval,
+        delegationRuleId: record.delegationRuleId,
+        delegationMode: record.delegationMode,
+        explanationJson: record.explanationJson,
+        linkedRefsJson: record.linkedRefsJson,
+        platformMessageId: record.platformMessageId,
+        scheduledTaskId: record.scheduledTaskId,
+        approvedAt: record.approvedAt,
+        lastActionKind: record.lastActionKind,
+        lastActionAt: record.lastActionAt,
+        presentationChatJid: record.presentationChatJid,
+        presentationThreadId: record.presentationThreadId,
+        presentationMessageId: record.presentationMessageId,
+        lastUpdatedAt: record.lastUpdatedAt,
+        sentAt: record.sentAt,
+      },
+    }).action;
+  } else {
+    upsertMessageAction(record, {
+      insertOnly: inboundIdentity || record.targetChannel === 'bluebubbles',
+    });
+    saved = getMessageAction(record.messageActionId) || record;
+  }
   syncOutcomeFromMessageActionRecord(saved, now);
   return saved;
 }
@@ -972,11 +1147,13 @@ export function linkMessageActionCognitiveContext(params: {
       ? { agentRuntimeRunId: params.agentRuntimeRunId }
       : {}),
   };
-  updateMessageAction(action.messageActionId, {
-    linkedRefsJson: JSON.stringify(linkedRefs),
-    lastUpdatedAt: (params.now || new Date()).toISOString(),
-  });
-  return getMessageAction(action.messageActionId) || action;
+  return updateMessageActionFromSnapshot({
+    action,
+    updates: {
+      linkedRefsJson: JSON.stringify(linkedRefs),
+      lastUpdatedAt: (params.now || new Date()).toISOString(),
+    },
+  }).action;
 }
 
 function recordMessageActionOwnerDecision(params: {
@@ -1001,11 +1178,13 @@ function recordMessageActionOwnerDecision(params: {
       ...linkedRefs,
       cognitiveOwnerReviewSignalId: review.signalId,
     };
-    updateMessageAction(action.messageActionId, {
-      linkedRefsJson: JSON.stringify(nextLinkedRefs),
-      lastUpdatedAt: params.now.toISOString(),
-    });
-    action = getMessageAction(action.messageActionId) || action;
+    action = updateMessageActionFromSnapshot({
+      action,
+      updates: {
+        linkedRefsJson: JSON.stringify(nextLinkedRefs),
+        lastUpdatedAt: params.now.toISOString(),
+      },
+    }).action;
   }
   recordAssistantMetric({
     eventId: `message-action:${action.messageActionId}:owner-review`,
@@ -1109,28 +1288,30 @@ function stampBlueBubblesProofDrillAction(params: {
     chatJid: params.chatJid,
     personName: 'Andrea self-thread',
   };
-  updateMessageAction(params.action.messageActionId, {
-    sourceSummary: 'BlueBubbles same-thread proof drill.',
-    draftText: BLUEBUBBLES_PROOF_DRILL_DRAFT_TEXT,
-    trustLevel: 'draft_only',
-    sendStatus: 'drafted',
-    followupAt: null,
-    scheduledTaskId: null,
-    requiresApproval: true,
-    approvedAt: null,
-    lastActionKind: 'drafted',
-    lastActionAt: nowIso,
-    presentationChatJid: params.chatJid,
-    linkedRefsJson: JSON.stringify(linkedRefs),
-    lastUpdatedAt: nowIso,
-  });
-  return getMessageAction(params.action.messageActionId) || params.action;
+  return updateMessageActionFromSnapshot({
+    action: params.action,
+    updates: {
+      sourceSummary: 'BlueBubbles same-thread proof drill.',
+      draftText: BLUEBUBBLES_PROOF_DRILL_DRAFT_TEXT,
+      trustLevel: 'draft_only',
+      sendStatus: 'drafted',
+      followupAt: null,
+      scheduledTaskId: null,
+      requiresApproval: true,
+      approvedAt: null,
+      lastActionKind: 'drafted',
+      lastActionAt: nowIso,
+      presentationChatJid: params.chatJid,
+      linkedRefsJson: JSON.stringify(linkedRefs),
+      lastUpdatedAt: nowIso,
+    },
+  }).action;
 }
 
 function recordBlueBubblesProofDrillDeferredDecision(params: {
   action: MessageActionRecord;
   now: Date;
-}): MessageActionRecord {
+}): MessageActionMutationResult {
   const nowIso = params.now.toISOString();
   const linkedRefs = {
     ...parseLinkedRefsRecord(params.action),
@@ -1138,23 +1319,25 @@ function recordBlueBubblesProofDrillDeferredDecision(params: {
     proofDrillDeferredAt: nowIso,
     proofDrillDecision: 'send_it_later_tonight',
   };
-  pauseScheduledTask(params.action.scheduledTaskId);
-  updateMessageAction(params.action.messageActionId, {
-    sendStatus: 'deferred',
-    followupAt: null,
-    scheduledTaskId: null,
-    requiresApproval: false,
-    trustLevel: 'draft_only',
-    approvedAt: null,
-    lastActionKind: 'remind_instead',
-    lastActionAt: nowIso,
-    linkedRefsJson: JSON.stringify(linkedRefs),
-    lastUpdatedAt: nowIso,
+  const mutation = updateMessageActionFromSnapshot({
+    action: params.action,
+    updates: {
+      sendStatus: 'deferred',
+      followupAt: null,
+      scheduledTaskId: null,
+      requiresApproval: false,
+      trustLevel: 'draft_only',
+      approvedAt: null,
+      lastActionKind: 'remind_instead',
+      lastActionAt: nowIso,
+      linkedRefsJson: JSON.stringify(linkedRefs),
+      lastUpdatedAt: nowIso,
+    },
   });
-  const updatedAction =
-    getMessageAction(params.action.messageActionId) || params.action;
+  if (mutation.applied) pauseScheduledTask(params.action.scheduledTaskId);
+  const updatedAction = mutation.action;
   syncOutcomeFromMessageActionRecord(updatedAction, params.now);
-  return updatedAction;
+  return { ...mutation, action: updatedAction };
 }
 
 export interface BlueBubblesProofDrillSnapshot {
@@ -1811,7 +1994,9 @@ function nextStepLine(record: MessageActionRecord): string {
       : 'Next: show it again, make it shorter, make it more direct, save that, remind me instead, or send it later tonight.';
   }
   if (record.sendStatus === 'sent') {
-    return 'Next: review it later if you want to track the follow-through.';
+    return record.targetChannel === 'bluebubbles'
+      ? 'Next: create a fresh message action if you want to send another message.'
+      : 'Next: review it later if you want to track the follow-through.';
   }
   if (record.sendStatus === 'delivery_unverified') {
     return 'Next: check the target conversation before deciding whether any new message is needed.';
@@ -1874,6 +2059,16 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
     ];
   }
   if (record.sendStatus === 'sent') {
+    if (record.targetChannel === 'bluebubbles') {
+      return [
+        [
+          {
+            label: 'Show draft',
+            actionId: `/message-show ${record.messageActionId}`,
+          },
+        ],
+      ];
+    }
     return [
       [
         {
@@ -2064,13 +2259,31 @@ function humanSendFailure(): string {
 }
 
 function describeSendSuccess(
-  _record: MessageActionRecord,
+  record: MessageActionRecord,
   target: MessageTarget,
+  receipt: SendMessageResult,
 ): string {
-  if (target.kind === 'external_thread') {
-    return `Andrea: I sent that${target.personName ? ` to ${target.personName}` : ' in the same thread'}.`;
-  }
-  return 'Andrea: I sent that to your companion chat.';
+  const providerReceiptId =
+    receipt.platformMessageId || receipt.platformMessageIds?.[0] || '';
+  const recipient =
+    target.kind === 'external_thread'
+      ? target.personName || target.chatJid
+      : 'your companion chat';
+  return `Andrea: ${formatRuntimeCapabilityOutcome({
+    state: 'verified_success',
+    capabilityId:
+      record.targetChannel === 'bluebubbles'
+        ? 'messages.send.bluebubbles'
+        : 'messages.send.telegram',
+    receipt: {
+      verification: 'verified',
+      providerReceiptId,
+      recipient,
+      exactContent: record.draftText,
+      recordedAt: record.sentAt || undefined,
+      idempotencyKey: record.messageActionId,
+    },
+  })}`;
 }
 
 function parseTimingHintFromUtterance(rawText: string): string | null {
@@ -2200,42 +2413,19 @@ export function isBlueBubblesExplicitSendAlias(rawText: string): boolean {
 export function parseExplicitBlueBubblesThreadSendIntent(
   rawText: string,
 ): BlueBubblesExplicitThreadSendIntent | null {
-  const normalized = normalizeText(rawText);
-  if (!normalized) return null;
-  const request = normalized
-    .replace(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?/i, '')
-    .trim();
-  const patterns = [
-    /^send (?:a )?(?:text )?message to\s+(.+?):\s*(.+)$/i,
-    /^send (?:a )?(?:text )?to\s+(.+?):\s*(.+)$/i,
-    /^text\s+(.+?):\s*(.+)$/i,
-    /^send (?:a )?(?:text )?message to\s+(.+?)\s+saying\s+(.+)$/i,
-    /^send (?:a )?message to\s+(.+?)\s+saying\s+(.+)$/i,
-    /^text\s+(.+?)\s+(?:saying|and say|to say|that says)\s+(.+)$/i,
-    /^send\s+(.+?)\s+(?:a )?(?:text|message)\s+(?:saying|that says|to say)\s+(.+)$/i,
-    /^text\s+(.+?)\s+that\s+(.+)$/i,
-  ];
-  for (const pattern of patterns) {
-    const match = request.match(pattern);
-    const targetLabel = normalizeText(match?.[1])
-      .replace(/[,:-]+$/, '')
-      .trim();
-    const rawDraftText = normalizeText(match?.[2]);
-    const pairedQuote = rawDraftText.match(
-      /^(?:"([\s\S]+)"|'([\s\S]+)'|“([\s\S]+)”|‘([\s\S]+)’)$/,
-    );
-    const draftText = normalizeText(
-      pairedQuote?.[1] ||
-        pairedQuote?.[2] ||
-        pairedQuote?.[3] ||
-        pairedQuote?.[4] ||
-        rawDraftText,
-    );
-    if (targetLabel && draftText) {
-      return { targetLabel, draftText };
-    }
+  const intent = parseAssistantMessageActionIntent(rawText);
+  if (
+    intent?.kind !== 'message_send' ||
+    intent.mode !== 'execute' ||
+    !intent.targetLabel ||
+    !intent.content
+  ) {
+    return null;
   }
-  return null;
+  return {
+    targetLabel: intent.targetLabel,
+    draftText: intent.content,
+  };
 }
 
 export function resolveBlueBubblesThreadTargetByName(
@@ -2263,7 +2453,10 @@ export function resolveBlueBubblesThreadTargetByName(
         jid: chat.jid,
         name: chat.name,
       }),
-      isGroup: Boolean(chat.is_group),
+      // The BlueBubbles chat GUID itself is authoritative when persisted
+      // metadata is stale or missing: `+` is a group and `-` is direct.
+      isGroup:
+        Boolean(chat.is_group) || /^bb:[^;]+;\+;/.test(chat.jid.toLowerCase()),
       normalizedName: normalizeBlueBubblesChatLookup(
         buildBlueBubblesChatDisplayName({ jid: chat.jid, name: chat.name }),
       ),
@@ -2315,16 +2508,7 @@ export function resolveBlueBubblesThreadTargetByName(
       candidate.normalizedName.includes(normalizedQuery) ||
       normalizedQuery.includes(candidate.normalizedName),
   );
-  if (fuzzyMatches.length === 1) {
-    const {
-      normalizedName: _normalizedName,
-      addressKeys: _addressKeys,
-      lastMessageTime: _lastMessageTime,
-      ...target
-    } = fuzzyMatches[0]!;
-    return { state: 'resolved', target };
-  }
-  if (fuzzyMatches.length > 1) {
+  if (fuzzyMatches.length > 0) {
     return {
       state: 'ambiguous',
       matches: fuzzyMatches
@@ -2354,7 +2538,11 @@ async function persistDeferredReminder(params: {
   deps: MessageActionExecutionDeps;
   now: Date;
   reminderOnly: boolean;
-}): Promise<{ replyText: string; updatedAction: MessageActionRecord }> {
+}): Promise<{
+  replyText: string;
+  updatedAction: MessageActionRecord;
+  applied: boolean;
+}> {
   const { planned } = planMessageFollowupTiming({
     timingHint: params.timingHint,
     fallbackHint: 'tomorrow morning',
@@ -2367,28 +2555,41 @@ async function persistDeferredReminder(params: {
     return {
       replyText: 'Andrea: I could not pin down the timing for that yet.',
       updatedAction: params.action,
+      applied: false,
     };
   }
-  createTask(planned.task);
   const linkedRefs = {
     ...parseLinkedRefs(params.action),
     reminderTaskId: planned.task.id,
     messageActionId: params.action.messageActionId,
   };
-  pauseScheduledTask(params.action.scheduledTaskId);
-  updateMessageAction(params.action.messageActionId, {
-    sendStatus: 'deferred',
-    followupAt: planned.task.next_run || null,
-    scheduledTaskId: null,
-    trustLevel: normalizeTrustLevelAfterQueue(params.action),
-    approvedAt: params.reminderOnly ? null : params.action.approvedAt,
-    lastActionKind: 'remind_instead',
-    lastActionAt: params.now.toISOString(),
-    linkedRefsJson: JSON.stringify(linkedRefs),
-    lastUpdatedAt: params.now.toISOString(),
+  const mutation = updateMessageActionFromSnapshot({
+    action: params.action,
+    updates: {
+      sendStatus: 'deferred',
+      followupAt: planned.task.next_run || null,
+      scheduledTaskId: null,
+      trustLevel: normalizeTrustLevelAfterQueue(params.action),
+      approvedAt: params.reminderOnly ? null : params.action.approvedAt,
+      lastActionKind: 'remind_instead',
+      lastActionAt: params.now.toISOString(),
+      linkedRefsJson: JSON.stringify(linkedRefs),
+      lastUpdatedAt: params.now.toISOString(),
+    },
   });
-  const updatedAction =
-    getMessageAction(params.action.messageActionId) || params.action;
+  if (!mutation.applied) {
+    return {
+      replyText: staleBlueBubblesMutationReply(
+        mutation.action,
+        params.reminderOnly ? 'set that reminder' : 'defer that message',
+      ),
+      updatedAction: mutation.action,
+      applied: false,
+    };
+  }
+  createTask(planned.task);
+  pauseScheduledTask(params.action.scheduledTaskId);
+  const updatedAction = mutation.action;
   syncCommunicationThreadState({
     action: updatedAction,
     now: params.now,
@@ -2419,6 +2620,7 @@ async function persistDeferredReminder(params: {
       ? `Andrea: I kept the draft unsent and I'll remind you about it around ${hint}.`
       : `Andrea: I saved that to revisit before sending, and I'll bring it back around ${hint}.`,
     updatedAction,
+    applied: true,
   };
 }
 
@@ -2454,7 +2656,11 @@ async function createScheduledSend(params: {
   timingHint?: string | null;
   deps: MessageActionExecutionDeps;
   now: Date;
-}): Promise<{ replyText: string; updatedAction: MessageActionRecord }> {
+}): Promise<{
+  replyText: string;
+  updatedAction: MessageActionRecord;
+  applied: boolean;
+}> {
   const { planned } = planMessageFollowupTiming({
     timingHint: params.timingHint,
     fallbackHint: 'today tonight',
@@ -2467,37 +2673,49 @@ async function createScheduledSend(params: {
     return {
       replyText: 'Andrea: I could not pin down the timing for that yet.',
       updatedAction: params.action,
+      applied: false,
     };
   }
 
-  pauseScheduledTask(params.action.scheduledTaskId);
   const scheduledTask = buildScheduledTask({
     action: params.action,
     dueAt: planned.task.next_run,
     now: params.now,
     deps: params.deps,
   });
-  createTask(scheduledTask);
-
   const linkedRefs = {
     ...parseLinkedRefs(params.action),
     messageActionId: params.action.messageActionId,
     reminderTaskId: undefined,
   };
-  updateMessageAction(params.action.messageActionId, {
-    sendStatus: 'deferred',
-    followupAt: planned.task.next_run,
-    scheduledTaskId: scheduledTask.id,
-    requiresApproval: false,
-    trustLevel: 'schedule_send',
-    approvedAt: params.action.approvedAt || params.now.toISOString(),
-    lastActionKind: 'scheduled_send',
-    lastActionAt: params.now.toISOString(),
-    linkedRefsJson: JSON.stringify(linkedRefs),
-    lastUpdatedAt: params.now.toISOString(),
+  const mutation = updateMessageActionFromSnapshot({
+    action: params.action,
+    updates: {
+      sendStatus: 'deferred',
+      followupAt: planned.task.next_run,
+      scheduledTaskId: scheduledTask.id,
+      requiresApproval: false,
+      trustLevel: 'schedule_send',
+      approvedAt: params.action.approvedAt || params.now.toISOString(),
+      lastActionKind: 'scheduled_send',
+      lastActionAt: params.now.toISOString(),
+      linkedRefsJson: JSON.stringify(linkedRefs),
+      lastUpdatedAt: params.now.toISOString(),
+    },
   });
-  const updatedAction =
-    getMessageAction(params.action.messageActionId) || params.action;
+  if (!mutation.applied) {
+    return {
+      replyText: staleBlueBubblesMutationReply(
+        mutation.action,
+        'schedule that message',
+      ),
+      updatedAction: mutation.action,
+      applied: false,
+    };
+  }
+  createTask(scheduledTask);
+  pauseScheduledTask(params.action.scheduledTaskId);
+  const updatedAction = mutation.action;
   syncCommunicationThreadState({
     action: updatedAction,
     now: params.now,
@@ -2509,33 +2727,51 @@ async function createScheduledSend(params: {
   return {
     replyText: `Andrea: I queued that to send around ${whenLabel}.`,
     updatedAction,
+    applied: true,
   };
 }
 
 function cancelScheduledSend(params: {
   action: MessageActionRecord;
   now: Date;
-}): { replyText: string; updatedAction: MessageActionRecord } {
+}): {
+  replyText: string;
+  updatedAction: MessageActionRecord;
+  applied: boolean;
+} {
   if (!isScheduledSendAction(params.action)) {
     return {
       replyText: 'Andrea: There is no queued send on that right now.',
       updatedAction: params.action,
+      applied: false,
+    };
+  }
+  const mutation = updateMessageActionFromSnapshot({
+    action: params.action,
+    updates: {
+      sendStatus: 'approved',
+      followupAt: null,
+      scheduledTaskId: null,
+      requiresApproval: false,
+      trustLevel: normalizeTrustLevelAfterQueue(params.action),
+      approvedAt: params.action.approvedAt || params.now.toISOString(),
+      lastActionKind: 'approved',
+      lastActionAt: params.now.toISOString(),
+      lastUpdatedAt: params.now.toISOString(),
+    },
+  });
+  if (!mutation.applied) {
+    return {
+      replyText: staleBlueBubblesMutationReply(
+        mutation.action,
+        'cancel the scheduled send',
+      ),
+      updatedAction: mutation.action,
+      applied: false,
     };
   }
   pauseScheduledTask(params.action.scheduledTaskId);
-  updateMessageAction(params.action.messageActionId, {
-    sendStatus: 'approved',
-    followupAt: null,
-    scheduledTaskId: null,
-    requiresApproval: false,
-    trustLevel: normalizeTrustLevelAfterQueue(params.action),
-    approvedAt: params.action.approvedAt || params.now.toISOString(),
-    lastActionKind: 'approved',
-    lastActionAt: params.now.toISOString(),
-    lastUpdatedAt: params.now.toISOString(),
-  });
-  const updatedAction =
-    getMessageAction(params.action.messageActionId) || params.action;
+  const updatedAction = mutation.action;
   syncCommunicationThreadState({
     action: updatedAction,
     now: params.now,
@@ -2546,30 +2782,47 @@ function cancelScheduledSend(params: {
     replyText:
       'Andrea: Okay, I canceled the scheduled send and kept the draft ready.',
     updatedAction,
+    applied: true,
   };
 }
 
 function keepMessageAsDraft(params: {
   action: MessageActionRecord;
   now: Date;
-}): { replyText: string; updatedAction: MessageActionRecord } {
+}): {
+  replyText: string;
+  updatedAction: MessageActionRecord;
+  applied: boolean;
+} {
+  const mutation = updateMessageActionFromSnapshot({
+    action: params.action,
+    updates: {
+      sendStatus: 'drafted',
+      followupAt: null,
+      scheduledTaskId: null,
+      requiresApproval: true,
+      trustLevel: normalizeTrustLevelAfterQueue(params.action),
+      approvedAt: null,
+      lastActionKind: 'drafted',
+      lastActionAt: params.now.toISOString(),
+      lastUpdatedAt: params.now.toISOString(),
+    },
+  });
+  if (!mutation.applied) {
+    return {
+      replyText: staleBlueBubblesMutationReply(
+        mutation.action,
+        'keep that stale version as a draft',
+      ),
+      updatedAction: mutation.action,
+      applied: false,
+    };
+  }
   if (params.action.delegationRuleId) {
     recordDelegationRuleOverride(params.action.delegationRuleId, params.now);
   }
   pauseScheduledTask(params.action.scheduledTaskId);
-  updateMessageAction(params.action.messageActionId, {
-    sendStatus: 'drafted',
-    followupAt: null,
-    scheduledTaskId: null,
-    requiresApproval: true,
-    trustLevel: normalizeTrustLevelAfterQueue(params.action),
-    approvedAt: null,
-    lastActionKind: 'drafted',
-    lastActionAt: params.now.toISOString(),
-    lastUpdatedAt: params.now.toISOString(),
-  });
-  const updatedAction =
-    getMessageAction(params.action.messageActionId) || params.action;
+  const updatedAction = mutation.action;
   syncCommunicationThreadState({
     action: updatedAction,
     now: params.now,
@@ -2580,6 +2833,21 @@ function keepMessageAsDraft(params: {
     replyText:
       'Andrea: Okay, I kept it as a draft. It will not send unless you come back to it.',
     updatedAction,
+    applied: true,
+  };
+}
+
+function buildPersistedSentResult(
+  action: MessageActionRecord,
+  target: MessageTarget,
+): SendExecutionResult {
+  return {
+    action,
+    replyText: describeSendSuccess(action, target, {
+      platformMessageId: action.platformMessageId || undefined,
+    }),
+    target,
+    didSend: true,
   };
 }
 
@@ -2587,10 +2855,14 @@ async function markFailedSend(params: {
   action: MessageActionRecord;
   deps: MessageActionExecutionDeps;
   now: Date;
+  expectedBlueBubblesStatuses?: readonly MessageActionSendStatus[];
+  expectedBlueBubblesLastUpdatedAt?: string;
+  failureExplanationJson?: string;
 }): Promise<SendExecutionResult> {
   const target = parseTarget(params.action);
-  pauseScheduledTask(params.action.scheduledTaskId);
-  updateMessageAction(params.action.messageActionId, {
+  const expectedLastUpdatedAt =
+    params.expectedBlueBubblesLastUpdatedAt || params.action.lastUpdatedAt;
+  const updates = {
     sendStatus: 'failed',
     followupAt: null,
     scheduledTaskId: null,
@@ -2599,10 +2871,44 @@ async function markFailedSend(params: {
     approvedAt: params.action.approvedAt || params.now.toISOString(),
     lastActionKind: 'failed',
     lastActionAt: params.now.toISOString(),
-    lastUpdatedAt: params.now.toISOString(),
-  });
+    ...(params.failureExplanationJson
+      ? { explanationJson: params.failureExplanationJson }
+      : {}),
+    lastUpdatedAt:
+      params.action.targetChannel === 'bluebubbles'
+        ? nextMessageActionVersion(
+            { lastUpdatedAt: expectedLastUpdatedAt },
+            params.now.toISOString(),
+          )
+        : params.now.toISOString(),
+  } as const;
+  const applied =
+    params.action.targetChannel === 'bluebubbles'
+      ? updateMessageActionIfSendStatus(
+          params.action.messageActionId,
+          params.expectedBlueBubblesStatuses || [params.action.sendStatus],
+          expectedLastUpdatedAt,
+          updates,
+        )
+      : (updateMessageAction(params.action.messageActionId, updates), true);
   const updatedAction =
     getMessageAction(params.action.messageActionId) || params.action;
+  if (!applied) {
+    if (updatedAction.sendStatus === 'sent') {
+      return buildPersistedSentResult(updatedAction, target);
+    }
+    syncOutcomeFromMessageActionRecord(updatedAction, params.now);
+    return {
+      action: updatedAction,
+      replyText:
+        updatedAction.sendStatus === 'delivery_unverified'
+          ? 'Andrea: This BlueBubbles action remains inside its durable dispatch fence. I will not retry it without exact provider evidence.'
+          : humanSendFailure(),
+      target,
+      didSend: false,
+    };
+  }
+  pauseScheduledTask(params.action.scheduledTaskId);
   if (updatedAction.delegationRuleId) {
     recordDelegationRuleUsage({
       ruleId: updatedAction.delegationRuleId,
@@ -2631,11 +2937,16 @@ async function markDeliveryUnverified(params: {
   action: MessageActionRecord;
   now: Date;
   error: ChannelDeliveryUnverifiedError;
+  expectedBlueBubblesLastUpdatedAt?: string;
+  dispatchExplanation?: MessageActionExplanation;
 }): Promise<SendExecutionResult> {
   const target = parseTarget(params.action);
-  pauseScheduledTask(params.action.scheduledTaskId);
   const evidence = params.error.evidence;
-  updateMessageAction(params.action.messageActionId, {
+  const currentAction =
+    getMessageAction(params.action.messageActionId) || params.action;
+  const currentExplanation =
+    params.dispatchExplanation || parseExplanation(currentAction);
+  const updates = {
     sendStatus: 'delivery_unverified',
     followupAt: null,
     scheduledTaskId: null,
@@ -2643,23 +2954,56 @@ async function markDeliveryUnverified(params: {
     trustLevel: 'never_automate',
     platformMessageId:
       evidence.confirmedReceiptIds[0] ||
-      params.action.platformMessageId ||
+      currentAction.platformMessageId ||
       null,
     lastActionKind: 'delivery_unverified',
     lastActionAt: params.now.toISOString(),
     explanationJson: JSON.stringify({
-      ...parseExplanation(params.action),
+      ...currentExplanation,
       safetyReason:
         'Delivery could not be verified. Check the target conversation before considering a new message.',
       deliveryVerification: {
         ...evidence,
         retryPolicy: 'verify_before_resend',
       },
+      dispatchAttempt: currentExplanation.dispatchAttempt
+        ? {
+            ...currentExplanation.dispatchAttempt,
+            state: 'unverified',
+            completedAt: params.now.toISOString(),
+          }
+        : undefined,
     }),
-    lastUpdatedAt: params.now.toISOString(),
-  });
+    lastUpdatedAt:
+      params.action.targetChannel === 'bluebubbles'
+        ? nextMessageActionVersion(
+            {
+              lastUpdatedAt:
+                params.expectedBlueBubblesLastUpdatedAt ||
+                currentAction.lastUpdatedAt,
+            },
+            params.now.toISOString(),
+          )
+        : params.now.toISOString(),
+  } as const;
+  const applied =
+    params.action.targetChannel === 'bluebubbles'
+      ? updateMessageActionIfSendStatus(
+          params.action.messageActionId,
+          ['delivery_unverified'],
+          params.expectedBlueBubblesLastUpdatedAt ||
+            currentAction.lastUpdatedAt,
+          updates,
+        )
+      : (updateMessageAction(params.action.messageActionId, updates), true);
   const updatedAction =
     getMessageAction(params.action.messageActionId) || params.action;
+  if (!applied && updatedAction.sendStatus === 'sent') {
+    return buildPersistedSentResult(updatedAction, target);
+  }
+  if (applied || params.action.targetChannel !== 'bluebubbles') {
+    pauseScheduledTask(params.action.scheduledTaskId);
+  }
   syncOutcomeFromMessageActionRecord(updatedAction, params.now);
   return {
     action: updatedAction,
@@ -2710,20 +3054,33 @@ async function executeSendOperationUnlocked(params: {
     ],
   });
   if (preflight.verdict !== 'proceed') {
-    pauseScheduledTask(params.action.scheduledTaskId);
-    updateMessageAction(params.action.messageActionId, {
-      sendStatus: 'drafted',
-      followupAt: null,
-      scheduledTaskId: null,
-      requiresApproval: true,
-      trustLevel: normalizeTrustLevelAfterQueue(params.action),
-      approvedAt: null,
-      lastActionKind: 'drafted',
-      lastActionAt: params.now.toISOString(),
-      lastUpdatedAt: params.now.toISOString(),
+    const mutation = updateMessageActionFromSnapshot({
+      action: params.action,
+      updates: {
+        sendStatus: 'drafted',
+        followupAt: null,
+        scheduledTaskId: null,
+        requiresApproval: true,
+        trustLevel: normalizeTrustLevelAfterQueue(params.action),
+        approvedAt: null,
+        lastActionKind: 'drafted',
+        lastActionAt: params.now.toISOString(),
+        lastUpdatedAt: params.now.toISOString(),
+      },
     });
-    const updatedAction =
-      getMessageAction(params.action.messageActionId) || params.action;
+    const updatedAction = mutation.action;
+    if (!mutation.applied) {
+      return {
+        action: updatedAction,
+        replyText: staleBlueBubblesMutationReply(
+          updatedAction,
+          'rewrite its current state after preflight',
+        ),
+        target,
+        didSend: false,
+      };
+    }
+    pauseScheduledTask(params.action.scheduledTaskId);
     syncCommunicationThreadState({
       action: updatedAction,
       now: params.now,
@@ -2745,59 +3102,109 @@ async function executeSendOperationUnlocked(params: {
           suppressSenderLabel: true,
           blueBubblesCreateChatAddress:
             target.blueBubblesCreateChatAddress || undefined,
+          idempotencyKey: params.action.messageActionId,
         }
       : {
           threadId: target.threadId || undefined,
+          idempotencyKey: params.action.messageActionId,
         };
+  const dispatchedDraftText = params.action.draftText;
+  const dispatchedTargetConversationJson = params.action.targetConversationJson;
+  let enteredExternalDispatchWindow = false;
+  let claimedLastUpdatedAt: string | null = null;
+  let dispatchExplanation: MessageActionExplanation | undefined;
   try {
-    pauseScheduledTask(params.action.scheduledTaskId);
-    if (
-      target.kind === 'external_thread' &&
-      target.blueBubblesCreateChatAddress
-    ) {
-      updateMessageAction(params.action.messageActionId, {
-        sendStatus: 'delivery_unverified',
-        followupAt: null,
-        scheduledTaskId: null,
-        requiresApproval: false,
-        trustLevel: 'never_automate',
-        approvedAt: params.action.approvedAt || params.now.toISOString(),
-        lastActionKind: 'delivery_unverified',
-        lastActionAt: params.now.toISOString(),
-        explanationJson: JSON.stringify({
-          ...parseExplanation(params.action),
-          safetyReason:
-            'First-contact delivery entered its external side-effect window. Verify the target conversation before any replay.',
-          deliveryVerification: {
-            outcome: 'unknown',
-            confirmedReceiptIds: [],
-            confirmedReceiptCount: 0,
-            retryPolicy: 'verify_before_resend',
-          },
-        }),
-        lastUpdatedAt: params.now.toISOString(),
-      });
-      if (
-        getMessageAction(params.action.messageActionId)?.sendStatus !==
-        'delivery_unverified'
-      ) {
-        throw new Error(
-          'Andrea could not persist the first-contact replay fence.',
-        );
+    if (params.action.targetChannel === 'bluebubbles') {
+      if (!isBlueBubblesDispatchableStatus(params.action.sendStatus)) {
+        const currentAction =
+          getMessageAction(params.action.messageActionId) || params.action;
+        return {
+          action: currentAction,
+          replyText: staleBlueBubblesMutationReply(
+            currentAction,
+            'dispatch that stale action',
+          ),
+          target,
+          didSend: false,
+        };
       }
+      dispatchExplanation = {
+        ...parseExplanation(params.action),
+        safetyReason:
+          'BlueBubbles delivery entered its external side-effect window. Verify the target conversation before any replay.',
+        deliveryVerification: {
+          outcome: 'unknown',
+          confirmedReceiptIds: [],
+          confirmedReceiptCount: 0,
+          retryPolicy: 'verify_before_resend',
+        },
+        dispatchAttempt: {
+          state: 'dispatching',
+          provider: params.action.targetChannel,
+          idempotencyKey: params.action.messageActionId,
+          targetChatJid: target.chatJid,
+          startedAt: params.now.toISOString(),
+        },
+      };
+      claimedLastUpdatedAt = nextMessageActionVersion(
+        params.action,
+        params.now.toISOString(),
+      );
+      const claimed = claimBlueBubblesMessageActionDispatch({
+        messageActionId: params.action.messageActionId,
+        expectedSendStatus: params.action.sendStatus,
+        expectedLastUpdatedAt: params.action.lastUpdatedAt,
+        approvedAt: params.action.approvedAt || params.now.toISOString(),
+        explanationJson: JSON.stringify(dispatchExplanation),
+        attemptedAt: params.now.toISOString(),
+        claimedLastUpdatedAt,
+      });
+      if (!claimed) {
+        const competingAction =
+          getMessageAction(params.action.messageActionId) || params.action;
+        if (
+          competingAction.sendStatus === 'sent' &&
+          competingAction.platformMessageId
+        ) {
+          return {
+            action: competingAction,
+            replyText: describeSendSuccess(competingAction, target, {
+              platformMessageId: competingAction.platformMessageId,
+            }),
+            target,
+            didSend: true,
+          };
+        }
+        return {
+          action: competingAction,
+          replyText:
+            competingAction.sendStatus === 'delivery_unverified'
+              ? 'Andrea: This BlueBubbles action is already inside a durable dispatch fence. I will not issue a second provider POST or claim success until its exact receipt is reconciled.'
+              : 'Andrea: I could not atomically acquire the BlueBubbles dispatch fence, so I did not issue a provider POST.',
+          target,
+          didSend: false,
+        };
+      }
+      enteredExternalDispatchWindow = true;
+      pauseScheduledTask(params.action.scheduledTaskId);
+    } else {
+      pauseScheduledTask(params.action.scheduledTaskId);
     }
     const receipt = requireCompleteChannelDelivery(
       await params.deps.sendToTarget(
         params.action.targetChannel,
         target.chatJid,
-        params.action.draftText,
+        dispatchedDraftText,
         sendOptions,
       ),
     );
     if (
       target.kind === 'external_thread' &&
       target.blueBubblesCreateChatAddress &&
-      !receipt.threadId?.startsWith('bb:')
+      !isBlueBubblesDirectChatJidForAddress(
+        receipt.threadId,
+        target.blueBubblesCreateChatAddress,
+      )
     ) {
       const confirmedReceiptIds = Array.from(
         new Set(
@@ -2813,7 +3220,21 @@ async function executeSendOperationUnlocked(params: {
         confirmedReceiptCount: confirmedReceiptIds.length,
       });
     }
-    updateMessageAction(params.action.messageActionId, {
+    const receiptIds = Array.from(
+      new Set(
+        [
+          receipt.platformMessageId,
+          ...(receipt.platformMessageIds || []),
+        ].filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const explanationBeforeReceipt =
+      dispatchExplanation || parseExplanation(params.action);
+    const recipient =
+      target.kind === 'external_thread'
+        ? target.personName || target.chatJid
+        : 'your companion chat';
+    const sentUpdates = {
       sendStatus: 'sent',
       requiresApproval: false,
       followupAt: null,
@@ -2822,24 +3243,88 @@ async function executeSendOperationUnlocked(params: {
       approvedAt: params.action.approvedAt || params.now.toISOString(),
       platformMessageId:
         receipt.platformMessageId || receipt.platformMessageIds?.[0] || null,
+      explanationJson: JSON.stringify({
+        ...explanationBeforeReceipt,
+        safetyReason: null,
+        deliveryVerification: undefined,
+        dispatchAttempt: {
+          state: 'confirmed',
+          provider: params.action.targetChannel,
+          idempotencyKey: params.action.messageActionId,
+          targetChatJid: receipt.threadId || target.chatJid,
+          startedAt:
+            explanationBeforeReceipt.dispatchAttempt?.startedAt ||
+            params.now.toISOString(),
+          completedAt: params.now.toISOString(),
+        },
+        executionReceipt: {
+          verification: 'verified',
+          provider: params.action.targetChannel,
+          providerReceiptId: receiptIds[0]!,
+          providerReceiptIds: receiptIds,
+          recipient,
+          exactContent: dispatchedDraftText,
+          threadId: receipt.threadId || target.chatJid,
+          recordedAt: params.now.toISOString(),
+          idempotencyKey: params.action.messageActionId,
+        },
+      }),
       targetConversationJson:
         target.kind === 'external_thread' &&
         target.blueBubblesCreateChatAddress &&
-        receipt.threadId?.startsWith('bb:')
+        isBlueBubblesDirectChatJidForAddress(
+          receipt.threadId,
+          target.blueBubblesCreateChatAddress,
+        )
           ? JSON.stringify({
               ...target,
               chatJid: receipt.threadId,
               threadId: null,
               blueBubblesCreateChatAddress: null,
             } satisfies ExternalThreadTarget)
-          : params.action.targetConversationJson,
+          : dispatchedTargetConversationJson,
       sentAt: params.now.toISOString(),
       lastActionKind: 'sent',
       lastActionAt: params.now.toISOString(),
-      lastUpdatedAt: params.now.toISOString(),
-    });
+      lastUpdatedAt:
+        params.action.targetChannel === 'bluebubbles' && claimedLastUpdatedAt
+          ? nextMessageActionVersion(
+              { lastUpdatedAt: claimedLastUpdatedAt },
+              params.now.toISOString(),
+            )
+          : params.now.toISOString(),
+    } as const;
+    let transitioned = true;
+    if (params.action.targetChannel === 'bluebubbles') {
+      transitioned = Boolean(
+        claimedLastUpdatedAt &&
+        updateMessageActionIfSendStatus(
+          params.action.messageActionId,
+          ['delivery_unverified'],
+          claimedLastUpdatedAt,
+          sentUpdates,
+        ),
+      );
+    } else {
+      updateMessageAction(params.action.messageActionId, sentUpdates);
+    }
     const updatedAction =
       getMessageAction(params.action.messageActionId) || params.action;
+    if (!transitioned && updatedAction.sendStatus !== 'sent') {
+      syncOutcomeFromMessageActionRecord(updatedAction, params.now);
+      return {
+        action: updatedAction,
+        replyText:
+          updatedAction.sendStatus === 'delivery_unverified'
+            ? 'Andrea: The provider returned a receipt, but the durable dispatch snapshot changed before I could record it. I left delivery unverified and will not retry this action.'
+            : staleBlueBubblesMutationReply(
+                updatedAction,
+                'record a success from the stale dispatch callback',
+              ),
+        target,
+        didSend: false,
+      };
+    }
     if (updatedAction.delegationRuleId) {
       recordDelegationRuleUsage({
         ruleId: updatedAction.delegationRuleId,
@@ -2860,11 +3345,83 @@ async function executeSendOperationUnlocked(params: {
     syncOutcomeFromMessageActionRecord(updatedAction, params.now);
     return {
       action: updatedAction,
-      replyText: describeSendSuccess(updatedAction, target),
+      replyText: describeSendSuccess(
+        { ...updatedAction, draftText: dispatchedDraftText },
+        target,
+        receipt,
+      ),
       target,
       didSend: true,
     };
   } catch (error) {
+    if (
+      enteredExternalDispatchWindow &&
+      params.action.targetChannel === 'bluebubbles'
+    ) {
+      if (isChannelDeliveryRejectedBeforeDispatchError(error)) {
+        const explanation =
+          dispatchExplanation || parseExplanation(params.action);
+        return markFailedSend({
+          action: params.action,
+          deps: params.deps,
+          now: params.now,
+          expectedBlueBubblesStatuses: ['delivery_unverified'],
+          expectedBlueBubblesLastUpdatedAt:
+            claimedLastUpdatedAt || params.action.lastUpdatedAt,
+          failureExplanationJson: JSON.stringify({
+            ...explanation,
+            safetyReason: error.message,
+            deliveryVerification: undefined,
+            dispatchAttempt: explanation.dispatchAttempt
+              ? {
+                  ...explanation.dispatchAttempt,
+                  state: 'rejected',
+                  completedAt: params.now.toISOString(),
+                }
+              : undefined,
+          }),
+        });
+      }
+      return markDeliveryUnverified({
+        action: params.action,
+        now: params.now,
+        error: isChannelDeliveryUnverifiedError(error)
+          ? error
+          : new ChannelDeliveryUnverifiedError({
+              outcome: 'unknown',
+              confirmedReceiptIds: [],
+              confirmedReceiptCount: 0,
+            }),
+        expectedBlueBubblesLastUpdatedAt:
+          claimedLastUpdatedAt || params.action.lastUpdatedAt,
+        dispatchExplanation,
+      });
+    }
+    if (isChannelDeliveryRejectedBeforeDispatchError(error)) {
+      const explanation = parseExplanation(params.action);
+      return markFailedSend({
+        action: params.action,
+        deps: params.deps,
+        now: params.now,
+        expectedBlueBubblesStatuses:
+          params.action.targetChannel === 'bluebubbles'
+            ? [params.action.sendStatus]
+            : undefined,
+        expectedBlueBubblesLastUpdatedAt: params.action.lastUpdatedAt,
+        failureExplanationJson: JSON.stringify({
+          ...explanation,
+          safetyReason: error.message,
+          deliveryVerification: undefined,
+          dispatchAttempt: explanation.dispatchAttempt
+            ? {
+                ...explanation.dispatchAttempt,
+                state: 'rejected',
+                completedAt: params.now.toISOString(),
+              }
+            : undefined,
+        }),
+      });
+    }
     if (isChannelDeliveryUnverifiedError(error)) {
       return markDeliveryUnverified({
         action: params.action,
@@ -2899,6 +3456,260 @@ async function executeSendOperation(params: {
       inFlightMessageActionSends.delete(params.action.messageActionId);
     }
   }
+}
+
+/**
+ * Executes a recipient-bound action when the current trusted owner utterance
+ * itself is the confirmation required by the capability contract. This path
+ * intentionally does not require a prior draft-card presentation receipt.
+ */
+export async function executeExplicitlyAuthorizedMessageAction(
+  messageActionId: string,
+  deps: MessageActionExecutionDeps,
+): Promise<ApplyMessageActionOperationResult> {
+  const inFlight = inFlightMessageActionSends.get(messageActionId);
+  if (inFlight) {
+    const executed = await inFlight;
+    return {
+      handled: true,
+      action: executed.action,
+      replyText: executed.replyText,
+    };
+  }
+  const action = getMessageAction(messageActionId);
+  if (!action) return { handled: false };
+  const target = parseTarget(action);
+  if (action.sendStatus === 'delivery_unverified') {
+    return {
+      handled: true,
+      action,
+      replyText:
+        'Andrea: The prior BlueBubbles attempt is still unverified. I will not resend it or claim success until the exact provider outcome is reconciled.',
+    };
+  }
+  if (action.sendStatus === 'sent') {
+    if (!action.platformMessageId) {
+      return {
+        handled: true,
+        action,
+        replyText:
+          'Andrea: The action is recorded as sent, but its provider receipt is missing. I will not resend it or make a fresh success claim.',
+      };
+    }
+    return {
+      handled: true,
+      action,
+      replyText: describeSendSuccess(action, target, {
+        platformMessageId: action.platformMessageId,
+      }),
+    };
+  }
+  if (
+    action.sendStatus === 'failed' &&
+    action.sourceKey.includes(':inbound:')
+  ) {
+    return {
+      handled: true,
+      action,
+      replyText:
+        'Andrea: That exact inbound request previously failed before dispatch. I did not replay it automatically; send a fresh instruction if you want a new attempt.',
+    };
+  }
+
+  const now = deps.currentTime || new Date();
+  if (
+    action.targetChannel !== 'bluebubbles' &&
+    (!action.approvedAt || action.sendStatus !== 'approved')
+  ) {
+    updateMessageAction(action.messageActionId, {
+      sendStatus: 'approved',
+      requiresApproval: false,
+      approvedAt: now.toISOString(),
+      lastActionKind: 'approved',
+      lastActionAt: now.toISOString(),
+      lastUpdatedAt: now.toISOString(),
+    });
+  }
+  // For BlueBubbles the explicit owner utterance is carried directly into the
+  // dispatch claim. Writing `approved` first would let a stale process
+  // overwrite a newer fence before it attempted the real CAS.
+  const approvedAction =
+    action.targetChannel === 'bluebubbles'
+      ? action
+      : getMessageAction(action.messageActionId) || action;
+  const executed = await executeSendOperation({
+    action: approvedAction,
+    deps,
+    now,
+    hasExplicitUserApproval: true,
+  });
+  return {
+    handled: true,
+    action: executed.action,
+    replyText: executed.replyText,
+  };
+}
+
+export interface BlueBubblesDeliveryReconciliationResult {
+  inspected: number;
+  reconciled: number;
+  stillUnverified: number;
+}
+
+/**
+ * Reconciles crash/timeout fences only from one action-correlated outbound
+ * provider row: the stable BlueBubbles tempGuid or a receipt captured from the
+ * original POST must match in addition to chat, bytes, authorship, and time.
+ * First-contact sends use the tempGuid to find the provider-created direct chat
+ * and safely replace their provisional target. Zero or multiple correlated
+ * matches remain unverified. This function never dispatches or retries a
+ * message.
+ */
+export function reconcileBlueBubblesUnverifiedMessageActions(params: {
+  groupFolder: string;
+  now?: Date;
+  dispatchWindowMs?: number;
+}): BlueBubblesDeliveryReconciliationResult {
+  const recoveryContract = runtimeCapabilityRegistry.get(
+    'messages.send.bluebubbles',
+  );
+  if (
+    !recoveryContract?.idempotency.required ||
+    recoveryContract.idempotency.strategy !== 'stable_action_key' ||
+    !recoveryContract.receipt.required
+  ) {
+    return { inspected: 0, reconciled: 0, stillUnverified: 0 };
+  }
+  const now = params.now || new Date();
+  const dispatchWindowMs = Math.max(
+    30_000,
+    Math.min(params.dispatchWindowMs || 10 * 60_000, 30 * 60_000),
+  );
+  const actions = listMessageActionsForGroup({
+    groupFolder: params.groupFolder,
+    statuses: ['delivery_unverified'],
+    targetChannels: ['bluebubbles'],
+    limit: 200,
+  });
+  let reconciled = 0;
+
+  for (const action of actions) {
+    const explanation = parseExplanation(action);
+    const attempt = explanation.dispatchAttempt;
+    const target = parseTarget(action);
+    const dispatchStartedAt = Date.parse(attempt?.startedAt || '');
+    if (
+      !attempt ||
+      attempt.idempotencyKey !== action.messageActionId ||
+      !Number.isFinite(dispatchStartedAt) ||
+      !target.chatJid
+    ) {
+      continue;
+    }
+    const normalizedBody = action.draftText.replace(/\r\n/g, '\n');
+    const providerReceiptIds = new Set(
+      explanation.deliveryVerification?.confirmedReceiptIds || [],
+    );
+    const isFirstContact =
+      target.kind === 'external_thread' &&
+      Boolean(target.blueBubblesCreateChatAddress?.trim());
+    const candidates = isFirstContact
+      ? listMessagesByProviderIdempotencyKey(action.messageActionId, 100)
+      : listRecentMessagesForChat(target.chatJid, 100);
+    const matches = candidates.filter((message) => {
+      const observedAt = Date.parse(message.timestamp || '');
+      const hasStableActionKey =
+        message.provider_idempotency_key === action.messageActionId;
+      const actionCorrelated = isFirstContact
+        ? hasStableActionKey
+        : hasStableActionKey || providerReceiptIds.has(message.id);
+      return (
+        actionCorrelated &&
+        (!isFirstContact ||
+          (target.kind === 'external_thread' &&
+            isBlueBubblesDirectChatJidForAddress(
+              message.chat_jid,
+              target.blueBubblesCreateChatAddress,
+            ))) &&
+        Boolean(message.is_from_me) &&
+        Boolean(message.id) &&
+        message.content.replace(/\r\n/g, '\n') === normalizedBody &&
+        Number.isFinite(observedAt) &&
+        observedAt >= dispatchStartedAt - 5_000 &&
+        observedAt <= dispatchStartedAt + dispatchWindowMs
+      );
+    });
+    if (matches.length !== 1) continue;
+
+    const match = matches[0]!;
+    const reconciledTarget: MessageTarget =
+      isFirstContact && target.kind === 'external_thread'
+        ? {
+            ...target,
+            chatJid: match.chat_jid,
+            threadId: null,
+            replyToMessageId: null,
+            blueBubblesCreateChatAddress: null,
+          }
+        : target;
+    const recipient =
+      target.kind === 'external_thread'
+        ? target.personName || target.chatJid
+        : 'your companion chat';
+    const transitioned = updateMessageActionIfSendStatus(
+      action.messageActionId,
+      ['delivery_unverified'],
+      action.lastUpdatedAt,
+      {
+        targetConversationJson: JSON.stringify(reconciledTarget),
+        sendStatus: 'sent',
+        requiresApproval: false,
+        trustLevel: normalizeTrustLevelAfterQueue(action),
+        platformMessageId: match.id,
+        sentAt: match.timestamp,
+        lastActionKind: 'sent',
+        lastActionAt: now.toISOString(),
+        explanationJson: JSON.stringify({
+          ...explanation,
+          safetyReason: null,
+          deliveryVerification: undefined,
+          dispatchAttempt: {
+            ...attempt,
+            state: 'confirmed',
+            completedAt: now.toISOString(),
+          },
+          executionReceipt: {
+            verification: 'verified',
+            provider: 'bluebubbles',
+            providerReceiptId: match.id,
+            providerReceiptIds: [match.id],
+            recipient,
+            exactContent: action.draftText,
+            threadId: reconciledTarget.chatJid,
+            recordedAt: now.toISOString(),
+            idempotencyKey: action.messageActionId,
+          },
+        }),
+        lastUpdatedAt: nextMessageActionVersion(action, now.toISOString()),
+      },
+    );
+    if (!transitioned) continue;
+    const updated = getMessageAction(action.messageActionId) || action;
+    syncCommunicationThreadState({
+      action: updated,
+      now,
+      mode: 'sent',
+      platformMessageId: match.id,
+    });
+    syncOutcomeFromMessageActionRecord(updated, now);
+    reconciled += 1;
+  }
+
+  return {
+    inspected: actions.length,
+    reconciled,
+    stillUnverified: actions.length - reconciled,
+  };
 }
 
 export async function runScheduledMessageActionByTaskId(
@@ -2996,6 +3807,54 @@ export async function applyMessageActionOperation(
 ): Promise<ApplyMessageActionOperationResult> {
   const action = getMessageAction(messageActionId);
   if (!action) return { handled: false };
+  if (
+    action.targetChannel === 'bluebubbles' &&
+    operation.kind === 'send_again'
+  ) {
+    return {
+      handled: true,
+      action,
+      replyText:
+        'Andrea: I will not resend from or reuse this BlueBubbles action or its idempotency key; create a new draft as a fresh message action if you want to send another message.',
+      presentation: buildMessageActionPresentation(
+        action,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
+  }
+  if (
+    operation.kind === 'send' ||
+    operation.kind === 'send_again' ||
+    operation.kind === 'rewrite_and_send'
+  ) {
+    // A replayed inbound platform event must observe the durable fence instead
+    // of waiting on process-local state. Ordinary simultaneous UI approvals
+    // can still share the same in-flight promise below.
+    if (
+      action.sendStatus === 'delivery_unverified' &&
+      action.sourceKey.includes(':inbound:')
+    ) {
+      return {
+        handled: true,
+        action,
+        replyText:
+          'Andrea: Delivery is still unverified, so I will not resend, rewrite-and-send, defer, or relabel this attempt. Check the target conversation first; if another message is needed after that, create a new draft.',
+        presentation: buildMessageActionPresentation(
+          action,
+          deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+        ),
+      };
+    }
+    const inFlight = inFlightMessageActionSends.get(messageActionId);
+    if (inFlight) {
+      const executed = await inFlight;
+      return {
+        handled: true,
+        action: executed.action,
+        replyText: executed.replyText,
+      };
+    }
+  }
   const now = deps.currentTime || new Date();
 
   if (
@@ -3095,22 +3954,39 @@ export async function applyMessageActionOperation(
             personName: linkedRefs.personName || null,
           })
         : null;
-    pauseScheduledTask(action.scheduledTaskId);
-    updateMessageAction(action.messageActionId, {
-      draftText:
-        modelRewrite?.draftText ||
-        rewriteDraft(action.draftText, operation.style),
-      sendStatus: 'drafted',
-      requiresApproval: true,
-      followupAt: null,
-      scheduledTaskId: null,
-      trustLevel: normalizeTrustLevelAfterQueue(action),
-      approvedAt: null,
-      lastActionKind: 'rewrite',
-      lastActionAt: now.toISOString(),
-      lastUpdatedAt: now.toISOString(),
+    const mutation = updateMessageActionFromSnapshot({
+      action,
+      updates: {
+        draftText:
+          modelRewrite?.draftText ||
+          rewriteDraft(action.draftText, operation.style),
+        sendStatus: 'drafted',
+        requiresApproval: true,
+        followupAt: null,
+        scheduledTaskId: null,
+        trustLevel: normalizeTrustLevelAfterQueue(action),
+        approvedAt: null,
+        lastActionKind: 'rewrite',
+        lastActionAt: now.toISOString(),
+        lastUpdatedAt: now.toISOString(),
+      },
     });
-    const updatedAction = getMessageAction(action.messageActionId) || action;
+    const updatedAction = mutation.action;
+    if (!mutation.applied) {
+      return {
+        handled: true,
+        action: updatedAction,
+        presentation: buildMessageActionPresentation(
+          updatedAction,
+          deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+        ),
+        replyText: staleBlueBubblesMutationReply(
+          updatedAction,
+          'rewrite that stale draft',
+        ),
+      };
+    }
+    pauseScheduledTask(action.scheduledTaskId);
     syncCommunicationThreadState({
       action: updatedAction,
       now,
@@ -3160,20 +4036,37 @@ export async function applyMessageActionOperation(
   }
 
   if (operation.kind === 'skip') {
+    const mutation = updateMessageActionFromSnapshot({
+      action,
+      updates: {
+        sendStatus: 'skipped',
+        followupAt: null,
+        scheduledTaskId: null,
+        trustLevel: normalizeTrustLevelAfterQueue(action),
+        lastActionKind: 'skipped',
+        lastActionAt: now.toISOString(),
+        lastUpdatedAt: now.toISOString(),
+      },
+    });
+    const updatedAction = mutation.action;
+    if (!mutation.applied) {
+      return {
+        handled: true,
+        action: updatedAction,
+        replyText: staleBlueBubblesMutationReply(
+          updatedAction,
+          'skip that stale action',
+        ),
+        presentation: buildMessageActionPresentation(
+          updatedAction,
+          deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+        ),
+      };
+    }
     if (action.delegationRuleId) {
       recordDelegationRuleOverride(action.delegationRuleId, now);
     }
     pauseScheduledTask(action.scheduledTaskId);
-    updateMessageAction(action.messageActionId, {
-      sendStatus: 'skipped',
-      followupAt: null,
-      scheduledTaskId: null,
-      trustLevel: normalizeTrustLevelAfterQueue(action),
-      lastActionKind: 'skipped',
-      lastActionAt: now.toISOString(),
-      lastUpdatedAt: now.toISOString(),
-    });
-    const updatedAction = getMessageAction(action.messageActionId) || action;
     syncOutcomeFromMessageActionRecord(updatedAction, now);
     const reviewedAction = recordMessageActionOwnerDecision({
       action: updatedAction,
@@ -3194,12 +4087,14 @@ export async function applyMessageActionOperation(
 
   if (operation.kind === 'cancel_deferred') {
     const cancelled = cancelScheduledSend({ action, now });
-    const reviewedAction = recordMessageActionOwnerDecision({
-      action: cancelled.updatedAction,
-      verdict: 'rejected',
-      decisionKind: 'cancel_deferred',
-      now,
-    });
+    const reviewedAction = cancelled.applied
+      ? recordMessageActionOwnerDecision({
+          action: cancelled.updatedAction,
+          verdict: 'rejected',
+          decisionKind: 'cancel_deferred',
+          now,
+        })
+      : cancelled.updatedAction;
     return {
       handled: true,
       action: reviewedAction,
@@ -3216,12 +4111,14 @@ export async function applyMessageActionOperation(
       action,
       now,
     });
-    const reviewedAction = recordMessageActionOwnerDecision({
-      action: kept.updatedAction,
-      verdict: 'accepted',
-      decisionKind: 'keep_draft',
-      now,
-    });
+    const reviewedAction = kept.applied
+      ? recordMessageActionOwnerDecision({
+          action: kept.updatedAction,
+          verdict: 'accepted',
+          decisionKind: 'keep_draft',
+          now,
+        })
+      : kept.updatedAction;
     return {
       handled: true,
       action: reviewedAction,
@@ -3234,9 +4131,6 @@ export async function applyMessageActionOperation(
   }
 
   if (operation.kind === 'save_to_thread') {
-    if (action.delegationRuleId) {
-      recordDelegationRuleOverride(action.delegationRuleId, now);
-    }
     const result = handleLifeThreadCommand({
       groupFolder: action.groupFolder,
       channel: deps.channel,
@@ -3255,19 +4149,39 @@ export async function applyMessageActionOperation(
       threadId:
         result.referencedThread?.id || existingLinkedRefs.threadId || undefined,
     };
-    updateMessageAction(action.messageActionId, {
-      sendStatus: 'deferred',
-      followupAt: null,
-      scheduledTaskId: null,
-      requiresApproval: false,
-      trustLevel: normalizeTrustLevelAfterQueue(action),
-      approvedAt: null,
-      lastActionKind: 'save_to_thread',
-      lastActionAt: now.toISOString(),
-      linkedRefsJson: JSON.stringify(nextLinkedRefs),
-      lastUpdatedAt: now.toISOString(),
+    const mutation = updateMessageActionFromSnapshot({
+      action,
+      updates: {
+        sendStatus: 'deferred',
+        followupAt: null,
+        scheduledTaskId: null,
+        requiresApproval: false,
+        trustLevel: normalizeTrustLevelAfterQueue(action),
+        approvedAt: null,
+        lastActionKind: 'save_to_thread',
+        lastActionAt: now.toISOString(),
+        linkedRefsJson: JSON.stringify(nextLinkedRefs),
+        lastUpdatedAt: now.toISOString(),
+      },
     });
-    const updatedAction = getMessageAction(action.messageActionId) || action;
+    const updatedAction = mutation.action;
+    if (!mutation.applied) {
+      return {
+        handled: true,
+        action: updatedAction,
+        replyText: staleBlueBubblesMutationReply(
+          updatedAction,
+          'save that stale message action under the thread',
+        ),
+        presentation: buildMessageActionPresentation(
+          updatedAction,
+          deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+        ),
+      };
+    }
+    if (action.delegationRuleId) {
+      recordDelegationRuleOverride(action.delegationRuleId, now);
+    }
     syncCommunicationThreadState({
       action: updatedAction,
       now,
@@ -3298,21 +4212,27 @@ export async function applyMessageActionOperation(
       recordDelegationRuleOverride(action.delegationRuleId, now);
     }
     if (isBlueBubblesProofDrillAction(action)) {
-      const updatedAction = recordBlueBubblesProofDrillDeferredDecision({
+      const deferredProof = recordBlueBubblesProofDrillDeferredDecision({
         action,
         now,
       });
-      const reviewedAction = recordMessageActionOwnerDecision({
-        action: updatedAction,
-        verdict: 'accepted',
-        decisionKind: 'defer',
-        now,
-      });
+      const reviewedAction = deferredProof.applied
+        ? recordMessageActionOwnerDecision({
+            action: deferredProof.action,
+            verdict: 'accepted',
+            decisionKind: 'defer',
+            now,
+          })
+        : deferredProof.action;
       return {
         handled: true,
         action: reviewedAction,
-        replyText:
-          'Andrea: BlueBubbles proof drill deferred decision is recorded.',
+        replyText: deferredProof.applied
+          ? 'Andrea: BlueBubbles proof drill deferred decision is recorded.'
+          : staleBlueBubblesMutationReply(
+              reviewedAction,
+              'record that stale proof-drill deferral',
+            ),
         presentation: buildMessageActionPresentation(
           reviewedAction,
           deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
@@ -3327,12 +4247,14 @@ export async function applyMessageActionOperation(
         deps,
         now,
       });
-      const reviewedAction = recordMessageActionOwnerDecision({
-        action: scheduled.updatedAction,
-        verdict: 'accepted',
-        decisionKind: 'defer',
-        now,
-      });
+      const reviewedAction = scheduled.applied
+        ? recordMessageActionOwnerDecision({
+            action: scheduled.updatedAction,
+            verdict: 'accepted',
+            decisionKind: 'defer',
+            now,
+          })
+        : scheduled.updatedAction;
       return {
         handled: true,
         action: reviewedAction,
@@ -3350,18 +4272,21 @@ export async function applyMessageActionOperation(
       now,
       reminderOnly: false,
     });
-    const reviewedAction = recordMessageActionOwnerDecision({
-      action: deferred.updatedAction,
-      verdict: 'accepted',
-      decisionKind: 'defer',
-      now,
-    });
+    const reviewedAction = deferred.applied
+      ? recordMessageActionOwnerDecision({
+          action: deferred.updatedAction,
+          verdict: 'accepted',
+          decisionKind: 'defer',
+          now,
+        })
+      : deferred.updatedAction;
     return {
       handled: true,
       action: reviewedAction,
-      replyText: eligibility.reason
-        ? `${deferred.replyText}\n\nAndrea: I kept this as a reminder because ${eligibility.reason.toLowerCase()}`
-        : deferred.replyText,
+      replyText:
+        eligibility.reason && deferred.applied
+          ? `${deferred.replyText}\n\nAndrea: I kept this as a reminder because ${eligibility.reason.toLowerCase()}`
+          : deferred.replyText,
       presentation: buildMessageActionPresentation(
         reviewedAction,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
@@ -3380,12 +4305,14 @@ export async function applyMessageActionOperation(
       now,
       reminderOnly: true,
     });
-    const reviewedAction = recordMessageActionOwnerDecision({
-      action: deferred.updatedAction,
-      verdict: 'accepted',
-      decisionKind: 'remind_instead',
-      now,
-    });
+    const reviewedAction = deferred.applied
+      ? recordMessageActionOwnerDecision({
+          action: deferred.updatedAction,
+          verdict: 'accepted',
+          decisionKind: 'remind_instead',
+          now,
+        })
+      : deferred.updatedAction;
     return {
       handled: true,
       action: reviewedAction,
@@ -3403,7 +4330,9 @@ export async function applyMessageActionOperation(
         handled: true,
         action,
         replyText:
-          'Andrea: That one already went out. Say send it again if you really want me to resend it.',
+          action.targetChannel === 'bluebubbles'
+            ? 'Andrea: That one already went out. Create a fresh message action if you want to send something else.'
+            : 'Andrea: That one already went out. Say send it again if you really want me to resend it.',
       };
     }
     const executed = await executeSendOperation({
@@ -4022,12 +4951,14 @@ function createRehydratedBlueBubblesMessageAction(params: {
     now,
   });
   if (params.presentationMessageId) {
-    updateMessageAction(action.messageActionId, {
-      presentationMessageId: params.presentationMessageId,
-      presentationChatJid,
-      lastUpdatedAt: now.toISOString(),
-    });
-    return getMessageAction(action.messageActionId) || action;
+    return updateMessageActionFromSnapshot({
+      action,
+      updates: {
+        presentationMessageId: params.presentationMessageId,
+        presentationChatJid,
+        lastUpdatedAt: now.toISOString(),
+      },
+    }).action;
   }
   return action;
 }

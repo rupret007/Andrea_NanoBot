@@ -83,6 +83,7 @@ describe('trusted owner review surface', () => {
         channelName: 'bluebubbles',
         chatJid: 'iMessage;-;owner@example.invalid',
         group: companionGroup,
+        ownerAuthored: true,
       }),
     ).toBe(false);
   });
@@ -100,6 +101,7 @@ describe('trusted owner review surface', () => {
         channelName: 'bluebubbles',
         chatJid: 'bb:iMessage;-;+12025550101',
         group: companionGroup,
+        ownerAuthored: true,
       }),
     ).toBe(false);
 
@@ -126,6 +128,7 @@ describe('trusted owner review surface', () => {
           channelName: 'bluebubbles',
           chatJid,
           group: companionGroup,
+          ownerAuthored: true,
         }),
       ).toBe(true);
     }
@@ -134,8 +137,34 @@ describe('trusted owner review surface', () => {
         channelName: 'bluebubbles',
         chatJid: 'bb:iMessage;-;someone-else@example.invalid',
         group: companionGroup,
+        ownerAuthored: true,
       }),
     ).toBe(false);
+  });
+
+  it('requires the exact current BlueBubbles message to be owner-authored', () => {
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;owner@example.invalid';
+
+    for (const ownerAuthored of [undefined, false] as const) {
+      expect(
+        isTrustedOwnerReviewSurface({
+          channelName: 'bluebubbles',
+          chatJid: 'bb:iMessage;-;owner@example.invalid',
+          group: companionGroup,
+          ownerAuthored,
+        }),
+      ).toBe(false);
+    }
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'bluebubbles',
+        chatJid: 'bb:iMessage;-;owner@example.invalid',
+        group: companionGroup,
+        ownerAuthored: true,
+      }),
+    ).toBe(true);
   });
 
   it('rejects an owner-looking surface without a resolved group scope', () => {

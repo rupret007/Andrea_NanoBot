@@ -537,7 +537,7 @@ describe('active release-readiness semantic reuse', () => {
     expect(setup.execute).not.toHaveBeenCalled();
   });
 
-  it('executes only on an explicitly configured BlueBubbles self-thread', async () => {
+  it('executes only for a current owner-authored message in the explicitly configured BlueBubbles self-thread', async () => {
     process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
     process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
       'iMessage;-;owner@example.invalid';
@@ -552,6 +552,7 @@ describe('active release-readiness semantic reuse', () => {
         channelName: 'bluebubbles',
         chatJid: BLUEBUBBLES_CHAT,
         group: blueBubblesGroup,
+        ownerAuthored: true,
         now: NOW,
       },
       setup.dependencies,
@@ -561,6 +562,39 @@ describe('active release-readiness semantic reuse', () => {
     expect(setup.stage).toHaveBeenCalledOnce();
     expect(setup.execute).toHaveBeenCalledOnce();
   });
+
+  it.each([undefined, false] as const)(
+    'restricts a configured BlueBubbles self-thread before reads when current-message owner authorship is %s',
+    async (ownerAuthored) => {
+      process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+      process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+        'iMessage;-;owner@example.invalid';
+      const setup = successfulDependencies({
+        channel: 'bluebubbles',
+        chatJid: BLUEBUBBLES_CHAT,
+      });
+
+      const result = await dispatchActiveReleaseReadinessReuse(
+        {
+          text: 'Show release readiness.',
+          channelName: 'bluebubbles',
+          chatJid: BLUEBUBBLES_CHAT,
+          group: blueBubblesGroup,
+          ownerAuthored,
+          now: NOW,
+        },
+        setup.dependencies,
+      );
+
+      expect(result.action).toBe('restricted');
+      expect(result.text).toContain('current owner-authored message');
+      expect(setup.match).not.toHaveBeenCalled();
+      expect(setup.getStatus).not.toHaveBeenCalled();
+      expect(setup.listHealth).not.toHaveBeenCalled();
+      expect(setup.stage).not.toHaveBeenCalled();
+      expect(setup.execute).not.toHaveBeenCalled();
+    },
+  );
 
   it('restricts unconfigured BlueBubbles aliases before any capability read', async () => {
     process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
@@ -575,6 +609,7 @@ describe('active release-readiness semantic reuse', () => {
         channelName: 'bluebubbles',
         chatJid: 'bb:iMessage;-;+12025550101',
         group: blueBubblesGroup,
+        ownerAuthored: true,
         now: NOW,
       },
       setup.dependencies,

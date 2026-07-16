@@ -143,6 +143,15 @@ function buildConfig(
     webhookPath: '/bluebubbles/webhook',
     webhookSecret: 'hook-secret',
     sendEnabled: true,
+    receiptInboxEnabled: true,
+    receiptInboxDatabasePath: ':memory:',
+    receiptInboxBaseUrl: null,
+    receiptInboxWebhookPath: '/bluebubbles/receipt-inbox',
+    receiptInboxWebhookPublicBaseUrl: null,
+    receiptInboxWebhookUrl: null,
+    receiptInboxHealthPath: '/health',
+    receiptInboxHealthUrl: null,
+    receiptInboxSupervisionRequired: false,
     ...overrides,
   };
   if (!overrides.baseUrlCandidates) {

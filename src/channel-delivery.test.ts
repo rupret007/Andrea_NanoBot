@@ -1,12 +1,31 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ChannelDeliveryRejectedBeforeDispatchError,
   ChannelDeliveryUnverifiedError,
   classifyChannelDelivery,
+  isChannelDeliveryRejectedBeforeDispatchError,
   requireCompleteChannelDelivery,
 } from './channel-delivery.js';
 
 describe('complete channel delivery guard', () => {
+  it('keeps definite pre-effect rejection distinct from uncertain delivery', () => {
+    const error = new ChannelDeliveryRejectedBeforeDispatchError(
+      'Provider rejected the authenticated request before invoking Messages.',
+      { stage: 'provider_pre_effect' },
+    );
+
+    expect(isChannelDeliveryRejectedBeforeDispatchError(error)).toBe(true);
+    expect(error).toMatchObject({
+      code: 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH',
+      evidence: {
+        outcome: 'rejected',
+        stage: 'provider_pre_effect',
+      },
+    });
+    expect(error).not.toBeInstanceOf(ChannelDeliveryUnverifiedError);
+  });
+
   it('accepts complete and legacy receipts', () => {
     expect(
       requireCompleteChannelDelivery({

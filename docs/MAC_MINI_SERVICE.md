@@ -8,6 +8,8 @@ Mac mini background service without changing the shared TypeScript runtime.
 - `launchd/com.nanoclaw.mac-mini.plist.template` is the LaunchAgent template.
 - `scripts/mac-mini-service.sh` renders and manages the LaunchAgent.
 - `scripts/mac-mini-service-runner.sh` is what launchd executes.
+- `com.nanoclaw.bluebubbles-receipt-inbox` is a separate optional LaunchAgent;
+  see [BlueBubbles Receipt Inbox LaunchAgent](./BLUEBUBBLES_RECEIPT_INBOX_SERVICE.md).
 - `scripts/agi-doctor.sh` performs read-only host, runtime, launchd, config,
   state, and recent-log checks.
 - `scripts/agi-backup.sh` creates local private backups under `data/backups`.
@@ -65,6 +67,13 @@ immediate verifier to trust stale state.
 
 The service label defaults to `com.nanoclaw.mac-mini`. Override it with
 `NANOCLAW_LAUNCHD_LABEL` before install if this Mac needs multiple checkouts.
+
+The main service manager owns only that label. It does not install, stop, or
+restart `com.nanoclaw.bluebubbles-receipt-inbox`. This separation keeps durable
+receipt capture alive during a main Andrea restart only after that dedicated
+LaunchAgent is installed and healthy and its exact second BlueBubbles webhook
+is registered. After rebuilding receipt sidecar code, use its dedicated dry-run
+and restart commands from the linked runbook.
 
 ## Post-change verification
 

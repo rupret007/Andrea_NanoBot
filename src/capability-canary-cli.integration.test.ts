@@ -87,6 +87,36 @@ afterEach(() => {
 });
 
 describe('release-readiness preparation to guided CLI', () => {
+  it('does not infer current BlueBubbles owner authorship from stored CLI binding metadata', () => {
+    vi.stubEnv('ANDREA_TEST_DISABLE_OWNER_ENV_FILE', '1');
+    vi.stubEnv(
+      'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+      'iMessage;-;owner@example.invalid',
+    );
+    setRegisteredGroup('bb:iMessage;-;owner@example.invalid', {
+      name: 'Messages (Main)',
+      folder: 'main',
+      trigger: '@Andrea',
+      added_at: '2026-07-15T12:00:00.000Z',
+      requiresTrigger: false,
+      isMain: false,
+    });
+    const deps = capabilityCanaryCliDependencies();
+
+    expect(
+      deps.isTrustedBinding({
+        binding: {
+          ownerId: 'owner',
+          chatId: 'bb:iMessage;-;owner@example.invalid',
+          groupId: 'main',
+          channel: 'bluebubbles',
+          targetScopeKey: 'release-readiness',
+        },
+        authorizedSurface: 'bluebubbles',
+      }),
+    ).toBe(false);
+  });
+
   it('stages, authorizes, and executes the canonical compiled candidate', async () => {
     const prepared = await prepareReleaseReadinessCandidate({
       groupFolder: 'main',

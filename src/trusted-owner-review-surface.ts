@@ -5,6 +5,12 @@ export interface TrustedOwnerReviewSurfaceInput {
   channelName: string | null | undefined;
   chatJid: string | null | undefined;
   group: RegisteredGroup | null | undefined;
+  /**
+   * Immutable fact from the current inbound platform message. BlueBubbles
+   * self-thread membership identifies the conversation, not who authored the
+   * current instruction, so missing provenance must never grant authority.
+   */
+  readonly ownerAuthored?: boolean | null;
 }
 
 /**
@@ -22,6 +28,7 @@ export function isTrustedOwnerReviewSurface(
   }
   return (
     input.channelName === 'bluebubbles' &&
+    input.ownerAuthored === true &&
     input.chatJid.startsWith('bb:') &&
     isConfiguredBlueBubblesSelfThreadAliasJid(input.chatJid)
   );

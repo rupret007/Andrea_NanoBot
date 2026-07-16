@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 
+import '../src/channels/index.js';
+
 import {
   _closeDatabase,
   _initTestDatabase,
@@ -9,7 +11,10 @@ import {
   formatAgiReadinessReport,
   runAgiGauntlet,
 } from '../src/agi-gauntlet.js';
+import { registerProductionRuntimeCapabilitySurfaces } from '../src/runtime-capability-production-surfaces.js';
+import { runtimeCapabilityRegistry } from '../src/runtime-capability-registry.js';
 
+registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
 _initTestDatabase();
 
 const report = runAgiGauntlet({ now: '2026-06-09T18:00:00.000Z' });

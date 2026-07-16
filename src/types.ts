@@ -57,6 +57,15 @@ export interface NewMessage {
   reply_to_id?: string;
   reply_to?: ReplyMessageRef;
   /**
+   * Stable client request identity echoed by providers such as BlueBubbles.
+   * It is independent from the provider-assigned message receipt (`id`).
+   */
+  provider_idempotency_key?: string;
+  /** Provider-assigned id retained when `id` is replaced by a durable ingress claim. */
+  provider_message_id?: string;
+  /** Cross-process canonical identity for an owner-authored ingress turn. */
+  durable_ingress_claim_id?: string;
+  /**
    * Structured reaction metadata supplied by channels that expose native
    * message reactions. Reaction events are control signals, not chat prompts;
    * callers should consume them before ordinary message persistence/routing.
@@ -497,6 +506,15 @@ export interface BlueBubblesConfig {
   webhookPath: string;
   webhookSecret: string | null;
   sendEnabled: boolean;
+  receiptInboxEnabled: boolean;
+  receiptInboxDatabasePath: string;
+  receiptInboxBaseUrl: string | null;
+  receiptInboxWebhookPath: string;
+  receiptInboxWebhookPublicBaseUrl: string | null;
+  receiptInboxWebhookUrl: string | null;
+  receiptInboxHealthPath: string;
+  receiptInboxHealthUrl: string | null;
+  receiptInboxSupervisionRequired: boolean;
 }
 
 export interface BlueBubblesWebhookEvent {
@@ -580,6 +598,9 @@ export interface BlueBubblesChannelControlSnapshot {
   detectionState: string;
   detectionDetail: string;
   detectionNextAction: string;
+  receiptInboxState?: string;
+  receiptInboxDetail?: string;
+  receiptInboxHealthUrl?: string | null;
 }
 
 export interface BlueBubblesControlStatus {
@@ -615,6 +636,9 @@ export interface BlueBubblesControlStatus {
   detectionState: string;
   detectionDetail: string;
   detectionNextAction: string;
+  receiptInboxState?: string;
+  receiptInboxDetail?: string;
+  receiptInboxHealthUrl?: string | null;
   mostRecentEngagedChatJid: string;
   mostRecentEngagedAt: string;
   lastInboundAt: string;
@@ -6610,6 +6634,25 @@ export interface MessageActionExplanation {
     nextUnconfirmedChunkIndex?: number;
     retryPolicy: 'verify_before_resend';
   };
+  dispatchAttempt?: {
+    state: 'dispatching' | 'confirmed' | 'unverified' | 'rejected';
+    provider: MessageActionTargetChannel;
+    idempotencyKey: string;
+    targetChatJid: string;
+    startedAt: string;
+    completedAt?: string | null;
+  };
+  executionReceipt?: {
+    verification: 'verified';
+    provider: MessageActionTargetChannel;
+    providerReceiptId: string;
+    providerReceiptIds: string[];
+    recipient: string;
+    exactContent: string;
+    threadId?: string | null;
+    recordedAt: string;
+    idempotencyKey: string;
+  };
 }
 
 export interface MessageActionRecord {
@@ -7874,6 +7917,8 @@ export interface SendMessageOptions {
   inlineActions?: ChannelInlineAction[];
   inlineActionRows?: ChannelInlineAction[][];
   suppressSenderLabel?: boolean;
+  /** Stable provider request identity for durable, replay-safe actions. */
+  idempotencyKey?: string;
   /**
    * Internal, approval-led BlueBubbles first-contact handoff. The channel
    * validates that this normalized address exactly matches the recipient JID
@@ -7956,6 +8001,7 @@ export interface Channel {
   // explicit user request. This is not a passive archive or background sync.
   primeRecentHistory?(options?: {
     limit?: number;
+    recoverUnacceptedClaims?: boolean;
   }): Promise<{ storedCount: number; totalCount: number }>;
 }
 

@@ -51,6 +51,7 @@ export interface AppleMessagesProvider {
     options?: {
       limit?: number;
       candidateChatJids?: string[];
+      timeoutMs?: number;
     },
   ): Promise<AppleMessagesRecentActivityRow[]>;
   sendText(

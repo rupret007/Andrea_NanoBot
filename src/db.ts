@@ -617,6 +617,7 @@ function createSchema(database: Database.Database): void {
       is_bot_message INTEGER DEFAULT 0,
       thread_id TEXT,
       reply_to_id TEXT,
+      provider_idempotency_key TEXT,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
@@ -6280,6 +6281,24 @@ function createSchema(database: Database.Database): void {
 
   try {
     database.exec(
+      `ALTER TABLE messages ADD COLUMN provider_idempotency_key TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_messages_provider_idempotency
+        ON messages(provider_idempotency_key)
+        WHERE provider_idempotency_key IS NOT NULL
+    `);
+  } catch {
+    /* index creation can fail until the migration column exists on very old DBs */
+  }
+
+  try {
+    database.exec(
       `ALTER TABLE companion_handoffs ADD COLUMN last_communication_summary TEXT`,
     );
   } catch {
@@ -7021,7 +7040,7 @@ function hydrateMessagesWithMedia(messages: NewMessage[]): NewMessage[] {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -7033,6 +7052,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.is_bot_message ? 1 : 0,
     msg.thread_id || null,
     msg.reply_to_id || null,
+    msg.provider_idempotency_key || null,
   );
   if (msg.attachments?.length) {
     upsertMessageMediaAttachments(
@@ -7060,6 +7080,39 @@ export function hasStoredMessage(chatJid: string, messageId: string): boolean {
 }
 
 /**
+ * Enrich an already-persisted provider message with the stable client request
+ * key used to create it. Never replace contradictory correlation evidence.
+ */
+export function associateMessageProviderIdempotencyKey(params: {
+  chatJid: string;
+  messageId: string;
+  providerIdempotencyKey: string;
+}): boolean {
+  const providerIdempotencyKey = params.providerIdempotencyKey.trim();
+  if (!providerIdempotencyKey) return false;
+  const result = db
+    .prepare(
+      `
+        UPDATE messages
+        SET provider_idempotency_key = ?
+        WHERE chat_jid = ?
+          AND id = ?
+          AND (
+            provider_idempotency_key IS NULL
+            OR provider_idempotency_key = ?
+          )
+      `,
+    )
+    .run(
+      providerIdempotencyKey,
+      params.chatJid,
+      params.messageId,
+      providerIdempotencyKey,
+    );
+  return result.changes === 1;
+}
+
+/**
  * Store a message directly.
  */
 export function storeMessageDirect(msg: {
@@ -7073,10 +7126,11 @@ export function storeMessageDirect(msg: {
   is_bot_message?: boolean;
   thread_id?: string;
   reply_to_id?: string;
+  provider_idempotency_key?: string;
   attachments?: MessageMediaAttachment[];
 }): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -7088,6 +7142,7 @@ export function storeMessageDirect(msg: {
     msg.is_bot_message ? 1 : 0,
     msg.thread_id || null,
     msg.reply_to_id || null,
+    msg.provider_idempotency_key || null,
   );
   if (msg.attachments?.length) {
     upsertMessageMediaAttachments(
@@ -7114,7 +7169,7 @@ export function getNewMessages(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_id, reply_to_id
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_id, reply_to_id, provider_idempotency_key
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -7148,7 +7203,7 @@ export function getMessagesSince(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_id, reply_to_id
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_id, reply_to_id, provider_idempotency_key
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -7170,7 +7225,7 @@ export function listRecentMessagesForChat(
   const rows = db
     .prepare(
       `
-        SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id
+        SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key
         FROM messages
         WHERE chat_jid = ?
           AND content != '' AND content IS NOT NULL
@@ -7179,6 +7234,34 @@ export function listRecentMessagesForChat(
       `,
     )
     .all(chatJid, Math.max(1, limit)) as NewMessage[];
+  return hydrateMessagesWithMedia(rows);
+}
+
+/**
+ * Finds provider-observed messages for one stable outbound action key across
+ * chats. First-contact BlueBubbles sends begin with a provisional address JID,
+ * while their matched webhook/history row can arrive under the server-created
+ * chat GUID, so recovery cannot safely scope this lookup to the provisional
+ * chat alone.
+ */
+export function listMessagesByProviderIdempotencyKey(
+  providerIdempotencyKey: string,
+  limit: number = 20,
+): NewMessage[] {
+  const normalizedKey = providerIdempotencyKey.trim();
+  if (!normalizedKey) return [];
+  const rows = db
+    .prepare(
+      `
+        SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key
+        FROM messages
+        WHERE provider_idempotency_key = ?
+          AND content != '' AND content IS NOT NULL
+        ORDER BY timestamp DESC
+        LIMIT ?
+      `,
+    )
+    .all(normalizedKey, Math.max(1, Math.min(limit, 200))) as NewMessage[];
   return hydrateMessagesWithMedia(rows);
 }
 
@@ -7191,7 +7274,7 @@ export function listMessagesForChatWindow(params: {
   const rows = db
     .prepare(
       `
-        SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id
+        SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key
         FROM messages
         WHERE chat_jid = ?
           AND timestamp >= ?
@@ -9387,10 +9470,45 @@ export function listRoutineEvidence(params: {
   }));
 }
 
-export function upsertMessageAction(record: MessageActionRecord): void {
+export function upsertMessageAction(
+  record: MessageActionRecord,
+  options: { insertOnly?: boolean } = {},
+): boolean {
   assertValidGroupFolder(record.groupFolder);
-  db.prepare(
-    `
+  const conflictClause = options.insertOnly
+    ? 'ON CONFLICT(message_action_id) DO NOTHING'
+    : `ON CONFLICT(message_action_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        source_type = excluded.source_type,
+        source_key = excluded.source_key,
+        source_summary = excluded.source_summary,
+        target_kind = excluded.target_kind,
+        target_channel = excluded.target_channel,
+        target_conversation_json = excluded.target_conversation_json,
+        draft_text = excluded.draft_text,
+        trust_level = excluded.trust_level,
+        send_status = excluded.send_status,
+        followup_at = excluded.followup_at,
+        requires_approval = excluded.requires_approval,
+        delegation_rule_id = excluded.delegation_rule_id,
+        delegation_mode = excluded.delegation_mode,
+        explanation_json = excluded.explanation_json,
+        linked_refs_json = excluded.linked_refs_json,
+        platform_message_id = excluded.platform_message_id,
+        scheduled_task_id = excluded.scheduled_task_id,
+        approved_at = excluded.approved_at,
+        last_action_kind = excluded.last_action_kind,
+        last_action_at = excluded.last_action_at,
+        dedupe_key = excluded.dedupe_key,
+        presentation_chat_jid = excluded.presentation_chat_jid,
+        presentation_thread_id = excluded.presentation_thread_id,
+        presentation_message_id = excluded.presentation_message_id,
+        created_at = excluded.created_at,
+        last_updated_at = excluded.last_updated_at,
+        sent_at = excluded.sent_at`;
+  const result = db
+    .prepare(
+      `
       INSERT INTO message_actions (
         message_action_id,
         group_folder,
@@ -9422,67 +9540,41 @@ export function upsertMessageAction(record: MessageActionRecord): void {
         last_updated_at,
         sent_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(message_action_id) DO UPDATE SET
-        group_folder = excluded.group_folder,
-        source_type = excluded.source_type,
-        source_key = excluded.source_key,
-        source_summary = excluded.source_summary,
-        target_kind = excluded.target_kind,
-        target_channel = excluded.target_channel,
-        target_conversation_json = excluded.target_conversation_json,
-        draft_text = excluded.draft_text,
-        trust_level = excluded.trust_level,
-        send_status = excluded.send_status,
-        followup_at = excluded.followup_at,
-        requires_approval = excluded.requires_approval,
-        delegation_rule_id = excluded.delegation_rule_id,
-        delegation_mode = excluded.delegation_mode,
-        explanation_json = excluded.explanation_json,
-        linked_refs_json = excluded.linked_refs_json,
-        platform_message_id = excluded.platform_message_id,
-        scheduled_task_id = excluded.scheduled_task_id,
-        approved_at = excluded.approved_at,
-        last_action_kind = excluded.last_action_kind,
-        last_action_at = excluded.last_action_at,
-        dedupe_key = excluded.dedupe_key,
-        presentation_chat_jid = excluded.presentation_chat_jid,
-        presentation_thread_id = excluded.presentation_thread_id,
-        presentation_message_id = excluded.presentation_message_id,
-        created_at = excluded.created_at,
-        last_updated_at = excluded.last_updated_at,
-        sent_at = excluded.sent_at
+      ${conflictClause}
     `,
-  ).run(
-    record.messageActionId,
-    record.groupFolder,
-    record.sourceType,
-    record.sourceKey,
-    record.sourceSummary || null,
-    record.targetKind,
-    record.targetChannel,
-    record.targetConversationJson,
-    record.draftText,
-    record.trustLevel,
-    record.sendStatus,
-    record.followupAt || null,
-    record.requiresApproval ? 1 : 0,
-    record.delegationRuleId || null,
-    record.delegationMode || null,
-    record.explanationJson || null,
-    record.linkedRefsJson || null,
-    record.platformMessageId || null,
-    record.scheduledTaskId || null,
-    record.approvedAt || null,
-    record.lastActionKind || null,
-    record.lastActionAt || null,
-    record.dedupeKey,
-    record.presentationChatJid || null,
-    record.presentationThreadId || null,
-    record.presentationMessageId || null,
-    record.createdAt,
-    record.lastUpdatedAt,
-    record.sentAt || null,
-  );
+    )
+    .run(
+      record.messageActionId,
+      record.groupFolder,
+      record.sourceType,
+      record.sourceKey,
+      record.sourceSummary || null,
+      record.targetKind,
+      record.targetChannel,
+      record.targetConversationJson,
+      record.draftText,
+      record.trustLevel,
+      record.sendStatus,
+      record.followupAt || null,
+      record.requiresApproval ? 1 : 0,
+      record.delegationRuleId || null,
+      record.delegationMode || null,
+      record.explanationJson || null,
+      record.linkedRefsJson || null,
+      record.platformMessageId || null,
+      record.scheduledTaskId || null,
+      record.approvedAt || null,
+      record.lastActionKind || null,
+      record.lastActionAt || null,
+      record.dedupeKey,
+      record.presentationChatJid || null,
+      record.presentationThreadId || null,
+      record.presentationMessageId || null,
+      record.createdAt,
+      record.lastUpdatedAt,
+      record.sentAt || null,
+    );
+  return result.changes > 0;
 }
 
 function mapMessageActionRow(row: {
@@ -9833,107 +9925,189 @@ export function getMessageActionByScheduledTaskId(
   return mapMessageActionRow(row);
 }
 
+/**
+ * Atomically acquires the durable BlueBubbles dispatch fence. The status and
+ * version predicates make this a cross-process compare-and-set: at most one
+ * worker may advance a particular action into the external side-effect window.
+ */
+export function claimBlueBubblesMessageActionDispatch(params: {
+  messageActionId: string;
+  expectedSendStatus: 'drafted' | 'approved' | 'deferred';
+  expectedLastUpdatedAt: string;
+  approvedAt: string;
+  explanationJson: string;
+  attemptedAt: string;
+  claimedLastUpdatedAt: string;
+}): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE message_actions
+        SET send_status = 'delivery_unverified',
+            followup_at = NULL,
+            scheduled_task_id = NULL,
+            requires_approval = 0,
+            trust_level = 'never_automate',
+            approved_at = ?,
+            last_action_kind = 'delivery_unverified',
+            last_action_at = ?,
+            explanation_json = ?,
+            last_updated_at = ?
+        WHERE message_action_id = ?
+          AND target_channel = 'bluebubbles'
+          -- A direct send operation is itself the fresh owner approval for a
+          -- drafted action. Keep the allowlist explicit so a stale worker can
+          -- never regress sent or delivery_unverified back into dispatch.
+          AND send_status = ?
+          AND send_status IN ('drafted', 'approved', 'deferred')
+          AND last_updated_at = ?
+      `,
+    )
+    .run(
+      params.approvedAt,
+      params.attemptedAt,
+      params.explanationJson,
+      params.claimedLastUpdatedAt,
+      params.messageActionId,
+      params.expectedSendStatus,
+      params.expectedLastUpdatedAt,
+    );
+  return result.changes === 1;
+}
+
+type MessageActionPartialUpdate = Partial<
+  Pick<
+    MessageActionRecord,
+    | 'sourceSummary'
+    | 'targetConversationJson'
+    | 'draftText'
+    | 'trustLevel'
+    | 'sendStatus'
+    | 'followupAt'
+    | 'requiresApproval'
+    | 'delegationRuleId'
+    | 'delegationMode'
+    | 'explanationJson'
+    | 'linkedRefsJson'
+    | 'platformMessageId'
+    | 'scheduledTaskId'
+    | 'approvedAt'
+    | 'lastActionKind'
+    | 'lastActionAt'
+    | 'presentationChatJid'
+    | 'presentationThreadId'
+    | 'presentationMessageId'
+    | 'lastUpdatedAt'
+    | 'sentAt'
+  >
+>;
+
+function buildMessageActionAssignments(updates: MessageActionPartialUpdate): {
+  assignments: string[];
+  values: Array<string | number | null>;
+} {
+  const assignments: string[] = [];
+  const values: Array<string | number | null> = [];
+  const add = (
+    column: string,
+    value: string | number | null | undefined,
+  ): void => {
+    if (value === undefined) return;
+    assignments.push(`${column} = ?`);
+    values.push(value);
+  };
+
+  add('source_summary', updates.sourceSummary);
+  add('target_conversation_json', updates.targetConversationJson);
+  add('draft_text', updates.draftText);
+  add('trust_level', updates.trustLevel);
+  add('send_status', updates.sendStatus);
+  add('followup_at', updates.followupAt);
+  add(
+    'requires_approval',
+    updates.requiresApproval === undefined
+      ? undefined
+      : updates.requiresApproval
+        ? 1
+        : 0,
+  );
+  add('delegation_rule_id', updates.delegationRuleId);
+  add('delegation_mode', updates.delegationMode);
+  add('explanation_json', updates.explanationJson);
+  add('linked_refs_json', updates.linkedRefsJson);
+  add('platform_message_id', updates.platformMessageId);
+  add('scheduled_task_id', updates.scheduledTaskId);
+  add('approved_at', updates.approvedAt);
+  add('last_action_kind', updates.lastActionKind);
+  add('last_action_at', updates.lastActionAt);
+  add('presentation_chat_jid', updates.presentationChatJid);
+  add('presentation_thread_id', updates.presentationThreadId);
+  add('presentation_message_id', updates.presentationMessageId);
+  add('last_updated_at', updates.lastUpdatedAt);
+  add('sent_at', updates.sentAt);
+  return { assignments, values };
+}
+
+/**
+ * Applies a message-action state update only while the persisted row remains in
+ * one of the caller's expected states. This is the terminal half of the
+ * BlueBubbles dispatch CAS: delayed timeout/failure handlers cannot regress a
+ * provider-confirmed `sent` row written by webhook or restart reconciliation.
+ */
+export function updateMessageActionIfSendStatus(
+  messageActionId: string,
+  expectedStatuses: readonly MessageActionRecord['sendStatus'][],
+  expectedLastUpdatedAt: string,
+  updates: MessageActionPartialUpdate,
+): boolean {
+  if (expectedStatuses.length === 0 || !expectedLastUpdatedAt) return false;
+  const { assignments, values } = buildMessageActionAssignments(updates);
+  if (assignments.length === 0) return false;
+
+  const statusPlaceholders = expectedStatuses.map(() => '?').join(', ');
+  const result = db
+    .prepare(
+      `
+        UPDATE message_actions
+        SET ${assignments.join(', ')}
+        WHERE message_action_id = ?
+          AND send_status IN (${statusPlaceholders})
+          AND last_updated_at = ?
+      `,
+    )
+    .run(
+      ...values,
+      messageActionId,
+      ...expectedStatuses,
+      expectedLastUpdatedAt,
+    );
+  return result.changes === 1;
+}
+
 export function updateMessageAction(
   messageActionId: string,
-  updates: Partial<
-    Pick<
-      MessageActionRecord,
-      | 'sourceSummary'
-      | 'targetConversationJson'
-      | 'draftText'
-      | 'trustLevel'
-      | 'sendStatus'
-      | 'followupAt'
-      | 'requiresApproval'
-      | 'delegationRuleId'
-      | 'delegationMode'
-      | 'explanationJson'
-      | 'linkedRefsJson'
-      | 'platformMessageId'
-      | 'scheduledTaskId'
-      | 'approvedAt'
-      | 'lastActionKind'
-      | 'lastActionAt'
-      | 'presentationChatJid'
-      | 'presentationThreadId'
-      | 'presentationMessageId'
-      | 'lastUpdatedAt'
-      | 'sentAt'
-    >
-  >,
+  updates: MessageActionPartialUpdate,
 ): void {
-  const existing = getMessageAction(messageActionId);
-  if (!existing) return;
-  upsertMessageAction({
-    ...existing,
-    sourceSummary:
-      updates.sourceSummary !== undefined
-        ? updates.sourceSummary
-        : existing.sourceSummary,
-    targetConversationJson:
-      updates.targetConversationJson ?? existing.targetConversationJson,
-    draftText: updates.draftText ?? existing.draftText,
-    trustLevel: updates.trustLevel ?? existing.trustLevel,
-    sendStatus: updates.sendStatus ?? existing.sendStatus,
-    followupAt:
-      updates.followupAt !== undefined
-        ? updates.followupAt
-        : existing.followupAt,
-    requiresApproval:
-      updates.requiresApproval !== undefined
-        ? updates.requiresApproval
-        : existing.requiresApproval,
-    delegationRuleId:
-      updates.delegationRuleId !== undefined
-        ? updates.delegationRuleId
-        : existing.delegationRuleId,
-    delegationMode:
-      updates.delegationMode !== undefined
-        ? updates.delegationMode
-        : existing.delegationMode,
-    explanationJson:
-      updates.explanationJson !== undefined
-        ? updates.explanationJson
-        : existing.explanationJson,
-    linkedRefsJson:
-      updates.linkedRefsJson !== undefined
-        ? updates.linkedRefsJson
-        : existing.linkedRefsJson,
-    platformMessageId:
-      updates.platformMessageId !== undefined
-        ? updates.platformMessageId
-        : existing.platformMessageId,
-    scheduledTaskId:
-      updates.scheduledTaskId !== undefined
-        ? updates.scheduledTaskId
-        : existing.scheduledTaskId,
-    approvedAt:
-      updates.approvedAt !== undefined
-        ? updates.approvedAt
-        : existing.approvedAt,
-    lastActionKind:
-      updates.lastActionKind !== undefined
-        ? updates.lastActionKind
-        : existing.lastActionKind,
-    lastActionAt:
-      updates.lastActionAt !== undefined
-        ? updates.lastActionAt
-        : existing.lastActionAt,
-    presentationChatJid:
-      updates.presentationChatJid !== undefined
-        ? updates.presentationChatJid
-        : existing.presentationChatJid,
-    presentationThreadId:
-      updates.presentationThreadId !== undefined
-        ? updates.presentationThreadId
-        : existing.presentationThreadId,
-    presentationMessageId:
-      updates.presentationMessageId !== undefined
-        ? updates.presentationMessageId
-        : existing.presentationMessageId,
+  const { assignments, values } = buildMessageActionAssignments({
+    ...updates,
     lastUpdatedAt: updates.lastUpdatedAt ?? new Date().toISOString(),
-    sentAt: updates.sentAt !== undefined ? updates.sentAt : existing.sentAt,
   });
+  if (assignments.length === 0) return;
+  const mutatesBlueBubblesDeliveryState =
+    updates.draftText !== undefined ||
+    updates.targetConversationJson !== undefined ||
+    updates.sendStatus !== undefined;
+  const terminalGuard = mutatesBlueBubblesDeliveryState
+    ? ` AND (
+          target_channel != 'bluebubbles'
+          OR send_status NOT IN ('sent', 'delivery_unverified')
+        )`
+    : '';
+  db.prepare(
+    `UPDATE message_actions
+     SET ${assignments.join(', ')}
+     WHERE message_action_id = ?${terminalGuard}`,
+  ).run(...values, messageActionId);
 }
 
 export function upsertOutcome(record: OutcomeRecord): void {

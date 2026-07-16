@@ -1,6 +1,11 @@
 import { NewMessage } from './types.js';
 import { classifyConversationalTurn } from './conversational-core.js';
 import { planCompoundCalendarResearchRequest } from './calendar-research-coordinator.js';
+import { parseAssistantMessageActionIntent } from './assistant-action-intent.js';
+import {
+  runtimeCapabilityRegistry,
+  type RuntimeCapabilityRegistry,
+} from './runtime-capability-registry.js';
 
 export type AssistantRequestRoute =
   | 'direct_assistant'
@@ -19,6 +24,10 @@ export interface AssistantRequestPolicy {
 
 export interface AssistantRoutingOptions {
   allowCombinedContext?: boolean;
+  capabilityRegistry?: Pick<
+    RuntimeCapabilityRegistry,
+    'get' | 'getRegistrationSnapshot'
+  >;
 }
 
 const FILE_READ_TOOLS = ['Read', 'Glob', 'Grep'] as const;
@@ -637,6 +646,8 @@ export function classifyAssistantRequest(
   const combinedContent = contents.join('\n');
   const lastOnly = dedupe([lastContent]).filter(Boolean);
   const allowCombinedContext = options.allowCombinedContext !== false;
+  const capabilityRegistry =
+    options.capabilityRegistry ?? runtimeCapabilityRegistry;
   const candidates = dedupe([
     ...lastOnly,
     ...(allowCombinedContext && shouldUseCombinedContext(lastContent)
@@ -678,6 +689,34 @@ export function classifyAssistantRequest(
   );
   if (explicitControlReason) {
     return createPolicy('control_plane', explicitControlReason);
+  }
+
+  const normalizedActionIntent = parseAssistantMessageActionIntent(lastContent);
+  const normalizedRuntimeCapability = normalizedActionIntent
+    ? capabilityRegistry.get(normalizedActionIntent.capabilityId)
+    : undefined;
+  if (
+    normalizedActionIntent?.kind === 'message_send' &&
+    ['execute', 'draft', 'prepare'].includes(normalizedActionIntent.mode) &&
+    normalizedRuntimeCapability?.toolExposure.protected
+  ) {
+    const registration = capabilityRegistry.getRegistrationSnapshot(
+      normalizedActionIntent.capabilityId,
+    );
+    const registrationDiagnostic =
+      registration.toolRegistered && registration.toolExposed
+        ? `registered/exposed ${normalizedRuntimeCapability.toolRegistration.toolId}`
+        : registration.toolRegistered
+          ? `registered but unexposed ${normalizedRuntimeCapability.toolRegistration.toolId}`
+          : `declared ${normalizedRuntimeCapability.toolRegistration.toolId} (production surface unavailable in this process)`;
+    return createPolicy(
+      'protected_assistant',
+      `matched normalized external message intent (${normalizedActionIntent.mode}) through ${registrationDiagnostic}`,
+      {
+        builtinTools: [],
+        mcpTools: [],
+      },
+    );
   }
 
   const explicitProtectedReason = evaluateSignals(

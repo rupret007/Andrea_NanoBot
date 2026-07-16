@@ -14,6 +14,43 @@ export interface ChannelDeliveryUnverifiedEvidence {
   nextUnconfirmedChunkIndex?: number;
 }
 
+export interface ChannelDeliveryRejectedBeforeDispatchEvidence {
+  outcome: 'rejected';
+  stage: 'local_preflight' | 'provider_pre_effect';
+}
+
+/**
+ * A machine-readable signal that the channel can prove no provider messaging
+ * effect occurred. Unlike an unverified delivery, callers may report this as
+ * an execution failure and may offer a deliberate retry after the cause is
+ * corrected.
+ */
+export class ChannelDeliveryRejectedBeforeDispatchError extends Error {
+  readonly code = 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH';
+  readonly evidence: ChannelDeliveryRejectedBeforeDispatchEvidence;
+
+  constructor(
+    message: string,
+    options: {
+      stage?: ChannelDeliveryRejectedBeforeDispatchEvidence['stage'];
+      cause?: unknown;
+    } = {},
+  ) {
+    super(message, { cause: options.cause });
+    this.name = 'ChannelDeliveryRejectedBeforeDispatchError';
+    this.evidence = {
+      outcome: 'rejected',
+      stage: options.stage || 'local_preflight',
+    };
+  }
+}
+
+export function isChannelDeliveryRejectedBeforeDispatchError(
+  error: unknown,
+): error is ChannelDeliveryRejectedBeforeDispatchError {
+  return error instanceof ChannelDeliveryRejectedBeforeDispatchError;
+}
+
 /**
  * A bounded, machine-readable signal that delivery may have happened in whole
  * or in part. Callers must preserve the evidence and block replay until a

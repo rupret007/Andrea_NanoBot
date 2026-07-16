@@ -172,7 +172,13 @@ describe('helper boundary wiring', () => {
     expect(openClawRouteIndex).toBeGreaterThan(ingressIndex);
     expect(companionQueueIndex).toBeGreaterThan(openClawRouteIndex);
     expect(source).toContain(
-      'blueBubblesSelfThread: isBlueBubblesSelfThreadAliasJid(chatJid)',
+      'queuedLatestMessage?.is_from_me === true &&\n        isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)',
+    );
+    expect(source).toContain(
+      'msg.is_from_me === true &&\n                isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)',
+    );
+    expect(source).toContain(
+      'msg.is_from_me === true &&\n          isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)',
     );
     expect(source).toContain(
       "'BlueBubbles self-thread OpenClaw delegation error'",

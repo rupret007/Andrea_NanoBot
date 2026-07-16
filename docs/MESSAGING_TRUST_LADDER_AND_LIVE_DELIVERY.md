@@ -37,7 +37,8 @@ Andrea uses these messaging levels:
 2. `suggest_and_ask`
    - use this when Andrea can help but should not pretend the draft is send-ready
 3. `approve_before_send`
-   - default for real external messaging
+   - default for suggested replies and drafts; a direct explicit owner send
+     imperative satisfies this approval at request time
 4. `schedule_send`
    - `send later` queues a one-off scheduled send for an already approved, existing-thread BlueBubbles reply
    - Andrea revalidates the action at send time and only fires it if it is still safe and valid
@@ -59,6 +60,14 @@ The default BlueBubbles flow is:
 `send it` and `send it later` apply only to the current same-thread draft/action.
 They do not approve unrelated suggestions or older stale reviews.
 
+A separate host-owned execution flow handles direct imperatives such as
+`Text Travis Story: Dinner is ready` or `Have BlueBubbles send Travis Story a
+message saying ...`. The same utterance selects the exact recipient/body and is
+the explicit approval required by the runtime capability registry. It executes
+with at most one fenced provider attempt only when the tool is registered and
+exposed, the provider is healthy, and write permission is enabled. `Draft...`
+and `Prepare...` wording never enters that execution flow.
+
 ### Supported in V1
 
 - BlueBubbles same-thread replies after explicit approval
@@ -66,16 +75,19 @@ They do not approve unrelated suggestions or older stale reviews.
 - Telegram-rich management of a BlueBubbles reply draft
 - owner-requested Telegram-to-BlueBubbles delivery for an existing synced
   one-to-one conversation, exact BlueBubbles/macOS contact, or explicit
-  phone/email address, with the exact recipient and message shown before a
-  separate approval
+  phone/email address, with the owner send imperative serving as approval and
+  the provider receipt bound to the immutable approved recipient/message
+  snapshot before success is reported
 - self-companion follow-through visibility in Telegram
 
 ### Still guarded
 
-- all external sends require approval by default
+- all external sends require explicit owner authorization; a direct send
+  imperative supplies it, while a staged draft needs a later send decision
 - delegated auto-send is only allowed for narrow low-risk BlueBubbles same-thread 1:1 replies
 - high-risk emotional, calendar, money, medical, or commitment-changing messages stay draft/approval-first
-- group, first-contact, long, ambiguous, or low-confidence messages remain draft-only until reviewed
+- group and ambiguous recipients fail closed; first-contact delivery uses one
+  fenced provider POST and verify-before-resend handling
 - `send later` is one-off, same-thread, existing-thread only, and revalidated at send time
 - failed, stale, unsent, and scheduled sends stay visible in review/outcome surfaces
 
@@ -116,12 +128,11 @@ address. For example:
 - `Send a text message to Travis Story saying Dinner is ready.`
 - `Text +1 202 555 0123: Dinner is ready.`
 
-Andrea resolves the exact conversation/contact/address, shows a
-recipient-bound draft and action controls, and leaves it unsent. `Send now`,
-`send it`, or—only for a verified existing linked conversation—a bounded
-`send later` decision is a separate fresh approval. A first-contact message is
-never queued for later. The original request alone never authorizes delivery,
-even if a delegation rule exists.
+Andrea resolves the exact conversation/contact/address and executes one send
+when the owner used an explicit send imperative. That utterance is the fresh
+approval; it is not followed by a redundant confirmation. `Draft a message...`
+or `Prepare a message...` instead creates the recipient-bound draft and action
+controls without sending. A first-contact message is never queued for later.
 
 Only the registered main Telegram chat or configured Messages self-thread can
 create or approve this action. Unknown or ambiguous names fail closed; Andrea
@@ -131,11 +142,12 @@ the exact phone/email. BlueBubbles contact hydration may attach a derived
 display name to an existing local chat record, but it does not store contact
 cards, avatars, or a second address-book archive. For a first contact, only the
 selected recipient name/address pair enters the normal message-action record.
-After approval, Andrea uses BlueBubbles' atomic new-chat endpoint exactly once.
-It requires both the created chat identifier and message receipt before marking
+After explicit authorization, Andrea permits one fenced BlueBubbles
+`/api/v1/chat/new` POST for that action. It requires both the created chat
+identifier and message receipt before marking
 the action sent. Before the network call, it durably enters a verify-before-
 resend state, so a process or machine failure inside the external side-effect
-window cannot reopen the action for automatic replay. A timeout, rejected
+window cannot reopen the action for automatic replay. A timeout, uncertain
 response, malformed receipt, or lost response remains `delivery_unverified`;
 Andrea tells the owner to inspect the conversation and blocks automatic retry.
 

@@ -64,6 +64,7 @@ import {
   issueCapabilityReviewTokenForAuthenticatedCockpit,
   issueCapabilityReviewTokenForTrustedChat,
   issueCapabilityControlTokenForAuthenticatedCockpit,
+  issueCapabilityControlTokenForTrustedChat,
   recordCapabilityOwnerVerdict,
   recoverCapabilityProductionRun,
   runCapabilityProductionExecution,
@@ -3142,6 +3143,62 @@ describe('production capability apprenticeship', () => {
         now: new Date(NOW.getTime() + 7_000),
       }),
     ).toThrow(/not awaiting this owner review/i);
+  });
+
+  it('requires exact current-message owner authorship before BlueBubbles review or control reads', () => {
+    vi.stubEnv('ANDREA_TEST_DISABLE_OWNER_ENV_FILE', '1');
+    vi.stubEnv(
+      'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+      'iMessage;-;owner@example.invalid',
+    );
+    const group: RegisteredGroup = {
+      name: 'Messages (Main)',
+      folder: 'main',
+      trigger: '@Andrea',
+      added_at: NOW.toISOString(),
+      requiresTrigger: false,
+      isMain: false,
+    };
+    const surface = {
+      channelName: 'bluebubbles',
+      chatJid: 'bb:iMessage;-;owner@example.invalid',
+      group,
+      now: new Date(NOW.getTime() + 7_000),
+    };
+
+    for (const ownerAuthored of [undefined, false] as const) {
+      expect(() =>
+        issueCapabilityReviewTokenForTrustedChat({
+          ...surface,
+          ownerAuthored,
+          runId: 'capability-run:missing',
+        }),
+      ).toThrow(/trusted private owner surface/i);
+      expect(() =>
+        issueCapabilityControlTokenForTrustedChat({
+          ...surface,
+          ownerAuthored,
+          acquisitionId: 'capability-acquisition:missing',
+          actionKind: 'pause',
+        }),
+      ).toThrow(/trusted private owner surface/i);
+    }
+
+    expect(() =>
+      issueCapabilityReviewTokenForTrustedChat({
+        ...surface,
+        ownerAuthored: true,
+        runId: 'capability-run:missing',
+      }),
+    ).toThrow(/not awaiting this owner review/i);
+    expect(() =>
+      issueCapabilityControlTokenForTrustedChat({
+        ...surface,
+        ownerAuthored: true,
+        acquisitionId: 'capability-acquisition:missing',
+        actionKind: 'pause',
+      }),
+    ).toThrow(/does not match canonical scope/i);
   });
 
   it('rejects a run whose named execution grant does not own its exact lease', async () => {

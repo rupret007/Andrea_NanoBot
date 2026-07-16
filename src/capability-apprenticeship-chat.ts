@@ -87,6 +87,8 @@ export interface CapabilityChatDispatchInput {
   channelName: string;
   chatJid: string;
   group: RegisteredGroup;
+  /** Exact authorship fact from the current inbound platform message. */
+  readonly ownerAuthored?: boolean | null;
   messageId?: string | null;
   now?: Date | string;
 }
@@ -863,7 +865,7 @@ export function dispatchCapabilityApprenticeshipOwnerAction(
     return {
       handled: true,
       action: 'restricted',
-      text: 'Capability review and controls are private to the registered main Telegram chat or explicitly configured Messages self-thread. I did not load evidence, issue a token, approve anything, or change capability state.',
+      text: 'Capability review and controls are private to the registered main Telegram chat or a current owner-authored message in the explicitly configured Messages self-thread. I did not load evidence, issue a token, approve anything, or change capability state.',
     };
   }
 
@@ -927,6 +929,7 @@ export function dispatchCapabilityApprenticeshipOwnerAction(
         channelName: input.channelName,
         chatJid: input.chatJid,
         group: input.group,
+        ownerAuthored: input.ownerAuthored,
         messageId: input.messageId || null,
         now,
       });
@@ -955,6 +958,7 @@ export function dispatchCapabilityApprenticeshipOwnerAction(
       channelName: input.channelName,
       chatJid: input.chatJid,
       group: input.group,
+      ownerAuthored: input.ownerAuthored,
       messageId: input.messageId || null,
       now,
     });

@@ -715,19 +715,18 @@ export function parseCapabilityCanaryArgs(
       '--worker-id is accepted only by --authorize-canary, --authorize-action, --run-canary, or --activate.',
     );
   }
-  const allowedSurfaces = new Set(['telegram', 'bluebubbles']);
-  if (!allowedSurfaces.has(options.authorizedSurface as string)) {
+  if (options.channel !== options.authorizedSurface) {
+    throw new Error('The channel and authorized surface must match.');
+  }
+  if (options.authorizedSurface !== 'telegram') {
     throw new Error(
-      '--authorized-surface must be an executable trusted chat surface: telegram or bluebubbles. The owner cockpit can review evidence but has no active-reuse route.',
+      '--authorized-surface for guided CLI mutations must be telegram. BlueBubbles owner authority requires the exact current owner-authored inbound message, which CLI binding metadata cannot provide; the owner cockpit can review evidence but has no active-reuse route.',
     );
   }
   if (options.ownerId !== 'owner') {
     throw new Error(
       '--owner-id must be the canonical owner identity "owner" for this bundled capability.',
     );
-  }
-  if (options.channel !== options.authorizedSurface) {
-    throw new Error('The channel and authorized surface must match.');
   }
   return options;
 }
@@ -1029,11 +1028,11 @@ function assertTrustedBinding(
   const binding = mutationBinding(options);
   if (
     binding.ownerId !== 'owner' ||
-    !['telegram', 'bluebubbles'].includes(options.authorizedSurface || '') ||
+    options.authorizedSurface !== 'telegram' ||
     binding.channel !== options.authorizedSurface
   ) {
     throw new Error(
-      'Guided canary mutations require canonical owner identity and one exact executable Telegram or BlueBubbles binding.',
+      'Guided canary mutations require canonical owner identity and one exact executable registered-main Telegram binding.',
     );
   }
   if (
@@ -1590,21 +1589,16 @@ function stageCommandTemplate(
   acquisitionId: string,
   groupFolder: string,
   acquisitionVersion: number,
-  surface: 'telegram' | 'bluebubbles',
 ): string {
-  const chatId =
-    surface === 'telegram'
-      ? 'REGISTERED_TELEGRAM_CHAT_ID'
-      : 'CONFIGURED_BLUEBUBBLES_SELF_THREAD_ID';
   return [
     'npm run capability:canary -- --stage',
     `--acquisition ${shellQuote(acquisitionId)}`,
     `--group ${shellQuote(groupFolder)}`,
     `--expected-acquisition-version ${acquisitionVersion}`,
     '--owner-id owner',
-    `--chat-id ${shellQuote(chatId)}`,
-    `--channel ${surface}`,
-    `--authorized-surface ${surface}`,
+    `--chat-id ${shellQuote('REGISTERED_TELEGRAM_CHAT_ID')}`,
+    '--channel telegram',
+    '--authorized-surface telegram',
     `--target-scope ${shellQuote('TARGET_SCOPE')}`,
     `--inputs-json '{"targetScopeKey":"TARGET_SCOPE"}'`,
     `--health-json '[{"resourceId":"RESOURCE_ID","observationId":"OBSERVATION_ID","expiresAt":"ISO_8601"}]'`,
@@ -1626,14 +1620,14 @@ export function buildCapabilityCanaryUsage(): string {
     '  npm run capability:canary -- --release-readiness',
     '',
     'Explicit multi-invocation operations:',
-    '  Choose exactly one executable trusted surface (telegram or bluebubbles), use --owner-id owner, shell-quote the actual chat/scope values, and preserve that exact surface and chat ID through every invocation.',
-    '  npm run capability:canary -- --stage --acquisition ACQUISITION_ID --group GROUP --expected-acquisition-version N --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
-    '  npm run capability:canary -- --authorize-canary --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
-    '  npm run capability:canary -- --stage-action-approval --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
-    '  npm run capability:canary -- --authorize-action --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
-    '  npm run capability:canary -- --run-canary --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
-    '  npm run capability:canary -- --stage-activation --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
-    '  npm run capability:canary -- --activate --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id TRUSTED_CHAT_ID --channel TRUSTED_SURFACE --authorized-surface TRUSTED_SURFACE --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  Guided CLI mutations execute only on the registered main Telegram binding. BlueBubbles owner authority must come from the exact current owner-authored inbound message in the companion runtime; stored CLI binding metadata cannot substitute.',
+    '  npm run capability:canary -- --stage --acquisition ACQUISITION_ID --group GROUP --expected-acquisition-version N --owner-id owner --chat-id REGISTERED_TELEGRAM_CHAT_ID --channel telegram --authorized-surface telegram --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --authorize-canary --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id REGISTERED_TELEGRAM_CHAT_ID --channel telegram --authorized-surface telegram --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --stage-action-approval --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --owner-id owner --chat-id REGISTERED_TELEGRAM_CHAT_ID --channel telegram --authorized-surface telegram --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --authorize-action --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id REGISTERED_TELEGRAM_CHAT_ID --channel telegram --authorized-surface telegram --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --run-canary --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id REGISTERED_TELEGRAM_CHAT_ID --channel telegram --authorized-surface telegram --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --stage-activation --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --owner-id owner --chat-id REGISTERED_TELEGRAM_CHAT_ID --channel telegram --authorized-surface telegram --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
+    '  npm run capability:canary -- --activate --acquisition ACQUISITION_ID --run-id RUN_ID --group GROUP --expected-acquisition-version N --expected-run-revision N --worker-id WORKER_ID --owner-id owner --chat-id REGISTERED_TELEGRAM_CHAT_ID --channel telegram --authorized-surface telegram --target-scope TARGET_SCOPE --inputs-json JSON --health-json JSON_ARRAY',
     '',
     'Staging creates only a bounded pending canary proposal and approval packet.',
     'Authorization consumes only an already-approved exact packet. Execution is restricted to the bundled read-only zero-egress canary.',
@@ -1960,18 +1954,11 @@ export async function runCapabilityCanaryCli(
       : []
     : eligible;
   const nextCommands = commandCandidates.flatMap((acquisition) => [
-    `Choose exactly one registered trusted chat for ${acquisition.acquisitionId}; replace only that route's chat-ID placeholder and the evidence/input placeholders:`,
+    `Use the registered main Telegram chat for ${acquisition.acquisitionId}; replace its chat-ID placeholder and the evidence/input placeholders:`,
     stageCommandTemplate(
       acquisition.acquisitionId,
       options.groupFolder,
       acquisition.recordVersion,
-      'telegram',
-    ),
-    stageCommandTemplate(
-      acquisition.acquisitionId,
-      options.groupFolder,
-      acquisition.recordVersion,
-      'bluebubbles',
     ),
   ]);
   if (staged) {

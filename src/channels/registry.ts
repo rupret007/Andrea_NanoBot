@@ -21,6 +21,8 @@ export interface ChannelOpts {
     channel: string,
   ) => Promise<{ ok: boolean; message: string }>;
   onHealthUpdate?: (snapshot: ChannelHealthSnapshot) => void;
+  /** Production-only local proof that the durable receipt consumer is polling. */
+  isBlueBubblesReceiptConsumerReady?: () => boolean;
 }
 
 export type ChannelFactory = (opts: ChannelOpts) => Channel | null;

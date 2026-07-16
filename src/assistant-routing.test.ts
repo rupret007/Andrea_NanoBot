@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
+import './channels/index.js';
+
 import {
   classifyAssistantRequest,
   classifyRuntimeJobRequest,
   classifyScheduledTaskRequest,
   maybeBuildOpenClawPresenceReply,
 } from './assistant-routing.js';
+import { registerProductionRuntimeCapabilitySurfaces } from './runtime-capability-production-surfaces.js';
+import {
+  DEFAULT_RUNTIME_CAPABILITY_DESCRIPTORS,
+  RuntimeCapabilityRegistry,
+} from './runtime-capability-registry.js';
 
 describe('assistant request routing', () => {
   it('defaults ordinary conversation to direct assistant handling', () => {
@@ -125,6 +132,75 @@ describe('assistant request routing', () => {
       expect(policy.builtinTools).toEqual([]);
       expect(policy.mcpTools).toEqual([]);
     }
+  });
+
+  it('routes the exact BlueBubbles execution wording through the host capability lane', () => {
+    const policy = classifyAssistantRequest([
+      {
+        content:
+          'Have BlueBubbles send Travis Story a message saying hi from Andrea and he smells, and make it funny.',
+      },
+    ]);
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.reason).toContain('normalized external message intent');
+    expect(policy.guidance).not.toContain('This route is tool-free');
+  });
+
+  it('does not describe a descriptor-only message tool as registered', () => {
+    const registry = new RuntimeCapabilityRegistry(
+      DEFAULT_RUNTIME_CAPABILITY_DESCRIPTORS,
+    );
+    const policy = classifyAssistantRequest(
+      [
+        {
+          content:
+            'Have BlueBubbles send Travis Story a message saying hi from Andrea.',
+        },
+      ],
+      { capabilityRegistry: registry },
+    );
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.reason).toContain(
+      'through declared host.messages.send.bluebubbles',
+    );
+    expect(policy.reason).toContain(
+      'production surface unavailable in this process',
+    );
+    expect(policy.reason).not.toContain('through registered ');
+  });
+
+  it('describes a composed message surface as registered and exposed', () => {
+    const registry = registerProductionRuntimeCapabilitySurfaces(
+      new RuntimeCapabilityRegistry(DEFAULT_RUNTIME_CAPABILITY_DESCRIPTORS),
+    );
+    const policy = classifyAssistantRequest(
+      [
+        {
+          content:
+            'Have BlueBubbles send Travis Story a message saying hi from Andrea.',
+        },
+      ],
+      { capabilityRegistry: registry },
+    );
+
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.reason).toContain(
+      'through registered/exposed host.messages.send.bluebubbles',
+    );
+    expect(policy.reason).not.toContain('surface unavailable');
+  });
+
+  it('keeps draft wording in the same host lane without changing it into execution', () => {
+    const policy = classifyAssistantRequest([
+      {
+        content:
+          'Draft a funny message to Travis Story saying hi from Andrea and he smells.',
+      },
+    ]);
+    expect(policy.route).toBe('protected_assistant');
+    expect(policy.reason).toContain('(draft)');
   });
 
   it('does not mistake discussion or content-transfer language for an outbound text request', () => {

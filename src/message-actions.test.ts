@@ -1162,7 +1162,7 @@ describe('message actions', () => {
     expect(outcome.nextFollowupText).toContain('saved under the thread');
   });
 
-  it('prevents duplicate sends unless the user explicitly asks to send again', async () => {
+  it('requires a fresh BlueBubbles action instead of reusing a sent idempotency key', async () => {
     const thread = seedCommunicationThread();
     const action = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
@@ -1204,8 +1204,26 @@ describe('message actions', () => {
         sendToTarget,
       },
     );
+    const sendAgain = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send_again' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:23:00.000Z'),
+        sendToTarget,
+      },
+    );
 
     expect(duplicate.replyText).toContain('already went out');
+    expect(sendAgain.replyText).toContain('fresh message action');
+    expect(sendAgain.replyText).toContain('idempotency key');
+    expect(
+      sendAgain.presentation?.inlineActionRows
+        .flat()
+        .map((control) => control.label),
+    ).not.toContain('Send again');
     expect(sendToTarget).toHaveBeenCalledTimes(1);
   });
 
@@ -1258,6 +1276,8 @@ describe('message actions', () => {
 
     expect(firstResult.action?.sendStatus).toBe('sent');
     expect(secondResult.action?.sendStatus).toBe('sent');
+    expect(firstResult.replyText).toBe(secondResult.replyText);
+    expect(getMessageAction(action.messageActionId)?.sendStatus).toBe('sent');
     expect(sendToTarget).toHaveBeenCalledTimes(1);
   });
 
@@ -1547,6 +1567,156 @@ describe('message actions', () => {
     expect(getMessageAction(action.messageActionId)?.draftText).toContain(
       'keep it easy',
     );
+  });
+
+  it('rejects a stale rewrite callback while the immutable original bytes are pending at BlueBubbles', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    let releaseRewrite: (() => void) | undefined;
+    const rewriteGate = new Promise<void>((resolve) => {
+      releaseRewrite = resolve;
+    });
+    globalThis.fetch = vi.fn(async () => {
+      await rewriteGate;
+      return new Response(
+        JSON.stringify({
+          output_text:
+            '{"draftText":"Hey Candace, a stale warmer rewrite must not replace the posted bytes."}',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const thread = seedCommunicationThread();
+    const originalText = 'Yes, the original dinner plan still works.';
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: `${thread.id}:stale-rewrite-vs-post`,
+      sourceSummary: 'Candace still needs the original dinner answer.',
+      draftText: originalText,
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:38:00.000Z'),
+    });
+
+    const rewrite = applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'rewrite', style: 'warmer' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:39:00.000Z'),
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+
+    let finishPost:
+      | ((value: { platformMessageId: string }) => void)
+      | undefined;
+    const sendToTarget = vi.fn(
+      () =>
+        new Promise<{ platformMessageId: string }>((resolve) => {
+          finishPost = resolve;
+        }),
+    );
+    const send = applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:40:00.000Z'),
+        sendToTarget,
+      },
+    );
+    await vi.waitFor(() => expect(sendToTarget).toHaveBeenCalledTimes(1));
+    expect(getMessageAction(action.messageActionId)).toMatchObject({
+      sendStatus: 'delivery_unverified',
+      draftText: originalText,
+    });
+
+    for (const blockedOperation of [
+      { kind: 'skip' } as const,
+      { kind: 'keep_draft' } as const,
+      { kind: 'save_to_thread' } as const,
+      { kind: 'defer', timingHint: 'tonight' } as const,
+      { kind: 'remind_instead', timingHint: 'tomorrow' } as const,
+    ]) {
+      const blocked = await applyMessageActionOperation(
+        action.messageActionId,
+        blockedOperation,
+        {
+          groupFolder: 'main',
+          channel: 'bluebubbles',
+          chatJid: 'bb:chat-1',
+          currentTime: new Date('2026-04-08T19:40:01.000Z'),
+          sendToTarget,
+        },
+      );
+      expect(blocked.replyText).toContain('Delivery is still unverified');
+      expect(blocked.action).toMatchObject({
+        sendStatus: 'delivery_unverified',
+        draftText: originalText,
+      });
+    }
+    const pendingSendAgain = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send_again' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:40:02.000Z'),
+        sendToTarget,
+      },
+    );
+    expect(pendingSendAgain.replyText).toContain('fresh message action');
+    expect(pendingSendAgain.replyText).toContain('idempotency key');
+    expect(sendToTarget).toHaveBeenCalledTimes(1);
+
+    releaseRewrite?.();
+    const staleRewrite = await rewrite;
+    expect(staleRewrite.replyText).toContain('Delivery is unverified');
+    expect(staleRewrite.replyText).toContain('did not rewrite');
+    expect(staleRewrite.action).toMatchObject({
+      sendStatus: 'delivery_unverified',
+      draftText: originalText,
+    });
+
+    finishPost?.({ platformMessageId: 'bb:immutable-original-receipt' });
+    const sent = await send;
+    expect(sent.action).toMatchObject({
+      sendStatus: 'sent',
+      draftText: originalText,
+      platformMessageId: 'bb:immutable-original-receipt',
+    });
+    expect(sent.replyText).toContain(`“${originalText}”`);
+    expect(sendToTarget).toHaveBeenCalledWith(
+      'bluebubbles',
+      'bb:chat-1',
+      originalText,
+      expect.objectContaining({ idempotencyKey: action.messageActionId }),
+    );
+    expect(
+      JSON.parse(
+        getMessageAction(action.messageActionId)?.explanationJson || '{}',
+      ).executionReceipt,
+    ).toMatchObject({
+      exactContent: originalText,
+      providerReceiptId: 'bb:immutable-original-receipt',
+      idempotencyKey: action.messageActionId,
+    });
   });
 
   it('blocks an approved send at the final preflight when the target integration is unhealthy', async () => {
@@ -1865,6 +2035,17 @@ describe('message actions', () => {
     });
   });
 
+  it('parses provider-first wording without treating a funny directive as literal content', () => {
+    expect(
+      parseExplicitBlueBubblesThreadSendIntent(
+        'Have BlueBubbles send Travis Story a message saying hi from Andrea and he smells, and make it funny.',
+      ),
+    ).toEqual({
+      targetLabel: 'Travis Story',
+      draftText: 'hi from Andrea and he smells',
+    });
+  });
+
   it('resolves a unique synced BlueBubbles chat name for explicit thread sends', () => {
     storeChatMetadata(
       'bb:iMessage;+;chat-rad-dad',
@@ -1881,9 +2062,7 @@ describe('message actions', () => {
       false,
     );
 
-    const resolved = resolveBlueBubblesThreadTargetByName(
-      'the Rad Dad test thread',
-    );
+    const resolved = resolveBlueBubblesThreadTargetByName('Rad Dad');
     expect(resolved.state).toBe('resolved');
     if (resolved.state !== 'resolved') {
       throw new Error('expected resolved target');
@@ -1909,6 +2088,36 @@ describe('message actions', () => {
         chatJid: 'bb:iMessage;-;+12025550177',
         isGroup: false,
       },
+    });
+  });
+
+  it('requires clarification for a partial stored-chat name instead of guessing', () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+12025550177',
+      '2026-04-10T19:01:34.886Z',
+      'Travis Story',
+      'bluebubbles',
+      false,
+    );
+
+    expect(resolveBlueBubblesThreadTargetByName('Travis')).toMatchObject({
+      state: 'ambiguous',
+      matches: [{ displayName: 'Travis Story' }],
+    });
+  });
+
+  it('treats a group GUID as a group even when persisted metadata is stale', () => {
+    storeChatMetadata(
+      'bb:iMessage;+;family-group-guid',
+      '2026-04-10T19:01:34.886Z',
+      'Family Group',
+      'bluebubbles',
+      false,
+    );
+
+    expect(resolveBlueBubblesThreadTargetByName('Family Group')).toMatchObject({
+      state: 'resolved',
+      target: { isGroup: true },
     });
   });
 

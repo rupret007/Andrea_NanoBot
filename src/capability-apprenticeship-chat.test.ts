@@ -436,6 +436,7 @@ describe('capability apprenticeship trusted-chat actions', () => {
       channelName: 'telegram',
       chatJid: 'tg:100',
       group: mainGroup,
+      ownerAuthored: undefined,
       messageId: 'telegram-message:fixture',
       now: '2026-07-15T12:07:00.000Z',
     });
@@ -848,6 +849,7 @@ describe('capability apprenticeship trusted-chat actions', () => {
       channelName: 'telegram',
       chatJid: 'tg:100',
       group: mainGroup,
+      ownerAuthored: undefined,
       messageId: 'telegram-message:fixture',
       now: '2026-07-15T12:07:00.000Z',
     });
@@ -884,6 +886,7 @@ describe('capability apprenticeship trusted-chat actions', () => {
         channelName: 'bluebubbles',
         chatJid: 'bb:iMessage;-;+12025550101',
         group: blueBubblesGroup,
+        ownerAuthored: true,
       },
       blueDeps,
     );
@@ -891,7 +894,7 @@ describe('capability apprenticeship trusted-chat actions', () => {
     expect(blueDeps.listAcquisitions).not.toHaveBeenCalled();
   });
 
-  it('allows only the configured BlueBubbles self-thread with exact run scope', () => {
+  it('allows only a current owner-authored message in the configured BlueBubbles self-thread with exact run scope', () => {
     process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
     process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
       'iMessage;-;owner@example.invalid';
@@ -910,6 +913,7 @@ describe('capability apprenticeship trusted-chat actions', () => {
         channelName: 'bluebubbles',
         chatJid,
         group: blueBubblesGroup,
+        ownerAuthored: true,
         messageId: 'bluebubbles-message:fixture',
         now: '2026-07-15T12:07:00.000Z',
       },
@@ -917,7 +921,11 @@ describe('capability apprenticeship trusted-chat actions', () => {
     );
     expect(result.action).toBe('control');
     expect(deps.issueControlToken).toHaveBeenCalledWith(
-      expect.objectContaining({ chatJid, channelName: 'bluebubbles' }),
+      expect.objectContaining({
+        chatJid,
+        channelName: 'bluebubbles',
+        ownerAuthored: true,
+      }),
     );
 
     const alias = dispatchCapabilityApprenticeshipOwnerAction(
@@ -926,11 +934,40 @@ describe('capability apprenticeship trusted-chat actions', () => {
         channelName: 'bluebubbles',
         chatJid: 'bb:iMessage;-;attacker@example.invalid',
         group: blueBubblesGroup,
+        ownerAuthored: true,
       },
       deps,
     );
     expect(alias.action).toBe('restricted');
   });
+
+  it.each([undefined, false] as const)(
+    'restricts a configured BlueBubbles self-thread before reads when current-message owner authorship is %s',
+    (ownerAuthored) => {
+      process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+      process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+        'iMessage;-;owner@example.invalid';
+      const record = acquisition();
+      const run = productionRun({ acquisition: record });
+      const deps = dependencies([status(record, run)]);
+
+      const result = dispatchCapabilityApprenticeshipOwnerAction(
+        {
+          text: 'pause that capability',
+          channelName: 'bluebubbles',
+          chatJid: 'bb:iMessage;-;owner@example.invalid',
+          group: blueBubblesGroup,
+          ownerAuthored,
+        },
+        deps,
+      );
+
+      expect(result.action).toBe('restricted');
+      expect(result.text).toContain('current owner-authored message');
+      expect(deps.listAcquisitions).not.toHaveBeenCalled();
+      expect(deps.issueControlToken).not.toHaveBeenCalled();
+    },
+  );
 
   it('approves only on the configured BlueBubbles self-thread binding', () => {
     process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
@@ -969,6 +1006,7 @@ describe('capability apprenticeship trusted-chat actions', () => {
         channelName: 'bluebubbles',
         chatJid,
         group: blueBubblesGroup,
+        ownerAuthored: true,
         now: '2026-07-15T12:07:00.000Z',
       },
       deps,

@@ -16,6 +16,8 @@ import {
   withProcessFetch,
 } from './evaluation-execution.js';
 import { runIntelligenceRegressionHarness } from './intelligence-regression-harness.js';
+import { registerProductionRuntimeCapabilitySurfaces } from './runtime-capability-production-surfaces.js';
+import { runtimeCapabilityRegistry } from './runtime-capability-registry.js';
 import {
   runExecutedSyntheticCapabilityGauntlet,
   runSyntheticUserGauntlet,
@@ -315,6 +317,13 @@ async function runAgiScorecardWithDatabase(
   const runId = runIdFor(generatedAt, mode);
   const scenarioResults: AgiScorecardScenarioResult[] = [];
   const pendingActions: string[] = [];
+
+  // The scorecard is a production composition root for the capability
+  // self-model exercised by the AGI gauntlet. Keep import-time behavior pure,
+  // but explicitly expose the same real runtime surfaces before evaluating
+  // capability truth.
+  await import('./channels/index.js');
+  registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
 
   const agi = runAgiGauntlet({
     now: generatedAt,

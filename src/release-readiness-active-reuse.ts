@@ -54,6 +54,8 @@ export interface ReleaseReadinessActiveReuseInput {
   channelName: string;
   chatJid: string;
   group: RegisteredGroup;
+  /** Exact authorship fact from the current inbound platform message. */
+  readonly ownerAuthored?: boolean | null;
   now?: Date | string;
 }
 
@@ -668,7 +670,7 @@ export async function dispatchActiveReleaseReadinessReuse(
     return timer.finish({
       handled: true,
       action: 'restricted',
-      text: 'The active release-readiness capability is restricted to your registered main Telegram chat or configured Messages self-thread. I did not inspect or execute it here.',
+      text: 'The active release-readiness capability is restricted to your registered main Telegram chat or a current owner-authored message in the configured Messages self-thread. I did not inspect or execute it here.',
     });
   }
 
