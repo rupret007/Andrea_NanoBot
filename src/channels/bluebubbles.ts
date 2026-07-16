@@ -108,6 +108,30 @@ const BLUEBUBBLES_INGRESS_FINGERPRINT_WINDOW_MS = 2 * 60 * 1_000;
 const BLUEBUBBLES_MIRRORED_MESSAGE_TIMESTAMP_TOLERANCE_MS = 2_000;
 const BLUEBUBBLES_RECEIPT_INBOX_HEALTH_TIMEOUT_MS = 2_000;
 const BLUEBUBBLES_HISTORY_FALLBACK_TOTAL_TIMEOUT_MS = 15_000;
+export const BLUEBUBBLES_RESTART_RECOVERY_MAX_AGE_MS = 15 * 60 * 1_000;
+const BLUEBUBBLES_RESTART_RECOVERY_FUTURE_SKEW_MS = 2 * 60 * 1_000;
+
+export function isFreshBlueBubblesRestartRecoveryTimestamp(
+  timestamp: string,
+  now: Date = new Date(),
+): boolean {
+  const timestampMs = Date.parse(timestamp);
+  const nowMs = now.getTime();
+  if (!Number.isFinite(timestampMs) || !Number.isFinite(nowMs)) return false;
+  const ageMs = nowMs - timestampMs;
+  return (
+    ageMs >= -BLUEBUBBLES_RESTART_RECOVERY_FUTURE_SKEW_MS &&
+    ageMs <= BLUEBUBBLES_RESTART_RECOVERY_MAX_AGE_MS
+  );
+}
+
+export function getBlueBubblesRestartRecoveryCutoff(
+  now: Date = new Date(),
+): string {
+  return new Date(
+    now.getTime() - BLUEBUBBLES_RESTART_RECOVERY_MAX_AGE_MS,
+  ).toISOString();
+}
 
 export type BlueBubblesReceiptInboxReadinessState =
   | 'not_required'
@@ -2902,6 +2926,7 @@ export async function primeBlueBubblesChatHistory(
       reply_to_id: row.message.reply_to_id || undefined,
       provider_idempotency_key:
         row.message.provider_idempotency_key || undefined,
+      message_ingress_origin: 'history_hydration',
       attachments: row.message.attachments || [],
     });
     storedCount += 1;
@@ -4426,6 +4451,7 @@ export class BlueBubblesChannel implements Channel {
     }
     if (
       normalized.message.is_from_me &&
+      isConfiguredBlueBubblesSelfThreadAliasJid(normalized.chatJid) &&
       replyGateMode === 'mention_required' &&
       !hasBlueBubblesAndreaMention(normalized.message.content)
     ) {
@@ -5054,6 +5080,7 @@ export class BlueBubblesChannel implements Channel {
         is_bot_message: isCompanionLabeled,
         reply_to_id: options?.replyToMessageId || undefined,
         provider_idempotency_key: options?.idempotencyKey,
+        message_ingress_origin: 'assistant_outbound',
       });
       this.persistMonitorState();
       this.emitHealth();
@@ -5130,6 +5157,7 @@ export class BlueBubblesChannel implements Channel {
       is_from_me: true,
       is_bot_message: true,
       reply_to_id: options.replyToMessageId || undefined,
+      message_ingress_origin: 'assistant_outbound',
     });
     this.persistMonitorState();
     this.emitHealth();
@@ -5196,6 +5224,21 @@ export class BlueBubblesChannel implements Channel {
         !row.message.provider_idempotency_key &&
         !isBlueBubblesAndreaBotEcho(row.message.content) &&
         isConfiguredBlueBubblesSelfThreadAliasJid(row.chatJid);
+      if (
+        configuredOwnerHistory &&
+        options.recoverUnacceptedClaims &&
+        !isFreshBlueBubblesRestartRecoveryTimestamp(row.message.timestamp)
+      ) {
+        logger.info(
+          {
+            chatJid: row.chatJid,
+            providerMessageId: row.message.id,
+            providerTimestamp: row.message.timestamp,
+          },
+          'Skipped stale BlueBubbles owner-ingress history during restart recovery',
+        );
+        continue;
+      }
       const providerIdentityJids = configuredOwnerHistory
         ? expandBlueBubblesLogicalSelfThreadJids(row.chatJid)
         : [row.chatJid];
@@ -5386,6 +5429,7 @@ export class BlueBubblesChannel implements Channel {
         reply_to_id: row.message.reply_to_id || undefined,
         provider_idempotency_key:
           row.message.provider_idempotency_key || undefined,
+        message_ingress_origin: 'history_hydration',
         attachments: row.message.attachments || [],
       });
       storedCount += 1;

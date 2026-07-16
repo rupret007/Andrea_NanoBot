@@ -66,6 +66,90 @@ describe('database migrations', () => {
     }
   });
 
+  it('finishes a partial ingress-origin migration and makes legacy BlueBubbles rows non-actionable', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-db-test-'));
+    try {
+      const dbPath = path.join(tempDir, 'messages.db');
+      const legacyDb = new Database(dbPath);
+      legacyDb.exec(`
+        CREATE TABLE chats (
+          jid TEXT PRIMARY KEY,
+          name TEXT,
+          last_message_time TEXT,
+          channel TEXT,
+          is_group INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+          id TEXT,
+          chat_jid TEXT,
+          sender TEXT,
+          sender_name TEXT,
+          content TEXT,
+          timestamp TEXT,
+          is_from_me INTEGER,
+          is_bot_message INTEGER DEFAULT 0,
+          thread_id TEXT,
+          reply_to_id TEXT,
+          provider_idempotency_key TEXT,
+          message_ingress_origin TEXT NOT NULL DEFAULT 'live',
+          PRIMARY KEY (id, chat_jid)
+        );
+        INSERT INTO chats VALUES
+          ('bb:iMessage;-;+15550001111', 'Contact', '2026-07-16T18:00:00.000Z', 'bluebubbles', 0),
+          ('tg:12345', 'Owner Telegram', '2026-07-16T18:00:00.000Z', 'telegram', 0);
+        INSERT INTO messages VALUES
+          ('bb:legacy-history', 'bb:iMessage;-;+15550001111', 'bb:contact', 'Contact', '@Andrea old provider row', '2026-07-16T18:00:00.000Z', 0, 0, NULL, NULL, NULL, 'live'),
+          ('tg:legacy-live', 'tg:12345', 'owner', 'Owner', 'current Telegram command', '2026-07-16T18:00:01.000Z', 1, 0, NULL, NULL, NULL, 'live');
+      `);
+      legacyDb.close();
+
+      vi.resetModules();
+      const dbModule = await import('./db.js');
+      dbModule._initTestDatabaseAtPath(dbPath);
+
+      expect(
+        dbModule
+          .listRecentMessagesForChat('bb:iMessage;-;+15550001111', 10)
+          .map((message) => message.id),
+      ).toContain('bb:legacy-history');
+      expect(
+        dbModule.getActionableMessagesSince(
+          'bb:iMessage;-;+15550001111',
+          '',
+          'Andrea',
+        ),
+      ).toEqual([]);
+      expect(
+        dbModule
+          .getActionableMessagesSince('tg:12345', '', 'Andrea')
+          .map((message) => message.id),
+      ).toEqual(['tg:legacy-live']);
+      dbModule.storeMessage({
+        id: 'bb:post-migration-live',
+        chat_jid: 'bb:iMessage;-;+15550001111',
+        sender: 'bb:owner',
+        sender_name: 'Owner',
+        content: '@Andrea current self-thread turn',
+        timestamp: '2026-07-16T18:01:00.000Z',
+        is_from_me: true,
+      });
+      dbModule._closeDatabase();
+      dbModule._initTestDatabaseAtPath(dbPath);
+      expect(
+        dbModule
+          .getActionableMessagesSince(
+            'bb:iMessage;-;+15550001111',
+            '',
+            'Andrea',
+          )
+          .map((message) => message.id),
+      ).toEqual(['bb:post-migration-live']);
+      dbModule._closeDatabase();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('backfills deterministic cognition runs as replay provenance', async () => {
     const repoRoot = process.cwd();
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-db-test-'));

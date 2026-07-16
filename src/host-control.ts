@@ -360,6 +360,8 @@ const TELEGRAM_TRANSPORT_ERROR_CLASSES = new Set<TelegramTransportErrorClass>([
   'local_start_failure',
 ]);
 
+const selfHostedBootIdByProjectRoot = new Map<string, string>();
+
 const ALEXA_HANDLED_LIVE_PROOF_RESPONSE_SOURCES = new Set([
   'local_companion',
   'life_thread_local',
@@ -1149,6 +1151,45 @@ export function clearRuntimeAuditState(projectRoot = process.cwd()): void {
   }
 }
 
+/**
+ * Resolve the boot identity owned by this assistant process before the final
+ * ready marker exists. Channel transports can become ready while the host
+ * state still describes the prior process, so a process-stable fallback is
+ * required instead of inheriting that stale generation.
+ */
+export function resolveAssistantProcessBootId(
+  projectRoot = process.cwd(),
+): string {
+  const resolvedProjectRoot = resolveProjectRoot(projectRoot);
+  let cacheKey = resolvedProjectRoot;
+  try {
+    cacheKey = fs.realpathSync(resolvedProjectRoot);
+  } catch {
+    // The project root normally exists. Retain the resolved path for callers
+    // that are preparing state before its directory has been created.
+  }
+  const hostState = readNanoclawHostState(resolvedProjectRoot);
+  const preservesWindowsLauncherGeneration =
+    process.platform === 'win32' &&
+    hostState?.phase === 'starting' &&
+    hostState.pid === null;
+  const hostStateOwnsCurrentGeneration =
+    Boolean(hostState?.bootId) &&
+    (hostState?.pid === process.pid || preservesWindowsLauncherGeneration);
+
+  if (hostStateOwnsCurrentGeneration && hostState?.bootId) {
+    selfHostedBootIdByProjectRoot.set(cacheKey, hostState.bootId);
+    return hostState.bootId;
+  }
+
+  const cached = selfHostedBootIdByProjectRoot.get(cacheKey);
+  if (cached) return cached;
+
+  const generated = `host-${process.pid}-${Date.now()}`;
+  selfHostedBootIdByProjectRoot.set(cacheKey, generated);
+  return generated;
+}
+
 export function writeAssistantReadyState(
   appVersion: string,
   projectRoot = process.cwd(),
@@ -1165,9 +1206,7 @@ export function writeAssistantReadyState(
   const shouldPersistSelfHostedState =
     process.platform !== 'win32' &&
     (!preservesProcessGeneration || hostState?.phase !== 'running_ready');
-  const bootId = preservesProcessGeneration
-    ? hostState?.bootId || `host-${process.pid}-${Date.now()}`
-    : `host-${process.pid}-${Date.now()}`;
+  const bootId = resolveAssistantProcessBootId(projectRoot);
 
   if (shouldPersistSelfHostedState) {
     const paths = resolveHostControlPaths(projectRoot);

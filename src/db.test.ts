@@ -14,6 +14,7 @@ import {
   getCognitiveGoal,
   getRegisteredMainChat,
   getLastBotMessageTimestamp,
+  getActionableMessagesSince,
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
@@ -32,7 +33,9 @@ import {
   listCognitiveSubgoalsForRun,
   listCognitiveToolRegistry,
   listCognitiveWorldBeliefs,
+  listRecentMessagesForChat,
   pruneCognitiveKernelData,
+  quarantineStaleBlueBubblesMessagesForRecovery,
   pruneChatBoundEphemeralContexts,
   repairRegisteredMainChat,
   replaceCognitiveSubgoalsForRun,
@@ -41,6 +44,7 @@ import {
   storeCursorMessageContext,
   storeChatMetadata,
   storeMessage,
+  storeMessageDirect,
   upsertCognitiveCheckpoint,
   upsertCognitiveAutonomyBudget,
   upsertCognitiveBlackboardEntry,
@@ -372,6 +376,129 @@ describe('getMessagesSince', () => {
       'Andy',
     );
     expect(msgs).toHaveLength(0);
+  });
+});
+
+describe('message ingress provenance', () => {
+  it('keeps provider-hydrated Messages history visible as context but never actionable', () => {
+    const chatJid = 'bb:iMessage;-;+15550001111';
+    storeChatMetadata(
+      chatJid,
+      '2026-07-16T18:00:00.000Z',
+      'Contact',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:history-newer-than-cursor',
+      chat_jid: chatJid,
+      sender: 'bb:+15550001111',
+      sender_name: 'Contact',
+      content: '@Andrea this is provider history, not a new prompt',
+      timestamp: '2026-07-16T18:01:00.000Z',
+      is_from_me: false,
+      message_ingress_origin: 'history_hydration',
+    });
+
+    expect(
+      listRecentMessagesForChat(chatJid, 10).map((message) => message.id),
+    ).toContain('bb:history-newer-than-cursor');
+    expect(
+      getMessagesSince(chatJid, '2026-07-16T18:00:30.000Z', 'Andrea').map(
+        (message) => message.id,
+      ),
+    ).toContain('bb:history-newer-than-cursor');
+    expect(
+      getActionableMessagesSince(chatJid, '2026-07-16T18:00:30.000Z', 'Andrea'),
+    ).toEqual([]);
+    expect(
+      getNewMessages([chatJid], '2026-07-16T18:00:30.000Z', 'Andrea').messages,
+    ).toEqual([]);
+  });
+
+  it('does not let provider history hitchhike beside a later live self-thread turn', () => {
+    const chatJid = 'bb:iMessage;-;owner@example.invalid';
+    storeChatMetadata(
+      chatJid,
+      '2026-07-16T18:10:00.000Z',
+      'Owner self-thread',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:historical-command',
+      chat_jid: chatJid,
+      sender: 'bb:owner',
+      sender_name: 'Owner',
+      content: '@Andrea send this old message to a contact',
+      timestamp: '2026-07-16T18:09:00.000Z',
+      is_from_me: true,
+      message_ingress_origin: 'history_hydration',
+    });
+    storeMessage({
+      id: 'bb:current-live-question',
+      chat_jid: chatJid,
+      sender: 'bb:owner',
+      sender_name: 'Owner',
+      content: '@Andrea what is new?',
+      timestamp: '2026-07-16T18:10:00.000Z',
+      is_from_me: true,
+    });
+
+    expect(
+      getActionableMessagesSince(chatJid, '', 'Andrea').map(
+        (message) => message.id,
+      ),
+    ).toEqual(['bb:current-live-question']);
+    expect(
+      getMessagesSince(chatJid, '', 'Andrea').map((message) => message.id),
+    ).toEqual(['bb:historical-command', 'bb:current-live-question']);
+  });
+
+  it('quarantines stale live Messages rows without hiding them from summaries or context', () => {
+    const chatJid = 'bb:iMessage;-;+15550002222';
+    storeChatMetadata(
+      chatJid,
+      '2026-07-16T18:20:00.000Z',
+      'Owner self-thread',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:stale-live',
+      chat_jid: chatJid,
+      sender: 'bb:owner',
+      sender_name: 'Owner',
+      content: '@Andrea old live command',
+      timestamp: '2026-07-16T18:00:00.000Z',
+      is_from_me: true,
+      message_ingress_origin: 'live',
+    });
+    storeMessageDirect({
+      id: 'bb:fresh-live',
+      chat_jid: chatJid,
+      sender: 'bb:owner',
+      sender_name: 'Owner',
+      content: '@Andrea current live command',
+      timestamp: '2026-07-16T18:20:00.000Z',
+      is_from_me: true,
+      message_ingress_origin: 'live',
+    });
+
+    expect(
+      quarantineStaleBlueBubblesMessagesForRecovery('2026-07-16T18:15:00.000Z'),
+    ).toBe(1);
+    expect(
+      getActionableMessagesSince(chatJid, '', 'Andrea').map(
+        (message) => message.id,
+      ),
+    ).toEqual(['bb:fresh-live']);
+    expect(
+      listRecentMessagesForChat(chatJid, 10).map((message) => message.id),
+    ).toEqual(expect.arrayContaining(['bb:stale-live', 'bb:fresh-live']));
+    expect(
+      getMessagesSince(chatJid, '', 'Andrea').map((message) => message.id),
+    ).toEqual(expect.arrayContaining(['bb:stale-live', 'bb:fresh-live']));
   });
 });
 

@@ -618,10 +618,16 @@ function createSchema(database: Database.Database): void {
       thread_id TEXT,
       reply_to_id TEXT,
       provider_idempotency_key TEXT,
+      message_ingress_origin TEXT NOT NULL DEFAULT 'live',
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      migration_key TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
 
     CREATE TABLE IF NOT EXISTS message_media_attachments (
       attachment_id TEXT PRIMARY KEY,
@@ -6086,6 +6092,44 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Historical BlueBubbles rows are useful read-only conversation context,
+  // but they must never become fresh assistant turns merely because a restart
+  // fetched them from the provider. Existing BlueBubbles rows predate origin
+  // tracking, so migrate them fail-closed; a later live webhook can safely
+  // replace the same provider row with the explicit `live` origin.
+  const messageIngressOriginMigrationKey = 'message_ingress_origin_v1';
+  const migrateMessageIngressOrigin = database.transaction(() => {
+    const columns = database.prepare(`PRAGMA table_info(messages)`).all() as {
+      name: string;
+    }[];
+    const addedColumn = !columns.some(
+      (column) => column.name === 'message_ingress_origin',
+    );
+    if (addedColumn) {
+      database.exec(
+        `ALTER TABLE messages ADD COLUMN message_ingress_origin TEXT NOT NULL DEFAULT 'live'`,
+      );
+    }
+    const applied = database
+      .prepare(
+        `SELECT 1 FROM schema_migrations WHERE migration_key = ? LIMIT 1`,
+      )
+      .get(messageIngressOriginMigrationKey);
+    if (!applied || addedColumn) {
+      database.exec(
+        `UPDATE messages
+         SET message_ingress_origin = 'legacy_unverified'
+         WHERE chat_jid LIKE 'bb:%'`,
+      );
+      database
+        .prepare(
+          `INSERT OR REPLACE INTO schema_migrations (migration_key, applied_at) VALUES (?, ?)`,
+        )
+        .run(messageIngressOriginMigrationKey, new Date().toISOString());
+    }
+  });
+  migrateMessageIngressOrigin.immediate();
+
   try {
     database.exec(
       `ALTER TABLE cursor_operator_contexts ADD COLUMN selected_lane_id TEXT`,
@@ -7040,7 +7084,7 @@ function hydrateMessagesWithMedia(messages: NewMessage[]): NewMessage[] {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key, message_ingress_origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live')`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -7113,7 +7157,9 @@ export function associateMessageProviderIdempotencyKey(params: {
 }
 
 /**
- * Store a message directly.
+ * Store a message outside the live channel-callback path. Direct writes are
+ * non-actionable by default; only the canonical `storeMessage` callback path,
+ * or an explicit `message_ingress_origin: 'live'`, may create a fresh turn.
  */
 export function storeMessageDirect(msg: {
   id: string;
@@ -7127,10 +7173,18 @@ export function storeMessageDirect(msg: {
   thread_id?: string;
   reply_to_id?: string;
   provider_idempotency_key?: string;
+  message_ingress_origin?:
+    | 'live'
+    | 'history_hydration'
+    | 'passive_contact_sync'
+    | 'assistant_outbound'
+    | 'direct_non_actionable'
+    | 'legacy_unverified'
+    | 'stale_recovery';
   attachments?: MessageMediaAttachment[];
 }): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key, message_ingress_origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -7143,6 +7197,7 @@ export function storeMessageDirect(msg: {
     msg.thread_id || null,
     msg.reply_to_id || null,
     msg.provider_idempotency_key || null,
+    msg.message_ingress_origin || 'direct_non_actionable',
   );
   if (msg.attachments?.length) {
     upsertMessageMediaAttachments(
@@ -7173,6 +7228,7 @@ export function getNewMessages(
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
         AND is_bot_message = 0 AND content NOT LIKE ?
+        AND message_ingress_origin = 'live'
         AND content != '' AND content IS NOT NULL
       ORDER BY timestamp DESC
       LIMIT ?
@@ -7190,6 +7246,60 @@ export function getNewMessages(
   }
 
   return { messages: hydratedRows, newTimestamp };
+}
+
+/**
+ * Return only messages that entered through a live channel callback and may
+ * therefore anchor a new assistant turn. Provider history remains queryable
+ * through `getMessagesSince` for bounded conversational context, but it cannot
+ * independently wake recovery or satisfy a trigger.
+ */
+export function getActionableMessagesSince(
+  chatJid: string,
+  sinceTimestamp: string,
+  botPrefix: string,
+  limit: number = 200,
+): NewMessage[] {
+  const sql = `
+    SELECT * FROM (
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_id, reply_to_id, provider_idempotency_key
+      FROM messages
+      WHERE chat_jid = ? AND timestamp > ?
+        AND is_bot_message = 0 AND content NOT LIKE ?
+        AND message_ingress_origin = 'live'
+        AND content != '' AND content IS NOT NULL
+      ORDER BY timestamp DESC
+      LIMIT ?
+    ) ORDER BY timestamp
+  `;
+  const rows = db
+    .prepare(sql)
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+  return hydrateMessagesWithMedia(rows);
+}
+
+/**
+ * Quarantine live BlueBubbles rows that have aged beyond the bounded restart
+ * recovery window. They remain available to reviews and explicit history
+ * queries, but a later restart cannot reinterpret them as a current prompt.
+ */
+export function quarantineStaleBlueBubblesMessagesForRecovery(
+  beforeTimestamp: string,
+): number {
+  const cutoffMs = Date.parse(beforeTimestamp);
+  if (!Number.isFinite(cutoffMs)) {
+    throw new Error('BlueBubbles recovery cutoff must be a valid timestamp.');
+  }
+  const result = db
+    .prepare(
+      `UPDATE messages
+       SET message_ingress_origin = 'stale_recovery'
+       WHERE chat_jid LIKE 'bb:%'
+         AND message_ingress_origin = 'live'
+         AND timestamp < ?`,
+    )
+    .run(new Date(cutoffMs).toISOString());
+  return result.changes;
 }
 
 export function getMessagesSince(

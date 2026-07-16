@@ -76,10 +76,10 @@ import {
   getAllSessions,
   getAllTasks,
   getLastBotMessageTimestamp,
+  getActionableMessagesSince,
   listRecentMessagesForChat,
   listCursorAgentArtifacts,
   listRecentResponseFeedback,
-  getMessagesSince,
   getNewMessages,
   hasStoredMessage,
   getRouterState,
@@ -90,6 +90,7 @@ import {
   listAllEnabledCommunitySkills,
   pruneExpiredRuntimeBackendCardContexts,
   pruneUnreviewedBlueBubblesFeedbackLinks,
+  quarantineStaleBlueBubblesMessagesForRecovery,
   repairRegisteredMainChat,
   setRegisteredGroup,
   setAgentThread,
@@ -115,11 +116,16 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import {
   BlueBubblesChannel,
+  getBlueBubblesRestartRecoveryCutoff,
   primeBlueBubblesChatHistory,
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
 import { startBlueBubblesControlServer } from './bluebubbles-control-server.js';
 import { recordBlueBubblesOutboundDeliveryEvidence } from './bluebubbles-delivery-recovery.js';
+import {
+  applyBlueBubblesIngressPolicy,
+  isBlueBubblesDataOnlyContactThread,
+} from './bluebubbles-ingress-policy.js';
 import { BlueBubblesReceiptInboxConsumer } from './bluebubbles-receipt-inbox-consumer.js';
 import { BlueBubblesReceiptInboxStore } from './bluebubbles-receipt-inbox-store.js';
 import { startOwnerCockpitServer } from './owner-cockpit-server.js';
@@ -4093,7 +4099,14 @@ function resolveCompanionBinding(chatJid: string) {
 function listProcessableCompanionChatJids(): string[] {
   return listCompanionConversationChatJids(registeredGroups, {
     bluebubbles: blueBubblesConversationBinding,
-  });
+  }).filter(
+    (chatJid) =>
+      !chatJid.startsWith('bb:') ||
+      !isBlueBubblesDataOnlyContactThread({
+        channelName: 'bluebubbles',
+        chatJid,
+      }),
+  );
 }
 
 let resolveTelegramMainChatForAlexa = (_groupFolder: string) =>
@@ -4249,21 +4262,37 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
     return true;
   }
+  if (
+    isBlueBubblesDataOnlyContactThread({
+      channelName: channel.name,
+      chatJid,
+    })
+  ) {
+    logger.warn(
+      { chatJid },
+      'Refused queued processing for a data-only BlueBubbles contact thread',
+    );
+    return true;
+  }
   const conversationChannel =
     channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram';
 
   const isMainGroup = group.isMain === true;
 
-  let missedMessages = getMessagesSince(
+  const recoveredCursor = getOrRecoverCursor(chatJid);
+  let actionableMessages = getActionableMessagesSince(
     chatJid,
-    getOrRecoverCursor(chatJid),
+    recoveredCursor,
     ASSISTANT_NAME,
     MAX_MESSAGES_PER_PROMPT,
   );
+  if (actionableMessages.length === 0) return true;
 
-  if (missedMessages.length === 0) return true;
-
-  const latestObservedTimestamp = missedMessages.at(-1)!.timestamp;
+  const latestObservedTimestamp = actionableMessages.at(-1)!.timestamp;
+  // Only live callback rows belong in the instruction batch. Provider history
+  // and passive contact sync remain available to explicit review/summary
+  // queries, but must not hitchhike into a later live turn as apparent commands.
+  let missedMessages = actionableMessages;
   const canonicalSelfThreadJid = canonicalizeBlueBubblesSelfThreadJid(chatJid);
   if (
     canonicalSelfThreadJid &&
@@ -4283,7 +4312,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         'Skipped mirrored BlueBubbles self-thread messages',
       );
       missedMessages = uniqueMessages;
-      if (missedMessages.length === 0) {
+      const remainingMessageKeys = new Set(
+        missedMessages.map(
+          (message) => `${message.chat_jid}\u0000${message.id}`,
+        ),
+      );
+      actionableMessages = actionableMessages.filter((message) =>
+        remainingMessageKeys.has(`${message.chat_jid}\u0000${message.id}`),
+      );
+      if (missedMessages.length === 0 || actionableMessages.length === 0) {
         lastAgentTimestamp[chatJid] = latestObservedTimestamp;
         saveState();
         return true;
@@ -4295,7 +4332,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (!isMainGroup && group.requiresTrigger !== false) {
     const triggerPattern = getTriggerPattern(group.trigger);
     const allowlistCfg = loadSenderAllowlist();
-    const hasTrigger = missedMessages.some(
+    const hasTrigger = actionableMessages.some(
       (m) =>
         triggerPattern.test(m.content.trim()) &&
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
@@ -4303,7 +4340,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const queuedLatestMessage = missedMessages.at(-1);
+  const queuedLatestMessage = actionableMessages.at(-1);
   const queuedOpenClawRoute = resolveOpenClawDelegationRoute({
     rawMessage: queuedLatestMessage?.content || '',
     mainControlChat: isOpenClawOwnerControlSurface({
@@ -11681,9 +11718,10 @@ async function startMessageLoop(): Promise<void> {
             if (!hasTrigger) continue;
           }
 
-          // Pull all messages since lastAgentTimestamp so non-trigger
-          // context that accumulated between triggers is included.
-          const allPending = getMessagesSince(
+          // Pull all live callback messages since lastAgentTimestamp so
+          // non-trigger control-surface context is included. Provider history
+          // and passive contact data are intentionally excluded from turns.
+          const allPending = getActionableMessagesSince(
             chatJid,
             getOrRecoverCursor(chatJid),
             ASSISTANT_NAME,
@@ -11855,10 +11893,20 @@ async function startMessageLoop(): Promise<void> {
  * Handles crash between advancing lastTimestamp and processing messages.
  */
 function recoverPendingMessages(): void {
+  const quarantinedBlueBubblesRows =
+    quarantineStaleBlueBubblesMessagesForRecovery(
+      getBlueBubblesRestartRecoveryCutoff(),
+    );
+  if (quarantinedBlueBubblesRows > 0) {
+    logger.info(
+      { quarantinedCount: quarantinedBlueBubblesRows },
+      'Quarantined stale BlueBubbles rows from automatic restart recovery',
+    );
+  }
   for (const chatJid of listProcessableCompanionChatJids()) {
     const group = resolveCompanionBinding(chatJid)?.group;
     if (!group) continue;
-    const pending = getMessagesSince(
+    const pending = getActionableMessagesSince(
       chatJid,
       getOrRecoverCursor(chatJid),
       ASSISTANT_NAME,
@@ -18927,6 +18975,43 @@ async function main(): Promise<void> {
         group: inboundGroup,
         ownerAuthored: msg.is_from_me === true,
       });
+
+      // Ordinary Messages conversations are synced communication data, not
+      // assistant command surfaces. Persist them for reviews, summaries, and
+      // explicitly owner-authorized sends, but stop before sender-command
+      // filtering, command parsing, or queueing. The configured owner
+      // self-thread remains the sole native BlueBubbles control surface.
+      if (
+        isBlueBubblesDataOnlyContactThread({
+          channelName: inboundChannel?.name,
+          chatJid,
+        })
+      ) {
+        const ingressPolicy = applyBlueBubblesIngressPolicy({
+          channelName: inboundChannel?.name,
+          chatJid,
+          message: msg,
+        });
+        const existingChatCursor = lastAgentTimestamp[chatJid] || '';
+        if (msg.timestamp > existingChatCursor) {
+          lastAgentTimestamp[chatJid] = msg.timestamp;
+        }
+        saveState();
+        logger.debug(
+          {
+            chatJid,
+            messageId: msg.id,
+            ownerAuthored: msg.is_from_me === true,
+            reaction: Boolean(msg.reaction),
+            stored:
+              ingressPolicy.kind === 'stored_contact_data_only'
+                ? ingressPolicy.stored
+                : false,
+          },
+          'Stored ordinary BlueBubbles contact-thread activity as data only',
+        );
+        return;
+      }
 
       const allowlistCfg = loadSenderAllowlist();
       if (

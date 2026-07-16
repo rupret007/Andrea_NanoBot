@@ -1,3 +1,7 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { describe, expect, it, vi } from 'vitest';
 import { GrammyError, HttpError } from 'grammy';
 
@@ -28,6 +32,11 @@ import {
   getTelegramBotGroupMenuCommands,
   getTelegramBotMenuCommands,
 } from '../command-surface-registry.js';
+import {
+  persistNanoclawHostState,
+  readTelegramTransportState,
+  writeAssistantReadyState,
+} from '../host-control.js';
 
 function telegramApiError(description: string, errorCode = 400): GrammyError {
   return new GrammyError(
@@ -929,6 +938,78 @@ describe('TelegramChannel.editMessage', () => {
 });
 
 describe('TelegramChannel health state', () => {
+  it('uses the current process boot identity before the ready marker rotates stale host state', () => {
+    const projectRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'telegram-boot-identity-'),
+    );
+    const projectAlias = `${projectRoot}-alias`;
+    const previousCwd = process.cwd();
+    const nowSpy = vi
+      .spyOn(Date, 'now')
+      .mockReturnValueOnce(1_776_000_000_000)
+      .mockReturnValue(1_776_000_000_001);
+    fs.mkdirSync(path.join(projectRoot, 'data', 'runtime'), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(projectRoot, 'logs'), { recursive: true });
+    fs.symlinkSync(
+      projectRoot,
+      projectAlias,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    persistNanoclawHostState(
+      {
+        bootId: 'boot-prior-process',
+        phase: 'running_ready',
+        pid: process.pid + 1,
+        installMode: 'manual_host_control',
+        nodePath: process.execPath,
+        nodeVersion: process.version,
+        startedAt: '2026-07-15T12:00:00.000Z',
+        readyAt: '2026-07-15T12:00:05.000Z',
+        lastError: '',
+        dependencyState: 'ok',
+        dependencyError: '',
+        stdoutLogPath: path.join(projectRoot, 'logs', 'nanoclaw.log'),
+        stderrLogPath: path.join(projectRoot, 'logs', 'nanoclaw.error.log'),
+        hostLogPath: path.join(projectRoot, 'logs', 'nanoclaw.host.log'),
+      },
+      projectRoot,
+    );
+
+    try {
+      process.chdir(projectRoot);
+      const channel = new TelegramChannel('test-token', {
+        onMessage: () => undefined,
+        onChatMetadata: () => undefined,
+        registeredGroups: () => ({}),
+      });
+      const internals = channel as unknown as {
+        persistTransportState: (patch: {
+          status: 'starting';
+          detail: string;
+        }) => void;
+      };
+
+      internals.persistTransportState({
+        status: 'starting',
+        detail: 'Starting Telegram long polling.',
+      });
+      const preReadyTransport = readTelegramTransportState(projectRoot);
+      const ready = writeAssistantReadyState('1.2.42', projectAlias);
+
+      expect(preReadyTransport?.bootId).toBe(ready.bootId);
+      expect(preReadyTransport?.bootId).not.toBe('boot-prior-process');
+      expect(preReadyTransport?.pid).toBe(process.pid);
+      expect(nowSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
+      process.chdir(previousCwd);
+      fs.rmSync(projectAlias, { force: true });
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('treats readiness as a health-driven signal instead of bot existence alone', () => {
     const onHealthUpdate = vi.fn();
     const channel = new TelegramChannel('test-token', {

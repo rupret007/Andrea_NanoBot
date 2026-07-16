@@ -7,8 +7,8 @@ import { readEnvFile } from '../env.js';
 import { buildFieldTrialOperatorTruth } from '../field-trial-readiness.js';
 import { buildAndreaPingPresenceReply } from '../ping-presence.js';
 import {
-  readNanoclawHostState,
   readTelegramTransportState,
+  resolveAssistantProcessBootId,
   writeTelegramTransportState,
   type TelegramTransportErrorClass,
   type TelegramTransportState,
@@ -712,9 +712,8 @@ export class TelegramChannel implements Channel {
   ): void {
     try {
       const previous = readTelegramTransportState();
-      const hostState = readNanoclawHostState();
       writeTelegramTransportState({
-        bootId: hostState?.bootId || previous?.bootId || '',
+        bootId: resolveAssistantProcessBootId(),
         pid: process.pid,
         mode: 'long_polling',
         status: patch.status,

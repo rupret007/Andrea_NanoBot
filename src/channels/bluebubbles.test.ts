@@ -16,6 +16,7 @@ import {
 import {
   _initTestDatabase,
   getAllChats,
+  getActionableMessagesSince,
   listMessageActionsForGroup,
   listRecentMessagesForChat,
   storeChatMetadata,
@@ -908,6 +909,9 @@ describe('BlueBubbles channel', () => {
           idempotencyKey: 'message-action:candace-1',
         },
       );
+      expect(
+        getActionableMessagesSince('bb:iMessage;-;+15551234567', '', 'Andrea'),
+      ).toEqual([]);
       const response = await fetch(channel.getWebhookUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1844,6 +1848,11 @@ describe('BlueBubbles channel', () => {
       tempProjectRoot,
       'expired-history-recovery-claim.sqlite3',
     );
+    const providerTimestampMs = Date.now() - 1_000;
+    const providerTimestamp = new Date(providerTimestampMs).toISOString();
+    const mirroredProviderTimestamp = new Date(
+      providerTimestampMs + 500,
+    ).toISOString();
     const claimStore = new BlueBubblesReceiptInboxStore(
       receiptInboxDatabasePath,
     );
@@ -1851,8 +1860,8 @@ describe('BlueBubbles channel', () => {
       canonicalScope: 'bb:iMessage;-;owner@example.invalid',
       ownerAuthored: true,
       body: '@Andrea recover this interrupted turn',
-      providerTimestamp: '2026-07-16T12:00:00.000Z',
-      now: new Date('2020-01-01T00:00:00.000Z'),
+      providerTimestamp,
+      now: new Date(Date.now() - 60_000),
       processingLeaseMs: 100,
     });
     claimStore.close();
@@ -1876,7 +1885,7 @@ describe('BlueBubbles channel', () => {
                   address: 'owner@example.invalid',
                   displayName: 'Owner',
                 },
-                dateCreated: '2026-07-16T12:00:00.500Z',
+                dateCreated: mirroredProviderTimestamp,
                 chats: [
                   {
                     guid: 'iMessage;-;owner@example.invalid',
@@ -1932,7 +1941,7 @@ describe('BlueBubbles channel', () => {
         canonicalScope: 'bb:iMessage;-;owner@example.invalid',
         ownerAuthored: true,
         body: '@Andrea recover this interrupted turn',
-        providerTimestamp: '2026-07-16T12:00:00.250Z',
+        providerTimestamp: new Date(providerTimestampMs + 250).toISOString(),
       });
       expect(accepted).toMatchObject({
         claimId: interrupted.claimId,
@@ -1941,6 +1950,110 @@ describe('BlueBubbles channel', () => {
         acceptedAt: expect.any(String),
       });
       inspection.close();
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+      if (previousCanonical == null) {
+        delete process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+      } else {
+        process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID = previousCanonical;
+      }
+      if (previousAliases == null) {
+        delete process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
+      } else {
+        process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS = previousAliases;
+      }
+    }
+  });
+
+  it('refuses to route a stale unaccepted owner-ingress claim from startup history', async () => {
+    const previousCanonical = process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+    const previousAliases = process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;owner@example.invalid';
+    process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS =
+      'iMessage;-;+12025550109,iMessage;-;owner@example.invalid';
+    const receiptInboxDatabasePath = path.join(
+      tempProjectRoot,
+      'stale-history-recovery-claim.sqlite3',
+    );
+    const claimStore = new BlueBubblesReceiptInboxStore(
+      receiptInboxDatabasePath,
+    );
+    claimStore.claimCanonicalSelfThreadIngress({
+      canonicalScope: 'bb:iMessage;-;owner@example.invalid',
+      ownerAuthored: true,
+      body: '@Andrea this stale turn must remain inert',
+      providerTimestamp: '2026-07-01T12:00:00.000Z',
+      now: new Date('2026-07-01T12:00:00.000Z'),
+      processingLeaseMs: 100,
+    });
+    claimStore.close();
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/message')) {
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                guid: 'stale-recovered-history-provider-guid',
+                text: '@Andrea this stale turn must remain inert',
+                senderName: 'Owner',
+                isFromMe: true,
+                handle: {
+                  address: 'owner@example.invalid',
+                  displayName: 'Owner',
+                },
+                dateCreated: '2026-07-01T12:00:00.500Z',
+                chats: [
+                  {
+                    guid: 'iMessage;-;owner@example.invalid',
+                    isGroup: false,
+                    participants: [{ address: 'owner@example.invalid' }],
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.end(JSON.stringify({ data: [] }));
+    });
+    const onMessage = vi.fn();
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+        receiptInboxDatabasePath,
+      }),
+      {
+        onMessage,
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      const primed = await channel.primeRecentHistory({
+        limit: 20,
+        recoverUnacceptedClaims: true,
+      });
+
+      expect(primed).toEqual({ storedCount: 0, totalCount: 1 });
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(
+        listRecentMessagesForChat('bb:iMessage;-;owner@example.invalid', 10),
+      ).toEqual([]);
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -2520,7 +2633,7 @@ describe('BlueBubbles channel', () => {
     }
   });
 
-  it('ignores self-authored BlueBubbles chatter without an @Andrea mention', async () => {
+  it('passes self-authored contact chatter through for passive data sync', async () => {
     const apiStub = await startBlueBubblesApiStub(async (_req, _body, res) => {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
@@ -2566,12 +2679,16 @@ describe('BlueBubbles channel', () => {
         }),
       });
 
-      expect(response.status).toBe(202);
-      expect(await response.text()).toContain(
-        'Use @Andrea once in this direct chat',
+      expect(response.status).toBe(200);
+      expect(onMessage).toHaveBeenCalledWith(
+        'bb:iMessage;+;chat-mention',
+        expect.objectContaining({
+          id: 'bb:msg-self-social',
+          content: 'sounds good',
+          is_from_me: true,
+        }),
       );
-      expect(onMessage).not.toHaveBeenCalled();
-      expect(onChatMetadata).not.toHaveBeenCalled();
+      expect(onChatMetadata).toHaveBeenCalled();
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -4660,7 +4777,7 @@ describe('BlueBubbles channel', () => {
     }
   });
 
-  it('records mention-gated Messages turns as ignored by gate or scope without triggering fallback', async () => {
+  it('passes owner-authored contact text to the data-only ingress policy without triggering fallback', async () => {
     const onCrossSurfaceFallback = vi.fn(async () => ({
       sent: true,
       detail: 'sent fallback notice to tg:main',
@@ -4691,6 +4808,7 @@ describe('BlueBubbles channel', () => {
       res.end('not found');
     });
 
+    const onMessage = vi.fn();
     const channel = new BlueBubblesChannel(
       buildConfig({
         baseUrl: apiStub.baseUrl,
@@ -4699,7 +4817,7 @@ describe('BlueBubbles channel', () => {
         allowedChatGuid: null,
       }),
       {
-        onMessage: vi.fn(),
+        onMessage,
         onChatMetadata: vi.fn(),
         registeredGroups: () => ({}),
         onHealthUpdate: vi.fn(),
@@ -4734,14 +4852,18 @@ describe('BlueBubbles channel', () => {
         }),
       });
 
-      const monitorState = readBlueBubblesMonitorState();
-      expect(response.status).toBe(202);
-      expect(monitorState.detectionState).toBe('ignored_by_gate_or_scope');
-      expect(monitorState.lastIgnoredChatJid).toBe(
+      expect(response.status).toBe(200);
+      expect(onMessage).toHaveBeenCalledWith(
         'bb:iMessage;-;+14695550123',
+        expect.objectContaining({
+          id: 'bb:ignored-self-msg-1',
+          content: 'just checking in',
+          is_from_me: true,
+        }),
       );
-      expect(monitorState.lastIgnoredReason).toBe('mention_required');
-      expect(monitorState.crossSurfaceFallbackState).toBe('idle');
+      expect(readBlueBubblesMonitorState().crossSurfaceFallbackState).toBe(
+        'idle',
+      );
       expect(onCrossSurfaceFallback).not.toHaveBeenCalled();
     } finally {
       await channel.disconnect();
@@ -5266,6 +5388,23 @@ describe('BlueBubbles channel', () => {
       res.end('not found');
     });
 
+    storeChatMetadata(
+      'bb:iMessage;+;chat-2',
+      '2026-04-07T20:00:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bb:hist-2',
+      chat_jid: 'bb:iMessage;+;chat-2',
+      sender: 'bb:+15551234567',
+      sender_name: 'Candace',
+      content: 'Can you send me the address when you get a chance?',
+      timestamp: '2026-04-07T20:00:00.000Z',
+      is_from_me: false,
+    });
+
     try {
       const primed = await primeBlueBubblesChatHistory(
         buildConfig({ baseUrl: apiStub.baseUrl }),
@@ -5273,7 +5412,12 @@ describe('BlueBubbles channel', () => {
         8,
       );
 
-      expect(primed).toEqual({ storedCount: 2, totalCount: 2 });
+      expect(primed).toEqual({ storedCount: 1, totalCount: 2 });
+      expect(
+        getActionableMessagesSince('bb:iMessage;+;chat-2', '', 'Andrea').map(
+          (message) => message.id,
+        ),
+      ).toContain('bb:hist-2');
       expect(listRecentMessagesForChat('bb:iMessage;+;chat-2', 4)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
