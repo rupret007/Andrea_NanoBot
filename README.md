@@ -632,6 +632,25 @@ Typical follow-ups now include:
 - `track that under Candace`
 - `turn that into a reminder`
 
+The registered main Telegram chat can also stage a new text to an existing
+synced one-to-one BlueBubbles conversation, an exact BlueBubbles/macOS contact,
+or an explicit phone/email address:
+
+- `Text Travis Story: Dinner is ready.`
+- `Send a text message to Travis Story saying Dinner is ready.`
+
+Andrea displays the exact Messages recipient and body, then waits for a
+separate `Send now`/`send it` approval. The initial request never sends by
+itself. Unknown or ambiguous names fail closed; an exact phone number or email
+address can select a direct recipient even before a conversation exists. This
+lane is private to the registered owner Telegram chat or configured Messages
+self-thread and does not store a second contact archive. First-contact delivery
+uses the same recipient-bound card and separate fresh approval as every other
+send. After approval, an existing thread uses the normal message endpoint; a
+new recipient uses one atomic BlueBubbles chat-creation request. If
+BlueBubbles does not return both the created thread and message receipt, Andrea
+marks delivery unverified and will not retry automatically.
+
 Use `npm run debug:cross-channel-handoffs` and `npm run debug:bluebubbles` for the operator-side near-live proof harnesses, and see [docs/CROSS_CHANNEL_HANDOFFS.md](docs/CROSS_CHANNEL_HANDOFFS.md) for the delivery model and limits.
 
 ## Knowledge Library

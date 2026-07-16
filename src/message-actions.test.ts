@@ -26,6 +26,7 @@ import {
   findLatestChatMessageAction,
   isBlueBubblesProofDrillAction,
   isBlueBubblesExplicitSendAlias,
+  isMessageActionBoundToPresentationSurface,
   interpretMessageActionFollowup,
   linkMessageActionCognitiveContext,
   listBlueBubblesMessageActionContinuitySnapshots,
@@ -1208,6 +1209,100 @@ describe('message actions', () => {
     expect(sendToTarget).toHaveBeenCalledTimes(1);
   });
 
+  it('collapses concurrent approvals into one outbound delivery attempt', async () => {
+    const thread = seedCommunicationThread();
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: `${thread.id}:concurrent-send`,
+      sourceSummary: 'Candace still needs a quick answer.',
+      draftText: 'Yes, tonight still works.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      forceApproval: true,
+      now: new Date('2026-04-08T19:20:00.000Z'),
+    });
+    let releaseDelivery: (() => void) | undefined;
+    const deliveryGate = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    const sendToTarget = vi.fn(async () => {
+      await deliveryGate;
+      return { platformMessageId: 'bb:sent-concurrent' };
+    });
+    const deps = {
+      groupFolder: 'main',
+      channel: 'telegram' as const,
+      chatJid: 'tg:main',
+      currentTime: new Date('2026-04-08T19:21:00.000Z'),
+      sendToTarget,
+    };
+
+    const first = applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      deps,
+    );
+    const second = applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      deps,
+    );
+    await vi.waitFor(() => expect(sendToTarget).toHaveBeenCalledTimes(1));
+    releaseDelivery?.();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult.action?.sendStatus).toBe('sent');
+    expect(secondResult.action?.sendStatus).toBe('sent');
+    expect(sendToTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds interactive message actions to the exact owner presentation surface', () => {
+    vi.stubEnv('ANDREA_TEST_DISABLE_OWNER_ENV_FILE', '1');
+    vi.stubEnv(
+      'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+      'iMessage;-;owner@example.invalid',
+    );
+    vi.stubEnv('BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS', 'SMS;-;+12025550109');
+
+    expect(
+      isMessageActionBoundToPresentationSurface({
+        action: { presentationChatJid: 'tg:main' },
+        channel: 'telegram',
+        chatJid: 'tg:main',
+      }),
+    ).toBe(true);
+    expect(
+      isMessageActionBoundToPresentationSurface({
+        action: { presentationChatJid: 'tg:main' },
+        channel: 'telegram',
+        chatJid: 'tg:other',
+      }),
+    ).toBe(false);
+    expect(
+      isMessageActionBoundToPresentationSurface({
+        action: {
+          presentationChatJid: 'bb:iMessage;-;owner@example.invalid',
+        },
+        channel: 'bluebubbles',
+        chatJid: 'bb:SMS;-;+12025550109',
+      }),
+    ).toBe(true);
+    expect(
+      isMessageActionBoundToPresentationSurface({
+        action: {
+          presentationChatJid: 'bb:iMessage;-;owner@example.invalid',
+        },
+        channel: 'bluebubbles',
+        chatJid: 'bb:iMessage;-;stranger@example.invalid',
+      }),
+    ).toBe(false);
+  });
+
   it('queues an eligible bluebubbles reply for scheduled send and tracks it separately from reminders', async () => {
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
     const thread = seedCommunicationThread();
@@ -1779,7 +1874,7 @@ describe('message actions', () => {
       true,
     );
     storeChatMetadata(
-      'bb:iMessage;-;+12025550101',
+      'bb:iMessage;-;+12025550177',
       '2026-04-10T19:01:34.886Z',
       'Jeff',
       'bluebubbles',
@@ -1796,6 +1891,25 @@ describe('message actions', () => {
     expect(resolved.target.chatJid).toBe('bb:iMessage;+;chat-rad-dad');
     expect(resolved.target.displayName).toBe('Rad Dad');
     expect(resolved.target.isGroup).toBe(true);
+  });
+
+  it('resolves an exact direct-chat phone or email address without guessing a name', () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+12025550177',
+      '2026-04-10T19:01:34.886Z',
+      undefined,
+      'bluebubbles',
+      false,
+    );
+
+    const resolved = resolveBlueBubblesThreadTargetByName('+1 202 555 0177');
+    expect(resolved).toMatchObject({
+      state: 'resolved',
+      target: {
+        chatJid: 'bb:iMessage;-;+12025550177',
+        isGroup: false,
+      },
+    });
   });
 
   it('keeps resolving a synced BlueBubbles thread after placeholder metadata updates', () => {

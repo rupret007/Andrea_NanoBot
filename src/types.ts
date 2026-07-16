@@ -7874,6 +7874,12 @@ export interface SendMessageOptions {
   inlineActions?: ChannelInlineAction[];
   inlineActionRows?: ChannelInlineAction[][];
   suppressSenderLabel?: boolean;
+  /**
+   * Internal, approval-led BlueBubbles first-contact handoff. The channel
+   * validates that this normalized address exactly matches the recipient JID
+   * and uses the atomic new-chat endpoint instead of existing-chat retries.
+   */
+  blueBubblesCreateChatAddress?: string;
 }
 
 export interface SendArtifactOptions extends SendMessageOptions {

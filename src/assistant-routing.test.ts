@@ -113,6 +113,31 @@ describe('assistant request routing', () => {
     );
   });
 
+  it('routes explicit text-message sends to the host-owned protected lane without tools', () => {
+    for (const content of [
+      "Send a text message to Travis Story saying dinner's ready.",
+      'Can you text Travis Story and say dinner is ready?',
+      'Text Travis Story: Dinner is ready.',
+    ]) {
+      const policy = classifyAssistantRequest([{ content }]);
+      expect(policy.route).toBe('protected_assistant');
+      expect(policy.reason).toContain('external message intent');
+      expect(policy.builtinTools).toEqual([]);
+      expect(policy.mcpTools).toEqual([]);
+    }
+  });
+
+  it('does not mistake discussion or content-transfer language for an outbound text request', () => {
+    for (const content of [
+      'Send me the text of the article.',
+      'What does this text message mean?',
+      'Can you summarize the message and text?',
+    ]) {
+      const policy = classifyAssistantRequest([{ content }]);
+      expect(policy.reason).not.toContain('external message intent');
+    }
+  });
+
   it('keeps the compound fallback research-only while the host owns the calendar draft', () => {
     const policy = classifyAssistantRequest([
       {

@@ -115,6 +115,7 @@ import { startIpcWatcher } from './ipc.js';
 import {
   BlueBubblesChannel,
   primeBlueBubblesChatHistory,
+  resolveBlueBubblesContactRecipient,
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
 import { startBlueBubblesControlServer } from './bluebubbles-control-server.js';
@@ -302,13 +303,13 @@ import {
   buildMessageActionPresentation,
   canApplyBlueBubblesMessageActionFollowup,
   canUseBareBlueBubblesMessageActionFollowup,
-  createOrRefreshMessageActionFromDraft,
   ensureBlueBubblesSelfThreadMessageActionForReplyText,
   reconcileBlueBubblesMessageActionContinuity,
   reconcileBlueBubblesSelfThreadContinuity,
   findLatestChatMessageAction,
   isBlueBubblesExplicitSendAlias,
   isBlueBubblesProofDrillAction,
+  isMessageActionBoundToPresentationSurface,
   interpretMessageActionFollowup,
   linkMessageActionCognitiveContext,
   parseExplicitBlueBubblesThreadSendIntent,
@@ -317,6 +318,10 @@ import {
   startBlueBubblesProofDrill,
   type MessageActionOperation,
 } from './message-actions.js';
+import {
+  stageBlueBubblesOutboundRequest,
+  type StageBlueBubblesOutboundRequestParams,
+} from './bluebubbles-outbound-request.js';
 import {
   applyOutcomeReviewControl,
   buildOutcomeReviewResponse,
@@ -337,6 +342,7 @@ import {
 } from './delegation-rules.js';
 import {
   getDelegationRule,
+  getMessageAction,
   updateDelegationRule,
   updateMessageAction,
 } from './db.js';
@@ -2332,6 +2338,28 @@ async function applyAndPresentMessageAction(params: {
       : channel.name === 'telegram'
         ? 'telegram'
         : 'alexa';
+  const action = getMessageAction(params.messageActionId);
+  const trustedOwnerSurface = isTrustedOwnerReviewSurface({
+    channelName: channel.name,
+    chatJid: params.chatJid,
+    group,
+  });
+  if (
+    !action ||
+    action.groupFolder !== group.folder ||
+    !trustedOwnerSurface ||
+    !isMessageActionBoundToPresentationSurface({
+      action,
+      channel: conversationChannel,
+      chatJid: params.chatJid,
+    })
+  ) {
+    await channel.sendMessage(
+      params.chatJid,
+      'Andrea: That message action is not bound to this private owner chat. I did not show, change, schedule, or send it.',
+    );
+    return true;
+  }
   const result = await applyMessageActionOperation(
     params.messageActionId,
     params.operation,
@@ -5286,70 +5314,106 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
   };
   const tryHandleExplicitBlueBubblesThreadSend = async (): Promise<boolean> => {
-    if (conversationChannel !== 'bluebubbles') return false;
-    const explicitSend = parseExplicitBlueBubblesThreadSendIntent(lastContent);
-    if (!explicitSend) return false;
-    const resolution = resolveBlueBubblesThreadTargetByName(
-      explicitSend.targetLabel,
-    );
-    if (resolution.state === 'missing') {
-      await channel.sendMessage(
+    if (
+      conversationChannel !== 'telegram' &&
+      conversationChannel !== 'bluebubbles'
+    ) {
+      return false;
+    }
+    let recipientResolution: StageBlueBubblesOutboundRequestParams['recipientResolution'];
+    const stageRequest = () =>
+      stageBlueBubblesOutboundRequest({
+        groupFolder: group.folder,
+        channel: conversationChannel,
         chatJid,
-        `Andrea: I could not match "${explicitSend.targetLabel}" to a synced Messages chat.\n\nUse the exact chat name, like \`send a text message to Rad Dad: <message>\`.`,
-      );
+        group,
+        rawText: lastContent,
+        inboundMessageId: latestUserMessage?.id || null,
+        recipientResolution,
+        now,
+      });
+    let staged = stageRequest();
+    if (staged.handled && staged.state === 'missing_target') {
+      const explicitIntent =
+        parseExplicitBlueBubblesThreadSendIntent(lastContent);
+      if (explicitIntent) {
+        try {
+          const contactResolution = await resolveBlueBubblesContactRecipient(
+            resolveBlueBubblesConfig(),
+            explicitIntent.targetLabel,
+          );
+          if (contactResolution.state === 'resolved') {
+            const existingConversation = resolveBlueBubblesThreadTargetByName(
+              contactResolution.target.blueBubblesCreateChatAddress,
+            );
+            recipientResolution =
+              existingConversation.state === 'resolved'
+                ? existingConversation
+                : contactResolution;
+          } else {
+            recipientResolution = contactResolution;
+          }
+          staged = stageRequest();
+          // Contact enrichment is optional; an unavailable local directory
+          // must preserve the explicit fail-closed response rather than turn
+          // the whole Telegram turn into a retry loop.
+          // eslint-disable-next-line no-catch-all/no-catch-all
+        } catch (error) {
+          logger.warn(
+            { component: 'assistant', err: error },
+            'BlueBubbles exact-contact lookup failed; retaining the safe unresolved-target response',
+          );
+        }
+      }
+    }
+    if (!staged.handled) return false;
+    if (staged.state !== 'staged') {
+      await sendAssistantReplyWithFeedback({
+        text: staged.replyText,
+        routeKey: `bluebubbles.outbound.${staged.state}`,
+        capabilityId: 'communication.draft_reply',
+        handlerKind: 'local_bluebubbles_outbound_request',
+        responseSource: 'local_companion',
+        traceReason:
+          'handled an explicit outbound Messages request without creating or sending an unsafe action',
+        allowFeedback: false,
+        latencyTargetClass: 'local_command',
+      });
       return true;
     }
-    if (resolution.state === 'ambiguous') {
-      const options = resolution.matches
-        .map((match) => match.displayName)
-        .join(', ');
-      await channel.sendMessage(
+
+    const sent = await sendAssistantReplyWithFeedback({
+      text: staged.presentation.text,
+      sendOptions:
+        conversationChannel === 'telegram'
+          ? { inlineActionRows: staged.presentation.inlineActionRows }
+          : {},
+      routeKey: 'bluebubbles.outbound.staged',
+      capabilityId: 'communication.draft_reply',
+      handlerKind: 'local_bluebubbles_outbound_request',
+      responseSource: 'local_companion',
+      traceReason:
+        'staged an exact recipient-bound BlueBubbles draft for fresh owner approval',
+      linkedRefs: { messageActionId: staged.action.messageActionId },
+      preserveStructuredText: true,
+      latencyTargetClass: 'local_command',
+    });
+    if (conversationChannel === 'bluebubbles') {
+      syncBlueBubblesMessageActionPresentation({
+        groupFolder: group.folder,
         chatJid,
-        `Andrea: I found more than one Messages chat that could be "${explicitSend.targetLabel}".\n\nUse the exact chat name. Matches: ${options}.`,
-      );
-      return true;
+        messageActionId: staged.action.messageActionId,
+        platformMessageId: sent.platformMessageId || null,
+        now,
+      });
+    } else {
+      updateMessageAction(staged.action.messageActionId, {
+        presentationMessageId:
+          sent.platformMessageId || sent.platformMessageIds?.[0] || null,
+        presentationChatJid: chatJid,
+        lastUpdatedAt: now.toISOString(),
+      });
     }
-    const target = resolution.target;
-    const action = createOrRefreshMessageActionFromDraft({
-      groupFolder: group.folder,
-      presentationChannel: 'bluebubbles',
-      presentationChatJid: chatJid,
-      sourceType: 'manual_prompt',
-      sourceKey: `bluebubbles-thread-send:${target.chatJid}:${explicitSend.draftText
-        .toLowerCase()
-        .slice(0, 80)}`,
-      sourceSummary: `Draft text message to ${target.displayName}.`,
-      draftText: explicitSend.draftText,
-      personName: target.displayName,
-      threadTitle: target.displayName,
-      communicationContext: 'general',
-      targetOverride: {
-        kind: 'external_thread',
-        chatJid: target.chatJid,
-        threadId: null,
-        replyToMessageId: null,
-        isGroup: target.isGroup,
-        personName: target.displayName,
-      },
-      targetChannelOverride: 'bluebubbles',
-      now,
-    });
-    const presentation = buildMessageActionPresentation(action, 'bluebubbles');
-    const sent = acceptConfirmedPresentationDelivery({
-      result: await channel.sendMessage(chatJid, presentation.text),
-      channel: channel.name,
-      chatJid,
-      workflow: 'bluebubbles_message_action_presentation',
-      onUnverified: () => inFlightCursorRollbacks.markDelivered(chatJid),
-    });
-    if (!sent) return true;
-    syncBlueBubblesMessageActionPresentation({
-      groupFolder: group.folder,
-      chatJid,
-      messageActionId: action.messageActionId,
-      platformMessageId: sent.platformMessageId || null,
-      now,
-    });
     return true;
   };
   const tryHandleOutcomeReview = async (): Promise<boolean> => {

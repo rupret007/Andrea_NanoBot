@@ -1512,6 +1512,208 @@ describe('BlueBubbles channel', () => {
     }
   });
 
+  it('creates a first-contact chat atomically and records the returned chat and message receipts', async () => {
+    const requests: Array<{
+      url: string;
+      body: Record<string, unknown>;
+    }> = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: 1,
+                url: 'http://127.0.0.1:0/bluebubbles/webhook?secret=hook-secret',
+                events: ['new-message'],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: false } }));
+        return;
+      }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      requests.push({
+        url: req.url || '',
+        body: JSON.parse(body || '{}') as Record<string, unknown>,
+      });
+      if (!(req.url || '').startsWith('/api/v1/chat/new')) {
+        res.statusCode = 500;
+        res.end('unexpected endpoint');
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(
+        JSON.stringify({
+          data: {
+            guid: 'iMessage;-;+12025550199',
+            messages: [{ guid: 'new-chat-message-1' }],
+          },
+        }),
+      );
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      await expect(
+        channel.sendMessage(
+          'bb:iMessage;-;+12025550199',
+          'Welcome to the neighborhood.',
+          {
+            suppressSenderLabel: true,
+            blueBubblesCreateChatAddress: '+12025550198',
+          },
+        ),
+      ).rejects.toThrow('does not match the approved target');
+      expect(requests).toHaveLength(0);
+
+      const result = await channel.sendMessage(
+        'bb:iMessage;-;+12025550199',
+        'Welcome to the neighborhood.',
+        {
+          suppressSenderLabel: true,
+          blueBubblesCreateChatAddress: '+1 (202) 555-0199',
+        },
+      );
+
+      expect(result).toEqual({
+        platformMessageId: 'bb:new-chat-message-1',
+        threadId: 'bb:iMessage;-;+12025550199',
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toContain('/api/v1/chat/new');
+      expect(requests[0]?.body).toMatchObject({
+        addresses: ['+12025550199'],
+        message: 'Welcome to the neighborhood.',
+        method: 'apple-script',
+        service: 'iMessage',
+      });
+      expect(typeof requests[0]?.body.tempGuid).toBe('string');
+      expect(
+        listRecentMessagesForChat('bb:iMessage;-;+12025550199', 1),
+      ).toContainEqual(
+        expect.objectContaining({
+          id: 'bb:new-chat-message-1',
+          content: 'Welcome to the neighborhood.',
+          is_from_me: 1,
+          is_bot_message: 0,
+        }),
+      );
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('marks an uncertain first-contact response unverified and never falls back to an existing-chat send', async () => {
+    const sendPaths: string[] = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: 1,
+                url: 'http://127.0.0.1:0/bluebubbles/webhook?secret=hook-secret',
+                events: ['new-message'],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: false } }));
+        return;
+      }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      sendPaths.push(req.url || '');
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'chat verification did not finish' }));
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      await expect(
+        channel.sendMessage(
+          'bb:iMessage;-;+12025550199',
+          'Welcome to the neighborhood.',
+          {
+            suppressSenderLabel: true,
+            blueBubblesCreateChatAddress: '+12025550199',
+          },
+        ),
+      ).rejects.toMatchObject({ code: 'CHANNEL_DELIVERY_UNVERIFIED' });
+      expect(sendPaths).toHaveLength(1);
+      expect(sendPaths[0]).toContain('/api/v1/chat/new');
+      expect(sendPaths[0]).not.toContain('/api/v1/message/text');
+      expect(
+        listRecentMessagesForChat('bb:iMessage;-;+12025550199', 1),
+      ).toHaveLength(0);
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
   it('falls back to a plain same-chat send when reply threading is rejected', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {

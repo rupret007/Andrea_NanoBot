@@ -64,6 +64,10 @@ They do not approve unrelated suggestions or older stale reviews.
 - BlueBubbles same-thread replies after explicit approval
 - BlueBubbles same-thread defer/send-later flows
 - Telegram-rich management of a BlueBubbles reply draft
+- owner-requested Telegram-to-BlueBubbles delivery for an existing synced
+  one-to-one conversation, exact BlueBubbles/macOS contact, or explicit
+  phone/email address, with the exact recipient and message shown before a
+  separate approval
 - self-companion follow-through visibility in Telegram
 
 ### Still guarded
@@ -77,9 +81,8 @@ They do not approve unrelated suggestions or older stale reviews.
 
 ### Out of scope
 
-- Telegram-to-other-people sending
 - group-chat auto-send
-- first-contact auto-send
+- unapproved or ambiguous first-contact sending
 - broad background auto-send outside the bounded scheduled-send queue
 - recurring scheduled delivery
 - inbox/CRM behavior
@@ -104,6 +107,37 @@ Andrea can:
 - save it under the thread
 - explain why approval is still required
 - show what messages are still unsent through review
+
+The registered main Telegram chat can also start a new message to an existing
+synced one-to-one BlueBubbles conversation, an exact contact, or an explicit
+address. For example:
+
+- `Text Travis Story: Dinner is ready.`
+- `Send a text message to Travis Story saying Dinner is ready.`
+- `Text +1 202 555 0123: Dinner is ready.`
+
+Andrea resolves the exact conversation/contact/address, shows a
+recipient-bound draft and action controls, and leaves it unsent. `Send now`,
+`send it`, or—only for a verified existing linked conversation—a bounded
+`send later` decision is a separate fresh approval. A first-contact message is
+never queued for later. The original request alone never authorizes delivery,
+even if a delegation rule exists.
+
+Only the registered main Telegram chat or configured Messages self-thread can
+create or approve this action. Unknown or ambiguous names fail closed; Andrea
+does not guess. A first-contact name must match exactly and must resolve to one
+address; multiple addresses are shown as choices and require a new request with
+the exact phone/email. BlueBubbles contact hydration may attach a derived
+display name to an existing local chat record, but it does not store contact
+cards, avatars, or a second address-book archive. For a first contact, only the
+selected recipient name/address pair enters the normal message-action record.
+After approval, Andrea uses BlueBubbles' atomic new-chat endpoint exactly once.
+It requires both the created chat identifier and message receipt before marking
+the action sent. Before the network call, it durably enters a verify-before-
+resend state, so a process or machine failure inside the external side-effect
+window cannot reopen the action for automatic replay. A timeout, rejected
+response, malformed receipt, or lost response remains `delivery_unverified`;
+Andrea tells the owner to inspect the conversation and blocks automatic retry.
 
 ### BlueBubbles
 
@@ -201,7 +235,7 @@ This shows up in daily and weekly review, especially under:
 Focused repo-side proof:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/message-actions.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/channels/bluebubbles.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/bluebubbles-outbound-request.test.ts src/bluebubbles-recipient-directory.test.ts src/message-actions.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/channels/bluebubbles.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts
 npm run typecheck
 npm run build
 npm run test
@@ -211,9 +245,13 @@ npm run debug:bluebubbles -- --live
 
 Strong near-live proof:
 
-1. draft a BlueBubbles reply
-2. approve and send it in the same thread
-3. create one `send later` case and confirm it becomes a scheduled task
-4. confirm review shows sent vs scheduled vs failed vs unsent honestly
-5. rerun `npm run debug:bluebubbles -- --live` and check the same-thread message-action proof leg
-6. if a narrow send rule exists, confirm Andrea explains when it used it
+1. from the registered main Telegram chat, request a text to an existing
+   synced one-to-one conversation or exact contact
+2. confirm the staged card shows the exact recipient and exact body and that no
+   outbound message exists yet
+3. approve it separately and confirm exactly one BlueBubbles delivery receipt
+4. draft a same-thread BlueBubbles reply
+5. create one `send later` case and confirm it becomes a scheduled task
+6. confirm review shows sent vs scheduled vs failed vs unsent honestly
+7. rerun `npm run debug:bluebubbles -- --live` and check the same-thread message-action proof leg
+8. if a narrow send rule exists, confirm Andrea explains when it used it

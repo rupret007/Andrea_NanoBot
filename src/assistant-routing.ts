@@ -262,6 +262,29 @@ const PROTECTED_ASSISTANT_SIGNALS: RouteSignal[] = [
   },
 ];
 
+const EXTERNAL_MESSAGE_SEND_SIGNALS: RouteSignal[] = [
+  {
+    pattern:
+      /^\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?send\s+(?:a\s+)?(?:text\s+)?message\s+to\s+.+?(?::|\s+saying\b)/i,
+    reason: 'matched approval-gated external message intent',
+  },
+  {
+    pattern:
+      /^\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?send\s+(?:a\s+)?text\s+to\s+.+?:/i,
+    reason: 'matched approval-gated external message intent',
+  },
+  {
+    pattern:
+      /^\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?text\s+.+?(?::|\s+(?:saying|and\s+say|to\s+say|that\s+says|that)\b)/i,
+    reason: 'matched approval-gated external message intent',
+  },
+  {
+    pattern:
+      /^\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?send\s+.+?\s+(?:a\s+)?(?:text|message)\s+(?:saying|that\s+says|to\s+say)\b/i,
+    reason: 'matched approval-gated external message intent',
+  },
+];
+
 const SHOPPING_ASSISTANT_SIGNALS: RouteSignal[] = [
   {
     pattern:
@@ -671,6 +694,17 @@ export function classifyAssistantRequest(
   const directReason = evaluateSignals(lastOnly, DIRECT_ASSISTANT_SIGNALS);
   if (directReason) {
     return createPolicy('direct_assistant', directReason);
+  }
+
+  const externalMessageSendReason = evaluateSignals(
+    lastOnly,
+    EXTERNAL_MESSAGE_SEND_SIGNALS,
+  );
+  if (externalMessageSendReason) {
+    return createPolicy('protected_assistant', externalMessageSendReason, {
+      builtinTools: [],
+      mcpTools: [],
+    });
   }
 
   const compoundCalendarResearch = candidates

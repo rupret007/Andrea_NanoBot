@@ -5,6 +5,80 @@ as historical implementation and release evidence unless its heading
 explicitly says otherwise; older uses of “candidate” or “authoritative” do not
 override the first section.
 
+## Telegram-To-BlueBubbles Owner-Approved Messaging — 2026-07-15 (working tree)
+
+This is the authoritative section for the current uncommitted increment. It
+adds the missing owner workflow for requesting a Messages text from Telegram
+without weakening the existing external-send boundary.
+
+### Implemented in the working tree
+
+- [x] Recognize explicit natural requests such as `Text Name: message`,
+      `Can you text Name and say message`, and
+      `Send a text message to Name saying message` before model routing.
+- [x] Restrict creation and approval to the registered main Telegram chat or
+      configured BlueBubbles owner self-thread. A callback or copied action id
+      from any other conversation cannot inspect, mutate, schedule, or send it.
+- [x] Resolve an existing synced one-to-one BlueBubbles conversation by exact
+      display name, phone number, or email address. Missing and ambiguous
+      identities fail closed and create no message action.
+- [x] Resolve a first message by exact BlueBubbles/macOS contact name or an
+      explicit phone/email address when no prior chat exists. Contact-name
+      matching is exact-only; one name with multiple addresses requires the
+      owner to repeat the request with one address. The selected pair still
+      enters the same draft-card and fresh-approval boundary.
+- [x] Hydrate otherwise opaque existing direct chats through the BlueBubbles
+      contact-query endpoint while persisting only a safe derived display name.
+      Contact cards, avatars, identifiers, and raw address-book payloads are not
+      retained; conflicting matches and existing human labels are preserved.
+- [x] Persist the exact target and exact draft together in the canonical
+      message-action ledger, return a Telegram action card, and require a fresh
+      second approval. The initial request cannot become delivery approval even
+      when an auto-apply delegation rule exists.
+- [x] Make repeated inbound delivery and simultaneous approval idempotent so
+      one request produces one action and one delivery attempt. Existing
+      unknown-delivery handling continues to block unsafe replay.
+- [x] Use BlueBubbles' atomic `/api/v1/chat/new` operation for a first-contact
+      recipient rather than pretending a synthetic address is an existing
+      thread. Require both the resulting chat and message receipt, rebind the
+      successful action to that real thread, and durably enter a verify-before-
+      resend fence before the network call so a process crash cannot reopen an
+      uncertain side effect. Classify every timeout, rejected/malformed
+      response, or missing receipt as delivery-unverified with automatic replay
+      blocked. First contacts remain ineligible for scheduled delivery.
+- [x] Route explicit outbound-message requests through the protected local lane
+      with no model-side tools. BlueBubbles remains the only transport that can
+      execute the approved message action.
+
+### Validation and live-proof state
+
+- [x] Focused recipient, approval, idempotency, trust-surface, routing,
+      scheduling, atomic chat creation, delivery-unverified replay blocking,
+      and BlueBubbles validation passes at 5 files / 156 tests.
+- [x] A live read-only contact-query against the configured BlueBubbles host
+      succeeded, and safe derived names were attached to matching existing
+      local direct-chat records. No outbound message was sent.
+- [x] Formatting, root typecheck, production build, 252-file / 3,106-test
+      primary suite, AGI typecheck, 28-file / 286-test AGI suite, and the
+      72-file documentation checker pass. Lint reports zero errors and the
+      repository's existing 664 warnings. The full dependency audit reports
+      zero vulnerabilities. Final diff, whitespace, and changed-file secret
+      review also pass.
+- [ ] Commit, push, rebuild, restart Andrea, and perform one owner-approved live
+      delivery proof before calling the feature live-proven. OpenClaw,
+      BlueBubbles, and Docker do not require a restart for this host-side route.
+
+### Honest residual limits
+
+- Names are never guessed. An existing chat may use its exact display name; a
+  first contact requires one exact contact match or an explicit address. Group
+  delivery remains outside this lane.
+- The current BlueBubbles contact directory does not resolve `Travis Story` on
+  this host. The owner can use the exact conversation phone/email address or
+  add/correct the BlueBubbles/macOS contact before using that display name.
+- No unsolicited live message is used as validation. A real delivery remains a
+  fresh owner action with the exact recipient and body visible before approval.
+
 ## Production Action Authority And Guided UX — 2026-07-15 (validated snapshot)
 
 This is the authoritative implementation and local-validation section for this

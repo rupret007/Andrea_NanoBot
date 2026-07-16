@@ -26,9 +26,9 @@ import { handleLifeThreadCommand } from './life-threads.js';
 import { planContextualReminder } from './local-reminder.js';
 import { runActionPreflight } from './action-preflight.js';
 import {
+  ChannelDeliveryUnverifiedError,
   isChannelDeliveryUnverifiedError,
   requireCompleteChannelDelivery,
-  type ChannelDeliveryUnverifiedError,
 } from './channel-delivery.js';
 import { recordCognitiveOwnerReview } from './cognitive-kernel.js';
 import { recordAssistantMetric } from './personal-assistant-metrics.js';
@@ -41,6 +41,7 @@ import {
   canonicalizeBlueBubblesSelfThreadJid,
   expandBlueBubblesLogicalSelfThreadJids,
   getBlueBubblesCanonicalSelfThreadJid,
+  isConfiguredBlueBubblesSelfThreadAliasJid,
   isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
 import { rewriteBlueBubblesMessageDraft } from './messages-fluidity.js';
@@ -73,6 +74,7 @@ interface ExternalThreadTarget {
   replyToMessageId?: string | null;
   isGroup?: boolean | null;
   personName?: string | null;
+  blueBubblesCreateChatAddress?: string | null;
 }
 
 interface SelfCompanionTarget {
@@ -92,6 +94,7 @@ export interface ResolvedBlueBubblesThreadTarget {
   chatJid: string;
   displayName: string;
   isGroup: boolean;
+  blueBubblesCreateChatAddress?: string | null;
 }
 
 export interface CreateMessageActionFromDraftParams {
@@ -173,6 +176,22 @@ export interface MessageActionExecutionDeps {
     text: string,
     options?: SendMessageOptions,
   ) => Promise<SendMessageResult>;
+}
+
+export function isMessageActionBoundToPresentationSurface(params: {
+  action: Pick<MessageActionRecord, 'presentationChatJid'>;
+  channel: PresentationChannel;
+  chatJid: string;
+}): boolean {
+  const presentationChatJid = normalizeText(params.action.presentationChatJid);
+  const currentChatJid = normalizeText(params.chatJid);
+  if (!presentationChatJid || !currentChatJid) return false;
+  if (presentationChatJid === currentChatJid) return true;
+  if (params.channel !== 'bluebubbles') return false;
+  return (
+    isConfiguredBlueBubblesSelfThreadAliasJid(presentationChatJid) &&
+    isConfiguredBlueBubblesSelfThreadAliasJid(currentChatJid)
+  );
 }
 
 interface SendExecutionResult {
@@ -387,6 +406,26 @@ function normalizeBlueBubblesChatLookup(
     .replace(/[“”"']/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function blueBubblesRecipientAddressKeys(
+  value: string | null | undefined,
+): string[] {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) return [];
+  if (normalized.includes('@')) return [`email:${normalized}`];
+  const digits = normalized.replace(/\D/g, '');
+  if (digits.length < 7) return [];
+  const keys = new Set([`phone:${digits}`]);
+  if (digits.length === 11 && digits.startsWith('1')) {
+    keys.add(`phone:${digits.slice(1)}`);
+  }
+  return [...keys];
+}
+
+function blueBubblesDirectAddressFromJid(jid: string): string | null {
+  const match = jid.replace(/^bb:/, '').match(/^[^;]+;-;(.+)$/);
+  return match?.[1]?.trim() || null;
 }
 
 function buildBlueBubblesChatDisplayName(params: {
@@ -2163,17 +2202,35 @@ export function parseExplicitBlueBubblesThreadSendIntent(
 ): BlueBubblesExplicitThreadSendIntent | null {
   const normalized = normalizeText(rawText);
   if (!normalized) return null;
+  const request = normalized
+    .replace(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?/i, '')
+    .trim();
   const patterns = [
     /^send (?:a )?(?:text )?message to\s+(.+?):\s*(.+)$/i,
     /^send (?:a )?(?:text )?to\s+(.+?):\s*(.+)$/i,
     /^text\s+(.+?):\s*(.+)$/i,
     /^send (?:a )?(?:text )?message to\s+(.+?)\s+saying\s+(.+)$/i,
     /^send (?:a )?message to\s+(.+?)\s+saying\s+(.+)$/i,
+    /^text\s+(.+?)\s+(?:saying|and say|to say|that says)\s+(.+)$/i,
+    /^send\s+(.+?)\s+(?:a )?(?:text|message)\s+(?:saying|that says|to say)\s+(.+)$/i,
+    /^text\s+(.+?)\s+that\s+(.+)$/i,
   ];
   for (const pattern of patterns) {
-    const match = normalized.match(pattern);
-    const targetLabel = normalizeText(match?.[1]);
-    const draftText = normalizeText(match?.[2]);
+    const match = request.match(pattern);
+    const targetLabel = normalizeText(match?.[1])
+      .replace(/[,:-]+$/, '')
+      .trim();
+    const rawDraftText = normalizeText(match?.[2]);
+    const pairedQuote = rawDraftText.match(
+      /^(?:"([\s\S]+)"|'([\s\S]+)'|“([\s\S]+)”|‘([\s\S]+)’)$/,
+    );
+    const draftText = normalizeText(
+      pairedQuote?.[1] ||
+        pairedQuote?.[2] ||
+        pairedQuote?.[3] ||
+        pairedQuote?.[4] ||
+        rawDraftText,
+    );
     if (targetLabel && draftText) {
       return { targetLabel, draftText };
     }
@@ -2189,6 +2246,7 @@ export function resolveBlueBubblesThreadTargetByName(
   | { state: 'missing' } {
   const normalizedQuery = normalizeBlueBubblesChatLookup(query);
   if (!normalizedQuery) return { state: 'missing' };
+  const queryAddressKeys = blueBubblesRecipientAddressKeys(query);
 
   const candidates = getAllChats()
     .filter(
@@ -2209,17 +2267,23 @@ export function resolveBlueBubblesThreadTargetByName(
       normalizedName: normalizeBlueBubblesChatLookup(
         buildBlueBubblesChatDisplayName({ jid: chat.jid, name: chat.name }),
       ),
+      addressKeys: blueBubblesRecipientAddressKeys(
+        blueBubblesDirectAddressFromJid(chat.jid),
+      ),
       lastMessageTime: chat.last_message_time,
     }));
 
   const exactMatches = candidates.filter(
     (candidate) =>
       candidate.normalizedName === normalizedQuery ||
-      candidate.chatJid.toLowerCase() === normalizedQuery,
+      candidate.chatJid.toLowerCase() === normalizedQuery ||
+      (queryAddressKeys.length > 0 &&
+        queryAddressKeys.some((key) => candidate.addressKeys.includes(key))),
   );
   if (exactMatches.length === 1) {
     const {
       normalizedName: _normalizedName,
+      addressKeys: _addressKeys,
       lastMessageTime: _lastMessageTime,
       ...target
     } = exactMatches[0]!;
@@ -2238,6 +2302,7 @@ export function resolveBlueBubblesThreadTargetByName(
         .map(
           ({
             normalizedName: _normalizedName,
+            addressKeys: _addressKeys,
             lastMessageTime: _lastMessageTime,
             ...target
           }) => target,
@@ -2253,6 +2318,7 @@ export function resolveBlueBubblesThreadTargetByName(
   if (fuzzyMatches.length === 1) {
     const {
       normalizedName: _normalizedName,
+      addressKeys: _addressKeys,
       lastMessageTime: _lastMessageTime,
       ...target
     } = fuzzyMatches[0]!;
@@ -2271,6 +2337,7 @@ export function resolveBlueBubblesThreadTargetByName(
         .map(
           ({
             normalizedName: _normalizedName,
+            addressKeys: _addressKeys,
             lastMessageTime: _lastMessageTime,
             ...target
           }) => target,
@@ -2603,7 +2670,12 @@ async function markDeliveryUnverified(params: {
   };
 }
 
-async function executeSendOperation(params: {
+const inFlightMessageActionSends = new Map<
+  string,
+  Promise<SendExecutionResult>
+>();
+
+async function executeSendOperationUnlocked(params: {
   action: MessageActionRecord;
   deps: MessageActionExecutionDeps;
   now: Date;
@@ -2671,12 +2743,49 @@ async function executeSendOperation(params: {
           threadId: target.threadId || undefined,
           replyToMessageId: target.replyToMessageId || undefined,
           suppressSenderLabel: true,
+          blueBubblesCreateChatAddress:
+            target.blueBubblesCreateChatAddress || undefined,
         }
       : {
           threadId: target.threadId || undefined,
         };
   try {
     pauseScheduledTask(params.action.scheduledTaskId);
+    if (
+      target.kind === 'external_thread' &&
+      target.blueBubblesCreateChatAddress
+    ) {
+      updateMessageAction(params.action.messageActionId, {
+        sendStatus: 'delivery_unverified',
+        followupAt: null,
+        scheduledTaskId: null,
+        requiresApproval: false,
+        trustLevel: 'never_automate',
+        approvedAt: params.action.approvedAt || params.now.toISOString(),
+        lastActionKind: 'delivery_unverified',
+        lastActionAt: params.now.toISOString(),
+        explanationJson: JSON.stringify({
+          ...parseExplanation(params.action),
+          safetyReason:
+            'First-contact delivery entered its external side-effect window. Verify the target conversation before any replay.',
+          deliveryVerification: {
+            outcome: 'unknown',
+            confirmedReceiptIds: [],
+            confirmedReceiptCount: 0,
+            retryPolicy: 'verify_before_resend',
+          },
+        }),
+        lastUpdatedAt: params.now.toISOString(),
+      });
+      if (
+        getMessageAction(params.action.messageActionId)?.sendStatus !==
+        'delivery_unverified'
+      ) {
+        throw new Error(
+          'Andrea could not persist the first-contact replay fence.',
+        );
+      }
+    }
     const receipt = requireCompleteChannelDelivery(
       await params.deps.sendToTarget(
         params.action.targetChannel,
@@ -2685,6 +2794,25 @@ async function executeSendOperation(params: {
         sendOptions,
       ),
     );
+    if (
+      target.kind === 'external_thread' &&
+      target.blueBubblesCreateChatAddress &&
+      !receipt.threadId?.startsWith('bb:')
+    ) {
+      const confirmedReceiptIds = Array.from(
+        new Set(
+          [
+            receipt.platformMessageId,
+            ...(receipt.platformMessageIds || []),
+          ].filter((value): value is string => Boolean(value)),
+        ),
+      );
+      throw new ChannelDeliveryUnverifiedError({
+        outcome: 'unknown',
+        confirmedReceiptIds,
+        confirmedReceiptCount: confirmedReceiptIds.length,
+      });
+    }
     updateMessageAction(params.action.messageActionId, {
       sendStatus: 'sent',
       requiresApproval: false,
@@ -2694,6 +2822,17 @@ async function executeSendOperation(params: {
       approvedAt: params.action.approvedAt || params.now.toISOString(),
       platformMessageId:
         receipt.platformMessageId || receipt.platformMessageIds?.[0] || null,
+      targetConversationJson:
+        target.kind === 'external_thread' &&
+        target.blueBubblesCreateChatAddress &&
+        receipt.threadId?.startsWith('bb:')
+          ? JSON.stringify({
+              ...target,
+              chatJid: receipt.threadId,
+              threadId: null,
+              blueBubblesCreateChatAddress: null,
+            } satisfies ExternalThreadTarget)
+          : params.action.targetConversationJson,
       sentAt: params.now.toISOString(),
       lastActionKind: 'sent',
       lastActionAt: params.now.toISOString(),
@@ -2734,6 +2873,31 @@ async function executeSendOperation(params: {
       });
     }
     return markFailedSend(params);
+  }
+}
+
+async function executeSendOperation(params: {
+  action: MessageActionRecord;
+  deps: MessageActionExecutionDeps;
+  now: Date;
+  hasExplicitUserApproval?: boolean;
+}): Promise<SendExecutionResult> {
+  const existing = inFlightMessageActionSends.get(
+    params.action.messageActionId,
+  );
+  if (existing) return existing;
+
+  const execution = executeSendOperationUnlocked(params);
+  inFlightMessageActionSends.set(params.action.messageActionId, execution);
+  try {
+    return await execution;
+  } finally {
+    if (
+      inFlightMessageActionSends.get(params.action.messageActionId) ===
+      execution
+    ) {
+      inFlightMessageActionSends.delete(params.action.messageActionId);
+    }
   }
 }
 
@@ -2872,6 +3036,27 @@ export async function applyMessageActionOperation(
         explanation.approvalReason ||
         explanation.safetyReason ||
         'Andrea: I still want your approval before sending that.',
+      presentation: buildMessageActionPresentation(
+        action,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
+  }
+
+  const requiresConfirmedOutboundPresentation =
+    action.sourceType === 'manual_prompt' &&
+    action.sourceKey.startsWith('outbound-message:') &&
+    !normalizeText(action.presentationMessageId) &&
+    (operation.kind === 'send' ||
+      operation.kind === 'send_again' ||
+      operation.kind === 'rewrite_and_send' ||
+      operation.kind === 'defer');
+  if (requiresConfirmedOutboundPresentation) {
+    return {
+      handled: true,
+      action,
+      replyText:
+        'Andrea: I could not verify that the recipient-bound draft card reached this private owner chat, so I did not send or schedule it. Show the draft again, review the exact recipient and message, then approve it.',
       presentation: buildMessageActionPresentation(
         action,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',

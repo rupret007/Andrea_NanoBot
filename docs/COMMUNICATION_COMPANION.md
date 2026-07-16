@@ -75,7 +75,7 @@ Andrea creates or updates communication context only when the user explicitly br
 Out of scope in v1:
 
 - passive inbox crawling
-- automatic message sending
+- unapproved or automatic first-contact message sending
 - autonomous follow-up spam
 
 BlueBubbles V1 can now work across synced chats, but Andrea should still wake only on explicit `@Andrea` mentions or the default `@OpenClaw` helper alias and should not behave like a passive inbox triage bot.
@@ -172,6 +172,13 @@ Telegram:
 
 - richest communication surface
 - better for full summaries, structured open loops, and richer draft review
+- can stage a recipient-bound text to an existing synced one-to-one
+  BlueBubbles conversation, exact contact, or explicit phone/email from the
+  registered main chat
+- always shows the exact recipient and body before a separate send approval;
+  missing or ambiguous recipients fail closed
+- creates a new direct chat in one BlueBubbles request after approval and
+  blocks automatic replay when delivery cannot be verified
 
 BlueBubbles:
 
@@ -200,6 +207,8 @@ For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AN
 
 ## Practical Prompts
 
+- `Text Travis Story: Dinner is ready.`
+- `Send a text message to Travis Story saying Dinner is ready.`
 - `Summarize this message: Candace: Can you let me know if dinner still works tonight?`
 - `What should I say back?`
 - `Give me a short reply.`

@@ -29,6 +29,13 @@ export interface AppleMessagesSendRequest {
   replyToGuid?: string;
 }
 
+export interface AppleMessagesCreateDirectChatRequest {
+  address: string;
+  text: string;
+  sendMethod: string;
+  service: 'iMessage' | 'SMS';
+}
+
 export interface AppleMessagesRecentActivityRow {
   chatJid: string;
   message: NewMessage;
@@ -49,6 +56,10 @@ export interface AppleMessagesProvider {
   sendText(
     config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
     request: AppleMessagesSendRequest & { sendMethod: string },
+  ): Promise<SendMessageResult>;
+  createDirectChat(
+    config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+    request: AppleMessagesCreateDirectChatRequest,
   ): Promise<SendMessageResult>;
   describeReadiness(
     config: Pick<

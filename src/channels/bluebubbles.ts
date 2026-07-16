@@ -19,6 +19,7 @@ import {
   listRecentMessagesForChat,
   storeChatMetadata,
   storeMessageDirect,
+  updateChatName,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
@@ -43,6 +44,7 @@ import {
   MediaCacheLimitError,
   readMediaResponseBytes,
 } from '../media-cache.js';
+import { ChannelDeliveryUnverifiedError } from '../channel-delivery.js';
 import type {
   BlueBubblesChannelControlSnapshot,
   BlueBubblesReplyGateMode,
@@ -73,6 +75,7 @@ const DEFAULT_BLUEBUBBLES_PORT = 4305;
 const DEFAULT_BLUEBUBBLES_CHAT_SCOPE: BlueBubblesChatScope = 'allowlist';
 const BLUEBUBBLES_OUTBOUND_SENDER_LABEL = 'Andrea:';
 const BLUEBUBBLES_STARTUP_FETCH_TIMEOUT_MS = 5_000;
+const BLUEBUBBLES_CREATE_CHAT_TIMEOUT_MS = 40_000;
 const BLUEBUBBLES_SHADOW_POLL_INTERVAL_MS = 75_000;
 const BLUEBUBBLES_MISSED_INBOUND_GRACE_MS = 2 * 60 * 1_000;
 const BLUEBUBBLES_DIRECT_CONTEXT_WINDOW_MS =
@@ -806,6 +809,35 @@ function extractBlueBubblesReceiptId(payload: unknown): string | null {
   );
 }
 
+function extractBlueBubblesCreatedChatReceipt(payload: unknown): {
+  chatGuid: string;
+  messageGuid: string;
+} | null {
+  const root = asRecord(payload);
+  const data = asRecord(root.data);
+  const chat = asRecord(data.chat);
+  const messages = [
+    ...(Array.isArray(data.messages) ? data.messages : []),
+    ...(Array.isArray(chat.messages) ? chat.messages : []),
+    ...(Array.isArray(root.messages) ? root.messages : []),
+  ].map((item) => asRecord(item));
+  const chatGuid = firstString(data.guid, data.chatGuid, chat.guid);
+  const messageGuid = firstString(
+    messages[0]?.guid,
+    messages[0]?.messageGuid,
+    messages[0]?.id,
+  );
+  return chatGuid && messageGuid ? { chatGuid, messageGuid } : null;
+}
+
+function blueBubblesDeliveryUnverified(): ChannelDeliveryUnverifiedError {
+  return new ChannelDeliveryUnverifiedError({
+    outcome: 'unknown',
+    confirmedReceiptIds: [],
+    confirmedReceiptCount: 0,
+  });
+}
+
 function normalizeBlueBubblesAttachmentRecords(payload: unknown): unknown[] {
   const root = asRecord(payload);
   const data = asRecord(root.data);
@@ -924,6 +956,326 @@ function buildAuthSearchParams(password: string): URLSearchParams {
   params.set('password', password);
   params.set('token', password);
   return params;
+}
+
+function blueBubblesContactAddressKeys(
+  value: string | null | undefined,
+): string[] {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return [];
+  if (normalized.includes('@')) return [`email:${normalized}`];
+  const digits = normalized.replace(/\D/g, '');
+  if (digits.length >= 7) {
+    const values = new Set([`phone:${digits}`]);
+    if (digits.length === 11 && digits.startsWith('1')) {
+      values.add(`phone:${digits.slice(1)}`);
+    }
+    return [...values];
+  }
+  return [`raw:${normalized}`];
+}
+
+function normalizeBlueBubblesContactTargetAddress(
+  value: string | null | undefined,
+): string | null {
+  const normalized = value?.trim();
+  if (!normalized || normalized.length > 254) return null;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    return normalized.toLowerCase();
+  }
+  if (!/^\+?[\d\s().-]+$/.test(normalized)) return null;
+  const digits = normalized.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) return null;
+  return normalized.startsWith('+') ? `+${digits}` : digits;
+}
+
+function normalizeBlueBubblesContactName(
+  value: string | null | undefined,
+): string {
+  return value?.replace(/\s+/g, ' ').trim().toLowerCase() || '';
+}
+
+function blueBubblesDirectChatAddress(jid: string): string | null {
+  const chatGuid = extractBlueBubblesChatGuid(jid);
+  const match = chatGuid?.match(/^[^;]+;-;(.+)$/);
+  return match?.[1]?.trim() || null;
+}
+
+function isSafeBlueBubblesContactDisplayName(
+  value: string | null | undefined,
+): value is string {
+  const normalized = value?.replace(/\s+/g, ' ').trim();
+  if (!normalized || normalized.length > 120) return false;
+  if (
+    [...normalized].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 31 || codePoint === 127;
+    })
+  ) {
+    return false;
+  }
+  if (/^[^\s@]+@[^\s@]+$/.test(normalized)) return false;
+  if (/^\+?[\d\s().-]{7,}$/.test(normalized)) return false;
+  return true;
+}
+
+function blueBubblesStoredChatNameIsDerivedAddress(params: {
+  jid: string;
+  name: string | null | undefined;
+}): boolean {
+  const normalized = params.name?.trim();
+  if (!normalized || normalized === params.jid) return true;
+  const guid = extractBlueBubblesChatGuid(params.jid);
+  return Boolean(guid && normalized === guid);
+}
+
+function blueBubblesContactDisplayName(
+  contact: Record<string, unknown>,
+): string | null {
+  const explicit = firstString(contact.displayName, contact.nickname);
+  if (isSafeBlueBubblesContactDisplayName(explicit)) return explicit.trim();
+  const composed = [
+    firstString(contact.firstName),
+    firstString(contact.lastName),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  return isSafeBlueBubblesContactDisplayName(composed) ? composed : null;
+}
+
+function blueBubblesContactAddresses(
+  contact: Record<string, unknown>,
+): string[] {
+  return [
+    ...(Array.isArray(contact.phoneNumbers) ? contact.phoneNumbers : []),
+    ...(Array.isArray(contact.emails) ? contact.emails : []),
+  ]
+    .map((item) => firstString(asRecord(item).address, item))
+    .map(normalizeBlueBubblesContactTargetAddress)
+    .filter((address): address is string => Boolean(address));
+}
+
+async function queryBlueBubblesContacts(
+  config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+  addresses: string[],
+): Promise<Record<string, unknown>[]> {
+  const baseUrl = config.baseUrl;
+  const password = config.password;
+  if (!baseUrl || !password) {
+    throw new Error('BlueBubbles contact lookup is not configured.');
+  }
+  const url = new URL('/api/v1/contact/query', baseUrl);
+  for (const [key, value] of buildAuthSearchParams(password).entries()) {
+    url.searchParams.set(key, value);
+  }
+  let response: Response;
+  try {
+    response = await fetchBlueBubblesWithTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addresses }),
+    });
+  } catch (error) {
+    // Do not propagate a fetch error that might include the authenticated URL.
+    const failureKind =
+      error instanceof Error && error.name === 'AbortError'
+        ? 'timed out'
+        : 'transport failed';
+    // eslint-disable-next-line preserve-caught-error -- the original may contain the authenticated URL
+    throw new Error(`BlueBubbles contact lookup ${failureKind}.`);
+  }
+  if (!response.ok) {
+    throw new Error(
+      `BlueBubbles contact lookup failed with status ${response.status}.`,
+    );
+  }
+  const responseText = await response.text();
+  if (Buffer.byteLength(responseText, 'utf8') > 2 * 1024 * 1024) {
+    throw new Error('BlueBubbles contact lookup response was too large.');
+  }
+  const payload = asRecord(parseBlueBubblesJson(responseText));
+  return Array.isArray(payload.data)
+    ? payload.data.slice(0, 2_000).map((item) => asRecord(item))
+    : [];
+}
+
+export type BlueBubblesContactRecipientResolution =
+  | {
+      state: 'resolved';
+      target: {
+        chatJid: string;
+        displayName: string;
+        isGroup: false;
+        blueBubblesCreateChatAddress: string;
+      };
+    }
+  | {
+      state: 'ambiguous';
+      matches: Array<{
+        chatJid: string;
+        displayName: string;
+        isGroup: false;
+        blueBubblesCreateChatAddress: string;
+      }>;
+    }
+  | { state: 'missing' };
+
+/**
+ * Resolve an explicit address, or an exact contact name, into a new direct
+ * Messages target. The full contact response exists only for this lookup; the
+ * selected name/address pair is the only value returned to the action ledger.
+ */
+export async function resolveBlueBubblesContactRecipient(
+  config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+  query: string,
+): Promise<BlueBubblesContactRecipientResolution> {
+  const explicitAddress = normalizeBlueBubblesContactTargetAddress(query);
+  if (explicitAddress) {
+    return {
+      state: 'resolved',
+      target: {
+        chatJid: `bb:iMessage;-;${explicitAddress}`,
+        displayName: explicitAddress,
+        isGroup: false,
+        blueBubblesCreateChatAddress: explicitAddress,
+      },
+    };
+  }
+  if (!config.baseUrl || !config.password) return { state: 'missing' };
+  const normalizedQuery = normalizeBlueBubblesContactName(query);
+  if (!normalizedQuery) return { state: 'missing' };
+
+  const contacts = await queryBlueBubblesContacts(config, []);
+  const phoneMatchesByAddress = new Map<
+    string,
+    {
+      chatJid: string;
+      displayName: string;
+      isGroup: false;
+      blueBubblesCreateChatAddress: string;
+    }
+  >();
+  const emailMatchesByAddress = new Map<
+    string,
+    {
+      chatJid: string;
+      displayName: string;
+      isGroup: false;
+      blueBubblesCreateChatAddress: string;
+    }
+  >();
+  for (const contact of contacts) {
+    const contactName = blueBubblesContactDisplayName(contact);
+    if (
+      !contactName ||
+      normalizeBlueBubblesContactName(contactName) !== normalizedQuery
+    ) {
+      continue;
+    }
+    for (const address of blueBubblesContactAddresses(contact)) {
+      const addressKeys = blueBubblesContactAddressKeys(address);
+      const addressKey = addressKeys.at(-1) || address;
+      const destination = address.includes('@')
+        ? emailMatchesByAddress
+        : phoneMatchesByAddress;
+      if (destination.has(addressKey)) continue;
+      destination.set(addressKey, {
+        chatJid: `bb:iMessage;-;${address}`,
+        displayName: `${contactName} at ${address}`,
+        isGroup: false,
+        blueBubblesCreateChatAddress: address,
+      });
+    }
+  }
+  // "Text" prefers the contact's phone lane. Email handles remain a fallback
+  // only when the exact contact has no valid phone number.
+  const matchesByAddress =
+    phoneMatchesByAddress.size > 0
+      ? phoneMatchesByAddress
+      : emailMatchesByAddress;
+  const matches = [...matchesByAddress.values()].slice(0, 8);
+  if (matches.length === 0) return { state: 'missing' };
+  if (matches.length === 1) return { state: 'resolved', target: matches[0]! };
+  return { state: 'ambiguous', matches };
+}
+
+export interface BlueBubblesRecipientDirectoryHydration {
+  queriedChatCount: number;
+  matchedChatCount: number;
+  updatedChatCount: number;
+}
+
+/**
+ * Resolve existing direct-chat addresses through BlueBubbles' contacts API and
+ * retain only the derived display-name mapping already supported by `chats`.
+ * Contact cards, avatars, and address-book payloads are never persisted.
+ */
+export async function hydrateBlueBubblesRecipientDirectory(
+  config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+): Promise<BlueBubblesRecipientDirectoryHydration> {
+  if (!config.baseUrl || !config.password) {
+    return { queriedChatCount: 0, matchedChatCount: 0, updatedChatCount: 0 };
+  }
+  const chats = getAllChats().filter(
+    (chat) =>
+      (chat.channel === 'bluebubbles' || chat.jid.startsWith('bb:')) &&
+      chat.is_group === 0 &&
+      Boolean(blueBubblesDirectChatAddress(chat.jid)),
+  );
+  const addresses = [
+    ...new Set(
+      chats
+        .map((chat) => blueBubblesDirectChatAddress(chat.jid))
+        .filter((address): address is string => Boolean(address)),
+    ),
+  ].slice(0, 500);
+  if (addresses.length === 0) {
+    return { queriedChatCount: 0, matchedChatCount: 0, updatedChatCount: 0 };
+  }
+
+  const contacts = await queryBlueBubblesContacts(config, addresses);
+  const namesByAddressKey = new Map<string, Set<string>>();
+  for (const contact of contacts) {
+    const displayName = blueBubblesContactDisplayName(contact);
+    if (!displayName) continue;
+    const contactAddresses = blueBubblesContactAddresses(contact);
+    for (const key of contactAddresses.flatMap(blueBubblesContactAddressKeys)) {
+      const names = namesByAddressKey.get(key) || new Set<string>();
+      names.add(displayName);
+      namesByAddressKey.set(key, names);
+    }
+  }
+
+  let matchedChatCount = 0;
+  let updatedChatCount = 0;
+  for (const chat of chats) {
+    const address = blueBubblesDirectChatAddress(chat.jid);
+    const names = new Set(
+      blueBubblesContactAddressKeys(address).flatMap((key) => [
+        ...(namesByAddressKey.get(key) || []),
+      ]),
+    );
+    if (names.size !== 1) continue;
+    matchedChatCount += 1;
+    const [displayName] = [...names];
+    if (
+      displayName &&
+      blueBubblesStoredChatNameIsDerivedAddress({
+        jid: chat.jid,
+        name: chat.name,
+      })
+    ) {
+      updateChatName(chat.jid, displayName);
+      updatedChatCount += 1;
+    }
+  }
+
+  return {
+    queriedChatCount: addresses.length,
+    matchedChatCount,
+    updatedChatCount,
+  };
 }
 
 async function readRequestBody(req: IncomingMessage): Promise<string> {
@@ -1557,6 +1909,78 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
     };
   }
 
+  async createDirectChat(
+    config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+    request: {
+      address: string;
+      text: string;
+      sendMethod: string;
+      service: 'iMessage' | 'SMS';
+    },
+  ): Promise<SendMessageResult> {
+    if (!config.baseUrl || !config.password || !request.address) {
+      throw new Error(
+        'BlueBubbles transport is missing a reachable endpoint, password, or recipient address',
+      );
+    }
+
+    const url = new URL('/api/v1/chat/new', config.baseUrl);
+    for (const [key, value] of buildAuthSearchParams(
+      config.password,
+    ).entries()) {
+      url.searchParams.set(key, value);
+    }
+    const body = {
+      addresses: [request.address],
+      message: request.text,
+      method: request.sendMethod,
+      service: request.service,
+      tempGuid: randomUUID(),
+    };
+
+    let response: Response;
+    try {
+      response = await fetchBlueBubblesWithTimeout(
+        url,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        BLUEBUBBLES_CREATE_CHAT_TIMEOUT_MS,
+      );
+    } catch {
+      // The request may have reached Messages even when its HTTP result did
+      // not return. First-contact sends must never retry that uncertainty.
+      throw blueBubblesDeliveryUnverified();
+    }
+
+    let responseText: string;
+    try {
+      responseText = await response.text();
+    } catch {
+      throw blueBubblesDeliveryUnverified();
+    }
+    if (
+      !response.ok ||
+      Buffer.byteLength(responseText, 'utf8') > 2 * 1024 * 1024
+    ) {
+      // BlueBubbles can send before completing its chat-verification wait, so
+      // even a non-success response is not evidence that delivery was absent.
+      throw blueBubblesDeliveryUnverified();
+    }
+    const receipt = extractBlueBubblesCreatedChatReceipt(
+      parseBlueBubblesJson(responseText),
+    );
+    if (!receipt) {
+      throw blueBubblesDeliveryUnverified();
+    }
+    return {
+      platformMessageId: `bb:${receipt.messageGuid}`,
+      threadId: buildBlueBubblesChatJid(receipt.chatGuid),
+    };
+  }
+
   async describeReadiness(
     config: Pick<
       BlueBubblesConfig,
@@ -1827,7 +2251,9 @@ export async function primeBlueBubblesChatHistory(
     storeChatMetadata(
       row.chatJid,
       row.message.timestamp,
-      row.chat.displayName || row.chat.chatGuid,
+      row.chat.displayName ||
+        (!row.chat.isGroup ? row.contact.displayName : null) ||
+        row.chat.chatGuid,
       'bluebubbles',
       row.chat.isGroup,
     );
@@ -1867,7 +2293,9 @@ export function createBlueBubblesWebhookAdapter(opts: {
     await opts.onChatMetadata(
       normalized.chatJid,
       timestamp,
-      normalized.chat.displayName || normalized.chat.chatGuid,
+      normalized.chat.displayName ||
+        (!normalized.chat.isGroup ? normalized.contact.displayName : null) ||
+        normalized.chat.chatGuid,
       'bluebubbles',
       normalized.chat.isGroup,
     );
@@ -3251,7 +3679,9 @@ export class BlueBubblesChannel implements Channel {
       await this.opts.onChatMetadata(
         normalized.chatJid,
         normalized.message.timestamp,
-        normalized.chat.displayName || normalized.chat.chatGuid,
+        normalized.chat.displayName ||
+          (!normalized.chat.isGroup ? normalized.contact.displayName : null) ||
+          normalized.chat.chatGuid,
         'bluebubbles',
         normalized.chat.isGroup,
       );
@@ -3296,6 +3726,36 @@ export class BlueBubblesChannel implements Channel {
         text,
         replyToGuid,
         sendMethod: this.sendMethod,
+      },
+    );
+  }
+
+  private async postBlueBubblesNewDirectChat(
+    address: string,
+    text: string,
+  ): Promise<SendMessageResult> {
+    const activeBaseUrl = await this.ensureActiveBaseUrl({
+      recheck: true,
+      refreshReadiness: true,
+    });
+    if (!activeBaseUrl || !this.config.password) {
+      throw new Error(
+        this.transportProbeDetail ||
+          'BlueBubbles transport is missing a reachable endpoint or password',
+      );
+    }
+    this.lastOutboundTargetKind = 'new_direct_chat_address';
+    this.lastOutboundTargetValue = address;
+    this.lastAttemptedTargetSequence = ['new_direct_chat_address'];
+    this.monitorState.lastOutboundTargetKind = this.lastOutboundTargetKind;
+    this.monitorState.lastOutboundTargetValue = address;
+    return this.bridgeProvider.createDirectChat(
+      this.buildConfigForBaseUrl(activeBaseUrl),
+      {
+        address,
+        text,
+        sendMethod: this.sendMethod,
+        service: 'iMessage',
       },
     );
   }
@@ -3543,7 +4003,36 @@ export class BlueBubblesChannel implements Channel {
     if (!chatGuid) {
       throw new Error('BlueBubbles target chat is not valid.');
     }
-    if (!isBlueBubblesChatEligible(this.config, chatGuid)) {
+    const requestedFirstContactAddress = options?.blueBubblesCreateChatAddress;
+    const firstContactAddress = requestedFirstContactAddress
+      ? normalizeBlueBubblesContactTargetAddress(requestedFirstContactAddress)
+      : null;
+    if (requestedFirstContactAddress && !firstContactAddress) {
+      throw new Error('BlueBubbles first-contact address is not valid.');
+    }
+    if (
+      firstContactAddress &&
+      chatGuid !== `iMessage;-;${firstContactAddress}`
+    ) {
+      throw new Error(
+        'BlueBubbles first-contact address does not match the approved target.',
+      );
+    }
+    if (
+      firstContactAddress &&
+      (options?.threadId || options?.replyToMessageId)
+    ) {
+      throw new Error(
+        'BlueBubbles first-contact delivery cannot include existing-thread metadata.',
+      );
+    }
+    if (
+      !isBlueBubblesChatEligible(
+        this.config,
+        chatGuid,
+        firstContactAddress ? false : undefined,
+      )
+    ) {
       throw new Error(
         'BlueBubbles can only reply inside the configured chat scope.',
       );
@@ -3555,13 +4044,17 @@ export class BlueBubblesChannel implements Channel {
     const isCompanionLabeled = !options?.suppressSenderLabel;
 
     try {
-      const result = await this.sendBlueBubblesReply(
-        jid,
-        renderedText,
-        options,
-      );
+      const result = firstContactAddress
+        ? await this.postBlueBubblesNewDirectChat(
+            firstContactAddress,
+            renderedText,
+          )
+        : await this.sendBlueBubblesReply(jid, renderedText, options);
       const sentAt = new Date().toISOString();
-      this.rememberLastOutboundObservation(jid, sentAt);
+      const deliveredJid = result.threadId?.startsWith('bb:')
+        ? result.threadId
+        : jid;
+      this.rememberLastOutboundObservation(deliveredJid, sentAt);
       this.lastErrorText = null;
       this.lastSendErrorDetail = null;
       this.monitorState.lastSendErrorDetail = null;
@@ -3578,10 +4071,10 @@ export class BlueBubblesChannel implements Channel {
           );
         this.persistMonitorState();
       }
-      storeChatMetadata(jid, sentAt, undefined, 'bluebubbles');
+      storeChatMetadata(deliveredJid, sentAt, undefined, 'bluebubbles');
       storeMessageDirect({
         id: result.platformMessageId || `bb:outbound:${chatGuid}:${sentAt}`,
-        chat_jid: jid,
+        chat_jid: deliveredJid,
         sender: isCompanionLabeled ? 'Andrea' : 'Me',
         sender_name: isCompanionLabeled ? 'Andrea' : 'You',
         content: renderedText,
@@ -3691,7 +4184,9 @@ export class BlueBubblesChannel implements Channel {
       storeChatMetadata(
         row.chatJid,
         row.message.timestamp,
-        row.chat.displayName || row.chat.chatGuid,
+        row.chat.displayName ||
+          (!row.chat.isGroup ? row.contact.displayName : null) ||
+          row.chat.chatGuid,
         'bluebubbles',
         row.chat.isGroup,
       );
