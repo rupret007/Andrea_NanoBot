@@ -93,6 +93,7 @@ const DEFAULT_BLUEBUBBLES_HOST = '127.0.0.1';
 const DEFAULT_BLUEBUBBLES_PORT = 4305;
 const DEFAULT_BLUEBUBBLES_CHAT_SCOPE: BlueBubblesChatScope = 'allowlist';
 const BLUEBUBBLES_OUTBOUND_SENDER_LABEL = 'Andrea:';
+const BLUEBUBBLES_CORRELATED_ECHO_WINDOW_MS = 5 * 60 * 1000;
 const BLUEBUBBLES_STARTUP_FETCH_TIMEOUT_MS = 5_000;
 const BLUEBUBBLES_SEND_TEXT_TIMEOUT_MS = 15_000;
 const BLUEBUBBLES_CREATE_CHAT_TIMEOUT_MS = 40_000;
@@ -2969,6 +2970,15 @@ export class BlueBubblesChannel implements Channel {
 
   private readonly inflightMessageIds = new Set<string>();
 
+  private readonly inflightOutboundEchoes = new Map<
+    string,
+    {
+      chatJids: string[];
+      content: string;
+      startedAtMs: number;
+    }
+  >();
+
   private readonly recentIngressFingerprints = new Map<
     string,
     BlueBubblesIngressFingerprintObservation[]
@@ -3225,6 +3235,42 @@ export class BlueBubblesChannel implements Channel {
           isBlueBubblesAndreaBotEcho(message.content))
       );
     });
+  }
+
+  private isRecentProviderCorrelatedOutboundEcho(input: {
+    chatJid: string;
+    message: NewMessage;
+  }): boolean {
+    if (!input.message.is_from_me) return false;
+    const observedAtMs = Date.parse(input.message.timestamp || '');
+    if (!Number.isFinite(observedAtMs)) return false;
+    const incomingContent = input.message.content.replace(/\s+/g, ' ').trim();
+    if (!incomingContent) return false;
+    const candidateJids = isBlueBubblesSelfThreadAliasJid(input.chatJid)
+      ? expandBlueBubblesLogicalSelfThreadJids(input.chatJid)
+      : [input.chatJid];
+    const exactStoredProviderMessage = candidateJids.some((candidateJid) =>
+      listRecentMessagesForChat(candidateJid, 200).some(
+        (candidate) =>
+          candidate.id === input.message.id &&
+          Boolean(candidate.is_from_me) &&
+          Boolean(candidate.provider_idempotency_key),
+      ),
+    );
+    if (exactStoredProviderMessage) return true;
+
+    // BlueBubbles can emit its webhook before the send POST returns, so the
+    // durable outbound row may not exist yet. During that narrow race, match
+    // only an actively in-flight, idempotency-keyed dispatch in the same
+    // logical thread. Once the POST settles, exact provider GUID correlation
+    // above replaces this temporary content match.
+    return [...this.inflightOutboundEchoes.values()].some(
+      (marker) =>
+        marker.chatJids.some((jid) => candidateJids.includes(jid)) &&
+        marker.content === incomingContent &&
+        Math.abs(observedAtMs - marker.startedAtMs) <=
+          BLUEBUBBLES_CORRELATED_ECHO_WINDOW_MS,
+    );
   }
 
   private getRepresentativeHealthChatJid(): string | null {
@@ -4203,12 +4249,11 @@ export class BlueBubblesChannel implements Channel {
     );
   }
 
-  private isReadyForTraffic(): boolean {
+  private isReadyForInboundTraffic(): boolean {
     return Boolean(
       this.connected &&
       this.config.enabled &&
-      isBlueBubblesRoutingConfigured(this.config) &&
-      this.config.sendEnabled,
+      isBlueBubblesRoutingConfigured(this.config),
     );
   }
 
@@ -4275,7 +4320,7 @@ export class BlueBubblesChannel implements Channel {
       writeResponse(res, 401, 'Unauthorized');
       return;
     }
-    if (!this.isReadyForTraffic()) {
+    if (!this.isReadyForInboundTraffic()) {
       writeResponse(res, 503, 'BlueBubbles channel is not ready');
       return;
     }
@@ -4368,6 +4413,15 @@ export class BlueBubblesChannel implements Channel {
       isBlueBubblesAndreaBotEcho(normalized.message.content)
     ) {
       writeResponse(res, 202, 'Ignored Andrea outbound echo');
+      return;
+    }
+    if (
+      this.isRecentProviderCorrelatedOutboundEcho({
+        chatJid: normalized.chatJid,
+        message: normalized.message,
+      })
+    ) {
+      writeResponse(res, 202, 'Ignored provider-correlated outbound echo');
       return;
     }
     if (
@@ -4945,6 +4999,19 @@ export class BlueBubblesChannel implements Channel {
       ? text.replace(/\r\n/g, '\n')
       : formatBlueBubblesOutboundText(text);
     const isCompanionLabeled = !options?.suppressSenderLabel;
+    const outboundEchoKey = options?.idempotencyKey?.trim() || null;
+    const outboundEchoMarker = outboundEchoKey
+      ? {
+          chatJids: isBlueBubblesSelfThreadAliasJid(jid)
+            ? expandBlueBubblesLogicalSelfThreadJids(jid)
+            : [jid],
+          content: renderedText.replace(/\s+/g, ' ').trim(),
+          startedAtMs: Date.now(),
+        }
+      : null;
+    if (outboundEchoKey && outboundEchoMarker) {
+      this.inflightOutboundEchoes.set(outboundEchoKey, outboundEchoMarker);
+    }
 
     try {
       const result = firstContactAddress
@@ -5000,6 +5067,13 @@ export class BlueBubblesChannel implements Channel {
       await this.maybeEscalateCrossSurfaceFallback();
       this.emitHealth({ state: 'degraded' });
       throw error;
+    } finally {
+      if (
+        outboundEchoKey &&
+        this.inflightOutboundEchoes.get(outboundEchoKey) === outboundEchoMarker
+      ) {
+        this.inflightOutboundEchoes.delete(outboundEchoKey);
+      }
     }
   }
 

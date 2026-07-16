@@ -11,6 +11,15 @@ export type MessageCompositionDirective =
   | 'shorter'
   | 'more_direct';
 
+export type AssistantMessageActionContextBinding =
+  | {
+      kind: 'recent_text_review_item';
+      itemNumber: number;
+    }
+  | {
+      kind: 'recent_recipient_thread';
+    };
+
 export interface AssistantMessageActionIntent {
   kind: 'message_send';
   mode: AssistantRequestedActionMode;
@@ -20,6 +29,7 @@ export interface AssistantMessageActionIntent {
   content: string | null;
   compositionDirectives: MessageCompositionDirective[];
   explicitlyAuthorizesExecution: boolean;
+  contextBinding?: AssistantMessageActionContextBinding;
 }
 
 function normalizeText(value: string | null | undefined): string {
@@ -86,13 +96,14 @@ function buildIntent(params: {
   target?: string;
   content?: string;
   prefixDirective?: MessageCompositionDirective;
+  contextBinding?: AssistantMessageActionContextBinding;
 }): AssistantMessageActionIntent {
   const extracted = extractCompositionDirectives(params.content || '');
   const compositionDirectives = [
     ...(params.prefixDirective ? [params.prefixDirective] : []),
     ...extracted.directives,
   ];
-  return {
+  const intent: AssistantMessageActionIntent = {
     kind: 'message_send',
     mode: params.mode,
     capabilityId: 'messages.send.bluebubbles',
@@ -102,6 +113,8 @@ function buildIntent(params: {
     compositionDirectives: [...new Set(compositionDirectives)],
     explicitlyAuthorizesExecution: params.mode === 'execute',
   };
+  if (params.contextBinding) intent.contextBinding = params.contextBinding;
+  return intent;
 }
 
 function matchMessageRequest(
@@ -115,6 +128,21 @@ function matchMessageRequest(
   return null;
 }
 
+function stripConversationalPreamble(value: string): string {
+  return value
+    .replace(/^(?:hi|hey|hello)(?:\s+there)?[,!.]?\s+/i, '')
+    .replace(/^(?:please\s+)?(?:can|could|would|will)\s+you\b[\s,:-]*/i, '')
+    .replace(/^please\b[\s,:-]*/i, '')
+    .trim();
+}
+
+function isBlueBubblesCapabilityQuestion(value: string): boolean {
+  return [
+    /^(?:can|does)\s+(?:blue\s*bubbles|messages)\s+send\s+(?:a\s+)?(?:texts?|messages?|text\s+messages?)(?:\s+(?:for\s+me|on\s+my\s+behalf))?\s*[?]$/i,
+    /^(?:(?:you\s+)?(?:can(?:not|['’]t)?|could(?:not|['’]t)?|will|would)|(?:can(?:not|['’]t)?|could(?:not|['’]t)?|will|would)\s+you)\s+send\s+(?:a\s+)?(?:texts?|messages?|text\s+messages?)\s+(?:on|through|using|via)\s+(?:blue\s*bubbles|messages)(?:\s+(?:for\s+me|on\s+my\s+behalf))?\s*[?]$/i,
+  ].some((pattern) => pattern.test(value));
+}
+
 /**
  * Normalizes user wording into action semantics before route selection.
  * In particular, a tone/composition request changes the payload, not whether
@@ -125,9 +153,39 @@ export function parseAssistantMessageActionIntent(
 ): AssistantMessageActionIntent | null {
   const normalized = normalizeText(rawText);
   if (!normalized) return null;
-  const request = normalized
-    .replace(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?/i, '')
-    .trim();
+  const request = stripConversationalPreamble(normalized);
+
+  const contextualReplyMatch = request.match(
+    /^(?:yes[,.!]?\s+)?reply\s+to\s+(?:item\s+)?#?\s*(\d+)(?:\s*[-,:]\s*|\s+)(.+?)\s+(?:saying|that says|to say|with(?:\s+the\s+text)?)\s*:?\s*(.+)$/i,
+  );
+  if (contextualReplyMatch) {
+    const itemNumber = Number.parseInt(contextualReplyMatch[1] || '', 10);
+    if (Number.isSafeInteger(itemNumber) && itemNumber > 0) {
+      return buildIntent({
+        mode: 'execute',
+        target: contextualReplyMatch[2],
+        content: contextualReplyMatch[3],
+        contextBinding: {
+          kind: 'recent_text_review_item',
+          itemNumber,
+        },
+      });
+    }
+  }
+
+  const compositeReplyMatch = matchMessageRequest(request, [
+    /^use\s+(?:blue\s*bubbles|messages)\s+to\s+send\s+(?:a\s+)?(?:text(?:\s+message)?|message)\s+back\s+to\s+(.+?)(?:\s+please)?[.!?]\s+(?:(?:check|read|look\s+at)\b[\s\S]*?\s+)?(?:and\s+)?reply(?:\s+from\s+(?:you|me))?(?:\s+(?:that|saying|to say|with(?:\s+the\s+text)?))?\s*:?\s*(.+)$/i,
+    /^use\s+(?:blue\s*bubbles|messages)\s+to\s+(?:check|read|look\s+at)\s+(?:my\s+)?(?:most\s+)?recent\s+(?:text|message)\s+from\s+(.+?)(?:\s+please)?\s+(?:and\s+)?reply(?:\s+from\s+(?:you|me))?(?:\s+(?:that|saying|to say|with(?:\s+the\s+text)?))?\s*:?\s*(.+)$/i,
+    /^use\s+(?:blue\s*bubbles|messages)\s+to\s+(?:check|read|look\s+at)\s+(.+?)(?:['’]s)\s+(?:most\s+)?recent\s+(?:text|message)(?:\s+please)?\s+(?:and\s+)?reply(?:\s+from\s+(?:you|me))?(?:\s+(?:that|saying|to say|with(?:\s+the\s+text)?))?\s*:?\s*(.+)$/i,
+  ]);
+  if (compositeReplyMatch) {
+    return buildIntent({
+      mode: 'execute',
+      target: compositeReplyMatch[1],
+      content: compositeReplyMatch[2],
+      contextBinding: { kind: 'recent_recipient_thread' },
+    });
+  }
 
   const executeMatch = matchMessageRequest(request, [
     /^(?:have|ask)\s+(?:blue\s*bubbles|messages)\s+(?:to\s+)?send\s+(.+?)\s+(?:a\s+)?(?:text(?:\s+message)?|message)\s+(?:saying|that says|to say|with(?:\s+the\s+text)?)\s*:?\s+(.+)$/i,
@@ -195,11 +253,7 @@ export function parseAssistantMessageActionIntent(
     });
   }
 
-  if (
-    /^(?:can|does)\s+(?:blue\s*bubbles|messages)\s+send\s+(?:texts?|messages?)(?:\s+for\s+me)?[?]$/i.test(
-      normalized,
-    )
-  ) {
+  if (isBlueBubblesCapabilityQuestion(normalized)) {
     return buildIntent({ mode: 'inform' });
   }
 
@@ -209,11 +263,34 @@ export function parseAssistantMessageActionIntent(
 export function composeAssistantMessageContent(
   intent: Pick<
     AssistantMessageActionIntent,
-    'content' | 'compositionDirectives'
+    'content' | 'compositionDirectives' | 'contextBinding'
   >,
 ): string | null {
   let content = normalizeText(intent.content);
   if (!content) return null;
+
+  // Natural cross-channel instructions are often phrased to Andrea in the
+  // third person ("tell Candace yes if she could pick them up"). The actual
+  // Messages recipient needs the direct version, not a robotic copy of the
+  // instruction. Keep this deliberately narrow so quoted/literal message text
+  // outside these common reply constructions remains untouched.
+  const indirectPickupReply = content.match(
+    /^yes[,.]?\s*please[,.]?\s+if\s+(?:she|he|they)\s+could\s+pick\s+(them|it)\s+up(?:[,.]?\s+i\s+(?:haven['’]?t|have\s+not)\s+had\s+a\s+chance)?[.!?]*$/i,
+  );
+  if (indirectPickupReply) {
+    const includesTimingContext =
+      /\bi\s+(?:haven['’]?t|have\s+not)\s+had\s+a\s+chance\b/i.test(content);
+    content = `Yes, please pick ${indirectPickupReply[1]!.toLowerCase()} up.${
+      includesTimingContext ? ' I haven’t had a chance.' : ''
+    }`;
+  } else if (
+    intent.contextBinding?.kind === 'recent_text_review_item' &&
+    /^yes[,.]?\s+i\s+need\s+(?:her|him|them)\s+to\s+pick(?:\s+(?:them|it))?\s+up\s+please[.!?]*$/i.test(
+      content,
+    )
+  ) {
+    content = 'Yes, please pick them up.';
+  }
 
   if (intent.compositionDirectives.includes('funny')) {
     if (

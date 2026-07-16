@@ -805,6 +805,264 @@ describe('BlueBubbles channel', () => {
     }
   });
 
+  it('keeps receiving signed Messages webhooks when outbound sending is disabled', async () => {
+    const apiStub = await startBlueBubblesApiStub(async (_req, _body, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ data: { guid: 'server-msg-read-only' } }));
+    });
+    const onMessage = vi.fn();
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl, sendEnabled: false }),
+      {
+        onMessage,
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      const response = await fetch(channel.getWebhookUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'new-message',
+          data: {
+            chatGuid: 'chat-1',
+            chat: {
+              guid: 'chat-1',
+              displayName: 'Candace',
+              participants: [{ address: '+15551234567' }],
+            },
+            message: {
+              guid: 'msg-read-only-inbound',
+              body: 'Can you pick this up?',
+              senderName: 'Candace',
+              handle: {
+                address: '+15551234567',
+                displayName: 'Candace',
+              },
+              dateCreated: '2026-07-16T16:00:00.000Z',
+            },
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(onMessage).toHaveBeenCalledWith(
+        'bb:chat-1',
+        expect.objectContaining({
+          id: 'bb:msg-read-only-inbound',
+          content: 'Can you pick this up?',
+        }),
+      );
+      await expect(
+        channel.sendMessage('bb:iMessage;-;+15551234567', 'No outbound'),
+      ).rejects.toMatchObject({
+        code: 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH',
+      });
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('does not turn a Telegram-to-BlueBubbles send echoed in the self-thread into a new assistant prompt', async () => {
+    const previousCanonical = process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;+15551234567';
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      if ((req.url || '').startsWith('/api/v1/message/text')) {
+        res.end(JSON.stringify({ data: { guid: 'provider-send-echo-1' } }));
+        return;
+      }
+      res.end(JSON.stringify({ data: [] }));
+    });
+    const onMessage = vi.fn();
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage,
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      await channel.sendMessage(
+        'bb:iMessage;-;+15551234567',
+        'Yes, please pick them up.',
+        {
+          suppressSenderLabel: true,
+          idempotencyKey: 'message-action:candace-1',
+        },
+      );
+      const response = await fetch(channel.getWebhookUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'new-message',
+          data: {
+            chatGuid: 'iMessage;-;+15551234567',
+            chat: {
+              guid: 'iMessage;-;+15551234567',
+              displayName: 'Jeff',
+              participants: [{ address: '+15551234567' }],
+            },
+            message: {
+              guid: 'provider-send-echo-1',
+              body: 'Yes, please pick them up.',
+              senderName: 'Jeff',
+              isFromMe: true,
+              handle: { address: '+15551234567', displayName: 'Jeff' },
+              dateCreated: new Date().toISOString(),
+            },
+          },
+        }),
+      });
+
+      expect(response.status).toBe(202);
+      expect(await response.text()).toBe(
+        'Ignored provider-correlated outbound echo',
+      );
+      expect(onMessage).not.toHaveBeenCalled();
+
+      const distinctOwnerMessage = await fetch(channel.getWebhookUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'new-message',
+          data: {
+            chatGuid: 'iMessage;-;+15551234567',
+            chat: {
+              guid: 'iMessage;-;+15551234567',
+              displayName: 'Jeff',
+              participants: [{ address: '+15551234567' }],
+            },
+            message: {
+              guid: 'owner-distinct-repeat-1',
+              body: 'Yes, please pick them up.',
+              senderName: 'Jeff',
+              isFromMe: true,
+              handle: { address: '+15551234567', displayName: 'Jeff' },
+              dateCreated: new Date().toISOString(),
+            },
+          },
+        }),
+      });
+      expect(distinctOwnerMessage.status).toBe(200);
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage).toHaveBeenCalledWith(
+        'bb:iMessage;-;+15551234567',
+        expect.objectContaining({
+          provider_message_id: 'bb:owner-distinct-repeat-1',
+          content: 'Yes, please pick them up.',
+        }),
+      );
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+      if (previousCanonical == null) {
+        delete process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+      } else {
+        process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID = previousCanonical;
+      }
+    }
+  });
+
+  it('suppresses an idempotency-keyed provider echo that races ahead of the send response', async () => {
+    const previousCanonical = process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;+15551234567';
+    let webhookUrl = '';
+    const racedWebhookStatuses: number[] = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      if ((req.url || '').startsWith('/api/v1/message/text')) {
+        const raced = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'new-message',
+            data: {
+              chatGuid: 'iMessage;-;+15551234567',
+              chat: {
+                guid: 'iMessage;-;+15551234567',
+                displayName: 'Jeff',
+                participants: [{ address: '+15551234567' }],
+              },
+              message: {
+                guid: 'provider-raced-echo-1',
+                body: 'Race-safe outbound text.',
+                senderName: 'Jeff',
+                isFromMe: true,
+                handle: {
+                  address: '+15551234567',
+                  displayName: 'Jeff',
+                },
+                dateCreated: new Date().toISOString(),
+              },
+            },
+          }),
+        });
+        racedWebhookStatuses.push(raced.status);
+        res.end(JSON.stringify({ data: { guid: 'provider-raced-echo-1' } }));
+        return;
+      }
+      res.end(JSON.stringify({ data: [] }));
+    });
+    const onMessage = vi.fn();
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage,
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      webhookUrl = channel.getWebhookUrl();
+      await channel.sendMessage(
+        'bb:iMessage;-;+15551234567',
+        'Race-safe outbound text.',
+        {
+          suppressSenderLabel: true,
+          idempotencyKey: 'message-action:race-safe-1',
+        },
+      );
+      expect(racedWebhookStatuses).toEqual([202]);
+      expect(onMessage).not.toHaveBeenCalled();
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+      if (previousCanonical == null) {
+        delete process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+      } else {
+        process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID = previousCanonical;
+      }
+    }
+  });
+
   it('carries signed-webhook authorship into the outbound boundary and ignores an isFromMe:false send command without provider work', async () => {
     const previousDisable = process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE;
     const previousCanonical = process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;

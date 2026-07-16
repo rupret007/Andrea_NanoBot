@@ -43,6 +43,8 @@ const REVIEW_OPENAI_TIMEOUT_MS = 12_000;
 const MAX_PROVIDER_ITEMS = 6;
 const MAX_REVIEW_ITEMS = 12;
 const MAX_REVIEW_SEED_AGE_MS = 36 * 60 * 60 * 1000;
+const TELEGRAM_REVIEW_DISPLAY_LIMIT = 4;
+const BLUEBUBBLES_REVIEW_DISPLAY_LIMIT = 3;
 
 export type RecentTextReviewSection =
   | 'needs_reply'
@@ -155,6 +157,8 @@ export interface RecentTextReviewResult {
   needsReply: RecentTextReviewItem[];
   worthWatching: RecentTextReviewItem[];
   noReplyNeeded: RecentTextReviewItem[];
+  reviewedConversationCount: number;
+  sectionTotals: Record<RecentTextReviewSection, number>;
   providerUsed: 'local' | 'openai';
   providerNote?: string | null;
 }
@@ -182,6 +186,13 @@ interface CandidateAnalysis {
   followupState: CommunicationFollowupState;
   suggestedAction: CommunicationSuggestedAction | null;
   urgency: CommunicationUrgency;
+}
+
+type AutomatedMessageKind = 'marketing_or_survey' | 'transactional_notice';
+
+interface AutomatedMessageSignal {
+  kind: AutomatedMessageKind;
+  expectsConfirmation: boolean;
 }
 
 function normalizeText(value: string | null | undefined): string {
@@ -381,6 +392,73 @@ function hasSensitiveSignal(text: string): boolean {
   return /\b(?:upset|angry|mad|hurt|sorry|apologize|awkward|fight|conflict|divorce|money|bill|health|family|relationship|worried|scared|emergency|urgent|missed)\b/i.test(
     text,
   );
+}
+
+function detectAutomatedMessageSignal(
+  text: string,
+): AutomatedMessageSignal | null {
+  const normalized = normalizeText(text);
+  if (!normalized) return null;
+  const hasLink = /\b(?:https?:\/\/|www\.|[a-z0-9-]+\.(?:com|net|org)\b)/i.test(
+    normalized,
+  );
+  const hasBrandPrefix = /^[A-Z][A-Za-z0-9&'. -]{1,48}:\s/.test(normalized);
+  const hasOptOut =
+    /\b(?:text|reply)\s+(?:STOP|END|UNSUBSCRIBE)\b|\bopt[ -]?out\b|\bunsubscribe\b/i.test(
+      normalized,
+    );
+  const hasStrongSurveyRequest =
+    /\b(?:survey|share (?:your )?feedback|leave (?:us )?(?:a )?review|rate (?:us|your)|how did we do|your recent experience)\b/i.test(
+      normalized,
+    );
+  const hasGenericTellUsRequest = /\btell us (?:about|how)\b/i.test(normalized);
+  const hasPromotion =
+    /\b(?:promo(?:tion)?|coupon|discount|limited[ -]?time|special offer|shop now|flash sale|clearance|deal|save \$?\d+|\d+% off|free [^.!?]{0,32}(?:purchase|order))\b/i.test(
+      normalized,
+    );
+  if (
+    hasOptOut ||
+    hasStrongSurveyRequest ||
+    (hasGenericTellUsRequest && (hasLink || hasBrandPrefix)) ||
+    (hasPromotion && (hasLink || hasBrandPrefix))
+  ) {
+    return {
+      kind: 'marketing_or_survey',
+      expectsConfirmation: false,
+    };
+  }
+
+  const expectsConfirmation =
+    /\b(?:reply|text)\s+(?:with\s+)?(?:YES|Y|OK|C|CONFIRM)\b|\bconfirm (?:your|this|the)\b/i.test(
+      normalized,
+    );
+  const isSystemNotice =
+    /\b(?:do not reply|no[ -]?reply|automated (?:message|notification)|verification code|one[ -]?time (?:code|passcode)|security code)\b/i.test(
+      normalized,
+    );
+  const hasTransactionalStatus =
+    /\b(?:order|delivery|package|appointment|reservation|service|technician|specialist|agent|driver)\b.{0,100}\b(?:confirm(?:ed)?|scheduled|ready|arriv(?:e|al|ing)|on (?:the|its) way|status|update|delayed|completed)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:confirm(?:ed)?|scheduled|ready|arriv(?:e|al|ing)|on (?:the|its) way|status|update|delayed|completed)\b.{0,100}\b(?:order|delivery|package|appointment|reservation|service|technician|specialist|agent|driver)\b/i.test(
+      normalized,
+    );
+  if (
+    isSystemNotice ||
+    hasTransactionalStatus ||
+    (expectsConfirmation &&
+      (hasBrandPrefix ||
+        hasLink ||
+        /\b(?:appointment|reservation|order|delivery|service)\b/i.test(
+          normalized,
+        )))
+  ) {
+    return {
+      kind: 'transactional_notice',
+      expectsConfirmation,
+    };
+  }
+  return null;
 }
 
 function substantiveMessage(text: string): boolean {
@@ -763,15 +841,15 @@ function buildSuggestedReplyOptions(input: {
     return [
       {
         label: 'careful',
-        text: `I saw this${topicTail}. Let me check the details before I answer the group.`,
+        text: `Thanks for flagging this${topicTail}. I saw the update.`,
       },
       {
         label: 'direct',
-        text: `I am checking${topicTail} and will send the group a clear answer once I confirm.`,
+        text: `I saw the group message${topicTail}.`,
       },
       {
         label: 'brief',
-        text: `Checking${topicTail} now. I will confirm shortly.`,
+        text: `Got it${topicTail}.`,
       },
     ];
   }
@@ -782,11 +860,11 @@ function buildSuggestedReplyOptions(input: {
     return [
       {
         label: 'careful',
-        text: `I saw this${topicTail}. Let me make sure I have the right context before I answer.`,
+        text: `Thanks for the message. I may be missing some context${topicTail}.`,
       },
       {
         label: 'direct',
-        text: `I am checking the context${topicTail} before I give you an answer.`,
+        text: `I saw this${topicTail}. I need a little more context.`,
       },
     ];
   }
@@ -794,15 +872,15 @@ function buildSuggestedReplyOptions(input: {
     return [
       {
         label: 'warm',
-        text: `I hear you. I do not want to answer too quickly, but I do want to understand this and respond thoughtfully.`,
+        text: 'I hear you. Thanks for telling me directly.',
       },
       {
         label: 'direct',
-        text: `I saw this and I am thinking it through before I answer.`,
+        text: "I hear what you're saying.",
       },
       {
         label: 'brief',
-        text: `I hear you. Let me think this through and answer carefully.`,
+        text: 'I saw your message. I hear you.',
       },
     ];
   }
@@ -811,15 +889,15 @@ function buildSuggestedReplyOptions(input: {
     return [
       {
         label: 'warm',
-        text: `I saw this${topicTail}, and I want to be thoughtful. I am checking the details before I answer.`,
+        text: `Thanks for the message${topicTail}. I saw it and appreciate the heads-up.`,
       },
       {
         label: 'direct',
-        text: `I am checking the details${topicTail} and will confirm shortly.`,
+        text: `I saw this${topicTail}. Thanks for flagging it.`,
       },
       {
         label: 'brief',
-        text: `I saw this${topicTail}. Checking the details now.`,
+        text: `Got it${topicTail}.`,
       },
     ];
   }
@@ -827,11 +905,11 @@ function buildSuggestedReplyOptions(input: {
     return [
       {
         label: 'direct',
-        text: `I saw this${topicTail}. I am checking before I answer.`,
+        text: `I saw your message${topicTail}.`,
       },
       {
         label: 'brief',
-        text: `Checking${topicTail} now. I will confirm shortly.`,
+        text: `Got it${topicTail}.`,
       },
     ];
   }
@@ -839,15 +917,15 @@ function buildSuggestedReplyOptions(input: {
     return [
       {
         label: 'warm',
-        text: `I saw this${topicTail}. Let me check what I can commit to and I will confirm shortly.`,
+        text: `Thanks for asking${topicTail}. I saw the timing in your message.`,
       },
       {
         label: 'direct',
-        text: `I am checking${topicTail} now and will confirm shortly.`,
+        text: `I saw your message${topicTail} and the timing.`,
       },
       {
         label: 'brief',
-        text: `Checking${topicTail} now. I will confirm soon.`,
+        text: `Got your message${topicTail}.`,
       },
     ];
   }
@@ -855,26 +933,26 @@ function buildSuggestedReplyOptions(input: {
     return [
       {
         label: 'warm',
-        text: `I saw this${topicTail}. Let me check and I will get back to you shortly.`,
+        text: `Thanks for asking${topicTail}. I saw your question.`,
       },
       {
         label: 'direct',
-        text: `I am checking${topicTail} and will confirm shortly.`,
+        text: `I saw your question${topicTail}.`,
       },
       {
         label: 'brief',
-        text: `Checking${topicTail} now. I will get back to you shortly.`,
+        text: `Got your question${topicTail}.`,
       },
     ];
   }
   return [
     {
       label: 'warm',
-      text: `Thanks for the heads-up${topicTail}. I saw this and will take a look.`,
+      text: `Thanks for the heads-up${topicTail}. I saw it.`,
     },
     {
       label: 'brief',
-      text: `Got it${topicTail}. I will take a look.`,
+      text: `Got it${topicTail}.`,
     },
   ];
 }
@@ -903,6 +981,7 @@ function classifyThread(input: {
   const sensitive = hasSensitiveSignal(
     [latestInboundText, latestText].join(' '),
   );
+  const automatedSignal = detectAutomatedMessageSignal(latestInboundText);
   const inboundAfterOutbound =
     Boolean(latestInbound) &&
     (!latestOutbound || latestInbound!.timestamp > latestOutbound.timestamp);
@@ -922,6 +1001,12 @@ function classifyThread(input: {
     learned.confidence === 'low' ? 'low_context_confidence' : null,
     learned.ambiguousIdentity ? 'ambiguous_identity' : null,
     selfAnsweredLatest ? 'self_authored_latest' : null,
+    automatedSignal?.kind === 'marketing_or_survey'
+      ? 'automated_marketing_or_survey'
+      : null,
+    automatedSignal?.kind === 'transactional_notice'
+      ? 'automated_transactional_notice'
+      : null,
   ].filter(Boolean) as string[];
   let score = 0;
   const reasons: string[] = [];
@@ -986,8 +1071,34 @@ function classifyThread(input: {
     score -= 8;
   }
 
-  const section: RecentTextReviewSection =
-    score >= 52
+  if (automatedSignal?.kind === 'marketing_or_survey') {
+    score = Math.min(score, 8);
+    reasons.splice(
+      0,
+      reasons.length,
+      'automated survey or promotion',
+      'no personal reply appears necessary',
+    );
+  } else if (automatedSignal?.kind === 'transactional_notice') {
+    score = Math.min(score, automatedSignal.expectsConfirmation ? 34 : 12);
+    reasons.splice(
+      0,
+      reasons.length,
+      automatedSignal.expectsConfirmation
+        ? 'automated confirmation request'
+        : 'automated service or transactional notice',
+      automatedSignal.expectsConfirmation
+        ? 'may require a short confirmation through the stated channel'
+        : 'appears informational rather than conversational',
+    );
+  }
+
+  const section: RecentTextReviewSection = automatedSignal
+    ? automatedSignal.kind === 'transactional_notice' &&
+      automatedSignal.expectsConfirmation
+      ? 'worth_watching'
+      : 'no_reply_needed'
+    : score >= 52
       ? 'needs_reply'
       : score >= 26
         ? 'worth_watching'
@@ -1000,8 +1111,13 @@ function classifyThread(input: {
     section,
     reasons,
   });
-  const recommendedAction =
-    section === 'needs_reply'
+  const recommendedAction = automatedSignal
+    ? automatedSignal.kind === 'marketing_or_survey'
+      ? 'No reply needed; ignore unless you personally want to use the offer or survey.'
+      : automatedSignal.expectsConfirmation
+        ? 'Verify the appointment or order details, then confirm only if they are correct.'
+        : 'Treat as informational; no conversational reply is needed.'
+    : section === 'needs_reply'
       ? input.chat.is_group
         ? 'Say `draft #` only if you want a group-chat draft to review first.'
         : 'Review the suggested reply or say `draft #` to make an approval-gated draft.'
@@ -1191,15 +1307,38 @@ function safeJsonParse<T>(value: string, fallback: T): T {
   }
 }
 
+function containsUnsupportedFuturePromise(text: string): boolean {
+  const normalized = normalizeText(text);
+  return (
+    /\b(?:i am|i'm)\s+(?:checking|confirming|looking(?: into)?|working on|following up)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:will|i'll|we'll|i will|we will)\s+(?:check|confirm|get back|send|let you know|follow up|look into|take a look|review|verify|circle back)\b/i.test(
+      normalized,
+    ) ||
+    /\blet me\s+(?:check|confirm|look into|take a look|review|verify|follow up)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:checking|looking into|working on)\b[^.!?]{0,80}\b(?:now|soon|shortly)\b/i.test(
+      normalized,
+    )
+  );
+}
+
 function normalizeSuggestedReplies(
   value: unknown,
+  options: { rejectUnsupportedPromises?: boolean } = {},
 ): RecentTextReviewSuggestedReply[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item, index) => {
       if (typeof item === 'string') {
         const text = sanitizeSnippet(item, 220);
-        return text
+        return text &&
+          !(
+            options.rejectUnsupportedPromises &&
+            containsUnsupportedFuturePromise(text)
+          )
           ? {
               label: index === 0 ? 'suggested' : `option ${index + 1}`,
               text,
@@ -1209,7 +1348,13 @@ function normalizeSuggestedReplies(
       if (!item || typeof item !== 'object') return null;
       const record = item as Record<string, unknown>;
       const text = sanitizeSnippet(String(record.text || ''), 220);
-      if (!text) return null;
+      if (
+        !text ||
+        (options.rejectUnsupportedPromises &&
+          containsUnsupportedFuturePromise(text))
+      ) {
+        return null;
+      }
       return {
         label:
           sanitizeSnippet(String(record.label || ''), 32) ||
@@ -1219,6 +1364,83 @@ function normalizeSuggestedReplies(
     })
     .filter((item): item is RecentTextReviewSuggestedReply => Boolean(item))
     .slice(0, 3);
+}
+
+function automatedMessageKindForItem(
+  item: RecentTextReviewItem,
+): AutomatedMessageKind | null {
+  if (item.riskFlags.includes('automated_marketing_or_survey')) {
+    return 'marketing_or_survey';
+  }
+  if (item.riskFlags.includes('automated_transactional_notice')) {
+    return 'transactional_notice';
+  }
+  return null;
+}
+
+const REVIEW_PROVIDER_GROUNDING_STOPWORDS = new Set([
+  'about',
+  'after',
+  'again',
+  'also',
+  'before',
+  'from',
+  'have',
+  'message',
+  'reply',
+  'should',
+  'that',
+  'their',
+  'them',
+  'there',
+  'these',
+  'they',
+  'this',
+  'with',
+  'would',
+  'your',
+]);
+
+function reviewProviderGroundingTokens(value: string): string[] {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/['’]s\b/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter(
+      (token) =>
+        token.length >= 4 &&
+        !REVIEW_PROVIDER_GROUNDING_STOPWORDS.has(token) &&
+        !/^\d+$/.test(token),
+    );
+}
+
+function isRecentTextProviderPatchGrounded(
+  item: RecentTextReviewItem,
+  value: string,
+): boolean {
+  const sanitized = sanitizeSnippet(value, 300);
+  if (!sanitized || /\b(?:https?:\/\/|www\.)/i.test(sanitized)) return false;
+  const evidenceText = [
+    item.chatLabel,
+    item.summaryText,
+    item.whyText,
+    ...item.evidenceSnippets,
+  ].join(' ');
+  const evidenceNumbers = new Set(evidenceText.match(/\b\d+\b/g) || []);
+  const unsupportedNumber = (sanitized.match(/\b\d+\b/g) || []).some(
+    (number) => !evidenceNumbers.has(number),
+  );
+  if (unsupportedNumber) return false;
+  const evidenceTokens = new Set(reviewProviderGroundingTokens(evidenceText));
+  const claimTokens = reviewProviderGroundingTokens(sanitized);
+  if (claimTokens.length === 0 || evidenceTokens.size === 0) return false;
+  const anchors = new Set(
+    claimTokens.filter((token) => evidenceTokens.has(token)),
+  );
+  const minimumAnchors = claimTokens.length <= 5 ? 1 : 2;
+  return (
+    anchors.size >= minimumAnchors && anchors.size / claimTokens.length >= 0.25
+  );
 }
 
 export function buildRecentTextReviewProviderPrompt(input: {
@@ -1359,46 +1581,35 @@ async function enhanceWithProvider(input: {
     for (const patch of parsed.items) {
       if (!patch.itemId || !byId.has(patch.itemId)) continue;
       const existing = byId.get(patch.itemId)!;
-      if (
-        patch.section &&
-        ['needs_reply', 'worth_watching', 'no_reply_needed'].includes(
-          patch.section,
-        )
-      ) {
-        existing.section = patch.section;
+      if (automatedMessageKindForItem(existing)) {
+        existing.suggestedReply = null;
+        existing.suggestedReplies = [];
+        continue;
       }
-      if (patch.summaryText) {
+      if (
+        patch.summaryText &&
+        isRecentTextProviderPatchGrounded(existing, patch.summaryText)
+      ) {
         existing.summaryText = sanitizeSnippet(patch.summaryText, 260);
       }
-      if (patch.whyText) {
+      if (
+        patch.whyText &&
+        isRecentTextProviderPatchGrounded(existing, patch.whyText)
+      ) {
         existing.whyText = sanitizeSnippet(patch.whyText, 220);
       }
-      if (patch.recommendedAction) {
+      if (
+        patch.recommendedAction &&
+        isRecentTextProviderPatchGrounded(existing, patch.recommendedAction)
+      ) {
         existing.recommendedAction = sanitizeSnippet(
           patch.recommendedAction,
           200,
         );
       }
-      if (patch.suggestedReply) {
-        existing.suggestedReply = sanitizeSnippet(patch.suggestedReply, 220);
-      }
-      const suggestedReplies = normalizeSuggestedReplies(
-        patch.suggestedReplies,
-      );
-      if (suggestedReplies.length > 0) {
-        existing.suggestedReplies = suggestedReplies;
-        existing.suggestedReply = suggestedReplies[0]?.text || null;
-      } else if (
-        patch.suggestedReply &&
-        (!existing.suggestedReplies || existing.suggestedReplies.length === 0)
-      ) {
-        existing.suggestedReplies = [
-          {
-            label: 'suggested',
-            text: sanitizeSnippet(patch.suggestedReply, 220),
-          },
-        ];
-      }
+      // Keep reply wording on the deterministic local lane. A cloud model can
+      // enrich grounded recap prose, but it cannot introduce a new commitment
+      // or action into a reply the user may later select by number.
     }
     recordOpenAiUsageState({
       at: new Date().toISOString(),
@@ -1416,6 +1627,8 @@ async function enhanceWithProvider(input: {
       providerUsed: 'openai',
       providerNote: null,
       reviewedAt: input.result.reviewedAt,
+      reviewedConversationCount: input.result.reviewedConversationCount,
+      sectionTotals: input.result.sectionTotals,
     });
   }
   return input.result;
@@ -1448,6 +1661,8 @@ function buildResultFromItems(input: {
   providerUsed: RecentTextReviewResult['providerUsed'];
   providerNote?: string | null;
   reviewedAt?: string;
+  reviewedConversationCount?: number;
+  sectionTotals?: Record<RecentTextReviewSection, number>;
 }): RecentTextReviewResult {
   const needsReply = input.items.filter(
     (item) => item.section === 'needs_reply',
@@ -1458,10 +1673,17 @@ function buildResultFromItems(input: {
   const noReplyNeeded = input.items.filter(
     (item) => item.section === 'no_reply_needed',
   );
+  const sectionTotals = input.sectionTotals || {
+    needs_reply: needsReply.length,
+    worth_watching: worthWatching.length,
+    no_reply_needed: noReplyNeeded.length,
+  };
+  const reviewedConversationCount =
+    input.reviewedConversationCount ?? input.items.length;
   const summaryText =
-    input.items.length === 0
+    reviewedConversationCount === 0
       ? `No synced Messages activity needing review over ${input.window.label}.`
-      : `${needsReply.length} need${needsReply.length === 1 ? 's' : ''} reply, ${worthWatching.length} worth watching, ${noReplyNeeded.length} no reply needed over ${input.window.label}.`;
+      : `${sectionTotals.needs_reply} need${sectionTotals.needs_reply === 1 ? 's' : ''} reply, ${sectionTotals.worth_watching} worth watching, ${sectionTotals.no_reply_needed} no reply needed over ${input.window.label}.`;
   return {
     ok: true,
     reviewedAt: input.reviewedAt || new Date().toISOString(),
@@ -1471,6 +1693,8 @@ function buildResultFromItems(input: {
     needsReply,
     worthWatching,
     noReplyNeeded,
+    reviewedConversationCount,
+    sectionTotals,
     providerUsed: input.providerUsed,
     providerNote: input.providerNote || null,
   };
@@ -1535,17 +1759,25 @@ export async function reviewRecentTexts(
         })
       : analysis.item,
   );
-  const items = sortItems(persistedItems)
-    .filter(
-      (item, index) =>
-        item.section !== 'no_reply_needed' || index < MAX_REVIEW_ITEMS,
-    )
-    .slice(0, MAX_REVIEW_ITEMS);
+  const sortedItems = sortItems(persistedItems);
+  const sectionTotals: Record<RecentTextReviewSection, number> = {
+    needs_reply: sortedItems.filter((item) => item.section === 'needs_reply')
+      .length,
+    worth_watching: sortedItems.filter(
+      (item) => item.section === 'worth_watching',
+    ).length,
+    no_reply_needed: sortedItems.filter(
+      (item) => item.section === 'no_reply_needed',
+    ).length,
+  };
+  const items = sortedItems.slice(0, MAX_REVIEW_ITEMS);
   const local = buildResultFromItems({
     window,
     items,
     providerUsed: 'local',
     reviewedAt: nowIso,
+    reviewedConversationCount: sortedItems.length,
+    sectionTotals,
   });
   return enhanceWithProvider({
     result: local,
@@ -1563,12 +1795,17 @@ function formatItemLine(
       : item.suggestedReply
         ? [{ label: 'suggested', text: item.suggestedReply }]
         : [];
+  const safeReplyOptions = replyOptions.filter(
+    (option) => !containsUnsupportedFuturePromise(option.text),
+  );
   const reply =
-    replyOptions.length > 0
+    safeReplyOptions.length > 0
       ? [
-          '\n   Suggested replies:',
-          ...replyOptions
-            .slice(0, channel === 'bluebubbles' ? 3 : 2)
+          channel === 'telegram'
+            ? '\n   Draft option:'
+            : '\n   Suggested replies:',
+          ...safeReplyOptions
+            .slice(0, 1)
             .map(
               (option) =>
                 `   - ${sanitizeSnippet(option.label, 32)}: "${sanitizeSnippet(option.text, 220)}"`,
@@ -1580,8 +1817,17 @@ function formatItemLine(
     : item.riskFlags.includes('low_context_confidence')
       ? '\n   Caution: low context confidence - confirm before drafting.'
       : '';
-  const summaryLimit = channel === 'bluebubbles' ? 360 : 260;
-  return `${item.rank}. ${item.chatLabel}: ${sanitizeSnippet(item.summaryText, summaryLimit)}\n   Why: ${sanitizeSnippet(item.whyText, 180)}\n   Next: ${sanitizeSnippet(item.recommendedAction, 180)}${caution}${reply}`;
+  const summaryLimit = channel === 'bluebubbles' ? 160 : 180;
+  const summary = sanitizeSnippet(item.summaryText, summaryLimit);
+  const duplicatedPrefix = `${item.chatLabel}:`;
+  const compactSummary = summary
+    .toLowerCase()
+    .startsWith(duplicatedPrefix.toLowerCase())
+    ? summary.slice(duplicatedPrefix.length).trimStart()
+    : summary;
+  const whyLimit = channel === 'bluebubbles' ? 100 : 120;
+  const actionLimit = channel === 'bluebubbles' ? 120 : 140;
+  return `${item.rank}. ${item.chatLabel}: ${compactSummary}\n   Why: ${sanitizeSnippet(item.whyText, whyLimit)}\n   Next: ${sanitizeSnippet(item.recommendedAction, actionLimit)}${caution}${reply}`;
 }
 
 export function formatRecentTextReviewReply(input: {
@@ -1592,28 +1838,60 @@ export function formatRecentTextReviewReply(input: {
   if (result.items.length === 0) {
     return `I checked synced Messages for ${result.window.label} and didn't find any conversations that need attention.\n\nSource: Messages sync checked at ${result.reviewedAt}.`;
   }
-  const topLimit = input.channel === 'bluebubbles' ? 3 : 6;
-  const needs = result.needsReply
-    .slice(0, topLimit)
-    .map((item) => formatItemLine(item, input.channel));
-  const watching = result.worthWatching
-    .slice(0, Math.max(0, topLimit - needs.length))
-    .map((item) => formatItemLine(item, input.channel));
-  const noReply =
-    input.channel === 'telegram'
-      ? result.noReplyNeeded
-          .slice(0, 3)
-          .map((item) => formatItemLine(item, input.channel))
-      : [];
+  const topLimit =
+    input.channel === 'bluebubbles'
+      ? BLUEBUBBLES_REVIEW_DISPLAY_LIMIT
+      : TELEGRAM_REVIEW_DISPLAY_LIMIT;
+  const displayedItems =
+    input.channel === 'bluebubbles'
+      ? [...result.needsReply, ...result.worthWatching].slice(0, topLimit)
+      : result.items.slice(0, topLimit);
+  const displayedNeeds = displayedItems.filter(
+    (item) => item.section === 'needs_reply',
+  );
+  const displayedWatching = displayedItems.filter(
+    (item) => item.section === 'worth_watching',
+  );
+  const displayedNoReply = displayedItems.filter(
+    (item) => item.section === 'no_reply_needed',
+  );
+  const needs = displayedNeeds.map((item) =>
+    formatItemLine(item, input.channel),
+  );
+  const watching = displayedWatching.map((item) =>
+    formatItemLine(item, input.channel),
+  );
+  const noReply = displayedNoReply.map((item) =>
+    formatItemLine(item, input.channel),
+  );
+  const hiddenCounts = [
+    {
+      count: result.sectionTotals.needs_reply - displayedNeeds.length,
+      label: 'needing reply',
+    },
+    {
+      count: result.sectionTotals.worth_watching - displayedWatching.length,
+      label: 'worth watching',
+    },
+    {
+      count: result.sectionTotals.no_reply_needed - displayedNoReply.length,
+      label: 'no reply needed',
+    },
+  ].filter((entry) => entry.count > 0);
+  const overview = `${result.sectionTotals.needs_reply} need${result.sectionTotals.needs_reply === 1 ? 's' : ''} reply, ${result.sectionTotals.worth_watching} worth watching, ${result.sectionTotals.no_reply_needed} no reply needed over ${result.window.label}. Showing ${displayedItems.length} highest-priority of ${result.reviewedConversationCount}.`;
+  const firstDisplayedNeed = displayedNeeds[0];
   const sections = [
-    result.summaryText,
-    `Source: Messages sync checked for ${result.window.label}; ${result.items.length} ${result.items.length === 1 ? 'conversation' : 'conversations'} reviewed.`,
+    overview,
+    `Source: Messages sync checked for ${result.window.label}; ${result.reviewedConversationCount} ${result.reviewedConversationCount === 1 ? 'conversation' : 'conversations'} reviewed.`,
     result.providerNote,
+    hiddenCounts.length > 0
+      ? `Not expanded below: ${hiddenCounts.map((entry) => `${entry.count} ${entry.label}`).join(', ')}.`
+      : null,
     needs.length > 0 ? ['Needs reply', ...needs].join('\n') : null,
     watching.length > 0 ? ['Worth watching', ...watching].join('\n') : null,
     noReply.length > 0 ? ['No reply needed', ...noReply].join('\n') : null,
-    result.needsReply.length > 0
-      ? 'Say `draft #1`, `make #2 warmer`, or `remind me about that` to continue.'
+    firstDisplayedNeed
+      ? `Say \`draft #${firstDisplayedNeed.rank}\`, \`make #${firstDisplayedNeed.rank} warmer\`, or \`remind me about that\` to continue.`
       : null,
   ].filter(Boolean);
   return sections.join('\n\n');

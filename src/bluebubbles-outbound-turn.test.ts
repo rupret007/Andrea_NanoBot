@@ -103,6 +103,97 @@ describe('BlueBubbles production outbound turn boundary', () => {
     vi.restoreAllMocks();
   });
 
+  it('answers the real Telegram capability question from current BlueBubbles truth without dispatching', async () => {
+    const refreshControlState = vi.fn(async () => controlSnapshot());
+    const resolveStoredRecipient = vi.fn(() => ({
+      state: 'missing' as const,
+    }));
+    const resolveLiveRecipient = vi.fn(async () => ({
+      state: 'missing' as const,
+    }));
+    const sendToTarget = vi.fn();
+
+    const result = await executeBlueBubblesOutboundTurn({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: 'You can’t send message on blue bubbles on my behalf?',
+      inboundMessageId: 'tg-capability-truth',
+      blueBubblesChannel: {
+        getControlSnapshot: () =>
+          controlSnapshot({ transportState: 'not_checked' }),
+        refreshControlState,
+      },
+      resolveConfig: testConfig,
+      resolveStoredRecipient,
+      resolveLiveRecipient,
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        sendToTarget,
+      },
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      state: 'capability_status',
+    });
+    expect(result).toHaveProperty(
+      'replyText',
+      expect.stringContaining('Yes. BlueBubbles is connected'),
+    );
+    expect(refreshControlState).toHaveBeenCalledWith('transport');
+    expect(resolveStoredRecipient).not.toHaveBeenCalled();
+    expect(resolveLiveRecipient).not.toHaveBeenCalled();
+    expect(sendToTarget).not.toHaveBeenCalled();
+  });
+
+  it('reports a current BlueBubbles outage instead of inventing a permanent platform limitation', async () => {
+    const refreshControlState = vi.fn(async () =>
+      controlSnapshot({
+        connected: false,
+        transportState: 'unreachable',
+        transportDetail: 'current probe failed',
+      }),
+    );
+    const sendToTarget = vi.fn();
+
+    const result = await executeBlueBubblesOutboundTurn({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: 'Can BlueBubbles send texts for me?',
+      inboundMessageId: 'tg-capability-outage',
+      blueBubblesChannel: {
+        getControlSnapshot: () => controlSnapshot(),
+        refreshControlState,
+      },
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        sendToTarget,
+      },
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      state: 'capability_status',
+    });
+    expect(result).toHaveProperty(
+      'replyText',
+      expect.stringContaining('not available right now'),
+    );
+    expect(result).toHaveProperty(
+      'replyText',
+      expect.stringContaining('provider is unhealthy'),
+    );
+    expect(sendToTarget).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, false] as const)(
     'rejects a configured BlueBubbles self-thread when ownerAuthored is %s before any provider work',
     async (ownerAuthored) => {
@@ -150,6 +241,151 @@ describe('BlueBubbles production outbound turn boundary', () => {
       expect(sendToTarget).not.toHaveBeenCalled();
     },
   );
+
+  it('does not read numbered-review context for a non-owner BlueBubbles turn', async () => {
+    const resolveContextBoundRecipient = vi.fn();
+    const refreshControlState = vi.fn();
+    const sendToTarget = vi.fn();
+
+    const result = await executeBlueBubblesOutboundTurn({
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      chatJid: 'bb:iMessage;-;owner@example.invalid',
+      group: companionGroup,
+      ownerAuthored: false,
+      rawText:
+        'Yes reply to 1 Candace saying yes I need her to pick up please.',
+      inboundMessageId: 'bb-untrusted-numbered-review',
+      blueBubblesChannel: {
+        getControlSnapshot: () => controlSnapshot(),
+        refreshControlState,
+      },
+      resolveContextBoundRecipient,
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:iMessage;-;owner@example.invalid',
+        sendToTarget,
+      },
+    });
+
+    expect(result).toMatchObject({ handled: true, state: 'restricted' });
+    expect(resolveContextBoundRecipient).not.toHaveBeenCalled();
+    expect(refreshControlState).not.toHaveBeenCalled();
+    expect(sendToTarget).not.toHaveBeenCalled();
+  });
+
+  it('replays a verified numbered-review send before rebinding changed context', async () => {
+    const resolveContextBoundRecipient = vi.fn(async () => ({
+      state: 'resolved' as const,
+      recipientResolution: {
+        state: 'resolved' as const,
+        target: {
+          chatJid: 'bb:iMessage;-;+18176580310',
+          displayName: 'Candace Story',
+          isGroup: false,
+        },
+      },
+    }));
+    const refreshControlState = vi.fn(async () => controlSnapshot());
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:candace-numbered-receipt',
+    }));
+    const turnRequest = {
+      groupFolder: 'main',
+      channel: 'telegram' as const,
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText:
+        'Yes reply to 1 Candace saying yes I need her to pick up please.',
+      inboundMessageId: 'tg-numbered-review-send',
+      blueBubblesChannel: {
+        getControlSnapshot: () => controlSnapshot(),
+        refreshControlState,
+      },
+      resolveContextBoundRecipient,
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'telegram' as const,
+        chatJid: 'tg:main',
+        sendToTarget,
+      },
+    };
+
+    const result = await executeBlueBubblesOutboundTurn(turnRequest);
+    expect(result).toMatchObject({ handled: true, state: 'sent' });
+    expect(sendToTarget).toHaveBeenCalledWith(
+      'bluebubbles',
+      'bb:iMessage;-;+18176580310',
+      'Yes, please pick them up.',
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    );
+
+    resolveContextBoundRecipient.mockRejectedValueOnce(
+      new Error('review seed is now stale'),
+    );
+    const replay = await executeBlueBubblesOutboundTurn(turnRequest);
+    expect(replay).toMatchObject({
+      handled: true,
+      state: 'sent',
+      action: { platformMessageId: 'bb:candace-numbered-receipt' },
+    });
+    expect(resolveContextBoundRecipient).toHaveBeenCalledTimes(1);
+    expect(refreshControlState).toHaveBeenCalledTimes(1);
+    expect(sendToTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispatches the real recent-Candace composite only through a context-bound recipient', async () => {
+    const resolveContextBoundRecipient = vi.fn(async ({ intent }) => {
+      expect(intent.contextBinding).toEqual({
+        kind: 'recent_recipient_thread',
+      });
+      return {
+        state: 'resolved' as const,
+        recipientResolution: {
+          state: 'resolved' as const,
+          target: {
+            chatJid: 'bb:iMessage;-;+18176580310',
+            displayName: 'Candace Story',
+            isGroup: false,
+          },
+        },
+      };
+    });
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:candace-composite-receipt',
+    }));
+
+    const result = await executeBlueBubblesOutboundTurn({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText:
+        "Hi can you use blue bubbles to send a message back to Candace please. Check my recent text from her and reply from you that yes please if she could pick them up I haven't had a chance.",
+      inboundMessageId: 'tg-candace-composite',
+      blueBubblesChannel: {
+        getControlSnapshot: () => controlSnapshot(),
+        refreshControlState: async () => controlSnapshot(),
+      },
+      resolveContextBoundRecipient,
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        sendToTarget,
+      },
+    });
+
+    expect(result).toMatchObject({ handled: true, state: 'sent' });
+    expect(resolveContextBoundRecipient).toHaveBeenCalledTimes(1);
+    expect(sendToTarget).toHaveBeenCalledWith(
+      'bluebubbles',
+      'bb:iMessage;-;+18176580310',
+      'Yes, please pick them up. I haven’t had a chance.',
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    );
+  });
 
   it('allows an owner-authored configured BlueBubbles self-thread turn through offline provider spies', async () => {
     const refreshControlState = vi.fn(async () => controlSnapshot());

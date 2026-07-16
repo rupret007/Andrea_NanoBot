@@ -347,7 +347,7 @@ describe('assistant capabilities', () => {
     expect(result.replyText).toBe('Meal plan read.');
   });
 
-  it('summarizes a synced BlueBubbles thread by name without creating side effects', async () => {
+  it('rejects an ungrounded synced-thread digest without creating side effects', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
     vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');
     globalThis.fetch = vi.fn(async (_input, init) => {
@@ -430,10 +430,12 @@ describe('assistant capabilities', () => {
     expect(result.handled).toBe(true);
     expect(result.capabilityId).toBe('communication.summarize_thread');
     expect(result.replyText).toContain('Pops of Punk');
-    expect(result.replyText).toContain('adaptation choices');
-    expect(result.replyText).toContain('The thread compared how faithfully');
-    expect(result.replyText).toContain('Suggested replies');
-    expect(result.replyText).toContain('same world, new story');
+    expect(result.replyText).toContain('lock the set list');
+    expect(result.replyText).toContain('load-in for Friday');
+    expect(result.replyText).not.toContain('adaptation choices');
+    expect(result.replyText).not.toContain('Fallout');
+    expect(result.replyText).not.toContain('Suggested replies');
+    expect(result.trace?.notes).toContain('digest_source:fallback');
     expect(result.trace?.responseSource).toBe('local_companion');
     expect(result.conversationSeed?.subjectData?.threadTitle).toBe(
       'Pops of Punk',
@@ -533,7 +535,31 @@ describe('assistant capabilities', () => {
     );
   });
 
-  it('summarizes all synced Messages activity for broad today requests', async () => {
+  it('semantically summarizes all synced Messages for broad today requests', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      const payload = JSON.parse(String(init?.body || '{}')) as {
+        input?: string;
+      };
+      expect(payload.input).toContain('Can you send me the dinner address?');
+      expect(payload.input).toContain("Fallout's worldbuilding");
+      return new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            lead: 'Dinner logistics and Fallout worldbuilding were the main themes.',
+            digest:
+              "The direct chat asked for the dinner address, while Pops of Punk agreed to use Fallout's worldbuilding as Friday's discussion topic.",
+            bullets: [
+              'The dinner-address request is the clearest unanswered item.',
+              'Pops of Punk agreed on a Fallout worldbuilding topic for Friday.',
+            ],
+            suggestedReplies: [],
+          }),
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
     storeChatMetadata(
       'bb:iMessage;-;+14695550123',
       '2026-04-15T16:50:00.000Z',
@@ -562,7 +588,8 @@ describe('assistant capabilities', () => {
       chat_jid: 'bb:iMessage;+;chat-pops-clean',
       sender: 'bb:+12025550103',
       sender_name: '+12025550103',
-      content: 'Fallout still has the best worldbuilding argument.',
+      content:
+        "We agreed to use Fallout's worldbuilding as Friday's discussion topic.",
       timestamp: '2026-04-15T18:51:51.947Z',
       is_from_me: false,
     });
@@ -583,14 +610,43 @@ describe('assistant capabilities', () => {
     });
 
     expect(result.handled).toBe(true);
-    expect(result.replyText).toContain('I found 2 synced Messages messages');
+    expect(result.replyText).toContain('Messages digest — today');
+    expect(result.replyText).toContain('Themes');
+    expect(result.replyText).toContain(
+      'Dinner logistics and Fallout worldbuilding',
+    );
+    expect(result.replyText).toContain('Decisions');
+    expect(result.replyText).toContain(
+      "We agreed to use Fallout's worldbuilding",
+    );
+    expect(result.replyText).toContain('Open questions');
+    expect(result.replyText).toContain('Can you send me the dinner address?');
+    expect(result.replyText).toContain('Reply priorities');
     expect(result.replyText).toContain('Pops of Punk');
     expect(result.replyText).toContain('Messages chat');
     expect(result.replyText).not.toContain('+14695550123');
     expect(result.trace?.notes).toContain('window:today');
+    expect(result.trace?.notes).toContain('digest_source:openai_grounded');
   });
 
   it('summarizes all synced BlueBubbles texts for the exact 48-hour phrasing', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output_text: JSON.stringify({
+              lead: 'A dinner-address request is the main theme.',
+              digest:
+                'The other person asked you to send the dinner address, and that request remains unanswered.',
+              bullets: ['Reply with the dinner address when you have it.'],
+              suggestedReplies: [],
+            }),
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as typeof fetch;
     storeChatMetadata(
       'bb:iMessage;-;+14695550123',
       '2026-04-15T16:50:00.000Z',
@@ -628,12 +684,204 @@ describe('assistant capabilities', () => {
     });
 
     expect(result.handled).toBe(true);
-    expect(result.replyText).toContain('I found 1 synced Messages message');
-    expect(result.replyText).toContain('over the last 48 hours');
+    expect(result.replyText).toContain('Messages digest — the last 48 hours');
+    expect(result.replyText).toContain('A dinner-address request');
+    expect(result.replyText).toContain('Can you send me the dinner address?');
+    expect(result.replyText).toContain('Reply priorities');
     expect(result.replyText).not.toContain("couldn't match");
     expect(result.replyText).not.toContain('Agent OS episode');
     expect(result.replyText).not.toContain('+14695550123');
     expect(result.trace?.notes).toContain('window:the last 48 hours');
+    expect(result.trace?.notes).toContain('digest_source:openai_grounded');
+  });
+
+  it('rejects an unrelated provider digest and falls back to grounded message evidence', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');
+    const fetchSpy = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output_text: JSON.stringify({
+              lead: 'The family finalized a beach trip to Miami.',
+              digest:
+                'Flights and a waterfront hotel were booked for August, and everyone agreed to rent a car.',
+              bullets: [
+                'The Miami flights are nonrefundable.',
+                'A rental car still needs an additional driver.',
+              ],
+              suggestedReplies: [],
+            }),
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    globalThis.fetch = fetchSpy as typeof fetch;
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:50:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'msg-untrusted-provider-1',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Can you confirm the dinner address for tonight?',
+      timestamp: '2026-04-15T16:46:28.314Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(result.replyText).toContain(
+      'Can you confirm the dinner address for tonight?',
+    );
+    expect(result.replyText).toContain('Open questions');
+    expect(result.replyText).not.toContain('Miami');
+    expect(result.replyText).not.toContain('waterfront hotel');
+    expect(result.replyText).not.toContain('rental car');
+    expect(result.trace?.notes).toContain(
+      'digest_source:local_untrusted_provider',
+    );
+  });
+
+  it('does not treat cancelled questions or automated surveys as reply priorities', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;cancelled-question',
+      '2026-04-15T16:05:00.000Z',
+      'Morgan',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'cancelled-question-1',
+      chat_jid: 'bb:iMessage;-;cancelled-question',
+      sender: 'Morgan',
+      sender_name: 'Morgan',
+      content: 'Can you bring the tickets tonight?',
+      timestamp: '2026-04-15T16:00:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'cancelled-question-2',
+      chat_jid: 'bb:iMessage;-;cancelled-question',
+      sender: 'Morgan',
+      sender_name: 'Morgan',
+      content: 'Never mind, I already got them.',
+      timestamp: '2026-04-15T16:05:00.000Z',
+      is_from_me: false,
+    });
+    storeChatMetadata(
+      'bb:iMessage;-;automated-survey',
+      '2026-04-15T16:10:00.000Z',
+      'Auto Survey',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'automated-survey-1',
+      chat_jid: 'bb:iMessage;-;automated-survey',
+      sender: 'Auto Survey',
+      sender_name: 'Auto Survey',
+      content: 'Can you take our survey? Text STOP to unsubscribe.',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain(
+      'No unanswered question is obvious from the latest turns.',
+    );
+    expect(result.replyText).toContain(
+      'No reply looks clearly due from the latest turns.',
+    );
+    expect(result.replyText).not.toContain('respond to');
+  });
+
+  it('keeps the all-synced digest compact on BlueBubbles', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    for (let index = 1; index <= 4; index += 1) {
+      const chatJid = `bb:iMessage;-;compact-${index}`;
+      storeChatMetadata(
+        chatJid,
+        `2026-04-15T1${index}:30:00.000Z`,
+        `Conversation ${index}`,
+        'bluebubbles',
+        false,
+      );
+      storeMessage({
+        id: `compact-decision-${index}`,
+        chat_jid: chatJid,
+        sender: `person-${index}`,
+        sender_name: `Person ${index}`,
+        content: `We agreed to meet at ${index + 4} tonight.`,
+        timestamp: `2026-04-15T1${index}:20:00.000Z`,
+        is_from_me: false,
+      });
+      storeMessage({
+        id: `compact-question-${index}`,
+        chat_jid: chatJid,
+        sender: `person-${index}`,
+        sender_name: `Person ${index}`,
+        content: `Can you bring item ${index} tonight?`,
+        timestamp: `2026-04-15T1${index}:30:00.000Z`,
+        is_from_me: false,
+      });
+    }
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;owner-self-thread',
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText!.length).toBeLessThan(1_400);
+    expect(result.replyText!.match(/respond to/g)).toHaveLength(2);
+    expect(result.replyText).toContain(
+      'Coverage note: 1 additional active conversation',
+    );
+    expect(result.trace?.notes).toContain('digest_source:local');
   });
 
   it('reviews recent texts without creating message actions until a selected draft follow-up', async () => {

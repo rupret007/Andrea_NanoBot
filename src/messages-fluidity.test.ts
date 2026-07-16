@@ -132,13 +132,13 @@ describe('messages fluidity', () => {
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({
-            lead: 'The thread mostly debated how faithful an adaptation should be.',
+            lead: 'Fallout, its world, and repeated material were the main points.',
             digest:
-              'People compared Fallout and Invincible as examples of when a story can stay true to the world without simply replaying the same material.',
+              'People compared whether Fallout can stay true to its world without simply replaying the same material.',
             bullets: [
-              'One person liked Fallout as a continuation story.',
-              'Another pushed against simple retellings.',
-              'The latest turn landed on liking the story but not knowing the wider world as well.',
+              'One person said Fallout keeps the world right.',
+              'Another did not want the same material repeated.',
+              'The latest turn liked the Fallout story but did not know the world well.',
             ],
             suggestedReplies: [
               {
@@ -165,8 +165,8 @@ describe('messages fluidity', () => {
     });
 
     expect(result.source).toBe('openai');
-    expect(result.lead).toContain('adaptation');
-    expect(result.digest).toContain('Fallout and Invincible');
+    expect(result.lead).toContain('repeated material');
+    expect(result.digest).toContain('Fallout can stay true');
     expect(result.bullets).toHaveLength(3);
     expect(result.suggestedReplies).toEqual([
       {
@@ -208,5 +208,42 @@ describe('messages fluidity', () => {
 
     expect(result.source).toBe('fallback');
     expect(result.fallbackNote).toContain('grounded locally');
+  });
+
+  it('rejects a cross-chat digest that swaps facts between named conversations', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output_text: JSON.stringify({
+              lead: 'Candace and Pops of Punk covered dinner and Fallout.',
+              digest:
+                'Candace agreed to use Fallout for Friday, while Pops of Punk asked for the dinner address.',
+              bullets: [
+                'Candace settled the Fallout topic.',
+                'Pops of Punk still needs the dinner address.',
+              ],
+              suggestedReplies: [],
+            }),
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as typeof fetch;
+
+    const result = await summarizeBlueBubblesThreadDigest({
+      chatName: 'all synced Messages chats',
+      windowLabel: 'today',
+      transcript:
+        '[Conversation: Candace]\nCandace: Can you send me the dinner address?\n\n[Conversation: Pops of Punk]\nAlex: We agreed to discuss Fallout on Friday.',
+      channel: 'telegram',
+      thinkingMode: 'quick',
+    });
+
+    expect(result).toMatchObject({
+      source: 'fallback',
+      fallbackReason: 'ungrounded',
+    });
   });
 });

@@ -30,6 +30,9 @@ export type BlueBubblesOutboundRequestResult =
       handled: true;
       state:
         | 'restricted'
+        | 'context_unavailable'
+        | 'context_stale'
+        | 'context_mismatch'
         | 'missing_target'
         | 'ambiguous_target'
         | 'unsupported_target';
@@ -47,6 +50,7 @@ export type ExecuteBlueBubblesOutboundRequestResult =
   | {
       handled: true;
       state:
+        | 'capability_status'
         | 'unavailable_capability'
         | 'unhealthy_provider'
         | 'missing_permission'

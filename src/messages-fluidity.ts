@@ -29,6 +29,81 @@ const THREAD_SUMMARY_FALLBACK_NOTE =
 const THREAD_SUMMARY_OPENAI_TIMEOUT_MS = 12_000;
 const BLUEBUBBLES_COUNCIL_SNIPPET_LIMIT = 900;
 
+const THREAD_DIGEST_GROUNDING_STOPWORDS = new Set([
+  'about',
+  'after',
+  'again',
+  'also',
+  'another',
+  'because',
+  'before',
+  'being',
+  'conversation',
+  'digest',
+  'from',
+  'have',
+  'into',
+  'latest',
+  'message',
+  'messages',
+  'mostly',
+  'people',
+  'person',
+  'recent',
+  'reply',
+  'summary',
+  'than',
+  'that',
+  'their',
+  'them',
+  'there',
+  'these',
+  'they',
+  'this',
+  'those',
+  'thread',
+  'today',
+  'very',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'while',
+  'with',
+  'would',
+  'your',
+]);
+
+const THREAD_DIGEST_ALLOWED_CAPITALIZED_WORDS = new Set([
+  'a',
+  'an',
+  'another',
+  'by',
+  'conversation',
+  'digest',
+  'finally',
+  'here',
+  'i',
+  'in',
+  'it',
+  'later',
+  'latest',
+  'messages',
+  'next',
+  'one',
+  'people',
+  'reply',
+  'someone',
+  'the',
+  'they',
+  'this',
+  'today',
+  'we',
+  'yeah',
+  'you',
+]);
+
 export interface BlueBubblesSuggestedReply {
   label: string;
   text: string;
@@ -40,6 +115,129 @@ function normalizeText(value: string | undefined): string {
     .replace(/[\u2018\u2019]/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function threadDigestGroundingTokens(value: string): string[] {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/['’]s\b/g, '')
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter(
+      (token) =>
+        token.length >= 4 &&
+        !THREAD_DIGEST_GROUNDING_STOPWORDS.has(token) &&
+        !/^\d+$/.test(token),
+    );
+}
+
+function hasUnsupportedThreadDigestProperNoun(
+  value: string,
+  evidenceText: string,
+): boolean {
+  const evidenceWords = new Set(
+    normalizeText(evidenceText)
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean),
+  );
+  return [...value.matchAll(/\b[A-Z][A-Za-z0-9'’-]{2,}\b/g)].some((match) => {
+    const token = (match[0] || '').toLowerCase().replace(/['’]s$/, '');
+    return (
+      !THREAD_DIGEST_ALLOWED_CAPITALIZED_WORDS.has(token) &&
+      !evidenceWords.has(token)
+    );
+  });
+}
+
+function isProviderThreadDigestGrounded(input: {
+  evidenceText: string;
+  lead: string;
+  digest: string;
+  bullets: string[];
+}): boolean {
+  const evidenceTokens = new Set(
+    threadDigestGroundingTokens(input.evidenceText),
+  );
+  if (evidenceTokens.size === 0) return false;
+  const claims = [
+    { kind: 'lead' as const, text: input.lead },
+    { kind: 'digest' as const, text: input.digest },
+    ...input.bullets.map((text) => ({ kind: 'bullet' as const, text })),
+  ].filter((claim) => threadDigestGroundingTokens(claim.text).length > 0);
+  if (claims.length === 0) return false;
+  if (
+    claims.some((claim) =>
+      hasUnsupportedThreadDigestProperNoun(claim.text, input.evidenceText),
+    )
+  ) {
+    return false;
+  }
+
+  const threadSections = [
+    ...input.evidenceText.matchAll(
+      /\[Conversation:\s*([^\]]+)\]\s*\n([\s\S]*?)(?=\n\n\[Conversation:|$)/g,
+    ),
+  ]
+    .map((match) => ({
+      label: normalizeText(match[1] || ''),
+      body: normalizeText(match[2] || ''),
+    }))
+    .filter((section) => section.label && section.body);
+  for (const claim of claims) {
+    const attributedSections = threadSections.filter((section) =>
+      claim.text.toLowerCase().includes(section.label.toLowerCase()),
+    );
+    if (attributedSections.length !== 1) continue;
+    const sectionEvidence = new Set(
+      threadDigestGroundingTokens(attributedSections[0]!.body),
+    );
+    const labelTokens = new Set(
+      threadDigestGroundingTokens(attributedSections[0]!.label),
+    );
+    const claimTokens = threadDigestGroundingTokens(claim.text).filter(
+      (token) => !labelTokens.has(token),
+    );
+    const localAnchors = new Set(
+      claimTokens.filter((token) => sectionEvidence.has(token)),
+    );
+    if (
+      claimTokens.length > 0 &&
+      (localAnchors.size < (claimTokens.length <= 5 ? 1 : 2) ||
+        localAnchors.size / claimTokens.length < 0.25)
+    ) {
+      return false;
+    }
+  }
+
+  const grounded = new Map<(typeof claims)[number], boolean>();
+  const totalAnchors = new Set<string>();
+  for (const claim of claims) {
+    const tokens = threadDigestGroundingTokens(claim.text);
+    const anchors = new Set(
+      tokens.filter((token) => evidenceTokens.has(token)),
+    );
+    for (const anchor of anchors) totalAnchors.add(anchor);
+    const minimumAnchors = tokens.length <= 5 ? 1 : 2;
+    grounded.set(
+      claim,
+      anchors.size >= minimumAnchors && anchors.size / tokens.length >= 0.3,
+    );
+  }
+  const primaryClaim =
+    claims.find((claim) => claim.kind === 'digest') || claims[0];
+  const groundedCount = [...grounded.values()].filter(Boolean).length;
+  return (
+    Boolean(primaryClaim && grounded.get(primaryClaim)) &&
+    totalAnchors.size >= Math.min(2, evidenceTokens.size) &&
+    groundedCount >= Math.ceil((claims.length * 2) / 3)
+  );
+}
+
+function containsUnsupportedThreadReplyPromise(value: string): boolean {
+  return /\b(?:(?:i am|i'm)\s+(?:checking|confirming|looking(?: into)?|working on)|(?:i |we )?(?:will|'ll)\s+(?:check|confirm|get back|follow up|look into|review|verify)|let me\s+(?:check|confirm|look into|review|verify))\b/i.test(
+    normalizeText(value),
+  );
 }
 
 function clipCouncilSnippet(
@@ -152,13 +350,16 @@ function stripJsonFences(value: string): string {
     .trim();
 }
 
-function buildThreadSummaryFallbackResult(): {
+function buildThreadSummaryFallbackResult(
+  fallbackReason: 'unavailable' | 'ungrounded' = 'unavailable',
+): {
   lead: null;
   digest: null;
   bullets: [];
   suggestedReplies: [];
   source: 'fallback';
   fallbackNote: string;
+  fallbackReason: 'unavailable' | 'ungrounded';
 } {
   return {
     lead: null,
@@ -167,6 +368,7 @@ function buildThreadSummaryFallbackResult(): {
     suggestedReplies: [],
     source: 'fallback',
     fallbackNote: THREAD_SUMMARY_FALLBACK_NOTE,
+    fallbackReason,
   };
 }
 
@@ -272,6 +474,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
   suggestedReplies: BlueBubblesSuggestedReply[];
   source: 'openai' | 'fallback';
   fallbackNote?: string;
+  fallbackReason?: 'unavailable' | 'ungrounded';
 }> {
   const shouldUseCouncil =
     input.thinkingMode === 'deep' ||
@@ -306,6 +509,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
     'digest: a detailed paragraph or two as one string covering the substantive flow, disagreements, decisions, and ending state.',
     'bullets: 3 to 6 concise bullets for notable points, shifts, decisions, or clear follow-up needs.',
     'suggestedReplies: 2-3 safe reply options when the user likely owes a reply, each with label and text. Use an empty array if no reply is likely owed.',
+    'Suggested replies must not claim the user is checking, confirming, following up, or getting back to someone unless that commitment is explicit in the transcript.',
     `Context JSON: ${JSON.stringify(input)}`,
   ].join('\n');
   const providerMode = detectOpenAiProviderMode(openAi.baseUrl);
@@ -390,12 +594,36 @@ export async function summarizeBlueBubblesThreadDigest(input: {
       const lead = normalizeText(parsed.lead);
       const digest = normalizeText(parsed.digest);
       const bullets = normalizeStringArray(parsed.bullets, 6);
-      const suggestedReplies = normalizeSuggestedReplies(
-        parsed.suggestedReplies,
-      );
       if (!lead && !digest && bullets.length === 0) {
         continue;
       }
+      const evidenceText = `${input.chatName}\n${input.transcript}`;
+      if (
+        !isProviderThreadDigestGrounded({
+          evidenceText,
+          lead,
+          digest,
+          bullets,
+        })
+      ) {
+        recordOpenAiUsageState({
+          at: new Date().toISOString(),
+          surface: 'messages_fluidity',
+          selectedModelTier: candidate.tier,
+          selectedModel: candidate.model,
+          providerMode,
+          outcome: 'failed',
+          detail: 'thread_summary rejected as ungrounded',
+        });
+        return buildThreadSummaryFallbackResult('ungrounded');
+      }
+      const suggestedReplies = normalizeSuggestedReplies(
+        parsed.suggestedReplies,
+      ).filter(
+        (reply) =>
+          !containsUnsupportedThreadReplyPromise(reply.text) &&
+          !hasUnsupportedThreadDigestProperNoun(reply.text, evidenceText),
+      );
       recordOpenAiUsageState({
         at: new Date().toISOString(),
         surface: 'messages_fluidity',

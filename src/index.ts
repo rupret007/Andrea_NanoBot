@@ -76,6 +76,7 @@ import {
   getAllSessions,
   getAllTasks,
   getLastBotMessageTimestamp,
+  listRecentMessagesForChat,
   listCursorAgentArtifacts,
   listRecentResponseFeedback,
   getMessagesSince,
@@ -320,6 +321,7 @@ import {
   interpretMessageActionFollowup,
   linkMessageActionCognitiveContext,
   reconcileBlueBubblesUnverifiedMessageActions,
+  resolveBlueBubblesThreadTargetByName,
   resolveMessageActionForFollowup,
   startBlueBubblesProofDrill,
   type MessageActionOperation,
@@ -621,6 +623,13 @@ import {
   maybeBuildOpenClawPresenceReply,
 } from './assistant-routing.js';
 import { parseAssistantMessageActionIntent } from './assistant-action-intent.js';
+import {
+  formatRecentTextReviewFreshnessBlockedReply,
+  parseRecentTextReviewItemFollowup,
+  recordRecentTextReviewOutcome,
+  resolveRecentTextReviewFollowupTarget,
+  validateRecentTextReviewFollowupFreshness,
+} from './recent-text-review.js';
 import {
   analyzeAgentError,
   buildRepeatedAgentErrorMessage,
@@ -4610,7 +4619,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     parseAssistantMessageActionIntent(lastContent);
   const shouldDeferPlatformHoldForExplicitBlueBubblesExecution = Boolean(
     localBlueBubblesOutboundIntent?.kind === 'message_send' &&
-    ['execute', 'draft', 'prepare'].includes(
+    ['execute', 'draft', 'prepare', 'inform'].includes(
       localBlueBubblesOutboundIntent.mode,
     ),
   );
@@ -5388,6 +5397,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       (candidate): candidate is BlueBubblesChannel =>
         candidate instanceof BlueBubblesChannel,
     );
+    let reviewBoundItem:
+      | NonNullable<
+          ReturnType<typeof parseRecentTextReviewItemFollowup>
+        >['item']
+      | null = null;
     const result = await executeBlueBubblesOutboundTurn({
       groupFolder: group.folder,
       channel: conversationChannel,
@@ -5398,6 +5412,203 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       inboundMessageId: latestUserMessage?.id || null,
       now,
       blueBubblesChannel,
+      resolveContextBoundRecipient: async ({ intent }) => {
+        if (!blueBubblesChannel) {
+          return {
+            state: 'blocked' as const,
+            result: {
+              handled: true as const,
+              state: 'context_unavailable' as const,
+              replyText:
+                'I could not refresh Messages history before binding that contextual reply, so I did not send anything. Ask me to review recent texts again.',
+            },
+          };
+        }
+        try {
+          await blueBubblesChannel.primeRecentHistory({ limit: 500 });
+        } catch (error) {
+          logger.warn(
+            { component: 'assistant', err: error },
+            'BlueBubbles contextual-send history refresh failed; dispatch blocked',
+          );
+          return {
+            state: 'blocked' as const,
+            result: {
+              handled: true as const,
+              state: 'context_unavailable' as const,
+              replyText:
+                'I could not verify the latest Messages history before binding that contextual reply, so I did not send anything. Ask me to review recent texts again.',
+            },
+          };
+        }
+        if (intent.contextBinding?.kind === 'recent_recipient_thread') {
+          if (!intent.targetLabel) {
+            return {
+              state: 'blocked' as const,
+              result: {
+                handled: true as const,
+                state: 'context_unavailable' as const,
+                replyText:
+                  'I could not identify the Messages recipient for that recent-thread reply, so I did not send anything.',
+              },
+            };
+          }
+          const resolution = resolveBlueBubblesThreadTargetByName(
+            intent.targetLabel,
+          );
+          if (resolution.state !== 'resolved') {
+            return {
+              state: 'blocked' as const,
+              result: {
+                handled: true as const,
+                state:
+                  resolution.state === 'ambiguous'
+                    ? ('context_mismatch' as const)
+                    : ('context_unavailable' as const),
+                replyText:
+                  resolution.state === 'ambiguous'
+                    ? `I found more than one current Messages conversation for ${intent.targetLabel}, so I did not send anything. Use the exact conversation name.`
+                    : `I could not find a current Messages conversation for ${intent.targetLabel}, so I did not send anything.`,
+              },
+            };
+          }
+          const latestInbound = listRecentMessagesForChat(
+            resolution.target.chatJid,
+            40,
+          ).find((message) => !message.is_from_me && !message.is_bot_message);
+          if (!latestInbound) {
+            return {
+              state: 'blocked' as const,
+              result: {
+                handled: true as const,
+                state: 'context_unavailable' as const,
+                replyText: `I could not verify a recent incoming message from ${resolution.target.displayName}, so I did not send anything.`,
+              },
+            };
+          }
+          const indirectPickupReply =
+            /\bif\s+(?:she|he|they)\s+could\s+pick\s+(?:them|it)\s+up\b/i.test(
+              intent.content || '',
+            );
+          if (
+            indirectPickupReply &&
+            !/\bpick\b[\s\S]{0,80}\bup\b/i.test(latestInbound.content || '')
+          ) {
+            return {
+              state: 'blocked' as const,
+              result: {
+                handled: true as const,
+                state: 'context_stale' as const,
+                replyText: `The latest synced message from ${resolution.target.displayName} no longer matches the pickup reply you described, so I did not send anything. Ask me to review the thread again.`,
+              },
+            };
+          }
+          return {
+            state: 'resolved' as const,
+            recipientResolution: resolution,
+          };
+        }
+        if (intent.contextBinding?.kind !== 'recent_text_review_item') {
+          return {
+            state: 'blocked' as const,
+            result: {
+              handled: true as const,
+              state: 'context_unavailable' as const,
+              replyText:
+                'I could not safely interpret that Messages context binding, so I did not send anything.',
+            },
+          };
+        }
+        const itemNumber = intent.contextBinding.itemNumber;
+        const priorSeed = getSharedAssistantCapabilitySeed(chatJid, now);
+        const seedJson = priorSeed?.subjectData?.recentTextReviewJson;
+        const reviewFollowup = parseRecentTextReviewItemFollowup({
+          seedJson,
+          userText: lastContent,
+        });
+        if (!reviewFollowup || reviewFollowup.item.rank !== itemNumber) {
+          return {
+            state: 'blocked' as const,
+            result: {
+              handled: true as const,
+              state: 'context_unavailable' as const,
+              replyText: `I could not safely bind item #${itemNumber} to the current text review, so I did not send anything. Ask me to review recent texts again, then choose from the fresh list.`,
+            },
+          };
+        }
+        const freshness = validateRecentTextReviewFollowupFreshness({
+          seedJson,
+          item: reviewFollowup.item,
+          now,
+        });
+        if (!freshness.ok) {
+          recordRecentTextReviewOutcome({
+            groupFolder: group.folder,
+            item: reviewFollowup.item,
+            outcome: freshness.outcome,
+            now,
+          });
+          return {
+            state: 'blocked' as const,
+            result: {
+              handled: true as const,
+              state: 'context_stale' as const,
+              replyText: formatRecentTextReviewFreshnessBlockedReply(
+                reviewFollowup.item,
+                freshness,
+              ),
+            },
+          };
+        }
+        const reviewTarget =
+          freshness.target ||
+          resolveRecentTextReviewFollowupTarget(reviewFollowup.item);
+        if (!reviewTarget.ok || !reviewTarget.chatJid) {
+          return {
+            state: 'blocked' as const,
+            result: {
+              handled: true as const,
+              state: 'context_unavailable' as const,
+              replyText: `I could not safely resolve item #${reviewFollowup.item.rank} to one current Messages conversation, so I did not send anything. Ask me to review recent texts again.`,
+            },
+          };
+        }
+        const normalizeRecipientLabel = (value: string | null | undefined) =>
+          (value || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+        const requestedLabel = normalizeRecipientLabel(intent.targetLabel);
+        const reviewLabel = normalizeRecipientLabel(
+          reviewTarget.personName || reviewFollowup.item.chatLabel,
+        );
+        const labelsAgree =
+          requestedLabel === reviewLabel ||
+          reviewLabel.startsWith(`${requestedLabel} `);
+        if (!requestedLabel || !reviewLabel || !labelsAgree) {
+          return {
+            state: 'blocked' as const,
+            result: {
+              handled: true as const,
+              state: 'context_mismatch' as const,
+              replyText: `Item #${reviewFollowup.item.rank} is ${reviewTarget.personName || reviewFollowup.item.chatLabel}, but your instruction named ${intent.targetLabel || 'a different recipient'}. I did not send anything.`,
+            },
+          };
+        }
+        reviewBoundItem = reviewFollowup.item;
+        return {
+          state: 'resolved' as const,
+          recipientResolution: {
+            state: 'resolved' as const,
+            target: {
+              chatJid: reviewTarget.chatJid,
+              displayName:
+                reviewTarget.personName || reviewFollowup.item.chatLabel,
+              isGroup: Boolean(reviewTarget.isGroup),
+            },
+          },
+        };
+      },
       executionDeps: {
         groupFolder: group.folder,
         channel: conversationChannel,
@@ -5423,6 +5634,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         ),
     });
     if (!result.handled) return false;
+    if (reviewBoundItem && result.state === 'sent') {
+      recordRecentTextReviewOutcome({
+        groupFolder: group.folder,
+        item: reviewBoundItem,
+        outcome: 'handled',
+        now,
+      });
+      // The verified send is now newer than the review snapshot. Clear the
+      // numbered binding so another follow-up cannot silently reuse stale
+      // context; an exact replay of this inbound event is handled earlier by
+      // the durable message-action receipt fence.
+      clearSharedAssistantCapabilitySeed(chatJid);
+    }
     if (
       conversationChannel === 'bluebubbles' &&
       currentTurnOwnerAuthored !== true &&
@@ -8724,13 +8948,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
     let result: AssistantCapabilityResult;
     try {
+      const messagesHistoryChannel = channels.find(
+        (candidate): candidate is BlueBubblesChannel =>
+          candidate instanceof BlueBubblesChannel,
+      );
       if (
-        channel.primeRecentHistory &&
+        messagesHistoryChannel?.primeRecentHistory &&
         (capabilityMatch.capabilityId === 'communication.summarize_thread' ||
           capabilityMatch.capabilityId === 'communication.review_recent_texts')
       ) {
         try {
-          const hydrated = await channel.primeRecentHistory({ limit: 500 });
+          // A Telegram request for "my texts" is a BlueBubbles history query,
+          // not a Telegram-history query. Refresh the Messages provider before
+          // reading the local index so Telegram and the Messages self-thread
+          // see the same bounded, current conversation set.
+          const hydrated = await messagesHistoryChannel.primeRecentHistory({
+            limit: 500,
+          });
           logger.info(
             {
               component: 'assistant',

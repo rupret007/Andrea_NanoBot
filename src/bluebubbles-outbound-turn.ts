@@ -1,4 +1,7 @@
-import { parseAssistantMessageActionIntent } from './assistant-action-intent.js';
+import {
+  parseAssistantMessageActionIntent,
+  type AssistantMessageActionIntent,
+} from './assistant-action-intent.js';
 import {
   type ExecuteBlueBubblesOutboundRequestParams,
   type ExecuteBlueBubblesOutboundRequestResult,
@@ -112,6 +115,18 @@ export interface ExecuteBlueBubblesOutboundTurnParams {
   resolveStoredRecipient?: typeof resolveBlueBubblesThreadTargetByName;
   resolveLiveRecipient?: typeof resolveBlueBubblesContactRecipient;
   resolveConfig?: typeof resolveBlueBubblesConfig;
+  resolveContextBoundRecipient?: (input: {
+    intent: AssistantMessageActionIntent;
+  }) => Promise<
+    | {
+        state: 'resolved';
+        recipientResolution: DefinedRecipientResolution;
+      }
+    | {
+        state: 'blocked';
+        result: ExecuteBlueBubblesOutboundRequestResult;
+      }
+  >;
   onRefreshFailure?: (error: unknown) => void;
   onRecipientLookupFailure?: (error: unknown) => void;
 }
@@ -163,7 +178,10 @@ export async function executeBlueBubblesOutboundTurn(
   if (terminalReplay) return terminalReplay;
 
   let control = params.blueBubblesChannel?.getControlSnapshot() ?? null;
-  if (intent.mode === 'execute' && params.blueBubblesChannel) {
+  if (
+    (intent.mode === 'execute' || intent.mode === 'inform') &&
+    params.blueBubblesChannel
+  ) {
     try {
       control =
         await params.blueBubblesChannel.refreshControlState('transport');
@@ -180,7 +198,13 @@ export async function executeBlueBubblesOutboundTurn(
   const capabilityFacts = buildBlueBubblesRuntimeCapabilityFacts(
     control,
     {
-      explicitlyAuthorized: intent.explicitlyAuthorizesExecution,
+      // An informational question asks whether a future explicit send would be
+      // available. Treat confirmation as hypothetically satisfied for that
+      // read-only capability check so the answer reflects transport,
+      // registration, and permission truth instead of saying only that no
+      // current send was authorized.
+      explicitlyAuthorized:
+        intent.mode === 'inform' || intent.explicitlyAuthorizesExecution,
       toolRegistered: Boolean(binding),
       toolExposed: Boolean(
         binding && descriptor?.sourceChannels.includes(params.channel),
@@ -189,8 +213,69 @@ export async function executeBlueBubblesOutboundTurn(
     registry,
   );
 
-  let recipientResolution: RecipientResolution;
-  if (intent.targetLabel) {
+  if (intent.mode === 'inform') {
+    const evaluation = registry.evaluate(
+      {
+        capabilityId: intent.capabilityId,
+        action: 'send',
+        sourceChannel: params.channel,
+      },
+      capabilityFacts,
+    );
+    if (evaluation.state === 'available') {
+      return {
+        handled: true,
+        state: 'capability_status',
+        replyText:
+          'Yes. BlueBubbles is connected and sending is enabled. From this registered Telegram chat or your configured Messages self-thread, say something like `Text Candace: Yes, please pick them up.` I will resolve the exact recipient, send through BlueBubbles, and only report “Sent” after a provider receipt. Say `Draft a text to Candace: ...` when you want to review it first.',
+      };
+    }
+    return {
+      handled: true,
+      state: 'capability_status',
+      replyText: `BlueBubbles messaging is part of this assistant, but sending is not available right now. ${
+        formatRuntimeCapabilityEvaluation(evaluation) ||
+        'The current provider state could not be verified.'
+      } I can still help review or summarize the Messages history already synced here.`,
+    };
+  }
+
+  let recipientResolution: RecipientResolution = undefined;
+  if (intent.mode === 'execute' && intent.contextBinding) {
+    const capability = registry.evaluate(
+      {
+        capabilityId: intent.capabilityId,
+        action: 'send',
+        sourceChannel: params.channel,
+      },
+      capabilityFacts,
+    );
+    // Provider/context hydration belongs after owner authority and terminal
+    // replay, but before a fresh side effect. If the send lane itself is down,
+    // preserve that authoritative capability result without exposing review
+    // context or doing unnecessary provider reads.
+    if (capability.state === 'available') {
+      if (!params.resolveContextBoundRecipient) {
+        return {
+          handled: true,
+          state: 'context_unavailable',
+          replyText:
+            'I could not safely bind that numbered reply to a current Messages review, so I did not send anything. Ask me to review recent texts again.',
+        };
+      }
+      const contextResolution = await params.resolveContextBoundRecipient({
+        intent,
+      });
+      if (contextResolution.state === 'blocked') {
+        return contextResolution.result;
+      }
+      recipientResolution = contextResolution.recipientResolution;
+    }
+  }
+  if (intent.targetLabel && !recipientResolution) {
+    // A context-bound recipient was revalidated against current provider
+    // history above. Do not let a looser name lookup redirect that exact
+    // thread; only unresolved ordinary requests enter this name-lookup lane.
     const resolveStored =
       params.resolveStoredRecipient ?? resolveBlueBubblesThreadTargetByName;
     const resolveLive =

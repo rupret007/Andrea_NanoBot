@@ -697,7 +697,9 @@ export function classifyAssistantRequest(
     : undefined;
   if (
     normalizedActionIntent?.kind === 'message_send' &&
-    ['execute', 'draft', 'prepare'].includes(normalizedActionIntent.mode) &&
+    ['execute', 'draft', 'prepare', 'inform'].includes(
+      normalizedActionIntent.mode,
+    ) &&
     normalizedRuntimeCapability?.toolExposure.protected
   ) {
     const registration = capabilityRegistry.getRegistrationSnapshot(

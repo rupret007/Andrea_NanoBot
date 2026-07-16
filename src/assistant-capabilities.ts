@@ -87,6 +87,7 @@ import {
   formatRecentTextReviewReply,
   parseRecentTextReviewItemFollowup,
   recordRecentTextReviewOutcome,
+  redactRecentTextReviewText,
   resolveRecentTextReviewFollowupTarget,
   reviewRecentTexts,
   validateRecentTextReviewFollowupFreshness,
@@ -2741,14 +2742,25 @@ function isBlueBubblesAssistantControlMessage(message: NewMessage): boolean {
 function buildLocalThreadSummarySuggestedReplies(
   messages: NewMessage[],
 ): BlueBubblesSuggestedReply[] {
-  const latestInbound = [...messages]
-    .reverse()
-    .find((message) => !message.is_from_me && !message.is_bot_message);
+  let latestInboundIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message && !message.is_from_me && !message.is_bot_message) {
+      latestInboundIndex = index;
+      break;
+    }
+  }
+  const latestInbound = messages[latestInboundIndex];
   if (!latestInbound) return [];
+  if (
+    messages.slice(latestInboundIndex + 1).some((message) => message.is_from_me)
+  ) {
+    return [];
+  }
   const content = normalizeText(latestInbound.content || '');
   if (
     !/\?$/.test(content.toLowerCase()) &&
-    !/\b(?:can you|could you|would you|will you|let me know|should we|are we|do you want|confirm|send me)\b/i.test(
+    !/\b(?:can you|could you|would you|will you|let me know|should we|are we|do you want|(?:can|could|would|will) you confirm|send me)\b/i.test(
       content,
     )
   ) {
@@ -2757,15 +2769,15 @@ function buildLocalThreadSummarySuggestedReplies(
   return [
     {
       label: 'warm',
-      text: 'I saw this. Let me check the details and I will get back to you shortly.',
+      text: 'I appreciate you checking in. I saw your question.',
     },
     {
       label: 'direct',
-      text: 'I am checking this now and will confirm shortly.',
+      text: 'I saw this and need a little more context before I answer.',
     },
     {
       label: 'brief',
-      text: 'Checking now. I will confirm shortly.',
+      text: 'Got your question.',
     },
   ];
 }
@@ -2801,14 +2813,25 @@ function pickRepresentativeThreadMessages(
 }
 
 function inferThreadReplyNeed(messages: NewMessage[]): string | null {
-  const latestInbound = [...messages]
-    .reverse()
-    .find((message) => !message.is_from_me && !message.is_bot_message);
+  let latestInboundIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message && !message.is_from_me && !message.is_bot_message) {
+      latestInboundIndex = index;
+      break;
+    }
+  }
+  const latestInbound = messages[latestInboundIndex];
   if (!latestInbound) return null;
+  if (
+    messages.slice(latestInboundIndex + 1).some((message) => message.is_from_me)
+  ) {
+    return null;
+  }
   const content = normalizeText(latestInbound.content || '').toLowerCase();
   if (
     /\?$/.test(content) ||
-    /\b(?:can you|could you|would you|let me know|should we|are we|do you want|confirm)\b/.test(
+    /\b(?:can you|could you|would you|let me know|should we|are we|do you want|(?:can|could|would|will) you confirm)\b/.test(
       content,
     )
   ) {
@@ -2960,10 +2983,336 @@ function formatSafeSyncedThreadLabel(params: {
   return params.isGroup ? 'Messages group' : 'Messages chat';
 }
 
-function buildAllSyncedMessagesSummaryReply(params: {
+interface AllSyncedMessagesSummaryThread {
+  label: string;
+  isGroup: boolean;
+  messages: NewMessage[];
+  latestTimestamp: string;
+}
+
+interface AllSyncedMessagesPendingReply {
+  label: string;
+  message: NewMessage;
+  priorityScore: number;
+}
+
+type AllSyncedMessagesDigestSource =
+  | 'openai_grounded'
+  | 'local'
+  | 'local_untrusted_provider';
+
+const ALL_SYNCED_MESSAGES_PROVIDER_THREAD_LIMIT = 8;
+
+const ALL_SYNCED_MESSAGES_GROUNDING_STOPWORDS = new Set(
+  [
+    'about',
+    'after',
+    'again',
+    'also',
+    'another',
+    'because',
+    'been',
+    'before',
+    'being',
+    'between',
+    'both',
+    'could',
+    'conversation',
+    'conversations',
+    'decision',
+    'decisions',
+    'digest',
+    'does',
+    'email',
+    'from',
+    'have',
+    'here',
+    'into',
+    'latest',
+    'main',
+    'message',
+    'messages',
+    'more',
+    'most',
+    'needs',
+    'open',
+    'other',
+    'people',
+    'person',
+    'priority',
+    'question',
+    'questions',
+    'redacted',
+    'recent',
+    'reply',
+    'should',
+    'still',
+    'summary',
+    'secret',
+    'texts',
+    'than',
+    'that',
+    'their',
+    'them',
+    'theme',
+    'themes',
+    'there',
+    'these',
+    'they',
+    'this',
+    'those',
+    'through',
+    'today',
+    'under',
+    'very',
+    'want',
+    'were',
+    'what',
+    'when',
+    'where',
+    'which',
+    'while',
+    'with',
+    'would',
+    'your',
+    'number',
+    'jid',
+  ].map((word) => word.toLowerCase()),
+);
+
+function allSyncedMessagesGroundingTokens(value: string): string[] {
+  return redactRecentTextReviewText(value)
+    .toLowerCase()
+    .replace(/[\u2018\u2019']s\b/g, '')
+    .replace(/[\u2018\u2019']/g, '')
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter(
+      (token) =>
+        token.length >= 4 &&
+        !ALL_SYNCED_MESSAGES_GROUNDING_STOPWORDS.has(token) &&
+        !/^\d+$/.test(token),
+    );
+}
+
+function clipAllSyncedMessagesEvidence(
+  value: string | null | undefined,
+  maxLength: number,
+): string {
+  const redacted = redactRecentTextReviewText(value || '');
+  if (!redacted || redacted.length <= maxLength) return redacted;
+  return `${redacted.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function isAllSyncedMessagesProviderDigestGrounded(params: {
+  evidenceText: string;
+  digest: Awaited<ReturnType<typeof summarizeBlueBubblesThreadDigest>>;
+}): boolean {
+  if (params.digest.source !== 'openai') return false;
+  const evidenceTokens = new Set(
+    allSyncedMessagesGroundingTokens(params.evidenceText),
+  );
+  if (evidenceTokens.size === 0) return false;
+
+  const substantiveClaims = [
+    { kind: 'lead' as const, text: params.digest.lead },
+    { kind: 'digest' as const, text: params.digest.digest },
+    ...params.digest.bullets.map((text) => ({
+      kind: 'bullet' as const,
+      text,
+    })),
+  ]
+    .map((claim) => ({
+      kind: claim.kind,
+      tokens: allSyncedMessagesGroundingTokens(claim.text || ''),
+    }))
+    .filter((claim) => claim.tokens.length > 0);
+  if (substantiveClaims.length === 0) return false;
+
+  const anchoredTokens = new Set<string>();
+  let groundedClaims = 0;
+  const claimGrounding = new Map<(typeof substantiveClaims)[number], boolean>();
+  for (const claim of substantiveClaims) {
+    const claimTokens = claim.tokens;
+    const claimAnchors = new Set(
+      claimTokens.filter((token) => evidenceTokens.has(token)),
+    );
+    for (const token of claimAnchors) anchoredTokens.add(token);
+    const minimumClaimAnchors = claimTokens.length <= 5 ? 1 : 2;
+    const claimIsGrounded =
+      claimAnchors.size >= minimumClaimAnchors &&
+      claimAnchors.size / claimTokens.length >= 0.3;
+    claimGrounding.set(claim, claimIsGrounded);
+    if (claimIsGrounded) {
+      groundedClaims += 1;
+    }
+  }
+
+  const minimumTotalAnchors = Math.min(2, evidenceTokens.size);
+  const primaryClaim =
+    substantiveClaims.find((claim) => claim.kind === 'digest') ||
+    substantiveClaims[0];
+  return (
+    anchoredTokens.size >= minimumTotalAnchors &&
+    Boolean(primaryClaim && claimGrounding.get(primaryClaim)) &&
+    groundedClaims >= Math.ceil((substantiveClaims.length * 2) / 3)
+  );
+}
+
+function isAllSyncedMessagesOpenRequest(message: NewMessage): boolean {
+  const content = redactRecentTextReviewText(message.content || '');
+  return (
+    /\?/.test(content) ||
+    /\b(?:can you|could you|would you|will you|please (?:send|share|confirm|call|bring)|let me know|should we|are we|do you want|need you to|confirm)\b/i.test(
+      content,
+    )
+  );
+}
+
+function isAllSyncedMessagesAutomatedNoise(message: NewMessage): boolean {
+  const content = redactRecentTextReviewText(message.content || '');
+  return /\b(?:survey|share your feedback|leave (?:us )?a review|text (?:STOP|END|UNSUBSCRIBE)|opt[ -]?out|unsubscribe|limited[ -]?time|special offer|promo(?:tion)?|verification code|one[ -]?time (?:code|passcode)|do not reply|automated (?:message|notification))\b/i.test(
+    content,
+  );
+}
+
+function closesAllSyncedMessagesOpenRequest(message: NewMessage): boolean {
+  const content = redactRecentTextReviewText(message.content || '');
+  return /\b(?:never mind|nevermind|ignore that|no need|all set|handled it|figured it out|already got it|cancel(?:led)?|disregard)\b/i.test(
+    content,
+  );
+}
+
+function findAllSyncedMessagesPendingReply(
+  thread: AllSyncedMessagesSummaryThread,
+): AllSyncedMessagesPendingReply | null {
+  let lastSelfAuthoredIndex = -1;
+  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
+    if (thread.messages[index]?.is_from_me) {
+      lastSelfAuthoredIndex = index;
+      break;
+    }
+  }
+  const latestSubstantive = thread.messages
+    .slice(lastSelfAuthoredIndex + 1)
+    .reverse()
+    .find((message) => !message.is_from_me && !message.is_bot_message);
+  if (
+    !latestSubstantive ||
+    closesAllSyncedMessagesOpenRequest(latestSubstantive) ||
+    isAllSyncedMessagesAutomatedNoise(latestSubstantive) ||
+    !isAllSyncedMessagesOpenRequest(latestSubstantive)
+  ) {
+    return null;
+  }
+  const content = redactRecentTextReviewText(latestSubstantive.content || '');
+  const timestampScore = Date.parse(latestSubstantive.timestamp || '');
+  const priorityScore =
+    (/\b(?:urgent|asap|right away|deadline)\b/i.test(content) ? 30 : 0) +
+    (/\b(?:today|tonight|tomorrow|by \d|before \d)\b/i.test(content) ? 15 : 0) +
+    (Number.isFinite(timestampScore) ? timestampScore : 0) / 1_000_000_000_000;
+  return {
+    label: thread.label,
+    message: latestSubstantive,
+    priorityScore,
+  };
+}
+
+function isAllSyncedMessagesDecision(message: NewMessage): boolean {
+  const content = redactRecentTextReviewText(message.content || '');
+  return /\b(?:agreed to|decided to|confirmed(?: that| for| the)?|booked|scheduled|locked (?:in|down)|set for|plan is|we(?:'re| are) (?:meeting|going|using)|let'?s (?:meet|use|go|do|plan|book|schedule))\b/i.test(
+    content,
+  );
+}
+
+function buildAllSyncedMessagesTranscript(
+  threads: AllSyncedMessagesSummaryThread[],
+): { transcript: string; evidenceText: string } {
+  const selectedThreads = threads.slice(
+    0,
+    ALL_SYNCED_MESSAGES_PROVIDER_THREAD_LIMIT,
+  );
+  const transcript = selectedThreads
+    .map((thread) => {
+      const speakerLabels = buildThreadSummarySpeakerLabels({
+        messages: thread.messages,
+        isGroup: thread.isGroup,
+      });
+      const turns = thread.messages
+        .slice(-16)
+        .map((message) => {
+          const speaker =
+            speakerLabels.get(getThreadSummarySpeakerKey(message)) || 'Someone';
+          return `${speaker}: ${clipAllSyncedMessagesEvidence(message.content, 240)}`;
+        })
+        .filter(Boolean)
+        .join('\n');
+      return `[Conversation: ${thread.label}]\n${turns}`;
+    })
+    .join('\n\n');
+  return {
+    transcript: redactRecentTextReviewText(transcript),
+    evidenceText: selectedThreads
+      .flatMap((thread) => thread.messages)
+      .map((message) => redactRecentTextReviewText(message.content || ''))
+      .join('\n'),
+  };
+}
+
+function buildLocalAllSyncedMessagesThemeLines(params: {
+  threads: AllSyncedMessagesSummaryThread[];
+  channel: AssistantCapabilityContext['channel'];
+}): string[] {
+  const maxThreads = params.channel === 'bluebubbles' ? 3 : 6;
+  const snippetLimit = params.channel === 'bluebubbles' ? 88 : 130;
+  return params.threads.slice(0, maxThreads).map((thread) => {
+    const highlights = pickRepresentativeThreadMessages(thread.messages);
+    const first = highlights[0] || thread.messages[0];
+    const latest = highlights.at(-1) || thread.messages.at(-1);
+    const firstText = clipAllSyncedMessagesEvidence(
+      first?.content,
+      snippetLimit,
+    );
+    const latestText = clipAllSyncedMessagesEvidence(
+      latest?.content,
+      snippetLimit,
+    );
+    if (!firstText || first?.id === latest?.id || firstText === latestText) {
+      return `- ${thread.label}: "${latestText || 'Recent conversation activity.'}"`;
+    }
+    return `- ${thread.label}: "${firstText}" \u2192 "${latestText}"`;
+  });
+}
+
+function formatAllSyncedMessagesProviderThemes(params: {
+  digest: Awaited<ReturnType<typeof summarizeBlueBubblesThreadDigest>>;
+  channel: AssistantCapabilityContext['channel'];
+}): string[] {
+  const compact = params.channel === 'bluebubbles';
+  const overview = [params.digest.lead, params.digest.digest]
+    .filter(Boolean)
+    .map((value) => redactRecentTextReviewText(value || ''))
+    .join(' ');
+  return [
+    overview ? clipText(overview, compact ? 420 : 760) : null,
+    ...params.digest.bullets
+      .slice(0, compact ? 2 : 4)
+      .map(
+        (bullet) =>
+          `- ${clipText(redactRecentTextReviewText(bullet), compact ? 140 : 190)}`,
+      ),
+  ].filter((line): line is string => Boolean(line));
+}
+
+async function buildAllSyncedMessagesSummaryReply(params: {
   window: ReturnType<typeof resolveThreadSummaryWindow>;
   channel: AssistantCapabilityContext['channel'];
-}): string {
+}): Promise<{
+  replyText: string;
+  digestSource: AllSyncedMessagesDigestSource;
+  threadCount: number;
+  messageCount: number;
+}> {
   const threads = getAllChats()
     .filter((chat) => chat.jid.startsWith('bb:'))
     .map((chat) => {
@@ -2977,44 +3326,145 @@ function buildAllSyncedMessagesSummaryReply(params: {
           !message.is_bot_message &&
           !isBlueBubblesAssistantControlMessage(message),
       );
-      return { chat, messages };
+      return {
+        label: formatSafeSyncedThreadLabel({
+          jid: chat.jid,
+          name: chat.name,
+          isGroup: Boolean(chat.is_group),
+        }),
+        isGroup: Boolean(chat.is_group),
+        messages,
+        latestTimestamp: messages[messages.length - 1]?.timestamp || '',
+      } satisfies AllSyncedMessagesSummaryThread;
     })
     .filter((entry) => entry.messages.length > 0)
-    .sort((left, right) => {
-      const leftLatest =
-        left.messages[left.messages.length - 1]?.timestamp || '';
-      const rightLatest =
-        right.messages[right.messages.length - 1]?.timestamp || '';
-      return rightLatest.localeCompare(leftLatest);
-    });
+    .sort((left, right) =>
+      right.latestTimestamp.localeCompare(left.latestTimestamp),
+    );
 
   if (threads.length === 0) {
-    return `I did not find any synced Messages activity across your chats over ${params.window.label}.`;
+    return {
+      replyText: `I did not find any synced Messages activity across your chats over ${params.window.label}.`,
+      digestSource: 'local',
+      threadCount: 0,
+      messageCount: 0,
+    };
   }
 
   const totalMessages = threads.reduce(
     (sum, entry) => sum + entry.messages.length,
     0,
   );
-  const lead = `I found ${totalMessages} synced Messages message${totalMessages === 1 ? '' : 's'} across ${threads.length} chat${threads.length === 1 ? '' : 's'} over ${params.window.label}.`;
-  const rows = threads
-    .slice(0, params.channel === 'bluebubbles' ? 3 : 6)
-    .map((entry) => {
-      const label = formatSafeSyncedThreadLabel({
-        jid: entry.chat.jid,
-        name: entry.chat.name,
-        isGroup: Boolean(entry.chat.is_group),
+  const { transcript, evidenceText } =
+    buildAllSyncedMessagesTranscript(threads);
+  const synthesizedDigest = await summarizeBlueBubblesThreadDigest({
+    chatName: 'all synced Messages chats',
+    windowLabel: params.window.label,
+    transcript,
+    channel: params.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+    thinkingMode: 'quick',
+  });
+  const providerGrounded = isAllSyncedMessagesProviderDigestGrounded({
+    evidenceText,
+    digest: synthesizedDigest,
+  });
+  const digestSource: AllSyncedMessagesDigestSource = providerGrounded
+    ? 'openai_grounded'
+    : synthesizedDigest.source === 'openai' ||
+        synthesizedDigest.fallbackReason === 'ungrounded'
+      ? 'local_untrusted_provider'
+      : 'local';
+  const themeLines = providerGrounded
+    ? formatAllSyncedMessagesProviderThemes({
+        digest: synthesizedDigest,
+        channel: params.channel,
+      })
+    : buildLocalAllSyncedMessagesThemeLines({
+        threads,
+        channel: params.channel,
       });
-      const latest = entry.messages[entry.messages.length - 1];
-      const latestText = clipText(latest?.content || '', 120);
-      return `- ${label}: ${entry.messages.length} message${entry.messages.length === 1 ? '' : 's'}${latestText ? `. Latest: "${latestText}"` : ''}`;
-    });
-  const hiddenCount = Math.max(0, threads.length - rows.length);
-  const tail =
-    hiddenCount > 0
-      ? `- Plus ${hiddenCount} more synced chat${hiddenCount === 1 ? '' : 's'} with activity.`
-      : null;
-  return [lead, '', ...rows, tail].filter(Boolean).join('\n');
+
+  const compact = params.channel === 'bluebubbles';
+  const sectionLimit = compact ? 2 : 3;
+  const evidenceLimit = compact ? 112 : 170;
+  const decisions = threads
+    .map((thread) => {
+      const message = [...thread.messages]
+        .reverse()
+        .find(isAllSyncedMessagesDecision);
+      return message ? { label: thread.label, message } : null;
+    })
+    .filter(
+      (
+        item,
+      ): item is {
+        label: string;
+        message: NewMessage;
+      } => Boolean(item),
+    )
+    .slice(0, sectionLimit)
+    .map(
+      (item) =>
+        `- ${item.label}: "${clipAllSyncedMessagesEvidence(item.message.content, evidenceLimit)}"`,
+    );
+  const pendingReplies = threads
+    .map(findAllSyncedMessagesPendingReply)
+    .filter((item): item is AllSyncedMessagesPendingReply => Boolean(item))
+    .sort(
+      (left, right) =>
+        right.priorityScore - left.priorityScore ||
+        right.message.timestamp.localeCompare(left.message.timestamp),
+    );
+  const openQuestions = pendingReplies
+    .slice(0, sectionLimit)
+    .map(
+      (item) =>
+        `- ${item.label}: "${clipAllSyncedMessagesEvidence(item.message.content, evidenceLimit)}"`,
+    );
+  const replyPriorities = pendingReplies
+    .slice(0, sectionLimit)
+    .map(
+      (item) =>
+        `- ${item.label} \u2014 respond to "${clipAllSyncedMessagesEvidence(item.message.content, compact ? 72 : 100)}"`,
+    );
+  const themeCoverageLimit = providerGrounded
+    ? ALL_SYNCED_MESSAGES_PROVIDER_THREAD_LIMIT
+    : compact
+      ? 3
+      : 6;
+  const hiddenThreadCount = Math.max(0, threads.length - themeCoverageLimit);
+
+  const sections = [
+    `Messages digest \u2014 ${params.window.label}`,
+    ['Themes', ...themeLines].join('\n'),
+    [
+      'Decisions',
+      ...(decisions.length > 0
+        ? decisions
+        : ['No clear decisions were captured in the synced messages.']),
+    ].join('\n'),
+    [
+      'Open questions',
+      ...(openQuestions.length > 0
+        ? openQuestions
+        : ['No unanswered question is obvious from the latest turns.']),
+    ].join('\n'),
+    [
+      'Reply priorities',
+      ...(replyPriorities.length > 0
+        ? replyPriorities
+        : ['No reply looks clearly due from the latest turns.']),
+    ].join('\n'),
+    hiddenThreadCount > 0
+      ? `Coverage note: ${hiddenThreadCount} additional active conversation${hiddenThreadCount === 1 ? '' : 's'} stayed outside this compact view.`
+      : null,
+  ].filter((section): section is string => Boolean(section));
+  return {
+    replyText: sections.join('\n\n'),
+    digestSource,
+    threadCount: threads.length,
+    messageCount: totalMessages,
+  };
 }
 
 async function runCommunicationThreadSummaryCapability(
@@ -3028,10 +3478,11 @@ async function runCommunicationThreadSummaryCapability(
       kind: input.timeWindowKind,
       value: input.timeWindowValue,
     });
-    const replyText = buildAllSyncedMessagesSummaryReply({
+    const summary = await buildAllSyncedMessagesSummaryReply({
       window,
       channel: context.channel,
     });
+    const replyText = summary.replyText;
     return {
       handled: true,
       capabilityId: descriptor.id,
@@ -3042,7 +3493,12 @@ async function runCommunicationThreadSummaryCapability(
         context,
         'local_companion',
         'summarized activity across all synced Messages chats',
-        [`window:${window.label}`],
+        [
+          `window:${window.label}`,
+          `threads:${summary.threadCount}`,
+          `messages:${summary.messageCount}`,
+          `digest_source:${summary.digestSource}`,
+        ],
       ),
       conversationSeed: {
         flowKey: descriptor.id.replace(/\./g, '_'),

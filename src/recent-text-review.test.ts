@@ -95,10 +95,129 @@ describe('recent text review', () => {
     ).toContain('Suggested replies');
     expect(
       formatRecentTextReviewReply({ result, channel: 'bluebubbles' }),
-    ).toContain('direct');
+    ).toContain('warm');
     expect(
       result.noReplyNeeded.some((item) => item.chatLabel === 'Game Chat'),
     ).toBe(true);
+  });
+
+  it('keeps human reply needs above automated surveys, promotions, and notices', async () => {
+    const storeInbound = (input: {
+      suffix: string;
+      label: string;
+      content: string;
+      timestamp: string;
+    }) => {
+      const chatJid = `bb:iMessage;-;+1555000${input.suffix}`;
+      storeChatMetadata(
+        chatJid,
+        input.timestamp,
+        input.label,
+        'bluebubbles',
+        false,
+      );
+      storeMessage({
+        id: `priority-${input.suffix}`,
+        chat_jid: chatJid,
+        sender: `bb:+1555000${input.suffix}`,
+        sender_name: input.label,
+        content: input.content,
+        timestamp: input.timestamp,
+        is_from_me: false,
+      });
+    };
+
+    storeInbound({
+      suffix: '1001',
+      label: 'Candace',
+      content: 'Do you need me to pick them up?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+    });
+    storeInbound({
+      suffix: '1006',
+      label: 'Family Committee',
+      content: 'Can you tell us about how pickup works tomorrow?',
+      timestamp: '2026-04-15T16:00:00.000Z',
+    });
+    storeInbound({
+      suffix: '1002',
+      label: 'Auto Survey',
+      content:
+        'Mercedes-Benz: Please take our survey about your recent experience: https://survey.example.com. Reply STOP to opt out.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+    });
+    storeInbound({
+      suffix: '1003',
+      label: 'Pizza Club',
+      content:
+        'Pizza Club: Limited-time deal, 25% off today at https://pizza.example.com. Text STOP to unsubscribe.',
+      timestamp: '2026-04-15T16:30:00.000Z',
+    });
+    storeInbound({
+      suffix: '1004',
+      label: 'Geek Squad',
+      content:
+        'Geek Squad: Your service specialist is on the way and expected to arrive by 4:30 PM. Do not reply.',
+      timestamp: '2026-04-15T16:40:00.000Z',
+    });
+    storeInbound({
+      suffix: '1005',
+      label: 'Dental Center',
+      content:
+        'Dental Center: Your appointment is scheduled tomorrow. Reply OK to confirm.',
+      timestamp: '2026-04-15T16:50:00.000Z',
+    });
+
+    const result = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+    const byLabel = new Map(result.items.map((item) => [item.chatLabel, item]));
+
+    expect(result.items.slice(0, 2).map((item) => item.chatLabel)).toEqual(
+      expect.arrayContaining(['Candace', 'Family Committee']),
+    );
+    expect(
+      result.items.slice(0, 2).every((item) => item.section === 'needs_reply'),
+    ).toBe(true);
+    for (const label of ['Auto Survey', 'Pizza Club']) {
+      expect(byLabel.get(label)).toMatchObject({
+        section: 'no_reply_needed',
+        suggestedReply: null,
+        suggestedReplies: [],
+      });
+      expect(byLabel.get(label)?.riskFlags).toContain(
+        'automated_marketing_or_survey',
+      );
+    }
+    expect(byLabel.get('Geek Squad')).toMatchObject({
+      section: 'no_reply_needed',
+      suggestedReplies: [],
+    });
+    expect(byLabel.get('Dental Center')).toMatchObject({
+      section: 'worth_watching',
+      suggestedReplies: [],
+    });
+    expect(byLabel.get('Dental Center')?.riskFlags).toContain(
+      'automated_transactional_notice',
+    );
+    expect(byLabel.get('Family Committee')?.riskFlags).not.toContain(
+      'automated_marketing_or_survey',
+    );
+    expect(byLabel.get('Family Committee')?.section).toBe('needs_reply');
+
+    const generatedDrafts = result.needsReply.flatMap(
+      (item) => item.suggestedReplies || [],
+    );
+    expect(generatedDrafts.length).toBeGreaterThan(0);
+    expect(generatedDrafts.map((draft) => draft.text).join(' ')).not.toMatch(
+      /\b(?:i am checking|i will confirm|i will get back|i will take a look|will confirm shortly)\b/i,
+    );
+    expect(
+      formatRecentTextReviewReply({ result, channel: 'telegram' }),
+    ).toMatch(/\d+\. Candace:/);
   });
 
   it('filters BlueBubbles assistant wake commands out of recent text recaps', async () => {
@@ -539,9 +658,11 @@ describe('recent text review', () => {
     });
 
     expect(result.needsReply[0]?.linkedSubjectIds).toContain('subject-candace');
-    expect(result.needsReply[0]?.suggestedReply).toContain('thoughtful');
     expect(result.needsReply[0]?.suggestedReply).toContain(
-      'checking the details',
+      'appreciate the heads-up',
+    );
+    expect(result.needsReply[0]?.suggestedReply).not.toMatch(
+      /\b(?:checking|will confirm|will get back)\b/i,
     );
   });
 
@@ -822,6 +943,128 @@ describe('recent text review', () => {
     }
   });
 
+  it('does not let provider refinement promote automation or invent follow-up promises', async () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+15550004001',
+      '2026-04-15T16:10:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'provider-guard-human',
+      chat_jid: 'bb:iMessage;-;+15550004001',
+      sender: 'bb:+15550004001',
+      sender_name: 'Candace',
+      content: 'Can you tell me whether you need me to pick them up?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+    storeChatMetadata(
+      'bb:iMessage;-;+15550004002',
+      '2026-04-15T16:20:00.000Z',
+      'Auto Survey',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'provider-guard-survey',
+      chat_jid: 'bb:iMessage;-;+15550004002',
+      sender: 'bb:+15550004002',
+      sender_name: 'Auto Survey',
+      content:
+        'Please complete our customer survey at https://survey.example.com. Text STOP to unsubscribe.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const request = JSON.parse(String(init?.body || '{}')) as {
+        input?: string;
+      };
+      const prompt = String(request.input || '');
+      const serializedItems = prompt.slice(
+        prompt.lastIndexOf('Review items: ') + 'Review items: '.length,
+      );
+      const providerItems = JSON.parse(serializedItems) as Array<{
+        itemId: string;
+        riskFlags: string[];
+      }>;
+      const automated = providerItems.find((item) =>
+        item.riskFlags.includes('automated_marketing_or_survey'),
+      )!;
+      const human = providerItems.find(
+        (item) => !item.riskFlags.includes('automated_marketing_or_survey'),
+      )!;
+      return new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            items: [
+              {
+                itemId: automated.itemId,
+                section: 'needs_reply',
+                summaryText: 'Urgent personal reply required.',
+                suggestedReplies: [
+                  {
+                    label: 'unsafe',
+                    text: 'I am checking and will confirm shortly.',
+                  },
+                ],
+              },
+              {
+                itemId: human.itemId,
+                suggestedReplies: [
+                  {
+                    label: 'unsafe',
+                    text: 'I am checking and will get back to you shortly.',
+                  },
+                  {
+                    label: 'grounded',
+                    text: 'Thanks for asking. I saw your question.',
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    });
+
+    const result = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'auto',
+    });
+    const automated = result.items.find(
+      (item) => item.chatLabel === 'Auto Survey',
+    );
+    const human = result.items.find((item) => item.chatLabel === 'Candace');
+
+    expect(result.providerUsed).toBe('openai');
+    expect(automated).toMatchObject({
+      section: 'no_reply_needed',
+      suggestedReply: null,
+      suggestedReplies: [],
+    });
+    expect(automated?.summaryText).not.toBe('Urgent personal reply required.');
+    expect(human?.suggestedReplies?.length).toBeGreaterThan(0);
+    expect(
+      (human?.suggestedReplies || []).map((reply) => reply.text).join(' '),
+    ).not.toMatch(/\b(?:checking|will get back|will confirm)\b/i);
+    expect(human?.suggestedReplies).not.toContainEqual({
+      label: 'grounded',
+      text: 'Thanks for asking. I saw your question.',
+    });
+  });
+
   it('stores privacy-safe review seeds that resolve through communication threads', async () => {
     storeChatMetadata(
       'bb:iMessage;-;+14695550123',
@@ -963,10 +1206,133 @@ describe('recent text review', () => {
     });
     expect(item?.riskFlags).toContain('group_chat_confirm_audience');
     expect(item?.recommendedAction).toContain('group-chat draft');
-    expect(item?.suggestedReply).toContain('answer the group');
+    expect(item?.suggestedReply).toContain('Thanks for flagging this');
+    expect(item?.suggestedReply).not.toMatch(
+      /\b(?:checking|will confirm|will send)\b/i,
+    );
     expect(
       formatRecentTextReviewReply({ result, channel: 'telegram' }),
     ).toContain('group chat - draft only');
+  });
+
+  it('keeps Telegram review numbering compact and preserves visible follow-up targets', async () => {
+    for (let index = 1; index <= 6; index += 1) {
+      const chatJid = `bb:iMessage;-;+15550005${String(index).padStart(3, '0')}`;
+      const timestamp = `2026-04-15T16:${String(index).padStart(2, '0')}:00.000Z`;
+      storeChatMetadata(
+        chatJid,
+        timestamp,
+        `Person ${index}`,
+        'bluebubbles',
+        false,
+      );
+      storeMessage({
+        id: `compact-human-${index}`,
+        chat_jid: chatJid,
+        sender: `bb:+15550005${String(index).padStart(3, '0')}`,
+        sender_name: `Person ${index}`,
+        content: `Can you answer question ${index} for me?`,
+        timestamp,
+        is_from_me: false,
+      });
+    }
+    storeChatMetadata(
+      'bb:iMessage;-;+15550005999',
+      '2026-04-15T16:30:00.000Z',
+      'Closed Loop',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'compact-no-reply',
+      chat_jid: 'bb:iMessage;-;+15550005999',
+      sender: 'bb:+15550005999',
+      sender_name: 'Closed Loop',
+      content: 'Thanks',
+      timestamp: '2026-04-15T16:30:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+    const formatted = formatRecentTextReviewReply({
+      result,
+      channel: 'telegram',
+    });
+    const visibleRanks = Array.from(formatted.matchAll(/^(\d+)\. /gm)).map(
+      (match) => Number(match[1]),
+    );
+
+    expect(result.needsReply).toHaveLength(6);
+    expect(visibleRanks).toEqual([1, 2, 3, 4]);
+    expect(formatted).toContain(
+      'Not expanded below: 2 needing reply, 1 no reply needed.',
+    );
+    expect(formatted).not.toMatch(/\n\nWorth watching\n/);
+    expect(formatted).not.toMatch(/\n\nNo reply needed\n/);
+    expect(formatted.length).toBeLessThan(3_500);
+
+    const visibleItem = result.items[0]!;
+    const seedJson = buildRecentTextReviewSeedJson(result);
+    const parsedSeed = parseRecentTextReviewSeedJson(seedJson);
+    const followup = parseRecentTextReviewItemFollowup({
+      seedJson,
+      userText: `draft #${visibleItem.rank}`,
+    });
+    expect(parsedSeed?.items[0]).toMatchObject({
+      itemId: visibleItem.itemId,
+      rank: visibleItem.rank,
+      communicationThreadId: visibleItem.communicationThreadId,
+    });
+    expect(followup?.item).toMatchObject({
+      itemId: visibleItem.itemId,
+      rank: visibleItem.rank,
+      communicationThreadId: visibleItem.communicationThreadId,
+    });
+  });
+
+  it('reports full review coverage even when the stored item list is capped', async () => {
+    for (let index = 1; index <= 15; index += 1) {
+      const chatJid = `bb:iMessage;-;coverage-${index}`;
+      storeChatMetadata(
+        chatJid,
+        `2026-04-15T${String(10 + Math.floor(index / 6)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}:00.000Z`,
+        `Person ${index}`,
+        'bluebubbles',
+        false,
+      );
+      storeMessage({
+        id: `coverage-${index}`,
+        chat_jid: chatJid,
+        sender: `person-${index}`,
+        sender_name: `Person ${index}`,
+        content: `Can you confirm pickup item ${index} tonight?`,
+        timestamp: `2026-04-15T${String(10 + Math.floor(index / 6)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}:00.000Z`,
+        is_from_me: false,
+      });
+    }
+
+    const result = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+    const formatted = formatRecentTextReviewReply({
+      result,
+      channel: 'telegram',
+    });
+
+    expect(result.items).toHaveLength(12);
+    expect(result.reviewedConversationCount).toBe(15);
+    expect(result.sectionTotals.needs_reply).toBe(15);
+    expect(formatted).toContain('Showing 4 highest-priority of 15');
+    expect(formatted).toContain('11 needing reply');
+    expect(formatted).toContain('15 conversations reviewed');
   });
 
   it('parses numbered follow-ups from a recent text review seed', () => {

@@ -147,6 +147,22 @@ describe('assistant request routing', () => {
     expect(policy.guidance).not.toContain('This route is tool-free');
   });
 
+  it.each([
+    'Hi can you use blue bubbles to send a message back to Candace please. Check my recent text from her and reply from you that yes please if she could pick them up I haven’t had a chance.',
+    'Yes reply to 1 Candace saying yes I need her to pick up please.',
+    'You can’t send message on blue bubbles on my behalf?',
+  ])(
+    'keeps the real Telegram BlueBubbles regression in the host capability lane: %s',
+    (content) => {
+      const policy = classifyAssistantRequest([{ content }]);
+
+      expect(policy.route).toBe('protected_assistant');
+      expect(policy.reason).toContain('normalized external message intent');
+      expect(policy.builtinTools).toEqual([]);
+      expect(policy.mcpTools).toEqual([]);
+    },
+  );
+
   it('does not describe a descriptor-only message tool as registered', () => {
     const registry = new RuntimeCapabilityRegistry(
       DEFAULT_RUNTIME_CAPABILITY_DESCRIPTORS,
