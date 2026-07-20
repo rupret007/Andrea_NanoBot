@@ -5152,7 +5152,7 @@ export class BlueBubblesChannel implements Channel {
     this.lastErrorText =
       this.transportProbeStatus === 'reachable' &&
       this.webhookRegistrationStatus === 'registered' &&
-      this.isReceiptInboxReadyForSend()
+      (!this.config.sendEnabled || this.isReceiptInboxReadyForSend())
         ? null
         : this.receiptInboxReadiness.detail ||
           this.webhookRegistrationDetail ||
