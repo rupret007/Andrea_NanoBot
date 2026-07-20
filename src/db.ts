@@ -6118,12 +6118,6 @@ function createSchema(database: Database.Database): void {
       /* column already exists */
     }
   }
-  database.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_companion_handoffs_provider_idempotency
-      ON companion_handoffs(provider_idempotency_key)
-      WHERE provider_idempotency_key IS NOT NULL
-  `);
-
   // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -6502,6 +6496,12 @@ function createSchema(database: Database.Database): void {
       /* column already exists */
     }
   }
+
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_companion_handoffs_provider_idempotency
+      ON companion_handoffs(provider_idempotency_key)
+      WHERE provider_idempotency_key IS NOT NULL
+  `);
 
   try {
     database.exec(

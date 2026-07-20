@@ -5,6 +5,45 @@ import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('database migrations', () => {
+  it('adds the companion handoff idempotency column before its index', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-db-test-'));
+    const dbPath = path.join(tempDir, 'messages.db');
+    try {
+      vi.resetModules();
+      const dbModule = await import('./db.js');
+      dbModule._initTestDatabaseAtPath(dbPath);
+      dbModule._closeDatabase();
+
+      const legacyDb = new Database(dbPath);
+      legacyDb.exec(`
+        DROP INDEX idx_companion_handoffs_provider_idempotency;
+        ALTER TABLE companion_handoffs DROP COLUMN provider_idempotency_key;
+      `);
+      legacyDb.close();
+
+      dbModule._initTestDatabaseAtPath(dbPath);
+      dbModule._closeDatabase();
+
+      const migratedDb = new Database(dbPath, { readonly: true });
+      const columns = migratedDb
+        .prepare(`PRAGMA table_info(companion_handoffs)`)
+        .all() as Array<{ name: string }>;
+      const index = migratedDb
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`,
+        )
+        .get('idx_companion_handoffs_provider_idempotency');
+      migratedDb.close();
+
+      expect(columns.map((column) => column.name)).toContain(
+        'provider_idempotency_key',
+      );
+      expect(index).toBeTruthy();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('defaults Telegram backfill chats to direct messages', async () => {
     const repoRoot = process.cwd();
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-db-test-'));
