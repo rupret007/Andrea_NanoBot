@@ -5078,14 +5078,23 @@ describe('BlueBubbles channel', () => {
     }
   });
 
-  it('reports degraded health when outbound reply-back is disabled', () => {
+  it('reports healthy inbound-only mode when outbound reply-back is disabled', () => {
     const snapshot = buildBlueBubblesHealthSnapshot(
       buildConfig({ sendEnabled: false }),
     );
 
     expect(snapshot.configured).toBe(true);
-    expect(snapshot.state).toBe('degraded');
-    expect(snapshot.detail).toContain('outbound reply-back is disabled');
+    expect(snapshot.state).toBe('ready');
+    expect(snapshot.operatingMode).toBe('inbound_only');
+    expect(snapshot.capabilities).toEqual({
+      inboundAvailable: true,
+      outboundAvailable: false,
+    });
+    expect(snapshot.alertDisposition).toBe('none');
+    expect(snapshot.faultCode).toBeNull();
+    expect(snapshot.detail).toContain(
+      'outbound reply-back is intentionally disabled',
+    );
   });
 
   it('accepts all-synced inbound chats but rejects ordinary outbound group sends', async () => {

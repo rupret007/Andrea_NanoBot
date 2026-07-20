@@ -8061,6 +8061,18 @@ export interface ChannelSendReceipt {
 
 export type ChannelHealthState = 'starting' | 'ready' | 'degraded' | 'stopped';
 
+export type ChannelOperatingMode =
+  | 'bidirectional'
+  | 'inbound_only'
+  | 'disabled';
+
+export type ChannelAlertDisposition = 'none' | 'action_required';
+
+export interface ChannelHealthCapabilities {
+  inboundAvailable: boolean;
+  outboundAvailable: boolean;
+}
+
 export interface ChannelHealthSnapshot {
   name: string;
   configured: boolean;
@@ -8069,6 +8081,13 @@ export interface ChannelHealthSnapshot {
   lastReadyAt?: string | null;
   lastError?: string | null;
   detail?: string | null;
+  /** Structured operating truth; omitted by legacy channel adapters. */
+  operatingMode?: ChannelOperatingMode;
+  capabilities?: ChannelHealthCapabilities;
+  /** Whether this condition should notify the operator. */
+  alertDisposition?: ChannelAlertDisposition;
+  /** Stable machine-readable identity for an actionable fault. */
+  faultCode?: string | null;
 }
 
 export interface Channel {

@@ -633,6 +633,10 @@ import {
   RuntimeBackendJob,
 } from './types.js';
 import { logger } from './logger.js';
+import {
+  assessChannelHealthAlert,
+  decideChannelHealthAlert,
+} from './channel-health-alert.js';
 import { parseGitDirtyPaths } from './git-status-paths.js';
 import { deliverCompanionHandoff } from './cross-channel-handoffs.js';
 import {
@@ -13500,6 +13504,15 @@ function emitAndreaPlatformTransportTruths(
       metadata: compactPlatformStrings({
         configured: String(channel.configured),
         channelState: channel.state,
+        operatingMode: channel.operatingMode || '',
+        inboundAvailable:
+          channel.capabilities == null
+            ? ''
+            : String(channel.capabilities.inboundAvailable),
+        outboundAvailable:
+          channel.capabilities == null
+            ? ''
+            : String(channel.capabilities.outboundAvailable),
         lastReadyAt: channel.lastReadyAt || '',
         ...(kind === 'bluebubbles'
           ? buildBlueBubblesPlatformMetadata(truth.bluebubbles)
@@ -13626,6 +13639,7 @@ async function main(): Promise<void> {
   let toolReliabilityInterval: ReturnType<typeof setInterval> | null = null;
   let toolReliabilityRefreshInFlight = false;
   const systemAlertLastStateByKey = new Map<string, string>();
+  const systemAlertLastChannelFaultByKey = new Map<string, string>();
   const systemAlertLastSentAtByKey = new Map<string, number>();
   const writeCurrentAssistantHealth = () => {
     try {
@@ -13808,6 +13822,7 @@ async function main(): Promise<void> {
     severity: AlertEventSnapshot['severity'];
   }): string => {
     const { snapshot, transition, severity } = params;
+    const assessment = assessChannelHealthAlert(snapshot);
     const symptom =
       transition === 'recovered'
         ? `${snapshot.name} recovered and is ready again.`
@@ -13817,18 +13832,14 @@ async function main(): Promise<void> {
     const nextAction =
       transition === 'recovered'
         ? 'No action needed. Andrea will keep monitoring.'
-        : snapshot.name === 'bluebubbles'
-          ? 'Confirm the Mac BlueBubbles server is online/reachable, then rerun debug:bluebubbles.'
-          : snapshot.name === 'telegram'
-            ? 'Regenerate or replace the Telegram bot token, then restart services.'
-            : 'Review channel configuration and rerun debug:status.';
+        : assessment.nextAction;
     return [
       'Andrea system alert',
       `System: ${snapshot.name}`,
       `Severity: ${severity}`,
       `Transition: ${transition}`,
       `Symptom: ${symptom}`,
-      `Likely cause: ${snapshot.lastError ? 'channel transport error' : 'channel health transition'}`,
+      `Likely cause: ${assessment.likelyCause}`,
       `Next action: ${nextAction}`,
       'Class: external/manual-or-host',
     ].join('\n');
@@ -13837,34 +13848,43 @@ async function main(): Promise<void> {
     snapshot: ChannelHealthSnapshot,
   ): Promise<void> => {
     const key = `channel:${snapshot.name}`;
-    const state = snapshot.state === 'ready' ? 'healthy' : snapshot.state;
-    const previousState = systemAlertLastStateByKey.get(key);
-    systemAlertLastStateByKey.set(key, state);
+    const previousFault = systemAlertLastChannelFaultByKey.get(key) || null;
+    const decision = decideChannelHealthAlert(snapshot, previousFault);
+    const { assessment } = decision;
 
-    if (state === 'healthy') {
-      if (previousState && previousState !== 'healthy') {
-        await maybeSendSystemAlert({
-          dedupeKey: `${key}:recovered`,
-          state,
-          message: formatChannelAlertMessage({
-            snapshot,
-            transition: 'recovered',
-            severity: 'info',
-          }),
-        });
+    if (decision.event === 'none') {
+      if (!assessment.actionable) {
+        systemAlertLastChannelFaultByKey.delete(key);
       }
       return;
     }
 
-    await maybeSendSystemAlert({
-      dedupeKey: `${key}:${snapshot.state}`,
-      state,
+    if (decision.event === 'recovered') {
+      systemAlertLastChannelFaultByKey.delete(key);
+      await maybeSendSystemAlert({
+        dedupeKey: `${key}:recovered`,
+        state: 'healthy',
+        message: formatChannelAlertMessage({
+          snapshot,
+          transition: 'recovered',
+          severity: 'info',
+        }),
+      });
+      return;
+    }
+
+    const sent = await maybeSendSystemAlert({
+      dedupeKey: `${key}:${assessment.fingerprint}`,
+      state: snapshot.state,
       message: formatChannelAlertMessage({
         snapshot,
         transition: snapshot.state === 'stopped' ? 'down' : 'degraded',
         severity: snapshot.state === 'stopped' ? 'critical' : 'warning',
       }),
     });
+    if (sent) {
+      systemAlertLastChannelFaultByKey.set(key, assessment.fingerprint!);
+    }
   };
   const dispatchSystemHealthAlerts = async (): Promise<void> => {
     const alertConfig = resolveSystemAlertConfig();

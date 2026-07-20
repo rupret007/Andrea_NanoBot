@@ -852,9 +852,7 @@ export function buildBlueBubblesHealthSnapshot(
     ? 'stopped'
     : !configured
       ? 'degraded'
-      : config.sendEnabled
-        ? 'ready'
-        : 'degraded';
+      : 'ready';
   const defaultDetail = !config.enabled
     ? 'BlueBubbles disabled'
     : !configured
@@ -863,13 +861,25 @@ export function buildBlueBubblesHealthSnapshot(
         : 'BlueBubbles enabled but missing base URL, password, webhook secret, or shared group binding'
       : config.sendEnabled
         ? `BlueBubbles listener ready for ${config.chatScope}`
-        : 'BlueBubbles listener is configured, but outbound reply-back is disabled';
+        : 'BlueBubbles listener ready for inbound traffic; outbound reply-back is intentionally disabled';
   return {
     name: 'bluebubbles',
     configured,
     state: defaultState,
     updatedAt: new Date().toISOString(),
     detail: defaultDetail,
+    operatingMode: !config.enabled
+      ? 'disabled'
+      : config.sendEnabled
+        ? 'bidirectional'
+        : 'inbound_only',
+    capabilities: {
+      inboundAvailable: config.enabled && configured,
+      outboundAvailable: config.enabled && configured && config.sendEnabled,
+    },
+    alertDisposition:
+      config.enabled && !configured ? 'action_required' : 'none',
+    faultCode: config.enabled && !configured ? 'configuration_invalid' : null,
     ...overrides,
   };
 }
@@ -4224,12 +4234,55 @@ export class BlueBubblesChannel implements Channel {
 
   private emitHealth(overrides: Partial<ChannelHealthSnapshot> = {}): void {
     const configured = isBlueBubblesRoutingConfigured(this.config);
-    const readyForTraffic =
+    const inboundReady =
       configured &&
-      this.config.sendEnabled &&
+      this.connected &&
       this.transportProbeStatus === 'reachable' &&
-      this.webhookRegistrationStatus === 'registered' &&
+      this.webhookRegistrationStatus === 'registered';
+    const outboundReady =
+      inboundReady &&
+      this.config.sendEnabled &&
       this.isReceiptInboxReadyForSend();
+    let state: ChannelHealthSnapshot['state'] = 'starting';
+    let alertDisposition: ChannelHealthSnapshot['alertDisposition'] = 'none';
+    let faultCode: string | null = null;
+    if (!this.config.enabled) {
+      state = 'stopped';
+    } else if (!configured) {
+      state = 'degraded';
+      alertDisposition = 'action_required';
+      faultCode = 'configuration_invalid';
+    } else if (!this.connected) {
+      state = 'starting';
+    } else if (this.transportProbeStatus === 'auth_failed') {
+      state = 'degraded';
+      alertDisposition = 'action_required';
+      faultCode = 'transport_auth_failed';
+    } else if (this.transportProbeStatus === 'unreachable') {
+      state = 'degraded';
+      alertDisposition = 'action_required';
+      faultCode = 'transport_unreachable';
+    } else if (this.webhookRegistrationStatus === 'auth_failed') {
+      state = 'degraded';
+      alertDisposition = 'action_required';
+      faultCode = 'webhook_auth_failed';
+    } else if (this.webhookRegistrationStatus === 'missing') {
+      state = 'degraded';
+      alertDisposition = 'action_required';
+      faultCode = 'webhook_missing';
+    } else if (this.webhookRegistrationStatus === 'unreachable') {
+      state = 'degraded';
+      alertDisposition = 'action_required';
+      faultCode = 'webhook_unreachable';
+    } else if (inboundReady && !this.config.sendEnabled) {
+      state = 'ready';
+    } else if (outboundReady) {
+      state = 'ready';
+    } else if (this.config.sendEnabled && !this.isReceiptInboxReadyForSend()) {
+      state = 'degraded';
+      alertDisposition = 'action_required';
+      faultCode = 'receipt_inbox_unavailable';
+    }
     const healthChatJid = this.getRepresentativeHealthChatJid();
     const matchedHealthChat = healthChatJid
       ? getAllChats().find((chat) => chat.jid === healthChatJid)
@@ -4347,17 +4400,22 @@ export class BlueBubblesChannel implements Channel {
     ];
     this.opts.onHealthUpdate?.(
       buildBlueBubblesHealthSnapshot(this.config, {
-        state: !this.config.enabled
-          ? 'stopped'
-          : this.connected && readyForTraffic
-            ? 'ready'
-            : this.connected
-              ? 'degraded'
-              : 'starting',
+        state,
         updatedAt: new Date().toISOString(),
         lastReadyAt: this.lastReadyAt,
         lastError: this.lastErrorText,
         detail: detailParts.join(' | '),
+        operatingMode: !this.config.enabled
+          ? 'disabled'
+          : this.config.sendEnabled
+            ? 'bidirectional'
+            : 'inbound_only',
+        capabilities: {
+          inboundAvailable: inboundReady,
+          outboundAvailable: outboundReady,
+        },
+        alertDisposition,
+        faultCode,
         ...overrides,
       }),
     );
@@ -4430,7 +4488,11 @@ export class BlueBubblesChannel implements Channel {
     }
     if (!this.verifyWebhookSecret(reqUrl)) {
       this.lastErrorText = 'BlueBubbles webhook secret mismatch';
-      this.emitHealth({ state: 'degraded' });
+      this.emitHealth({
+        state: 'degraded',
+        alertDisposition: 'action_required',
+        faultCode: 'webhook_secret_mismatch',
+      });
       writeResponse(res, 401, 'Unauthorized');
       return;
     }
@@ -4491,7 +4553,15 @@ export class BlueBubblesChannel implements Channel {
           state: 'unreachable',
           detail: this.lastErrorText,
         };
-        this.emitHealth({ state: 'degraded' });
+        this.emitHealth(
+          this.config.sendEnabled
+            ? {
+                state: 'degraded',
+                alertDisposition: 'action_required',
+                faultCode: 'receipt_inbox_unavailable',
+              }
+            : {},
+        );
         writeResponse(res, 503, 'Durable receipt inbox unavailable');
       }
       return;
@@ -4587,7 +4657,11 @@ export class BlueBubblesChannel implements Channel {
           state: 'unreachable',
           detail: this.lastErrorText,
         };
-        this.emitHealth({ state: 'degraded' });
+        this.emitHealth({
+          state: 'degraded',
+          alertDisposition: 'action_required',
+          faultCode: 'inbound_processing_failed',
+        });
         writeResponse(res, 503, 'Durable ingress claim unavailable');
         return;
       }
@@ -4627,7 +4701,11 @@ export class BlueBubblesChannel implements Channel {
               ? error.message
               : 'Durable ingress claim acceptance failed',
         };
-        this.emitHealth({ state: 'degraded' });
+        this.emitHealth({
+          state: 'degraded',
+          alertDisposition: 'action_required',
+          faultCode: 'inbound_processing_failed',
+        });
         writeResponse(res, 503, 'Durable ingress acceptance unavailable');
         return;
       }
@@ -4711,7 +4789,11 @@ export class BlueBubblesChannel implements Channel {
         error instanceof Error
           ? error.message
           : 'Unknown BlueBubbles ingress error';
-      this.emitHealth({ state: 'degraded' });
+      this.emitHealth({
+        state: 'degraded',
+        alertDisposition: 'action_required',
+        faultCode: 'inbound_processing_failed',
+      });
       writeResponse(res, 500, this.lastErrorText);
     } finally {
       try {
@@ -5037,7 +5119,11 @@ export class BlueBubblesChannel implements Channel {
           error instanceof Error
             ? error.message
             : 'Unknown BlueBubbles listener error';
-        this.emitHealth({ state: 'degraded' });
+        this.emitHealth({
+          state: 'degraded',
+          alertDisposition: 'action_required',
+          faultCode: 'listener_error',
+        });
         writeResponse(res, 500, this.lastErrorText);
       });
     });
@@ -5238,7 +5324,11 @@ export class BlueBubblesChannel implements Channel {
           : 'Unknown BlueBubbles send error';
       this.noteReplySendFailure(jid, this.lastErrorText);
       await this.maybeEscalateCrossSurfaceFallback();
-      this.emitHealth({ state: 'degraded' });
+      this.emitHealth({
+        state: 'degraded',
+        alertDisposition: 'action_required',
+        faultCode: 'outbound_delivery_failed',
+      });
       throw error;
     } finally {
       if (

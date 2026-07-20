@@ -610,6 +610,26 @@ function normalizeChannelHealthSnapshot(
       : null,
     lastError: isNonEmptyString(snapshot.lastError) ? snapshot.lastError : null,
     detail: isNonEmptyString(snapshot.detail) ? snapshot.detail : null,
+    operatingMode: ['bidirectional', 'inbound_only', 'disabled'].includes(
+      String(snapshot.operatingMode),
+    )
+      ? snapshot.operatingMode
+      : undefined,
+    capabilities:
+      snapshot.capabilities &&
+      typeof snapshot.capabilities.inboundAvailable === 'boolean' &&
+      typeof snapshot.capabilities.outboundAvailable === 'boolean'
+        ? {
+            inboundAvailable: snapshot.capabilities.inboundAvailable,
+            outboundAvailable: snapshot.capabilities.outboundAvailable,
+          }
+        : undefined,
+    alertDisposition: ['none', 'action_required'].includes(
+      String(snapshot.alertDisposition),
+    )
+      ? snapshot.alertDisposition
+      : undefined,
+    faultCode: isNonEmptyString(snapshot.faultCode) ? snapshot.faultCode : null,
   };
 }
 
