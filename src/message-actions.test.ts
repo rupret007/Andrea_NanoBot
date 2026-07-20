@@ -18,15 +18,19 @@ import {
 } from './db.js';
 import { getBlueBubblesCanonicalSelfThreadJid } from './bluebubbles-self-thread.js';
 import {
+  MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS,
   applyMessageActionOperation,
   buildBlueBubblesProofDrillPresentationText,
+  buildMessageActionPresentation,
   canUseBareBlueBubblesMessageActionFollowup,
   createOrRefreshMessageActionFromDraft,
   ensureBlueBubblesSelfThreadMessageActionForReplyText,
+  executeExplicitlyAuthorizedMessageAction,
   findLatestChatMessageAction,
   isBlueBubblesProofDrillAction,
   isBlueBubblesExplicitSendAlias,
   isMessageActionBoundToPresentationSurface,
+  isMessageActionBoundToPresentationMessage,
   interpretMessageActionFollowup,
   linkMessageActionCognitiveContext,
   listBlueBubblesMessageActionContinuitySnapshots,
@@ -38,14 +42,22 @@ import {
   resolveMessageActionForFollowup,
   runScheduledMessageActionByTaskId,
   startBlueBubblesProofDrill,
+  validateMessageActionFollowupContext,
 } from './message-actions.js';
 import {
   beginCognitiveKernelRun,
   finalizeCognitiveKernelOutcome,
 } from './cognitive-kernel.js';
+import {
+  resolveQueuedMessagingOwnerAuthorizationAt,
+  setMessagingOutboundPaused,
+  validateMessagingOutboundAuthorizationFence,
+} from './messaging-outbound-pause.js';
+import { ChannelDeliveryRejectedBeforeDispatchError } from './channel-delivery.js';
 import type {
   CommunicationThreadRecord,
   DelegationRuleRecord,
+  SendMessageOptions,
 } from './types.js';
 
 const originalFetch = globalThis.fetch;
@@ -123,9 +135,34 @@ function seedSendRule(
   return rule;
 }
 
+function confirmMessageActionPresentation(
+  action: {
+    messageActionId: string;
+    presentationChatJid?: string | null;
+  },
+  presentationMessageId?: string,
+): void {
+  updateMessageAction(action.messageActionId, {
+    presentationMessageId:
+      presentationMessageId || `bb:test-card:${action.messageActionId}`,
+    presentationThreadId: action.presentationChatJid || null,
+  });
+}
+
+function configureTestBlueBubblesOwnerSelfThread(): string {
+  const chatJid = 'bb:iMessage;-;+12025550199';
+  vi.stubEnv('BLUEBUBBLES_CANONICAL_SELF_THREAD_JID', chatJid);
+  vi.stubEnv(
+    'BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS',
+    `${chatJid},bb:iMessage;-;+12025550198`,
+  );
+  return chatJid;
+}
+
 describe('message actions', () => {
   beforeEach(() => {
     _initTestDatabase();
+    configureTestBlueBubblesOwnerSelfThread();
   });
 
   afterEach(() => {
@@ -164,6 +201,34 @@ describe('message actions', () => {
       getOutcomeBySource('main', 'message_action', action.messageActionId)
         ?.status,
     ).toBe('partial');
+  });
+
+  it('infers external-thread targets from telegram communication threads', () => {
+    const thread = seedCommunicationThread({
+      id: 'comm-telegram-1',
+      channel: 'telegram',
+      channelChatJid: 'tg:alice',
+      title: 'Alice',
+    });
+
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:alice',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Alice asked a quick follow-up.',
+      draftText: 'Yes, we are still on.',
+      personName: 'Alice',
+      threadTitle: thread.title,
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:00:00.000Z'),
+    });
+
+    expect(action.targetKind).toBe('external_thread');
+    expect(action.targetChannel).toBe('telegram');
+    expect(action.sendStatus).toBe('drafted');
   });
 
   it('turns a linked BlueBubbles message decision into one reviewed cognitive outcome', async () => {
@@ -251,7 +316,7 @@ describe('message actions', () => {
     const action = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+12025550101',
+      presentationChatJid: 'bb:iMessage;-;+12025550199',
       sourceType: 'manual_prompt',
       sourceKey: 'self-thread-followup-proof',
       sourceSummary: 'Draft text message to Candace.',
@@ -274,14 +339,17 @@ describe('message actions', () => {
     expect(
       findLatestChatMessageAction({
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;owner@example.com',
+        chatJid: 'bb:iMessage;-;+12025550198',
         now: new Date('2026-04-16T16:20:00.000Z'),
       })?.messageActionId,
     ).toBe(action.messageActionId);
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'bb:self-thread-action-card',
+    });
     expect(
       resolveMessageActionForFollowup({
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;owner@example.com',
+        chatJid: 'bb:iMessage;-;+12025550198',
         rawText: 'send it later tonight',
         now: new Date('2026-04-16T16:20:00.000Z'),
       })?.messageActionId,
@@ -297,7 +365,7 @@ describe('message actions', () => {
       false,
     );
     storeChatMetadata(
-      'bb:iMessage;-;owner@example.com',
+      'bb:iMessage;-;+12025550198',
       '2026-04-16T16:06:22.703Z',
       'Jeff',
       'bluebubbles',
@@ -305,7 +373,7 @@ describe('message actions', () => {
     );
     storeMessageDirect({
       id: 'bb:self-thread-draft-1',
-      chat_jid: 'bb:iMessage;-;owner@example.com',
+      chat_jid: 'bb:iMessage;-;+12025550198',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: [
@@ -325,7 +393,7 @@ describe('message actions', () => {
 
     const action = resolveMessageActionForFollowup({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+12025550101',
+      chatJid: 'bb:iMessage;-;+12025550199',
       rawText: 'send it later tonight',
       now: new Date('2026-04-16T16:20:00.000Z'),
     });
@@ -351,7 +419,7 @@ describe('message actions', () => {
       false,
     );
     storeChatMetadata(
-      'bb:iMessage;-;owner@example.com',
+      'bb:iMessage;-;+12025550198',
       '2026-04-16T16:06:22.703Z',
       'Jeff',
       'bluebubbles',
@@ -360,7 +428,7 @@ describe('message actions', () => {
 
     const action = ensureBlueBubblesSelfThreadMessageActionForReplyText({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;owner@example.com',
+      chatJid: 'bb:iMessage;-;+12025550198',
       presentationMessageId: 'bb:self-thread-draft-ensure',
       replyText: [
         'Andrea: I drafted a reply.',
@@ -387,7 +455,7 @@ describe('message actions', () => {
     const older = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+12025550101',
+      presentationChatJid: 'bb:iMessage;-;+12025550199',
       sourceType: 'manual_prompt',
       sourceKey: 'duplicate-self-thread-older',
       sourceSummary: 'Draft text message to Candace.',
@@ -409,7 +477,7 @@ describe('message actions', () => {
     const newer = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+12025550101',
+      presentationChatJid: 'bb:iMessage;-;+12025550199',
       sourceType: 'manual_prompt',
       sourceKey: 'duplicate-self-thread-newer',
       sourceSummary: 'Draft text message to Candace.',
@@ -431,7 +499,7 @@ describe('message actions', () => {
 
     const continuity = reconcileBlueBubblesSelfThreadContinuity({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;owner@example.com',
+      chatJid: 'bb:iMessage;-;+12025550198',
       now: new Date('2026-04-16T16:10:00.000Z'),
       allowRehydrate: false,
     });
@@ -443,11 +511,66 @@ describe('message actions', () => {
     expect(getMessageAction(newer.messageActionId)?.sendStatus).toBe('drafted');
   });
 
+  it('keeps case-different same-target self-thread drafts distinct and fails closed', () => {
+    const sharedParams = {
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles' as const,
+      presentationChatJid: 'bb:iMessage;-;+12025550199',
+      sourceType: 'manual_prompt' as const,
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationContext: 'general' as const,
+      targetOverride: {
+        kind: 'external_thread' as const,
+        chatJid: 'bb:iMessage;+;chat-candace',
+        threadId: null,
+        replyToMessageId: null,
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles' as const,
+    };
+    const older = createOrRefreshMessageActionFromDraft({
+      ...sharedParams,
+      sourceKey: 'case-distinct-self-thread-older',
+      sourceSummary: 'First same-target draft.',
+      draftText: 'Tonight still works for me.',
+      now: new Date('2026-04-16T16:00:00.000Z'),
+    });
+    const newer = createOrRefreshMessageActionFromDraft({
+      ...sharedParams,
+      sourceKey: 'case-distinct-self-thread-newer',
+      sourceSummary: 'Second same-target draft.',
+      draftText: 'tonight still works for me.',
+      now: new Date('2026-04-16T16:05:00.000Z'),
+    });
+
+    const continuity = reconcileBlueBubblesSelfThreadContinuity({
+      groupFolder: 'main',
+      chatJid: 'bb:iMessage;-;+12025550198',
+      now: new Date('2026-04-16T16:10:00.000Z'),
+      allowRehydrate: false,
+    });
+
+    expect(continuity.openMessageActionCount).toBe(2);
+    expect(continuity.supersededActionIds).not.toContain(older.messageActionId);
+    expect(getMessageAction(older.messageActionId)?.sendStatus).toBe('drafted');
+    expect(getMessageAction(newer.messageActionId)?.sendStatus).toBe('drafted');
+    expect(
+      resolveMessageActionForFollowup({
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;+12025550198',
+        rawText: 'make it shorter',
+        now: new Date('2026-04-16T16:10:00.000Z'),
+      }),
+    ).toBeUndefined();
+  });
+
   it('skips stale self-thread BlueBubbles actions when no fresh draft remains', () => {
     const stale = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+12025550101',
+      presentationChatJid: 'bb:iMessage;-;+12025550199',
       sourceType: 'manual_prompt',
       sourceKey: 'stale-self-thread-only',
       sourceSummary: 'Older draft text message to Candace.',
@@ -469,7 +592,7 @@ describe('message actions', () => {
 
     const continuity = reconcileBlueBubblesSelfThreadContinuity({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;owner@example.com',
+      chatJid: 'bb:iMessage;-;+12025550198',
       now: new Date('2026-04-16T16:20:00.000Z'),
       allowRehydrate: true,
     });
@@ -482,20 +605,21 @@ describe('message actions', () => {
     expect(
       findLatestChatMessageAction({
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;owner@example.com',
+        chatJid: 'bb:iMessage;-;+12025550198',
       }),
     ).toBeUndefined();
   });
 
   it('starts one active BlueBubbles proof drill action and refreshes it on repeat start', () => {
+    const canonicalSelfThreadJid = configureTestBlueBubblesOwnerSelfThread();
     const first = startBlueBubblesProofDrill({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;owner@example.com',
+      chatJid: 'bb:iMessage;-;+12025550198',
       now: new Date('2026-04-16T16:00:00.000Z'),
     });
     const second = startBlueBubblesProofDrill({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+12025550101',
+      chatJid: canonicalSelfThreadJid,
       now: new Date('2026-04-16T16:05:00.000Z'),
     });
     const snapshot = resolveBlueBubblesProofDrillSnapshot({
@@ -504,7 +628,7 @@ describe('message actions', () => {
     });
     const continuity = reconcileBlueBubblesSelfThreadContinuity({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+12025550101',
+      chatJid: canonicalSelfThreadJid,
       now: new Date('2026-04-16T16:05:00.000Z'),
       allowRehydrate: false,
     });
@@ -523,11 +647,13 @@ describe('message actions', () => {
   });
 
   it('keeps BlueBubbles proof drills deferred-only and rejects immediate send', async () => {
+    configureTestBlueBubblesOwnerSelfThread();
     const started = startBlueBubblesProofDrill({
       groupFolder: 'main',
       now: new Date('2026-04-16T16:00:00.000Z'),
     });
     const sendToTarget = vi.fn(async () => ({ platformMessageId: 'unused' }));
+    confirmMessageActionPresentation(started.action);
 
     const blocked = await applyMessageActionOperation(
       started.action.messageActionId,
@@ -573,11 +699,13 @@ describe('message actions', () => {
   });
 
   it('records late-night BlueBubbles proof drill deferral without requiring a schedulable reminder', async () => {
+    configureTestBlueBubblesOwnerSelfThread();
     const started = startBlueBubblesProofDrill({
       groupFolder: 'main',
       now: new Date('2026-06-16T04:57:00.000Z'),
     });
     const sendToTarget = vi.fn(async () => ({ platformMessageId: 'unused' }));
+    confirmMessageActionPresentation(started.action);
 
     const deferred = await applyMessageActionOperation(
       started.action.messageActionId,
@@ -609,7 +737,7 @@ describe('message actions', () => {
     const stale = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+12025550101',
+      presentationChatJid: 'bb:iMessage;-;+12025550199',
       sourceType: 'manual_prompt',
       sourceKey: 'stale-self-thread-action',
       sourceSummary: 'Older draft text message to Candace.',
@@ -636,7 +764,7 @@ describe('message actions', () => {
       false,
     );
     storeChatMetadata(
-      'bb:iMessage;-;owner@example.com',
+      'bb:iMessage;-;+12025550198',
       '2026-04-16T16:06:22.703Z',
       'Jeff',
       'bluebubbles',
@@ -644,7 +772,7 @@ describe('message actions', () => {
     );
     storeMessageDirect({
       id: 'bb:self-thread-draft-fresh',
-      chat_jid: 'bb:iMessage;-;owner@example.com',
+      chat_jid: 'bb:iMessage;-;+12025550198',
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: [
@@ -664,7 +792,7 @@ describe('message actions', () => {
 
     const resolved = resolveMessageActionForFollowup({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+12025550101',
+      chatJid: 'bb:iMessage;-;+12025550199',
       rawText: 'send it later tonight',
       now: new Date('2026-04-16T16:20:00.000Z'),
     });
@@ -835,7 +963,7 @@ describe('message actions', () => {
     createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+12025550101',
+      presentationChatJid: 'bb:iMessage;-;+12025550199',
       sourceType: 'manual_prompt',
       sourceKey: 'self-thread-draft-order',
       sourceSummary: 'Draft text message to Candace.',
@@ -891,6 +1019,35 @@ describe('message actions', () => {
     expect(action.trustLevel).toBe('approve_before_send');
   });
 
+  it('does not let a saved rule or creation-time approval bypass a separately presented owner approval for an external recipient', () => {
+    const thread = seedCommunicationThread({
+      id: 'comm-external-fresh-approval',
+    });
+    seedSendRule({ ruleId: 'rule-external-fresh-approval' });
+
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace needs a simple yes/no answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      explicitApproval: true,
+      now: new Date('2026-04-08T19:06:00.000Z'),
+    });
+
+    expect(action.targetKind).toBe('external_thread');
+    expect(action.sendStatus).toBe('drafted');
+    expect(action.requiresApproval).toBe(true);
+    expect(action.trustLevel).not.toBe('delegated_safe_send');
+    expect(action.approvedAt).toBeNull();
+  });
+
   it('sends a bluebubbles reply without the Andrea companion label and marks it sent', async () => {
     const thread = seedCommunicationThread();
     const action = createOrRefreshMessageActionFromDraft({
@@ -910,6 +1067,7 @@ describe('message actions', () => {
     const sendToTarget = vi.fn(async () => ({
       platformMessageId: 'bb:sent-1',
     }));
+    confirmMessageActionPresentation(action);
 
     const result = await applyMessageActionOperation(
       action.messageActionId,
@@ -940,6 +1098,273 @@ describe('message actions', () => {
     ).toBe('completed');
   });
 
+  it('rejects an old Telegram callback authorization even when the action was touched recently', async () => {
+    const thread = seedCommunicationThread({ id: 'comm-stale-callback' });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace needs a quick answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T20:00:00.000Z'),
+    });
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'tg:old-callback-card',
+      lastActionAt: '2026-04-08T20:05:00.000Z',
+      lastUpdatedAt: '2026-04-08T20:05:00.000Z',
+    });
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'must-not-send',
+    }));
+
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T20:10:00.001Z'),
+        // Telegram callbacks intentionally carry the original card timestamp.
+        ownerAuthorizationAt: '2026-04-08T19:30:00.000Z',
+        sendToTarget,
+      },
+    );
+
+    expect(result.replyText).toContain('too old to authorize');
+    expect(result.replyText).toContain('fresh draft');
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getMessageAction(action.messageActionId)?.sendStatus).toBe(
+      'drafted',
+    );
+  });
+
+  it('rejects a stale natural-language approval with fresh review guidance', async () => {
+    const thread = seedCommunicationThread({ id: 'comm-stale-natural-send' });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace needs a quick answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:00:00.000Z'),
+    });
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'tg:stale-natural-card',
+    });
+    const now = new Date(
+      new Date('2026-04-08T19:00:00.000Z').getTime() +
+        MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS +
+        1,
+    );
+
+    expect(
+      resolveMessageActionForFollowup({
+        groupFolder: 'main',
+        chatJid: 'tg:main',
+        rawText: 'send it',
+        replyToMessageId: 'tg:stale-natural-card',
+        now,
+      }),
+    ).toBeUndefined();
+    const staleForDenial = resolveMessageActionForFollowup({
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      rawText: 'send it',
+      replyToMessageId: 'tg:stale-natural-card',
+      includeStaleForDenial: true,
+      now,
+    });
+    const sendToTarget = vi.fn();
+    const result = await applyMessageActionOperation(
+      staleForDenial!.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: now,
+        ownerAuthorizationAt: now.toISOString(),
+        sendToTarget,
+      },
+    );
+
+    expect(staleForDenial?.messageActionId).toBe(action.messageActionId);
+    expect(result.replyText).toContain('too old to authorize');
+    expect(result.replyText).toContain(
+      'review the exact recipient and message',
+    );
+    expect(sendToTarget).not.toHaveBeenCalled();
+  });
+
+  it('validates both the action context and immutable owner-authorization TTL directly', () => {
+    const touchedAt = '2026-04-08T19:00:00.000Z';
+    const actionClock = {
+      lastActionAt: touchedAt,
+      lastUpdatedAt: touchedAt,
+      createdAt: touchedAt,
+    };
+    const exactBoundary = new Date(
+      Date.parse(touchedAt) + MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS,
+    );
+
+    expect(
+      validateMessageActionFollowupContext({
+        action: actionClock,
+        now: exactBoundary,
+        ownerAuthorizationAt: touchedAt,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      validateMessageActionFollowupContext({
+        action: actionClock,
+        now: new Date(exactBoundary.getTime() + 1),
+      }),
+    ).toEqual({ ok: false, reason: 'stale_action_context' });
+    expect(
+      validateMessageActionFollowupContext({
+        action: {
+          ...actionClock,
+          lastActionAt: exactBoundary.toISOString(),
+          lastUpdatedAt: exactBoundary.toISOString(),
+        },
+        now: new Date(exactBoundary.getTime() + 1),
+        ownerAuthorizationAt: touchedAt,
+      }),
+    ).toEqual({ ok: false, reason: 'stale_owner_authorization' });
+  });
+
+  it('keeps discarded actions terminal and removes send or edit controls', async () => {
+    const thread = seedCommunicationThread({ id: 'comm-discard-terminal' });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace needs a quick answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T20:00:00.000Z'),
+    });
+    const openControls = buildMessageActionPresentation(
+      action,
+      'telegram',
+    ).inlineActionRows.flat();
+    expect(openControls).toContainEqual({
+      label: 'Discard draft',
+      actionId: `/message-skip ${action.messageActionId}`,
+    });
+    updateMessageAction(action.messageActionId, {
+      sendStatus: 'skipped',
+      requiresApproval: false,
+      lastActionKind: 'skipped',
+      lastActionAt: '2026-04-08T20:01:00.000Z',
+      lastUpdatedAt: '2026-04-08T20:01:00.000Z',
+    });
+    const discarded = getMessageAction(action.messageActionId)!;
+    expect(
+      buildMessageActionPresentation(discarded, 'telegram').inlineActionRows,
+    ).toEqual([]);
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'must-not-send',
+    }));
+
+    for (const operation of [
+      { kind: 'send' } as const,
+      { kind: 'rewrite', style: 'warmer' } as const,
+    ]) {
+      const result = await applyMessageActionOperation(
+        action.messageActionId,
+        operation,
+        {
+          groupFolder: 'main',
+          channel: 'telegram',
+          chatJid: 'tg:main',
+          currentTime: new Date('2026-04-08T20:02:00.000Z'),
+          sendToTarget,
+        },
+      );
+      expect(result.replyText).toContain('was discarded');
+      expect(result.presentation?.inlineActionRows).toEqual([]);
+    }
+    const explicitReplay = await executeExplicitlyAuthorizedMessageAction(
+      action.messageActionId,
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T20:03:00.000Z'),
+        ownerAuthorizationAt: '2026-04-08T20:03:00.000Z',
+        sendToTarget,
+      },
+    );
+    expect(explicitReplay.replyText).toContain('was discarded');
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getMessageAction(action.messageActionId)).toMatchObject({
+      sendStatus: 'skipped',
+      draftText: 'Yes, tonight still works for me.',
+    });
+  });
+
+  it('blocks every external-thread approval operation until any source has a delivered card', async () => {
+    const thread = seedCommunicationThread({ id: 'comm-missing-card' });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick answer.',
+      draftText: 'Yes, that still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+    });
+    const sendToTarget = vi.fn();
+
+    for (const operation of [
+      { kind: 'send' } as const,
+      { kind: 'defer', timingHint: 'tonight' } as const,
+      { kind: 'rewrite_and_send', style: 'warmer' } as const,
+    ]) {
+      const result = await applyMessageActionOperation(
+        action.messageActionId,
+        operation,
+        {
+          groupFolder: 'main',
+          channel: 'bluebubbles',
+          chatJid: 'bb:chat-1',
+          sendToTarget,
+        },
+      );
+      expect(result.replyText).toContain(
+        'could not verify that the recipient-bound draft card reached',
+      );
+      expect(result.presentation).toBeTruthy();
+    }
+
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getMessageAction(action.messageActionId)).toMatchObject({
+      sendStatus: 'drafted',
+      presentationMessageId: null,
+      scheduledTaskId: null,
+    });
+  });
+
   it('blocks replay and preserves evidence when channel delivery is partial', async () => {
     const thread = seedCommunicationThread();
     const action = createOrRefreshMessageActionFromDraft({
@@ -956,6 +1381,7 @@ describe('message actions', () => {
       communicationContext: 'reply_followthrough',
       now: new Date('2026-04-08T19:10:00.000Z'),
     });
+    confirmMessageActionPresentation(action);
 
     const result = await applyMessageActionOperation(
       action.messageActionId,
@@ -1034,6 +1460,7 @@ describe('message actions', () => {
       communicationContext: 'reply_followthrough',
       now: new Date('2026-04-08T19:10:00.000Z'),
     });
+    confirmMessageActionPresentation(action);
 
     await applyMessageActionOperation(
       action.messageActionId,
@@ -1181,6 +1608,7 @@ describe('message actions', () => {
     const sendToTarget = vi.fn(async () => ({
       platformMessageId: 'bb:sent-2',
     }));
+    confirmMessageActionPresentation(action);
 
     await applyMessageActionOperation(
       action.messageActionId,
@@ -1244,6 +1672,7 @@ describe('message actions', () => {
       forceApproval: true,
       now: new Date('2026-04-08T19:20:00.000Z'),
     });
+    confirmMessageActionPresentation(action, 'tg:concurrent-send-card');
     let releaseDelivery: (() => void) | undefined;
     const deliveryGate = new Promise<void>((resolve) => {
       releaseDelivery = resolve;
@@ -1340,6 +1769,7 @@ describe('message actions', () => {
       communicationContext: 'reply_followthrough',
       now: new Date('2026-04-08T19:25:00.000Z'),
     });
+    confirmMessageActionPresentation(action);
 
     const result = await applyMessageActionOperation(
       action.messageActionId,
@@ -1363,6 +1793,205 @@ describe('message actions', () => {
     expect(getCommunicationThread(thread.id)?.followupState).toBe('scheduled');
   });
 
+  it('does not queue a scheduled send while the owner pause is active', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_natural_language_pause',
+      now: new Date('2026-04-08T19:25:30.000Z'),
+    });
+    const thread = seedCommunicationThread({ id: 'comm-paused-schedule' });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'bluebubbles',
+      presentationChatJid: 'bb:chat-1',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:25:00.000Z'),
+    });
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'must-not-send',
+    }));
+    confirmMessageActionPresentation(action);
+
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:chat-1',
+        currentTime: new Date('2026-04-08T19:26:00.000Z'),
+        sendToTarget,
+      },
+    );
+
+    const updated = getMessageAction(action.messageActionId)!;
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('paused by the owner');
+    expect(updated.sendStatus).toBe('deferred');
+    expect(updated.scheduledTaskId).toBeNull();
+    expect(sendToTarget).not.toHaveBeenCalled();
+  });
+
+  it('does not execute an immediate send while the owner pause is active', async () => {
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_natural_language_pause',
+    });
+    const thread = seedCommunicationThread({ id: 'comm-paused-immediate' });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace needs a quick answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+    });
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'must-not-send',
+    }));
+    confirmMessageActionPresentation(action, 'tg:paused-send-card');
+
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        sendToTarget,
+      },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('paused by the owner');
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getMessageAction(action.messageActionId)?.sendStatus).toBe(
+      'drafted',
+    );
+  });
+
+  it('keeps a queued pre-stop send-it approval stale after resume while allowing a fresh followup', async () => {
+    const makeAction = (suffix: string) => {
+      const thread = seedCommunicationThread({
+        id: `comm-queued-approval-${suffix}`,
+      });
+      const action = createOrRefreshMessageActionFromDraft({
+        groupFolder: 'main',
+        presentationChannel: 'telegram',
+        presentationChatJid: 'tg:main',
+        sourceType: 'communication_thread',
+        sourceKey: thread.id,
+        sourceSummary: 'Candace needs a quick answer.',
+        draftText: 'Yes, tonight still works for me.',
+        personName: 'Candace',
+        threadTitle: 'Candace',
+        communicationThreadId: thread.id,
+        communicationContext: 'reply_followthrough',
+        now: new Date('2026-04-08T19:40:00.000Z'),
+      });
+      confirmMessageActionPresentation(
+        action,
+        `tg:queued-approval-card-${suffix}`,
+      );
+      return action;
+    };
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_stop_after_queued_approval',
+      now: new Date('2026-04-08T19:50:00.000Z'),
+    });
+    setMessagingOutboundPaused({
+      paused: false,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_resume_after_queued_approval',
+      now: new Date('2026-04-08T19:55:00.000Z'),
+    });
+    let providerPostCount = 0;
+    const sendToBoundary = vi.fn(
+      async (_targetChannel, _chatJid, _text, options) => {
+        const validation = validateMessagingOutboundAuthorizationFence({
+          authorizationAt: options?.blueBubblesAuthorizationAt || '',
+          pauseGeneration: options?.blueBubblesPauseGeneration ?? -1,
+        });
+        if (!validation.ok) {
+          throw new ChannelDeliveryRejectedBeforeDispatchError(
+            validation.reason || 'stale owner authorization',
+          );
+        }
+        providerPostCount += 1;
+        return { platformMessageId: `bb:provider-${providerPostCount}` };
+      },
+    );
+
+    const staleAction = makeAction('stale');
+    const delayedPreStopTelegramAuthorization =
+      resolveQueuedMessagingOwnerAuthorizationAt('telegram', {
+        timestamp: '2026-04-08T19:45:00.000Z',
+        // The bot first persisted/drained this delayed update after resume.
+        ingress_received_at: '2026-04-08T20:00:00.000Z',
+      });
+    const stale = await applyMessageActionOperation(
+      staleAction.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T20:00:00.000Z'),
+        ownerAuthorizationAt: delayedPreStopTelegramAuthorization,
+        sendToTarget: sendToBoundary,
+      },
+    );
+    expect(stale.replyText).toContain("couldn't send");
+    expect(providerPostCount).toBe(0);
+    expect(sendToBoundary).toHaveBeenLastCalledWith(
+      'bluebubbles',
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        blueBubblesAuthorizationAt: '2026-04-08T19:45:00.000Z',
+        blueBubblesPauseGeneration: 1,
+      }),
+    );
+
+    const freshAction = makeAction('fresh');
+    const freshPostResumeTelegramAuthorization =
+      resolveQueuedMessagingOwnerAuthorizationAt('telegram', {
+        timestamp: '2026-04-08T19:55:00.001Z',
+        ingress_received_at: '2026-04-08T20:01:00.000Z',
+      });
+    const fresh = await applyMessageActionOperation(
+      freshAction.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T20:01:00.000Z'),
+        ownerAuthorizationAt: freshPostResumeTelegramAuthorization,
+        sendToTarget: sendToBoundary,
+      },
+    );
+    expect(fresh.action?.sendStatus).toBe('sent');
+    expect(providerPostCount).toBe(1);
+  });
+
   it('cancels a scheduled send and keeps the draft ready', async () => {
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
     const thread = seedCommunicationThread();
@@ -1380,6 +2009,7 @@ describe('message actions', () => {
       communicationContext: 'reply_followthrough',
       now: new Date('2026-04-08T19:30:00.000Z'),
     });
+    confirmMessageActionPresentation(action);
 
     await applyMessageActionOperation(
       action.messageActionId,
@@ -1412,6 +2042,59 @@ describe('message actions', () => {
     expect(getTaskById(scheduled.scheduledTaskId!)?.status).toBe('paused');
   });
 
+  it('stops claiming exact owner text after a draft rewrite', async () => {
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'manual_prompt',
+      sourceKey: 'owner-literal-rewrite-provenance',
+      sourceSummary: 'Owner supplied the initial exact text.',
+      draftProvenance: 'owner_literal',
+      draftText: 'Just wanted to ask if seven still works.',
+      personName: 'Candace',
+      forceApproval: true,
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:iMessage;-;+12025550123',
+        isGroup: false,
+        personName: 'Candace',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-08T19:34:00.000Z'),
+    });
+    expect(buildMessageActionPresentation(action, 'telegram').text).toContain(
+      'Andrea: I staged your exact text.',
+    );
+    confirmMessageActionPresentation(action, 'tg:owner-literal-card');
+
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'rewrite', style: 'more_direct' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T19:35:00.000Z'),
+        sendToTarget: vi.fn(),
+      },
+    );
+
+    expect(result.presentation?.text).toContain('Andrea: I drafted a reply.');
+    expect(result.presentation?.text).not.toContain(
+      'Andrea: I staged your exact text.',
+    );
+    expect(JSON.parse(result.action?.explanationJson || '{}')).toMatchObject({
+      draftProvenance: 'assistant_authored',
+    });
+    expect(result.action).toMatchObject({
+      sendStatus: 'drafted',
+      requiresApproval: true,
+      lastActionKind: 'rewrite',
+      presentationMessageId: null,
+    });
+  });
+
   it('rewriting a queued send cancels the queue and forces fresh approval', async () => {
     vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
     const thread = seedCommunicationThread();
@@ -1428,6 +2111,10 @@ describe('message actions', () => {
       communicationThreadId: thread.id,
       communicationContext: 'reply_followthrough',
       now: new Date('2026-04-08T19:35:00.000Z'),
+    });
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'bb:pre-rewrite-card',
+      presentationThreadId: 'bb:pre-rewrite-thread',
     });
 
     await applyMessageActionOperation(
@@ -1460,6 +2147,8 @@ describe('message actions', () => {
     expect(updated.requiresApproval).toBe(true);
     expect(updated.scheduledTaskId).toBeNull();
     expect(updated.lastActionKind).toBe('rewrite');
+    expect(updated.presentationMessageId).toBeNull();
+    expect(updated.presentationThreadId).toBeNull();
     expect(getTaskById(scheduled.scheduledTaskId!)?.status).toBe('paused');
   });
 
@@ -1480,6 +2169,7 @@ describe('message actions', () => {
       communicationContext: 'reply_followthrough',
       now: new Date('2026-04-08T19:38:00.000Z'),
     });
+    confirmMessageActionPresentation(action);
 
     await applyMessageActionOperation(
       action.messageActionId,
@@ -1569,7 +2259,76 @@ describe('message actions', () => {
     );
   });
 
-  it('rejects a stale rewrite callback while the immutable original bytes are pending at BlueBubbles', async () => {
+  it('keeps rewrite-and-send unsent and requires fresh review of the changed card', async () => {
+    const thread = seedCommunicationThread({
+      id: 'comm-rewrite-and-send-review',
+      channelChatJid: 'bb:rewrite-and-send-target',
+    });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      presentationThreadId: 'topic-review',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace needs a concise answer.',
+      draftText:
+        'Yes, tonight still works. I would also be glad to meet at seven.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:38:00.000Z'),
+    });
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'tg:old-rewrite-and-send-card',
+      presentationThreadId: 'topic-review',
+    });
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'must-not-send',
+    }));
+
+    const result = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'rewrite_and_send', style: 'shorter' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T19:39:00.000Z'),
+        sendToTarget,
+      },
+    );
+
+    const updated = getMessageAction(action.messageActionId)!;
+    expect(result.handled).toBe(true);
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(updated).toMatchObject({
+      draftText: 'Yes, tonight still works.',
+      sendStatus: 'drafted',
+      requiresApproval: true,
+      approvedAt: null,
+      presentationMessageId: null,
+      presentationThreadId: null,
+      platformMessageId: null,
+      sentAt: null,
+      lastActionKind: 'rewrite',
+    });
+    expect(result.replyText).toContain('kept the changed draft unsent');
+    expect(result.replyText).toContain('approve it separately');
+    expect(result.presentation?.primaryMessageActionId).toBe(
+      action.messageActionId,
+    );
+    expect(
+      isMessageActionBoundToPresentationMessage({
+        action: updated,
+        presentationMessageId: 'tg:old-rewrite-and-send-card',
+        presentationThreadId: 'topic-review',
+      }),
+    ).toBe(false);
+  });
+
+  it('fences the old card and blocks sends until a pending rewrite gets a fresh presentation', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
     vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
     let releaseRewrite: (() => void) | undefined;
@@ -1606,6 +2365,10 @@ describe('message actions', () => {
       communicationContext: 'reply_followthrough',
       now: new Date('2026-04-08T19:38:00.000Z'),
     });
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'bb:original-rewrite-card',
+      presentationThreadId: 'bb:self-thread',
+    });
 
     const rewrite = applyMessageActionOperation(
       action.messageActionId,
@@ -1619,17 +2382,18 @@ describe('message actions', () => {
       },
     );
     await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+    const fencedRewrite = getMessageAction(action.messageActionId)!;
+    expect(fencedRewrite.presentationMessageId).toBeNull();
+    expect(
+      isMessageActionBoundToPresentationMessage({
+        action: fencedRewrite,
+        presentationMessageId: 'bb:original-rewrite-card',
+        presentationThreadId: 'bb:self-thread',
+      }),
+    ).toBe(false);
 
-    let finishPost:
-      | ((value: { platformMessageId: string }) => void)
-      | undefined;
-    const sendToTarget = vi.fn(
-      () =>
-        new Promise<{ platformMessageId: string }>((resolve) => {
-          finishPost = resolve;
-        }),
-    );
-    const send = applyMessageActionOperation(
+    const sendToTarget = vi.fn();
+    const blockedSend = await applyMessageActionOperation(
       action.messageActionId,
       { kind: 'send' },
       {
@@ -1640,83 +2404,28 @@ describe('message actions', () => {
         sendToTarget,
       },
     );
-    await vi.waitFor(() => expect(sendToTarget).toHaveBeenCalledTimes(1));
-    expect(getMessageAction(action.messageActionId)).toMatchObject({
-      sendStatus: 'delivery_unverified',
-      draftText: originalText,
-    });
-
-    for (const blockedOperation of [
-      { kind: 'skip' } as const,
-      { kind: 'keep_draft' } as const,
-      { kind: 'save_to_thread' } as const,
-      { kind: 'defer', timingHint: 'tonight' } as const,
-      { kind: 'remind_instead', timingHint: 'tomorrow' } as const,
-    ]) {
-      const blocked = await applyMessageActionOperation(
-        action.messageActionId,
-        blockedOperation,
-        {
-          groupFolder: 'main',
-          channel: 'bluebubbles',
-          chatJid: 'bb:chat-1',
-          currentTime: new Date('2026-04-08T19:40:01.000Z'),
-          sendToTarget,
-        },
-      );
-      expect(blocked.replyText).toContain('Delivery is still unverified');
-      expect(blocked.action).toMatchObject({
-        sendStatus: 'delivery_unverified',
-        draftText: originalText,
-      });
-    }
-    const pendingSendAgain = await applyMessageActionOperation(
-      action.messageActionId,
-      { kind: 'send_again' },
-      {
-        groupFolder: 'main',
-        channel: 'bluebubbles',
-        chatJid: 'bb:chat-1',
-        currentTime: new Date('2026-04-08T19:40:02.000Z'),
-        sendToTarget,
-      },
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(blockedSend.replyText).toContain(
+      'could not verify that the recipient-bound draft card reached',
     );
-    expect(pendingSendAgain.replyText).toContain('fresh message action');
-    expect(pendingSendAgain.replyText).toContain('idempotency key');
-    expect(sendToTarget).toHaveBeenCalledTimes(1);
+    expect(blockedSend.action).toMatchObject({
+      sendStatus: 'drafted',
+      draftText: originalText,
+      presentationMessageId: null,
+    });
 
     releaseRewrite?.();
-    const staleRewrite = await rewrite;
-    expect(staleRewrite.replyText).toContain('Delivery is unverified');
-    expect(staleRewrite.replyText).toContain('did not rewrite');
-    expect(staleRewrite.action).toMatchObject({
-      sendStatus: 'delivery_unverified',
-      draftText: originalText,
+    const rewritten = await rewrite;
+    expect(rewritten.action).toMatchObject({
+      sendStatus: 'drafted',
+      draftText:
+        'Hey Candace, a stale warmer rewrite must not replace the posted bytes.',
+      presentationMessageId: null,
     });
-
-    finishPost?.({ platformMessageId: 'bb:immutable-original-receipt' });
-    const sent = await send;
-    expect(sent.action).toMatchObject({
-      sendStatus: 'sent',
-      draftText: originalText,
-      platformMessageId: 'bb:immutable-original-receipt',
-    });
-    expect(sent.replyText).toContain(`“${originalText}”`);
-    expect(sendToTarget).toHaveBeenCalledWith(
-      'bluebubbles',
-      'bb:chat-1',
-      originalText,
-      expect.objectContaining({ idempotencyKey: action.messageActionId }),
+    expect(rewritten.presentation?.text).toContain(
+      'stale warmer rewrite must not replace the posted bytes',
     );
-    expect(
-      JSON.parse(
-        getMessageAction(action.messageActionId)?.explanationJson || '{}',
-      ).executionReceipt,
-    ).toMatchObject({
-      exactContent: originalText,
-      providerReceiptId: 'bb:immutable-original-receipt',
-      idempotencyKey: action.messageActionId,
-    });
+    expect(sendToTarget).not.toHaveBeenCalled();
   });
 
   it('blocks an approved send at the final preflight when the target integration is unhealthy', async () => {
@@ -1740,6 +2449,8 @@ describe('message actions', () => {
       approvedAt: '2026-04-08T19:41:00.000Z',
       requiresApproval: false,
       trustLevel: 'approve_before_send',
+      presentationMessageId: 'bb:unhealthy-preflight-card',
+      presentationThreadId: action.presentationChatJid || null,
     });
     upsertToolReliabilityRollup({
       subjectId: 'integration:bluebubbles',
@@ -1800,6 +2511,7 @@ describe('message actions', () => {
       communicationContext: 'reply_followthrough',
       now: new Date('2026-04-08T19:40:00.000Z'),
     });
+    confirmMessageActionPresentation(action);
 
     await applyMessageActionOperation(
       action.messageActionId,
@@ -1809,6 +2521,7 @@ describe('message actions', () => {
         channel: 'bluebubbles',
         chatJid: 'bb:chat-1',
         currentTime: new Date('2026-04-08T19:41:00.000Z'),
+        ownerAuthorizationAt: '2026-04-08T19:40:30.000Z',
         sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
       },
     );
@@ -1829,18 +2542,241 @@ describe('message actions', () => {
     );
 
     expect(runResult.handled).toBe(true);
+    expect(scheduled.approvedAt).toBe('2026-04-08T19:40:30.000Z');
     expect(sendToTarget).toHaveBeenCalledWith(
       'bluebubbles',
       'bb:chat-1',
       'Yes, tonight still works for me.',
       expect.objectContaining({
         suppressSenderLabel: true,
+        blueBubblesAuthorizationAt: '2026-04-08T19:40:30.000Z',
+        blueBubblesPauseGeneration: 0,
       }),
     );
     expect(getMessageAction(action.messageActionId)?.sendStatus).toBe('sent');
     expect(getCommunicationThread(thread.id)?.followupState).toBe(
       'waiting_on_them',
     );
+  });
+
+  it('rejects a scheduled send when pause and resume interleave before the provider effect', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    const thread = seedCommunicationThread({
+      id: 'comm-scheduled-pause-resume-race',
+    });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:40:00.000Z'),
+    });
+    confirmMessageActionPresentation(action, 'tg:scheduled-race-card');
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T19:41:00.000Z'),
+        ownerAuthorizationAt: '2026-04-08T19:40:30.000Z',
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+    const scheduled = getMessageAction(action.messageActionId)!;
+    let providerPostCount = 0;
+    const sendToBoundary = vi.fn(
+      async (
+        _targetChannel: string,
+        _chatJid: string,
+        _text: string,
+        options?: SendMessageOptions,
+      ) => {
+        setMessagingOutboundPaused({
+          paused: true,
+          changedByChatJid: 'tg:owner',
+          reason: 'owner_stop_during_scheduled_preflight',
+          now: new Date('2026-04-08T20:59:00.000Z'),
+        });
+        setMessagingOutboundPaused({
+          paused: false,
+          changedByChatJid: 'tg:owner',
+          reason: 'owner_resume_during_scheduled_preflight',
+          now: new Date('2026-04-08T20:59:00.001Z'),
+        });
+        const validation = validateMessagingOutboundAuthorizationFence({
+          authorizationAt: options?.blueBubblesAuthorizationAt || '',
+          pauseGeneration: options?.blueBubblesPauseGeneration ?? -1,
+        });
+        if (!validation.ok) {
+          throw new ChannelDeliveryRejectedBeforeDispatchError(
+            validation.reason || 'stale owner authorization',
+          );
+        }
+        providerPostCount += 1;
+        return { platformMessageId: 'bb:scheduled-race-must-not-post' };
+      },
+    );
+
+    const runResult = await runScheduledMessageActionByTaskId(
+      scheduled.scheduledTaskId!,
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T21:00:00.000Z'),
+        sendToTarget: sendToBoundary,
+      },
+    );
+
+    expect(runResult.resultSummary).toContain('Scheduled message send failed');
+    expect(sendToBoundary).toHaveBeenCalledTimes(1);
+    expect(providerPostCount).toBe(0);
+    expect(getMessageAction(action.messageActionId)?.sendStatus).toBe('failed');
+  });
+
+  it('invalidates a pre-pause scheduled-send authorization even after the owner resumes', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    const thread = seedCommunicationThread({
+      id: 'comm-pre-pause-scheduled-send',
+    });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:40:00.000Z'),
+    });
+    confirmMessageActionPresentation(action, 'tg:scheduled-before-stop-card');
+
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T19:41:00.000Z'),
+        ownerAuthorizationAt: '2026-04-08T19:40:30.000Z',
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+    const scheduled = getMessageAction(action.messageActionId)!;
+    expect(scheduled.approvedAt).toBe('2026-04-08T19:40:30.000Z');
+
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_natural_language_pause',
+      now: new Date('2026-04-08T19:50:00.000Z'),
+    });
+    setMessagingOutboundPaused({
+      paused: false,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_explicit_resume',
+      now: new Date('2026-04-08T19:55:00.000Z'),
+    });
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:must-not-send-after-resume',
+    }));
+
+    const runResult = await runScheduledMessageActionByTaskId(
+      scheduled.scheduledTaskId!,
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T21:00:00.000Z'),
+        sendToTarget,
+      },
+    );
+
+    expect(runResult.handled).toBe(true);
+    expect(runResult.resultSummary).toContain('needs a fresh owner action');
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getMessageAction(action.messageActionId)).toMatchObject({
+      sendStatus: 'failed',
+      scheduledTaskId: null,
+    });
+    expect(getTaskById(scheduled.scheduledTaskId!)?.status).toBe('paused');
+  });
+
+  it('allows a newly scheduled send whose owner authorization is after the last pause', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_natural_language_pause',
+      now: new Date('2026-04-08T19:30:00.000Z'),
+    });
+    setMessagingOutboundPaused({
+      paused: false,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_explicit_resume',
+      now: new Date('2026-04-08T19:35:00.000Z'),
+    });
+    const thread = seedCommunicationThread({
+      id: 'comm-post-resume-scheduled-send',
+    });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Candace still needs a quick dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:40:00.000Z'),
+    });
+    confirmMessageActionPresentation(action, 'tg:scheduled-after-stop-card');
+
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-04-08T19:41:00.000Z'),
+        ownerAuthorizationAt: '2026-04-08T19:40:30.000Z',
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+    const scheduled = getMessageAction(action.messageActionId)!;
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:fresh-post-resume-send',
+    }));
+
+    await runScheduledMessageActionByTaskId(scheduled.scheduledTaskId!, {
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      currentTime: new Date('2026-04-08T21:00:00.000Z'),
+      sendToTarget,
+    });
+
+    expect(scheduled.approvedAt).toBe('2026-04-08T19:40:30.000Z');
+    expect(sendToTarget).toHaveBeenCalledTimes(1);
+    expect(getMessageAction(action.messageActionId)?.sendStatus).toBe('sent');
   });
 
   it('resolves explicit person-targeted followups to an existing open message action', () => {
@@ -1867,13 +2803,477 @@ describe('message actions', () => {
       now: new Date('2026-04-08T19:45:00.000Z'),
     });
 
+    expect(
+      resolveMessageActionForFollowup({
+        groupFolder: 'main',
+        chatJid: 'tg:main',
+        rawText: 'send this to Candace',
+        now: new Date('2026-04-08T19:46:00.000Z'),
+      }),
+    ).toBeUndefined();
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'tg:candace-reviewed-card',
+    });
+
     const resolved = resolveMessageActionForFollowup({
       groupFolder: 'main',
       chatJid: 'tg:main',
       rawText: 'send this to Candace',
+      now: new Date('2026-04-08T19:46:00.000Z'),
     });
 
     expect(resolved?.messageActionId).toBe(action.messageActionId);
+  });
+
+  it('binds a callback to the exact presentation card and thread', () => {
+    const action = {
+      presentationMessageId: 'tg:card-1',
+      presentationThreadId: 'topic-7',
+    };
+
+    expect(
+      isMessageActionBoundToPresentationMessage({
+        action,
+        presentationMessageId: 'tg:card-1',
+        presentationThreadId: 'topic-7',
+      }),
+    ).toBe(true);
+    expect(
+      isMessageActionBoundToPresentationMessage({
+        action,
+        presentationMessageId: 'tg:other-card',
+        presentationThreadId: 'topic-7',
+      }),
+    ).toBe(false);
+    expect(
+      isMessageActionBoundToPresentationMessage({
+        action,
+        presentationMessageId: 'tg:card-1',
+        presentationThreadId: 'topic-8',
+      }),
+    ).toBe(false);
+  });
+
+  it('creates a new immutable card action when the recipient changes', () => {
+    const candaceThread = seedCommunicationThread({
+      id: 'comm-card-target-change',
+      title: 'Candace',
+      channelChatJid: 'bb:card-candace',
+      lastMessageId: 'bb:card-candace-last',
+    });
+    const original = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: candaceThread.id,
+      sourceSummary: 'A draft first shown for Candace.',
+      draftText: 'Yes, that works.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: candaceThread.id,
+      now: new Date('2026-04-08T19:45:00.000Z'),
+    });
+    updateMessageAction(original.messageActionId, {
+      presentationMessageId: 'tg:old-candace-card',
+    });
+
+    const refreshed = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: candaceThread.id,
+      sourceSummary: 'The source was rebound to Travis.',
+      draftText: 'Yes, that works.',
+      personName: 'Travis',
+      threadTitle: 'Travis',
+      communicationThreadId: candaceThread.id,
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: 'bb:card-avery',
+        personName: 'Travis',
+      },
+      now: new Date('2026-04-08T19:46:00.000Z'),
+    });
+
+    expect(refreshed.messageActionId).not.toBe(original.messageActionId);
+    expect(refreshed.presentationMessageId).toBeNull();
+    expect(getMessageAction(original.messageActionId)?.sendStatus).toBe(
+      'skipped',
+    );
+    expect(
+      getMessageAction(original.messageActionId)?.presentationMessageId,
+    ).toBe('tg:old-candace-card');
+  });
+
+  it.each([
+    {
+      label: 'letter case',
+      originalBody: 'Dinner is ready.',
+      revisedBody: 'dinner is ready.',
+    },
+    {
+      label: 'interior whitespace',
+      originalBody: 'Dinner  is ready.',
+      revisedBody: 'Dinner is ready.',
+    },
+  ])(
+    'creates a new immutable card when only $label changes in the body',
+    ({ originalBody, revisedBody }) => {
+      const thread = seedCommunicationThread({
+        id: 'comm-card-body-change',
+        title: 'Candace',
+        channelChatJid: 'bb:card-body-change',
+      });
+      const original = createOrRefreshMessageActionFromDraft({
+        groupFolder: 'main',
+        presentationChannel: 'telegram',
+        presentationChatJid: 'tg:main',
+        sourceType: 'communication_thread',
+        sourceKey: thread.id,
+        sourceSummary: 'Original exact-body draft.',
+        draftText: originalBody,
+        personName: 'Candace',
+        threadTitle: 'Candace',
+        communicationThreadId: thread.id,
+        now: new Date('2026-04-08T19:45:00.000Z'),
+      });
+      updateMessageAction(original.messageActionId, {
+        presentationMessageId: 'tg:original-body-card',
+      });
+
+      const revised = createOrRefreshMessageActionFromDraft({
+        groupFolder: 'main',
+        presentationChannel: 'telegram',
+        presentationChatJid: 'tg:main',
+        sourceType: 'communication_thread',
+        sourceKey: thread.id,
+        sourceSummary: 'Revised exact-body draft.',
+        draftText: revisedBody,
+        personName: 'Candace',
+        threadTitle: 'Candace',
+        communicationThreadId: thread.id,
+        now: new Date('2026-04-08T19:46:00.000Z'),
+      });
+
+      expect(revised.messageActionId).not.toBe(original.messageActionId);
+      expect(revised.presentationMessageId).toBeNull();
+      expect(getMessageAction(original.messageActionId)?.sendStatus).toBe(
+        'skipped',
+      );
+      expect(
+        getMessageAction(original.messageActionId)?.presentationMessageId,
+      ).toBe('tg:original-body-card');
+    },
+  );
+
+  it('allows only CRLF-to-LF normalization when reusing an action card', () => {
+    const thread = seedCommunicationThread({
+      id: 'comm-card-line-endings',
+      title: 'Candace',
+      channelChatJid: 'bb:card-line-endings',
+    });
+    const original = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'CRLF draft.',
+      draftText: 'First line.\r\nSecond line.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      now: new Date('2026-04-08T19:45:00.000Z'),
+    });
+    updateMessageAction(original.messageActionId, {
+      presentationMessageId: 'tg:line-ending-card',
+    });
+
+    const refreshed = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'LF draft.',
+      draftText: 'First line.\nSecond line.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: thread.id,
+      now: new Date('2026-04-08T19:46:00.000Z'),
+    });
+
+    expect(refreshed.messageActionId).toBe(original.messageActionId);
+    expect(refreshed.presentationMessageId).toBe('tg:line-ending-card');
+  });
+
+  it('fails closed when an explicit person does not match the open draft', () => {
+    const averyThread = seedCommunicationThread({
+      id: 'comm-avery-only',
+      title: 'Travis',
+      channelChatJid: 'bb:avery-only',
+      lastMessageId: 'bb:avery-last',
+    });
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: averyThread.id,
+      sourceSummary: 'Travis has the latest draft.',
+      draftText: 'Dinner is ready.',
+      personName: 'Travis',
+      threadTitle: 'Travis',
+      communicationThreadId: averyThread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:45:00.000Z'),
+    });
+
+    expect(
+      resolveMessageActionForFollowup({
+        groupFolder: 'main',
+        chatJid: 'tg:main',
+        rawText: 'send this to Candace',
+        now: new Date('2026-04-08T19:46:00.000Z'),
+      }),
+    ).toBeUndefined();
+  });
+
+  it('does not match a requested name inside another recipient name', () => {
+    const joanneThread = seedCommunicationThread({
+      id: 'comm-joanne',
+      title: 'Joanne',
+      channelChatJid: 'bb:joanne',
+      lastMessageId: 'bb:joanne-last',
+    });
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: joanneThread.id,
+      sourceSummary: 'Joanne has a draft.',
+      draftText: 'I can make that work.',
+      personName: 'Joanne',
+      threadTitle: 'Joanne',
+      communicationThreadId: joanneThread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:45:00.000Z'),
+    });
+
+    expect(
+      resolveMessageActionForFollowup({
+        groupFolder: 'main',
+        chatJid: 'tg:main',
+        rawText: 'send this to Ann',
+        now: new Date('2026-04-08T19:46:00.000Z'),
+      }),
+    ).toBeUndefined();
+  });
+
+  it('matches only the full normalized structured target label', () => {
+    const maryAnnThread = seedCommunicationThread({
+      id: 'comm-mary-ann',
+      title: 'Mary Ann',
+      channelChatJid: 'bb:mary-ann',
+      lastMessageId: 'bb:mary-ann-last',
+    });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: maryAnnThread.id,
+      sourceSummary: 'Mary Ann has a draft.',
+      draftText: 'I can make that work.',
+      personName: 'Mary Ann',
+      threadTitle: 'Mary Ann',
+      communicationThreadId: maryAnnThread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:45:00.000Z'),
+    });
+
+    expect(
+      resolveMessageActionForFollowup({
+        groupFolder: 'main',
+        chatJid: 'tg:main',
+        rawText: 'send this to Ann',
+        now: new Date('2026-04-08T19:46:00.000Z'),
+      }),
+    ).toBeUndefined();
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'tg:mary-ann-reviewed-card',
+    });
+    expect(
+      resolveMessageActionForFollowup({
+        groupFolder: 'main',
+        chatJid: 'tg:main',
+        rawText: 'send this to Mary Ann',
+        now: new Date('2026-04-08T19:46:00.000Z'),
+      })?.messageActionId,
+    ).toBe(action.messageActionId);
+  });
+
+  it('binds a Telegram reply to the exact older draft card', () => {
+    const candaceThread = seedCommunicationThread({
+      id: 'comm-reply-candace',
+      title: 'Candace',
+      channelChatJid: 'bb:reply-candace',
+      lastMessageId: 'bb:reply-candace-last',
+    });
+    const candaceAction = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: candaceThread.id,
+      sourceSummary: 'Candace needs an answer.',
+      draftText: 'Yes, please pick them up.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: candaceThread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:45:00.000Z'),
+    });
+    updateMessageAction(candaceAction.messageActionId, {
+      presentationMessageId: 'tg:candace-card',
+    });
+    const averyThread = seedCommunicationThread({
+      id: 'comm-reply-avery',
+      title: 'Travis',
+      channelChatJid: 'bb:reply-avery',
+      lastMessageId: 'bb:reply-avery-last',
+    });
+    const averyAction = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: averyThread.id,
+      sourceSummary: 'Travis has the newer draft.',
+      draftText: 'Dinner is ready.',
+      personName: 'Travis',
+      threadTitle: 'Travis',
+      communicationThreadId: averyThread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:46:00.000Z'),
+    });
+    updateMessageAction(averyAction.messageActionId, {
+      presentationMessageId: 'tg:avery-card',
+    });
+
+    const resolved = resolveMessageActionForFollowup({
+      groupFolder: 'main',
+      chatJid: 'tg:main',
+      rawText: 'send it',
+      replyToMessageId: 'tg:candace-card',
+      now: new Date('2026-04-08T19:47:00.000Z'),
+    });
+
+    expect(resolved?.messageActionId).toBe(candaceAction.messageActionId);
+  });
+
+  it('does not guess when a bare Telegram followup has multiple recipients', () => {
+    const firstThread = seedCommunicationThread({
+      id: 'comm-ambiguous-one',
+      title: 'Candace',
+      channelChatJid: 'bb:ambiguous-one',
+      lastMessageId: 'bb:ambiguous-one-last',
+    });
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: firstThread.id,
+      sourceSummary: 'Candace draft.',
+      draftText: 'Yes, please.',
+      personName: 'Candace',
+      communicationThreadId: firstThread.id,
+      now: new Date('2026-04-08T19:45:00.000Z'),
+    });
+    const secondThread = seedCommunicationThread({
+      id: 'comm-ambiguous-two',
+      title: 'Travis',
+      channelChatJid: 'bb:ambiguous-two',
+      lastMessageId: 'bb:ambiguous-two-last',
+    });
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: secondThread.id,
+      sourceSummary: 'Travis draft.',
+      draftText: 'Dinner is ready.',
+      personName: 'Travis',
+      communicationThreadId: secondThread.id,
+      now: new Date('2026-04-08T19:46:00.000Z'),
+    });
+
+    expect(
+      resolveMessageActionForFollowup({
+        groupFolder: 'main',
+        chatJid: 'tg:main',
+        rawText: 'send it',
+        now: new Date('2026-04-08T19:47:00.000Z'),
+      }),
+    ).toBeUndefined();
+  });
+
+  it('does not guess among multiple fresh drafts for the same recipient', () => {
+    const targetOverride = {
+      kind: 'external_thread' as const,
+      chatJid: 'bb:same-candace',
+      personName: 'Candace',
+    };
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'manual_prompt',
+      sourceKey: 'same-recipient-first',
+      sourceSummary: 'First Candace draft.',
+      draftText: 'The first version.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      targetOverride,
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-08T19:45:00.000Z'),
+    });
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'manual_prompt',
+      sourceKey: 'same-recipient-second',
+      sourceSummary: 'Second Candace draft.',
+      draftText: 'The second version.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      targetOverride,
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-08T19:46:00.000Z'),
+    });
+
+    for (const rawText of [
+      'send it',
+      'make it shorter',
+      'send this to Candace',
+      'send the shorter version to Candace',
+    ]) {
+      expect(
+        resolveMessageActionForFollowup({
+          groupFolder: 'main',
+          chatJid: 'tg:main',
+          rawText,
+          now: new Date('2026-04-08T19:47:00.000Z'),
+        }),
+        rawText,
+      ).toBeUndefined();
+    }
   });
 
   it('does not bind a bare followup to a stale open message action', () => {
@@ -1900,6 +3300,32 @@ describe('message actions', () => {
     });
 
     expect(resolved).toBeUndefined();
+  });
+
+  it('does not bind a named followup to a stale open message action', () => {
+    createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: 'comm-stale-named',
+      sourceSummary: 'Older Candace draft.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Candace',
+      threadTitle: 'Candace',
+      communicationThreadId: 'comm-stale-named',
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-04-08T19:00:00.000Z'),
+    });
+
+    expect(
+      resolveMessageActionForFollowup({
+        groupFolder: 'main',
+        chatJid: 'tg:main',
+        rawText: 'send this to Candace',
+        now: new Date('2026-04-08T20:00:01.000Z'),
+      }),
+    ).toBeUndefined();
   });
 
   it('treats BlueBubbles send-using phrasing as a send follow-up', () => {
@@ -1957,7 +3383,7 @@ describe('message actions', () => {
     createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+12025550101',
+      presentationChatJid: 'bb:iMessage;-;+12025550199',
       sourceType: 'manual_prompt',
       sourceKey: 'self-thread-policy',
       sourceSummary: 'Draft text message to Candace.',
@@ -1978,7 +3404,7 @@ describe('message actions', () => {
     });
     const selfThreadContinuity = reconcileBlueBubblesMessageActionContinuity({
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;+12025550101',
+      chatJid: 'bb:iMessage;-;+12025550199',
       now: new Date('2026-04-16T19:05:00.000Z'),
       allowRehydrate: true,
     });
@@ -2038,11 +3464,11 @@ describe('message actions', () => {
   it('parses provider-first wording without treating a funny directive as literal content', () => {
     expect(
       parseExplicitBlueBubblesThreadSendIntent(
-        'Have BlueBubbles send Travis Story a message saying hi from Andrea and he smells, and make it funny.',
+        'Have BlueBubbles send Avery Example a message saying The package arrived, and make it funny.',
       ),
     ).toEqual({
-      targetLabel: 'Travis Story',
-      draftText: 'hi from Andrea and he smells',
+      targetLabel: 'Avery Example',
+      draftText: 'The package arrived',
     });
   });
 
@@ -2095,14 +3521,14 @@ describe('message actions', () => {
     storeChatMetadata(
       'bb:iMessage;-;+12025550177',
       '2026-04-10T19:01:34.886Z',
-      'Travis Story',
+      'Avery Example',
       'bluebubbles',
       false,
     );
 
-    expect(resolveBlueBubblesThreadTargetByName('Travis')).toMatchObject({
+    expect(resolveBlueBubblesThreadTargetByName('Avery')).toMatchObject({
       state: 'ambiguous',
-      matches: [{ displayName: 'Travis Story' }],
+      matches: [{ displayName: 'Avery Example' }],
     });
   });
 
@@ -2152,7 +3578,7 @@ describe('message actions', () => {
     const action = createOrRefreshMessageActionFromDraft({
       groupFolder: 'main',
       presentationChannel: 'bluebubbles',
-      presentationChatJid: 'bb:iMessage;-;+12025550101',
+      presentationChatJid: 'bb:iMessage;-;+12025550199',
       sourceType: 'manual_prompt',
       sourceKey: 'bluebubbles-thread-send:bb:iMessage;+;chat-rad-dad:hey',
       sourceSummary: 'Draft text message to Rad Dad.',

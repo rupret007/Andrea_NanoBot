@@ -77,7 +77,7 @@ service restarts give active research a bounded drain window, but this sidecar
 is not a durable mission: after a hard process failure, ask Andrea to rerun any
 missing result.
 
-In BlueBubbles/Messages, start assistant-directed messages with `@Andrea`. If you specifically want the OpenClaw helper/tool lane, use `@OpenClaw`.
+Only the configured owner BlueBubbles/Messages self-thread is assistant-directed. In that thread, use `@Andrea`, or `@OpenClaw` for the helper/tool lane; ordinary contact and group threads stay data-only even if those aliases appear in message text.
 
 ## Public-Safe Commands
 
@@ -367,20 +367,21 @@ Surface shorthand:
 
 - Telegram is the richest surface for normal day-to-day use.
 - Alexa stays shorter and voice-first when it is enabled.
-- BlueBubbles is the bounded personal messaging surface and stays mention-required.
+- The configured owner BlueBubbles self-thread is a bounded personal control surface; ordinary contact and group threads are data-only.
 
 From the registered main Telegram chat, you can send a text to an existing
 synced Messages conversation or exact BlueBubbles/macOS contact with
-`Text Travis Story: Dinner is ready.` or
-`Send a text message to Travis Story saying Dinner is ready.` An explicit
-phone/email also works for a first message. The explicit send imperative is the
-authorization; Andrea does not ask for the same approval twice. Ask Andrea to
-`draft` or `prepare` the message when you want review controls instead of
-delivery. Unknown or partial names are never guessed; an exact name with
+`Text Avery Example: Dinner is ready.` or
+`Send a text message to Avery Example saying Dinner is ready.` An explicit
+phone/email also works for a first message. The initial imperative displays an
+unsent card containing the exact recipient and body. Use `Send now` on that
+card or say `send it` separately to authorize dispatch. `Draft` and `prepare`
+requests use the same review-first controls. Unknown or partial names are never
+guessed; an exact name with
 multiple addresses requires a new request naming one phone/email. Arbitrary
 Telegram chats cannot send through your Messages account.
 For a new recipient, Andrea makes one BlueBubbles chat-creation attempt only
-after explicit authorization. If the returned chat or message receipt is incomplete, Andrea
+after that separate fresh authorization. If the returned chat or message receipt is incomplete, Andrea
 will not retry automatically because the text may already have arrived. New
 recipients cannot be scheduled for later until an existing linked conversation
 has been verified.
@@ -392,7 +393,7 @@ Andrea works best when your request includes the outcome you want.
 Examples:
 
 - `Remind me Friday at 2pm to check on the demo`
-- `Text Travis Story: Dinner is ready.`
+- `Text Avery Example: Dinner is ready.`
 - `Summarize the last week of discussion and list the next three actions`
 - `Research the best ergonomic keyboards under $150`
 - `What is 1,234 plus 99?`

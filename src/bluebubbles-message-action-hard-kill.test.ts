@@ -173,6 +173,26 @@ async function runWorker(
   return completeWorker(spawnWorker(fixture, command));
 }
 
+async function stageInitialTextRequest(
+  fixture: FixturePaths,
+  provider: FakeProvider,
+): Promise<Record<string, unknown>> {
+  const staged = await runWorker(fixture, {
+    kind: 'stage_request',
+    providerBaseUrl: provider.baseUrl,
+  });
+  const action = asRecord(staged.action);
+  expect(staged.state).toBe('staged');
+  expect(action).toMatchObject({
+    sendStatus: 'drafted',
+    approvedAt: null,
+    draftText: 'Hi from Andrea.',
+  });
+  expect(String(action.presentationMessageId)).toContain('tg:draft-card:');
+  expect(provider.posts).toHaveLength(0);
+  return action;
+}
+
 async function hardKill(worker: ManagedWorker): Promise<void> {
   if (!worker.child.kill('SIGKILL')) {
     throw new Error('Failed to terminate BlueBubbles fixture worker.');
@@ -325,13 +345,15 @@ afterEach(async () => {
 });
 
 describe('BlueBubbles first-contact durable subprocess recovery', () => {
-  it('reopens a database with the /chat/new dispatch fence durable after SIGKILL', async () => {
+  it('stages the initial Text turn, then keeps the separately approved /chat/new dispatch fence durable after SIGKILL', async () => {
     const fixture = createFixture('fence');
     const provider = await startFakeProvider({ holdResponses: true });
     await runWorker(fixture, { kind: 'initialize' });
+    const stagedAction = await stageInitialTextRequest(fixture, provider);
 
     const crashing = spawnWorker(fixture, {
-      kind: 'execute',
+      kind: 'approve',
+      approvalText: 'Send now',
       providerBaseUrl: provider.baseUrl,
     });
     await provider.waitForPostCount(1);
@@ -340,7 +362,9 @@ describe('BlueBubbles first-contact durable subprocess recovery', () => {
     const inspection = await runWorker(fixture, { kind: 'inspect' });
     const action = asRecord(inspection.action);
     const dispatchAttempt = asRecord(action.dispatchAttempt);
+    expect(action.messageActionId).toBe(stagedAction.messageActionId);
     expect(action.sendStatus).toBe('delivery_unverified');
+    expect(action.approvedAt).toBe('2026-07-16T12:00:01.000Z');
     expect(dispatchAttempt.state).toBe('dispatching');
     expect(dispatchAttempt.idempotencyKey).toBe(action.messageActionId);
     expect(provider.posts).toHaveLength(1);
@@ -357,13 +381,15 @@ describe('BlueBubbles first-contact durable subprocess recovery', () => {
     assertDatabaseHealthy(fixture.databasePath);
   }, 60_000);
 
-  it('reconciles delayed /chat/new evidence under the real chat GUID and replays without redispatch', async () => {
+  it('reconciles delayed /chat/new evidence from a separate approval under the real chat GUID and replays without redispatch', async () => {
     const fixture = createFixture('recovery');
     const provider = await startFakeProvider({ holdResponses: true });
     await runWorker(fixture, { kind: 'initialize' });
+    const stagedAction = await stageInitialTextRequest(fixture, provider);
 
     const crashing = spawnWorker(fixture, {
-      kind: 'execute',
+      kind: 'approve',
+      approvalText: 'send it',
       providerBaseUrl: provider.baseUrl,
     });
     await provider.waitForPostCount(1);
@@ -390,6 +416,7 @@ describe('BlueBubbles first-contact durable subprocess recovery', () => {
     expect(provider.posts).toHaveLength(1);
     expect(effect.endpoint).toBe('/api/v1/chat/new');
     expect(effect.chatJid).toBe('bb:SMS;-;2025550123');
+    expect(effect.tempGuid).toBe(stagedAction.messageActionId);
 
     const action = asRecord(recovered.action);
     const receipt = asRecord(action.executionReceipt);
@@ -454,25 +481,36 @@ describe('BlueBubbles first-contact durable subprocess recovery', () => {
     assertDatabaseHealthy(fixture.databasePath);
   }, 60_000);
 
-  it('lets two processes race one inbound first-contact action with one /chat/new POST and tempGuid', async () => {
+  it('lets two fresh approvals race one staged first-contact action with one /chat/new POST and tempGuid', async () => {
     const fixture = createFixture('race');
     const provider = await startFakeProvider();
     await runWorker(fixture, { kind: 'initialize' });
+    const stagedAction = await stageInitialTextRequest(fixture, provider);
 
     const first = spawnWorker(fixture, {
-      kind: 'race_execute',
+      kind: 'race_approve',
       workerId: 'one',
+      approvalText: 'Send now',
       providerBaseUrl: provider.baseUrl,
       barrierPath: fixture.barrierPath,
     });
     const second = spawnWorker(fixture, {
-      kind: 'race_execute',
+      kind: 'race_approve',
       workerId: 'two',
+      approvalText: 'send it',
       providerBaseUrl: provider.baseUrl,
       barrierPath: fixture.barrierPath,
     });
-    expect((await first.nextMessage()).type).toBe('ready_for_barrier');
-    expect((await second.nextMessage()).type).toBe('ready_for_barrier');
+    const firstReady = await first.nextMessage();
+    const secondReady = await second.nextMessage();
+    expect(firstReady).toMatchObject({
+      type: 'ready_for_barrier',
+      messageActionId: stagedAction.messageActionId,
+    });
+    expect(secondReady).toMatchObject({
+      type: 'ready_for_barrier',
+      messageActionId: stagedAction.messageActionId,
+    });
     fs.writeFileSync(fixture.barrierPath, 'release\n', { mode: 0o600 });
 
     const [firstResult, secondResult] = await Promise.all([
@@ -481,7 +519,11 @@ describe('BlueBubbles first-contact durable subprocess recovery', () => {
     ]);
     const firstAction = asRecord(firstResult.action);
     const secondAction = asRecord(secondResult.action);
+    expect([firstResult.state, secondResult.state]).toContain('sent');
+    expect(['delivery_unverified', 'sent']).toContain(firstResult.state);
+    expect(['delivery_unverified', 'sent']).toContain(secondResult.state);
     expect(firstAction.messageActionId).toBe(secondAction.messageActionId);
+    expect(firstAction.messageActionId).toBe(stagedAction.messageActionId);
     expect(provider.posts).toHaveLength(1);
     expect(provider.posts[0]?.endpoint).toBe('/api/v1/chat/new');
     expect(provider.posts[0]?.addresses).toEqual(['+12025550123']);

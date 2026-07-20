@@ -27,7 +27,7 @@ Surface roles:
 
 - Telegram is Andrea's richest day-to-day companion surface.
 - Alexa is the shorter voice surface when your operator enabled the custom skill.
-- BlueBubbles is an optional bounded Messages bridge when available and stays mention-required.
+- BlueBubbles is an optional bounded Messages bridge when available. Only the configured owner self-thread is a control surface; ordinary contact and group threads are data-only.
 - Alexa should read back only the most useful slice of a list and hand richer review to Telegram when needed.
 - BlueBubbles should stay capture-and-readout only for lists, with fuller management handed off to Telegram.
 

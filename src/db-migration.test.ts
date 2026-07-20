@@ -124,6 +124,9 @@ describe('database migrations', () => {
           .getActionableMessagesSince('tg:12345', '', 'Andrea')
           .map((message) => message.id),
       ).toEqual(['tg:legacy-live']);
+      expect(
+        dbModule.listPendingActionableMessagesForChats(['tg:12345']),
+      ).toEqual([]);
       dbModule.storeMessage({
         id: 'bb:post-migration-live',
         chat_jid: 'bb:iMessage;-;+15550001111',
@@ -142,6 +145,11 @@ describe('database migrations', () => {
             '',
             'Andrea',
           )
+          .map((message) => message.id),
+      ).toEqual(['bb:post-migration-live']);
+      expect(
+        dbModule
+          .listPendingActionableMessagesForChats(['bb:iMessage;-;+15550001111'])
           .map((message) => message.id),
       ).toEqual(['bb:post-migration-live']);
       dbModule._closeDatabase();

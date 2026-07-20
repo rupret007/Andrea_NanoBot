@@ -122,9 +122,9 @@ describe('assistant request routing', () => {
 
   it('routes explicit text-message sends to the host-owned protected lane without tools', () => {
     for (const content of [
-      "Send a text message to Travis Story saying dinner's ready.",
-      'Can you text Travis Story and say dinner is ready?',
-      'Text Travis Story: Dinner is ready.',
+      "Send a text message to Avery Example saying dinner's ready.",
+      'Can you text Avery Example and say dinner is ready?',
+      'Text Avery Example: Dinner is ready.',
     ]) {
       const policy = classifyAssistantRequest([{ content }]);
       expect(policy.route).toBe('protected_assistant');
@@ -138,7 +138,7 @@ describe('assistant request routing', () => {
     const policy = classifyAssistantRequest([
       {
         content:
-          'Have BlueBubbles send Travis Story a message saying hi from Andrea and he smells, and make it funny.',
+          'Have BlueBubbles send Avery Example a message saying The package arrived, and make it funny.',
       },
     ]);
 
@@ -171,7 +171,7 @@ describe('assistant request routing', () => {
       [
         {
           content:
-            'Have BlueBubbles send Travis Story a message saying hi from Andrea.',
+            'Have BlueBubbles send Avery Example a message saying hi from Andrea.',
         },
       ],
       { capabilityRegistry: registry },
@@ -195,7 +195,7 @@ describe('assistant request routing', () => {
       [
         {
           content:
-            'Have BlueBubbles send Travis Story a message saying hi from Andrea.',
+            'Have BlueBubbles send Avery Example a message saying hi from Andrea.',
         },
       ],
       { capabilityRegistry: registry },
@@ -212,7 +212,7 @@ describe('assistant request routing', () => {
     const policy = classifyAssistantRequest([
       {
         content:
-          'Draft a funny message to Travis Story saying hi from Andrea and he smells.',
+          'Draft a funny message to Avery Example saying The package arrived.',
       },
     ]);
     expect(policy.route).toBe('protected_assistant');

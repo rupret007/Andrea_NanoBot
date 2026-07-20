@@ -15,9 +15,12 @@ import {
   _closeDatabase,
   _initTestDatabase,
   _initTestDatabaseAtPath,
+  getActionableMessagesSince,
   getMessageAction,
   storeChatMetadata,
+  updateMessageAction,
 } from './db.js';
+import { applyMessageActionOperation } from './message-actions.js';
 import { registerProductionRuntimeCapabilitySurfaces } from './runtime-capability-production-surfaces.js';
 import {
   runtimeCapabilityRegistry,
@@ -51,7 +54,7 @@ describe('automatic BlueBubbles outbound evidence recovery', () => {
     storeChatMetadata(
       'bb:iMessage;-;+12025550123',
       '2026-07-16T12:00:00.000Z',
-      'Travis Story',
+      'Avery Example',
       'bluebubbles',
       false,
     );
@@ -76,7 +79,7 @@ describe('automatic BlueBubbles outbound evidence recovery', () => {
       channel: 'telegram' as const,
       chatJid: 'tg:main',
       group,
-      rawText: 'Text Travis Story: Delayed provider match.',
+      rawText: 'Text Avery Example: Delayed provider match.',
       inboundMessageId: 'tg:delayed-after-startup',
       now: new Date('2026-07-16T12:10:00.000Z'),
       capabilityFacts: readyFacts,
@@ -88,11 +91,24 @@ describe('automatic BlueBubbles outbound evidence recovery', () => {
         sendToTarget,
       },
     };
-    const uncertain = await executeBlueBubblesOutboundRequest(request);
-    if (!uncertain.handled || !('action' in uncertain)) {
-      throw new Error('expected a durable unverified action');
+    const staged = await executeBlueBubblesOutboundRequest(request);
+    if (!staged.handled || staged.state !== 'staged') {
+      throw new Error('expected an approval-gated outbound action');
     }
-    expect(uncertain.state).toBe('delivery_unverified');
+    expect(sendToTarget).not.toHaveBeenCalled();
+    updateMessageAction(staged.action.messageActionId, {
+      presentationMessageId: 'tg:delayed-recovery-card',
+      lastUpdatedAt: '2026-07-16T12:10:01.000Z',
+    });
+    const uncertain = await applyMessageActionOperation(
+      staged.action.messageActionId,
+      { kind: 'send' },
+      request.executionDeps,
+    );
+    if (!uncertain.action) {
+      throw new Error('expected a durable unverified action after approval');
+    }
+    expect(uncertain.action.sendStatus).toBe('delivery_unverified');
 
     const unrelated = recordBlueBubblesOutboundDeliveryEvidence({
       chatJid: 'bb:iMessage;-;+12025550123',
@@ -134,6 +150,9 @@ describe('automatic BlueBubbles outbound evidence recovery', () => {
       reconciled: 1,
       stillUnverified: 0,
     });
+    expect(
+      getActionableMessagesSince('bb:iMessage;-;+12025550123', '', 'Andrea'),
+    ).toEqual([]);
     expect(getMessageAction(uncertain.action.messageActionId)).toMatchObject({
       sendStatus: 'sent',
       platformMessageId: 'bb:correlated-provider-receipt',
@@ -191,11 +210,26 @@ describe('automatic BlueBubbles outbound evidence recovery', () => {
           sendToTarget,
         },
       };
-      const uncertain = await executeBlueBubblesOutboundRequest(request);
-      if (!uncertain.handled || !('action' in uncertain)) {
-        throw new Error('expected a durable first-contact action');
+      const staged = await executeBlueBubblesOutboundRequest(request);
+      if (!staged.handled || staged.state !== 'staged') {
+        throw new Error('expected an approval-gated first-contact action');
       }
-      expect(uncertain.state).toBe('delivery_unverified');
+      expect(sendToTarget).not.toHaveBeenCalled();
+      updateMessageAction(staged.action.messageActionId, {
+        presentationMessageId: 'tg:first-contact-restart-card',
+        lastUpdatedAt: '2026-07-16T12:30:01.000Z',
+      });
+      const uncertain = await applyMessageActionOperation(
+        staged.action.messageActionId,
+        { kind: 'send' },
+        request.executionDeps,
+      );
+      if (!uncertain.action) {
+        throw new Error(
+          'expected a durable first-contact action after approval',
+        );
+      }
+      expect(uncertain.action.sendStatus).toBe('delivery_unverified');
 
       receiptStore = new BlueBubblesReceiptInboxStore(receiptDatabasePath);
       receiptStore.persistReceipt({

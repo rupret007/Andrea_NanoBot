@@ -70,7 +70,7 @@ describe('compound calendar and research production sequencing', () => {
       'utf8',
     );
     const shutdownIndex = indexSource.indexOf(
-      'const shutdown = async (signal: string) =>',
+      'const performShutdown = async (signal: string) =>',
     );
     const drainIndex = indexSource.indexOf(
       'await drainBackgroundReadOnlySidecars(10_000)',

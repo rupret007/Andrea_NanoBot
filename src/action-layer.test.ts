@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   advancePendingActionDraft,
@@ -102,6 +102,26 @@ const baseEnv = {
   GOOGLE_CALENDAR_ACCESS_TOKEN: 'token',
   GOOGLE_CALENDAR_IDS: 'primary',
 };
+
+const TEST_BLUEBUBBLES_SELF_THREAD_JID =
+  'bb:iMessage;-;owner-fixture@example.invalid';
+const TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID =
+  'bb:iMessage;-;owner-alias@example.invalid';
+
+function stubConfiguredBlueBubblesSelfThread(): void {
+  vi.stubEnv(
+    'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+    TEST_BLUEBUBBLES_SELF_THREAD_JID,
+  );
+  vi.stubEnv(
+    'BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS',
+    TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
+  );
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('buildActionLayerResponse', () => {
   it('leaves broad next-step planning to the shared chief-of-staff layer', async () => {
@@ -249,6 +269,7 @@ describe('buildActionLayerResponse', () => {
   });
 
   it('captures a direct reminder ask before the broader assistant path and keeps BlueBubbles self-thread linkage', async () => {
+    stubConfiguredBlueBubblesSelfThread();
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: { primary: { items: [] } },
     });
@@ -261,7 +282,7 @@ describe('buildActionLayerResponse', () => {
         env: baseEnv,
         fetchImpl,
         groupFolder: 'main',
-        chatJid: 'bb:iMessage;-;owner@example.com',
+        chatJid: TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
       },
     );
 
@@ -274,9 +295,11 @@ describe('buildActionLayerResponse', () => {
       "create an adoption barrier for Wintrust's new defect with agent login",
     );
     expect(response.state.originChatJid).toBe(
-      'bb:iMessage;-;owner@example.com',
+      TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
     );
-    expect(response.state.canonicalChatJid).toBe('bb:iMessage;-;+12025550101');
+    expect(response.state.canonicalChatJid).toBe(
+      TEST_BLUEBUBBLES_SELF_THREAD_JID,
+    );
   });
 
   it('leaves broad summarize-my-actions asks to the shared chief-of-staff layer', async () => {

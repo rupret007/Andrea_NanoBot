@@ -13,6 +13,7 @@ import {
 } from './host-control.js';
 import { recordOrganicTelegramRoundtripSuccess } from './telegram-roundtrip.js';
 import {
+  assertTelegramUserSessionOutboundAllowed,
   assessTelegramLiveProbeConfig,
   DEFAULT_TELEGRAM_LIVE_TEST_MESSAGES,
   didTelegramReplyChange,
@@ -31,8 +32,100 @@ import {
   resolveTelegramTapButtonTarget,
   resolveTelegramUserSessionConfig,
   runTelegramPingProbe,
+  sendTelegramUserMessageAndCaptureReplies,
+  tapTelegramMessageButtonAndCaptureReplies,
   withTelegramUserSessionLock,
 } from './telegram-user-session.js';
+
+describe('Telegram user-session outbound stop boundary', () => {
+  it('fails closed for both an owner stop and an unreadable durable state', () => {
+    expect(() =>
+      assertTelegramUserSessionOutboundAllowed(() => ({
+        paused: true,
+        changedAt: '2026-07-16T20:00:00.000Z',
+        changedByChatJid: 'tg:owner',
+        reason: 'owner_natural_language_pause',
+        lastPausedAt: '2026-07-16T20:00:00.000Z',
+        pauseGeneration: 1,
+      })),
+    ).toThrow('paused by the owner');
+    expect(() =>
+      assertTelegramUserSessionOutboundAllowed(() => {
+        throw new Error('store unavailable');
+      }),
+    ).toThrow('durable owner-pause state is unavailable');
+    expect(() => assertTelegramUserSessionOutboundAllowed(() => null)).toThrow(
+      'durable owner-pause state is unavailable',
+    );
+  });
+
+  it('checks the durable stop immediately before a user-session text send', async () => {
+    const sendMessage = vi.fn(async () => ({ id: 42 }));
+    const client = { sendMessage } as any;
+
+    await expect(
+      sendTelegramUserMessageAndCaptureReplies(
+        client,
+        '@assistant_bot',
+        '/ping',
+        10,
+        1,
+        {
+          assertOutboundAllowed: () => {
+            throw new Error('owner stop');
+          },
+        },
+      ),
+    ).rejects.toThrow('owner stop');
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('checks the durable stop immediately before an inline-button tap', async () => {
+    const click = vi.fn(async () => undefined);
+    const sourceMessage = {
+      id: 41,
+      message: 'Choose',
+      buttons: [[{ text: 'Approve', click }]],
+    };
+    const getMessages = vi
+      .fn()
+      .mockResolvedValueOnce([sourceMessage])
+      .mockResolvedValueOnce([{ id: 41 }]);
+    const client = { getMessages } as any;
+
+    await expect(
+      tapTelegramMessageButtonAndCaptureReplies(
+        client,
+        '@assistant_bot',
+        41,
+        'Approve',
+        10,
+        1,
+        {
+          assertOutboundAllowed: () => {
+            throw new Error('owner stop');
+          },
+        },
+      ),
+    ).rejects.toThrow('owner stop');
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it('keeps live smoke explicit and removes user-session probes from the watchdog', () => {
+    const hostScript = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'nanoclaw-host.ps1'),
+      'utf8',
+    );
+    const packageJson = fs.readFileSync(
+      path.join(process.cwd(), 'package.json'),
+      'utf8',
+    );
+
+    expect(hostScript).not.toContain('Invoke-TelegramRoundtripProbe');
+    expect(hostScript).not.toMatch(/telegram-user-session\.ts['",\s]+probe/i);
+    expect(packageJson).toContain('"telegram:user:smoke"');
+  });
+});
 
 describe('normalizeTelegramTestTarget', () => {
   it('strips tg prefix from stored chat ids', () => {

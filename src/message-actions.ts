@@ -10,7 +10,6 @@ import {
   getMessageActionByScheduledTaskId,
   getMessageActionBySource,
   findLatestOpenMessageActionForChat,
-  listCommunicationThreadsForGroup,
   listMessageActionsForGroup,
   listMessagesByProviderIdempotencyKey,
   listRecentMessagesForChat,
@@ -37,6 +36,11 @@ import {
 import { recordCognitiveOwnerReview } from './cognitive-kernel.js';
 import { recordAssistantMetric } from './personal-assistant-metrics.js';
 import {
+  captureMessagingOutboundAuthorizationFence,
+  getMessagingOutboundPauseState,
+  isMessagingOutboundPaused,
+} from './messaging-outbound-pause.js';
+import {
   syncOutcomeFromMessageActionRecord,
   syncOutcomeFromReminderTask,
 } from './outcome-reviews.js';
@@ -52,6 +56,10 @@ import {
   isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
 import { rewriteBlueBubblesMessageDraft } from './messages-fluidity.js';
+import {
+  isExactNonEmptyMessagesHistoryRefreshReceipt,
+  validateMessagesThreadSnapshotBinding,
+} from './recent-text-review.js';
 import { parseAssistantMessageActionIntent } from './assistant-action-intent.js';
 import {
   formatRuntimeCapabilityOutcome,
@@ -64,7 +72,10 @@ import type {
   BlueBubblesProofDrillState,
   ChannelInlineAction,
   MessageActionExplanation,
+  MessageActionDraftProvenance,
   MessageActionLinkedRefs,
+  MessageActionNamedMessagesSummaryLink,
+  MessageActionRecentTextReviewLink,
   MessageActionRecord,
   MessageActionSendStatus,
   MessageActionSourceType,
@@ -117,10 +128,14 @@ export interface CreateMessageActionFromDraftParams {
   sourceType: MessageActionSourceType;
   sourceKey: string;
   sourceSummary?: string | null;
+  /** Who supplied the exact recipient-facing bytes shown in the draft card. */
+  draftProvenance?: MessageActionDraftProvenance;
   draftText: string;
   personName?: string | null;
   threadTitle?: string | null;
   communicationThreadId?: string | null;
+  recentTextReview?: MessageActionRecentTextReviewLink | null;
+  namedMessagesSummary?: MessageActionNamedMessagesSummaryLink | null;
   threadId?: string | null;
   missionId?: string | null;
   handoffId?: string | null;
@@ -184,12 +199,21 @@ export interface MessageActionExecutionDeps {
   channel: PresentationChannel;
   chatJid: string;
   currentTime?: Date;
+  /** Immutable local receipt time of the owner action authorizing this work. */
+  ownerAuthorizationAt?: string;
+  /** Read-only exact-thread refresh used to revalidate context-bound drafts. */
+  primeMessagesChatHistory?: (chatJid: string) => Promise<unknown>;
   sendToTarget: (
     targetChannel: MessageActionTargetChannel,
     chatJid: string,
     text: string,
     options?: SendMessageOptions,
   ) => Promise<SendMessageResult>;
+  /**
+   * Post-receipt bookkeeping only. This callback cannot authorize, redirect,
+   * or dispatch a message and must never be consulted before provider proof.
+   */
+  onVerifiedSend?: (action: MessageActionRecord) => void;
 }
 
 export function isMessageActionBoundToPresentationSurface(params: {
@@ -208,6 +232,23 @@ export function isMessageActionBoundToPresentationSurface(params: {
   );
 }
 
+export function isMessageActionBoundToPresentationMessage(params: {
+  action: Pick<
+    MessageActionRecord,
+    'presentationMessageId' | 'presentationThreadId'
+  >;
+  presentationMessageId?: string | null;
+  presentationThreadId?: string | null;
+}): boolean {
+  const expectedMessageId = normalizeText(params.action.presentationMessageId);
+  const observedMessageId = normalizeText(params.presentationMessageId);
+  if (!expectedMessageId || !observedMessageId) return false;
+  if (expectedMessageId !== observedMessageId) return false;
+  const expectedThreadId = normalizeText(params.action.presentationThreadId);
+  const observedThreadId = normalizeText(params.presentationThreadId);
+  return expectedThreadId === observedThreadId;
+}
+
 interface SendExecutionResult {
   action: MessageActionRecord;
   replyText: string;
@@ -215,10 +256,33 @@ interface SendExecutionResult {
   didSend: boolean;
 }
 
+function notifyVerifiedSend(
+  deps: MessageActionExecutionDeps,
+  action: MessageActionRecord,
+): void {
+  if (
+    action.sendStatus !== 'sent' ||
+    !normalizeText(action.platformMessageId) ||
+    !deps.onVerifiedSend
+  ) {
+    return;
+  }
+  try {
+    deps.onVerifiedSend(action);
+  } catch {
+    // Provider truth is already durable. Optional lifecycle bookkeeping must
+    // never turn a verified success into an apparent failure or invite replay.
+  }
+}
+
 export interface ResolveMessageActionForPromptParams {
   groupFolder: string;
   chatJid: string;
   rawText: string;
+  /** Exact platform message referenced by a native reply gesture. */
+  replyToMessageId?: string | null;
+  /** Return one exact stale match only so the caller can present a denial. */
+  includeStaleForDenial?: boolean;
   now?: Date;
 }
 
@@ -292,6 +356,23 @@ function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
 }
 
+function normalizeMessageActionBodyForEquality(value: string): string {
+  return value.replace(/\r\n/g, '\n');
+}
+
+function messageActionBodiesEqual(left: string, right: string): boolean {
+  return (
+    normalizeMessageActionBodyForEquality(left) ===
+    normalizeMessageActionBodyForEquality(right)
+  );
+}
+
+function messageActionBodyFingerprint(value: string): string {
+  return createHash('sha256')
+    .update(normalizeMessageActionBodyForEquality(value), 'utf8')
+    .digest('hex');
+}
+
 function normalizeMessageActionCommand(
   value: string | null | undefined,
 ): string {
@@ -315,7 +396,7 @@ function normalizeBlueBubblesConversationChatJid(
 function resolveBlueBubblesConversationKind(
   chatJid: string | null | undefined,
 ): BlueBubblesConversationKind {
-  if (isBlueBubblesSelfThreadAliasJid(chatJid)) {
+  if (isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)) {
     return 'self_thread';
   }
   const normalizedChatJid = normalizeBlueBubblesConversationChatJid(chatJid);
@@ -485,6 +566,13 @@ function buildLinkedRefs(
     delegationRuleId: params.delegationRuleId || undefined,
     delegationMode: params.delegationMode || null,
     delegationExplanation: params.delegationExplanation || null,
+    conversationSnapshotRequired: params.recentTextReview
+      ? 'recent_text_review'
+      : params.namedMessagesSummary
+        ? 'named_messages_summary'
+        : undefined,
+    recentTextReview: params.recentTextReview || undefined,
+    namedMessagesSummary: params.namedMessagesSummary || undefined,
   };
 }
 
@@ -662,11 +750,13 @@ function buildBlueBubblesMessageActionContinuityKey(
   const presentationChatJid =
     resolveBlueBubblesConversationPresentationChatJid(action);
   const targetChatJid = parseTargetConversation(action).chatJid;
-  const normalizedDraft = normalizeText(action.draftText).toLowerCase();
+  const normalizedDraft = normalizeMessageActionBodyForEquality(
+    action.draftText,
+  );
   if (!presentationChatJid || !targetChatJid || !normalizedDraft) {
     return null;
   }
-  return `${presentationChatJid}|${targetChatJid}|${normalizedDraft}`;
+  return JSON.stringify([presentationChatJid, targetChatJid, normalizedDraft]);
 }
 
 function findFreshBlueBubblesDraftPresentation(params: {
@@ -784,13 +874,14 @@ function inferTarget(params: CreateMessageActionFromDraftParams): {
   const thread = params.communicationThreadId
     ? getCommunicationThread(params.communicationThreadId)
     : undefined;
-  const isBlueBubblesExternal =
-    thread?.channel === 'bluebubbles' && Boolean(thread.channelChatJid);
+  const isExternalThread =
+    (thread?.channel === 'bluebubbles' || thread?.channel === 'telegram') &&
+    Boolean(thread.channelChatJid);
 
-  if (isBlueBubblesExternal && thread?.channelChatJid) {
+  if (isExternalThread && thread?.channelChatJid) {
     return {
       targetKind: 'external_thread',
-      targetChannel: 'bluebubbles',
+      targetChannel: thread.channel === 'telegram' ? 'telegram' : 'bluebubbles',
       target: {
         kind: 'external_thread',
         chatJid: thread.channelChatJid,
@@ -859,12 +950,14 @@ function isNarrowSafeDelegatedSendCandidate(
 
 function buildExplanation(params: {
   sourceSummary?: string | null;
+  draftProvenance?: MessageActionDraftProvenance;
   trustLevel: MessageActionTrustLevel;
   requiresApproval: boolean;
   delegationExplanation?: string | null;
 }): MessageActionExplanation {
   return {
     sourceSummary: params.sourceSummary || null,
+    draftProvenance: params.draftProvenance,
     approvalReason: params.requiresApproval
       ? 'This still needs your approval before it goes out.'
       : 'This matched a narrow rule you already approved for safe reuse.',
@@ -899,7 +992,7 @@ function buildDedupeKey(params: {
     params.sourceKey,
     params.targetChannel,
     clipText(params.targetConversationJson, 80),
-    clipText(params.draftText.toLowerCase(), 120),
+    messageActionBodyFingerprint(params.draftText),
     params.seed || '',
   ]
     .map((value) => normalizeText(value))
@@ -950,7 +1043,12 @@ export function createOrRefreshMessageActionFromDraft(
     threadTitle: params.threadTitle,
     communicationContext: params.communicationContext || 'general',
   });
+  // A stored delegation rule may shape a draft, but it must never turn the
+  // creation of an outward message action into dispatch approval. Every
+  // external recipient requires a separately presented, fresh owner action.
+  const externalRecipient = targetInfo.targetKind === 'external_thread';
   const autoSendEligible =
+    !externalRecipient &&
     !params.forceApproval &&
     Boolean(ruleMatch.rule) &&
     ruleMatch.autoApplied &&
@@ -963,7 +1061,8 @@ export function createOrRefreshMessageActionFromDraft(
       },
       targetInfo.target,
     );
-  const explicitlyApproved = Boolean(params.explicitApproval);
+  const explicitlyApproved =
+    !externalRecipient && Boolean(params.explicitApproval);
   const trustLevel: MessageActionTrustLevel = autoSendEligible
     ? 'delegated_safe_send'
     : baseTrustLevel;
@@ -984,10 +1083,29 @@ export function createOrRefreshMessageActionFromDraft(
   }
   const reuseExisting =
     existing &&
-    existing.sendStatus !== 'sent' &&
-    existing.sendStatus !== 'delivery_unverified' &&
-    normalizeText(existing.draftText).toLowerCase() ===
-      normalizeText(params.draftText).toLowerCase();
+    isOpenMessageActionStatus(existing.sendStatus) &&
+    existing.targetKind === targetInfo.targetKind &&
+    existing.targetChannel === targetInfo.targetChannel &&
+    existing.targetConversationJson === targetConversationJson &&
+    normalizeText(existing.presentationChatJid) ===
+      normalizeText(params.presentationChatJid) &&
+    normalizeText(existing.presentationThreadId) ===
+      normalizeText(params.presentationThreadId) &&
+    messageActionBodiesEqual(existing.draftText, params.draftText);
+  if (
+    existing &&
+    !reuseExisting &&
+    isOpenMessageActionStatus(existing.sendStatus)
+  ) {
+    updateMessageAction(existing.messageActionId, {
+      sendStatus: 'skipped',
+      followupAt: null,
+      scheduledTaskId: null,
+      lastActionKind: 'skipped',
+      lastActionAt: now.toISOString(),
+      lastUpdatedAt: now.toISOString(),
+    });
+  }
   const inboundIdentity = params.sourceKey.includes(':inbound:');
   const record: MessageActionRecord = {
     messageActionId: reuseExisting
@@ -1016,6 +1134,7 @@ export function createOrRefreshMessageActionFromDraft(
     explanationJson: JSON.stringify(
       buildExplanation({
         sourceSummary: params.sourceSummary,
+        draftProvenance: params.draftProvenance,
         trustLevel,
         requiresApproval,
         delegationExplanation: params.forceApproval
@@ -1120,8 +1239,343 @@ function parseTarget(record: MessageActionRecord): MessageTarget {
   } as MessageTarget);
 }
 
+function isGroupExternalMessageTarget(target: MessageTarget): boolean {
+  return (
+    target.kind === 'external_thread' &&
+    (target.isGroup === true || /^(?:bb:)?[^;]+;\+;/.test(target.chatJid))
+  );
+}
+
+function isGroupExternalMessageAction(record: MessageActionRecord): boolean {
+  return isGroupExternalMessageTarget(parseTarget(record));
+}
+
+const GROUP_DRAFT_ONLY_REPLY =
+  'Andrea: I kept that as a group draft only. I cannot send it or queue it for later; you can still review, rewrite, save, set a reminder, or discard it.';
+
 function parseLinkedRefs(record: MessageActionRecord): MessageActionLinkedRefs {
   return parseJsonSafe<MessageActionLinkedRefs>(record.linkedRefsJson, {});
+}
+
+function fingerprintMessageActionSnapshotValue(
+  domain: string,
+  value: string,
+): string {
+  return createHash('sha256')
+    .update(`${domain}\u0000${value}`, 'utf8')
+    .digest('hex');
+}
+
+function computeRecentTextReviewSnapshotLinkFingerprint(
+  link: Omit<MessageActionRecentTextReviewLink, 'linkFingerprint'>,
+): string {
+  return fingerprintMessageActionSnapshotValue(
+    'message-action-recent-text-review-link',
+    [
+      link.version,
+      link.seedFingerprint,
+      link.reviewedAt,
+      link.itemId,
+      link.itemRank,
+      link.communicationThreadId,
+      link.historyStartTimestamp,
+      link.freshnessSnapshot.latestMessageIdentityHash,
+      link.freshnessSnapshot.latestMessageAt,
+      link.freshnessSnapshot.latestInboundAt || '',
+      link.freshnessSnapshot.latestOutboundAt || '',
+      link.freshnessSnapshot.messageCount,
+      link.freshnessSnapshot.snapshotHash,
+      link.freshnessSnapshot.transcriptHash,
+      link.targetChatFingerprint,
+      link.presentationScopeFingerprint,
+    ].join('\u0000'),
+  );
+}
+
+function computeNamedMessagesSummarySnapshotLinkFingerprint(
+  link: Omit<MessageActionNamedMessagesSummaryLink, 'linkFingerprint'>,
+): string {
+  return fingerprintMessageActionSnapshotValue(
+    'message-action-named-messages-summary-link',
+    [
+      link.version,
+      link.queryFingerprint,
+      link.historyStartTimestamp,
+      link.freshnessSnapshot.latestMessageIdentityHash,
+      link.freshnessSnapshot.latestMessageAt,
+      link.freshnessSnapshot.latestInboundAt || '',
+      link.freshnessSnapshot.latestOutboundAt || '',
+      link.freshnessSnapshot.messageCount,
+      link.freshnessSnapshot.snapshotHash,
+      link.freshnessSnapshot.transcriptHash,
+      link.targetChatFingerprint,
+      link.presentationScopeFingerprint,
+    ].join('\u0000'),
+  );
+}
+
+function parseMessageActionFreshnessSnapshot(
+  value: unknown,
+): MessageActionRecentTextReviewLink['freshnessSnapshot'] | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const snapshot = value as Record<string, unknown>;
+  if (
+    typeof snapshot.latestMessageIdentityHash !== 'string' ||
+    !/^[a-f0-9]{16}$/i.test(snapshot.latestMessageIdentityHash) ||
+    typeof snapshot.latestMessageAt !== 'string' ||
+    !Number.isFinite(Date.parse(snapshot.latestMessageAt)) ||
+    !(
+      snapshot.latestInboundAt === null ||
+      typeof snapshot.latestInboundAt === 'string'
+    ) ||
+    !(
+      snapshot.latestOutboundAt === null ||
+      typeof snapshot.latestOutboundAt === 'string'
+    ) ||
+    typeof snapshot.messageCount !== 'number' ||
+    !Number.isInteger(snapshot.messageCount) ||
+    snapshot.messageCount < 1 ||
+    typeof snapshot.snapshotHash !== 'string' ||
+    !/^[a-f0-9]{16}$/i.test(snapshot.snapshotHash) ||
+    typeof snapshot.transcriptHash !== 'string' ||
+    !/^[a-f0-9]{16}$/i.test(snapshot.transcriptHash)
+  ) {
+    return null;
+  }
+  return {
+    latestMessageIdentityHash: snapshot.latestMessageIdentityHash,
+    latestMessageAt: snapshot.latestMessageAt,
+    latestInboundAt: snapshot.latestInboundAt,
+    latestOutboundAt: snapshot.latestOutboundAt,
+    messageCount: snapshot.messageCount,
+    snapshotHash: snapshot.snapshotHash,
+    transcriptHash: snapshot.transcriptHash,
+  };
+}
+
+function parseRecentTextReviewSnapshotLink(
+  value: unknown,
+): MessageActionRecentTextReviewLink | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  const freshnessSnapshot = parseMessageActionFreshnessSnapshot(
+    candidate.freshnessSnapshot,
+  );
+  if (
+    candidate.version !== 2 ||
+    typeof candidate.seedFingerprint !== 'string' ||
+    typeof candidate.reviewedAt !== 'string' ||
+    typeof candidate.itemId !== 'string' ||
+    typeof candidate.itemRank !== 'number' ||
+    typeof candidate.communicationThreadId !== 'string' ||
+    typeof candidate.historyStartTimestamp !== 'string' ||
+    !freshnessSnapshot ||
+    typeof candidate.targetChatFingerprint !== 'string' ||
+    typeof candidate.presentationScopeFingerprint !== 'string' ||
+    typeof candidate.linkFingerprint !== 'string'
+  ) {
+    return null;
+  }
+  const link: MessageActionRecentTextReviewLink = {
+    version: 2,
+    seedFingerprint: candidate.seedFingerprint,
+    reviewedAt: candidate.reviewedAt,
+    itemId: candidate.itemId,
+    itemRank: candidate.itemRank,
+    communicationThreadId: candidate.communicationThreadId,
+    historyStartTimestamp: candidate.historyStartTimestamp,
+    freshnessSnapshot,
+    targetChatFingerprint: candidate.targetChatFingerprint,
+    presentationScopeFingerprint: candidate.presentationScopeFingerprint,
+    linkFingerprint: candidate.linkFingerprint,
+  };
+  const fingerprints = [
+    link.seedFingerprint,
+    link.targetChatFingerprint,
+    link.presentationScopeFingerprint,
+    link.linkFingerprint,
+  ];
+  const { linkFingerprint: _linkFingerprint, ...linkWithoutFingerprint } = link;
+  return fingerprints.every((value) => /^[a-f0-9]{64}$/i.test(value)) &&
+    Number.isFinite(Date.parse(link.reviewedAt)) &&
+    Number.isFinite(Date.parse(link.historyStartTimestamp)) &&
+    /^text-review:[a-f0-9]{16,64}$/i.test(link.itemId) &&
+    Number.isInteger(link.itemRank) &&
+    link.itemRank >= 1 &&
+    link.itemRank <= 8 &&
+    /^[a-z0-9][a-z0-9:._-]{0,199}$/i.test(link.communicationThreadId) &&
+    computeRecentTextReviewSnapshotLinkFingerprint(linkWithoutFingerprint) ===
+      link.linkFingerprint
+    ? link
+    : null;
+}
+
+function parseNamedMessagesSummarySnapshotLink(
+  value: unknown,
+): MessageActionNamedMessagesSummaryLink | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  const freshnessSnapshot = parseMessageActionFreshnessSnapshot(
+    candidate.freshnessSnapshot,
+  );
+  if (
+    candidate.version !== 1 ||
+    typeof candidate.queryFingerprint !== 'string' ||
+    typeof candidate.historyStartTimestamp !== 'string' ||
+    !freshnessSnapshot ||
+    typeof candidate.targetChatFingerprint !== 'string' ||
+    typeof candidate.presentationScopeFingerprint !== 'string' ||
+    typeof candidate.linkFingerprint !== 'string'
+  ) {
+    return null;
+  }
+  const link: MessageActionNamedMessagesSummaryLink = {
+    version: 1,
+    queryFingerprint: candidate.queryFingerprint,
+    historyStartTimestamp: candidate.historyStartTimestamp,
+    freshnessSnapshot,
+    targetChatFingerprint: candidate.targetChatFingerprint,
+    presentationScopeFingerprint: candidate.presentationScopeFingerprint,
+    linkFingerprint: candidate.linkFingerprint,
+  };
+  const fingerprints = [
+    link.queryFingerprint,
+    link.targetChatFingerprint,
+    link.presentationScopeFingerprint,
+    link.linkFingerprint,
+  ];
+  const { linkFingerprint: _linkFingerprint, ...linkWithoutFingerprint } = link;
+  return fingerprints.every((fingerprint) =>
+    /^[a-f0-9]{64}$/i.test(fingerprint),
+  ) &&
+    Number.isFinite(Date.parse(link.historyStartTimestamp)) &&
+    computeNamedMessagesSummarySnapshotLinkFingerprint(
+      linkWithoutFingerprint,
+    ) === link.linkFingerprint
+    ? link
+    : null;
+}
+
+type ContextBoundMessageActionFreshnessResult =
+  | { ok: true }
+  | { ok: false; detail: string };
+
+function resolveMessageActionSnapshotRequirement(
+  action: MessageActionRecord,
+): MessageActionLinkedRefs['conversationSnapshotRequired'] | null {
+  const refs = parseLinkedRefs(action);
+  if (
+    refs.conversationSnapshotRequired === 'recent_text_review' ||
+    refs.conversationSnapshotRequired === 'named_messages_summary'
+  ) {
+    return refs.conversationSnapshotRequired;
+  }
+  if (
+    action.sourceKey.startsWith('recent-text-review-bound:') ||
+    action.sourceKey.startsWith('text-review:') ||
+    refs.recentTextReview
+  ) {
+    return 'recent_text_review';
+  }
+  if (
+    action.sourceKey.startsWith('named-messages-summary-draft:') ||
+    refs.namedMessagesSummary
+  ) {
+    return 'named_messages_summary';
+  }
+  return null;
+}
+
+async function validateContextBoundMessageActionFreshness(input: {
+  action: MessageActionRecord;
+  target: MessageTarget;
+  deps: MessageActionExecutionDeps;
+}): Promise<ContextBoundMessageActionFreshnessResult> {
+  const requirement = resolveMessageActionSnapshotRequirement(input.action);
+  if (!requirement) return { ok: true };
+  if (
+    input.target.kind !== 'external_thread' ||
+    !input.target.chatJid.startsWith('bb:')
+  ) {
+    return {
+      ok: false,
+      detail: 'the context-bound draft no longer has one exact Messages target',
+    };
+  }
+  const refs = parseLinkedRefs(input.action);
+  const presentationScope = `${input.action.groupFolder}\u0000${input.action.presentationChatJid}`;
+  const binding =
+    requirement === 'recent_text_review'
+      ? parseRecentTextReviewSnapshotLink(refs.recentTextReview)
+      : parseNamedMessagesSummarySnapshotLink(refs.namedMessagesSummary);
+  if (!binding) {
+    return {
+      ok: false,
+      detail: `the ${requirement.replaceAll('_', ' ')} snapshot link is missing or corrupt`,
+    };
+  }
+  const expectedTargetFingerprint = fingerprintMessageActionSnapshotValue(
+    requirement === 'recent_text_review'
+      ? 'recent-text-review-target-chat'
+      : 'named-messages-summary-target-chat',
+    input.target.chatJid,
+  );
+  const expectedPresentationFingerprint = fingerprintMessageActionSnapshotValue(
+    requirement === 'recent_text_review'
+      ? 'recent-text-review-presentation-scope'
+      : 'named-messages-summary-presentation-scope',
+    presentationScope,
+  );
+  if (
+    binding.targetChatFingerprint !== expectedTargetFingerprint ||
+    binding.presentationScopeFingerprint !== expectedPresentationFingerprint ||
+    (requirement === 'recent_text_review' &&
+      (!('communicationThreadId' in binding) ||
+        refs.communicationThreadId !== binding.communicationThreadId))
+  ) {
+    return {
+      ok: false,
+      detail:
+        'the context-bound draft target or private presentation scope changed',
+    };
+  }
+  if (!input.deps.primeMessagesChatHistory) {
+    return {
+      ok: false,
+      detail:
+        'the exact Messages thread refresh capability is unavailable at dispatch',
+    };
+  }
+  let receipt: unknown;
+  try {
+    receipt = await input.deps.primeMessagesChatHistory(input.target.chatJid);
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    return {
+      ok: false,
+      detail: 'the exact Messages thread could not be refreshed at dispatch',
+    };
+  }
+  if (
+    !isExactNonEmptyMessagesHistoryRefreshReceipt({
+      receipt,
+      expectedChatJid: input.target.chatJid,
+    })
+  ) {
+    return {
+      ok: false,
+      detail:
+        'the exact Messages thread refresh returned no verifiable target rows',
+    };
+  }
+  const snapshotValidation = validateMessagesThreadSnapshotBinding({
+    chatJid: input.target.chatJid,
+    historyStartTimestamp: binding.historyStartTimestamp,
+    freshnessSnapshot: binding.freshnessSnapshot,
+  });
+  return snapshotValidation.ok
+    ? { ok: true }
+    : { ok: false, detail: snapshotValidation.detail };
 }
 
 export function linkMessageActionCognitiveContext(params: {
@@ -1429,9 +1883,9 @@ export function startBlueBubblesProofDrill(params: {
       ? params.chatJid
       : null) ||
     getBlueBubblesCanonicalSelfThreadJid();
-  if (!isBlueBubblesSelfThreadAliasJid(chatJid)) {
+  if (!isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)) {
     throw new Error(
-      'BlueBubbles proof drill can only run in the canonical self-thread.',
+      'BlueBubbles proof drill requires an explicitly configured owner self-thread.',
     );
   }
 
@@ -1739,12 +2193,51 @@ function syncCommunicationThreadState(params: {
   });
 }
 
-function validateScheduledSendEligibility(action: MessageActionRecord): {
+function resolveOwnerAuthorizationAt(
+  deps: MessageActionExecutionDeps,
+  now: Date,
+): string {
+  return deps.ownerAuthorizationAt === undefined
+    ? now.toISOString()
+    : deps.ownerAuthorizationAt;
+}
+
+function validateScheduledSendEligibility(
+  action: MessageActionRecord,
+  options: { authorizationAt?: string | null } = {},
+): {
   ok: boolean;
   reason?: string;
   target: MessageTarget;
 } {
   const target = parseTarget(action);
+  if (isMessagingOutboundPaused()) {
+    return {
+      ok: false,
+      reason: 'Outbound messaging is paused by the owner.',
+      target,
+    };
+  }
+  const authorizationAt = options.authorizationAt || action.approvedAt;
+  const authorizationAtMs = Date.parse(authorizationAt || '');
+  if (!Number.isFinite(authorizationAtMs)) {
+    return {
+      ok: false,
+      reason:
+        'This scheduled send is missing a durable owner-authorization timestamp.',
+      target,
+    };
+  }
+  const lastPausedAt = getMessagingOutboundPauseState()?.lastPausedAt || null;
+  const lastPausedAtMs = Date.parse(lastPausedAt || '');
+  if (Number.isFinite(lastPausedAtMs) && authorizationAtMs <= lastPausedAtMs) {
+    return {
+      ok: false,
+      reason:
+        'The owner paused Messages after this scheduled send was authorized, so it needs a fresh owner action.',
+      target,
+    };
+  }
   if (
     action.targetChannel !== 'bluebubbles' ||
     action.targetKind !== 'external_thread'
@@ -1852,21 +2345,105 @@ function extractExplicitPersonName(rawText: string): string | null {
   return match?.[1]?.trim() || null;
 }
 
+function tokenizePersonName(value: string | null | undefined): string[] {
+  const normalized = normalizeText(value).normalize('NFKC').toLocaleLowerCase();
+  return Array.from(
+    normalized.matchAll(/[\p{L}\p{N}]+/gu),
+    (match) => match[0],
+  );
+}
+
+function normalizeStructuredTargetLabel(
+  value: string | null | undefined,
+): string {
+  return tokenizePersonName(value).join(' ');
+}
+
 function actionMatchesPersonName(
   action: MessageActionRecord,
   personName: string,
 ): boolean {
-  const normalizedPerson = personName.toLowerCase();
+  const requestedLabel = normalizeStructuredTargetLabel(personName);
+  if (!requestedLabel) return false;
   const target = parseTarget(action);
   const linkedRefs = parseLinkedRefs(action);
-  const candidates = [
-    linkedRefs.personName,
-    action.sourceSummary,
-    target.kind === 'external_thread' ? target.personName : null,
-  ]
-    .map((value) => normalizeText(value).toLowerCase())
-    .filter(Boolean);
-  return candidates.some((value) => value.includes(normalizedPerson));
+  const structuredTargetLabel = normalizeStructuredTargetLabel(
+    target.kind === 'external_thread'
+      ? target.personName || linkedRefs.personName
+      : linkedRefs.personName,
+  );
+  return (
+    Boolean(structuredTargetLabel) && requestedLabel === structuredTargetLabel
+  );
+}
+
+function actionIsBoundToPromptChat(
+  action: MessageActionRecord,
+  chatJid: string,
+): boolean {
+  const presentationChatJid = normalizeText(action.presentationChatJid);
+  if (!presentationChatJid) return false;
+  if (presentationChatJid === normalizeText(chatJid)) return true;
+  return (
+    chatJid.startsWith('bb:') &&
+    isConfiguredBlueBubblesSelfThreadAliasJid(presentationChatJid) &&
+    isConfiguredBlueBubblesSelfThreadAliasJid(chatJid) &&
+    canonicalizeBlueBubblesSelfThreadJid(presentationChatJid) ===
+      canonicalizeBlueBubblesSelfThreadJid(chatJid)
+  );
+}
+
+function isMessageActionFreshForFollowup(
+  action: MessageActionRecord,
+  now: Date,
+): boolean {
+  const lastTouchedAtMs = Date.parse(
+    action.lastActionAt || action.lastUpdatedAt || action.createdAt,
+  );
+  return (
+    Number.isFinite(lastTouchedAtMs) &&
+    lastTouchedAtMs + MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS >= now.getTime()
+  );
+}
+
+export interface MessageActionFollowupContextValidation {
+  ok: boolean;
+  reason?: 'stale_action_context' | 'stale_owner_authorization';
+}
+
+export function validateMessageActionFollowupContext(params: {
+  action: Pick<
+    MessageActionRecord,
+    'lastActionAt' | 'lastUpdatedAt' | 'createdAt'
+  >;
+  now: Date;
+  ownerAuthorizationAt?: string | null;
+}): MessageActionFollowupContextValidation {
+  const lastTouchedAtMs = Date.parse(
+    params.action.lastActionAt ||
+      params.action.lastUpdatedAt ||
+      params.action.createdAt,
+  );
+  if (
+    !Number.isFinite(lastTouchedAtMs) ||
+    lastTouchedAtMs + MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS <
+      params.now.getTime()
+  ) {
+    return { ok: false, reason: 'stale_action_context' };
+  }
+  if (params.ownerAuthorizationAt !== undefined) {
+    const ownerAuthorizationAtMs = Date.parse(
+      params.ownerAuthorizationAt || '',
+    );
+    if (
+      !Number.isFinite(ownerAuthorizationAtMs) ||
+      ownerAuthorizationAtMs + MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS <
+        params.now.getTime()
+    ) {
+      return { ok: false, reason: 'stale_owner_authorization' };
+    }
+  }
+  return { ok: true };
 }
 
 function buildActionLead(record: MessageActionRecord): string {
@@ -1901,11 +2478,19 @@ function buildActionLead(record: MessageActionRecord): string {
       return 'Andrea: Okay, I left that unsent.';
     case 'drafted':
     default:
-      return 'Andrea: I drafted a reply.';
+      return parseExplanation(record).draftProvenance === 'owner_literal'
+        ? 'Andrea: I staged your exact text.'
+        : 'Andrea: I drafted a reply.';
   }
 }
 
 function buildStatusLine(record: MessageActionRecord): string {
+  if (
+    isGroupExternalMessageAction(record) &&
+    isOpenMessageActionStatus(record.sendStatus)
+  ) {
+    return 'Status: group draft only; Andrea will not send or schedule it.';
+  }
   if (isScheduledSendAction(record)) {
     return `Status: queued to send around ${
       formatWhenLabel(record.followupAt) || record.followupAt || 'later'
@@ -1945,7 +2530,7 @@ function buildStatusLine(record: MessageActionRecord): string {
     return 'Status: delivery unverified; resending is blocked to prevent a duplicate.';
   }
   if (record.sendStatus === 'skipped') {
-    return 'Status: skipped for now.';
+    return 'Status: discarded and unsent.';
   }
   return record.requiresApproval
     ? 'Status: waiting for your approval before sending.'
@@ -1953,6 +2538,12 @@ function buildStatusLine(record: MessageActionRecord): string {
 }
 
 function buildStateNote(record: MessageActionRecord): string | null {
+  if (
+    isGroupExternalMessageAction(record) &&
+    isOpenMessageActionStatus(record.sendStatus)
+  ) {
+    return 'This group reply is an unsent draft. Andrea cannot deliver it or queue it for later.';
+  }
   if (record.sendStatus === 'sent') {
     return null;
   }
@@ -2001,6 +2592,15 @@ function nextStepLine(record: MessageActionRecord): string {
   if (record.sendStatus === 'delivery_unverified') {
     return 'Next: check the target conversation before deciding whether any new message is needed.';
   }
+  if (record.sendStatus === 'skipped') {
+    return 'Next: create and review a fresh draft if you still want to send a message.';
+  }
+  if (
+    isGroupExternalMessageAction(record) &&
+    isOpenMessageActionStatus(record.sendStatus)
+  ) {
+    return 'Next: show it again, rewrite it, save it, set a reminder, or discard it.';
+  }
   if (isScheduledSendAction(record)) {
     return 'Next: send it now, cancel the scheduled send, remind yourself instead, or revise it.';
   }
@@ -2023,7 +2623,10 @@ function nextStepLine(record: MessageActionRecord): string {
 }
 
 function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
-  if (record.sendStatus === 'delivery_unverified') {
+  if (
+    record.sendStatus === 'delivery_unverified' ||
+    record.sendStatus === 'skipped'
+  ) {
     return [];
   }
   if (isBlueBubblesProofDrillAction(record)) {
@@ -2054,6 +2657,47 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
         {
           label: 'Save under thread',
           actionId: `/message-save-thread ${record.messageActionId}`,
+        },
+      ],
+    ];
+  }
+  if (
+    isGroupExternalMessageAction(record) &&
+    isOpenMessageActionStatus(record.sendStatus)
+  ) {
+    return [
+      [
+        {
+          label: 'Show draft',
+          actionId: `/message-show ${record.messageActionId}`,
+        },
+        {
+          label: 'Shorter',
+          actionId: `/message-rewrite ${record.messageActionId} shorter`,
+        },
+        {
+          label: 'Warmer',
+          actionId: `/message-rewrite ${record.messageActionId} warmer`,
+        },
+      ],
+      [
+        {
+          label: 'More direct',
+          actionId: `/message-rewrite ${record.messageActionId} direct`,
+        },
+        {
+          label: 'Remind me instead',
+          actionId: `/message-remind ${record.messageActionId}`,
+        },
+        {
+          label: 'Save under thread',
+          actionId: `/message-save-thread ${record.messageActionId}`,
+        },
+      ],
+      [
+        {
+          label: 'Discard draft',
+          actionId: `/message-skip ${record.messageActionId}`,
         },
       ],
     ];
@@ -2155,6 +2799,12 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
       {
         label: 'Why this needs approval',
         actionId: `/message-why ${record.messageActionId}`,
+      },
+    ],
+    [
+      {
+        label: 'Discard draft',
+        actionId: `/message-skip ${record.messageActionId}`,
       },
     ],
   ];
@@ -2696,7 +3346,9 @@ async function createScheduledSend(params: {
       scheduledTaskId: scheduledTask.id,
       requiresApproval: false,
       trustLevel: 'schedule_send',
-      approvedAt: params.action.approvedAt || params.now.toISOString(),
+      // The defer/schedule utterance is the authorization for this future
+      // side effect. Do not carry an older approval across an owner stop.
+      approvedAt: resolveOwnerAuthorizationAt(params.deps, params.now),
       lastActionKind: 'scheduled_send',
       lastActionAt: params.now.toISOString(),
       linkedRefsJson: JSON.stringify(linkedRefs),
@@ -3019,13 +3671,97 @@ const inFlightMessageActionSends = new Map<
   Promise<SendExecutionResult>
 >();
 
+function discardStaleContextBoundMessageAction(input: {
+  action: MessageActionRecord;
+  target: MessageTarget;
+  now: Date;
+  detail: string;
+}): SendExecutionResult {
+  const mutation = updateMessageActionFromSnapshot({
+    action: input.action,
+    updates: {
+      sendStatus: 'skipped',
+      requiresApproval: false,
+      approvedAt: null,
+      followupAt: null,
+      scheduledTaskId: null,
+      lastActionKind: 'skipped',
+      lastActionAt: input.now.toISOString(),
+      lastUpdatedAt: input.now.toISOString(),
+    },
+  });
+  const action = mutation.action;
+  if (mutation.applied) {
+    pauseScheduledTask(input.action.scheduledTaskId);
+    syncOutcomeFromMessageActionRecord(action, input.now);
+  }
+  return {
+    action,
+    target: input.target,
+    didSend: false,
+    replyText: mutation.applied
+      ? `Andrea: I discarded that stale context-bound draft and did not send it because ${input.detail}. Review the exact Messages thread again and create a fresh draft if a reply is still needed.`
+      : staleBlueBubblesMutationReply(
+          action,
+          'discard that stale context-bound draft',
+        ),
+  };
+}
+
 async function executeSendOperationUnlocked(params: {
   action: MessageActionRecord;
   deps: MessageActionExecutionDeps;
   now: Date;
   hasExplicitUserApproval?: boolean;
+  blueBubblesAuthorizationAt?: string;
 }): Promise<SendExecutionResult> {
   const target = parseTarget(params.action);
+  if (isGroupExternalMessageTarget(target)) {
+    return {
+      action: params.action,
+      replyText: GROUP_DRAFT_ONLY_REPLY,
+      target,
+      didSend: false,
+    };
+  }
+  if (
+    params.action.targetChannel === 'bluebubbles' &&
+    isMessagingOutboundPaused()
+  ) {
+    return {
+      action: params.action,
+      replyText:
+        'Andrea: Outbound Messages sending is paused by the owner, so I did not send this draft.',
+      target,
+      didSend: false,
+    };
+  }
+  const contextFreshness = await validateContextBoundMessageActionFreshness({
+    action: params.action,
+    target,
+    deps: params.deps,
+  });
+  if (!contextFreshness.ok) {
+    return discardStaleContextBoundMessageAction({
+      action: params.action,
+      target,
+      now: params.now,
+      detail: contextFreshness.detail,
+    });
+  }
+  // Persisted approval/trust metadata is not authority to contact another
+  // person. External delivery must arrive through a caller that just handled
+  // a fresh owner approval (or the separately fenced scheduled-send runner).
+  const hasDispatchAuthorization =
+    target.kind === 'external_thread'
+      ? Boolean(params.hasExplicitUserApproval)
+      : Boolean(
+          params.hasExplicitUserApproval ||
+          params.action.approvedAt ||
+          params.action.sendStatus === 'approved' ||
+          params.action.trustLevel === 'schedule_send' ||
+          params.action.trustLevel === 'delegated_safe_send',
+        );
   const preflight = runActionPreflight({
     actionId: params.action.messageActionId,
     actionSummary: `send message to ${
@@ -3035,13 +3771,7 @@ async function executeSendOperationUnlocked(params: {
     }`,
     actionType: 'message_send',
     channel: params.action.targetChannel,
-    hasExplicitUserApproval: Boolean(
-      params.hasExplicitUserApproval ||
-      params.action.approvedAt ||
-      params.action.sendStatus === 'approved' ||
-      params.action.trustLevel === 'schedule_send' ||
-      params.action.trustLevel === 'delegated_safe_send',
-    ),
+    hasExplicitUserApproval: hasDispatchAuthorization,
     approvedCapability:
       params.action.targetChannel === 'telegram'
         ? 'messages.send.telegram'
@@ -3094,6 +3824,12 @@ async function executeSendOperationUnlocked(params: {
       didSend: false,
     };
   }
+  const blueBubblesAuthorizationFence =
+    params.action.targetChannel === 'bluebubbles'
+      ? captureMessagingOutboundAuthorizationFence(
+          params.blueBubblesAuthorizationAt || '',
+        )
+      : null;
   const sendOptions: SendMessageOptions =
     target.kind === 'external_thread'
       ? {
@@ -3103,10 +3839,18 @@ async function executeSendOperationUnlocked(params: {
           blueBubblesCreateChatAddress:
             target.blueBubblesCreateChatAddress || undefined,
           idempotencyKey: params.action.messageActionId,
+          blueBubblesAuthorizationAt:
+            blueBubblesAuthorizationFence?.authorizationAt,
+          blueBubblesPauseGeneration:
+            blueBubblesAuthorizationFence?.pauseGeneration,
         }
       : {
           threadId: target.threadId || undefined,
           idempotencyKey: params.action.messageActionId,
+          blueBubblesAuthorizationAt:
+            blueBubblesAuthorizationFence?.authorizationAt,
+          blueBubblesPauseGeneration:
+            blueBubblesAuthorizationFence?.pauseGeneration,
         };
   const dispatchedDraftText = params.action.draftText;
   const dispatchedTargetConversationJson = params.action.targetConversationJson;
@@ -3188,6 +3932,33 @@ async function executeSendOperationUnlocked(params: {
       enteredExternalDispatchWindow = true;
       pauseScheduledTask(params.action.scheduledTaskId);
     } else {
+      const currentAction =
+        getMessageAction(params.action.messageActionId) || params.action;
+      const terminalStatusChanged =
+        currentAction.sendStatus === 'skipped' ||
+        currentAction.sendStatus === 'delivery_unverified' ||
+        (currentAction.sendStatus === 'sent' &&
+          params.action.sendStatus !== 'sent');
+      const snapshotChanged =
+        currentAction.lastUpdatedAt !== params.action.lastUpdatedAt ||
+        currentAction.sendStatus !== params.action.sendStatus ||
+        !messageActionBodiesEqual(
+          currentAction.draftText,
+          params.action.draftText,
+        ) ||
+        currentAction.targetConversationJson !==
+          params.action.targetConversationJson;
+      if (terminalStatusChanged || snapshotChanged) {
+        return {
+          action: currentAction,
+          replyText:
+            currentAction.sendStatus === 'skipped'
+              ? 'Andrea: That draft was discarded before dispatch, so I did not send it. Create and review a fresh draft if you still want to message them.'
+              : 'Andrea: That message action changed before dispatch, so I did not send the stale recipient/body snapshot. Show or create a fresh draft and review it again.',
+          target,
+          didSend: false,
+        };
+      }
       pauseScheduledTask(params.action.scheduledTaskId);
     }
     const receipt = requireCompleteChannelDelivery(
@@ -3438,16 +4209,23 @@ async function executeSendOperation(params: {
   deps: MessageActionExecutionDeps;
   now: Date;
   hasExplicitUserApproval?: boolean;
+  blueBubblesAuthorizationAt?: string;
 }): Promise<SendExecutionResult> {
   const existing = inFlightMessageActionSends.get(
     params.action.messageActionId,
   );
-  if (existing) return existing;
+  if (existing) {
+    const result = await existing;
+    notifyVerifiedSend(params.deps, result.action);
+    return result;
+  }
 
   const execution = executeSendOperationUnlocked(params);
   inFlightMessageActionSends.set(params.action.messageActionId, execution);
   try {
-    return await execution;
+    const result = await execution;
+    notifyVerifiedSend(params.deps, result.action);
+    return result;
   } finally {
     if (
       inFlightMessageActionSends.get(params.action.messageActionId) ===
@@ -3478,7 +4256,16 @@ export async function executeExplicitlyAuthorizedMessageAction(
   }
   const action = getMessageAction(messageActionId);
   if (!action) return { handled: false };
+  const now = deps.currentTime || new Date();
   const target = parseTarget(action);
+  if (action.sendStatus === 'skipped') {
+    return {
+      handled: true,
+      action,
+      replyText:
+        'Andrea: That draft was discarded, so I did not revive or send it. Create a fresh message action and review the exact recipient and text first.',
+    };
+  }
   if (action.sendStatus === 'delivery_unverified') {
     return {
       handled: true,
@@ -3496,6 +4283,7 @@ export async function executeExplicitlyAuthorizedMessageAction(
           'Andrea: The action is recorded as sent, but its provider receipt is missing. I will not resend it or make a fresh success claim.',
       };
     }
+    notifyVerifiedSend(deps, action);
     return {
       handled: true,
       action,
@@ -3515,8 +4303,19 @@ export async function executeExplicitlyAuthorizedMessageAction(
         'Andrea: That exact inbound request previously failed before dispatch. I did not replay it automatically; send a fresh instruction if you want a new attempt.',
     };
   }
-
-  const now = deps.currentTime || new Date();
+  const contextValidation = validateMessageActionFollowupContext({
+    action,
+    now,
+    ownerAuthorizationAt: deps.ownerAuthorizationAt,
+  });
+  if (!contextValidation.ok) {
+    return {
+      handled: true,
+      action,
+      replyText:
+        'Andrea: This owner authorization is too old to dispatch that message action. I kept it unsent; create a fresh action and review the exact recipient and text first.',
+    };
+  }
   if (
     action.targetChannel !== 'bluebubbles' &&
     (!action.approvedAt || action.sendStatus !== 'approved')
@@ -3542,6 +4341,7 @@ export async function executeExplicitlyAuthorizedMessageAction(
     deps,
     now,
     hasExplicitUserApproval: true,
+    blueBubblesAuthorizationAt: resolveOwnerAuthorizationAt(deps, now),
   });
   return {
     handled: true,
@@ -3773,6 +4573,7 @@ export async function runScheduledMessageActionByTaskId(
     deps,
     now,
     hasExplicitUserApproval: true,
+    blueBubblesAuthorizationAt: action.approvedAt || '',
   });
   return {
     handled: true,
@@ -3807,6 +4608,49 @@ export async function applyMessageActionOperation(
 ): Promise<ApplyMessageActionOperationResult> {
   const action = getMessageAction(messageActionId);
   if (!action) return { handled: false };
+  const now = deps.currentTime || new Date();
+  if (
+    action.sendStatus === 'skipped' &&
+    operation.kind !== 'show' &&
+    operation.kind !== 'show_draft' &&
+    operation.kind !== 'why'
+  ) {
+    return {
+      handled: true,
+      action,
+      replyText:
+        'Andrea: That draft was discarded, so this old control cannot change, schedule, or send it. Create a fresh draft, review the exact recipient and message, then approve the new card.',
+      presentation: buildMessageActionPresentation(
+        action,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
+  }
+  const requiresFreshFollowupContext =
+    operation.kind !== 'show' &&
+    operation.kind !== 'show_draft' &&
+    operation.kind !== 'why' &&
+    operation.kind !== 'skip' &&
+    operation.kind !== 'cancel_deferred' &&
+    !(
+      action.sendStatus === 'sent' &&
+      (operation.kind === 'send' || operation.kind === 'rewrite_and_send')
+    );
+  if (requiresFreshFollowupContext) {
+    const contextValidation = validateMessageActionFollowupContext({
+      action,
+      now,
+      ownerAuthorizationAt: deps.ownerAuthorizationAt,
+    });
+    if (!contextValidation.ok) {
+      return {
+        handled: true,
+        action,
+        replyText:
+          'Andrea: This draft card or follow-up context is too old to authorize changing, sending, or scheduling this action. I kept it unsent. Create or show a fresh draft, review the exact recipient and message, then use the new card.',
+      };
+    }
+  }
   if (
     action.targetChannel === 'bluebubbles' &&
     operation.kind === 'send_again'
@@ -3855,8 +4699,6 @@ export async function applyMessageActionOperation(
       };
     }
   }
-  const now = deps.currentTime || new Date();
-
   if (
     isBlueBubblesProofDrillAction(action) &&
     (operation.kind === 'send' ||
@@ -3868,6 +4710,23 @@ export async function applyMessageActionOperation(
       action,
       replyText:
         'Andrea: I will not send the BlueBubbles proof drill immediately. Use `send it later tonight` to record the safe deferred proof decision.',
+      presentation: buildMessageActionPresentation(
+        action,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
+  }
+  if (
+    isGroupExternalMessageAction(action) &&
+    (operation.kind === 'send' ||
+      operation.kind === 'send_again' ||
+      operation.kind === 'rewrite_and_send' ||
+      operation.kind === 'defer')
+  ) {
+    return {
+      handled: true,
+      action,
+      replyText: GROUP_DRAFT_ONLY_REPLY,
       presentation: buildMessageActionPresentation(
         action,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
@@ -3903,8 +4762,7 @@ export async function applyMessageActionOperation(
   }
 
   const requiresConfirmedOutboundPresentation =
-    action.sourceType === 'manual_prompt' &&
-    action.sourceKey.startsWith('outbound-message:') &&
+    action.targetKind === 'external_thread' &&
     !normalizeText(action.presentationMessageId) &&
     (operation.kind === 'send' ||
       operation.kind === 'send_again' ||
@@ -3945,28 +4803,60 @@ export async function applyMessageActionOperation(
           'Andrea: That one already went out. Ask me to draft a new version if you want to send another reply.',
       };
     }
-    const linkedRefs = parseLinkedRefs(action);
+    // Fence the old presentation and any scheduled delivery synchronously,
+    // before the model rewrite can yield. A Send tap on the stale card must be
+    // rejected for the entire rewrite window, not only after new text exists.
+    const fence = updateMessageActionFromSnapshot({
+      action,
+      updates: {
+        sendStatus: 'drafted',
+        requiresApproval: true,
+        followupAt: null,
+        scheduledTaskId: null,
+        presentationMessageId: null,
+        presentationThreadId: null,
+        trustLevel: normalizeTrustLevelAfterQueue(action),
+        approvedAt: null,
+        lastActionKind: 'rewrite',
+        lastActionAt: now.toISOString(),
+        lastUpdatedAt: now.toISOString(),
+      },
+    });
+    if (!fence.applied) {
+      return {
+        handled: true,
+        action: fence.action,
+        presentation: buildMessageActionPresentation(
+          fence.action,
+          deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+        ),
+        replyText: staleBlueBubblesMutationReply(
+          fence.action,
+          'rewrite that stale draft',
+        ),
+      };
+    }
+    pauseScheduledTask(action.scheduledTaskId);
+    const rewriteBase = fence.action;
+    const linkedRefs = parseLinkedRefs(rewriteBase);
     const modelRewrite =
       deps.channel === 'bluebubbles'
         ? await rewriteBlueBubblesMessageDraft({
-            draftText: action.draftText,
+            draftText: rewriteBase.draftText,
             style: operation.style,
             personName: linkedRefs.personName || null,
           })
         : null;
     const mutation = updateMessageActionFromSnapshot({
-      action,
+      action: rewriteBase,
       updates: {
         draftText:
           modelRewrite?.draftText ||
-          rewriteDraft(action.draftText, operation.style),
-        sendStatus: 'drafted',
-        requiresApproval: true,
-        followupAt: null,
-        scheduledTaskId: null,
-        trustLevel: normalizeTrustLevelAfterQueue(action),
-        approvedAt: null,
-        lastActionKind: 'rewrite',
+          rewriteDraft(rewriteBase.draftText, operation.style),
+        explanationJson: JSON.stringify({
+          ...parseExplanation(rewriteBase),
+          draftProvenance: 'assistant_authored',
+        }),
         lastActionAt: now.toISOString(),
         lastUpdatedAt: now.toISOString(),
       },
@@ -3986,7 +4876,6 @@ export async function applyMessageActionOperation(
         ),
       };
     }
-    pauseScheduledTask(action.scheduledTaskId);
     syncCommunicationThreadState({
       action: updatedAction,
       now,
@@ -4021,18 +4910,27 @@ export async function applyMessageActionOperation(
       { kind: 'rewrite', style: operation.style },
       deps,
     );
-    const refreshed = getMessageAction(action.messageActionId);
-    if (!rewritten.handled || !refreshed) {
+    if (!rewritten.handled) {
       return rewritten;
     }
-    return applyMessageActionOperation(
-      refreshed.messageActionId,
-      { kind: 'send' },
-      {
-        ...deps,
-        currentTime: now,
-      },
-    );
+    const refreshed = getMessageAction(action.messageActionId);
+    if (
+      !refreshed ||
+      refreshed.sendStatus !== 'drafted' ||
+      !refreshed.requiresApproval ||
+      refreshed.lastActionKind !== 'rewrite'
+    ) {
+      return rewritten;
+    }
+    return {
+      handled: true,
+      action: refreshed,
+      presentation: buildMessageActionPresentation(
+        refreshed,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+      replyText: `${rewritten.replyText || 'Andrea: I rewrote the draft.'}\n\nAndrea: I kept the changed draft unsent. Review the new draft card and approve it separately if you still want to send it.`,
+    };
   }
 
   if (operation.kind === 'skip') {
@@ -4239,7 +5137,9 @@ export async function applyMessageActionOperation(
         ),
       };
     }
-    const eligibility = validateScheduledSendEligibility(action);
+    const eligibility = validateScheduledSendEligibility(action, {
+      authorizationAt: resolveOwnerAuthorizationAt(deps, now),
+    });
     if (eligibility.ok) {
       const scheduled = await createScheduledSend({
         action,
@@ -4326,6 +5226,7 @@ export async function applyMessageActionOperation(
 
   if (operation.kind === 'send' || operation.kind === 'send_again') {
     if (action.sendStatus === 'sent' && operation.kind !== 'send_again') {
+      notifyVerifiedSend(deps, action);
       return {
         handled: true,
         action,
@@ -4340,6 +5241,7 @@ export async function applyMessageActionOperation(
       deps,
       now,
       hasExplicitUserApproval: true,
+      blueBubblesAuthorizationAt: resolveOwnerAuthorizationAt(deps, now),
     });
     const reviewedAction = recordMessageActionOwnerDecision({
       action: executed.action,
@@ -4393,66 +5295,78 @@ export function resolveMessageActionForFollowup(
       chatJid: params.chatJid,
     });
   const explicitPersonName = extractExplicitPersonName(params.rawText);
-  if (!explicitPersonName) {
-    if (!current) {
-      return recoverCurrent();
-    }
-    const lastTouchedAtMs = Date.parse(
-      current.lastActionAt || current.lastUpdatedAt || current.createdAt,
+  const openSurfaceActions = listOpenMessageActionsForGroup(params.groupFolder)
+    .filter((action) => isOpenMessageActionStatus(action.sendStatus))
+    .filter((action) => actionIsBoundToPromptChat(action, params.chatJid));
+  const replyToMessageId = normalizeText(params.replyToMessageId);
+  if (replyToMessageId) {
+    const replyMatches = openSurfaceActions.filter(
+      (action) =>
+        normalizeText(action.presentationMessageId) === replyToMessageId,
     );
+    if (replyMatches.length !== 1) return undefined;
+    const replyBoundAction = replyMatches[0];
     if (
-      !Number.isFinite(lastTouchedAtMs) ||
-      lastTouchedAtMs + MESSAGE_ACTION_FOLLOWUP_CONTEXT_TTL_MS < now.getTime()
+      explicitPersonName &&
+      !actionMatchesPersonName(replyBoundAction, explicitPersonName)
     ) {
-      return recoverCurrent();
+      return undefined;
     }
-    return current;
+    if (
+      !isMessageActionFreshForFollowup(replyBoundAction, now) &&
+      !params.includeStaleForDenial
+    ) {
+      return undefined;
+    }
+    return replyBoundAction;
   }
-  if (current && actionMatchesPersonName(current, explicitPersonName)) {
-    return current;
-  }
+  const collectEligibleActions = (
+    recovered?: MessageActionRecord,
+    includeStale = false,
+  ): MessageActionRecord[] => {
+    const candidates = [
+      ...listOpenMessageActionsForGroup(params.groupFolder),
+      ...(current ? [current] : []),
+      ...(recovered ? [recovered] : []),
+    ]
+      .filter(
+        (action, index, actions) =>
+          actions.findIndex(
+            (candidate) => candidate.messageActionId === action.messageActionId,
+          ) === index,
+      )
+      .filter((action) => actionIsBoundToPromptChat(action, params.chatJid))
+      .filter((action) => isOpenMessageActionStatus(action.sendStatus))
+      // Natural send/rewrite followups are card followups, not a separate
+      // explicit-send syntax. Without a confirmed presentation receipt there
+      // is no reviewed recipient/body pair to approve.
+      .filter(
+        (action) =>
+          action.targetKind !== 'external_thread' ||
+          Boolean(normalizeText(action.presentationMessageId)),
+      )
+      .filter(
+        (action) =>
+          includeStale || isMessageActionFreshForFollowup(action, now),
+      );
+    return explicitPersonName
+      ? candidates.filter((action) =>
+          actionMatchesPersonName(action, explicitPersonName),
+        )
+      : candidates;
+  };
 
-  const matchedAction = listOpenMessageActionsForGroup(params.groupFolder)
-    .filter((action) => action.sendStatus !== 'skipped')
-    .filter((action) => actionMatchesPersonName(action, explicitPersonName))
-    .sort(
-      (left, right) =>
-        Date.parse(right.lastUpdatedAt) - Date.parse(left.lastUpdatedAt),
-    )[0];
-  if (matchedAction) {
-    return matchedAction;
+  let eligibleActions = collectEligibleActions();
+  if (eligibleActions.length === 0) {
+    eligibleActions = collectEligibleActions(recoverCurrent());
   }
-
-  const recovered = recoverCurrent();
-  if (recovered && actionMatchesPersonName(recovered, explicitPersonName)) {
-    return recovered;
+  if (eligibleActions.length === 0 && params.includeStaleForDenial) {
+    const staleActions = collectEligibleActions(undefined, true).filter(
+      (action) => !isMessageActionFreshForFollowup(action, now),
+    );
+    return staleActions.length === 1 ? staleActions[0] : undefined;
   }
-
-  const matchedThread = listCommunicationThreadsForGroup({
-    groupFolder: params.groupFolder,
-    includeDisabled: false,
-    limit: 80,
-  })
-    .filter((thread) =>
-      normalizeText(thread.title)
-        .toLowerCase()
-        .includes(explicitPersonName.toLowerCase()),
-    )
-    .sort(
-      (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
-    )[0];
-  if (!matchedThread) {
-    return current;
-  }
-  return (
-    getMessageActionBySource(
-      params.groupFolder,
-      'communication_thread',
-      matchedThread.id,
-    ) ||
-    current ||
-    recovered
-  );
+  return eligibleActions.length === 1 ? eligibleActions[0] : undefined;
 }
 
 export function findLatestChatMessageAction(params: {
@@ -4887,7 +5801,7 @@ export function ensureBlueBubblesSelfThreadMessageActionForReplyText(params: {
   presentationMessageId?: string | null;
   now?: Date;
 }): MessageActionRecord | undefined {
-  if (!isBlueBubblesSelfThreadAliasJid(params.chatJid)) {
+  if (!isConfiguredBlueBubblesSelfThreadAliasJid(params.chatJid)) {
     return undefined;
   }
   const created = createRehydratedBlueBubblesMessageAction({
@@ -4924,10 +5838,7 @@ function createRehydratedBlueBubblesMessageAction(params: {
   }
   const presentationChatJid =
     normalizeBlueBubblesConversationChatJid(params.chatJid) || params.chatJid;
-  const dedupeSeed = clipText(
-    normalizeText(parsed.draftText).toLowerCase(),
-    80,
-  );
+  const dedupeSeed = messageActionBodyFingerprint(parsed.draftText);
   const action = createOrRefreshMessageActionFromDraft({
     groupFolder: params.groupFolder,
     presentationChannel: 'bluebubbles',
@@ -4966,7 +5877,7 @@ function createRehydratedBlueBubblesMessageAction(params: {
 function rehydrateBlueBubblesSelfThreadMessageAction(
   params: ResolveMessageActionForPromptParams,
 ): MessageActionRecord | undefined {
-  const continuity = isBlueBubblesSelfThreadAliasJid(params.chatJid)
+  const continuity = isConfiguredBlueBubblesSelfThreadAliasJid(params.chatJid)
     ? reconcileBlueBubblesSelfThreadContinuity({
         groupFolder: params.groupFolder,
         chatJid: params.chatJid,

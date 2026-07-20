@@ -69,6 +69,9 @@ function main(): void {
     ]),
     runNodeScript('lint', './node_modules/eslint/bin/eslint.js', ['src/']),
     runNodeScript('unit-tests', './node_modules/vitest/vitest.mjs', ['run']),
+    runNodeScript('adaptive-cognition-certification', '--import=tsx', [
+      'scripts/test-adaptive-cognition-certification.ts',
+    ]),
     runNodeScript('build', './node_modules/typescript/bin/tsc'),
     runNodeScript(
       'live-verify',

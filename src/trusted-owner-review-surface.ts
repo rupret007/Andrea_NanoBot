@@ -24,7 +24,11 @@ export function isTrustedOwnerReviewSurface(
 ): boolean {
   if (!input.group || !input.chatJid) return false;
   if (input.channelName === 'telegram') {
-    return input.chatJid.startsWith('tg:') && input.group.isMain === true;
+    return (
+      input.chatJid.startsWith('tg:') &&
+      !input.chatJid.startsWith('tg:-') &&
+      input.group.isMain === true
+    );
   }
   return (
     input.channelName === 'bluebubbles' &&

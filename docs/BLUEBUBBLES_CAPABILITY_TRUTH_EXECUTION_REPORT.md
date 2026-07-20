@@ -7,59 +7,50 @@
 
 ## Outcome
 
-Andrea now has a production-bound BlueBubbles execution path whose capability
-answer is derived from current registration, exposure, authorization, transport,
-receipt supervision, and dispatch ownership. Explicit send requests are no
-longer silently reduced to draft-only behavior.
+Andrea has a production-bound, review-first BlueBubbles path. Capability answers
+are derived from current registration, exposure, transport, write permission,
+receipt supervision, and dispatch ownership. A fresh direct send request stages
+the exact recipient/body and never dispatches by itself; a separate fresh
+`Send now`/`send it` approval is required on the presented action.
 
 The requested turn is parsed as:
 
 - intent: `execute`
-- target: `Travis Story`
-- requested content: say hi from Andrea and say he smells
+- target: `Avery Example`
+- requested content: `The package arrived`
 - style: funny
 
-Its deterministic output is:
-
-> Hi from Andrea — she says you smell, but in a limited-edition, artisanal way. 😄
+The parser retains the style request for protected routing, but there is no
+generic deterministic funny rewrite. Until a grounded authoring result exists,
+the review card preserves the owner's literal body rather than appending canned
+or unrelated recipient-facing prose. Any authored or transformed bytes remain
+unsent until separately approved.
 
 This work proves repository behavior, fail-closed runtime checks, and an
 isolated compiled sidecar lifecycle. It is not live-delivery proof. Per the
-task boundary, no message was sent to Travis Story or anyone else.
+task boundary, no message was sent to anyone.
 
-## Baseline root cause
+## Superseding safety correction
 
-Four systemic gaps combined to make capability claims and runtime behavior
-disagree:
-
-1. Explicit BlueBubbles imperatives were always converted to approval-bound
-   drafts. The production handler called a staging contract that explicitly
-   never sent.
-2. Capability answers relied on static configuration and historical proof
-   state instead of actual in-process function registration, current exposure,
-   and dispatch ownership.
-3. A configured Messages self-thread identified a conversation but did not
-   prove that the current instruction was authored by the owner.
-4. In-process dedupe and ordinary database updates did not provide an atomic
-   cross-process dispatch fence or independently durable receipt persistence
-   across main-runtime restarts.
-
-The result was a misleading combination: Andrea could describe BlueBubbles as
-available while the explicit-send path still stopped at a draft, and the
-execution boundary was not durable enough to make a safe retry decision after
-ambiguous provider outcomes.
+This report originally treated an initial direct imperative as dispatch
+approval. That contract is superseded. Current behavior deliberately separates
+recipient/body selection from authorization: the first turn stages a card; only
+a later fresh action on that card may dispatch. Runtime capability answers must
+describe that two-step contract. The existing ownership, cross-process fence,
+and durable receipt work remains necessary at the second-step send boundary.
 
 ## Runtime capability truth
 
 ### Intent and protected routing
 
-`src/assistant-action-intent.ts` separates `execute`, `draft`, `prepare`,
-`recommend`, and `inform`. A tone directive such as “make it funny” changes the
-message content without demoting an execute imperative.
+`src/assistant-action-intent.ts` separates requested `execute`, `draft`,
+`prepare`, `recommend`, and `inform` semantics for routing. Requested `execute`
+does not mean provider authorization. A tone directive such as “make it funny”
+keeps the request review-staged and never triggers the retired canned rewrite.
 
 Execute, draft, and prepare message requests enter the protected local lane.
 That lane does not expose model tools; production code owns identity,
-authorization, recipient resolution, and dispatch.
+recipient resolution, card creation, authorization, and dispatch.
 
 ### Registration and ownership
 
@@ -70,11 +61,12 @@ previously conflated:
 - a concrete production function surface;
 - an executable binding with declared dispatch ownership.
 
-BlueBubbles is registry-dispatched. Telegram, Calendar, Reminders, and Research
-are registered as observational references to their existing host-owned
-production paths. Their presence proves a real function reference, but it does
-not claim registry-owned dispatch, common provider health, or unified
-idempotency for those tools.
+BlueBubbles is registry-bound. Its initial imperative binding stages an exact
+recipient/body action; the separately approved message-action path owns provider
+dispatch. Telegram, Calendar, Reminders, and Research are registered as
+observational references to their existing host-owned production paths. Their
+presence proves a real function reference, but it does not claim registry-owned
+dispatch, common provider health, or unified idempotency for those tools.
 
 BlueBubbles execution is exposed only to Telegram and BlueBubbles source
 channels. Current evaluation requires all applicable checks to agree:
@@ -83,21 +75,23 @@ channels. Current evaluation requires all applicable checks to agree:
 - registry-owned BlueBubbles dispatch;
 - current transport and independently supervised receipt readiness;
 - write permission;
-- explicit authorization for this turn.
+- a separate fresh authorization on the current presented action.
 
 `src/capability-self-model.ts` now uses this runtime evaluation for availability
 answers. Historical proof remains diagnostic evidence; it cannot substitute
 for current registration, authorization, or health.
 
 `src/bluebubbles-outbound-turn.ts` is the trusted production turn. It checks
-authorization before replay lookup, provider health refresh, contact lookup, or
-binding invocation, then calls the registry's concrete BlueBubbles binding.
+owner authority before replay lookup, provider health refresh, contact lookup,
+or binding invocation, then stages through the registry's concrete BlueBubbles
+binding. Terminal replay remains read-only and precedes fresh staging.
 
 ## Authorization and recipient resolution
 
 ### Trusted instruction origins
 
-A production send instruction is trusted only when it comes from either:
+A production staging instruction and later send approval are trusted only when
+they come from either:
 
 - the registered main Telegram chat; or
 - an explicitly configured BlueBubbles self-thread alias where the current
@@ -127,26 +121,28 @@ The execute-time merge matrix is:
 | Exact direct | Conflicting identity | Block as ambiguous |
 | Any | Directory, configuration, or transport exception | Fail closed; do not use stale fallback |
 
-An explicitly authorized direct or first-contact action may bypass the ordinary
-inbound allowlist only when it has a stable action key, suppresses the Andrea
-label, and resolves to a non-group target. Group sends and ordinary
+After its separate fresh approval, a direct or first-contact action may bypass
+the ordinary inbound allowlist only when it has a stable action key, suppresses
+the Andrea label, and resolves to a non-group target. Group sends and ordinary
 conversational sends remain scope-bound.
 
-No live contact lookup for Travis Story was treated as proof in this task.
+No live contact lookup was treated as proof in this task.
 
 ## Fenced dispatch and receipt semantics
 
 The durable dispatch sequence is:
 
-1. Authorize the current turn and resolve one exact direct target.
-2. Atomically advance one eligible action snapshot from
+1. Resolve one exact direct target and present the exact recipient/body card.
+2. Receive a separate fresh `Send now`/`send it` approval bound to that card,
+   then revalidate the outbound pause fence and current send eligibility.
+3. Atomically advance one eligible action snapshot from
    `drafted|approved|deferred` to `delivery_unverified`, conditioned on its exact
    prior status and `last_updated_at` value.
-3. Capture immutable target JSON and exact draft bytes. Use the stable action
+4. Capture immutable target JSON and exact draft bytes. Use the stable action
    identifier as the provider `tempGuid`.
-4. Permit at most one fenced provider POST attempt for that action.
-5. Transition to `sent` only from the claimed `delivery_unverified` snapshot.
-6. Apply terminal updates through the same status/version compare-and-swap so
+5. Permit at most one fenced provider POST attempt for that action.
+6. Transition to `sent` only from the claimed `delivery_unverified` snapshot.
+7. Apply terminal updates through the same status/version compare-and-swap so
    stale workers and UI actions cannot regress newer truth.
 
 A definite rejection before a provider effect may become `failed`. A timeout,
@@ -318,7 +314,7 @@ The following were intentionally not performed:
 - no BlueBubbles webhook registration or other provider mutation;
 - no LaunchAgent install, bootstrap, restart, stop, or uninstall;
 - no deployment, merge, or push; and
-- no claim that Travis Story was live-resolved or received a message.
+- no claim that any contact was live-resolved or received a message.
 
 To obtain live proof in a separately authorized operation:
 
@@ -329,8 +325,9 @@ To obtain live proof in a separately authorized operation:
 4. Re-verify current BlueBubbles transport, webhook, and exact contact truth.
    Prior host notes in `docs/BLUEBUBBLES_CHANNEL_PREP.md` were not freshly
    re-established by this task.
-5. Obtain explicit authorization for the live send and execute it once through
-   the fenced production path.
+5. Stage the exact recipient/body through the trusted owner surface, review its
+   card, then provide a separate fresh authorization for the one live send
+   through the fenced production path.
 
 Until those gates are completed, the correct status is: implementation and
 offline runtime proof complete; live delivery unproven.

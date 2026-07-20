@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import { isBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
+import {
+  isBlueBubblesSelfThreadAliasJid,
+  isConfiguredBlueBubblesSelfThreadAliasJid,
+} from './bluebubbles-self-thread.js';
 import {
   decideCommunicationThreadIdentity,
   getAllChats,
@@ -34,6 +37,7 @@ export interface CommunicationIdentityReviewItem {
   threadTitle: string;
   isGroup: boolean;
   isSelfThread: boolean;
+  inferenceState: CommunicationThreadRecord['inferenceState'];
   review: CommunicationIdentityReviewRecord | null;
   candidate: CommunicationIdentityCandidate | null;
   linkedSubjectIds: string[];
@@ -56,7 +60,8 @@ function identityReviewResolved(
   return (
     item.isGroup ||
     item.isSelfThread ||
-    item.linkedSubjectIds.length > 0 ||
+    (item.inferenceState === 'user_confirmed' &&
+      item.linkedSubjectIds.length > 0) ||
     Boolean(item.review)
   );
 }
@@ -264,6 +269,7 @@ export function buildCommunicationIdentityReviewSnapshot(params: {
       threadTitle,
       isGroup,
       isSelfThread,
+      inferenceState: thread.inferenceState,
       review: reviews.get(thread.id) || null,
       candidate: exactPersonCandidate(threadTitle, people, isGroup),
       linkedSubjectIds: [...thread.linkedSubjectIds],
@@ -553,7 +559,7 @@ export function handleCommunicationIdentityReview(params: {
   }
   if (
     params.channel === 'bluebubbles' &&
-    !isBlueBubblesSelfThreadAliasJid(params.chatJid)
+    !isConfiguredBlueBubblesSelfThreadAliasJid(params.chatJid)
   ) {
     return {
       handled: true,

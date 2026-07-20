@@ -14,9 +14,13 @@ import {
   claimBlueBubblesMessageActionDispatch,
   getMessageAction,
   listMessageActionsForGroup,
+  updateMessageAction,
   updateMessageActionIfSendStatus,
 } from '../../src/db.js';
-import { createOrRefreshMessageActionFromDraft } from '../../src/message-actions.js';
+import {
+  applyMessageActionOperation,
+  createOrRefreshMessageActionFromDraft,
+} from '../../src/message-actions.js';
 import { registerProductionRuntimeCapabilitySurfaces } from '../../src/runtime-capability-production-surfaces.js';
 import { runtimeCapabilityRegistry } from '../../src/runtime-capability-registry.js';
 import type {
@@ -30,10 +34,11 @@ registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
 type WorkerKind =
   | 'initialize'
   | 'stage'
-  | 'execute'
+  | 'stage_request'
+  | 'approve'
   | 'inspect'
   | 'recover_and_replay'
-  | 'race_execute'
+  | 'race_approve'
   | 'stale_explicit_claim'
   | 'mutate_staged_action';
 
@@ -55,6 +60,7 @@ interface WorkerCommand {
   providerBaseUrl?: string;
   barrierPath?: string;
   workerId?: string;
+  approvalText?: string;
   providerEffect?: ProviderEffect;
 }
 
@@ -65,8 +71,7 @@ const INBOUND_MESSAGE_ID = 'tg:bluebubbles-hard-kill-inbound-1';
 const REQUEST_AT = new Date('2026-07-16T12:00:00.000Z');
 const TARGET_CHAT_JID = 'bb:iMessage;-;+12025550123';
 const TARGET_ADDRESS = '+12025550123';
-const REQUEST =
-  'Have BlueBubbles send Travis Story a message saying hi from Andrea and he smells, and make it funny.';
+const REQUEST = 'Text Travis Story: Hi from Andrea.';
 
 const MAIN_GROUP: RegisteredGroup = {
   name: 'Main',
@@ -110,6 +115,7 @@ function summarizeAction(action: ReturnType<typeof getMessageAction>) {
     draftText: action.draftText,
     targetConversationJson: action.targetConversationJson,
     approvedAt: action.approvedAt,
+    presentationMessageId: action.presentationMessageId,
     lastUpdatedAt: action.lastUpdatedAt,
     dispatchAttempt: parseRecord(explanation.dispatchAttempt),
     executionReceipt: parseRecord(explanation.executionReceipt),
@@ -224,6 +230,73 @@ async function executeRequest(
         postToFakeProvider(providerBaseUrl, chatJid, text, options),
     },
   });
+}
+
+async function stageInitialRequest(providerBaseUrl: string) {
+  const result = await executeRequest(providerBaseUrl);
+  if (!result.handled || result.state !== 'staged') {
+    throw new Error('The initial Text request must produce an unsent draft.');
+  }
+  updateMessageAction(result.action.messageActionId, {
+    presentationMessageId: `tg:draft-card:${result.action.messageActionId}`,
+    lastUpdatedAt: '2026-07-16T12:00:00.500Z',
+  });
+  return {
+    state: result.state,
+    action: onlyAction(),
+  };
+}
+
+async function approveStagedRequest(
+  providerBaseUrl: string,
+  approvalText: string | undefined,
+  options?: {
+    expectedMessageActionId?: string;
+    acceptObservedCompetingDispatch?: boolean;
+  },
+) {
+  if (!/^(?:send now|send it)$/i.test(approvalText?.trim() || '')) {
+    throw new Error('Approval must be a fresh Send now/send it turn.');
+  }
+  const staged = onlyAction();
+  if (
+    options?.expectedMessageActionId &&
+    staged.messageActionId !== options.expectedMessageActionId
+  ) {
+    throw new Error('Approval race resolved a different message action.');
+  }
+  if (staged.sendStatus !== 'drafted' || !staged.presentationMessageId) {
+    if (
+      options?.acceptObservedCompetingDispatch &&
+      staged.presentationMessageId &&
+      ['delivery_unverified', 'sent'].includes(staged.sendStatus)
+    ) {
+      return {
+        state: staged.sendStatus,
+        action: staged,
+      };
+    }
+    throw new Error('Fresh approval requires a delivered, unsent draft card.');
+  }
+  const result = await applyMessageActionOperation(
+    staged.messageActionId,
+    { kind: 'send' },
+    {
+      groupFolder: GROUP_FOLDER,
+      channel: SOURCE_CHANNEL,
+      chatJid: SOURCE_CHAT_JID,
+      currentTime: new Date('2026-07-16T12:00:01.000Z'),
+      sendToTarget: (_targetChannel, chatJid, text, options) =>
+        postToFakeProvider(providerBaseUrl, chatJid, text, options),
+    },
+  );
+  if (!result.action) {
+    throw new Error('Fresh approval did not resolve a message action.');
+  }
+  return {
+    state: result.action.sendStatus,
+    action: result.action,
+  };
 }
 
 async function waitForBarrier(barrierPath: string): Promise<void> {
@@ -400,24 +473,53 @@ async function handleCommand(command: WorkerCommand): Promise<void> {
   if (!command.providerBaseUrl) {
     throw new Error('Execution requires a deterministic provider endpoint.');
   }
-  if (command.kind === 'race_execute') {
+  if (command.kind === 'stage_request') {
+    const result = await stageInitialRequest(command.providerBaseUrl);
+    await sendToParent({
+      type: 'staging_result',
+      state: result.state,
+      action: summarizeAction(result.action),
+    });
+    return;
+  }
+  let raceSnapshotId: string | undefined;
+  if (command.kind === 'race_approve') {
     if (!command.barrierPath) {
-      throw new Error('Race execution requires a barrier path.');
+      throw new Error('Approval race requires a barrier path.');
     }
+    const raceSnapshot = onlyAction();
+    if (
+      raceSnapshot.sendStatus !== 'drafted' ||
+      !raceSnapshot.presentationMessageId
+    ) {
+      throw new Error('Approval race requires a delivered, unsent draft card.');
+    }
+    raceSnapshotId = raceSnapshot.messageActionId;
     await sendToParent({
       type: 'ready_for_barrier',
       workerId: command.workerId,
+      messageActionId: raceSnapshotId,
     });
     await waitForBarrier(command.barrierPath);
   }
-  const result = await executeRequest(command.providerBaseUrl);
-  const action =
-    result.handled && 'action' in result ? result.action : onlyAction();
+  if (command.kind !== 'approve' && command.kind !== 'race_approve') {
+    throw new Error(`Unsupported provider command: ${command.kind}`);
+  }
+  const result = await approveStagedRequest(
+    command.providerBaseUrl,
+    command.approvalText,
+    command.kind === 'race_approve'
+      ? {
+          expectedMessageActionId: raceSnapshotId,
+          acceptObservedCompetingDispatch: true,
+        }
+      : undefined,
+  );
   await sendToParent({
-    type: 'execution_result',
+    type: 'approval_result',
     workerId: command.workerId,
-    state: result.handled ? result.state : 'unhandled',
-    action: summarizeAction(action),
+    state: result.state,
+    action: summarizeAction(result.action),
   });
 }
 

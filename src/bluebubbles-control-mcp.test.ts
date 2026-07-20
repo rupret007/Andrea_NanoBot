@@ -37,10 +37,6 @@ async function startControlStub(): Promise<{
       );
       return;
     }
-    if ((req.url || '').startsWith('/v1/bluebubbles/send')) {
-      res.end(JSON.stringify({ sent: true }));
-      return;
-    }
     if ((req.url || '').startsWith('/v1/bluebubbles/media/')) {
       res.end(JSON.stringify({ handled: true, attachment: { kind: 'image' } }));
       return;
@@ -103,17 +99,27 @@ describe('BlueBubbles MCP bridge helpers', () => {
       }),
     );
 
-    await handlers.bluebubbles_send({
-      chatJid: 'bb:iMessage;-;+15551234567',
-      text: 'Hello there',
-    });
+    expect(handlers).not.toHaveProperty('bluebubbles_send');
+    const requestCountBeforeRejectedSend = stub.requests.length;
+    await expect(
+      handlers.bluebubbles_execute_message_action({
+        actionId: 'action-1',
+        operation: 'send',
+      }),
+    ).rejects.toThrow('MCP cannot execute send or send_again');
+    expect(stub.requests).toHaveLength(requestCountBeforeRejectedSend);
     await handlers.bluebubbles_execute_message_action({
       actionId: 'action-1',
-      operation: 'defer',
+      operation: 'remind_instead',
       timingHint: 'later tonight',
     });
     await handlers.bluebubbles_start_proof_drill({
-      chatJid: 'bb:iMessage;-;+12025550101',
+      chatJid: 'bb:iMessage;-;+12025550199',
+    });
+    await handlers.bluebubbles_execute_message_action({
+      actionId: 'proof-drill-action',
+      operation: 'defer',
+      timingHint: 'later tonight',
     });
     await handlers.bluebubbles_get_media_metadata({
       attachmentId: 'media-1',
@@ -127,11 +133,11 @@ describe('BlueBubbles MCP bridge helpers', () => {
       expect.arrayContaining([
         expect.objectContaining({
           method: 'POST',
-          url: '/v1/bluebubbles/send',
+          url: '/v1/bluebubbles/message-actions/action-1/execute',
         }),
         expect.objectContaining({
           method: 'POST',
-          url: '/v1/bluebubbles/message-actions/action-1/execute',
+          url: '/v1/bluebubbles/message-actions/proof-drill-action/execute',
         }),
         expect.objectContaining({
           method: 'POST',
@@ -147,9 +153,24 @@ describe('BlueBubbles MCP bridge helpers', () => {
         }),
       ]),
     );
-    expect(stub.requests[0]?.body).toContain('Hello there');
-    expect(stub.requests[1]?.body).toContain('later tonight');
-    expect(stub.requests[2]?.body).toContain('+12025550101');
-    expect(stub.requests[4]?.body).toContain('What is in this?');
+    expect(
+      stub.requests.some((request) => request.url === '/v1/bluebubbles/send'),
+    ).toBe(false);
+    expect(
+      stub.requests.find((request) => request.url.includes('/action-1/'))?.body,
+    ).toContain('remind_instead');
+    expect(
+      stub.requests.find((request) =>
+        request.url.endsWith('/proof-drill/start'),
+      )?.body,
+    ).toContain('+12025550199');
+    expect(
+      stub.requests.find((request) =>
+        request.url.includes('/proof-drill-action/'),
+      )?.body,
+    ).toContain('"operation":"defer"');
+    expect(
+      stub.requests.find((request) => request.url.endsWith('/analyze'))?.body,
+    ).toContain('What is in this?');
   });
 });

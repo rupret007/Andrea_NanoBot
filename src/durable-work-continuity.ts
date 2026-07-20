@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
+import { selectAdaptiveNextAction } from './adaptive-cognition-engine.js';
 import { redactCouncilText } from './council-safety.js';
 import {
   consumeDurableResumeGrantAtomic,
@@ -463,6 +464,7 @@ export function stageDurableWorkApproval(input: {
   cognitiveRunId: string;
   actionClass: string;
   summary: string;
+  nodeId?: string | null;
   checkpointId?: string | null;
   ttlMs?: number;
   now?: Date | string;
@@ -478,6 +480,7 @@ export function stageDurableWorkApproval(input: {
   }
   const cognitiveRunId = safeId(input.cognitiveRunId, 'cognitive run ID');
   const actionClass = safeId(input.actionClass, 'action class');
+  const nodeId = input.nodeId ? safeId(input.nodeId, 'approval node ID') : null;
   assertDurableActionExecutionSurface(actionClass, 'generic_durable');
   if (!durableActionRequiresApproval(actionClass)) {
     throw new Error(
@@ -517,6 +520,7 @@ export function stageDurableWorkApproval(input: {
         parentCheckpointId,
         work.targetScopeHash,
         actionClass,
+        nodeId || '',
         String(work.planVersion),
         work.approvalPacketId || '',
         now,
@@ -536,7 +540,9 @@ export function stageDurableWorkApproval(input: {
     status: 'staged',
     summary,
     approvalChannel: null,
-    approvalKey: `durable-scope:${approvalIdentity}`,
+    approvalKey: `durable-node:${
+      nodeId ? createHash('sha256').update(nodeId).digest('hex') : 'unbound'
+    }:${approvalIdentity}`,
     expiresAt: new Date(Date.parse(now) + ttlMs).toISOString(),
     approvalVersion: 1,
     scopeDigest: null,
@@ -551,6 +557,7 @@ export function stageDurableWorkApproval(input: {
       parentCheckpointId,
       planVersion: work.planVersion,
       approvalRequired: true,
+      nodeId,
       externalActionExecuted: false,
       metadataOnly: true,
     }),
@@ -576,6 +583,7 @@ export function stageDurableWorkApproval(input: {
       approvalPacketId,
       approvalVersion: 1,
       actionClass,
+      nodeId,
       durableWorkId: work.workId,
       durableCheckpointId: approvalCheckpointId,
       planVersion: work.planVersion,
@@ -674,9 +682,7 @@ export function transitionDurableWork(input: {
     const uncertainNodeIds = checkpoint
       ? checkpointIds(checkpoint.uncertainNodeIdsJson, 'uncertain node ID')
       : [];
-    const unresolved = receipts.some((receipt) =>
-      ['started', 'partial', 'unknown', 'failed'].includes(receipt.status),
-    );
+    const unresolved = unresolvedDurableEffectReceipts(receipts).length > 0;
     const verifiedTerminalReceipt = receipts.find(
       (receipt) =>
         receipt.status === 'succeeded' &&
@@ -969,6 +975,7 @@ function approvalForGrant(input: {
   planVersion: number;
   targetScopeHash: string;
   actionClass: string;
+  nodeId?: string | null;
   now: string;
 }): CognitiveApprovalPacket {
   const packet = listCognitiveApprovalPackets({
@@ -991,13 +998,57 @@ function approvalForGrant(input: {
       'A current exact-scope approval is required for this resume grant.',
     );
   }
+  if (input.nodeId) {
+    if (!durableApprovalMatchesNode(packet, input.nodeId)) {
+      throw new Error('Durable approval does not match the exact plan node.');
+    }
+  }
   return packet;
+}
+
+function durableApprovalMatchesNode(
+  packet: CognitiveApprovalPacket,
+  nodeId: string,
+): boolean {
+  const checkpoint = packet.durableCheckpointId
+    ? getDurableWorkCheckpoint(packet.durableCheckpointId)
+    : null;
+  if (
+    !checkpoint ||
+    checkpoint.workId !== packet.durableWorkId ||
+    checkpoint.planVersion !== packet.planVersion ||
+    checkpoint.targetScopeHash !== packet.targetScopeDigest
+  ) {
+    return false;
+  }
+  try {
+    const scope: unknown = JSON.parse(checkpoint.approvalScopeJson);
+    if (
+      !scope ||
+      typeof scope !== 'object' ||
+      (scope as { approvalPacketId?: unknown }).approvalPacketId !==
+        packet.approvalPacketId ||
+      (scope as { actionClass?: unknown }).actionClass !== packet.actionClass
+    ) {
+      return false;
+    }
+    const nodeDigest = createHash('sha256')
+      .update(safeId(nodeId, 'approval node ID'))
+      .digest('hex');
+    const keyMatch = /^durable-node:([0-9a-f]{64}|unbound):[0-9a-f]{64}$/.exec(
+      packet.approvalKey || '',
+    );
+    return keyMatch?.[1] === nodeDigest;
+  } catch {
+    return false;
+  }
 }
 
 export function issueDurableResumeGrant(input: {
   workId: string;
   binding: DurableWorkBindingInput;
   actionClass: string;
+  nodeId?: string | null;
   approvalPacketId?: string | null;
   approvalVersion?: number | null;
   inboundMessageId?: string | null;
@@ -1022,6 +1073,7 @@ export function issueDurableResumeGrant(input: {
       'needs_replan',
       'verifying',
       'delivery_unverified',
+      'verification_failed',
     ].includes(work.status)
   ) {
     throw new Error(
@@ -1067,6 +1119,7 @@ export function issueDurableResumeGrant(input: {
       planVersion: work.planVersion,
       targetScopeHash: work.targetScopeHash,
       actionClass,
+      nodeId: input.nodeId ? safeId(input.nodeId, 'approval node ID') : null,
       now,
     });
   }
@@ -1113,6 +1166,95 @@ export function issueDurableResumeGrant(input: {
   return { token, grant };
 }
 
+function recoveryBinding(receipt: DurableEffectReceipt): {
+  receiptId: string;
+  checkpointId: string;
+} | null {
+  try {
+    const metadata: unknown = JSON.parse(receipt.metadataJson);
+    if (
+      !metadata ||
+      typeof metadata !== 'object' ||
+      typeof (metadata as { recoveryOfReceiptId?: unknown })
+        .recoveryOfReceiptId !== 'string' ||
+      typeof (metadata as { recoveryOfCheckpointId?: unknown })
+        .recoveryOfCheckpointId !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      receiptId: safeId(
+        (metadata as { recoveryOfReceiptId: string }).recoveryOfReceiptId,
+        'recovered receipt ID',
+      ),
+      checkpointId: safeId(
+        (metadata as { recoveryOfCheckpointId: string }).recoveryOfCheckpointId,
+        'recovered checkpoint ID',
+      ),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns receipts whose effect state still needs verification. A later
+ * verified recovery receipt resolves only the exact prior receipt named in
+ * its metadata and only when every immutable execution binding still matches.
+ */
+export function unresolvedDurableEffectReceipts(
+  receipts: readonly DurableEffectReceipt[],
+): DurableEffectReceipt[] {
+  const recoveredReceiptIds = resolvedDurableRecoveryReceiptIds(receipts);
+  return receipts.filter(
+    (receipt) =>
+      !recoveredReceiptIds.has(receipt.receiptId) &&
+      (['started', 'partial', 'unknown', 'failed'].includes(receipt.status) ||
+        (receipt.status === 'succeeded' &&
+          (!receipt.verificationFingerprint || !receipt.postStateFingerprint))),
+  );
+}
+
+function resolvedDurableRecoveryReceiptIds(
+  receipts: readonly DurableEffectReceipt[],
+): Set<string> {
+  const byId = new Map(receipts.map((receipt) => [receipt.receiptId, receipt]));
+  const recoveredReceiptIds = new Set<string>();
+  for (const terminalRecovery of receipts) {
+    if (
+      terminalRecovery.status !== 'succeeded' ||
+      !terminalRecovery.verificationFingerprint ||
+      !terminalRecovery.postStateFingerprint
+    ) {
+      continue;
+    }
+    let recovery = terminalRecovery;
+    const visited = new Set([recovery.receiptId]);
+    while (true) {
+      const recovered = recoveryBinding(recovery);
+      const prior = recovered ? byId.get(recovered.receiptId) : null;
+      if (
+        !prior ||
+        visited.has(prior.receiptId) ||
+        prior.workId !== recovery.workId ||
+        prior.checkpointId !== recovered?.checkpointId ||
+        prior.planVersion !== recovery.planVersion ||
+        prior.nodeId !== recovery.nodeId ||
+        prior.actionClass !== recovery.actionClass ||
+        prior.effectClass !== recovery.effectClass ||
+        prior.targetScopeHash !== recovery.targetScopeHash ||
+        prior.preStateFingerprint !== recovery.preStateFingerprint
+      ) {
+        break;
+      }
+      recoveredReceiptIds.add(prior.receiptId);
+      visited.add(prior.receiptId);
+      recovery = prior;
+    }
+  }
+  return recoveredReceiptIds;
+}
+
 export function consumeResumeGrantAndAcquireLease(input: {
   token: string;
   binding: DurableWorkBindingInput;
@@ -1140,15 +1282,16 @@ export function consumeResumeGrantAndAcquireLease(input: {
   const checkpoint = grant
     ? getDurableWorkCheckpoint(grant.checkpointId)
     : null;
+  const currentReceipts = checkpoint
+    ? listDurableEffectReceipts({
+        workId: checkpoint.workId,
+        limit: 500,
+      }).filter((receipt) => receipt.planVersion === checkpoint.planVersion)
+    : [];
   const hasUnknown = checkpoint
     ? checkpointIds(checkpoint.uncertainNodeIdsJson, 'uncertain node ID')
         .length > 0 ||
-      listDurableEffectReceipts({ workId: checkpoint.workId, limit: 500 }).some(
-        (receipt) =>
-          ['started', 'partial', 'unknown'].includes(receipt.status) ||
-          (!receipt.verificationFingerprint &&
-            ['succeeded', 'failed'].includes(receipt.status)),
-      )
+      unresolvedDurableEffectReceipts(currentReceipts).length > 0
     : false;
   const leaseId = `lease:${randomUUID()}`;
   const result = consumeDurableResumeGrantAtomic({
@@ -1217,6 +1360,7 @@ export function recordDurableEffect(input: {
     idempotencyKeyHash?: string;
     source?: string;
     recoveryOfReceiptId?: string;
+    recoveryOfCheckpointId?: string;
     verifiedPostconditionHashesJson?: string;
     providerCalls?: string;
     costUsd?: string;
@@ -1511,40 +1655,29 @@ export function chooseDurableAdaptiveDecision(input: {
   const stale = safeIds(input.staleSignalIds, 'stale signal ID');
   const missing = safeIds(input.missingSignalIds, 'missing signal ID');
   const contradictions = safeIds(input.contradictionIds, 'contradiction ID');
-  const scored = input.candidates.map((candidate) => {
-    const healthPenalty =
-      candidate.toolHealth === 'blocked'
-        ? 1
-        : candidate.toolHealth === 'degraded'
-          ? 0.3
-          : candidate.toolHealth === 'unknown'
-            ? 0.15
-            : 0;
-    let score =
-      0.25 * candidate.usefulness +
-      0.2 * candidate.successProbability +
-      0.15 * candidate.informationGain +
-      0.1 * candidate.reversibility -
-      0.12 * candidate.risk -
-      0.08 * candidate.cost -
-      0.04 * candidate.latency -
-      0.12 * healthPenalty -
-      (candidate.approvalRequired ? 0.04 : 0);
-    if ((stale.length || missing.length) && candidate.action === 'inspect')
-      score += 0.35;
-    if (contradictions.length && candidate.action === 'replan') score += 0.4;
-    if (contradictions.length && candidate.action === 'execute') score -= 0.8;
-    if (candidate.toolHealth === 'blocked' && candidate.action === 'execute')
-      score -= 1;
-    return { candidate, score: Math.max(-2, Math.min(2, score)) };
+  const selection = selectAdaptiveNextAction({
+    candidates: input.candidates.map((candidate, index) => ({
+      candidateId: `candidate:${index}`,
+      action: candidate.action,
+      usefulness: candidate.usefulness,
+      successProbability: candidate.successProbability,
+      cost: candidate.cost,
+      latency: candidate.latency,
+      risk: candidate.risk,
+      reversibility: candidate.reversibility,
+      informationGain: candidate.informationGain,
+      approvalRequired: candidate.approvalRequired === true,
+      toolHealth: candidate.toolHealth || 'unknown',
+    })),
+    staleSignalCount: stale.length,
+    missingSignalCount: missing.length,
+    contradictionCount: contradictions.length,
   });
-  scored.sort((left, right) => right.score - left.score);
-  const selected = scored[0]!;
-  const now = iso(input.now);
-  const confidence = Math.max(
-    0,
-    Math.min(1, 0.5 + selected.score / 2 - contradictions.length * 0.1),
+  const selectedIndex = Number(
+    selection.selectedCandidateId.replace('candidate:', ''),
   );
+  const selected = input.candidates[selectedIndex]!;
+  const now = iso(input.now);
   return {
     decisionId: `durable:decision:${randomUUID()}`,
     workId: safeId(input.workId, 'work ID'),
@@ -1552,34 +1685,28 @@ export function chooseDurableAdaptiveDecision(input: {
       ? safeId(input.checkpointId, 'checkpoint ID')
       : null,
     createdAt: now,
-    selectedAction: selected.candidate.action,
-    confidence,
+    selectedAction: selected.action,
+    confidence: selection.confidence,
     candidateScoresJson: JSON.stringify(
-      scored.map(({ candidate, score }) => ({
-        action: candidate.action,
+      selection.scores.map(({ action, score }) => ({
+        action,
         score,
       })),
     ),
     evidenceRefsJson: idsJson(
-      [
-        ...(input.verifiedFactIds || []),
-        ...(selected.candidate.evidenceIds || []),
-      ],
+      [...(input.verifiedFactIds || []), ...(selected.evidenceIds || [])],
       'decision evidence ID',
     ),
     assumptionsJson: idsJson(input.assumptionIds, 'assumption ID'),
     contradictionIdsJson: JSON.stringify(contradictions),
     staleSignalIdsJson: JSON.stringify(stale),
     missingSignalIdsJson: JSON.stringify(missing),
-    approvalRequired: selected.candidate.approvalRequired === true,
+    approvalRequired: selected.approvalRequired === true,
     verificationMethod: safeSummary(
-      selected.candidate.verificationMethod,
+      selected.verificationMethod,
       'verification method',
     ),
-    stopCondition: safeSummary(
-      selected.candidate.stopCondition,
-      'stop condition',
-    ),
+    stopCondition: safeSummary(selected.stopCondition, 'stop condition'),
     attemptLimit: Math.max(
       1,
       Math.min(10, Math.trunc(input.attemptLimit || 3)),
@@ -1591,7 +1718,7 @@ export function chooseDurableAdaptiveDecision(input: {
       Math.min(3_600_000, input.timeLimitMs || 60_000),
     ),
     summary: safeSummary(
-      `${selected.candidate.action} selected for the highest evidence-adjusted usefulness under current risk and freshness constraints.`,
+      `${selected.action} selected by AdaptiveCognitionEngine for the highest evidence-adjusted usefulness under current risk and freshness constraints.`,
       'decision summary',
     ),
     privacyJson: privacyJson(),
@@ -2061,6 +2188,7 @@ export async function orchestrateNextDurableNode<
   processGeneration?: string;
   executorScopeKey: string;
   targetScopeKey: string;
+  expectedNodeId?: string | null;
   callbacks: DurableNodeOrchestrationCallbacks<TAuthorization>;
   now?: Date | string;
 }): Promise<DurableNodeOrchestrationResult> {
@@ -2069,6 +2197,9 @@ export async function orchestrateNextDurableNode<
     input.processGeneration || PROCESS_GENERATION,
     'process generation',
   );
+  const expectedNodeId = input.expectedNodeId
+    ? safeId(input.expectedNodeId, 'expected plan node ID')
+    : null;
   const initialWork = getDurableWorkUnit(input.workId);
   const initialLease = getDurableWorkLease(input.leaseId);
   if (
@@ -2209,6 +2340,10 @@ export async function orchestrateNextDurableNode<
     const priorRequirements = checkpointIds(
       checkpoint.verificationRequirementsJson,
       'verification requirement ID',
+    );
+    const priorDependencies = checkpointIds(
+      checkpoint.dependencyIdsJson,
+      'dependency ID',
     );
     const requestReplan = async (
       currentWork: DurableWorkUnit,
@@ -2393,14 +2528,8 @@ export async function orchestrateNextDurableNode<
         executed: false,
       };
     }
-    const unresolvedReceipts = [...receipts]
-      .reverse()
-      .filter(
-        (receipt) =>
-          ['started', 'partial', 'unknown'].includes(receipt.status) ||
-          (['succeeded', 'failed'].includes(receipt.status) &&
-            !receipt.verificationFingerprint),
-      );
+    const unresolvedReceipts =
+      unresolvedDurableEffectReceipts(receipts).reverse();
     const recoveryNodeId =
       uncertain[0] || unresolvedReceipts[0]?.nodeId || null;
     const unresolvedReceipt = recoveryNodeId
@@ -2444,6 +2573,18 @@ export async function orchestrateNextDurableNode<
         }
       }
       if (!node) return requestReplan(work, checkpoint, 'dependency_deadlock');
+    }
+
+    if (expectedNodeId && node.nodeId !== expectedNodeId) {
+      return requestReplan(work, checkpoint, 'node_identity_changed');
+    }
+    if (expectedNodeId && consumedGrant.approvalPacketId) {
+      const approval = listCognitiveApprovalPackets({ limit: 1_000 }).find(
+        (packet) => packet.approvalPacketId === consumedGrant.approvalPacketId,
+      );
+      if (!approval || !durableApprovalMatchesNode(approval, expectedNodeId)) {
+        return requestReplan(work, checkpoint, 'approval_node_changed');
+      }
     }
 
     let revalidation: DurableNodeRevalidation;
@@ -2521,6 +2662,19 @@ export async function orchestrateNextDurableNode<
       const nextUncertain = uncertain.filter(
         (nodeId) => nodeId !== node!.nodeId,
       );
+      const resolvedRecoveryReceiptIds = !executed
+        ? resolvedDurableRecoveryReceiptIds(
+            listDurableEffectReceipts({
+              workId: currentWork.workId,
+              limit: 1_000,
+            }).filter(
+              (candidate) => candidate.planVersion === currentWork.planVersion,
+            ),
+          )
+        : new Set<string>();
+      const carriedReceiptIds = priorReceiptIds.filter(
+        (receiptId) => !resolvedRecoveryReceiptIds.has(receiptId),
+      );
       const hasRemainingWork =
         nextPending.length > 0 || nextUncertain.length > 0;
       const nextSafeAction = nextUncertain.length
@@ -2534,7 +2688,10 @@ export async function orchestrateNextDurableNode<
         completedNodeIds: nextCompleted,
         pendingNodeIds: nextPending,
         uncertainNodeIds: nextUncertain,
-        dependencyIds: plan.nodes.flatMap((entry) => entry.dependsOnNodeIds),
+        dependencyIds: [
+          ...priorDependencies,
+          ...plan.nodes.flatMap((entry) => entry.dependsOnNodeIds),
+        ],
         worldSignals: {
           fresh: revalidation.freshSignalIds,
           stale: revalidation.staleSignalIds,
@@ -2547,7 +2704,7 @@ export async function orchestrateNextDurableNode<
         verifiedPostStateFingerprint:
           verification.postStateFingerprint || receipt.postStateFingerprint,
         receiptIds: [
-          ...priorReceiptIds,
+          ...carriedReceiptIds,
           receipt.receiptId,
           ...scopeReceiptIds,
           ...(verification.receiptIds || []),
@@ -2610,7 +2767,10 @@ export async function orchestrateNextDurableNode<
         completedNodeIds: completed,
         pendingNodeIds: nextPending,
         uncertainNodeIds: nextUncertain,
-        dependencyIds: plan.nodes.flatMap((entry) => entry.dependsOnNodeIds),
+        dependencyIds: [
+          ...priorDependencies,
+          ...plan.nodes.flatMap((entry) => entry.dependsOnNodeIds),
+        ],
         worldSignals: {
           fresh: revalidation.freshSignalIds,
           stale: revalidation.staleSignalIds,
@@ -2747,6 +2907,12 @@ export async function orchestrateNextDurableNode<
                 verification.status === 'verified'
                   ? verification.verificationFingerprint
                   : null,
+              metadata: unresolvedReceipt
+                ? {
+                    recoveryOfReceiptId: unresolvedReceipt.receiptId,
+                    recoveryOfCheckpointId: unresolvedReceipt.checkpointId,
+                  }
+                : undefined,
               now,
             });
       if (verification.status === 'verified') {
@@ -2891,6 +3057,7 @@ export async function orchestrateNextDurableNode<
       if (isDurableLeaseBoundaryError(error)) throw error;
       execution = { status: 'unknown' };
     }
+    emitBoundary('after_effect_before_receipt', work.workId, work.version);
     let scopeCompletion: DurableScopeCompletion = {};
     if (needsRepositoryScope(node) && input.callbacks.completeScope) {
       try {
@@ -3044,14 +3211,13 @@ export async function orchestrateNextDurableNode<
         failedWork.leaseExpiresAt === failedLease.expiresAt &&
         ['executing', 'verifying'].includes(failedWork.status)
       ) {
-        const unresolved = listDurableEffectReceipts({
-          workId: failedWork.workId,
-          limit: 1_000,
-        }).filter(
-          (receipt) =>
-            receipt.planVersion === failedWork.planVersion &&
-            (!receipt.verificationFingerprint ||
-              ['started', 'partial', 'unknown'].includes(receipt.status)),
+        const unresolved = unresolvedDurableEffectReceipts(
+          listDurableEffectReceipts({
+            workId: failedWork.workId,
+            limit: 1_000,
+          }).filter(
+            (receipt) => receipt.planVersion === failedWork.planVersion,
+          ),
         );
         const externalUnknown = unresolved.some(
           (receipt) => receipt.effectClass === 'external_effect',
@@ -3250,9 +3416,9 @@ export function buildDurableContinuityReport(
   if (work.status === 'delivery_unverified')
     evidenceGaps.push('delivery_unverified');
   if (
-    receipts.some(
-      (receipt) => receipt.status === 'started' || receipt.status === 'unknown',
-    )
+    unresolvedDurableEffectReceipts(
+      receipts.filter((receipt) => receipt.planVersion === work.planVersion),
+    ).length > 0
   ) {
     evidenceGaps.push('execution_receipt_unresolved');
   }
@@ -3267,6 +3433,7 @@ export function buildDurableContinuityReport(
       'needs_replan',
       'verifying',
       'delivery_unverified',
+      'verification_failed',
     ].includes(work.status);
   return {
     generatedAt,

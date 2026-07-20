@@ -1409,32 +1409,6 @@ function Get-TelegramLiveProbeConfigStatus {
   }
 }
 
-function Invoke-TelegramRoundtripProbe {
-  param([switch] $Force)
-
-  $nodeExe = Resolve-PinnedNodeExecutable
-  $args = @(
-    '.\node_modules\tsx\dist\cli.mjs',
-    'src\telegram-user-session.ts',
-    'probe'
-  )
-  if ($Force) {
-    $args += '--force'
-  }
-
-  $output = & $nodeExe @args 2>&1 | Out-String
-  $exitCode = $LASTEXITCODE
-  $assistantHealthMarker = Read-JsonFile $assistantHealthPath
-  $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
-  $assessment = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState (Read-JsonFile $hostStatePath) -ReadyState (Read-JsonFile $readyStatePath) -TelegramTransport $telegramTransport
-
-  return [pscustomobject]@{
-    exitCode = $exitCode
-    output = $output.Trim()
-    assessment = $assessment
-  }
-}
-
 function Get-HealthyRunningSnapshot {
   $hostState = Read-JsonFile $hostStatePath
   $readyState = Read-JsonFile $readyStatePath
@@ -2222,25 +2196,9 @@ function Ensure-NanoClaw {
   }
 
   if ([string] $assistantHealth.status -eq 'healthy') {
-    if ($telegramRoundtrip.due) {
-      $probe = Invoke-TelegramRoundtripProbe
-      $telegramRoundtrip = $probe.assessment
-      if ([string] $telegramRoundtrip.status -eq 'degraded') {
-        Start-Sleep -Seconds 15
-        $retryProbe = Invoke-TelegramRoundtripProbe -Force
-        $telegramRoundtrip = $retryProbe.assessment
-        if ([string] $telegramRoundtrip.status -eq 'degraded') {
-          Write-HostStep ("Periodic ensure check detected Telegram roundtrip failure after retry: {0}" -f ([string] $telegramRoundtrip.detail))
-          Stop-NanoClaw
-          Start-Sleep -Milliseconds 700
-          Start-NanoClaw
-          Start-Sleep -Seconds 10
-          $confirmProbe = Invoke-TelegramRoundtripProbe -Force
-          $telegramRoundtrip = $confirmProbe.assessment
-        }
-      }
-    }
-
+    # A watchdog must never originate a message from the owner's Telegram user
+    # session. Roundtrip truth is refreshed only by organic traffic or an
+    # explicit operator smoke command.
     Start-Watchdog
       $ensureStatus = if (
         [string] $telegramTransport.status -eq 'ready' -and

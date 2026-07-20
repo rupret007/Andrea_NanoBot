@@ -27,6 +27,8 @@ export interface AppleMessagesSendRequest {
   chatGuid: string;
   text: string;
   replyToGuid?: string;
+  authorizationAt: string;
+  pauseGeneration: number;
 }
 
 export interface AppleMessagesCreateDirectChatRequest {
@@ -34,6 +36,8 @@ export interface AppleMessagesCreateDirectChatRequest {
   text: string;
   sendMethod: string;
   service: 'iMessage' | 'SMS';
+  authorizationAt: string;
+  pauseGeneration: number;
 }
 
 export interface AppleMessagesRecentActivityRow {
@@ -51,6 +55,14 @@ export interface AppleMessagesProvider {
     options?: {
       limit?: number;
       candidateChatJids?: string[];
+      timeoutMs?: number;
+    },
+  ): Promise<AppleMessagesRecentActivityRow[]>;
+  inspectChatHistory(
+    config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+    options: {
+      chatJid: string;
+      limit?: number;
       timeoutMs?: number;
     },
   ): Promise<AppleMessagesRecentActivityRow[]>;

@@ -135,6 +135,8 @@ Use these when you are enabling or validating specific capabilities:
 | Delegation Rules / Safe Automation     | [DELEGATION_RULES_AND_SAFE_AUTOMATION.md](DELEGATION_RULES_AND_SAFE_AUTOMATION.md)         |
 | Messaging Trust Ladder / Live Delivery | [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md) |
 | Outcome Tracking / Reviews             | [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md)                         |
+| Adaptive cognition core and rollout    | [ADAPTIVE_COGNITIVE_CORE.md](ADAPTIVE_COGNITIVE_CORE.md)                                   |
+| Adaptive cognition live dogfood gate   | [ADAPTIVE_COGNITION_DOGFOOD.md](ADAPTIVE_COGNITION_DOGFOOD.md)                             |
 | Knowledge Library                      | [KNOWLEDGE_LIBRARY.md](KNOWLEDGE_LIBRARY.md)                                               |
 | Commitment Intelligence                | [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md)                                   |
 | Verified capability acquisition        | [VERIFIED_CAPABILITY_ACQUISITION.md](VERIFIED_CAPABILITY_ACQUISITION.md)                   |

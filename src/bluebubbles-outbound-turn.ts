@@ -14,6 +14,7 @@ import {
 } from './channels/bluebubbles.js';
 import { resolveBlueBubblesThreadTargetByName } from './message-actions.js';
 import type { MessageActionExecutionDeps } from './message-actions.js';
+import { isMessagingOutboundPaused } from './messaging-outbound-pause.js';
 import {
   buildBlueBubblesRuntimeCapabilityFacts,
   formatRuntimeCapabilityEvaluation,
@@ -30,10 +31,40 @@ type OutboundChannel = StageBlueBubblesOutboundRequestParams['channel'];
 type RecipientResolution =
   StageBlueBubblesOutboundRequestParams['recipientResolution'];
 type DefinedRecipientResolution = Exclude<RecipientResolution, undefined>;
+type RecentTextReviewLink =
+  StageBlueBubblesOutboundRequestParams['recentTextReview'];
 type ResolvedRecipient = Extract<
   DefinedRecipientResolution,
   { state: 'resolved' }
 >['target'];
+
+export function doContextBoundRecipientLabelsMatch(
+  requestedLabel: string | null | undefined,
+  resolvedLabel: string | null | undefined,
+): boolean {
+  const normalize = (value: string | null | undefined) =>
+    Array.from(
+      (value || '')
+        .normalize('NFKC')
+        .toLowerCase()
+        .matchAll(/[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}]*)/gu),
+      (match) => match[0],
+    ).join(' ');
+  const supplied = Boolean(requestedLabel?.trim());
+  if (!supplied) return true;
+  const requested = normalize(requestedLabel);
+  const resolved = normalize(resolvedLabel);
+  if (!requested || !resolved) return false;
+  if (requested === resolved) return true;
+
+  const requestedTokens = requested.split(' ');
+  const resolvedTokens = resolved.split(' ');
+  if (requestedTokens.length === 1) {
+    return requested === resolvedTokens[0];
+  }
+
+  return false;
+}
 
 function blueBubblesAddressIdentityKeys(
   value: string | null | undefined,
@@ -115,12 +146,15 @@ export interface ExecuteBlueBubblesOutboundTurnParams {
   resolveStoredRecipient?: typeof resolveBlueBubblesThreadTargetByName;
   resolveLiveRecipient?: typeof resolveBlueBubblesContactRecipient;
   resolveConfig?: typeof resolveBlueBubblesConfig;
+  /** Injectable durable owner-pause check for deterministic offline tests. */
+  isOutboundPaused?: () => boolean;
   resolveContextBoundRecipient?: (input: {
     intent: AssistantMessageActionIntent;
   }) => Promise<
     | {
         state: 'resolved';
         recipientResolution: DefinedRecipientResolution;
+        recentTextReview?: RecentTextReviewLink;
       }
     | {
         state: 'blocked';
@@ -177,6 +211,32 @@ export async function executeBlueBubblesOutboundTurn(
   });
   if (terminalReplay) return terminalReplay;
 
+  // The durable owner stop is authoritative before any provider probe,
+  // recipient lookup, or fresh execution. Terminal replays stay ahead of this
+  // check so a previously verified send is reported truthfully rather than
+  // being rewritten as a new blocked attempt after the owner pauses outbound.
+  const outboundPaused = (
+    params.isOutboundPaused ?? isMessagingOutboundPaused
+  )();
+  if (outboundPaused) {
+    if (intent.mode === 'inform') {
+      return {
+        handled: true,
+        state: 'capability_status',
+        replyText:
+          'BlueBubbles outbound sending is paused by your owner stop request. I will not send, probe the provider, or look up a recipient until you explicitly resume outbound messaging. I can still review or summarize Messages history already synced here.',
+      };
+    }
+    if (intent.mode === 'execute') {
+      return {
+        handled: true,
+        state: 'restricted',
+        replyText:
+          'Andrea: outbound messaging is paused by your owner stop request, so I did not query BlueBubbles, look up the recipient, or send anything. Sending remains blocked until you explicitly resume outbound messaging.',
+      };
+    }
+  }
+
   let control = params.blueBubblesChannel?.getControlSnapshot() ?? null;
   if (
     (intent.mode === 'execute' || intent.mode === 'inform') &&
@@ -227,7 +287,7 @@ export async function executeBlueBubblesOutboundTurn(
         handled: true,
         state: 'capability_status',
         replyText:
-          'Yes. BlueBubbles is connected and sending is enabled. From this registered Telegram chat or your configured Messages self-thread, say something like `Text Candace: Yes, please pick them up.` I will resolve the exact recipient, send through BlueBubbles, and only report “Sent” after a provider receipt. Say `Draft a text to Candace: ...` when you want to review it first.',
+          'Yes. BlueBubbles is connected and sending is enabled. From this registered Telegram chat or your configured Messages self-thread, say something like `Text Alex: The package arrived.` I will show the exact recipient and body in an unsent card. A separate fresh `Send now` or `send it` approval is required before BlueBubbles dispatch, and I report “Sent” only after a provider receipt.',
       };
     }
     return {
@@ -241,6 +301,7 @@ export async function executeBlueBubblesOutboundTurn(
   }
 
   let recipientResolution: RecipientResolution = undefined;
+  let recentTextReview: RecentTextReviewLink = undefined;
   if (intent.mode === 'execute' && intent.contextBinding) {
     const capability = registry.evaluate(
       {
@@ -270,6 +331,7 @@ export async function executeBlueBubblesOutboundTurn(
         return contextResolution.result;
       }
       recipientResolution = contextResolution.recipientResolution;
+      recentTextReview = contextResolution.recentTextReview;
     }
   }
   if (intent.targetLabel && !recipientResolution) {
@@ -352,6 +414,7 @@ export async function executeBlueBubblesOutboundTurn(
     rawText: params.rawText,
     inboundMessageId: params.inboundMessageId,
     recipientResolution,
+    recentTextReview,
     now: params.now,
     capabilityFacts,
     executionDeps: params.executionDeps,

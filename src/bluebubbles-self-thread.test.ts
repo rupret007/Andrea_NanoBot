@@ -85,4 +85,50 @@ describe('BlueBubbles self-thread resolver', () => {
       aliasJids: ['bb:iMessage;-;configured@example.invalid'],
     });
   });
+
+  it('never promotes reserved fallback aliases beside a real canonical self-thread', () => {
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'bb:iMessage;-;owner@example.invalid';
+    process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS =
+      'bb:iMessage;-;owner@example.invalid,bb:iMessage;-;+12025550101,bb:iMessage;-;owner@example.com';
+
+    expect(
+      isConfiguredBlueBubblesSelfThreadAliasJid(
+        'bb:iMessage;-;owner@example.invalid',
+        {},
+      ),
+    ).toBe(true);
+    expect(
+      isConfiguredBlueBubblesSelfThreadAliasJid(
+        'bb:iMessage;-;+12025550101',
+        {},
+      ),
+    ).toBe(false);
+    expect(
+      isConfiguredBlueBubblesSelfThreadAliasJid(
+        'bb:iMessage;-;owner@example.com',
+        {},
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects configured group and unstructured JIDs as owner self-threads', () => {
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'bb:iMessage;+;family-group';
+    process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS =
+      'bb:iMessage;+;family-group,bb:opaque-chat';
+
+    expect(
+      isConfiguredBlueBubblesSelfThreadAliasJid(
+        'bb:iMessage;+;family-group',
+        {},
+      ),
+    ).toBe(false);
+    expect(
+      isConfiguredBlueBubblesSelfThreadAliasJid('bb:opaque-chat', {}),
+    ).toBe(false);
+    expect(isBlueBubblesSelfThreadAliasJid('bb:iMessage;+;family-group')).toBe(
+      false,
+    );
+  });
 });

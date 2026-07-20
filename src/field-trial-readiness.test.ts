@@ -30,6 +30,22 @@ import { classifyHostDiskHealth } from './host-resource-health.js';
 import { completePilotJourney, startPilotJourney } from './pilot-mode.js';
 import { writeProviderProofState } from './provider-proof-state.js';
 
+const TEST_BLUEBUBBLES_SELF_THREAD_JID =
+  'bb:iMessage;-;owner-fixture@example.invalid';
+const TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID =
+  'bb:iMessage;-;owner-alias@example.invalid';
+
+function stubConfiguredBlueBubblesSelfThread(): void {
+  vi.stubEnv(
+    'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+    TEST_BLUEBUBBLES_SELF_THREAD_JID,
+  );
+  vi.stubEnv(
+    'BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS',
+    TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
+  );
+}
+
 describe('field-trial readiness', () => {
   let previousCwd = '';
   let tempDir = '';
@@ -1178,6 +1194,7 @@ describe('field-trial readiness', () => {
   });
 
   it('parses BlueBubbles direct companion chats as conversational 1:1 mode', () => {
+    stubConfiguredBlueBubblesSelfThread();
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
@@ -1206,8 +1223,7 @@ describe('field-trial readiness', () => {
             configured: true,
             state: 'ready',
             updatedAt: '2026-04-10T00:12:00.000Z',
-            detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate direct_1to1 | group trigger required yes | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;+12025550101 | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;+12025550101) | last outbound target kind chat_guid | last outbound target value iMessage;-;+12025550101 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+            detail: `listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate direct_1to1 | group trigger required yes | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat ${TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID} | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (${TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID}) | last outbound target kind chat_guid | last outbound target value iMessage;-;owner-alias@example.invalid | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid`,
           },
         ],
       },
@@ -1233,6 +1249,7 @@ describe('field-trial readiness', () => {
   });
 
   it('prefers active self-thread message-action continuity over stale pilot-only targeting', () => {
+    stubConfiguredBlueBubblesSelfThread();
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
@@ -1261,8 +1278,7 @@ describe('field-trial readiness', () => {
             configured: true,
             state: 'ready',
             updatedAt: '2026-04-10T00:12:00.000Z',
-            detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;owner@example.com | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;owner@example.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;+12025550101 | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+            detail: `listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat ${TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID} | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (${TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID}) | last outbound target kind chat_guid | last outbound target value iMessage;-;owner-alias@example.invalid | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid`,
           },
         ],
       },
@@ -1323,7 +1339,7 @@ describe('field-trial readiness', () => {
       lastActionKind: null,
       lastActionAt: '2026-04-10T00:11:30.000Z',
       dedupeKey: 'bb-open-self-thread-action',
-      presentationChatJid: 'bb:iMessage;-;owner@example.com',
+      presentationChatJid: TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
       presentationThreadId: null,
       presentationMessageId: 'bb:self-thread-draft-1',
       createdAt: '2026-04-10T00:11:00.000Z',
@@ -1428,6 +1444,7 @@ describe('field-trial readiness', () => {
   });
 
   it('anchors BlueBubbles proof to the presentation chat when a linked-thread action was decided from self-chat', () => {
+    stubConfiguredBlueBubblesSelfThread();
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
@@ -1456,8 +1473,7 @@ describe('field-trial readiness', () => {
             configured: true,
             state: 'ready',
             updatedAt: '2026-04-10T00:12:00.000Z',
-            detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat bb:iMessage;-;owner@example.com | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (bb:iMessage;-;owner@example.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;owner@example.com | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+            detail: `listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat ${TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID} | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (${TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID}) | last outbound target kind chat_guid | last outbound target value iMessage;-;owner-alias@example.invalid | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid`,
           },
         ],
       },
@@ -1467,7 +1483,7 @@ describe('field-trial readiness', () => {
     };
 
     storeChatMetadata(
-      'bb:iMessage;-;owner@example.com',
+      TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
       '2026-04-10T00:11:00.000Z',
       'Jeff',
       'bluebubbles',
@@ -1475,8 +1491,8 @@ describe('field-trial readiness', () => {
     );
     storeMessage({
       id: 'bb:self-proof-user-1',
-      chat_jid: 'bb:iMessage;-;owner@example.com',
-      sender: 'bb:owner@example.com',
+      chat_jid: TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
+      sender: 'bb:owner-alias@example.invalid',
       sender_name: 'Jeff',
       content: '@Andrea what should I send back?',
       timestamp: '2026-04-10T00:10:00.000Z',
@@ -1485,7 +1501,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:self-proof-bot-1',
-      chat_jid: 'bb:iMessage;-;owner@example.com',
+      chat_jid: TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Andrea: Here is a draft you can send.',
@@ -1498,7 +1514,7 @@ describe('field-trial readiness', () => {
       journeyId: 'ordinary_chat',
       channel: 'bluebubbles',
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;owner@example.com',
+      chatJid: TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
       threadId: null,
       routeKey: 'direct_quick_reply',
       systemsInvolved: ['assistant_shell'],
@@ -1522,7 +1538,7 @@ describe('field-trial readiness', () => {
       journeyId: 'daily_guidance',
       channel: 'bluebubbles',
       groupFolder: 'main',
-      chatJid: 'bb:iMessage;-;owner@example.com',
+      chatJid: TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
       threadId: null,
       routeKey: 'communication.draft_reply',
       systemsInvolved: ['communication_companion'],
@@ -1572,7 +1588,7 @@ describe('field-trial readiness', () => {
       lastActionKind: 'sent',
       lastActionAt: '2026-04-10T00:11:40.000Z',
       dedupeKey: 'proof-key-self-1',
-      presentationChatJid: 'bb:iMessage;-;owner@example.com',
+      presentationChatJid: TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
       presentationThreadId: null,
       presentationMessageId: null,
       createdAt: '2026-04-10T00:11:20.000Z',
@@ -1932,6 +1948,11 @@ describe('field-trial readiness', () => {
     );
     expect(truth.bluebubbles.blockerOwner).toBe('repo_side');
     expect(truth.bluebubbles.nextAction).toContain('self-chat');
+    expect(truth.bluebubbles.nextAction).toContain('only');
+    expect(truth.bluebubbles.nextAction).toContain('data-only');
+    expect(truth.bluebubbles.nextAction).not.toContain(
+      'normal 1:1 or group thread as a second proof target',
+    );
     expect(truth.bluebubbles.lastInboundObservedAt).toBe(
       '2026-04-08T05:10:24.440Z',
     );
@@ -2066,6 +2087,7 @@ describe('field-trial readiness', () => {
   });
 
   it('keeps the active self-thread anchored when another BlueBubbles chat pings later', () => {
+    stubConfiguredBlueBubblesSelfThread();
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
     vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
     vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
@@ -2094,8 +2116,7 @@ describe('field-trial readiness', () => {
             configured: true,
             state: 'ready',
             updatedAt: '2026-04-10T00:32:10.000Z',
-            detail:
-              'listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:32:06.334Z | last inbound chat bb:RCS;-;+12025550107 | last inbound self_authored no | last outbound 2026-04-10T00:11:29.973Z (bb:iMessage;-;owner@example.com) | last outbound target kind chat_guid | last outbound target value iMessage;-;owner@example.com | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid',
+            detail: `listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:32:06.334Z | last inbound chat bb:RCS;-;+12025550107 | last inbound self_authored no | last outbound 2026-04-10T00:11:29.973Z (${TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID}) | last outbound target kind chat_guid | last outbound target value iMessage;-;owner-alias@example.invalid | last send error none | send method apple-script | private api available no | last metadata hydration none | attempted target sequence chat_guid`,
           },
         ],
       },
@@ -2105,7 +2126,7 @@ describe('field-trial readiness', () => {
     };
 
     storeChatMetadata(
-      'bb:iMessage;-;owner@example.com',
+      TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
       '2026-04-10T00:11:29.973Z',
       'Jeff',
       'bluebubbles',
@@ -2120,8 +2141,8 @@ describe('field-trial readiness', () => {
     );
     storeMessage({
       id: 'bb:self-thread-user-1',
-      chat_jid: 'bb:iMessage;-;owner@example.com',
-      sender: 'bb:owner@example.com',
+      chat_jid: TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
+      sender: 'bb:owner-alias@example.invalid',
       sender_name: 'Jeff',
       content: '@Andrea what should I say back',
       timestamp: '2026-04-10T00:08:15.455Z',
@@ -2130,7 +2151,7 @@ describe('field-trial readiness', () => {
     });
     storeMessage({
       id: 'bb:self-thread-bot-1',
-      chat_jid: 'bb:iMessage;-;owner@example.com',
+      chat_jid: TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID,
       sender: 'Andrea',
       sender_name: 'Andrea',
       content: 'Sure! Here is your draft text you can send.',
@@ -2165,7 +2186,7 @@ describe('field-trial readiness', () => {
     expect(truth.bluebubbles.lastInboundChatJid).toBe('bb:RCS;-;+12025550107');
     expect(truth.bluebubbles.messageActionProofState).toBe('none');
     expect(truth.bluebubbles.messageActionProofDetail).toContain(
-      'Andrea drafted in bb:iMessage;-;owner@example.com earlier',
+      `Andrea drafted in ${TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID} earlier`,
     );
     expect(truth.bluebubbles.messageActionProofDetail).toContain(
       'no active message-action record remains',

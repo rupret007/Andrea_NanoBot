@@ -2,14 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _initTestDatabase,
+  claimScheduledTaskOutboundDispatch,
   createTask,
   getMessageAction,
   getTaskById,
+  updateTask,
   upsertCommunicationThread,
   upsertMessageAction,
   upsertResponseFeedback,
 } from './db.js';
 import type { ResponseFeedbackRecord } from './types.js';
+import { setMessagingOutboundPaused } from './messaging-outbound-pause.js';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
@@ -117,6 +120,536 @@ describe('task scheduler', () => {
       status: 'paused',
       last_result:
         'Error: Scheduled task script execution is blocked because the task has no reviewed script approval provenance.',
+    });
+  });
+
+  it('pauses a generic task targeting an external BlueBubbles thread before execution', async () => {
+    const chatJid = 'bb:iMessage;-;+15551234567';
+    createTask({
+      id: 'task-bb-external-generic',
+      group_folder: 'main',
+      chat_jid: chatJid,
+      prompt: 'Send a concise reminder telling the user to call Sam.',
+      schedule_type: 'once',
+      schedule_value: '2026-05-02T04:30:00.000Z',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-05-02T04:00:00.000Z',
+    });
+
+    const pendingRuns: Promise<void>[] = [];
+    const onProcess = vi.fn();
+    const sendMessage = vi.fn(async () => {});
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'unexpected',
+    }));
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        [chatJid]: {
+          name: 'External contact',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: '2026-05-02T04:00:00.000Z',
+          isMain: true,
+          requiresTrigger: false,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: (
+          _groupJid: string,
+          _taskId: string,
+          fn: () => Promise<void>,
+        ) => {
+          pendingRuns.push(fn());
+        },
+      } as any,
+      onProcess,
+      sendMessage,
+      sendToTarget,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all(pendingRuns);
+
+    expect(onProcess).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getTaskById('task-bb-external-generic')).toMatchObject({
+      status: 'paused',
+      last_result:
+        'Error: Generic scheduled tasks cannot target a BlueBubbles contact or group; use the explicitly configured owner self-thread or a recipient-bound scheduled message action.',
+    });
+  });
+
+  it('allows a generic task to deliver to the configured BlueBubbles owner self-thread', async () => {
+    const chatJid = 'bb:iMessage;-;+12025550199';
+    vi.stubEnv('BLUEBUBBLES_CANONICAL_SELF_THREAD_JID', chatJid);
+    createTask({
+      id: 'task-bb-owner-self-thread',
+      group_folder: 'main',
+      chat_jid: chatJid,
+      prompt: 'Send a concise reminder telling the user to call Sam.',
+      schedule_type: 'once',
+      schedule_value: '2026-05-02T04:30:00.000Z',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-05-02T04:00:00.000Z',
+      outbound_authorization_at: '2026-05-02T04:00:00.000Z',
+      outbound_pause_generation: 0,
+    });
+
+    const pendingRuns: Promise<void>[] = [];
+    const sendMessage = vi.fn(async () => {});
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:self-thread-reminder-1',
+    }));
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        [chatJid]: {
+          name: 'Owner self-thread',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: '2026-05-02T04:00:00.000Z',
+          isMain: true,
+          requiresTrigger: false,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: (
+          _groupJid: string,
+          _taskId: string,
+          fn: () => Promise<void>,
+        ) => {
+          pendingRuns.push(fn());
+        },
+      } as any,
+      onProcess: vi.fn(),
+      sendMessage,
+      sendToTarget,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all(pendingRuns);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendToTarget).toHaveBeenCalledWith(
+      'bluebubbles',
+      chatJid,
+      'Reminder: call Sam.',
+      expect.objectContaining({
+        idempotencyKey: expect.stringMatching(/^scheduled-task:[a-f0-9]{32}$/),
+        blueBubblesAuthorizationAt: '2026-05-02T04:00:00.000Z',
+        blueBubblesPauseGeneration: 0,
+      }),
+    );
+    expect(getTaskById('task-bb-owner-self-thread')).toMatchObject({
+      status: 'completed',
+      last_result: 'Reminder: call Sam.',
+      outbound_authorization_at: '2026-05-02T04:00:00.000Z',
+      outbound_pause_generation: 0,
+      outbound_dispatch_state: 'completed',
+    });
+  });
+
+  it('terminally blocks a generic self-thread task created before stop even after resume', async () => {
+    vi.setSystemTime('2026-05-02T04:30:00.000Z');
+    const chatJid = 'bb:iMessage;-;+12025550199';
+    vi.stubEnv('BLUEBUBBLES_CANONICAL_SELF_THREAD_JID', chatJid);
+    createTask({
+      id: 'task-bb-self-thread-before-stop',
+      group_folder: 'main',
+      chat_jid: chatJid,
+      prompt: 'Send a concise reminder telling the user to call Sam.',
+      schedule_type: 'once',
+      schedule_value: '2026-05-02T04:20:00.000Z',
+      context_mode: 'isolated',
+      next_run: '2026-05-02T04:20:00.000Z',
+      status: 'active',
+      created_at: '2026-05-02T04:00:00.000Z',
+      outbound_authorization_at: '2026-05-02T04:00:00.000Z',
+      outbound_pause_generation: 0,
+    });
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_stop',
+      now: new Date('2026-05-02T04:10:00.000Z'),
+    });
+    setMessagingOutboundPaused({
+      paused: false,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_resume',
+      now: new Date('2026-05-02T04:15:00.000Z'),
+    });
+
+    const pendingRuns: Promise<void>[] = [];
+    const providerDispatch = vi.fn(async () => ({
+      platformMessageId: 'bb:must-not-send',
+    }));
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        [chatJid]: {
+          name: 'Owner self-thread',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: '2026-05-02T04:00:00.000Z',
+          isMain: true,
+          requiresTrigger: false,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: (
+          _groupJid: string,
+          _taskId: string,
+          fn: () => Promise<void>,
+        ) => {
+          pendingRuns.push(fn());
+        },
+      } as any,
+      onProcess: vi.fn(),
+      sendMessage: vi.fn(async () => {}),
+      sendToTarget: providerDispatch,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all(pendingRuns);
+
+    expect(providerDispatch).not.toHaveBeenCalled();
+    expect(getTaskById('task-bb-self-thread-before-stop')).toMatchObject({
+      status: 'completed',
+      next_run: null,
+      last_result: expect.stringContaining('pause generation'),
+      outbound_dispatch_state: 'blocked',
+    });
+  });
+
+  it('does not refresh pre-stop ingress authority when its task is created after resume', async () => {
+    vi.setSystemTime('2026-05-02T04:30:00.000Z');
+    const chatJid = 'bb:iMessage;-;+12025550199';
+    vi.stubEnv('BLUEBUBBLES_CANONICAL_SELF_THREAD_JID', chatJid);
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_stop',
+      now: new Date('2026-05-02T04:10:00.000Z'),
+    });
+    setMessagingOutboundPaused({
+      paused: false,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_resume',
+      now: new Date('2026-05-02T04:15:00.000Z'),
+    });
+
+    // The task is persisted after resume, but its only authority is the
+    // immutable timestamp/generation from the delayed pre-stop ingress.
+    createTask({
+      id: 'task-bb-delayed-pre-stop-ingress',
+      group_folder: 'main',
+      chat_jid: chatJid,
+      prompt: 'Send a concise reminder telling the user to call Sam.',
+      schedule_type: 'once',
+      schedule_value: '2026-05-02T04:20:00.000Z',
+      context_mode: 'isolated',
+      next_run: '2026-05-02T04:20:00.000Z',
+      status: 'active',
+      created_at: '2026-05-02T04:30:00.000Z',
+      outbound_authorization_at: '2026-05-02T04:00:00.000Z',
+      // The queue captures the current generation at processing time, but it
+      // must retain the pre-stop ingress timestamp rather than task.created_at.
+      outbound_pause_generation: 1,
+    });
+    expect(getTaskById('task-bb-delayed-pre-stop-ingress')).toMatchObject({
+      created_at: '2026-05-02T04:30:00.000Z',
+      outbound_authorization_at: '2026-05-02T04:00:00.000Z',
+      outbound_pause_generation: 1,
+    });
+
+    const pendingRuns: Promise<void>[] = [];
+    const providerDispatch = vi.fn(async () => ({
+      platformMessageId: 'bb:must-not-send-delayed-ingress',
+    }));
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        [chatJid]: {
+          name: 'Owner self-thread',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: '2026-05-02T04:00:00.000Z',
+          isMain: true,
+          requiresTrigger: false,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: (
+          _groupJid: string,
+          _taskId: string,
+          fn: () => Promise<void>,
+        ) => {
+          pendingRuns.push(fn());
+        },
+      } as any,
+      onProcess: vi.fn(),
+      sendMessage: vi.fn(async () => {}),
+      sendToTarget: providerDispatch,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all(pendingRuns);
+
+    expect(providerDispatch).not.toHaveBeenCalled();
+    expect(getTaskById('task-bb-delayed-pre-stop-ingress')).toMatchObject({
+      status: 'completed',
+      next_run: null,
+      last_result: expect.stringContaining('latest owner stop boundary'),
+      outbound_dispatch_state: 'blocked',
+    });
+  });
+
+  it('requires an explicit current-turn fence to authorize a legacy task resume or update', async () => {
+    vi.setSystemTime('2026-05-02T04:30:00.000Z');
+    const chatJid = 'bb:iMessage;-;+12025550199';
+    vi.stubEnv('BLUEBUBBLES_CANONICAL_SELF_THREAD_JID', chatJid);
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_stop',
+      now: new Date('2026-05-02T04:10:00.000Z'),
+    });
+    setMessagingOutboundPaused({
+      paused: false,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_resume',
+      now: new Date('2026-05-02T04:15:00.000Z'),
+    });
+
+    for (const id of ['task-bb-legacy-resume', 'task-bb-explicit-resume']) {
+      createTask({
+        id,
+        group_folder: 'main',
+        chat_jid: chatJid,
+        prompt: 'Send a concise reminder telling the user to call Sam.',
+        schedule_type: 'once',
+        schedule_value: '2026-05-02T04:20:00.000Z',
+        context_mode: 'isolated',
+        next_run: null,
+        status: 'paused',
+        created_at: '2026-05-02T04:30:00.000Z',
+      });
+    }
+    updateTask('task-bb-legacy-resume', {
+      next_run: '2026-05-02T04:20:00.000Z',
+      status: 'active',
+    });
+    updateTask('task-bb-explicit-resume', {
+      prompt: 'Send a concise reminder telling the user to call Pat.',
+      next_run: '2026-05-02T04:20:00.000Z',
+      status: 'active',
+      outbound_authorization_at: '2026-05-02T04:16:00.000Z',
+      outbound_pause_generation: 1,
+    });
+    expect(getTaskById('task-bb-legacy-resume')).toMatchObject({
+      outbound_authorization_at: null,
+      outbound_pause_generation: null,
+    });
+    expect(getTaskById('task-bb-explicit-resume')).toMatchObject({
+      outbound_authorization_at: '2026-05-02T04:16:00.000Z',
+      outbound_pause_generation: 1,
+    });
+
+    const pendingRuns: Promise<void>[] = [];
+    const providerDispatch = vi.fn(async () => ({
+      platformMessageId: 'bb:explicit-resume-reminder',
+    }));
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        [chatJid]: {
+          name: 'Owner self-thread',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: '2026-05-02T04:00:00.000Z',
+          isMain: true,
+          requiresTrigger: false,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: (
+          _groupJid: string,
+          _taskId: string,
+          fn: () => Promise<void>,
+        ) => {
+          pendingRuns.push(fn());
+        },
+      } as any,
+      onProcess: vi.fn(),
+      sendMessage: vi.fn(async () => {}),
+      sendToTarget: providerDispatch,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all(pendingRuns);
+
+    expect(providerDispatch).toHaveBeenCalledTimes(1);
+    expect(providerDispatch).toHaveBeenCalledWith(
+      'bluebubbles',
+      chatJid,
+      'Reminder: call Pat.',
+      expect.objectContaining({
+        blueBubblesAuthorizationAt: '2026-05-02T04:16:00.000Z',
+        blueBubblesPauseGeneration: 1,
+      }),
+    );
+    expect(getTaskById('task-bb-legacy-resume')).toMatchObject({
+      status: 'completed',
+      last_result: expect.stringContaining(
+        'missing a valid immutable owner-authorization timestamp',
+      ),
+      outbound_dispatch_state: 'blocked',
+    });
+  });
+
+  it('passes one immutable post-resume fence and stable occurrence key to the final provider boundary', async () => {
+    vi.setSystemTime('2026-05-02T04:30:00.000Z');
+    const chatJid = 'bb:iMessage;-;+12025550199';
+    vi.stubEnv('BLUEBUBBLES_CANONICAL_SELF_THREAD_JID', chatJid);
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_stop',
+      now: new Date('2026-05-02T04:10:00.000Z'),
+    });
+    setMessagingOutboundPaused({
+      paused: false,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_resume',
+      now: new Date('2026-05-02T04:15:00.000Z'),
+    });
+    createTask({
+      id: 'task-bb-self-thread-after-resume',
+      group_folder: 'main',
+      chat_jid: chatJid,
+      prompt: 'Send a concise reminder telling the user to call Sam.',
+      schedule_type: 'once',
+      schedule_value: '2026-05-02T04:20:00.000Z',
+      context_mode: 'isolated',
+      next_run: '2026-05-02T04:20:00.000Z',
+      status: 'active',
+      created_at: '2026-05-02T04:16:00.000Z',
+      outbound_authorization_at: '2026-05-02T04:16:00.000Z',
+      outbound_pause_generation: 1,
+    });
+
+    const pendingRuns: Promise<void>[] = [];
+    const providerDispatch = vi.fn(async () => ({
+      platformMessageId: 'bb:post-resume-reminder',
+    }));
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        [chatJid]: {
+          name: 'Owner self-thread',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: '2026-05-02T04:00:00.000Z',
+          isMain: true,
+          requiresTrigger: false,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: (
+          _groupJid: string,
+          _taskId: string,
+          fn: () => Promise<void>,
+        ) => {
+          pendingRuns.push(fn());
+        },
+      } as any,
+      onProcess: vi.fn(),
+      sendMessage: vi.fn(async () => {}),
+      sendToTarget: providerDispatch,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all(pendingRuns);
+
+    expect(providerDispatch).toHaveBeenCalledTimes(1);
+    expect(providerDispatch).toHaveBeenCalledWith(
+      'bluebubbles',
+      chatJid,
+      'Reminder: call Sam.',
+      expect.objectContaining({
+        idempotencyKey: expect.stringMatching(/^scheduled-task:[a-f0-9]{32}$/),
+        blueBubblesAuthorizationAt: '2026-05-02T04:16:00.000Z',
+        blueBubblesPauseGeneration: 1,
+      }),
+    );
+  });
+
+  it('quarantines a prior-process self-thread claim on scheduler startup without replay', async () => {
+    vi.setSystemTime('2026-05-02T04:30:00.000Z');
+    const chatJid = 'bb:iMessage;-;+12025550199';
+    const runKey = '2026-05-02T04:20:00.000Z';
+    vi.stubEnv('BLUEBUBBLES_CANONICAL_SELF_THREAD_JID', chatJid);
+    createTask({
+      id: 'task-bb-self-thread-crash-claim',
+      group_folder: 'main',
+      chat_jid: chatJid,
+      prompt: 'Send a concise reminder telling the user to call Sam.',
+      schedule_type: 'once',
+      schedule_value: runKey,
+      context_mode: 'isolated',
+      next_run: runKey,
+      status: 'active',
+      created_at: '2026-05-02T04:00:00.000Z',
+      outbound_authorization_at: '2026-05-02T04:00:00.000Z',
+      outbound_pause_generation: 0,
+    });
+    expect(
+      claimScheduledTaskOutboundDispatch({
+        taskId: 'task-bb-self-thread-crash-claim',
+        runKey,
+        claimToken: 'prior-process-claim',
+      }),
+    ).toMatchObject({ status: 'claimed' });
+    expect(
+      claimScheduledTaskOutboundDispatch({
+        taskId: 'task-bb-self-thread-crash-claim',
+        runKey,
+        claimToken: 'automatic-replay-attempt',
+      }),
+    ).toEqual({ status: 'already_claimed', runKey });
+
+    const providerDispatch = vi.fn(async () => ({
+      platformMessageId: 'bb:duplicate-must-not-send',
+    }));
+    const enqueueTask = vi.fn();
+    startSchedulerLoop({
+      registeredGroups: () => ({}),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: vi.fn(),
+      sendMessage: vi.fn(async () => {}),
+      sendToTarget: providerDispatch,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(enqueueTask).not.toHaveBeenCalled();
+    expect(providerDispatch).not.toHaveBeenCalled();
+    expect(getTaskById('task-bb-self-thread-crash-claim')).toMatchObject({
+      status: 'completed',
+      next_run: null,
+      outbound_dispatch_state: 'blocked',
+      outbound_dispatch_claim_token: null,
+      last_result: expect.stringContaining('automatic replay is blocked'),
     });
   });
 
@@ -380,6 +913,119 @@ describe('task scheduler', () => {
       status: 'completed',
       last_result:
         'Scheduled message delivery could not be verified; automatic retry is blocked.',
+    });
+  });
+
+  it('drains a pre-pause scheduled send after resume with zero provider dispatches', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    vi.setSystemTime('2026-05-02T04:30:00.000Z');
+    const taskId = 'task-scheduled-before-owner-stop';
+    const approvedAt = '2026-05-02T04:00:00.000Z';
+    createTask({
+      id: taskId,
+      group_folder: 'main',
+      chat_jid: 'bb:chat-1',
+      prompt: 'Scheduled message send for the owner',
+      schedule_type: 'once',
+      schedule_value: '2026-05-02T04:20:00.000Z',
+      context_mode: 'isolated',
+      next_run: '2026-05-02T04:20:00.000Z',
+      status: 'active',
+      created_at: approvedAt,
+    });
+    upsertMessageAction({
+      messageActionId: 'message-scheduled-before-owner-stop',
+      groupFolder: 'main',
+      sourceType: 'manual_prompt',
+      sourceKey: 'scheduled-before-owner-stop',
+      sourceSummary: 'Owner follow-through',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid: 'bb:chat-1',
+        isGroup: false,
+        personName: 'Candace',
+      }),
+      draftText: 'This stale queued message must not send.',
+      trustLevel: 'schedule_send',
+      sendStatus: 'deferred',
+      followupAt: '2026-05-02T04:20:00.000Z',
+      requiresApproval: false,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: null,
+      platformMessageId: null,
+      scheduledTaskId: taskId,
+      approvedAt,
+      lastActionKind: 'scheduled_send',
+      lastActionAt: approvedAt,
+      dedupeKey: 'scheduled-before-owner-stop',
+      presentationChatJid: 'bb:chat-1',
+      presentationThreadId: null,
+      presentationMessageId: null,
+      createdAt: approvedAt,
+      lastUpdatedAt: approvedAt,
+      sentAt: null,
+    });
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_natural_language_pause',
+      now: new Date('2026-05-02T04:10:00.000Z'),
+    });
+    setMessagingOutboundPaused({
+      paused: false,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_explicit_resume',
+      now: new Date('2026-05-02T04:15:00.000Z'),
+    });
+
+    const pendingRuns: Promise<void>[] = [];
+    const providerDispatch = vi.fn(async () => ({
+      platformMessageId: 'bb:must-not-be-created',
+    }));
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'bb:chat-1': {
+          name: 'Main',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: approvedAt,
+          isMain: true,
+          requiresTrigger: false,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: (
+          _groupJid: string,
+          _taskId: string,
+          fn: () => Promise<void>,
+        ) => {
+          pendingRuns.push(fn());
+        },
+      } as any,
+      onProcess: vi.fn(),
+      sendMessage: vi.fn(async () => {}),
+      sendToTarget: providerDispatch,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all(pendingRuns);
+
+    expect(providerDispatch).not.toHaveBeenCalled();
+    expect(
+      getMessageAction('message-scheduled-before-owner-stop'),
+    ).toMatchObject({
+      sendStatus: 'failed',
+      scheduledTaskId: null,
+    });
+    expect(getTaskById(taskId)).toMatchObject({
+      status: 'completed',
+      next_run: null,
+      last_result: expect.stringContaining('needs a fresh owner action'),
     });
   });
 

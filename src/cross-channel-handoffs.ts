@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 
 import {
+  beginIngressBoundCompanionHandoffDispatch,
   getCompanionHandoff,
   purgeExpiredCompanionHandoffs,
   updateCompanionHandoff,
@@ -8,11 +9,15 @@ import {
 } from './db.js';
 import { syncOutcomeFromHandoffRecord } from './outcome-reviews.js';
 import {
+  isChannelDeliveryRejectedBeforeDispatchError,
   isChannelDeliveryUnverifiedError,
   requireCompleteChannelDelivery,
 } from './channel-delivery.js';
+import { buildIngressBoundCompanionHandoffId } from './bluebubbles-ingress-dispatch.js';
+import { canonicalizeBlueBubblesSelfThreadJid } from './bluebubbles-self-thread.js';
 import type {
   ChannelArtifact,
+  CompanionHandoffIngressAuthorization,
   CompanionHandoffPayload,
   CompanionHandoffRecord,
   SendArtifactOptions,
@@ -88,6 +93,16 @@ export interface QueueCompanionHandoffParams {
   knowledgeSourceIds?: string[];
   workRef?: string;
   followupSuggestions?: string[];
+  /** Required for an automatic Telegram-to-BlueBubbles self-thread handoff. */
+  ingressAuthorization?: CompanionHandoffIngressAuthorization;
+}
+
+export interface CompanionHandoffDeliveryControl {
+  /**
+   * Called only after the durable delivery-unverified tombstone is committed
+   * and before the provider boundary is crossed.
+   */
+  onDispatchQuarantined?: () => void;
 }
 
 export interface DeliverCompanionHandoffResult {
@@ -169,17 +184,24 @@ function sendHandoffMessage(
   targetChannel: CompanionHandoffRecord['targetChannel'],
   chatJid: string,
   text: string,
+  options?: SendMessageOptions,
 ): Promise<SendMessageResult> {
   if (deps.sendHandoffMessage) {
-    return deps.sendHandoffMessage(targetChannel, chatJid, text);
+    return options
+      ? deps.sendHandoffMessage(targetChannel, chatJid, text, options)
+      : deps.sendHandoffMessage(targetChannel, chatJid, text);
   }
   if (targetChannel === 'bluebubbles') {
     if (!deps.sendBlueBubblesMessage) {
       throw new Error('BlueBubbles handoff delivery is unavailable.');
     }
-    return deps.sendBlueBubblesMessage(chatJid, text);
+    return options
+      ? deps.sendBlueBubblesMessage(chatJid, text, options)
+      : deps.sendBlueBubblesMessage(chatJid, text);
   }
-  return deps.sendTelegramMessage(chatJid, text);
+  return options
+    ? deps.sendTelegramMessage(chatJid, text, options)
+    : deps.sendTelegramMessage(chatJid, text);
 }
 
 function sendHandoffArtifact(
@@ -204,17 +226,35 @@ function sendHandoffArtifact(
 function buildCompanionHandoffRecord(
   params: QueueCompanionHandoffParams,
   now: Date,
+  resolvedTargetChatJid?: string | null,
 ): CompanionHandoffRecord {
   const createdAt = now.toISOString();
   const expiresAt = new Date(
     now.getTime() + (params.expiresInMs || 6 * 60 * 60 * 1000),
   ).toISOString();
+  const ingressBoundBlueBubblesHandoff =
+    params.originChannel === 'telegram' &&
+    (params.targetChannel || 'telegram') === 'bluebubbles' &&
+    params.ingressAuthorization &&
+    resolvedTargetChatJid
+      ? {
+          ingress: params.ingressAuthorization,
+          handoffId: buildIngressBoundCompanionHandoffId({
+            sourceChatJid: params.ingressAuthorization.sourceChatJid,
+            sourceMessageId: params.ingressAuthorization.sourceMessageId,
+            sourceReceivedAt: params.ingressAuthorization.sourceReceivedAt,
+            targetChatJid:
+              canonicalizeBlueBubblesSelfThreadJid(resolvedTargetChatJid) ||
+              resolvedTargetChatJid,
+          }),
+        }
+      : null;
   return {
-    handoffId: randomUUID(),
+    handoffId: ingressBoundBlueBubblesHandoff?.handoffId || randomUUID(),
     groupFolder: params.groupFolder,
     originChannel: params.originChannel,
     targetChannel: params.targetChannel || 'telegram',
-    targetChatJid: null,
+    targetChatJid: resolvedTargetChatJid || null,
     capabilityId: params.capabilityId || null,
     voiceSummary: params.voiceSummary,
     richPayloadJson: JSON.stringify(params.payload),
@@ -251,6 +291,18 @@ function buildCompanionHandoffRecord(
       params.followupSuggestions && params.followupSuggestions.length > 0
         ? JSON.stringify(params.followupSuggestions)
         : null,
+    sourceChatJid:
+      ingressBoundBlueBubblesHandoff?.ingress.sourceChatJid || null,
+    sourceMessageId:
+      ingressBoundBlueBubblesHandoff?.ingress.sourceMessageId || null,
+    sourceIngressReceivedAt:
+      ingressBoundBlueBubblesHandoff?.ingress.sourceReceivedAt || null,
+    outboundAuthorizationAt:
+      ingressBoundBlueBubblesHandoff?.ingress.authorizationAt || null,
+    outboundPauseGeneration:
+      ingressBoundBlueBubblesHandoff?.ingress.pauseGeneration ?? null,
+    providerIdempotencyKey: ingressBoundBlueBubblesHandoff?.handoffId || null,
+    dispatchStartedAt: null,
     deliveredMessageId: null,
     errorText: null,
   };
@@ -266,19 +318,141 @@ export function queueCompanionHandoff(
   return record;
 }
 
+function isValidIngressBoundBlueBubblesHandoff(
+  params: QueueCompanionHandoffParams,
+): params is QueueCompanionHandoffParams & {
+  ingressAuthorization: CompanionHandoffIngressAuthorization;
+} {
+  const ingress = params.ingressAuthorization;
+  return Boolean(
+    ingress &&
+    ingress.sourceChatJid.trim().startsWith('tg:') &&
+    ingress.sourceMessageId.trim() &&
+    Number.isFinite(Date.parse(ingress.sourceReceivedAt)) &&
+    Number.isFinite(Date.parse(ingress.authorizationAt)) &&
+    Number.isSafeInteger(ingress.pauseGeneration) &&
+    ingress.pauseGeneration >= 0,
+  );
+}
+
+function sameIngressBoundHandoff(
+  existing: CompanionHandoffRecord,
+  expected: CompanionHandoffRecord,
+): boolean {
+  return (
+    existing.handoffId === expected.handoffId &&
+    existing.groupFolder === expected.groupFolder &&
+    existing.originChannel === expected.originChannel &&
+    existing.targetChannel === expected.targetChannel &&
+    existing.targetChatJid === expected.targetChatJid &&
+    existing.richPayloadJson === expected.richPayloadJson &&
+    existing.sourceChatJid === expected.sourceChatJid &&
+    existing.sourceMessageId === expected.sourceMessageId &&
+    existing.sourceIngressReceivedAt === expected.sourceIngressReceivedAt &&
+    existing.outboundAuthorizationAt === expected.outboundAuthorizationAt &&
+    existing.outboundPauseGeneration === expected.outboundPauseGeneration &&
+    existing.providerIdempotencyKey === expected.providerIdempotencyKey
+  );
+}
+
+function existingHandoffResult(
+  record: CompanionHandoffRecord,
+): DeliverCompanionHandoffResult {
+  if (record.status === 'delivered') {
+    return {
+      ok: true,
+      handoffId: record.handoffId,
+      status: record.status,
+      speech: `Okay. The fuller version is already in ${getTargetLabel(record.targetChannel)}.`,
+      targetChatJid: record.targetChatJid || undefined,
+      platformMessageId: record.deliveredMessageId || undefined,
+    };
+  }
+  return {
+    ok: false,
+    handoffId: record.handoffId,
+    status: record.status,
+    speech:
+      record.status === 'delivery_unverified'
+        ? `I could not verify whether that ${getTargetLabel(record.targetChannel)} handoff arrived. I will not retry it automatically.`
+        : `That ${getTargetLabel(record.targetChannel)} handoff is already terminal and will not be retried automatically.`,
+    targetChatJid: record.targetChatJid || undefined,
+    platformMessageId: record.deliveredMessageId || undefined,
+    errorText: record.errorText || undefined,
+  };
+}
+
 export async function deliverCompanionHandoff(
   params: QueueCompanionHandoffParams,
   deps: CompanionHandoffDeps,
+  control: CompanionHandoffDeliveryControl = {},
 ): Promise<DeliverCompanionHandoffResult> {
   const now = deps.now ? deps.now() : new Date();
   purgeExpiredCompanionHandoffs(now.toISOString());
-  const record = queueCompanionHandoff(params, now);
   const targetChannel = params.targetChannel || 'telegram';
   const target = resolveHandoffTarget(deps, params.groupFolder, targetChannel);
+  const requiresIngressBoundBlueBubblesDispatch =
+    params.originChannel === 'telegram' && targetChannel === 'bluebubbles';
+  if (
+    requiresIngressBoundBlueBubblesDispatch &&
+    !isValidIngressBoundBlueBubblesHandoff(params)
+  ) {
+    const record = queueCompanionHandoff(params, now);
+    const errorText =
+      'Telegram-to-BlueBubbles handoff is missing an immutable owner-ingress authorization fence.';
+    updateCompanionHandoff(record.handoffId, {
+      status: 'failed',
+      errorText,
+      updatedAt: now.toISOString(),
+    });
+    return {
+      ok: false,
+      handoffId: record.handoffId,
+      status: 'failed',
+      speech:
+        'I did not hand that off to Messages because the original Telegram turn was not durably bound.',
+      errorText,
+    };
+  }
+  const proposedRecord = buildCompanionHandoffRecord(
+    params,
+    now,
+    target?.chatJid,
+  );
+  let record = getCompanionHandoff(proposedRecord.handoffId);
+  if (!record) {
+    const inserted = upsertCompanionHandoff(proposedRecord, {
+      insertOnly: true,
+    });
+    record = inserted
+      ? proposedRecord
+      : getCompanionHandoff(proposedRecord.handoffId);
+  }
+  if (!record) {
+    throw new Error('Companion handoff could not be durably inserted.');
+  }
+  if (record === proposedRecord) {
+    syncOutcomeFromHandoffRecord(proposedRecord, now);
+  }
+  if (!sameIngressBoundHandoff(record, proposedRecord)) {
+    return {
+      ok: false,
+      handoffId: record.handoffId,
+      status: record.status,
+      speech:
+        'I did not retry that Messages handoff because its durable ingress binding no longer matches.',
+      targetChatJid: record.targetChatJid || undefined,
+      errorText:
+        'Ingress-bound handoff replay did not match its durable record.',
+    };
+  }
+  if (record.status !== 'queued') {
+    return existingHandoffResult(record);
+  }
   if (!target?.chatJid) {
     const errorText =
       targetChannel === 'bluebubbles'
-        ? 'No recent Andrea-engaged BlueBubbles chat is available for this account.'
+        ? 'No configured BlueBubbles owner self-thread is available for this account.'
         : 'No registered main Telegram chat is available for this linked account.';
     updateCompanionHandoff(record.handoffId, {
       status: 'failed',
@@ -293,7 +467,7 @@ export async function deliverCompanionHandoff(
       status: 'failed',
       speech:
         targetChannel === 'bluebubbles'
-          ? 'I do not have a recent BlueBubbles conversation to send that into yet. Start in BlueBubbles first and I can use that thread.'
+          ? 'I do not have a configured Messages self-thread for your account yet.'
           : 'I do not have a main Telegram chat set up for this account yet.',
       errorText,
     };
@@ -307,6 +481,7 @@ export async function deliverCompanionHandoff(
   if (targetedRecord) syncOutcomeFromHandoffRecord(targetedRecord, now);
 
   const payload = params.payload;
+  let crashSafeBlueBubblesDispatchStarted = false;
   try {
     if (
       payload.kind === 'artifact' &&
@@ -331,6 +506,37 @@ export async function deliverCompanionHandoff(
         targetChatJid: target.chatJid,
       };
     }
+    if (requiresIngressBoundBlueBubblesDispatch) {
+      const dispatchStartedAt = new Date().toISOString();
+      const errorText =
+        'BlueBubbles dispatch crossed its durable write-ahead fence; delivery is unverified until an exact provider receipt is recorded. Automatic retry is blocked.';
+      if (
+        !beginIngressBoundCompanionHandoffDispatch({
+          handoffId: record.handoffId,
+          targetChatJid: target.chatJid,
+          dispatchStartedAt,
+          errorText,
+        })
+      ) {
+        const concurrent = getCompanionHandoff(record.handoffId);
+        if (concurrent) return existingHandoffResult(concurrent);
+        throw new Error('Companion handoff dispatch claim disappeared.');
+      }
+      const quarantined = getCompanionHandoff(record.handoffId);
+      if (quarantined) syncOutcomeFromHandoffRecord(quarantined);
+      crashSafeBlueBubblesDispatchStarted = true;
+      control.onDispatchQuarantined?.();
+    }
+    const ingressAuthorization = params.ingressAuthorization;
+    const messageOptions = requiresIngressBoundBlueBubblesDispatch
+      ? {
+          idempotencyKey: record.providerIdempotencyKey || undefined,
+          blueBubblesAuthorizationAt:
+            ingressAuthorization?.authorizationAt || '',
+          blueBubblesPauseGeneration:
+            ingressAuthorization?.pauseGeneration ?? -1,
+        }
+      : undefined;
     const delivery = requireCompleteChannelDelivery(
       payload.kind === 'artifact' && payload.artifact
         ? await sendHandoffArtifact(
@@ -351,6 +557,7 @@ export async function deliverCompanionHandoff(
             targetChannel,
             target.chatJid,
             renderCompanionHandoffText(targetChannel, payload),
+            messageOptions,
           ),
     );
     const platformMessageId =
@@ -406,6 +613,28 @@ export async function deliverCompanionHandoff(
         confirmedReceiptCount: evidence.confirmedReceiptCount,
         nextUnconfirmedChunkIndex: evidence.nextUnconfirmedChunkIndex,
         deliveryOutcome: evidence.outcome,
+      };
+    }
+    if (
+      crashSafeBlueBubblesDispatchStarted &&
+      !isChannelDeliveryRejectedBeforeDispatchError(error)
+    ) {
+      const errorText =
+        'BlueBubbles delivery may have crossed the provider boundary. Automatic retry is blocked pending an exact receipt.';
+      updateCompanionHandoff(record.handoffId, {
+        status: 'delivery_unverified',
+        errorText,
+        updatedAt: new Date().toISOString(),
+      });
+      const updated = getCompanionHandoff(record.handoffId);
+      if (updated) syncOutcomeFromHandoffRecord(updated);
+      return {
+        ok: false,
+        handoffId: record.handoffId,
+        status: 'delivery_unverified',
+        speech: `I could not verify whether the ${getTargetLabel(targetChannel)} handoff arrived. I will not retry it because that could create a duplicate.`,
+        errorText,
+        targetChatJid: target.chatJid,
       };
     }
     const errorText =

@@ -35,6 +35,7 @@ import {
   getAlexaLastSignedRequestStatePath,
   readAlexaSignedRequestProofState,
 } from './host-control.js';
+import { logicalTurnSerializer } from './keyed-turn-serializer.js';
 import {
   createGoogleCalendarEvent,
   listGoogleCalendarEvents,
@@ -2236,6 +2237,46 @@ describe('createAlexaSkill', () => {
       expect.any(Object),
     );
     expect(extractSpeechText(response)).toContain('send Candace a short note');
+  });
+
+  it('waits behind chat work that owns the same logical group folder', async () => {
+    mockedRunAlexaAssistantTurn.mockResolvedValue({
+      text: 'The follow-up draft is ready.',
+      route: 'protected_assistant',
+      chatJid: 'alexa:main:abc',
+      groupFolder: 'main',
+    });
+
+    let releaseChatTurn!: () => void;
+    let markChatTurnStarted!: () => void;
+    const chatTurnStarted = new Promise<void>((resolve) => {
+      markChatTurnStarted = resolve;
+    });
+    const chatTurnGate = new Promise<void>((resolve) => {
+      releaseChatTurn = resolve;
+    });
+    const chatTurn = logicalTurnSerializer.run('main', async () => {
+      markChatTurnStarted();
+      await chatTurnGate;
+    });
+    await chatTurnStarted;
+
+    const skill = createAlexaSkill(buildConfig());
+    const alexaTurn = skill.invoke(
+      buildIntentEnvelope('DraftFollowUpIntent', {
+        meetingReference: 'the review',
+      }),
+    );
+    await Promise.resolve();
+
+    expect(mockedRunAlexaAssistantTurn).not.toHaveBeenCalled();
+
+    releaseChatTurn();
+    await chatTurn;
+    const response = await alexaTurn;
+
+    expect(mockedRunAlexaAssistantTurn).toHaveBeenCalledOnce();
+    expect(extractSpeechText(response)).toContain('follow-up draft is ready');
   });
 
   it('hands daily companion detail over to Telegram from an Alexa follow-up', async () => {

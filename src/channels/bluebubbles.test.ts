@@ -14,6 +14,7 @@ import {
   writeBlueBubblesMonitorState,
 } from '../bluebubbles-monitor-state.js';
 import {
+  _closeDatabase,
   _initTestDatabase,
   getAllChats,
   getActionableMessagesSince,
@@ -22,8 +23,14 @@ import {
   storeChatMetadata,
   storeMessage,
   storeMessageDirect,
+  updateMessageAction,
 } from '../db.js';
 import { executeBlueBubblesOutboundTurn } from '../bluebubbles-outbound-turn.js';
+import { applyMessageActionOperation } from '../message-actions.js';
+import {
+  captureMessagingOutboundAuthorizationFence,
+  setMessagingOutboundPaused,
+} from '../messaging-outbound-pause.js';
 import { resolveBlueBubblesReceiptInboxBuildId } from '../bluebubbles-receipt-inbox-service.js';
 import {
   buildBlueBubblesReceiptInboxConfigIdentity,
@@ -58,6 +65,9 @@ async function startBlueBubblesApiStub(
     body: string,
     res: http.ServerResponse,
   ) => void | Promise<void>,
+  options: {
+    onPing?: () => void | Promise<void>;
+  } = {},
 ): Promise<{
   baseUrl: string;
   close(): Promise<void>;
@@ -67,6 +77,7 @@ async function startBlueBubblesApiStub(
       (req.method || 'GET').toUpperCase() === 'GET' &&
       (req.url || '').startsWith('/api/v1/ping')
     ) {
+      await options.onPing?.();
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
       res.end(
@@ -143,6 +154,19 @@ function buildConfig(
   return config;
 }
 
+function buildBlueBubblesAuthorizationOptions(
+  authorizationAt = new Date().toISOString(),
+): Pick<
+  import('../types.js').SendMessageOptions,
+  'blueBubblesAuthorizationAt' | 'blueBubblesPauseGeneration'
+> {
+  const fence = captureMessagingOutboundAuthorizationFence(authorizationAt);
+  return {
+    blueBubblesAuthorizationAt: fence.authorizationAt,
+    blueBubblesPauseGeneration: fence.pauseGeneration,
+  };
+}
+
 describe('BlueBubbles channel', () => {
   let tempProjectRoot: string;
 
@@ -151,11 +175,19 @@ describe('BlueBubbles channel', () => {
       path.join(os.tmpdir(), 'andrea-bluebubbles-monitor-'),
     );
     vi.spyOn(process, 'cwd').mockReturnValue(tempProjectRoot);
+    // Most transport tests use bb:iMessage;-;fixture-chat-1 as the owner companion fixture. Make
+    // that authority explicit so contact-destination tests cannot inherit it
+    // merely from chat scope or an allowlist.
+    vi.stubEnv(
+      'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+      'bb:iMessage;-;fixture-chat-1',
+    );
     _initTestDatabase();
     clearBlueBubblesMonitorState();
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     vi.useRealTimers();
     clearBlueBubblesMonitorState();
@@ -806,6 +838,192 @@ describe('BlueBubbles channel', () => {
     }
   });
 
+  it('upgrades an exact history-hydrated row when its live webhook arrives', async () => {
+    const apiStub = await startBlueBubblesApiStub(async (_req, _body, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ data: [] }));
+    });
+    const chatJid = 'bb:chat-1';
+    const messageId = 'bb:history-before-live-1';
+    storeChatMetadata(
+      chatJid,
+      '2026-07-16T13:00:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: messageId,
+      chat_jid: chatJid,
+      sender: 'bb:+15551234567',
+      sender_name: 'Candace',
+      content: '@Andrea this live delivery arrived after history hydration',
+      timestamp: '2026-07-16T13:00:00.000Z',
+      is_from_me: false,
+      message_ingress_origin: 'history_hydration',
+    });
+    const onMessage = vi.fn(async (_chatJid, message) => {
+      storeMessage(message);
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl }),
+      {
+        onMessage,
+        onChatMetadata: vi.fn(
+          async (
+            incomingChatJid: string,
+            timestamp: string,
+            name?: string,
+            channelName?: string,
+            isGroup?: boolean,
+          ) => {
+            storeChatMetadata(
+              incomingChatJid,
+              timestamp,
+              name,
+              channelName,
+              isGroup,
+            );
+          },
+        ),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      const response = await fetch(channel.getWebhookUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'new-message',
+          data: {
+            chatGuid: 'chat-1',
+            chat: {
+              guid: 'chat-1',
+              displayName: 'Candace',
+              participants: [{ address: '+15551234567' }],
+            },
+            message: {
+              guid: 'history-before-live-1',
+              body: '@Andrea this live delivery arrived after history hydration',
+              senderName: 'Candace',
+              handle: {
+                address: '+15551234567',
+                displayName: 'Candace',
+              },
+              dateCreated: '2026-07-16T13:00:00.000Z',
+            },
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(
+        getActionableMessagesSince(chatJid, '', 'Andrea').map(
+          (message) => message.id,
+        ),
+      ).toEqual([messageId]);
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('does not fingerprint-suppress a retry until a live callback is durably accepted', async () => {
+    const apiStub = await startBlueBubblesApiStub(async (_req, _body, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ data: [] }));
+    });
+    let attempt = 0;
+    const onMessage = vi.fn(async (_chatJid, message) => {
+      attempt += 1;
+      if (attempt === 1) {
+        throw new Error('simulated main-store acceptance failure');
+      }
+      storeMessage(message);
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl }),
+      {
+        onMessage,
+        onChatMetadata: vi.fn(
+          async (
+            chatJid: string,
+            timestamp: string,
+            name?: string,
+            channelName?: string,
+            isGroup?: boolean,
+          ) => {
+            storeChatMetadata(chatJid, timestamp, name, channelName, isGroup);
+          },
+        ),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+    const payload = (guid: string) => ({
+      type: 'new-message',
+      data: {
+        chatGuid: 'chat-1',
+        chat: {
+          guid: 'chat-1',
+          displayName: 'Candace',
+          participants: [{ address: '+15551234567' }],
+        },
+        message: {
+          guid,
+          body: '@Andrea retry this exact physical delivery',
+          senderName: 'Candace',
+          handle: {
+            address: '+15551234567',
+            displayName: 'Candace',
+          },
+          dateCreated: '2026-07-16T13:05:00.000Z',
+        },
+      },
+    });
+
+    try {
+      await channel.connect();
+      const first = await fetch(channel.getWebhookUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload('failed-fingerprint-guid-a')),
+      });
+      const retry = await fetch(channel.getWebhookUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload('failed-fingerprint-guid-b')),
+      });
+      const duplicateAfterAcceptance = await fetch(channel.getWebhookUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload('failed-fingerprint-guid-c')),
+      });
+
+      expect(first.status).toBe(500);
+      expect(retry.status).toBe(200);
+      expect(duplicateAfterAcceptance.status).toBe(202);
+      expect(await duplicateAfterAcceptance.text()).toBe(
+        'Ignored duplicate delivery',
+      );
+      expect(onMessage).toHaveBeenCalledTimes(2);
+      expect(
+        getActionableMessagesSince('bb:chat-1', '', 'Andrea').map(
+          (message) => message.id,
+        ),
+      ).toEqual(['bb:failed-fingerprint-guid-b']);
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
   it('keeps receiving signed Messages webhooks when outbound sending is disabled', async () => {
     const apiStub = await startBlueBubblesApiStub(async (_req, _body, res) => {
       res.statusCode = 200;
@@ -864,6 +1082,262 @@ describe('BlueBubbles channel', () => {
       ).rejects.toMatchObject({
         code: 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH',
       });
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('blocks text and artifact dispatch at the owner pause before transport work', async () => {
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_natural_language_pause',
+    });
+    const channel = new BlueBubblesChannel(buildConfig(), {
+      onMessage: vi.fn(),
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({}),
+      onHealthUpdate: vi.fn(),
+    });
+
+    expect(channel.getControlSnapshot().sendEnabled).toBe(false);
+    await expect(
+      channel.sendMessage('bb:iMessage;-;fixture-chat-1', 'must not dispatch'),
+    ).rejects.toThrow('paused by the owner');
+    await expect(
+      channel.sendArtifact(
+        'bb:iMessage;-;fixture-chat-1',
+        {
+          kind: 'file',
+          filename: 'blocked.txt',
+          mimeType: 'text/plain',
+          bytesBase64: Buffer.from('blocked').toString('base64'),
+        },
+        {},
+      ),
+    ).rejects.toThrow('paused by the owner');
+  });
+
+  it('fails closed before provider dispatch when durable pause state is unavailable', async () => {
+    const providerPosts: string[] = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.method || 'GET').toUpperCase() === 'POST') {
+        providerPosts.push(req.url || '');
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      res.end(JSON.stringify({ data: { guid: 'must-not-exist' } }));
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      providerPosts.length = 0;
+      const authorization = buildBlueBubblesAuthorizationOptions();
+      _closeDatabase();
+
+      await expect(
+        channel.sendMessage(
+          'bb:iMessage;-;+12025550123',
+          'Durable state is required before this can send.',
+          {
+            ...authorization,
+            suppressSenderLabel: true,
+            idempotencyKey: 'message-action:db-unavailable',
+          },
+        ),
+      ).rejects.toThrow('durable owner-pause state is unavailable');
+      expect(providerPosts).toEqual([]);
+    } finally {
+      _initTestDatabase();
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('invalidates in-flight text, attachment, and first-contact sends across pause and resume', async () => {
+    let pauseOnNextPing = false;
+    const providerPostUrls: string[] = [];
+    const apiStub = await startBlueBubblesApiStub(
+      async (req, _body, res) => {
+        if ((req.method || 'GET').toUpperCase() === 'POST') {
+          providerPostUrls.push(req.url || '');
+        }
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        if ((req.url || '').startsWith('/api/v1/server/info')) {
+          res.end(JSON.stringify({ data: { private_api: true } }));
+          return;
+        }
+        res.end(JSON.stringify({ data: [] }));
+      },
+      {
+        onPing: () => {
+          if (!pauseOnNextPing) return;
+          pauseOnNextPing = false;
+          setMessagingOutboundPaused({
+            paused: true,
+            changedByChatJid: 'tg:owner',
+            reason: 'owner_pause_during_readiness',
+          });
+          setMessagingOutboundPaused({
+            paused: false,
+            changedByChatJid: 'tg:owner',
+            reason: 'owner_resume_during_readiness',
+          });
+        },
+      },
+    );
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      providerPostUrls.length = 0;
+
+      pauseOnNextPing = true;
+      await expect(
+        channel.sendMessage(
+          'bb:iMessage;-;fixture-chat-1',
+          'must not cross the pause race',
+        ),
+      ).rejects.toThrow(/pause generation|latest owner stop boundary/);
+      expect(providerPostUrls).toEqual([]);
+
+      setMessagingOutboundPaused({
+        paused: false,
+        changedByChatJid: 'tg:owner',
+        reason: 'test_reset_between_attempts',
+      });
+      pauseOnNextPing = true;
+      await expect(
+        channel.sendArtifact('bb:iMessage;-;fixture-chat-1', {
+          kind: 'file',
+          filename: 'blocked-after-readiness.txt',
+          mimeType: 'text/plain',
+          bytesBase64: Buffer.from('blocked').toString('base64'),
+        }),
+      ).rejects.toThrow(/pause generation|latest owner stop boundary/);
+      expect(providerPostUrls).toEqual([]);
+
+      setMessagingOutboundPaused({
+        paused: false,
+        changedByChatJid: 'tg:owner',
+        reason: 'test_reset_before_first_contact_attempt',
+      });
+      pauseOnNextPing = true;
+      await expect(
+        channel.sendMessage(
+          'bb:iMessage;-;+12025550199',
+          'must not create a new chat across the pause race',
+          {
+            ...buildBlueBubblesAuthorizationOptions(),
+            suppressSenderLabel: true,
+            blueBubblesCreateChatAddress: '+12025550199',
+            idempotencyKey: 'message-action:paused-first-contact',
+          },
+        ),
+      ).rejects.toThrow(/pause generation|latest owner stop boundary/);
+      expect(providerPostUrls).toEqual([]);
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('rejects a pre-stop queued authorization after resume and allows only a fresh post-resume action', async () => {
+    const providerPosts: string[] = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.method || 'GET').toUpperCase() === 'POST') {
+        providerPosts.push(req.url || '');
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      res.end(JSON.stringify({ data: { guid: 'fresh-after-resume' } }));
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      providerPosts.length = 0;
+      setMessagingOutboundPaused({
+        paused: true,
+        changedByChatJid: 'tg:owner',
+        reason: 'owner_stop_after_ingress',
+        now: new Date('2026-07-16T20:01:00.000Z'),
+      });
+      setMessagingOutboundPaused({
+        paused: false,
+        changedByChatJid: 'tg:owner',
+        reason: 'owner_resume_after_ingress',
+        now: new Date('2026-07-16T20:02:00.000Z'),
+      });
+
+      await expect(
+        channel.sendMessage(
+          'bb:iMessage;-;+12025550123',
+          'Stale queued instruction must not send.',
+          {
+            ...buildBlueBubblesAuthorizationOptions('2026-07-16T20:00:00.000Z'),
+            suppressSenderLabel: true,
+            idempotencyKey: 'message-action:stale-queued-after-resume',
+          },
+        ),
+      ).rejects.toThrow('before the latest owner stop boundary');
+      expect(providerPosts).toEqual([]);
+
+      await expect(
+        channel.sendMessage(
+          'bb:iMessage;-;+12025550123',
+          'Fresh owner action may send.',
+          {
+            ...buildBlueBubblesAuthorizationOptions('2026-07-16T20:02:00.001Z'),
+            suppressSenderLabel: true,
+            idempotencyKey: 'message-action:fresh-after-resume',
+          },
+        ),
+      ).resolves.toMatchObject({
+        platformMessageId: 'bb:fresh-after-resume',
+      });
+      expect(providerPosts).toHaveLength(1);
+      expect(providerPosts[0]).toContain('/api/v1/message/text');
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -990,7 +1464,7 @@ describe('BlueBubbles channel', () => {
     process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
       'iMessage;-;+15551234567';
     let webhookUrl = '';
-    const racedWebhookStatuses: number[] = [];
+    const racedWebhookResponses: Array<{ status: number; body: string }> = [];
     const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
@@ -1021,7 +1495,10 @@ describe('BlueBubbles channel', () => {
             },
           }),
         });
-        racedWebhookStatuses.push(raced.status);
+        racedWebhookResponses.push({
+          status: raced.status,
+          body: await raced.text(),
+        });
         res.end(JSON.stringify({ data: { guid: 'provider-raced-echo-1' } }));
         return;
       }
@@ -1054,7 +1531,12 @@ describe('BlueBubbles channel', () => {
           idempotencyKey: 'message-action:race-safe-1',
         },
       );
-      expect(racedWebhookStatuses).toEqual([202]);
+      expect(racedWebhookResponses).toEqual([
+        {
+          status: 202,
+          body: 'Ignored provider-correlated outbound echo',
+        },
+      ]);
       expect(onMessage).not.toHaveBeenCalled();
     } finally {
       await channel.disconnect();
@@ -1064,6 +1546,131 @@ describe('BlueBubbles channel', () => {
       } else {
         process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID = previousCanonical;
       }
+    }
+  });
+
+  it('suppresses captioned and attachment-only echoes that race ahead of attachment receipts', async () => {
+    let webhookUrl = '';
+    const attachmentBodies: string[] = [];
+    const racedWebhookResponses: Array<{ status: number; body: string }> = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      if ((req.url || '').startsWith('/api/v1/message/attachment')) {
+        attachmentBodies.push(body);
+        const index = attachmentBodies.length;
+        const caption = index === 1 ? 'Race-safe artifact caption.' : undefined;
+        const raced = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'new-message',
+            data: {
+              chatGuid: 'iMessage;-;fixture-chat-1',
+              chat: {
+                guid: 'iMessage;-;fixture-chat-1',
+                displayName: 'Owner',
+                participants: [{ address: '+15551234567' }],
+              },
+              message: {
+                guid: `provider-raced-artifact-${index}`,
+                ...(caption ? { body: caption } : {}),
+                senderName: 'Owner',
+                isFromMe: true,
+                handle: {
+                  address: '+15551234567',
+                  displayName: 'Owner',
+                },
+                dateCreated: new Date().toISOString(),
+                attachments: [
+                  {
+                    guid: `provider-raced-attachment-${index}`,
+                    mimeType: 'text/plain',
+                    transferName: 'echo-proof.txt',
+                  },
+                ],
+              },
+            },
+          }),
+        });
+        racedWebhookResponses.push({
+          status: raced.status,
+          body: await raced.text(),
+        });
+        res.end(
+          JSON.stringify({
+            data: { guid: `provider-raced-artifact-${index}` },
+          }),
+        );
+        return;
+      }
+      res.end(JSON.stringify({ data: [] }));
+    });
+    const onMessage = vi.fn();
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage,
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+    const artifact = {
+      kind: 'file' as const,
+      filename: 'echo-proof.txt',
+      mimeType: 'text/plain',
+      bytesBase64: Buffer.from('proof').toString('base64'),
+    };
+
+    try {
+      await channel.connect();
+      webhookUrl = channel.getWebhookUrl();
+      await channel.sendArtifact('bb:iMessage;-;fixture-chat-1', artifact, {
+        caption: 'Race-safe artifact caption.',
+        idempotencyKey: 'artifact-action:race-safe-captioned',
+      });
+      await channel.sendArtifact('bb:iMessage;-;fixture-chat-1', artifact, {
+        idempotencyKey: 'artifact-action:race-safe-attachment-only',
+      });
+
+      expect(racedWebhookResponses).toEqual([
+        {
+          status: 202,
+          body: 'Ignored provider-correlated outbound echo',
+        },
+        {
+          status: 202,
+          body: 'Ignored provider-correlated outbound echo',
+        },
+      ]);
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(attachmentBodies[0]).toContain(
+        'artifact-action:race-safe-captioned',
+      );
+      expect(attachmentBodies[1]).toContain(
+        'artifact-action:race-safe-attachment-only',
+      );
+      const storedArtifacts = listRecentMessagesForChat(
+        'bb:iMessage;-;fixture-chat-1',
+        10,
+      ).filter((message) =>
+        message.id.startsWith('bb:provider-raced-artifact-'),
+      );
+      expect(
+        storedArtifacts.map((message) => message.provider_idempotency_key),
+      ).toEqual([
+        'artifact-action:race-safe-attachment-only',
+        'artifact-action:race-safe-captioned',
+      ]);
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
     }
   });
 
@@ -1211,13 +1818,50 @@ describe('BlueBubbles channel', () => {
       });
 
       expect(trusted.status).toBe(200);
-      expect(results.at(-1)).toMatchObject({ handled: true, state: 'sent' });
+      expect(results.at(-1)).toMatchObject({
+        handled: true,
+        state: 'staged',
+        action: {
+          sendStatus: 'drafted',
+          requiresApproval: true,
+          draftText: 'Dinner is ready.',
+        },
+      });
       expect(refreshControlState).toHaveBeenCalledTimes(1);
+      expect(providerSend).not.toHaveBeenCalled();
+      expect(providerPostPaths).toEqual([]);
+      const [stagedAction] = listMessageActionsForGroup({
+        groupFolder: 'main',
+        includeSent: true,
+      });
+      expect(stagedAction).toMatchObject({
+        sendStatus: 'drafted',
+        requiresApproval: true,
+      });
+      if (!stagedAction) throw new Error('expected a staged message action');
+
+      updateMessageAction(stagedAction.messageActionId, {
+        presentationMessageId: 'bb:fresh-owner-approval-card',
+        lastUpdatedAt: '2026-07-16T12:00:20.000Z',
+      });
+      const approved = await applyMessageActionOperation(
+        stagedAction.messageActionId,
+        { kind: 'send' },
+        {
+          groupFolder: 'main',
+          channel: 'bluebubbles',
+          chatJid: 'bb:iMessage;-;owner@example.invalid',
+          currentTime: new Date('2026-07-16T12:00:30.000Z'),
+          sendToTarget: providerSend,
+        },
+      );
+
+      expect(approved.action).toMatchObject({
+        sendStatus: 'sent',
+        platformMessageId: 'bb:offline-signed-webhook-receipt',
+      });
       expect(providerSend).toHaveBeenCalledTimes(1);
       expect(providerPostPaths).toEqual([]);
-      expect(
-        listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
-      ).toHaveLength(1);
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -1512,7 +2156,11 @@ describe('BlueBubbles channel', () => {
       expect(firstMessage).toMatchObject({
         id: firstMessage?.durable_ingress_claim_id,
         provider_message_id: 'bb:mirrored-phone-guid',
+        ingress_received_at: expect.any(String),
       });
+      expect(firstMessage?.ingress_received_at).not.toBe(
+        firstMessage?.timestamp,
+      );
 
       await channel.disconnect();
       channel = new BlueBubblesChannel(config, opts);
@@ -1572,7 +2220,7 @@ describe('BlueBubbles channel', () => {
       ownerAuthored: true,
       body: '@Andrea recover after crash',
       providerTimestamp: '2026-07-16T12:00:00.000Z',
-      now: new Date('2020-01-01T00:00:00.000Z'),
+      now: new Date(Date.now() - 60_000),
       processingLeaseMs: 100,
     });
     claimStore.close();
@@ -1659,6 +2307,127 @@ describe('BlueBubbles channel', () => {
       });
       expect(accepted).toMatchObject({
         claimId: interrupted.claimId,
+        disposition: 'mirror',
+        shouldProcess: false,
+        acceptedAt: expect.any(String),
+      });
+      inspection.close();
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+      if (previousCanonical == null) {
+        delete process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+      } else {
+        process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID = previousCanonical;
+      }
+      if (previousAliases == null) {
+        delete process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
+      } else {
+        process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS = previousAliases;
+      }
+    }
+  });
+
+  it('terminally ignores an old sidecar claim redelivered through the live webhook', async () => {
+    const previousCanonical = process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+    const previousAliases = process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;owner@example.invalid';
+    process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS =
+      'iMessage;-;+12025550109,iMessage;-;owner@example.invalid';
+    const receiptInboxDatabasePath = path.join(
+      tempProjectRoot,
+      'stale-live-redelivery-claim.sqlite3',
+    );
+    const providerTimestampMs = Date.now() - 1_000;
+    const claimStore = new BlueBubblesReceiptInboxStore(
+      receiptInboxDatabasePath,
+    );
+    const staleClaim = claimStore.claimCanonicalSelfThreadIngress({
+      canonicalScope: 'bb:iMessage;-;owner@example.invalid',
+      ownerAuthored: true,
+      body: '@Andrea do not replay this old turn',
+      providerTimestamp: new Date(providerTimestampMs).toISOString(),
+      now: new Date(Date.now() - 20 * 60 * 1_000),
+      processingLeaseMs: 100,
+    });
+    claimStore.close();
+    const apiStub = await startBlueBubblesApiStub(async (_req, _body, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ data: [] }));
+    });
+    const onMessage = vi.fn();
+    const onChatMetadata = vi.fn();
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+        receiptInboxDatabasePath,
+      }),
+      {
+        onMessage,
+        onChatMetadata,
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    const payload = JSON.stringify({
+      type: 'new-message',
+      data: {
+        guid: 'stale-live-redelivery-guid',
+        text: '@Andrea do not replay this old turn',
+        dateCreated: new Date(providerTimestampMs + 500).toISOString(),
+        isFromMe: true,
+        handle: {
+          address: 'owner@example.invalid',
+          displayName: 'Owner',
+        },
+        chats: [
+          {
+            guid: 'iMessage;-;owner@example.invalid',
+            isGroup: false,
+            participants: [{ address: 'owner@example.invalid' }],
+          },
+        ],
+      },
+    });
+
+    try {
+      await channel.connect();
+      const first = await fetch(channel.getWebhookUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+      });
+      const repeated = await fetch(channel.getWebhookUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+      });
+
+      expect(first.status).toBe(202);
+      expect(await first.text()).toBe('Ignored stale durable ingress claim');
+      expect(repeated.status).toBe(202);
+      expect(await repeated.text()).toBe('Ignored durable mirrored delivery');
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(onChatMetadata).not.toHaveBeenCalled();
+      const inspection = new BlueBubblesReceiptInboxStore(
+        receiptInboxDatabasePath,
+      );
+      expect(
+        inspection.claimCanonicalSelfThreadIngress({
+          canonicalScope: 'bb:iMessage;-;owner@example.invalid',
+          ownerAuthored: true,
+          body: '@Andrea do not replay this old turn',
+          providerTimestamp: new Date(providerTimestampMs + 250).toISOString(),
+        }),
+      ).toMatchObject({
+        claimId: staleClaim.claimId,
+        claimedAt: staleClaim.claimedAt,
         disposition: 'mirror',
         shouldProcess: false,
         acceptedAt: expect.any(String),
@@ -1837,7 +2606,7 @@ describe('BlueBubbles channel', () => {
     }
   });
 
-  it('normally routes only a pre-existing expired owner-ingress claim recovered from history', async () => {
+  it('routes a locally fresh recovery claim even when the provider timestamp is stale', async () => {
     const previousCanonical = process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
     const previousAliases = process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
     process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
@@ -1848,7 +2617,9 @@ describe('BlueBubbles channel', () => {
       tempProjectRoot,
       'expired-history-recovery-claim.sqlite3',
     );
-    const providerTimestampMs = Date.now() - 1_000;
+    // Provider clocks are evidence for mirror matching, never the recovery
+    // authorization clock. Only the sidecar's immutable claimedAt is fresh.
+    const providerTimestampMs = Date.now() - 24 * 60 * 60 * 1_000;
     const providerTimestamp = new Date(providerTimestampMs).toISOString();
     const mirroredProviderTimestamp = new Date(
       providerTimestampMs + 500,
@@ -1933,6 +2704,7 @@ describe('BlueBubbles channel', () => {
         id: interrupted.claimId,
         durable_ingress_claim_id: interrupted.claimId,
         provider_message_id: 'bb:recovered-history-provider-guid',
+        ingress_received_at: interrupted.claimedAt,
       });
       const inspection = new BlueBubblesReceiptInboxStore(
         receiptInboxDatabasePath,
@@ -1966,7 +2738,7 @@ describe('BlueBubbles channel', () => {
     }
   });
 
-  it('refuses to route a stale unaccepted owner-ingress claim from startup history', async () => {
+  it('terminally ignores an old local claim even when provider history looks fresh', async () => {
     const previousCanonical = process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
     const previousAliases = process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
     process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
@@ -1980,12 +2752,16 @@ describe('BlueBubbles channel', () => {
     const claimStore = new BlueBubblesReceiptInboxStore(
       receiptInboxDatabasePath,
     );
-    claimStore.claimCanonicalSelfThreadIngress({
+    const providerTimestampMs = Date.now() - 1_000;
+    const providerTimestamp = new Date(providerTimestampMs).toISOString();
+    const staleClaim = claimStore.claimCanonicalSelfThreadIngress({
       canonicalScope: 'bb:iMessage;-;owner@example.invalid',
       ownerAuthored: true,
       body: '@Andrea this stale turn must remain inert',
-      providerTimestamp: '2026-07-01T12:00:00.000Z',
-      now: new Date('2026-07-01T12:00:00.000Z'),
+      // Adversarial provider evidence is fresh, while the authoritative local
+      // receipt is older than the bounded recovery window.
+      providerTimestamp,
+      now: new Date(Date.now() - 20 * 60 * 1_000),
       processingLeaseMs: 100,
     });
     claimStore.close();
@@ -2009,7 +2785,7 @@ describe('BlueBubbles channel', () => {
                   address: 'owner@example.invalid',
                   displayName: 'Owner',
                 },
-                dateCreated: '2026-07-01T12:00:00.500Z',
+                dateCreated: new Date(providerTimestampMs + 500).toISOString(),
                 chats: [
                   {
                     guid: 'iMessage;-;owner@example.invalid',
@@ -2048,12 +2824,34 @@ describe('BlueBubbles channel', () => {
         limit: 20,
         recoverUnacceptedClaims: true,
       });
+      const repeated = await channel.primeRecentHistory({
+        limit: 20,
+        recoverUnacceptedClaims: true,
+      });
 
       expect(primed).toEqual({ storedCount: 0, totalCount: 1 });
+      expect(repeated).toEqual({ storedCount: 0, totalCount: 1 });
       expect(onMessage).not.toHaveBeenCalled();
       expect(
         listRecentMessagesForChat('bb:iMessage;-;owner@example.invalid', 10),
       ).toEqual([]);
+      const inspection = new BlueBubblesReceiptInboxStore(
+        receiptInboxDatabasePath,
+      );
+      const terminal = inspection.claimCanonicalSelfThreadIngress({
+        canonicalScope: 'bb:iMessage;-;owner@example.invalid',
+        ownerAuthored: true,
+        body: '@Andrea this stale turn must remain inert',
+        providerTimestamp: new Date(providerTimestampMs + 250).toISOString(),
+      });
+      expect(terminal).toMatchObject({
+        claimId: staleClaim.claimId,
+        claimedAt: staleClaim.claimedAt,
+        disposition: 'mirror',
+        shouldProcess: false,
+        acceptedAt: expect.any(String),
+      });
+      inspection.close();
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -2180,12 +2978,15 @@ describe('BlueBubbles channel', () => {
     try {
       await channel.connect();
       await expect(
-        channel.sendMessage('bb:chat-1', 'must not dispatch'),
+        channel.sendMessage(
+          'bb:iMessage;-;fixture-chat-1',
+          'must not dispatch',
+        ),
       ).rejects.toMatchObject({
         code: 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH',
       });
       await expect(
-        channel.sendArtifact('bb:chat-1', {
+        channel.sendArtifact('bb:iMessage;-;fixture-chat-1', {
           kind: 'file',
           filename: 'proof.txt',
           mimeType: 'text/plain',
@@ -2237,7 +3038,10 @@ describe('BlueBubbles channel', () => {
     try {
       await channel.connect();
       await expect(
-        channel.sendMessage('bb:chat-1', 'must not dispatch'),
+        channel.sendMessage(
+          'bb:iMessage;-;fixture-chat-1',
+          'must not dispatch',
+        ),
       ).rejects.toMatchObject({
         code: 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH',
       });
@@ -2257,6 +3061,14 @@ describe('BlueBubbles channel', () => {
   });
 
   it('does not hydrate or substitute a target after an existing-chat dispatch', async () => {
+    vi.stubEnv(
+      'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+      'bb:iMessage;-;+13125550101',
+    );
+    vi.stubEnv(
+      'BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS',
+      'bb:iMessage;-;+13125550101',
+    );
     const requests: Array<Record<string, unknown>> = [];
     const historyRequests: string[] = [];
     const healthDetails: string[] = [];
@@ -2301,21 +3113,21 @@ describe('BlueBubbles channel', () => {
                 text: '@Andrea Hi',
                 isFromMe: true,
                 service: 'iMessage',
-                chatIdentifier: '+12025550101',
+                chatIdentifier: '+13125550101',
                 lastAddressedHandle: 'owner@example.com',
                 handle: {
-                  address: '+12025550101',
+                  address: '+13125550101',
                   displayName: 'Jeff',
                   service: 'iMessage',
                 },
                 chats: [
                   {
-                    guid: 'iMessage;-;+12025550101',
-                    chatIdentifier: '+12025550101',
+                    guid: 'iMessage;-;+13125550101',
+                    chatIdentifier: '+13125550101',
                     lastAddressedHandle: 'owner@example.com',
                     service: 'iMessage',
                     isGroup: false,
-                    participants: [{ address: '+12025550101' }],
+                    participants: [{ address: '+13125550101' }],
                   },
                 ],
               },
@@ -2335,7 +3147,7 @@ describe('BlueBubbles channel', () => {
       }
       const parsed = JSON.parse(body) as Record<string, unknown>;
       requests.push(parsed);
-      if (parsed.chatGuid === 'iMessage;-;+12025550101') {
+      if (parsed.chatGuid === 'iMessage;-;+13125550101') {
         res.statusCode = 500;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ error: 'Message Send Error' }));
@@ -2396,20 +3208,20 @@ describe('BlueBubbles channel', () => {
         body: JSON.stringify({
           type: 'new-message',
           data: {
-            chatGuid: 'iMessage;-;+12025550101',
+            chatGuid: 'iMessage;-;+13125550101',
             chat: {
-              guid: 'iMessage;-;+12025550101',
+              guid: 'iMessage;-;+13125550101',
               displayName: 'Jeff',
               isGroup: false,
-              chatIdentifier: '+12025550101',
-              participants: [{ address: '+12025550101' }],
+              chatIdentifier: '+13125550101',
+              participants: [{ address: '+13125550101' }],
             },
             message: {
               guid: 'msg-self-1',
               body: '@Andrea hi',
               senderName: 'Jeff',
               handle: {
-                address: '+12025550101',
+                address: '+13125550101',
                 displayName: 'Jeff',
                 service: 'iMessage',
               },
@@ -2423,23 +3235,23 @@ describe('BlueBubbles channel', () => {
       expect(inbound.status).toBe(200);
       expect(
         (channel as any)['buildOutboundTargetCandidates'](
-          'bb:iMessage;-;+12025550101',
-          'iMessage;-;+12025550101',
+          'bb:iMessage;-;+13125550101',
+          'iMessage;-;+13125550101',
         ),
       ).toEqual([
-        { kind: 'chat_guid', chatGuid: 'iMessage;-;+12025550101' },
-        { kind: 'chat_identifier', chatGuid: 'any;-;+12025550101' },
+        { kind: 'chat_guid', chatGuid: 'iMessage;-;+13125550101' },
+        { kind: 'chat_identifier', chatGuid: 'any;-;+13125550101' },
       ]);
 
       await expect(
-        channel.sendMessage('bb:iMessage;-;+12025550101', 'Hi. I am here.', {
+        channel.sendMessage('bb:iMessage;-;+13125550101', 'Hi. I am here.', {
           idempotencyKey: 'message-action:no-target-fallthrough-1',
         }),
       ).rejects.toMatchObject({ code: 'CHANNEL_DELIVERY_UNVERIFIED' });
 
       expect(historyRequests).toHaveLength(0);
       expect(requests.map((request) => request.chatGuid)).toEqual([
-        'iMessage;-;+12025550101',
+        'iMessage;-;+13125550101',
       ]);
       expect(
         requests.every((request) => request.method === 'apple-script'),
@@ -2449,12 +3261,12 @@ describe('BlueBubbles channel', () => {
       );
       expect(
         (channel as any)['buildOutboundTargetCandidates'](
-          'bb:iMessage;-;+12025550101',
-          'iMessage;-;+12025550101',
+          'bb:iMessage;-;+13125550101',
+          'iMessage;-;+13125550101',
         ),
       ).toEqual([
-        { kind: 'chat_guid', chatGuid: 'iMessage;-;+12025550101' },
-        { kind: 'chat_identifier', chatGuid: 'any;-;+12025550101' },
+        { kind: 'chat_guid', chatGuid: 'iMessage;-;+13125550101' },
+        { kind: 'chat_identifier', chatGuid: 'any;-;+13125550101' },
       ]);
       expect(
         healthDetails.every(
@@ -2482,7 +3294,7 @@ describe('BlueBubbles channel', () => {
     }
   });
 
-  it('does not use the direct-chat fallback ladder for group chats', async () => {
+  it('rejects ordinary group-chat sends before any fallback or provider POST', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const historyRequests: string[] = [];
     const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {
@@ -2549,10 +3361,11 @@ describe('BlueBubbles channel', () => {
       await channel.connect();
       await expect(
         channel.sendMessage('bb:iMessage;+;chat-group', 'Hi group.'),
-      ).rejects.toMatchObject({ code: 'CHANNEL_DELIVERY_UNVERIFIED' });
-      expect(requests).toHaveLength(1);
+      ).rejects.toMatchObject({
+        code: 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH',
+      });
+      expect(requests).toHaveLength(0);
       expect(historyRequests).toHaveLength(0);
-      expect(requests[0]?.chatGuid).toBe('iMessage;+;chat-group');
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -2801,7 +3614,10 @@ describe('BlueBubbles channel', () => {
         'not_configured',
       );
       await expect(
-        channel.sendMessage('bb:chat-1', 'must not dispatch'),
+        channel.sendMessage(
+          'bb:iMessage;-;fixture-chat-1',
+          'must not dispatch',
+        ),
       ).rejects.toMatchObject({
         code: 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH',
         evidence: {
@@ -2886,6 +3702,7 @@ describe('BlueBubbles channel', () => {
           'bb:iMessage;-;+12025550123',
           'Exact existing direct.',
           {
+            ...buildBlueBubblesAuthorizationOptions(),
             suppressSenderLabel: true,
             idempotencyKey: 'message-action:outside-existing-direct',
           },
@@ -2899,6 +3716,7 @@ describe('BlueBubbles channel', () => {
           'bb:iMessage;-;+12025550199',
           'Exact first contact.',
           {
+            ...buildBlueBubblesAuthorizationOptions(),
             suppressSenderLabel: true,
             blueBubblesCreateChatAddress: '+12025550199',
             idempotencyKey: 'message-action:outside-first-contact',
@@ -2930,6 +3748,7 @@ describe('BlueBubbles channel', () => {
           'bb:iMessage;+;family-group',
           'Do not broaden to groups.',
           {
+            ...buildBlueBubblesAuthorizationOptions(),
             suppressSenderLabel: true,
             idempotencyKey: 'message-action:outside-group',
           },
@@ -2946,6 +3765,150 @@ describe('BlueBubbles channel', () => {
         code: 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH',
       });
       expect(providerRequests).toHaveLength(2);
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('does not let all_synced scope authorize ordinary contact or group sends', async () => {
+    const providerRequests: Array<{
+      path: string;
+      body: Record<string, unknown>;
+    }> = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.method || 'GET').toUpperCase() === 'POST') {
+        providerRequests.push({
+          path: req.url || '',
+          body: JSON.parse(body || '{}') as Record<string, unknown>,
+        });
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ data: { guid: 'approved-direct-receipt' } }));
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      providerRequests.length = 0;
+
+      await expect(
+        channel.sendMessage(
+          'bb:iMessage;-;+12025550123',
+          'Ordinary assistant/status text must not reach a contact.',
+        ),
+      ).rejects.toThrow('immutable owner-authorization fence');
+      await expect(
+        channel.sendMessage(
+          'bb:iMessage;+;family-group',
+          'Ordinary assistant/status text must not reach a group.',
+        ),
+      ).rejects.toThrow('immutable owner-authorization fence');
+      expect(providerRequests).toEqual([]);
+
+      await expect(
+        channel.sendMessage(
+          'bb:iMessage;-;+12025550123',
+          'Exact owner-approved direct message.',
+          {
+            ...buildBlueBubblesAuthorizationOptions(),
+            suppressSenderLabel: true,
+            idempotencyKey: 'message-action:all-synced-approved-direct',
+          },
+        ),
+      ).resolves.toMatchObject({
+        platformMessageId: 'bb:approved-direct-receipt',
+      });
+      expect(providerRequests).toHaveLength(1);
+      expect(providerRequests[0]).toMatchObject({
+        path: expect.stringContaining('/api/v1/message/text'),
+        body: {
+          chatGuid: 'iMessage;-;+12025550123',
+          message: 'Exact owner-approved direct message.',
+          tempGuid: 'message-action:all-synced-approved-direct',
+        },
+      });
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('refuses non-self-thread artifacts under all_synced without a provider POST', async () => {
+    const providerPostPaths: string[] = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.method || 'GET').toUpperCase() === 'POST') {
+        providerPostPaths.push(req.url || '');
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      res.end(JSON.stringify({ data: [] }));
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+    const artifact = {
+      kind: 'file' as const,
+      filename: 'must-not-send.txt',
+      mimeType: 'text/plain',
+      bytesBase64: Buffer.from('must not send').toString('base64'),
+    };
+
+    try {
+      await channel.connect();
+      providerPostPaths.length = 0;
+
+      await expect(
+        channel.sendArtifact('bb:iMessage;-;+12025550123', artifact),
+      ).rejects.toThrow('explicitly configured owner self-thread');
+      await expect(
+        channel.sendArtifact('bb:iMessage;+;family-group', artifact),
+      ).rejects.toThrow('explicitly configured owner self-thread');
+      expect(providerPostPaths).toEqual([]);
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -3008,9 +3971,13 @@ describe('BlueBubbles channel', () => {
     try {
       await channel.connect();
       const unicodeMessage = 'Hello 👋🏽 — Cafe\u0301 is ready. 🫠';
-      const result = await channel.sendMessage('bb:chat-1', unicodeMessage, {
-        idempotencyKey: 'message-action:stable-existing-1',
-      });
+      const result = await channel.sendMessage(
+        'bb:iMessage;-;fixture-chat-1',
+        unicodeMessage,
+        {
+          idempotencyKey: 'message-action:stable-existing-1',
+        },
+      );
 
       expect(result.platformMessageId).toBe('bb:server-msg-7');
       expect(requests).toHaveLength(1);
@@ -3019,12 +3986,14 @@ describe('BlueBubbles channel', () => {
       expect(requests[0]?.url).toContain('password=secret');
       expect(requests[0]?.url).toContain('token=secret');
       expect(requests[0]?.body).toMatchObject({
-        chatGuid: 'chat-1',
+        chatGuid: 'iMessage;-;fixture-chat-1',
         message: `Andrea: ${unicodeMessage}`,
         method: 'private-api',
         tempGuid: 'message-action:stable-existing-1',
       });
-      expect(listRecentMessagesForChat('bb:chat-1', 1)).toContainEqual(
+      expect(
+        listRecentMessagesForChat('bb:iMessage;-;fixture-chat-1', 1),
+      ).toContainEqual(
         expect.objectContaining({
           id: 'bb:server-msg-7',
           content: `Andrea: ${unicodeMessage}`,
@@ -3100,7 +4069,7 @@ describe('BlueBubbles channel', () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
       const outcome = channel
-        .sendMessage('bb:chat-1', 'one dispatch only', {
+        .sendMessage('bb:iMessage;-;fixture-chat-1', 'one dispatch only', {
           idempotencyKey: 'message-action:timeout-1',
         })
         .catch((error: unknown) => error);
@@ -3182,7 +4151,7 @@ describe('BlueBubbles channel', () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
       const outcome = channel
-        .sendMessage('bb:chat-1', 'body timeout', {
+        .sendMessage('bb:iMessage;-;fixture-chat-1', 'body timeout', {
           idempotencyKey: 'message-action:body-timeout-1',
         })
         .catch((error: unknown) => error);
@@ -3255,9 +4224,13 @@ describe('BlueBubbles channel', () => {
     try {
       await channel.connect();
       await expect(
-        channel.sendMessage('bb:chat-1', 'duplicate request identity', {
-          idempotencyKey: 'message-action:duplicate-1',
-        }),
+        channel.sendMessage(
+          'bb:iMessage;-;fixture-chat-1',
+          'duplicate request identity',
+          {
+            idempotencyKey: 'message-action:duplicate-1',
+          },
+        ),
       ).rejects.toMatchObject({
         code: 'CHANNEL_DELIVERY_UNVERIFIED',
         evidence: { outcome: 'unknown' },
@@ -3312,9 +4285,13 @@ describe('BlueBubbles channel', () => {
     try {
       await channel.connect();
       await expect(
-        channel.sendMessage('bb:chat-1', 'receipt may have landed', {
-          idempotencyKey: 'message-action:uncertain-receipt-1',
-        }),
+        channel.sendMessage(
+          'bb:iMessage;-;fixture-chat-1',
+          'receipt may have landed',
+          {
+            idempotencyKey: 'message-action:uncertain-receipt-1',
+          },
+        ),
       ).rejects.toMatchObject({
         code: 'CHANNEL_DELIVERY_UNVERIFIED',
         evidence: {
@@ -3387,20 +4364,30 @@ describe('BlueBubbles channel', () => {
 
     try {
       await channel.connect();
-      await channel.sendMessage('bb:chat-1', 'Andrea: Already labeled.');
-      await channel.sendMessage('bb:chat-1', 'First line.\nSecond line.');
+      await channel.sendMessage(
+        'bb:iMessage;-;fixture-chat-1',
+        'Andrea: Already labeled.',
+      );
+      await channel.sendMessage(
+        'bb:iMessage;-;fixture-chat-1',
+        'First line.\nSecond line.',
+      );
 
       expect(requests).toHaveLength(2);
       expect(requests[0]?.message).toBe('Andrea: Already labeled.');
       expect(requests[1]?.message).toBe('Andrea: First line.\nSecond line.');
-      expect(listRecentMessagesForChat('bb:chat-1', 2)).toContainEqual(
+      expect(
+        listRecentMessagesForChat('bb:iMessage;-;fixture-chat-1', 2),
+      ).toContainEqual(
         expect.objectContaining({
           id: 'bb:server-msg-2',
           content: 'Andrea: First line.\nSecond line.',
           is_bot_message: 1,
         }),
       );
-      expect(listRecentMessagesForChat('bb:chat-1', 2)).toContainEqual(
+      expect(
+        listRecentMessagesForChat('bb:iMessage;-;fixture-chat-1', 2),
+      ).toContainEqual(
         expect.objectContaining({
           id: 'bb:server-msg-1',
           content: 'Andrea: Already labeled.',
@@ -3469,18 +4456,23 @@ describe('BlueBubbles channel', () => {
     try {
       await channel.connect();
       await channel.sendMessage(
-        'bb:chat-1',
+        'bb:iMessage;-;+15551234567',
         'Yes, tonight still works for me.',
         {
+          ...buildBlueBubblesAuthorizationOptions(),
           suppressSenderLabel: true,
+          idempotencyKey: 'message-action:approved-external-1',
         },
       );
 
       expect(requests[0]?.body).toMatchObject({
-        chatGuid: 'chat-1',
+        chatGuid: 'iMessage;-;+15551234567',
         message: 'Yes, tonight still works for me.',
+        tempGuid: 'message-action:approved-external-1',
       });
-      expect(listRecentMessagesForChat('bb:chat-1', 1)).toContainEqual(
+      expect(
+        listRecentMessagesForChat('bb:iMessage;-;+15551234567', 1),
+      ).toContainEqual(
         expect.objectContaining({
           id: 'bb:server-msg-external-1',
           content: 'Yes, tonight still works for me.',
@@ -3584,6 +4576,7 @@ describe('BlueBubbles channel', () => {
         'bb:iMessage;-;+12025550199',
         'Welcome to the neighborhood.',
         {
+          ...buildBlueBubblesAuthorizationOptions(),
           suppressSenderLabel: true,
           blueBubblesCreateChatAddress: '+1 (202) 555-0199',
           idempotencyKey: 'message-action:stable-first-contact-1',
@@ -3695,6 +4688,7 @@ describe('BlueBubbles channel', () => {
             'bb:iMessage;-;+12025550199',
             'Welcome to the neighborhood.',
             {
+              ...buildBlueBubblesAuthorizationOptions(),
               suppressSenderLabel: true,
               blueBubblesCreateChatAddress: '+1 (202) 555-0199',
               idempotencyKey: `message-action:wrong-first-contact-${returnedChatGuid}`,
@@ -3781,8 +4775,10 @@ describe('BlueBubbles channel', () => {
           'bb:iMessage;-;+12025550199',
           'Welcome to the neighborhood.',
           {
+            ...buildBlueBubblesAuthorizationOptions(),
             suppressSenderLabel: true,
             blueBubblesCreateChatAddress: '+12025550199',
+            idempotencyKey: 'message-action:uncertain-first-contact-1',
           },
         ),
       ).rejects.toMatchObject({ code: 'CHANNEL_DELIVERY_UNVERIFIED' });
@@ -3832,6 +4828,12 @@ describe('BlueBubbles channel', () => {
         res.end(JSON.stringify({ data: [] }));
         return;
       }
+      if (!(req.url || '').startsWith('/api/v1/message/text')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
       const parsed = JSON.parse(body) as Record<string, unknown>;
       requests.push(parsed);
       if (parsed.selectedMessageGuid) {
@@ -3858,7 +4860,7 @@ describe('BlueBubbles channel', () => {
     try {
       await channel.connect();
       await expect(
-        channel.sendMessage('bb:chat-1', 'Andrea reply', {
+        channel.sendMessage('bb:iMessage;-;fixture-chat-1', 'Andrea reply', {
           replyToMessageId: 'bb:msg-2',
           idempotencyKey: 'message-action:threaded-1',
         }),
@@ -3928,14 +4930,85 @@ describe('BlueBubbles channel', () => {
 
     try {
       await channel.connect();
-      const result = await channel.sendMessage('bb:chat-1', 'ordinary reply', {
-        replyToMessageId: 'bb:msg-ordinary-1',
-      });
+      const result = await channel.sendMessage(
+        'bb:iMessage;-;fixture-chat-1',
+        'ordinary reply',
+        {
+          replyToMessageId: 'bb:msg-ordinary-1',
+        },
+      );
 
       expect(result.platformMessageId).toBe('bb:server-msg-ordinary-1');
       expect(requests).toHaveLength(2);
       expect(requests[0]?.selectedMessageGuid).toBe('msg-ordinary-1');
       expect(requests[1]?.selectedMessageGuid).toBeUndefined();
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('rechecks the owner pause before a compatibility retry can issue another provider POST', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if (!(req.url || '').startsWith('/api/v1/message/text')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      requests.push(parsed);
+      setMessagingOutboundPaused({
+        paused: true,
+        changedByChatJid: 'tg:owner',
+        reason: 'owner_pause_between_provider_attempts',
+      });
+      setMessagingOutboundPaused({
+        paused: false,
+        changedByChatJid: 'tg:owner',
+        reason: 'owner_resume_between_provider_attempts',
+      });
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'reply target rejected' }));
+    });
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      await expect(
+        channel.sendMessage('bb:iMessage;-;fixture-chat-1', 'ordinary reply', {
+          replyToMessageId: 'bb:msg-pause-between-attempts',
+        }),
+      ).rejects.toThrow('pause generation');
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.selectedMessageGuid).toBe(
+        'msg-pause-between-attempts',
+      );
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -3978,7 +5051,7 @@ describe('BlueBubbles channel', () => {
       await disabled.connect();
       await missingReceipt.connect();
       await expect(
-        disabled.sendMessage('bb:chat-1', 'hello'),
+        disabled.sendMessage('bb:iMessage;-;fixture-chat-1', 'hello'),
       ).rejects.toMatchObject({
         code: 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH',
         evidence: {
@@ -3988,7 +5061,7 @@ describe('BlueBubbles channel', () => {
       });
       expect(textDispatches).toHaveLength(0);
       await expect(
-        missingReceipt.sendMessage('bb:chat-1', 'hello'),
+        missingReceipt.sendMessage('bb:iMessage;-;fixture-chat-1', 'hello'),
       ).rejects.toMatchObject({
         code: 'CHANNEL_DELIVERY_UNVERIFIED',
         evidence: {
@@ -4015,7 +5088,7 @@ describe('BlueBubbles channel', () => {
     expect(snapshot.detail).toContain('outbound reply-back is disabled');
   });
 
-  it('accepts all-synced inbound chats and can send to another scoped chat', async () => {
+  it('accepts all-synced inbound chats but rejects ordinary outbound group sends', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {
       if ((req.url || '').startsWith('/api/v1/webhook')) {
@@ -4107,10 +5180,11 @@ describe('BlueBubbles channel', () => {
           },
         }),
       });
-      const sendResult = await channel.sendMessage(
-        'bb:iMessage;+;chat-2',
-        'Hi. I am here.',
-      );
+      await expect(
+        channel.sendMessage('bb:iMessage;+;chat-2', 'Hi. I am here.'),
+      ).rejects.toMatchObject({
+        code: 'CHANNEL_DELIVERY_REJECTED_BEFORE_DISPATCH',
+      });
 
       expect(inbound.status).toBe(200);
       expect(onMessage).toHaveBeenCalledWith(
@@ -4120,8 +5194,7 @@ describe('BlueBubbles channel', () => {
           content: '@Andrea hi',
         }),
       );
-      expect(sendResult.platformMessageId).toBe('bb:server-msg-1');
-      expect(requests[0]?.chatGuid).toBe('iMessage;+;chat-2');
+      expect(requests).toEqual([]);
     } finally {
       await channel.disconnect();
       await apiStub.close();
@@ -4700,7 +5773,7 @@ describe('BlueBubbles channel', () => {
       staleClosed = true;
 
       const result = await channel.sendMessage(
-        'bb:chat-1',
+        'bb:iMessage;-;fixture-chat-1',
         'Hello after failover.',
       );
       const monitorState = readBlueBubblesMonitorState();
@@ -4709,7 +5782,7 @@ describe('BlueBubbles channel', () => {
       expect(monitorState.activeBaseUrl).toBe(healthyStub.baseUrl);
       expect(failoverRequests).toHaveLength(1);
       expect(failoverRequests[0]).toMatchObject({
-        chatGuid: 'chat-1',
+        chatGuid: 'iMessage;-;fixture-chat-1',
         method: 'apple-script',
       });
     } finally {
@@ -5248,7 +6321,7 @@ describe('BlueBubbles channel', () => {
     }
   });
 
-  it('rehydrates persisted same-thread outbound diagnostics into health updates after restart', async () => {
+  it('rehydrates persisted outbound diagnostics without promoting an unconfigured thread to control', async () => {
     const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
       if ((req.url || '').startsWith('/api/v1/webhook')) {
         res.statusCode = 200;
@@ -5320,7 +6393,8 @@ describe('BlueBubbles channel', () => {
       await channel.connect();
 
       const latestDetail = healthUpdates[healthUpdates.length - 1] || '';
-      expect(latestDetail).toContain('reply gate direct_1to1');
+      expect(latestDetail).toContain('reply gate mention_required');
+      expect(latestDetail).toContain('conversation mode data-only');
       expect(latestDetail).toContain(
         'last outbound 2026-04-12T20:05:00.000Z (bb:iMessage;-;+12025550101)',
       );
@@ -5589,6 +6663,130 @@ describe('BlueBubbles channel', () => {
           provider_idempotency_key: 'message-action:startup-prime-1',
         }),
       );
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('targets one exact known quiet thread without depending on the global newest slice', async () => {
+    let targetedRequests = 0;
+    let globalHistoryRequests = 0;
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/chat/')) {
+        targetedRequests += 1;
+        const requestUrl = new URL(req.url || '/', apiStub.baseUrl);
+        expect(requestUrl.searchParams.get('limit')).toBe('400');
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                guid: 'quiet-thread-latest',
+                text: 'The quiet-thread update is ready.',
+                senderName: 'Avery Example',
+                handle: {
+                  address: '+12025550123',
+                  displayName: 'Avery Example',
+                },
+                dateCreated: '2026-07-16T20:15:00.000Z',
+                isFromMe: false,
+                chats: [
+                  {
+                    guid: 'iMessage;-;+12025550123',
+                    displayName: 'Avery Example',
+                    isGroup: false,
+                    participants: [{ address: '+12025550123' }],
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/message')) {
+        globalHistoryRequests += 1;
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    storeChatMetadata(
+      'bb:iMessage;-;+12025550123',
+      '2026-06-01T12:00:00.000Z',
+      'Avery Example',
+      'bluebubbles',
+      false,
+    );
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+      },
+    );
+
+    try {
+      await channel.connect();
+      globalHistoryRequests = 0;
+      const hydrated = await channel.primeChatHistory(
+        'bb:iMessage;-;+12025550123',
+        { limit: 900 },
+      );
+
+      expect(hydrated).toEqual({
+        chatJid: 'bb:iMessage;-;+12025550123',
+        storedCount: 1,
+        totalCount: 1,
+      });
+      expect(targetedRequests).toBe(1);
+      expect(globalHistoryRequests).toBe(0);
+      expect(
+        listRecentMessagesForChat('bb:iMessage;-;+12025550123', 1),
+      ).toContainEqual(
+        expect.objectContaining({
+          id: 'bb:quiet-thread-latest',
+          content: 'The quiet-thread update is ready.',
+        }),
+      );
+      await expect(
+        channel.primeChatHistory('bb:iMessage;-;+12025550999', { limit: 10 }),
+      ).rejects.toThrow(/already-known exact chat/i);
+      storeChatMetadata(
+        'bb:iMessage;-;fixture-chat-1',
+        '2026-07-16T20:20:00.000Z',
+        'Canonical self-thread fixture',
+        'bluebubbles',
+        false,
+      );
+      await expect(
+        channel.primeChatHistory('bb:iMessage;-;fixture-chat-1', { limit: 10 }),
+      ).rejects.toThrow(/canonical self-thread/i);
+      expect(targetedRequests).toBe(1);
     } finally {
       await channel.disconnect();
       await apiStub.close();

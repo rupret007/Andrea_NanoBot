@@ -4,13 +4,38 @@ import type {
   AndreaPlatformProviderCouncilResult,
   PlatformTaskFamily,
 } from './andrea-platform-bridge.js';
+import {
+  ADAPTIVE_COGNITION_PRIVACY,
+  ADAPTIVE_COGNITION_VERSION,
+  adaptiveEvidence,
+  advanceAdaptiveCognition,
+  buildAdaptivePlanGraph,
+  createAdaptiveProblemFrame,
+  reopenAdaptivePlanForEvidence,
+  runAdaptiveCognition,
+  type AdaptiveActionCandidate,
+  type AdaptiveBeliefClaim,
+  type AdaptiveCognitionRunResult,
+  type AdaptiveEvidence,
+  type AdaptivePlanGraph,
+  type AdaptivePlanNode,
+  type AdaptiveProblemFrame,
+  type AdaptiveVerificationReport,
+} from './adaptive-cognition-engine.js';
 import { runtimeHashId } from './agent-runtime-glue.js';
+import {
+  compileAdaptiveDurablePlan,
+  orchestrateAdaptiveDurableDirective,
+  type AdaptiveCognitionSnapshot,
+  type AdaptiveDurableNodeBinding,
+} from './adaptive-cognition-durable-adapter.js';
 import { isSensitiveName, redactCouncilText } from './council-safety.js';
 import {
   findOpenCognitiveCheckpoint,
   buildCognitiveReplayPacket,
   getCognitiveGoal,
   getCognitiveRun,
+  getDurableWorkUnit,
   insertCognitiveBenchmarkAttempt,
   insertCognitiveReflection,
   insertCognitiveRewardSignal,
@@ -63,6 +88,11 @@ import {
   upsertCognitiveWorkbenchState,
   upsertCognitiveWorldBelief,
 } from './db.js';
+import {
+  consumeResumeGrantAndAcquireLease,
+  issueDurableResumeGrant,
+  type DurableWorkBindingInput,
+} from './durable-work-continuity.js';
 import { getBraveSearchStatus } from './brave-search.js';
 import { buildIntegrationDoctorReport } from './integration-doctor.js';
 import type { ProviderHealthSnapshot } from './provider-health.js';
@@ -109,6 +139,7 @@ import type {
   CognitiveWorkbenchRole,
   CognitiveWorkbenchState,
   CognitiveWorldBeliefRecord,
+  DurableWorkUnit,
 } from './types.js';
 
 const COGNITIVE_RETENTION_DAYS = 90;
@@ -128,6 +159,7 @@ export interface CognitiveFrame {
   selectedSkillApprovalNeed: string;
   selectedSkillSideEffectRisk: string;
   selectedSkillEvidenceLevel: string;
+  adaptiveProblemFrameId?: string;
 }
 
 export interface CognitiveToolCallPlan {
@@ -168,6 +200,14 @@ export interface CognitiveTaskGraph {
   >;
   subgoals: CognitiveSubgoal[];
   selectedSkillId?: string | null;
+  /** Present on v1+ runs; optional only so pre-v1 persisted graphs can replay. */
+  adaptiveEngineVersion?: string;
+  adaptiveFrame?: AdaptiveProblemFrame;
+  adaptivePlan?: AdaptivePlanGraph;
+  adaptiveEvidence?: AdaptiveEvidence[];
+  adaptiveBeliefs?: AdaptiveBeliefClaim[];
+  adaptiveVerification?: AdaptiveVerificationReport;
+  adaptiveStatus?: AdaptiveCognitionRunResult['status'];
 }
 
 export interface CognitiveVerificationResult {
@@ -230,6 +270,12 @@ export interface BeginCognitiveKernelInput {
   knownBlockers?: string[];
   thinkingPreference?: string | null;
   thinkingTrigger?: string | null;
+  /**
+   * Live turn handling prepares the canonical graph and lets the durable
+   * adapter execute exact nodes asynchronously. Legacy/internal callers keep
+   * the synchronous compatibility loop until their migration is complete.
+   */
+  executionMode?: 'synchronous_compatibility' | 'prepare_only';
 }
 
 export interface CognitiveKernelResult {
@@ -263,7 +309,18 @@ export interface CognitiveKernelResult {
   traceSpans: CognitiveTraceSpan[];
   providerCooldowns: CognitiveProviderCooldown[];
   rewardPreview: CognitiveRewardSignal;
+  adaptiveRun?: AdaptiveCognitionRunResult | null;
+  /** True when user-visible completion also requires the durable terminal verifier. */
+  requiresDurableCompletion?: boolean;
 }
+
+export type CognitiveReplyKind =
+  | 'completion'
+  | 'approval_request'
+  | 'evidence_request'
+  | 'clarification'
+  | 'blocked_notice'
+  | 'progress';
 
 export interface FinalizeCognitiveKernelOutcomeInput {
   cognitiveRun: CognitiveKernelResult | null | undefined;
@@ -272,8 +329,14 @@ export interface FinalizeCognitiveKernelOutcomeInput {
   evaluatorFlags: string[];
   routeUsed: string;
   answerClass: 'handled' | 'blocked' | 'degraded' | 'fallback' | 'unknown';
+  replyKind?: CognitiveReplyKind;
   blockerClass?: string | null;
   fallbackUsed?: boolean;
+  /**
+   * Typed postcondition evidence supplied by an execution/receipt adapter.
+   * Pre-send evaluator metadata is intentionally not completion proof.
+   */
+  completionEvidence?: AdaptiveEvidence[];
 }
 
 export interface CognitiveDoctorReport {
@@ -535,6 +598,13 @@ function safeJson(value: unknown, limit = 12000): string {
   } catch {
     return 'null';
   }
+}
+
+function adaptiveTaskGraphJson(value: CognitiveTaskGraph): string {
+  // Adaptive state is already structurally bounded. Never replace it with a
+  // truncation preview, because losing the frame/plan would let a later
+  // finalizer mistake a v1 run for a pre-adaptive legacy run.
+  return JSON.stringify(redactJsonValue(value));
 }
 
 function parseJsonSafe<T>(value: string | null | undefined, fallback: T): T {
@@ -862,6 +932,21 @@ function validateToolPlanAgainstRegistry(
   };
 }
 
+function demotedAdapterIdsFromToolPolicy(input: {
+  issues: string[];
+  plans: CognitiveToolCallPlan[];
+}): string[] {
+  const plannedToolIds = new Set(input.plans.map((plan) => plan.toolId));
+  const demoted = input.issues.flatMap((issue) => {
+    const match = issue.match(
+      /^(?:unknown_tool|forbidden_tool|approval_missing|tool_blocked):(.+)$/,
+    );
+    const toolId = match?.[1] || '';
+    return plannedToolIds.has(toolId) ? [toolId] : [];
+  });
+  return Array.from(new Set(demoted)).sort();
+}
+
 function describeTextShape(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return 'empty';
@@ -888,6 +973,14 @@ function summarizeGoal(
     );
   }
   return redactCouncilText(goal, 480);
+}
+
+function summarizeAdaptiveGoal(
+  goal: string,
+  taskFamily: PlatformTaskFamily,
+  channel: CognitiveChannel,
+): string {
+  return `Task family=${taskFamily}; channel=${channel}; input_shape=${describeTextShape(goal)}; input_ref=${runtimeHashId('adaptive:objective', goal)}.`;
 }
 
 function providerUsability(
@@ -1444,6 +1537,7 @@ function trajectoryScoreForExecution(input: {
   verifications: CognitiveStepVerification[];
   approvalPackets: CognitiveApprovalPacket[];
   loopState: CognitiveExecutionLoopState;
+  demotedAdapterIds?: string[];
   now: string;
 }): CognitiveTrajectoryScore {
   const blockers = input.verifications.filter(
@@ -1492,9 +1586,14 @@ function trajectoryScoreForExecution(input: {
       6
     ).toFixed(3),
   );
-  const demotedAdapters = input.verifications
-    .filter((verification) => verification.status === 'block')
-    .map((verification) => verification.toolId);
+  const demotedAdapters = Array.from(
+    new Set([
+      ...input.verifications
+        .filter((verification) => verification.status === 'block')
+        .map((verification) => verification.toolId),
+      ...(input.demotedAdapterIds || []),
+    ]),
+  ).sort();
   return {
     trajectoryId: sanitizeId(`cogtrajectory:${input.run.runId}`),
     createdAt: input.now,
@@ -1508,13 +1607,16 @@ function trajectoryScoreForExecution(input: {
     blockerClarity: Number(blockerClarity.toFixed(3)),
     privacySafety,
     outcomeSignal: Number(outcomeSignal.toFixed(3)),
-    promotedRoute: overall >= 0.82 && input.approvalPackets.length === 0,
+    promotedRoute:
+      overall >= 0.82 &&
+      input.approvalPackets.length === 0 &&
+      demotedAdapters.length === 0,
     demotedAdaptersJson: safeJson(demotedAdapters, 1200),
     nextAction:
-      overall >= 0.82
-        ? 'Promote this read-only route when outcome confirmation arrives.'
-        : demotedAdapters.length > 0
-          ? 'Demote or repair blocked adapters before repeating this route.'
+      demotedAdapters.length > 0
+        ? 'Demote or repair blocked adapters before repeating this route.'
+        : overall >= 0.82
+          ? 'Promote this read-only route when outcome confirmation arrives.'
           : 'Keep route usable but gather stronger evidence next time.',
     privacyJson: privacyPolicyJson(),
   };
@@ -2287,9 +2389,11 @@ function workbenchStateForRun(input: {
       ? 'awaiting_approval'
       : input.run.status === 'answered'
         ? 'answered'
-        : openRisk
+        : input.run.status === 'awaiting_evidence'
           ? 'degraded'
-          : 'active';
+          : openRisk
+            ? 'degraded'
+            : 'active';
   const nextAction = blocked
     ? input.decisions.find((decision) => decision.status === 'block')
         ?.nextAction || input.run.nextAction
@@ -2901,6 +3005,7 @@ function executeCognitiveToolPlan(input: {
   evidenceContract: ReturnType<typeof buildEvidenceContract>;
   autonomyBudget: CognitiveAutonomyBudgetRecord;
   now: string;
+  positionOffset?: number;
 }): CognitiveExecutionBundle {
   const byTool = new Map(input.registry.map((tool) => [tool.toolId, tool]));
   const simulationByTool = new Map(
@@ -2935,13 +3040,14 @@ function executeCognitiveToolPlan(input: {
     }),
   ];
   input.toolPlans.forEach((plan, index) => {
+    const position = (input.positionOffset || 0) + index + 1;
     const registry = byTool.get(plan.toolId) || null;
     const simulation = simulationByTool.get(plan.toolId) || null;
     const action = actionIdentityFor({
       run: input.run,
       plan,
       registry,
-      index,
+      index: position - 1,
       now: input.now,
     });
     actionIdentities.push(action);
@@ -3035,14 +3141,14 @@ function executeCognitiveToolPlan(input: {
     const stepStatus = stepStatusFrom({ decision, result });
     const step: CognitiveExecutionStep = {
       stepId: sanitizeId(
-        `cogstep:${input.run.runId}:${String(index + 1).padStart(2, '0')}:${plan.toolId}`,
+        `cogstep:${input.run.runId}:${String(position).padStart(2, '0')}:${plan.toolId}`,
       ),
       createdAt: input.now,
       updatedAt: input.now,
       runId: input.run.runId,
       subgoalId: subgoalByTool.get(plan.toolId) || null,
       toolId: plan.toolId,
-      position: index + 1,
+      position,
       actionClass: plan.actionClass,
       status: stepStatus,
       policyDecisionId: decision.decisionId,
@@ -3244,6 +3350,144 @@ function executeCognitiveToolPlan(input: {
   };
 }
 
+function mergeCognitiveExecutionBundles(input: {
+  run: CognitiveRunRecord;
+  goalText: string;
+  graph: CognitiveTaskGraph;
+  provider: ReturnType<typeof providerUsability>;
+  selectedSkill: CognitiveSkillCardRecord | null;
+  evidenceContract: ReturnType<typeof buildEvidenceContract>;
+  autonomyBudget: CognitiveAutonomyBudgetRecord;
+  bundles: CognitiveExecutionBundle[];
+  now: string;
+}): CognitiveExecutionBundle {
+  const uniqueBy = <T>(values: T[], keyFor: (value: T) => string): T[] => {
+    const seen = new Set<string>();
+    return values.filter((value) => {
+      const key = keyFor(value);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  const flatten = <T>(pick: (bundle: CognitiveExecutionBundle) => T[]): T[] =>
+    input.bundles.flatMap(pick);
+  const actionIdentities = uniqueBy(
+    flatten((bundle) => bundle.actionIdentities),
+    (value) => value.actionId,
+  );
+  const governanceDecisions = uniqueBy(
+    flatten((bundle) => bundle.governanceDecisions),
+    (value) => value.decisionId,
+  );
+  const guardrailTripwires = uniqueBy(
+    flatten((bundle) => bundle.guardrailTripwires),
+    (value) => value.tripwireId,
+  );
+  const riskSignals = uniqueBy(
+    flatten((bundle) => bundle.riskSignals),
+    (value) => value.signalId,
+  );
+  const policyDecisions = uniqueBy(
+    flatten((bundle) => bundle.policyDecisions),
+    (value) => value.decisionId,
+  );
+  const toolResults = uniqueBy(
+    flatten((bundle) => bundle.toolResults),
+    (value) => value.resultId,
+  );
+  const executionSteps = uniqueBy(
+    flatten((bundle) => bundle.executionSteps),
+    (value) => value.stepId,
+  ).sort((left, right) => left.position - right.position);
+  const evidenceArtifacts = uniqueBy(
+    flatten((bundle) => bundle.evidenceArtifacts),
+    (value) => value.artifactId,
+  );
+  const stepVerifications = uniqueBy(
+    flatten((bundle) => bundle.stepVerifications),
+    (value) => value.verificationId,
+  );
+  const approvalPackets = uniqueBy(
+    flatten((bundle) => bundle.approvalPackets),
+    (value) => value.approvalPacketId,
+  );
+  const planRevisions = uniqueBy(
+    flatten((bundle) => bundle.planRevisions),
+    (value) =>
+      `${value.revisionKind}|${value.changedToolId || ''}|${value.reason}`,
+  );
+  const runEvents = uniqueBy(
+    flatten((bundle) => bundle.runEvents),
+    (value) => `${value.eventKind}|${value.summary}|${value.refsJson}`,
+  );
+  const loopState = loopStateForExecution({
+    run: input.run,
+    executionSteps,
+    verifications: stepVerifications,
+    revisions: planRevisions,
+    budget: input.autonomyBudget,
+    now: input.now,
+  });
+  const memoryBlocks = memoryBlocksForRun({
+    run: input.run,
+    goalText: input.goalText,
+    selectedSkill: input.selectedSkill,
+    provider: input.provider,
+    evidenceContract: input.evidenceContract,
+    decisions: governanceDecisions,
+    now: input.now,
+  });
+  const handoffs = handoffsForRun({
+    run: input.run,
+    graph: input.graph,
+    decisions: governanceDecisions,
+    evidenceArtifacts,
+    approvalPackets,
+    now: input.now,
+  });
+  const workbenchState = workbenchStateForRun({
+    run: input.run,
+    handoffs,
+    decisions: governanceDecisions,
+    memoryBlocks,
+    riskSignals,
+    approvalPackets,
+    now: input.now,
+  });
+  const trajectoryScore = trajectoryScoreForExecution({
+    run: input.run,
+    executionSteps,
+    artifacts: evidenceArtifacts,
+    verifications: stepVerifications,
+    approvalPackets,
+    loopState,
+    demotedAdapterIds: input.bundles.flatMap((bundle) =>
+      parseJsonSafe<string[]>(bundle.trajectoryScore.demotedAdaptersJson, []),
+    ),
+    now: input.now,
+  });
+  return {
+    actionIdentities,
+    governanceDecisions,
+    guardrailTripwires,
+    handoffs,
+    riskSignals,
+    memoryBlocks,
+    workbenchState,
+    policyDecisions,
+    toolResults,
+    executionSteps,
+    evidenceArtifacts,
+    loopStates: [loopState],
+    stepVerifications,
+    approvalPackets,
+    planRevisions,
+    runEvents,
+    trajectoryScore,
+  };
+}
+
 function applyExecutionFeedback(
   verification: CognitiveVerificationResult,
   execution: CognitiveExecutionBundle,
@@ -3288,6 +3532,339 @@ function applyExecutionFeedback(
     evidenceGaps: Array.from(gaps),
     approvalRequired: verification.approvalRequired || approval,
     nextAction,
+  };
+}
+
+function runKernelAdaptiveLoop(input: {
+  run: CognitiveRunRecord;
+  goalText: string;
+  graph: CognitiveTaskGraph;
+  toolPlans: CognitiveToolCallPlan[];
+  toolSimulations: CognitiveToolSimulation[];
+  registry: CognitiveToolRegistryRecord[];
+  governancePolicy: CognitiveGovernancePolicy;
+  providerSnapshots: ProviderHealthSnapshot[];
+  provider: ReturnType<typeof providerUsability>;
+  selectedSkill: CognitiveSkillCardRecord | null;
+  providerCouncil?: AndreaPlatformProviderCouncilResult | null;
+  evidenceContract: ReturnType<typeof buildEvidenceContract>;
+  autonomyBudget: CognitiveAutonomyBudgetRecord;
+  toolPolicy: ReturnType<typeof validateToolPlanAgainstRegistry>;
+  budgetPolicy: ReturnType<typeof validateAutonomyBudget>;
+  now: string;
+  prepareOnly?: boolean;
+}): {
+  adaptiveRun: AdaptiveCognitionRunResult | null;
+  execution: CognitiveExecutionBundle;
+} {
+  const frame = input.graph.adaptiveFrame;
+  const plan = input.graph.adaptivePlan;
+  if (!frame || !plan) {
+    return {
+      adaptiveRun: null,
+      execution: input.prepareOnly
+        ? mergeCognitiveExecutionBundles({
+            run: input.run,
+            goalText: input.goalText,
+            graph: input.graph,
+            provider: input.provider,
+            selectedSkill: input.selectedSkill,
+            evidenceContract: input.evidenceContract,
+            autonomyBudget: input.autonomyBudget,
+            bundles: [],
+            now: input.now,
+          })
+        : executeCognitiveToolPlan({
+            run: input.run,
+            goalText: input.goalText,
+            graph: input.graph,
+            toolPlans: input.toolPlans,
+            toolSimulations: input.toolSimulations,
+            registry: input.registry,
+            governancePolicy: input.governancePolicy,
+            providerSnapshots: input.providerSnapshots,
+            provider: input.provider,
+            selectedSkill: input.selectedSkill,
+            providerCouncil: input.providerCouncil,
+            evidenceContract: input.evidenceContract,
+            autonomyBudget: input.autonomyBudget,
+            now: input.now,
+          }),
+    };
+  }
+  if (input.prepareOnly) {
+    const directive = advanceAdaptiveCognition({
+      frame,
+      graph: plan,
+      beliefs: input.graph.adaptiveBeliefs || [],
+      evidence: input.graph.adaptiveEvidence || [],
+      now: () => input.now,
+    });
+    const result = directive.result;
+    input.graph.adaptivePlan = result.graph;
+    input.graph.adaptiveEvidence = result.evidence;
+    input.graph.adaptiveBeliefs = result.beliefs;
+    input.graph.adaptiveVerification = result.verification;
+    input.graph.adaptiveStatus = result.status;
+    return {
+      adaptiveRun: result,
+      execution: mergeCognitiveExecutionBundles({
+        run: input.run,
+        goalText: input.goalText,
+        graph: input.graph,
+        provider: input.provider,
+        selectedSkill: input.selectedSkill,
+        evidenceContract: input.evidenceContract,
+        autonomyBudget: input.autonomyBudget,
+        bundles: [],
+        now: input.now,
+      }),
+    };
+  }
+  const outcomeCriterionId = frame.successCriteria[0]?.criterionId || '';
+  const safetyCriterionId = frame.successCriteria[1]?.criterionId || '';
+  const targetPrefix = `target:${outcomeCriterionId}:`;
+  const exactTarget =
+    frame.contextRefs
+      .find((ref) => ref.startsWith(targetPrefix))
+      ?.slice(targetPrefix.length) || input.run.runId;
+  const evidenceScope = frame.authority.actorScope;
+  const primaryPlansByTool = new Map<string, CognitiveToolCallPlan[]>();
+  for (const toolPlan of input.toolPlans) {
+    const existing = primaryPlansByTool.get(toolPlan.toolId) || [];
+    existing.push(toolPlan);
+    primaryPlansByTool.set(toolPlan.toolId, existing);
+  }
+  const executionBundles: CognitiveExecutionBundle[] = [];
+  let executionPosition = 0;
+  const executionPlanForNode = (
+    node: AdaptivePlanNode,
+  ): CognitiveToolCallPlan | null => {
+    const primaryCandidates = node.toolId
+      ? primaryPlansByTool.get(node.toolId) || []
+      : [];
+    if (
+      node.actionId?.startsWith(`kernel:${node.toolId}:`) &&
+      !node.actionId.startsWith('kernel:fallback:')
+    ) {
+      // Tool-plan compilation can group compatibility subgoals differently
+      // from the adaptive graph. Bind by the unique registered tool identity,
+      // never by a reordered array position or a fuzzy purpose match.
+      return primaryCandidates.length === 1 ? primaryCandidates[0]! : null;
+    }
+    if (node.kind !== 'recover' || !node.toolId) return null;
+    const actionClass: CognitiveToolCallPlan['actionClass'] | null =
+      node.actionClass === 'local_lookup'
+        ? 'local_lookup'
+        : node.actionClass === 'read_only_integration'
+          ? 'read_only_integration'
+          : node.actionClass === 'council'
+            ? 'council'
+            : node.actionClass === 'draft'
+              ? 'draft'
+              : node.actionClass === 'approval_gate'
+                ? 'approval_gate'
+                : null;
+    return actionClass
+      ? {
+          toolId: node.toolId,
+          actionClass,
+          purpose: node.purpose,
+          approvalRequired: node.approvalRequired,
+        }
+      : null;
+  };
+  const result = runAdaptiveCognition({
+    frame,
+    graph: plan,
+    now: () => input.now,
+    executor: (node) => {
+      if (node.actionId === 'kernel:policy-verification') {
+        const policyPass =
+          input.toolPolicy.pass &&
+          input.budgetPolicy.pass &&
+          !input.toolSimulations.some(
+            (simulation) => simulation.status === 'block',
+          );
+        return {
+          status: policyPass ? 'success' : 'terminal_failure',
+          summary: policyPass
+            ? 'Existing tool registry, simulation, autonomy budget, and approval policy passed.'
+            : 'Existing policy enforcement blocked this plan before consequential action.',
+          failureClass: policyPass ? null : 'policy_block',
+          nextAction: policyPass
+            ? 'Continue through registered tools only.'
+            : 'Repair the policy or authority boundary before action.',
+          evidence: [
+            adaptiveEvidence({
+              evidenceId: `adaptive:policy:${input.run.runId}`,
+              createdAt: input.now,
+              evidenceClass: 'observed',
+              origin: input.run.runOrigin,
+              source: 'cognitive_policy_enforcement',
+              claim: policyPass
+                ? 'The enforced tool and autonomy policy passed.'
+                : 'The enforced tool or autonomy policy blocked the plan.',
+              subject: exactTarget,
+              predicate: 'policy_boundary',
+              value: policyPass ? 'pass' : 'block',
+              confidence: 0.98,
+              freshness: 'fresh',
+              scope: evidenceScope,
+              verification: policyPass ? 'verified' : 'rejected',
+              supportsCriterionIds: policyPass ? [safetyCriterionId] : [],
+              provenanceRefs: [
+                'tool_policy',
+                'autonomy_budget',
+                ...input.toolSimulations.map(
+                  (simulation) => simulation.simulationId,
+                ),
+              ],
+            }),
+          ],
+        };
+      }
+      const selectedPlan = executionPlanForNode(node);
+      if (!selectedPlan) {
+        return {
+          status: 'terminal_failure',
+          summary:
+            'The adaptive node has no exact registered execution-plan binding.',
+          failureClass: 'adaptive_execution_binding_missing',
+          nextAction: 'Replan through a registered bounded tool action.',
+          evidence: [],
+        };
+      }
+      const fragment = executeCognitiveToolPlan({
+        run: input.run,
+        goalText: input.goalText,
+        graph: input.graph,
+        toolPlans: [selectedPlan],
+        toolSimulations: input.toolSimulations,
+        registry: input.registry,
+        governancePolicy: input.governancePolicy,
+        providerSnapshots: input.providerSnapshots,
+        provider: input.provider,
+        selectedSkill: input.selectedSkill,
+        providerCouncil: input.providerCouncil,
+        evidenceContract: input.evidenceContract,
+        autonomyBudget: input.autonomyBudget,
+        now: input.now,
+        positionOffset: executionPosition,
+      });
+      executionBundles.push(fragment);
+      executionPosition += fragment.executionSteps.length;
+      const step = fragment.executionSteps[0];
+      const toolResult = step?.resultId
+        ? fragment.toolResults.find(
+            (candidate) => candidate.resultId === step.resultId,
+          )
+        : fragment.toolResults.find(
+            (candidate) => candidate.toolId === node.toolId,
+          );
+      const stepVerification = step
+        ? fragment.stepVerifications.find(
+            (candidate) => candidate.stepId === step.stepId,
+          )
+        : null;
+      const artifact = step
+        ? fragment.evidenceArtifacts.find(
+            (candidate) => candidate.resultId === step.resultId,
+          )
+        : null;
+      if (!step || !toolResult) {
+        return {
+          status: 'terminal_failure',
+          summary:
+            'No registered execution observation exists for this adaptive node.',
+          failureClass: 'missing_execution_observation',
+          nextAction: 'Name the missing adapter observation and stop.',
+          evidence: [],
+        };
+      }
+      const approvalRequired =
+        step.status === 'approval_staged' ||
+        stepVerification?.status === 'approval_staged';
+      const succeeded =
+        step.status === 'executed' &&
+        toolResult.status === 'succeeded' &&
+        stepVerification?.status === 'pass';
+      const failureClass =
+        toolResult.failureClass ||
+        stepVerification?.blockerClass ||
+        `${step.toolId}:${step.status}`;
+      const recoverable =
+        /provider|timeout|rate|temporar|unavailable|missing_evidence|degraded|not_configured/i.test(
+          failureClass,
+        );
+      const observationStatus = approvalRequired
+        ? 'approval_required'
+        : succeeded
+          ? 'success'
+          : recoverable
+            ? 'retryable_failure'
+            : step.status === 'degraded' || toolResult.status === 'degraded'
+              ? 'degraded'
+              : 'terminal_failure';
+      return {
+        status: observationStatus,
+        summary: `Registered tool ${step.toolId} produced status ${step.status}; raw output omitted.`,
+        failureClass: succeeded ? null : failureClass,
+        nextAction: toolResult.nextAction,
+        evidence: [
+          adaptiveEvidence({
+            evidenceId:
+              artifact?.artifactId ||
+              `adaptive:tool:${input.run.runId}:${step.toolId}:${step.position}`,
+            createdAt: input.now,
+            evidenceClass: 'observed',
+            origin: input.run.runOrigin,
+            source: toolResult.resultId,
+            claim: `Registered tool execution recorded status ${step.status}; raw output omitted.`,
+            subject: exactTarget,
+            predicate: `execution_status:${step.toolId}`,
+            value: step.status,
+            confidence: artifact?.confidence ?? (succeeded ? 0.86 : 0.62),
+            freshness: artifact?.freshness || 'unknown',
+            scope: evidenceScope,
+            verification: succeeded
+              ? 'verified'
+              : stepVerification?.status === 'block'
+                ? 'rejected'
+                : 'accepted',
+            supportsCriterionIds: succeeded ? [outcomeCriterionId] : [],
+            provenanceRefs: [
+              step.stepId,
+              toolResult.resultId,
+              ...(node.kind === 'recover'
+                ? ['local_metadata', 'explicit_blocker']
+                : ['registered_tool_policy', 'bounded_scope']),
+              ...(artifact ? [artifact.artifactId] : []),
+              ...(stepVerification ? [stepVerification.verificationId] : []),
+            ],
+          }),
+        ],
+      };
+    },
+  });
+  input.graph.adaptivePlan = result.graph;
+  input.graph.adaptiveEvidence = result.evidence;
+  input.graph.adaptiveBeliefs = result.beliefs;
+  input.graph.adaptiveVerification = result.verification;
+  input.graph.adaptiveStatus = result.status;
+  return {
+    adaptiveRun: result,
+    execution: mergeCognitiveExecutionBundles({
+      run: input.run,
+      goalText: input.goalText,
+      graph: input.graph,
+      provider: input.provider,
+      selectedSkill: input.selectedSkill,
+      evidenceContract: input.evidenceContract,
+      autonomyBudget: input.autonomyBudget,
+      bundles: executionBundles,
+      now: input.now,
+    }),
   };
 }
 
@@ -3537,7 +4114,21 @@ function goalStatusForRun(
   if (run.status === 'awaiting_evidence') return 'waiting_evidence';
   if (run.status === 'blocked' || verification.status === 'block')
     return 'blocked';
-  if (run.status === 'answered' || run.status === 'learned') return 'satisfied';
+  if (run.status === 'answered' || run.status === 'learned') {
+    const graph = parseJsonSafe<Partial<CognitiveTaskGraph>>(
+      run.taskGraphJson,
+      {},
+    );
+    if (
+      !graph.adaptiveFrame ||
+      !graph.adaptivePlan ||
+      graph.adaptiveStatus !== 'satisfied' ||
+      graph.adaptiveVerification?.completionAuthorized !== true
+    ) {
+      return 'waiting_evidence';
+    }
+    return 'satisfied';
+  }
   if (verification.evidenceGaps.length > 0) return 'waiting_evidence';
   return 'active';
 }
@@ -3834,12 +4425,199 @@ function selectSkillCard(
 function buildTaskGraph(
   input: BeginCognitiveKernelInput,
   mode: CognitiveMode,
+  createdAt = nowIso(),
 ): CognitiveTaskGraph {
   const baseTools = toolPlanFor(input);
   const approvalNeed =
     mode === 'approval_staged' || input.selectedSkillApprovalNeed === 'explicit'
       ? 'explicit'
       : input.selectedSkillApprovalNeed;
+  const exactTarget = runtimeHashId(
+    'adaptive:target',
+    `${input.turnId}|${input.channel}|${input.groupFolder || 'global'}`,
+  );
+  const effectReceiptRequired = baseTools.some(
+    (plan) => plan.actionClass === 'approval_gate' || plan.approvalRequired,
+  );
+  const adaptiveFrame = createAdaptiveProblemFrame({
+    createdAt,
+    objective: summarizeAdaptiveGoal(
+      input.goal,
+      input.taskFamily,
+      input.channel,
+    ),
+    taskFamily: input.taskFamily,
+    channel: input.channel,
+    route: input.requestRoute || null,
+    successCriteria: [
+      {
+        description:
+          'The requested outcome or named blocker is supported by fresh typed evidence.',
+        requiredEvidenceClasses: ['observed', 'user_attested'],
+        minimumConfidence: 0.6,
+      },
+      {
+        description:
+          'Tool policy, target scope, approval, and privacy boundaries are verified.',
+        requiredEvidenceClasses: ['observed'],
+        minimumConfidence: 0.8,
+      },
+      {
+        description:
+          'The final answer or effect postcondition is independently evaluated against the original objective.',
+        requiredEvidenceClasses: ['observed', 'user_attested'],
+        minimumConfidence: 0.75,
+      },
+    ],
+    constraints: [
+      'Use local-first evidence and bounded tool budgets.',
+      'Never treat model reasoning, simulation, or an unverified tool result as completion proof.',
+      'Never execute a mutation without exact current approval and the existing enforcement layer.',
+      'Persist metadata only; omit prompts, private bodies, hidden reasoning, raw tool output, and secrets.',
+    ],
+    assumptions: [
+      `selected_skill:${input.selectedSkillId}`,
+      `skill_evidence:${input.selectedSkillEvidenceLevel}`,
+    ],
+    unknowns: (input.knownBlockers || []).map((blocker) => ({
+      description: `Known blocker metadata; shape=${describeTextShape(blocker)}; ref=${runtimeHashId('adaptive:blocker', blocker)}.`,
+      impact: 'degrading' as const,
+      resolvableBy: ['read_only_evidence', 'user_clarification'],
+    })),
+    authority: {
+      actorScope: `${input.channel}:${input.groupFolder || 'global'}`,
+      maximumActionClass:
+        approvalNeed === 'explicit'
+          ? 'approval_gated_mutation'
+          : mode === 'reactive_plan'
+            ? 'draft_only'
+            : 'read_only',
+      approvedActionIds: [],
+    },
+    risk: {
+      level: /critical/i.test(input.selectedSkillSideEffectRisk)
+        ? 'critical'
+        : /high/i.test(input.selectedSkillSideEffectRisk)
+          ? 'high'
+          : /medium/i.test(input.selectedSkillSideEffectRisk)
+            ? 'medium'
+            : 'low',
+      flags: [
+        `side_effect:${input.selectedSkillSideEffectRisk}`,
+        ...(approvalNeed === 'explicit' ? ['approval_required'] : []),
+      ],
+    },
+    contextRefs: [
+      `turn:${input.turnId}`,
+      `skill:${input.selectedSkillId}`,
+      ...(input.providerCouncil?.councilRunId
+        ? [`council:${input.providerCouncil.councilRunId}`]
+        : []),
+    ],
+  });
+  const outcomeCriterionId = adaptiveFrame.successCriteria[0]!.criterionId;
+  const safetyCriterionId = adaptiveFrame.successCriteria[1]!.criterionId;
+  const completionCriterionId = adaptiveFrame.successCriteria[2]!.criterionId;
+  adaptiveFrame.contextRefs.push(
+    `target:${outcomeCriterionId}:${exactTarget}`,
+    `target:${safetyCriterionId}:${exactTarget}`,
+    `target:${completionCriterionId}:${exactTarget}`,
+    `runtime_outcome_criterion:${outcomeCriterionId}`,
+    `completion_criterion:${completionCriterionId}`,
+  );
+  if (effectReceiptRequired) {
+    adaptiveFrame.contextRefs.push(
+      `receipt_required:${outcomeCriterionId}`,
+      `receipt_required:${completionCriterionId}`,
+    );
+  }
+  const primaryActions: AdaptiveActionCandidate[] = baseTools.map(
+    (plan, index) => ({
+      actionId: `kernel:${plan.toolId}:${index + 1}`,
+      title: `Use ${plan.toolId} within its registered policy`,
+      purpose: plan.purpose,
+      toolId: plan.toolId,
+      actionClass:
+        plan.actionClass === 'operator'
+          ? 'read_only_integration'
+          : plan.actionClass,
+      mutationClass: 'none',
+      // The kernel adapter for draft/approval_gate can only stage an approval
+      // packet; it cannot perform the underlying effect. Let the adaptive
+      // engine invoke that bounded staging node so the existing policy layer
+      // can return `approval_required`. Actual mutation nodes still require an
+      // exact approved action ID before their executor is reachable.
+      approvalRequired:
+        plan.approvalRequired &&
+        !['draft', 'approval_gate'].includes(plan.actionClass),
+      requiredEvidence: ['registered_tool_policy', 'bounded_scope'],
+      producesCriterionIds: [
+        outcomeCriterionId,
+        ...(plan.actionClass === 'approval_gate' ? [safetyCriterionId] : []),
+      ],
+      expectedEvidenceClass: 'observed',
+      priority: Math.max(0.2, 1 - index * 0.05),
+      maxAttempts:
+        plan.actionClass === 'read_only_integration' ||
+        plan.actionClass === 'council'
+          ? 2
+          : 1,
+      timeoutMs: plan.actionClass === 'council' ? 45_000 : 15_000,
+    }),
+  );
+  const fallbackActions: AdaptiveActionCandidate[] = primaryActions
+    .filter(
+      (action) =>
+        action.actionClass === 'read_only_integration' ||
+        action.actionClass === 'council',
+    )
+    .map((action, index) => ({
+      actionId: `kernel:fallback:${action.toolId || index}`,
+      title: 'Use local metadata and name the unavailable live evidence',
+      purpose:
+        'Recover without widening authority, fabricating evidence, or retrying an uncertain effect.',
+      toolId: 'local_skill_library',
+      actionClass: 'local_lookup' as const,
+      mutationClass: 'none' as const,
+      approvalRequired: false,
+      requiredEvidence: ['local_metadata', 'explicit_blocker'],
+      producesCriterionIds: action.producesCriterionIds,
+      expectedEvidenceClass: 'observed' as const,
+      priority: Math.max(0.1, action.priority - 0.1),
+      maxAttempts: 1,
+      timeoutMs: 5_000,
+      alternativeForActionId: action.actionId,
+      recoveryForFailureClasses: [
+        'provider_degraded',
+        'provider_blocked',
+        'timeout',
+        'missing_evidence',
+      ],
+    }));
+  const policyEvidenceAction: AdaptiveActionCandidate = {
+    actionId: 'kernel:policy-verification',
+    title: 'Verify tool policy and authority boundary',
+    purpose:
+      'Use the existing cognitive registry, autonomy budget, simulations, and approval policy as the enforcement decision.',
+    toolId: 'cognition_trace',
+    actionClass: 'local_lookup',
+    mutationClass: 'none',
+    approvalRequired: false,
+    requiredEvidence: ['tool_policy', 'autonomy_budget'],
+    producesCriterionIds: [safetyCriterionId],
+    expectedEvidenceClass: 'observed',
+    priority: 1,
+    maxAttempts: 1,
+    timeoutMs: 5_000,
+  };
+  const adaptivePlan = buildAdaptivePlanGraph({
+    createdAt,
+    frame: adaptiveFrame,
+    actions: [policyEvidenceAction, ...primaryActions, ...fallbackActions],
+    maxNodeExecutions:
+      mode === 'council_verified' || mode === 'approval_staged' ? 24 : 16,
+    maxRuntimeMs: mode === 'council_verified' ? 45_000 : 15_000,
+  });
   const subgoals: CognitiveSubgoal[] = [
     {
       subgoalId: `subgoal:${randomUUID()}`,
@@ -3850,7 +4628,7 @@ function buildTaskGraph(
       approvalNeed: 'none',
       stopCondition: 'Goal is framed without raw private content.',
       toolPlan: baseTools.filter((plan) => plan.actionClass === 'local_lookup'),
-      verification: { metadataOnly: true },
+      verification: { ...ADAPTIVE_COGNITION_PRIVACY },
     },
     {
       subgoalId: `subgoal:${randomUUID()}`,
@@ -3940,7 +4718,101 @@ function buildTaskGraph(
       'reflect_learn',
     ],
     subgoals,
+    adaptiveEngineVersion: ADAPTIVE_COGNITION_VERSION,
+    adaptiveFrame,
+    adaptivePlan,
   };
+}
+
+function cognitiveDurableActionClass(
+  node: AdaptivePlanNode,
+): AdaptiveDurableNodeBinding['durableActionClass'] {
+  switch (node.actionClass) {
+    case 'local_lookup':
+      return 'local_lookup';
+    case 'read_only_integration':
+      return 'read_only_integration';
+    case 'council':
+      return 'council';
+    case 'approval_gate':
+    case 'draft':
+      // These kernel adapters stage metadata/approval only. The actual effect
+      // is a separate action-layer operation with its own exact approval.
+      return 'approval_gate';
+    default:
+      throw new Error(
+        `Adaptive kernel node ${node.nodeId} has no closed durable action binding.`,
+      );
+  }
+}
+
+function adaptiveCriterionTarget(
+  frame: AdaptiveProblemFrame,
+  criterionId: string,
+): string | null {
+  const prefix = `target:${criterionId}:`;
+  return (
+    frame.contextRefs
+      .find((ref) => ref.startsWith(prefix))
+      ?.slice(prefix.length) || null
+  );
+}
+
+/**
+ * Compiles explicit node identities into the closed read-only kernel adapter.
+ * Tool names, titles, purposes, and goal text never select an effect class.
+ */
+export function buildCognitiveAdaptiveDurableBindings(input: {
+  cognitiveRun: CognitiveKernelResult;
+  targetScopeKey: string;
+}): AdaptiveDurableNodeBinding[] {
+  const frame = input.cognitiveRun.taskGraph.adaptiveFrame;
+  const graph = input.cognitiveRun.taskGraph.adaptivePlan;
+  if (!frame || !graph || !input.targetScopeKey.trim()) {
+    throw new Error(
+      'Cognitive adaptive durable binding requires an exact graph and target.',
+    );
+  }
+  return graph.nodes
+    .filter((node) => ['act', 'recover'].includes(node.kind))
+    .map((node) => {
+      if (!node.actionId) {
+        throw new Error(
+          'Adaptive executable node has no exact action identity.',
+        );
+      }
+      if (node.mutationClass !== 'none') {
+        throw new Error(
+          'The cognitive kernel read-only adapter cannot bind a mutation node.',
+        );
+      }
+      const criterionTargets = node.producesCriterionIds.map((criterionId) =>
+        adaptiveCriterionTarget(frame, criterionId),
+      );
+      const evidenceSubject = criterionTargets[0] || null;
+      if (
+        !evidenceSubject ||
+        criterionTargets.some((target) => target !== evidenceSubject)
+      ) {
+        throw new Error(
+          'Adaptive executable node lacks one exact criterion-bound evidence subject.',
+        );
+      }
+      return {
+        graphId: graph.graphId,
+        planContractDigest: graph.planContractDigest,
+        nodeId: node.nodeId,
+        actionId: node.actionId,
+        toolId: node.toolId,
+        durableActionClass: cognitiveDurableActionClass(node),
+        effectClass: 'read_only',
+        targetScopeKey: input.targetScopeKey,
+        evidenceSubject,
+        criterionIds: [...node.producesCriterionIds],
+        requiredEvidenceIds: [...node.requiredEvidence],
+        verifierRequirementIds: [...node.verifier.requirementIds],
+      };
+    });
 }
 
 function buildVerification(
@@ -4096,7 +4968,7 @@ function buildRunRecord(input: {
           : 'planned',
     autonomyLevel: input.autonomyLevel,
     cognitiveMode: input.mode,
-    taskGraphJson: safeJson(input.taskGraph),
+    taskGraphJson: adaptiveTaskGraphJson(input.taskGraph),
     evidenceContractJson: safeJson(input.evidenceContract),
     providerUsabilityJson: safeJson(input.provider),
     councilRunId: input.providerCouncil?.councilRunId || null,
@@ -4204,6 +5076,7 @@ function openCheckpointKindForRun(
     return 'approval_wait';
   }
   if (run.status === 'blocked') return 'clarification_wait';
+  if (run.status === 'awaiting_evidence') return 'evidence_wait';
   if (verification.evidenceGaps.length > 0) return 'evidence_wait';
   return null;
 }
@@ -4302,6 +5175,30 @@ function persistInitialCheckpoints(input: {
   for (const record of records) upsertCognitiveCheckpoint(record);
 }
 
+export function mapAdaptiveCognitiveRunStatus(input: {
+  phase: 'begin' | 'finalize';
+  adaptiveRun: AdaptiveCognitionRunResult | null;
+  legacyBlocked?: boolean;
+  legacyAwaitingApproval?: boolean;
+  legacyAwaitingEvidence?: boolean;
+}): CognitiveRunStatus {
+  if (input.legacyBlocked) return 'blocked';
+  if (input.legacyAwaitingApproval) return 'awaiting_approval';
+  if (!input.adaptiveRun) return 'awaiting_evidence';
+  if (input.adaptiveRun.status === 'awaiting_approval') {
+    return 'awaiting_approval';
+  }
+  if (input.adaptiveRun.status === 'blocked') return 'blocked';
+  if (input.legacyAwaitingEvidence) return 'awaiting_evidence';
+  if (
+    input.adaptiveRun.status === 'satisfied' &&
+    input.adaptiveRun.verification.completionAuthorized
+  ) {
+    return input.phase === 'finalize' ? 'answered' : 'planned';
+  }
+  return 'awaiting_evidence';
+}
+
 export function beginCognitiveKernelRun(
   input: BeginCognitiveKernelInput,
 ): CognitiveKernelResult {
@@ -4333,7 +5230,8 @@ export function beginCognitiveKernelRun(
     selectedSkillEvidenceLevel: input.selectedSkillEvidenceLevel,
   };
   const evidenceContract = buildEvidenceContract(input);
-  const graph = buildTaskGraph(input, framePolicy.cognitiveMode);
+  const graph = buildTaskGraph(input, framePolicy.cognitiveMode, startedAt);
+  frame.adaptiveProblemFrameId = graph.adaptiveFrame!.frameId;
   graph.selectedSkillId = selectedSkill?.skillId || null;
   const toolPolicy = validateToolPlanAgainstRegistry(
     graph.subgoals.flatMap((subgoal) => subgoal.toolPlan),
@@ -4386,7 +5284,7 @@ export function beginCognitiveKernelRun(
     runOrigin: input.runOrigin || 'live',
     providerCouncil: input.providerCouncil,
   });
-  const execution = executeCognitiveToolPlan({
+  const adaptiveExecution = runKernelAdaptiveLoop({
     run,
     goalText: input.goal,
     graph,
@@ -4400,8 +5298,12 @@ export function beginCognitiveKernelRun(
     providerCouncil: input.providerCouncil,
     evidenceContract,
     autonomyBudget,
+    toolPolicy,
+    budgetPolicy,
     now: startedAt,
+    prepareOnly: input.executionMode === 'prepare_only',
   });
+  const { adaptiveRun, execution } = adaptiveExecution;
   const verification = applyExecutionFeedback(
     initialVerification,
     execution,
@@ -4413,22 +5315,20 @@ export function beginCognitiveKernelRun(
   const policyBlocked = execution.policyDecisions.some(
     (decision) => decision.status === 'block',
   );
+  const legacyAwaitingApproval =
+    verification.approvalRequired ||
+    framePolicy.cognitiveMode === 'approval_staged';
+  const legacyBlocked =
+    policyBlocked || (verification.status === 'block' && !executionBlocked);
   run = {
     ...run,
-    status: policyBlocked
-      ? 'blocked'
-      : verification.approvalRequired ||
-          framePolicy.cognitiveMode === 'approval_staged'
-        ? 'awaiting_approval'
-        : verification.status === 'block' && executionBlocked
-          ? 'awaiting_evidence'
-          : verification.status === 'block'
-            ? 'blocked'
-            : execution.executionSteps.some(
-                  (step) => step.status === 'executed',
-                )
-              ? 'answered'
-              : run.status,
+    taskGraphJson: adaptiveTaskGraphJson(graph),
+    status: mapAdaptiveCognitiveRunStatus({
+      phase: 'begin',
+      adaptiveRun,
+      legacyBlocked,
+      legacyAwaitingApproval,
+    }),
     verificationJson: safeJson(verification),
     nextAction: redactCouncilText(verification.nextAction, 360),
   };
@@ -4439,6 +5339,10 @@ export function beginCognitiveKernelRun(
     verifications: execution.stepVerifications,
     approvalPackets: execution.approvalPackets,
     loopState: execution.loopStates[0],
+    demotedAdapterIds: demotedAdapterIdsFromToolPolicy({
+      issues: toolPolicy.issues,
+      plans: toolPlans,
+    }),
     now: startedAt,
   });
   execution.workbenchState = workbenchStateForRun({
@@ -4450,7 +5354,19 @@ export function beginCognitiveKernelRun(
     approvalPackets: execution.approvalPackets,
     now: startedAt,
   });
-  const worldBeliefs = buildWorldBeliefs(input, providers, selectedSkill);
+  const worldBeliefs: CognitiveWorldBelief[] = [
+    ...buildWorldBeliefs(input, providers, selectedSkill),
+    ...(adaptiveRun?.beliefs || []).map((belief) => ({
+      beliefId: belief.beliefId,
+      source: 'local_metadata' as const,
+      summary: redactCouncilText(
+        `${belief.subject}.${belief.predicate}=${belief.value}; state=${belief.state}; class=${belief.evidenceClass}; scope=${belief.scope}; testable=${belief.testable ? 'yes' : 'no'}; contradictions=${belief.contradictionIds.length}.`,
+        520,
+      ),
+      confidence: belief.confidence,
+      freshness: belief.freshness,
+    })),
+  ];
   const providerCooldowns = persistProviderCooldowns({
     snapshots: providerSnapshots,
     runId: run.runId,
@@ -4462,7 +5378,9 @@ export function beginCognitiveKernelRun(
         ? 'approval_required'
         : run.status === 'blocked'
           ? 'task_blocked'
-          : 'task_answered',
+          : run.status === 'awaiting_evidence'
+            ? 'evidence_required'
+            : 'task_answered',
     score: 0,
     summary: redactCouncilText(
       `Cognitive run planned ${input.taskFamily} task with ${framePolicy.cognitiveMode}.`,
@@ -4610,7 +5528,12 @@ export function beginCognitiveKernelRun(
         runId: run.runId,
         goalId: activeGoal.goalId,
         spanKind: 'run',
-        status: run.status === 'blocked' ? 'blocked' : 'completed',
+        status:
+          run.status === 'blocked'
+            ? 'blocked'
+            : ['awaiting_approval', 'awaiting_evidence'].includes(run.status)
+              ? 'warn'
+              : 'completed',
         summary: `Cognitive run initialized in ${run.cognitiveMode}.`,
         inputSummary: frame.goal,
         outputSummary: run.nextAction,
@@ -4916,6 +5839,610 @@ export function beginCognitiveKernelRun(
     ),
     providerCooldowns,
     rewardPreview,
+    adaptiveRun,
+    requiresDurableCompletion: input.executionMode === 'prepare_only',
+  };
+}
+
+export interface ContinueCognitiveKernelDurablyInput {
+  cognitiveRun: CognitiveKernelResult;
+  beginInput: BeginCognitiveKernelInput;
+  durableWork: DurableWorkUnit;
+  durableBinding: DurableWorkBindingInput;
+  bindings: AdaptiveDurableNodeBinding[];
+  executorScopeKey: string;
+  targetScopeKey: string;
+  workerId?: string;
+  processGeneration?: string;
+  maxNodeLeases?: number;
+  now?: string;
+}
+
+export interface CognitiveKernelDurableContinuationResult {
+  cognitiveRun: CognitiveKernelResult;
+  durableWork: DurableWorkUnit;
+  leasesConsumed: number;
+  nodesExecuted: number;
+  stoppedBecause:
+    | 'adaptive_stop'
+    | 'lease_budget'
+    | 'approval_or_verification_wait'
+    | 'durable_replan'
+    | 'work_completed';
+}
+
+function executionBundleFromKernel(
+  kernel: CognitiveKernelResult,
+): CognitiveExecutionBundle {
+  return {
+    actionIdentities: kernel.actionIdentities,
+    governanceDecisions: kernel.governanceDecisions,
+    guardrailTripwires: kernel.guardrailTripwires,
+    handoffs: kernel.handoffs,
+    riskSignals: kernel.riskSignals,
+    memoryBlocks: kernel.memoryBlocks,
+    workbenchState: kernel.workbenchState,
+    policyDecisions: kernel.policyDecisions,
+    toolResults: kernel.toolResults,
+    executionSteps: kernel.executionSteps,
+    evidenceArtifacts: kernel.evidenceArtifacts,
+    loopStates: kernel.loopStates,
+    stepVerifications: kernel.stepVerifications,
+    approvalPackets: kernel.approvalPackets,
+    planRevisions: kernel.planRevisions,
+    runEvents: kernel.runEvents,
+    trajectoryScore: kernel.trajectoryScore,
+  };
+}
+
+function persistDurableCognitiveProgress(input: {
+  kernel: CognitiveKernelResult;
+  snapshot: AdaptiveCognitionSnapshot;
+  fragments: CognitiveExecutionBundle[];
+  provider: ReturnType<typeof providerUsability>;
+  selectedSkill: CognitiveSkillCardRecord | null;
+  evidenceContract: ReturnType<typeof buildEvidenceContract>;
+  autonomyBudget: CognitiveAutonomyBudgetRecord;
+  now: string;
+}): void {
+  const { kernel, snapshot } = input;
+  kernel.taskGraph.adaptiveFrame = snapshot.frame;
+  kernel.taskGraph.adaptivePlan = snapshot.graph;
+  kernel.taskGraph.adaptiveEvidence = snapshot.evidence;
+  kernel.taskGraph.adaptiveBeliefs = snapshot.beliefs;
+  const adaptiveRun = runAdaptiveCognition({
+    frame: snapshot.frame,
+    graph: snapshot.graph,
+    beliefs: snapshot.beliefs,
+    evidence: snapshot.evidence,
+    maxExternalNodeExecutions: 0,
+    now: () => input.now,
+    executor: () => {
+      throw new Error('Durable progress projection cannot execute a node.');
+    },
+  });
+  kernel.taskGraph.adaptivePlan = adaptiveRun.graph;
+  kernel.taskGraph.adaptiveEvidence = adaptiveRun.evidence;
+  kernel.taskGraph.adaptiveBeliefs = adaptiveRun.beliefs;
+  kernel.taskGraph.adaptiveVerification = adaptiveRun.verification;
+  kernel.taskGraph.adaptiveStatus = adaptiveRun.status;
+  kernel.adaptiveRun = adaptiveRun;
+
+  const merged = mergeCognitiveExecutionBundles({
+    run: kernel.run,
+    goalText: kernel.frame.goal,
+    graph: kernel.taskGraph,
+    provider: input.provider,
+    selectedSkill: input.selectedSkill,
+    evidenceContract: input.evidenceContract,
+    autonomyBudget: input.autonomyBudget,
+    bundles: [executionBundleFromKernel(kernel), ...input.fragments],
+    now: input.now,
+  });
+  const verification = applyExecutionFeedback(
+    kernel.verification,
+    merged,
+    kernel.run.cognitiveMode,
+  );
+  const status = mapAdaptiveCognitiveRunStatus({
+    phase: 'begin',
+    adaptiveRun,
+    legacyBlocked:
+      kernel.run.status === 'blocked' ||
+      merged.policyDecisions.some((decision) => decision.status === 'block'),
+    legacyAwaitingApproval:
+      kernel.run.status === 'awaiting_approval' ||
+      verification.approvalRequired ||
+      merged.executionSteps.some((step) => step.status === 'approval_staged'),
+  });
+  kernel.verification = verification;
+  kernel.run = {
+    ...kernel.run,
+    updatedAt: input.now,
+    status,
+    taskGraphJson: adaptiveTaskGraphJson(kernel.taskGraph),
+    verificationJson: safeJson(verification),
+    nextAction: redactCouncilText(adaptiveRun.nextAction, 360),
+  };
+  kernel.actionIdentities = merged.actionIdentities;
+  kernel.governanceDecisions = merged.governanceDecisions;
+  kernel.guardrailTripwires = merged.guardrailTripwires;
+  kernel.handoffs = merged.handoffs;
+  kernel.riskSignals = merged.riskSignals;
+  kernel.memoryBlocks = merged.memoryBlocks;
+  kernel.workbenchState = merged.workbenchState;
+  kernel.policyDecisions = merged.policyDecisions;
+  kernel.toolResults = merged.toolResults;
+  kernel.executionSteps = merged.executionSteps;
+  kernel.evidenceArtifacts = merged.evidenceArtifacts;
+  kernel.loopStates = merged.loopStates;
+  kernel.stepVerifications = merged.stepVerifications;
+  kernel.approvalPackets = merged.approvalPackets;
+  kernel.planRevisions = merged.planRevisions;
+  kernel.runEvents = merged.runEvents;
+  kernel.trajectoryScore = merged.trajectoryScore;
+
+  safeDb(undefined, () => {
+    upsertCognitiveRun(kernel.run);
+    for (const fragment of input.fragments) {
+      for (const value of fragment.actionIdentities)
+        upsertCognitiveActionIdentity(value);
+      for (const value of fragment.governanceDecisions)
+        upsertCognitiveGovernanceDecision(value);
+      for (const value of fragment.guardrailTripwires)
+        upsertCognitiveGuardrailTripwire(value);
+      for (const value of fragment.policyDecisions)
+        upsertCognitivePolicyDecision(value);
+      for (const value of fragment.toolResults)
+        upsertCognitiveToolResult(value);
+      for (const value of fragment.executionSteps)
+        upsertCognitiveExecutionStep(value);
+      for (const value of fragment.evidenceArtifacts)
+        upsertCognitiveEvidenceArtifact(value);
+      for (const value of fragment.stepVerifications)
+        upsertCognitiveStepVerification(value);
+      for (const value of fragment.approvalPackets)
+        upsertCognitiveApprovalPacket(value);
+      for (const value of fragment.planRevisions)
+        upsertCognitivePlanRevision(value);
+      for (const value of fragment.runEvents) upsertCognitiveRunEvent(value);
+    }
+    upsertCognitiveExecutionLoopState(merged.loopStates[0]!);
+    upsertCognitiveTrajectoryScore(merged.trajectoryScore);
+    upsertCognitiveWorkbenchState(merged.workbenchState);
+    return undefined;
+  });
+}
+
+/**
+ * Advances the prepared kernel through exact, single-use durable leases. This
+ * path is deliberately read-only/staging-only; mutations remain owned by the
+ * existing action layer and its separate approval/receipt adapters.
+ */
+export async function continueCognitiveKernelDurably(
+  input: ContinueCognitiveKernelDurablyInput,
+): Promise<CognitiveKernelDurableContinuationResult> {
+  const kernel = input.cognitiveRun;
+  const frame = kernel.taskGraph.adaptiveFrame;
+  const graph = kernel.taskGraph.adaptivePlan;
+  if (!frame || !graph) {
+    throw new Error('Durable cognitive continuation requires adaptive state.');
+  }
+  if (
+    input.durableWork.planId !== graph.graphId ||
+    input.durableWork.cognitiveRunId !== kernel.run.runId
+  ) {
+    throw new Error('Durable work is not bound to this cognitive graph.');
+  }
+  const startedAt = input.now || nowIso();
+  const registry = ensureCognitiveToolRegistry(startedAt);
+  const providerSnapshots =
+    input.beginInput.providerHealthSnapshots ||
+    collectProviderHealthSnapshotsWithRecentLiveEvidence(startedAt, {
+      projectRoot: input.beginInput.projectRoot,
+    });
+  const provider = providerUsability(providerSnapshots);
+  const selectedSkill = selectSkillCard(input.beginInput);
+  const evidenceContract = buildEvidenceContract(input.beginInput);
+  const autonomyBudget =
+    kernel.autonomyBudget ||
+    buildAutonomyBudget({
+      mode: kernel.run.cognitiveMode,
+      taskFamily: input.beginInput.taskFamily,
+      approvalRequired:
+        input.beginInput.selectedSkillApprovalNeed === 'explicit',
+      hasAttachedCouncil: Boolean(
+        input.beginInput.providerCouncil?.councilRunId,
+      ),
+      now: startedAt,
+    });
+  const governancePolicy = ensureCognitiveGovernancePolicy(startedAt);
+  const toolPlans = kernel.taskGraph.subgoals.flatMap(
+    (subgoal) => subgoal.toolPlan,
+  );
+  const toolPolicy = validateToolPlanAgainstRegistry(toolPlans, registry);
+  const budgetPolicy = validateAutonomyBudget({
+    budget: autonomyBudget,
+    plans: toolPlans,
+  });
+  const primaryPlans = toolPlanFor(input.beginInput);
+  const planByActionId = new Map<string, CognitiveToolCallPlan>();
+  primaryPlans.forEach((plan, index) => {
+    planByActionId.set(`kernel:${plan.toolId}:${index + 1}`, plan);
+    if (
+      plan.actionClass === 'read_only_integration' ||
+      plan.actionClass === 'council'
+    ) {
+      planByActionId.set(`kernel:fallback:${plan.toolId}`, {
+        toolId: 'local_skill_library',
+        actionClass: 'local_lookup',
+        purpose: 'Use local metadata and name the unavailable live evidence.',
+        approvalRequired: false,
+      });
+    }
+  });
+  const fragments: CognitiveExecutionBundle[] = [];
+  const executionByNode = new Map<
+    string,
+    {
+      verified: boolean;
+      adaptiveStatus: 'success' | 'degraded' | 'terminal_failure';
+      failureClass: string | null;
+      postStateFingerprint: string;
+      verificationFingerprint: string;
+    }
+  >();
+  const invokedNodeIds = new Set<string>();
+  let snapshot: AdaptiveCognitionSnapshot = {
+    frame,
+    graph,
+    beliefs: kernel.taskGraph.adaptiveBeliefs || [],
+    evidence: kernel.taskGraph.adaptiveEvidence || [],
+  };
+  let work = getDurableWorkUnit(input.durableWork.workId) || input.durableWork;
+  let leasesConsumed = 0;
+  let nodesExecuted = 0;
+  let stoppedBecause: CognitiveKernelDurableContinuationResult['stoppedBecause'] =
+    'lease_budget';
+  const maxNodeLeases = Math.max(
+    1,
+    Math.min(
+      frame.budget.maxNodeExecutions,
+      Math.floor(input.maxNodeLeases || frame.budget.maxNodeExecutions),
+    ),
+  );
+
+  for (let index = 0; index < maxNodeLeases; index += 1) {
+    const tick = new Date(Date.parse(startedAt) + index * 10).toISOString();
+    const next = advanceAdaptiveCognition({
+      ...snapshot,
+      now: () => tick,
+    });
+    snapshot = {
+      frame: next.result.frame,
+      graph: next.result.graph,
+      beliefs: next.result.beliefs,
+      evidence: next.result.evidence,
+    };
+    const terminalVerifier =
+      next.kind === 'terminal' &&
+      next.result.status === 'satisfied' &&
+      next.result.verification.completionAuthorized;
+    if (next.kind !== 'execute_node' && !terminalVerifier) {
+      stoppedBecause = 'adaptive_stop';
+      break;
+    }
+    const expectedNodeId = terminalVerifier
+      ? next.result.graph.verificationNodeId
+      : next.node!.nodeId;
+    const binding = terminalVerifier
+      ? null
+      : input.bindings.find(
+          (candidate) => candidate.nodeId === expectedNodeId,
+        ) || null;
+    const actionClass = terminalVerifier
+      ? 'verification_test'
+      : binding?.durableActionClass;
+    if (!actionClass) {
+      throw new Error('The exact adaptive directive has no durable binding.');
+    }
+    work = getDurableWorkUnit(work.workId) || work;
+    const issued = issueDurableResumeGrant({
+      workId: work.workId,
+      binding: input.durableBinding,
+      actionClass,
+      nodeId: expectedNodeId,
+      now: tick,
+    });
+    const consumed = consumeResumeGrantAndAcquireLease({
+      token: issued.token,
+      binding: input.durableBinding,
+      actionClass,
+      workerId: input.workerId || `cognitive-kernel:${kernel.run.runId}`,
+      processGeneration: input.processGeneration,
+      now: tick,
+    });
+    if (consumed.status !== 'consumed' || !consumed.lease) {
+      throw new Error(
+        'The adaptive durable grant could not acquire its lease.',
+      );
+    }
+    leasesConsumed += 1;
+    const orchestrated = await orchestrateAdaptiveDurableDirective({
+      snapshot,
+      bindings: input.bindings,
+      planVersion: work.planVersion,
+      workId: work.workId,
+      leaseId: consumed.lease.leaseId,
+      processGeneration: consumed.lease.processGeneration,
+      executorScopeKey: input.executorScopeKey,
+      targetScopeKey: input.targetScopeKey,
+      origin: kernel.run.runOrigin,
+      callbacks: {
+        revalidateNode: ({ node }) => {
+          const adaptiveNode = snapshot.graph.nodes.find(
+            (candidate) => candidate.nodeId === node.nodeId,
+          );
+          const exact =
+            node.nodeId === snapshot.graph.verificationNodeId ||
+            Boolean(
+              adaptiveNode?.actionId &&
+              input.bindings.some(
+                (candidate) =>
+                  candidate.nodeId === node.nodeId &&
+                  candidate.actionId === adaptiveNode.actionId &&
+                  candidate.planContractDigest ===
+                    snapshot.graph.planContractDigest,
+              ),
+            );
+          return {
+            dependencyState: exact ? 'fresh' : 'changed',
+            targetState: exact ? 'fresh' : 'changed',
+            preStateFingerprint: runtimeHashId(
+              'adaptive:prestate',
+              `${snapshot.graph.planContractDigest}|${node.nodeId}|${input.targetScopeKey}`,
+            ),
+            freshSignalIds: exact
+              ? [
+                  snapshot.graph.frameContractDigest,
+                  snapshot.graph.planContractDigest,
+                ]
+              : [],
+          };
+        },
+        executeNode: ({ node }) => {
+          invokedNodeIds.add(node.nodeId);
+          if (node.nodeId === snapshot.graph.verificationNodeId) {
+            return { status: 'failed' as const };
+          }
+          const adaptiveNode = snapshot.graph.nodes.find(
+            (candidate) => candidate.nodeId === node.nodeId,
+          );
+          if (!adaptiveNode?.actionId) return { status: 'failed' as const };
+          let verified = false;
+          let adaptiveStatus: 'success' | 'degraded' | 'terminal_failure' =
+            'terminal_failure';
+          let failureClass: string | null = 'missing_execution_observation';
+          let seed = `${node.nodeId}|unverified`;
+          if (adaptiveNode.actionId === 'kernel:policy-verification') {
+            const policyPassed =
+              toolPolicy.pass &&
+              budgetPolicy.pass &&
+              !kernel.toolSimulations.some(
+                (simulation) => simulation.status === 'block',
+              );
+            // The policy decision itself is a determinate, independently
+            // verifiable observation even when it blocks the adaptive goal.
+            // Durable success means the observation was recorded, not that
+            // the task criterion was satisfied.
+            verified = true;
+            adaptiveStatus = policyPassed ? 'success' : 'terminal_failure';
+            failureClass = policyPassed ? null : 'policy_block';
+            seed = `${node.nodeId}|policy|${policyPassed ? 'pass' : 'block'}`;
+          } else {
+            const selectedPlan = planByActionId.get(adaptiveNode.actionId);
+            if (!selectedPlan || selectedPlan.toolId !== adaptiveNode.toolId) {
+              return { status: 'failed' as const };
+            }
+            const fragment = executeCognitiveToolPlan({
+              run: kernel.run,
+              goalText: input.beginInput.goal,
+              graph: kernel.taskGraph,
+              toolPlans: [selectedPlan],
+              toolSimulations: kernel.toolSimulations,
+              registry,
+              governancePolicy,
+              providerSnapshots,
+              provider,
+              selectedSkill,
+              providerCouncil: input.beginInput.providerCouncil,
+              evidenceContract,
+              autonomyBudget,
+              now: tick,
+              positionOffset:
+                kernel.executionSteps.length +
+                fragments.reduce(
+                  (total, candidate) => total + candidate.executionSteps.length,
+                  0,
+                ),
+            });
+            fragments.push(fragment);
+            const step = fragment.executionSteps[0] || null;
+            const result = step
+              ? fragment.toolResults.find(
+                  (candidate) => candidate.resultId === step.resultId,
+                ) || null
+              : null;
+            const verification = step
+              ? fragment.stepVerifications.find(
+                  (candidate) => candidate.stepId === step.stepId,
+                ) || null
+              : null;
+            const successfulOutcome = Boolean(
+              step &&
+              result &&
+              verification &&
+              step.status === 'executed' &&
+              result.status === 'succeeded' &&
+              verification.status === 'pass',
+            );
+            const degradedOutcome = Boolean(
+              step &&
+              result &&
+              verification &&
+              (step.status === 'degraded' ||
+                step.status === 'skipped' ||
+                result.status === 'degraded' ||
+                verification.status === 'warn' ||
+                verification.status === 'approval_staged'),
+            );
+            // A complete typed result plus its verifier is a durable
+            // observation. Its adaptive disposition remains separate, so a
+            // degraded or blocked lookup can never mint success evidence.
+            verified = Boolean(step && result && verification);
+            adaptiveStatus = successfulOutcome
+              ? 'success'
+              : degradedOutcome
+                ? 'degraded'
+                : 'terminal_failure';
+            failureClass = successfulOutcome
+              ? null
+              : result?.failureClass ||
+                verification?.blockerClass ||
+                `${step?.toolId || adaptiveNode.toolId || 'tool'}:${step?.status || 'missing'}`;
+            seed = `${node.nodeId}|${step?.stepId || 'missing'}|${result?.resultId || 'missing'}|${verification?.verificationId || 'missing'}|${adaptiveStatus}|${verified ? 'observed' : 'unverified'}`;
+          }
+          const postStateFingerprint = runtimeHashId(
+            'adaptive:poststate',
+            seed,
+          );
+          const verificationFingerprint = runtimeHashId(
+            'adaptive:verification',
+            `${seed}|${postStateFingerprint}`,
+          );
+          executionByNode.set(node.nodeId, {
+            verified,
+            adaptiveStatus,
+            failureClass,
+            postStateFingerprint,
+            verificationFingerprint,
+          });
+          if (verified) nodesExecuted += 1;
+          return {
+            status: verified ? ('succeeded' as const) : ('failed' as const),
+            postStateFingerprint,
+          };
+        },
+        verifyNode: ({ node, recovery }) => {
+          if (recovery) return { status: 'unknown' as const };
+          const execution = executionByNode.get(node.nodeId);
+          if (!execution?.verified) return { status: 'not_applied' as const };
+          return {
+            status: 'verified' as const,
+            verificationFingerprint: execution.verificationFingerprint,
+            postStateFingerprint: execution.postStateFingerprint,
+          };
+        },
+        replan: ({ nextPlanVersion }) => {
+          const compiled = compileAdaptiveDurablePlan({
+            frame: snapshot.frame,
+            graph: snapshot.graph,
+            bindings: input.bindings,
+            targetScopeKey: input.targetScopeKey,
+            planVersion: nextPlanVersion,
+          });
+          return {
+            pendingNodeIds: compiled.pendingNodeIds,
+            dependencyIds: compiled.dependencyIds,
+            verificationRequirementIds: compiled.verificationRequirementIds,
+            nextAction: 'Resume only the exact next adaptive node.',
+          };
+        },
+      },
+      mapVerifiedReceiptObservation: ({ receipt, defaultEvidence }) => {
+        const execution = executionByNode.get(receipt.nodeId);
+        if (!execution?.verified) {
+          throw new Error(
+            'The verified durable receipt has no exact kernel observation.',
+          );
+        }
+        if (execution.adaptiveStatus === 'success') {
+          return {
+            status: 'success',
+            summary:
+              'The exact kernel observation satisfied its node contract.',
+            evidence: [{ ...defaultEvidence }],
+          };
+        }
+        return {
+          status: execution.adaptiveStatus,
+          summary:
+            execution.adaptiveStatus === 'degraded'
+              ? 'The exact kernel read completed with a verified degraded result.'
+              : 'The exact kernel observation verified a blocking result.',
+          evidence: [
+            {
+              ...defaultEvidence,
+              supportsCriterionIds: [],
+            },
+          ],
+          failureClass:
+            execution.failureClass || 'verified_kernel_observation_blocked',
+          nextAction:
+            execution.adaptiveStatus === 'degraded'
+              ? 'Continue only with other verified evidence or a target-bound runtime outcome receipt.'
+              : 'Stop before claiming completion or use a different authorized plan node.',
+        };
+      },
+      now: tick,
+    });
+    snapshot = orchestrated.snapshot;
+    work = orchestrated.durable?.work || work;
+    if (orchestrated.durable?.status === 'work_completed') {
+      stoppedBecause = 'work_completed';
+      break;
+    }
+    if (orchestrated.durable?.status === 'replanned') {
+      // A successful durable replan is a fail-closed plan-version refresh,
+      // unless the selected adapter was actually invoked and returned a
+      // determinate failure. The lease used for a pre-invocation refresh is
+      // already counted, so resume only under a fresh single-use lease and
+      // remain bounded by maxNodeLeases. Never replay an invoked node here.
+      stoppedBecause = 'durable_replan';
+      if (!invokedNodeIds.has(expectedNodeId)) continue;
+      break;
+    }
+    if (orchestrated.durable?.status === 'replan_required') {
+      stoppedBecause = 'durable_replan';
+      break;
+    }
+    if (
+      orchestrated.durable &&
+      !['node_completed', 'work_completed'].includes(
+        orchestrated.durable.status,
+      )
+    ) {
+      stoppedBecause = 'approval_or_verification_wait';
+      break;
+    }
+  }
+
+  persistDurableCognitiveProgress({
+    kernel,
+    snapshot,
+    fragments,
+    provider,
+    selectedSkill,
+    evidenceContract,
+    autonomyBudget,
+    now: startedAt,
+  });
+  return {
+    cognitiveRun: kernel,
+    durableWork: getDurableWorkUnit(work.workId) || work,
+    leasesConsumed,
+    nodesExecuted,
+    stoppedBecause,
   };
 }
 
@@ -4937,36 +6464,41 @@ function outcomeScore(input: FinalizeCognitiveKernelOutcomeInput): number {
 function finalStatus(
   input: FinalizeCognitiveKernelOutcomeInput,
 ): CognitiveRunStatus {
+  if (
+    input.replyKind === 'approval_request' ||
+    input.cognitiveRun?.run.status === 'awaiting_approval'
+  ) {
+    return 'awaiting_approval';
+  }
+  if (input.replyKind === 'blocked_notice') return 'blocked';
   if (input.evaluationStatus === 'block' || input.answerClass === 'blocked') {
     return 'blocked';
   }
   if (
-    input.evaluatorFlags.some((flag) => /approval|send|mutating/i.test(flag)) ||
-    input.cognitiveRun?.run.cognitiveMode === 'approval_staged'
+    ['evidence_request', 'clarification', 'progress'].includes(
+      input.replyKind || '',
+    )
   ) {
-    return 'awaiting_approval';
+    return 'awaiting_evidence';
   }
   return 'answered';
 }
 
 function signalKind(
-  input: FinalizeCognitiveKernelOutcomeInput,
+  status: CognitiveRunStatus,
 ): CognitiveRewardSignalRecord['signalKind'] {
-  const status = finalStatus(input);
   if (status === 'blocked') return 'task_blocked';
+  if (status === 'awaiting_evidence') return 'evidence_required';
   if (status === 'awaiting_approval') return 'approval_required';
   return 'task_answered';
 }
 
 function reflectionKind(
   input: FinalizeCognitiveKernelOutcomeInput,
+  status: CognitiveRunStatus,
 ): CognitiveReflectionRecord['reflectionKind'] {
-  if (
-    input.evaluatorFlags.some((flag) => /approval|send|mutating/i.test(flag)) ||
-    input.cognitiveRun?.run.cognitiveMode === 'approval_staged'
-  ) {
-    return 'approval_blocked';
-  }
+  if (status === 'awaiting_evidence') return 'verifier_block';
+  if (status === 'awaiting_approval') return 'approval_blocked';
   if (input.blockerClass || input.answerClass === 'blocked') return 'failure';
   if (input.evaluationStatus === 'block') return 'verifier_block';
   if (input.evaluatorFlags.some((flag) => /provider/i.test(flag))) {
@@ -4992,6 +6524,8 @@ function upsertSkillFromOutcome(input: {
   flags: string[];
   now: string;
 }): CognitiveSkillCardRecord {
+  const completionVerified =
+    input.status === 'answered' || input.status === 'learned';
   const skillId =
     `cogskill:${input.run.taskFamily}:${input.run.selectedSkillId}`.replace(
       /[^a-zA-Z0-9:_.-]/g,
@@ -5047,9 +6581,11 @@ function upsertSkillFromOutcome(input: {
       ),
     ),
     verificationChecklistJson: input.run.verificationJson,
-    latestOutcomeScore: input.score,
+    latestOutcomeScore: completionVerified
+      ? input.score
+      : existing?.latestOutcomeScore || 0,
     promotionState: state,
-    usageCount: (existing?.usageCount || 0) + 1,
+    usageCount: (existing?.usageCount || 0) + (completionVerified ? 1 : 0),
     lastUsedAt: input.now,
   };
   safeDb(undefined, () => upsertCognitiveSkillCard(record));
@@ -5069,7 +6605,8 @@ function persistFinalCheckpoint(input: {
   });
   if (
     open?.runId === input.updated.runId &&
-    input.updated.status !== 'awaiting_approval'
+    input.updated.status !== 'awaiting_approval' &&
+    input.updated.status !== 'awaiting_evidence'
   ) {
     resolveCognitiveCheckpoint(open.checkpointId, {
       status: input.updated.status === 'blocked' ? 'blocked' : 'closed',
@@ -5154,6 +6691,243 @@ function persistGoalOutcome(input: {
   upsertCognitiveBlackboardEntry(outcomeEntry);
 }
 
+function finalizeAdaptiveTaskGraph(input: {
+  taskGraphJson: string;
+  completionEvidence?: AdaptiveEvidence[];
+  now: string;
+}): {
+  graphJson: string;
+  result: AdaptiveCognitionRunResult | null;
+  adaptivePresent: boolean;
+  completionAuthorized: boolean;
+} {
+  const graph = parseJsonSafe<Partial<CognitiveTaskGraph>>(
+    input.taskGraphJson,
+    {},
+  );
+  if (!graph.adaptiveFrame || !graph.adaptivePlan) {
+    return {
+      graphJson: input.taskGraphJson,
+      result: null,
+      adaptivePresent: false,
+      completionAuthorized: false,
+    };
+  }
+  const completionEvidence = input.completionEvidence || [];
+  const planForVerification = completionEvidence.length
+    ? reopenAdaptivePlanForEvidence(graph.adaptivePlan, input.now)
+    : graph.adaptivePlan;
+  const result = runAdaptiveCognition({
+    frame: graph.adaptiveFrame,
+    graph: planForVerification,
+    evidence: Array.from(
+      new Map(
+        [...(graph.adaptiveEvidence || []), ...completionEvidence].map(
+          (evidence) => [evidence.evidenceId, evidence],
+        ),
+      ).values(),
+    ),
+    beliefs: graph.adaptiveBeliefs || [],
+    now: () => input.now,
+    executor: () => ({
+      status: 'terminal_failure',
+      summary:
+        'Final verification never replays an action node; a fresh execution grant is required.',
+      evidence: [],
+      failureClass: 'action_replay_forbidden',
+    }),
+  });
+  const effectfulFrame =
+    graph.adaptiveFrame.authority.maximumActionClass ===
+    'approval_gated_mutation';
+  const effectBindingsPresent =
+    !effectfulFrame ||
+    graph.adaptiveFrame.successCriteria.every(
+      (criterion, index) =>
+        !criterion.required ||
+        index === 1 ||
+        (graph.adaptiveFrame!.contextRefs.some((ref) =>
+          ref.startsWith(`target:${criterion.criterionId}:`),
+        ) &&
+          graph.adaptiveFrame!.contextRefs.includes(
+            `receipt_required:${criterion.criterionId}`,
+          )),
+    );
+  const completionAuthorized =
+    effectBindingsPresent &&
+    result.status === 'satisfied' &&
+    result.verification.completionAuthorized;
+  if (!completionAuthorized && result.status === 'satisfied') {
+    result.status = 'awaiting_evidence';
+    result.graph.status = 'awaiting_evidence';
+    const completionNode = result.graph.nodes.find(
+      (node) => node.nodeId === result.graph.completionNodeId,
+    );
+    if (completionNode?.status === 'succeeded')
+      completionNode.status = 'blocked';
+    result.verification = {
+      ...result.verification,
+      status: 'block',
+      completionAuthorized: false,
+      reason: effectBindingsPresent
+        ? result.verification.reason
+        : 'Effect completion is blocked until criterion-specific target and receipt bindings are present.',
+    };
+    result.nextAction =
+      'Collect fresh target-bound postcondition evidence from a trusted receipt adapter.';
+  }
+  const updatedGraph: CognitiveTaskGraph = {
+    graphId: graph.graphId || result.graph.graphId,
+    loop: graph.loop || [],
+    subgoals: graph.subgoals || [],
+    selectedSkillId: graph.selectedSkillId,
+    adaptiveEngineVersion: result.engineVersion,
+    adaptiveFrame: result.frame,
+    adaptivePlan: result.graph,
+    adaptiveEvidence: result.evidence,
+    adaptiveBeliefs: result.beliefs,
+    adaptiveVerification: result.verification,
+    adaptiveStatus: result.status,
+  };
+  return {
+    graphJson: adaptiveTaskGraphJson(updatedGraph),
+    result,
+    adaptivePresent: true,
+    completionAuthorized,
+  };
+}
+
+/**
+ * Reconciles typed completion proof before delivery without recording an
+ * answered outcome. A prepare-only live run remains merely planned until its
+ * durable terminal verifier and the actual delivery both succeed.
+ */
+export function reconcileCognitiveKernelCompletionEvidence(input: {
+  cognitiveRun: CognitiveKernelResult | null | undefined;
+  completionEvidence: AdaptiveEvidence[];
+  now?: string;
+}): boolean {
+  const kernel = input.cognitiveRun;
+  if (!kernel?.run.taskGraphJson || input.completionEvidence.length === 0) {
+    return false;
+  }
+  const reconciledAt = input.now || nowIso();
+  const finalized = finalizeAdaptiveTaskGraph({
+    taskGraphJson: kernel.run.taskGraphJson,
+    completionEvidence: input.completionEvidence,
+    now: reconciledAt,
+  });
+  if (!finalized.result || !finalized.completionAuthorized) return false;
+  kernel.taskGraph = parseJsonSafe<CognitiveTaskGraph>(
+    finalized.graphJson,
+    kernel.taskGraph,
+  );
+  kernel.adaptiveRun = finalized.result;
+  kernel.run = {
+    ...kernel.run,
+    updatedAt: reconciledAt,
+    status: mapAdaptiveCognitiveRunStatus({
+      phase: 'begin',
+      adaptiveRun: finalized.result,
+    }),
+    taskGraphJson: finalized.graphJson,
+    nextAction: kernel.requiresDurableCompletion
+      ? 'Verify the terminal adaptive checkpoint before delivery.'
+      : kernel.run.nextAction,
+  };
+  safeDb(undefined, () => upsertCognitiveRun(kernel.run));
+  return true;
+}
+
+export interface CognitiveDeliveryAuthorization {
+  allowed: boolean;
+  replyKind: CognitiveReplyKind;
+  adaptiveStatus: AdaptiveCognitionRunResult['status'] | 'missing';
+  completionAuthorized: boolean;
+  reason: string;
+  safeFallbackText: string;
+}
+
+/** Pure pre-send claim gate. It never writes, executes, or delivers effects. */
+export function authorizeCognitiveReplyDelivery(input: {
+  cognitiveRun: CognitiveKernelResult | null | undefined;
+  replyKind?: CognitiveReplyKind;
+  completionEvidence?: AdaptiveEvidence[];
+  durableCompletionVerified?: boolean;
+  now?: string;
+}): CognitiveDeliveryAuthorization {
+  const replyKind = input.replyKind || 'completion';
+  const safeFallbackText =
+    'I’m not calling this complete yet. I’m waiting for fresh, target-bound verification before making that claim.';
+  const kernel = input.cognitiveRun;
+  if (!kernel?.run.taskGraphJson) {
+    const allowed =
+      replyKind === 'progress' || replyKind === 'evidence_request';
+    return {
+      allowed,
+      replyKind,
+      adaptiveStatus: 'missing',
+      completionAuthorized: false,
+      reason: allowed
+        ? 'A non-completion status reply is allowed without adaptive state.'
+        : 'Completion is blocked because adaptive state is missing.',
+      safeFallbackText,
+    };
+  }
+  const finalized = finalizeAdaptiveTaskGraph({
+    taskGraphJson: kernel.run.taskGraphJson,
+    completionEvidence: input.completionEvidence,
+    now: input.now || nowIso(),
+  });
+  const adaptiveStatus = finalized.result?.status || 'missing';
+  const completionAuthorized = Boolean(
+    finalized.result &&
+    finalized.result.status === 'satisfied' &&
+    finalized.completionAuthorized,
+  );
+  let allowed = false;
+  if (replyKind === 'completion') {
+    allowed =
+      completionAuthorized &&
+      (!kernel.requiresDurableCompletion ||
+        input.durableCompletionVerified === true);
+  } else if (replyKind === 'approval_request') {
+    allowed =
+      adaptiveStatus === 'awaiting_approval' ||
+      kernel.run.status === 'awaiting_approval';
+  } else if (replyKind === 'evidence_request') {
+    allowed =
+      adaptiveStatus === 'missing' ||
+      ['active', 'degraded', 'awaiting_evidence', 'budget_exhausted'].includes(
+        adaptiveStatus,
+      );
+  } else if (replyKind === 'clarification') {
+    allowed =
+      adaptiveStatus === 'awaiting_clarification' ||
+      finalized.result?.frame.ambiguity === 'blocking';
+  } else if (replyKind === 'blocked_notice') {
+    allowed = adaptiveStatus === 'blocked' || kernel.run.status === 'blocked';
+  } else if (replyKind === 'progress') {
+    allowed = true;
+  }
+  return {
+    allowed,
+    replyKind,
+    adaptiveStatus,
+    completionAuthorized,
+    reason: allowed
+      ? replyKind === 'completion'
+        ? 'Every required criterion has target-bound completion evidence.'
+        : 'The typed non-completion reply matches the adaptive stop state.'
+      : replyKind === 'completion'
+        ? completionAuthorized && kernel.requiresDurableCompletion
+          ? 'Completion text is blocked until the durable terminal verifier succeeds.'
+          : 'Completion text is blocked until adaptive verification authorizes it.'
+        : 'The typed reply does not match the current adaptive stop state.',
+    safeFallbackText,
+  };
+}
+
 export function finalizeCognitiveKernelOutcome(
   input: FinalizeCognitiveKernelOutcomeInput,
 ): void {
@@ -5165,31 +6939,51 @@ export function finalizeCognitiveKernelOutcome(
   const baseRun = stored || kernel.run;
   const endedAt = nowIso();
   const score = outcomeScore(input);
-  const status = finalStatus(input);
+  const requestedStatus = finalStatus(input);
+  const adaptiveFinalization = finalizeAdaptiveTaskGraph({
+    taskGraphJson: baseRun.taskGraphJson,
+    completionEvidence: input.completionEvidence,
+    now: endedAt,
+  });
+  const status = mapAdaptiveCognitiveRunStatus({
+    phase: 'finalize',
+    adaptiveRun: adaptiveFinalization.result,
+    legacyBlocked: requestedStatus === 'blocked',
+    legacyAwaitingApproval: requestedStatus === 'awaiting_approval',
+    legacyAwaitingEvidence: requestedStatus === 'awaiting_evidence',
+  });
+  const recordedScore =
+    status === 'awaiting_evidence' ? Math.min(score, 0.49) : score;
   const nextAction =
     status === 'blocked'
       ? 'Name the blocker and collect the missing read-only evidence or user clarification.'
       : status === 'awaiting_approval'
         ? 'Wait for explicit same-channel approval before any mutating action.'
-        : baseRun.runOrigin === 'live'
-          ? 'Use this outcome to reinforce the reusable skill candidate.'
-          : 'Record replay evidence without changing live learning state.';
+        : status === 'awaiting_evidence'
+          ? 'Collect fresh target-bound outcome evidence from a trusted execution or receipt adapter.'
+          : baseRun.runOrigin === 'live'
+            ? 'Use this outcome to reinforce the reusable skill candidate.'
+            : 'Record replay evidence without changing live learning state.';
   const isLiveRun = baseRun.runOrigin === 'live';
   const updated: CognitiveRunRecord = {
     ...baseRun,
     updatedAt: endedAt,
     status,
-    outcomeScore: score,
+    outcomeScore: recordedScore,
     nextAction,
+    taskGraphJson: adaptiveFinalization.graphJson,
     linkedSkillCardId: isLiveRun ? baseRun.linkedSkillCardId || null : null,
   };
-  const flags = input.evaluatorFlags.map((flag) =>
-    redactCouncilText(flag, 120),
-  );
+  const flags = [
+    ...input.evaluatorFlags.map((flag) => redactCouncilText(flag, 120)),
+    ...(status === 'awaiting_evidence'
+      ? ['adaptive_completion_unverified']
+      : []),
+  ];
   const skill = isLiveRun
     ? upsertSkillFromOutcome({
         run: updated,
-        score,
+        score: recordedScore,
         status,
         routeUsed: input.routeUsed,
         flags,
@@ -5199,16 +6993,32 @@ export function finalizeCognitiveKernelOutcome(
   updated.linkedSkillCardId = skill?.skillId || null;
   safeDb(undefined, () => {
     upsertCognitiveRun(updated);
+    if (adaptiveFinalization.result) {
+      persistCognitiveWorldBeliefs({
+        run: updated,
+        worldBeliefs: adaptiveFinalization.result.beliefs.map((belief) => ({
+          beliefId: belief.beliefId,
+          source: 'local_metadata',
+          summary: redactCouncilText(
+            `${belief.subject}.${belief.predicate}=${belief.value}; state=${belief.state}; class=${belief.evidenceClass}; scope=${belief.scope}; testable=${belief.testable ? 'yes' : 'no'}; contradictions=${belief.contradictionIds.length}.`,
+            520,
+          ),
+          confidence: belief.confidence,
+          freshness: belief.freshness,
+        })),
+        now: endedAt,
+      });
+    }
     persistFinalCheckpoint({
       updated,
       input,
-      score,
+      score: recordedScore,
       now: endedAt,
     });
     persistGoalOutcome({
       updated,
       outcome: input,
-      score,
+      score: recordedScore,
       now: endedAt,
     });
     persistTraceSpans([
@@ -5219,14 +7029,14 @@ export function finalizeCognitiveKernelOutcome(
         status:
           status === 'blocked'
             ? 'blocked'
-            : status === 'awaiting_approval'
+            : status === 'awaiting_approval' || status === 'awaiting_evidence'
               ? 'warn'
               : 'completed',
         summary: `Cognitive run finalized as ${status}.`,
         inputSummary: input.routeUsed,
         outputSummary: nextAction,
         metadata: {
-          score,
+          score: recordedScore,
           answerClass: input.answerClass,
           evidenceGap: input.evidenceGap,
           blockerClass: input.blockerClass || '',
@@ -5242,8 +7052,8 @@ export function finalizeCognitiveKernelOutcome(
       createdAt: endedAt,
       runId: updated.runId,
       skillId: skill?.skillId || null,
-      signalKind: signalKind(input),
-      score,
+      signalKind: signalKind(status),
+      score: recordedScore,
       summary: redactCouncilText(
         `Cognitive run ${updated.runId} ended as ${status}; answer=${input.answerClass}; route=${input.routeUsed}; gap=${input.evidenceGap}.`,
         520,
@@ -5257,7 +7067,7 @@ export function finalizeCognitiveKernelOutcome(
       runId: updated.runId,
       skillId: skill?.skillId || null,
       taskFamily: updated.taskFamily,
-      reflectionKind: reflectionKind(input),
+      reflectionKind: reflectionKind(input, status),
       summary: redactCouncilText(
         `${updated.taskFamily} route ${input.routeUsed} produced ${input.answerClass} with ${input.evaluationStatus} verification; raw content omitted.`,
         520,
@@ -5265,12 +7075,19 @@ export function finalizeCognitiveKernelOutcome(
       routeKey: redactCouncilText(input.routeUsed, 160),
       providerStateJson: updated.providerUsabilityJson,
       nextRule: redactCouncilText(nextAction, 420),
-      confidence: score,
+      confidence: recordedScore,
       privacyJson: updated.privacyJson,
     });
     return undefined;
   });
   kernel.run = updated;
+  if (adaptiveFinalization.result) {
+    kernel.taskGraph = parseJsonSafe<CognitiveTaskGraph>(
+      adaptiveFinalization.graphJson,
+      kernel.taskGraph,
+    );
+    kernel.adaptiveRun = adaptiveFinalization.result;
+  }
 }
 
 export interface CognitiveOwnerReviewResult {
@@ -5315,11 +7132,11 @@ export function assessCognitiveSkillPromotion(
   skill: CognitiveSkillCardRecord,
   referenceIso = nowIso(),
 ): CognitiveSkillPromotionAssessment {
-  const liveRunIds = new Set(
-    safeDb<CognitiveRunRecord[]>([], () =>
-      listCognitiveRuns({ runOrigin: 'live', limit: 1000 }),
-    ).map((run) => run.runId),
+  const liveRuns = safeDb<CognitiveRunRecord[]>([], () =>
+    listCognitiveRuns({ runOrigin: 'live', limit: 1000 }),
   );
+  const liveRunById = new Map(liveRuns.map((run) => [run.runId, run]));
+  const liveRunIds = new Set(liveRunById.keys());
   const ownerSignals = safeDb<CognitiveRewardSignalRecord[]>([], () =>
     listCognitiveRewardSignals({ skillId: skill.skillId, limit: 200 }),
   ).filter(
@@ -5339,7 +7156,22 @@ export function assessCognitiveSkillPromotion(
   }
   const reviews = [...latestReviewByRun.values()];
   const acceptedRunIds = reviews
-    .filter((signal) => signal.signalKind === 'user_acceptance')
+    .filter((signal) => {
+      if (signal.signalKind !== 'user_acceptance') return false;
+      const run = liveRunById.get(signal.runId);
+      if (!run) return false;
+      const graph = parseJsonSafe<Partial<CognitiveTaskGraph>>(
+        run.taskGraphJson,
+        {},
+      );
+      if (!graph.adaptiveFrame || !graph.adaptivePlan) {
+        return run.status === 'answered' || run.status === 'learned';
+      }
+      return (
+        graph.adaptiveStatus === 'satisfied' &&
+        graph.adaptiveVerification?.completionAuthorized === true
+      );
+    })
     .map((signal) => signal.runId);
   const negativeRuns = reviews.filter(
     (signal) => signal.signalKind === 'user_correction',
@@ -5507,6 +7339,74 @@ export function recordCognitiveOwnerReview(input: {
         : input.verdict === 'corrected'
           ? 'owner_corrected'
           : 'owner_rejected';
+  let reviewedRun = run;
+  let ownerAdaptiveResult: AdaptiveCognitionRunResult | null = null;
+  if (accepted) {
+    const taskGraph = parseJsonSafe<Partial<CognitiveTaskGraph>>(
+      run.taskGraphJson,
+      {},
+    );
+    const frame = taskGraph.adaptiveFrame;
+    if (frame && taskGraph.adaptivePlan) {
+      const attestedCriteria = Array.from(
+        new Map(
+          [frame.successCriteria[0], frame.successCriteria.at(-1)]
+            .filter((criterion): criterion is NonNullable<typeof criterion> =>
+              Boolean(criterion),
+            )
+            .map((criterion) => [criterion.criterionId, criterion]),
+        ).values(),
+      );
+      const attestationRef = runtimeHashId(
+        'adaptive:owner-verdict',
+        `${run.runId}|${input.feedbackId}|${reviewedAt}`,
+      );
+      const completionEvidence = attestedCriteria.flatMap((criterion) => {
+        const criterionTargetPrefix = `target:${criterion.criterionId}:`;
+        const target =
+          frame.contextRefs
+            .find((ref) => ref.startsWith(criterionTargetPrefix))
+            ?.slice(criterionTargetPrefix.length) ||
+          frame.contextRefs
+            .find((ref) => ref.startsWith('target:'))
+            ?.slice('target:'.length);
+        if (!target) return [];
+        return [
+          adaptiveEvidence({
+            evidenceId: `${attestationRef}:${criterion.criterionId}`,
+            createdAt: reviewedAt,
+            evidenceClass: 'user_attested',
+            origin: 'live',
+            source: 'explicit_owner_verdict',
+            claim:
+              'The owner explicitly accepted the bounded outcome; private response content was omitted.',
+            subject: target,
+            predicate: `owner_outcome_attestation:${criterion.criterionId}`,
+            value: 'accepted',
+            confidence: 0.96,
+            freshness: 'fresh',
+            scope: frame.authority.actorScope,
+            verification: 'verified',
+            supportsCriterionIds: [criterion.criterionId],
+            provenanceRefs: [`owner_verdict:${attestationRef}`],
+          }),
+        ];
+      });
+      const adaptiveFinalization = finalizeAdaptiveTaskGraph({
+        taskGraphJson: run.taskGraphJson,
+        completionEvidence,
+        now: reviewedAt,
+      });
+      ownerAdaptiveResult = adaptiveFinalization.result;
+      reviewedRun = {
+        ...run,
+        taskGraphJson: adaptiveFinalization.graphJson,
+        status: adaptiveFinalization.completionAuthorized
+          ? 'answered'
+          : run.status,
+      };
+    }
+  }
   insertCognitiveRewardSignal({
     signalId,
     createdAt: reviewedAt,
@@ -5532,7 +7432,7 @@ export function recordCognitiveOwnerReview(input: {
   });
 
   const updatedRun: CognitiveRunRecord = {
-    ...run,
+    ...reviewedRun,
     updatedAt: reviewedAt,
     outcomeScore: score,
     nextAction: accepted
@@ -5544,6 +7444,22 @@ export function recordCognitiveOwnerReview(input: {
           : 'Inspect this route and its evidence before reuse; do not promote from this outcome.',
   };
   upsertCognitiveRun(updatedRun);
+  if (ownerAdaptiveResult) {
+    persistCognitiveWorldBeliefs({
+      run: updatedRun,
+      worldBeliefs: ownerAdaptiveResult.beliefs.map((belief) => ({
+        beliefId: belief.beliefId,
+        source: 'local_metadata',
+        summary: redactCouncilText(
+          `${belief.subject}.${belief.predicate}=${belief.value}; state=${belief.state}; class=${belief.evidenceClass}; scope=${belief.scope}.`,
+          520,
+        ),
+        confidence: belief.confidence,
+        freshness: belief.freshness,
+      })),
+      now: reviewedAt,
+    });
+  }
 
   let promotionState: CognitiveSkillCardRecord['promotionState'] | null = null;
   let promotionAssessment: CognitiveSkillPromotionAssessment | null = null;

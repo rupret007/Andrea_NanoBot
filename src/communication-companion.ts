@@ -44,6 +44,7 @@ import type {
   CommunicationThreadRecord,
   CommunicationUrgency,
   LifeThread,
+  MessageActionDraftProvenance,
   ProfileFactWithSubject,
   ProfileSubject,
 } from './types.js';
@@ -96,6 +97,7 @@ export interface CommunicationDraftResult {
   linkedSubjects: ProfileSubject[];
   style: 'balanced' | 'warmer' | 'direct' | 'short';
   draftMode?: 'deterministic' | 'openai';
+  draftProvenance?: MessageActionDraftProvenance;
   fallbackNote?: string;
 }
 
@@ -1689,6 +1691,73 @@ function buildRelationshipAwareDraft(input: {
     .trim();
 }
 
+function extractExplicitOwnerSuppliedDraftBody(
+  value: string | undefined,
+): string | undefined {
+  const normalized = stripAssistantAddressing(value || '').trim();
+  const body = normalized.match(
+    /^(?:please\s+)?(?:draft|write|use)\s+(?:this\s+)?(?:reply|response|text|message)\s*:\s*(\S[\s\S]*)$/i,
+  )?.[1];
+  return body?.trim() || undefined;
+}
+
+function isExplicitOwnerSuppliedDraftBody(value: string | undefined): boolean {
+  return Boolean(extractExplicitOwnerSuppliedDraftBody(value));
+}
+
+function draftNeedsOwnerAnswer(input: {
+  request: CommunicationContextInput;
+  analysis: CommunicationAnalysisResult;
+}): boolean {
+  if (isExplicitOwnerSuppliedDraftBody(input.request.text)) return false;
+  // "...to <person> about <topic>" supplies an outbound topic. It is not
+  // equivalent to asking us to answer an inbound yes/no question.
+  if (extractExplicitDraftTopicFromPrompt(input.request.text || '')) {
+    return false;
+  }
+  if (
+    hasUnsafeLifeThreadContext(
+      input.analysis.linkedLifeThreads,
+      input.request.now || new Date(),
+    )
+  ) {
+    return true;
+  }
+  const evidence = normalizeText(
+    [input.analysis.messageText, input.analysis.summaryText]
+      .filter(Boolean)
+      .join(' '),
+  );
+  return (
+    /\?/.test(evidence) ||
+    /\b(?:asked|asks|wants|needs)\b[\s\S]{0,80}\b(?:answer|whether|which|when|where|what|who|how)\b/i.test(
+      evidence,
+    ) ||
+    /\b(?:can|could|would|will|do|did|are|were|should)\s+you\b|\b(?:should|can)\s+we\b|\blet me know\b/i.test(
+      evidence,
+    )
+  );
+}
+
+function ownerAnswerClarification(
+  request: CommunicationContextInput,
+  analysis: CommunicationAnalysisResult,
+): string {
+  const chatName = request.chatJid
+    ? getAllChats().find((chat) => chat.jid === request.chatJid)?.name
+    : undefined;
+  const messageName = normalizeText(analysis.messageText || '').match(
+    /^([A-Z][A-Za-z' -]{0,39}?)(?:\s+(?:said|asked)|\s*:)/,
+  )?.[1];
+  const personName = normalizeSpokenPersonName(
+    analysis.linkedSubjects[0]?.displayName ||
+      request.priorContext?.personName ||
+      (chatName !== request.chatJid ? chatName : undefined) ||
+      messageName,
+  );
+  return `What answer do you want to give ${personName || 'them'}? I won't guess your decision or create or send a draft until you tell me.`;
+}
+
 function inferStyle(text: string): CommunicationDraftResult['style'] {
   const normalized = text.toLowerCase();
   if (/\bshort\b/.test(normalized)) return 'short';
@@ -2038,6 +2107,7 @@ function finalizeCommunicationDraftResult(input: {
   style: CommunicationDraftResult['style'];
   draftText: string;
   draftMode?: CommunicationDraftResult['draftMode'];
+  draftProvenance?: CommunicationDraftResult['draftProvenance'];
   fallbackNote?: string;
 }): CommunicationDraftResult {
   if (input.analysis.thread) {
@@ -2069,6 +2139,7 @@ function finalizeCommunicationDraftResult(input: {
     linkedSubjects: input.analysis.linkedSubjects,
     style: input.style,
     draftMode: input.draftMode || 'deterministic',
+    draftProvenance: input.draftProvenance,
     fallbackNote: input.fallbackNote,
   };
 }
@@ -2101,6 +2172,9 @@ export function draftCommunicationReply(
   input: CommunicationContextInput,
 ): CommunicationDraftResult {
   const style = inferStyle(input.text || '');
+  const ownerSuppliedDraftBody = extractExplicitOwnerSuppliedDraftBody(
+    input.text,
+  );
   if (!hasConcreteCommunicationRewriteContext(input)) {
     return {
       ok: false,
@@ -2125,6 +2199,15 @@ export function draftCommunicationReply(
       clarificationQuestion:
         analysis.clarificationQuestion ||
         'Show me the message first so I can draft from the right context.',
+      linkedLifeThreads: analysis.linkedLifeThreads,
+      linkedSubjects: analysis.linkedSubjects,
+      style,
+    };
+  }
+  if (draftNeedsOwnerAnswer({ request: repairedInput, analysis })) {
+    return {
+      ok: false,
+      clarificationQuestion: ownerAnswerClarification(repairedInput, analysis),
       linkedLifeThreads: analysis.linkedLifeThreads,
       linkedSubjects: analysis.linkedSubjects,
       style,
@@ -2135,13 +2218,16 @@ export function draftCommunicationReply(
     baseInput: repairedInput,
     analysis,
     style,
-    draftText: buildDeterministicCommunicationDraft({
-      analysis,
-      baseInput: repairedInput,
-      groupFolder: repairedInput.groupFolder,
-      style,
-    }),
+    draftText:
+      ownerSuppliedDraftBody ||
+      buildDeterministicCommunicationDraft({
+        analysis,
+        baseInput: repairedInput,
+        groupFolder: repairedInput.groupFolder,
+        style,
+      }),
     draftMode: 'deterministic',
+    draftProvenance: ownerSuppliedDraftBody ? 'owner_literal' : undefined,
   });
 }
 
@@ -2149,6 +2235,9 @@ export async function draftCommunicationReplyWithChannelFluidity(
   input: CommunicationContextInput,
 ): Promise<CommunicationDraftResult> {
   const style = inferStyle(input.text || '');
+  const ownerSuppliedDraftBody = extractExplicitOwnerSuppliedDraftBody(
+    input.text,
+  );
   if (!hasConcreteCommunicationRewriteContext(input)) {
     return {
       ok: false,
@@ -2177,6 +2266,26 @@ export async function draftCommunicationReplyWithChannelFluidity(
       linkedSubjects: analysis.linkedSubjects,
       style,
     };
+  }
+  if (draftNeedsOwnerAnswer({ request: repairedInput, analysis })) {
+    return {
+      ok: false,
+      clarificationQuestion: ownerAnswerClarification(repairedInput, analysis),
+      linkedLifeThreads: analysis.linkedLifeThreads,
+      linkedSubjects: analysis.linkedSubjects,
+      style,
+    };
+  }
+
+  if (ownerSuppliedDraftBody) {
+    return finalizeCommunicationDraftResult({
+      baseInput: repairedInput,
+      analysis,
+      style,
+      draftText: ownerSuppliedDraftBody,
+      draftMode: 'deterministic',
+      draftProvenance: 'owner_literal',
+    });
   }
 
   const deterministicDraft = buildDeterministicCommunicationDraft({

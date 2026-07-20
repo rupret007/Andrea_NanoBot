@@ -46,7 +46,7 @@ describe('BlueBubbles outbound turn registry ownership', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Hello from the injected registry.',
+      rawText: 'Text Avery Example: Hello from the injected registry.',
       registry,
       resolveStoredRecipient: () => ({ state: 'missing' }),
       executionDeps: {

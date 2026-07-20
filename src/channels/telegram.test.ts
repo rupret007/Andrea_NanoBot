@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 
 import { describe, expect, it, vi } from 'vitest';
-import { GrammyError, HttpError } from 'grammy';
+import { Bot, GrammyError, HttpError } from 'grammy';
 
 import {
   TelegramChannel,
@@ -49,6 +49,116 @@ function telegramApiError(description: string, errorCode = 400): GrammyError {
     'sendMessage',
     {},
   );
+}
+
+type TelegramInboundFixtureKind = 'text' | 'media' | 'callback';
+
+const TELEGRAM_INBOUND_TEST_CHAT_ID = 4242;
+
+function buildTelegramInboundFixture(
+  kind: TelegramInboundFixtureKind,
+): Parameters<Bot['handleUpdate']>[0] {
+  const from = {
+    id: 77,
+    is_bot: false,
+    first_name: 'Owner',
+  };
+  const chat = {
+    id: TELEGRAM_INBOUND_TEST_CHAT_ID,
+    type: 'private' as const,
+    first_name: 'Owner',
+  };
+  const message = {
+    message_id: 101,
+    date: 1_776_000_000,
+    chat,
+    from,
+  };
+
+  if (kind === 'text') {
+    return {
+      update_id: 1,
+      message: {
+        ...message,
+        text: 'Summarize my recent texts.',
+      },
+    };
+  }
+  if (kind === 'media') {
+    return {
+      update_id: 2,
+      message: {
+        ...message,
+        voice: {
+          file_id: 'voice-file-1',
+          file_unique_id: 'voice-unique-1',
+          duration: 1,
+        },
+      },
+    };
+  }
+  return {
+    update_id: 3,
+    callback_query: {
+      id: 'callback-1',
+      from,
+      chat_instance: 'callback-chat-instance-1',
+      data: '/cursor-status',
+      message: {
+        ...message,
+        text: 'Owner controls',
+      },
+    },
+  };
+}
+
+async function createTelegramInboundTestBot(
+  onMessage: ConstructorParameters<typeof TelegramChannel>[1]['onMessage'],
+): Promise<Bot> {
+  const channel = new TelegramChannel('test-token', {
+    onMessage,
+    onChatMetadata: vi.fn(),
+    registeredGroups: () => ({
+      [`tg:${TELEGRAM_INBOUND_TEST_CHAT_ID}`]: {
+        name: 'Main',
+        folder: 'main',
+        trigger: '@Andrea',
+        added_at: '2026-07-16T00:00:00.000Z',
+        requiresTrigger: false,
+        isMain: true,
+      },
+    }),
+  });
+  (
+    channel as unknown as {
+      startPollingSession: () => Promise<void>;
+    }
+  ).startPollingSession = vi.fn().mockResolvedValue(undefined);
+  await channel.connect();
+
+  const bot = (channel as unknown as { bot: Bot }).bot;
+  bot.botInfo = {
+    id: 999,
+    is_bot: true,
+    first_name: 'Andrea',
+    username: 'andrea_test_bot',
+    can_join_groups: true,
+    can_read_all_group_messages: false,
+    supports_inline_queries: false,
+    can_connect_to_business: false,
+    has_main_web_app: false,
+    has_topics_enabled: false,
+    allows_users_to_create_topics: false,
+  };
+  bot.api.config.use((previous, method, payload, signal) => {
+    if (method === 'answerCallbackQuery') {
+      return Promise.resolve({ ok: true, result: true }) as ReturnType<
+        typeof previous
+      >;
+    }
+    return previous(method, payload, signal);
+  });
+  return bot;
 }
 
 describe('extractTelegramLeadingCommand', () => {
@@ -120,6 +230,9 @@ describe('buildTelegramHelpText', () => {
     expect(help).toContain('what bills do I need to pay this week');
     expect(help).toContain('reply help');
     expect(help).toContain('Not helpful');
+    expect(help).toContain('review my recent texts');
+    expect(help).toContain('draft #1');
+    expect(help).toContain('registered owner Telegram DM');
     expect(help).not.toContain('/alexa_status');
     expect(help).not.toContain('/amazon_status');
     expect(help).not.toContain('/amazon_search');
@@ -320,7 +433,10 @@ describe('buildTelegramFeaturesText', () => {
       'open follow-through across people, home, pills, bills, and projects',
     );
     expect(features).toContain(
-      'Messages is a best-effort bridge when available through BlueBubbles',
+      'configured owner Messages self-thread is a bounded companion control surface',
+    );
+    expect(features).toContain(
+      'ordinary contact and group threads remain data-only',
     );
     expect(features).toContain('private pilot issue');
     expect(features).toContain(
@@ -367,6 +483,86 @@ describe('splitTelegramMessage', () => {
     expect(chunks[0]).toHaveLength(4096);
     expect(chunks[1]).toHaveLength(904);
   });
+});
+
+describe('TelegramChannel inbound acceptance', () => {
+  it('uses the original Telegram card time as callback authorization time', async () => {
+    const onMessage = vi.fn<
+      ConstructorParameters<typeof TelegramChannel>[1]['onMessage']
+    >(async () => undefined);
+    const bot = await createTelegramInboundTestBot(onMessage);
+
+    await bot.handleUpdate(buildTelegramInboundFixture('callback'));
+
+    expect(onMessage).toHaveBeenCalledWith(
+      `tg:${TELEGRAM_INBOUND_TEST_CHAT_ID}`,
+      expect.objectContaining({
+        id: 'callback:callback-1',
+        timestamp: '2026-04-12T13:20:00.000Z',
+        ingress_received_at: '2026-04-12T13:20:00.000Z',
+      }),
+    );
+  });
+
+  it('retains the Telegram server time on a delayed typed update', async () => {
+    const onMessage = vi.fn<
+      ConstructorParameters<typeof TelegramChannel>[1]['onMessage']
+    >(async () => undefined);
+    const bot = await createTelegramInboundTestBot(onMessage);
+
+    await bot.handleUpdate(buildTelegramInboundFixture('text'));
+
+    expect(onMessage).toHaveBeenCalledWith(
+      `tg:${TELEGRAM_INBOUND_TEST_CHAT_ID}`,
+      expect.objectContaining({
+        id: '101',
+        timestamp: '2026-04-12T13:20:00.000Z',
+      }),
+    );
+    expect(onMessage.mock.calls[0]?.[1].ingress_received_at).toBeUndefined();
+  });
+
+  it.each(['text', 'media', 'callback'] as const)(
+    'waits for async onMessage acceptance for %s updates',
+    async (kind) => {
+      let releaseAcceptance: (() => void) | undefined;
+      const acceptance = new Promise<void>((resolve) => {
+        releaseAcceptance = resolve;
+      });
+      const onMessage = vi.fn(() => acceptance);
+      const bot = await createTelegramInboundTestBot(onMessage);
+      const settled = vi.fn();
+
+      const handling = bot
+        .handleUpdate(buildTelegramInboundFixture(kind))
+        .then(() => settled());
+
+      await vi.waitFor(() => {
+        expect(onMessage).toHaveBeenCalledTimes(1);
+      });
+      expect(settled).not.toHaveBeenCalled();
+
+      releaseAcceptance?.();
+      await handling;
+      expect(settled).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['text', 'media', 'callback'] as const)(
+    'propagates onMessage rejection for %s updates',
+    async (kind) => {
+      const failure = new Error(`inbound ${kind} acceptance failed`);
+      const onMessage = vi.fn(async () => {
+        throw failure;
+      });
+      const bot = await createTelegramInboundTestBot(onMessage);
+
+      await expect(
+        bot.handleUpdate(buildTelegramInboundFixture(kind)),
+      ).rejects.toMatchObject({ error: failure });
+      expect(onMessage).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 describe('TelegramChannel polling hardening', () => {

@@ -12,7 +12,7 @@ Communication companion is the core of journeys like:
 - `Remind me to reply later tonight.`
 
 The flagship product goal is that Andrea can move from open loop -> draft -> approve/send or defer without making the user restate the whole conversation.
-Telegram and BlueBubbles should now preserve the same communication-thread context across that journey, with Telegram as the richer review/edit surface and BlueBubbles as the calmer message-help surface.
+The registered owner Telegram chat and explicitly configured Messages self-thread share the same short-lived recent-summary continuation seed when both are bound to the same companion group folder. That lets a recent-text review or summary started on either owner surface continue on the other without restating it. Ordinary Messages contacts/groups, non-owner Telegram chats, unconfigured self-thread placeholders, and differently bound folders cannot read, write, or clear that owner seed. Generic seeds expire after ten minutes; review-backed seeds retain only their independently validated review window. Other conversation state remains scoped according to its own feature contract.
 
 This is not a full inbox app, not a CRM, and not an auto-reply system.
 
@@ -78,7 +78,7 @@ Out of scope in v1:
 - unapproved or automatic first-contact message sending
 - autonomous follow-up spam
 
-BlueBubbles V1 can now work across synced chats, but Andrea should still wake only on explicit `@Andrea` mentions or the default `@OpenClaw` helper alias and should not behave like a passive inbox triage bot.
+BlueBubbles V1 can sync contact and group chats as communication data, but only the explicitly configured owner self-thread can wake Andrea. Alias text in ordinary contact or group messages never turns those threads into control surfaces.
 
 ## What Andrea Can Do
 
@@ -175,8 +175,9 @@ Telegram:
 - can send or stage a recipient-bound text to an existing synced one-to-one
   BlueBubbles conversation, exact contact, or explicit phone/email from the
   registered main chat
-- treats a direct, explicit owner send imperative as the approval required by
-  the runtime capability contract; `draft` or `prepare` wording stays unsent
+- treats a direct owner send imperative as recipient/body selection only; all
+  `Text`, `draft`, and `prepare` wording stays unsent until a separate fresh
+  `Send now` or `send it` approval is bound to the presented action
 - reports success only after binding a provider receipt to the immutable
   approved recipient/body snapshot; missing, partial, group, or ambiguous
   recipients fail closed
@@ -206,13 +207,19 @@ BlueBubbles:
 - sensitive or legacy planning titles are replaced before persistence and are
   omitted from provider prompts; the optional recent-text cloud pass does not
   receive unrelated profile or life-thread memory
+- a fresh direct imperative such as `Text Avery Example: Dinner is ready.`
+  selects and displays the exact recipient/body but does not send; only a
+  separate fresh `Send now`/`send it` approval on that presented action may
+  enter provider dispatch
+- style or authoring instructions remain review-staged. Andrea never appends a
+  generic canned joke or other unrelated recipient-facing prose
 
 For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md).
 
 ## Practical Prompts
 
-- `Text Travis Story: Dinner is ready.`
-- `Send a text message to Travis Story saying Dinner is ready.`
+- `Text Avery Example: Dinner is ready.`
+- `Send a text message to Avery Example saying Dinner is ready.`
 - `Summarize this message: Candace: Can you let me know if dinner still works tonight?`
 - `What should I say back?`
 - `Give me a short reply.`

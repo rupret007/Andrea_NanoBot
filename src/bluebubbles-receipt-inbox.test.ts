@@ -597,4 +597,46 @@ describe('BlueBubbles durable receipt inbox', () => {
       acceptedAt: '2026-07-16T12:10:01.100Z',
     });
   });
+
+  it('terminally ignores the exact stale claim even while its old lease is present', () => {
+    const store = openStore(createDatabasePath('claim-ignore'));
+    const first = store.claimCanonicalSelfThreadIngress({
+      canonicalScope: 'bb:iMessage;-;owner@example.invalid',
+      ownerAuthored: true,
+      body: '@Andrea never replay this stale turn',
+      providerTimestamp: '2026-07-16T12:00:00.000Z',
+      now: new Date('2026-07-16T12:20:00.000Z'),
+      processingLeaseMs: 60_000,
+    });
+
+    expect(
+      store.ignoreCanonicalSelfThreadIngressClaim({
+        claimId: first.claimId,
+        claimedAt: first.claimedAt,
+        ignoredAt: new Date('2026-07-16T12:20:01.000Z'),
+      }),
+    ).toBe(true);
+    expect(
+      store.ignoreCanonicalSelfThreadIngressClaim({
+        claimId: first.claimId,
+        claimedAt: first.claimedAt,
+        ignoredAt: new Date('2026-07-16T12:20:02.000Z'),
+      }),
+    ).toBe(true);
+
+    const redelivery = store.claimCanonicalSelfThreadIngress({
+      canonicalScope: 'bb:iMessage;-;owner@example.invalid',
+      ownerAuthored: true,
+      body: '@Andrea never replay this stale turn',
+      providerTimestamp: '2026-07-16T12:00:00.500Z',
+      now: new Date('2026-07-16T15:20:00.000Z'),
+    });
+    expect(redelivery).toMatchObject({
+      claimId: first.claimId,
+      claimedAt: first.claimedAt,
+      disposition: 'mirror',
+      shouldProcess: false,
+      acceptedAt: '2026-07-16T12:20:01.000Z',
+    });
+  });
 });

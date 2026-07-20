@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _initTestDatabase,
@@ -8,7 +8,12 @@ import {
   getTaskById,
   setRegisteredGroup,
 } from './db.js';
-import { processShoppingRpcIpc, processTaskIpc, IpcDeps } from './ipc.js';
+import {
+  isIpcMessageAuthorized,
+  processShoppingRpcIpc,
+  processTaskIpc,
+  IpcDeps,
+} from './ipc.js';
 import {
   DisabledOpenClawSkill,
   EnabledOpenClawSkill,
@@ -299,6 +304,10 @@ beforeEach(() => {
   };
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 // --- schedule_task authorization ---
 
 describe('schedule_task authorization', () => {
@@ -375,6 +384,88 @@ describe('schedule_task authorization', () => {
 
     const allTasks = getAllTasks();
     expect(allTasks.length).toBe(0);
+  });
+
+  it('rejects a generic task targeting an external BlueBubbles thread', async () => {
+    const targetJid = 'bb:iMessage;-;+15551234567';
+    groups[targetJid] = {
+      name: 'External contact',
+      folder: 'bb-external',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+    };
+
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'send a reminder later',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00',
+        targetJid,
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(getAllTasks()).toEqual([]);
+    expect(sentMessages).toEqual([]);
+  });
+
+  it('rejects other IPC work targeting an external BlueBubbles thread before side effects', async () => {
+    const targetJid = 'bb:iMessage;+;family-group';
+    groups[targetJid] = {
+      name: 'Family group',
+      folder: 'bb-family-group',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+    };
+
+    await processTaskIpc(
+      {
+        type: 'create_cursor_agent',
+        prompt: 'work on the repository',
+        targetJid,
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(createdCursorAgents).toEqual([]);
+    expect(sentMessages).toEqual([]);
+    expect(getAllTasks()).toEqual([]);
+  });
+
+  it('allows a generic task targeting the configured BlueBubbles owner self-thread', async () => {
+    const targetJid = 'bb:iMessage;-;+12025550199';
+    vi.stubEnv('BLUEBUBBLES_CANONICAL_SELF_THREAD_JID', targetJid);
+    groups[targetJid] = {
+      name: 'Owner self-thread',
+      folder: 'bb-owner-self',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+    };
+
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'send a reminder later',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00',
+        targetJid,
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(getAllTasks()).toMatchObject([
+      {
+        group_folder: 'bb-owner-self',
+        chat_jid: targetJid,
+      },
+    ]);
   });
 
   it('rejects assistant task creation with a nonempty shell script', async () => {
@@ -998,19 +1089,21 @@ describe('refresh_groups authorization', () => {
 });
 
 // --- IPC message authorization ---
-// Tests the authorization pattern from startIpcWatcher (ipc.ts).
-// The logic: isMain || (targetGroup && targetGroup.folder === sourceGroup)
+// Tests the shared authorization boundary used by startIpcWatcher (ipc.ts).
 
 describe('IPC message authorization', () => {
-  // Replicate the exact check from the IPC watcher
   function isMessageAuthorized(
     sourceGroup: string,
     isMain: boolean,
     targetChatJid: string,
     registeredGroups: Record<string, RegisteredGroup>,
   ): boolean {
-    const targetGroup = registeredGroups[targetChatJid];
-    return isMain || (!!targetGroup && targetGroup.folder === sourceGroup);
+    return isIpcMessageAuthorized({
+      sourceGroup,
+      isMain,
+      targetChatJid,
+      registeredGroups,
+    });
   }
 
   it('main group can send to any group', () => {
@@ -1044,9 +1137,35 @@ describe('IPC message authorization', () => {
   });
 
   it('main group can send to unregistered JID', () => {
-    // Main is always authorized regardless of target
     expect(
       isMessageAuthorized('whatsapp_main', true, 'unknown@g.us', groups),
+    ).toBe(true);
+  });
+
+  it('main group cannot use raw IPC to text a BlueBubbles contact or group', () => {
+    expect(
+      isMessageAuthorized(
+        'whatsapp_main',
+        true,
+        'bb:iMessage;-;+15551234567',
+        groups,
+      ),
+    ).toBe(false);
+    expect(
+      isMessageAuthorized(
+        'whatsapp_main',
+        true,
+        'bb:iMessage;+;family-group',
+        groups,
+      ),
+    ).toBe(false);
+  });
+
+  it('allows raw IPC only to the explicitly configured BlueBubbles owner self-thread', () => {
+    const selfThreadJid = 'bb:iMessage;-;+12025550199';
+    vi.stubEnv('BLUEBUBBLES_CANONICAL_SELF_THREAD_JID', selfThreadJid);
+    expect(
+      isMessageAuthorized('whatsapp_main', true, selfThreadJid, groups),
     ).toBe(true);
   });
 });

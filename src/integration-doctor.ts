@@ -283,7 +283,7 @@ function normalizeBlueBubbles(
   }
   if (directChatGate) {
     safeActions.push(
-      'For the ignored direct 1:1 thread, send @Andrea once in that same thread to reactivate fresh context.',
+      'Keep ordinary Messages contact and group threads data-only. Use @Andrea only in the configured owner self-thread, or use the registered main Telegram chat.',
     );
   }
   return surfaceStatus({
@@ -311,7 +311,7 @@ function normalizeBlueBubbles(
         ? 'Same-thread proof still needs a real deferred message_action decision.'
         : 'Same-thread proof is fresh.',
       directChatGate
-        ? `Latest ignored direct chat needs @Andrea once before bare follow-ups: ${truth.bluebubbles.detectionDetail}`
+        ? 'The latest ordinary Messages contact/group event was retained as data-only. It cannot become an Andrea control thread; use the configured owner self-thread or the registered main Telegram chat.'
         : '',
     ]
       .filter(Boolean)
@@ -734,7 +734,7 @@ const FIX_GUIDANCE: Record<string, string[]> = {
     'BlueBubbles transport is usable when the Mac BlueBubbles server is online.',
     'Run npm run debug:bluebubbles -- --live.',
     'In the canonical self-thread, send @Andrea start bluebubbles proof, then reply send it later tonight.',
-    'For ignored direct 1:1 chats, send @Andrea once in that same thread to create fresh context.',
+    'Keep ordinary Messages contact and group threads data-only. Use @Andrea only in the configured owner self-thread, or use the registered main Telegram chat.',
   ],
   alexa: [
     'Alexa needs manual public ingress proof.',

@@ -6,14 +6,21 @@ import {
   reconcileInterruptedAgentRuntimeRuns,
   recordAgentRuntimeTruthAudit,
 } from './agent-runtime-spine.js';
+import type { AdaptiveDurableNodeBinding } from './adaptive-cognition-durable-adapter.js';
+import {
+  buildAdaptivePlanGraph,
+  createAdaptiveProblemFrame,
+} from './adaptive-cognition-engine.js';
 import {
   _closeDatabase,
   _initTestDatabase,
   getAgentOSEpisode,
   getAgentRuntimeRun,
+  getDurableWorkCheckpoint,
   listAgentOSEpisodeSteps,
   listAgentOSTrajectoryEvals,
   listCognitiveApprovalPackets,
+  listDurableEffectReceipts,
 } from './db.js';
 import { beginCognitiveKernelRun } from './cognitive-kernel.js';
 import {
@@ -22,6 +29,132 @@ import {
   orchestrateNextDurableNode,
 } from './durable-work-continuity.js';
 import { runTruthEngine } from './truth-engine.js';
+
+function adaptiveRuntimeFixture(input: {
+  targetScopeKey: string;
+  effectful?: boolean;
+}) {
+  const criterionId = input.effectful
+    ? 'criterion:runtime-effect'
+    : 'criterion:runtime-read';
+  const frame = createAdaptiveProblemFrame({
+    frameId: input.effectful ? 'frame:runtime-effect' : 'frame:runtime-read',
+    createdAt: '2026-07-12T12:00:00.000Z',
+    objective: input.effectful
+      ? 'Apply one explicitly bound effect and verify its receipt.'
+      : 'Inspect one explicitly bound target and verify the observation.',
+    taskFamily: input.effectful ? 'communication' : 'assistant',
+    channel: 'telegram',
+    successCriteria: [
+      {
+        criterionId,
+        description: 'The exact target has independently verified evidence.',
+        requiredEvidenceClasses: ['observed'],
+        minimumConfidence: 0.8,
+      },
+    ],
+    authority: {
+      actorScope: 'telegram:main',
+      maximumActionClass: input.effectful
+        ? 'approval_gated_mutation'
+        : 'read_only',
+    },
+    contextRefs: [
+      `target:${criterionId}:${input.targetScopeKey}`,
+      ...(input.effectful ? [`receipt_required:${criterionId}`] : []),
+    ],
+  });
+  const graph = buildAdaptivePlanGraph({
+    graphId: input.effectful
+      ? 'adaptive:graph:runtime-effect'
+      : 'adaptive:graph:runtime-read',
+    createdAt: frame.createdAt,
+    frame,
+    actions: [
+      {
+        actionId: input.effectful
+          ? 'adaptive:runtime:send'
+          : 'adaptive:runtime:inspect',
+        title: input.effectful
+          ? 'Apply the exact approved effect'
+          : 'Inspect the exact bounded target',
+        purpose: input.effectful
+          ? 'Use only the explicitly bound effect adapter.'
+          : 'Use only the explicitly bound read adapter.',
+        toolId: input.effectful
+          ? 'runtime-effect-adapter'
+          : 'runtime-read-adapter',
+        actionClass: input.effectful ? 'mutation' : 'local_lookup',
+        mutationClass: input.effectful ? 'external_irreversible' : 'none',
+        approvalRequired: input.effectful === true,
+        requiredEvidence: input.effectful
+          ? ['effect_receipt', 'postcondition']
+          : ['bounded_observation'],
+        producesCriterionIds: [criterionId],
+        expectedEvidenceClass: 'observed',
+        priority: 1,
+        maxAttempts: 1,
+        timeoutMs: 2_000,
+        verifier: {
+          kind: input.effectful ? 'receipt' : 'postcondition',
+          requirementIds: input.effectful
+            ? ['effect_receipt', 'postcondition']
+            : ['bounded_observation'],
+        },
+      },
+    ],
+  });
+  const node = graph.nodes.find((candidate) =>
+    ['act', 'recover'].includes(candidate.kind),
+  )!;
+  const bindings: AdaptiveDurableNodeBinding[] = [
+    {
+      graphId: graph.graphId,
+      planContractDigest: graph.planContractDigest,
+      nodeId: node.nodeId,
+      actionId: node.actionId!,
+      toolId: node.toolId,
+      durableActionClass: input.effectful ? 'send' : 'local_lookup',
+      effectClass: input.effectful ? 'external_effect' : 'read_only',
+      targetScopeKey: input.targetScopeKey,
+      evidenceSubject: input.targetScopeKey,
+      criterionIds: [...node.producesCriterionIds],
+      requiredEvidenceIds: [...node.requiredEvidence],
+      verifierRequirementIds: [...node.verifier.requirementIds],
+    },
+  ];
+  return { frame, graph, node, bindings };
+}
+
+function beginAdaptiveRuntimeCognitive(input: {
+  turnId: string;
+  fixture: ReturnType<typeof adaptiveRuntimeFixture>;
+  effectful?: boolean;
+}) {
+  const cognitive = beginCognitiveKernelRun({
+    turnId: input.turnId,
+    channel: 'telegram',
+    groupFolder: 'main',
+    taskFamily: input.effectful ? 'communication' : 'assistant',
+    goal: input.fixture.frame.objective,
+    requestRoute: input.effectful ? 'message_action' : 'local_status',
+    selectedSkillId: input.effectful
+      ? 'communication.send'
+      : 'assistant.daily_guidance',
+    selectedSkillPurpose: input.effectful
+      ? 'Prepare one exact approval-gated effect.'
+      : 'Inspect one exact read-only target.',
+    selectedSkillApprovalNeed: input.effectful ? 'explicit' : 'none',
+    selectedSkillSideEffectRisk: input.effectful ? 'high' : 'none',
+    selectedSkillEvidenceLevel: 'strong',
+    executionMode: 'prepare_only',
+  });
+  cognitive.taskGraph.adaptiveFrame = input.fixture.frame;
+  cognitive.taskGraph.adaptivePlan = input.fixture.graph;
+  cognitive.taskGraph.adaptiveBeliefs = [];
+  cognitive.taskGraph.adaptiveEvidence = [];
+  return cognitive;
+}
 
 describe('agent runtime spine lifecycle', () => {
   beforeEach(() => _initTestDatabase());
@@ -305,5 +438,186 @@ describe('agent runtime spine lifecycle', () => {
       }
     }
     expect(finalStatus).toBe('work_completed');
+  });
+
+  it('projects new durable work from the authoritative adaptive graph without executing it', () => {
+    const turnId = 'runtime-adaptive-authoritative';
+    const targetScopeKey = 'runtime-adaptive-read-target';
+    const fixture = adaptiveRuntimeFixture({ targetScopeKey });
+    const cognitive = beginAdaptiveRuntimeCognitive({ turnId, fixture });
+
+    const runtime = beginAgentRuntimeSpineRun({
+      turnId,
+      channel: 'telegram',
+      groupFolder: 'main',
+      actorId: 'runtime-adaptive-owner',
+      chatId: 'runtime-adaptive-chat',
+      targetScopeKey,
+      explicitlyDurable: true,
+      taskFamily: 'assistant',
+      requestRoute: 'local_status',
+      goal: 'Inspect the exact bounded target.',
+      cognitiveRun: cognitive,
+      adaptiveDurable: { bindings: fixture.bindings },
+      generatedAt: '2026-07-12T12:50:00.000Z',
+      mode: 'assistive',
+    });
+
+    const expectedNodeIds = [
+      fixture.node.nodeId,
+      fixture.graph.verificationNodeId,
+    ];
+    expect(runtime?.adaptiveDurable).toMatchObject({
+      disposition: 'authoritative',
+      nextNodeId: fixture.node.nodeId,
+    });
+    expect(runtime?.durableWork).toMatchObject({
+      planId: fixture.graph.graphId,
+      status: 'ready',
+      runtimeRunId: runtime?.run.runtimeRunId,
+      cognitiveRunId: cognitive.run.runId,
+    });
+    expect(
+      runtime?.adaptiveDurable?.compiled?.plan.nodes.map((node) => node.nodeId),
+    ).toEqual(expectedNodeIds);
+    expect(
+      JSON.parse(
+        runtime?.adaptiveDurable?.checkpoint?.pendingNodeIdsJson || '[]',
+      ),
+    ).toEqual(expectedNodeIds);
+    expect(runtime?.adaptiveDurable?.checkpoint?.runtimeCheckpointId).toBe(
+      runtime?.report.checkpoints[0]?.checkpointId,
+    );
+    expect(
+      listDurableEffectReceipts({
+        workId: runtime?.durableWork?.workId || 'missing',
+      }),
+    ).toEqual([]);
+  });
+
+  it('stages effectful adaptive approval for the exact bound node without executing it', () => {
+    const turnId = 'runtime-adaptive-exact-approval';
+    const targetScopeKey = 'runtime-adaptive-effect-target';
+    const fixture = adaptiveRuntimeFixture({
+      targetScopeKey,
+      effectful: true,
+    });
+    const cognitive = beginAdaptiveRuntimeCognitive({
+      turnId,
+      fixture,
+      effectful: true,
+    });
+
+    const runtime = beginAgentRuntimeSpineRun({
+      turnId,
+      channel: 'telegram',
+      groupFolder: 'main',
+      actorId: 'runtime-adaptive-owner',
+      chatId: 'runtime-adaptive-chat',
+      targetScopeKey,
+      explicitlyDurable: true,
+      taskFamily: 'communication',
+      requestRoute: 'message_action',
+      goal: 'Apply the exact bounded operation.',
+      cognitiveRun: cognitive,
+      adaptiveDurable: { bindings: fixture.bindings },
+      generatedAt: '2026-07-12T13:00:00.000Z',
+      mode: 'assistive',
+    });
+
+    expect(runtime?.adaptiveDurable).toMatchObject({
+      disposition: 'authoritative',
+      nextNodeId: fixture.node.nodeId,
+    });
+    expect(runtime?.durableWork).toMatchObject({
+      planId: fixture.graph.graphId,
+      status: 'awaiting_approval',
+    });
+    const packets = listCognitiveApprovalPackets({
+      runId: cognitive.run.runId,
+    }).filter(
+      (packet) => packet.durableWorkId === runtime?.durableWork?.workId,
+    );
+    expect(packets).toHaveLength(1);
+    expect(packets[0]).toMatchObject({
+      actionClass: 'send',
+      status: 'staged',
+      durableCheckpointId:
+        runtime?.adaptiveDurable?.checkpoint?.durableCheckpointId,
+    });
+    expect(JSON.parse(packets[0]!.decisionJson)).toMatchObject({
+      nodeId: fixture.node.nodeId,
+      externalActionExecuted: false,
+      metadataOnly: true,
+    });
+    expect(
+      listDurableEffectReceipts({
+        workId: runtime?.durableWork?.workId || 'missing',
+      }),
+    ).toEqual([]);
+  });
+
+  it('keeps an existing legacy durable plan pinned during adaptive rollout', () => {
+    const turnId = 'runtime-adaptive-legacy-pinned';
+    const targetScopeKey = 'runtime-adaptive-pinned-target';
+    const baseInput = {
+      turnId,
+      channel: 'telegram',
+      groupFolder: 'main',
+      actorId: 'runtime-adaptive-owner',
+      chatId: 'runtime-adaptive-chat',
+      targetScopeKey,
+      explicitlyDurable: true,
+      taskFamily: 'assistant',
+      requestRoute: 'local_status',
+      goal: 'Inspect and verify one bounded local mission.',
+      mode: 'assistive' as const,
+    };
+    const legacy = beginAgentRuntimeSpineRun({
+      ...baseInput,
+      generatedAt: '2026-07-12T13:10:00.000Z',
+    });
+    const legacyPendingNodeIds = JSON.parse(
+      legacy?.durableWork?.checkpointHeadId
+        ? getDurableWorkCheckpoint(legacy.durableWork.checkpointHeadId)
+            ?.pendingNodeIdsJson || '[]'
+        : '[]',
+    );
+    const fixture = adaptiveRuntimeFixture({ targetScopeKey });
+    const cognitive = beginAdaptiveRuntimeCognitive({ turnId, fixture });
+
+    const adaptive = beginAgentRuntimeSpineRun({
+      ...baseInput,
+      cognitiveRun: cognitive,
+      adaptiveDurable: { bindings: fixture.bindings },
+      generatedAt: '2026-07-12T13:11:00.000Z',
+    });
+
+    expect(legacy?.durableWork?.planId).toBeNull();
+    expect(adaptive?.durableWork).toMatchObject({
+      workId: legacy?.durableWork?.workId,
+      planId: null,
+      checkpointHeadId: legacy?.durableWork?.checkpointHeadId,
+    });
+    expect(adaptive?.adaptiveDurable).toMatchObject({
+      disposition: 'legacy_pinned',
+      compiled: null,
+      nextNodeId: null,
+    });
+    expect(
+      JSON.parse(
+        adaptive?.adaptiveDurable?.checkpoint?.pendingNodeIdsJson || '[]',
+      ),
+    ).toEqual(legacyPendingNodeIds);
+    expect(legacyPendingNodeIds).toEqual([
+      'tool_step',
+      'verification',
+      'outcome',
+    ]);
+    expect(
+      listDurableEffectReceipts({
+        workId: adaptive?.durableWork?.workId || 'missing',
+      }),
+    ).toEqual([]);
   });
 });

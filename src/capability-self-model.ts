@@ -750,7 +750,7 @@ export function formatCapabilityNaturalResponse(
         const sourceChannels =
           resolveRuntimeCapabilitySourceChannels(registration);
         lines.push(
-          `- ${state.displayName}: registry-owned executable binding ${toolId} is registered and exposed for ${sourceChannels.join(', ')}. An explicit send request is the authorization; I check current provider health and write permission immediately before dispatch. Historical proof is ${state.proofStatus.replace(/_/g, ' ')} and is diagnostic, not a capability denial.`,
+          `- ${state.displayName}: registry-owned executable binding ${toolId} is registered and exposed for ${sourceChannels.join(', ')}. A fresh send imperative stages the exact recipient and body; a separate fresh Send now/send it approval authorizes dispatch. I check current provider health and write permission immediately before dispatch. Historical proof is ${state.proofStatus.replace(/_/g, ' ')} and is diagnostic, not a capability denial.`,
         );
       } else {
         const sourceChannels =

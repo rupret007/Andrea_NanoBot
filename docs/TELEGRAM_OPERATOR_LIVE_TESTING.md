@@ -160,15 +160,22 @@ What it does:
 - sends a real `/ping` from the operator Telegram user session
 - waits for Andrea's real bot reply in the same chat
 - exits non-zero if no reply arrives, the wrong sender replies, or the reply text is not the expected `/ping` confirmation
-- writes the same roundtrip health state the Windows watchdog uses for periodic enforcement
+- writes the round-trip health state shown by Windows status and diagnostics;
+  the watchdog does not invoke this user-session probe
 
 Current watchdog truth:
 
-- the watchdog only sends its own scheduled `/ping` when there has not been a more recent successful Telegram exchange
-- cadence is every 30 minutes
-- the first failed due probe retries once before Andrea is restarted automatically
-- if the operator session or target chat is missing, Telegram roundtrip health is reported as `unconfigured`, not healthy
-- when Telegram polling degrades but the live roundtrip harness is still unconfigured, `services:ensure` now reports `degraded` plus `telegram_roundtrip=unconfigured` instead of pretending Telegram is healthy or thrashing Andrea with blind restart loops
+- the watchdog never sends `/ping` or any other message from the owner's
+  Telegram user session
+- only organic traffic or an explicit operator smoke command refreshes live
+  round-trip proof
+- a failed smoke check does not trigger a message retry or automatic restart
+- if the operator session or target chat is missing, Telegram round-trip health
+  is reported as `unconfigured`, not healthy
+- when Telegram polling degrades but the live round-trip harness is still
+  unconfigured, `services:ensure` reports `degraded` plus
+  `telegram_roundtrip=unconfigured` instead of pretending Telegram is healthy
+  or thrashing Andrea with blind restart loops
 
 ## Tap An Inline Button
 

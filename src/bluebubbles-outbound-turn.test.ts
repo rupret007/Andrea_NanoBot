@@ -2,10 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './channels/index.js';
 
-import { executeBlueBubblesOutboundTurn } from './bluebubbles-outbound-turn.js';
+import {
+  doContextBoundRecipientLabelsMatch,
+  executeBlueBubblesOutboundTurn,
+} from './bluebubbles-outbound-turn.js';
 import { resolveBlueBubblesConfig } from './channels/bluebubbles.js';
-import { _closeDatabase, _initTestDatabase } from './db.js';
-import type { MessageActionExecutionDeps } from './message-actions.js';
+import {
+  _closeDatabase,
+  _initTestDatabase,
+  listMessageActionsForGroup,
+  updateMessageAction,
+} from './db.js';
+import {
+  applyMessageActionOperation,
+  type MessageActionExecutionDeps,
+} from './message-actions.js';
+import { setMessagingOutboundPaused } from './messaging-outbound-pause.js';
 import {
   DEFAULT_RUNTIME_CAPABILITY_DESCRIPTORS,
   RuntimeCapabilityRegistry,
@@ -88,6 +100,27 @@ function testConfig() {
 }
 
 describe('BlueBubbles production outbound turn boundary', () => {
+  it('requires an exact normalized recipient label for numbered-review sends', () => {
+    expect(doContextBoundRecipientLabelsMatch('Mary Ann', 'Mary Ann')).toBe(
+      true,
+    );
+    expect(doContextBoundRecipientLabelsMatch('mary-ann', 'Mary Ann')).toBe(
+      true,
+    );
+    expect(doContextBoundRecipientLabelsMatch(null, 'Mary Ann')).toBe(true);
+    expect(doContextBoundRecipientLabelsMatch('Candace', 'Candace Story')).toBe(
+      true,
+    );
+    expect(doContextBoundRecipientLabelsMatch('Mary', 'Mary Ann')).toBe(true);
+    expect(doContextBoundRecipientLabelsMatch('Ann', 'Mary Ann')).toBe(false);
+    expect(doContextBoundRecipientLabelsMatch('李雷', '李雷')).toBe(true);
+    expect(doContextBoundRecipientLabelsMatch('李雷', '韩梅梅')).toBe(false);
+    expect(doContextBoundRecipientLabelsMatch('!!!', 'Mary Ann')).toBe(false);
+    expect(doContextBoundRecipientLabelsMatch('🎉?!', '🎉?!')).toBe(false);
+    expect(
+      doContextBoundRecipientLabelsMatch('Ｍａｒｙ　Ａｎｎ', 'Mary Ann'),
+    ).toBe(true);
+  });
   beforeEach(() => {
     vi.stubEnv('ANDREA_TEST_DISABLE_OWNER_ENV_FILE', '1');
     vi.stubEnv(
@@ -150,6 +183,107 @@ describe('BlueBubbles production outbound turn boundary', () => {
     expect(sendToTarget).not.toHaveBeenCalled();
   });
 
+  it('reports the durable owner pause without probing BlueBubbles or looking up a recipient', async () => {
+    const refreshControlState = vi.fn(async () => controlSnapshot());
+    const resolveStoredRecipient = vi.fn(() => ({
+      state: 'missing' as const,
+    }));
+    const resolveLiveRecipient = vi.fn(async () => ({
+      state: 'missing' as const,
+    }));
+    const sendToTarget = vi.fn();
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:main',
+      reason: 'owner_explicit_stop_instruction',
+      now: new Date('2026-07-16T20:52:17.507Z'),
+    });
+
+    const result = await executeBlueBubblesOutboundTurn({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: 'You can’t send message on blue bubbles on my behalf?',
+      inboundMessageId: 'tg-capability-paused',
+      blueBubblesChannel: {
+        getControlSnapshot: () => controlSnapshot(),
+        refreshControlState,
+      },
+      resolveConfig: testConfig,
+      resolveStoredRecipient,
+      resolveLiveRecipient,
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        sendToTarget,
+      },
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      state: 'capability_status',
+    });
+    expect(result).toHaveProperty(
+      'replyText',
+      expect.stringContaining('paused by your owner stop request'),
+    );
+    expect(refreshControlState).not.toHaveBeenCalled();
+    expect(resolveStoredRecipient).not.toHaveBeenCalled();
+    expect(resolveLiveRecipient).not.toHaveBeenCalled();
+    expect(sendToTarget).not.toHaveBeenCalled();
+  });
+
+  it('blocks a fresh explicit send at the durable owner pause before any provider or recipient work', async () => {
+    const refreshControlState = vi.fn(async () => controlSnapshot());
+    const resolveStoredRecipient = vi.fn(() => ({
+      state: 'resolved' as const,
+      target: {
+        chatJid: 'bb:iMessage;-;+12025550123',
+        displayName: 'Avery Example',
+        isGroup: false,
+      },
+    }));
+    const resolveLiveRecipient = vi.fn(async () => ({
+      state: 'missing' as const,
+    }));
+    const sendToTarget = vi.fn();
+
+    const result = await executeBlueBubblesOutboundTurn({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: 'Text Avery Example: Dinner is ready.',
+      inboundMessageId: 'tg-explicit-send-paused',
+      isOutboundPaused: () => true,
+      blueBubblesChannel: {
+        getControlSnapshot: () => controlSnapshot(),
+        refreshControlState,
+      },
+      resolveConfig: testConfig,
+      resolveStoredRecipient,
+      resolveLiveRecipient,
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        sendToTarget,
+      },
+    });
+
+    expect(result).toMatchObject({ handled: true, state: 'restricted' });
+    expect(result).toHaveProperty(
+      'replyText',
+      expect.stringContaining('paused by your owner stop request'),
+    );
+    expect(refreshControlState).not.toHaveBeenCalled();
+    expect(resolveStoredRecipient).not.toHaveBeenCalled();
+    expect(resolveLiveRecipient).not.toHaveBeenCalled();
+    expect(sendToTarget).not.toHaveBeenCalled();
+  });
+
   it('reports a current BlueBubbles outage instead of inventing a permanent platform limitation', async () => {
     const refreshControlState = vi.fn(async () =>
       controlSnapshot({
@@ -202,7 +336,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
         state: 'resolved' as const,
         target: {
           chatJid: 'bb:iMessage;-;+12025550123',
-          displayName: 'Travis Story',
+          displayName: 'Avery Example',
           isGroup: false,
         },
       }));
@@ -217,7 +351,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
         chatJid: 'bb:iMessage;-;owner@example.invalid',
         group: companionGroup,
         ownerAuthored,
-        rawText: 'Text Travis Story: Dinner is ready.',
+        rawText: 'Text Avery Example: Dinner is ready.',
         inboundMessageId: `bb-untrusted-${String(ownerAuthored)}`,
         blueBubblesChannel: {
           getControlSnapshot: () => controlSnapshot(),
@@ -253,8 +387,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       chatJid: 'bb:iMessage;-;owner@example.invalid',
       group: companionGroup,
       ownerAuthored: false,
-      rawText:
-        'Yes reply to 1 Candace saying yes I need her to pick up please.',
+      rawText: 'Yes reply to 1 Casey saying yes I need her to pick up please.',
       inboundMessageId: 'bb-untrusted-numbered-review',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -282,22 +415,21 @@ describe('BlueBubbles production outbound turn boundary', () => {
         state: 'resolved' as const,
         target: {
           chatJid: 'bb:iMessage;-;+18176580310',
-          displayName: 'Candace Story',
+          displayName: 'Casey Example',
           isGroup: false,
         },
       },
     }));
     const refreshControlState = vi.fn(async () => controlSnapshot());
     const sendToTarget = vi.fn(async () => ({
-      platformMessageId: 'bb:candace-numbered-receipt',
+      platformMessageId: 'bb:casey-numbered-receipt',
     }));
     const turnRequest = {
       groupFolder: 'main',
       channel: 'telegram' as const,
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText:
-        'Yes reply to 1 Candace saying yes I need her to pick up please.',
+      rawText: 'Yes reply to 1 Casey saying yes I need her to pick up please.',
       inboundMessageId: 'tg-numbered-review-send',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -313,11 +445,32 @@ describe('BlueBubbles production outbound turn boundary', () => {
     };
 
     const result = await executeBlueBubblesOutboundTurn(turnRequest);
-    expect(result).toMatchObject({ handled: true, state: 'sent' });
+    expect(result).toMatchObject({
+      handled: true,
+      state: 'staged',
+      action: { sendStatus: 'drafted', requiresApproval: true },
+    });
+    if (!result.handled || result.state !== 'staged') {
+      throw new Error('expected a separately approved numbered-review draft');
+    }
+    expect(sendToTarget).not.toHaveBeenCalled();
+    updateMessageAction(result.action.messageActionId, {
+      presentationMessageId: 'tg:numbered-review-card',
+      lastUpdatedAt: new Date().toISOString(),
+    });
+    const approved = await applyMessageActionOperation(
+      result.action.messageActionId,
+      { kind: 'send' },
+      turnRequest.executionDeps,
+    );
+    expect(approved.action).toMatchObject({
+      sendStatus: 'sent',
+      platformMessageId: 'bb:casey-numbered-receipt',
+    });
     expect(sendToTarget).toHaveBeenCalledWith(
       'bluebubbles',
       'bb:iMessage;-;+18176580310',
-      'Yes, please pick them up.',
+      'yes I need her to pick up please.',
       expect.objectContaining({ idempotencyKey: expect.any(String) }),
     );
 
@@ -328,14 +481,27 @@ describe('BlueBubbles production outbound turn boundary', () => {
     expect(replay).toMatchObject({
       handled: true,
       state: 'sent',
-      action: { platformMessageId: 'bb:candace-numbered-receipt' },
+      action: { platformMessageId: 'bb:casey-numbered-receipt' },
+    });
+    expect(resolveContextBoundRecipient).toHaveBeenCalledTimes(1);
+    expect(refreshControlState).toHaveBeenCalledTimes(1);
+    expect(sendToTarget).toHaveBeenCalledTimes(1);
+
+    const replayWhilePaused = await executeBlueBubblesOutboundTurn({
+      ...turnRequest,
+      isOutboundPaused: () => true,
+    });
+    expect(replayWhilePaused).toMatchObject({
+      handled: true,
+      state: 'sent',
+      action: { platformMessageId: 'bb:casey-numbered-receipt' },
     });
     expect(resolveContextBoundRecipient).toHaveBeenCalledTimes(1);
     expect(refreshControlState).toHaveBeenCalledTimes(1);
     expect(sendToTarget).toHaveBeenCalledTimes(1);
   });
 
-  it('dispatches the real recent-Candace composite only through a context-bound recipient', async () => {
+  it('stages a synthetic recent-thread composite only against its context-bound recipient', async () => {
     const resolveContextBoundRecipient = vi.fn(async ({ intent }) => {
       expect(intent.contextBinding).toEqual({
         kind: 'recent_recipient_thread',
@@ -346,14 +512,14 @@ describe('BlueBubbles production outbound turn boundary', () => {
           state: 'resolved' as const,
           target: {
             chatJid: 'bb:iMessage;-;+18176580310',
-            displayName: 'Candace Story',
+            displayName: 'Casey Example',
             isGroup: false,
           },
         },
       };
     });
     const sendToTarget = vi.fn(async () => ({
-      platformMessageId: 'bb:candace-composite-receipt',
+      platformMessageId: 'bb:casey-composite-receipt',
     }));
 
     const result = await executeBlueBubblesOutboundTurn({
@@ -362,8 +528,8 @@ describe('BlueBubbles production outbound turn boundary', () => {
       chatJid: 'tg:main',
       group: mainGroup,
       rawText:
-        "Hi can you use blue bubbles to send a message back to Candace please. Check my recent text from her and reply from you that yes please if she could pick them up I haven't had a chance.",
-      inboundMessageId: 'tg-candace-composite',
+        'Hi can you use blue bubbles to send a message back to Casey please. Check my recent text from her and reply from you that yes, please bring the blue folder before the courier arrives.',
+      inboundMessageId: 'tg-casey-composite',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
         refreshControlState: async () => controlSnapshot(),
@@ -377,14 +543,18 @@ describe('BlueBubbles production outbound turn boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({ handled: true, state: 'sent' });
+    expect(result).toMatchObject({
+      handled: true,
+      state: 'staged',
+      action: {
+        draftText:
+          'yes, please bring the blue folder before the courier arrives.',
+        sendStatus: 'drafted',
+        requiresApproval: true,
+      },
+    });
     expect(resolveContextBoundRecipient).toHaveBeenCalledTimes(1);
-    expect(sendToTarget).toHaveBeenCalledWith(
-      'bluebubbles',
-      'bb:iMessage;-;+18176580310',
-      'Yes, please pick them up. I haven’t had a chance.',
-      expect.objectContaining({ idempotencyKey: expect.any(String) }),
-    );
+    expect(sendToTarget).not.toHaveBeenCalled();
   });
 
   it('allows an owner-authored configured BlueBubbles self-thread turn through offline provider spies', async () => {
@@ -393,7 +563,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       state: 'resolved' as const,
       target: {
         chatJid: 'bb:iMessage;-;+12025550123',
-        displayName: 'Travis Story',
+        displayName: 'Avery Example',
         isGroup: false,
       },
     }));
@@ -410,7 +580,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       chatJid: 'bb:iMessage;-;owner@example.invalid',
       group: companionGroup,
       ownerAuthored: true,
-      rawText: 'Text Travis Story: Dinner is ready.',
+      rawText: 'Text Avery Example: Dinner is ready.',
       inboundMessageId: 'bb-owner-authored-true',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -427,12 +597,16 @@ describe('BlueBubbles production outbound turn boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({ handled: true, state: 'sent' });
+    expect(result).toMatchObject({
+      handled: true,
+      state: 'staged',
+      action: { sendStatus: 'drafted', requiresApproval: true },
+    });
     expect(refreshControlState).toHaveBeenCalledWith('transport');
-    expect(sendToTarget).toHaveBeenCalledTimes(1);
+    expect(sendToTarget).not.toHaveBeenCalled();
   });
 
-  it('drives the exact prompt through fresh health, exact live identity, the registered binding, and a verified receipt', async () => {
+  it('resolves the exact recipient and stages a funny request without canned invented prose', async () => {
     const stale = controlSnapshot({
       transportState: 'unreachable',
       transportDetail: 'stale failure',
@@ -443,7 +617,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       state: 'resolved' as const,
       target: {
         chatJid: 'bb:iMessage;-;+12025550123',
-        displayName: 'Travis Story',
+        displayName: 'Avery Example',
         isGroup: false as const,
         blueBubblesCreateChatAddress: '+12025550123',
       },
@@ -460,7 +634,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       chatJid: 'tg:main',
       group: mainGroup,
       rawText:
-        'Have BlueBubbles send Travis Story a message saying hi from Andrea and he smells, and make it funny.',
+        'Have BlueBubbles send Avery Example a message saying The package arrived, and make it funny.',
       inboundMessageId: 'tg:exact-production-turn',
       now: new Date('2026-07-16T12:00:00.000Z'),
       blueBubblesChannel: {
@@ -483,44 +657,28 @@ describe('BlueBubbles production outbound turn boundary', () => {
     expect(refreshControlState).toHaveBeenCalledWith('transport');
     expect(resolveLiveRecipient).toHaveBeenCalledWith(
       expect.objectContaining({ baseUrl: 'http://bluebubbles.test' }),
-      'Travis Story',
+      'Avery Example',
     );
-    expect(resolveStoredRecipient).toHaveBeenCalledWith('Travis Story');
-    expect(sendToTarget).toHaveBeenCalledTimes(1);
-    expect(sendToTarget).toHaveBeenCalledWith(
-      'bluebubbles',
-      'bb:iMessage;-;+12025550123',
-      'Hi from Andrea — she says you smell, but in a limited-edition, artisanal way. 😄',
-      expect.objectContaining({
-        blueBubblesCreateChatAddress: '+12025550123',
-        idempotencyKey: expect.any(String),
-      }),
-    );
-    expect(result).toMatchObject({ handled: true, state: 'sent' });
-    if (!result.handled || result.state !== 'sent') {
-      throw new Error('expected verified send');
-    }
-    expect(result.replyText).toContain('Sent to Travis Story');
-    expect(result.replyText).toContain('bb:provider-receipt-1');
-    expect(result.replyText).toContain(
-      'Hi from Andrea — she says you smell, but in a limited-edition, artisanal way. 😄',
-    );
-
-    refreshControlState.mockRejectedValueOnce(new Error('provider now down'));
-    resolveLiveRecipient.mockRejectedValueOnce(new Error('directory now down'));
-    const replay = await executeBlueBubblesOutboundTurn(turnRequest);
-    expect(replay).toMatchObject({
+    expect(resolveStoredRecipient).toHaveBeenCalledWith('Avery Example');
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
       handled: true,
-      state: 'sent',
-      action: { platformMessageId: 'bb:provider-receipt-1' },
+      state: 'staged',
+      action: {
+        draftText: 'The package arrived',
+        sendStatus: 'drafted',
+        requiresApproval: true,
+      },
     });
-    expect(replay.handled && replay.state === 'sent' && replay.replyText).toBe(
-      result.replyText,
-    );
+    if (!result.handled || result.state !== 'staged') {
+      throw new Error('expected approval-gated transformed draft');
+    }
+    expect(result.presentation.text).toContain('Target: Avery Example');
+    expect(result.presentation.text).toContain('The package arrived');
     expect(refreshControlState).toHaveBeenCalledTimes(1);
     expect(resolveStoredRecipient).toHaveBeenCalledTimes(1);
     expect(resolveLiveRecipient).toHaveBeenCalledTimes(1);
-    expect(sendToTarget).toHaveBeenCalledTimes(1);
+    expect(sendToTarget).not.toHaveBeenCalled();
   });
 
   it('invalidates cached healthy state when the explicit transport refresh fails', async () => {
@@ -531,7 +689,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Hello.',
+      rawText: 'Text Avery Example: Hello.',
       inboundMessageId: 'tg:refresh-failed',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -549,10 +707,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({
-      handled: true,
-      state: 'unhealthy_provider',
-    });
+    expect(result).toMatchObject({ handled: true, state: 'missing_target' });
     expect(resolveLiveRecipient).not.toHaveBeenCalled();
     expect(sendToTarget).not.toHaveBeenCalled();
   });
@@ -562,7 +717,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       state: 'resolved' as const,
       target: {
         chatJid: 'bb:stale-guid',
-        displayName: 'Travis Story',
+        displayName: 'Avery Example',
         isGroup: false,
       },
     }));
@@ -572,7 +727,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Hello.',
+      rawText: 'Text Avery Example: Hello.',
       inboundMessageId: 'tg:directory-outage',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -592,7 +747,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
     });
 
     expect(result).toMatchObject({ handled: true, state: 'missing_target' });
-    expect(resolveStoredRecipient).toHaveBeenCalledWith('Travis Story');
+    expect(resolveStoredRecipient).toHaveBeenCalledWith('Avery Example');
     expect(sendToTarget).not.toHaveBeenCalled();
   });
 
@@ -601,7 +756,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       state: 'resolved' as const,
       target: {
         chatJid: 'bb:iMessage;-;+12025550123',
-        displayName: 'Travis Story',
+        displayName: 'Avery Example',
         isGroup: false,
       },
     }));
@@ -618,7 +773,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Hello.',
+      rawText: 'Text Avery Example: Hello.',
       inboundMessageId: 'tg:existing-non-contact',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -635,22 +790,23 @@ describe('BlueBubbles production outbound turn boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({ handled: true, state: 'sent' });
-    expect(resolveStoredRecipient).toHaveBeenCalledWith('Travis Story');
+    expect(result).toMatchObject({
+      handled: true,
+      state: 'staged',
+      action: { sendStatus: 'drafted', requiresApproval: true },
+    });
+    expect(resolveStoredRecipient).toHaveBeenCalledWith('Avery Example');
     expect(resolveLiveRecipient).toHaveBeenCalledWith(
       expect.objectContaining({ baseUrl: 'http://bluebubbles.test' }),
-      'Travis Story',
+      'Avery Example',
     );
-    expect(sendToTarget).toHaveBeenCalledTimes(1);
-    expect(sendToTarget).toHaveBeenCalledWith(
-      'bluebubbles',
-      'bb:iMessage;-;+12025550123',
-      'Hello.',
-      expect.objectContaining({ idempotencyKey: expect.any(String) }),
-    );
-    expect(
-      sendToTarget.mock.calls[0]?.[3]?.blueBubblesCreateChatAddress,
-    ).toBeUndefined();
+    expect(sendToTarget).not.toHaveBeenCalled();
+    if (!result.handled || result.state !== 'staged') {
+      throw new Error('expected an approval-gated stored-thread draft');
+    }
+    expect(JSON.parse(result.action.targetConversationJson)).toMatchObject({
+      chatJid: 'bb:iMessage;-;+12025550123',
+    });
   });
 
   it('keeps the exact stored thread when live contact truth confirms the same direct address', async () => {
@@ -658,7 +814,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       state: 'resolved' as const,
       target: {
         chatJid: 'bb:SMS;-;202-555-0123',
-        displayName: 'Travis Story',
+        displayName: 'Avery Example',
         isGroup: false,
       },
     }));
@@ -666,7 +822,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       state: 'resolved' as const,
       target: {
         chatJid: 'bb:iMessage;-;+12025550123',
-        displayName: 'Travis Story at +1 202 555 0123',
+        displayName: 'Avery Example at +1 202 555 0123',
         isGroup: false as const,
         blueBubblesCreateChatAddress: '+12025550123',
       },
@@ -679,7 +835,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Hello.',
+      rawText: 'Text Avery Example: Hello.',
       inboundMessageId: 'tg:stored-live-same-identity',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -696,16 +852,18 @@ describe('BlueBubbles production outbound turn boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({ handled: true, state: 'sent' });
-    expect(sendToTarget).toHaveBeenCalledWith(
-      'bluebubbles',
-      'bb:SMS;-;202-555-0123',
-      'Hello.',
-      expect.objectContaining({ idempotencyKey: expect.any(String) }),
-    );
-    expect(
-      sendToTarget.mock.calls[0]?.[3]?.blueBubblesCreateChatAddress,
-    ).toBeUndefined();
+    expect(result).toMatchObject({
+      handled: true,
+      state: 'staged',
+      action: { sendStatus: 'drafted', requiresApproval: true },
+    });
+    expect(sendToTarget).not.toHaveBeenCalled();
+    if (!result.handled || result.state !== 'staged') {
+      throw new Error('expected an approval-gated same-address draft');
+    }
+    expect(JSON.parse(result.action.targetConversationJson)).toMatchObject({
+      chatJid: 'bb:SMS;-;202-555-0123',
+    });
   });
 
   it('reports a missing target when neither stored conversations nor the live directory resolve exactly', async () => {
@@ -745,18 +903,100 @@ describe('BlueBubbles production outbound turn boundary', () => {
     expect(sendToTarget).not.toHaveBeenCalled();
   });
 
+  it('re-prompts one fuzzy recipient with the exact body, then stages only after a fresh exact request', async () => {
+    const body = 'Dinner is ready: bring salsa 🫶🏽.';
+    const target = {
+      chatJid: 'bb:iMessage;-;+12025550124',
+      displayName: 'Travis Work',
+      isGroup: false as const,
+    };
+    const resolveStoredRecipient = vi.fn((query: string) =>
+      query === 'Travis'
+        ? { state: 'ambiguous' as const, matches: [target] }
+        : { state: 'resolved' as const, target },
+    );
+    const resolveLiveRecipient = vi.fn(async () => ({
+      state: 'missing' as const,
+    }));
+    const refreshControlState = vi.fn(async () => controlSnapshot());
+    const sendToTarget = vi.fn();
+    const common = {
+      groupFolder: 'main',
+      channel: 'telegram' as const,
+      chatJid: 'tg:main',
+      group: mainGroup,
+      blueBubblesChannel: {
+        getControlSnapshot: () => controlSnapshot(),
+        refreshControlState,
+      },
+      resolveConfig: testConfig,
+      resolveStoredRecipient,
+      resolveLiveRecipient,
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'telegram' as const,
+        chatJid: 'tg:main',
+        sendToTarget,
+      },
+    };
+
+    const fuzzy = await executeBlueBubblesOutboundTurn({
+      ...common,
+      rawText: `Text Travis: ${body}`,
+      inboundMessageId: 'tg:one-fuzzy-recipient',
+    });
+
+    expect(fuzzy).toMatchObject({
+      handled: true,
+      state: 'ambiguous_target',
+    });
+    if (!fuzzy.handled || fuzzy.state !== 'ambiguous_target') {
+      throw new Error('expected a fuzzy recipient re-prompt');
+    }
+    expect(fuzzy.replyText).toContain('one possible Messages recipient');
+    expect(fuzzy.replyText).not.toContain('more than one');
+    expect(fuzzy.replyText).toContain(`Text Travis Work: ${body}`);
+    expect(fuzzy.replyText).toContain('separate fresh');
+    expect(resolveLiveRecipient).not.toHaveBeenCalled();
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(0);
+
+    const exact = await executeBlueBubblesOutboundTurn({
+      ...common,
+      rawText: `Text Travis Work: ${body}`,
+      inboundMessageId: 'tg:exact-recipient-after-fuzzy',
+    });
+
+    expect(exact).toMatchObject({
+      handled: true,
+      state: 'staged',
+      action: {
+        draftText: body,
+        sendStatus: 'drafted',
+        requiresApproval: true,
+        platformMessageId: null,
+      },
+    });
+    expect(resolveLiveRecipient).toHaveBeenCalledWith(
+      expect.any(Object),
+      'Travis Work',
+    );
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(1);
+  });
+
   it('rejects stored ambiguity without allowing a same-name live contact to redirect the request', async () => {
     const resolveStoredRecipient = vi.fn(() => ({
       state: 'ambiguous' as const,
       matches: [
         {
           chatJid: 'bb:iMessage;-;+12025550123',
-          displayName: 'Travis Story at +1 202 555 0123',
+          displayName: 'Avery Example at +1 202 555 0123',
           isGroup: false,
         },
         {
           chatJid: 'bb:iMessage;-;+13125550123',
-          displayName: 'Travis Story at +1 312 555 0123',
+          displayName: 'Avery Example at +1 312 555 0123',
           isGroup: false,
         },
       ],
@@ -765,7 +1005,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       state: 'resolved' as const,
       target: {
         chatJid: 'bb:iMessage;-;+12025550123',
-        displayName: 'Travis Story',
+        displayName: 'Avery Example',
         isGroup: false as const,
         blueBubblesCreateChatAddress: '+12025550123',
       },
@@ -776,7 +1016,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Hello.',
+      rawText: 'Text Avery Example: Hello.',
       inboundMessageId: 'tg:stored-ambiguous',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -794,7 +1034,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
     });
 
     expect(result).toMatchObject({ handled: true, state: 'ambiguous_target' });
-    expect(resolveStoredRecipient).toHaveBeenCalledWith('Travis Story');
+    expect(resolveStoredRecipient).toHaveBeenCalledWith('Avery Example');
     expect(resolveLiveRecipient).not.toHaveBeenCalled();
     expect(sendToTarget).not.toHaveBeenCalled();
   });
@@ -806,13 +1046,13 @@ describe('BlueBubbles production outbound turn boundary', () => {
       matches: [
         {
           chatJid: 'bb:iMessage;-;+12025550123',
-          displayName: 'Travis Story at +1 202 555 0123',
+          displayName: 'Avery Example at +1 202 555 0123',
           isGroup: false as const,
           blueBubblesCreateChatAddress: '+12025550123',
         },
         {
           chatJid: 'bb:iMessage;-;+13125550123',
-          displayName: 'Travis Story at +1 312 555 0123',
+          displayName: 'Avery Example at +1 312 555 0123',
           isGroup: false as const,
           blueBubblesCreateChatAddress: '+13125550123',
         },
@@ -824,7 +1064,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Hello.',
+      rawText: 'Text Avery Example: Hello.',
       inboundMessageId: 'tg:live-ambiguous',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -842,7 +1082,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
     });
 
     expect(result).toMatchObject({ handled: true, state: 'ambiguous_target' });
-    expect(resolveStoredRecipient).toHaveBeenCalledWith('Travis Story');
+    expect(resolveStoredRecipient).toHaveBeenCalledWith('Avery Example');
     expect(resolveLiveRecipient).toHaveBeenCalledTimes(1);
     expect(sendToTarget).not.toHaveBeenCalled();
   });
@@ -902,7 +1142,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       state: 'resolved' as const,
       target: {
         chatJid: 'bb:iMessage;-;+12025550123',
-        displayName: 'Travis Story',
+        displayName: 'Avery Example',
         isGroup: false,
       },
     }));
@@ -910,7 +1150,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       state: 'resolved' as const,
       target: {
         chatJid: 'bb:iMessage;-;+13125550123',
-        displayName: 'Travis Story at +1 312 555 0123',
+        displayName: 'Avery Example at +1 312 555 0123',
         isGroup: false as const,
         blueBubblesCreateChatAddress: '+13125550123',
       },
@@ -921,7 +1161,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Hello.',
+      rawText: 'Text Avery Example: Hello.',
       inboundMessageId: 'tg:identity-conflict',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -943,7 +1183,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       throw new Error('expected conflicting recipients to remain ambiguous');
     }
     expect(result.replyText).toContain('+1 312 555 0123');
-    expect(resolveStoredRecipient).toHaveBeenCalledWith('Travis Story');
+    expect(resolveStoredRecipient).toHaveBeenCalledWith('Avery Example');
     expect(resolveLiveRecipient).toHaveBeenCalledTimes(1);
     expect(sendToTarget).not.toHaveBeenCalled();
   });
@@ -956,7 +1196,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Draft a text to Travis Story: Hello.',
+      rawText: 'Draft a text to Avery Example: Hello.',
       inboundMessageId: 'tg:draft-production-turn',
       blueBubblesChannel: {
         getControlSnapshot: () => controlSnapshot(),
@@ -968,7 +1208,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
         state: 'resolved',
         target: {
           chatJid: 'bb:iMessage;-;+12025550123',
-          displayName: 'Travis Story',
+          displayName: 'Avery Example',
           isGroup: false,
         },
       }),
@@ -995,7 +1235,7 @@ describe('BlueBubbles production outbound turn boundary', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Hello.',
+      rawText: 'Text Avery Example: Hello.',
       inboundMessageId: 'tg:unbound-tool',
       registry: descriptorOnlyRegistry,
       blueBubblesChannel: {

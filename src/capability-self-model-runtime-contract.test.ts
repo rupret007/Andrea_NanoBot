@@ -150,7 +150,9 @@ describe('capability self-model runtime contract', () => {
     expect(response).toContain(
       'existing host-owned guarded path, not a registry-owned binding',
     );
-    expect(response).toContain('explicit send request is the authorization');
+    expect(response).toContain(
+      'separate fresh Send now/send it approval authorizes dispatch',
+    );
     expect(response).toContain('not a capability denial');
     expect(response).not.toContain('always draft first');
     const blueBubblesLine = messageCapabilityLine(

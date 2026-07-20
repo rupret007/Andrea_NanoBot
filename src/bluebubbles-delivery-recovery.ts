@@ -1,4 +1,11 @@
-import { storeChatMetadata, storeMessage } from './db.js';
+import {
+  getCompanionHandoff,
+  getCompanionHandoffByProviderIdempotencyKey,
+  storeChatMetadata,
+  storeMessageDirect,
+  updateCompanionHandoff,
+} from './db.js';
+import { syncOutcomeFromHandoffRecord } from './outcome-reviews.js';
 import {
   reconcileBlueBubblesUnverifiedMessageActions,
   type BlueBubblesDeliveryReconciliationResult,
@@ -49,7 +56,34 @@ export function recordBlueBubblesOutboundDeliveryEvidence(params: {
     'bluebubbles',
     false,
   );
-  storeMessage(params.message);
+  storeMessageDirect({
+    ...params.message,
+    is_from_me: true,
+    message_ingress_origin: 'assistant_outbound',
+  });
+
+  const providerIdempotencyKey = params.message.provider_idempotency_key.trim();
+  const handoff = getCompanionHandoffByProviderIdempotencyKey(
+    providerIdempotencyKey,
+  );
+  const handoffInspected = handoff?.targetChannel === 'bluebubbles' ? 1 : 0;
+  let handoffReconciled = 0;
+  if (
+    handoff?.targetChannel === 'bluebubbles' &&
+    handoff.status === 'delivery_unverified'
+  ) {
+    updateCompanionHandoff(handoff.handoffId, {
+      status: 'delivered',
+      deliveredMessageId: params.message.id,
+      errorText: null,
+      updatedAt: (params.now || new Date()).toISOString(),
+    });
+    const reconciledHandoff = getCompanionHandoff(handoff.handoffId);
+    if (reconciledHandoff) {
+      syncOutcomeFromHandoffRecord(reconciledHandoff, params.now);
+    }
+    handoffReconciled = 1;
+  }
 
   const groupResults = [...new Set(params.groupFolders.filter(Boolean))].map(
     (groupFolder) => ({
@@ -63,14 +97,16 @@ export function recordBlueBubblesOutboundDeliveryEvidence(params: {
   return {
     accepted: true,
     groupResults,
-    inspected: groupResults.reduce((sum, result) => sum + result.inspected, 0),
+    inspected:
+      handoffInspected +
+      groupResults.reduce((sum, result) => sum + result.inspected, 0),
     reconciled: groupResults.reduce(
       (sum, result) => sum + result.reconciled,
-      0,
+      handoffReconciled,
     ),
     stillUnverified: groupResults.reduce(
       (sum, result) => sum + result.stillUnverified,
-      0,
+      handoffInspected - handoffReconciled,
     ),
   };
 }

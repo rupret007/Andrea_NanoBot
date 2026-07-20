@@ -475,20 +475,27 @@ Andrea Pulse is a separate request-driven personality feature. It is not a healt
 
 BlueBubbles is now Andrea's optional bounded Messages bridge, not a core requirement for day-to-day use.
 
-- BlueBubbles V1 now supports all synced personal and group chats, not one pinned linked thread
-- `@Andrea` addresses Andrea, while `@OpenClaw` selects the OpenClaw helper lane for deeper orchestration and skill work
-- the canonical self-thread accepts bounded direct asks without a mention;
-  a recent direct 1:1 chat accepts bounded bare follow-ups after fresh Andrea
-  context; groups and cold direct chats still require `@Andrea` or `@OpenClaw`
-  so ordinary social chatter does not trigger assistant replies
-- current-chat asks like `summarize this` now use recent `bb:` chat context, exclude the wake command itself, and can prime recent history from the live BlueBubbles server when local context is thin
+- BlueBubbles V1 syncs personal and group chats as communication data and
+  explicit outbound destinations when `BLUEBUBBLES_CHAT_SCOPE=all_synced`
+- ordinary contact and group threads are never assistant control surfaces, even
+  when their text contains `@Andrea` or `@OpenClaw`; their activity remains
+  available to trusted summaries, reviews, explicit direct-thread identity
+  review, and explicit sends
+- owner controls run from the registered main Telegram chat or the explicitly
+  configured private Messages self-thread; in that self-thread, `@Andrea`
+  addresses Andrea and `@OpenClaw` selects the helper lane, while bounded direct
+  asks and fresh follow-ups may omit the mention
+- self-thread asks such as `summarize my recent texts` or
+  `summarize Candace from the last 2 days` use synced `bb:` contact history and can prime bounded
+  recent history from the live BlueBubbles server when local context is thin
+- a recent-summary continuation can move between the registered owner Telegram chat and configured Messages self-thread when both use the same companion group folder; the seed stays unavailable to contact/group and non-owner surfaces and retains its normal freshness limit
 - communication asks now favor fuller conversation recaps plus grounded suggested replies; choosing a suggestion creates one approval-gated draft/action, not an automatic send
 - incoming BlueBubbles and Telegram images/videos are cached as bounded local message attachments (20 MiB per file, 7-day / 1 GiB retention by default) so Andrea can answer asks like `analyze this photo` or `what is in this video` when OpenAI vision is configured
-- broad asks from Telegram such as `use BlueBubbles and summarize my texts from the past 48 hours` summarize activity across all synced BlueBubbles chats in that time window without exposing raw phone numbers
+- broad asks from Telegram such as `use BlueBubbles and summarize my texts from the past 48 hours` summarize the available local synced contact/group snapshot in that window, exclude the owner self-thread, redact raw identifiers, cap each conversation to its newest 80 in-window messages, and state that sync completeness was not independently verified
 - BlueBubbles keeps companion-safe capabilities like daily guidance, communication help, follow-through, Knowledge Library summaries, draft follow-up, and short research summaries
 - in the configured self-thread, native Like/Love/Dislike tapbacks provide privacy-safe accepted/rejected outcome signals; ambiguous reactions and removals never train Andrea
 - the same narrow natural verdict phrases work in the configured self-thread; they retain route/run provenance only and never expand Messages authority
-- `review communication identities` starts a private, explicit identity-link review in the registered main Telegram chat or configured Messages self-thread; already-linked threads and authoritative group-chat metadata are skipped, Telegram presents one genuinely unresolved direct conversation at a time with bounded Link/Leave Unlinked controls, and Messages returns exact text commands for the next item; group audience checks still apply before drafting or sending, but the owner no longer has to confirm that a platform-declared group is not one person; both channels use stable opaque review keys instead of requiring raw phone/JID labels and may propose only unique exact-name matches—never message-body, identifier, generic-self, collective-category, or similarity inference
+- `review communication identities` starts a private, explicit identity-link review in the registered main Telegram chat or configured Messages self-thread; only user-confirmed direct-thread links are skipped, while assistant-inferred direct links remain reviewable and can never supply high-confidence relationship context on their own; platform-declared groups are excluded and never retain person/life links; Telegram presents one genuinely unresolved direct conversation at a time with bounded Link/Leave Unlinked controls, and Messages returns exact text commands for the next item; both channels use stable opaque review keys instead of requiring raw phone/JID labels and may propose only unique exact-name matches—never message-body, identifier, generic-self, collective-category, or similarity inference
 - richer details still hand off explicitly to Telegram when that is the better surface
 - BlueBubbles does **not** become a main control chat and does not expose work-cockpit or admin/runtime controls
 
@@ -636,8 +643,8 @@ The registered main Telegram chat can also stage a new text to an existing
 synced one-to-one BlueBubbles conversation, an exact BlueBubbles/macOS contact,
 or an explicit phone/email address:
 
-- `Text Travis Story: Dinner is ready.`
-- `Send a text message to Travis Story saying Dinner is ready.`
+- `Text Avery Example: Dinner is ready.`
+- `Send a text message to Avery Example saying Dinner is ready.`
 
 Andrea displays the exact Messages recipient and body, then waits for a
 separate `Send now`/`send it` approval. The initial request never sends by

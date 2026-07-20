@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildCommunicationIdentityReviewActionRows,
@@ -83,6 +83,10 @@ function seedThread(
 
 beforeEach(() => {
   _initTestDatabase();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe('communication identity review', () => {
@@ -386,7 +390,93 @@ describe('communication identity review', () => {
     ).toBe(true);
   });
 
+  it('keeps assistant-inferred links in the owner queue while explicit identity provenance resolves them', () => {
+    seedPerson('person-candace', 'Candace');
+    seedPerson('person-travis', 'Travis');
+    seedPerson('person-riley', 'Riley');
+    seedThread({
+      id: 'communication:assistant-linked',
+      title: 'Candace',
+      channelChatJid: 'bb:iMessage;-;+14695550181',
+      linkedSubjectIds: ['person-candace'],
+      inferenceState: 'assistant_inferred',
+    });
+    seedThread({
+      id: 'communication:user-confirmed',
+      title: 'Travis',
+      channelChatJid: 'bb:iMessage;-;+14695550182',
+      linkedSubjectIds: ['person-travis'],
+      inferenceState: 'user_confirmed',
+    });
+    seedThread({
+      id: 'communication:mixed-reviewed',
+      title: 'Riley',
+      channelChatJid: 'bb:iMessage;-;+14695550183',
+      linkedSubjectIds: ['person-candace'],
+      inferenceState: 'mixed',
+    });
+    expect(
+      decideCommunicationThreadIdentity({
+        groupFolder: 'main',
+        threadId: 'communication:mixed-reviewed',
+        decision: 'confirmed',
+        subjectId: 'person-riley',
+        sourceChannel: 'telegram',
+        now,
+      }),
+    ).toMatchObject({ ok: true });
+
+    const snapshot = buildCommunicationIdentityReviewSnapshot({
+      groupFolder: 'main',
+    });
+    const assistantInferred = snapshot.items.find(
+      (item) => item.threadId === 'communication:assistant-linked',
+    )!;
+    const actions = buildCommunicationIdentityReviewActionRows(snapshot).flat();
+
+    expect(snapshot).toMatchObject({
+      identityApplicableThreads: 3,
+      resolvedThreads: 2,
+      unreviewedThreads: 1,
+    });
+    expect(assistantInferred).toMatchObject({
+      inferenceState: 'assistant_inferred',
+      linkedSubjectIds: ['person-candace'],
+      review: null,
+    });
+    expect(
+      snapshot.items.find(
+        (item) => item.threadId === 'communication:user-confirmed',
+      ),
+    ).toMatchObject({
+      inferenceState: 'user_confirmed',
+      review: null,
+    });
+    expect(
+      snapshot.items.find(
+        (item) => item.threadId === 'communication:mixed-reviewed',
+      ),
+    ).toMatchObject({
+      inferenceState: 'mixed',
+      review: {
+        decision: 'confirmed',
+        linkedSubjectId: 'person-riley',
+      },
+    });
+    expect(actions.length).toBeGreaterThan(0);
+    expect(
+      actions.every((action) =>
+        action.actionId?.includes(assistantInferred.reviewKey),
+      ),
+    ).toBe(true);
+  });
+
   it('returns explicit next commands in Messages where inline controls are unavailable', () => {
+    const configuredSelfThreadJid = 'bb:iMessage;-;+12025550121';
+    vi.stubEnv(
+      'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+      configuredSelfThreadJid,
+    );
     seedPerson('person-candace', 'Candace');
     seedThread({
       id: 'communication:number-one',
@@ -413,7 +503,7 @@ describe('communication identity review', () => {
     const response = handleCommunicationIdentityReview({
       groupFolder: 'main',
       channel: 'bluebubbles',
-      chatJid: 'bb:iMessage;-;+12025550101',
+      chatJid: configuredSelfThreadJid,
       text: `link identity ${first.reviewKey} to "Candace"`,
     });
 
@@ -702,6 +792,27 @@ describe('communication identity review', () => {
     expect(response).toMatchObject({ handled: true, changed: false });
     expect(response.replyText).toContain('private');
     expect(response.replyText).not.toContain('Riley');
+  });
+
+  it('does not grant identity-review authority to an unconfigured fallback self-thread alias', () => {
+    seedPerson('person-riley', 'Riley');
+    seedThread();
+    const reviewKey = buildCommunicationIdentityReviewSnapshot({
+      groupFolder: 'main',
+    }).items[0]!.reviewKey;
+
+    const response = handleCommunicationIdentityReview({
+      groupFolder: 'main',
+      channel: 'bluebubbles',
+      chatJid: BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
+      text: `link identity ${reviewKey} to "Riley"`,
+    });
+
+    expect(response).toMatchObject({ handled: true, changed: false });
+    expect(response.replyText).toContain('private');
+    expect(
+      getCommunicationThread('communication:riley')?.linkedSubjectIds,
+    ).toEqual([]);
   });
 
   it('keeps private identity review out of non-main Telegram chats', () => {

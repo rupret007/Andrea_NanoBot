@@ -7,6 +7,7 @@ import {
   listRecentMessagesForChat,
   storeChatMetadata,
   storeMessage,
+  storeMessageDirect,
 } from './db.js';
 import { applyBlueBubblesIngressPolicy } from './bluebubbles-ingress-policy.js';
 
@@ -128,5 +129,96 @@ describe('BlueBubbles ingress policy', () => {
         (stored) => stored.id,
       ),
     ).toEqual(['bb:self-thread-live']);
+  });
+
+  it('stores a contact reaction passively with its target link and never makes it actionable', () => {
+    const chatJid = 'bb:iMessage;-;+15550001112';
+    storeChatMetadata(
+      chatJid,
+      '2026-07-16T19:09:00.000Z',
+      'Reaction Contact',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:original-message',
+      chat_jid: chatJid,
+      sender: 'bb:owner',
+      sender_name: 'Owner',
+      content: 'The reservation is confirmed.',
+      timestamp: '2026-07-16T19:09:00.000Z',
+      is_from_me: true,
+    });
+    const result = applyBlueBubblesIngressPolicy({
+      channelName: 'bluebubbles',
+      chatJid,
+      message: {
+        id: 'bb:contact-reaction',
+        chat_jid: chatJid,
+        sender: 'bb:+15550001112',
+        sender_name: 'Contact',
+        content: '[BlueBubbles reaction: like]',
+        timestamp: '2026-07-16T19:10:00.000Z',
+        is_from_me: false,
+        reply_to_id: 'bb:original-message',
+        reaction: {
+          kind: 'like',
+          removed: false,
+          targetMessageId: 'bb:original-message',
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      kind: 'stored_contact_data_only',
+      stored: true,
+    });
+    expect(getActionableMessagesSince(chatJid, '', 'Andrea')).toEqual([]);
+    expect(
+      listRecentMessagesForChat(chatJid, 10).find(
+        (message) => message.id === 'bb:contact-reaction',
+      ),
+    ).toMatchObject({
+      content: '[BlueBubbles reaction: like]',
+      reply_to_id: 'bb:original-message',
+    });
+  });
+
+  it('stores a contact reaction safely when the referenced provider message is not local', () => {
+    const chatJid = 'bb:iMessage;-;+15550001113';
+    storeChatMetadata(
+      chatJid,
+      '2026-07-16T19:11:00.000Z',
+      'Orphan Reaction Contact',
+      'bluebubbles',
+      false,
+    );
+    expect(
+      applyBlueBubblesIngressPolicy({
+        channelName: 'bluebubbles',
+        chatJid,
+        message: {
+          id: 'bb:orphan-reaction',
+          chat_jid: chatJid,
+          sender: 'bb:+15550001113',
+          sender_name: 'Contact',
+          content: '[BlueBubbles reaction: love]',
+          timestamp: '2026-07-16T19:11:00.000Z',
+          is_from_me: false,
+          reply_to_id: 'bb:not-hydrated-locally',
+          reaction: {
+            kind: 'love',
+            removed: false,
+            targetMessageId: 'bb:not-hydrated-locally',
+          },
+        },
+      }),
+    ).toEqual({ kind: 'stored_contact_data_only', stored: true });
+    const stored = listRecentMessagesForChat(chatJid, 10)[0];
+    expect(stored).toMatchObject({
+      id: 'bb:orphan-reaction',
+      content: '[BlueBubbles reaction: love]',
+    });
+    expect(stored?.reply_to_id ?? null).toBeNull();
   });
 });

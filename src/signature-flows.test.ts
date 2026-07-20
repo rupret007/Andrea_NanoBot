@@ -272,7 +272,7 @@ describe('signature flows', () => {
     expect(openLoops.handled).toBe(true);
     expect((openLoops.replyText || '').toLowerCase()).toContain('candace');
 
-    const draft = await executeAssistantCapability({
+    const clarification = await executeAssistantCapability({
       capabilityId: 'communication.draft_reply',
       context: {
         channel: 'telegram',
@@ -286,9 +286,32 @@ describe('signature flows', () => {
       },
     });
 
+    expect(clarification.handled).toBe(true);
+    expect(clarification.replyText).toContain(
+      'What answer do you want to give Candace?',
+    );
+    expect(clarification.messageAction).toBeUndefined();
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder,
+        chatJid,
+        now,
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        canonicalText:
+          'Draft this reply: Yes, dinner still works for me tonight.',
+      },
+    });
+
     expect(draft.handled).toBe(true);
     expect(draft.replyText).toContain('Draft:');
-    expect(draft.replyText).toContain('whether dinner still works tonight');
+    expect(draft.replyText).toContain(
+      'Yes, dinner still works for me tonight.',
+    );
     expect(draft.continuationCandidate?.communicationThreadId).toBe(
       openLoops.continuationCandidate?.communicationThreadId,
     );
@@ -581,7 +604,7 @@ describe('signature flows', () => {
       },
     });
 
-    const draft = await executeAssistantCapability({
+    const clarification = await executeAssistantCapability({
       capabilityId: 'communication.draft_reply',
       context: {
         channel: 'bluebubbles',
@@ -592,6 +615,26 @@ describe('signature flows', () => {
       },
       input: {
         canonicalText: 'what should I say back',
+      },
+    });
+
+    expect(clarification.handled).toBe(true);
+    expect(clarification.replyText).toContain(
+      'What answer do you want to give Band?',
+    );
+    expect(clarification.messageAction).toBeUndefined();
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder,
+        chatJid: bbChatJid,
+        now,
+        priorSubjectData: understand.conversationSeed?.subjectData,
+      },
+      input: {
+        canonicalText: "Draft this reply: Yes, I'm in tonight.",
       },
     });
 
@@ -652,6 +695,7 @@ describe('signature flows', () => {
 
     expect(understand.handled).toBe(true);
     expect(draft.replyText).toContain('Draft:');
+    expect(draft.replyText).toContain("Yes, I'm in tonight.");
     expect(reminder.replyText).not.toContain('That still leaves');
     expect(handoff.ok).toBe(true);
     expect(sendTelegramMessage).toHaveBeenCalledWith(

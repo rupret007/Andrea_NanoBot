@@ -41,7 +41,13 @@ import {
   runAlexaAssistantTurn,
   type AlexaPrincipal,
 } from './alexa-bridge.js';
-import { _initTestDatabase } from './db.js';
+import {
+  _initTestDatabase,
+  listPendingActionableMessagesForChats,
+  listRecentMessagesForChat,
+  storeChatMetadata,
+  storeMessageDirect,
+} from './db.js';
 
 function buildDeps() {
   return {
@@ -82,7 +88,7 @@ function buildDeps() {
     setAgentThread: vi.fn(),
     deleteAgentThread: vi.fn(),
     storeChatMetadata: vi.fn(),
-    storeMessage: vi.fn(),
+    storeMessageDirect: vi.fn(),
     runContainerAgent: vi.fn(),
   } satisfies AlexaBridgeDeps;
 }
@@ -179,7 +185,24 @@ describe('runAlexaAssistantTurn', () => {
       'main::protected',
       'session-2',
     );
-    expect(deps.storeMessage).toHaveBeenCalledTimes(2);
+    expect(deps.storeMessageDirect).toHaveBeenCalledTimes(2);
+    expect(deps.storeMessageDirect).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        content: 'research standing desks',
+        is_from_me: false,
+        message_ingress_origin: 'direct_non_actionable',
+      }),
+    );
+    expect(deps.storeMessageDirect).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        content: 'Hello from Andrea',
+        is_from_me: true,
+        is_bot_message: true,
+        message_ingress_origin: 'direct_non_actionable',
+      }),
+    );
     expect(deps.runContainerAgent).toHaveBeenCalledWith(
       expect.objectContaining({ folder: 'main' }),
       expect.objectContaining({
@@ -193,6 +216,41 @@ describe('runAlexaAssistantTurn', () => {
       expect.stringContaining('input'),
       '',
     );
+  });
+
+  it('keeps an inline Alexa user turn out of actionable ingress', async () => {
+    const deps = buildDeps();
+    deps.storeChatMetadata.mockImplementation(storeChatMetadata);
+    deps.storeMessageDirect.mockImplementation(storeMessageDirect);
+    deps.runContainerAgent.mockResolvedValue({
+      status: 'success',
+      result: 'Your day is clear after three.',
+      newSessionId: 'session-2',
+    });
+
+    const result = await runAlexaAssistantTurn(
+      {
+        utterance: 'what does my day look like',
+        principal,
+      },
+      { assistantName: 'Andrea' },
+      deps,
+    );
+
+    const persisted = listRecentMessagesForChat(result.chatJid).map(
+      (message) => ({
+        content: message.content,
+        isBot: Boolean(message.is_bot_message),
+      }),
+    );
+    expect(persisted).toHaveLength(2);
+    expect(persisted).toEqual(
+      expect.arrayContaining([
+        { content: 'Your day is clear after three.', isBot: true },
+        { content: 'what does my day look like', isBot: false },
+      ]),
+    );
+    expect(listPendingActionableMessagesForChats([result.chatJid])).toEqual([]);
   });
 
   it('persists a new isolated Alexa workspace when no shared target exists', async () => {

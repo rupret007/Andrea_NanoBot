@@ -57,6 +57,13 @@ describe('trusted owner review surface', () => {
         group: { ...mainGroup, isMain: false },
       }),
     ).toBe(false);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:-100123456789',
+        group: mainGroup,
+      }),
+    ).toBe(false);
   });
 
   it('rejects cross-channel identifiers and status-like channel names', () => {

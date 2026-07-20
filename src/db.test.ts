@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import {
   _initTestDatabase,
+  claimPendingActionableMessagesThroughSequence,
+  claimPendingActionableMessagesForChat,
+  completeActionableIngressClaim,
   createTask,
   deleteRegisteredGroup,
   deleteTask,
@@ -17,8 +20,10 @@ import {
   getActionableMessagesSince,
   getMessagesSince,
   getNewMessages,
+  getNewMessagesByChatCursor,
   getRegisteredGroup,
   getTaskById,
+  findFirstPendingActionableMessageForChat,
   insertCognitiveBenchmarkAttempt,
   insertCognitiveReflection,
   insertCognitiveRewardSignal,
@@ -34,8 +39,11 @@ import {
   listCognitiveToolRegistry,
   listCognitiveWorldBeliefs,
   listRecentMessagesForChat,
+  listMessagesForChatWindow,
+  listPendingActionableMessagesForChats,
   pruneCognitiveKernelData,
   quarantineStaleBlueBubblesMessagesForRecovery,
+  recoverAllActionableIngressClaims,
   pruneChatBoundEphemeralContexts,
   repairRegisteredMainChat,
   replaceCognitiveSubgoalsForRun,
@@ -72,6 +80,7 @@ function store(overrides: {
   is_from_me?: boolean;
   thread_id?: string;
   reply_to_id?: string;
+  ingress_received_at?: string;
 }) {
   storeMessage({
     id: overrides.id,
@@ -83,6 +92,7 @@ function store(overrides: {
     is_from_me: overrides.is_from_me ?? false,
     thread_id: overrides.thread_id,
     reply_to_id: overrides.reply_to_id,
+    ingress_received_at: overrides.ingress_received_at,
   });
 }
 
@@ -380,6 +390,102 @@ describe('getMessagesSince', () => {
 });
 
 describe('message ingress provenance', () => {
+  it('revokes a prior live claim when authoritative BlueBubbles outbound evidence arrives', () => {
+    const chatJid = 'bb:iMessage;-;+15550001001';
+    const messageId = 'bb:provider-outbound-race-1';
+    storeChatMetadata(
+      chatJid,
+      '2026-07-16T17:59:59.000Z',
+      'Outbound target',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: messageId,
+      chat_jid: chatJid,
+      sender: 'bb:+15550001001',
+      sender_name: 'Outbound target',
+      content: 'This row was initially misclassified as inbound.',
+      timestamp: '2026-07-16T18:00:00.000Z',
+      is_from_me: false,
+    });
+    const claimed = claimPendingActionableMessagesForChat({ chatJid });
+    expect(claimed.messages.map((message) => message.id)).toEqual([messageId]);
+
+    storeMessageDirect({
+      id: messageId,
+      chat_jid: chatJid,
+      sender: 'bb:me',
+      sender_name: 'Andrea',
+      content: 'This row was initially misclassified as inbound.',
+      timestamp: '2026-07-16T18:00:00.000Z',
+      is_from_me: true,
+      message_ingress_origin: 'assistant_outbound',
+    });
+
+    expect(getActionableMessagesSince(chatJid, '', 'Andrea')).toEqual([]);
+    expect(listPendingActionableMessagesForChats([chatJid])).toEqual([]);
+    expect(
+      completeActionableIngressClaim({ claimToken: claimed.claimToken! }),
+    ).toBe(0);
+
+    // Authoritative outbound provenance is sticky if the provider later
+    // replays the same row through its generic live webhook.
+    storeMessage({
+      id: messageId,
+      chat_jid: chatJid,
+      sender: 'bb:me',
+      sender_name: 'Andrea',
+      content: 'This row was initially misclassified as inbound.',
+      timestamp: '2026-07-16T18:00:00.000Z',
+      is_from_me: true,
+    });
+    expect(getActionableMessagesSince(chatJid, '', 'Andrea')).toEqual([]);
+    expect(listPendingActionableMessagesForChats([chatJid])).toEqual([]);
+  });
+
+  it('does not let self-thread history downgrade a legitimately live owner command', () => {
+    const chatJid = 'bb:iMessage;-;owner@example.invalid';
+    const messageId = 'bb:live-owner-self-thread-command';
+    storeChatMetadata(
+      chatJid,
+      '2026-07-16T18:00:00.000Z',
+      'Owner self-thread',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: messageId,
+      chat_jid: chatJid,
+      sender: 'bb:owner',
+      sender_name: 'Owner',
+      content: '@Andrea keep this live',
+      timestamp: '2026-07-16T18:00:00.000Z',
+      is_from_me: true,
+    });
+    storeMessageDirect({
+      id: messageId,
+      chat_jid: chatJid,
+      sender: 'bb:owner',
+      sender_name: 'Owner',
+      content: '@Andrea keep this live',
+      timestamp: '2026-07-16T18:00:00.000Z',
+      is_from_me: true,
+      message_ingress_origin: 'history_hydration',
+    });
+
+    expect(
+      getActionableMessagesSince(chatJid, '', 'Andrea').map(
+        (message) => message.id,
+      ),
+    ).toEqual([messageId]);
+    expect(
+      listPendingActionableMessagesForChats([chatJid]).map(
+        (message) => message.id,
+      ),
+    ).toEqual([messageId]);
+  });
+
   it('keeps provider-hydrated Messages history visible as context but never actionable', () => {
     const chatJid = 'bb:iMessage;-;+15550001111';
     storeChatMetadata(
@@ -455,50 +561,62 @@ describe('message ingress provenance', () => {
     ).toEqual(['bb:historical-command', 'bb:current-live-question']);
   });
 
-  it('quarantines stale live Messages rows without hiding them from summaries or context', () => {
-    const chatJid = 'bb:iMessage;-;+15550002222';
-    storeChatMetadata(
-      chatJid,
-      '2026-07-16T18:20:00.000Z',
-      'Owner self-thread',
-      'bluebubbles',
-      false,
-    );
-    storeMessageDirect({
-      id: 'bb:stale-live',
-      chat_jid: chatJid,
-      sender: 'bb:owner',
-      sender_name: 'Owner',
-      content: '@Andrea old live command',
-      timestamp: '2026-07-16T18:00:00.000Z',
-      is_from_me: true,
-      message_ingress_origin: 'live',
-    });
-    storeMessageDirect({
-      id: 'bb:fresh-live',
-      chat_jid: chatJid,
-      sender: 'bb:owner',
-      sender_name: 'Owner',
-      content: '@Andrea current live command',
-      timestamp: '2026-07-16T18:20:00.000Z',
-      is_from_me: true,
-      message_ingress_origin: 'live',
-    });
+  it('quarantines stale local BlueBubbles receipts without hiding history', () => {
+    vi.useFakeTimers();
+    try {
+      const chatJid = 'bb:iMessage;-;+15550002222';
+      storeChatMetadata(
+        chatJid,
+        '2026-07-16T18:20:00.000Z',
+        'Owner self-thread',
+        'bluebubbles',
+        false,
+      );
+      vi.setSystemTime('2026-07-16T18:00:00.000Z');
+      storeMessageDirect({
+        id: 'bb:stale-live',
+        chat_jid: chatJid,
+        sender: 'bb:owner',
+        sender_name: 'Owner',
+        content: '@Andrea old live command',
+        // Deliberately fresh-looking provider time; local receipt is stale.
+        timestamp: '2026-07-16T18:20:00.000Z',
+        is_from_me: true,
+        message_ingress_origin: 'live',
+      });
+      vi.setSystemTime('2026-07-16T18:20:00.000Z');
+      storeMessageDirect({
+        id: 'bb:fresh-live',
+        chat_jid: chatJid,
+        sender: 'bb:owner',
+        sender_name: 'Owner',
+        content: '@Andrea current live command',
+        // Deliberately stale-looking provider time; local receipt is fresh.
+        timestamp: '2026-07-16T17:00:00.000Z',
+        is_from_me: true,
+        message_ingress_origin: 'live',
+      });
 
-    expect(
-      quarantineStaleBlueBubblesMessagesForRecovery('2026-07-16T18:15:00.000Z'),
-    ).toBe(1);
-    expect(
-      getActionableMessagesSince(chatJid, '', 'Andrea').map(
-        (message) => message.id,
-      ),
-    ).toEqual(['bb:fresh-live']);
-    expect(
-      listRecentMessagesForChat(chatJid, 10).map((message) => message.id),
-    ).toEqual(expect.arrayContaining(['bb:stale-live', 'bb:fresh-live']));
-    expect(
-      getMessagesSince(chatJid, '', 'Andrea').map((message) => message.id),
-    ).toEqual(expect.arrayContaining(['bb:stale-live', 'bb:fresh-live']));
+      expect(
+        quarantineStaleBlueBubblesMessagesForRecovery(
+          '2026-07-16T18:15:00.000Z',
+          new Date('2026-07-16T18:30:00.000Z'),
+        ),
+      ).toBe(1);
+      expect(
+        getActionableMessagesSince(chatJid, '', 'Andrea').map(
+          (message) => message.id,
+        ),
+      ).toEqual(['bb:fresh-live']);
+      expect(
+        listRecentMessagesForChat(chatJid, 10).map((message) => message.id),
+      ).toEqual(expect.arrayContaining(['bb:stale-live', 'bb:fresh-live']));
+      expect(
+        getMessagesSince(chatJid, '', 'Andrea').map((message) => message.id),
+      ).toEqual(expect.arrayContaining(['bb:stale-live', 'bb:fresh-live']));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -570,6 +688,336 @@ describe('getNewMessages', () => {
     const { messages, newTimestamp } = getNewMessages([], '', 'Andy');
     expect(messages).toHaveLength(0);
     expect(newTimestamp).toBe('');
+  });
+
+  it('does not let a newer cursor in one chat hide delayed ingress in another', () => {
+    const messages = getNewMessagesByChatCursor(
+      ['group1@g.us', 'group2@g.us'],
+      {
+        'group1@g.us': '2024-01-01T00:00:04.000Z',
+        'group2@g.us': '2024-01-01T00:00:00.000Z',
+      },
+      'Andy',
+    );
+
+    expect(messages.map((message) => message.id)).toEqual(['a2']);
+  });
+});
+
+describe('durable actionable ingress ledger', () => {
+  beforeEach(() => {
+    for (const chatJid of [
+      'tg:main',
+      'tg:paged',
+      'tg:restart',
+      'tg:triggered',
+      'tg:no-trigger',
+    ]) {
+      storeChatMetadata(chatJid, '2026-07-16T19:59:00.000Z');
+    }
+  });
+
+  it('preserves two Telegram messages received in the same provider second', () => {
+    store({
+      id: 'same-second-1',
+      chat_jid: 'tg:main',
+      sender: 'owner',
+      sender_name: 'Owner',
+      content: 'First command',
+      timestamp: '2026-07-16T20:00:00.000Z',
+    });
+    store({
+      id: 'same-second-2',
+      chat_jid: 'tg:main',
+      sender: 'owner',
+      sender_name: 'Owner',
+      content: 'Second command',
+      timestamp: '2026-07-16T20:00:00.000Z',
+    });
+
+    const firstClaim = claimPendingActionableMessagesForChat({
+      chatJid: 'tg:main',
+      limit: 1,
+    });
+    expect(firstClaim.messages.map((message) => message.id)).toEqual([
+      'same-second-1',
+    ]);
+    completeActionableIngressClaim({ claimToken: firstClaim.claimToken! });
+
+    expect(
+      listPendingActionableMessagesForChats(['tg:main']).map(
+        (message) => message.id,
+      ),
+    ).toEqual(['same-second-2']);
+  });
+
+  it('preserves immutable local receipt time instead of provider or drain time', () => {
+    vi.useFakeTimers();
+    try {
+      const chatJid = 'bb:iMessage;-;owner@example.invalid';
+      storeChatMetadata(
+        chatJid,
+        '2026-07-16T19:40:00.000Z',
+        'Owner self-thread',
+        'bluebubbles',
+        false,
+      );
+      vi.setSystemTime('2026-07-16T19:45:00.000Z');
+      store({
+        id: 'local-receipt-authorization-clock',
+        chat_jid: chatJid,
+        sender: 'owner',
+        sender_name: 'Owner',
+        content: 'Text Avery Example: This arrived before stop.',
+        // Provider clocks are not owner-authorization clocks.
+        timestamp: '2026-07-17T01:00:00.000Z',
+      });
+
+      vi.setSystemTime('2026-07-16T20:00:00.000Z');
+      expect(listPendingActionableMessagesForChats([chatJid])[0]).toMatchObject(
+        {
+          id: 'local-receipt-authorization-clock',
+          timestamp: '2026-07-17T01:00:00.000Z',
+          ingress_received_at: '2026-07-16T19:45:00.000Z',
+        },
+      );
+      expect(
+        claimPendingActionableMessagesForChat({ chatJid }).messages[0],
+      ).toMatchObject({
+        id: 'local-receipt-authorization-clock',
+        ingress_received_at: '2026-07-16T19:45:00.000Z',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves the sidecar claim time supplied by durable BlueBubbles ingress', () => {
+    storeChatMetadata(
+      'bb:iMessage;-;owner@example.invalid',
+      '2026-07-16T20:00:00.000Z',
+    );
+    store({
+      id: 'durable-bluebubbles-claim',
+      chat_jid: 'bb:iMessage;-;owner@example.invalid',
+      sender: 'owner',
+      sender_name: 'Owner',
+      content: '@Andrea summarize my new messages',
+      timestamp: '2026-07-17T01:00:00.000Z',
+      ingress_received_at: '2026-07-16T19:44:59.123Z',
+    });
+
+    expect(
+      listPendingActionableMessagesForChats([
+        'bb:iMessage;-;owner@example.invalid',
+      ])[0],
+    ).toMatchObject({
+      id: 'durable-bluebubbles-claim',
+      timestamp: '2026-07-17T01:00:00.000Z',
+      ingress_received_at: '2026-07-16T19:44:59.123Z',
+    });
+  });
+
+  it('rejects a malformed durable ingress receipt time instead of minting fresh authority', () => {
+    storeChatMetadata(
+      'bb:iMessage;-;owner@example.invalid',
+      '2026-07-16T20:00:00.000Z',
+    );
+
+    expect(() =>
+      store({
+        id: 'malformed-durable-bluebubbles-claim',
+        chat_jid: 'bb:iMessage;-;owner@example.invalid',
+        sender: 'owner',
+        sender_name: 'Owner',
+        content: '@Andrea this must fail closed',
+        timestamp: '2026-07-17T01:00:00.000Z',
+        ingress_received_at: 'not-a-timestamp',
+      }),
+    ).toThrow(/durable ingress receipt time must be a timestamp/i);
+    expect(
+      listPendingActionableMessagesForChats([
+        'bb:iMessage;-;owner@example.invalid',
+      ]),
+    ).toEqual([]);
+  });
+
+  it('drains oldest-first without swallowing messages beyond a prompt page', () => {
+    for (let index = 1; index <= 11; index += 1) {
+      store({
+        id: `ledger-page-${index}`,
+        chat_jid: 'tg:paged',
+        sender: 'owner',
+        sender_name: 'Owner',
+        content: `Command ${index}`,
+        timestamp: `2026-07-16T20:00:${String(index).padStart(2, '0')}.000Z`,
+      });
+    }
+
+    const firstPage = claimPendingActionableMessagesForChat({
+      chatJid: 'tg:paged',
+      limit: 10,
+    });
+    expect(firstPage.messages.map((message) => message.id)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `ledger-page-${index + 1}`),
+    );
+    completeActionableIngressClaim({ claimToken: firstPage.claimToken! });
+    expect(
+      listPendingActionableMessagesForChats(['tg:paged']).map(
+        (message) => message.id,
+      ),
+    ).toEqual(['ledger-page-11']);
+  });
+
+  it('recovers an exact in-flight claim after a hard process restart', () => {
+    store({
+      id: 'hard-kill-command',
+      chat_jid: 'tg:restart',
+      sender: 'owner',
+      sender_name: 'Owner',
+      content: 'Do not lose this',
+      timestamp: '2026-07-16T20:00:00.000Z',
+    });
+    const claim = claimPendingActionableMessagesForChat({
+      chatJid: 'tg:restart',
+    });
+    expect(claim.messages).toHaveLength(1);
+
+    expect(recoverAllActionableIngressClaims()).toBe(1);
+    expect(
+      listPendingActionableMessagesForChats(['tg:restart']).map(
+        (message) => message.id,
+      ),
+    ).toEqual(['hard-kill-command']);
+  });
+
+  it('deduplicates callback retries and accepts owner text beginning Andrea', () => {
+    const message = {
+      id: 'owner-prefixed-command',
+      chat_jid: 'tg:main',
+      sender: 'owner',
+      sender_name: 'Owner',
+      content: 'Andrea: summarize my texts',
+      timestamp: '2026-07-16T20:00:00.000Z',
+    };
+    store(message);
+    store(message);
+
+    expect(
+      listPendingActionableMessagesForChats(['tg:main']).map(
+        (entry) => entry.id,
+      ),
+    ).toEqual(['owner-prefixed-command']);
+  });
+
+  it('finds and claims a trigger beyond 201 older non-trigger rows', () => {
+    for (let index = 1; index <= 201; index += 1) {
+      store({
+        id: `trigger-context-${index}`,
+        chat_jid: 'tg:triggered',
+        sender: 'owner',
+        sender_name: 'Owner',
+        content: `Background chatter ${index}`,
+        timestamp: `2026-07-16T20:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
+      });
+    }
+    store({
+      id: 'eligible-trigger',
+      chat_jid: 'tg:triggered',
+      sender: 'owner',
+      sender_name: 'Owner',
+      content: '@Andrea summarize this chat',
+      timestamp: '2026-07-16T20:04:00.000Z',
+    });
+
+    const trigger = findFirstPendingActionableMessageForChat({
+      chatJid: 'tg:triggered',
+      pageSize: 17,
+      predicate: (message) => message.content.startsWith('@Andrea'),
+    });
+    expect(trigger?.id).toBe('eligible-trigger');
+    expect(trigger?.ingress_seq).toEqual(expect.any(Number));
+
+    const claim = claimPendingActionableMessagesThroughSequence({
+      chatJid: 'tg:triggered',
+      throughSequence: trigger!.ingress_seq!,
+      limit: 10,
+      now: new Date('2026-07-16T21:00:00.000Z'),
+    });
+    expect(claim.claimToken).toEqual(expect.any(String));
+    expect(claim.throughSequence).toBe(trigger!.ingress_seq);
+    expect(claim.ignoredBeforeCount).toBe(192);
+    expect(claim.messages).toHaveLength(10);
+    expect(claim.messages.at(-1)?.id).toBe('eligible-trigger');
+    expect(claim.messages[0]?.id).toBe('trigger-context-193');
+    expect(
+      claim.messages.every(
+        (message) => message.ingress_claim_token === claim.claimToken,
+      ),
+    ).toBe(true);
+    expect(claim.messages.map((message) => message.ingress_seq)).toEqual(
+      [...claim.messages]
+        .map((message) => message.ingress_seq)
+        .sort((left, right) => left! - right!),
+    );
+    expect(
+      listPendingActionableMessagesForChats(
+        ['tg:triggered'],
+        200,
+        new Date('2026-07-16T21:01:00.000Z'),
+      ),
+    ).toEqual([]);
+    expect(
+      completeActionableIngressClaim({ claimToken: claim.claimToken! }),
+    ).toBe(10);
+  });
+
+  it('returns no trigger or claim and leaves pending ingress unchanged', () => {
+    for (let index = 1; index <= 25; index += 1) {
+      store({
+        id: `no-trigger-${index}`,
+        chat_jid: 'tg:no-trigger',
+        sender: 'owner',
+        sender_name: 'Owner',
+        content: `Background chatter ${index}`,
+        timestamp: `2026-07-16T20:00:${String(index).padStart(2, '0')}.000Z`,
+      });
+    }
+    const before = listPendingActionableMessagesForChats(['tg:no-trigger']);
+
+    const trigger = findFirstPendingActionableMessageForChat({
+      chatJid: 'tg:no-trigger',
+      pageSize: 7,
+      predicate: (message) => message.content.startsWith('@Andrea'),
+    });
+    expect(trigger).toBeNull();
+
+    const missingSequence = before.at(-1)!.ingress_seq! + 1;
+    const claim = claimPendingActionableMessagesThroughSequence({
+      chatJid: 'tg:no-trigger',
+      throughSequence: missingSequence,
+    });
+    expect(claim).toEqual({
+      claimToken: null,
+      messages: [],
+      ignoredBeforeCount: 0,
+      throughSequence: null,
+    });
+    expect(
+      listPendingActionableMessagesForChats(['tg:no-trigger']).map(
+        (message) => ({
+          id: message.id,
+          ingress_seq: message.ingress_seq,
+          ingress_claim_token: message.ingress_claim_token,
+        }),
+      ),
+    ).toEqual(
+      before.map((message) => ({
+        id: message.id,
+        ingress_seq: message.ingress_seq,
+        ingress_claim_token: message.ingress_claim_token,
+      })),
+    );
   });
 });
 
@@ -749,6 +1197,20 @@ describe('message query LIMIT', () => {
       50,
     );
     expect(messages).toHaveLength(10);
+  });
+
+  it('returns the newest bounded chat window in chronological order', () => {
+    const messages = listMessagesForChatWindow({
+      chatJid: 'group@g.us',
+      startTimestamp: '2024-01-01T00:00:00.000Z',
+      limit: 3,
+    });
+
+    expect(messages.map((message) => message.id)).toEqual([
+      'lim-8',
+      'lim-9',
+      'lim-10',
+    ]);
   });
 });
 

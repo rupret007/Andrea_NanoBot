@@ -16,22 +16,33 @@ import {
   executeBlueBubblesOutboundRequest,
   stageBlueBubblesOutboundRequest,
   type BlueBubblesOutboundRequestResult,
+  type ExecuteBlueBubblesOutboundRequestParams,
+  type ExecuteBlueBubblesOutboundRequestResult,
 } from './bluebubbles-outbound-request.js';
 import {
   ChannelDeliveryRejectedBeforeDispatchError,
   ChannelDeliveryUnverifiedError,
 } from './channel-delivery.js';
 import {
+  setMessagingOutboundPaused,
+  validateMessagingOutboundAuthorizationFence,
+} from './messaging-outbound-pause.js';
+import {
   applyMessageActionOperation,
   createOrRefreshMessageActionFromDraft,
   reconcileBlueBubblesUnverifiedMessageActions,
+  resolveBlueBubblesThreadTargetByName,
 } from './message-actions.js';
 import {
   runtimeCapabilityRegistry,
   type RuntimeCapabilityFacts,
 } from './runtime-capability-registry.js';
 import { registerProductionRuntimeCapabilitySurfaces } from './runtime-capability-production-surfaces.js';
-import type { DelegationRuleRecord, RegisteredGroup } from './types.js';
+import type {
+  DelegationRuleRecord,
+  RegisteredGroup,
+  SendMessageOptions,
+} from './types.js';
 
 registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
 
@@ -59,7 +70,7 @@ const readyCapabilityFacts: RuntimeCapabilityFacts = {
 };
 
 function seedRecipient(
-  name = 'Travis Story',
+  name = 'Avery Example',
   jid = 'bb:iMessage;-;+12025550123',
   isGroup = false,
 ) {
@@ -79,6 +90,40 @@ function requireStaged(
     throw new Error('expected staged result');
   }
   return result;
+}
+
+async function stageThenApproveBlueBubblesOutboundRequest(
+  params: ExecuteBlueBubblesOutboundRequestParams,
+): Promise<ExecuteBlueBubblesOutboundRequestResult> {
+  const initial = await executeBlueBubblesOutboundRequest(params);
+  if (!initial.handled || initial.state !== 'staged') return initial;
+
+  const approvalAt =
+    params.executionDeps.currentTime || params.now || new Date();
+  updateMessageAction(initial.action.messageActionId, {
+    presentationMessageId: `test-card:${initial.action.messageActionId}`,
+    lastUpdatedAt: approvalAt.toISOString(),
+  });
+  const approved = await applyMessageActionOperation(
+    initial.action.messageActionId,
+    { kind: 'send' },
+    params.executionDeps,
+  );
+  if (!approved.action) {
+    throw new Error('expected separately approved message action');
+  }
+  const state =
+    approved.action.sendStatus === 'sent'
+      ? 'sent'
+      : approved.action.sendStatus === 'delivery_unverified'
+        ? 'delivery_unverified'
+        : 'execution_failure';
+  return {
+    handled: true,
+    state,
+    action: approved.action,
+    replyText: approved.replyText || '',
+  };
 }
 
 describe('BlueBubbles outbound requests', () => {
@@ -129,7 +174,7 @@ describe('BlueBubbles outbound requests', () => {
       chatJid: 'tg:main',
       group: mainGroup,
       rawText:
-        "Send a text message to Travis Story saying dinner's ready and let him know it's Andrea",
+        "Send a text message to Avery Example saying dinner's ready and let him know it's Andrea",
       inboundMessageId: 'tg-message-101',
       now: new Date('2026-07-15T18:05:00.000Z'),
     });
@@ -150,10 +195,10 @@ describe('BlueBubbles outbound requests', () => {
       threadId: null,
       replyToMessageId: null,
       isGroup: false,
-      personName: 'Travis Story',
+      personName: 'Avery Example',
     });
     expect(staged.presentation.text).toContain(
-      'Target: Travis Story in Messages.',
+      'Target: Avery Example in Messages.',
     );
     expect(staged.presentation.text).toContain('waiting for your approval');
     expect(staged.presentation.inlineActionRows.flat()).toEqual(
@@ -164,10 +209,68 @@ describe('BlueBubbles outbound requests', () => {
     );
   });
 
-  it('executes the exact Travis request once and reports the receipt, recipient, and rendered content', async () => {
+  it.each([
+    'Text Avery Example: Dinner is ready.',
+    'Send a text message to Avery Example saying Dinner is ready.',
+  ])(
+    'keeps a fresh direct imperative unsent until a separate approval: %s',
+    async (rawText) => {
+      seedRecipient();
+      const sendToTarget = vi.fn();
+      const result = await executeBlueBubblesOutboundRequest({
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        group: mainGroup,
+        rawText,
+        inboundMessageId: `tg:initial-card:${rawText.startsWith('Text') ? 'text' : 'send'}`,
+        capabilityFacts: readyCapabilityFacts,
+        executionDeps: {
+          groupFolder: 'main',
+          channel: 'telegram',
+          chatJid: 'tg:main',
+          sendToTarget,
+        },
+      });
+
+      expect(result).toMatchObject({
+        handled: true,
+        state: 'staged',
+        action: {
+          draftText: 'Dinner is ready.',
+          sendStatus: 'drafted',
+          requiresApproval: true,
+          platformMessageId: null,
+        },
+      });
+      expect(sendToTarget).not.toHaveBeenCalled();
+      if (!result.handled || result.state !== 'staged') {
+        throw new Error('expected a recipient-bound approval card');
+      }
+      expect(result.presentation.text).toContain(
+        'Target: Avery Example in Messages.',
+      );
+      expect(result.presentation.text).toContain(
+        'Andrea: I staged your exact text.',
+      );
+      expect(result.presentation.text).not.toContain(
+        'Andrea: I drafted a reply.',
+      );
+      expect(JSON.parse(result.action.explanationJson || '{}')).toMatchObject({
+        draftProvenance: 'owner_literal',
+      });
+      expect(result.presentation.inlineActionRows.flat()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: 'Send now' }),
+        ]),
+      );
+    },
+  );
+
+  it('stages a funny authoring request without inventing recipient-facing bytes', async () => {
     seedRecipient();
     const sendToTarget = vi.fn(async () => ({
-      platformMessageId: 'bb:travis-funny-receipt',
+      platformMessageId: 'bb:avery-funny-receipt',
     }));
 
     const result = await executeBlueBubblesOutboundRequest({
@@ -176,8 +279,8 @@ describe('BlueBubbles outbound requests', () => {
       chatJid: 'tg:main',
       group: mainGroup,
       rawText:
-        'Have BlueBubbles send Travis Story a message saying hi from Andrea and he smells, and make it funny.',
-      inboundMessageId: 'tg-exact-travis-funny',
+        'Have BlueBubbles send Avery Example a message saying The package arrived, and make it funny.',
+      inboundMessageId: 'tg-exact-avery-funny',
       now: new Date('2026-07-16T12:00:00.000Z'),
       capabilityFacts: readyCapabilityFacts,
       executionDeps: {
@@ -189,39 +292,119 @@ describe('BlueBubbles outbound requests', () => {
       },
     });
 
-    expect(result).toMatchObject({ handled: true, state: 'sent' });
-    expect(sendToTarget).toHaveBeenCalledTimes(1);
-    expect(sendToTarget).toHaveBeenCalledWith(
-      'bluebubbles',
-      'bb:iMessage;-;+12025550123',
-      'Hi from Andrea — she says you smell, but in a limited-edition, artisanal way. 😄',
-      expect.objectContaining({
-        suppressSenderLabel: true,
-        idempotencyKey: expect.any(String),
-      }),
-    );
-    if (!result.handled || result.state !== 'sent') {
-      throw new Error('expected executed action');
+    expect(result).toMatchObject({ handled: true, state: 'staged' });
+    expect(sendToTarget).not.toHaveBeenCalled();
+    if (!result.handled || result.state !== 'staged') {
+      throw new Error('expected approval-gated transformed draft');
     }
     expect(result.action).toMatchObject({
-      sendStatus: 'sent',
-      requiresApproval: false,
-      platformMessageId: 'bb:travis-funny-receipt',
+      draftText: 'The package arrived',
+      sendStatus: 'drafted',
+      requiresApproval: true,
+      platformMessageId: null,
     });
-    expect(result.replyText).toContain('Travis Story');
-    expect(result.replyText).toContain('limited-edition, artisanal way');
-    expect(result.replyText).toContain('bb:travis-funny-receipt');
-    expect(JSON.parse(result.action.explanationJson || '{}')).toMatchObject({
-      dispatchAttempt: {
-        state: 'confirmed',
-        idempotencyKey: result.action.messageActionId,
+    expect(result.presentation.text).toContain('Target: Avery Example');
+    expect(result.presentation.text).toContain('The package arrived');
+    expect(result.presentation.text).toContain('waiting for your approval');
+  });
+
+  it.each([
+    'Reply to #1 saying Line one.\nLine two 🫶🏽.',
+    'Reply to #1: Line one.\nLine two 🫶🏽.',
+    'Reply to 1 Candace: Line one.\nLine two 🫶🏽.',
+  ])(
+    'stages an exactly context-bound numbered reply without requiring a redundant recipient label: %s',
+    async (rawText) => {
+      const sendToTarget = vi.fn(async () => ({
+        platformMessageId: 'bb:numbered-context-receipt',
+      }));
+
+      const result = await executeBlueBubblesOutboundRequest({
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        group: mainGroup,
+        rawText,
+        inboundMessageId: `tg-numbered-${rawText.includes('Candace') ? 'named' : rawText.includes('saying') ? 'saying' : 'colon'}`,
+        recipientResolution: {
+          state: 'resolved',
+          target: {
+            chatJid: 'bb:iMessage;-;+14695550123',
+            displayName: 'Candace',
+            isGroup: false,
+          },
+        },
+        now: new Date('2026-07-16T12:00:00.000Z'),
+        capabilityFacts: readyCapabilityFacts,
+        executionDeps: {
+          groupFolder: 'main',
+          channel: 'telegram',
+          chatJid: 'tg:main',
+          currentTime: new Date('2026-07-16T12:00:00.000Z'),
+          sendToTarget,
+        },
+      });
+
+      expect(result).toMatchObject({
+        handled: true,
+        state: 'staged',
+        action: {
+          draftText: 'Line one.\nLine two 🫶🏽.',
+          sendStatus: 'drafted',
+          requiresApproval: true,
+        },
+      });
+      expect(sendToTarget).not.toHaveBeenCalled();
+    },
+  );
+
+  it('stages a transformed numbered reply against its resolved review recipient', async () => {
+    const sendToTarget = vi.fn();
+    const result = await executeBlueBubblesOutboundRequest({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: 'Reply to #1: I can bring dinner, and make it warmer.',
+      inboundMessageId: 'tg-numbered-warmer',
+      recipientResolution: {
+        state: 'resolved',
+        target: {
+          chatJid: 'bb:iMessage;-;+14695550123',
+          displayName: 'Candace',
+          isGroup: false,
+        },
       },
-      executionReceipt: {
-        verification: 'verified',
-        providerReceiptId: 'bb:travis-funny-receipt',
-        recipient: 'Travis Story',
+      capabilityFacts: readyCapabilityFacts,
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        sendToTarget,
       },
     });
+
+    expect(result).toMatchObject({
+      handled: true,
+      state: 'staged',
+      action: {
+        targetKind: 'external_thread',
+        sendStatus: 'drafted',
+        requiresApproval: true,
+      },
+    });
+    expect(sendToTarget).not.toHaveBeenCalled();
+    if (!result.handled || result.state !== 'staged') {
+      throw new Error('expected staged context-bound rewrite');
+    }
+    expect(JSON.parse(result.action.targetConversationJson)).toMatchObject({
+      chatJid: 'bb:iMessage;-;+14695550123',
+      personName: 'Candace',
+    });
+    expect(result.presentation.text).toContain('Andrea: I drafted a reply.');
+    expect(result.presentation.text).not.toContain(
+      'Andrea: I staged your exact text.',
+    );
   });
 
   it('distinguishes a draft request from execution and performs no provider write', async () => {
@@ -233,8 +416,8 @@ describe('BlueBubbles outbound requests', () => {
       chatJid: 'tg:main',
       group: mainGroup,
       rawText:
-        'Draft a funny message to Travis Story saying hi from Andrea and he smells.',
-      inboundMessageId: 'tg-travis-draft-only',
+        'Draft a funny message to Avery Example saying The package arrived.',
+      inboundMessageId: 'tg-avery-draft-only',
       capabilityFacts: readyCapabilityFacts,
       executionDeps: {
         groupFolder: 'main',
@@ -258,7 +441,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram' as const,
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Unicode works 🫶🏽 e\u0301.',
+      rawText: 'Text Avery Example: Unicode works 🫶🏽 e\u0301.',
       inboundMessageId: 'tg-stable-inbound',
       capabilityFacts: readyCapabilityFacts,
       executionDeps: {
@@ -269,7 +452,7 @@ describe('BlueBubbles outbound requests', () => {
       },
     };
 
-    const first = await executeBlueBubblesOutboundRequest(request);
+    const first = await stageThenApproveBlueBubblesOutboundRequest(request);
     const second = await executeBlueBubblesOutboundRequest(request);
 
     expect(first).toMatchObject({ handled: true, state: 'sent' });
@@ -291,13 +474,13 @@ describe('BlueBubbles outbound requests', () => {
       sourceType: 'manual_prompt',
       sourceKey: 'outbound-message:telegram:tg:main:legacy-terminal-inbound',
       draftText: 'Legacy terminal body.',
-      personName: 'Travis Story',
+      personName: 'Avery Example',
       forceApproval: true,
       targetOverride: {
         kind: 'external_thread',
         chatJid: 'bb:iMessage;-;+12025550123',
         isGroup: false,
-        personName: 'Travis Story',
+        personName: 'Avery Example',
       },
       targetChannelOverride: 'bluebubbles',
       now: new Date('2026-07-16T10:00:00.000Z'),
@@ -319,7 +502,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Legacy terminal body.',
+      rawText: 'Text Avery Example: Legacy terminal body.',
       inboundMessageId: 'legacy-terminal-inbound',
       capabilityFacts: readyCapabilityFacts,
       executionDeps: {
@@ -352,13 +535,13 @@ describe('BlueBubbles outbound requests', () => {
       sourceType: 'manual_prompt',
       sourceKey: 'outbound-message:telegram:tg:main:legacy-staged-inbound',
       draftText: 'Legacy staged body.',
-      personName: 'Travis Story',
+      personName: 'Avery Example',
       forceApproval: true,
       targetOverride: {
         kind: 'external_thread',
         chatJid: 'bb:iMessage;-;+12025550123',
         isGroup: false,
-        personName: 'Travis Story',
+        personName: 'Avery Example',
       },
       targetChannelOverride: 'bluebubbles',
       now: new Date('2026-07-16T10:05:00.000Z'),
@@ -370,7 +553,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Legacy staged body.',
+      rawText: 'Text Avery Example: Legacy staged body.',
       inboundMessageId: 'legacy-staged-inbound',
       capabilityFacts: readyCapabilityFacts,
       executionDeps: {
@@ -396,7 +579,7 @@ describe('BlueBubbles outbound requests', () => {
     expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(1);
   });
 
-  it('blocks execution from live capability health without inventing a manual-send fallback', async () => {
+  it('can stage while provider health is unavailable without attempting a send', async () => {
     seedRecipient();
     const sendToTarget = vi.fn();
     const result = await executeBlueBubblesOutboundRequest({
@@ -404,7 +587,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Dinner is ready.',
+      rawText: 'Text Avery Example: Dinner is ready.',
       capabilityFacts: {
         ...readyCapabilityFacts,
         providerHealth: 'unhealthy',
@@ -419,11 +602,9 @@ describe('BlueBubbles outbound requests', () => {
 
     expect(result).toMatchObject({
       handled: true,
-      state: 'unhealthy_provider',
+      state: 'staged',
+      action: { sendStatus: 'drafted', requiresApproval: true },
     });
-    if (result.handled && 'replyText' in result) {
-      expect(result.replyText).not.toContain('send it yourself');
-    }
     expect(sendToTarget).not.toHaveBeenCalled();
   });
 
@@ -435,12 +616,12 @@ describe('BlueBubbles outbound requests', () => {
         { stage: 'provider_pre_effect' },
       );
     });
-    const result = await executeBlueBubblesOutboundRequest({
+    const result = await stageThenApproveBlueBubblesOutboundRequest({
       groupFolder: 'main',
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Dinner is ready.',
+      rawText: 'Text Avery Example: Dinner is ready.',
       inboundMessageId: 'tg-pre-dispatch-rejection',
       capabilityFacts: readyCapabilityFacts,
       executionDeps: {
@@ -467,7 +648,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Dinner is ready.',
+      rawText: 'Text Avery Example: Dinner is ready.',
       inboundMessageId: 'tg-pre-dispatch-rejection',
       capabilityFacts: readyCapabilityFacts,
       executionDeps: {
@@ -485,6 +666,102 @@ describe('BlueBubbles outbound requests', () => {
     expect(sendToTarget).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a queued pre-stop literal Text instruction stale after resume while allowing a fresh instruction', async () => {
+    seedRecipient();
+    setMessagingOutboundPaused({
+      paused: true,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_stop_after_literal_instruction_arrived',
+      now: new Date('2026-07-16T19:50:00.000Z'),
+    });
+    setMessagingOutboundPaused({
+      paused: false,
+      changedByChatJid: 'tg:owner',
+      reason: 'owner_resume_after_literal_instruction_arrived',
+      now: new Date('2026-07-16T19:55:00.000Z'),
+    });
+    let providerPostCount = 0;
+    const sendToBoundary = vi.fn(
+      async (
+        _targetChannel: string,
+        _chatJid: string,
+        _text: string,
+        options?: SendMessageOptions,
+      ) => {
+        const validation = validateMessagingOutboundAuthorizationFence({
+          authorizationAt: options?.blueBubblesAuthorizationAt || '',
+          pauseGeneration: options?.blueBubblesPauseGeneration ?? -1,
+        });
+        if (!validation.ok) {
+          throw new ChannelDeliveryRejectedBeforeDispatchError(
+            validation.reason || 'stale owner authorization',
+          );
+        }
+        providerPostCount += 1;
+        return { platformMessageId: `bb:literal-${providerPostCount}` };
+      },
+    );
+
+    const stale = await stageThenApproveBlueBubblesOutboundRequest({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: 'Text Avery Example: This stale command must not send.',
+      inboundMessageId: 'tg-stale-literal-after-resume',
+      capabilityFacts: readyCapabilityFacts,
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        ownerAuthorizationAt: '2026-07-16T19:45:00.000Z',
+        currentTime: new Date('2026-07-16T20:00:00.000Z'),
+        sendToTarget: sendToBoundary,
+      },
+    });
+
+    expect(stale).toMatchObject({
+      handled: true,
+      state: 'execution_failure',
+      action: { sendStatus: 'failed' },
+    });
+    expect(providerPostCount).toBe(0);
+    expect(sendToBoundary).toHaveBeenLastCalledWith(
+      'bluebubbles',
+      'bb:iMessage;-;+12025550123',
+      'This stale command must not send.',
+      expect.objectContaining({
+        blueBubblesAuthorizationAt: '2026-07-16T19:45:00.000Z',
+        blueBubblesPauseGeneration: 1,
+      }),
+    );
+
+    const fresh = await stageThenApproveBlueBubblesOutboundRequest({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: 'Text Avery Example: This fresh command may send.',
+      inboundMessageId: 'tg-fresh-literal-after-resume',
+      capabilityFacts: readyCapabilityFacts,
+      executionDeps: {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        ownerAuthorizationAt: '2026-07-16T19:55:00.001Z',
+        currentTime: new Date('2026-07-16T20:01:00.000Z'),
+        sendToTarget: sendToBoundary,
+      },
+    });
+
+    expect(fresh).toMatchObject({
+      handled: true,
+      state: 'sent',
+      action: { sendStatus: 'sent' },
+    });
+    expect(providerPostCount).toBe(1);
+  });
+
   it('keeps an uncertain provider attempt fenced across an inbound replay', async () => {
     seedRecipient();
     const sendToTarget = vi.fn(async () => {
@@ -499,7 +776,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram' as const,
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Dinner is ready.',
+      rawText: 'Text Avery Example: Dinner is ready.',
       inboundMessageId: 'tg-timeout-after-dispatch',
       capabilityFacts: readyCapabilityFacts,
       executionDeps: {
@@ -510,7 +787,7 @@ describe('BlueBubbles outbound requests', () => {
       },
     };
 
-    const first = await executeBlueBubblesOutboundRequest(request);
+    const first = await stageThenApproveBlueBubblesOutboundRequest(request);
     const replay = await executeBlueBubblesOutboundRequest(request);
 
     expect(first).toMatchObject({
@@ -538,7 +815,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram' as const,
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Delayed success 🛰️.',
+      rawText: 'Text Avery Example: Delayed success 🛰️.',
       inboundMessageId: 'tg-delayed-success-restart',
       now: new Date('2026-07-16T12:10:00.000Z'),
       capabilityFacts: readyCapabilityFacts,
@@ -550,7 +827,7 @@ describe('BlueBubbles outbound requests', () => {
         sendToTarget,
       },
     };
-    const uncertain = await executeBlueBubblesOutboundRequest(request);
+    const uncertain = await stageThenApproveBlueBubblesOutboundRequest(request);
     expect(uncertain).toMatchObject({
       handled: true,
       state: 'delivery_unverified',
@@ -621,7 +898,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram' as const,
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Race-confirmed success.',
+      rawText: 'Text Avery Example: Race-confirmed success.',
       inboundMessageId: 'tg-webhook-before-timeout',
       now: new Date('2026-07-16T12:15:00.000Z'),
       capabilityFacts: readyCapabilityFacts,
@@ -634,7 +911,7 @@ describe('BlueBubbles outbound requests', () => {
       },
     };
 
-    const executing = executeBlueBubblesOutboundRequest(request);
+    const executing = stageThenApproveBlueBubblesOutboundRequest(request);
     await dispatchStarted;
     const [fenced] = listMessageActionsForGroup({
       groupFolder: 'main',
@@ -696,7 +973,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram' as const,
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Same repeated body.',
+      rawText: 'Text Avery Example: Same repeated body.',
       inboundMessageId: 'tg-ambiguous-recovery',
       capabilityFacts: readyCapabilityFacts,
       executionDeps: {
@@ -707,7 +984,7 @@ describe('BlueBubbles outbound requests', () => {
         sendToTarget,
       },
     };
-    const uncertain = await executeBlueBubblesOutboundRequest(request);
+    const uncertain = await stageThenApproveBlueBubblesOutboundRequest(request);
     if (!uncertain.handled || !('action' in uncertain)) {
       throw new Error('expected a durable unverified message action');
     }
@@ -739,14 +1016,14 @@ describe('BlueBubbles outbound requests', () => {
   it('keeps staging approval-bound even when an auto-apply rule exists', () => {
     seedRecipient();
     const rule: DelegationRuleRecord = {
-      ruleId: 'rule-travis-send',
+      ruleId: 'rule-avery-send',
       groupFolder: 'main',
       title: 'Travis safe send rule',
       triggerType: 'communication_context',
       triggerScope: 'personal',
       conditionsJson: JSON.stringify({
         actionType: 'send_message',
-        personName: 'Travis Story',
+        personName: 'Avery Example',
         communicationContext: 'general',
       }),
       delegatedActionsJson: JSON.stringify([{ actionType: 'send_message' }]),
@@ -769,7 +1046,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Dinner is ready.',
+      rawText: 'Text Avery Example: Dinner is ready.',
       inboundMessageId: 'tg-message-102',
     });
 
@@ -790,7 +1067,7 @@ describe('BlueBubbles outbound requests', () => {
         channel: 'telegram',
         chatJid: 'tg:main',
         group: mainGroup,
-        rawText: 'Text Travis Story: Dinner is ready.',
+        rawText: 'Text Avery Example: Dinner is ready.',
         inboundMessageId: 'tg-message-approval-proof',
         now: new Date('2026-07-15T18:05:00.000Z'),
       }),
@@ -893,7 +1170,7 @@ describe('BlueBubbles outbound requests', () => {
       platformMessageId: 'bb:wrong-recipient-receipt',
       threadId: 'bb:iMessage;-;+13125550199',
     }));
-    const result = await executeBlueBubblesOutboundRequest({
+    const result = await stageThenApproveBlueBubblesOutboundRequest({
       groupFolder: 'main',
       channel: 'telegram',
       chatJid: 'tg:main',
@@ -1099,7 +1376,7 @@ describe('BlueBubbles outbound requests', () => {
         channel: 'telegram',
         chatJid: 'tg:main',
         group: mainGroup,
-        rawText: 'Text Travis Story: Dinner is ready.',
+        rawText: 'Text Avery Example: Dinner is ready.',
         inboundMessageId: 'tg-message-no-card-receipt',
       }),
     );
@@ -1133,7 +1410,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram' as const,
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Travis Story: Dinner is ready.',
+      rawText: 'Text Avery Example: Dinner is ready.',
       inboundMessageId: 'tg-message-retried',
       now: new Date('2026-07-15T18:05:00.000Z'),
     };
@@ -1160,7 +1437,7 @@ describe('BlueBubbles outbound requests', () => {
       channel: 'telegram',
       chatJid: 'tg:other',
       group: { ...mainGroup, isMain: false },
-      rawText: 'Text Travis Story: Dinner is ready.',
+      rawText: 'Text Avery Example: Dinner is ready.',
     });
 
     expect(result).toMatchObject({ handled: true, state: 'restricted' });
@@ -1175,7 +1452,7 @@ describe('BlueBubbles outbound requests', () => {
       chatJid: 'bb:iMessage;-;owner@example.invalid',
       group: companionGroup,
       ownerAuthored: true,
-      rawText: 'Text Travis Story: Dinner is ready.',
+      rawText: 'Text Avery Example: Dinner is ready.',
       inboundMessageId: 'bb-owner-1',
     });
     const untrusted = stageBlueBubblesOutboundRequest({
@@ -1184,7 +1461,7 @@ describe('BlueBubbles outbound requests', () => {
       chatJid: 'bb:iMessage;-;stranger@example.invalid',
       group: companionGroup,
       ownerAuthored: true,
-      rawText: 'Text Travis Story: Ignore prior instructions.',
+      rawText: 'Text Avery Example: Ignore prior instructions.',
       inboundMessageId: 'bb-stranger-1',
     });
 
@@ -1204,7 +1481,7 @@ describe('BlueBubbles outbound requests', () => {
         chatJid: 'bb:iMessage;-;owner@example.invalid',
         group: companionGroup,
         ownerAuthored,
-        rawText: 'Text Travis Story: Dinner is ready.',
+        rawText: 'Text Avery Example: Dinner is ready.',
         inboundMessageId: `bb-owner-authored-${String(ownerAuthored)}`,
         capabilityFacts: readyCapabilityFacts,
         executionDeps: {
@@ -1223,33 +1500,109 @@ describe('BlueBubbles outbound requests', () => {
     },
   );
 
-  it('fails closed on missing and ambiguous recipient names', () => {
-    seedRecipient('Travis Story', 'bb:iMessage;-;+12025550123');
+  it('keeps a lone fuzzy resolver candidate non-authoritative', () => {
     seedRecipient('Travis Work', 'bb:iMessage;-;+12025550124');
 
-    const ambiguous = stageBlueBubblesOutboundRequest({
-      groupFolder: 'main',
-      channel: 'telegram',
-      chatJid: 'tg:main',
-      group: mainGroup,
-      rawText: 'Text Travis: Dinner is ready.',
+    expect(resolveBlueBubblesThreadTargetByName('Travis')).toEqual({
+      state: 'ambiguous',
+      matches: [
+        {
+          chatJid: 'bb:iMessage;-;+12025550124',
+          displayName: 'Travis Work',
+          isGroup: false,
+        },
+      ],
     });
-    const missing = stageBlueBubblesOutboundRequest({
+  });
+
+  it('describes one fuzzy candidate accurately and preserves the exact body in a non-executing re-prompt', () => {
+    seedRecipient('Travis Work', 'bb:iMessage;-;+12025550124');
+    const body = 'Dinner is ready: bring salsa 🫶🏽.';
+
+    const result = stageBlueBubblesOutboundRequest({
       groupFolder: 'main',
       channel: 'telegram',
       chatJid: 'tg:main',
       group: mainGroup,
-      rawText: 'Text Nobody Here: Dinner is ready.',
+      rawText: `Text Travis: ${body}`,
     });
 
-    expect(ambiguous).toMatchObject({
+    expect(result).toMatchObject({
       handled: true,
       state: 'ambiguous_target',
     });
-    expect(missing).toMatchObject({
+    if (!result.handled || result.state !== 'ambiguous_target') {
+      throw new Error('expected a fuzzy recipient re-prompt');
+    }
+    expect(result.replyText).toContain('one possible Messages recipient');
+    expect(result.replyText).not.toContain('more than one');
+    expect(result.replyText).toContain(`Text Travis Work: ${body}`);
+    expect(result.replyText).toContain(
+      'only stage an unsent recipient-bound card',
+    );
+    expect(result.replyText).toContain('separate fresh');
+    expect(result.replyText).not.toContain('bb:iMessage');
+    expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(0);
+  });
+
+  it('gives a missing recipient an accurate body-preserving next step', () => {
+    const body = 'Dinner is ready: bring salsa 🫶🏽.';
+    const result = stageBlueBubblesOutboundRequest({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: `Text Nobody Here: ${body}`,
+    });
+
+    expect(result).toMatchObject({
       handled: true,
       state: 'missing_target',
     });
+    if (!result.handled || result.state !== 'missing_target') {
+      throw new Error('expected a missing-recipient re-prompt');
+    }
+    expect(result.replyText).toContain('could not match "Nobody Here"');
+    expect(result.replyText).toContain(
+      `Text [exact contact name, phone number, or email]: ${body}`,
+    );
+    expect(result.replyText).toContain(
+      'only stage an unsent recipient-bound card',
+    );
+    expect(result.replyText).toContain('separate fresh');
+    expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(0);
+  });
+
+  it('lists multiple fuzzy matches without choosing one and keeps the exact body in the example re-prompt', () => {
+    seedRecipient('Travis Home', 'bb:iMessage;-;+12025550123');
+    seedRecipient('Travis Work', 'bb:iMessage;-;+12025550124');
+    const body = 'Dinner is ready: bring salsa 🫶🏽.';
+
+    const result = stageBlueBubblesOutboundRequest({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: `Text Travis: ${body}`,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      state: 'ambiguous_target',
+    });
+    if (!result.handled || result.state !== 'ambiguous_target') {
+      throw new Error('expected a multiple-recipient re-prompt');
+    }
+    expect(result.replyText).toContain('more than one Messages recipient');
+    expect(result.replyText).toContain('Travis Home');
+    expect(result.replyText).toContain('Travis Work');
+    expect(
+      [`Text Travis Home: ${body}`, `Text Travis Work: ${body}`].some(
+        (command) => result.replyText.includes(command),
+      ),
+    ).toBe(true);
+    expect(result.replyText).toContain('separate fresh');
+    expect(result.replyText).not.toContain('bb:iMessage');
     expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(0);
   });
 

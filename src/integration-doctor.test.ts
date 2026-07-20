@@ -268,7 +268,15 @@ describe('integration doctor', () => {
     );
     expect(bluebubbles?.state).toBe('needs_proof');
     expect(bluebubbles?.transportState).toBe('healthy');
-    expect(bluebubbles?.safeActions.join(' ')).toContain('@Andrea once');
+    expect(bluebubbles?.safeActions.join(' ')).toContain(
+      'ordinary Messages contact and group threads data-only',
+    );
+    expect(bluebubbles?.safeActions.join(' ')).toContain(
+      'configured owner self-thread',
+    );
+    expect(bluebubbles?.detail).not.toContain(
+      'needs @Andrea once before bare follow-ups',
+    );
   });
 
   it('keeps BlueBubbles degraded-but-usable when message-action proof is fresh', () => {
@@ -389,6 +397,12 @@ describe('integration doctor', () => {
     ).toBe(true);
     expect(buildIntegrationFixGuidance('calendar')).toContain(
       'Google Calendar needs OAuth reauth',
+    );
+    expect(buildIntegrationFixGuidance('bluebubbles')).toContain(
+      'ordinary Messages contact and group threads data-only',
+    );
+    expect(buildIntegrationFixGuidance('bluebubbles')).not.toContain(
+      '@Andrea once in that same thread',
     );
   });
 });

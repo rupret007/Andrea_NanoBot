@@ -1,5 +1,5 @@
 import { execFileSync } from 'child_process';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -54,6 +54,8 @@ import {
 import {
   createCalendarAutomation,
   createTask,
+  claimPendingActionableMessagesForChat,
+  completeActionableIngressClaim,
   deleteAgentThread,
   deleteSession,
   deleteSessionStorageKey,
@@ -70,17 +72,18 @@ import {
   getResponseFeedbackByMessage,
   getResponseFeedbackByRemediationJob,
   getVerifiedDeepWorkPacket,
+  findFirstPendingActionableMessageForChat,
   listAllCursorAgents,
   listCalendarAutomationsForChat,
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
-  getLastBotMessageTimestamp,
-  getActionableMessagesSince,
+  ignorePendingActionableIngressMessage,
   listRecentMessagesForChat,
   listCursorAgentArtifacts,
   listRecentResponseFeedback,
-  getNewMessages,
+  listPendingActionableMessagesForChats,
+  claimPendingActionableMessagesThroughSequence,
   hasStoredMessage,
   getRouterState,
   getRuntimeBackendCardContext,
@@ -90,7 +93,7 @@ import {
   listAllEnabledCommunitySkills,
   pruneExpiredRuntimeBackendCardContexts,
   pruneUnreviewedBlueBubblesFeedbackLinks,
-  quarantineStaleBlueBubblesMessagesForRecovery,
+  releaseActionableIngressClaim,
   repairRegisteredMainChat,
   setRegisteredGroup,
   setAgentThread,
@@ -108,15 +111,26 @@ import {
 } from './db.js';
 import { buildDeepWorkReviewInvitation } from './deep-work-apprenticeship.js';
 import { GroupQueue } from './group-queue.js';
+import { logicalTurnSerializer } from './keyed-turn-serializer.js';
+import { acquireRuntimeProcessLock } from './runtime-process-lock.js';
+import {
+  applyMessagingOutboundPauseCommand,
+  captureMessagingOutboundAuthorizationFence,
+  parseMessagingOutboundPauseCommand,
+  resolveInboundMessagingOwnerAuthorizationAt,
+  resolveQueuedMessagingOwnerAuthorizationAt,
+} from './messaging-outbound-pause.js';
 import {
   classifyChannelDelivery,
   requireCompleteChannelDelivery,
 } from './channel-delivery.js';
+import { deliverQueuedResponseWithIngressCommit } from './queued-response-delivery.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import { prepareActionableIngressForStartupRecovery } from './startup-ingress-recovery.js';
 import {
+  BLUEBUBBLES_TARGETED_HISTORY_LIMIT,
   BlueBubblesChannel,
-  getBlueBubblesRestartRecoveryCutoff,
   primeBlueBubblesChatHistory,
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
@@ -128,6 +142,7 @@ import {
 } from './bluebubbles-ingress-policy.js';
 import { BlueBubblesReceiptInboxConsumer } from './bluebubbles-receipt-inbox-consumer.js';
 import { BlueBubblesReceiptInboxStore } from './bluebubbles-receipt-inbox-store.js';
+import { buildBlueBubblesIngressDispatchIdempotencyKey } from './bluebubbles-ingress-dispatch.js';
 import { startOwnerCockpitServer } from './owner-cockpit-server.js';
 import { planSimpleReminder } from './local-reminder.js';
 import { persistReminderOperation } from './reminder-operation.js';
@@ -168,11 +183,15 @@ import {
   matchAssistantCapabilityRequest,
 } from './assistant-capability-router.js';
 import { buildAssistantCapabilityExecutionInput } from './assistant-capability-input.js';
+import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
+import {
+  formatMessagesHistoryRefreshDisclosure,
+  type MessagesHistoryRefreshDisclosureInput,
+} from './messages-history-refresh-disclosure.js';
 import {
   capturePilotIssue,
   completePilotJourney,
   type PilotJourneyCompleteParams,
-  recordOrdinaryChatQuickReplyPilotProof,
   resolveCrossChannelPilotJourney,
   resolveGoalPlannerPilotJourney,
   resolveOrdinaryChatPilotJourney,
@@ -234,6 +253,7 @@ import {
   isSafeReadOnlyCalendarLookupAsk,
   reconcileTurnRuntimeEvidence,
   reflectTurnAgentOutcome,
+  verifyTurnAgentAdaptiveCompletion,
   type PreSendEvaluation,
   type TurnAgentHarnessContext,
 } from './turn-agent-harness.js';
@@ -323,6 +343,7 @@ import {
   findLatestChatMessageAction,
   isBlueBubblesExplicitSendAlias,
   isBlueBubblesProofDrillAction,
+  isMessageActionBoundToPresentationMessage,
   isMessageActionBoundToPresentationSurface,
   interpretMessageActionFollowup,
   linkMessageActionCognitiveContext,
@@ -332,7 +353,11 @@ import {
   startBlueBubblesProofDrill,
   type MessageActionOperation,
 } from './message-actions.js';
-import { executeBlueBubblesOutboundTurn } from './bluebubbles-outbound-turn.js';
+import {
+  doContextBoundRecipientLabelsMatch,
+  executeBlueBubblesOutboundTurn,
+} from './bluebubbles-outbound-turn.js';
+import { resolveRefreshedContextBoundRecipient } from './context-bound-messages-history.js';
 import {
   applyOutcomeReviewControl,
   buildOutcomeReviewResponse,
@@ -352,8 +377,10 @@ import {
   updateDelegationRuleMode,
 } from './delegation-rules.js';
 import {
+  getCommunicationThread,
   getDelegationRule,
   getMessageAction,
+  hasCommunicationSignal,
   updateDelegationRule,
   updateMessageAction,
 } from './db.js';
@@ -492,11 +519,18 @@ import {
   recordCouncilOutcomeSignal,
 } from './council-quality.js';
 import {
+  authorizeCognitiveReplyDelivery,
   buildCognitiveDoctorReport,
   formatCognitiveDoctorReport,
   isCognitionDoctorRequest,
   recordCognitiveOwnerReview,
+  type CognitiveReplyKind,
 } from './cognitive-kernel.js';
+import type { AdaptiveEvidence } from './adaptive-cognition-engine.js';
+import {
+  adaptiveCompletionEvidenceFromVerifiedRuntime,
+  resolveCognitiveDeliveryPayload,
+} from './cognitive-runtime-completion.js';
 import { buildAgentOSStatusText, isAgentOSNaturalRequest } from './agent-os.js';
 import { buildLogicStatusText, isLogicNaturalRequest } from './logic-kernel.js';
 import { buildTruthStatusText, isTruthNaturalRequest } from './truth-engine.js';
@@ -587,6 +621,8 @@ import {
   AgentThreadState,
   Channel,
   ChannelHealthSnapshot,
+  MessageActionRecentTextReviewLink,
+  MessageActionRecord,
   NewMessage,
   PilotBlockerOwner,
   PilotJourneyOutcome,
@@ -630,12 +666,18 @@ import {
 } from './assistant-routing.js';
 import { parseAssistantMessageActionIntent } from './assistant-action-intent.js';
 import {
+  buildRecentTextReviewOutcomeSignalId,
   formatRecentTextReviewFreshnessBlockedReply,
   parseRecentTextReviewItemFollowup,
+  parseRecentTextReviewSeedJson,
   recordRecentTextReviewOutcome,
   resolveRecentTextReviewFollowupTarget,
-  validateRecentTextReviewFollowupFreshness,
+  validateRecentTextReviewFollowupFreshnessAfterTargetedRefresh,
 } from './recent-text-review.js';
+import {
+  resolveSharedAssistantOwnerContextScope,
+  shouldRetainSharedAssistantCapabilitySeed,
+} from './shared-assistant-context.js';
 import {
   analyzeAgentError,
   buildRepeatedAgentErrorMessage,
@@ -697,7 +739,6 @@ import {
 } from './assistant-session.js';
 import {
   decideMainChatRouting,
-  shouldPipeToActiveAssistant,
   shouldAvoidCombinedContextForMainChat,
   type MainChatSessionState,
 } from './main-chat-routing.js';
@@ -899,7 +940,6 @@ registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
-let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let agentThreads: Record<string, AgentThreadState> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
@@ -915,6 +955,40 @@ const lastNonRetriableErrorNotice: Record<
   { code: string; at: number }
 > = {};
 const lastDirectAssistantTextByChatJid: Record<string, string> = {};
+
+function resolveLatestEligibleLocalMessagesTimestamp(
+  targetChatJid?: string | null,
+): string | null {
+  const chatJids = targetChatJid
+    ? [targetChatJid]
+    : getAllChats()
+        .filter(
+          (chat) =>
+            chat.channel === 'bluebubbles' &&
+            chat.jid.startsWith('bb:') &&
+            !isConfiguredBlueBubblesSelfThreadAliasJid(chat.jid),
+        )
+        .map((chat) => chat.jid);
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidateChatJid of chatJids) {
+    if (
+      !candidateChatJid.startsWith('bb:') ||
+      isConfiguredBlueBubblesSelfThreadAliasJid(candidateChatJid)
+    ) {
+      continue;
+    }
+    const message = listRecentMessagesForChat(candidateChatJid, 8).find(
+      (candidate) => !candidate.is_bot_message,
+    );
+    if (!message) continue;
+    const timestampMs = Date.parse(message.timestamp);
+    if (!Number.isFinite(timestampMs) || timestampMs <= latestMs) continue;
+    latestMs = timestampMs;
+    latest = message.timestamp;
+  }
+  return latest;
+}
 const GOOGLE_CALENDAR_PENDING_STATE_PREFIX = 'google_calendar_pending_create:';
 const GOOGLE_CALENDAR_SCHEDULING_CONTEXT_PREFIX =
   'google_calendar_scheduling_context:';
@@ -934,7 +1008,6 @@ const ACTION_LAYER_PENDING_DRAFT_PREFIX = 'action_layer_pending_draft:';
 const DAILY_COMPANION_CONTEXT_PREFIX = 'daily_companion_context:';
 const DAILY_COMPANION_CONTEXT_TTL_MS = 10 * 60 * 1000;
 const SHARED_ASSISTANT_CONTEXT_PREFIX = 'shared_assistant_context:';
-const SHARED_ASSISTANT_CONTEXT_TTL_MS = 10 * 60 * 1000;
 const OUTCOME_REVIEW_CONTEXT_PREFIX = 'outcome_review_context:';
 const OUTCOME_REVIEW_CONTEXT_TTL_MS = 30 * 60 * 1000;
 const DELEGATION_RULE_CONTEXT_PREFIX = 'delegation_rule_context:';
@@ -992,8 +1065,16 @@ function getDailyCompanionContextKey(chatJid: string): string {
   return `${DAILY_COMPANION_CONTEXT_PREFIX}${chatJid}`;
 }
 
-function getSharedAssistantContextKey(chatJid: string): string {
-  return `${SHARED_ASSISTANT_CONTEXT_PREFIX}${chatJid}`;
+function getSharedAssistantContextKey(chatJid: string): string | null {
+  const scope = resolveSharedAssistantOwnerContextScope({
+    chatJid,
+    registeredGroups,
+    blueBubblesEnabled: blueBubblesConversationBinding?.enabled,
+    blueBubblesGroupFolder: blueBubblesConversationBinding?.groupFolder,
+  });
+  return scope
+    ? `${SHARED_ASSISTANT_CONTEXT_PREFIX}${scope.storageKeySuffix}`
+    : null;
 }
 
 function getOutcomeReviewContextKey(chatJid: string): string {
@@ -1037,6 +1118,10 @@ const ACTIVE_REPO_ROOT = ACTIVE_RUNTIME_ARTIFACT.projectRoot;
 const ACTIVE_ENTRY_PATH = ACTIVE_RUNTIME_ARTIFACT.modulePath;
 const ACTIVE_ENV_PATH = path.resolve(ACTIVE_REPO_ROOT, '.env');
 const ACTIVE_STORE_DB_PATH = path.join(STORE_DIR, 'messages.db');
+const ACTIVE_RUNTIME_PROCESS_LOCK_PATH = path.join(
+  RUNTIME_STATE_DIR,
+  'andrea-runtime-process.lock',
+);
 const ACTIVE_GIT_BRANCH = readGitRef(['rev-parse', '--abbrev-ref', 'HEAD']);
 const ACTIVE_GIT_COMMIT = readGitRef(['rev-parse', 'HEAD']);
 const ACTIVE_BUILD_PROVENANCE = assessBuildProvenance({
@@ -1985,7 +2070,9 @@ function getSharedAssistantCapabilitySeed(
   chatJid: string,
   now = new Date(),
 ): AssistantCapabilityConversationSeed | null {
-  const raw = getRouterState(getSharedAssistantContextKey(chatJid));
+  const contextKey = getSharedAssistantContextKey(chatJid);
+  if (!contextKey) return null;
+  const raw = getRouterState(contextKey);
   if (!raw) return null;
 
   try {
@@ -1997,22 +2084,24 @@ function getSharedAssistantCapabilitySeed(
       !parsed.seed?.flowKey ||
       !parsed.seed?.summaryText
     ) {
-      clearSharedAssistantCapabilitySeed(chatJid);
+      deleteRouterState(contextKey);
       return null;
     }
 
-    const createdAtMs = Date.parse(parsed.createdAt);
     if (
-      !Number.isFinite(createdAtMs) ||
-      createdAtMs + SHARED_ASSISTANT_CONTEXT_TTL_MS < now.getTime()
+      !shouldRetainSharedAssistantCapabilitySeed({
+        createdAt: parsed.createdAt,
+        recentTextReviewJson: parsed.seed.subjectData?.recentTextReviewJson,
+        now,
+      })
     ) {
-      clearSharedAssistantCapabilitySeed(chatJid);
+      deleteRouterState(contextKey);
       return null;
     }
 
     return parsed.seed;
   } catch {
-    clearSharedAssistantCapabilitySeed(chatJid);
+    deleteRouterState(contextKey);
     return null;
   }
 }
@@ -2022,16 +2111,363 @@ function setSharedAssistantCapabilitySeed(
   seed: AssistantCapabilityConversationSeed,
   now = new Date(),
 ): void {
+  const contextKey = getSharedAssistantContextKey(chatJid);
+  if (!contextKey) return;
   const state: SharedAssistantContextState = {
     version: 1,
     createdAt: now.toISOString(),
     seed,
   };
-  setRouterState(getSharedAssistantContextKey(chatJid), JSON.stringify(state));
+  setRouterState(contextKey, JSON.stringify(state));
 }
 
 function clearSharedAssistantCapabilitySeed(chatJid: string): void {
-  deleteRouterState(getSharedAssistantContextKey(chatJid));
+  const contextKey = getSharedAssistantContextKey(chatJid);
+  if (contextKey) deleteRouterState(contextKey);
+}
+
+/** @internal - exported for offline owner-surface continuity tests. */
+export function _getSharedAssistantCapabilitySeedForTests(
+  chatJid: string,
+  now = new Date(),
+): AssistantCapabilityConversationSeed | null {
+  return getSharedAssistantCapabilitySeed(chatJid, now);
+}
+
+/** @internal - exported for offline owner-surface continuity tests. */
+export function _setSharedAssistantCapabilitySeedForTests(
+  chatJid: string,
+  seed: AssistantCapabilityConversationSeed,
+  now = new Date(),
+): void {
+  setSharedAssistantCapabilitySeed(chatJid, seed, now);
+}
+
+/** @internal - exported for offline owner-surface continuity tests. */
+export function _clearSharedAssistantCapabilitySeedForTests(
+  chatJid: string,
+): void {
+  clearSharedAssistantCapabilitySeed(chatJid);
+}
+
+function fingerprintRecentTextReviewValue(
+  domain: string,
+  value: string,
+): string {
+  return createHash('sha256')
+    .update(`${domain}\u0000${value}`, 'utf8')
+    .digest('hex');
+}
+
+function computeRecentTextReviewLinkFingerprint(
+  link: Omit<MessageActionRecentTextReviewLink, 'linkFingerprint'>,
+): string {
+  return fingerprintRecentTextReviewValue(
+    'message-action-recent-text-review-link',
+    [
+      link.version,
+      link.seedFingerprint,
+      link.reviewedAt,
+      link.itemId,
+      link.itemRank,
+      link.communicationThreadId,
+      link.historyStartTimestamp,
+      link.freshnessSnapshot.latestMessageIdentityHash,
+      link.freshnessSnapshot.latestMessageAt,
+      link.freshnessSnapshot.latestInboundAt || '',
+      link.freshnessSnapshot.latestOutboundAt || '',
+      link.freshnessSnapshot.messageCount,
+      link.freshnessSnapshot.snapshotHash,
+      link.freshnessSnapshot.transcriptHash,
+      link.targetChatFingerprint,
+      link.presentationScopeFingerprint,
+    ].join('\u0000'),
+  );
+}
+
+export function buildRecentTextReviewMessageActionLink(input: {
+  groupFolder: string;
+  presentationChatJid: string;
+  targetChatJid: string;
+  seedJson: string;
+  item: {
+    itemId: string;
+    rank: number;
+    communicationThreadId?: string | null;
+  };
+}): MessageActionRecentTextReviewLink | null {
+  const seed = parseRecentTextReviewSeedJson(input.seedJson);
+  const reviewedAt = seed?.reviewedAt || '';
+  const historyStartTimestamp = seed?.windowStartTimestamp || '';
+  const communicationThreadId = input.item.communicationThreadId?.trim() || '';
+  const itemId = input.item.itemId.trim();
+  const exactSeedItem = seed?.items.find(
+    (candidate) =>
+      candidate.itemId === itemId &&
+      candidate.rank === input.item.rank &&
+      candidate.communicationThreadId === communicationThreadId,
+  );
+  const freshnessSnapshot = exactSeedItem?.freshnessSnapshot;
+  if (
+    !exactSeedItem ||
+    !freshnessSnapshot?.latestMessageIdentityHash ||
+    !freshnessSnapshot.latestMessageAt ||
+    !Number.isInteger(freshnessSnapshot.messageCount) ||
+    !freshnessSnapshot.messageCount ||
+    !/^[a-f0-9]{16}$/i.test(freshnessSnapshot.snapshotHash || '') ||
+    !/^[a-f0-9]{16}$/i.test(freshnessSnapshot.transcriptHash || '') ||
+    !Number.isInteger(input.item.rank) ||
+    input.item.rank < 1 ||
+    input.item.rank > 8 ||
+    !/^text-review:[a-f0-9]{16,64}$/i.test(itemId) ||
+    !/^[a-z0-9][a-z0-9:._-]{0,199}$/i.test(communicationThreadId) ||
+    !input.groupFolder.trim() ||
+    !input.presentationChatJid.trim() ||
+    !input.targetChatJid.startsWith('bb:') ||
+    !Number.isFinite(Date.parse(reviewedAt)) ||
+    !Number.isFinite(Date.parse(historyStartTimestamp))
+  ) {
+    return null;
+  }
+  const base: Omit<MessageActionRecentTextReviewLink, 'linkFingerprint'> = {
+    version: 2,
+    seedFingerprint: fingerprintRecentTextReviewValue(
+      'recent-text-review-seed',
+      input.seedJson,
+    ),
+    reviewedAt,
+    itemId,
+    itemRank: input.item.rank,
+    communicationThreadId,
+    historyStartTimestamp,
+    freshnessSnapshot: {
+      latestMessageIdentityHash: freshnessSnapshot.latestMessageIdentityHash,
+      latestMessageAt: freshnessSnapshot.latestMessageAt,
+      latestInboundAt: freshnessSnapshot.latestInboundAt || null,
+      latestOutboundAt: freshnessSnapshot.latestOutboundAt || null,
+      messageCount: freshnessSnapshot.messageCount,
+      snapshotHash: freshnessSnapshot.snapshotHash!,
+      transcriptHash: freshnessSnapshot.transcriptHash!,
+    },
+    targetChatFingerprint: fingerprintRecentTextReviewValue(
+      'recent-text-review-target-chat',
+      input.targetChatJid,
+    ),
+    presentationScopeFingerprint: fingerprintRecentTextReviewValue(
+      'recent-text-review-presentation-scope',
+      `${input.groupFolder}\u0000${input.presentationChatJid}`,
+    ),
+  };
+  return {
+    ...base,
+    linkFingerprint: computeRecentTextReviewLinkFingerprint(base),
+  };
+}
+
+function parseRecentTextReviewMessageActionLink(
+  action: MessageActionRecord,
+): MessageActionRecentTextReviewLink | null {
+  let refs: Record<string, unknown>;
+  try {
+    refs = JSON.parse(action.linkedRefsJson || '{}') as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const raw = refs.recentTextReview;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const candidate = raw as Record<string, unknown>;
+  if (
+    candidate.version !== 2 ||
+    typeof candidate.seedFingerprint !== 'string' ||
+    typeof candidate.reviewedAt !== 'string' ||
+    typeof candidate.itemId !== 'string' ||
+    typeof candidate.itemRank !== 'number' ||
+    typeof candidate.communicationThreadId !== 'string' ||
+    typeof candidate.historyStartTimestamp !== 'string' ||
+    !candidate.freshnessSnapshot ||
+    typeof candidate.freshnessSnapshot !== 'object' ||
+    Array.isArray(candidate.freshnessSnapshot) ||
+    typeof candidate.targetChatFingerprint !== 'string' ||
+    typeof candidate.presentationScopeFingerprint !== 'string' ||
+    typeof candidate.linkFingerprint !== 'string'
+  ) {
+    return null;
+  }
+  const rawSnapshot = candidate.freshnessSnapshot as Record<string, unknown>;
+  if (
+    typeof rawSnapshot.latestMessageIdentityHash !== 'string' ||
+    typeof rawSnapshot.latestMessageAt !== 'string' ||
+    !(
+      rawSnapshot.latestInboundAt === null ||
+      typeof rawSnapshot.latestInboundAt === 'string'
+    ) ||
+    !(
+      rawSnapshot.latestOutboundAt === null ||
+      typeof rawSnapshot.latestOutboundAt === 'string'
+    ) ||
+    typeof rawSnapshot.messageCount !== 'number' ||
+    typeof rawSnapshot.snapshotHash !== 'string' ||
+    typeof rawSnapshot.transcriptHash !== 'string'
+  ) {
+    return null;
+  }
+  const link: MessageActionRecentTextReviewLink = {
+    version: 2,
+    seedFingerprint: candidate.seedFingerprint,
+    reviewedAt: candidate.reviewedAt,
+    itemId: candidate.itemId,
+    itemRank: candidate.itemRank,
+    communicationThreadId: candidate.communicationThreadId,
+    historyStartTimestamp: candidate.historyStartTimestamp,
+    freshnessSnapshot: {
+      latestMessageIdentityHash: rawSnapshot.latestMessageIdentityHash,
+      latestMessageAt: rawSnapshot.latestMessageAt,
+      latestInboundAt: rawSnapshot.latestInboundAt,
+      latestOutboundAt: rawSnapshot.latestOutboundAt,
+      messageCount: rawSnapshot.messageCount,
+      snapshotHash: rawSnapshot.snapshotHash,
+      transcriptHash: rawSnapshot.transcriptHash,
+    },
+    targetChatFingerprint: candidate.targetChatFingerprint,
+    presentationScopeFingerprint: candidate.presentationScopeFingerprint,
+    linkFingerprint: candidate.linkFingerprint,
+  };
+  const fingerprints = [
+    link.seedFingerprint,
+    link.targetChatFingerprint,
+    link.presentationScopeFingerprint,
+    link.linkFingerprint,
+  ];
+  const valid =
+    fingerprints.every((value) => /^[a-f0-9]{64}$/i.test(value)) &&
+    /^text-review:[a-f0-9]{16,64}$/i.test(link.itemId) &&
+    Number.isInteger(link.itemRank) &&
+    link.itemRank >= 1 &&
+    link.itemRank <= 8 &&
+    /^[a-z0-9][a-z0-9:._-]{0,199}$/i.test(link.communicationThreadId) &&
+    Number.isFinite(Date.parse(link.reviewedAt)) &&
+    Number.isFinite(Date.parse(link.historyStartTimestamp)) &&
+    /^[a-f0-9]{16}$/i.test(link.freshnessSnapshot.latestMessageIdentityHash) &&
+    Number.isFinite(Date.parse(link.freshnessSnapshot.latestMessageAt)) &&
+    Number.isInteger(link.freshnessSnapshot.messageCount) &&
+    link.freshnessSnapshot.messageCount > 0 &&
+    /^[a-f0-9]{16}$/i.test(link.freshnessSnapshot.snapshotHash) &&
+    /^[a-f0-9]{16}$/i.test(link.freshnessSnapshot.transcriptHash) &&
+    refs.communicationThreadId === link.communicationThreadId &&
+    computeRecentTextReviewLinkFingerprint({
+      version: link.version,
+      seedFingerprint: link.seedFingerprint,
+      reviewedAt: link.reviewedAt,
+      itemId: link.itemId,
+      itemRank: link.itemRank,
+      communicationThreadId: link.communicationThreadId,
+      historyStartTimestamp: link.historyStartTimestamp,
+      freshnessSnapshot: link.freshnessSnapshot,
+      targetChatFingerprint: link.targetChatFingerprint,
+      presentationScopeFingerprint: link.presentationScopeFingerprint,
+    }) === link.linkFingerprint;
+  return valid ? link : null;
+}
+
+export function completeRecentTextReviewMessageActionLifecycle(input: {
+  action: MessageActionRecord;
+  now?: Date;
+}): boolean {
+  const action = getMessageAction(input.action.messageActionId) || input.action;
+  const link = parseRecentTextReviewMessageActionLink(action);
+  const presentationChatJid = action.presentationChatJid?.trim() || '';
+  const sentAt = action.sentAt || '';
+  const now = input.now || new Date();
+  let targetChatJid = '';
+  try {
+    const target = JSON.parse(action.targetConversationJson) as {
+      chatJid?: unknown;
+    };
+    targetChatJid =
+      typeof target.chatJid === 'string' ? target.chatJid.trim() : '';
+  } catch {
+    return false;
+  }
+  const thread = link
+    ? getCommunicationThread(link.communicationThreadId)
+    : undefined;
+  if (
+    !link ||
+    action.sourceType !== 'manual_prompt' ||
+    !action.sourceKey.includes(':inbound:') ||
+    action.targetKind !== 'external_thread' ||
+    action.targetChannel !== 'bluebubbles' ||
+    action.sendStatus !== 'sent' ||
+    !action.platformMessageId?.trim() ||
+    !Number.isFinite(Date.parse(sentAt)) ||
+    Date.parse(sentAt) > now.getTime() + 5 * 60_000 ||
+    !presentationChatJid ||
+    !getSharedAssistantContextKey(presentationChatJid) ||
+    !targetChatJid.startsWith('bb:') ||
+    !thread ||
+    thread.groupFolder !== action.groupFolder ||
+    thread.channel !== 'bluebubbles' ||
+    thread.channelChatJid !== targetChatJid ||
+    thread.disabledAt != null ||
+    fingerprintRecentTextReviewValue(
+      'recent-text-review-target-chat',
+      targetChatJid,
+    ) !== link.targetChatFingerprint ||
+    fingerprintRecentTextReviewValue(
+      'recent-text-review-presentation-scope',
+      `${action.groupFolder}\u0000${presentationChatJid}`,
+    ) !== link.presentationScopeFingerprint
+  ) {
+    return false;
+  }
+
+  const signalId = buildRecentTextReviewOutcomeSignalId({
+    itemId: link.itemId,
+    outcome: 'handled',
+    occurredAt: sentAt,
+  });
+  if (!hasCommunicationSignal(signalId)) {
+    const recorded = recordRecentTextReviewOutcome({
+      groupFolder: action.groupFolder,
+      item: {
+        itemId: link.itemId,
+        rank: link.itemRank,
+        section: 'needs_reply',
+        chatLabel: 'Messages thread',
+        isGroup: false,
+        communicationThreadId: link.communicationThreadId,
+        summaryText: 'Verified reply sent.',
+      },
+      outcome: 'handled',
+      now: new Date(sentAt),
+    });
+    if (!recorded) return false;
+  }
+
+  const currentSeed = getSharedAssistantCapabilitySeed(
+    presentationChatJid,
+    now,
+  );
+  const currentSeedJson = currentSeed?.subjectData?.recentTextReviewJson;
+  if (
+    currentSeedJson &&
+    fingerprintRecentTextReviewValue(
+      'recent-text-review-seed',
+      currentSeedJson,
+    ) === link.seedFingerprint
+  ) {
+    const currentReview = parseRecentTextReviewSeedJson(currentSeedJson);
+    const exactItem = currentReview?.items.find(
+      (item) =>
+        item.itemId === link.itemId &&
+        item.rank === link.itemRank &&
+        item.communicationThreadId === link.communicationThreadId,
+    );
+    if (currentReview?.reviewedAt === link.reviewedAt && exactItem) {
+      clearSharedAssistantCapabilitySeed(presentationChatJid);
+    }
+  }
+  return true;
 }
 
 function parseJsonSafe<T>(value: string | null | undefined, fallback: T): T {
@@ -2365,8 +2801,12 @@ async function applyAndPresentMessageAction(params: {
   chatJid: string;
   messageActionId: string;
   operation: MessageActionOperation;
+  /** Exact presentation card that emitted a callback, when applicable. */
+  sourcePresentationMessageId?: string | null;
+  sourcePresentationThreadId?: string | null;
   /** Exact authorship fact from the current inbound platform message. */
   readonly ownerAuthored?: boolean | null;
+  ownerAuthorizationAt?: string;
   now?: Date;
 }): Promise<boolean> {
   const group = resolveCompanionBinding(params.chatJid)?.group;
@@ -2379,6 +2819,10 @@ async function applyAndPresentMessageAction(params: {
         ? 'telegram'
         : 'alexa';
   const action = getMessageAction(params.messageActionId);
+  const messagesHistoryChannel = channels.find(
+    (candidate) =>
+      candidate.name === 'bluebubbles' && candidate.primeChatHistory,
+  );
   const trustedOwnerSurface = isTrustedOwnerReviewSurface({
     channelName: channel.name,
     chatJid: params.chatJid,
@@ -2393,7 +2837,13 @@ async function applyAndPresentMessageAction(params: {
       action,
       channel: conversationChannel,
       chatJid: params.chatJid,
-    })
+    }) ||
+    (params.sourcePresentationMessageId !== undefined &&
+      !isMessageActionBoundToPresentationMessage({
+        action,
+        presentationMessageId: params.sourcePresentationMessageId,
+        presentationThreadId: params.sourcePresentationThreadId,
+      }))
   ) {
     await channel.sendMessage(
       params.chatJid,
@@ -2409,6 +2859,21 @@ async function applyAndPresentMessageAction(params: {
       channel: conversationChannel,
       chatJid: params.chatJid,
       currentTime: params.now,
+      ownerAuthorizationAt: params.ownerAuthorizationAt,
+      ...(messagesHistoryChannel?.primeChatHistory
+        ? {
+            primeMessagesChatHistory: (targetChatJid: string) =>
+              messagesHistoryChannel.primeChatHistory!(targetChatJid, {
+                limit: BLUEBUBBLES_TARGETED_HISTORY_LIMIT,
+              }),
+          }
+        : {}),
+      onVerifiedSend: (verifiedAction) => {
+        completeRecentTextReviewMessageActionLifecycle({
+          action: verifiedAction,
+          now: params.now,
+        });
+      },
       sendToTarget: (targetChannel, chatJid, text, options) =>
         sendCompanionHandoffMessage(targetChannel, chatJid, text, options),
     },
@@ -2455,9 +2920,7 @@ async function applyAndPresentMessageAction(params: {
     return true;
   }
 
-  if (result.replyText) {
-    await channel.sendMessage(params.chatJid, result.replyText);
-  } else if (result.presentation) {
+  if (result.presentation) {
     const sent = acceptConfirmedPresentationDelivery({
       result: await channel.sendMessage(
         params.chatJid,
@@ -2477,6 +2940,14 @@ async function applyAndPresentMessageAction(params: {
         now: params.now || new Date(),
       });
     }
+    if (
+      result.replyText &&
+      !['show', 'show_draft'].includes(params.operation.kind)
+    ) {
+      await channel.sendMessage(params.chatJid, result.replyText);
+    }
+  } else if (result.replyText) {
+    await channel.sendMessage(params.chatJid, result.replyText);
   }
   return true;
 }
@@ -3425,7 +3896,6 @@ function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
 }
 
 function loadState(): void {
-  lastTimestamp = getRouterState('last_timestamp') || '';
   const agentTs = getRouterState('last_agent_timestamp');
   try {
     lastAgentTimestamp = agentTs ? JSON.parse(agentTs) : {};
@@ -3442,29 +3912,7 @@ function loadState(): void {
   );
 }
 
-/**
- * Return the message cursor for a group, recovering from the last bot reply
- * if lastAgentTimestamp is missing (new group, corrupted state, restart).
- */
-function getOrRecoverCursor(chatJid: string): string {
-  const existing = lastAgentTimestamp[chatJid];
-  if (existing) return existing;
-
-  const botTs = getLastBotMessageTimestamp(chatJid, ASSISTANT_NAME);
-  if (botTs) {
-    logger.info(
-      { chatJid, recoveredFrom: botTs },
-      'Recovered message cursor from last bot reply',
-    );
-    lastAgentTimestamp[chatJid] = botTs;
-    saveState();
-    return botTs;
-  }
-  return '';
-}
-
 function saveState(): void {
-  setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
 }
 
@@ -4090,6 +4538,13 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
+/** @internal - exported for offline owner-surface continuity tests. */
+export function _setBlueBubblesConversationBindingForTests(
+  binding: typeof blueBubblesConversationBinding,
+): void {
+  blueBubblesConversationBinding = binding;
+}
+
 function resolveCompanionBinding(chatJid: string) {
   return resolveCompanionConversationBinding(chatJid, registeredGroups, {
     bluebubbles: blueBubblesConversationBinding,
@@ -4256,6 +4711,143 @@ async function prepareOpenClawDelegationResponse(params: {
 async function processGroupMessages(chatJid: string): Promise<boolean> {
   const group = resolveCompanionBinding(chatJid)?.group;
   if (!group) return true;
+  const channel = findChannel(channels, chatJid);
+  if (!channel) return true;
+  if (
+    isBlueBubblesDataOnlyContactThread({
+      channelName: channel.name,
+      chatJid,
+    })
+  ) {
+    return true;
+  }
+
+  // Acquire the logical session lock before claiming. Telegram and
+  // BlueBubbles JIDs may share one folder/session; a claim must not age while
+  // another surface is still running that same assistant context.
+  return logicalTurnSerializer.run(group.folder, async () => {
+    const needsTrigger =
+      group.isMain !== true && group.requiresTrigger !== false;
+    const allowlistCfg = needsTrigger ? loadSenderAllowlist() : null;
+    const triggerPattern = needsTrigger
+      ? getTriggerPattern(group.trigger)
+      : null;
+    // A proof-drill request is a deterministic owner-surface control turn.
+    // Find it across the full durable pending sequence and end the claim at
+    // that exact row so newer chatter cannot bury it or join its instruction
+    // batch. Authorization is enforced again inside the claimed handler.
+    const proofDrillMessage =
+      channel.name === 'bluebubbles'
+        ? findFirstPendingActionableMessageForChat({
+            chatJid,
+            predicate: (message) =>
+              isBlueBubblesProofDrillStartRequest(message.content) &&
+              isTrustedOwnerReviewSurface({
+                channelName: channel.name,
+                chatJid,
+                group,
+                ownerAuthored: message.is_from_me === true,
+              }),
+          })
+        : null;
+    const triggerMessage =
+      !proofDrillMessage && needsTrigger && triggerPattern && allowlistCfg
+        ? findFirstPendingActionableMessageForChat({
+            chatJid,
+            predicate: (message) =>
+              triggerPattern.test(message.content.trim()) &&
+              (message.is_from_me ||
+                isTriggerAllowed(chatJid, message.sender, allowlistCfg)),
+          })
+        : null;
+    if (
+      needsTrigger &&
+      !proofDrillMessage?.ingress_seq &&
+      !triggerMessage?.ingress_seq
+    ) {
+      return true;
+    }
+
+    const boundedTerminus = proofDrillMessage || triggerMessage;
+    const claim = boundedTerminus?.ingress_seq
+      ? claimPendingActionableMessagesThroughSequence({
+          chatJid,
+          throughSequence: boundedTerminus.ingress_seq,
+          limit: 200,
+        })
+      : claimPendingActionableMessagesForChat({
+          chatJid,
+          limit: MAX_MESSAGES_PER_PROMPT,
+        });
+    if (!claim.claimToken || claim.messages.length === 0) return true;
+    const ignoredBeforeCount =
+      'ignoredBeforeCount' in claim ? Number(claim.ignoredBeforeCount) || 0 : 0;
+    if (ignoredBeforeCount > 0) {
+      logger.info(
+        {
+          chatJid,
+          ignoredBeforeCount,
+          contextWindowCount: claim.messages.length,
+        },
+        'Bounded accumulated group context to the newest messages ending at the trigger',
+      );
+    }
+
+    let claimCommitted = false;
+    const commitClaim = (disposition: string) => {
+      if (claimCommitted) return;
+      const completed = completeActionableIngressClaim({
+        claimToken: claim.claimToken!,
+        disposition,
+      });
+      if (completed !== claim.messages.length) {
+        throw new Error(
+          `Actionable ingress claim commit mismatch: expected ${claim.messages.length}, completed ${completed}.`,
+        );
+      }
+      claimCommitted = true;
+    };
+
+    try {
+      const success = await processClaimedGroupMessages(
+        chatJid,
+        claim.messages,
+        (disposition) =>
+          commitClaim(disposition || 'primary_delivery_committed'),
+      );
+      if (success) {
+        commitClaim('assistant_turn_handled');
+      } else if (!claimCommitted) {
+        releaseActionableIngressClaim({
+          claimToken: claim.claimToken,
+          disposition: 'assistant_turn_retry',
+        });
+      }
+      return success;
+    } catch (error) {
+      if (claimCommitted) {
+        // Delivery already crossed the real side-effect boundary. Never make
+        // the originating input actionable again because enrichment failed.
+      } else if (isCommittedIncompleteDeliveryError(error)) {
+        commitClaim('delivery_committed_or_unverified');
+      } else {
+        releaseActionableIngressClaim({
+          claimToken: claim.claimToken,
+          disposition: 'assistant_turn_threw',
+        });
+      }
+      throw error;
+    }
+  });
+}
+
+async function processClaimedGroupMessages(
+  chatJid: string,
+  actionableMessages: NewMessage[],
+  onPrimaryDeliveryCommitted?: (disposition?: string) => void,
+): Promise<boolean> {
+  const group = resolveCompanionBinding(chatJid)?.group;
+  if (!group) return true;
 
   const channel = findChannel(channels, chatJid);
   if (!channel) {
@@ -4276,17 +4868,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
   const conversationChannel =
     channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram';
+  if (conversationChannel === 'bluebubbles' && !onPrimaryDeliveryCommitted) {
+    logger.error(
+      { chatJid, groupFolder: group.folder },
+      'Refused BlueBubbles self-thread processing without a durable pre-dispatch ingress commit',
+    );
+    return false;
+  }
 
   const isMainGroup = group.isMain === true;
-
-  const recoveredCursor = getOrRecoverCursor(chatJid);
-  let actionableMessages = getActionableMessagesSince(
-    chatJid,
-    recoveredCursor,
-    ASSISTANT_NAME,
-    MAX_MESSAGES_PER_PROMPT,
-  );
-  if (actionableMessages.length === 0) return true;
 
   const latestObservedTimestamp = actionableMessages.at(-1)!.timestamp;
   // Only live callback rows belong in the instruction batch. Provider history
@@ -4328,8 +4918,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
-  // For non-main groups, check if trigger is required and present
-  if (!isMainGroup && group.requiresTrigger !== false) {
+  // For non-main groups, check if trigger is required and present. A durable
+  // proof-drill claim deliberately ends at its exact control row; treat that
+  // row as the terminus here and enforce owner authority in the local handler.
+  const hasProofDrillTerminus =
+    conversationChannel === 'bluebubbles' &&
+    isBlueBubblesProofDrillStartRequest(
+      actionableMessages.at(-1)?.content || '',
+    );
+  if (
+    !hasProofDrillTerminus &&
+    !isMainGroup &&
+    group.requiresTrigger !== false
+  ) {
     const triggerPattern = getTriggerPattern(group.trigger);
     const allowlistCfg = loadSenderAllowlist();
     const hasTrigger = actionableMessages.some(
@@ -4341,6 +4942,53 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   const queuedLatestMessage = actionableMessages.at(-1);
+  const queuedOwnerAuthorizationAt = resolveQueuedMessagingOwnerAuthorizationAt(
+    conversationChannel,
+    queuedLatestMessage,
+  );
+  const queuedMessagingAuthorizationFence =
+    captureMessagingOutboundAuthorizationFence(queuedOwnerAuthorizationAt);
+  const queuedBlueBubblesAuthorizationFence =
+    conversationChannel === 'bluebubbles'
+      ? queuedMessagingAuthorizationFence
+      : null;
+  let queuedBlueBubblesDispatchOrdinal = 0;
+  const withQueuedBlueBubblesAuthorization = (
+    options: SendMessageOptions = {},
+  ): SendMessageOptions =>
+    queuedBlueBubblesAuthorizationFence
+      ? {
+          ...options,
+          idempotencyKey:
+            options.idempotencyKey ||
+            buildBlueBubblesIngressDispatchIdempotencyKey({
+              sourceChatJid: queuedLatestMessage?.chat_jid || '',
+              sourceMessageId: queuedLatestMessage?.id || '',
+              sourceReceivedAt: queuedLatestMessage?.ingress_received_at || '',
+              targetChatJid: chatJid,
+              slot: `queued_self_thread_reply:${++queuedBlueBubblesDispatchOrdinal}`,
+            }),
+          blueBubblesAuthorizationAt:
+            queuedBlueBubblesAuthorizationFence.authorizationAt,
+          blueBubblesPauseGeneration:
+            queuedBlueBubblesAuthorizationFence.pauseGeneration,
+        }
+      : options;
+  const withQueuedBlueBubblesTaskAuthorization = <T extends object>(
+    task: T,
+  ): T & {
+    outbound_authorization_at?: string | null;
+    outbound_pause_generation?: number | null;
+  } =>
+    queuedBlueBubblesAuthorizationFence
+      ? {
+          ...task,
+          outbound_authorization_at:
+            queuedBlueBubblesAuthorizationFence.authorizationAt,
+          outbound_pause_generation:
+            queuedBlueBubblesAuthorizationFence.pauseGeneration,
+        }
+      : task;
   const queuedOpenClawRoute = resolveOpenClawDelegationRoute({
     rawMessage: queuedLatestMessage?.content || '',
     mainControlChat: isOpenClawOwnerControlSurface({
@@ -4384,7 +5032,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         },
         'OpenClaw delegation prepared for same-chat delivery',
       );
-      await channel.sendMessage(chatJid, prepared.responseText);
+      await deliverQueuedResponseWithIngressCommit({
+        send: () =>
+          channel.sendMessage(
+            chatJid,
+            prepared.responseText,
+            withQueuedBlueBubblesAuthorization(),
+          ),
+        onPrimaryDeliveryCommitted: () =>
+          onPrimaryDeliveryCommitted?.(
+            conversationChannel === 'bluebubbles'
+              ? 'delivery_unverified_pre_dispatch_quarantine'
+              : undefined,
+          ),
+        quarantineBeforeDispatch: conversationChannel === 'bluebubbles',
+      });
       logger.info(
         {
           chatJid,
@@ -4401,6 +5063,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         { err, chatJid, ingress: 'durable_queue' },
         'Queued OpenClaw delegation failed',
       );
+      throw err;
     } finally {
       await channel.setTyping?.(chatJid, false).catch(() => undefined);
     }
@@ -4577,6 +5240,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     isBlueBubblesProofDrillAction(preHarnessMessageAction)
       ? 'replay'
       : 'live';
+  const shouldHandleProofDrillLocally =
+    shouldHandleBlueBubblesProofDrillLocally({
+      conversationChannel,
+      requestRoute: requestPolicy.route,
+      text: rawLastContent,
+    });
   const shouldHandleOutcomeReviewLocally =
     shouldPreferLocalResponseFeedbackReview({
       requestRoute: requestPolicy.route,
@@ -4588,6 +5257,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     isReleaseReadinessActiveReuseRequest(lastContent);
   const turnHarnessStartedAt = Date.now();
   const turnAgentHarness: TurnAgentHarnessContext | null =
+    shouldHandleProofDrillLocally ||
     shouldHandleOutcomeReviewLocally ||
     shouldHandleDurableContinuityLocally ||
     shouldHandleReleaseReadinessReuseLocally ||
@@ -4701,30 +5371,62 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     latencyTargetClass?: InteractionLatencyTargetClass;
     deliveryOrdinal?: number;
     recordMetricEnabled?: boolean;
+    replyKind?: CognitiveReplyKind;
+    completionEvidence?: AdaptiveEvidence[];
+    durableCompletionVerified?: boolean;
   }) => {
-    const turnEvaluation: PreSendEvaluation = params.preserveStructuredText
-      ? {
-          status: 'pass',
-          evidenceLevel: 'unknown',
-          evidenceGap: 'none',
-          evaluatorFlags: ['structured_presentation_preserved'],
-          safeRewriteApplied: false,
-          rewrittenText: params.text,
-          approvalCorrectness: 'correct',
-          memoryEffect: 'unknown',
-          summary:
-            'Structured approval presentation preserved after local safety staging.',
-          truthVerdict: null,
-        }
-      : evaluateTurnReply({
-          context: turnAgentHarness,
-          text: params.text,
-          routeKey: params.routeKey || requestPolicy.route,
-          capabilityId: params.capabilityId,
-          handlerKind: params.handlerKind,
-          responseSource: params.responseSource,
-          blockerClass: params.blockerClass,
-        });
+    const requestedReplyKind = params.replyKind || 'completion';
+    const authorizationNow = new Date();
+    const durableCompletionVerified =
+      params.durableCompletionVerified ??
+      (requestedReplyKind === 'completion' &&
+      (params.completionEvidence?.length || 0) > 0
+        ? await verifyTurnAgentAdaptiveCompletion({
+            context: turnAgentHarness,
+            completionEvidence: params.completionEvidence!,
+            now: authorizationNow,
+          })
+        : false);
+    const deliveryAuthorization = authorizeCognitiveReplyDelivery({
+      cognitiveRun: turnAgentHarness?.cognitiveRun,
+      replyKind: requestedReplyKind,
+      completionEvidence: params.completionEvidence,
+      durableCompletionVerified,
+      now: authorizationNow.toISOString(),
+    });
+    const authorizedPayload = resolveCognitiveDeliveryPayload({
+      authorization: deliveryAuthorization,
+      requestedText: params.text,
+      requestedSendOptions: params.sendOptions,
+    });
+    const authorizedText = authorizedPayload.text;
+    const effectiveReplyKind: CognitiveReplyKind = deliveryAuthorization.allowed
+      ? requestedReplyKind
+      : 'evidence_request';
+    const turnEvaluation: PreSendEvaluation =
+      params.preserveStructuredText && deliveryAuthorization.allowed
+        ? {
+            status: 'pass',
+            evidenceLevel: 'unknown',
+            evidenceGap: 'none',
+            evaluatorFlags: ['structured_presentation_preserved'],
+            safeRewriteApplied: false,
+            rewrittenText: authorizedText,
+            approvalCorrectness: 'correct',
+            memoryEffect: 'unknown',
+            summary:
+              'Structured approval presentation preserved after local safety staging.',
+            truthVerdict: null,
+          }
+        : evaluateTurnReply({
+            context: turnAgentHarness,
+            text: authorizedText,
+            routeKey: params.routeKey || requestPolicy.route,
+            capabilityId: params.capabilityId,
+            handlerKind: params.handlerKind,
+            responseSource: params.responseSource,
+            blockerClass: params.blockerClass,
+          });
     const replyText = turnEvaluation.rewrittenText.trim();
     const shouldRecordFeedback =
       params.allowFeedback !== false &&
@@ -4738,10 +5440,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const shouldAttachFeedbackButtons =
       shouldRecordFeedback && channel.name === 'telegram';
     const feedbackId = shouldRecordFeedback ? randomUUID() : null;
-    const sendOptions =
+    const authorizedSendOptions = authorizedPayload.sendOptions || {};
+    const requestedSendOptions =
       shouldAttachFeedbackButtons && feedbackId
-        ? appendResponseFeedbackInlineRow(params.sendOptions || {}, feedbackId)
-        : params.sendOptions || {};
+        ? appendResponseFeedbackInlineRow(authorizedSendOptions, feedbackId)
+        : authorizedSendOptions;
+    const sendOptions =
+      withQueuedBlueBubblesAuthorization(requestedSendOptions);
     const delivery = await deliverAssistantReplyWithMetric({
       context: {
         groupFolder: group.folder,
@@ -4779,13 +5484,25 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           Boolean(compoundCalendarResearchPlan || compoundReminderResearchPlan),
         hostPressure: turnHostPressure,
       },
-      send: () => channel.sendMessage(chatJid, replyText, sendOptions),
+      send: async () => {
+        if (conversationChannel === 'bluebubbles') {
+          // There is no atomic transaction spanning the local ingress ledger
+          // and BlueBubbles. Quarantine this exact claimed turn before POST;
+          // a crash may leave delivery unverified, but can never replay it.
+          inFlightCursorRollbacks.markDelivered(chatJid);
+          onPrimaryDeliveryCommitted?.(
+            'delivery_unverified_pre_dispatch_quarantine',
+          );
+        }
+        return channel.sendMessage(chatJid, replyText, sendOptions);
+      },
       classifyDelivery: classifyChannelDelivery,
       recordMetricEnabled:
         params.recordMetricEnabled ?? !primaryDeliveryCompleted,
       onDelivered: () => {
         if (!params.skipCursorDeliveryMark) {
           inFlightCursorRollbacks.markDelivered(chatJid);
+          onPrimaryDeliveryCommitted?.();
         }
       },
       onDeliveryCommitError: (error) =>
@@ -4935,14 +5652,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               context: turnAgentHarness,
               evaluation: turnEvaluation,
               routeUsed: params.routeKey || requestPolicy.route,
-              answerClass: params.blockerClass
-                ? 'blocked'
-                : params.responseSource === 'container_agent'
-                  ? 'handled'
-                  : params.handlerKind?.includes('fallback')
-                    ? 'fallback'
-                    : 'handled',
+              answerClass:
+                effectiveReplyKind === 'blocked_notice' || params.blockerClass
+                  ? 'blocked'
+                  : effectiveReplyKind !== 'completion'
+                    ? 'degraded'
+                    : params.responseSource === 'container_agent'
+                      ? 'handled'
+                      : params.handlerKind?.includes('fallback')
+                        ? 'fallback'
+                        : 'handled',
               blockerClass: params.blockerClass,
+              replyKind: effectiveReplyKind,
+              completionEvidence: deliveryAuthorization.allowed
+                ? params.completionEvidence
+                : undefined,
               fallbackUsed:
                 params.handlerKind?.includes('fallback') ||
                 params.responseSource === 'local_companion',
@@ -5018,6 +5742,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
     return sent;
   };
+  const sendCognitiveTurnReply = (params: {
+    text: string;
+    replyKind: CognitiveReplyKind;
+    sendOptions?: SendMessageOptions;
+    routeKey?: string;
+    capabilityId?: string;
+    traceReason?: string;
+  }) =>
+    sendAssistantReplyWithFeedback({
+      text: params.text,
+      sendOptions: params.sendOptions,
+      routeKey: params.routeKey || `turn_status.${params.replyKind}`,
+      capabilityId: params.capabilityId || 'cognition.turn_status',
+      handlerKind: 'typed_turn_status',
+      responseSource: 'local_companion',
+      traceReason:
+        params.traceReason ||
+        `delivered an explicit ${params.replyKind} response without widening it into a completion claim`,
+      replyKind: params.replyKind,
+    });
 
   const openClawPresenceReply = maybeBuildOpenClawPresenceReply(missedMessages);
   if (openClawPresenceReply) {
@@ -5030,6 +5774,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered explicit OpenClaw presence check through local fast path',
+        replyKind: 'progress',
       });
       logger.info(
         { group: group.name },
@@ -5103,6 +5848,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         handlerKind: 'agi_runtime',
         responseSource: 'agi_runtime',
         traceReason: 'handled Telegram canary turn through AGI runtime',
+        replyKind:
+          (out.pendingActions?.length || 0) > 0
+            ? 'approval_request'
+            : 'completion',
       });
       lastDirectAssistantTextByChatJid[chatJid] = out.reply;
       logger.info(
@@ -5129,17 +5878,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   if (
-    shouldHandleBlueBubblesProofDrillLocally({
-      conversationChannel,
-      requestRoute: requestPolicy.route,
-      text: rawLastContent,
+    shouldHandleProofDrillLocally &&
+    !isTrustedOwnerReviewSurface({
+      channelName: channel.name,
+      chatJid,
+      group,
+      ownerAuthored: currentTurnOwnerAuthored,
     })
   ) {
+    logger.warn(
+      { component: 'assistant', chatJid, groupFolder: group.folder },
+      'Ignored non-owner-authored BlueBubbles proof instruction from the durable queue',
+    );
+    return true;
+  }
+
+  if (shouldHandleProofDrillLocally) {
     const started = startBlueBubblesProofDrill({
       groupFolder: group.folder,
       chatJid,
       now,
     });
+    const proofPresentationAuthorization = authorizeCognitiveReplyDelivery({
+      cognitiveRun: turnAgentHarness?.cognitiveRun,
+      replyKind: 'progress',
+      now: new Date().toISOString(),
+    });
+    if (!proofPresentationAuthorization.allowed) {
+      throw new Error('Cognitive gate rejected the proof-drill status reply.');
+    }
     const sent = acceptConfirmedPresentationDelivery({
       result: await channel.sendMessage(
         started.action.presentationChatJid || chatJid,
@@ -5148,9 +5915,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       channel: channel.name,
       chatJid,
       workflow: 'bluebubbles_proof_drill_presentation',
-      onUnverified: () => inFlightCursorRollbacks.markDelivered(chatJid),
+      onUnverified: () => {
+        inFlightCursorRollbacks.markDelivered(chatJid);
+        onPrimaryDeliveryCommitted?.();
+      },
     });
     if (!sent) return true;
+    inFlightCursorRollbacks.markDelivered(chatJid);
+    onPrimaryDeliveryCommitted?.();
     updateMessageAction(started.action.messageActionId, {
       presentationMessageId: sent.platformMessageId || null,
       presentationChatJid: started.action.presentationChatJid || chatJid,
@@ -5174,6 +5946,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     (requestPolicy.route === 'direct_assistant' ||
       requestPolicy.route === 'protected_assistant')
   ) {
+    const holdPosture = turnAgentHarness.deliberation?.executionPosture;
     await sendAssistantReplyWithFeedback({
       text: turnAgentHarness.platformHoldReply,
       routeKey: `turn_agent_harness.${turnAgentHarness.deliberation?.executionPosture || 'hold'}`,
@@ -5183,10 +5956,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       traceReason:
         'honored platform deliberation hold before executing the selected route',
       blockerClass:
-        turnAgentHarness.deliberation?.executionPosture === 'blocked'
-          ? turnAgentHarness.deliberation.policyHoldReason ||
+        holdPosture === 'blocked'
+          ? turnAgentHarness.deliberation?.policyHoldReason ||
             'platform_policy_hold'
           : null,
+      replyKind:
+        holdPosture === 'approval_first'
+          ? 'approval_request'
+          : holdPosture === 'clarify_first'
+            ? 'clarification'
+            : holdPosture === 'blocked'
+              ? 'blocked_notice'
+              : 'evidence_request',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
     logger.info(
@@ -5282,7 +6063,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (
       conversationChannel !== 'bluebubbles' ||
       requestPolicy.route !== 'direct_assistant' ||
-      !isBlueBubblesSelfThreadAliasJid(chatJid)
+      !isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)
     ) {
       blueBubblesDirectTurnEnvelope = null;
       return blueBubblesDirectTurnEnvelope;
@@ -5364,13 +6145,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       groupFolder: group.folder,
       chatJid,
       rawText: messageActionCommandText,
+      replyToMessageId: latestUserMessage?.reply_to_id || null,
+      includeStaleForDenial: true,
       now,
     });
     if (!messageAction) {
       if (
         conversationChannel === 'bluebubbles' &&
         operation.kind === 'defer' &&
-        isBlueBubblesSelfThreadAliasJid(chatJid)
+        isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)
       ) {
         const started = startBlueBubblesProofDrill({
           groupFolder: group.folder,
@@ -5382,6 +6165,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           messageActionId: started.action.messageActionId,
           operation,
           ownerAuthored: currentTurnOwnerAuthored,
+          ownerAuthorizationAt: queuedOwnerAuthorizationAt,
           now,
         });
       }
@@ -5390,10 +6174,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         operation.kind === 'send' &&
         isBlueBubblesExplicitSendAlias(messageActionCommandText)
       ) {
-        await channel.sendMessage(
-          chatJid,
-          'Andrea: I do not have a draft open here yet.\n\nAsk what you should say back, or say `send a text message to <chat name>: <message>`.',
-        );
+        await sendAssistantReplyWithFeedback({
+          text: 'Andrea: I do not have a draft open here yet.\n\nAsk what you should say back, or say `send a text message to <chat name>: <message>`.',
+          routeKey: 'bluebubbles.outbound.missing_draft',
+          capabilityId: 'communication.draft_reply',
+          handlerKind: 'local_bluebubbles_outbound_request',
+          responseSource: 'local_companion',
+          traceReason:
+            'asked for the missing draft context without claiming completion',
+          replyKind: 'clarification',
+        });
         return true;
       }
       return false;
@@ -5420,6 +6210,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       messageActionId: messageAction.messageActionId,
       operation,
       ownerAuthored: currentTurnOwnerAuthored,
+      ownerAuthorizationAt: queuedOwnerAuthorizationAt,
       now,
     });
   };
@@ -5434,11 +6225,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       (candidate): candidate is BlueBubblesChannel =>
         candidate instanceof BlueBubblesChannel,
     );
-    let reviewBoundItem:
-      | NonNullable<
-          ReturnType<typeof parseRecentTextReviewItemFollowup>
-        >['item']
-      | null = null;
     const result = await executeBlueBubblesOutboundTurn({
       groupFolder: group.folder,
       channel: conversationChannel,
@@ -5461,23 +6247,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             },
           };
         }
-        try {
-          await blueBubblesChannel.primeRecentHistory({ limit: 500 });
-        } catch (error) {
-          logger.warn(
-            { component: 'assistant', err: error },
-            'BlueBubbles contextual-send history refresh failed; dispatch blocked',
-          );
-          return {
-            state: 'blocked' as const,
-            result: {
-              handled: true as const,
-              state: 'context_unavailable' as const,
-              replyText:
-                'I could not verify the latest Messages history before binding that contextual reply, so I did not send anything. Ask me to review recent texts again.',
-            },
-          };
-        }
         if (intent.contextBinding?.kind === 'recent_recipient_thread') {
           if (!intent.targetLabel) {
             return {
@@ -5490,59 +6259,90 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               },
             };
           }
-          const resolution = resolveBlueBubblesThreadTargetByName(
-            intent.targetLabel,
-          );
-          if (resolution.state !== 'resolved') {
+          const refreshedContext = await resolveRefreshedContextBoundRecipient({
+            targetLabel: intent.targetLabel,
+            replyContent: intent.content,
+            resolveRecipient: resolveBlueBubblesThreadTargetByName,
+            primeRecentHistory: () =>
+              blueBubblesChannel.primeRecentHistory({ limit: 500 }),
+            primeChatHistory: (targetChatJid) =>
+              blueBubblesChannel.primeChatHistory(targetChatJid, {
+                limit: BLUEBUBBLES_TARGETED_HISTORY_LIMIT,
+              }),
+            listRecentMessagesForChat,
+          });
+          if (refreshedContext.state === 'resolved') {
             return {
-              state: 'blocked' as const,
-              result: {
-                handled: true as const,
-                state:
-                  resolution.state === 'ambiguous'
-                    ? ('context_mismatch' as const)
-                    : ('context_unavailable' as const),
-                replyText:
-                  resolution.state === 'ambiguous'
-                    ? `I found more than one current Messages conversation for ${intent.targetLabel}, so I did not send anything. Use the exact conversation name.`
-                    : `I could not find a current Messages conversation for ${intent.targetLabel}, so I did not send anything.`,
-              },
+              state: 'resolved' as const,
+              recipientResolution: refreshedContext.recipientResolution,
             };
           }
-          const latestInbound = listRecentMessagesForChat(
-            resolution.target.chatJid,
-            40,
-          ).find((message) => !message.is_from_me && !message.is_bot_message);
-          if (!latestInbound) {
+          if (refreshedContext.state === 'targeted_refresh_failed') {
+            logger.warn(
+              { component: 'assistant', err: refreshedContext.error },
+              'BlueBubbles exact-thread contextual history refresh failed; dispatch blocked',
+            );
             return {
               state: 'blocked' as const,
               result: {
                 handled: true as const,
                 state: 'context_unavailable' as const,
-                replyText: `I could not verify a recent incoming message from ${resolution.target.displayName}, so I did not send anything.`,
+                replyText: `I could not refresh the exact Messages thread for ${refreshedContext.target.displayName}, so I did not create a draft or send anything. Ask me to summarize that thread again.`,
               },
             };
           }
-          const indirectPickupReply =
-            /\bif\s+(?:she|he|they)\s+could\s+pick\s+(?:them|it)\s+up\b/i.test(
-              intent.content || '',
+          if (refreshedContext.state === 'global_refresh_failed') {
+            logger.warn(
+              { component: 'assistant', err: refreshedContext.error },
+              'BlueBubbles bounded recipient discovery refresh failed; contextual dispatch blocked',
             );
-          if (
-            indirectPickupReply &&
-            !/\bpick\b[\s\S]{0,80}\bup\b/i.test(latestInbound.content || '')
-          ) {
+            return {
+              state: 'blocked' as const,
+              result: {
+                handled: true as const,
+                state: 'context_unavailable' as const,
+                replyText:
+                  'I could not refresh the bounded recent Messages directory needed to find that named thread, so I did not create a draft or send anything. Use the exact phone/email or ask me to summarize the thread again.',
+              },
+            };
+          }
+          if (refreshedContext.state === 'ambiguous') {
+            return {
+              state: 'blocked' as const,
+              result: {
+                handled: true as const,
+                state: 'context_mismatch' as const,
+                replyText: `I found more than one locally known Messages conversation for ${intent.targetLabel}, so I did not create a draft or send anything. Use the exact conversation name or phone/email.`,
+              },
+            };
+          }
+          if (refreshedContext.state === 'missing') {
+            return {
+              state: 'blocked' as const,
+              result: {
+                handled: true as const,
+                state: 'context_unavailable' as const,
+                replyText: `I could not match ${intent.targetLabel} after a bounded recent-conversation discovery. A quiet thread can fall outside that global slice, so I did not create a draft or send anything. Use the exact phone/email or ask me to summarize that thread.`,
+              },
+            };
+          }
+          if (refreshedContext.state === 'context_stale') {
             return {
               state: 'blocked' as const,
               result: {
                 handled: true as const,
                 state: 'context_stale' as const,
-                replyText: `The latest synced message from ${resolution.target.displayName} no longer matches the pickup reply you described, so I did not send anything. Ask me to review the thread again.`,
+                replyText: `After refreshing the exact Messages thread, the latest incoming message from ${refreshedContext.target.displayName} no longer matches the contextual reply you described, so I did not create a draft or send anything. Ask me to review that thread again.`,
               },
             };
           }
           return {
-            state: 'resolved' as const,
-            recipientResolution: resolution,
+            state: 'blocked' as const,
+            result: {
+              handled: true as const,
+              state: 'context_unavailable' as const,
+              replyText: `I refreshed the exact Messages thread for ${refreshedContext.target.displayName}, but could not verify a recent incoming message, so I did not create a draft or send anything.`,
+            },
           };
         }
         if (intent.contextBinding?.kind !== 'recent_text_review_item') {
@@ -5563,7 +6363,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           seedJson,
           userText: lastContent,
         });
-        if (!reviewFollowup || reviewFollowup.item.rank !== itemNumber) {
+        if (
+          !seedJson ||
+          !reviewFollowup ||
+          reviewFollowup.item.rank !== itemNumber
+        ) {
           return {
             state: 'blocked' as const,
             result: {
@@ -5573,11 +6377,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             },
           };
         }
-        const freshness = validateRecentTextReviewFollowupFreshness({
-          seedJson,
-          item: reviewFollowup.item,
-          now,
-        });
+        const freshness =
+          await validateRecentTextReviewFollowupFreshnessAfterTargetedRefresh({
+            seedJson,
+            item: reviewFollowup.item,
+            now,
+            primeChatHistory: (targetChatJid) =>
+              blueBubblesChannel.primeChatHistory(targetChatJid, {
+                limit: BLUEBUBBLES_TARGETED_HISTORY_LIMIT,
+              }),
+          });
         if (!freshness.ok) {
           recordRecentTextReviewOutcome({
             groupFolder: group.folder,
@@ -5585,15 +6394,27 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             outcome: freshness.outcome,
             now,
           });
+          const exactRefreshFailed =
+            freshness.reason === 'targeted_refresh_failed';
+          if (exactRefreshFailed) {
+            logger.warn(
+              { component: 'assistant' },
+              'BlueBubbles exact numbered-review thread refresh failed; dispatch blocked',
+            );
+          }
           return {
             state: 'blocked' as const,
             result: {
               handled: true as const,
-              state: 'context_stale' as const,
-              replyText: formatRecentTextReviewFreshnessBlockedReply(
-                reviewFollowup.item,
-                freshness,
-              ),
+              state: exactRefreshFailed
+                ? ('context_unavailable' as const)
+                : ('context_stale' as const),
+              replyText: exactRefreshFailed
+                ? `I could not refresh the exact Messages thread for item #${reviewFollowup.item.rank}, so I did not create a draft or send anything. Ask me to review recent texts again.`
+                : formatRecentTextReviewFreshnessBlockedReply(
+                    reviewFollowup.item,
+                    freshness,
+                  ),
             },
           };
         }
@@ -5610,19 +6431,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             },
           };
         }
-        const normalizeRecipientLabel = (value: string | null | undefined) =>
-          (value || '')
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, ' ')
-            .trim();
-        const requestedLabel = normalizeRecipientLabel(intent.targetLabel);
-        const reviewLabel = normalizeRecipientLabel(
-          reviewTarget.personName || reviewFollowup.item.chatLabel,
+        const reviewLabel =
+          reviewTarget.personName || reviewFollowup.item.chatLabel;
+        const labelsAgree = doContextBoundRecipientLabelsMatch(
+          intent.targetLabel,
+          reviewLabel,
         );
-        const labelsAgree =
-          requestedLabel === reviewLabel ||
-          reviewLabel.startsWith(`${requestedLabel} `);
-        if (!requestedLabel || !reviewLabel || !labelsAgree) {
+        if (!reviewLabel || !labelsAgree) {
           return {
             state: 'blocked' as const,
             result: {
@@ -5632,9 +6447,33 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             },
           };
         }
-        reviewBoundItem = reviewFollowup.item;
+        const recentTextReview = buildRecentTextReviewMessageActionLink({
+          groupFolder: group.folder,
+          presentationChatJid: chatJid,
+          targetChatJid: reviewTarget.chatJid!,
+          seedJson,
+          item: {
+            itemId: reviewFollowup.item.itemId,
+            rank: reviewFollowup.item.rank,
+            communicationThreadId:
+              reviewTarget.communicationThreadId ||
+              reviewFollowup.item.communicationThreadId ||
+              null,
+          },
+        });
+        if (!recentTextReview) {
+          return {
+            state: 'blocked' as const,
+            result: {
+              handled: true as const,
+              state: 'context_unavailable' as const,
+              replyText: `I could not durably bind item #${reviewFollowup.item.rank} to this exact draft, so I did not create or send anything. Ask me to review recent texts again.`,
+            },
+          };
+        }
         return {
           state: 'resolved' as const,
+          recentTextReview,
           recipientResolution: {
             state: 'resolved' as const,
             target: {
@@ -5651,6 +6490,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         channel: conversationChannel,
         chatJid,
         currentTime: now,
+        ownerAuthorizationAt: queuedOwnerAuthorizationAt,
+        primeMessagesChatHistory: (targetChatJid) => {
+          if (!blueBubblesChannel) {
+            throw new Error('BlueBubbles history refresh is unavailable.');
+          }
+          return blueBubblesChannel.primeChatHistory(targetChatJid, {
+            limit: BLUEBUBBLES_TARGETED_HISTORY_LIMIT,
+          });
+        },
+        onVerifiedSend: (action) => {
+          completeRecentTextReviewMessageActionLifecycle({ action, now });
+        },
         sendToTarget: (targetChannel, targetChatJid, text, options) =>
           sendCompanionHandoffMessage(
             targetChannel,
@@ -5671,19 +6522,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         ),
     });
     if (!result.handled) return false;
-    if (reviewBoundItem && result.state === 'sent') {
-      recordRecentTextReviewOutcome({
-        groupFolder: group.folder,
-        item: reviewBoundItem,
-        outcome: 'handled',
-        now,
-      });
-      // The verified send is now newer than the review snapshot. Clear the
-      // numbered binding so another follow-up cannot silently reuse stale
-      // context; an exact replay of this inbound event is handled earlier by
-      // the durable message-action receipt fence.
-      clearSharedAssistantCapabilitySeed(chatJid);
-    }
     if (
       conversationChannel === 'bluebubbles' &&
       currentTurnOwnerAuthored !== true &&
@@ -5711,6 +6549,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           ? { linkedRefs: { messageActionId: result.action.messageActionId } }
           : {}),
         latencyTargetClass: 'local_command',
+        replyKind:
+          result.state === 'sent'
+            ? 'completion'
+            : result.state === 'confirmation_required'
+              ? 'approval_request'
+              : result.state === 'capability_status'
+                ? 'progress'
+                : [
+                      'missing_target',
+                      'ambiguous_target',
+                      'unsupported_target',
+                      'context_unavailable',
+                      'context_stale',
+                      'context_mismatch',
+                    ].includes(result.state)
+                  ? 'clarification'
+                  : 'blocked_notice',
       });
       return true;
     }
@@ -5726,9 +6581,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       handlerKind: 'local_bluebubbles_outbound_request',
       responseSource: 'local_companion',
       traceReason:
-        'staged an exact recipient-bound BlueBubbles draft because the owner asked to draft or prepare rather than execute',
+        'staged an exact recipient-bound BlueBubbles draft; every fresh imperative requires a separate approval before dispatch',
       linkedRefs: { messageActionId: result.action.messageActionId },
       preserveStructuredText: true,
+      replyKind: 'approval_request',
       latencyTargetClass: 'local_command',
     });
     if (conversationChannel === 'bluebubbles') {
@@ -5771,8 +6627,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         timeZone: TIMEZONE,
       });
       const sent = acceptConfirmedPresentationDelivery({
-        result: await channel.sendMessage(chatJid, presentation.text, {
-          inlineActionRows: presentation.inlineActionRows,
+        result: await sendCognitiveTurnReply({
+          text: presentation.text,
+          sendOptions: withQueuedBlueBubblesAuthorization({
+            inlineActionRows: presentation.inlineActionRows,
+          }),
+          replyKind: 'progress',
+          routeKey: 'outcome_review.presentation',
+          capabilityId: 'outcome_review.read',
         }),
         channel: channel.name,
         chatJid,
@@ -5810,10 +6672,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!intent) return false;
 
     if (conversationChannel === 'bluebubbles') {
-      await channel.sendMessage(
-        chatJid,
-        'Andrea: I can honor your usual safe defaults here, but rule setup and editing works best in Telegram. Ask me to send the rule details there if you want to manage them.',
-      );
+      await sendCognitiveTurnReply({
+        text: 'Andrea: I can honor your usual safe defaults here, but rule setup and editing works best in Telegram. Ask me to send the rule details there if you want to manage them.',
+        sendOptions: withQueuedBlueBubblesAuthorization(),
+        replyKind: 'progress',
+        routeKey: 'delegation_rules.channel_guidance',
+      });
       return true;
     }
 
@@ -5823,8 +6687,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         channel: conversationChannel,
       });
       const sent = acceptConfirmedPresentationDelivery({
-        result: await channel.sendMessage(chatJid, presentation.text, {
-          inlineActionRows: presentation.inlineActionRows,
+        result: await sendCognitiveTurnReply({
+          text: presentation.text,
+          sendOptions: withQueuedBlueBubblesAuthorization({
+            inlineActionRows: presentation.inlineActionRows,
+          }),
+          replyKind: 'progress',
+          routeKey: 'delegation_rules.list',
         }),
         channel: channel.name,
         chatJid,
@@ -5916,7 +6785,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     });
     if (!previewResult.handled) return false;
     if (previewResult.clarificationQuestion) {
-      await channel.sendMessage(chatJid, previewResult.clarificationQuestion);
+      await sendCognitiveTurnReply({
+        text: previewResult.clarificationQuestion,
+        sendOptions: withQueuedBlueBubblesAuthorization(),
+        replyKind: 'clarification',
+        routeKey: 'delegation_rules.clarification',
+      });
       return true;
     }
     if (!previewResult.preview) return false;
@@ -5924,8 +6798,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       previewResult.preview,
     );
     const sent = acceptConfirmedPresentationDelivery({
-      result: await channel.sendMessage(chatJid, presentation.text, {
-        inlineActionRows: presentation.inlineActionRows,
+      result: await sendCognitiveTurnReply({
+        text: presentation.text,
+        sendOptions: withQueuedBlueBubblesAuthorization({
+          inlineActionRows: presentation.inlineActionRows,
+        }),
+        replyKind: 'approval_request',
+        routeKey: 'delegation_rules.preview',
       }),
       channel: channel.name,
       chatJid,
@@ -5990,28 +6869,36 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         }
         if (result.kind === 'cancelled') {
           clearPendingCalendarAutomationState(chatJid);
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText('*Calendar Automation*', result.message),
-            {
+          await sendCognitiveTurnReply({
+            text: formatCalendarPanelText(
+              '*Calendar Automation*',
+              result.message,
+            ),
+            sendOptions: {
               inlineActionRows: buildCalendarLookupInlineActionRows(
                 CALENDAR_LOOKUP_TOMORROW_PROMPT,
               ),
             },
-          );
+            replyKind: 'progress',
+            routeKey: 'calendar_automation.cancelled',
+          });
           return true;
         }
         if (result.kind === 'awaiting_input') {
           setPendingCalendarAutomationState(chatJid, result.state);
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText('*Calendar Automation*', result.message),
-            {
+          await sendCognitiveTurnReply({
+            text: formatCalendarPanelText(
+              '*Calendar Automation*',
+              result.message,
+            ),
+            sendOptions: {
               inlineActionRows: buildCalendarAutomationInlineActionRows(
                 result.state,
               ),
             },
-          );
+            replyKind: 'clarification',
+            routeKey: 'calendar_automation.awaiting_input',
+          });
           return true;
         }
 
@@ -6032,18 +6919,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             updated_at: now.toISOString(),
           });
           refreshTaskSnapshots(registeredGroups);
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText(
+          await sendCognitiveTurnReply({
+            text: formatCalendarPanelText(
               '*Calendar Automation*',
               `Paused "${confirmedState.draft.label}".`,
             ),
-            {
+            sendOptions: {
               inlineActionRows: buildCalendarLookupInlineActionRows(
                 CALENDAR_LOOKUP_TOMORROW_PROMPT,
               ),
             },
-          );
+            replyKind: 'completion',
+            routeKey: 'calendar_automation.paused',
+          });
           return true;
         }
 
@@ -6057,13 +6945,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             confirmedState.draft.config.schedule,
             now,
           );
-          updateTask(confirmedState.targetTaskId, {
-            prompt: `Calendar automation: ${confirmedState.draft.label}`,
-            schedule_type: confirmedState.draft.config.schedule.scheduleType,
-            schedule_value: confirmedState.draft.config.schedule.scheduleValue,
-            next_run: nextRun,
-            status: 'active',
-          });
+          updateTask(
+            confirmedState.targetTaskId,
+            withQueuedBlueBubblesTaskAuthorization({
+              prompt: `Calendar automation: ${confirmedState.draft.label}`,
+              schedule_type: confirmedState.draft.config.schedule.scheduleType,
+              schedule_value:
+                confirmedState.draft.config.schedule.scheduleValue,
+              next_run: nextRun,
+              status: 'active',
+            }),
+          );
           updateCalendarAutomation(confirmedState.targetTaskId, {
             label: confirmedState.draft.label,
             config_json: JSON.stringify(confirmedState.draft.config),
@@ -6071,9 +6963,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             updated_at: now.toISOString(),
           });
           refreshTaskSnapshots(registeredGroups);
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText(
+          await sendCognitiveTurnReply({
+            text: formatCalendarPanelText(
               '*Calendar Automation*',
               nextRun
                 ? `Resumed "${confirmedState.draft.label}".\nNext: ${new Intl.DateTimeFormat(
@@ -6087,30 +6978,33 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                   ).format(new Date(nextRun))}`
                 : `Resumed "${confirmedState.draft.label}".`,
             ),
-            {
+            sendOptions: {
               inlineActionRows: buildCalendarLookupInlineActionRows(
                 CALENDAR_LOOKUP_TOMORROW_PROMPT,
               ),
             },
-          );
+            replyKind: 'completion',
+            routeKey: 'calendar_automation.resumed',
+          });
           return true;
         }
 
         if (confirmedState.mode === 'delete' && confirmedState.targetTaskId) {
           deleteTask(confirmedState.targetTaskId);
           refreshTaskSnapshots(registeredGroups);
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText(
+          await sendCognitiveTurnReply({
+            text: formatCalendarPanelText(
               '*Calendar Automation*',
               `Deleted "${confirmedState.draft.label}".`,
             ),
-            {
+            sendOptions: {
               inlineActionRows: buildCalendarLookupInlineActionRows(
                 CALENDAR_LOOKUP_TOMORROW_PROMPT,
               ),
             },
-          );
+            replyKind: 'completion',
+            routeKey: 'calendar_automation.deleted',
+          });
           return true;
         }
 
@@ -6128,13 +7022,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         });
 
         if (persistInput.replaceTaskId) {
-          updateTask(persistInput.replaceTaskId, {
-            prompt: persistInput.task.prompt,
-            schedule_type: persistInput.task.schedule_type,
-            schedule_value: persistInput.task.schedule_value,
-            next_run: persistInput.task.next_run,
-            status: persistInput.task.status,
-          });
+          updateTask(
+            persistInput.replaceTaskId,
+            withQueuedBlueBubblesTaskAuthorization({
+              prompt: persistInput.task.prompt,
+              schedule_type: persistInput.task.schedule_type,
+              schedule_value: persistInput.task.schedule_value,
+              next_run: persistInput.task.next_run,
+              status: persistInput.task.status,
+            }),
+          );
           updateCalendarAutomation(persistInput.replaceTaskId, {
             label: persistInput.automation.label,
             config_json: persistInput.automation.config_json,
@@ -6142,7 +7039,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             updated_at: now.toISOString(),
           });
         } else {
-          createTask(persistInput.task);
+          createTask(withQueuedBlueBubblesTaskAuthorization(persistInput.task));
           createCalendarAutomation({
             ...persistInput.automation,
             created_at: now.toISOString(),
@@ -6151,9 +7048,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         }
 
         refreshTaskSnapshots(registeredGroups);
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText(
+        await sendCognitiveTurnReply({
+          text: formatCalendarPanelText(
             '*Calendar Automation*',
             persistInput.replaceTaskId
               ? persistInput.task.status === 'paused'
@@ -6161,12 +7057,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 : `Updated automation:\n- ${confirmedState.draft.label}`
               : `Saved automation:\n- ${confirmedState.draft.label}`,
           ),
-          {
+          sendOptions: {
             inlineActionRows: buildCalendarLookupInlineActionRows(
               CALENDAR_LOOKUP_TOMORROW_PROMPT,
             ),
           },
-        );
+          replyKind: 'completion',
+          routeKey: 'calendar_automation.saved',
+        });
         return true;
       }
 
@@ -6176,26 +7074,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
 
       if (plan.kind === 'list') {
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText('*Calendar Automations*', plan.message),
-          {
+        await sendCognitiveTurnReply({
+          text: formatCalendarPanelText('*Calendar Automations*', plan.message),
+          sendOptions: {
             inlineActionRows: buildCalendarLookupInlineActionRows(
               CALENDAR_LOOKUP_TOMORROW_PROMPT,
             ),
           },
-        );
+          replyKind: 'progress',
+          routeKey: 'calendar_automation.list',
+        });
         return true;
       }
 
       setPendingCalendarAutomationState(chatJid, plan.state);
-      await channel.sendMessage(
-        chatJid,
-        formatCalendarPanelText('*Calendar Automation*', plan.message),
-        {
+      await sendCognitiveTurnReply({
+        text: formatCalendarPanelText('*Calendar Automation*', plan.message),
+        sendOptions: {
           inlineActionRows: buildCalendarAutomationInlineActionRows(plan.state),
         },
-      );
+        replyKind: 'approval_request',
+        routeKey: 'calendar_automation.confirmation',
+      });
       return true;
     } catch (err) {
       lastAgentTimestamp[chatJid] = previousCursor;
@@ -6258,41 +7158,44 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             }
             if (result.kind === 'cancelled') {
               clearPendingCalendarReminderState(chatJid);
-              await channel.sendMessage(
-                chatJid,
-                formatCalendarPanelText('*Calendar*', result.message),
-                {
+              await sendCognitiveTurnReply({
+                text: formatCalendarPanelText('*Calendar*', result.message),
+                sendOptions: {
                   inlineActionRows: buildCalendarLookupInlineActionRows(
                     CALENDAR_LOOKUP_TOMORROW_PROMPT,
                   ),
                 },
-              );
+                replyKind: 'progress',
+                routeKey: 'calendar_reminder.cancelled',
+              });
               return true;
             }
             if (result.kind === 'invalid') {
               clearPendingCalendarReminderState(chatJid);
-              await channel.sendMessage(
-                chatJid,
-                formatCalendarPanelText('*Calendar*', result.message),
-                {
+              await sendCognitiveTurnReply({
+                text: formatCalendarPanelText('*Calendar*', result.message),
+                sendOptions: {
                   inlineActionRows: buildCalendarLookupInlineActionRows(
                     CALENDAR_LOOKUP_TOMORROW_PROMPT,
                   ),
                 },
-              );
+                replyKind: 'clarification',
+                routeKey: 'calendar_reminder.invalid',
+              });
               return true;
             }
             if (result.kind === 'awaiting_input') {
               setPendingCalendarReminderState(chatJid, result.state);
-              await channel.sendMessage(
-                chatJid,
-                formatCalendarPanelText('*Calendar*', result.message),
-                {
+              await sendCognitiveTurnReply({
+                text: formatCalendarPanelText('*Calendar*', result.message),
+                sendOptions: {
                   inlineActionRows: buildCalendarReminderInlineActionRows(
                     result.state,
                   ),
                 },
-              );
+                replyKind: 'clarification',
+                routeKey: 'calendar_reminder.awaiting_input',
+              });
               return true;
             }
 
@@ -6304,22 +7207,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               timeZone: TIMEZONE,
             });
             for (const task of reminderPlan.tasks || []) {
-              createTask(task);
+              createTask(withQueuedBlueBubblesTaskAuthorization(task));
             }
             if (reminderPlan.task) {
-              createTask(reminderPlan.task);
+              createTask(
+                withQueuedBlueBubblesTaskAuthorization(reminderPlan.task),
+              );
             }
             refreshTaskSnapshots(registeredGroups);
             clearPendingCalendarReminderState(chatJid);
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Calendar*', reminderPlan.confirmation),
-              {
+            await sendCognitiveTurnReply({
+              text: formatCalendarPanelText(
+                '*Calendar*',
+                reminderPlan.confirmation,
+              ),
+              sendOptions: {
                 inlineActionRows: buildCalendarLookupInlineActionRows(
                   CALENDAR_LOOKUP_TOMORROW_PROMPT,
                 ),
               },
-            );
+              replyKind: 'completion',
+              routeKey: 'calendar_reminder.created',
+            });
             return true;
           }
         }
@@ -6337,15 +7246,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           }
           if (result.kind === 'cancelled') {
             clearPendingGoogleCalendarEventActionState(chatJid);
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Google Calendar*', result.message),
-              {
+            await sendCognitiveTurnReply({
+              text: formatCalendarPanelText(
+                '*Google Calendar*',
+                result.message,
+              ),
+              sendOptions: {
                 inlineActionRows: buildCalendarLookupInlineActionRows(
                   CALENDAR_LOOKUP_TOMORROW_PROMPT,
                 ),
               },
-            );
+              replyKind: 'progress',
+              routeKey: 'google_calendar.action_cancelled',
+            });
             return true;
           }
           if (result.kind === 'resolve_anchor') {
@@ -6377,33 +7290,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               return eventStart <= point && eventEnd > point;
             });
             if (matches.length === 0) {
-              await channel.sendMessage(
-                chatJid,
-                formatCalendarPanelText(
+              await sendCognitiveTurnReply({
+                text: formatCalendarPanelText(
                   '*Google Calendar*',
                   `I couldn't find a ${result.anchorTime.displayLabel} meeting to schedule around on that day.`,
                 ),
-                {
+                sendOptions: {
                   inlineActionRows: buildGoogleCalendarEventActionInlineRows(
                     result.state,
                   ),
                 },
-              );
+                replyKind: 'clarification',
+                routeKey: 'google_calendar.anchor_missing',
+              });
               return true;
             }
             if (matches.length > 1) {
-              await channel.sendMessage(
-                chatJid,
-                formatCalendarPanelText(
+              await sendCognitiveTurnReply({
+                text: formatCalendarPanelText(
                   '*Google Calendar*',
                   `I found more than one event around ${result.anchorTime.displayLabel}. Tell me which one you mean.`,
                 ),
-                {
+                sendOptions: {
                   inlineActionRows: buildGoogleCalendarEventActionInlineRows(
                     result.state,
                   ),
                 },
-              );
+                replyKind: 'clarification',
+                routeKey: 'google_calendar.anchor_ambiguous',
+              });
               return true;
             }
             const anchorEvent = matches[0];
@@ -6424,17 +7339,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 conflictSummary: null,
               });
             setPendingGoogleCalendarEventActionState(chatJid, movedState);
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText(
+            await sendCognitiveTurnReply({
+              text: formatCalendarPanelText(
                 '*Google Calendar*',
                 formatPendingGoogleCalendarEventActionPrompt(movedState),
               ),
-              {
+              sendOptions: {
                 inlineActionRows:
                   buildGoogleCalendarEventActionInlineRows(movedState),
               },
-            );
+              replyKind: 'approval_request',
+              routeKey: 'google_calendar.action_confirmation',
+            });
             return true;
           }
           if (result.kind === 'awaiting_input') {
@@ -6445,17 +7361,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                   )
                 : result.state;
             setPendingGoogleCalendarEventActionState(chatJid, enrichedState);
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText(
+            await sendCognitiveTurnReply({
+              text: formatCalendarPanelText(
                 '*Google Calendar*',
                 formatPendingGoogleCalendarEventActionPrompt(enrichedState),
               ),
-              {
+              sendOptions: {
                 inlineActionRows:
                   buildGoogleCalendarEventActionInlineRows(enrichedState),
               },
-            );
+              replyKind: 'clarification',
+              routeKey: 'google_calendar.action_input',
+            });
             return true;
           }
 
@@ -6470,18 +7387,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             );
             clearPendingGoogleCalendarEventActionState(chatJid);
             clearActiveGoogleCalendarEventContext(chatJid);
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText(
+            await sendCognitiveTurnReply({
+              text: formatCalendarPanelText(
                 '*Google Calendar*',
                 `Deleted "${result.state.sourceEvent.title}".`,
               ),
-              {
+              sendOptions: {
                 inlineActionRows: buildCalendarLookupInlineActionRows(
                   CALENDAR_LOOKUP_TOMORROW_PROMPT,
                 ),
               },
-            );
+              replyKind: 'completion',
+              routeKey: 'google_calendar.event_deleted',
+            });
             return true;
           }
 
@@ -6499,9 +7417,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               chatJid,
               buildActiveGoogleCalendarEventContextState(movedEvent, now),
             );
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText(
+            await sendCognitiveTurnReply({
+              text: formatCalendarPanelText(
                 '*Google Calendar*',
                 buildCalendarCompanionEventReply({
                   action: 'update_event',
@@ -6514,12 +7431,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                   htmlLink: movedEvent.htmlLink || null,
                 }),
               ),
-              {
+              sendOptions: {
                 inlineActionRows: buildGoogleCalendarCreatedInlineActionRows({
                   htmlLink: movedEvent.htmlLink || null,
                 }),
               },
-            );
+              replyKind: 'completion',
+              routeKey: 'google_calendar.event_reassigned',
+            });
             return true;
           }
 
@@ -6541,9 +7460,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             chatJid,
             buildActiveGoogleCalendarEventContextState(updatedEvent, now),
           );
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText(
+          await sendCognitiveTurnReply({
+            text: formatCalendarPanelText(
               '*Google Calendar*',
               buildCalendarCompanionEventReply({
                 action: 'update_event',
@@ -6556,27 +7474,30 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 htmlLink: updatedEvent.htmlLink || null,
               }),
             ),
-            {
+            sendOptions: {
               inlineActionRows: buildGoogleCalendarCreatedInlineActionRows({
                 htmlLink: updatedEvent.htmlLink || null,
               }),
             },
-          );
+            replyKind: 'completion',
+            routeKey: 'google_calendar.event_updated',
+          });
           return true;
         }
 
         const reminderPlan = freshReminderPlan;
         if (reminderPlan.kind !== 'none') {
           if (reminderPlan.kind === 'needs_event_context') {
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Calendar*', reminderPlan.message),
-              {
+            await sendCognitiveTurnReply({
+              text: formatCalendarPanelText('*Calendar*', reminderPlan.message),
+              sendOptions: {
                 inlineActionRows: buildCalendarLookupInlineActionRows(
                   CALENDAR_LOOKUP_TOMORROW_PROMPT,
                 ),
               },
-            );
+              replyKind: 'clarification',
+              routeKey: 'calendar_reminder.event_context_needed',
+            });
             return true;
           }
 
@@ -6602,20 +7523,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 },
                 'Google calendar reminder lookup unavailable during local fast path',
               );
-              await channel.sendMessage(
-                chatJid,
-                buildCalendarCompanionFailurePanelText({
+              await sendCognitiveTurnReply({
+                text: buildCalendarCompanionFailurePanelText({
                   title: '*Calendar*',
                   channelName: channel.name,
                   action: 'confirm_reminder',
                   technicalDetail: failures.join('; '),
                 }),
-                {
+                sendOptions: {
                   inlineActionRows: buildCalendarLookupInlineActionRows(
                     CALENDAR_LOOKUP_TOMORROW_PROMPT,
                   ),
                 },
-              );
+                replyKind: 'blocked_notice',
+                routeKey: 'calendar_reminder.lookup_blocked',
+              });
               return true;
             }
             const resolved = resolveCalendarReminderLookup({
@@ -6632,45 +7554,48 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             });
             if (resolved.kind === 'awaiting_input') {
               setPendingCalendarReminderState(chatJid, resolved.state);
-              await channel.sendMessage(
-                chatJid,
-                formatCalendarPanelText('*Calendar*', resolved.message),
-                {
+              await sendCognitiveTurnReply({
+                text: formatCalendarPanelText('*Calendar*', resolved.message),
+                sendOptions: {
                   inlineActionRows: buildCalendarReminderInlineActionRows(
                     resolved.state,
                   ),
                 },
-              );
+                replyKind: 'clarification',
+                routeKey: 'calendar_reminder.lookup_clarification',
+              });
               return true;
             }
 
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText(
+            await sendCognitiveTurnReply({
+              text: formatCalendarPanelText(
                 '*Calendar*',
                 'message' in resolved
                   ? resolved.message
                   : "I couldn't set that reminder from the events I found.",
               ),
-              {
+              sendOptions: {
                 inlineActionRows: buildCalendarLookupInlineActionRows(
                   CALENDAR_LOOKUP_TOMORROW_PROMPT,
                 ),
               },
-            );
+              replyKind: 'blocked_notice',
+              routeKey: 'calendar_reminder.lookup_unresolved',
+            });
             return true;
           }
 
           setPendingCalendarReminderState(chatJid, reminderPlan.state);
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText('*Calendar*', reminderPlan.message),
-            {
+          await sendCognitiveTurnReply({
+            text: formatCalendarPanelText('*Calendar*', reminderPlan.message),
+            sendOptions: {
               inlineActionRows: buildCalendarReminderInlineActionRows(
                 reminderPlan.state,
               ),
             },
-          );
+            replyKind: 'approval_request',
+            routeKey: 'calendar_reminder.confirmation',
+          });
           return true;
         }
 
@@ -6690,18 +7615,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         }
 
         if (actionPlanPreview.kind === 'needs_event_context') {
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText(
+          await sendCognitiveTurnReply({
+            text: formatCalendarPanelText(
               '*Google Calendar*',
               actionPlanPreview.message,
             ),
-            {
+            sendOptions: {
               inlineActionRows: buildCalendarLookupInlineActionRows(
                 CALENDAR_LOOKUP_TOMORROW_PROMPT,
               ),
             },
-          );
+            replyKind: 'clarification',
+            routeKey: 'google_calendar.event_context_needed',
+          });
           return true;
         }
 
@@ -6720,15 +7646,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           return false;
         }
         if (actionPlan.kind === 'needs_event_context') {
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText('*Google Calendar*', actionPlan.message),
-            {
+          await sendCognitiveTurnReply({
+            text: formatCalendarPanelText(
+              '*Google Calendar*',
+              actionPlan.message,
+            ),
+            sendOptions: {
               inlineActionRows: buildCalendarLookupInlineActionRows(
                 CALENDAR_LOOKUP_TOMORROW_PROMPT,
               ),
             },
-          );
+            replyKind: 'clarification',
+            routeKey: 'google_calendar.event_context_needed',
+          });
           return true;
         }
         if (actionPlan.kind === 'resolve_anchor') {
@@ -6759,33 +7689,35 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             return eventStart <= point && eventEnd > point;
           });
           if (matches.length === 0) {
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText(
+            await sendCognitiveTurnReply({
+              text: formatCalendarPanelText(
                 '*Google Calendar*',
                 `I couldn't find a ${actionPlan.anchorTime.displayLabel} meeting to schedule around on that day.`,
               ),
-              {
+              sendOptions: {
                 inlineActionRows: buildGoogleCalendarEventActionInlineRows(
                   actionPlan.state,
                 ),
               },
-            );
+              replyKind: 'clarification',
+              routeKey: 'google_calendar.anchor_missing',
+            });
             return true;
           }
           if (matches.length > 1) {
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText(
+            await sendCognitiveTurnReply({
+              text: formatCalendarPanelText(
                 '*Google Calendar*',
                 `I found more than one event around ${actionPlan.anchorTime.displayLabel}. Tell me which one you mean.`,
               ),
-              {
+              sendOptions: {
                 inlineActionRows: buildGoogleCalendarEventActionInlineRows(
                   actionPlan.state,
                 ),
               },
-            );
+              replyKind: 'clarification',
+              routeKey: 'google_calendar.anchor_ambiguous',
+            });
             return true;
           }
 
@@ -6807,17 +7739,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               conflictSummary: null,
             });
           setPendingGoogleCalendarEventActionState(chatJid, movedState);
-          await channel.sendMessage(
-            chatJid,
-            formatCalendarPanelText(
+          await sendCognitiveTurnReply({
+            text: formatCalendarPanelText(
               '*Google Calendar*',
               formatPendingGoogleCalendarEventActionPrompt(movedState),
             ),
-            {
+            sendOptions: {
               inlineActionRows:
                 buildGoogleCalendarEventActionInlineRows(movedState),
             },
-          );
+            replyKind: 'approval_request',
+            routeKey: 'google_calendar.action_confirmation',
+            capabilityId: 'google_calendar.event_action',
+          });
           return true;
         }
 
@@ -6829,17 +7763,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               )
             : actionPlan.state;
         setPendingGoogleCalendarEventActionState(chatJid, enrichedState);
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText(
+        await sendCognitiveTurnReply({
+          text: formatCalendarPanelText(
             '*Google Calendar*',
             formatPendingGoogleCalendarEventActionPrompt(enrichedState),
           ),
-          {
+          sendOptions: {
             inlineActionRows:
               buildGoogleCalendarEventActionInlineRows(enrichedState),
           },
-        );
+          replyKind: 'approval_request',
+          routeKey: 'google_calendar.action_confirmation',
+          capabilityId: 'google_calendar.event_action',
+        });
         return true;
       } catch (err) {
         lastAgentTimestamp[chatJid] = previousCursor;
@@ -6939,6 +7875,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           linkedRefs: {
             googleCalendarEventId: reconciledCreatedEvent.id,
           },
+          replyKind: 'completion',
         });
         clearPendingGoogleCalendarCreateState(chatJid);
         clearGoogleCalendarSchedulingContext(chatJid);
@@ -7007,6 +7944,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         skipCursorDeliveryMark: true,
         deliveryOrdinal: 2,
         recordMetricEnabled: true,
+        replyKind: 'blocked_notice',
       });
       logger.warn(
         {
@@ -7056,6 +7994,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         skipCursorDeliveryMark: true,
         deliveryOrdinal: 2,
         recordMetricEnabled: true,
+        replyKind: 'completion',
       });
       logger.info(
         {
@@ -7187,6 +8126,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 'google calendar create fast path hit a provider failure',
               blockerClass: technicalDetail,
               blockerOwner: 'external',
+              replyKind: 'blocked_notice',
             });
           });
           logger.warn(
@@ -7228,6 +8168,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 responseSource: 'local_companion',
                 traceReason:
                   'compound calendar request needed more event details before drafting',
+                replyKind: 'clarification',
               });
             });
             return true;
@@ -7299,6 +8240,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         createPlan.kind === 'needs_details'
           ? 'google calendar create is waiting on one missing detail'
           : 'google calendar create draft is ready for confirmation';
+      const calendarDraftReplyKind: CognitiveReplyKind =
+        createPlan.kind === 'needs_details'
+          ? 'clarification'
+          : noWritableCalendars
+            ? 'blocked_notice'
+            : 'approval_request';
 
       try {
         if (pendingStateToPersist) {
@@ -7326,6 +8273,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             handlerKind: 'google_calendar_create_local',
             responseSource: 'local_companion',
             traceReason: calendarDraftTraceReason,
+            replyKind: calendarDraftReplyKind,
           });
         });
         logger.info(
@@ -7377,6 +8325,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           handlerKind: 'google_calendar_create_local',
           responseSource: 'local_companion',
           traceReason: 'google calendar create flow was cancelled in-thread',
+          replyKind: 'progress',
         });
         return true;
       } catch (err) {
@@ -7438,6 +8387,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             responseSource: 'local_companion',
             traceReason:
               'google calendar create could not resolve the requested anchor event',
+            replyKind: 'clarification',
           });
           return true;
         }
@@ -7459,6 +8409,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             responseSource: 'local_companion',
             traceReason:
               'google calendar create needs one more clarification about the anchor event',
+            replyKind: 'clarification',
           });
           return true;
         }
@@ -7495,6 +8446,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           responseSource: 'local_companion',
           traceReason:
             'google calendar create resolved the requested anchor event and refreshed the draft',
+          replyKind: 'approval_request',
         });
         return true;
       } catch (err) {
@@ -7538,6 +8490,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           responseSource: 'local_companion',
           traceReason:
             'google calendar create stayed in the same-thread continuation flow',
+          replyKind: 'approval_request',
         });
         return true;
       } catch (err) {
@@ -7616,6 +8569,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         linkedRefs: {
           googleCalendarEventId: createdEvent.id,
         },
+        replyKind: 'completion',
       });
       clearPendingGoogleCalendarCreateState(chatJid);
       clearGoogleCalendarSchedulingContext(chatJid);
@@ -7667,6 +8621,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           traceReason: 'google calendar create failed after confirmation',
           blockerClass: technicalDetail,
           blockerOwner: 'external',
+          replyKind: 'blocked_notice',
         });
         logger.warn(
           {
@@ -7768,6 +8723,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             responseSource: 'local_companion',
             traceReason:
               'refused to bind an ambiguous timing answer across pending reminders',
+            replyKind: 'clarification',
           });
           return true;
         }
@@ -7806,6 +8762,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               responseSource: 'local_companion',
               traceReason:
                 'persisted a scoped reminder clarification before delivery',
+              replyKind: 'clarification',
             });
             return true;
           }
@@ -7850,6 +8807,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               traceReason:
                 'persisted a clarified reminder before confirmation delivery',
               linkedRefs: { reminderTaskId: persisted.task.id },
+              replyKind: 'completion',
             });
             return true;
           }
@@ -7869,6 +8827,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               linkedRefs: {
                 reminderTaskId: activeActionReminder.taskId || undefined,
               },
+              replyKind: 'completion',
             });
             clearPendingActionReminderState(chatJid, activeActionReminder);
             return true;
@@ -7892,14 +8851,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           );
           if (continued.kind === 'awaiting_draft_input') {
             setPendingActionDraftState(chatJid, continued.state);
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Next Step*', continued.message),
-              {
+            await sendAssistantReplyWithFeedback({
+              text: formatCalendarPanelText('*Next Step*', continued.message),
+              sendOptions: {
                 inlineActionRows:
                   buildCalendarLookupInlineActionRows(lastContent),
               },
-            );
+              routeKey: 'action_layer.awaiting_draft_input',
+              capabilityId: 'communication.draft_reply',
+              handlerKind: 'local_action_layer',
+              responseSource: 'local_companion',
+              traceReason: 'asked for missing draft input before continuing',
+              replyKind: 'clarification',
+            });
             return true;
           }
           clearPendingActionDraftState(chatJid);
@@ -7930,14 +8894,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 ),
               );
             }
-            await channel.sendMessage(
-              chatJid,
-              formatCalendarPanelText('*Next Step*', continued.reply),
-              {
+            await sendAssistantReplyWithFeedback({
+              text: formatCalendarPanelText('*Next Step*', continued.reply),
+              sendOptions: {
                 inlineActionRows:
                   buildCalendarLookupInlineActionRows(lastContent),
               },
-            );
+              routeKey: 'action_layer.draft_progress',
+              capabilityId: 'communication.draft_reply',
+              handlerKind: 'local_action_layer',
+              responseSource: 'local_companion',
+              traceReason:
+                'presented non-completion action-layer draft progress',
+              replyKind: 'progress',
+            });
             return true;
           }
         }
@@ -7963,13 +8933,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
       if (actionResult.kind === 'awaiting_reminder_time') {
         setPendingActionReminderState(chatJid, actionResult.state);
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText('*Next Step*', actionResult.message),
-          {
+        await sendAssistantReplyWithFeedback({
+          text: formatCalendarPanelText('*Next Step*', actionResult.message),
+          sendOptions: {
             inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
           },
-        );
+          routeKey: 'action_layer.awaiting_reminder_time',
+          capabilityId: 'capture.reminder',
+          handlerKind: 'local_action_layer',
+          responseSource: 'local_companion',
+          traceReason: 'asked for missing reminder timing before persistence',
+          replyKind: 'clarification',
+        });
         return true;
       }
 
@@ -7978,18 +8953,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (actionResult.actionContext) {
           setActionLayerContext(chatJid, actionResult.actionContext);
         }
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText('*Next Step*', actionResult.message),
-          {
+        await sendAssistantReplyWithFeedback({
+          text: formatCalendarPanelText('*Next Step*', actionResult.message),
+          sendOptions: {
             inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
           },
-        );
+          routeKey: 'action_layer.awaiting_draft_input',
+          capabilityId: 'communication.draft_reply',
+          handlerKind: 'local_action_layer',
+          responseSource: 'local_companion',
+          traceReason: 'asked for missing draft input before continuing',
+          replyKind: 'clarification',
+        });
         return true;
       }
 
       if (actionResult.kind === 'created_reminder') {
-        createTask(actionResult.task);
+        createTask(withQueuedBlueBubblesTaskAuthorization(actionResult.task));
         syncOutcomeFromReminderTask(actionResult.task, {
           linkedRefs: {
             reminderTaskId: actionResult.task.id,
@@ -8007,13 +8987,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (actionResult.actionContext) {
           setActionLayerContext(chatJid, actionResult.actionContext);
         }
-        await channel.sendMessage(
-          chatJid,
-          formatCalendarPanelText('*Next Step*', actionResult.confirmation),
-          {
+        await sendAssistantReplyWithFeedback({
+          text: formatCalendarPanelText(
+            '*Next Step*',
+            actionResult.confirmation,
+          ),
+          sendOptions: {
             inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
           },
-        );
+          routeKey: 'action_layer.created_reminder',
+          capabilityId: 'capture.reminder',
+          handlerKind: 'local_action_layer',
+          responseSource: 'local_companion',
+          traceReason:
+            'presented reminder completion only through the cognitive claim gate',
+          linkedRefs: { reminderTaskId: actionResult.task.id },
+          replyKind: 'completion',
+        });
         logger.info(
           {
             component: 'assistant',
@@ -8057,13 +9047,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           ),
         );
       }
-      await channel.sendMessage(
-        chatJid,
-        formatCalendarPanelText('*Next Step*', actionResult.reply),
-        {
+      await sendAssistantReplyWithFeedback({
+        text: formatCalendarPanelText('*Next Step*', actionResult.reply),
+        sendOptions: {
           inlineActionRows: buildCalendarLookupInlineActionRows(lastContent),
         },
-      );
+        routeKey: 'action_layer.result',
+        capabilityId: 'action_layer.local',
+        handlerKind: 'local_action_layer',
+        responseSource: 'local_companion',
+        traceReason:
+          'routed action-layer result through the cognitive claim gate',
+        replyKind: 'progress',
+      });
       logger.info(
         {
           component: 'assistant',
@@ -8128,6 +9124,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason: 'handled daily companion via local fast path',
         linkedRefs: {},
+        replyKind: 'progress',
       });
       if (actionContext) {
         setActionLayerContext(chatJid, actionContext);
@@ -8148,10 +9145,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             })
           : null;
       if (suggestedThread) {
-        await channel.sendMessage(
-          chatJid,
-          buildLifeThreadSuggestionAskText(suggestedThread.title),
-        );
+        await sendCognitiveTurnReply({
+          text: buildLifeThreadSuggestionAskText(suggestedThread.title),
+          replyKind: 'approval_request',
+          routeKey: 'life_thread.suggestion_confirmation',
+          capabilityId: 'life_thread.suggestion',
+        });
       }
       logger.info(
         {
@@ -8254,6 +9253,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               googleCalendarEventId: activeEventContext.event.id,
             }
           : {},
+        replyKind: 'progress',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       logger.info(
@@ -8580,6 +9580,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 lifeThreadId: savedThread.referencedThread.id,
               }
             : {},
+          replyKind: 'completion',
         });
       } else if (
         result.bridgeDraftReference &&
@@ -8630,6 +9631,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 messageActionId: draftResult.messageAction.messageActionId,
               },
               preserveStructuredText: true,
+              replyKind: 'approval_request',
             });
             linkMessageActionCognitiveContext({
               messageActionId: draftResult.messageAction.messageActionId,
@@ -8664,6 +9666,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 messageActionId: draftResult.messageAction.messageActionId,
               },
               preserveStructuredText: true,
+              replyKind: 'approval_request',
               skipBlueBubblesActionRehydration: true,
             });
             linkMessageActionCognitiveContext({
@@ -8699,6 +9702,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               draftResult.trace?.reason ||
               'completed shared capability follow-up by reopening reply help',
             traceNotes: draftResult.trace?.notes || [],
+            replyKind: 'progress',
           });
         }
         if (draftResult.conversationSeed) {
@@ -8728,6 +9732,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 reminderTaskId: result.reminderTaskId,
               }
             : {},
+          replyKind: 'completion',
         });
       }
 
@@ -8932,6 +9937,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           responseSource: 'local_companion',
           traceReason:
             'cognitive executive asked for clarification before action selection',
+          replyKind: 'clarification',
         });
         finalizeCognitiveExecutiveTurn({
           context: executiveContext,
@@ -8985,47 +9991,172 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
     let result: AssistantCapabilityResult;
     try {
+      const ownerReviewAllowed = isTrustedOwnerReviewSurface({
+        channelName: conversationChannel,
+        chatJid,
+        group,
+        ownerAuthored: currentTurnOwnerAuthored,
+      });
       const messagesHistoryChannel = channels.find(
         (candidate): candidate is BlueBubblesChannel =>
           candidate instanceof BlueBubblesChannel,
       );
-      if (
-        messagesHistoryChannel?.primeRecentHistory &&
-        (capabilityMatch.capabilityId === 'communication.summarize_thread' ||
-          capabilityMatch.capabilityId === 'communication.review_recent_texts')
-      ) {
-        try {
-          // A Telegram request for "my texts" is a BlueBubbles history query,
-          // not a Telegram-history query. Refresh the Messages provider before
-          // reading the local index so Telegram and the Messages self-thread
-          // see the same bounded, current conversation set.
-          const hydrated = await messagesHistoryChannel.primeRecentHistory({
-            limit: 500,
-          });
-          logger.info(
-            {
-              component: 'assistant',
-              channel: conversationChannel,
-              capabilityId: capabilityMatch.capabilityId,
-              storedCount: hydrated.storedCount,
-              totalCount: hydrated.totalCount,
-            },
-            'Hydrated bounded recent channel history for an explicit review request',
-          );
-          // Explicit history hydration is an enrichment step. A transport
-          // failure must not discard already-stored local context or prevent
-          // an honest bounded summary from being returned.
-          // eslint-disable-next-line no-catch-all/no-catch-all
-        } catch (error) {
-          logger.warn(
-            {
-              component: 'assistant',
-              channel: conversationChannel,
-              capabilityId: capabilityMatch.capabilityId,
-              err: error,
-            },
-            'Recent channel history hydration failed; continuing with locally stored history',
-          );
+      const capabilityInput = buildAssistantCapabilityExecutionInput({
+        lastContent,
+        capabilityMatch,
+        priorSubjectData: priorAssistantCapabilitySeed?.subjectData,
+      });
+      let historyRefreshDisclosure: MessagesHistoryRefreshDisclosureInput | null =
+        null;
+      let historyRefreshTargetChatJid: string | null = null;
+      const historyCapability =
+        capabilityMatch.capabilityId === 'communication.summarize_thread' ||
+        capabilityMatch.capabilityId === 'communication.review_recent_texts';
+
+      // Keep provider history reads inside the exact owner-only privacy gate.
+      // A known named thread gets its own bounded read so a quiet conversation
+      // cannot disappear merely because the global newest-500 slice is busy.
+      if (ownerReviewAllowed && historyCapability) {
+        type GlobalDiscoveryDisclosure = NonNullable<
+          MessagesHistoryRefreshDisclosureInput['precedingGlobalDiscovery']
+        >;
+        const runGlobalHistoryRefresh =
+          async (): Promise<GlobalDiscoveryDisclosure> => {
+            if (!messagesHistoryChannel?.primeRecentHistory) {
+              const refresh: GlobalDiscoveryDisclosure = {
+                mode: 'local_only',
+                requestedLimit: 500,
+              };
+              historyRefreshDisclosure = { ...refresh, timeZone: TIMEZONE };
+              return refresh;
+            }
+            try {
+              const hydrated = await messagesHistoryChannel.primeRecentHistory({
+                limit: 500,
+              });
+              const refresh: GlobalDiscoveryDisclosure = {
+                mode: 'global_succeeded',
+                requestedLimit: 500,
+                inspectedCount: hydrated.totalCount,
+                storedCount: hydrated.storedCount,
+              };
+              historyRefreshDisclosure = { ...refresh, timeZone: TIMEZONE };
+              logger.info(
+                {
+                  component: 'assistant',
+                  channel: conversationChannel,
+                  capabilityId: capabilityMatch.capabilityId,
+                  storedCount: hydrated.storedCount,
+                  totalCount: hydrated.totalCount,
+                },
+                'Hydrated bounded global Messages history for an explicit owner review request',
+              );
+              return refresh;
+              // eslint-disable-next-line no-catch-all/no-catch-all
+            } catch (error) {
+              const refresh: GlobalDiscoveryDisclosure = {
+                mode: 'global_failed',
+                requestedLimit: 500,
+              };
+              historyRefreshDisclosure = { ...refresh, timeZone: TIMEZONE };
+              logger.warn(
+                {
+                  component: 'assistant',
+                  channel: conversationChannel,
+                  capabilityId: capabilityMatch.capabilityId,
+                  err: error,
+                },
+                'Global Messages history hydration failed; continuing with locally stored history',
+              );
+              return refresh;
+            }
+          };
+
+        const namedChatQuery =
+          capabilityMatch.capabilityId === 'communication.summarize_thread' &&
+          capabilityInput.targetChatJid !== ALL_SYNCED_MESSAGES_TARGET
+            ? capabilityInput.targetChatJid ||
+              capabilityInput.targetChatName ||
+              capabilityInput.threadTitle ||
+              capabilityInput.personName ||
+              null
+            : null;
+
+        if (namedChatQuery) {
+          let precedingGlobalDiscovery: GlobalDiscoveryDisclosure | null = null;
+          let resolution = resolveBlueBubblesThreadTargetByName(namedChatQuery);
+          if (resolution.state === 'missing') {
+            // A global refresh can discover current metadata for a recently
+            // active thread. If it remains missing, the resulting disclosure
+            // is explicit that the newest-500 global slice may omit quiet chats.
+            precedingGlobalDiscovery = await runGlobalHistoryRefresh();
+            resolution = resolveBlueBubblesThreadTargetByName(namedChatQuery);
+          }
+          if (resolution.state === 'resolved') {
+            historyRefreshTargetChatJid = resolution.target.chatJid;
+            if (messagesHistoryChannel?.primeChatHistory) {
+              try {
+                const hydrated = await messagesHistoryChannel.primeChatHistory(
+                  resolution.target.chatJid,
+                  { limit: BLUEBUBBLES_TARGETED_HISTORY_LIMIT },
+                );
+                historyRefreshDisclosure = {
+                  mode: 'targeted_succeeded',
+                  requestedLimit: BLUEBUBBLES_TARGETED_HISTORY_LIMIT,
+                  inspectedCount: hydrated.totalCount,
+                  storedCount: hydrated.storedCount,
+                  timeZone: TIMEZONE,
+                  ...(precedingGlobalDiscovery
+                    ? { precedingGlobalDiscovery }
+                    : {}),
+                };
+                logger.info(
+                  {
+                    component: 'assistant',
+                    channel: conversationChannel,
+                    capabilityId: capabilityMatch.capabilityId,
+                    storedCount: hydrated.storedCount,
+                    totalCount: hydrated.totalCount,
+                  },
+                  'Hydrated bounded targeted Messages history for an explicit owner summary request',
+                );
+                // eslint-disable-next-line no-catch-all/no-catch-all
+              } catch (error) {
+                historyRefreshDisclosure = {
+                  mode: 'targeted_failed',
+                  requestedLimit: BLUEBUBBLES_TARGETED_HISTORY_LIMIT,
+                  timeZone: TIMEZONE,
+                  ...(precedingGlobalDiscovery
+                    ? { precedingGlobalDiscovery }
+                    : {}),
+                };
+                logger.warn(
+                  {
+                    component: 'assistant',
+                    channel: conversationChannel,
+                    capabilityId: capabilityMatch.capabilityId,
+                    err: error,
+                  },
+                  'Targeted Messages history hydration failed; continuing with the exact local thread snapshot',
+                );
+              }
+            } else {
+              historyRefreshDisclosure = {
+                mode: 'local_only',
+                requestedLimit: BLUEBUBBLES_TARGETED_HISTORY_LIMIT,
+                timeZone: TIMEZONE,
+                ...(precedingGlobalDiscovery
+                  ? { precedingGlobalDiscovery }
+                  : {}),
+              };
+            }
+          }
+        } else if (
+          capabilityMatch.capabilityId ===
+            'communication.review_recent_texts' ||
+          capabilityInput.targetChatJid === ALL_SYNCED_MESSAGES_TARGET
+        ) {
+          await runGlobalHistoryRefresh();
         }
       }
       result = await executeAssistantCapability({
@@ -9034,12 +10165,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           channel: conversationChannel,
           groupFolder: group.folder,
           chatJid,
-          ownerReviewAllowed: isTrustedOwnerReviewSurface({
-            channelName: conversationChannel,
-            chatJid,
-            group,
-            ownerAuthored: currentTurnOwnerAuthored,
-          }),
+          ownerReviewAllowed,
           currentMessageId: latestUserMessage?.id,
           currentAttachmentIds,
           now,
@@ -9050,13 +10176,37 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           priorCompanionContext: priorDailyContext,
           priorSubjectData: priorAssistantCapabilitySeed?.subjectData,
           replyText: missedMessages.at(-1)?.reply_to?.content,
+          ...(ownerReviewAllowed && messagesHistoryChannel
+            ? {
+                primeMessagesChatHistory: (targetChatJid: string) =>
+                  messagesHistoryChannel.primeChatHistory(targetChatJid, {
+                    limit: BLUEBUBBLES_TARGETED_HISTORY_LIMIT,
+                  }),
+              }
+            : {}),
         },
-        input: buildAssistantCapabilityExecutionInput({
-          lastContent,
-          capabilityMatch,
-          priorSubjectData: priorAssistantCapabilitySeed?.subjectData,
-        }),
+        input: capabilityInput,
       });
+      if (historyRefreshDisclosure && result.replyText) {
+        const disclosure = formatMessagesHistoryRefreshDisclosure({
+          ...historyRefreshDisclosure,
+          latestLocalMessageAt: resolveLatestEligibleLocalMessagesTimestamp(
+            historyRefreshTargetChatJid,
+          ),
+        });
+        result = {
+          ...result,
+          replyText: `${result.replyText}\n\n${disclosure}`,
+          ...(result.conversationSeed
+            ? {
+                conversationSeed: {
+                  ...result.conversationSeed,
+                  summaryText: `${result.conversationSeed.summaryText}\n\n${disclosure}`,
+                },
+              }
+            : {}),
+        };
+      }
     } catch (err) {
       finalizeCognitiveExecutiveTurn({
         context: executiveContext,
@@ -9119,6 +10269,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           traceReason:
             result.trace?.reason || 'handled shared daily capability',
           traceNotes: result.trace?.notes || [],
+          replyKind: 'progress',
         });
         if (actionContext) {
           setActionLayerContext(chatJid, actionContext);
@@ -9138,10 +10289,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               })
             : null;
         if (suggestedThread) {
-          await channel.sendMessage(
-            chatJid,
-            buildLifeThreadSuggestionAskText(suggestedThread.title),
-          );
+          await sendCognitiveTurnReply({
+            text: buildLifeThreadSuggestionAskText(suggestedThread.title),
+            replyKind: 'approval_request',
+            routeKey: 'life_thread.suggestion_confirmation',
+            capabilityId: 'life_thread.suggestion',
+          });
         }
       } else if (result.lifeThreadResult) {
         if (result.lifeThreadResult.referencedThread) {
@@ -9167,21 +10320,49 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 lifeThreadId: result.lifeThreadResult.referencedThread.id,
               }
             : {},
+          replyKind: 'completion',
         });
       } else if (result.mediaResult?.artifact && channel.sendArtifact) {
-        await channel.sendArtifact(chatJid, result.mediaResult.artifact, {
-          caption: result.replyText || result.mediaResult.summaryText,
+        const artifactAuthorization = authorizeCognitiveReplyDelivery({
+          cognitiveRun: turnAgentHarness?.cognitiveRun,
+          replyKind: 'completion',
+          now: new Date().toISOString(),
         });
+        if (!artifactAuthorization.allowed) {
+          await sendCognitiveTurnReply({
+            text: artifactAuthorization.safeFallbackText,
+            replyKind: 'evidence_request',
+            routeKey: 'media.artifact_verification_pending',
+            capabilityId: result.capabilityId || capabilityMatch.capabilityId,
+          });
+          return true;
+        }
+        const sentArtifact = acceptConfirmedPresentationDelivery({
+          result: await channel.sendArtifact(
+            chatJid,
+            result.mediaResult.artifact,
+            {
+              caption: result.replyText || result.mediaResult.summaryText,
+            },
+          ),
+          channel: channel.name,
+          chatJid,
+          workflow: 'assistant_media_artifact_completion',
+          onUnverified: () => inFlightCursorRollbacks.markDelivered(chatJid),
+        });
+        if (!sentArtifact) return true;
       } else if (result.messageAction) {
         if (
           result.messageAction.sendStatus === 'approved' &&
-          !result.messageAction.requiresApproval
+          !result.messageAction.requiresApproval &&
+          result.messageAction.targetKind !== 'external_thread'
         ) {
           await applyAndPresentMessageAction({
             chatJid,
             messageActionId: result.messageAction.messageActionId,
             operation: { kind: 'send' },
             ownerAuthored: currentTurnOwnerAuthored,
+            ownerAuthorizationAt: queuedOwnerAuthorizationAt,
             now,
           });
         } else {
@@ -9207,6 +10388,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 messageActionId: result.messageAction.messageActionId,
               },
               preserveStructuredText: true,
+              replyKind: 'approval_request',
             });
             linkMessageActionCognitiveContext({
               messageActionId: result.messageAction.messageActionId,
@@ -9239,6 +10421,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
                 messageActionId: result.messageAction.messageActionId,
               },
               preserveStructuredText: true,
+              replyKind: 'approval_request',
               skipBlueBubblesActionRehydration: true,
             });
             linkMessageActionCognitiveContext({
@@ -9272,6 +10455,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           traceReason:
             result.trace?.reason || 'handled shared assistant capability',
           traceNotes: result.trace?.notes || [],
+          replyKind: 'completion',
         });
       }
 
@@ -9322,9 +10506,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         }
         if (conversationChannel === 'telegram') {
           const presentation = buildActionBundlePresentation(actionBundle);
+          const bundleAuthorization = authorizeCognitiveReplyDelivery({
+            cognitiveRun: turnAgentHarness?.cognitiveRun,
+            replyKind: 'approval_request',
+            now: new Date().toISOString(),
+          });
+          if (!bundleAuthorization.allowed) {
+            await sendCognitiveTurnReply({
+              text: presentation.text,
+              replyKind: 'approval_request',
+              routeKey: 'action_bundle.approval_presentation',
+              capabilityId: 'action_bundle.approval',
+            });
+            return true;
+          }
           const sent = acceptConfirmedPresentationDelivery({
-            result: await channel.sendMessage(chatJid, presentation.text, {
-              inlineActionRows: presentation.inlineActionRows,
+            result: await sendAssistantReplyWithFeedback({
+              text: presentation.text,
+              sendOptions: withQueuedBlueBubblesAuthorization({
+                inlineActionRows: presentation.inlineActionRows,
+              }),
+              routeKey: 'action_bundle.approval_presentation',
+              capabilityId: 'action_bundle.approval',
+              handlerKind: 'action_bundle_presentation',
+              responseSource: 'local_companion',
+              traceReason:
+                'presented a staged action bundle for explicit approval',
+              preserveStructuredText: true,
+              replyKind: 'approval_request',
             }),
             channel: channel.name,
             chatJid,
@@ -9351,10 +10560,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             });
           }
         } else if (conversationChannel === 'bluebubbles') {
-          await channel.sendMessage(
-            chatJid,
-            'I can line up the next steps here. If you want the fuller bundle, ask me to send it to Telegram.',
-          );
+          await sendCognitiveTurnReply({
+            text: 'I can line up the next steps here. If you want the fuller bundle, ask me to send it to Telegram.',
+            replyKind: 'progress',
+            routeKey: 'action_bundle.channel_guidance',
+            capabilityId: 'action_bundle.guidance',
+          });
         }
       }
 
@@ -9399,6 +10610,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             knowledgeSourceIds: result.continuationCandidate.knowledgeSourceIds,
             followupSuggestions:
               result.continuationCandidate.followupSuggestions,
+            ingressAuthorization:
+              conversationChannel === 'telegram' &&
+              explicitHandoffTarget === 'bluebubbles' &&
+              queuedLatestMessage?.ingress_received_at
+                ? {
+                    sourceChatJid: queuedLatestMessage.chat_jid,
+                    sourceMessageId: queuedLatestMessage.id,
+                    sourceReceivedAt: queuedLatestMessage.ingress_received_at,
+                    authorizationAt:
+                      queuedMessagingAuthorizationFence.authorizationAt,
+                    pauseGeneration:
+                      queuedMessagingAuthorizationFence.pauseGeneration,
+                  }
+                : undefined,
           },
           {
             resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
@@ -9410,9 +10635,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             sendTelegramArtifact: sendCompanionHandoffArtifactToChannel,
             sendHandoffArtifact: sendCompanionHandoffArtifact,
           },
+          {
+            onDispatchQuarantined: () => {
+              inFlightCursorRollbacks.markDelivered(chatJid);
+              onPrimaryDeliveryCommitted?.(
+                'delivery_unverified_pre_dispatch_quarantine',
+              );
+            },
+          },
         );
         explicitHandoffCreated = true;
-        await channel.sendMessage(chatJid, handoff.speech);
+        const handoffReplyKind: CognitiveReplyKind = handoff.ok
+          ? 'completion'
+          : handoff.status === 'delivery_unverified'
+            ? 'evidence_request'
+            : 'blocked_notice';
+        await sendCognitiveTurnReply({
+          text: handoff.speech,
+          sendOptions: withQueuedBlueBubblesAuthorization(),
+          replyKind: handoffReplyKind,
+          routeKey: 'companion_handoff.delivery_status',
+          capabilityId: 'companion_handoff.delivery',
+        });
       }
 
       logger.info(
@@ -9527,6 +10771,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         routingEndpointMode: decision.providerMode || null,
         toolClass: 'openai_guided_router',
         traceReason: 'handled message via OpenAI-guided clarification path',
+        replyKind: 'clarification',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       logger.info(
@@ -9583,6 +10828,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         toolClass: 'openai_guided_router',
         traceReason:
           'handled message via OpenAI-guided direct quick reply path',
+        replyKind: 'progress',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       completeConversationPilotProof(quickReplyPilot, {
@@ -9647,6 +10893,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!replyText) {
       return false;
     }
+    if (!clarificationNeeded && interpretedTurn.source !== 'fallback') {
+      // Model-authored chat prose must finish through the canonical runtime
+      // evidence and durable terminal-verifier path. Only the deterministic
+      // bounded fallback remains an informational fast path.
+      return false;
+    }
     rememberOpenAiGuidedRoutingState({
       source:
         interpretedTurn.source === 'openai'
@@ -9683,6 +10935,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         interpretedTurn.routeFamily === 'help'
           ? 'handled Messages direct turn as a bounded help reply'
           : 'handled Messages direct turn as a fluid bounded chat reply',
+      replyKind: clarificationNeeded ? 'clarification' : 'progress',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
     logger.info(
@@ -9721,7 +10974,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
     if (statusMonitor) {
       try {
-        createTask(statusMonitor.task);
+        createTask(withQueuedBlueBubblesTaskAuthorization(statusMonitor.task));
         refreshTaskSnapshots(registeredGroups);
         clearSharedAssistantCapabilitySeed(chatJid);
         await sendAssistantReplyWithFeedback({
@@ -9735,6 +10988,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           linkedRefs: {
             reminderTaskId: statusMonitor.task.id,
           },
+          replyKind: 'completion',
           latencyTargetClass: 'local_command',
         });
         logger.info(
@@ -9790,6 +11044,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       responseSource: 'local_companion',
       traceReason:
         'answered self-improvement status from response-feedback repair truth',
+      replyKind: 'progress',
       latencyTargetClass: 'local_command',
     });
     return true;
@@ -9813,6 +11068,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       responseSource: 'local_companion',
       traceReason:
         'answered integration health from canonical integration doctor truth',
+      replyKind: 'progress',
       latencyTargetClass: 'local_command',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
@@ -9831,6 +11087,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       handlerKind: 'local_council_doctor',
       responseSource: 'local_companion',
       traceReason: 'answered council quality status from local metadata ledger',
+      replyKind: 'progress',
       latencyTargetClass: 'local_command',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
@@ -9861,6 +11118,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           'resolved an exact private capability apprenticeship action through canonical token binding',
         allowFeedback: false,
         preserveStructuredText: true,
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -9888,6 +11146,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         'resolved an exact release-readiness request through active contract matching, fresh health, and independent verification',
       allowFeedback: result.action === 'verified',
       preserveStructuredText: true,
+      replyKind: 'progress',
       latencyTargetClass: 'local_command',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
@@ -9912,6 +11171,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           traceReason:
             'refused to expose review candidates outside owner-only surfaces',
           allowFeedback: false,
+          replyKind: 'blocked_notice',
           latencyTargetClass: 'local_command',
         });
         clearSharedAssistantCapabilitySeed(chatJid);
@@ -9944,6 +11204,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         traceReason:
           'presented one recent unreviewed answer without recording a verdict',
         allowFeedback: false,
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -9959,6 +11220,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'kept an unresolved default-learning request proposed until the behavior is explicit',
+        replyKind: 'clarification',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -9991,6 +11253,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         handlerKind: 'local_learning_control',
         responseSource: 'local_companion',
         traceReason: 'paused latest inspectable skill metadata when available',
+        replyKind: 'completion',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10028,6 +11291,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'updated latest inspectable learning metadata when available',
+        replyKind: 'completion',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10042,6 +11306,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         handlerKind: 'local_learning_control',
         responseSource: 'local_companion',
         traceReason: 'confirmed approval-first learning boundary',
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10085,6 +11350,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       responseSource: 'local_companion',
       traceReason:
         'answered learning and skill status from metadata-only ledgers',
+      replyKind: 'progress',
       latencyTargetClass: 'local_command',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
@@ -10125,6 +11391,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered current-state request from metadata-only cognitive blackboard',
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10140,6 +11407,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered pending-action request from metadata-only action lifecycle ledger',
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10155,6 +11423,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered capability/setup request from metadata-only capability self-model',
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10170,6 +11439,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered learning-recall request from redacted episodic memory summaries',
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10185,6 +11455,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered autonomy-boundary request from static governor policy',
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10200,6 +11471,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered metacognitive confidence/context request from metadata-only ledger',
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10220,6 +11492,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered executive route explanation from local metadata ledger',
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10235,6 +11508,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered reality grounding status from metadata-only proof and tool truth',
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
@@ -10254,6 +11528,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'answered goal-directed planning request from metadata-only planner',
+        replyKind: 'progress',
         latencyTargetClass: 'local_command',
       });
       completeConversationPilotProof(pilotRecord, {
@@ -10298,6 +11573,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       handlerKind: 'local_cognition_doctor',
       responseSource: 'local_companion',
       traceReason: 'answered cognitive task status from local metadata ledger',
+      replyKind: 'progress',
       latencyTargetClass: 'local_command',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
@@ -10320,6 +11596,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       traceReason:
         'answered recovery request from canonical durable continuity metadata',
       preserveStructuredText: true,
+      replyKind: 'progress',
       latencyTargetClass: 'local_command',
     });
     clearSharedAssistantCapabilitySeed(chatJid);
@@ -10454,6 +11731,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         handlerKind: 'direct_quick_reply',
         responseSource: 'local_companion',
         traceReason: 'handled message via direct quick reply fallback path',
+        replyKind: 'progress',
       });
       clearSharedAssistantCapabilitySeed(chatJid);
       completeConversationPilotProof(quickReplyPilot, {
@@ -10590,6 +11868,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             traceReason:
               'persisted the reminder before delivery and queued bounded read-only research',
             linkedRefs: { reminderTaskId: persisted.task.id },
+            replyKind: 'completion',
           });
           setReminderResearchOperation(
             chatJid,
@@ -10640,6 +11919,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             ],
             skipCursorDeliveryMark: true,
             deliveryOrdinal: 2,
+            replyKind: 'completion',
           });
         },
         deliverFailure: async (error) => {
@@ -10673,6 +11953,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             ],
             skipCursorDeliveryMark: true,
             deliveryOrdinal: 2,
+            replyKind: 'blocked_notice',
           });
         },
         onSidecarDeliveryError: (error) => {
@@ -10709,6 +11990,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       traceReason:
         'reported persisted reminder and research states without re-executing either leg',
       linkedRefs: { reminderTaskId: state.taskId },
+      replyKind: 'progress',
     });
     return true;
   };
@@ -10751,6 +12033,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           linkedRefs: {
             reminderTaskId: plannedReminder.task.id,
           },
+          replyKind: 'completion',
         });
         logger.info(
           {
@@ -10822,6 +12105,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           linkedRefs: {
             reminderTaskId: plannedReminder.task.id,
           },
+          replyKind: 'completion',
         });
         logger.info(
           {
@@ -10889,6 +12173,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               lifeThreadId: lifeThreadTurn.referencedThread.id,
             }
           : {},
+        replyKind: 'completion',
       });
       logger.info(
         { group: group.name },
@@ -10923,6 +12208,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'handled personalization request via local assistant fast path',
+        replyKind: 'completion',
       });
       logger.info(
         { group: group.name },
@@ -10989,19 +12275,33 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let outputSentToUser = false;
   let runtimeEvidenceReconciled = false;
   let scopedDeliveredTurnEvaluation: PreSendEvaluation | null = null;
+  type BufferedAgentReply = {
+    text: string;
+    shielded: boolean;
+    runtime?: string | null;
+    selectedModel?: string | null;
+    endpointMode?: string | null;
+  };
+  let bufferedAgentReplies: BufferedAgentReply[] = [];
   const reconcileCurrentRuntimeEvidence = (
     runtimeStatus: 'success' | 'error',
+    evaluation?: PreSendEvaluation | null,
   ) => {
-    if (runtimeEvidenceReconciled) return;
-    reconcileTurnRuntimeEvidence({
+    if (runtimeEvidenceReconciled) {
+      return turnAgentHarness?.verifiedDeepWorkPacket || null;
+    }
+    const packet = reconcileTurnRuntimeEvidence({
       context: turnAgentHarness,
       evaluation:
-        scopedDeliveredTurnEvaluation || latestDeliveredTurnEvaluation,
+        evaluation ||
+        scopedDeliveredTurnEvaluation ||
+        latestDeliveredTurnEvaluation,
       runtimeToolEvidence: runtimeEvidenceScope.snapshot(),
       runtimeStatus,
       routeUsed: requestPolicy.route,
     });
     runtimeEvidenceReconciled = true;
+    return packet;
   };
   const handleAgentOutput = async (result: ContainerOutput) => {
     if (result.runtimeToolEvidence) {
@@ -11034,39 +12334,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         'Agent output chunk received',
       );
       if (outboundText) {
-        await sendAssistantReplyWithFeedback({
+        // Runtime output is untrusted until the terminal attempt has finished
+        // and its host-scoped evidence has been reconciled. Buffering here is
+        // the last pre-send boundary: partial output can never outrun its
+        // postcondition receipt.
+        bufferedAgentReplies.push({
           text: outboundText,
-          routeKey: requestPolicy.route,
-          handlerKind: shieldedProtectedText
-            ? 'assistant_fallback'
-            : requestPolicy.route === 'direct_assistant'
-              ? 'container_direct_assistant'
-              : 'container_assistant',
-          responseSource: shieldedProtectedText
-            ? 'local_companion'
-            : 'container_agent',
-          providerId: shieldedProtectedText
-            ? 'local_runtime'
-            : result.runtime || 'container_runtime',
-          modelId: shieldedProtectedText
-            ? undefined
-            : result.selectedModel || undefined,
-          endpointMode: shieldedProtectedText
-            ? undefined
-            : result.endpointMode || undefined,
-          toolClass: 'container_agent',
-          traceReason: shieldedProtectedText
-            ? 'shielded protected assistant container output with a safe degraded reply'
-            : requestPolicy.route === 'direct_assistant'
-              ? 'handled request through the direct assistant container lane'
-              : 'handled request through the assistant container lane',
+          shielded: Boolean(shieldedProtectedText),
+          runtime: result.runtime,
+          selectedModel: result.selectedModel,
+          endpointMode: result.endpointMode,
         });
-        outputSentToUser = true;
-        runtimeEvidenceScope.freezeDelivered();
-        scopedDeliveredTurnEvaluation ||= latestDeliveredTurnEvaluation;
-        if (requestPolicy.route === 'direct_assistant') {
-          lastDirectAssistantTextByChatJid[chatJid] = outboundText;
-        }
       }
       resetIdleTimer();
     }
@@ -11092,6 +12370,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     freshSession: boolean,
   ) => {
     hadError = false;
+    bufferedAgentReplies = [];
     runtimeEvidenceScope.beginAttempt();
     const attemptOutput = await runAgent(
       group,
@@ -11175,9 +12454,99 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     output = await executeAgentPrompt(lastDirectAssistantAttemptPrompt, true);
   }
 
-  reconcileCurrentRuntimeEvidence(
-    output.status === 'error' || hadError ? 'error' : 'success',
-  );
+  const runtimeFailed = output.status === 'error' || hadError;
+  if (!runtimeFailed && bufferedAgentReplies.length > 0) {
+    runtimeEvidenceScope.freezeDelivered();
+    const terminalReply = bufferedAgentReplies.at(-1)!;
+    const provisionalEvaluation = evaluateTurnReply({
+      context: turnAgentHarness,
+      text: terminalReply.text,
+      routeKey: requestPolicy.route,
+      handlerKind: terminalReply.shielded
+        ? 'assistant_fallback'
+        : requestPolicy.route === 'direct_assistant'
+          ? 'container_direct_assistant'
+          : 'container_assistant',
+      responseSource: terminalReply.shielded
+        ? 'local_companion'
+        : 'container_agent',
+    });
+    const verifiedPacket = reconcileCurrentRuntimeEvidence(
+      'success',
+      provisionalEvaluation,
+    );
+    const completionNow = new Date();
+    const completionEvidence = adaptiveCompletionEvidenceFromVerifiedRuntime({
+      cognitiveRun: turnAgentHarness?.cognitiveRun,
+      packet: verifiedPacket,
+      now: completionNow,
+    });
+    const durableCompletionVerified =
+      completionEvidence.length > 0
+        ? await verifyTurnAgentAdaptiveCompletion({
+            context: turnAgentHarness,
+            completionEvidence,
+            now: completionNow,
+          })
+        : false;
+    const completionAuthorization = authorizeCognitiveReplyDelivery({
+      cognitiveRun: turnAgentHarness?.cognitiveRun,
+      replyKind: 'completion',
+      completionEvidence,
+      durableCompletionVerified,
+      now: completionNow.toISOString(),
+    });
+    const repliesToDeliver = completionAuthorization.allowed
+      ? bufferedAgentReplies
+      : [terminalReply];
+    for (const buffered of repliesToDeliver) {
+      const replyKind: CognitiveReplyKind = buffered.shielded
+        ? 'evidence_request'
+        : 'completion';
+      await sendAssistantReplyWithFeedback({
+        text: buffered.text,
+        routeKey: requestPolicy.route,
+        handlerKind: buffered.shielded
+          ? 'assistant_fallback'
+          : requestPolicy.route === 'direct_assistant'
+            ? 'container_direct_assistant'
+            : 'container_assistant',
+        responseSource: buffered.shielded
+          ? 'local_companion'
+          : 'container_agent',
+        providerId: buffered.shielded
+          ? 'local_runtime'
+          : buffered.runtime || 'container_runtime',
+        modelId: buffered.shielded
+          ? undefined
+          : buffered.selectedModel || undefined,
+        endpointMode: buffered.shielded
+          ? undefined
+          : buffered.endpointMode || undefined,
+        toolClass: 'container_agent',
+        traceReason: buffered.shielded
+          ? 'shielded protected assistant container output with a safe degraded reply'
+          : requestPolicy.route === 'direct_assistant'
+            ? 'handled request through the direct assistant container lane'
+            : 'handled request through the assistant container lane',
+        replyKind,
+        completionEvidence:
+          replyKind === 'completion' ? completionEvidence : undefined,
+        durableCompletionVerified:
+          replyKind === 'completion' ? durableCompletionVerified : false,
+      });
+      outputSentToUser = true;
+      scopedDeliveredTurnEvaluation ||= latestDeliveredTurnEvaluation;
+    }
+    if (requestPolicy.route === 'direct_assistant') {
+      lastDirectAssistantTextByChatJid[chatJid] =
+        completionAuthorization.allowed
+          ? terminalReply.text
+          : completionAuthorization.safeFallbackText;
+    }
+  } else {
+    reconcileCurrentRuntimeEvidence(runtimeFailed ? 'error' : 'success');
+  }
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -11213,6 +12582,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           responseSource: 'local_companion',
           traceReason:
             'shielded a protected assistant runtime failure with a safe degraded reply',
+          replyKind: 'evidence_request',
         });
         return true;
       }
@@ -11241,6 +12611,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           responseSource: 'local_companion',
           traceReason:
             'used a safe local fallback after a non-retriable agent/runtime problem',
+          replyKind: 'evidence_request',
         });
       } else if (shouldNotify && output.userMessage) {
         await sendAssistantReplyWithFeedback({
@@ -11250,6 +12621,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           responseSource: 'local_companion',
           traceReason:
             'reported a non-retriable agent/runtime issue back to the user',
+          replyKind: 'blocked_notice',
         });
       } else if (!shouldNotify) {
         await sendAssistantReplyWithFeedback({
@@ -11258,6 +12630,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           handlerKind: 'assistant_runtime_failure',
           responseSource: 'local_companion',
           traceReason: 'reported a repeated non-retriable agent/runtime issue',
+          replyKind: 'blocked_notice',
         });
       }
 
@@ -11314,6 +12687,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         responseSource: 'local_companion',
         traceReason:
           'used the direct-assistant runtime failure fallback after retries failed',
+        replyKind: 'blocked_notice',
       });
       logger.warn(
         {
@@ -11361,7 +12735,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       missedMessages,
       conversationChannel,
     );
-    await channel.sendMessage(chatJid, fallbackReply);
+    await sendAssistantReplyWithFeedback({
+      text: fallbackReply,
+      routeKey: requestPolicy.route,
+      handlerKind: 'assistant_blank_success_fallback',
+      responseSource: 'local_companion',
+      traceReason:
+        'reported a successful runtime without a verified user-visible completion',
+      replyKind: 'evidence_request',
+    });
     logger.warn(
       {
         component: 'assistant',
@@ -11382,7 +12764,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   });
   if (proactiveCandidate) {
     try {
-      await channel.sendMessage(chatJid, proactiveCandidate.askText);
+      await sendAssistantReplyWithFeedback({
+        text: proactiveCandidate.askText,
+        routeKey: 'personalization.proactive_candidate',
+        capabilityId: 'personalization.local',
+        handlerKind: 'proactive_personalization_ask',
+        responseSource: 'local_companion',
+        traceReason:
+          'asked a non-completion personalization question after the turn',
+        replyKind: 'progress',
+      });
     } catch (err) {
       logger.warn(
         { group: group.name, err },
@@ -11666,18 +13057,13 @@ async function startMessageLoop(): Promise<void> {
   while (true) {
     try {
       const jids = listProcessableCompanionChatJids();
-      const { messages, newTimestamp } = getNewMessages(
+      const messages = listPendingActionableMessagesForChats(
         jids,
-        lastTimestamp,
-        ASSISTANT_NAME,
+        MAX_MESSAGES_PER_PROMPT,
       );
 
       if (messages.length > 0) {
         logger.info({ count: messages.length }, 'New messages');
-
-        // Advance the "seen" cursor for all messages immediately
-        lastTimestamp = newTimestamp;
-        saveState();
 
         // Deduplicate by group
         const messagesByGroup = new Map<string, NewMessage[]>();
@@ -11702,33 +13088,24 @@ async function startMessageLoop(): Promise<void> {
 
           const isMainGroup = group.isMain === true;
           const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
+          let durableTriggerMessage: NewMessage | null = null;
 
           // For non-main groups, only act on trigger messages.
-          // Non-trigger messages accumulate in DB and get pulled as
-          // context when a trigger eventually arrives.
+          // Scan the durable sequence ledger in bounded pages so an old
+          // chatter prefix can never hide a later trigger.
           if (needsTrigger) {
             const triggerPattern = getTriggerPattern(group.trigger);
             const allowlistCfg = loadSenderAllowlist();
-            const hasTrigger = groupMessages.some(
-              (m) =>
-                triggerPattern.test(m.content.trim()) &&
-                (m.is_from_me ||
-                  isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
-            );
-            if (!hasTrigger) continue;
+            durableTriggerMessage = findFirstPendingActionableMessageForChat({
+              chatJid,
+              predicate: (message) =>
+                triggerPattern.test(message.content.trim()) &&
+                (message.is_from_me ||
+                  isTriggerAllowed(chatJid, message.sender, allowlistCfg)),
+            });
+            if (!durableTriggerMessage) continue;
           }
 
-          // Pull all live callback messages since lastAgentTimestamp so
-          // non-trigger control-surface context is included. Provider history
-          // and passive contact data are intentionally excluded from turns.
-          const allPending = getActionableMessagesSince(
-            chatJid,
-            getOrRecoverCursor(chatJid),
-            ASSISTANT_NAME,
-            MAX_MESSAGES_PER_PROMPT,
-          );
-          const messagesToSend =
-            allPending.length > 0 ? allPending : groupMessages;
           const sessionState = getMainChatSessionState(chatJid);
           const localQuickReply =
             groupMessages.length === 1
@@ -11742,83 +13119,36 @@ async function startMessageLoop(): Promise<void> {
           });
 
           if (mainChatRoutingDecision.kind === 'pipe_active_session') {
-            const incomingPolicy = classifyAssistantRequest(messagesToSend, {
-              allowCombinedContext:
-                !isMainGroup ||
-                !shouldAvoidCombinedContextForMainChat(messagesToSend),
-            });
-            const triggerPattern = needsTrigger
-              ? getTriggerPattern(group.trigger)
-              : null;
-            const routingMessages = messagesToSend.map((message) => ({
-              content: triggerPattern
-                ? message.content.replace(triggerPattern, '').trim()
-                : message.content,
-              reply_to_id: message.reply_to_id,
-            }));
-            const activeCapability =
-              queue.getActiveAssistantCapability(chatJid);
-            if (
-              !shouldPipeToActiveAssistant({
-                messages: routingMessages,
-                incomingPolicy,
-                activeCapabilityKey: activeCapability?.key || null,
-              })
-            ) {
-              queue.enqueueMessageCheck(chatJid);
-              if (sessionState === 'idle_assistant') {
-                queue.closeStdin(chatJid);
-              }
-              logger.debug(
-                {
-                  chatJid,
-                  sessionState,
-                  activeRoute: activeCapability?.route || null,
-                  incomingRoute: incomingPolicy.route,
-                },
-                'Queued message for fresh route-specific processing instead of piping across a capability boundary',
-              );
-              continue;
+            // The IPC inbox currently has no durable consumer acknowledgement.
+            // Writing a file and immediately marking ingress handled can lose a
+            // command if the container exits before reading it, or replay it if
+            // the host dies after consumption but before the ledger update.
+            // Keep every protected messaging turn on the durable queue until an
+            // end-to-end ACK protocol exists.
+            queue.enqueueMessageCheck(chatJid);
+            if (sessionState === 'idle_assistant') {
+              queue.closeStdin(chatJid);
             }
+            logger.debug(
+              { chatJid, sessionState },
+              'Queued actionable messaging ingress for durable fresh-turn processing',
+            );
+            continue;
           }
 
           if (mainChatRoutingDecision.kind === 'reply_locally') {
-            try {
-              await channel.sendMessage(
-                chatJid,
-                mainChatRoutingDecision.replyText,
-              );
-              recordOrdinaryChatQuickReplyPilotProof({
-                text: groupMessages[groupMessages.length - 1]?.content || '',
-                replyText: mainChatRoutingDecision.replyText,
-                channel:
-                  String(channel.name) === 'bluebubbles'
-                    ? 'bluebubbles'
-                    : String(channel.name) === 'alexa'
-                      ? 'alexa'
-                      : 'telegram',
-                groupFolder: group.folder,
-                chatJid,
-                threadId:
-                  groupMessages[groupMessages.length - 1]?.thread_id || null,
-              });
-              lastAgentTimestamp[chatJid] =
-                groupMessages[groupMessages.length - 1].timestamp;
-              saveState();
-              logger.info(
-                { chatJid, sessionState },
-                'Handled standalone main-chat message locally while work session stayed intact',
-              );
-            } catch (err) {
-              logger.warn(
-                { chatJid, err },
-                'Local main-chat reply failed, deferring to standard processing',
-              );
-              queue.enqueueMessageCheck(chatJid);
-              if (sessionState === 'idle_assistant') {
-                queue.closeStdin(chatJid);
-              }
+            // The claimed turn already has the same deterministic quick-reply
+            // path plus an exact delivery-boundary ledger commit. Keep this
+            // poller read-only so a crash cannot duplicate a reply or mark a
+            // larger pending batch handled than the message it examined.
+            queue.enqueueMessageCheck(chatJid);
+            if (sessionState === 'idle_assistant') {
+              queue.closeStdin(chatJid);
             }
+            logger.debug(
+              { chatJid, sessionState },
+              'Queued local quick reply through durable claimed processing',
+            );
             continue;
           }
 
@@ -11842,43 +13172,6 @@ async function startMessageLoop(): Promise<void> {
             );
             continue;
           }
-
-          const formatted = buildAssistantPromptWithPersonalization(
-            formatMessages(messagesToSend, TIMEZONE),
-            {
-              channel:
-                channel.name === 'bluebubbles' ? 'bluebubbles' : 'telegram',
-              groupFolder: group.folder,
-            },
-          );
-
-          if (ANDREA_USE_AGI && channel.name === 'telegram') {
-            queue.enqueueMessageCheck(chatJid);
-            if (sessionState === 'idle_assistant') {
-              queue.closeStdin(chatJid);
-            }
-            logger.debug(
-              { chatJid, count: messagesToSend.length },
-              'Queued Telegram AGI canary turn instead of piping to active container',
-            );
-          } else if (queue.sendMessage(chatJid, formatted)) {
-            logger.debug(
-              { chatJid, count: messagesToSend.length },
-              'Piped messages to active container',
-            );
-            lastAgentTimestamp[chatJid] =
-              messagesToSend[messagesToSend.length - 1].timestamp;
-            saveState();
-            // Show typing indicator while the container processes the piped message
-            channel
-              .setTyping?.(chatJid, true)
-              ?.catch((err) =>
-                logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
-              );
-          } else {
-            // No active container — enqueue for a new one
-            queue.enqueueMessageCheck(chatJid);
-          }
         }
       }
     } catch (err) {
@@ -11890,26 +13183,15 @@ async function startMessageLoop(): Promise<void> {
 
 /**
  * Startup recovery: check for unprocessed messages in registered groups.
- * Handles crash between advancing lastTimestamp and processing messages.
+ * Handles a crash after live ingress was stored but before that chat's
+ * processing cursor was durably advanced.
  */
 function recoverPendingMessages(): void {
-  const quarantinedBlueBubblesRows =
-    quarantineStaleBlueBubblesMessagesForRecovery(
-      getBlueBubblesRestartRecoveryCutoff(),
-    );
-  if (quarantinedBlueBubblesRows > 0) {
-    logger.info(
-      { quarantinedCount: quarantinedBlueBubblesRows },
-      'Quarantined stale BlueBubbles rows from automatic restart recovery',
-    );
-  }
   for (const chatJid of listProcessableCompanionChatJids()) {
     const group = resolveCompanionBinding(chatJid)?.group;
     if (!group) continue;
-    const pending = getActionableMessagesSince(
-      chatJid,
-      getOrRecoverCursor(chatJid),
-      ASSISTANT_NAME,
+    const pending = listPendingActionableMessagesForChats(
+      [chatJid],
       MAX_MESSAGES_PER_PROMPT,
     );
     if (pending.length > 0) {
@@ -12285,6 +13567,47 @@ function emitAndreaPlatformTransportTruths(
 }
 
 async function main(): Promise<void> {
+  // This must remain the first runtime action. In particular, database and
+  // recovery state below must never be touched by overlapping main processes.
+  const runtimeProcessLock = await acquireRuntimeProcessLock(
+    ACTIVE_RUNTIME_PROCESS_LOCK_PATH,
+  );
+  const releaseRuntimeProcessLockOnExit = () => {
+    try {
+      if (!runtimeProcessLock.releaseSync()) {
+        logger.error(
+          {
+            component: 'runtime_process_lock',
+            lockPath: runtimeProcessLock.lockPath,
+          },
+          'Runtime process lock ownership changed before exit; preserved the current lock file',
+        );
+      }
+    } catch (err) {
+      logger.error(
+        {
+          component: 'runtime_process_lock',
+          lockPath: runtimeProcessLock.lockPath,
+          err,
+        },
+        'Runtime process lock could not be released during exit',
+      );
+    }
+  };
+  // Cover startup failures before the full shutdown state is initialized.
+  process.once('exit', releaseRuntimeProcessLockOnExit);
+  const exitDuringStartup = (signal: 'SIGTERM' | 'SIGINT') => {
+    logger.info(
+      { component: 'runtime_process_lock', signal },
+      'Shutdown signal received during startup',
+    );
+    process.exit(0);
+  };
+  const exitDuringStartupOnSigterm = () => exitDuringStartup('SIGTERM');
+  const exitDuringStartupOnSigint = () => exitDuringStartup('SIGINT');
+  process.once('SIGTERM', exitDuringStartupOnSigterm);
+  process.once('SIGINT', exitDuringStartupOnSigint);
+
   if (ACTIVE_RUNTIME_ARTIFACT.isCompiledArtifact) {
     process.env.ANDREA_BUILD_ID = requireVerifiedRuntimeBuild({
       projectRoot: ACTIVE_REPO_ROOT,
@@ -12601,11 +13924,48 @@ async function main(): Promise<void> {
     clearTelegramTransportState();
   };
 
+  // Replace the startup-only exit hook before the first shared filesystem or
+  // database mutation. This keeps the process lock held until health markers
+  // and transports are marked stopped, then releases it synchronously as the
+  // final exit operation.
+  process.removeListener('exit', releaseRuntimeProcessLockOnExit);
+  process.once('exit', () => {
+    try {
+      stopAssistantHealthLoop();
+      clearAssistantReadyState();
+    } finally {
+      releaseRuntimeProcessLockOnExit();
+    }
+  });
+
   clearAssistantHealthState();
   clearAssistantReadyState();
   clearTelegramTransportState();
   ensureContainerSystemRunning();
   initDatabase();
+  // Fence stale actionable ingress before any channel connects, any callback
+  // can enqueue work, or the shared queue is given a processor. Once a stale
+  // row has been claimed into an in-memory turn, a later database quarantine
+  // cannot revoke side effects that the turn has already started.
+  const startupIngressRecovery = prepareActionableIngressForStartupRecovery();
+  if (startupIngressRecovery.quarantinedBlueBubblesMessageCount > 0) {
+    logger.warn(
+      {
+        cutoff: startupIngressRecovery.blueBubblesRecoveryCutoff,
+        quarantinedMessageCount:
+          startupIngressRecovery.quarantinedBlueBubblesMessageCount,
+      },
+      'Quarantined stale BlueBubbles actionable ingress before startup recovery',
+    );
+  }
+  if (startupIngressRecovery.recoveredIngressClaimCount > 0) {
+    logger.info(
+      {
+        recoveredClaimCount: startupIngressRecovery.recoveredIngressClaimCount,
+      },
+      'Recovered durable actionable ingress claims from the prior process',
+    );
+  }
   const durableContinuityRecovery =
     reconcileDurableContinuityBeforeAcceptingWork();
   logger.info(
@@ -12667,8 +14027,23 @@ async function main(): Promise<void> {
     null;
   let ownerCockpitServer: ReturnType<typeof startOwnerCockpitServer> = null;
 
+  // This is the final shared cursor mutation during shutdown. The exit hook
+  // that follows it is synchronous, so no channel work can interleave before
+  // health-state cleanup and process-lock release.
+  const finalizeInFlightCursorRollback = () => {
+    if (inFlightCursorRollbacks.size === 0) return;
+    inFlightCursorRollbacks.rollbackAll((chatJid, previousCursor) => {
+      lastAgentTimestamp[chatJid] = previousCursor;
+      logger.info(
+        { component: 'assistant', chatJid },
+        'Rolled back message cursor for unresolved turn; it will retry after restart',
+      );
+    });
+    saveState();
+  };
+
   // Graceful shutdown handlers
-  const shutdown = async (signal: string) => {
+  const performShutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     stopAssistantHealthLoop();
     clearAssistantReadyState();
@@ -12750,28 +14125,35 @@ async function main(): Promise<void> {
           ),
         );
     }
-    // Keep this as the final synchronous operation before exit. A channel send
-    // that settles while transports are disconnecting can still commit its
-    // cursor; only replies that remain unresolved after transports stop are
-    // rewound. No event-loop turn exists between this rollback and exit.
-    if (inFlightCursorRollbacks.size > 0) {
-      inFlightCursorRollbacks.rollbackAll((chatJid, previousCursor) => {
-        lastAgentTimestamp[chatJid] = previousCursor;
-        logger.info(
-          { component: 'assistant', chatJid },
-          'Rolled back message cursor for unresolved turn; it will retry after restart',
-        );
-      });
-      saveState();
-    }
-    process.exit(0);
   };
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('exit', () => {
-    stopAssistantHealthLoop();
-    clearAssistantReadyState();
-  });
+  let shutdownPromise: Promise<void> | null = null;
+  const shutdown = (signal: string): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
+    let exitCode = 0;
+    shutdownPromise = performShutdown(signal)
+      .catch((err) => {
+        exitCode = 1;
+        logger.error({ signal, err }, 'Graceful shutdown failed');
+      })
+      .finally(() => {
+        try {
+          finalizeInFlightCursorRollback();
+        } catch (err) {
+          exitCode = 1;
+          logger.error(
+            { signal, err },
+            'Failed to persist unresolved-turn cursor rollback during shutdown',
+          );
+        } finally {
+          process.exit(exitCode);
+        }
+      });
+    return shutdownPromise;
+  };
+  process.removeListener('SIGTERM', exitDuringStartupOnSigterm);
+  process.removeListener('SIGINT', exitDuringStartupOnSigint);
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 
   const CURSOR_STATUS_COMMANDS = new Set(['/cursor-status', '/cursor_status']);
   const CURSOR_CREATE_USAGE =
@@ -18959,6 +20341,8 @@ async function main(): Promise<void> {
       }
     },
     onMessage: async (chatJid: string, msg: NewMessage) => {
+      const callbackOwnerAuthorizationAt =
+        resolveInboundMessagingOwnerAuthorizationAt(msg);
       const rawTrimmed = msg.content.trim();
       const trimmed = rawTrimmed.toLowerCase();
       const isSlashCommand = rawTrimmed.startsWith('/');
@@ -19013,6 +20397,45 @@ async function main(): Promise<void> {
         return;
       }
 
+      const outboundPauseCommand =
+        parseMessagingOutboundPauseCommand(rawTrimmed);
+      if (outboundPauseCommand && trustedInboundOwnerSurface) {
+        const paused = outboundPauseCommand === 'pause';
+        const pauseResult = applyMessagingOutboundPauseCommand({
+          paused,
+          changedByChatJid: chatJid,
+          reason: paused
+            ? 'owner_natural_language_pause'
+            : 'owner_explicit_resume',
+          authorizationAt: callbackOwnerAuthorizationAt,
+        });
+        if (!pauseResult.applied) {
+          logger.warn(
+            { chatJid, paused, reason: pauseResult.reason },
+            'Ignored stale or invalid owner outbound resume command',
+          );
+          return;
+        }
+        logger.warn(
+          { chatJid, paused },
+          paused
+            ? 'Owner paused all BlueBubbles outbound messaging'
+            : 'Owner explicitly resumed BlueBubbles outbound messaging',
+        );
+        if (inboundChannel?.name === 'telegram' || !paused) {
+          await inboundChannel?.sendMessage(
+            chatJid,
+            paused
+              ? 'Outbound Messages sending is paused. Incoming sync and text summaries remain available. Only an explicit resume command will turn sending back on.'
+              : 'The runtime outbound pause is cleared. BlueBubbles still must pass its configured send and receipt-readiness checks before anything can be sent.',
+          );
+        }
+        return;
+      }
+
+      // A verified owner stop instruction is a safety interrupt. Handle it
+      // before configurable sender filtering so a stale allowlist cannot
+      // prevent the owner from fencing outbound Messages delivery.
       const allowlistCfg = loadSenderAllowlist();
       if (
         shouldDropIncomingMessageBeforeCommands(
@@ -19327,15 +20750,16 @@ async function main(): Promise<void> {
 
       const messageActionCommand = parseMessageActionCommand(rawTrimmed);
       if (messageActionCommand) {
-        applyAndPresentMessageAction({
+        await applyAndPresentMessageAction({
           chatJid,
           messageActionId: messageActionCommand.messageActionId,
           operation: messageActionCommand.operation,
+          sourcePresentationMessageId: msg.reply_to_id || null,
+          sourcePresentationThreadId: msg.thread_id || null,
           ownerAuthored: msg.is_from_me === true,
+          ownerAuthorizationAt: callbackOwnerAuthorizationAt,
           now: new Date(),
-        }).catch((err) =>
-          logger.error({ err, chatJid }, 'Message action command error'),
-        );
+        });
         return;
       }
 
@@ -20129,140 +21553,29 @@ async function main(): Promise<void> {
         ? resolveCompanionBinding(chatJid)
         : null;
       if (blueBubblesBinding) {
-        if (msg.timestamp > lastTimestamp) {
-          lastTimestamp = msg.timestamp;
-          saveState();
-        }
         const companionNow = new Date();
+        if (!trustedInboundOwnerSurface) {
+          ignorePendingActionableIngressMessage({
+            chatJid,
+            messageId: msg.id,
+            disposition: 'bluebubbles_self_thread_rejected_non_owner',
+            now: companionNow,
+          });
+          logger.info(
+            { chatJid, messageId: msg.id },
+            'Ignored non-owner-authored BlueBubbles self-thread activity as control input',
+          );
+          return;
+        }
         if (isBlueBubblesProofDrillStartRequest(msg.content)) {
-          if (!trustedInboundOwnerSurface) {
-            logger.info(
-              { chatJid, messageId: msg.id },
-              'Ignored non-owner-authored BlueBubbles proof instruction',
-            );
-            return;
-          }
-          const blueBubblesChannel = findChannel(channels, chatJid);
-          if (blueBubblesChannel?.name !== 'bluebubbles') {
-            logger.warn(
-              { chatJid },
-              'BlueBubbles proof drill requested without an active BlueBubbles channel',
-            );
-            return;
-          }
-          try {
-            const started = startBlueBubblesProofDrill({
-              groupFolder: blueBubblesBinding.group.folder,
-              chatJid,
-              now: companionNow,
-            });
-            const sent = acceptConfirmedPresentationDelivery({
-              result: await blueBubblesChannel.sendMessage(
-                started.action.presentationChatJid || chatJid,
-                buildBlueBubblesProofDrillPresentationText(started.action),
-              ),
-              channel: blueBubblesChannel.name,
-              chatJid,
-              workflow: 'bluebubbles_proof_drill_presentation',
-            });
-            if (!sent) return;
-            updateMessageAction(started.action.messageActionId, {
-              presentationMessageId: sent.platformMessageId || null,
-              presentationChatJid:
-                started.action.presentationChatJid || chatJid,
-              lastUpdatedAt: companionNow.toISOString(),
-            });
-            const correlationId = `bluebubbles-proof-drill:${started.action.messageActionId}`;
-            void emitAndreaPlatformTraceEvent({
-              traceId: `${correlationId}:proof_drill_started:${companionNow.getTime()}`,
-              traceKind: 'proof',
-              title: 'BlueBubbles proof_drill_started',
-              summary:
-                'BlueBubbles proof drill started from the canonical self-thread trigger.',
-              refs: {
-                correlationId,
-                messageActionId: started.action.messageActionId,
-                chatJid: started.action.presentationChatJid || chatJid,
-              },
-              metadata: {
-                surface: 'bluebubbles',
-                event: 'proof_drill_started',
-                messageActionId: started.action.messageActionId,
-                chatJid: started.action.presentationChatJid || chatJid,
-                confirmationMessageId: sent.platformMessageId || '',
-                continuityState: 'draft_open',
-                messageActionProofState: 'none',
-                messageActionProofChatJid:
-                  started.action.presentationChatJid || chatJid,
-                mostRecentEngagedChatJid:
-                  started.action.presentationChatJid || chatJid,
-                proofCandidateChatJid:
-                  started.action.presentationChatJid || chatJid,
-                activeMessageActionId: started.action.messageActionId,
-                openMessageActionCount: '1',
-                conversationKind: 'self_thread',
-                decisionPolicy: 'semi_auto_self_thread',
-                conversationalEligibility: 'conversational_now',
-                requiresExplicitMention: 'false',
-                activePresentationAt: companionNow.toISOString(),
-                recentTargetAt: companionNow.toISOString(),
-                eligibleFollowups:
-                  'show it again | make it shorter | make it more direct | save that | remind me instead | send it later | send it later tonight',
-              },
-            });
-            void emitAndreaPlatformProofEvent({
-              surface: 'bluebubbles',
-              journey: 'same_thread_message_action',
-              state: 'DEGRADED_BUT_USABLE',
-              summary:
-                'BlueBubbles proof drill started with a fresh same-thread message action.',
-              blocker:
-                'BlueBubbles proof drill still needs the deferred same-thread decision.',
-              nextAction:
-                'In the same BlueBubbles self-thread, say `send it later tonight`.',
-              metadata: {
-                event: 'proof_drill_started',
-                messageActionId: started.action.messageActionId,
-                chatJid: started.action.presentationChatJid || chatJid,
-                continuityState: 'draft_open',
-                messageActionProofState: 'none',
-                messageActionProofChatJid:
-                  started.action.presentationChatJid || chatJid,
-                mostRecentEngagedChatJid:
-                  started.action.presentationChatJid || chatJid,
-                proofCandidateChatJid:
-                  started.action.presentationChatJid || chatJid,
-                activeMessageActionId: started.action.messageActionId,
-                openMessageActionCount: '1',
-                conversationKind: 'self_thread',
-                decisionPolicy: 'semi_auto_self_thread',
-                conversationalEligibility: 'conversational_now',
-                requiresExplicitMention: 'false',
-                activePresentationAt: companionNow.toISOString(),
-                recentTargetAt: companionNow.toISOString(),
-                eligibleFollowups:
-                  'show it again | make it shorter | make it more direct | save that | remind me instead | send it later | send it later tonight',
-              },
-            });
-            logger.info(
-              {
-                chatJid,
-                actionId: started.action.messageActionId,
-              },
-              'Started BlueBubbles same-thread proof drill from in-channel trigger',
-            );
-            lastAgentTimestamp[chatJid] = msg.timestamp;
-            saveState();
-          } catch (err) {
-            logger.error(
-              { err, chatJid },
-              'BlueBubbles proof drill trigger failed',
-            );
-            await blueBubblesChannel.sendMessage(
-              chatJid,
-              'Andrea: I could not start the BlueBubbles proof drill from here yet. Try the control API or ask me again in the canonical self-thread.',
-            );
-          }
+          // The durable queue is the only proof-drill executor. The stored
+          // ingress row can now be recovered after a crash and cannot race a
+          // second direct delivery from this callback.
+          queue.enqueueMessageCheck(chatJid);
+          logger.debug(
+            { chatJid, messageId: msg.id },
+            'Enqueued BlueBubbles proof drill through durable ingress',
+          );
           return;
         }
         const hasRecentCompanionContext = Boolean(
@@ -20323,19 +21636,7 @@ async function main(): Promise<void> {
             delegationEnabled: isOpenClawDelegationEnabled(),
           });
           if (selfThreadOpenClawRoute.action === 'delegate') {
-            lastAgentTimestamp[chatJid] = msg.timestamp;
-            saveState();
-            handleOpenClawDelegation(
-              chatJid,
-              selfThreadOpenClawRoute.request.prompt,
-              msg,
-              selfThreadOpenClawRoute.request.command,
-            ).catch((err) =>
-              logger.error(
-                { err, chatJid },
-                'BlueBubbles self-thread OpenClaw delegation error',
-              ),
-            );
+            queue.enqueueMessageCheck(chatJid);
             return;
           }
           try {
@@ -20351,7 +21652,7 @@ async function main(): Promise<void> {
                   storedCount: primed.storedCount,
                   totalCount: primed.totalCount,
                 },
-                'Primed BlueBubbles recent chat history for an @Andrea mention',
+                'Primed BlueBubbles recent chat history for an owner self-thread ask',
               );
             }
           } catch (error) {
@@ -20362,7 +21663,7 @@ async function main(): Promise<void> {
           }
           logger.debug(
             { chatJid, messageId: msg.id },
-            'Enqueued BlueBubbles companion turn from explicit @Andrea ask',
+            'Enqueued BlueBubbles companion turn from an owner self-thread ask',
           );
           queue.enqueueMessageCheck(chatJid);
         } else if (
@@ -20380,9 +21681,15 @@ async function main(): Promise<void> {
         } else {
           lastAgentTimestamp[chatJid] = msg.timestamp;
           saveState();
+          ignorePendingActionableIngressMessage({
+            chatJid,
+            messageId: msg.id,
+            disposition: 'bluebubbles_non_companion_chatter',
+            now: companionNow,
+          });
           logger.debug(
             { chatJid, messageId: msg.id },
-            'Ignored BlueBubbles chatter without an @Andrea mention or pending local continuation',
+            'Ignored non-actionable BlueBubbles owner self-thread chatter',
           );
         }
       }
@@ -20501,7 +21808,10 @@ async function main(): Promise<void> {
       groupFolder,
       maxAgeHours: 12,
     });
-    if (!recentChat?.chatJid) {
+    if (
+      !recentChat?.chatJid ||
+      !isConfiguredBlueBubblesSelfThreadAliasJid(recentChat.chatJid)
+    ) {
       return undefined;
     }
     const channel = findChannel(channels, recentChat.chatJid);

@@ -1362,7 +1362,7 @@ export class TelegramChannel implements Channel {
         return;
       }
 
-      this.opts.onMessage(chatJid, {
+      await this.opts.onMessage(chatJid, {
         id: msgId,
         chat_jid: chatJid,
         sender,
@@ -1495,7 +1495,7 @@ export class TelegramChannel implements Channel {
         isGroup,
       );
       this.rememberInbound(chatJid, timestamp);
-      this.opts.onMessage(chatJid, {
+      await this.opts.onMessage(chatJid, {
         id: messageId,
         chat_jid: chatJid,
         sender: ctx.from?.id?.toString() || '',
@@ -1510,80 +1510,120 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => {
+    const storeNonTextWithLogging = async (
+      ctx: Parameters<typeof storeNonText>[0],
+      placeholder: string,
+      attachmentInput: Parameters<typeof storeNonText>[2] | undefined,
+      failureMessage: string,
+    ): Promise<void> => {
+      try {
+        await storeNonText(ctx, placeholder, attachmentInput);
+      } catch (err) {
+        logger.error({ err }, failureMessage);
+        throw err;
+      }
+    };
+
+    this.bot.on('message:photo', async (ctx) => {
       const photo = [...(ctx.message.photo || [])].sort(
         (left, right) => (right.file_size || 0) - (left.file_size || 0),
       )[0];
-      storeNonText(ctx, '[Photo]', {
-        kindHint: 'image',
-        fileId: photo?.file_id,
-        sourceId: photo?.file_unique_id || photo?.file_id,
-        mimeType: 'image/jpeg',
-        filename: photo ? `telegram-photo-${ctx.message.message_id}.jpg` : null,
-        sizeBytes: photo?.file_size ?? null,
-        width: photo?.width ?? null,
-        height: photo?.height ?? null,
-      }).catch((err) =>
-        logger.error({ err }, 'Telegram photo ingestion failed'),
+      await storeNonTextWithLogging(
+        ctx,
+        '[Photo]',
+        {
+          kindHint: 'image',
+          fileId: photo?.file_id,
+          sourceId: photo?.file_unique_id || photo?.file_id,
+          mimeType: 'image/jpeg',
+          filename: photo
+            ? `telegram-photo-${ctx.message.message_id}.jpg`
+            : null,
+          sizeBytes: photo?.file_size ?? null,
+          width: photo?.width ?? null,
+          height: photo?.height ?? null,
+        },
+        'Telegram photo ingestion failed',
       );
     });
-    this.bot.on('message:video', (ctx) => {
+    this.bot.on('message:video', async (ctx) => {
       const video = ctx.message.video;
-      storeNonText(ctx, '[Video]', {
-        kindHint: 'video',
-        fileId: video?.file_id,
-        sourceId: video?.file_unique_id || video?.file_id,
-        mimeType: video?.mime_type || 'video/mp4',
-        filename:
-          video?.file_name || `telegram-video-${ctx.message.message_id}.mp4`,
-        sizeBytes: video?.file_size ?? null,
-        width: video?.width ?? null,
-        height: video?.height ?? null,
-        durationMs: video?.duration ? video.duration * 1000 : null,
-      }).catch((err) =>
-        logger.error({ err }, 'Telegram video ingestion failed'),
+      await storeNonTextWithLogging(
+        ctx,
+        '[Video]',
+        {
+          kindHint: 'video',
+          fileId: video?.file_id,
+          sourceId: video?.file_unique_id || video?.file_id,
+          mimeType: video?.mime_type || 'video/mp4',
+          filename:
+            video?.file_name || `telegram-video-${ctx.message.message_id}.mp4`,
+          sizeBytes: video?.file_size ?? null,
+          width: video?.width ?? null,
+          height: video?.height ?? null,
+          durationMs: video?.duration ? video.duration * 1000 : null,
+        },
+        'Telegram video ingestion failed',
       );
     });
-    this.bot.on('message:voice', (ctx) =>
-      storeNonText(ctx, '[Voice message]').catch((err) =>
-        logger.error({ err }, 'Telegram voice ingestion failed'),
-      ),
-    );
-    this.bot.on('message:audio', (ctx) =>
-      storeNonText(ctx, '[Audio]').catch((err) =>
-        logger.error({ err }, 'Telegram audio ingestion failed'),
-      ),
-    );
-    this.bot.on('message:document', (ctx) => {
+    this.bot.on('message:voice', async (ctx) => {
+      await storeNonTextWithLogging(
+        ctx,
+        '[Voice message]',
+        undefined,
+        'Telegram voice ingestion failed',
+      );
+    });
+    this.bot.on('message:audio', async (ctx) => {
+      await storeNonTextWithLogging(
+        ctx,
+        '[Audio]',
+        undefined,
+        'Telegram audio ingestion failed',
+      );
+    });
+    this.bot.on('message:document', async (ctx) => {
       const document = ctx.message.document;
       const name = document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`, {
-        kindHint: 'file',
-        fileId: document?.file_id,
-        sourceId: document?.file_unique_id || document?.file_id,
-        mimeType: document?.mime_type || null,
-        filename: name,
-        sizeBytes: document?.file_size ?? null,
-      }).catch((err) =>
-        logger.error({ err }, 'Telegram document ingestion failed'),
+      await storeNonTextWithLogging(
+        ctx,
+        `[Document: ${name}]`,
+        {
+          kindHint: 'file',
+          fileId: document?.file_id,
+          sourceId: document?.file_unique_id || document?.file_id,
+          mimeType: document?.mime_type || null,
+          filename: name,
+          sizeBytes: document?.file_size ?? null,
+        },
+        'Telegram document ingestion failed',
       );
     });
-    this.bot.on('message:sticker', (ctx) => {
+    this.bot.on('message:sticker', async (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
-      storeNonText(ctx, `[Sticker ${emoji}]`).catch((err) =>
-        logger.error({ err }, 'Telegram sticker ingestion failed'),
+      await storeNonTextWithLogging(
+        ctx,
+        `[Sticker ${emoji}]`,
+        undefined,
+        'Telegram sticker ingestion failed',
       );
     });
-    this.bot.on('message:location', (ctx) =>
-      storeNonText(ctx, '[Location]').catch((err) =>
-        logger.error({ err }, 'Telegram location ingestion failed'),
-      ),
-    );
-    this.bot.on('message:contact', (ctx) =>
-      storeNonText(ctx, '[Contact]').catch((err) =>
-        logger.error({ err }, 'Telegram contact ingestion failed'),
-      ),
-    );
+    this.bot.on('message:location', async (ctx) => {
+      await storeNonTextWithLogging(
+        ctx,
+        '[Location]',
+        undefined,
+        'Telegram location ingestion failed',
+      );
+    });
+    this.bot.on('message:contact', async (ctx) => {
+      await storeNonTextWithLogging(
+        ctx,
+        '[Contact]',
+        undefined,
+        'Telegram contact ingestion failed',
+      );
+    });
 
     this.bot.on('callback_query:data', async (ctx) => {
       const callbackMessage = ctx.callbackQuery.message;
@@ -1597,7 +1637,17 @@ export class TelegramChannel implements Channel {
       const chatJid = `tg:${callbackMessage.chat.id}`;
       const senderName =
         ctx.from.first_name || ctx.from.username || ctx.from.id.toString();
-      const timestamp = new Date().toISOString();
+      const receivedAt = new Date().toISOString();
+      const callbackMessageDate = new Date(
+        typeof callbackMessage.date === 'number'
+          ? callbackMessage.date * 1000
+          : Number.NaN,
+      );
+      const callbackAuthorizationAt = Number.isFinite(
+        callbackMessageDate.getTime(),
+      )
+        ? callbackMessageDate.toISOString()
+        : '';
       const isGroup =
         callbackMessage.chat.type === 'group' ||
         callbackMessage.chat.type === 'supergroup';
@@ -1608,31 +1658,29 @@ export class TelegramChannel implements Channel {
 
       this.opts.onChatMetadata(
         chatJid,
-        timestamp,
+        receivedAt,
         chatName,
         'telegram',
         isGroup,
       );
-      this.rememberInbound(chatJid, timestamp);
+      this.rememberInbound(chatJid, receivedAt);
 
       await ctx.answerCallbackQuery({ text: 'Working...' });
-      this.opts.onMessage(chatJid, {
+      await this.opts.onMessage(chatJid, {
         id: `callback:${ctx.callbackQuery.id}`,
         chat_jid: chatJid,
         sender: ctx.from.id.toString(),
         sender_name: senderName,
         content: ctx.callbackQuery.data,
-        timestamp,
+        timestamp: callbackAuthorizationAt,
+        ingress_received_at: callbackAuthorizationAt,
         is_from_me: false,
         thread_id: callbackMessage.message_thread_id?.toString(),
         reply_to_id: callbackMessage.message_id.toString(),
         reply_to: {
           message_id: callbackMessage.message_id.toString(),
           content: callbackMessage.text || '',
-          timestamp:
-            callbackMessage.date === undefined
-              ? undefined
-              : new Date(callbackMessage.date * 1000).toISOString(),
+          timestamp: callbackAuthorizationAt || undefined,
         },
       });
     });

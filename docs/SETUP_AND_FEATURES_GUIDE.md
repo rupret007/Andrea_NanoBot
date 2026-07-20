@@ -97,11 +97,17 @@ Default product shape:
 - Alexa gives short voice help for schedule, reminders, planning, review, and quick reply help
 - Alexa is also a good first stop for pill reminders, open bills, grocery capture, and quick tonight planning
 - Telegram is the richer execution and follow-through surface, including setup, grouped list views, and edits
-- BlueBubbles stays calm and text-first: the canonical self-thread accepts
-  bounded direct asks without a mention, recent direct 1:1 chats accept bounded
-  bare follow-ups after fresh Andrea context, and groups or cold direct chats
-  require `@Andrea` or `@OpenClaw`; richer answers can hand off explicitly to
-  Telegram
+- BlueBubbles stays calm and text-first: only the canonical owner self-thread
+  accepts bounded direct asks or assistant aliases. Ordinary contact and group
+  threads are communication data and explicit destinations, never control
+  surfaces; richer answers can hand off explicitly to Telegram. Trusted
+  self-thread configuration must use a direct `bb:<service>;-;<identifier>`
+  JID; group and opaque JIDs are rejected even when misconfigured as aliases
+- the configured direct JIDs are an explicit trust root because a normal
+  person's direct chat has the same shape. Verify each identifier against the
+  owner's own Messages handles and confirm it opens a private self-conversation
+  before enabling sends; when uncertain, leave Messages control disabled and
+  use Telegram
 - `@Andrea` is Andrea; `@OpenClaw` is the OpenClaw helper lane for deeper orchestration, skill work, and advanced helper requests
 
 ## Status Terms
@@ -179,8 +185,9 @@ On this Mac mini host, Google Calendar read/write is live-proven through that pr
 - A small bounded personality layer plus request-driven Andrea Pulse.
 - A real bounded BlueBubbles companion channel across synced personal and group
   chats, with mention-free direct asks limited to the canonical self-thread and
-  bounded recent 1:1 follow-ups; groups and cold direct chats remain gated to
-  `@Andrea` or `@OpenClaw`.
+  short-lived owner follow-ups shared with the registered Telegram control
+  chat. Ordinary contact and group threads remain data-only even when their
+  message text contains `@Andrea` or `@OpenClaw`.
 
 For demo use, keep the default public surface smaller than the full operator feature set.
 The safest baseline is Telegram + direct assistance + fast quick replies for simple asks + reminders/tasks + `/cursor_status` + clean startup/health checks.
@@ -544,21 +551,31 @@ These style controls affect phrasing. They do not change trust, linking, or capa
 
 ## BlueBubbles Companion Channel
 
-BlueBubbles is now a live V1 companion channel through the same adapter architecture Andrea already uses elsewhere.
+Andrea's source implements a V1 BlueBubbles companion channel through the same
+adapter architecture used elsewhere. It is not live merely because the source
+exists; deployment, configured ownership, and an explicit operator restart are
+still required.
 
 Current implementation truth:
 
-- all synced BlueBubbles chats can share the same Andrea companion folder, defaulting to `main`, when `BLUEBUBBLES_CHAT_SCOPE=all_synced`
+- all synced BlueBubbles contact and group chats can share the same Andrea
+  companion folder as passive communication data and explicit outbound
+  destinations, defaulting to `main`, when
+  `BLUEBUBBLES_CHAT_SCOPE=all_synced`
 - Andrea accepts inbound BlueBubbles webhook messages and normalizes them into
-  shared opaque identities; the canonical self-thread accepts bounded direct
-  asks without a mention, a recent direct 1:1 chat accepts bounded bare
-  follow-ups after fresh Andrea context, and groups or cold direct chats require
-  `@Andrea` or `@OpenClaw`
+  shared opaque identities; only the explicitly configured owner self-thread is
+  a bounded control surface. Contact and group threads never wake Andrea, even
+  when their message text contains `@Andrea` or `@OpenClaw`
 - outbound is intentionally text-only in V1
 - BlueBubbles stays companion-safe and does not become a main control chat
 - richer detail and artifacts still hand off explicitly to Telegram
-- `summarize this` now uses the current BlueBubbles chat's recent context and can prime recent history from the live server when local context is thin
-- broad Telegram asks such as `use BlueBubbles and summarize my texts from the past 48 hours` summarize all synced BlueBubbles chats in that time window, using safe chat labels instead of raw identifiers
+- named or broad summary asks run only from the registered main Telegram chat
+  or configured owner self-thread and use bounded synced contact history
+- broad asks such as `use BlueBubbles and summarize my texts from the past 48 hours`
+  review the available local contact/group snapshot in that time window,
+  excluding the owner self-thread, redacting raw identifiers, and stating the
+  per-conversation limits and that sync completeness was not independently
+  verified
 
 See [BLUEBUBBLES_CHANNEL_PREP.md](BLUEBUBBLES_CHANNEL_PREP.md) for the exact config, webhook/send model, and current limits.
 
@@ -1177,8 +1194,13 @@ Startup behavior:
   `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\nanoclaw-start.cmd`;
   it delegates to `scripts/nanoclaw-host.ps1`.
 - The Windows host launcher bootstraps and reuses the repo-local pinned runtime under `data\runtime\node-v22.22.2-win-x64`, so daily startup does not depend on host Node 24.
-- The Windows host launcher also keeps a repo-owned watchdog running and periodically calls `ensure`, so a live process that loses Telegram polling or stops updating its health marker gets corrected automatically.
-- Telegram responsiveness is now enforced with a real `/ping` roundtrip probe every 30 minutes when no more recent successful Telegram exchange has already refreshed the same heartbeat.
+- The Windows host launcher also keeps a repo-owned watchdog running and
+  periodically calls `ensure` for process-health checks. It never originates a
+  Telegram user-session message or uses a missing bot reply as permission for a
+  blind restart.
+- Telegram round-trip truth comes from organic exchanges or the explicit
+  operator-only `npm run telegram:user:smoke` command; there is no scheduled
+  watchdog `/ping`.
 - `npm run telegram:user:smoke` is the canonical operator-side proof for that path and exits non-zero if the real reply does not come back.
 - On macOS this uses launchd.
 - On Linux this uses systemd (or nohup fallback).

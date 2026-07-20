@@ -36,9 +36,16 @@ import {
 import { classifyCouncilLearningCandidate } from './council-learning-classifier.js';
 import {
   beginCognitiveKernelRun,
+  buildCognitiveAdaptiveDurableBindings,
+  continueCognitiveKernelDurably,
   finalizeCognitiveKernelOutcome,
+  reconcileCognitiveKernelCompletionEvidence,
+  type BeginCognitiveKernelInput,
   type CognitiveKernelResult,
+  type CognitiveReplyKind,
 } from './cognitive-kernel.js';
+import type { AdaptiveEvidence } from './adaptive-cognition-engine.js';
+import type { AdaptiveDurableNodeBinding } from './adaptive-cognition-durable-adapter.js';
 import {
   beginLogicKernelRun,
   evaluateLogicAnswerSupport,
@@ -50,7 +57,10 @@ import {
   recordAgentRuntimeTruthAudit,
   type AgentRuntimeSpineResult,
 } from './agent-runtime-spine.js';
-import { linkDurableWorkProjection } from './durable-work-continuity.js';
+import {
+  linkDurableWorkProjection,
+  type DurableWorkBindingInput,
+} from './durable-work-continuity.js';
 import { repositoryExecutionTargetScopeKey } from './repository-execution-scope.js';
 import { runTruthEngine } from './truth-engine.js';
 import {
@@ -207,6 +217,13 @@ export interface TurnAgentHarnessContext {
   cognitiveRun?: CognitiveKernelResult | null;
   logicRun?: LogicKernelResult | null;
   runtimeSpine?: AgentRuntimeSpineResult | null;
+  adaptiveDurableExecution?: {
+    beginInput: BeginCognitiveKernelInput;
+    durableBinding: DurableWorkBindingInput;
+    bindings: AdaptiveDurableNodeBinding[];
+    executorScopeKey: string;
+    targetScopeKey: string;
+  } | null;
   platformHoldReply?: string | null;
   actorId?: string | null;
   chatId?: string | null;
@@ -1014,7 +1031,7 @@ export async function beginTurnAgentHarness(
         })
       : null;
   const councilHoldReply = buildCouncilDirectiveHoldReply(providerCouncil);
-  const cognitiveRun = beginCognitiveKernelRun({
+  const cognitiveBeginInput = {
     turnId: input.turnId,
     channel: input.channel,
     groupFolder: input.groupFolder,
@@ -1031,15 +1048,9 @@ export async function beginTurnAgentHarness(
     knownBlockers: input.knownBlockers,
     thinkingPreference: detectThinkingControlPreference(input.text),
     thinkingTrigger: detectThinkingControlTrigger(input.text),
-  });
-  const logicRun =
-    runOrigin === 'live'
-      ? beginLogicKernelRun({
-          subject: buildSanitizedGoal(input, taskFamily),
-          cognitiveRun,
-          generatedAt: new Date().toISOString(),
-        })
-      : null;
+    executionMode: 'prepare_only',
+  } as const;
+  const cognitiveRun = beginCognitiveKernelRun(cognitiveBeginInput);
   const repositorySnapshot =
     runOrigin === 'live' && taskFamily === 'code'
       ? captureCurrentRepositorySnapshot()
@@ -1057,6 +1068,41 @@ export async function beginTurnAgentHarness(
       repositoryTargetScopeKey = undefined;
     }
   }
+  const adaptiveTargetScopeKey =
+    repositoryTargetScopeKey ||
+    `adaptive-turn:${input.channel}:${input.chatId || input.turnId}`;
+  const adaptiveDurableBinding = {
+    ownerId:
+      input.actorId || input.chatId || input.groupFolder || 'system-owner',
+    chatId: input.chatId || input.turnId,
+    groupId: input.groupFolder || 'main',
+    channel: input.channel,
+    targetScopeKey: adaptiveTargetScopeKey,
+  };
+  let adaptiveDurableBindings: AdaptiveDurableNodeBinding[] = [];
+  if (runOrigin === 'live' && isDatabaseInitialized()) {
+    try {
+      adaptiveDurableBindings = buildCognitiveAdaptiveDurableBindings({
+        cognitiveRun,
+        targetScopeKey: adaptiveTargetScopeKey,
+      });
+      contextCompile.metadata.adaptive_durable_disposition = 'prepared';
+      // Binding failures leave the graph awaiting evidence instead of falling
+      // back to direct tool execution.
+      // eslint-disable-next-line no-catch-all/no-catch-all
+    } catch {
+      contextCompile.metadata.adaptive_durable_disposition = 'fail_closed';
+      contextCompile.metadata.adaptive_durable_nodes_executed = '0';
+    }
+  }
+  const logicRun =
+    runOrigin === 'live'
+      ? beginLogicKernelRun({
+          subject: buildSanitizedGoal(input, taskFamily),
+          cognitiveRun,
+          generatedAt: new Date().toISOString(),
+        })
+      : null;
   const runtimeSpine =
     runOrigin === 'live'
       ? beginAgentRuntimeSpineRun({
@@ -1069,11 +1115,51 @@ export async function beginTurnAgentHarness(
           taskFamily,
           goal: buildSanitizedGoal(input, taskFamily),
           cognitiveRun,
+          adaptiveDurable:
+            adaptiveDurableBindings.length > 0
+              ? {
+                  bindings: adaptiveDurableBindings,
+                }
+              : null,
           logicRun,
           providerCouncil,
-          targetScopeKey: repositoryTargetScopeKey,
+          targetScopeKey: adaptiveTargetScopeKey,
         })
       : null;
+  if (
+    runtimeSpine?.durableWork &&
+    runtimeSpine.adaptiveDurable?.disposition === 'authoritative' &&
+    adaptiveDurableBindings.length > 0
+  ) {
+    try {
+      const continued = await continueCognitiveKernelDurably({
+        cognitiveRun,
+        beginInput: cognitiveBeginInput,
+        durableWork: runtimeSpine.durableWork,
+        durableBinding: adaptiveDurableBinding,
+        bindings: adaptiveDurableBindings,
+        executorScopeKey: `runtime-spine:${runtimeSpine.run.mode}`,
+        targetScopeKey: adaptiveTargetScopeKey,
+      });
+      runtimeSpine.durableWork = continued.durableWork;
+      contextCompile.metadata.adaptive_durable_disposition = 'authoritative';
+      contextCompile.metadata.adaptive_durable_work_id =
+        continued.durableWork.workId;
+      contextCompile.metadata.adaptive_durable_nodes_executed = String(
+        continued.nodesExecuted,
+      );
+      contextCompile.metadata.adaptive_durable_stop = continued.stoppedBecause;
+      // Durable execution failure is an evidence wait, never permission to run
+      // the former synchronous path.
+      // eslint-disable-next-line no-catch-all/no-catch-all
+    } catch {
+      contextCompile.metadata.adaptive_durable_disposition = 'fail_closed';
+      contextCompile.metadata.adaptive_durable_nodes_executed = '0';
+    }
+  } else if (runtimeSpine?.adaptiveDurable?.disposition === 'legacy_pinned') {
+    contextCompile.metadata.adaptive_durable_disposition = 'legacy_pinned';
+    contextCompile.metadata.adaptive_durable_nodes_executed = '0';
+  }
   const verifiedDeepWorkPacket =
     runOrigin === 'live' && input.groupFolder && isDatabaseInitialized()
       ? beginVerifiedDeepWorkForTurn({
@@ -1146,6 +1232,17 @@ export async function beginTurnAgentHarness(
     cognitiveRun,
     logicRun,
     runtimeSpine,
+    adaptiveDurableExecution:
+      runtimeSpine?.adaptiveDurable?.disposition === 'authoritative' &&
+      adaptiveDurableBindings.length > 0
+        ? {
+            beginInput: cognitiveBeginInput,
+            durableBinding: adaptiveDurableBinding,
+            bindings: adaptiveDurableBindings,
+            executorScopeKey: `runtime-spine:${runtimeSpine.run.mode}`,
+            targetScopeKey: adaptiveTargetScopeKey,
+          }
+        : null,
     platformHoldReply:
       councilHoldReply || buildPlatformHoldReply(deliberation, contextCompile),
     actorId: input.actorId,
@@ -1771,6 +1868,8 @@ export async function reflectTurnAgentOutcome(input: {
   answerClass?: PostTurnReflection['answerClass'];
   blockerClass?: string | null;
   fallbackUsed?: boolean;
+  replyKind?: CognitiveReplyKind;
+  completionEvidence?: AdaptiveEvidence[];
 }): Promise<PostTurnReflection> {
   const context = input.context;
   recordCouncilOutcomeSignalsForTurn({
@@ -1787,8 +1886,10 @@ export async function reflectTurnAgentOutcome(input: {
     evaluatorFlags: input.evaluation.evaluatorFlags,
     routeUsed: input.routeUsed,
     answerClass: input.answerClass || 'unknown',
+    replyKind: input.replyKind,
     blockerClass: input.blockerClass,
     fallbackUsed: input.fallbackUsed,
+    completionEvidence: input.completionEvidence,
   });
   finalizeAgentRuntimeSpineOutcome({
     runtime: context?.runtimeSpine || null,
@@ -2016,6 +2117,68 @@ export async function reflectTurnAgentOutcome(input: {
     fallbackUsed: input.fallbackUsed === true,
     reflection,
   };
+}
+
+/**
+ * Reconciles typed completion evidence and closes the same adaptive durable
+ * work before a completion-bearing reply can be delivered.
+ */
+export async function verifyTurnAgentAdaptiveCompletion(input: {
+  context: TurnAgentHarnessContext | null | undefined;
+  completionEvidence: AdaptiveEvidence[];
+  now?: Date | string;
+}): Promise<boolean> {
+  const context = input.context;
+  const kernel = context?.cognitiveRun;
+  if (!context || !kernel || input.completionEvidence.length === 0)
+    return false;
+  const now =
+    input.now instanceof Date
+      ? input.now.toISOString()
+      : input.now || new Date().toISOString();
+  if (
+    !reconcileCognitiveKernelCompletionEvidence({
+      cognitiveRun: kernel,
+      completionEvidence: input.completionEvidence,
+      now,
+    })
+  ) {
+    return false;
+  }
+  if (!kernel.requiresDurableCompletion) return true;
+  const durable = context.adaptiveDurableExecution;
+  const runtime = context.runtimeSpine;
+  if (
+    !durable ||
+    !runtime?.durableWork ||
+    runtime.adaptiveDurable?.disposition !== 'authoritative'
+  ) {
+    return false;
+  }
+  try {
+    const continued = await continueCognitiveKernelDurably({
+      cognitiveRun: kernel,
+      beginInput: durable.beginInput,
+      durableWork: runtime.durableWork,
+      durableBinding: durable.durableBinding,
+      bindings: durable.bindings,
+      executorScopeKey: durable.executorScopeKey,
+      targetScopeKey: durable.targetScopeKey,
+      maxNodeLeases: 3,
+      now,
+    });
+    runtime.durableWork = continued.durableWork;
+    context.contextCompile.metadata.adaptive_durable_stop =
+      continued.stoppedBecause;
+    context.contextCompile.metadata.adaptive_durable_terminal_status =
+      continued.durableWork.status;
+    return continued.durableWork.status === 'completed';
+    // A terminal verifier failure is a delivery evidence wait, not a reason to
+    // bypass the durable boundary.
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    return false;
+  }
 }
 
 /**

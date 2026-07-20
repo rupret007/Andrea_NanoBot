@@ -1,4 +1,4 @@
-import { storeMessageDirect } from './db.js';
+import { hasStoredMessage, storeMessageDirect } from './db.js';
 import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
 import type { NewMessage } from './types.js';
 
@@ -30,10 +30,6 @@ export function applyBlueBubblesIngressPolicy(params: {
     return { kind: 'continue_control_routing' };
   }
 
-  if (params.message.reaction) {
-    return { kind: 'stored_contact_data_only', stored: false };
-  }
-
   storeMessageDirect({
     id: params.message.id,
     chat_jid: params.message.chat_jid,
@@ -44,7 +40,11 @@ export function applyBlueBubblesIngressPolicy(params: {
     is_from_me: params.message.is_from_me === true,
     is_bot_message: params.message.is_bot_message,
     thread_id: params.message.thread_id,
-    reply_to_id: params.message.reply_to_id,
+    reply_to_id:
+      params.message.reply_to_id &&
+      hasStoredMessage(params.message.chat_jid, params.message.reply_to_id)
+        ? params.message.reply_to_id
+        : undefined,
     provider_idempotency_key: params.message.provider_idempotency_key,
     message_ingress_origin: 'passive_contact_sync',
     attachments: params.message.attachments,

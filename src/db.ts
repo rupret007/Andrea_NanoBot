@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import fs from 'fs';
 import path from 'path';
@@ -624,6 +624,25 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
 
+    CREATE TABLE IF NOT EXISTS actionable_message_ingress (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_jid TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (state IN ('pending', 'claimed', 'handled', 'ignored')),
+      received_at TEXT NOT NULL,
+      claim_token TEXT,
+      claim_expires_at TEXT,
+      completed_at TEXT,
+      disposition TEXT,
+      UNIQUE (chat_jid, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_actionable_ingress_chat_state_seq
+      ON actionable_message_ingress(chat_jid, state, seq);
+    CREATE INDEX IF NOT EXISTS idx_actionable_ingress_claim
+      ON actionable_message_ingress(claim_token)
+      WHERE claim_token IS NOT NULL;
+
     CREATE TABLE IF NOT EXISTS schema_migrations (
       migration_key TEXT PRIMARY KEY,
       applied_at TEXT NOT NULL
@@ -668,7 +687,14 @@ function createSchema(database: Database.Database): void {
       last_run TEXT,
       last_result TEXT,
       status TEXT DEFAULT 'active',
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      outbound_authorization_at TEXT,
+      outbound_pause_generation INTEGER,
+      outbound_dispatch_state TEXT,
+      outbound_dispatch_run_key TEXT,
+      outbound_dispatch_claim_token TEXT,
+      outbound_dispatch_claimed_at TEXT,
+      outbound_dispatch_completed_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
     CREATE INDEX IF NOT EXISTS idx_status ON scheduled_tasks(status);
@@ -1193,6 +1219,13 @@ function createSchema(database: Database.Database): void {
       knowledge_source_ids_json TEXT,
       work_ref TEXT,
       followup_suggestions_json TEXT,
+      source_chat_jid TEXT,
+      source_message_id TEXT,
+      source_ingress_received_at TEXT,
+      outbound_authorization_at TEXT,
+      outbound_pause_generation INTEGER,
+      provider_idempotency_key TEXT,
+      dispatch_started_at TEXT,
       delivered_message_id TEXT,
       error_text TEXT,
       created_at TEXT NOT NULL,
@@ -6067,6 +6100,30 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Generic BlueBubbles self-thread tasks use immutable owner authority plus a
+  // durable one-occurrence claim. Legacy rows intentionally remain NULL and
+  // therefore fail closed instead of gaining fresh authority after deploy.
+  for (const column of [
+    'outbound_authorization_at TEXT',
+    'outbound_pause_generation INTEGER',
+    'outbound_dispatch_state TEXT',
+    'outbound_dispatch_run_key TEXT',
+    'outbound_dispatch_claim_token TEXT',
+    'outbound_dispatch_claimed_at TEXT',
+    'outbound_dispatch_completed_at TEXT',
+  ]) {
+    try {
+      database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN ${column}`);
+    } catch {
+      /* column already exists */
+    }
+  }
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_companion_handoffs_provider_idempotency
+      ON companion_handoffs(provider_idempotency_key)
+      WHERE provider_idempotency_key IS NOT NULL
+  `);
+
   // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -6129,6 +6186,49 @@ function createSchema(database: Database.Database): void {
     }
   });
   migrateMessageIngressOrigin.immediate();
+
+  // Provider timestamps are not a safe processing cursor: Telegram only has
+  // second precision, and different providers can arrive out of timestamp
+  // order. Backfill pre-ledger rows as handled (fail closed) so deploying this
+  // migration can never replay an old human message; every subsequent live
+  // callback is inserted transactionally with a monotonic local sequence.
+  const actionableIngressMigrationKey = 'actionable_message_ingress_v1';
+  const migrateActionableIngress = database.transaction(() => {
+    const applied = database
+      .prepare(
+        `SELECT 1 FROM schema_migrations WHERE migration_key = ? LIMIT 1`,
+      )
+      .get(actionableIngressMigrationKey);
+    if (applied) return;
+    database.exec(`
+      INSERT OR IGNORE INTO actionable_message_ingress (
+        chat_jid,
+        message_id,
+        state,
+        received_at,
+        completed_at,
+        disposition
+      )
+      SELECT
+        chat_jid,
+        id,
+        'handled',
+        COALESCE(timestamp, CURRENT_TIMESTAMP),
+        CURRENT_TIMESTAMP,
+        'legacy_fail_closed'
+      FROM messages
+      WHERE message_ingress_origin = 'live'
+        AND is_bot_message = 0
+        AND content != ''
+        AND content IS NOT NULL;
+    `);
+    database
+      .prepare(
+        `INSERT INTO schema_migrations (migration_key, applied_at) VALUES (?, ?)`,
+      )
+      .run(actionableIngressMigrationKey, new Date().toISOString());
+  });
+  migrateActionableIngress.immediate();
 
   try {
     database.exec(
@@ -6385,6 +6485,22 @@ function createSchema(database: Database.Database): void {
     );
   } catch {
     /* column already exists */
+  }
+
+  for (const column of [
+    'source_chat_jid TEXT',
+    'source_message_id TEXT',
+    'source_ingress_received_at TEXT',
+    'outbound_authorization_at TEXT',
+    'outbound_pause_generation INTEGER',
+    'provider_idempotency_key TEXT',
+    'dispatch_started_at TEXT',
+  ]) {
+    try {
+      database.exec(`ALTER TABLE companion_handoffs ADD COLUMN ${column}`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   try {
@@ -6723,6 +6839,36 @@ export function _initTestDatabaseAtPath(dbPath: string): void {
 export function _closeDatabase(): void {
   db.close();
   databaseMode = 'uninitialized';
+}
+
+export interface TestActionableIngressSnapshot {
+  state: 'pending' | 'claimed' | 'handled' | 'ignored';
+  received_at: string;
+  claim_token: string | null;
+  disposition: string | null;
+}
+
+/** @internal - for isolated durable-ingress tests only. */
+export function _getActionableIngressSnapshotForTests(
+  chatJid: string,
+  messageId: string,
+): TestActionableIngressSnapshot | null {
+  if (databaseMode !== 'isolated_test') {
+    throw new Error(
+      'Actionable ingress snapshots are available only in isolated tests.',
+    );
+  }
+  return (
+    (db
+      .prepare(
+        `SELECT state, received_at, claim_token, disposition
+         FROM actionable_message_ingress
+         WHERE chat_jid = ? AND message_id = ?
+         LIMIT 1`,
+      )
+      .get(chatJid, messageId) as TestActionableIngressSnapshot | undefined) ||
+    null
+  );
 }
 
 /**
@@ -7082,31 +7228,159 @@ function hydrateMessagesWithMedia(messages: NewMessage[]): NewMessage[] {
  * Store a message with full content.
  * Only call this for registered groups where message history is needed.
  */
-export function storeMessage(msg: NewMessage): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key, message_ingress_origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live')`,
-  ).run(
-    msg.id,
-    msg.chat_jid,
-    msg.sender,
-    msg.sender_name,
-    msg.content,
-    msg.timestamp,
-    msg.is_from_me ? 1 : 0,
-    msg.is_bot_message ? 1 : 0,
-    msg.thread_id || null,
-    msg.reply_to_id || null,
-    msg.provider_idempotency_key || null,
-  );
-  if (msg.attachments?.length) {
-    upsertMessageMediaAttachments(
-      msg.attachments.map((attachment) => ({
-        ...attachment,
-        chatJid: msg.chat_jid,
-        messageId: msg.id,
-      })),
+export type MessageIngressOrigin =
+  | 'live'
+  | 'history_hydration'
+  | 'passive_contact_sync'
+  | 'assistant_outbound'
+  | 'direct_non_actionable'
+  | 'legacy_unverified'
+  | 'stale_recovery';
+
+function persistMessageWithOrigin(
+  msg: NewMessage,
+  messageIngressOrigin: MessageIngressOrigin,
+): void {
+  const persist = db.transaction(() => {
+    const persistedAt = new Date().toISOString();
+    let actionableIngressReceivedAt = persistedAt;
+    if (
+      messageIngressOrigin === 'live' &&
+      msg.ingress_received_at !== undefined
+    ) {
+      if (typeof msg.ingress_received_at !== 'string') {
+        throw new Error('Durable ingress receipt time must be a timestamp.');
+      }
+      const ingressReceivedAtMs = Date.parse(msg.ingress_received_at);
+      if (!Number.isFinite(ingressReceivedAtMs)) {
+        throw new Error('Durable ingress receipt time must be a timestamp.');
+      }
+      actionableIngressReceivedAt = new Date(ingressReceivedAtMs).toISOString();
+    }
+    // `is_from_me` alone is not outbound authority: owner commands in the
+    // configured BlueBubbles self-thread are also self-authored. Only the
+    // explicit outbound provenance written by a send/receipt path may revoke
+    // live ingress for an otherwise identical provider row.
+    db.prepare(
+      `
+        INSERT INTO messages (
+          id,
+          chat_jid,
+          sender,
+          sender_name,
+          content,
+          timestamp,
+          is_from_me,
+          is_bot_message,
+          thread_id,
+          reply_to_id,
+          provider_idempotency_key,
+          message_ingress_origin
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id, chat_jid) DO UPDATE SET
+          sender = excluded.sender,
+          sender_name = excluded.sender_name,
+          content = excluded.content,
+          timestamp = excluded.timestamp,
+          is_from_me = excluded.is_from_me,
+          is_bot_message = MAX(messages.is_bot_message, excluded.is_bot_message),
+          thread_id = excluded.thread_id,
+          reply_to_id = excluded.reply_to_id,
+          provider_idempotency_key = COALESCE(
+            excluded.provider_idempotency_key,
+            messages.provider_idempotency_key
+          ),
+          message_ingress_origin = CASE
+            WHEN messages.message_ingress_origin = 'assistant_outbound'
+            THEN messages.message_ingress_origin
+            WHEN excluded.message_ingress_origin = 'assistant_outbound'
+            THEN excluded.message_ingress_origin
+            WHEN messages.message_ingress_origin = 'live'
+              AND excluded.message_ingress_origin != 'live'
+            THEN messages.message_ingress_origin
+            ELSE excluded.message_ingress_origin
+          END
+      `,
+    ).run(
+      msg.id,
+      msg.chat_jid,
+      msg.sender,
+      msg.sender_name,
+      msg.content,
+      msg.timestamp,
+      msg.is_from_me ? 1 : 0,
+      msg.is_bot_message ? 1 : 0,
+      msg.thread_id || null,
+      msg.reply_to_id || null,
+      msg.provider_idempotency_key || null,
+      messageIngressOrigin,
     );
-  }
+
+    if (
+      messageIngressOrigin === 'live' &&
+      !msg.is_bot_message &&
+      Boolean(msg.content?.trim())
+    ) {
+      db.prepare(
+        `
+          INSERT OR IGNORE INTO actionable_message_ingress (
+            chat_jid,
+            message_id,
+            state,
+            received_at
+          )
+          SELECT ?, ?, 'pending', ?
+          WHERE EXISTS (
+            SELECT 1
+            FROM messages
+            WHERE messages.chat_jid = ?
+              AND messages.id = ?
+              AND messages.message_ingress_origin = 'live'
+              AND messages.is_bot_message = 0
+              AND messages.content != ''
+              AND messages.content IS NOT NULL
+          )
+        `,
+      ).run(
+        msg.chat_jid,
+        msg.id,
+        actionableIngressReceivedAt,
+        msg.chat_jid,
+        msg.id,
+      );
+    }
+
+    if (messageIngressOrigin === 'assistant_outbound') {
+      db.prepare(
+        `
+          UPDATE actionable_message_ingress
+          SET state = 'ignored',
+              claim_token = NULL,
+              claim_expires_at = NULL,
+              completed_at = ?,
+              disposition = 'authoritative_assistant_outbound_evidence'
+          WHERE chat_jid = ?
+            AND message_id = ?
+            AND state IN ('pending', 'claimed')
+        `,
+      ).run(persistedAt, msg.chat_jid, msg.id);
+    }
+
+    if (msg.attachments?.length) {
+      upsertMessageMediaAttachments(
+        msg.attachments.map((attachment) => ({
+          ...attachment,
+          chatJid: msg.chat_jid,
+          messageId: msg.id,
+        })),
+      );
+    }
+  });
+  persist.immediate();
+}
+
+export function storeMessage(msg: NewMessage): void {
+  persistMessageWithOrigin(msg, 'live');
 }
 
 export function hasStoredMessage(chatJid: string, messageId: string): boolean {
@@ -7116,6 +7390,33 @@ export function hasStoredMessage(chatJid: string, messageId: string): boolean {
         SELECT 1
         FROM messages
         WHERE chat_jid = ? AND id = ?
+        LIMIT 1
+      `,
+    )
+    .get(chatJid, messageId) as { 1: number } | undefined;
+  return Boolean(row);
+}
+
+/**
+ * Return true only after a live callback has been transactionally persisted
+ * with its durable actionable-ingress record. History hydration and other
+ * non-actionable observations must not suppress a later live delivery.
+ */
+export function hasDurablyAcceptedLiveMessage(
+  chatJid: string,
+  messageId: string,
+): boolean {
+  const row = db
+    .prepare(
+      `
+        SELECT 1
+        FROM messages
+        JOIN actionable_message_ingress
+          ON actionable_message_ingress.chat_jid = messages.chat_jid
+         AND actionable_message_ingress.message_id = messages.id
+        WHERE messages.chat_jid = ?
+          AND messages.id = ?
+          AND messages.message_ingress_origin = 'live'
         LIMIT 1
       `,
     )
@@ -7173,41 +7474,594 @@ export function storeMessageDirect(msg: {
   thread_id?: string;
   reply_to_id?: string;
   provider_idempotency_key?: string;
-  message_ingress_origin?:
-    | 'live'
-    | 'history_hydration'
-    | 'passive_contact_sync'
-    | 'assistant_outbound'
-    | 'direct_non_actionable'
-    | 'legacy_unverified'
-    | 'stale_recovery';
+  message_ingress_origin?: MessageIngressOrigin;
   attachments?: MessageMediaAttachment[];
 }): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key, message_ingress_origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    msg.id,
-    msg.chat_jid,
-    msg.sender,
-    msg.sender_name,
-    msg.content,
-    msg.timestamp,
-    msg.is_from_me ? 1 : 0,
-    msg.is_bot_message ? 1 : 0,
-    msg.thread_id || null,
-    msg.reply_to_id || null,
-    msg.provider_idempotency_key || null,
+  persistMessageWithOrigin(
+    msg,
     msg.message_ingress_origin || 'direct_non_actionable',
   );
-  if (msg.attachments?.length) {
-    upsertMessageMediaAttachments(
-      msg.attachments.map((attachment) => ({
-        ...attachment,
-        chatJid: msg.chat_jid,
-        messageId: msg.id,
-      })),
+}
+
+export interface ActionableIngressClaim {
+  claimToken: string | null;
+  messages: NewMessage[];
+}
+
+export interface ActionableIngressClaimThroughSequence extends ActionableIngressClaim {
+  ignoredBeforeCount: number;
+  throughSequence: number | null;
+}
+
+const ACTIONABLE_INGRESS_LEASE_MS = 4 * 60 * 60 * 1000;
+const OMITTED_TRIGGER_CONTEXT_DISPOSITION =
+  'omitted_before_trigger_context_window';
+
+function quarantineInvalidActionableIngressRows(nowIso: string): number {
+  return db
+    .prepare(
+      `
+        UPDATE actionable_message_ingress
+        SET state = 'ignored',
+            claim_token = NULL,
+            claim_expires_at = NULL,
+            completed_at = ?,
+            disposition = 'message_no_longer_actionable'
+        WHERE state IN ('pending', 'claimed')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM messages
+            WHERE messages.chat_jid = actionable_message_ingress.chat_jid
+              AND messages.id = actionable_message_ingress.message_id
+              AND messages.message_ingress_origin = 'live'
+              AND messages.is_bot_message = 0
+              AND messages.content != ''
+              AND messages.content IS NOT NULL
+          )
+      `,
+    )
+    .run(nowIso).changes;
+}
+
+export function recoverExpiredActionableIngressClaims(
+  now: Date = new Date(),
+): number {
+  const nowIso = now.toISOString();
+  const recovered = db
+    .prepare(
+      `
+        UPDATE actionable_message_ingress
+        SET state = 'pending',
+            claim_token = NULL,
+            claim_expires_at = NULL,
+            disposition = 'expired_claim_recovered'
+        WHERE state = 'claimed'
+          AND claim_expires_at IS NOT NULL
+          AND claim_expires_at <= ?
+      `,
+    )
+    .run(nowIso).changes;
+  quarantineInvalidActionableIngressRows(nowIso);
+  return recovered;
+}
+
+/** Release every prior-process claim during boot before recovery is queued. */
+export function recoverAllActionableIngressClaims(
+  now: Date = new Date(),
+): number {
+  const nowIso = now.toISOString();
+  const recovered = db
+    .prepare(
+      `
+        UPDATE actionable_message_ingress
+        SET state = 'pending',
+            claim_token = NULL,
+            claim_expires_at = NULL,
+            disposition = 'startup_claim_recovered'
+        WHERE state = 'claimed'
+      `,
+    )
+    .run().changes;
+  quarantineInvalidActionableIngressRows(nowIso);
+  return recovered;
+}
+
+function selectPendingActionableIngressForChat(
+  chatJid: string,
+  limit: number,
+): NewMessage[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          messages.id,
+          messages.chat_jid,
+          messages.sender,
+          messages.sender_name,
+          messages.content,
+          messages.timestamp,
+          messages.is_from_me,
+          messages.is_bot_message,
+          messages.thread_id,
+          messages.reply_to_id,
+          messages.provider_idempotency_key,
+          actionable_message_ingress.seq AS ingress_seq,
+          actionable_message_ingress.claim_token AS ingress_claim_token,
+          actionable_message_ingress.received_at AS ingress_received_at
+        FROM actionable_message_ingress
+        JOIN messages
+          ON messages.chat_jid = actionable_message_ingress.chat_jid
+         AND messages.id = actionable_message_ingress.message_id
+        WHERE actionable_message_ingress.chat_jid = ?
+          AND actionable_message_ingress.state = 'pending'
+          AND messages.message_ingress_origin = 'live'
+          AND messages.is_bot_message = 0
+          AND messages.content != ''
+          AND messages.content IS NOT NULL
+        ORDER BY actionable_message_ingress.seq ASC
+        LIMIT ?
+      `,
+    )
+    .all(chatJid, Math.max(1, Math.min(limit, 1_000))) as NewMessage[];
+  return hydrateMessagesWithMedia(rows);
+}
+
+function selectPendingActionableIngressPageForChat(
+  chatJid: string,
+  afterSequence: number,
+  limit: number,
+): NewMessage[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          messages.id,
+          messages.chat_jid,
+          messages.sender,
+          messages.sender_name,
+          messages.content,
+          messages.timestamp,
+          messages.is_from_me,
+          messages.is_bot_message,
+          messages.thread_id,
+          messages.reply_to_id,
+          messages.provider_idempotency_key,
+          actionable_message_ingress.seq AS ingress_seq,
+          actionable_message_ingress.claim_token AS ingress_claim_token,
+          actionable_message_ingress.received_at AS ingress_received_at
+        FROM actionable_message_ingress
+        JOIN messages
+          ON messages.chat_jid = actionable_message_ingress.chat_jid
+         AND messages.id = actionable_message_ingress.message_id
+        WHERE actionable_message_ingress.chat_jid = ?
+          AND actionable_message_ingress.state = 'pending'
+          AND actionable_message_ingress.seq > ?
+          AND messages.message_ingress_origin = 'live'
+          AND messages.is_bot_message = 0
+          AND messages.content != ''
+          AND messages.content IS NOT NULL
+        ORDER BY actionable_message_ingress.seq ASC
+        LIMIT ?
+      `,
+    )
+    .all(
+      chatJid,
+      afterSequence,
+      Math.max(1, Math.min(Math.floor(limit), 1_000)),
+    ) as NewMessage[];
+  return hydrateMessagesWithMedia(rows);
+}
+
+/**
+ * Scan one chat's pending actionable ingress in bounded pages. The predicate is
+ * evaluated oldest-first, while only the current page is retained in memory.
+ */
+export function findFirstPendingActionableMessageForChat(params: {
+  chatJid: string;
+  predicate: (message: NewMessage) => boolean;
+  pageSize?: number;
+}): NewMessage | null {
+  const requestedPageSize = params.pageSize ?? 200;
+  const pageSize = Number.isFinite(requestedPageSize)
+    ? Math.max(1, Math.min(Math.floor(requestedPageSize), 1_000))
+    : 200;
+  let afterSequence = 0;
+
+  while (true) {
+    const page = selectPendingActionableIngressPageForChat(
+      params.chatJid,
+      afterSequence,
+      pageSize,
     );
+    if (page.length === 0) return null;
+
+    for (const message of page) {
+      if (params.predicate(message)) return message;
+    }
+
+    const lastSequence = page.at(-1)?.ingress_seq;
+    if (!Number.isInteger(lastSequence) || lastSequence! <= afterSequence) {
+      throw new Error(
+        'Pending actionable ingress scan did not advance its sequence cursor',
+      );
+    }
+    afterSequence = lastSequence!;
   }
+}
+
+export function listPendingActionableMessagesForChats(
+  chatJids: string[],
+  limitPerChat: number = 200,
+  now: Date = new Date(),
+): NewMessage[] {
+  recoverExpiredActionableIngressClaims(now);
+  return [...new Set(chatJids)]
+    .flatMap((chatJid) =>
+      selectPendingActionableIngressForChat(chatJid, limitPerChat),
+    )
+    .sort(
+      (left, right) =>
+        (left.ingress_seq || 0) - (right.ingress_seq || 0) ||
+        left.chat_jid.localeCompare(right.chat_jid) ||
+        left.id.localeCompare(right.id),
+    );
+}
+
+export function claimPendingActionableMessagesForChat(params: {
+  chatJid: string;
+  limit?: number;
+  now?: Date;
+  leaseMs?: number;
+}): ActionableIngressClaim {
+  const now = params.now || new Date();
+  const claimToken = randomUUID();
+  const claimExpiresAt = new Date(
+    now.getTime() +
+      Math.max(1_000, params.leaseMs || ACTIONABLE_INGRESS_LEASE_MS),
+  ).toISOString();
+  const claim = db.transaction((): ActionableIngressClaim => {
+    recoverExpiredActionableIngressClaims(now);
+    const pending = selectPendingActionableIngressForChat(
+      params.chatJid,
+      params.limit || 200,
+    );
+    const sequences = pending
+      .map((message) => message.ingress_seq)
+      .filter((seq): seq is number => Number.isInteger(seq));
+    if (sequences.length === 0) {
+      return { claimToken: null, messages: [] };
+    }
+    const placeholders = sequences.map(() => '?').join(', ');
+    db.prepare(
+      `
+        UPDATE actionable_message_ingress
+        SET state = 'claimed',
+            claim_token = ?,
+            claim_expires_at = ?,
+            disposition = 'processing'
+        WHERE state = 'pending'
+          AND seq IN (${placeholders})
+      `,
+    ).run(claimToken, claimExpiresAt, ...sequences);
+    const claimedRows = db
+      .prepare(
+        `
+          SELECT
+            messages.id,
+            messages.chat_jid,
+            messages.sender,
+            messages.sender_name,
+            messages.content,
+            messages.timestamp,
+            messages.is_from_me,
+            messages.is_bot_message,
+            messages.thread_id,
+            messages.reply_to_id,
+            messages.provider_idempotency_key,
+            actionable_message_ingress.seq AS ingress_seq,
+            actionable_message_ingress.claim_token AS ingress_claim_token,
+            actionable_message_ingress.received_at AS ingress_received_at
+          FROM actionable_message_ingress
+          JOIN messages
+            ON messages.chat_jid = actionable_message_ingress.chat_jid
+           AND messages.id = actionable_message_ingress.message_id
+          WHERE actionable_message_ingress.claim_token = ?
+            AND actionable_message_ingress.state = 'claimed'
+          ORDER BY actionable_message_ingress.seq ASC
+        `,
+      )
+      .all(claimToken) as NewMessage[];
+    return {
+      claimToken,
+      messages: hydrateMessagesWithMedia(claimedRows),
+    };
+  });
+  return claim.immediate();
+}
+
+/**
+ * Atomically claim the newest bounded pending context ending at one exact
+ * actionable-ingress sequence. Older pending rows in that prefix are made
+ * explicitly non-actionable so they cannot starve the matched trigger again.
+ */
+export function claimPendingActionableMessagesThroughSequence(params: {
+  chatJid: string;
+  throughSequence: number;
+  limit?: number;
+  now?: Date;
+  leaseMs?: number;
+  omittedDisposition?: string;
+}): ActionableIngressClaimThroughSequence {
+  if (
+    !Number.isSafeInteger(params.throughSequence) ||
+    params.throughSequence <= 0
+  ) {
+    throw new Error('throughSequence must be a positive safe integer');
+  }
+
+  const requestedLimit = params.limit ?? 200;
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.max(1, Math.min(Math.floor(requestedLimit), 1_000))
+    : 200;
+  const now = params.now || new Date();
+  const nowIso = now.toISOString();
+  const claimToken = randomUUID();
+  const claimExpiresAt = new Date(
+    now.getTime() +
+      Math.max(1_000, params.leaseMs || ACTIONABLE_INGRESS_LEASE_MS),
+  ).toISOString();
+  const omittedDisposition =
+    params.omittedDisposition || OMITTED_TRIGGER_CONTEXT_DISPOSITION;
+
+  const claim = db.transaction((): ActionableIngressClaimThroughSequence => {
+    const target = db
+      .prepare(
+        `
+          SELECT actionable_message_ingress.seq
+          FROM actionable_message_ingress
+          JOIN messages
+            ON messages.chat_jid = actionable_message_ingress.chat_jid
+           AND messages.id = actionable_message_ingress.message_id
+          WHERE actionable_message_ingress.chat_jid = ?
+            AND actionable_message_ingress.seq = ?
+            AND actionable_message_ingress.state = 'pending'
+            AND messages.message_ingress_origin = 'live'
+            AND messages.is_bot_message = 0
+            AND messages.content != ''
+            AND messages.content IS NOT NULL
+        `,
+      )
+      .get(params.chatJid, params.throughSequence) as
+      | { seq: number }
+      | undefined;
+    if (!target) {
+      return {
+        claimToken: null,
+        messages: [],
+        ignoredBeforeCount: 0,
+        throughSequence: null,
+      };
+    }
+
+    const selectedRows = db
+      .prepare(
+        `
+          SELECT actionable_message_ingress.seq
+          FROM actionable_message_ingress
+          JOIN messages
+            ON messages.chat_jid = actionable_message_ingress.chat_jid
+           AND messages.id = actionable_message_ingress.message_id
+          WHERE actionable_message_ingress.chat_jid = ?
+            AND actionable_message_ingress.state = 'pending'
+            AND actionable_message_ingress.seq <= ?
+            AND messages.message_ingress_origin = 'live'
+            AND messages.is_bot_message = 0
+            AND messages.content != ''
+            AND messages.content IS NOT NULL
+          ORDER BY actionable_message_ingress.seq DESC
+          LIMIT ?
+        `,
+      )
+      .all(params.chatJid, params.throughSequence, limit) as Array<{
+      seq: number;
+    }>;
+    const sequences = selectedRows.map((row) => row.seq);
+    if (!sequences.includes(params.throughSequence)) {
+      throw new Error(
+        'Actionable ingress claim window did not include its target sequence',
+      );
+    }
+
+    const placeholders = sequences.map(() => '?').join(', ');
+    const ignoredBeforeCount = db
+      .prepare(
+        `
+          UPDATE actionable_message_ingress
+          SET state = 'ignored',
+              claim_token = NULL,
+              claim_expires_at = NULL,
+              completed_at = ?,
+              disposition = ?
+          WHERE chat_jid = ?
+            AND state = 'pending'
+            AND seq <= ?
+            AND seq NOT IN (${placeholders})
+        `,
+      )
+      .run(
+        nowIso,
+        omittedDisposition,
+        params.chatJid,
+        params.throughSequence,
+        ...sequences,
+      ).changes;
+
+    const claimedCount = db
+      .prepare(
+        `
+          UPDATE actionable_message_ingress
+          SET state = 'claimed',
+              claim_token = ?,
+              claim_expires_at = ?,
+              disposition = 'processing'
+          WHERE chat_jid = ?
+            AND state = 'pending'
+            AND seq IN (${placeholders})
+        `,
+      )
+      .run(claimToken, claimExpiresAt, params.chatJid, ...sequences).changes;
+    if (claimedCount !== sequences.length) {
+      throw new Error(
+        `Expected to claim ${sequences.length} actionable ingress rows, claimed ${claimedCount}`,
+      );
+    }
+
+    const claimedRows = db
+      .prepare(
+        `
+          SELECT
+            messages.id,
+            messages.chat_jid,
+            messages.sender,
+            messages.sender_name,
+            messages.content,
+            messages.timestamp,
+            messages.is_from_me,
+            messages.is_bot_message,
+            messages.thread_id,
+            messages.reply_to_id,
+            messages.provider_idempotency_key,
+            actionable_message_ingress.seq AS ingress_seq,
+            actionable_message_ingress.claim_token AS ingress_claim_token,
+            actionable_message_ingress.received_at AS ingress_received_at
+          FROM actionable_message_ingress
+          JOIN messages
+            ON messages.chat_jid = actionable_message_ingress.chat_jid
+           AND messages.id = actionable_message_ingress.message_id
+          WHERE actionable_message_ingress.chat_jid = ?
+            AND actionable_message_ingress.claim_token = ?
+            AND actionable_message_ingress.state = 'claimed'
+          ORDER BY actionable_message_ingress.seq ASC
+        `,
+      )
+      .all(params.chatJid, claimToken) as NewMessage[];
+    if (
+      claimedRows.length !== sequences.length ||
+      claimedRows.at(-1)?.ingress_seq !== params.throughSequence
+    ) {
+      throw new Error(
+        'Claimed actionable ingress rows did not preserve the exact target window',
+      );
+    }
+
+    return {
+      claimToken,
+      messages: hydrateMessagesWithMedia(claimedRows),
+      ignoredBeforeCount,
+      throughSequence: params.throughSequence,
+    };
+  });
+  return claim.immediate();
+}
+
+export function completeActionableIngressClaim(params: {
+  claimToken: string;
+  disposition?: string;
+  now?: Date;
+}): number {
+  return db
+    .prepare(
+      `
+        UPDATE actionable_message_ingress
+        SET state = 'handled',
+            claim_token = NULL,
+            claim_expires_at = NULL,
+            completed_at = ?,
+            disposition = ?
+        WHERE state = 'claimed'
+          AND claim_token = ?
+      `,
+    )
+    .run(
+      (params.now || new Date()).toISOString(),
+      params.disposition || 'handled',
+      params.claimToken,
+    ).changes;
+}
+
+export function releaseActionableIngressClaim(params: {
+  claimToken: string;
+  disposition?: string;
+}): number {
+  return db
+    .prepare(
+      `
+        UPDATE actionable_message_ingress
+        SET state = 'pending',
+            claim_token = NULL,
+            claim_expires_at = NULL,
+            disposition = ?
+        WHERE state = 'claimed'
+          AND claim_token = ?
+      `,
+    )
+    .run(params.disposition || 'retry_requested', params.claimToken).changes;
+}
+
+export function completePendingActionableIngressMessages(params: {
+  messages: NewMessage[];
+  disposition?: string;
+  now?: Date;
+}): number {
+  const sequences = params.messages
+    .map((message) => message.ingress_seq)
+    .filter((seq): seq is number => Number.isInteger(seq));
+  if (sequences.length === 0) return 0;
+  const placeholders = sequences.map(() => '?').join(', ');
+  return db
+    .prepare(
+      `
+        UPDATE actionable_message_ingress
+        SET state = 'handled',
+            completed_at = ?,
+            disposition = ?
+        WHERE state = 'pending'
+          AND seq IN (${placeholders})
+      `,
+    )
+    .run(
+      (params.now || new Date()).toISOString(),
+      params.disposition || 'handled_without_claim',
+      ...sequences,
+    ).changes;
+}
+
+export function ignorePendingActionableIngressMessage(params: {
+  chatJid: string;
+  messageId: string;
+  disposition: string;
+  now?: Date;
+}): boolean {
+  return (
+    db
+      .prepare(
+        `
+          UPDATE actionable_message_ingress
+          SET state = 'ignored',
+              completed_at = ?,
+              disposition = ?
+          WHERE chat_jid = ?
+            AND message_id = ?
+            AND state = 'pending'
+        `,
+      )
+      .run(
+        (params.now || new Date()).toISOString(),
+        params.disposition,
+        params.chatJid,
+        params.messageId,
+      ).changes === 1
+  );
 }
 
 export function getNewMessages(
@@ -7249,6 +8103,37 @@ export function getNewMessages(
 }
 
 /**
+ * Poll actionable ingress independently for each chat's processing cursor.
+ *
+ * Provider timestamps are not a globally ordered clock: a Telegram update can
+ * arrive after a newer-dated BlueBubbles webhook (and vice versa). A single
+ * cross-channel watermark would permanently hide that delayed update. Keeping
+ * the cursors per chat makes delivery order on one provider irrelevant to the
+ * other control surfaces.
+ */
+export function getNewMessagesByChatCursor(
+  jids: string[],
+  cursors: Readonly<Record<string, string | undefined>>,
+  botPrefix: string,
+  limitPerChat: number = 200,
+): NewMessage[] {
+  const messages = [...new Set(jids)].flatMap((chatJid) =>
+    getActionableMessagesSince(
+      chatJid,
+      cursors[chatJid] || '',
+      botPrefix,
+      limitPerChat,
+    ),
+  );
+  return messages.sort(
+    (left, right) =>
+      left.timestamp.localeCompare(right.timestamp) ||
+      left.chat_jid.localeCompare(right.chat_jid) ||
+      left.id.localeCompare(right.id),
+  );
+}
+
+/**
  * Return only messages that entered through a live channel callback and may
  * therefore anchor a new assistant turn. Provider history remains queryable
  * through `getMessagesSince` for bounded conversational context, but it cannot
@@ -7279,27 +8164,57 @@ export function getActionableMessagesSince(
 }
 
 /**
- * Quarantine live BlueBubbles rows that have aged beyond the bounded restart
- * recovery window. They remain available to reviews and explicit history
- * queries, but a later restart cannot reinterpret them as a current prompt.
+ * Quarantine BlueBubbles actionable ingress received locally before the
+ * bounded restart-recovery window. Provider timestamps are intentionally not
+ * authorization clocks. Message content remains available to reviews and
+ * explicit history queries, while the durable ledger is irreversibly ignored.
  */
 export function quarantineStaleBlueBubblesMessagesForRecovery(
   beforeTimestamp: string,
+  quarantinedAt: Date = new Date(),
 ): number {
   const cutoffMs = Date.parse(beforeTimestamp);
   if (!Number.isFinite(cutoffMs)) {
     throw new Error('BlueBubbles recovery cutoff must be a valid timestamp.');
   }
-  const result = db
-    .prepare(
+  if (!Number.isFinite(quarantinedAt.getTime())) {
+    throw new Error(
+      'BlueBubbles recovery quarantine time must be a valid timestamp.',
+    );
+  }
+  const cutoffIso = new Date(cutoffMs).toISOString();
+  const quarantinedAtIso = quarantinedAt.toISOString();
+  const quarantine = db.transaction(() => {
+    db.prepare(
       `UPDATE messages
        SET message_ingress_origin = 'stale_recovery'
-       WHERE chat_jid LIKE 'bb:%'
-         AND message_ingress_origin = 'live'
-         AND timestamp < ?`,
-    )
-    .run(new Date(cutoffMs).toISOString());
-  return result.changes;
+       WHERE message_ingress_origin = 'live'
+         AND EXISTS (
+           SELECT 1
+           FROM actionable_message_ingress
+           WHERE actionable_message_ingress.chat_jid = messages.chat_jid
+             AND actionable_message_ingress.message_id = messages.id
+             AND actionable_message_ingress.chat_jid LIKE 'bb:%'
+             AND actionable_message_ingress.state IN ('pending', 'claimed')
+             AND actionable_message_ingress.received_at < ?
+         )`,
+    ).run(cutoffIso);
+
+    return db
+      .prepare(
+        `UPDATE actionable_message_ingress
+         SET state = 'ignored',
+             claim_token = NULL,
+             claim_expires_at = NULL,
+             completed_at = ?,
+             disposition = 'stale_bluebubbles_startup_quarantine'
+         WHERE chat_jid LIKE 'bb:%'
+           AND state IN ('pending', 'claimed')
+           AND received_at < ?`,
+      )
+      .run(quarantinedAtIso, cutoffIso).changes;
+  });
+  return quarantine.immediate();
 }
 
 export function getMessagesSince(
@@ -7384,14 +8299,24 @@ export function listMessagesForChatWindow(params: {
   const rows = db
     .prepare(
       `
-        SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key
-        FROM messages
-        WHERE chat_jid = ?
-          AND timestamp >= ?
-          AND (? IS NULL OR timestamp <= ?)
-          AND content != '' AND content IS NOT NULL
-        ORDER BY timestamp ASC
-        LIMIT ?
+        SELECT * FROM (
+          SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_id, reply_to_id, provider_idempotency_key
+          FROM messages
+          WHERE chat_jid = ?
+            AND timestamp >= ?
+            AND (? IS NULL OR timestamp <= ?)
+            AND (
+              (content != '' AND content IS NOT NULL)
+              OR EXISTS (
+                SELECT 1
+                FROM message_media_attachments AS media
+                WHERE media.chat_jid = messages.chat_jid
+                  AND media.message_id = messages.id
+              )
+            )
+          ORDER BY timestamp DESC, id DESC
+          LIMIT ?
+        ) ORDER BY timestamp ASC, id ASC
       `,
     )
     .all(
@@ -7557,13 +8482,60 @@ export function getCursorMessageContext(
     .get(chatJid, platformMessageId) as CursorMessageContextRecord | undefined;
 }
 
+function resolveExplicitScheduledTaskOutboundAuthorization(
+  task: Pick<
+    ScheduledTask,
+    'chat_jid' | 'outbound_authorization_at' | 'outbound_pause_generation'
+  >,
+): {
+  authorizationAt: string | null;
+  pauseGeneration: number | null;
+} {
+  if (!task.chat_jid.startsWith('bb:')) {
+    return { authorizationAt: null, pauseGeneration: null };
+  }
+  const authorizationAt = task.outbound_authorization_at;
+  const pauseGeneration = task.outbound_pause_generation;
+  if (
+    typeof authorizationAt !== 'string' ||
+    !Number.isFinite(Date.parse(authorizationAt)) ||
+    !Number.isSafeInteger(pauseGeneration) ||
+    Number(pauseGeneration) < 0
+  ) {
+    // Generic/legacy BlueBubbles task producers do not receive authority by
+    // virtue of creating or processing a task. Only an explicit fence copied
+    // from an immutable owner-authored ingress may be persisted.
+    return { authorizationAt: null, pauseGeneration: null };
+  }
+  return {
+    authorizationAt,
+    pauseGeneration: Number(pauseGeneration),
+  };
+}
+
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {
+  const outboundAuthorization =
+    resolveExplicitScheduledTaskOutboundAuthorization(task);
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, script, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (
+      id,
+      group_folder,
+      chat_jid,
+      prompt,
+      script,
+      schedule_type,
+      schedule_value,
+      context_mode,
+      next_run,
+      status,
+      created_at,
+      outbound_authorization_at,
+      outbound_pause_generation
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -7577,6 +8549,8 @@ export function createTask(
     task.next_run,
     task.status,
     task.created_at,
+    outboundAuthorization.authorizationAt,
+    outboundAuthorization.pauseGeneration,
   );
 }
 
@@ -7611,6 +8585,8 @@ export function updateTask(
       | 'schedule_value'
       | 'next_run'
       | 'status'
+      | 'outbound_authorization_at'
+      | 'outbound_pause_generation'
     >
   >,
 ): void {
@@ -7640,6 +8616,26 @@ export function updateTask(
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
+  }
+  if (
+    updates.outbound_authorization_at !== undefined ||
+    updates.outbound_pause_generation !== undefined
+  ) {
+    const existing = db
+      .prepare('SELECT chat_jid FROM scheduled_tasks WHERE id = ?')
+      .get(id) as Pick<ScheduledTask, 'chat_jid'> | undefined;
+    const outboundAuthorization =
+      resolveExplicitScheduledTaskOutboundAuthorization({
+        chat_jid: existing?.chat_jid || '',
+        outbound_authorization_at: updates.outbound_authorization_at,
+        outbound_pause_generation: updates.outbound_pause_generation,
+      });
+    // The fence is one atomic authority value. A partial or malformed update
+    // clears both halves so no task update can accidentally synthesize it.
+    fields.push('outbound_authorization_at = ?');
+    values.push(outboundAuthorization.authorizationAt);
+    fields.push('outbound_pause_generation = ?');
+    values.push(outboundAuthorization.pauseGeneration);
   }
 
   if (fields.length === 0) return;
@@ -7772,6 +8768,197 @@ export function getDueTasks(): ScheduledTask[] {
   `,
     )
     .all(now) as ScheduledTask[];
+}
+
+export interface ScheduledTaskOutboundDispatchClaim {
+  status: 'claimed' | 'already_claimed' | 'unavailable';
+  claimToken?: string;
+  runKey: string;
+}
+
+/** Atomically claim one exact scheduled occurrence before any provider call. */
+export function claimScheduledTaskOutboundDispatch(params: {
+  taskId: string;
+  runKey: string;
+  now?: Date;
+  claimToken?: string;
+}): ScheduledTaskOutboundDispatchClaim {
+  const claimToken = params.claimToken || randomUUID();
+  const claimedAt = (params.now || new Date()).toISOString();
+  const changed = db
+    .prepare(
+      `
+        UPDATE scheduled_tasks
+        SET outbound_dispatch_state = 'claimed',
+            outbound_dispatch_run_key = ?,
+            outbound_dispatch_claim_token = ?,
+            outbound_dispatch_claimed_at = ?,
+            outbound_dispatch_completed_at = NULL
+        WHERE id = ?
+          AND status = 'active'
+          AND next_run = ?
+          AND outbound_authorization_at IS NOT NULL
+          AND outbound_pause_generation IS NOT NULL
+          AND (
+            outbound_dispatch_run_key IS NULL
+            OR outbound_dispatch_run_key != ?
+          )
+      `,
+    )
+    .run(
+      params.runKey,
+      claimToken,
+      claimedAt,
+      params.taskId,
+      params.runKey,
+      params.runKey,
+    ).changes;
+  if (changed === 1) {
+    return { status: 'claimed', claimToken, runKey: params.runKey };
+  }
+  const current = db
+    .prepare(
+      `SELECT status, next_run, outbound_dispatch_state, outbound_dispatch_run_key
+       FROM scheduled_tasks WHERE id = ? LIMIT 1`,
+    )
+    .get(params.taskId) as
+    | {
+        status: ScheduledTask['status'];
+        next_run: string | null;
+        outbound_dispatch_state: ScheduledTask['outbound_dispatch_state'];
+        outbound_dispatch_run_key: string | null;
+      }
+    | undefined;
+  return {
+    status:
+      current?.status === 'active' &&
+      current.next_run === params.runKey &&
+      current.outbound_dispatch_run_key === params.runKey
+        ? 'already_claimed'
+        : 'unavailable',
+    runKey: params.runKey,
+  };
+}
+
+export function isScheduledTaskOutboundDispatchClaimCurrent(params: {
+  taskId: string;
+  runKey: string;
+  claimToken: string;
+}): boolean {
+  return Boolean(
+    db
+      .prepare(
+        `
+          SELECT 1
+          FROM scheduled_tasks
+          WHERE id = ?
+            AND status = 'active'
+            AND next_run = ?
+            AND outbound_dispatch_state = 'claimed'
+            AND outbound_dispatch_run_key = ?
+            AND outbound_dispatch_claim_token = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.taskId, params.runKey, params.runKey, params.claimToken),
+  );
+}
+
+/** Commit the receipt/result and advance the schedule in the same durable CAS. */
+export function completeScheduledTaskOutboundDispatch(params: {
+  taskId: string;
+  runKey: string;
+  claimToken: string;
+  nextRun: string | null;
+  lastResult: string;
+  now?: Date;
+}): boolean {
+  const completedAt = (params.now || new Date()).toISOString();
+  return (
+    db
+      .prepare(
+        `
+          UPDATE scheduled_tasks
+          SET next_run = ?,
+              last_run = ?,
+              last_result = ?,
+              status = CASE WHEN ? IS NULL THEN 'completed' ELSE status END,
+              outbound_dispatch_state = 'completed',
+              outbound_dispatch_claim_token = NULL,
+              outbound_dispatch_completed_at = ?
+          WHERE id = ?
+            AND status = 'active'
+            AND next_run = ?
+            AND outbound_dispatch_state = 'claimed'
+            AND outbound_dispatch_run_key = ?
+            AND outbound_dispatch_claim_token = ?
+        `,
+      )
+      .run(
+        params.nextRun,
+        completedAt,
+        params.lastResult,
+        params.nextRun,
+        completedAt,
+        params.taskId,
+        params.runKey,
+        params.runKey,
+        params.claimToken,
+      ).changes === 1
+  );
+}
+
+export function terminallyBlockScheduledTaskOutboundDispatch(params: {
+  taskId: string;
+  lastResult: string;
+  now?: Date;
+}): boolean {
+  const blockedAt = (params.now || new Date()).toISOString();
+  return (
+    db
+      .prepare(
+        `
+          UPDATE scheduled_tasks
+          SET next_run = NULL,
+              last_run = ?,
+              last_result = ?,
+              status = 'completed',
+              outbound_dispatch_state = 'blocked',
+              outbound_dispatch_claim_token = NULL,
+              outbound_dispatch_completed_at = ?
+          WHERE id = ?
+            AND status = 'active'
+        `,
+      )
+      .run(blockedAt, params.lastResult, blockedAt, params.taskId).changes === 1
+  );
+}
+
+/**
+ * A prior-process claim may have crossed the provider boundary. Never replay
+ * it on startup; quarantine the occurrence as unverified and require a newly
+ * authorized task instead.
+ */
+export function recoverClaimedScheduledTaskOutboundDispatches(
+  now: Date = new Date(),
+): number {
+  const recoveredAt = now.toISOString();
+  return db
+    .prepare(
+      `
+        UPDATE scheduled_tasks
+        SET next_run = NULL,
+            last_run = ?,
+            last_result = 'Scheduled self-thread delivery was left claimed by a prior process; delivery is unverified and automatic replay is blocked.',
+            status = 'completed',
+            outbound_dispatch_state = 'blocked',
+            outbound_dispatch_claim_token = NULL,
+            outbound_dispatch_completed_at = ?
+        WHERE status = 'active'
+          AND outbound_dispatch_state = 'claimed'
+      `,
+    )
+    .run(recoveredAt, recoveredAt).changes;
 }
 
 export function updateTaskAfterRun(
@@ -9027,10 +10214,52 @@ export function purgeExpiredAlexaConversationContexts(
   return result.changes;
 }
 
-export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
+export function upsertCompanionHandoff(
+  record: CompanionHandoffRecord,
+  options: { insertOnly?: boolean } = {},
+): boolean {
   assertValidGroupFolder(record.groupFolder);
-  db.prepare(
-    `
+  const conflictClause = options.insertOnly
+    ? 'ON CONFLICT(handoff_id) DO NOTHING'
+    : `ON CONFLICT(handoff_id) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        origin_channel = excluded.origin_channel,
+        target_channel = excluded.target_channel,
+        target_chat_jid = excluded.target_chat_jid,
+        capability_id = excluded.capability_id,
+        voice_summary = excluded.voice_summary,
+        rich_payload_json = excluded.rich_payload_json,
+        status = excluded.status,
+        requires_confirmation = excluded.requires_confirmation,
+        thread_id = excluded.thread_id,
+        task_id = excluded.task_id,
+        communication_thread_id = excluded.communication_thread_id,
+        communication_subject_ids_json = excluded.communication_subject_ids_json,
+        communication_life_thread_ids_json = excluded.communication_life_thread_ids_json,
+        last_communication_summary = excluded.last_communication_summary,
+        mission_id = excluded.mission_id,
+        mission_summary = excluded.mission_summary,
+        mission_suggested_actions_json = excluded.mission_suggested_actions_json,
+        mission_blockers_json = excluded.mission_blockers_json,
+        mission_step_focus_json = excluded.mission_step_focus_json,
+        knowledge_source_ids_json = excluded.knowledge_source_ids_json,
+        work_ref = excluded.work_ref,
+        followup_suggestions_json = excluded.followup_suggestions_json,
+        source_chat_jid = excluded.source_chat_jid,
+        source_message_id = excluded.source_message_id,
+        source_ingress_received_at = excluded.source_ingress_received_at,
+        outbound_authorization_at = excluded.outbound_authorization_at,
+        outbound_pause_generation = excluded.outbound_pause_generation,
+        provider_idempotency_key = excluded.provider_idempotency_key,
+        dispatch_started_at = excluded.dispatch_started_at,
+        delivered_message_id = excluded.delivered_message_id,
+        error_text = excluded.error_text,
+        created_at = excluded.created_at,
+        expires_at = excluded.expires_at,
+        updated_at = excluded.updated_at`;
+  const result = db
+    .prepare(
+      `
       INSERT INTO companion_handoffs (
         handoff_id,
         group_folder,
@@ -9056,73 +10285,61 @@ export function upsertCompanionHandoff(record: CompanionHandoffRecord): void {
         knowledge_source_ids_json,
         work_ref,
         followup_suggestions_json,
+        source_chat_jid,
+        source_message_id,
+        source_ingress_received_at,
+        outbound_authorization_at,
+        outbound_pause_generation,
+        provider_idempotency_key,
+        dispatch_started_at,
         delivered_message_id,
         error_text,
         created_at,
         expires_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(handoff_id) DO UPDATE SET
-        group_folder = excluded.group_folder,
-        origin_channel = excluded.origin_channel,
-        target_channel = excluded.target_channel,
-        target_chat_jid = excluded.target_chat_jid,
-        capability_id = excluded.capability_id,
-        voice_summary = excluded.voice_summary,
-        rich_payload_json = excluded.rich_payload_json,
-        status = excluded.status,
-        requires_confirmation = excluded.requires_confirmation,
-        thread_id = excluded.thread_id,
-        task_id = excluded.task_id,
-        communication_thread_id = excluded.communication_thread_id,
-        communication_subject_ids_json = excluded.communication_subject_ids_json,
-        communication_life_thread_ids_json = excluded.communication_life_thread_ids_json,
-        last_communication_summary = excluded.last_communication_summary,
-        mission_id = excluded.mission_id,
-        mission_summary = excluded.mission_summary,
-        mission_suggested_actions_json = excluded.mission_suggested_actions_json,
-        mission_blockers_json = excluded.mission_blockers_json,
-        mission_step_focus_json = excluded.mission_step_focus_json,
-        knowledge_source_ids_json = excluded.knowledge_source_ids_json,
-        work_ref = excluded.work_ref,
-        followup_suggestions_json = excluded.followup_suggestions_json,
-        delivered_message_id = excluded.delivered_message_id,
-        error_text = excluded.error_text,
-        created_at = excluded.created_at,
-        expires_at = excluded.expires_at,
-        updated_at = excluded.updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ${conflictClause}
     `,
-  ).run(
-    record.handoffId,
-    record.groupFolder,
-    record.originChannel,
-    record.targetChannel,
-    record.targetChatJid || null,
-    record.capabilityId || null,
-    record.voiceSummary,
-    record.richPayloadJson,
-    record.status,
-    record.requiresConfirmation ? 1 : 0,
-    record.threadId || null,
-    record.taskId || null,
-    record.communicationThreadId || null,
-    record.communicationSubjectIdsJson || null,
-    record.communicationLifeThreadIdsJson || null,
-    record.lastCommunicationSummary || null,
-    record.missionId || null,
-    record.missionSummary || null,
-    record.missionSuggestedActionsJson || null,
-    record.missionBlockersJson || null,
-    record.missionStepFocusJson || null,
-    record.knowledgeSourceIdsJson || null,
-    record.workRef || null,
-    record.followupSuggestionsJson || null,
-    record.deliveredMessageId || null,
-    record.errorText || null,
-    record.createdAt,
-    record.expiresAt,
-    record.updatedAt,
-  );
+    )
+    .run(
+      record.handoffId,
+      record.groupFolder,
+      record.originChannel,
+      record.targetChannel,
+      record.targetChatJid || null,
+      record.capabilityId || null,
+      record.voiceSummary,
+      record.richPayloadJson,
+      record.status,
+      record.requiresConfirmation ? 1 : 0,
+      record.threadId || null,
+      record.taskId || null,
+      record.communicationThreadId || null,
+      record.communicationSubjectIdsJson || null,
+      record.communicationLifeThreadIdsJson || null,
+      record.lastCommunicationSummary || null,
+      record.missionId || null,
+      record.missionSummary || null,
+      record.missionSuggestedActionsJson || null,
+      record.missionBlockersJson || null,
+      record.missionStepFocusJson || null,
+      record.knowledgeSourceIdsJson || null,
+      record.workRef || null,
+      record.followupSuggestionsJson || null,
+      record.sourceChatJid || null,
+      record.sourceMessageId || null,
+      record.sourceIngressReceivedAt || null,
+      record.outboundAuthorizationAt || null,
+      record.outboundPauseGeneration ?? null,
+      record.providerIdempotencyKey || null,
+      record.dispatchStartedAt || null,
+      record.deliveredMessageId || null,
+      record.errorText || null,
+      record.createdAt,
+      record.expiresAt,
+      record.updatedAt,
+    );
+  return result.changes === 1;
 }
 
 export function getCompanionHandoff(
@@ -9163,6 +10380,13 @@ export function getCompanionHandoff(
         knowledge_source_ids_json: string | null;
         work_ref: string | null;
         followup_suggestions_json: string | null;
+        source_chat_jid: string | null;
+        source_message_id: string | null;
+        source_ingress_received_at: string | null;
+        outbound_authorization_at: string | null;
+        outbound_pause_generation: number | null;
+        provider_idempotency_key: string | null;
+        dispatch_started_at: string | null;
         delivered_message_id: string | null;
         error_text: string | null;
         created_at: string;
@@ -9197,12 +10421,78 @@ export function getCompanionHandoff(
     knowledgeSourceIdsJson: row.knowledge_source_ids_json,
     workRef: row.work_ref,
     followupSuggestionsJson: row.followup_suggestions_json,
+    sourceChatJid: row.source_chat_jid,
+    sourceMessageId: row.source_message_id,
+    sourceIngressReceivedAt: row.source_ingress_received_at,
+    outboundAuthorizationAt: row.outbound_authorization_at,
+    outboundPauseGeneration: row.outbound_pause_generation,
+    providerIdempotencyKey: row.provider_idempotency_key,
+    dispatchStartedAt: row.dispatch_started_at,
     deliveredMessageId: row.delivered_message_id,
     errorText: row.error_text,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     updatedAt: row.updated_at,
   };
+}
+
+export function getCompanionHandoffByProviderIdempotencyKey(
+  providerIdempotencyKey: string,
+): CompanionHandoffRecord | undefined {
+  const normalizedKey = providerIdempotencyKey.trim();
+  if (!normalizedKey) return undefined;
+  const row = db
+    .prepare(
+      `
+        SELECT handoff_id
+        FROM companion_handoffs
+        WHERE provider_idempotency_key = ?
+        LIMIT 1
+      `,
+    )
+    .get(normalizedKey) as { handoff_id: string } | undefined;
+  return row ? getCompanionHandoff(row.handoff_id) : undefined;
+}
+
+/**
+ * Atomically cross the durable write-ahead boundary for one ingress-bound
+ * BlueBubbles handoff. Only the caller that changes queued -> unverified may
+ * contact the provider; concurrent processes observe the terminal row.
+ */
+export function beginIngressBoundCompanionHandoffDispatch(params: {
+  handoffId: string;
+  targetChatJid: string;
+  dispatchStartedAt: string;
+  errorText: string;
+}): boolean {
+  return (
+    db
+      .prepare(
+        `
+          UPDATE companion_handoffs
+          SET status = 'delivery_unverified',
+              dispatch_started_at = ?,
+              error_text = ?,
+              updated_at = ?
+          WHERE handoff_id = ?
+            AND target_chat_jid = ?
+            AND status = 'queued'
+            AND source_chat_jid IS NOT NULL
+            AND source_message_id IS NOT NULL
+            AND source_ingress_received_at IS NOT NULL
+            AND outbound_authorization_at IS NOT NULL
+            AND outbound_pause_generation IS NOT NULL
+            AND provider_idempotency_key IS NOT NULL
+        `,
+      )
+      .run(
+        params.dispatchStartedAt,
+        params.errorText,
+        params.dispatchStartedAt,
+        params.handoffId,
+        params.targetChatJid,
+      ).changes === 1
+  );
 }
 
 export function updateCompanionHandoff(
@@ -9212,6 +10502,7 @@ export function updateCompanionHandoff(
       CompanionHandoffRecord,
       | 'targetChatJid'
       | 'status'
+      | 'dispatchStartedAt'
       | 'deliveredMessageId'
       | 'errorText'
       | 'updatedAt'
@@ -9228,6 +10519,10 @@ export function updateCompanionHandoff(
         ? updates.targetChatJid
         : existing.targetChatJid,
     status: updates.status || existing.status,
+    dispatchStartedAt:
+      updates.dispatchStartedAt !== undefined
+        ? updates.dispatchStartedAt
+        : existing.dispatchStartedAt,
     deliveredMessageId:
       updates.deliveredMessageId !== undefined
         ? updates.deliveredMessageId
@@ -12056,6 +13351,13 @@ export function listCommunicationSignalsForThread(
       urgency: row.urgency,
       createdAt: row.created_at,
     }));
+}
+
+export function hasCommunicationSignal(id: string): boolean {
+  if (!id) return false;
+  return Boolean(
+    db.prepare('SELECT 1 FROM communication_signals WHERE id = ?').get(id),
+  );
 }
 
 function mapPilotJourneyEventRow(row: {
@@ -42599,6 +43901,7 @@ export function stageDurableWorkApprovalPacketAtomic(params: {
         'needs_replan',
         'verifying',
         'delivery_unverified',
+        'verification_failed',
       ].includes(work.status) ||
       work.cognitiveRunId !== packet.runId ||
       work.targetScopeHash !== packet.targetScopeDigest ||
@@ -43343,6 +44646,7 @@ export function insertDurableResumeGrant(params: {
         'needs_replan',
         'verifying',
         'delivery_unverified',
+        'verification_failed',
       ].includes(work.status) ||
       grant.workVersion !== work.version ||
       grant.planVersion !== work.planVersion ||
@@ -43840,7 +45144,8 @@ export function consumeDurableResumeGrantAtomic(params: {
               next_action = ?
           WHERE work_id = ? AND version = ? AND plan_version = ?
             AND status IN ('ready', 'awaiting_approval', 'interrupted',
-                           'needs_replan', 'verifying', 'delivery_unverified')
+                           'needs_replan', 'verifying', 'delivery_unverified',
+                           'verification_failed')
         `,
       )
       .run(

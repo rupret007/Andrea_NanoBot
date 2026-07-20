@@ -38,12 +38,14 @@ Andrea uses these messaging levels:
    - use this when Andrea can help but should not pretend the draft is send-ready
 3. `approve_before_send`
    - default for suggested replies and drafts; a direct explicit owner send
-     imperative satisfies this approval at request time
+     imperative only stages the exact card, and a separate fresh approval is
+     required before provider dispatch
 4. `schedule_send`
    - `send later` queues a one-off scheduled send for an already approved, existing-thread BlueBubbles reply
    - Andrea revalidates the action at send time and only fires it if it is still safe and valid
 5. `delegated_safe_send`
-   - only for narrow BlueBubbles same-thread low-risk replies with an explicit saved rule
+   - retained only as legacy record metadata; it never grants external dispatch
+     authority and is normalized back to a separately approved send path
 6. `never_automate`
    - high-risk or privileged sends never cross into automation
 
@@ -60,13 +62,15 @@ The default BlueBubbles flow is:
 `send it` and `send it later` apply only to the current same-thread draft/action.
 They do not approve unrelated suggestions or older stale reviews.
 
-A separate host-owned execution flow handles direct imperatives such as
-`Text Travis Story: Dinner is ready` or `Have BlueBubbles send Travis Story a
-message saying ...`. The same utterance selects the exact recipient/body and is
-the explicit approval required by the runtime capability registry. It executes
-with at most one fenced provider attempt only when the tool is registered and
-exposed, the provider is healthy, and write permission is enabled. `Draft...`
-and `Prepare...` wording never enters that execution flow.
+A separate host-owned staging flow handles direct imperatives such as
+`Text Avery Example: Dinner is ready` or `Have BlueBubbles send Avery Example a
+message saying ...`. The initial utterance selects and presents the exact
+recipient/body but never authorizes provider dispatch. Only a separate fresh
+`Send now`/`send it` action bound to that presented card may enter the fenced
+send path. That approval checks current registration, provider health, write
+permission, pause generation, recipient, and exact body before at most one
+provider attempt. `Draft...` and `Prepare...` wording use the same non-sending
+card contract.
 
 ### Supported in V1
 
@@ -75,16 +79,18 @@ and `Prepare...` wording never enters that execution flow.
 - Telegram-rich management of a BlueBubbles reply draft
 - owner-requested Telegram-to-BlueBubbles delivery for an existing synced
   one-to-one conversation, exact BlueBubbles/macOS contact, or explicit
-  phone/email address, with the owner send imperative serving as approval and
-  the provider receipt bound to the immutable approved recipient/message
-  snapshot before success is reported
+  phone/email address, with the initial imperative staging an immutable
+  recipient/message snapshot and a separate fresh owner approval required
+  before dispatch; success is reported only from its provider receipt
 - self-companion follow-through visibility in Telegram
 
 ### Still guarded
 
-- all external sends require explicit owner authorization; a direct send
-  imperative supplies it, while a staged draft needs a later send decision
-- delegated auto-send is only allowed for narrow low-risk BlueBubbles same-thread 1:1 replies
+- all external sends require a separate fresh owner authorization on the current
+  presented action; a direct send imperative stages the card but does not supply
+  dispatch approval
+- saved delegation rules may shape a draft, but never auto-send to an external
+  recipient or replace the separately presented fresh approval
 - high-risk emotional, calendar, money, medical, or commitment-changing messages stay draft/approval-first
 - group and ambiguous recipients fail closed; first-contact delivery uses one
   fenced provider POST and verify-before-resend handling
@@ -124,15 +130,16 @@ The registered main Telegram chat can also start a new message to an existing
 synced one-to-one BlueBubbles conversation, an exact contact, or an explicit
 address. For example:
 
-- `Text Travis Story: Dinner is ready.`
-- `Send a text message to Travis Story saying Dinner is ready.`
+- `Text Avery Example: Dinner is ready.`
+- `Send a text message to Avery Example saying Dinner is ready.`
 - `Text +1 202 555 0123: Dinner is ready.`
 
-Andrea resolves the exact conversation/contact/address and executes one send
-when the owner used an explicit send imperative. That utterance is the fresh
-approval; it is not followed by a redundant confirmation. `Draft a message...`
-or `Prepare a message...` instead creates the recipient-bound draft and action
-controls without sending. A first-contact message is never queued for later.
+Andrea resolves the exact conversation/contact/address and displays one
+recipient-bound action card without sending. The owner must then use that
+card's `Send now` control or say `send it` as a separate fresh approval.
+`Draft a message...`, `Prepare a message...`, and direct imperatives therefore
+all begin with review controls. A first-contact message is never queued for
+later.
 
 Only the registered main Telegram chat or configured Messages self-thread can
 create or approve this action. Unknown or ambiguous names fail closed; Andrea
@@ -142,7 +149,7 @@ the exact phone/email. BlueBubbles contact hydration may attach a derived
 display name to an existing local chat record, but it does not store contact
 cards, avatars, or a second address-book archive. For a first contact, only the
 selected recipient name/address pair enters the normal message-action record.
-After explicit authorization, Andrea permits one fenced BlueBubbles
+After the separate fresh authorization, Andrea permits one fenced BlueBubbles
 `/api/v1/chat/new` POST for that action. It requires both the created chat
 identifier and message receipt before marking
 the action sent. Before the network call, it durably enters a verify-before-

@@ -1,10 +1,20 @@
 import { buildAgentOSReport } from './agent-os.js';
+import {
+  compileAdaptiveDurablePlan,
+  createAdaptiveDurableWork,
+  type AdaptiveDurableCompiledPlan,
+  type AdaptiveDurableNodeBinding,
+  type AdaptiveDurableWorkCreationResult,
+} from './adaptive-cognition-durable-adapter.js';
+import { advanceAdaptiveCognition } from './adaptive-cognition-engine.js';
 import type { AndreaPlatformProviderCouncilResult } from './andrea-platform-bridge.js';
 import type { CognitiveKernelResult } from './cognitive-kernel.js';
 import { redactCouncilText } from './council-safety.js';
+import { durableActionRequiresApproval } from './durable-action-policy.js';
 import {
   commitDurableCheckpointCAS,
   createOrLoadDurableWork,
+  durableScopeHash,
   shouldCreateDurableWork,
   stageDurableWorkApproval,
 } from './durable-work-continuity.js';
@@ -12,6 +22,8 @@ import type { IntegrationDoctorReport } from './integration-doctor.js';
 import {
   getAgentOSEpisode,
   getAgentRuntimeRun,
+  getDurableWorkCheckpoint,
+  getDurableWorkUnit,
   isDatabaseInitialized,
   listAgentOSEpisodeSteps,
   listAgentRuntimeCheckpoints,
@@ -82,6 +94,7 @@ import type {
   AgentRuntimeSpineReport,
   AgentRuntimeStep,
   AgentRuntimeWrite,
+  DurableWorkCheckpoint,
   DurableWorkUnit,
   CognitiveReplayPacket,
   TruthEngineReport,
@@ -104,6 +117,14 @@ export interface BeginAgentRuntimeSpineInput {
   generatedAt?: string;
   mode?: AgentRuntimeSpineMode;
   cognitiveRun?: CognitiveKernelResult | null;
+  /**
+   * Exact adaptive-node bindings supplied by a trusted planner/adapter. Runtime
+   * Spine never derives these contracts from goal text or tool names.
+   */
+  adaptiveDurable?: {
+    bindings: AdaptiveDurableNodeBinding[];
+    preparedWork?: AdaptiveDurableWorkCreationResult | null;
+  } | null;
   logicRun?: LogicKernelResult | null;
   providerCouncil?: AndreaPlatformProviderCouncilResult | null;
   persist?: boolean;
@@ -115,6 +136,12 @@ export interface AgentRuntimeSpineResult {
   worldReport: WorldModelDoctorReport;
   supervisor?: SupervisorKernelResult | null;
   durableWork?: DurableWorkUnit | null;
+  adaptiveDurable?: {
+    disposition: 'authoritative' | 'legacy_pinned';
+    compiled: AdaptiveDurableCompiledPlan | null;
+    checkpoint: DurableWorkCheckpoint | null;
+    nextNodeId: string | null;
+  } | null;
 }
 
 export interface RecordAgentRuntimeTruthInput {
@@ -606,8 +633,73 @@ export function beginAgentRuntimeSpineRun(
       ? `runtime:run:${input.turnId}`
       : runtimeHashId('runtime:run', `${generatedAt}|${taskFamily}|${goal}`),
   );
+  const durableTargetScopeKey =
+    input.targetScopeKey ||
+    `runtime:${input.channel || 'unknown'}:${input.chatId || input.turnId || runtimeRunId}`;
+  const adaptiveDurableRequest = input.adaptiveDurable || null;
+  let adaptiveCompiledPreview: AdaptiveDurableCompiledPlan | null = null;
+  let adaptiveNextNodeId: string | null = null;
+  let adaptiveNextBinding: AdaptiveDurableNodeBinding | null = null;
+  if (adaptiveDurableRequest) {
+    const frame = input.cognitiveRun?.taskGraph.adaptiveFrame;
+    const graph = input.cognitiveRun?.taskGraph.adaptivePlan;
+    if (!input.cognitiveRun?.run.runId || !frame || !graph) {
+      throw new Error(
+        'Adaptive durable Runtime Spine work requires the canonical cognitive graph.',
+      );
+    }
+    if (!input.targetScopeKey?.trim()) {
+      throw new Error(
+        'Adaptive durable Runtime Spine work requires an exact target scope.',
+      );
+    }
+    const planVersion =
+      adaptiveDurableRequest.preparedWork?.work.planVersion || 1;
+    adaptiveCompiledPreview = compileAdaptiveDurablePlan({
+      frame,
+      graph,
+      bindings: adaptiveDurableRequest.bindings,
+      targetScopeKey: durableTargetScopeKey,
+      planVersion,
+    });
+    const directive = advanceAdaptiveCognition({
+      frame,
+      graph,
+      beliefs: input.cognitiveRun.taskGraph.adaptiveBeliefs || [],
+      evidence: input.cognitiveRun.taskGraph.adaptiveEvidence || [],
+      now: () => generatedAt,
+    });
+    const awaitingApprovalNodes = directive.result.graph.nodes.filter(
+      (node) =>
+        ['act', 'recover'].includes(node.kind) &&
+        node.status === 'awaiting_approval',
+    );
+    if (!directive.node && awaitingApprovalNodes.length > 1) {
+      throw new Error(
+        'Adaptive durable Runtime Spine work has an ambiguous approval node.',
+      );
+    }
+    const nextNode = directive.node || awaitingApprovalNodes[0] || null;
+    adaptiveNextNodeId = nextNode?.nodeId || null;
+    if (nextNode) {
+      adaptiveNextBinding =
+        adaptiveDurableRequest.bindings.find(
+          (binding) => binding.nodeId === nextNode.nodeId,
+        ) || null;
+      if (!adaptiveNextBinding) {
+        throw new Error(
+          'Adaptive durable Runtime Spine work lacks the exact next-node binding.',
+        );
+      }
+    }
+  }
   const mutatingActionClass = classifyRuntimeMutatingAction(goal);
-  const needsApproval = mutatingActionClass !== null;
+  const needsApproval = adaptiveDurableRequest
+    ? Boolean(
+        adaptiveNextBinding &&
+        durableActionRequiresApproval(adaptiveNextBinding.durableActionClass),
+      )
+    : mutatingActionClass !== null;
   const linkedEpisode = linkedAgentOSEpisode({
     runtimeRunId,
     generatedAt,
@@ -618,18 +710,18 @@ export function beginAgentRuntimeSpineRun(
     cognitiveRun: input.cognitiveRun || null,
     persist,
   });
-  const durableTargetScopeKey =
-    input.targetScopeKey ||
-    `runtime:${input.channel || 'unknown'}:${input.chatId || input.turnId || runtimeRunId}`;
   const hasExactMutatingTarget = Boolean(input.targetScopeKey?.trim());
-  const durableWork =
+  const durableWorkEligible =
     persist &&
     shouldCreateDurableWork({
       taskFamily,
       requestRoute: input.requestRoute,
       approvalRequired: needsApproval,
-      explicitlyDurable: input.explicitlyDurable,
-    })
+      explicitlyDurable:
+        input.explicitlyDurable || Boolean(adaptiveDurableRequest),
+    });
+  let durableWork =
+    durableWorkEligible && !adaptiveDurableRequest
       ? createOrLoadDurableWork({
           originTurnId: input.turnId || runtimeRunId,
           authorizedSurface: input.channel || 'system',
@@ -781,70 +873,230 @@ export function beginAgentRuntimeSpineRun(
     },
     3200,
   );
-  const durableCheckpoint = durableWork
-    ? commitDurableCheckpointCAS({
-        workId: durableWork.workId,
-        expectedWorkVersion: durableWork.version,
-        runtimeCheckpointId: checkpoint.checkpointId,
-        // World, goal, and guardrail evidence is linked below as checkpoint
-        // dependencies. It is not predeclared as completed execution work:
-        // terminal durable nodes require their own verified effect receipts.
-        completedNodeIds: [],
-        pendingNodeIds: needsApproval
-          ? ['approval', 'tool_step', 'verification', 'outcome']
-          : ['tool_step', 'verification', 'outcome'],
-        uncertainNodeIds: [],
-        dependencyIds: [
-          worldReport.snapshot.snapshotId,
-          linkedEpisode.episodeId,
-          input.cognitiveRun?.run.runId || '',
-        ].filter(Boolean),
-        worldSignals: {
-          fresh: [worldReport.snapshot.snapshotId],
-          stale: [],
-          missing: worldReport.verificationNeeds
-            .filter((need) => need.status !== 'resolved')
-            .map((need) => need.needId),
-        },
-        executorScopeKey: `runtime-spine:${mode}`,
-        targetScopeKey: durableTargetScopeKey,
-        verificationRequirementIds: ['truth_audit', 'postcondition'],
-        retryBudget: 3,
-        attemptsUsed: 0,
-        stopConditionIds: [
-          'approval_boundary',
-          'terminal_runtime_error',
-          'retry_budget',
-        ],
-        recoveryPolicy: needsApproval
-          ? 'approval_required'
-          : 'inspect_then_resume',
-        nextSafeAction: needsApproval
-          ? 'Revalidate the target and approval before any mutating continuation.'
-          : 'Execute only the next dependency-ready node and verify it.',
-        status: needsApproval ? 'interrupted' : 'open',
-        now: generatedAt,
-      })
+  let adaptiveDurableState: AgentRuntimeSpineResult['adaptiveDurable'] = null;
+  let durableCheckpoint: {
+    work: DurableWorkUnit;
+    checkpoint: DurableWorkCheckpoint;
+  } | null = null;
+  if (adaptiveDurableRequest) {
+    if (!durableWorkEligible || !adaptiveCompiledPreview) {
+      throw new Error(
+        'Adaptive durable Runtime Spine work requires initialized durable storage.',
+      );
+    }
+    const prepared = adaptiveDurableRequest.preparedWork;
+    if (prepared) {
+      const currentWork = getDurableWorkUnit(prepared.work.workId);
+      const currentCheckpoint = currentWork?.checkpointHeadId
+        ? getDurableWorkCheckpoint(currentWork.checkpointHeadId)
+        : null;
+      if (
+        !currentWork ||
+        !currentCheckpoint ||
+        currentWork.cognitiveRunId !== input.cognitiveRun?.run.runId ||
+        currentWork.planId !== adaptiveCompiledPreview.plan.planId ||
+        currentWork.targetScopeHash !==
+          durableScopeHash('target', durableTargetScopeKey) ||
+        currentCheckpoint.workId !== currentWork.workId ||
+        currentCheckpoint.planVersion !== currentWork.planVersion ||
+        prepared.compiled.plan.planId !== adaptiveCompiledPreview.plan.planId ||
+        prepared.compiled.plan.planVersion !== currentWork.planVersion ||
+        JSON.stringify(prepared.compiled.plan.nodes) !==
+          JSON.stringify(adaptiveCompiledPreview.plan.nodes)
+      ) {
+        throw new Error(
+          'Prepared adaptive durable work no longer matches Runtime Spine scope.',
+        );
+      }
+      durableWork = currentWork;
+      durableCheckpoint = { work: currentWork, checkpoint: currentCheckpoint };
+      adaptiveDurableState = {
+        disposition: 'authoritative',
+        compiled: adaptiveCompiledPreview,
+        checkpoint: currentCheckpoint,
+        nextNodeId: adaptiveNextNodeId,
+      };
+    } else {
+      try {
+        const created = createAdaptiveDurableWork({
+          originTurnId: input.turnId || runtimeRunId,
+          authorizedSurface: input.channel || 'system',
+          binding: {
+            ownerId:
+              input.actorId || input.chatId || input.groupFolder || 'system',
+            chatId: input.chatId || input.turnId || runtimeRunId,
+            groupId: input.groupFolder || 'main',
+            channel: input.channel || 'system',
+            targetScopeKey: durableTargetScopeKey,
+          },
+          goalSummary: goal,
+          cognitiveRunId: input.cognitiveRun!.run.runId,
+          runtimeRunId,
+          agentOSEpisodeId: linkedEpisode.episodeId,
+          frame: input.cognitiveRun!.taskGraph.adaptiveFrame!,
+          graph: input.cognitiveRun!.taskGraph.adaptivePlan!,
+          bindings: adaptiveDurableRequest.bindings,
+          executorScopeKey: `runtime-spine:${mode}`,
+          targetScopeKey: durableTargetScopeKey,
+          runtimeCheckpointId: checkpoint.checkpointId,
+          now: generatedAt,
+        });
+        durableWork = created.work;
+        durableCheckpoint = {
+          work: created.work,
+          checkpoint: created.checkpoint,
+        };
+        adaptiveDurableState = {
+          disposition: 'authoritative',
+          compiled: created.compiled,
+          checkpoint: created.checkpoint,
+          nextNodeId: adaptiveNextNodeId,
+        };
+      } catch (error) {
+        const pinned = createOrLoadDurableWork({
+          originTurnId: input.turnId || runtimeRunId,
+          authorizedSurface: input.channel || 'system',
+          binding: {
+            ownerId:
+              input.actorId || input.chatId || input.groupFolder || 'system',
+            chatId: input.chatId || input.turnId || runtimeRunId,
+            groupId: input.groupFolder || 'main',
+            channel: input.channel || 'system',
+            targetScopeKey: durableTargetScopeKey,
+          },
+          goalSummary: goal,
+          status: needsApproval ? 'awaiting_approval' : 'ready',
+          runtimeRunId,
+          agentOSEpisodeId: linkedEpisode.episodeId,
+          cognitiveRunId: input.cognitiveRun!.run.runId,
+          nextAction: 'Continue only through the already-pinned durable plan.',
+          now: generatedAt,
+        });
+        if (
+          pinned.created ||
+          pinned.work.planId === adaptiveCompiledPreview.plan.planId
+        ) {
+          throw error;
+        }
+        durableWork = pinned.work;
+        const pinnedCheckpoint = pinned.work.checkpointHeadId
+          ? getDurableWorkCheckpoint(pinned.work.checkpointHeadId)
+          : null;
+        durableCheckpoint = pinnedCheckpoint
+          ? { work: pinned.work, checkpoint: pinnedCheckpoint }
+          : null;
+        adaptiveDurableState = {
+          disposition: 'legacy_pinned',
+          compiled: null,
+          checkpoint: pinnedCheckpoint,
+          nextNodeId: null,
+        };
+      }
+    }
+  }
+  if (!durableCheckpoint && durableWork) {
+    const existingCheckpoint = durableWork.checkpointHeadId
+      ? getDurableWorkCheckpoint(durableWork.checkpointHeadId)
+      : null;
+    durableCheckpoint = existingCheckpoint
+      ? { work: durableWork, checkpoint: existingCheckpoint }
+      : commitDurableCheckpointCAS({
+          workId: durableWork.workId,
+          expectedWorkVersion: durableWork.version,
+          runtimeCheckpointId: checkpoint.checkpointId,
+          // World, goal, and guardrail evidence is linked below as checkpoint
+          // dependencies. It is not predeclared as completed execution work:
+          // terminal durable nodes require their own verified effect receipts.
+          completedNodeIds: [],
+          pendingNodeIds: needsApproval
+            ? ['approval', 'tool_step', 'verification', 'outcome']
+            : ['tool_step', 'verification', 'outcome'],
+          uncertainNodeIds: [],
+          dependencyIds: [
+            worldReport.snapshot.snapshotId,
+            linkedEpisode.episodeId,
+            input.cognitiveRun?.run.runId || '',
+          ].filter(Boolean),
+          worldSignals: {
+            fresh: [worldReport.snapshot.snapshotId],
+            stale: [],
+            missing: worldReport.verificationNeeds
+              .filter((need) => need.status !== 'resolved')
+              .map((need) => need.needId),
+          },
+          executorScopeKey: `runtime-spine:${mode}`,
+          targetScopeKey: durableTargetScopeKey,
+          verificationRequirementIds: ['truth_audit', 'postcondition'],
+          retryBudget: 3,
+          attemptsUsed: 0,
+          stopConditionIds: [
+            'approval_boundary',
+            'terminal_runtime_error',
+            'retry_budget',
+          ],
+          recoveryPolicy: needsApproval
+            ? 'approval_required'
+            : 'inspect_then_resume',
+          nextSafeAction: needsApproval
+            ? 'Revalidate the target and approval before any mutating continuation.'
+            : 'Execute only the next dependency-ready node and verify it.',
+          status: needsApproval ? 'interrupted' : 'open',
+          now: generatedAt,
+        });
+  }
+  const adaptiveNode = adaptiveNextNodeId
+    ? input.cognitiveRun?.taskGraph.adaptivePlan?.nodes.find(
+        (node) => node.nodeId === adaptiveNextNodeId,
+      ) || null
     : null;
   const durableApproval =
+    adaptiveDurableState?.disposition === 'authoritative' &&
     needsApproval &&
-    mutatingActionClass &&
-    hasExactMutatingTarget &&
+    adaptiveNextBinding &&
+    adaptiveNode &&
     durableCheckpoint &&
-    input.cognitiveRun?.run.runId
+    input.cognitiveRun?.run.runId &&
+    durableCheckpoint.work.status !== 'awaiting_approval'
       ? stageDurableWorkApproval({
           workId: durableCheckpoint.work.workId,
           expectedWorkVersion: durableCheckpoint.work.version,
           cognitiveRunId: input.cognitiveRun.run.runId,
-          actionClass: mutatingActionClass,
+          actionClass: adaptiveNextBinding.durableActionClass,
+          nodeId: adaptiveNode.nodeId,
           summary: redactCouncilText(
-            `Approve one exact ${mutatingActionClass.replaceAll('_', ' ')} action: ${goal}`,
+            `Approve exact adaptive action ${adaptiveNode.actionId || adaptiveNode.nodeId}: ${adaptiveNode.title}`,
             620,
           ),
           checkpointId: durableCheckpoint.checkpoint.durableCheckpointId,
           now: generatedAt,
         })
-      : null;
+      : adaptiveDurableState?.disposition === 'authoritative'
+        ? null
+        : needsApproval &&
+            mutatingActionClass &&
+            hasExactMutatingTarget &&
+            durableCheckpoint &&
+            input.cognitiveRun?.run.runId
+          ? stageDurableWorkApproval({
+              workId: durableCheckpoint.work.workId,
+              expectedWorkVersion: durableCheckpoint.work.version,
+              cognitiveRunId: input.cognitiveRun.run.runId,
+              actionClass: mutatingActionClass,
+              summary: redactCouncilText(
+                `Approve one exact ${mutatingActionClass.replaceAll('_', ' ')} action: ${goal}`,
+                620,
+              ),
+              checkpointId: durableCheckpoint.checkpoint.durableCheckpointId,
+              now: generatedAt,
+            })
+          : null;
+  if (adaptiveDurableState?.disposition === 'authoritative') {
+    adaptiveDurableState = {
+      ...adaptiveDurableState,
+      checkpoint:
+        durableApproval?.checkpoint || adaptiveDurableState.checkpoint,
+    };
+  }
   const worldEvidencePacket = makeRuntimeEvidencePacket({
     runtimeRunId,
     generatedAt,
@@ -1148,6 +1400,7 @@ export function beginAgentRuntimeSpineRun(
     worldReport,
     durableWork:
       durableApproval?.work || durableCheckpoint?.work || durableWork,
+    adaptiveDurable: adaptiveDurableState,
     report: persist
       ? buildAgentRuntimeSpineReport({ runtimeRunId, generatedAt })
       : runtimeReportFromParts({

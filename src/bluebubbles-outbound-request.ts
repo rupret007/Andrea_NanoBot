@@ -13,14 +13,16 @@ import {
   parseAssistantMessageActionIntent,
 } from './assistant-action-intent.js';
 import {
-  formatRuntimeCapabilityEvaluation,
   formatRuntimeCapabilityOutcome,
-  runtimeCapabilityRegistry,
   type RuntimeCapabilityFacts,
   type RuntimeCapabilityRegistry,
 } from './runtime-capability-registry.js';
 import { isTrustedOwnerReviewSurface } from './trusted-owner-review-surface.js';
-import type { MessageActionRecord, RegisteredGroup } from './types.js';
+import type {
+  MessageActionRecentTextReviewLink,
+  MessageActionRecord,
+  RegisteredGroup,
+} from './types.js';
 
 type OutboundRequestChannel = 'telegram' | 'bluebubbles';
 
@@ -77,6 +79,8 @@ export interface StageBlueBubblesOutboundRequestParams {
     | { state: 'resolved'; target: ResolvedBlueBubblesThreadTarget }
     | { state: 'ambiguous'; matches: ResolvedBlueBubblesThreadTarget[] }
     | { state: 'missing' };
+  /** Inert provenance for exact recent-review lifecycle bookkeeping. */
+  recentTextReview?: MessageActionRecentTextReviewLink | null;
   now?: Date;
 }
 
@@ -109,6 +113,105 @@ function buildLegacyInboundSourceKey(params: {
   inboundMessageId: string;
 }): string {
   return `outbound-message:${params.channel}:${params.chatJid}:${params.inboundMessageId}`;
+}
+
+function normalizeRecipientReplyLabel(
+  value: string | null | undefined,
+): string {
+  const normalized = (value || '')
+    .normalize('NFKC')
+    .replace(/\p{Cc}/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (normalized.length <= 160) return normalized;
+  return `${normalized.slice(0, 157).trimEnd()}...`;
+}
+
+function quoteRecipientReplyLabel(value: string | null | undefined): string {
+  const normalized = normalizeRecipientReplyLabel(value) || 'that recipient';
+  return `"${normalized.replace(/"/g, "'")}"`;
+}
+
+function normalizeExactRecipientAddress(
+  value: string | null | undefined,
+): string | null {
+  const normalized = value?.trim();
+  if (!normalized || normalized.length > 254) return null;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    return normalized.toLowerCase();
+  }
+  if (!/^\+?[\d\s().-]+$/.test(normalized)) return null;
+  const digits = normalized.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) return null;
+  return normalized;
+}
+
+function directRecipientAddress(
+  target: ResolvedBlueBubblesThreadTarget,
+): string | null {
+  const explicitAddress = normalizeExactRecipientAddress(
+    target.blueBubblesCreateChatAddress,
+  );
+  if (explicitAddress) return explicitAddress;
+  const chatGuid = target.chatJid.replace(/^bb:/i, '');
+  return normalizeExactRecipientAddress(/^[^;]+;-;(.+)$/.exec(chatGuid)?.[1]);
+}
+
+function isInternalBlueBubblesIdentifier(value: string): boolean {
+  return /^(?:bb:)?[^;\s]+;[+-];/i.test(value);
+}
+
+function buildRecipientRepromptChoices(
+  matches: ResolvedBlueBubblesThreadTarget[],
+): Array<{ displayLabel: string; exactTarget: string | null }> {
+  const displayNames = matches.map((match) =>
+    normalizeRecipientReplyLabel(match.displayName),
+  );
+  const displayNameCounts = new Map<string, number>();
+  for (const displayName of displayNames) {
+    const key = displayName.toLowerCase();
+    if (!key) continue;
+    displayNameCounts.set(key, (displayNameCounts.get(key) || 0) + 1);
+  }
+
+  return matches.map((match, index) => {
+    const displayName = displayNames[index] || '';
+    const address = directRecipientAddress(match);
+    const displayNameIsUnique =
+      Boolean(displayName) &&
+      displayNameCounts.get(displayName.toLowerCase()) === 1;
+    const displayNameCanBeRetyped =
+      displayNameIsUnique &&
+      !isInternalBlueBubblesIdentifier(displayName) &&
+      !/[\r\n:]/.test(displayName);
+    // Live contact candidates carry their exact address because their display
+    // label (for example, "Alex at +1 ...") is explanatory, not itself a
+    // resolvable contact query. Stored fuzzy matches can safely use a unique
+    // full conversation name, minimizing unnecessary address disclosure.
+    const exactTarget = match.blueBubblesCreateChatAddress
+      ? address
+      : displayNameCanBeRetyped
+        ? displayName
+        : address;
+    const safeDisplay =
+      displayName && !isInternalBlueBubblesIdentifier(displayName)
+        ? displayName
+        : exactTarget || `Messages recipient ${index + 1}`;
+    return { displayLabel: safeDisplay, exactTarget };
+  });
+}
+
+function freshRecipientRequestNextStep(params: {
+  draftText: string;
+  exactTarget?: string | null;
+  exampleOnly?: boolean;
+}): string {
+  const target =
+    params.exactTarget || '[exact contact name, phone number, or email]';
+  const lead = params.exampleOnly
+    ? 'Then repeat the complete request with one exact choice and the same body, for example:'
+    : 'Repeat the complete request with an exact recipient, keeping the body unchanged:';
+  return `${lead}\nText ${target}: ${params.draftText}\n\nThat fresh request will only stage an unsent recipient-bound card. Review that card, then use a separate fresh \`Send now\` or \`send it\` approval. I did not create or send anything.`;
 }
 
 /**
@@ -233,10 +336,9 @@ export async function readTerminalBlueBubblesOutboundReplay(
 }
 
 /**
- * Non-executing draft-card builder. The production dispatcher calls this only
- * for `draft`/`prepare` semantics; it remains exported for review workflows and
- * tests that deliberately stage an explicit request. The exact target and body
- * are persisted together so a later approval cannot drift.
+ * Non-executing recipient/body card builder. Fresh `execute`, `draft`, and
+ * `prepare` wording all enter this boundary: the exact target and body are
+ * persisted together so a later, separate approval cannot drift.
  */
 export function stageBlueBubblesOutboundRequest(
   params: StageBlueBubblesOutboundRequestParams,
@@ -245,13 +347,16 @@ export function stageBlueBubblesOutboundRequest(
   if (
     actionIntent?.kind !== 'message_send' ||
     !['execute', 'draft', 'prepare'].includes(actionIntent.mode) ||
-    !actionIntent.targetLabel ||
+    (!actionIntent.targetLabel &&
+      params.recipientResolution?.state !== 'resolved') ||
     !actionIntent.content
   ) {
     return { handled: false };
   }
   const draftText = composeAssistantMessageContent(actionIntent);
   if (!draftText) return { handled: false };
+  const draftProvenance =
+    draftText === actionIntent.content ? ('owner_literal' as const) : undefined;
 
   if (
     !isTrustedOwnerReviewSurface({
@@ -271,22 +376,61 @@ export function stageBlueBubblesOutboundRequest(
 
   const resolution =
     params.recipientResolution ||
-    resolveBlueBubblesThreadTargetByName(actionIntent.targetLabel);
+    resolveBlueBubblesThreadTargetByName(actionIntent.targetLabel!);
   if (resolution.state === 'missing') {
     return {
       handled: true,
       state: 'missing_target',
-      replyText: `Andrea: I could not match "${actionIntent.targetLabel}" to an existing Messages conversation or exact BlueBubbles/macOS contact.\n\nUse the exact contact/conversation name or a phone/email address, like \`text Rad Dad: Dinner is ready.\` or \`text +1 202 555 0123: Dinner is ready.\` I did not create or send anything.`,
+      replyText: `Andrea: I could not match ${quoteRecipientReplyLabel(actionIntent.targetLabel)} to an existing Messages conversation or exact BlueBubbles/macOS contact.\n\n${freshRecipientRequestNextStep({ draftText })}`,
     };
   }
   if (resolution.state === 'ambiguous') {
-    const options = resolution.matches
-      .map((match) => match.displayName)
-      .join(', ');
+    const choices = buildRecipientRepromptChoices(resolution.matches);
+    if (choices.length === 0) {
+      return {
+        handled: true,
+        state: 'ambiguous_target',
+        replyText: `Andrea: I could not identify a usable Messages recipient for ${quoteRecipientReplyLabel(actionIntent.targetLabel)}, so I did not select one.\n\n${freshRecipientRequestNextStep({ draftText })}`,
+      };
+    }
+    if (choices.length === 1) {
+      const choice = choices[0]!;
+      const suggestion = choice.exactTarget
+        ? `If you mean ${quoteRecipientReplyLabel(choice.displayLabel)}, use this exact recipient:\n\n${freshRecipientRequestNextStep(
+            {
+              draftText,
+              exactTarget: choice.exactTarget,
+            },
+          )}`
+        : freshRecipientRequestNextStep({ draftText });
+      return {
+        handled: true,
+        state: 'ambiguous_target',
+        replyText: `Andrea: I found one possible Messages recipient for ${quoteRecipientReplyLabel(actionIntent.targetLabel)}, but it was not an exact match, so I did not select it.\n\n${suggestion}`,
+      };
+    }
+    const optionLines = choices
+      .map((choice, index) => {
+        const exactHint =
+          choice.exactTarget && choice.exactTarget !== choice.displayLabel
+            ? ` — use ${choice.exactTarget}`
+            : '';
+        return `${index + 1}. ${choice.displayLabel}${exactHint}`;
+      })
+      .join('\n');
+    const firstExactTarget = choices.find(
+      (choice) => choice.exactTarget,
+    )?.exactTarget;
     return {
       handled: true,
       state: 'ambiguous_target',
-      replyText: `Andrea: I found more than one Messages recipient that could be "${actionIntent.targetLabel}".\n\nRepeat the request with one exact name, phone number, or email from: ${options}. I did not create or send anything.`,
+      replyText: `Andrea: I found more than one Messages recipient that could be ${quoteRecipientReplyLabel(actionIntent.targetLabel)}, so I did not select one.\n\nChoose one exact recipient:\n${optionLines}\n\n${freshRecipientRequestNextStep(
+        {
+          draftText,
+          exactTarget: firstExactTarget,
+          exampleOnly: Boolean(firstExactTarget),
+        },
+      )}`,
     };
   }
 
@@ -303,20 +447,29 @@ export function stageBlueBubblesOutboundRequest(
     presentationChannel: params.channel,
     presentationChatJid: params.chatJid,
     sourceType: 'manual_prompt',
-    sourceKey: buildSourceKey({
-      channel: params.channel,
-      chatJid: params.chatJid,
-      inboundMessageId: params.inboundMessageId,
-      targetChatJid: target.chatJid,
-      draftText,
-    }),
+    sourceKey: (() => {
+      const baseSourceKey = buildSourceKey({
+        channel: params.channel,
+        chatJid: params.chatJid,
+        inboundMessageId: params.inboundMessageId,
+        targetChatJid: target.chatJid,
+        draftText,
+      });
+      return params.recentTextReview
+        ? `recent-text-review-bound:${params.recentTextReview.linkFingerprint}:${baseSourceKey}`
+        : baseSourceKey;
+    })(),
     sourceSummary: `Draft text message to ${target.displayName}.`,
+    draftProvenance,
     draftText,
     personName: target.displayName,
     threadTitle: target.displayName,
     communicationContext: 'general',
-    // This is the intentionally non-executing API. The execution API below
-    // treats a normalized send imperative as explicit approval instead.
+    communicationThreadId:
+      params.recentTextReview?.communicationThreadId || null,
+    recentTextReview: params.recentTextReview || null,
+    // The initial imperative selects the exact recipient/body only. A separate
+    // fresh Send now/send it action is always required for provider dispatch.
     forceApproval: true,
     targetOverride: {
       kind: 'external_thread',
@@ -344,9 +497,10 @@ export function stageBlueBubblesOutboundRequest(
 }
 
 /**
- * Executes a normalized owner send request through the same capability
- * contract used by planning and outcome wording. Draft/prepare wording stays
- * in the non-executing staging path.
+ * Handles a normalized owner send request. Historical terminal inbound actions
+ * are replayed as read-only delivery truth; every fresh request is staged as an
+ * exact recipient/body card and cannot dispatch until a separate fresh owner
+ * approval enters the message-action boundary.
  */
 export async function executeBlueBubblesOutboundRequest(
   params: ExecuteBlueBubblesOutboundRequestParams,
@@ -359,7 +513,7 @@ export async function executeBlueBubblesOutboundRequest(
   if (
     intent.mode !== 'execute' ||
     !intent.explicitlyAuthorizesExecution ||
-    !intent.targetLabel ||
+    (!intent.targetLabel && params.recipientResolution?.state !== 'resolved') ||
     !intent.content
   ) {
     return { handled: false };
@@ -384,145 +538,5 @@ export async function executeBlueBubblesOutboundRequest(
   const terminalReplay = await readTerminalBlueBubblesOutboundReplay(params);
   if (terminalReplay) return terminalReplay;
 
-  const capability = (
-    params.capabilityRegistry ?? runtimeCapabilityRegistry
-  ).evaluate(
-    {
-      capabilityId: intent.capabilityId,
-      action: 'send',
-      sourceChannel: params.channel,
-    },
-    params.capabilityFacts,
-  );
-  if (capability.state !== 'available') {
-    return {
-      handled: true,
-      state: capability.state,
-      replyText: `Andrea: ${formatRuntimeCapabilityEvaluation(capability)}`,
-    };
-  }
-
-  const resolution =
-    params.recipientResolution ||
-    resolveBlueBubblesThreadTargetByName(intent.targetLabel);
-  if (resolution.state === 'missing') {
-    return {
-      handled: true,
-      state: 'missing_target',
-      replyText: `Andrea: I could not match "${intent.targetLabel}" to one exact Messages conversation or contact. I did not dispatch anything.`,
-    };
-  }
-  if (resolution.state === 'ambiguous') {
-    return {
-      handled: true,
-      state: 'ambiguous_target',
-      replyText: `Andrea: ${formatRuntimeCapabilityOutcome({
-        state: 'ambiguous_entity',
-        capabilityId: intent.capabilityId,
-        entity: `the Messages recipient "${intent.targetLabel}"`,
-        candidates: resolution.matches.map((match) => match.displayName),
-      })}`,
-    };
-  }
-  if (resolution.target.isGroup) {
-    return {
-      handled: true,
-      state: 'unsupported_target',
-      replyText: `Andrea: "${resolution.target.displayName}" is a group conversation, not the exact one-to-one recipient required by this request. I did not dispatch anything.`,
-    };
-  }
-
-  const draftText = composeAssistantMessageContent(intent);
-  if (!draftText) {
-    return {
-      handled: true,
-      state: 'execution_failure',
-      action: createOrRefreshMessageActionFromDraft({
-        groupFolder: params.groupFolder,
-        presentationChannel: params.channel,
-        presentationChatJid: params.chatJid,
-        sourceType: 'manual_prompt',
-        sourceKey: buildSourceKey({
-          channel: params.channel,
-          chatJid: params.chatJid,
-          inboundMessageId: params.inboundMessageId,
-          targetChatJid: resolution.target.chatJid,
-          draftText: intent.content,
-        }),
-        draftText: intent.content,
-        forceApproval: true,
-        targetOverride: {
-          kind: 'external_thread',
-          chatJid: resolution.target.chatJid,
-          isGroup: false,
-          personName: resolution.target.displayName,
-        },
-        targetChannelOverride: 'bluebubbles',
-        now: params.now,
-      }),
-      replyText:
-        'Andrea: I could not produce a non-empty message body, so I did not dispatch anything.',
-    };
-  }
-
-  const target = resolution.target;
-  const action = createOrRefreshMessageActionFromDraft({
-    groupFolder: params.groupFolder,
-    presentationChannel: params.channel,
-    presentationChatJid: params.chatJid,
-    sourceType: 'manual_prompt',
-    sourceKey: buildSourceKey({
-      channel: params.channel,
-      chatJid: params.chatJid,
-      inboundMessageId: params.inboundMessageId,
-      targetChatJid: target.chatJid,
-      draftText,
-    }),
-    sourceSummary: `Explicitly authorized message to ${target.displayName}.`,
-    draftText,
-    personName: target.displayName,
-    threadTitle: target.displayName,
-    communicationContext: 'general',
-    explicitApproval: true,
-    targetOverride: {
-      kind: 'external_thread',
-      chatJid: target.chatJid,
-      threadId: null,
-      replyToMessageId: null,
-      isGroup: false,
-      personName: target.displayName,
-      ...(target.blueBubblesCreateChatAddress
-        ? {
-            blueBubblesCreateChatAddress: target.blueBubblesCreateChatAddress,
-          }
-        : {}),
-    },
-    targetChannelOverride: 'bluebubbles',
-    now: params.now,
-  });
-  const executed = await executeExplicitlyAuthorizedMessageAction(
-    action.messageActionId,
-    params.executionDeps,
-  );
-  const executedAction = executed.action || action;
-  const state =
-    executedAction.sendStatus === 'sent'
-      ? 'sent'
-      : executedAction.sendStatus === 'delivery_unverified'
-        ? 'delivery_unverified'
-        : 'execution_failure';
-  return {
-    handled: true,
-    state,
-    action: executedAction,
-    replyText:
-      executed.replyText ||
-      formatRuntimeCapabilityOutcome({
-        state:
-          state === 'delivery_unverified'
-            ? 'uncertain_outcome'
-            : 'execution_failure',
-        capabilityId: intent.capabilityId,
-      }),
-  };
+  return stageBlueBubblesOutboundRequest(params);
 }

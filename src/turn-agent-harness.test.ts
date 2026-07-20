@@ -264,6 +264,109 @@ describe('turn agent harness', () => {
     }
   });
 
+  it('uses the same adaptive graph as the authoritative live durable work', async () => {
+    vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'false');
+    vi.stubEnv('AGENT_RUNTIME_SPINE_MODE', 'assistive');
+    const { _initTestDatabase, _closeDatabase, getDurableWorkCheckpoint } =
+      await import('./db.js');
+    _initTestDatabase();
+    try {
+      const { beginTurnAgentHarness, verifyTurnAgentAdaptiveCompletion } =
+        await import('./turn-agent-harness.js');
+      const { adaptiveEvidence } =
+        await import('./adaptive-cognition-engine.js');
+      const context = await beginTurnAgentHarness({
+        turnId: 'turn-adaptive-authoritative-live',
+        channel: 'telegram',
+        groupFolder: 'main',
+        actorId: 'owner-adaptive-live',
+        chatId: 'chat-adaptive-live',
+        text: 'What am I forgetting tonight? Give me one grounded next step.',
+        requestRoute: 'direct_assistant',
+      });
+
+      const adaptiveGraph = context?.cognitiveRun?.taskGraph.adaptivePlan;
+      const durable = context?.runtimeSpine?.durableWork;
+      expect(context?.runtimeSpine?.adaptiveDurable?.disposition).toBe(
+        'authoritative',
+      );
+      expect(durable?.planId).toBe(adaptiveGraph?.graphId);
+      expect(
+        context?.contextCompile.metadata.adaptive_durable_disposition,
+      ).toBe('authoritative');
+      expect(context?.cognitiveRun?.executionSteps.length).toBeGreaterThan(0);
+      const checkpoint = durable?.checkpointHeadId
+        ? getDurableWorkCheckpoint(durable.checkpointHeadId)
+        : null;
+      const durableNodeIds = JSON.parse(
+        checkpoint?.completedNodeIdsJson || '[]',
+      ) as string[];
+      expect(durableNodeIds.length).toBeGreaterThan(0);
+      expect(
+        durableNodeIds.every((nodeId) => nodeId.startsWith('adaptive:node:')),
+      ).toBe(true);
+      expect(durableNodeIds).not.toContain('tool_step');
+      expect(durable?.planVersion).toBe(1);
+      const executedToolIds =
+        context?.cognitiveRun?.executionSteps.map((step) => step.toolId) || [];
+      expect(new Set(executedToolIds).size).toBe(executedToolIds.length);
+      expect(
+        context?.cognitiveRun?.adaptiveRun?.verification.completionAuthorized,
+      ).toBe(false);
+      const frame = context?.cognitiveRun?.taskGraph.adaptiveFrame;
+      const completionRef = frame?.contextRefs.find((ref) =>
+        ref.startsWith('completion_criterion:'),
+      );
+      const outcomeRef = frame?.contextRefs.find((ref) =>
+        ref.startsWith('runtime_outcome_criterion:'),
+      );
+      const completionCriterionId = completionRef?.slice(
+        'completion_criterion:'.length,
+      );
+      const outcomeCriterionId = outcomeRef?.slice(
+        'runtime_outcome_criterion:'.length,
+      );
+      const criterionIds = [outcomeCriterionId, completionCriterionId].filter(
+        (value): value is string => Boolean(value),
+      );
+      const targetPrefix = completionCriterionId
+        ? `target:${completionCriterionId}:`
+        : '';
+      const target = targetPrefix
+        ? frame?.contextRefs
+            .find((ref) => ref.startsWith(targetPrefix))
+            ?.slice(targetPrefix.length)
+        : null;
+      expect(frame && criterionIds.length === 2 && target).toBeTruthy();
+      const durableTerminalVerified = await verifyTurnAgentAdaptiveCompletion({
+        context,
+        completionEvidence: [
+          adaptiveEvidence({
+            evidenceId: 'adaptive:test:turn-terminal-verification',
+            createdAt: new Date().toISOString(),
+            evidenceClass: 'observed',
+            origin: 'live',
+            source: 'verified_turn_test_adapter',
+            claim: 'The exact turn outcome passed its independent check.',
+            subject: target!,
+            predicate: 'verified_turn_outcome',
+            value: 'verified',
+            confidence: 0.98,
+            freshness: 'fresh',
+            scope: frame!.authority.actorScope,
+            verification: 'verified',
+            supportsCriterionIds: criterionIds,
+            provenanceRefs: ['verification_receipt:turn_terminal_verification'],
+          }),
+        ],
+      });
+      expect(durableTerminalVerified).toBe(true);
+      expect(context?.runtimeSpine?.durableWork?.status).toBe('completed');
+    } finally {
+      _closeDatabase();
+    }
+  });
+
   it('compiles memory and skill metadata before platform deliberation', async () => {
     vi.stubEnv('ANDREA_PLATFORM_COORDINATOR_ENABLED', 'true');
     vi.stubEnv('ANDREA_PLATFORM_FALLBACK_TO_DIRECT_RUNTIME', 'false');

@@ -65,6 +65,12 @@ export interface NewMessage {
   provider_message_id?: string;
   /** Cross-process canonical identity for an owner-authored ingress turn. */
   durable_ingress_claim_id?: string;
+  /** Monotonic local receipt sequence for durable actionable ingress. */
+  ingress_seq?: number;
+  /** Lease identity while the durable ingress row is being processed. */
+  ingress_claim_token?: string;
+  /** Local durable receipt time for the actionable ingress row. */
+  ingress_received_at?: string;
   /**
    * Structured reaction metadata supplied by channels that expose native
    * message reactions. Reaction events are control signals, not chat prompts;
@@ -139,6 +145,16 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
+  /** Immutable owner authority copied from owner-authored ingress, never task creation time. */
+  outbound_authorization_at?: string | null;
+  /** Durable owner-stop epoch captured with outbound_authorization_at. */
+  outbound_pause_generation?: number | null;
+  /** Durable one-occurrence dispatch state for generic self-thread tasks. */
+  outbound_dispatch_state?: 'claimed' | 'completed' | 'blocked' | null;
+  outbound_dispatch_run_key?: string | null;
+  outbound_dispatch_claim_token?: string | null;
+  outbound_dispatch_claimed_at?: string | null;
+  outbound_dispatch_completed_at?: string | null;
 }
 
 export interface TaskRunLog {
@@ -740,7 +756,6 @@ export interface BlueBubblesMessageView {
 }
 
 export type BlueBubblesMessageActionOperationKind =
-  | 'send'
   | 'defer'
   | 'remind_instead'
   | 'save_to_thread';
@@ -2178,6 +2193,7 @@ export interface CognitiveRewardSignalRecord {
   signalKind:
     | 'task_answered'
     | 'task_blocked'
+    | 'evidence_required'
     | 'approval_required'
     | 'skill_promoted'
     | 'skill_demoted'
@@ -6601,6 +6617,61 @@ export type MessageActionLastActionKind =
   | 'delivery_unverified'
   | 'failed';
 
+export type MessageActionDraftProvenance =
+  | 'owner_literal'
+  | 'assistant_authored';
+
+/**
+ * Immutable, non-authorizing provenance for a draft bound to one exact recent
+ * text-review item. Raw message, recipient, and summary text are deliberately
+ * excluded; hashes are used only to validate lifecycle bookkeeping after a
+ * separately approved, receipt-verified send.
+ */
+export interface MessageActionRecentTextReviewLink {
+  version: 2;
+  seedFingerprint: string;
+  reviewedAt: string;
+  itemId: string;
+  itemRank: number;
+  communicationThreadId: string;
+  historyStartTimestamp: string;
+  freshnessSnapshot: {
+    latestMessageIdentityHash: string;
+    latestMessageAt: string;
+    latestInboundAt: string | null;
+    latestOutboundAt: string | null;
+    messageCount: number;
+    snapshotHash: string;
+    transcriptHash: string;
+  };
+  targetChatFingerprint: string;
+  presentationScopeFingerprint: string;
+  linkFingerprint: string;
+}
+
+/**
+ * Immutable transcript provenance for a draft derived from one named
+ * Messages summary. It is non-authorizing: dispatch must still refresh the
+ * exact target and prove this snapshot is unchanged.
+ */
+export interface MessageActionNamedMessagesSummaryLink {
+  version: 1;
+  queryFingerprint: string;
+  historyStartTimestamp: string;
+  freshnessSnapshot: {
+    latestMessageIdentityHash: string;
+    latestMessageAt: string;
+    latestInboundAt: string | null;
+    latestOutboundAt: string | null;
+    messageCount: number;
+    snapshotHash: string;
+    transcriptHash: string;
+  };
+  targetChatFingerprint: string;
+  presentationScopeFingerprint: string;
+  linkFingerprint: string;
+}
+
 export interface MessageActionLinkedRefs {
   actionBundleId?: string;
   communicationThreadId?: string;
@@ -6619,10 +6690,16 @@ export interface MessageActionLinkedRefs {
   cognitiveTrajectoryId?: string;
   agentRuntimeRunId?: string;
   cognitiveOwnerReviewSignalId?: string;
+  conversationSnapshotRequired?:
+    | 'recent_text_review'
+    | 'named_messages_summary';
+  recentTextReview?: MessageActionRecentTextReviewLink;
+  namedMessagesSummary?: MessageActionNamedMessagesSummaryLink;
 }
 
 export interface MessageActionExplanation {
   sourceSummary?: string | null;
+  draftProvenance?: MessageActionDraftProvenance;
   approvalReason?: string | null;
   safetyReason?: string | null;
   delegationNote?: string | null;
@@ -7340,6 +7417,19 @@ export interface CompanionHandoffPayload {
   followupSuggestions: string[];
 }
 
+/**
+ * Exact owner-ingress authority copied into a cross-channel BlueBubbles
+ * handoff. Processing time is intentionally absent: delayed/recovered work
+ * may not manufacture fresh send authority.
+ */
+export interface CompanionHandoffIngressAuthorization {
+  sourceChatJid: string;
+  sourceMessageId: string;
+  sourceReceivedAt: string;
+  authorizationAt: string;
+  pauseGeneration: number;
+}
+
 export interface CompanionContinuationCandidate {
   capabilityId?: string;
   voiceSummary: string;
@@ -7395,6 +7485,13 @@ export interface CompanionHandoffRecord {
   knowledgeSourceIdsJson?: string | null;
   workRef?: string | null;
   followupSuggestionsJson?: string | null;
+  sourceChatJid?: string | null;
+  sourceMessageId?: string | null;
+  sourceIngressReceivedAt?: string | null;
+  outboundAuthorizationAt?: string | null;
+  outboundPauseGeneration?: number | null;
+  providerIdempotencyKey?: string | null;
+  dispatchStartedAt?: string | null;
   deliveredMessageId?: string | null;
   errorText?: string | null;
 }
@@ -7920,6 +8017,14 @@ export interface SendMessageOptions {
   /** Stable provider request identity for durable, replay-safe actions. */
   idempotencyKey?: string;
   /**
+   * Internal immutable owner-action time used by BlueBubbles' final provider
+   * fence. For queued turns this is the actionable-ingress `received_at`, not
+   * the later processing time.
+   */
+  blueBubblesAuthorizationAt?: string;
+  /** Durable pause epoch captured with the BlueBubbles authorization. */
+  blueBubblesPauseGeneration?: number;
+  /**
    * Internal, approval-led BlueBubbles first-contact handoff. The channel
    * validates that this normalized address exactly matches the recipient JID
    * and uses the atomic new-chat endpoint instead of existing-chat retries.
@@ -8003,6 +8108,13 @@ export interface Channel {
     limit?: number;
     recoverUnacceptedClaims?: boolean;
   }): Promise<{ storedCount: number; totalCount: number }>;
+  // Optional: hydrate one already-known exact platform thread on an explicit
+  // owner request. Implementations must enforce their own scope/eligibility
+  // rules and keep the read bounded.
+  primeChatHistory?(
+    chatJid: string,
+    options?: { limit?: number },
+  ): Promise<{ storedCount: number; totalCount: number }>;
 }
 
 // Callback type that channels use to deliver inbound messages

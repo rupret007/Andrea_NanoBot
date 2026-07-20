@@ -2503,14 +2503,18 @@ function buildBlueBubblesTruth(
     ) {
       const blocker = lastInboundWasSelfAuthored
         ? 'Messages bridge received your @Andrea message, but reply-back failed in that same chat.'
-        : 'Messages bridge received a real inbound message, but reply-back failed in that same chat.';
+        : 'Messages bridge received a real contact or group message as synced data. Andrea correctly does not reply in that conversation, and the separate owner-control or outbound delivery path still reports an error.';
       const nextAction = lastInboundWasSelfAuthored
-        ? 'Retry the same `@Andrea` prompt in this self-chat after the direct-target fix lands. In parallel, you can still use a normal 1:1 or group thread as a second proof target.'
-        : 'Retry the same `@Andrea` prompt in that chat and inspect the BlueBubbles direct-target diagnostics if reply-back still fails.';
+        ? 'Retry the same `@Andrea` prompt only in the configured owner self-chat after the direct-target fix lands. Ordinary 1:1 and group threads remain data-only and are not control or reply-proof targets.'
+        : 'Keep that contact or group thread data-only. Inspect the failed outbound target, then test Andrea reply delivery only from the configured owner self-chat or registered Telegram control chat.';
       const detailPrefix =
         lastInboundChatJid !== 'none'
-          ? `Recent inbound reached ${lastInboundChatJid}, but no Andrea reply was delivered back yet.`
-          : 'A real Messages bridge inbound reached Andrea, but no Andrea reply was delivered back yet.';
+          ? lastInboundWasSelfAuthored
+            ? `Recent owner-control inbound reached ${lastInboundChatJid}, but no Andrea reply was delivered back yet.`
+            : `Recent contact or group inbound reached ${lastInboundChatJid} as data; no Andrea reply is expected in that conversation.`
+          : lastInboundWasSelfAuthored
+            ? 'A real owner-control Messages inbound reached Andrea, but no Andrea reply was delivered back yet.'
+            : 'A real contact or group Messages inbound was synced as data; no Andrea reply is expected in that conversation.';
       const targetDetail =
         base.lastOutboundTargetKind !== 'none'
           ? ` Andrea last tried ${base.lastOutboundTargetKind} -> ${base.lastOutboundTarget}.`

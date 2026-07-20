@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+
 import {
   buildAndreaPulseReply,
   getDefaultPulsePreference,
@@ -72,26 +74,43 @@ import {
   type BlueBubblesSuggestedReply,
 } from './messages-fluidity.js';
 import {
+  extractGroundedMessagesPlanFacts,
+  formatGroundedMessagesPlanFact,
+  type GroundedMessagesPlanFact,
+} from './messages-commitment-summary.js';
+import { hasMessagesGroundingPolarityConflict } from './messages-grounding-polarity.js';
+import {
   applyMessageActionOperation,
   createOrRefreshMessageActionFromDraft,
   resolveBlueBubblesThreadTargetByName,
   type MessageActionOperation,
+  type ResolvedBlueBubblesThreadTarget,
 } from './message-actions.js';
 import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
+import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
 import {
   buildRecentTextReviewSeedJson,
+  buildMessagesThreadFreshnessSnapshot,
+  describeMessageForSummary,
   buildReviewDraftPrompt,
+  findLatestUnresolvedInboundAsk,
   formatRecentTextReviewFreshnessBlockedReply,
   formatRecentTextReviewUnboundReply,
   formatRecentTextReviewItemWhyReply,
   formatRecentTextReviewReply,
+  isAutomatedRecentTextNotice,
+  isBlueBubblesReactionPlaceholder,
+  isExactNonEmptyMessagesHistoryRefreshReceipt,
   parseRecentTextReviewItemFollowup,
+  parseRecentTextReviewSeedJson,
   recordRecentTextReviewOutcome,
   redactRecentTextReviewText,
   resolveRecentTextReviewFollowupTarget,
   reviewRecentTexts,
-  validateRecentTextReviewFollowupFreshness,
+  validateRecentTextReviewFollowupFreshnessAfterTargetedRefresh,
+  validateMessagesThreadSnapshotBinding,
   type RecentTextReviewOutcome,
+  type RecentTextReviewFreshnessSnapshot,
 } from './recent-text-review.js';
 import {
   buildFollowThroughOutcomeMetadata,
@@ -128,6 +147,8 @@ import type {
   LifeThreadSnapshot,
   MediaGenerationResult,
   MessageActionLastActionKind,
+  MessageActionNamedMessagesSummaryLink,
+  MessageActionRecentTextReviewLink,
   MessageActionRecord,
   MessageActionSendStatus,
   MissionExecutionContext,
@@ -257,6 +278,12 @@ export interface AssistantCapabilityContext {
   groupFolder?: string;
   chatJid?: string;
   ownerReviewAllowed?: boolean;
+  /**
+   * Refreshes one exact Messages chat before a review-backed continuation is
+   * allowed to create or mutate an action. Absence and failure are both
+   * fail-closed; a broad/global history refresh is not equivalent.
+   */
+  primeMessagesChatHistory?: (chatJid: string) => Promise<unknown>;
   currentMessageId?: string;
   currentAttachmentIds?: string[];
   now?: Date;
@@ -297,6 +324,7 @@ export interface AssistantCapabilityContext {
     communicationSubjectIds?: string[];
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
+    namedMessagesSummaryTargetJson?: string;
     recentTextReviewJson?: string;
     followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
@@ -396,6 +424,7 @@ export interface AssistantCapabilityConversationSeed {
     communicationSubjectIds?: string[];
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
+    namedMessagesSummaryTargetJson?: string;
     recentTextReviewJson?: string;
     followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
@@ -510,6 +539,17 @@ function normalizeText(value: string | undefined): string {
 
 function clipText(value: string | undefined, maxLength: number): string {
   const normalized = normalizeText(value);
+  if (!normalized || normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function clipPreservedText(
+  value: string | null | undefined,
+  maxLength: number,
+): string {
+  const normalized = (value || '').replace(/\s+/g, ' ').trim();
   if (!normalized || normalized.length <= maxLength) {
     return normalized;
   }
@@ -1998,6 +2038,7 @@ function buildCommunicationConversationSeed(input: {
   communicationSubjectIds?: string[];
   communicationLifeThreadIds?: string[];
   lastCommunicationSummary?: string;
+  namedMessagesSummaryTargetJson?: string;
   messageActionId?: string;
   messageActionSummary?: string;
   recentTextReviewJson?: string;
@@ -2020,6 +2061,7 @@ function buildCommunicationConversationSeed(input: {
       communicationLifeThreadIds: input.communicationLifeThreadIds,
       lastCommunicationSummary:
         input.lastCommunicationSummary || input.summaryText,
+      namedMessagesSummaryTargetJson: input.namedMessagesSummaryTargetJson,
       recentTextReviewJson: input.recentTextReviewJson,
       messageActionId: input.messageActionId,
       messageActionSummary: input.messageActionSummary,
@@ -2663,10 +2705,46 @@ function resolveThreadSummaryWindow(params: {
 function looksLikeRawParticipantIdentifier(value: string): boolean {
   const normalized = normalizeText(value);
   if (!normalized) return true;
-  if (/^bb[:;]/i.test(normalized)) return true;
-  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) return true;
+  if (/(?:^|\s)bb[:;]/i.test(normalized)) return true;
+  if (/(?:^|\s)(?:iMessage|SMS);[+-];/i.test(normalized)) return true;
+  if (/(?:^|\s)[^@\s]+@[^@\s]+\.[^@\s]+(?:$|\s)/.test(normalized)) {
+    return true;
+  }
   const digits = normalized.replace(/\D/g, '');
+  if (/^[+\d\s().-]+$/.test(normalized) && digits.length >= 3) return true;
   return digits.length >= 7;
+}
+
+function clipThreadSummaryEvidence(
+  value: string | null | undefined,
+  maxLength: number,
+): string {
+  const redacted = redactRecentTextReviewText(value || '');
+  if (!redacted || redacted.length <= maxLength) return redacted;
+  return `${redacted.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function formatThreadSummaryTranscriptTimestamp(
+  value: string | null | undefined,
+): string {
+  const date = new Date(value || '');
+  if (!Number.isFinite(date.getTime())) return 'time unknown';
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  const pad = (part: number): string => String(part).padStart(2, '0');
+  return `${date.getUTCFullYear()} ${months[date.getUTCMonth()]} ${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())} UTC`;
 }
 
 function getThreadSummarySpeakerKey(message: NewMessage): string {
@@ -2718,6 +2796,49 @@ function buildThreadSummarySpeakerLabels(params: {
   return labels;
 }
 
+function extractThreadSummaryPlanFacts(params: {
+  messages: NewMessage[];
+  speakerLabels: Map<string, string>;
+  isGroup: boolean;
+  directOtherLabel?: string | null;
+}): GroundedMessagesPlanFact[] {
+  const directOtherLabel =
+    normalizeText(params.directOtherLabel || '') ||
+    params.messages
+      .filter((message) => !message.is_from_me)
+      .map((message) =>
+        params.speakerLabels.get(getThreadSummarySpeakerKey(message)),
+      )
+      .find(Boolean) ||
+    'The other person';
+  return extractGroundedMessagesPlanFacts({
+    messages: params.messages,
+    getSpeakerLabel: (message) =>
+      params.speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
+      (message.is_from_me ? 'You' : directOtherLabel),
+    getSecondPersonLabel: params.isGroup
+      ? undefined
+      : (message) => (message.is_from_me ? directOtherLabel : 'You'),
+  });
+}
+
+function formatThreadSummaryPlanSection(params: {
+  facts: GroundedMessagesPlanFact[];
+  limit: number;
+}): string {
+  const lines = params.facts
+    .slice(-params.limit)
+    .map((fact) => `- ${formatGroundedMessagesPlanFact(fact)}`);
+  return [
+    'Commitments and decisions',
+    ...(lines.length > 0
+      ? lines
+      : [
+          '- No explicit commitments, decisions, or pending proposals were found in this bounded snapshot.',
+        ]),
+  ].join('\n');
+}
+
 function buildThreadSummaryTranscript(params: {
   messages: NewMessage[];
   speakerLabels: Map<string, string>;
@@ -2728,15 +2849,10 @@ function buildThreadSummaryTranscript(params: {
       const speaker =
         params.speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
         'Someone';
-      return `${speaker}: ${clipText(message.content || '', 240)}`;
+      return `[${formatThreadSummaryTranscriptTimestamp(message.timestamp)}] ${clipThreadSummaryEvidence(speaker, 72)}: ${clipThreadSummaryEvidence(message.content, 240)}`;
     })
     .filter(Boolean)
     .join('\n');
-}
-
-function isBlueBubblesAssistantControlMessage(message: NewMessage): boolean {
-  const text = normalizeText(message.content || '');
-  return /^\s*(?:hey\s+)?@(?:andrea|openclaw)\b/i.test(text);
 }
 
 function buildLocalThreadSummarySuggestedReplies(
@@ -2752,32 +2868,39 @@ function buildLocalThreadSummarySuggestedReplies(
   }
   const latestInbound = messages[latestInboundIndex];
   if (!latestInbound) return [];
+  if (isBlueBubblesReactionPlaceholder(latestInbound.content)) return [];
   if (
     messages.slice(latestInboundIndex + 1).some((message) => message.is_from_me)
   ) {
     return [];
   }
-  const content = normalizeText(latestInbound.content || '');
+  const content = clipPreservedText(
+    latestInbound.content,
+    Number.MAX_SAFE_INTEGER,
+  );
   if (
-    !/\?$/.test(content.toLowerCase()) &&
-    !/\b(?:can you|could you|would you|will you|let me know|should we|are we|do you want|(?:can|could|would|will) you confirm|send me)\b/i.test(
+    !content ||
+    content.length < 8 ||
+    /\?|\b(?:can you|could you|would you|will you|do you|did you|are you|were you|should we|should i|do you want|let me know|lmk|need you to|please\s+(?:send|share|confirm|call|bring|reply|tell)|send me|share with me|tell me|confirm)\b/i.test(
       content,
-    )
+    ) ||
+    /^(?:ok(?:ay)?|thanks(?: so much)?|thank you|thx|got it|sounds good|perfect|great|cool|nice|no worries|you(?:'re| are) welcome|lol|haha)[!. ]*$/i.test(
+      content,
+    ) ||
+    closesAllSyncedMessagesOpenRequest(latestInbound) ||
+    isAllSyncedMessagesAutomatedNoise(latestInbound) ||
+    isAutomatedRecentTextNotice(latestInbound.content || '')
   ) {
     return [];
   }
   return [
     {
       label: 'warm',
-      text: 'I appreciate you checking in. I saw your question.',
-    },
-    {
-      label: 'direct',
-      text: 'I saw this and need a little more context before I answer.',
+      text: 'Thanks for the update.',
     },
     {
       label: 'brief',
-      text: 'Got your question.',
+      text: 'Got it.',
     },
   ];
 }
@@ -2785,31 +2908,34 @@ function buildLocalThreadSummarySuggestedReplies(
 function pickRepresentativeThreadMessages(
   messages: NewMessage[],
 ): NewMessage[] {
-  const substantive = messages.filter(
-    (message) => normalizeText(message.content || '').length >= 16,
-  );
-  if (substantive.length <= 4) {
-    return substantive;
+  if (messages.length <= 4) return [...messages];
+  const selected = new Set<number>([0, messages.length - 1]);
+  const salientIndexes = messages
+    .map((message, index) => ({
+      index,
+      text: normalizeText(message.content || ''),
+    }))
+    .filter(({ text }) =>
+      /\?|\b(?:yes|no|done|confirmed|decided|booked|scheduled|cancelled|canceled|never mind|all set|instead|change of plans)\b|\[Attached:|\[(?:Reacted with|Removed .* reaction)\]/i.test(
+        text,
+      ),
+    )
+    .map(({ index }) => index);
+  for (const index of salientIndexes.reverse()) {
+    selected.add(index);
+    if (selected.size >= 4) break;
   }
-  const indexes = [
-    0,
-    Math.floor(substantive.length / 3),
-    Math.floor((substantive.length * 2) / 3),
-    substantive.length - 1,
-  ];
-  const seen = new Set<string>();
-  const picks: NewMessage[] = [];
-  for (const index of indexes) {
-    const message = substantive[index];
-    if (!message) continue;
-    const fingerprint = `${getThreadSummarySpeakerKey(message)}|${normalizeText(
-      message.content || '',
-    )}`;
-    if (seen.has(fingerprint)) continue;
-    seen.add(fingerprint);
-    picks.push(message);
+  for (const index of [
+    Math.floor(messages.length / 3),
+    Math.floor((messages.length * 2) / 3),
+  ]) {
+    if (selected.size >= 4) break;
+    selected.add(index);
   }
-  return picks;
+  return [...selected]
+    .sort((left, right) => left - right)
+    .map((index) => messages[index])
+    .filter((message): message is NewMessage => Boolean(message));
 }
 
 function inferThreadReplyNeed(messages: NewMessage[]): string | null {
@@ -2828,16 +2954,16 @@ function inferThreadReplyNeed(messages: NewMessage[]): string | null {
   ) {
     return null;
   }
-  const content = normalizeText(latestInbound.content || '').toLowerCase();
+  const content = redactRecentTextReviewText(
+    latestInbound.content || '',
+  ).toLowerCase();
   if (
-    /\?$/.test(content) ||
-    /\b(?:can you|could you|would you|let me know|should we|are we|do you want|(?:can|could|would|will) you confirm)\b/.test(
+    /\?/.test(content) ||
+    /\b(?:can you|could you|would you|will you|do you|did you|are you|were you|should we|should i|do you want|let me know|lmk|need you to|please\s+(?:send|share|confirm|call|bring|reply|tell)|send me|share with me|tell me|confirm)\b/.test(
       content,
     )
   ) {
-    return `The latest open question looks like: "${normalizeText(
-      latestInbound.content || '',
-    )}".`;
+    return `The latest open ask looks like: "${clipThreadSummaryEvidence(latestInbound.content, 180)}".`;
   }
   return null;
 }
@@ -2850,25 +2976,39 @@ function buildFallbackThreadSummaryReply(params: {
   channel: AssistantCapabilityContext['channel'];
 }): string {
   const highlights = pickRepresentativeThreadMessages(params.messages);
+  const selectHighlightsIncludingLatest = (limit: number): NewMessage[] => {
+    if (highlights.length <= limit) return highlights;
+    return [
+      ...highlights.slice(0, Math.max(0, limit - 1)),
+      highlights.at(-1),
+    ].filter((message): message is NewMessage => Boolean(message));
+  };
+  const digestHighlights = selectHighlightsIncludingLatest(
+    params.channel === 'bluebubbles' ? 2 : 3,
+  );
+  const bulletHighlights = selectHighlightsIncludingLatest(
+    params.channel === 'bluebubbles' ? 2 : 4,
+  );
   const replyNeed = inferThreadReplyNeed(params.messages);
   const lead = `Here’s the gist from ${params.chatName} ${params.windowLabel === 'today' ? 'today' : `over ${params.windowLabel}`}.`;
-  const digestSentences = highlights.slice(0, 3).map((message, index) => {
+  const digestSentences = digestHighlights.map((message, index) => {
     const speaker =
       params.speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
       'Someone';
-    const content = clipText(
-      message.content || '',
+    const content = clipThreadSummaryEvidence(
+      message.content,
       params.channel === 'bluebubbles' ? 90 : 140,
     );
     if (index === 0) {
-      return `${speaker} opened with "${content}".`;
+      return `${clipThreadSummaryEvidence(speaker, 72)} opened with "${content}".`;
     }
-    if (index === highlights.length - 1) {
-      return `By the end, ${speaker} was saying "${content}".`;
+    if (index === digestHighlights.length - 1) {
+      return `By the end, ${clipThreadSummaryEvidence(speaker, 72)} was saying "${content}".`;
     }
-    return `Later, ${speaker} added "${content}".`;
+    return `Later, ${clipThreadSummaryEvidence(speaker, 72)} added "${content}".`;
   });
-  const bullets = highlights
+  const latestHighlightId = highlights.at(-1)?.id;
+  const bullets = bulletHighlights
     .map((message, index) => {
       const speaker =
         params.speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
@@ -2876,10 +3016,10 @@ function buildFallbackThreadSummaryReply(params: {
       const prefix =
         index === 0
           ? 'Early on'
-          : index === highlights.length - 1
+          : message.id === latestHighlightId
             ? 'Latest turn'
             : 'Later';
-      return `${prefix}: ${speaker} said "${clipText(message.content || '', 120)}".`;
+      return `${prefix}: ${clipThreadSummaryEvidence(speaker, 72)} said "${clipThreadSummaryEvidence(message.content, 120)}".`;
     })
     .slice(0, params.channel === 'bluebubbles' ? 2 : 4);
   if (replyNeed) {
@@ -2891,10 +3031,10 @@ function buildFallbackThreadSummaryReply(params: {
   const suggestedReplyLines =
     suggestedReplies.length > 0
       ? [
-          'Suggested replies',
+          'Suggested replies (unsent; review before using)',
           ...suggestedReplies.map(
             (reply) =>
-              `- ${clipText(reply.label, 32)}: "${clipText(reply.text, 180)}"`,
+              `- ${clipText(reply.label, 32)}: "${clipThreadSummaryEvidence(reply.text, 180)}"`,
           ),
         ]
       : [];
@@ -2934,20 +3074,22 @@ function formatThreadSummaryReply(params: {
   const suggestedReplyLines =
     suggestedReplies.length > 0
       ? [
-          'Suggested replies',
+          'Suggested replies (unsent; review before using)',
           ...suggestedReplies
             .slice(0, 3)
             .map(
               (reply) =>
-                `- ${clipText(reply.label, 32)}: "${clipText(reply.text, 180)}"`,
+                `- ${clipText(reply.label, 32)}: "${clipThreadSummaryEvidence(reply.text, 180)}"`,
             ),
         ]
       : [];
   if (params.channel === 'bluebubbles') {
     return [
-      params.lead,
-      params.digest ? clipText(params.digest, 520) : null,
-      ...params.bullets.slice(0, 2).map((line) => `- ${clipText(line, 180)}`),
+      params.lead ? clipThreadSummaryEvidence(params.lead, 520) : null,
+      params.digest ? clipThreadSummaryEvidence(params.digest, 520) : null,
+      ...params.bullets
+        .slice(0, 2)
+        .map((line) => `- ${clipThreadSummaryEvidence(line, 180)}`),
       suggestedReplyLines.length > 0 ? suggestedReplyLines.join('\n') : null,
     ]
       .filter(Boolean)
@@ -2955,11 +3097,13 @@ function formatThreadSummaryReply(params: {
   }
 
   return [
-    params.lead,
+    params.lead ? clipThreadSummaryEvidence(params.lead, 760) : null,
     '',
-    params.digest,
+    params.digest ? clipThreadSummaryEvidence(params.digest, 1_200) : null,
     '',
-    ...params.bullets.slice(0, 6).map((line) => `- ${line}`),
+    ...params.bullets
+      .slice(0, 6)
+      .map((line) => `- ${clipThreadSummaryEvidence(line, 260)}`),
     suggestedReplyLines.length > 0 ? '' : null,
     suggestedReplyLines.length > 0 ? suggestedReplyLines.join('\n') : null,
   ]
@@ -2973,14 +3117,352 @@ function formatSafeSyncedThreadLabel(params: {
   isGroup?: boolean | null;
 }): string {
   const normalized = normalizeText(params.name || '');
-  if (
-    normalized &&
-    normalized !== params.jid &&
-    !/(?:\+?\d[\d\s().-]{6,}\d)/.test(normalized)
-  ) {
+  const looksLikePrivateIdentifier =
+    looksLikeRawParticipantIdentifier(normalized);
+  if (normalized && normalized !== params.jid && !looksLikePrivateIdentifier) {
     return clipText(normalized, 64);
   }
   return params.isGroup ? 'Messages group' : 'Messages chat';
+}
+
+interface NamedMessagesSummaryTargetSeedV2 {
+  version: 2;
+  query: string;
+  target: {
+    chatJid: string;
+    displayName: string;
+    isGroup: boolean;
+  };
+  historyStartTimestamp: string;
+  freshnessSnapshot: MessageActionNamedMessagesSummaryLink['freshnessSnapshot'];
+}
+
+function requireMessagesSummaryFreshnessSnapshot(
+  snapshot: RecentTextReviewFreshnessSnapshot,
+): MessageActionNamedMessagesSummaryLink['freshnessSnapshot'] | null {
+  if (
+    !/^[a-f0-9]{16}$/i.test(snapshot.latestMessageIdentityHash || '') ||
+    !snapshot.latestMessageAt ||
+    !Number.isFinite(Date.parse(snapshot.latestMessageAt)) ||
+    !Number.isInteger(snapshot.messageCount) ||
+    !snapshot.messageCount ||
+    snapshot.messageCount < 1 ||
+    !/^[a-f0-9]{16}$/i.test(snapshot.snapshotHash || '') ||
+    !/^[a-f0-9]{16}$/i.test(snapshot.transcriptHash || '')
+  ) {
+    return null;
+  }
+  return {
+    latestMessageIdentityHash: snapshot.latestMessageIdentityHash!,
+    latestMessageAt: snapshot.latestMessageAt,
+    latestInboundAt: snapshot.latestInboundAt || null,
+    latestOutboundAt: snapshot.latestOutboundAt || null,
+    messageCount: snapshot.messageCount,
+    snapshotHash: snapshot.snapshotHash!,
+    transcriptHash: snapshot.transcriptHash!,
+  };
+}
+
+function fingerprintNamedMessagesSummaryValue(
+  domain: string,
+  value: string,
+): string {
+  return createHash('sha256')
+    .update(`${domain}\u0000${value}`, 'utf8')
+    .digest('hex');
+}
+
+function buildNamedMessagesSummaryActionLink(input: {
+  validation: Extract<
+    NamedMessagesSummaryTargetValidation,
+    { state: 'resolved' }
+  >;
+  groupFolder: string;
+  presentationChatJid: string;
+}): MessageActionNamedMessagesSummaryLink {
+  const base: Omit<MessageActionNamedMessagesSummaryLink, 'linkFingerprint'> = {
+    version: 1,
+    queryFingerprint: fingerprintNamedMessagesSummaryValue(
+      'named-messages-summary-query',
+      input.validation.seed.query,
+    ),
+    historyStartTimestamp: input.validation.seed.historyStartTimestamp,
+    freshnessSnapshot: input.validation.seed.freshnessSnapshot,
+    targetChatFingerprint: fingerprintNamedMessagesSummaryValue(
+      'named-messages-summary-target-chat',
+      input.validation.target.chatJid,
+    ),
+    presentationScopeFingerprint: fingerprintNamedMessagesSummaryValue(
+      'named-messages-summary-presentation-scope',
+      `${input.groupFolder}\u0000${input.presentationChatJid}`,
+    ),
+  };
+  return {
+    ...base,
+    linkFingerprint: fingerprintNamedMessagesSummaryValue(
+      'message-action-named-messages-summary-link',
+      [
+        base.version,
+        base.queryFingerprint,
+        base.historyStartTimestamp,
+        base.freshnessSnapshot.latestMessageIdentityHash,
+        base.freshnessSnapshot.latestMessageAt,
+        base.freshnessSnapshot.latestInboundAt || '',
+        base.freshnessSnapshot.latestOutboundAt || '',
+        base.freshnessSnapshot.messageCount,
+        base.freshnessSnapshot.snapshotHash,
+        base.freshnessSnapshot.transcriptHash,
+        base.targetChatFingerprint,
+        base.presentationScopeFingerprint,
+      ].join('\u0000'),
+    ),
+  };
+}
+
+function buildRecentTextReviewDraftActionLink(input: {
+  seedJson: string;
+  itemId: string;
+  itemRank: number;
+  communicationThreadId: string;
+  targetChatJid: string;
+  groupFolder: string;
+  presentationChatJid: string;
+}): MessageActionRecentTextReviewLink | null {
+  const seed = parseRecentTextReviewSeedJson(input.seedJson);
+  const item = seed?.items.find(
+    (candidate) =>
+      candidate.itemId === input.itemId &&
+      candidate.rank === input.itemRank &&
+      candidate.communicationThreadId === input.communicationThreadId,
+  );
+  const freshnessSnapshot = item?.freshnessSnapshot
+    ? requireMessagesSummaryFreshnessSnapshot(item.freshnessSnapshot)
+    : null;
+  if (
+    !seed?.reviewedAt ||
+    !seed.windowStartTimestamp ||
+    !item ||
+    !freshnessSnapshot
+  ) {
+    return null;
+  }
+  const base: Omit<MessageActionRecentTextReviewLink, 'linkFingerprint'> = {
+    version: 2,
+    seedFingerprint: fingerprintNamedMessagesSummaryValue(
+      'recent-text-review-seed',
+      input.seedJson,
+    ),
+    reviewedAt: seed.reviewedAt,
+    itemId: input.itemId,
+    itemRank: input.itemRank,
+    communicationThreadId: input.communicationThreadId,
+    historyStartTimestamp: seed.windowStartTimestamp,
+    freshnessSnapshot,
+    targetChatFingerprint: fingerprintNamedMessagesSummaryValue(
+      'recent-text-review-target-chat',
+      input.targetChatJid,
+    ),
+    presentationScopeFingerprint: fingerprintNamedMessagesSummaryValue(
+      'recent-text-review-presentation-scope',
+      `${input.groupFolder}\u0000${input.presentationChatJid}`,
+    ),
+  };
+  return {
+    ...base,
+    linkFingerprint: fingerprintNamedMessagesSummaryValue(
+      'message-action-recent-text-review-link',
+      [
+        base.version,
+        base.seedFingerprint,
+        base.reviewedAt,
+        base.itemId,
+        base.itemRank,
+        base.communicationThreadId,
+        base.historyStartTimestamp,
+        base.freshnessSnapshot.latestMessageIdentityHash,
+        base.freshnessSnapshot.latestMessageAt,
+        base.freshnessSnapshot.latestInboundAt || '',
+        base.freshnessSnapshot.latestOutboundAt || '',
+        base.freshnessSnapshot.messageCount,
+        base.freshnessSnapshot.snapshotHash,
+        base.freshnessSnapshot.transcriptHash,
+        base.targetChatFingerprint,
+        base.presentationScopeFingerprint,
+      ].join('\u0000'),
+    ),
+  };
+}
+
+type NamedMessagesSummaryTargetValidation =
+  | {
+      state: 'resolved';
+      target: ResolvedBlueBubblesThreadTarget;
+      seedJson: string;
+      seed: NamedMessagesSummaryTargetSeedV2;
+    }
+  | {
+      state:
+        | 'missing_seed'
+        | 'invalid_seed'
+        | 'missing'
+        | 'ambiguous'
+        | 'changed'
+        | 'presentation_conflict';
+      detail: string;
+    };
+
+function buildNamedMessagesSummaryTargetSeedJson(input: {
+  query: string;
+  target: ResolvedBlueBubblesThreadTarget;
+  historyStartTimestamp: string;
+  freshnessSnapshot: MessageActionNamedMessagesSummaryLink['freshnessSnapshot'];
+}): string {
+  return JSON.stringify({
+    version: 2,
+    query: input.query,
+    target: {
+      chatJid: input.target.chatJid,
+      displayName: input.target.displayName,
+      isGroup: input.target.isGroup,
+    },
+    historyStartTimestamp: input.historyStartTimestamp,
+    freshnessSnapshot: input.freshnessSnapshot,
+  } satisfies NamedMessagesSummaryTargetSeedV2);
+}
+
+function parseNamedMessagesSummaryTargetSeed(
+  value: string | null | undefined,
+): NamedMessagesSummaryTargetSeedV2 | null {
+  if (!value?.trim()) return null;
+  try {
+    const parsed = JSON.parse(
+      value,
+    ) as Partial<NamedMessagesSummaryTargetSeedV2>;
+    const snapshot = parsed.freshnessSnapshot;
+    if (
+      parsed.version !== 2 ||
+      typeof parsed.query !== 'string' ||
+      !parsed.query.trim() ||
+      !parsed.target ||
+      typeof parsed.target.chatJid !== 'string' ||
+      !parsed.target.chatJid.trim().startsWith('bb:') ||
+      typeof parsed.target.displayName !== 'string' ||
+      !parsed.target.displayName.trim() ||
+      typeof parsed.target.isGroup !== 'boolean' ||
+      typeof parsed.historyStartTimestamp !== 'string' ||
+      !Number.isFinite(Date.parse(parsed.historyStartTimestamp)) ||
+      !snapshot ||
+      typeof snapshot.latestMessageIdentityHash !== 'string' ||
+      !/^[a-f0-9]{16}$/i.test(snapshot.latestMessageIdentityHash) ||
+      typeof snapshot.latestMessageAt !== 'string' ||
+      !Number.isFinite(Date.parse(snapshot.latestMessageAt)) ||
+      !(
+        snapshot.latestInboundAt === null ||
+        typeof snapshot.latestInboundAt === 'string'
+      ) ||
+      !(
+        snapshot.latestOutboundAt === null ||
+        typeof snapshot.latestOutboundAt === 'string'
+      ) ||
+      !Number.isInteger(snapshot.messageCount) ||
+      snapshot.messageCount < 1 ||
+      typeof snapshot.snapshotHash !== 'string' ||
+      !/^[a-f0-9]{16}$/i.test(snapshot.snapshotHash) ||
+      typeof snapshot.transcriptHash !== 'string' ||
+      !/^[a-f0-9]{16}$/i.test(snapshot.transcriptHash)
+    ) {
+      return null;
+    }
+    return {
+      version: 2,
+      query: parsed.query.trim(),
+      target: {
+        chatJid: parsed.target.chatJid.trim(),
+        displayName: parsed.target.displayName.trim(),
+        isGroup: parsed.target.isGroup,
+      },
+      historyStartTimestamp: parsed.historyStartTimestamp,
+      freshnessSnapshot: snapshot,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function validateNamedMessagesSummaryTarget(input: {
+  seedJson?: string | null;
+  presentationChatJid?: string | null;
+}): NamedMessagesSummaryTargetValidation {
+  if (!input.seedJson?.trim()) {
+    return {
+      state: 'missing_seed',
+      detail: 'the summary continuation has no exact Messages target seed',
+    };
+  }
+  const seed = parseNamedMessagesSummaryTargetSeed(input.seedJson);
+  if (!seed) {
+    return {
+      state: 'invalid_seed',
+      detail: 'the exact Messages target seed is malformed',
+    };
+  }
+  const presentationChatJid = normalizeText(input.presentationChatJid || '');
+  if (
+    seed.target.chatJid === presentationChatJid ||
+    isConfiguredBlueBubblesSelfThreadAliasJid(seed.target.chatJid)
+  ) {
+    return {
+      state: 'presentation_conflict',
+      detail:
+        'the external Messages target resolves to the assistant control conversation',
+    };
+  }
+  const hasCurrentExactChat = getAllChats().some(
+    (chat) =>
+      chat.jid === seed.target.chatJid &&
+      (chat.channel === 'bluebubbles' || chat.jid.startsWith('bb:')),
+  );
+  if (!hasCurrentExactChat) {
+    return {
+      state: 'missing',
+      detail: 'the exact Messages target is no longer in the synced chat list',
+    };
+  }
+  const resolution = resolveBlueBubblesThreadTargetByName(seed.query);
+  if (resolution.state === 'missing') {
+    return {
+      state: 'missing',
+      detail: 'the named Messages target no longer resolves',
+    };
+  }
+  if (resolution.state === 'ambiguous') {
+    return {
+      state: 'ambiguous',
+      detail: 'the named Messages target now matches more than one chat',
+    };
+  }
+  if (
+    resolution.target.chatJid !== seed.target.chatJid ||
+    resolution.target.isGroup !== seed.target.isGroup ||
+    resolution.target.chatJid === presentationChatJid ||
+    isConfiguredBlueBubblesSelfThreadAliasJid(resolution.target.chatJid)
+  ) {
+    return {
+      state: 'changed',
+      detail: 'the current Messages target no longer matches the summary seed',
+    };
+  }
+  return {
+    state: 'resolved',
+    target: resolution.target,
+    seedJson: buildNamedMessagesSummaryTargetSeedJson({
+      query: seed.query,
+      target: resolution.target,
+      historyStartTimestamp: seed.historyStartTimestamp,
+      freshnessSnapshot: seed.freshnessSnapshot,
+    }),
+    seed,
+  };
 }
 
 interface AllSyncedMessagesSummaryThread {
@@ -2999,6 +3481,7 @@ interface AllSyncedMessagesPendingReply {
 type AllSyncedMessagesDigestSource =
   | 'openai_grounded'
   | 'local'
+  | 'local_provider_failed'
   | 'local_untrusted_provider';
 
 const ALL_SYNCED_MESSAGES_PROVIDER_THREAD_LIMIT = 8;
@@ -3109,8 +3592,55 @@ function isAllSyncedMessagesProviderDigestGrounded(params: {
   digest: Awaited<ReturnType<typeof summarizeBlueBubblesThreadDigest>>;
 }): boolean {
   if (params.digest.source !== 'openai') return false;
+  const evidenceText = redactRecentTextReviewText(params.evidenceText);
+  const evidenceNumbers = new Set(
+    evidenceText.toLowerCase().match(/\b\d+(?:[.,:]\d+)?\b/g) || [],
+  );
+  const highImpactFacts = [
+    'not',
+    'never',
+    'cancelled',
+    'canceled',
+    'confirmed',
+    'decided',
+    'booked',
+    'scheduled',
+    'paid',
+    'due',
+    'overdue',
+    'sent',
+    'completed',
+    'delayed',
+  ];
+  const evidenceLower = evidenceText.toLowerCase();
+  const claims = [
+    params.digest.lead,
+    params.digest.digest,
+    ...params.digest.bullets,
+  ].filter((claim): claim is string => Boolean(claim));
+  for (const claim of claims) {
+    const sanitizedClaim = redactRecentTextReviewText(claim).toLowerCase();
+    const unsupportedNumber = (
+      sanitizedClaim.match(/\b\d+(?:[.,:]\d+)?\b/g) || []
+    ).some((number) => !evidenceNumbers.has(number));
+    const unsupportedState = highImpactFacts.some(
+      (fact) =>
+        new RegExp(`\\b${fact}\\b`, 'i').test(sanitizedClaim) &&
+        !new RegExp(`\\b${fact}\\b`, 'i').test(evidenceLower),
+    );
+    if (
+      unsupportedNumber ||
+      unsupportedState ||
+      hasMessagesGroundingPolarityConflict({
+        claimText: sanitizedClaim,
+        evidenceText,
+      })
+    ) {
+      return false;
+    }
+  }
   const evidenceTokens = new Set(
-    allSyncedMessagesGroundingTokens(params.evidenceText),
+    allSyncedMessagesGroundingTokens(evidenceText),
   );
   if (evidenceTokens.size === 0) return false;
 
@@ -3130,7 +3660,6 @@ function isAllSyncedMessagesProviderDigestGrounded(params: {
   if (substantiveClaims.length === 0) return false;
 
   const anchoredTokens = new Set<string>();
-  let groundedClaims = 0;
   const claimGrounding = new Map<(typeof substantiveClaims)[number], boolean>();
   for (const claim of substantiveClaims) {
     const claimTokens = claim.tokens;
@@ -3143,9 +3672,6 @@ function isAllSyncedMessagesProviderDigestGrounded(params: {
       claimAnchors.size >= minimumClaimAnchors &&
       claimAnchors.size / claimTokens.length >= 0.3;
     claimGrounding.set(claim, claimIsGrounded);
-    if (claimIsGrounded) {
-      groundedClaims += 1;
-    }
   }
 
   const minimumTotalAnchors = Math.min(2, evidenceTokens.size);
@@ -3155,25 +3681,25 @@ function isAllSyncedMessagesProviderDigestGrounded(params: {
   return (
     anchoredTokens.size >= minimumTotalAnchors &&
     Boolean(primaryClaim && claimGrounding.get(primaryClaim)) &&
-    groundedClaims >= Math.ceil((substantiveClaims.length * 2) / 3)
+    substantiveClaims.every((claim) => claimGrounding.get(claim) === true)
   );
 }
 
-function isAllSyncedMessagesOpenRequest(message: NewMessage): boolean {
-  const content = redactRecentTextReviewText(message.content || '');
-  return (
-    /\?/.test(content) ||
-    /\b(?:can you|could you|would you|will you|please (?:send|share|confirm|call|bring)|let me know|should we|are we|do you want|need you to|confirm)\b/i.test(
-      content,
-    )
-  );
+export function formatMessagesSummaryCouncilDisclosure(input: {
+  councilAttempted: boolean;
+  councilProviderUsed: boolean;
+}): string | null {
+  if (input.councilProviderUsed) {
+    return 'Council review: At least one configured council provider processed a sanitized transcript snippet; no council wording is rendered directly in this summary.';
+  }
+  if (input.councilAttempted) {
+    return 'Council review: A provider council was attempted with a sanitized transcript snippet; no council wording is rendered directly in this summary.';
+  }
+  return null;
 }
 
 function isAllSyncedMessagesAutomatedNoise(message: NewMessage): boolean {
-  const content = redactRecentTextReviewText(message.content || '');
-  return /\b(?:survey|share your feedback|leave (?:us )?a review|text (?:STOP|END|UNSUBSCRIBE)|opt[ -]?out|unsubscribe|limited[ -]?time|special offer|promo(?:tion)?|verification code|one[ -]?time (?:code|passcode)|do not reply|automated (?:message|notification))\b/i.test(
-    content,
-  );
+  return isAutomatedRecentTextNotice(message.content || '');
 }
 
 function closesAllSyncedMessagesOpenRequest(message: NewMessage): boolean {
@@ -3186,43 +3712,43 @@ function closesAllSyncedMessagesOpenRequest(message: NewMessage): boolean {
 function findAllSyncedMessagesPendingReply(
   thread: AllSyncedMessagesSummaryThread,
 ): AllSyncedMessagesPendingReply | null {
-  let lastSelfAuthoredIndex = -1;
-  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
-    if (thread.messages[index]?.is_from_me) {
-      lastSelfAuthoredIndex = index;
-      break;
-    }
-  }
-  const latestSubstantive = thread.messages
-    .slice(lastSelfAuthoredIndex + 1)
-    .reverse()
-    .find((message) => !message.is_from_me && !message.is_bot_message);
+  // Use the same turn-aware unresolved-ask semantics as the dedicated recent
+  // text review. A later inbound addendum does not answer an earlier ask, and
+  // an unrelated owner message does not silently close it.
+  const unresolvedAsk = findLatestUnresolvedInboundAsk(thread.messages);
   if (
-    !latestSubstantive ||
-    closesAllSyncedMessagesOpenRequest(latestSubstantive) ||
-    isAllSyncedMessagesAutomatedNoise(latestSubstantive) ||
-    !isAllSyncedMessagesOpenRequest(latestSubstantive)
+    !unresolvedAsk ||
+    closesAllSyncedMessagesOpenRequest(unresolvedAsk) ||
+    isAllSyncedMessagesAutomatedNoise(unresolvedAsk)
   ) {
     return null;
   }
-  const content = redactRecentTextReviewText(latestSubstantive.content || '');
-  const timestampScore = Date.parse(latestSubstantive.timestamp || '');
+  if (thread.isGroup) {
+    const repliedToOwnerTurn = Boolean(
+      unresolvedAsk.reply_to_id &&
+      thread.messages.some(
+        (candidate) =>
+          candidate.id === unresolvedAsk.reply_to_id && candidate.is_from_me,
+      ),
+    );
+    if (!repliedToOwnerTurn) {
+      // A bare question in a group may be addressed to another participant or
+      // the room generally. Do not turn it into owner-owed work without an
+      // explicit provider reply binding to the owner's turn.
+      return null;
+    }
+  }
+  const content = redactRecentTextReviewText(unresolvedAsk.content || '');
+  const timestampScore = Date.parse(unresolvedAsk.timestamp || '');
   const priorityScore =
     (/\b(?:urgent|asap|right away|deadline)\b/i.test(content) ? 30 : 0) +
     (/\b(?:today|tonight|tomorrow|by \d|before \d)\b/i.test(content) ? 15 : 0) +
     (Number.isFinite(timestampScore) ? timestampScore : 0) / 1_000_000_000_000;
   return {
     label: thread.label,
-    message: latestSubstantive,
+    message: unresolvedAsk,
     priorityScore,
   };
-}
-
-function isAllSyncedMessagesDecision(message: NewMessage): boolean {
-  const content = redactRecentTextReviewText(message.content || '');
-  return /\b(?:agreed to|decided to|confirmed(?: that| for| the)?|booked|scheduled|locked (?:in|down)|set for|plan is|we(?:'re| are) (?:meeting|going|using)|let'?s (?:meet|use|go|do|plan|book|schedule))\b/i.test(
-    content,
-  );
 }
 
 function buildAllSyncedMessagesTranscript(
@@ -3243,7 +3769,7 @@ function buildAllSyncedMessagesTranscript(
         .map((message) => {
           const speaker =
             speakerLabels.get(getThreadSummarySpeakerKey(message)) || 'Someone';
-          return `${speaker}: ${clipAllSyncedMessagesEvidence(message.content, 240)}`;
+          return `[${formatThreadSummaryTranscriptTimestamp(message.timestamp)}] ${speaker}: ${clipAllSyncedMessagesEvidence(message.content, 240)}`;
         })
         .filter(Boolean)
         .join('\n');
@@ -3315,17 +3841,22 @@ async function buildAllSyncedMessagesSummaryReply(params: {
 }> {
   const threads = getAllChats()
     .filter((chat) => chat.jid.startsWith('bb:'))
+    .filter((chat) => !isConfiguredBlueBubblesSelfThreadAliasJid(chat.jid))
     .map((chat) => {
       const messages = listMessagesForChatWindow({
         chatJid: chat.jid,
         startTimestamp: params.window.startTimestamp,
         endTimestamp: params.window.endTimestamp,
         limit: 80,
-      }).filter(
-        (message) =>
-          !message.is_bot_message &&
-          !isBlueBubblesAssistantControlMessage(message),
-      );
+      })
+        .filter(
+          (message) =>
+            !message.is_bot_message && describeMessageForSummary(message),
+        )
+        .map((message) => ({
+          ...message,
+          content: describeMessageForSummary(message),
+        }));
       return {
         label: formatSafeSyncedThreadLabel({
           jid: chat.jid,
@@ -3344,7 +3875,7 @@ async function buildAllSyncedMessagesSummaryReply(params: {
 
   if (threads.length === 0) {
     return {
-      replyText: `I did not find any synced Messages activity across your chats over ${params.window.label}.`,
+      replyText: `In the available local Messages snapshot, I did not find activity outside your configured self-thread over ${params.window.label}.\n\nSynthesis: Local-only; all visible claims and classifications are grounded in the available local synced snapshot.\n\nCoverage: Sync completeness was not independently verified, and each conversation was capped at its newest 80 in-window messages. This is an activity/actionability view, not device unread/read status.`,
       digestSource: 'local',
       threadCount: 0,
       messageCount: 0,
@@ -3373,7 +3904,19 @@ async function buildAllSyncedMessagesSummaryReply(params: {
     : synthesizedDigest.source === 'openai' ||
         synthesizedDigest.fallbackReason === 'ungrounded'
       ? 'local_untrusted_provider'
-      : 'local';
+      : synthesizedDigest.providerAttempted
+        ? 'local_provider_failed'
+        : 'local';
+  const synthesisDisclosure =
+    digestSource === 'openai_grounded'
+      ? 'Synthesis: OpenAI generated the Themes wording from the bounded local synced transcript; commitments, decisions, open questions, and reply classifications remain deterministic and grounded in that local snapshot.'
+      : digestSource === 'local_untrusted_provider'
+        ? 'Synthesis: Local-only output. An OpenAI draft was rejected by grounding checks; all visible claims and classifications come from the available local synced snapshot.'
+        : digestSource === 'local_provider_failed'
+          ? 'Synthesis: Visible output is local. OpenAI synthesis was attempted on the bounded transcript but did not return usable output; all visible claims and classifications come from the available local synced snapshot.'
+          : 'Synthesis: Local-only; no OpenAI synthesis request was made, and all visible claims and classifications are grounded in the available local synced snapshot.';
+  const councilDisclosure =
+    formatMessagesSummaryCouncilDisclosure(synthesizedDigest);
   const themeLines = providerGrounded
     ? formatAllSyncedMessagesProviderThemes({
         digest: synthesizedDigest,
@@ -3387,25 +3930,32 @@ async function buildAllSyncedMessagesSummaryReply(params: {
   const compact = params.channel === 'bluebubbles';
   const sectionLimit = compact ? 2 : 3;
   const evidenceLimit = compact ? 112 : 170;
-  const decisions = threads
-    .map((thread) => {
-      const message = [...thread.messages]
-        .reverse()
-        .find(isAllSyncedMessagesDecision);
-      return message ? { label: thread.label, message } : null;
+  const groundedPlans = threads
+    .flatMap((thread) => {
+      const speakerLabels = buildThreadSummarySpeakerLabels({
+        messages: thread.messages,
+        isGroup: thread.isGroup,
+      });
+      return extractThreadSummaryPlanFacts({
+        messages: thread.messages,
+        speakerLabels,
+        isGroup: thread.isGroup,
+        directOtherLabel: thread.label,
+      }).map((fact) => ({ label: thread.label, fact }));
     })
-    .filter(
-      (
-        item,
-      ): item is {
-        label: string;
-        message: NewMessage;
-      } => Boolean(item),
+    .sort((left, right) =>
+      right.fact.timestamp.localeCompare(left.fact.timestamp),
     )
     .slice(0, sectionLimit)
     .map(
       (item) =>
-        `- ${item.label}: "${clipAllSyncedMessagesEvidence(item.message.content, evidenceLimit)}"`,
+        `- ${item.label}: ${formatGroundedMessagesPlanFact({
+          ...item.fact,
+          action: clipAllSyncedMessagesEvidence(
+            item.fact.action,
+            compact ? 72 : 110,
+          ),
+        })}`,
     );
   const pendingReplies = threads
     .map(findAllSyncedMessagesPendingReply)
@@ -3433,15 +3983,27 @@ async function buildAllSyncedMessagesSummaryReply(params: {
       ? 3
       : 6;
   const hiddenThreadCount = Math.max(0, threads.length - themeCoverageLimit);
+  const coverageNote = [
+    'Coverage: Available local synced snapshot only; sync completeness was not independently verified.',
+    'The configured self-thread was excluded, and each conversation was capped at its newest 80 in-window messages.',
+    'Reply priorities are inferred from conversation turns, not device unread/read status.',
+    providerGrounded
+      ? 'Model-generated Themes used at most 8 conversations and their newest 16 messages.'
+      : `Local Themes show at most ${themeCoverageLimit} conversations.`,
+  ].join(' ');
 
   const sections = [
     `Messages digest \u2014 ${params.window.label}`,
+    synthesisDisclosure,
+    councilDisclosure,
     ['Themes', ...themeLines].join('\n'),
     [
-      'Decisions',
-      ...(decisions.length > 0
-        ? decisions
-        : ['No clear decisions were captured in the synced messages.']),
+      'Commitments and decisions',
+      ...(groundedPlans.length > 0
+        ? groundedPlans
+        : [
+            'No explicit commitments, decisions, or pending proposals were captured in the synced messages.',
+          ]),
     ].join('\n'),
     [
       'Open questions',
@@ -3458,6 +4020,7 @@ async function buildAllSyncedMessagesSummaryReply(params: {
     hiddenThreadCount > 0
       ? `Coverage note: ${hiddenThreadCount} additional active conversation${hiddenThreadCount === 1 ? '' : 's'} stayed outside this compact view.`
       : null,
+    coverageNote,
   ].filter((section): section is string => Boolean(section));
   return {
     replyText: sections.join('\n\n'),
@@ -3552,7 +4115,13 @@ async function runCommunicationThreadSummaryCapability(
   }
   if (resolution.state === 'ambiguous') {
     const matches = resolution.matches
-      .map((match) => match.displayName)
+      .map((match) =>
+        formatSafeSyncedThreadLabel({
+          jid: match.chatJid,
+          name: match.displayName,
+          isGroup: match.isGroup,
+        }),
+      )
       .join(', ');
     return {
       handled: true,
@@ -3568,6 +4137,12 @@ async function runCommunicationThreadSummaryCapability(
     };
   }
 
+  const safeDisplayName = formatSafeSyncedThreadLabel({
+    jid: resolution.target.chatJid,
+    name: resolution.target.displayName,
+    isGroup: resolution.target.isGroup,
+  });
+
   const window = resolveThreadSummaryWindow({
     now: context.now || new Date(),
     kind: input.timeWindowKind,
@@ -3578,16 +4153,21 @@ async function runCommunicationThreadSummaryCapability(
     startTimestamp: window.startTimestamp,
     endTimestamp: window.endTimestamp,
     limit: 400,
-  }).filter(
-    (message) =>
-      !message.is_bot_message && !isBlueBubblesAssistantControlMessage(message),
-  );
+  })
+    .filter(
+      (message) =>
+        !message.is_bot_message && describeMessageForSummary(message),
+    )
+    .map((message) => ({
+      ...message,
+      content: describeMessageForSummary(message),
+    }));
 
   if (messages.length === 0) {
     return {
       handled: true,
       capabilityId: descriptor.id,
-      replyText: `I didn't find any synced Messages activity in ${resolution.target.displayName} over ${window.label}.`,
+      replyText: `In the available local Messages snapshot, I didn't find activity in ${safeDisplayName} over ${window.label}.\n\nCoverage: Sync completeness was not independently verified; this named conversation lookup was capped at its newest 400 in-window messages. This is an activity view, not device unread status.`,
       outputShape: descriptor.preferredOutputShape[context.channel],
       trace: buildCapabilityTrace(
         descriptor,
@@ -3607,32 +4187,82 @@ async function runCommunicationThreadSummaryCapability(
     speakerLabels,
   });
   const synthesizedDigest = await summarizeBlueBubblesThreadDigest({
-    chatName: resolution.target.displayName,
+    chatName: safeDisplayName,
     windowLabel: window.label,
     transcript,
     channel: context.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
   });
-  const replyText =
+  const safeSuggestedReplies =
+    buildLocalThreadSummarySuggestedReplies(messages);
+  const usedOpenAiSynthesis =
     synthesizedDigest.source === 'openai' &&
-    (synthesizedDigest.lead ||
+    Boolean(
+      synthesizedDigest.lead ||
       synthesizedDigest.digest ||
-      synthesizedDigest.bullets.length > 0)
-      ? formatThreadSummaryReply({
-          lead:
-            synthesizedDigest.lead ||
-            `Here’s the gist from ${resolution.target.displayName} ${window.label === 'today' ? 'today' : `over ${window.label}`}.`,
-          digest: synthesizedDigest.digest,
-          bullets: synthesizedDigest.bullets,
-          suggestedReplies: synthesizedDigest.suggestedReplies,
-          channel: context.channel,
-        })
-      : buildFallbackThreadSummaryReply({
-          chatName: resolution.target.displayName,
-          windowLabel: window.label,
-          messages,
-          speakerLabels,
-          channel: context.channel,
-        });
+      synthesizedDigest.bullets.length > 0,
+    );
+  const summaryReplyText = usedOpenAiSynthesis
+    ? formatThreadSummaryReply({
+        lead:
+          synthesizedDigest.lead ||
+          `Here’s the gist from ${safeDisplayName} ${window.label === 'today' ? 'today' : `over ${window.label}`}.`,
+        digest: synthesizedDigest.digest,
+        bullets: synthesizedDigest.bullets,
+        suggestedReplies: safeSuggestedReplies,
+        channel: context.channel,
+      })
+    : buildFallbackThreadSummaryReply({
+        chatName: safeDisplayName,
+        windowLabel: window.label,
+        messages,
+        speakerLabels,
+        channel: context.channel,
+      });
+  const groundedPlanFacts = extractThreadSummaryPlanFacts({
+    messages,
+    speakerLabels,
+    isGroup: resolution.target.isGroup,
+    directOtherLabel: safeDisplayName,
+  });
+  const planSection = formatThreadSummaryPlanSection({
+    facts: groundedPlanFacts,
+    limit: context.channel === 'bluebubbles' ? 2 : 4,
+  });
+  const synthesisDisclosure = usedOpenAiSynthesis
+    ? 'Synthesis: OpenAI summarized the bounded local synced transcript; all visible claims and the deterministic commitment/decision classification remain grounded in that local snapshot.'
+    : synthesizedDigest.fallbackReason === 'ungrounded'
+      ? 'Synthesis: Visible output is local. An OpenAI draft was rejected by grounding checks; all visible claims and commitment/decision classifications come from the available local synced snapshot.'
+      : synthesizedDigest.providerAttempted
+        ? 'Synthesis: Visible output is local. OpenAI synthesis was attempted on the bounded transcript but did not return usable output; all visible claims and commitment/decision classifications come from the available local synced snapshot.'
+        : 'Synthesis: Local-only; no OpenAI synthesis request was made, and all visible claims and commitment/decision classifications are grounded in the available local synced snapshot.';
+  const synthesisCoverage = usedOpenAiSynthesis
+    ? 'OpenAI synthesis saw only the newest 120 in-window messages.'
+    : synthesizedDigest.providerAttempted
+      ? 'The attempted OpenAI synthesis saw only the newest 120 in-window messages; its wording is not rendered.'
+      : 'No OpenAI synthesis request was made.';
+  const councilDisclosure =
+    formatMessagesSummaryCouncilDisclosure(synthesizedDigest);
+  const replyText = `${summaryReplyText}\n\n${planSection}\n\n${synthesisDisclosure}${councilDisclosure ? `\n\n${councilDisclosure}` : ''}\n\nCoverage: Available local synced snapshot only; sync completeness was not independently verified. This named conversation lookup was capped at its newest 400 in-window messages. ${synthesisCoverage} This is an activity/actionability view, not device unread/read status; any suggested reply is unsent.`;
+  const latestTranscriptMessages = listMessagesForChatWindow({
+    chatJid: resolution.target.chatJid,
+    startTimestamp: window.startTimestamp,
+    endTimestamp: null,
+    limit: 400,
+  })
+    .filter(
+      (message) =>
+        !message.is_bot_message && describeMessageForSummary(message),
+    )
+    .map((message) => ({
+      ...message,
+      content: describeMessageForSummary(message),
+    }));
+  const namedSummaryFreshnessSnapshot = requireMessagesSummaryFreshnessSnapshot(
+    buildMessagesThreadFreshnessSnapshot({
+      chatJid: resolution.target.chatJid,
+      messages: latestTranscriptMessages,
+    }),
+  );
 
   return {
     handled: true,
@@ -3645,10 +4275,13 @@ async function runCommunicationThreadSummaryCapability(
       'local_companion',
       'summarized a synced Messages chat from raw BlueBubbles history',
       [
-        `chat:${resolution.target.displayName}`,
+        `chat:${safeDisplayName}`,
         `window:${window.label}`,
         `messages:${messages.length}`,
         `digest_source:${synthesizedDigest.source}`,
+        `provider_attempted:${synthesizedDigest.providerAttempted}`,
+        `council_attempted:${synthesizedDigest.councilAttempted}`,
+        `council_provider_used:${synthesizedDigest.councilProviderUsed}`,
       ],
     ),
     conversationSeed: {
@@ -3658,8 +4291,17 @@ async function runCommunicationThreadSummaryCapability(
       guidanceGoal: 'open_conversation',
       subjectData: {
         activeCapabilityId: descriptor.id,
-        threadTitle: resolution.target.displayName,
-        conversationFocus: resolution.target.displayName,
+        personName: resolution.target.isGroup ? undefined : safeDisplayName,
+        threadTitle: safeDisplayName,
+        conversationFocus: safeDisplayName,
+        namedMessagesSummaryTargetJson: namedSummaryFreshnessSnapshot
+          ? buildNamedMessagesSummaryTargetSeedJson({
+              query: chatQuery,
+              target: resolution.target,
+              historyStartTimestamp: window.startTimestamp,
+              freshnessSnapshot: namedSummaryFreshnessSnapshot,
+            })
+          : undefined,
       },
       supportedFollowups: descriptor.followupActions,
       responseSource: 'local_companion',
@@ -3931,16 +4573,157 @@ async function runCommunicationDraftCapability(
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const namedSummarySeedJson =
+    context.priorSubjectData?.namedMessagesSummaryTargetJson;
+  const expectsNamedSummaryTarget =
+    Boolean(namedSummarySeedJson) ||
+    context.priorSubjectData?.activeCapabilityId ===
+      'communication.summarize_thread';
+  const namedSummaryTargetValidation = expectsNamedSummaryTarget
+    ? validateNamedMessagesSummaryTarget({
+        seedJson: namedSummarySeedJson,
+        presentationChatJid: context.chatJid,
+      })
+    : null;
+  if (
+    namedSummaryTargetValidation &&
+    namedSummaryTargetValidation.state !== 'resolved'
+  ) {
+    const replyText =
+      namedSummaryTargetValidation.state === 'ambiguous'
+        ? 'That summarized Messages name now matches more than one current chat. Ask me to summarize the exact conversation again before drafting. I did not create a draft or any send controls.'
+        : 'I can no longer bind that summary to one exact current Messages chat. Ask me to summarize the named conversation again before drafting. I did not create a draft or any send controls.';
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'blocked a named Messages summary continuation without an exact current external target',
+        [
+          `target_validation:${namedSummaryTargetValidation.state}`,
+          namedSummaryTargetValidation.detail,
+        ],
+      ),
+      followupActions: [],
+    };
+  }
+  let namedSummaryTarget =
+    namedSummaryTargetValidation?.state === 'resolved'
+      ? namedSummaryTargetValidation
+      : null;
+  if (namedSummaryTarget) {
+    if (!context.primeMessagesChatHistory) {
+      return {
+        handled: true,
+        capabilityId: descriptor.id,
+        replyText:
+          'I could not refresh the exact Messages chat behind that summary, so I did not create a draft or any send controls. Ask me to summarize the named conversation again.',
+        outputShape: descriptor.preferredOutputShape[context.channel],
+        trace: buildCapabilityTrace(
+          descriptor,
+          context,
+          'local_companion',
+          'blocked a named Messages summary continuation without an exact-thread refresh capability',
+          ['target_refresh:unavailable'],
+        ),
+        followupActions: [],
+      };
+    }
+    try {
+      const receipt = await context.primeMessagesChatHistory(
+        namedSummaryTarget.target.chatJid,
+      );
+      if (
+        !isExactNonEmptyMessagesHistoryRefreshReceipt({
+          receipt,
+          expectedChatJid: namedSummaryTarget.target.chatJid,
+        })
+      ) {
+        throw new Error('unverifiable targeted Messages refresh');
+      }
+    } catch {
+      return {
+        handled: true,
+        capabilityId: descriptor.id,
+        replyText:
+          'I could not refresh the exact Messages chat behind that summary, so I did not create a draft or any send controls. Ask me to summarize the named conversation again.',
+        outputShape: descriptor.preferredOutputShape[context.channel],
+        trace: buildCapabilityTrace(
+          descriptor,
+          context,
+          'local_companion',
+          'blocked a named Messages summary continuation after its exact-thread refresh failed',
+          ['target_refresh:failed'],
+        ),
+        followupActions: [],
+      };
+    }
+    const refreshedTargetValidation = validateNamedMessagesSummaryTarget({
+      seedJson: namedSummaryTarget.seedJson,
+      presentationChatJid: context.chatJid,
+    });
+    if (refreshedTargetValidation.state !== 'resolved') {
+      return {
+        handled: true,
+        capabilityId: descriptor.id,
+        replyText:
+          'The Messages target changed while I refreshed it, so I did not create a draft or any send controls. Ask me to summarize the exact conversation again.',
+        outputShape: descriptor.preferredOutputShape[context.channel],
+        trace: buildCapabilityTrace(
+          descriptor,
+          context,
+          'local_companion',
+          'blocked a named Messages summary continuation whose target changed during refresh',
+          [`target_validation:${refreshedTargetValidation.state}`],
+        ),
+        followupActions: [],
+      };
+    }
+    const refreshedSnapshotValidation = validateMessagesThreadSnapshotBinding({
+      chatJid: refreshedTargetValidation.target.chatJid,
+      historyStartTimestamp:
+        refreshedTargetValidation.seed.historyStartTimestamp,
+      freshnessSnapshot: refreshedTargetValidation.seed.freshnessSnapshot,
+    });
+    if (!refreshedSnapshotValidation.ok) {
+      return {
+        handled: true,
+        capabilityId: descriptor.id,
+        replyText:
+          'The Messages conversation changed after that summary, so I did not create a draft or any send controls. Ask me to summarize the exact conversation again.',
+        outputShape: descriptor.preferredOutputShape[context.channel],
+        trace: buildCapabilityTrace(
+          descriptor,
+          context,
+          'local_companion',
+          'blocked a named Messages summary continuation whose transcript snapshot changed',
+          [refreshedSnapshotValidation.reason],
+        ),
+        followupActions: [],
+      };
+    }
+    namedSummaryTarget = refreshedTargetValidation;
+  }
   const reviewItemFollowup = parseRecentTextReviewItemFollowup({
     seedJson: context.priorSubjectData?.recentTextReviewJson,
     userText: input.text || input.canonicalText || '',
   });
   if (reviewItemFollowup && reviewItemFollowup.kind !== 'why') {
-    const freshness = validateRecentTextReviewFollowupFreshness({
-      seedJson: context.priorSubjectData?.recentTextReviewJson,
-      item: reviewItemFollowup.item,
-      now: context.now,
-    });
+    const freshness =
+      await validateRecentTextReviewFollowupFreshnessAfterTargetedRefresh({
+        seedJson: context.priorSubjectData?.recentTextReviewJson,
+        item: reviewItemFollowup.item,
+        now: context.now,
+        primeChatHistory:
+          context.primeMessagesChatHistory ||
+          (async () => {
+            throw new Error('targeted Messages history refresh unavailable');
+          }),
+      });
     if (!freshness.ok) {
       recordRecentTextReviewOutcome({
         groupFolder: context.groupFolder,
@@ -3978,6 +4761,40 @@ async function runCommunicationDraftCapability(
         },
       };
     }
+  }
+  if (
+    reviewItemFollowup?.kind === 'draft' &&
+    reviewItemFollowup.item.riskFlags?.includes('needs_owner_answer')
+  ) {
+    const replyText = `#${reviewItemFollowup.item.rank} asks for your actual answer, and I do not want to guess it. Tell me what you want to say to ${reviewItemFollowup.item.chatLabel}, and I can help word it. I did not create or send a draft.`;
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'withheld an ungrounded answer draft pending owner-provided wording',
+        ['needs_owner_answer'],
+      ),
+      conversationSeed: buildRecentTextReviewFollowupSeed({
+        descriptor,
+        context,
+        summaryText: replyText,
+        item: reviewItemFollowup.item,
+      }),
+      followupActions: descriptor.followupActions,
+      outcomeMetadata: {
+        source: 'recent_text_review',
+        outcomeKind: 'reviewed',
+        handled: false,
+        capabilityId: descriptor.id,
+        itemId: reviewItemFollowup.item.itemId,
+        itemRank: reviewItemFollowup.item.rank,
+      },
+    };
   }
   if (reviewItemFollowup?.kind === 'why') {
     const replyText = formatRecentTextReviewItemWhyReply(
@@ -4060,6 +4877,12 @@ async function runCommunicationDraftCapability(
   const selectedReviewTarget = selectedReviewItem
     ? resolveRecentTextReviewFollowupTarget(selectedReviewItem)
     : null;
+  const selectedReviewTargetChannel =
+    selectedReviewTarget?.ok &&
+    (selectedReviewTarget.targetChannel === 'telegram' ||
+      selectedReviewTarget.targetChannel === 'bluebubbles')
+      ? selectedReviewTarget.targetChannel
+      : null;
   const earlyReviewOperation =
     mapRecentTextReviewFollowupToMessageOperation(reviewItemFollowup);
   const earlyReviewActionSourceKey = selectedReviewItem
@@ -4158,6 +4981,50 @@ async function runCommunicationDraftCapability(
       };
     }
   }
+  if (
+    reviewItemFollowup?.kind === 'skip' &&
+    selectedReviewItem &&
+    !earlyReusableReviewAction
+  ) {
+    const recorded = recordRecentTextReviewOutcome({
+      groupFolder: context.groupFolder,
+      item: selectedReviewItem,
+      outcome: 'skipped',
+      now: context.now,
+    });
+    const replyText = recorded
+      ? `Skipped #${selectedReviewItem.rank}. I did not draft or send anything.`
+      : formatRecentTextReviewUnboundReply(selectedReviewItem);
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      conversationSeed: buildRecentTextReviewFollowupSeed({
+        descriptor,
+        context,
+        summaryText: replyText,
+        item: selectedReviewItem,
+      }),
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        recorded
+          ? 'skipped a selected recent text review item without drafting'
+          : 'could not bind a skipped recent text review item to a current thread',
+      ),
+      followupActions: descriptor.followupActions,
+      outcomeMetadata: {
+        source: 'recent_text_review',
+        outcomeKind: recorded ? 'skipped' : 'blocked_unbound',
+        handled: recorded,
+        capabilityId: descriptor.id,
+        itemId: selectedReviewItem.itemId,
+        itemRank: selectedReviewItem.rank,
+      },
+    };
+  }
   if (selectedReviewItem && selectedReviewTarget && !selectedReviewTarget.ok) {
     const replyText = formatRecentTextReviewUnboundReply(selectedReviewItem);
     return {
@@ -4187,45 +5054,63 @@ async function runCommunicationDraftCapability(
     (selectedReviewItem
       ? `Use this recent text review item without sending anything yet. Thread: ${selectedReviewItem.chatLabel}. Context: ${selectedReviewItem.summaryText}. Why it matters: ${selectedReviewItem.whyText || selectedReviewItem.recommendedAction || 'recent synced Messages review'}.`
       : input.text || input.canonicalText || '');
-  const priorContextForDraft = reviewDraftPrompt?.item
+  const priorContextForDraft = namedSummaryTarget
     ? {
         ...context.priorSubjectData,
-        threadTitle: selectedReviewItem?.chatLabel,
-        personName: selectedReviewItem?.chatLabel,
+        personName: namedSummaryTarget.target.isGroup
+          ? undefined
+          : namedSummaryTarget.target.displayName,
+        threadTitle: namedSummaryTarget.target.displayName,
         communicationThreadId: undefined,
-        communicationSubjectIds:
-          selectedReviewItem?.linkedSubjectIds ||
-          context.priorSubjectData?.communicationSubjectIds,
-        communicationLifeThreadIds:
-          selectedReviewItem?.linkedLifeThreadIds ||
-          context.priorSubjectData?.communicationLifeThreadIds,
-        lastCommunicationSummary:
-          selectedReviewItem?.summaryText ||
-          context.priorSubjectData?.lastCommunicationSummary,
+        communicationSubjectIds: [],
+        communicationLifeThreadIds: [],
+        lastCommunicationSummary: undefined,
+        recentTextReviewJson: undefined,
       }
-    : selectedReviewItem
+    : reviewDraftPrompt?.item
       ? {
           ...context.priorSubjectData,
-          threadTitle: selectedReviewItem.chatLabel,
-          personName: selectedReviewItem.chatLabel,
+          threadTitle: selectedReviewItem?.chatLabel,
+          personName: selectedReviewItem?.chatLabel,
           communicationThreadId: undefined,
           communicationSubjectIds:
-            selectedReviewItem.linkedSubjectIds ||
+            selectedReviewItem?.linkedSubjectIds ||
             context.priorSubjectData?.communicationSubjectIds,
           communicationLifeThreadIds:
-            selectedReviewItem.linkedLifeThreadIds ||
+            selectedReviewItem?.linkedLifeThreadIds ||
             context.priorSubjectData?.communicationLifeThreadIds,
           lastCommunicationSummary:
-            selectedReviewItem.summaryText ||
+            selectedReviewItem?.summaryText ||
             context.priorSubjectData?.lastCommunicationSummary,
         }
-      : context.priorSubjectData;
+      : selectedReviewItem
+        ? {
+            ...context.priorSubjectData,
+            threadTitle: selectedReviewItem.chatLabel,
+            personName: selectedReviewItem.chatLabel,
+            communicationThreadId: undefined,
+            communicationSubjectIds:
+              selectedReviewItem.linkedSubjectIds ||
+              context.priorSubjectData?.communicationSubjectIds,
+            communicationLifeThreadIds:
+              selectedReviewItem.linkedLifeThreadIds ||
+              context.priorSubjectData?.communicationLifeThreadIds,
+            lastCommunicationSummary:
+              selectedReviewItem.summaryText ||
+              context.priorSubjectData?.lastCommunicationSummary,
+          }
+        : context.priorSubjectData;
+  const draftContextChannel = namedSummaryTarget
+    ? ('bluebubbles' as const)
+    : context.channel;
+  const draftContextChatJid =
+    namedSummaryTarget?.target.chatJid || context.chatJid;
   const draft =
     context.channel === 'bluebubbles'
       ? await draftCommunicationReplyWithChannelFluidity({
-          channel: context.channel,
+          channel: draftContextChannel,
           groupFolder: context.groupFolder,
-          chatJid: context.chatJid,
+          chatJid: draftContextChatJid,
           text: rawCommunicationText,
           replyText: context.replyText,
           conversationSummary: context.conversationSummary,
@@ -4233,9 +5118,9 @@ async function runCommunicationDraftCapability(
           now: context.now,
         })
       : draftCommunicationReply({
-          channel: context.channel,
+          channel: draftContextChannel,
           groupFolder: context.groupFolder,
-          chatJid: context.chatJid,
+          chatJid: draftContextChatJid,
           text: rawCommunicationText,
           replyText: context.replyText,
           conversationSummary: context.conversationSummary,
@@ -4259,6 +5144,128 @@ async function runCommunicationDraftCapability(
     };
   }
 
+  if (namedSummaryTarget) {
+    let refreshReceipt: unknown;
+    try {
+      refreshReceipt = await context.primeMessagesChatHistory!(
+        namedSummaryTarget.target.chatJid,
+      );
+      // eslint-disable-next-line no-catch-all/no-catch-all
+    } catch {
+      refreshReceipt = null;
+    }
+    const finalTargetValidation = validateNamedMessagesSummaryTarget({
+      seedJson: namedSummaryTarget.seedJson,
+      presentationChatJid: context.chatJid,
+    });
+    const exactRefreshProven = isExactNonEmptyMessagesHistoryRefreshReceipt({
+      receipt: refreshReceipt,
+      expectedChatJid: namedSummaryTarget.target.chatJid,
+    });
+    const finalSnapshotValidation =
+      finalTargetValidation.state === 'resolved'
+        ? validateMessagesThreadSnapshotBinding({
+            chatJid: finalTargetValidation.target.chatJid,
+            historyStartTimestamp:
+              finalTargetValidation.seed.historyStartTimestamp,
+            freshnessSnapshot: finalTargetValidation.seed.freshnessSnapshot,
+          })
+        : null;
+    if (
+      !exactRefreshProven ||
+      finalTargetValidation.state !== 'resolved' ||
+      !finalSnapshotValidation?.ok
+    ) {
+      return {
+        handled: true,
+        capabilityId: descriptor.id,
+        replyText:
+          'The exact Messages conversation could not be proven unchanged after drafting, so I discarded the generated wording and did not create a draft or any send controls. Ask me to summarize that conversation again.',
+        outputShape: descriptor.preferredOutputShape[context.channel],
+        trace: buildCapabilityTrace(
+          descriptor,
+          context,
+          'local_companion',
+          'blocked named-summary action creation after final transcript revalidation',
+          [
+            exactRefreshProven
+              ? 'final_target_refresh:verified'
+              : 'final_target_refresh:unverifiable',
+            `final_target_validation:${finalTargetValidation.state}`,
+            finalSnapshotValidation?.ok
+              ? 'final_snapshot:fresh'
+              : `final_snapshot:${finalSnapshotValidation?.reason || 'unavailable'}`,
+          ],
+        ),
+        followupActions: [],
+      };
+    }
+    namedSummaryTarget = finalTargetValidation;
+  }
+
+  if (selectedReviewItem) {
+    const finalReviewFreshness =
+      await validateRecentTextReviewFollowupFreshnessAfterTargetedRefresh({
+        seedJson: context.priorSubjectData?.recentTextReviewJson,
+        item: selectedReviewItem,
+        now: context.now,
+        primeChatHistory:
+          context.primeMessagesChatHistory ||
+          (async () => {
+            throw new Error('targeted Messages history refresh unavailable');
+          }),
+      });
+    if (!finalReviewFreshness.ok) {
+      return {
+        handled: true,
+        capabilityId: descriptor.id,
+        replyText: `${formatRecentTextReviewFreshnessBlockedReply(selectedReviewItem, finalReviewFreshness)}\n\nI discarded the generated wording and created no send controls.`,
+        outputShape: descriptor.preferredOutputShape[context.channel],
+        trace: buildCapabilityTrace(
+          descriptor,
+          context,
+          'local_companion',
+          'blocked recent-review action creation after final transcript revalidation',
+          [finalReviewFreshness.reason],
+        ),
+        followupActions: [],
+      };
+    }
+  }
+
+  const recentTextReviewActionLink =
+    selectedReviewItem?.communicationThreadId &&
+    selectedReviewTarget?.ok &&
+    selectedReviewTarget.chatJid &&
+    context.chatJid &&
+    context.priorSubjectData?.recentTextReviewJson
+      ? buildRecentTextReviewDraftActionLink({
+          seedJson: context.priorSubjectData.recentTextReviewJson,
+          itemId: selectedReviewItem.itemId,
+          itemRank: selectedReviewItem.rank,
+          communicationThreadId: selectedReviewItem.communicationThreadId,
+          targetChatJid: selectedReviewTarget.chatJid,
+          groupFolder: context.groupFolder,
+          presentationChatJid: context.chatJid,
+        })
+      : null;
+  if (selectedReviewItem && !recentTextReviewActionLink) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: `I could not bind #${selectedReviewItem.rank} to an immutable Messages transcript snapshot after drafting, so I discarded the wording and did not create any send controls. Ask me to review recent texts again.`,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'blocked recent-review action creation without an immutable transcript link',
+        ['review_snapshot_link:missing'],
+      ),
+      followupActions: [],
+    };
+  }
+
   const reviewOperation = earlyReviewOperation;
   const reviewActionSourceKey = selectedReviewItem
     ? selectedReviewItem.itemId ||
@@ -4277,100 +5284,169 @@ async function runCommunicationDraftCapability(
   const messageAction =
     context.channel === 'alexa' || !context.chatJid
       ? undefined
-      : draft.thread?.id
-        ? reusableReviewAction &&
-          reusableReviewAction.sendStatus !== 'sent' &&
-          reusableReviewAction.sendStatus !== 'skipped'
-          ? reusableReviewAction
-          : createOrRefreshMessageActionFromDraft({
-              groupFolder: context.groupFolder,
-              presentationChannel: context.channel,
-              presentationChatJid: context.chatJid,
-              presentationThreadId: priorContextForDraft?.threadId || null,
-              sourceType: 'communication_thread',
-              sourceKey:
-                reviewActionSourceKey ||
-                selectedReviewItem?.communicationThreadId ||
-                draft.thread.id,
-              sourceSummary:
-                selectedReviewItem?.summaryText ||
-                draft.summaryText ||
-                'Drafted reply',
-              draftText: draft.draftText || replyText,
-              personName:
-                selectedReviewItem?.chatLabel ||
-                draft.linkedSubjects[0]?.displayName ||
-                draft.thread.title,
-              threadTitle:
-                selectedReviewItem?.chatLabel ||
-                draft.linkedLifeThreads[0]?.title ||
-                draft.thread.title,
-              communicationThreadId:
-                selectedReviewItem?.communicationThreadId || draft.thread.id,
-              threadId: draft.linkedLifeThreads[0]?.id,
-              communicationContext: 'reply_followthrough',
-              forceApproval: Boolean(selectedReviewItem),
-              targetOverride:
-                selectedReviewItem && selectedReviewTarget?.ok
-                  ? {
-                      kind: 'external_thread',
-                      chatJid: selectedReviewTarget.chatJid!,
-                      threadId: null,
-                      replyToMessageId: null,
-                      isGroup: selectedReviewTarget.isGroup || false,
-                      personName:
-                        selectedReviewTarget.personName ||
-                        selectedReviewItem.chatLabel,
-                    }
-                  : null,
-              targetChannelOverride: selectedReviewItem ? 'bluebubbles' : null,
-              now: context.now,
-            })
-        : context.channel === 'bluebubbles' &&
-            draft.linkedSubjects[0]?.displayName
+      : namedSummaryTarget?.target.isGroup
+        ? undefined
+        : namedSummaryTarget
           ? (() => {
-              const resolvedTarget = resolveBlueBubblesThreadTargetByName(
-                draft.linkedSubjects[0]!.displayName,
-              );
-              if (resolvedTarget.state !== 'resolved') {
-                return undefined;
-              }
               const dedupeSeed = clipText(
                 normalizeText(draft.draftText || replyText).toLowerCase(),
                 80,
               );
+              const exactCommunicationThreadId =
+                draft.thread?.channel === 'bluebubbles' &&
+                draft.thread.channelChatJid ===
+                  namedSummaryTarget.target.chatJid
+                  ? draft.thread.id
+                  : undefined;
               return createOrRefreshMessageActionFromDraft({
                 groupFolder: context.groupFolder,
-                presentationChannel: 'bluebubbles',
+                presentationChannel: context.channel,
                 presentationChatJid: context.chatJid,
-                presentationThreadId: priorContextForDraft?.threadId || null,
+                presentationThreadId: null,
                 sourceType: 'manual_prompt',
-                sourceKey: `bluebubbles-channel-draft:${resolvedTarget.target.chatJid}:${dedupeSeed}`,
+                sourceKey: `named-messages-summary-draft:${namedSummaryTarget.target.chatJid}:${dedupeSeed}`,
                 sourceSummary:
                   draft.summaryText ||
-                  `Draft text message to ${resolvedTarget.target.displayName}.`,
+                  `Draft text message to ${namedSummaryTarget.target.displayName}.`,
+                draftProvenance: draft.draftProvenance,
                 draftText: draft.draftText || replyText,
-                personName: resolvedTarget.target.displayName,
-                threadTitle:
-                  draft.linkedLifeThreads[0]?.title ||
-                  resolvedTarget.target.displayName,
-                threadId: draft.linkedLifeThreads[0]?.id,
-                communicationContext: 'general',
+                personName: namedSummaryTarget.target.displayName,
+                threadTitle: namedSummaryTarget.target.displayName,
+                communicationThreadId: exactCommunicationThreadId,
+                communicationContext: 'reply_followthrough',
+                namedMessagesSummary: buildNamedMessagesSummaryActionLink({
+                  validation: namedSummaryTarget,
+                  groupFolder: context.groupFolder,
+                  presentationChatJid: context.chatJid,
+                }),
+                forceApproval: true,
                 targetOverride: {
                   kind: 'external_thread',
-                  chatJid: resolvedTarget.target.chatJid,
+                  chatJid: namedSummaryTarget.target.chatJid,
                   threadId: null,
                   replyToMessageId: null,
-                  isGroup: resolvedTarget.target.isGroup,
-                  personName: resolvedTarget.target.displayName,
+                  isGroup: namedSummaryTarget.target.isGroup,
+                  personName: namedSummaryTarget.target.displayName,
+                  blueBubblesCreateChatAddress:
+                    namedSummaryTarget.target.blueBubblesCreateChatAddress,
                 },
                 targetChannelOverride: 'bluebubbles',
                 now: context.now,
               });
             })()
-          : undefined;
+          : draft.thread?.id
+            ? reusableReviewAction &&
+              reusableReviewAction.sendStatus !== 'sent' &&
+              reusableReviewAction.sendStatus !== 'skipped'
+              ? reusableReviewAction
+              : createOrRefreshMessageActionFromDraft({
+                  groupFolder: context.groupFolder,
+                  presentationChannel: context.channel,
+                  presentationChatJid: context.chatJid,
+                  presentationThreadId: priorContextForDraft?.threadId || null,
+                  sourceType: 'communication_thread',
+                  sourceKey:
+                    reviewActionSourceKey ||
+                    selectedReviewItem?.communicationThreadId ||
+                    draft.thread.id,
+                  sourceSummary:
+                    selectedReviewItem?.summaryText ||
+                    draft.summaryText ||
+                    'Drafted reply',
+                  draftProvenance: draft.draftProvenance,
+                  draftText: draft.draftText || replyText,
+                  personName:
+                    selectedReviewItem?.chatLabel ||
+                    draft.linkedSubjects[0]?.displayName ||
+                    draft.thread.title,
+                  threadTitle:
+                    selectedReviewItem?.chatLabel ||
+                    draft.linkedLifeThreads[0]?.title ||
+                    draft.thread.title,
+                  communicationThreadId:
+                    selectedReviewItem?.communicationThreadId ||
+                    draft.thread.id,
+                  threadId: draft.linkedLifeThreads[0]?.id,
+                  communicationContext: 'reply_followthrough',
+                  recentTextReview: recentTextReviewActionLink,
+                  forceApproval: Boolean(selectedReviewItem),
+                  targetOverride:
+                    selectedReviewItem && selectedReviewTarget?.ok
+                      ? {
+                          kind: 'external_thread',
+                          chatJid: selectedReviewTarget.chatJid!,
+                          threadId: null,
+                          replyToMessageId: null,
+                          isGroup: selectedReviewTarget.isGroup || false,
+                          personName:
+                            selectedReviewTarget.personName ||
+                            selectedReviewItem.chatLabel,
+                        }
+                      : null,
+                  targetChannelOverride:
+                    selectedReviewTargetChannel ??
+                    (selectedReviewItem
+                      ? selectedReviewItem.sourceChannel === 'telegram'
+                        ? 'telegram'
+                        : selectedReviewItem.sourceChannel === 'bluebubbles'
+                          ? 'bluebubbles'
+                          : selectedReviewTarget?.chatJid?.startsWith('tg:')
+                            ? 'telegram'
+                            : selectedReviewTarget?.chatJid?.startsWith('bb:')
+                              ? 'bluebubbles'
+                              : null
+                      : null),
+                  now: context.now,
+                })
+            : context.channel === 'bluebubbles' &&
+                draft.linkedSubjects[0]?.displayName
+              ? (() => {
+                  const resolvedTarget = resolveBlueBubblesThreadTargetByName(
+                    draft.linkedSubjects[0]!.displayName,
+                  );
+                  if (resolvedTarget.state !== 'resolved') {
+                    return undefined;
+                  }
+                  const dedupeSeed = clipText(
+                    normalizeText(draft.draftText || replyText).toLowerCase(),
+                    80,
+                  );
+                  return createOrRefreshMessageActionFromDraft({
+                    groupFolder: context.groupFolder,
+                    presentationChannel: 'bluebubbles',
+                    presentationChatJid: context.chatJid,
+                    presentationThreadId:
+                      priorContextForDraft?.threadId || null,
+                    sourceType: 'manual_prompt',
+                    sourceKey: `bluebubbles-channel-draft:${resolvedTarget.target.chatJid}:${dedupeSeed}`,
+                    sourceSummary:
+                      draft.summaryText ||
+                      `Draft text message to ${resolvedTarget.target.displayName}.`,
+                    draftProvenance: draft.draftProvenance,
+                    draftText: draft.draftText || replyText,
+                    personName: resolvedTarget.target.displayName,
+                    threadTitle:
+                      draft.linkedLifeThreads[0]?.title ||
+                      resolvedTarget.target.displayName,
+                    threadId: draft.linkedLifeThreads[0]?.id,
+                    communicationContext: 'general',
+                    targetOverride: {
+                      kind: 'external_thread',
+                      chatJid: resolvedTarget.target.chatJid,
+                      threadId: null,
+                      replyToMessageId: null,
+                      isGroup: resolvedTarget.target.isGroup,
+                      personName: resolvedTarget.target.displayName,
+                    },
+                    targetChannelOverride: 'bluebubbles',
+                    now: context.now,
+                  });
+                })()
+              : undefined;
 
-  let finalReplyText = replyText;
+  let finalReplyText = namedSummaryTarget?.target.isGroup
+    ? `${replyText}\n\nGroup draft only: this is unsent and not sendable from Andrea. I did not create any send controls.`
+    : replyText;
   let finalMessageAction = messageAction;
   let finalSendOptions:
     | Pick<SendMessageOptions, 'inlineActions' | 'inlineActionRows'>
@@ -4447,11 +5523,22 @@ async function runCommunicationDraftCapability(
         rawCommunicationText ||
         draft.summaryText ||
         '',
-      personName: draft.linkedSubjects[0]?.displayName,
+      personName: namedSummaryTarget?.target.isGroup
+        ? undefined
+        : namedSummaryTarget?.target.displayName ||
+          draft.linkedSubjects[0]?.displayName,
       threadId: draft.linkedLifeThreads[0]?.id,
-      threadTitle: draft.linkedLifeThreads[0]?.title || draft.thread?.title,
+      threadTitle:
+        namedSummaryTarget?.target.displayName ||
+        draft.linkedLifeThreads[0]?.title ||
+        draft.thread?.title,
       communicationThreadId:
-        selectedReviewItem?.communicationThreadId || draft.thread?.id,
+        selectedReviewItem?.communicationThreadId ||
+        (namedSummaryTarget &&
+        (draft.thread?.channel !== 'bluebubbles' ||
+          draft.thread.channelChatJid !== namedSummaryTarget.target.chatJid)
+          ? undefined
+          : draft.thread?.id),
       communicationSubjectIds: draft.linkedSubjects.map(
         (subject) => subject.id,
       ),
@@ -4459,6 +5546,7 @@ async function runCommunicationDraftCapability(
         (thread) => thread.id,
       ),
       lastCommunicationSummary: draft.summaryText,
+      namedMessagesSummaryTargetJson: namedSummaryTarget?.seedJson,
       recentTextReviewJson: context.priorSubjectData?.recentTextReviewJson,
       messageActionId: finalMessageAction?.messageActionId,
       messageActionSummary: finalMessageAction?.sourceSummary || undefined,
@@ -7432,6 +8520,17 @@ export function isAssistantCapabilityAllowed(
   return descriptor.safeForTelegram;
 }
 
+const OWNER_PRIVATE_MESSAGES_CAPABILITIES = new Set<AssistantCapabilityId>([
+  'communication.summarize_thread',
+  'communication.review_recent_texts',
+]);
+
+function requiresTrustedOwnerMessagesSurface(
+  capabilityId: AssistantCapabilityId,
+): boolean {
+  return OWNER_PRIVATE_MESSAGES_CAPABILITIES.has(capabilityId);
+}
+
 export async function executeAssistantCapability(params: {
   capabilityId: AssistantCapabilityId;
   context: AssistantCapabilityContext;
@@ -7458,6 +8557,25 @@ export async function executeAssistantCapability(params: {
         params.context,
         'unavailable',
         'blocked by channel safety gate',
+      ),
+    };
+  }
+  if (
+    requiresTrustedOwnerMessagesSurface(descriptor.id) &&
+    params.context.ownerReviewAllowed !== true
+  ) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'I can only review synced Messages in your registered owner control chat. I did not read or summarize any Messages content here.',
+      outputShape:
+        params.context.channel === 'telegram' ? 'chat_rich' : 'chat_brief',
+      trace: buildCapabilityTrace(
+        descriptor,
+        params.context,
+        'unavailable',
+        'blocked private Messages review outside a trusted owner surface',
       ),
     };
   }

@@ -253,18 +253,18 @@ export const ANDREA_INTEGRATION_CAPABILITY_REGISTRY: readonly AndreaIntegrationC
     {
       id: 'messages_threads',
       label: 'Messages / thread context',
-      status: 'live_proven',
+      status: 'degraded_but_usable',
       journeys: [
         'reply help',
         'message summary',
         'open communication loops',
-        'same-thread send or defer decisions',
+        'owner-control-thread draft or defer decisions',
       ],
       requiredAuth: ['BlueBubbles bridge for Messages'],
       degradedWording:
         'When the bridge is unhealthy, Andrea should keep reply help bounded and point people back to Telegram as the dependable lane.',
       proofCriteria:
-        'One thread summary plus one draft/defer follow-up chain with same-thread continuity.',
+        'One bounded thread summary plus one separately approved draft/defer follow-up chain with owner-control-thread continuity.',
     },
     {
       id: 'github_repo_context',

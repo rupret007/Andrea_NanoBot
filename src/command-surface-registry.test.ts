@@ -210,6 +210,9 @@ describe('command surface registry', () => {
     expect(help).toContain('repo check-ins');
     expect(help).toContain('Not helpful');
     expect(help).toContain('capture this idea');
+    expect(help).toContain('review my recent texts');
+    expect(help).toContain('draft #1');
+    expect(help).toContain('registered owner Telegram DM');
 
     expect(features).toContain('calendar');
     expect(features).toContain('planning');
@@ -218,6 +221,10 @@ describe('command surface registry', () => {
     expect(features).toContain('life threads');
     expect(features).toContain('repo and project work');
     expect(features).toContain('private pilot issue');
+    expect(features).toContain('does not auto-reply to contacts');
+    expect(features).toContain(
+      'ordinary contact and group threads remain data-only',
+    );
   });
 
   it('keeps discovery truth classes aligned with the current host story', () => {
@@ -228,7 +235,9 @@ describe('command surface registry', () => {
     );
 
     expect(truthById.get('alexa_voice_surface')).toBe('live_proven');
-    expect(truthById.get('bluebubbles_bounded_surface')).toBe('live_proven');
+    expect(truthById.get('bluebubbles_bounded_surface')).toBe(
+      'degraded_but_usable',
+    );
     expect(truthById.get('planning_and_next_steps')).toBe('near_live_only');
     expect(truthById.get('communication_and_reply_help')).toBe('live_proven');
     expect(truthById.get('compare_explain_and_saved_context')).toBe(

@@ -42,7 +42,7 @@ import {
   setRegisteredGroup,
   setSession,
   storeChatMetadata,
-  storeMessage,
+  storeMessageDirect,
 } from './db.js';
 import {
   assertValidGroupFolder,
@@ -131,7 +131,7 @@ type RuntimeDeps = {
   setAgentThread?: typeof setAgentThread;
   deleteAgentThread?: typeof deleteAgentThread;
   storeChatMetadata: typeof storeChatMetadata;
-  storeMessage: typeof storeMessage;
+  storeMessageDirect: typeof storeMessageDirect;
   runContainerAgent: typeof runContainerAgent;
 };
 
@@ -154,7 +154,7 @@ const runtimeDeps: RuntimeDeps = {
   setAgentThread,
   deleteAgentThread,
   storeChatMetadata,
-  storeMessage,
+  storeMessageDirect,
   runContainerAgent,
 };
 
@@ -485,6 +485,13 @@ export async function runAlexaAssistantTurn(
     request.principal,
     request.utterance,
   );
+  const persistInlineAlexaMessage = (message: NewMessage): void => {
+    deps.storeMessageDirect({
+      ...message,
+      is_from_me: message.is_from_me === true,
+      message_ingress_origin: 'direct_non_actionable',
+    });
+  };
   deps.storeChatMetadata(
     target.chatJid,
     userMessage.timestamp,
@@ -492,7 +499,7 @@ export async function runAlexaAssistantTurn(
     'alexa',
     false,
   );
-  deps.storeMessage(userMessage);
+  persistInlineAlexaMessage(userMessage);
 
   const requestPolicy = classifyAssistantRequest([userMessage]);
   const sessionStorageKey = getAssistantSessionStorageKey(
@@ -613,7 +620,7 @@ export async function runAlexaAssistantTurn(
       const failureText =
         analysis.userMessage ||
         `Sorry, ${assistantName} hit a snag and needs another try.`;
-      deps.storeMessage(
+      persistInlineAlexaMessage(
         buildAssistantMessage(target.chatJid, assistantName, failureText),
       );
       return {
@@ -632,7 +639,7 @@ export async function runAlexaAssistantTurn(
       text = `${assistantName} is here, but I did not get a finished answer back yet. Please ask again.`;
     }
 
-    deps.storeMessage(
+    persistInlineAlexaMessage(
       buildAssistantMessage(target.chatJid, assistantName, text),
     );
 
@@ -677,7 +684,7 @@ export async function runAlexaAssistantTurn(
           if (!text) {
             text = `${assistantName} is here, but I did not get a finished answer back yet. Please ask again.`;
           }
-          deps.storeMessage(
+          persistInlineAlexaMessage(
             buildAssistantMessage(target.chatJid, assistantName, text),
           );
           logger.info(
@@ -715,7 +722,7 @@ export async function runAlexaAssistantTurn(
       'Alexa bridge failed',
     );
     const failureText = `Sorry, ${assistantName} ran into a runtime issue: ${getUserFacingErrorDetail(err)}`;
-    deps.storeMessage(
+    persistInlineAlexaMessage(
       buildAssistantMessage(target.chatJid, assistantName, failureText),
     );
     return {

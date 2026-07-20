@@ -9,6 +9,10 @@ import {
 } from './db.js';
 import { readEnvFile } from './env.js';
 import {
+  getBlueBubblesCanonicalSelfThreadJid,
+  isConfiguredBlueBubblesSelfThreadAliasJid,
+} from './bluebubbles-self-thread.js';
+import {
   buildFieldTrialOperatorTruth,
   type FieldTrialBlueBubblesTruth,
 } from './field-trial-readiness.js';
@@ -559,7 +563,11 @@ function buildAllowedOperations(action: {
   sendStatus: string;
   sourceKey: string;
   linkedRefsJson?: string | null;
+  presentationChatJid?: string | null;
 }): BlueBubblesMessageActionOperationKind[] {
+  if (!isConfiguredBlueBubblesSelfThreadAliasJid(action.presentationChatJid)) {
+    return [];
+  }
   if (
     action.sendStatus === 'sent' ||
     action.sendStatus === 'skipped' ||
@@ -570,15 +578,12 @@ function buildAllowedOperations(action: {
   if (isBlueBubblesProofDrillAction(action)) {
     return ['defer', 'remind_instead', 'save_to_thread'];
   }
-  return ['send', 'defer', 'remind_instead', 'save_to_thread'];
+  return ['remind_instead', 'save_to_thread'];
 }
 
 function resolveOperation(
   request: BlueBubblesExecuteMessageActionRequest,
 ): MessageActionOperation {
-  if (request.operation === 'send') {
-    return { kind: 'send' };
-  }
   if (request.operation === 'defer') {
     return { kind: 'defer', timingHint: request.timingHint || null };
   }
@@ -690,6 +695,14 @@ export class BlueBubblesControlServer {
     actionId: string,
     request: BlueBubblesExecuteMessageActionRequest,
   ): Promise<Record<string, unknown>> {
+    if (
+      (request.operation as string) === 'send' ||
+      (request.operation as string) === 'send_again'
+    ) {
+      throw new Error(
+        'The BlueBubbles control API cannot send messages. A fresh owner-authored approval must come from the registered Telegram chat or configured Messages self-thread.',
+      );
+    }
     const action = getMessageAction(actionId);
     if (!action) {
       throw new Error(`Unknown message action: ${actionId}`);
@@ -697,15 +710,27 @@ export class BlueBubblesControlServer {
     if (action.targetChannel !== 'bluebubbles') {
       throw new Error('This message action is not owned by BlueBubbles.');
     }
-    if (!action.presentationChatJid?.startsWith('bb:')) {
+    const presentationChatJid = action.presentationChatJid;
+    if (
+      !presentationChatJid ||
+      !isConfiguredBlueBubblesSelfThreadAliasJid(presentationChatJid)
+    ) {
       throw new Error(
-        'This BlueBubbles message action is missing a presentation chat.',
+        'The BlueBubbles control API can operate only on an action presented in the explicitly configured owner self-thread.',
+      );
+    }
+    if (
+      request.operation === 'defer' &&
+      !isBlueBubblesProofDrillAction(action)
+    ) {
+      throw new Error(
+        'The BlueBubbles control API reserves defer for the no-send proof drill. Use remind_instead or save_to_thread for an ordinary recipient-bound action.',
       );
     }
     const currentTime = this.now();
     const continuity = reconcileBlueBubblesMessageActionContinuity({
       groupFolder: action.groupFolder,
-      chatJid: action.presentationChatJid,
+      chatJid: presentationChatJid,
       now: currentTime,
       allowRehydrate: true,
     });
@@ -719,11 +744,6 @@ export class BlueBubblesControlServer {
         'This BlueBubbles message action is no longer the active draft. Ask Andrea for a fresh draft, then use send it later tonight.',
       );
     }
-    if (isBlueBubblesProofDrillAction(action) && request.operation === 'send') {
-      throw new Error(
-        'BlueBubbles proof drill does not allow immediate send. Use send it later tonight.',
-      );
-    }
     const operation = resolveOperation(request);
     const result = await applyMessageActionOperation(
       action.messageActionId,
@@ -731,7 +751,7 @@ export class BlueBubblesControlServer {
       {
         groupFolder: action.groupFolder,
         channel: 'bluebubbles',
-        chatJid: action.presentationChatJid,
+        chatJid: presentationChatJid,
         currentTime,
         sendToTarget: async (
           targetChannel: string,
@@ -751,27 +771,58 @@ export class BlueBubblesControlServer {
     if (!result.handled) {
       throw new Error('BlueBubbles could not execute that message action.');
     }
+    let presentationMessageId: string | null = null;
     let confirmationMessageId: string | null = null;
     let confirmationError: string | null = null;
-    const confirmationText =
-      isBlueBubblesProofDrillAction(action) && operation.kind === 'defer'
-        ? result.presentation?.text || result.replyText || null
-        : result.replyText || result.presentation?.text || null;
-    if (confirmationText) {
+    let presentationDelivered = !result.presentation?.text;
+    if (result.presentation?.text) {
+      try {
+        const presentation = await this.requireChannel().sendMessage(
+          presentationChatJid,
+          result.presentation.text,
+        );
+        presentationMessageId = presentation.platformMessageId || null;
+        presentationDelivered = Boolean(presentationMessageId);
+        if (presentationMessageId) {
+          updateMessageAction(action.messageActionId, {
+            presentationMessageId,
+            presentationThreadId:
+              presentation.threadId || action.presentationThreadId || null,
+            lastUpdatedAt: currentTime.toISOString(),
+          });
+        } else {
+          confirmationError =
+            'BlueBubbles did not return a receipt for the refreshed draft card.';
+        }
+      } catch (err) {
+        confirmationError = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          { err, actionId, chatJid: presentationChatJid },
+          'BlueBubbles control API could not post the refreshed same-thread draft card',
+        );
+      }
+    }
+    const confirmationText = result.replyText || null;
+    if (
+      confirmationText &&
+      presentationDelivered &&
+      confirmationText !== result.presentation?.text
+    ) {
       try {
         const confirmation = await this.requireChannel().sendMessage(
-          action.presentationChatJid,
+          presentationChatJid,
           confirmationText,
         );
         confirmationMessageId = confirmation.platformMessageId || null;
       } catch (err) {
         confirmationError = err instanceof Error ? err.message : String(err);
         logger.warn(
-          { err, actionId, chatJid: action.presentationChatJid },
+          { err, actionId, chatJid: presentationChatJid },
           'BlueBubbles control API executed a message action but could not post the same-thread confirmation',
         );
       }
     }
+    confirmationMessageId ||= presentationMessageId;
     if (isBlueBubblesProofDrillAction(action) && operation.kind === 'defer') {
       const truth = this.buildTruth();
       const state =
@@ -781,7 +832,7 @@ export class BlueBubblesControlServer {
       emitBlueBubblesProofDrillPlatformEvent({
         event: 'proof_drill_deferred',
         actionId,
-        chatJid: action.presentationChatJid,
+        chatJid: presentationChatJid,
         state,
         summary:
           'BlueBubbles proof drill recorded a deferred same-thread decision.',
@@ -792,7 +843,7 @@ export class BlueBubblesControlServer {
         emitBlueBubblesProofDrillPlatformEvent({
           event: 'proof_drill_confirmed',
           actionId,
-          chatJid: action.presentationChatJid,
+          chatJid: presentationChatJid,
           state,
           summary:
             'BlueBubbles proof drill posted a same-thread confirmation after the deferred decision.',
@@ -806,6 +857,7 @@ export class BlueBubblesControlServer {
       action: getMessageAction(actionId),
       replyText: result.replyText || null,
       presentation: result.presentation || null,
+      presentationMessageId,
       confirmationMessageId,
       confirmationError,
       proof: buildProofReport(this.buildTruth(), currentTime),
@@ -817,15 +869,26 @@ export class BlueBubblesControlServer {
   ): Promise<Record<string, unknown>> {
     const currentTime = this.now();
     const config = resolveBlueBubblesConfig();
+    const requestedChatJid = chatJid || getBlueBubblesCanonicalSelfThreadJid();
+    if (!isConfiguredBlueBubblesSelfThreadAliasJid(requestedChatJid)) {
+      throw new Error(
+        'BlueBubbles proof drill requires an explicitly configured owner self-thread.',
+      );
+    }
     const started = startBlueBubblesProofDrill({
       groupFolder: config.groupFolder || 'main',
-      chatJid,
+      chatJid: requestedChatJid,
       now: currentTime,
     });
     let presentationMessageId: string | null = null;
     const presentationChatJid = started.action.presentationChatJid;
-    if (!presentationChatJid?.startsWith('bb:')) {
-      throw new Error('BlueBubbles proof drill is missing a self-thread chat.');
+    if (
+      !presentationChatJid ||
+      !isConfiguredBlueBubblesSelfThreadAliasJid(presentationChatJid)
+    ) {
+      throw new Error(
+        'BlueBubbles proof drill requires an explicitly configured owner self-thread.',
+      );
     }
     const presentationText = buildBlueBubblesProofDrillPresentationText(
       started.action,
@@ -1070,31 +1133,13 @@ export class BlueBubblesControlServer {
       }
 
       if (method === 'POST' && url.pathname === '/v1/bluebubbles/send') {
-        const body = await readJsonBody(req);
-        const chatJid = toNullableString(body.chatJid);
-        const text = toNullableString(body.text);
-        const replyToMessageId = toNullableString(body.replyToMessageId);
-        if (!chatJid || !text) {
-          throw new Error('chatJid and text are required.');
-        }
-        const knownChat = this.requireKnownChat(chatJid);
-        const effectiveReplyGateMode = resolveBlueBubblesReplyGateMode({
-          chatJid,
-          isGroup: knownChat.isGroup,
-        });
-        if (effectiveReplyGateMode !== 'direct_1to1') {
-          throw new Error(
-            'Direct BlueBubbles send is only allowed for safe direct 1:1 chats. Use a same-thread message action for other chats.',
-          );
-        }
-        const result = await this.requireChannel().sendMessage(chatJid, text, {
-          replyToMessageId: replyToMessageId || undefined,
-          suppressSenderLabel: true,
-        });
-        writeJson(res, 200, {
-          sent: true,
-          result,
-          proof: buildProofReport(this.buildTruth(), this.now()),
+        // Arbitrary recipient/body writes are intentionally unavailable on the
+        // control plane. External delivery must start from a persisted message
+        // action whose exact card receipt is verified before approval.
+        writeJson(res, 410, {
+          error: 'direct_bluebubbles_send_retired',
+          detail:
+            'Direct BlueBubbles control sends are retired. Create and deliver a recipient-bound message-action card, then approve that action.',
         });
         return;
       }
@@ -1107,17 +1152,24 @@ export class BlueBubblesControlServer {
         segments[3] &&
         segments[4] === 'execute'
       ) {
-        const body = (await readJsonBody(
-          req,
-        )) as unknown as BlueBubblesExecuteMessageActionRequest;
+        const rawBody = await readJsonBody(req);
         if (
-          body.operation !== 'send' &&
+          rawBody.operation === 'send' ||
+          rawBody.operation === 'send_again'
+        ) {
+          throw new Error(
+            'The BlueBubbles control API cannot send messages. A fresh owner-authored approval must come from the registered Telegram chat or configured Messages self-thread.',
+          );
+        }
+        const body =
+          rawBody as unknown as BlueBubblesExecuteMessageActionRequest;
+        if (
           body.operation !== 'defer' &&
           body.operation !== 'remind_instead' &&
           body.operation !== 'save_to_thread'
         ) {
           throw new Error(
-            'operation must be send, defer, remind_instead, or save_to_thread.',
+            'operation must be defer, remind_instead, or save_to_thread; send operations are not available on the control API.',
           );
         }
         writeJson(

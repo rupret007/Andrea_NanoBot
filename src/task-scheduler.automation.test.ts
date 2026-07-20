@@ -19,6 +19,7 @@ import {
   createTask,
   getCalendarAutomationByTaskId,
   getTaskById,
+  upsertMessageAction,
 } from './db.js';
 import {
   _resetSchedulerLoopForTests,
@@ -129,5 +130,115 @@ describe('task scheduler calendar automations', () => {
     expect(automation?.dedupe_state_json).toContain(
       'briefing:today:2026-04-01',
     );
+  });
+
+  it('routes an external BlueBubbles task with a linked message action through that action before calendar automation', async () => {
+    const nowIso = '2026-04-01T12:00:00.000Z';
+    const taskId = 'task-linked-action-and-automation';
+    const chatJid = 'bb:iMessage;-;+15551234567';
+    createTask({
+      id: taskId,
+      group_folder: 'main',
+      chat_jid: chatJid,
+      prompt: 'Send me a morning brief every weekday at 7 AM',
+      schedule_type: 'once',
+      schedule_value: nowIso,
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: nowIso,
+    });
+    createCalendarAutomation({
+      task_id: taskId,
+      chat_jid: chatJid,
+      group_folder: 'main',
+      automation_type: 'briefing',
+      label: 'Morning brief every weekday at 7:00 AM',
+      config_json: JSON.stringify({ kind: 'briefing' }),
+      dedupe_state_json: null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    });
+    upsertMessageAction({
+      messageActionId: 'message-already-sent',
+      groupFolder: 'main',
+      sourceType: 'manual_prompt',
+      sourceKey: 'already-sent',
+      sourceSummary: 'Already completed send',
+      targetKind: 'external_thread',
+      targetChannel: 'bluebubbles',
+      targetConversationJson: JSON.stringify({
+        kind: 'external_thread',
+        chatJid,
+        isGroup: false,
+        personName: 'Candace',
+      }),
+      draftText: 'Already sent.',
+      trustLevel: 'schedule_send',
+      sendStatus: 'sent',
+      followupAt: nowIso,
+      requiresApproval: false,
+      delegationRuleId: null,
+      delegationMode: null,
+      explanationJson: null,
+      linkedRefsJson: null,
+      platformMessageId: 'message-1',
+      scheduledTaskId: taskId,
+      approvedAt: nowIso,
+      lastActionKind: 'scheduled_send',
+      lastActionAt: nowIso,
+      dedupeKey: 'already-sent',
+      presentationChatJid: chatJid,
+      presentationThreadId: null,
+      presentationMessageId: null,
+      createdAt: nowIso,
+      lastUpdatedAt: nowIso,
+      sentAt: nowIso,
+    });
+
+    const pendingRuns: Promise<void>[] = [];
+    const sendMessage = vi.fn(async () => {});
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'unexpected',
+    }));
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        [chatJid]: {
+          name: 'External contact',
+          folder: 'main',
+          trigger: '@andrea',
+          added_at: nowIso,
+          isMain: true,
+          requiresTrigger: false,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: (
+          _groupJid: string,
+          _taskId: string,
+          fn: () => Promise<void>,
+        ) => {
+          pendingRuns.push(fn());
+        },
+        closeStdin: () => {},
+        notifyIdle: () => {},
+      } as any,
+      onProcess: vi.fn(),
+      sendMessage,
+      sendToTarget,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all(pendingRuns);
+
+    expect(parseCalendarAutomationRecord).not.toHaveBeenCalled();
+    expect(executeCalendarAutomation).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getTaskById(taskId)).toMatchObject({
+      status: 'completed',
+      last_result: 'Scheduled message no longer needed to send.',
+    });
   });
 });

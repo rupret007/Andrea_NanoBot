@@ -6,6 +6,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -115,6 +116,32 @@ function resolveSourceChatJid(
   );
 }
 
+function isBlockedExternalBlueBubblesIpcTarget(
+  chatJid: unknown,
+): chatJid is string {
+  return (
+    typeof chatJid === 'string' &&
+    chatJid.startsWith('bb:') &&
+    !isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)
+  );
+}
+
+export function isIpcMessageAuthorized(params: {
+  sourceGroup: string;
+  isMain: boolean;
+  targetChatJid: string;
+  registeredGroups: Record<string, RegisteredGroup>;
+}): boolean {
+  if (isBlockedExternalBlueBubblesIpcTarget(params.targetChatJid)) {
+    return false;
+  }
+  const targetGroup = params.registeredGroups[params.targetChatJid];
+  return (
+    params.isMain ||
+    Boolean(targetGroup && targetGroup.folder === params.sourceGroup)
+  );
+}
+
 let ipcWatcherRunning = false;
 
 function writeRpcResponseFile(
@@ -191,11 +218,16 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   fs.unlinkSync(filePath);
                   continue;
                 }
-                // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[data.chatJid];
+                // Authorization: verify this group can send to this chatJid.
+                // Generic IPC must never become an external Messages send
+                // lane; those writes require the recipient-bound host action.
                 if (
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
+                  isIpcMessageAuthorized({
+                    sourceGroup,
+                    isMain,
+                    targetChatJid: data.chatJid,
+                    registeredGroups,
+                  })
                 ) {
                   await deps.sendMessage(data.chatJid, text);
                   logger.info(
@@ -359,6 +391,13 @@ export async function processTaskIpc(
   deps: IpcDeps,
 ): Promise<void> {
   const registeredGroups = deps.registeredGroups();
+  if (isBlockedExternalBlueBubblesIpcTarget(data.targetJid)) {
+    logger.warn(
+      { sourceGroup, targetJid: data.targetJid, operation: data.type },
+      'Rejected IPC operation targeting an external BlueBubbles thread',
+    );
+    return;
+  }
   const runSkillEnable =
     deps.enableOpenClawSkill ||
     deps.installOpenClawSkill ||
@@ -396,6 +435,17 @@ export async function processTaskIpc(
           logger.warn(
             { targetJid },
             'Cannot schedule task: target group not registered',
+          );
+          break;
+        }
+
+        if (
+          targetJid.startsWith('bb:') &&
+          !isConfiguredBlueBubblesSelfThreadAliasJid(targetJid)
+        ) {
+          logger.warn(
+            { sourceGroup, targetJid },
+            'Rejected generic scheduled task targeting an external BlueBubbles thread',
           );
           break;
         }

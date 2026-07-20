@@ -1,14 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { adaptiveEvidence } from './adaptive-cognition-engine.js';
+import { createAdaptiveDurableWork } from './adaptive-cognition-durable-adapter.js';
 import {
   assessCognitiveRunQuality,
+  authorizeCognitiveReplyDelivery,
   beginCognitiveKernelRun,
+  buildCognitiveAdaptiveDurableBindings,
   buildCognitiveDoctorReport,
   buildCognitiveResumePlan,
   buildCognitiveTraceReport,
+  continueCognitiveKernelDurably,
   finalizeCognitiveKernelOutcome,
   formatCognitiveDoctorReport,
   isCognitionDoctorRequest,
+  mapAdaptiveCognitiveRunStatus,
   recordCognitiveOwnerReview,
   runCognitiveBenchmarkSuite,
 } from './cognitive-kernel.js';
@@ -34,13 +40,282 @@ import {
   listCognitiveTraceSpans,
   listCognitiveToolRegistry,
   listCognitiveWorldBeliefs,
+  listDurableEffectReceipts,
   upsertCognitiveSkillCard,
 } from './db.js';
 import { buildSkillLibraryReport } from './skill-library.js';
 
+function explicitTestCompletionEvidence(
+  kernel: ReturnType<typeof beginCognitiveKernelRun>,
+) {
+  const frame = kernel.taskGraph.adaptiveFrame;
+  const criterion = frame?.successCriteria.at(-1);
+  if (!frame || !criterion) return [];
+  const targetPrefix = `target:${criterion.criterionId}:`;
+  const target = frame.contextRefs
+    .find((ref) => ref.startsWith(targetPrefix))
+    ?.slice(targetPrefix.length);
+  if (!target) return [];
+  return [
+    adaptiveEvidence({
+      evidenceId: `adaptive:test-receipt:${kernel.run.runId}`,
+      evidenceClass: 'observed',
+      origin: 'synthetic',
+      source: 'trusted_test_receipt_adapter',
+      claim: 'The bounded test outcome was independently observed.',
+      subject: target,
+      predicate: 'postcondition',
+      value: 'verified',
+      confidence: 0.98,
+      freshness: 'fresh',
+      scope: frame.authority.actorScope,
+      verification: 'verified',
+      supportsCriterionIds: [criterion.criterionId],
+      provenanceRefs: [`verification_receipt:${kernel.run.runId}`],
+    }),
+  ];
+}
+
 describe('cognitive kernel', () => {
+  it('maps adaptive completion state authoritatively at begin and finalization', () => {
+    const kernel = beginCognitiveKernelRun({
+      turnId: 'cog-adaptive-status-map',
+      channel: 'telegram',
+      taskFamily: 'assistant',
+      goal: 'Give one bounded next step.',
+      requestRoute: 'direct_assistant',
+      selectedSkillId: 'assistant.daily_guidance',
+      selectedSkillPurpose: 'Offer one bounded next step.',
+      selectedSkillApprovalNeed: 'none',
+      selectedSkillSideEffectRisk: 'none',
+      selectedSkillEvidenceLevel: 'strong',
+    });
+    const adaptive = kernel.adaptiveRun!;
+    const authorized = {
+      ...adaptive,
+      status: 'satisfied' as const,
+      verification: {
+        ...adaptive.verification,
+        completionAuthorized: true,
+      },
+    };
+
+    expect(
+      mapAdaptiveCognitiveRunStatus({
+        phase: 'finalize',
+        adaptiveRun: null,
+      }),
+    ).toBe('awaiting_evidence');
+    expect(
+      mapAdaptiveCognitiveRunStatus({
+        phase: 'finalize',
+        adaptiveRun: {
+          ...authorized,
+          verification: {
+            ...authorized.verification,
+            completionAuthorized: false,
+          },
+        },
+      }),
+    ).toBe('awaiting_evidence');
+    expect(
+      mapAdaptiveCognitiveRunStatus({
+        phase: 'begin',
+        adaptiveRun: authorized,
+      }),
+    ).toBe('planned');
+    expect(
+      mapAdaptiveCognitiveRunStatus({
+        phase: 'finalize',
+        adaptiveRun: authorized,
+      }),
+    ).toBe('answered');
+    expect(
+      mapAdaptiveCognitiveRunStatus({
+        phase: 'finalize',
+        adaptiveRun: { ...adaptive, status: 'awaiting_approval' },
+      }),
+    ).toBe('awaiting_approval');
+    expect(
+      mapAdaptiveCognitiveRunStatus({
+        phase: 'finalize',
+        adaptiveRun: { ...adaptive, status: 'blocked' },
+      }),
+    ).toBe('blocked');
+  });
+
+  it('blocks pre-send completion text until typed adaptive evidence authorizes it', () => {
+    const kernel = beginCognitiveKernelRun({
+      turnId: 'cog-pre-send-gate',
+      channel: 'telegram',
+      taskFamily: 'research',
+      goal: 'Compare this with local memory first and search only if needed.',
+      requestRoute: 'direct_assistant',
+      selectedSkillId: 'research.live_or_saved',
+      selectedSkillPurpose: 'Answer from saved or live evidence.',
+      selectedSkillApprovalNeed: 'none',
+      selectedSkillSideEffectRisk: 'none',
+      selectedSkillEvidenceLevel: 'strong',
+    });
+
+    expect(
+      authorizeCognitiveReplyDelivery({
+        cognitiveRun: kernel,
+        replyKind: 'completion',
+        now: '2026-07-19T12:00:00.000Z',
+      }),
+    ).toMatchObject({
+      allowed: false,
+      completionAuthorized: false,
+    });
+    expect(
+      authorizeCognitiveReplyDelivery({
+        cognitiveRun: kernel,
+        replyKind: 'evidence_request',
+        now: '2026-07-19T12:00:00.000Z',
+      }).allowed,
+    ).toBe(true);
+    expect(
+      authorizeCognitiveReplyDelivery({
+        cognitiveRun: kernel,
+        replyKind: 'completion',
+        completionEvidence: explicitTestCompletionEvidence(kernel),
+        now: '2026-07-19T12:00:00.000Z',
+      }),
+    ).toMatchObject({
+      allowed: true,
+      completionAuthorized: true,
+      adaptiveStatus: 'satisfied',
+    });
+
+    const durableRequired = {
+      ...kernel,
+      requiresDurableCompletion: true,
+    };
+    expect(
+      authorizeCognitiveReplyDelivery({
+        cognitiveRun: durableRequired,
+        replyKind: 'completion',
+        completionEvidence: explicitTestCompletionEvidence(kernel),
+        now: '2026-07-19T12:00:00.000Z',
+      }),
+    ).toMatchObject({
+      allowed: false,
+      completionAuthorized: true,
+    });
+    expect(
+      authorizeCognitiveReplyDelivery({
+        cognitiveRun: durableRequired,
+        replyKind: 'completion',
+        completionEvidence: explicitTestCompletionEvidence(kernel),
+        durableCompletionVerified: true,
+        now: '2026-07-19T12:00:00.000Z',
+      }),
+    ).toMatchObject({
+      allowed: true,
+      completionAuthorized: true,
+    });
+
+    const missingAdaptive = {
+      ...kernel,
+      run: { ...kernel.run, taskGraphJson: '{}' },
+    };
+    expect(
+      authorizeCognitiveReplyDelivery({
+        cognitiveRun: missingAdaptive,
+        replyKind: 'completion',
+        now: '2026-07-19T12:00:00.000Z',
+      }),
+    ).toMatchObject({
+      allowed: false,
+      adaptiveStatus: 'missing',
+    });
+  });
   beforeEach(() => _initTestDatabase());
   afterEach(() => _closeDatabase());
+
+  it('prepares without tool execution and advances only through exact durable node leases', async () => {
+    const beginInput = {
+      turnId: 'cog-durable-production-path',
+      channel: 'telegram',
+      groupFolder: 'main',
+      taskFamily: 'assistant',
+      goal: 'Give one bounded next step from available local evidence.',
+      requestRoute: 'direct_assistant',
+      runOrigin: 'synthetic',
+      selectedSkillId: 'assistant.daily_guidance',
+      selectedSkillPurpose: 'Offer one bounded next step.',
+      selectedSkillApprovalNeed: 'none',
+      selectedSkillSideEffectRisk: 'none',
+      selectedSkillEvidenceLevel: 'strong',
+      executionMode: 'prepare_only',
+    } as const;
+    const kernel = beginCognitiveKernelRun(beginInput);
+    expect(kernel.executionSteps).toEqual([]);
+    expect(kernel.adaptiveRun?.status).toBe('active');
+
+    const targetScopeKey = 'adaptive:test:kernel-target';
+    const bindings = buildCognitiveAdaptiveDurableBindings({
+      cognitiveRun: kernel,
+      targetScopeKey,
+    });
+    expect(bindings).not.toHaveLength(0);
+    expect(
+      bindings.every(
+        (binding) =>
+          binding.effectClass === 'read_only' &&
+          binding.planContractDigest ===
+            kernel.taskGraph.adaptivePlan?.planContractDigest,
+      ),
+    ).toBe(true);
+    const durableBinding = {
+      ownerId: 'owner:adaptive-kernel',
+      chatId: 'chat:adaptive-kernel',
+      groupId: 'main',
+      channel: 'telegram',
+      targetScopeKey,
+    };
+    const created = createAdaptiveDurableWork({
+      originTurnId: beginInput.turnId,
+      authorizedSurface: beginInput.channel,
+      binding: durableBinding,
+      goalSummary: kernel.frame.goal,
+      cognitiveRunId: kernel.run.runId,
+      frame: kernel.taskGraph.adaptiveFrame!,
+      graph: kernel.taskGraph.adaptivePlan!,
+      bindings,
+      executorScopeKey: 'cognitive-kernel:adaptive:v1',
+      targetScopeKey,
+      now: '2026-07-19T20:00:00.000Z',
+    });
+    const continued = await continueCognitiveKernelDurably({
+      cognitiveRun: kernel,
+      beginInput,
+      durableWork: created.work,
+      durableBinding,
+      bindings,
+      executorScopeKey: 'cognitive-kernel:adaptive:v1',
+      targetScopeKey,
+      processGeneration: 'process:cognitive-kernel-test',
+      maxNodeLeases: 4,
+      now: '2026-07-19T20:01:00.000Z',
+    });
+
+    expect(continued.leasesConsumed).toBeGreaterThan(0);
+    expect(continued.nodesExecuted).toBeGreaterThan(0);
+    expect(kernel.executionSteps.length).toBeGreaterThan(0);
+    expect(
+      listDurableEffectReceipts({ workId: created.work.workId, limit: 100 })
+        .filter((receipt) => receipt.status === 'succeeded')
+        .every(
+          (receipt) =>
+            Boolean(receipt.verificationFingerprint) &&
+            Boolean(receipt.postStateFingerprint),
+        ),
+    ).toBe(true);
+    expect(kernel.adaptiveRun?.verification.completionAuthorized).toBe(false);
+    expect(kernel.run.status).toBe('awaiting_evidence');
+  });
 
   it('hashes unsafe caller turn IDs into distinct durable run identities', () => {
     const input = {
@@ -230,6 +505,55 @@ describe('cognitive kernel', () => {
     expect(kernel.run.status).not.toBe('answered');
   });
 
+  it('keeps a handled turn awaiting evidence without a typed completion receipt', () => {
+    const kernel = beginCognitiveKernelRun({
+      turnId: 'cog-no-completion-receipt',
+      channel: 'telegram',
+      taskFamily: 'assistant',
+      goal: 'Give me one bounded next step.',
+      requestRoute: 'direct_assistant',
+      selectedSkillId: 'assistant.daily_guidance',
+      selectedSkillPurpose: 'Offer one bounded next step.',
+      selectedSkillApprovalNeed: 'none',
+      selectedSkillSideEffectRisk: 'none',
+      selectedSkillEvidenceLevel: 'strong',
+    });
+
+    finalizeCognitiveKernelOutcome({
+      cognitiveRun: kernel,
+      evaluationStatus: 'pass',
+      evidenceGap: 'none',
+      evaluatorFlags: ['none'],
+      routeUsed: 'assistant.daily_guidance',
+      answerClass: 'handled',
+    });
+
+    const stored = getCognitiveRun(kernel.run.runId);
+    const taskGraph = JSON.parse(stored?.taskGraphJson || '{}') as {
+      adaptiveEvidence?: Array<{ source?: string }>;
+      adaptiveVerification?: { completionAuthorized?: boolean };
+    };
+    expect(stored?.status).toBe('awaiting_evidence');
+    expect(stored?.outcomeScore).toBeLessThan(0.5);
+    expect(taskGraph.adaptiveVerification?.completionAuthorized).toBe(false);
+    expect(
+      taskGraph.adaptiveEvidence?.some(
+        (evidence) => evidence.source === 'final_turn_verifier',
+      ),
+    ).toBe(false);
+    expect(
+      listCognitiveRewardSignals({ runId: kernel.run.runId })[0],
+    ).toMatchObject({ signalKind: 'evidence_required' });
+    expect(
+      listCognitiveReflections({ taskFamily: 'assistant' }).find(
+        (reflection) => reflection.runId === kernel.run.runId,
+      ),
+    ).toMatchObject({ reflectionKind: 'verifier_block' });
+    expect(
+      listCognitiveSkillCards({ taskFamily: 'assistant' })[0],
+    ).toMatchObject({ promotionState: 'candidate', usageCount: 0 });
+  });
+
   it('forces ultrathink into council-verified mode without storing raw private content', () => {
     const kernel = beginCognitiveKernelRun({
       turnId: 'cog-ultra',
@@ -312,13 +636,17 @@ describe('cognitive kernel', () => {
         (simulation) => simulation.status === 'block',
       ),
     ).toEqual([]);
+    const approvalStep = kernel.executionSteps.find(
+      (step) => step.status === 'approval_staged',
+    );
+    expect(approvalStep?.toolId).toBe('bluebubbles_draft');
+    expect(approvalStep?.position).toBe(kernel.executionSteps.length);
     expect(
-      kernel.executionSteps.some(
-        (step) =>
-          step.toolId === 'approval_stage' && step.status === 'approval_staged',
-      ),
-    ).toBe(true);
-    expect(kernel.approvalPackets.length).toBeGreaterThanOrEqual(1);
+      kernel.executionSteps.some((step) => step.toolId === 'approval_stage'),
+    ).toBe(false);
+    expect(kernel.approvalPackets).toHaveLength(1);
+    expect(kernel.taskGraph.adaptiveStatus).toBe('awaiting_approval');
+    expect(JSON.parse(kernel.trajectoryScore.demotedAdaptersJson)).toEqual([]);
 
     const incomplete = assessCognitiveRunQuality(kernel.run);
     expect(incomplete).toMatchObject({
@@ -369,6 +697,7 @@ describe('cognitive kernel', () => {
         evaluatorFlags: ['none'],
         routeUsed: 'research.live_or_saved',
         answerClass: 'handled',
+        completionEvidence: explicitTestCompletionEvidence(kernel),
       });
       return kernel;
     }
@@ -412,6 +741,7 @@ describe('cognitive kernel', () => {
         evaluatorFlags: ['none'],
         routeUsed: 'assistant.daily_guidance',
         answerClass: 'handled',
+        completionEvidence: explicitTestCompletionEvidence(kernel),
       });
       return kernel;
     });
@@ -534,6 +864,7 @@ describe('cognitive kernel', () => {
         evaluatorFlags: ['none'],
         routeUsed: 'assistant.daily_guidance',
         answerClass: 'handled',
+        completionEvidence: explicitTestCompletionEvidence(kernel),
       });
       return kernel;
     }
@@ -671,10 +1002,11 @@ describe('cognitive kernel', () => {
     );
   });
 
-  it('blocks unsafe tool plans that omit high-risk approval', () => {
-    const kernel = beginCognitiveKernelRun({
+  it('blocks unsafe tool plans that omit high-risk approval', async () => {
+    const input = {
       turnId: 'cog-unsafe-tool',
       channel: 'telegram',
+      groupFolder: 'main',
       taskFamily: 'communication',
       goal: 'Communication task from telegram; raw message body stays local. Shape: words=6; question=false; action=true.',
       requestRoute: 'direct_assistant',
@@ -683,7 +1015,8 @@ describe('cognitive kernel', () => {
       selectedSkillApprovalNeed: 'none',
       selectedSkillSideEffectRisk: 'high',
       selectedSkillEvidenceLevel: 'partial',
-    });
+    } as const;
+    const kernel = beginCognitiveKernelRun(input);
 
     expect(kernel.run.status).toBe('blocked');
     expect(kernel.verification.evidenceGaps).toContain(
@@ -698,6 +1031,58 @@ describe('cognitive kernel', () => {
         status: 'block',
       }).some((simulation) => simulation.toolId === 'bluebubbles_draft'),
     ).toBe(true);
+    expect(
+      kernel.executionSteps.some((step) => step.toolId === 'bluebubbles_draft'),
+    ).toBe(false);
+    expect(JSON.parse(kernel.trajectoryScore.demotedAdaptersJson)).toEqual([
+      'bluebubbles_draft',
+    ]);
+    expect(kernel.trajectoryScore.promotedRoute).toBe(false);
+
+    const preparedInput = {
+      ...input,
+      turnId: 'cog-unsafe-tool-durable',
+      executionMode: 'prepare_only',
+    } as const;
+    const prepared = beginCognitiveKernelRun(preparedInput);
+    const targetScopeKey = 'adaptive:test:unsafe-tool';
+    const bindings = buildCognitiveAdaptiveDurableBindings({
+      cognitiveRun: prepared,
+      targetScopeKey,
+    });
+    const durableBinding = {
+      ownerId: 'owner:unsafe-tool-test',
+      chatId: 'chat:unsafe-tool-test',
+      groupId: 'main',
+      channel: 'telegram',
+      targetScopeKey,
+    };
+    const created = createAdaptiveDurableWork({
+      originTurnId: preparedInput.turnId,
+      authorizedSurface: preparedInput.channel,
+      binding: durableBinding,
+      goalSummary: prepared.frame.goal,
+      cognitiveRunId: prepared.run.runId,
+      frame: prepared.taskGraph.adaptiveFrame!,
+      graph: prepared.taskGraph.adaptivePlan!,
+      bindings,
+      executorScopeKey: 'cognitive-kernel:adaptive:v1',
+      targetScopeKey,
+    });
+    await continueCognitiveKernelDurably({
+      cognitiveRun: prepared,
+      beginInput: preparedInput,
+      durableWork: created.work,
+      durableBinding,
+      bindings,
+      executorScopeKey: 'cognitive-kernel:adaptive:v1',
+      targetScopeKey,
+      processGeneration: 'process:unsafe-tool-test',
+      maxNodeLeases: 1,
+    });
+    expect(JSON.parse(prepared.trajectoryScore.demotedAdaptersJson)).toEqual([
+      'bluebubbles_draft',
+    ]);
   });
 
   it('runs deterministic cognition benchmarks with checkpoints and policy proof', () => {

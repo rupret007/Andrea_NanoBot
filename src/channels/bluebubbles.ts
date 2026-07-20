@@ -18,6 +18,7 @@ import {
   associateMessageProviderIdempotencyKey,
   getAllChats,
   getMessageMediaAttachment,
+  hasDurablyAcceptedLiveMessage,
   hasStoredMessage,
   listRecentMessagesForChat,
   storeChatMetadata,
@@ -26,13 +27,18 @@ import {
 } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
+import {
+  captureMessagingOutboundAuthorizationFence,
+  isMessagingOutboundPaused,
+  type MessagingOutboundAuthorizationFence,
+  validateMessagingOutboundAuthorizationFence,
+} from '../messaging-outbound-pause.js';
 import { buildBlueBubblesChatJid } from '../companion-conversation-binding.js';
 import { hasBlueBubblesAndreaMention } from '../bluebubbles-companion.js';
 import {
   expandBlueBubblesLogicalSelfThreadJids,
   getBlueBubblesCanonicalSelfThreadJid,
   isConfiguredBlueBubblesSelfThreadAliasJid,
-  isBlueBubblesSelfThreadAliasJid,
 } from '../bluebubbles-self-thread.js';
 import {
   BLUEBUBBLES_RECEIPT_INBOX_PROTOCOL_VERSION,
@@ -99,18 +105,33 @@ const BLUEBUBBLES_SEND_TEXT_TIMEOUT_MS = 15_000;
 const BLUEBUBBLES_CREATE_CHAT_TIMEOUT_MS = 40_000;
 const BLUEBUBBLES_SHADOW_POLL_INTERVAL_MS = 75_000;
 const BLUEBUBBLES_MISSED_INBOUND_GRACE_MS = 2 * 60 * 1_000;
-const BLUEBUBBLES_DIRECT_CONTEXT_WINDOW_MS =
-  BLUEBUBBLES_MISSED_INBOUND_GRACE_MS * 15;
 const BLUEBUBBLES_EVIDENCE_WINDOW_MS = 10 * 60 * 1_000;
 const BLUEBUBBLES_FALLBACK_COOLDOWN_MS = 6 * 60 * 60 * 1_000;
 const BLUEBUBBLES_FALLBACK_EVIDENCE_THRESHOLD = 2;
 const BLUEBUBBLES_INGRESS_FINGERPRINT_WINDOW_MS = 2 * 60 * 1_000;
 const BLUEBUBBLES_MIRRORED_MESSAGE_TIMESTAMP_TOLERANCE_MS = 2_000;
+
+function assertBlueBubblesAuthorizationFence(
+  fence: MessagingOutboundAuthorizationFence,
+): void {
+  const validation = validateMessagingOutboundAuthorizationFence(fence);
+  if (!validation.ok) {
+    throw new ChannelDeliveryRejectedBeforeDispatchError(
+      validation.reason ||
+        'BlueBubbles owner authorization is no longer valid.',
+    );
+  }
+}
 const BLUEBUBBLES_RECEIPT_INBOX_HEALTH_TIMEOUT_MS = 2_000;
 const BLUEBUBBLES_HISTORY_FALLBACK_TOTAL_TIMEOUT_MS = 15_000;
+export const BLUEBUBBLES_TARGETED_HISTORY_LIMIT = 400;
 export const BLUEBUBBLES_RESTART_RECOVERY_MAX_AGE_MS = 15 * 60 * 1_000;
 const BLUEBUBBLES_RESTART_RECOVERY_FUTURE_SKEW_MS = 2 * 60 * 1_000;
 
+/**
+ * Freshness gate for an immutable local receipt/claim time. Provider message
+ * timestamps must never be passed here as owner authorization evidence.
+ */
 export function isFreshBlueBubblesRestartRecoveryTimestamp(
   timestamp: string,
   now: Date = new Date(),
@@ -158,6 +179,11 @@ interface BlueBubblesChannelReceiptInboxStore {
   acceptCanonicalSelfThreadIngressClaim(
     input: Parameters<
       BlueBubblesReceiptInboxStore['acceptCanonicalSelfThreadIngressClaim']
+    >[0],
+  ): boolean;
+  ignoreCanonicalSelfThreadIngressClaim(
+    input: Parameters<
+      BlueBubblesReceiptInboxStore['ignoreCanonicalSelfThreadIngressClaim']
     >[0],
   ): boolean;
   releaseCanonicalSelfThreadIngressClaim(
@@ -354,11 +380,6 @@ function formatBlueBubblesOutboundText(text: string): string {
   const firstLine = normalized.slice(0, newlineIndex);
   const remaining = normalized.slice(newlineIndex);
   return `${BLUEBUBBLES_OUTBOUND_SENDER_LABEL} ${firstLine}${remaining}`;
-}
-
-function formatBlueBubblesDirectContextWindow(): string {
-  const minutes = Math.round(BLUEBUBBLES_DIRECT_CONTEXT_WINDOW_MS / 60_000);
-  return `${minutes} minutes`;
 }
 
 export function buildBlueBubblesLinkedChatJid(
@@ -2439,6 +2460,24 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
     );
   }
 
+  async inspectChatHistory(
+    config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
+    options: {
+      chatJid: string;
+      limit?: number;
+      timeoutMs?: number;
+    },
+  ): Promise<NormalizedBlueBubblesHistoryRow[]> {
+    const chatGuid = extractBlueBubblesChatGuid(options.chatJid);
+    if (!chatGuid) return [];
+    return fetchNormalizedBlueBubblesHistoryRows(
+      config,
+      chatGuid,
+      options.limit ?? 12,
+      options.timeoutMs,
+    );
+  }
+
   async sendText(
     config: Pick<BlueBubblesConfig, 'baseUrl' | 'password'>,
     request: {
@@ -2447,6 +2486,8 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
       replyToGuid?: string;
       sendMethod: string;
       idempotencyKey?: string;
+      authorizationAt: string;
+      pauseGeneration: number;
     },
   ): Promise<SendMessageResult> {
     if (!config.baseUrl || !config.password || !request.chatGuid) {
@@ -2475,6 +2516,10 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
     let response: Response;
     let responseText: string;
     try {
+      assertBlueBubblesAuthorizationFence({
+        authorizationAt: request.authorizationAt,
+        pauseGeneration: request.pauseGeneration,
+      });
       ({ response, responseText } =
         await fetchBlueBubblesTextResponseWithTimeout(
           url,
@@ -2531,6 +2576,8 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
       sendMethod: string;
       service: 'iMessage' | 'SMS';
       idempotencyKey?: string;
+      authorizationAt: string;
+      pauseGeneration: number;
     },
   ): Promise<SendMessageResult> {
     if (!config.baseUrl || !config.password || !request.address) {
@@ -2556,6 +2603,10 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
     let response: Response;
     let responseText: string;
     try {
+      assertBlueBubblesAuthorizationFence({
+        authorizationAt: request.authorizationAt,
+        pauseGeneration: request.pauseGeneration,
+      });
       ({ response, responseText } =
         await fetchBlueBubblesTextResponseWithTimeout(
           url,
@@ -2893,6 +2944,12 @@ export async function primeBlueBubblesChatHistory(
     limit,
   );
 
+  return persistNormalizedBlueBubblesHistoryRows(normalizedRows);
+}
+
+function persistNormalizedBlueBubblesHistoryRows(
+  normalizedRows: NormalizedBlueBubblesHistoryRow[],
+): { storedCount: number; totalCount: number } {
   let storedCount = 0;
   for (const row of normalizedRows) {
     storeChatMetadata(
@@ -3081,11 +3138,77 @@ export class BlueBubblesChannel implements Channel {
     return store;
   }
 
+  private terminallyIgnoreStaleCanonicalIngressClaim(
+    claim: CanonicalSelfThreadIngressClaim,
+    source: 'history_recovery' | 'webhook_redelivery',
+  ): boolean {
+    if (
+      claim.acceptedAt ||
+      isFreshBlueBubblesRestartRecoveryTimestamp(claim.claimedAt)
+    ) {
+      return false;
+    }
+    const ignored =
+      this.getReceiptInboxStore().ignoreCanonicalSelfThreadIngressClaim({
+        claimId: claim.claimId,
+        claimedAt: claim.claimedAt,
+      });
+    if (!ignored) {
+      throw new Error(
+        'BlueBubbles could not durably terminalize a stale owner-ingress claim.',
+      );
+    }
+    logger.warn(
+      {
+        claimId: claim.claimId,
+        claimedAt: claim.claimedAt,
+        source,
+      },
+      'Durably ignored stale BlueBubbles owner ingress using its local claim time',
+    );
+    return true;
+  }
+
   private isReceiptInboxReadyForSend(): boolean {
     return (
       this.receiptInboxReadiness.state === 'reachable' ||
       this.receiptInboxReadiness.state === 'not_required'
     );
+  }
+
+  private assertOutboundMessagingNotPaused(): void {
+    if (isMessagingOutboundPaused()) {
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles outbound messaging is paused by the owner.',
+      );
+    }
+  }
+
+  private resolveOutboundAuthorizationFence(
+    options: SendMessageOptions | SendArtifactOptions | undefined,
+    requireExplicit: boolean,
+  ): MessagingOutboundAuthorizationFence {
+    const hasAuthorizationAt =
+      options?.blueBubblesAuthorizationAt !== undefined;
+    const hasPauseGeneration =
+      options?.blueBubblesPauseGeneration !== undefined;
+    if (
+      hasAuthorizationAt !== hasPauseGeneration ||
+      (requireExplicit && (!hasAuthorizationAt || !hasPauseGeneration))
+    ) {
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles recipient-bound dispatch requires one complete immutable owner-authorization fence.',
+      );
+    }
+    const fence =
+      hasAuthorizationAt && hasPauseGeneration
+        ? {
+            authorizationAt: options!.blueBubblesAuthorizationAt!,
+            pauseGeneration: options!.blueBubblesPauseGeneration!,
+          }
+        : captureMessagingOutboundAuthorizationFence(new Date().toISOString());
+    assertBlueBubblesAuthorizationFence(fence);
+    return fence;
   }
 
   private async refreshReceiptInboxReadiness(): Promise<void> {
@@ -3229,36 +3352,12 @@ export class BlueBubblesChannel implements Channel {
     if (params.isGroup) {
       return 'mention_required';
     }
-    if (isBlueBubblesSelfThreadAliasJid(params.chatJid)) {
-      return 'direct_1to1';
-    }
-    if (this.hasRecentAndreaContextForChat(params.chatJid)) {
+    if (isConfiguredBlueBubblesSelfThreadAliasJid(params.chatJid)) {
       return 'direct_1to1';
     }
     return resolveBlueBubblesReplyGateMode({
       chatJid: params.chatJid,
       isGroup: params.isGroup,
-    });
-  }
-
-  private hasRecentAndreaContextForChat(
-    chatJid: string | null | undefined,
-  ): boolean {
-    const normalizedChatJid = chatJid?.trim();
-    if (!normalizedChatJid) {
-      return false;
-    }
-    const freshnessCutoff = Date.now() - BLUEBUBBLES_DIRECT_CONTEXT_WINDOW_MS;
-    return listRecentMessagesForChat(normalizedChatJid, 12).some((message) => {
-      const timestamp = Date.parse(message.timestamp || '');
-      if (!Number.isFinite(timestamp) || timestamp < freshnessCutoff) {
-        return false;
-      }
-      return (
-        Boolean(message.is_bot_message) ||
-        (Boolean(message.is_from_me) &&
-          isBlueBubblesAndreaBotEcho(message.content))
-      );
     });
   }
 
@@ -3271,7 +3370,9 @@ export class BlueBubblesChannel implements Channel {
     if (!Number.isFinite(observedAtMs)) return false;
     const incomingContent = input.message.content.replace(/\s+/g, ' ').trim();
     if (!incomingContent) return false;
-    const candidateJids = isBlueBubblesSelfThreadAliasJid(input.chatJid)
+    const candidateJids = isConfiguredBlueBubblesSelfThreadAliasJid(
+      input.chatJid,
+    )
       ? expandBlueBubblesLogicalSelfThreadJids(input.chatJid)
       : [input.chatJid];
     const exactStoredProviderMessage = candidateJids.some((candidateJid) =>
@@ -3788,23 +3889,17 @@ export class BlueBubblesChannel implements Channel {
     chatJid: string,
     at: string,
     reason: 'mention_required' | 'chat_scope',
-    isGroup?: boolean | null,
   ): void {
     this.monitorState.lastIgnoredAt = at;
     this.monitorState.lastIgnoredChatJid = chatJid;
     this.monitorState.lastIgnoredReason = reason;
-    const ignoredDirectChat = reason === 'mention_required' && !isGroup;
     this.setDetectionState(
       'ignored_by_gate_or_scope',
       reason === 'mention_required'
-        ? ignoredDirectChat
-          ? `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that direct 1:1 chat does not have fresh Andrea context yet and still needs @Andrea.`
-          : `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that group thread still needs @Andrea for a fresh Andrea-directed turn.`
+        ? `Andrea saw an owner-authored Messages turn in ${chatJid}, but it was intentionally ignored because the configured owner self-thread still requires an explicit @Andrea turn.`
         : `Andrea saw a Messages turn in ${chatJid}, but it was intentionally ignored because that chat is outside the configured scope.`,
       reason === 'mention_required'
-        ? ignoredDirectChat
-          ? `Use @Andrea once in that direct 1:1 chat to re-establish Andrea context. After Andrea replies there, bare follow-ups stay available in that same thread for about ${formatBlueBubblesDirectContextWindow()}.`
-          : 'Use @Andrea in that group thread to open the next action, then keep follow-ups in the same thread.'
+        ? 'Use @Andrea only in the configured owner self-thread, or use the registered main Telegram chat. Ordinary contact and group threads remain data-only.'
         : 'Use a chat that is inside the configured Messages scope, or widen the BlueBubbles scope on this host.',
     );
     this.persistMonitorState();
@@ -4037,19 +4132,13 @@ export class BlueBubblesChannel implements Channel {
           'Inspect the BlueBubbles reply target and send method on this host, then retry the same thread.',
         );
       } else if (latestIgnored) {
-        const ignoredDirectChat =
-          latestIgnored.reason === 'mention_required' && !latestIgnored.isGroup;
         this.setDetectionState(
           'ignored_by_gate_or_scope',
           latestIgnored.reason === 'mention_required'
-            ? ignoredDirectChat
-              ? `The newest Messages turn in ${latestIgnored.chatJid} would still be ignored until that direct 1:1 chat gets a fresh Andrea-directed turn or recent Andrea context.`
-              : `The newest Messages turn in ${latestIgnored.chatJid} would still be ignored until it includes @Andrea.`
+            ? `The newest owner-authored Messages turn in ${latestIgnored.chatJid} would still be ignored until it explicitly addresses Andrea in the configured owner self-thread.`
             : `The newest Messages turn in ${latestIgnored.chatJid} is outside Andrea's configured BlueBubbles scope.`,
           latestIgnored.reason === 'mention_required'
-            ? ignoredDirectChat
-              ? `Use @Andrea once in that direct 1:1 chat. After Andrea replies there, bare follow-ups stay available in that same thread for about ${formatBlueBubblesDirectContextWindow()}.`
-              : 'Use @Andrea in that group thread to open the next action, then keep follow-ups in the same thread.'
+            ? 'Use @Andrea only in the configured owner self-thread, or use the registered main Telegram chat. Ordinary contact and group threads remain data-only.'
             : 'Use a chat inside the configured scope, or widen the BlueBubbles scope on this host.',
         );
       } else {
@@ -4147,13 +4236,13 @@ export class BlueBubblesChannel implements Channel {
       : null;
     const healthReplyGateMode = this.getHealthReplyGateMode();
     const healthConversationModeDetail =
-      healthReplyGateMode === 'direct_1to1'
-        ? 'conversation mode 1:1 conversational now'
+      isConfiguredBlueBubblesSelfThreadAliasJid(healthChatJid)
+        ? 'conversation mode configured owner self-thread control'
         : matchedHealthChat && typeof matchedHealthChat.is_group === 'number'
           ? matchedHealthChat.is_group !== 0
-            ? 'conversation mode group explicit @Andrea'
-            : 'conversation mode direct 1:1 needs fresh @Andrea context'
-          : 'conversation mode explicit-only until fresh Andrea context exists';
+            ? 'conversation mode group data-only'
+            : 'conversation mode contact data-only'
+          : 'conversation mode data-only unless the configured owner self-thread is selected';
     const lastInboundObservedAt =
       this.lastInboundObservedAt || this.monitorState.lastInboundObservedAt;
     const lastInboundChatJid =
@@ -4459,12 +4548,11 @@ export class BlueBubblesChannel implements Channel {
         normalized.chatJid,
         normalized.message.timestamp,
         'mention_required',
-        normalized.chat.isGroup,
       );
       writeResponse(
         res,
         202,
-        `Ignored outgoing message without @Andrea mention. Use @Andrea once in this direct chat; after Andrea replies, bare follow-ups are accepted here for about ${formatBlueBubblesDirectContextWindow()}.`,
+        'Ignored owner self-thread message without an explicit Andrea request. Use @Andrea in the configured owner self-thread, or use the registered main Telegram chat.',
       );
       return;
     }
@@ -4481,6 +4569,15 @@ export class BlueBubblesChannel implements Channel {
             body: normalized.message.content,
             providerTimestamp: normalized.message.timestamp,
           });
+        if (
+          this.terminallyIgnoreStaleCanonicalIngressClaim(
+            ingressClaim,
+            'webhook_redelivery',
+          )
+        ) {
+          writeResponse(res, 202, 'Ignored stale durable ingress claim');
+          return;
+        }
       } catch (error) {
         this.lastErrorText =
           error instanceof Error
@@ -4502,14 +4599,15 @@ export class BlueBubblesChannel implements Channel {
       normalized.message.id = ingressClaim.claimId;
       normalized.message.provider_message_id = providerMessageId;
       normalized.message.durable_ingress_claim_id = ingressClaim.claimId;
+      normalized.message.ingress_received_at = ingressClaim.claimedAt;
     }
     const durableIdentityJids = ingressClaim
       ? expandBlueBubblesLogicalSelfThreadJids(normalized.chatJid)
       : [normalized.chatJid];
-    const alreadyStored = durableIdentityJids.some((chatJid) =>
-      hasStoredMessage(chatJid, normalized.message.id),
+    const alreadyDurablyAccepted = durableIdentityJids.some((chatJid) =>
+      hasDurablyAcceptedLiveMessage(chatJid, normalized.message.id),
     );
-    if (alreadyStored && ingressClaim?.processingLeaseToken) {
+    if (alreadyDurablyAccepted && ingressClaim?.processingLeaseToken) {
       try {
         const accepted =
           this.getReceiptInboxStore().acceptCanonicalSelfThreadIngressClaim({
@@ -4538,7 +4636,7 @@ export class BlueBubblesChannel implements Channel {
     }
     if (
       this.inflightMessageIds.has(normalized.message.id) ||
-      alreadyStored ||
+      alreadyDurablyAccepted ||
       (!ingressClaim &&
         this.hasRecentIngressFingerprint(
           normalized.chatJid,
@@ -4563,7 +4661,6 @@ export class BlueBubblesChannel implements Channel {
       message: normalized.message,
     });
     this.noteWebhookObserved(normalized.chatJid, normalized.message.timestamp);
-    this.noteIngressFingerprint(normalized.chatJid, normalized.message);
 
     this.inflightMessageIds.add(normalized.message.id);
     let ingressClaimAccepted = false;
@@ -4617,13 +4714,33 @@ export class BlueBubblesChannel implements Channel {
       this.emitHealth({ state: 'degraded' });
       writeResponse(res, 500, this.lastErrorText);
     } finally {
-      this.inflightMessageIds.delete(normalized.message.id);
+      try {
+        if (
+          durableIdentityJids.some((chatJid) =>
+            hasDurablyAcceptedLiveMessage(chatJid, normalized.message.id),
+          )
+        ) {
+          this.noteIngressFingerprint(normalized.chatJid, normalized.message);
+        }
+      } catch (fingerprintError) {
+        logger.warn(
+          {
+            err: fingerprintError,
+            chatJid: normalized.chatJid,
+            messageId: normalized.message.id,
+          },
+          'Could not verify durable BlueBubbles acceptance for fingerprint deduplication',
+        );
+      } finally {
+        this.inflightMessageIds.delete(normalized.message.id);
+      }
     }
   }
 
   private async postBlueBubblesText(
     chatGuid: string,
     text: string,
+    authorizationFence: MessagingOutboundAuthorizationFence,
     replyToGuid?: string,
     idempotencyKey?: string,
   ): Promise<SendMessageResult> {
@@ -4643,6 +4760,8 @@ export class BlueBubblesChannel implements Channel {
       replyToGuid,
       sendMethod: this.sendMethod,
       idempotencyKey,
+      authorizationAt: authorizationFence.authorizationAt,
+      pauseGeneration: authorizationFence.pauseGeneration,
     };
     return this.bridgeProvider.sendText(
       this.buildConfigForBaseUrl(activeBaseUrl),
@@ -4653,6 +4772,7 @@ export class BlueBubblesChannel implements Channel {
   private async postBlueBubblesNewDirectChat(
     address: string,
     text: string,
+    authorizationFence: MessagingOutboundAuthorizationFence,
     idempotencyKey?: string,
   ): Promise<SendMessageResult> {
     const activeBaseUrl = await this.ensureActiveBaseUrl({
@@ -4676,6 +4796,8 @@ export class BlueBubblesChannel implements Channel {
       sendMethod: this.sendMethod,
       service: 'iMessage' as const,
       idempotencyKey,
+      authorizationAt: authorizationFence.authorizationAt,
+      pauseGeneration: authorizationFence.pauseGeneration,
     };
     return this.bridgeProvider.createDirectChat(
       this.buildConfigForBaseUrl(activeBaseUrl),
@@ -4686,7 +4808,7 @@ export class BlueBubblesChannel implements Channel {
   private async postBlueBubblesAttachment(
     chatGuid: string,
     artifact: ChannelArtifact,
-    options?: SendMessageOptions & { caption?: string },
+    options?: SendArtifactOptions,
   ): Promise<SendMessageResult> {
     const activeBaseUrl = await this.ensureActiveBaseUrl({
       recheck: true,
@@ -4711,7 +4833,7 @@ export class BlueBubblesChannel implements Channel {
       : undefined;
     const form = new FormData();
     form.set('chatGuid', chatGuid);
-    form.set('tempGuid', randomUUID());
+    form.set('tempGuid', options?.idempotencyKey?.trim() || randomUUID());
     form.set('method', this.sendMethod);
     if (replyToGuid) {
       form.set('selectedMessageGuid', replyToGuid);
@@ -4728,6 +4850,10 @@ export class BlueBubblesChannel implements Channel {
       artifact.filename,
     );
 
+    assertBlueBubblesAuthorizationFence({
+      authorizationAt: options?.blueBubblesAuthorizationAt || '',
+      pauseGeneration: options?.blueBubblesPauseGeneration ?? -1,
+    });
     const response = await fetch(url, {
       method: 'POST',
       body: form,
@@ -4752,6 +4878,7 @@ export class BlueBubblesChannel implements Channel {
   private async sendBlueBubblesReply(
     jid: string,
     text: string,
+    authorizationFence: MessagingOutboundAuthorizationFence,
     options?: SendMessageOptions,
   ): Promise<SendMessageResult> {
     const chatGuid = extractBlueBubblesChatGuid(jid);
@@ -4776,6 +4903,7 @@ export class BlueBubblesChannel implements Channel {
         const result = await this.postBlueBubblesText(
           chatGuid,
           text,
+          authorizationFence,
           replyToGuid,
           options.idempotencyKey,
         );
@@ -4803,6 +4931,7 @@ export class BlueBubblesChannel implements Channel {
         const result = await this.postBlueBubblesText(
           chatGuid,
           text,
+          authorizationFence,
           replyToGuid,
         );
         this.successfulOutboundTargetByJid.set(jid, {
@@ -4833,7 +4962,11 @@ export class BlueBubblesChannel implements Channel {
       attemptedTargets.push(candidate);
       this.lastAttemptedTargetSequence.push(candidate.kind);
       try {
-        const result = await this.postBlueBubblesText(candidate.chatGuid, text);
+        const result = await this.postBlueBubblesText(
+          candidate.chatGuid,
+          text,
+          authorizationFence,
+        );
         this.successfulOutboundTargetByJid.set(jid, candidate);
         this.lastSendErrorDetail = null;
         return result;
@@ -4953,6 +5086,7 @@ export class BlueBubblesChannel implements Channel {
     text: string,
     options?: SendMessageOptions,
   ): Promise<SendMessageResult> {
+    this.assertOutboundMessagingNotPaused();
     if (!this.connected) {
       throw new ChannelDeliveryRejectedBeforeDispatchError(
         'BlueBubbles channel is not connected.',
@@ -4966,12 +5100,6 @@ export class BlueBubblesChannel implements Channel {
     if (!this.config.webhookSecret) {
       throw new ChannelDeliveryRejectedBeforeDispatchError(
         'BlueBubbles webhook authentication is not configured.',
-      );
-    }
-    await this.refreshReceiptInboxReadiness();
-    if (!this.isReceiptInboxReadyForSend()) {
-      throw new ChannelDeliveryRejectedBeforeDispatchError(
-        `BlueBubbles durable receipt inbox is not ready: ${this.receiptInboxReadiness.detail}`,
       );
     }
     const chatGuid = extractBlueBubblesChatGuid(jid);
@@ -5005,19 +5133,31 @@ export class BlueBubblesChannel implements Channel {
         'BlueBubbles first-contact delivery cannot include existing-thread metadata.',
       );
     }
-    const inboundEligible = isBlueBubblesChatEligible(
-      this.config,
-      chatGuid,
-      firstContactAddress ? false : undefined,
+    const configuredOwnerSelfThread =
+      isConfiguredBlueBubblesSelfThreadAliasJid(jid);
+    const authorizationFence = this.resolveOutboundAuthorizationFence(
+      options,
+      !configuredOwnerSelfThread,
     );
+    const authorizedOptions: SendMessageOptions = {
+      ...options,
+      blueBubblesAuthorizationAt: authorizationFence.authorizationAt,
+      blueBubblesPauseGeneration: authorizationFence.pauseGeneration,
+    };
     const exactApprovalBoundDirectSend =
       Boolean(options?.idempotencyKey?.trim()) &&
       options?.suppressSenderLabel === true &&
       (Boolean(firstContactAddress) ||
         !this.getDirectChatMetadata(jid, chatGuid).isGroup);
-    if (!inboundEligible && !exactApprovalBoundDirectSend) {
+    if (!configuredOwnerSelfThread && !exactApprovalBoundDirectSend) {
       throw new ChannelDeliveryRejectedBeforeDispatchError(
-        'BlueBubbles can only reply inside the configured chat scope.',
+        'BlueBubbles non-owner destinations require an exact approval-bound 1:1 message action.',
+      );
+    }
+    await this.refreshReceiptInboxReadiness();
+    if (!this.isReceiptInboxReadyForSend()) {
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        `BlueBubbles durable receipt inbox is not ready: ${this.receiptInboxReadiness.detail}`,
       );
     }
 
@@ -5028,7 +5168,7 @@ export class BlueBubblesChannel implements Channel {
     const outboundEchoKey = options?.idempotencyKey?.trim() || null;
     const outboundEchoMarker = outboundEchoKey
       ? {
-          chatJids: isBlueBubblesSelfThreadAliasJid(jid)
+          chatJids: isConfiguredBlueBubblesSelfThreadAliasJid(jid)
             ? expandBlueBubblesLogicalSelfThreadJids(jid)
             : [jid],
           content: renderedText.replace(/\s+/g, ' ').trim(),
@@ -5044,9 +5184,15 @@ export class BlueBubblesChannel implements Channel {
         ? await this.postBlueBubblesNewDirectChat(
             firstContactAddress,
             renderedText,
+            authorizationFence,
             options?.idempotencyKey,
           )
-        : await this.sendBlueBubblesReply(jid, renderedText, options);
+        : await this.sendBlueBubblesReply(
+            jid,
+            renderedText,
+            authorizationFence,
+            authorizedOptions,
+          );
       const sentAt = new Date().toISOString();
       const deliveredJid = result.threadId?.startsWith('bb:')
         ? result.threadId
@@ -5109,6 +5255,7 @@ export class BlueBubblesChannel implements Channel {
     artifact: ChannelArtifact,
     options: SendArtifactOptions = {},
   ): Promise<SendMessageResult> {
+    this.assertOutboundMessagingNotPaused();
     if (!this.connected) {
       throw new ChannelDeliveryRejectedBeforeDispatchError(
         'BlueBubbles channel is not connected.',
@@ -5124,44 +5271,72 @@ export class BlueBubblesChannel implements Channel {
         'BlueBubbles webhook authentication is not configured.',
       );
     }
+    const chatGuid = extractBlueBubblesChatGuid(jid);
+    if (!chatGuid) {
+      throw new Error('BlueBubbles target chat is not valid.');
+    }
+    if (!isConfiguredBlueBubblesSelfThreadAliasJid(jid)) {
+      throw new ChannelDeliveryRejectedBeforeDispatchError(
+        'BlueBubbles artifacts are restricted to the explicitly configured owner self-thread.',
+      );
+    }
+    const authorizationFence = this.resolveOutboundAuthorizationFence(
+      options,
+      false,
+    );
     await this.refreshReceiptInboxReadiness();
     if (!this.isReceiptInboxReadyForSend()) {
       throw new ChannelDeliveryRejectedBeforeDispatchError(
         `BlueBubbles durable receipt inbox is not ready: ${this.receiptInboxReadiness.detail}`,
       );
     }
-    const chatGuid = extractBlueBubblesChatGuid(jid);
-    if (!chatGuid) {
-      throw new Error('BlueBubbles target chat is not valid.');
-    }
-    if (!isBlueBubblesChatEligible(this.config, chatGuid)) {
-      throw new Error(
-        'BlueBubbles can only send media inside the configured chat scope.',
-      );
-    }
 
-    const result = await this.postBlueBubblesAttachment(chatGuid, artifact, {
-      ...options,
-      caption: options.caption,
-    });
-    const sentAt = new Date().toISOString();
-    this.rememberLastOutboundObservation(jid, sentAt);
-    storeChatMetadata(jid, sentAt, undefined, 'bluebubbles');
-    storeMessageDirect({
-      id: result.platformMessageId || `bb:outbound-media:${chatGuid}:${sentAt}`,
-      chat_jid: jid,
-      sender: 'Andrea',
-      sender_name: 'Andrea',
-      content: options.caption || `[${artifact.kind}: ${artifact.filename}]`,
-      timestamp: sentAt,
-      is_from_me: true,
-      is_bot_message: true,
-      reply_to_id: options.replyToMessageId || undefined,
-      message_ingress_origin: 'assistant_outbound',
-    });
-    this.persistMonitorState();
-    this.emitHealth();
-    return result;
+    const artifactIdempotencyKey =
+      options.idempotencyKey?.trim() || `artifact:${randomUUID()}`;
+    const outboundEchoMarker = {
+      chatJids: expandBlueBubblesLogicalSelfThreadJids(jid),
+      content: (options.caption || `[${artifact.kind}]`)
+        .replace(/\s+/g, ' ')
+        .trim(),
+      startedAtMs: Date.now(),
+    };
+    this.inflightOutboundEchoes.set(artifactIdempotencyKey, outboundEchoMarker);
+
+    try {
+      const result = await this.postBlueBubblesAttachment(chatGuid, artifact, {
+        ...options,
+        idempotencyKey: artifactIdempotencyKey,
+        blueBubblesAuthorizationAt: authorizationFence.authorizationAt,
+        blueBubblesPauseGeneration: authorizationFence.pauseGeneration,
+      });
+      const sentAt = new Date().toISOString();
+      this.rememberLastOutboundObservation(jid, sentAt);
+      storeChatMetadata(jid, sentAt, undefined, 'bluebubbles');
+      storeMessageDirect({
+        id:
+          result.platformMessageId || `bb:outbound-media:${chatGuid}:${sentAt}`,
+        chat_jid: jid,
+        sender: 'Andrea',
+        sender_name: 'Andrea',
+        content: options.caption || `[${artifact.kind}: ${artifact.filename}]`,
+        timestamp: sentAt,
+        is_from_me: true,
+        is_bot_message: true,
+        reply_to_id: options.replyToMessageId || undefined,
+        provider_idempotency_key: artifactIdempotencyKey,
+        message_ingress_origin: 'assistant_outbound',
+      });
+      this.persistMonitorState();
+      this.emitHealth();
+      return result;
+    } finally {
+      if (
+        this.inflightOutboundEchoes.get(artifactIdempotencyKey) ===
+        outboundEchoMarker
+      ) {
+        this.inflightOutboundEchoes.delete(artifactIdempotencyKey);
+      }
+    }
   }
 
   isConnected(): boolean {
@@ -5224,21 +5399,6 @@ export class BlueBubblesChannel implements Channel {
         !row.message.provider_idempotency_key &&
         !isBlueBubblesAndreaBotEcho(row.message.content) &&
         isConfiguredBlueBubblesSelfThreadAliasJid(row.chatJid);
-      if (
-        configuredOwnerHistory &&
-        options.recoverUnacceptedClaims &&
-        !isFreshBlueBubblesRestartRecoveryTimestamp(row.message.timestamp)
-      ) {
-        logger.info(
-          {
-            chatJid: row.chatJid,
-            providerMessageId: row.message.id,
-            providerTimestamp: row.message.timestamp,
-          },
-          'Skipped stale BlueBubbles owner-ingress history during restart recovery',
-        );
-        continue;
-      }
       const providerIdentityJids = configuredOwnerHistory
         ? expandBlueBubblesLogicalSelfThreadJids(row.chatJid)
         : [row.chatJid];
@@ -5266,6 +5426,15 @@ export class BlueBubblesChannel implements Channel {
             providerTimestamp: row.message.timestamp,
           });
         if (!durableIngressClaim) {
+          continue;
+        }
+        if (
+          options.recoverUnacceptedClaims &&
+          this.terminallyIgnoreStaleCanonicalIngressClaim(
+            durableIngressClaim,
+            'history_recovery',
+          )
+        ) {
           continue;
         }
         if (
@@ -5376,6 +5545,7 @@ export class BlueBubblesChannel implements Channel {
             chat_jid: row.chatJid,
             provider_message_id: providerMessageId,
             durable_ingress_claim_id: durableIngressClaim.claimId,
+            ingress_received_at: durableIngressClaim.claimedAt,
           };
           await this.opts.onChatMetadata(
             row.chatJid,
@@ -5440,6 +5610,79 @@ export class BlueBubblesChannel implements Channel {
     return { storedCount, totalCount: eligibleRows.length };
   }
 
+  async primeChatHistory(
+    chatJid: string,
+    options: { limit?: number } = {},
+  ): Promise<{ chatJid: string; storedCount: number; totalCount: number }> {
+    if (!this.connected) {
+      throw new Error('BlueBubbles channel is not connected.');
+    }
+    const normalizedChatJid = chatJid.trim();
+    const chatGuid = extractBlueBubblesChatGuid(normalizedChatJid);
+    const knownChat = getAllChats().find(
+      (chat) =>
+        chat.jid === normalizedChatJid && chat.channel === 'bluebubbles',
+    );
+    if (!chatGuid || !knownChat) {
+      throw new Error(
+        'BlueBubbles targeted history requires one already-known exact chat.',
+      );
+    }
+    if (isConfiguredBlueBubblesSelfThreadAliasJid(normalizedChatJid)) {
+      throw new Error(
+        'BlueBubbles targeted history cannot inspect the canonical self-thread.',
+      );
+    }
+    if (
+      !isBlueBubblesChatEligible(
+        this.config,
+        chatGuid,
+        knownChat.is_group !== 0,
+      )
+    ) {
+      throw new Error(
+        'BlueBubbles targeted history is outside the configured chat scope.',
+      );
+    }
+
+    const activeBaseUrl = await this.ensureActiveBaseUrl({
+      recheck: true,
+      refreshReadiness: true,
+    });
+    if (!activeBaseUrl) {
+      throw new Error(
+        this.transportProbeDetail ||
+          'Andrea could not reach the configured BlueBubbles endpoint.',
+      );
+    }
+    const limit = Math.min(
+      Math.max(1, options.limit || 120),
+      BLUEBUBBLES_TARGETED_HISTORY_LIMIT,
+    );
+    const rows = await this.bridgeProvider.inspectChatHistory(
+      this.buildConfigForBaseUrl(activeBaseUrl),
+      {
+        chatJid: normalizedChatJid,
+        limit,
+        timeoutMs: this.durabilityDeps.historyFetchTimeoutMs,
+      },
+    );
+    const eligibleRows = rows.filter(
+      (row) =>
+        extractBlueBubblesChatGuid(row.chatJid) === chatGuid &&
+        isBlueBubblesChatEligible(
+          this.config,
+          row.chat.chatGuid,
+          row.chat.isGroup,
+        ),
+    );
+    const result = persistNormalizedBlueBubblesHistoryRows(eligibleRows);
+    this.lastMetadataHydrationSource = 'history';
+    this.monitorState.lastMetadataHydrationSource = 'history';
+    this.persistMonitorState();
+    return { chatJid: normalizedChatJid, ...result };
+  }
+
   ownsJid(jid: string): boolean {
     return jid.startsWith('bb:');
   }
@@ -5487,6 +5730,7 @@ export class BlueBubblesChannel implements Channel {
       chatScope: this.config.chatScope,
       sendEnabled:
         this.config.sendEnabled &&
+        !isMessagingOutboundPaused() &&
         Boolean(this.config.webhookSecret) &&
         this.isReceiptInboxReadyForSend(),
       listenerHost: this.config.host,

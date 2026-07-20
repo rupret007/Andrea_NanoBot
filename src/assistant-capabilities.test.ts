@@ -2,9 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   executeAssistantCapability,
+  formatMessagesSummaryCouncilDisclosure,
   getAssistantCapability,
   getAssistantCapabilityRegistry,
 } from './assistant-capabilities.js';
+import {
+  applyMessageActionOperation,
+  buildMessageActionPresentation,
+  createOrRefreshMessageActionFromDraft,
+  executeExplicitlyAuthorizedMessageAction,
+} from './message-actions.js';
 import {
   buildRecentTextReviewSeedJson,
   reviewRecentTexts,
@@ -18,7 +25,9 @@ import {
   listMessageActionsForGroup,
   storeChatMetadata,
   storeMessage,
+  storeMessageDirect,
   _initTestDatabase,
+  updateMessageAction,
   upsertCommunicationThread,
   upsertDelegationRule,
   upsertProfileSubject,
@@ -116,6 +125,27 @@ describe('assistant capabilities', () => {
     globalThis.fetch = originalFetch;
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  it('discloses attempted and actual council participation without claiming council wording was rendered', () => {
+    expect(
+      formatMessagesSummaryCouncilDisclosure({
+        councilAttempted: true,
+        councilProviderUsed: true,
+      }),
+    ).toContain('configured council provider processed');
+    expect(
+      formatMessagesSummaryCouncilDisclosure({
+        councilAttempted: true,
+        councilProviderUsed: false,
+      }),
+    ).toContain('provider council was attempted');
+    expect(
+      formatMessagesSummaryCouncilDisclosure({
+        councilAttempted: false,
+        councilProviderUsed: false,
+      }),
+    ).toBeNull();
   });
 
   it('registers shared daily, research, work, and media capabilities with safety metadata', () => {
@@ -415,6 +445,7 @@ describe('assistant capabilities', () => {
         channel: 'telegram',
         groupFolder: 'main',
         chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
         now: new Date('2026-04-15T12:00:00-05:00'),
       },
       input: {
@@ -432,6 +463,13 @@ describe('assistant capabilities', () => {
     expect(result.replyText).toContain('Pops of Punk');
     expect(result.replyText).toContain('lock the set list');
     expect(result.replyText).toContain('load-in for Friday');
+    expect(result.replyText).toContain(
+      'Pending proposal — Shared plan: lock the set list and confirm load-in for Friday. Deadline: not stated.',
+    );
+    expect(result.replyText).toContain('Synthesis: Visible output is local');
+    expect(result.replyText).toContain(
+      'An OpenAI draft was rejected by grounding checks',
+    );
     expect(result.replyText).not.toContain('adaptation choices');
     expect(result.replyText).not.toContain('Fallout');
     expect(result.replyText).not.toContain('Suggested replies');
@@ -446,6 +484,475 @@ describe('assistant capabilities', () => {
       }),
     ).toHaveLength(0);
     expect(listKnowledgeSourcesForGroup('main')).toHaveLength(0);
+  });
+
+  it.each([
+    {
+      label: 'registered Telegram owner chat',
+      channel: 'telegram' as const,
+      presentationChatJid: 'tg:named-summary-owner',
+    },
+    {
+      label: 'configured Messages self-thread',
+      channel: 'bluebubbles' as const,
+      presentationChatJid: 'bb:iMessage;-;owner-self-summary',
+    },
+  ])(
+    'keeps a named-summary draft bound to the exact external Messages target when presented in the $label',
+    async ({ channel, presentationChatJid }) => {
+      vi.stubEnv('OPENAI_API_KEY', ' ');
+      vi.stubEnv(
+        'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+        'bb:iMessage;-;owner-self-summary',
+      );
+      vi.stubEnv(
+        'BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS',
+        'bb:iMessage;-;owner-self-summary',
+      );
+      const targetChatJid = 'bb:iMessage;-;opaque-named-summary-target';
+      storeChatMetadata(
+        targetChatJid,
+        '2026-04-15T16:30:00.000Z',
+        'Avery Exact',
+        'bluebubbles',
+        false,
+      );
+      storeMessage({
+        id: `named-summary-inbound-${channel}`,
+        chat_jid: targetChatJid,
+        sender: 'Avery',
+        sender_name: 'Avery Exact',
+        content: 'Practice starts at seven tonight. Can you make it?',
+        timestamp: '2026-04-15T16:30:00.000Z',
+        is_from_me: false,
+      });
+
+      const summary = await executeAssistantCapability({
+        capabilityId: 'communication.summarize_thread',
+        context: {
+          channel,
+          groupFolder: 'main',
+          chatJid: presentationChatJid,
+          ownerReviewAllowed: true,
+          now: new Date('2026-04-15T17:00:00.000Z'),
+        },
+        input: {
+          canonicalText: 'summarize Avery Exact from today',
+          targetChatName: 'Avery Exact',
+          timeWindowKind: 'today',
+        },
+      });
+
+      expect(
+        summary.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
+      ).toBeTruthy();
+      const primeMessagesChatHistory = vi.fn(async (chatJid: string) => {
+        expect(chatJid).toBe(targetChatJid);
+        return { chatJid, storedCount: 1, totalCount: 1 };
+      });
+
+      const draft = await executeAssistantCapability({
+        capabilityId: 'communication.draft_reply',
+        context: {
+          channel,
+          groupFolder: 'main',
+          chatJid: presentationChatJid,
+          primeMessagesChatHistory,
+          priorSubjectData: summary.conversationSeed?.subjectData,
+          now: new Date('2026-04-15T17:01:00.000Z'),
+        },
+        input: {
+          text: 'Draft this reply: Yes, I can make practice at seven tonight.',
+          canonicalText:
+            'Draft this reply: Yes, I can make practice at seven tonight.',
+        },
+      });
+      const target = JSON.parse(
+        draft.messageAction?.targetConversationJson || '{}',
+      );
+
+      expect(draft.messageAction).toMatchObject({
+        presentationChatJid,
+        targetChannel: 'bluebubbles',
+        targetKind: 'external_thread',
+        sendStatus: 'drafted',
+        requiresApproval: true,
+        draftText: 'Yes, I can make practice at seven tonight.',
+      });
+      expect(target).toMatchObject({
+        kind: 'external_thread',
+        chatJid: targetChatJid,
+        isGroup: false,
+      });
+      expect(target.chatJid).not.toBe(presentationChatJid);
+      expect(primeMessagesChatHistory).toHaveBeenCalledTimes(2);
+      expect(
+        draft.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
+      ).toBeTruthy();
+    },
+  );
+
+  it('drops a named-summary draft when the exact thread changes during the async draft window', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    vi.stubEnv(
+      'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+      'bb:iMessage;-;owner-self-summary-window',
+    );
+    vi.stubEnv(
+      'BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS',
+      'bb:iMessage;-;owner-self-summary-window',
+    );
+    const targetChatJid = 'bb:iMessage;-;named-summary-window-target';
+    storeChatMetadata(
+      targetChatJid,
+      '2026-04-15T16:30:00.000Z',
+      'Avery Window',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'named-summary-window-before',
+      chat_jid: targetChatJid,
+      sender: 'Avery Window',
+      sender_name: 'Avery Window',
+      content: 'Can you still make dinner tonight?',
+      timestamp: '2026-04-15T16:30:00.000Z',
+      is_from_me: false,
+    });
+    const summary = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:named-summary-window-owner',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'summarize Avery Window from today',
+        targetChatName: 'Avery Window',
+        timeWindowKind: 'today',
+      },
+    });
+    let refreshCount = 0;
+    const primeMessagesChatHistory = vi.fn(async (chatJid: string) => {
+      refreshCount += 1;
+      expect(chatJid).toBe(targetChatJid);
+      if (refreshCount === 2) {
+        storeMessage({
+          id: 'named-summary-window-never-mind',
+          chat_jid: targetChatJid,
+          sender: 'Avery Window',
+          sender_name: 'Avery Window',
+          content: 'Never mind, dinner is handled.',
+          timestamp: '2026-04-15T17:01:30.000Z',
+          is_from_me: false,
+        });
+      }
+      return { chatJid, storedCount: 1, totalCount: 1 };
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;owner-self-summary-window',
+        primeMessagesChatHistory,
+        priorSubjectData: summary.conversationSeed?.subjectData,
+        now: new Date('2026-04-15T17:01:00.000Z'),
+      },
+      input: {
+        text: 'Draft this reply: Yes, dinner still works.',
+        canonicalText: 'Draft this reply: Yes, dinner still works.',
+      },
+    });
+
+    expect(primeMessagesChatHistory).toHaveBeenCalledTimes(2);
+    expect(result.replyText).toContain('could not be proven unchanged');
+    expect(result.messageAction).toBeUndefined();
+    expect(result.sendOptions).toBeUndefined();
+    expect(result.followupActions).toEqual([]);
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('fails closed when the exact named-summary target cannot be refreshed before drafting', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const targetChatJid = 'bb:iMessage;-;named-summary-refresh-failure';
+    storeChatMetadata(
+      targetChatJid,
+      '2026-04-15T16:30:00.000Z',
+      'Refresh Failure',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'named-summary-refresh-failure-inbound',
+      chat_jid: targetChatJid,
+      sender: 'Refresh Failure',
+      sender_name: 'Refresh Failure',
+      content: 'Can you confirm the plan tonight?',
+      timestamp: '2026-04-15T16:30:00.000Z',
+      is_from_me: false,
+    });
+    const summary = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:named-summary-owner',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'summarize Refresh Failure from today',
+        targetChatName: 'Refresh Failure',
+        timeWindowKind: 'today',
+      },
+    });
+    const primeMessagesChatHistory = vi.fn(async (chatJid: string) => {
+      expect(chatJid).toBe(targetChatJid);
+      throw new Error('offline targeted refresh fixture failed');
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:named-summary-owner',
+        primeMessagesChatHistory,
+        priorSubjectData: summary.conversationSeed?.subjectData,
+        now: new Date('2026-04-15T17:01:00.000Z'),
+      },
+      input: {
+        text: 'Draft this reply: Yes, the plan works.',
+        canonicalText: 'Draft this reply: Yes, the plan works.',
+      },
+    });
+
+    expect(primeMessagesChatHistory).toHaveBeenCalledTimes(1);
+    expect(result.replyText).toContain('could not refresh the exact Messages');
+    expect(result.replyText).toContain('did not create a draft');
+    expect(result.messageAction).toBeUndefined();
+    expect(result.sendOptions).toBeUndefined();
+    expect(result.followupActions).toEqual([]);
+    expect(result.trace?.notes).toContain('target_refresh:failed');
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('keeps a named Messages group continuation draft-only with no send controls', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const groupChatJid = 'bb:iMessage;+;named-summary-group';
+    storeChatMetadata(
+      groupChatJid,
+      '2026-04-15T16:30:00.000Z',
+      'Band Logistics',
+      'bluebubbles',
+      true,
+    );
+    storeMessage({
+      id: 'named-summary-group-inbound',
+      chat_jid: groupChatJid,
+      sender: 'Bandmate',
+      sender_name: 'Bandmate',
+      content: 'Load-in moved to seven tonight. Does that work?',
+      timestamp: '2026-04-15T16:30:00.000Z',
+      is_from_me: false,
+    });
+    const summary = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:named-summary-owner',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'summarize Band Logistics from today',
+        targetChatName: 'Band Logistics',
+        timeWindowKind: 'today',
+      },
+    });
+    const primeMessagesChatHistory = vi.fn(async (chatJid: string) => {
+      expect(chatJid).toBe(groupChatJid);
+      return { chatJid, storedCount: 1, totalCount: 1 };
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:named-summary-owner',
+        primeMessagesChatHistory,
+        priorSubjectData: summary.conversationSeed?.subjectData,
+        now: new Date('2026-04-15T17:01:00.000Z'),
+      },
+      input: {
+        text: 'Draft this reply: Seven works for me.',
+        canonicalText: 'Draft this reply: Seven works for me.',
+      },
+    });
+
+    expect(primeMessagesChatHistory).toHaveBeenCalledTimes(2);
+    expect(result.replyText).toContain('Draft:');
+    expect(result.replyText).toContain('Seven works for me.');
+    expect(result.replyText).toContain('Group draft only');
+    expect(result.replyText).toContain('unsent and not sendable');
+    expect(result.messageAction).toBeUndefined();
+    expect(result.sendOptions).toBeUndefined();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('fails closed without send controls when a named-summary target seed is missing', async () => {
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:named-summary-owner',
+        priorSubjectData: {
+          activeCapabilityId: 'communication.summarize_thread',
+          threadTitle: 'Avery Exact',
+        },
+      },
+      input: {
+        text: 'Draft this reply: I can make it.',
+        canonicalText: 'Draft this reply: I can make it.',
+      },
+    });
+
+    expect(result.replyText).toContain('no longer bind that summary');
+    expect(result.replyText).toContain('did not create a draft');
+    expect(result.messageAction).toBeUndefined();
+    expect(result.sendOptions).toBeUndefined();
+    expect(result.followupActions).toEqual([]);
+    expect(result.trace?.notes).toContain('target_validation:missing_seed');
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('fails closed when a named-summary seed points to a Messages chat that is no longer current', async () => {
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;owner-self-summary',
+        priorSubjectData: {
+          activeCapabilityId: 'communication.summarize_thread',
+          namedMessagesSummaryTargetJson: JSON.stringify({
+            version: 2,
+            query: 'No Longer Synced',
+            target: {
+              chatJid: 'bb:iMessage;-;missing-named-summary-target',
+              displayName: 'No Longer Synced',
+              isGroup: false,
+            },
+            historyStartTimestamp: '2026-04-15T05:00:00.000Z',
+            freshnessSnapshot: {
+              latestMessageIdentityHash: 'a'.repeat(16),
+              latestMessageAt: '2026-04-15T16:00:00.000Z',
+              latestInboundAt: '2026-04-15T16:00:00.000Z',
+              latestOutboundAt: null,
+              messageCount: 1,
+              snapshotHash: 'b'.repeat(16),
+              transcriptHash: 'c'.repeat(16),
+            },
+          }),
+        },
+      },
+      input: {
+        text: 'Draft this reply: I can make it.',
+        canonicalText: 'Draft this reply: I can make it.',
+      },
+    });
+
+    expect(result.replyText).toContain('no longer bind that summary');
+    expect(result.messageAction).toBeUndefined();
+    expect(result.sendOptions).toBeUndefined();
+    expect(result.followupActions).toEqual([]);
+    expect(result.trace?.notes).toContain('target_validation:missing');
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('fails closed without send controls when a named-summary target becomes ambiguous', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const originalTarget = 'bb:iMessage;-;named-summary-taylor-one';
+    storeChatMetadata(
+      originalTarget,
+      '2026-04-15T16:30:00.000Z',
+      'Taylor Project',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'named-summary-taylor-inbound',
+      chat_jid: originalTarget,
+      sender: 'Taylor',
+      sender_name: 'Taylor',
+      content: 'The project outline is ready for review.',
+      timestamp: '2026-04-15T16:30:00.000Z',
+      is_from_me: false,
+    });
+    const summary = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:named-summary-owner',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'summarize Taylor Project from today',
+        targetChatName: 'Taylor Project',
+        timeWindowKind: 'today',
+      },
+    });
+    storeChatMetadata(
+      'bb:iMessage;-;named-summary-taylor-two',
+      '2026-04-15T17:00:30.000Z',
+      'Taylor Project',
+      'bluebubbles',
+      false,
+    );
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:named-summary-owner',
+        priorSubjectData: summary.conversationSeed?.subjectData,
+        now: new Date('2026-04-15T17:01:00.000Z'),
+      },
+      input: {
+        text: 'Draft this reply: Thanks, I will review it.',
+        canonicalText: 'Draft this reply: Thanks, I will review it.',
+      },
+    });
+
+    expect(result.replyText).toContain('matches more than one current chat');
+    expect(result.replyText).toContain('did not create a draft');
+    expect(result.messageAction).toBeUndefined();
+    expect(result.sendOptions).toBeUndefined();
+    expect(result.followupActions).toEqual([]);
+    expect(result.trace?.notes).toContain('target_validation:ambiguous');
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
   });
 
   it('falls back to a clean local digest for today without surfacing raw identifiers', async () => {
@@ -497,22 +1004,13 @@ describe('assistant capabilities', () => {
       timestamp: '2026-04-15T18:51:51.947Z',
       is_from_me: false,
     });
-    storeMessage({
-      id: 'msg-pops-command',
-      chat_jid: 'bb:iMessage;+;chat-pops-clean',
-      sender: 'me',
-      sender_name: 'Jeff',
-      content: '@Andrea summarize this',
-      timestamp: '2026-04-15T18:55:51.947Z',
-      is_from_me: true,
-    });
-
     const result = await executeAssistantCapability({
       capabilityId: 'communication.summarize_thread',
       context: {
         channel: 'telegram',
         groupFolder: 'main',
         chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
         now: new Date('2026-04-15T19:00:00-05:00'),
       },
       input: {
@@ -527,12 +1025,350 @@ describe('assistant capabilities', () => {
     expect(result.replyText).toContain(
       'Here’s the gist from Pops of Punk today.',
     );
+    expect(result.replyText).toContain('Suggested replies');
+    expect(result.replyText).toContain('Thanks for the update.');
     expect(result.replyText).not.toContain('+12025550102');
     expect(result.replyText).not.toContain('+12025550103');
-    expect(result.replyText).not.toContain('@Andrea');
     expect(result.replyText).not.toContain(
       'Yesterday everyone was still just figuring out',
     );
+  });
+
+  it('withholds named-thread reply options for an unanswered request without a question mark', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;dinner-request',
+      '2026-04-15T18:51:51.947Z',
+      'Dinner Plans',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'dinner-request-1',
+      chat_jid: 'bb:iMessage;-;dinner-request',
+      sender: 'Candace',
+      sender_name: 'Candace',
+      content: 'Please bring ice tonight.',
+      timestamp: '2026-04-15T18:51:51.947Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize Dinner Plans from today',
+        targetChatName: 'Dinner Plans',
+        threadTitle: 'Dinner Plans',
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('Please bring ice tonight.');
+    expect(result.replyText).not.toContain('Suggested replies');
+    expect(result.replyText).not.toContain('I saw your question');
+    expect(result.replyText).not.toContain('Got your question');
+  });
+
+  it('redacts raw identifiers from named summaries and labels every suggestion as unsent', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    let providerBody = '';
+    const fetchSpy = vi.fn(async (_input, init) => {
+      providerBody = String(init?.body || '');
+      return new Response('provider unavailable', { status: 503 });
+    });
+    globalThis.fetch = fetchSpy as typeof fetch;
+    storeChatMetadata(
+      'bb:SMS;-;12345',
+      '2026-04-15T18:51:51.947Z',
+      '12345',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'named-summary-verification-code',
+      chat_jid: 'bb:SMS;-;12345',
+      sender: 'SMS;-;12345',
+      sender_name: 'iMessage;-;opaque-handle',
+      content: 'Your verification code is 765432. Do not share it.',
+      timestamp: '2026-04-15T18:50:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'named-summary-private-identifiers',
+      chat_jid: 'bb:SMS;-;12345',
+      sender: 'SMS;-;12345',
+      sender_name: 'iMessage;-;opaque-handle',
+      content:
+        'Email private.person@example.com or call +1 469 555 0123 about pickup.',
+      timestamp: '2026-04-15T18:51:51.947Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize 12345 from today',
+        targetChatName: '12345',
+        threadTitle: '12345',
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(providerBody).not.toContain('private.person@example.com');
+    expect(providerBody).not.toContain('+1 469 555 0123');
+    expect(providerBody).not.toContain('iMessage;-;opaque-handle');
+    expect(providerBody).not.toContain('SMS;-;12345');
+    expect(providerBody).not.toContain('765432');
+    expect(providerBody).toContain('[redacted email]');
+    expect(providerBody).toContain('[redacted code]');
+    expect(result.replyText).toContain('Messages chat');
+    expect(result.replyText).toContain(
+      'Suggested replies (unsent; review before using)',
+    );
+    expect(result.replyText).toContain('not device unread/read status');
+    expect(result.replyText).toContain('any suggested reply is unsent');
+    expect(result.replyText).toContain(
+      'OpenAI synthesis was attempted on the bounded transcript but did not return usable output',
+    );
+    expect(result.replyText).toContain('Visible output is local');
+    expect(result.replyText).not.toContain('No OpenAI synthesis was used');
+    expect(result.replyText).not.toContain('private.person@example.com');
+    expect(result.replyText).not.toContain('+1 469 555 0123');
+    expect(result.replyText).not.toContain('iMessage;-;opaque-handle');
+    expect(result.replyText).not.toContain('SMS;-;12345');
+    expect(result.replyText).not.toContain('765432');
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('includes timestamps in chronological order in named and broad model transcripts', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    const providerInputs: string[] = [];
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      const payload = JSON.parse(String(init?.body || '{}')) as {
+        input?: string;
+      };
+      providerInputs.push(String(payload.input || ''));
+      return new Response('provider unavailable', { status: 503 });
+    }) as typeof fetch;
+    const chatJid = 'bb:iMessage;-;timestamp-order-fixture';
+    storeChatMetadata(
+      chatJid,
+      '2026-04-15T16:10:00.000Z',
+      'Timestamp Order',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'timestamp-order-first',
+      chat_jid: chatJid,
+      sender: 'other',
+      sender_name: 'Other person',
+      content: 'First chronological turn.',
+      timestamp: '2026-04-15T16:00:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'timestamp-order-second',
+      chat_jid: chatJid,
+      sender: 'me',
+      sender_name: 'Jeff',
+      content: 'Second chronological turn.',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: true,
+    });
+
+    const named = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize Timestamp Order from today',
+        targetChatName: 'Timestamp Order',
+        timeWindowKind: 'today',
+      },
+    });
+    const broad = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(providerInputs).toHaveLength(2);
+    for (const result of [named, broad]) {
+      expect(result.replyText).toContain('Visible output is local');
+      expect(result.replyText).toContain('OpenAI synthesis was attempted');
+      expect(result.replyText).not.toContain('No OpenAI synthesis was used');
+    }
+    for (const providerInput of providerInputs) {
+      const firstTimestamp = providerInput.indexOf(
+        '[2026 Apr 15 16:00:00 UTC]',
+      );
+      const secondTimestamp = providerInput.indexOf(
+        '[2026 Apr 15 16:10:00 UTC]',
+      );
+      expect(firstTimestamp).toBeGreaterThanOrEqual(0);
+      expect(secondTimestamp).toBeGreaterThan(firstTimestamp);
+      expect(providerInput).toContain('First chronological turn.');
+      expect(providerInput).toContain('Second chronological turn.');
+      expect(providerInput).not.toContain('[redacted number] UTC');
+    }
+  });
+
+  it('summarizes an automated past-due notice without inventing a conversational reply', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:SMS;-;city-water',
+      '2026-04-15T18:51:51.947Z',
+      'City Water',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'named-summary-past-due-notice',
+      chat_jid: 'bb:SMS;-;city-water',
+      sender: 'SMS;-;city-water',
+      sender_name: 'City Water',
+      content:
+        'CITY WATER: Your bill is past due. Pay online now at https://billing.example.com/water.',
+      timestamp: '2026-04-15T18:51:51.947Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize City Water from today',
+        targetChatName: 'City Water',
+        threadTitle: 'City Water',
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain('bill is past due');
+    expect(result.replyText).not.toContain('Suggested replies');
+    expect(result.replyText).not.toContain('Thanks for the update.');
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('shows attachment presence in named and broad Messages summaries without inventing file contents', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const chatJid = 'bb:iMessage;-;media-digest-fixture';
+    storeChatMetadata(
+      chatJid,
+      '2026-04-15T18:51:51.947Z',
+      'Media Digest',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'media-digest-attachment-only',
+      chat_jid: chatJid,
+      sender: 'media-contact',
+      sender_name: 'Media contact',
+      content: '',
+      timestamp: '2026-04-15T18:51:51.947Z',
+      is_from_me: false,
+      attachments: [
+        {
+          attachmentId: 'media:digest-audio',
+          chatJid,
+          messageId: 'media-digest-attachment-only',
+          sourceChannel: 'bluebubbles',
+          kind: 'audio',
+          fetchStatus: 'download_failed',
+        },
+        {
+          attachmentId: 'media:digest-file',
+          chatJid,
+          messageId: 'media-digest-attachment-only',
+          sourceChannel: 'bluebubbles',
+          kind: 'file',
+          fetchStatus: 'metadata_only',
+        },
+      ],
+    });
+
+    const named = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize Media Digest from today',
+        targetChatName: 'Media Digest',
+        timeWindowKind: 'today',
+      },
+    });
+    const broad = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    for (const result of [named, broad]) {
+      expect(result.replyText).toContain(
+        '[Attached: audio clip, file; contents not included in this text summary]',
+      );
+      expect(result.replyText).not.toMatch(/transcript|heard in the audio/i);
+    }
   });
 
   it('semantically summarizes all synced Messages for broad today requests', async () => {
@@ -544,6 +1380,8 @@ describe('assistant capabilities', () => {
       };
       expect(payload.input).toContain('Can you send me the dinner address?');
       expect(payload.input).toContain("Fallout's worldbuilding");
+      expect(payload.input).not.toContain('654321');
+      expect(payload.input).toContain('[redacted code]');
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({
@@ -593,6 +1431,22 @@ describe('assistant capabilities', () => {
       timestamp: '2026-04-15T18:51:51.947Z',
       is_from_me: false,
     });
+    storeChatMetadata(
+      'bb:SMS;-;security-code-fixture',
+      '2026-04-15T18:55:00.000Z',
+      'Account notice',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'msg-all-today-security-code',
+      chat_jid: 'bb:SMS;-;security-code-fixture',
+      sender: 'account-notice',
+      sender_name: 'Account notice',
+      content: 'Your one-time security code is 654321. Do not share it.',
+      timestamp: '2026-04-15T18:55:00.000Z',
+      is_from_me: false,
+    });
 
     const result = await executeAssistantCapability({
       capabilityId: 'communication.summarize_thread',
@@ -600,6 +1454,7 @@ describe('assistant capabilities', () => {
         channel: 'telegram',
         groupFolder: 'main',
         chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
         now: new Date('2026-04-15T19:00:00-05:00'),
       },
       input: {
@@ -615,9 +1470,12 @@ describe('assistant capabilities', () => {
     expect(result.replyText).toContain(
       'Dinner logistics and Fallout worldbuilding',
     );
-    expect(result.replyText).toContain('Decisions');
+    expect(result.replyText).toContain('Commitments and decisions');
     expect(result.replyText).toContain(
-      "We agreed to use Fallout's worldbuilding",
+      "Decided — Shared plan: use Fallout's worldbuilding as Friday's discussion topic. Deadline: not stated.",
+    );
+    expect(result.replyText).toContain(
+      'Synthesis: OpenAI generated the Themes wording',
     );
     expect(result.replyText).toContain('Open questions');
     expect(result.replyText).toContain('Can you send me the dinner address?');
@@ -625,8 +1483,104 @@ describe('assistant capabilities', () => {
     expect(result.replyText).toContain('Pops of Punk');
     expect(result.replyText).toContain('Messages chat');
     expect(result.replyText).not.toContain('+14695550123');
+    expect(result.replyText).toContain(
+      'Available local synced snapshot only; sync completeness was not independently verified.',
+    );
+    expect(result.replyText).toContain(
+      'Model-generated Themes used at most 8 conversations and their newest 16 messages.',
+    );
+    expect(result.replyText).toContain('not device unread/read status');
     expect(result.trace?.notes).toContain('window:today');
     expect(result.trace?.notes).toContain('digest_source:openai_grounded');
+  });
+
+  it('describes an empty broad digest as a bounded local snapshot', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain(
+      'In the available local Messages snapshot, I did not find activity',
+    );
+    expect(result.replyText).toContain(
+      'Sync completeness was not independently verified',
+    );
+    expect(result.replyText).toContain('Synthesis: Local-only');
+    expect(result.replyText).toContain('newest 80 in-window messages');
+    expect(result.replyText).toContain('not device unread/read status');
+  });
+
+  it('redacts email and raw BlueBubbles identifiers used as chat names', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;email-label-fixture',
+      '2026-04-15T16:20:00.000Z',
+      'private.person@example.com',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'private-email-label-message',
+      chat_jid: 'bb:iMessage;-;email-label-fixture',
+      sender: 'private-person',
+      sender_name: 'Private person',
+      content: 'Dinner is at seven.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+    storeChatMetadata(
+      'bb:iMessage;-;raw-jid-label-fixture',
+      '2026-04-15T16:25:00.000Z',
+      'iMessage;-;opaque-handle',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'private-raw-jid-label-message',
+      chat_jid: 'bb:iMessage;-;raw-jid-label-fixture',
+      sender: 'private-person-2',
+      sender_name: 'Private person 2',
+      content: 'Can you bring ice?',
+      timestamp: '2026-04-15T16:25:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain('Messages chat');
+    expect(result.replyText).not.toContain('private.person@example.com');
+    expect(result.replyText).not.toContain('iMessage;-;opaque-handle');
+    expect(result.replyText).not.toContain(
+      'bb:iMessage;-;raw-jid-label-fixture',
+    );
   });
 
   it('summarizes all synced BlueBubbles texts for the exact 48-hour phrasing', async () => {
@@ -670,6 +1624,7 @@ describe('assistant capabilities', () => {
         channel: 'telegram',
         groupFolder: 'main',
         chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
         now: new Date('2026-04-15T19:00:00-05:00'),
       },
       input: {
@@ -693,6 +1648,78 @@ describe('assistant capabilities', () => {
     expect(result.replyText).not.toContain('+14695550123');
     expect(result.trace?.notes).toContain('window:the last 48 hours');
     expect(result.trace?.notes).toContain('digest_source:openai_grounded');
+  });
+
+  it('keeps configured self-thread controls out of all-synced summaries without dropping passive contact @Andrea text', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    vi.stubEnv(
+      'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+      'iMessage;-;owner@example.invalid',
+    );
+    vi.stubEnv(
+      'BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS',
+      'iMessage;-;owner@example.invalid,iMessage;-;+15550009999',
+    );
+    const selfThreadAliasJid = 'bb:iMessage;-;+15550009999';
+    const contactJid = 'bb:iMessage;-;+15550001111';
+
+    storeChatMetadata(
+      selfThreadAliasJid,
+      '2026-04-15T16:40:00.000Z',
+      'Owner Messages self-thread',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'all-synced-self-control',
+      chat_jid: selfThreadAliasJid,
+      sender: 'owner',
+      sender_name: 'Owner',
+      content: 'summarize all my recent texts',
+      timestamp: '2026-04-15T16:40:00.000Z',
+      is_from_me: true,
+    });
+    storeChatMetadata(
+      contactJid,
+      '2026-04-15T16:45:00.000Z',
+      'Andrea G',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'all-synced-passive-contact',
+      chat_jid: contactJid,
+      sender: 'bb:+15550001111',
+      sender_name: 'Andrea G',
+      content: '@Andrea can you bring the salad tonight?',
+      timestamp: '2026-04-15T16:45:00.000Z',
+      is_from_me: false,
+      message_ingress_origin: 'passive_contact_sync',
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain(
+      '@Andrea can you bring the salad tonight?',
+    );
+    expect(result.replyText).not.toContain('summarize all my recent texts');
+    expect(result.trace?.notes).toEqual(
+      expect.arrayContaining(['threads:1', 'messages:1']),
+    );
   });
 
   it('rejects an unrelated provider digest and falls back to grounded message evidence', async () => {
@@ -740,6 +1767,7 @@ describe('assistant capabilities', () => {
         channel: 'telegram',
         groupFolder: 'main',
         chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
         now: new Date('2026-04-15T19:00:00-05:00'),
       },
       input: {
@@ -757,9 +1785,386 @@ describe('assistant capabilities', () => {
     expect(result.replyText).not.toContain('Miami');
     expect(result.replyText).not.toContain('waterfront hotel');
     expect(result.replyText).not.toContain('rental car');
+    expect(result.replyText).toContain(
+      'Synthesis: Local-only output. An OpenAI draft was rejected by grounding checks',
+    );
     expect(result.trace?.notes).toContain(
       'digest_source:local_untrusted_provider',
     );
+  });
+
+  it('rejects a broad digest when one of several otherwise grounded bullets is fabricated', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output_text: JSON.stringify({
+              lead: 'Dinner address and Fallout worldbuilding were discussed.',
+              digest:
+                'The messages covered the dinner address and Fallout worldbuilding.',
+              bullets: [
+                'The dinner address remains an open question.',
+                "Fallout worldbuilding is Friday's topic.",
+                'The discussion centered on garden renovation plans.',
+              ],
+              suggestedReplies: [],
+            }),
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as typeof fetch;
+    const chatJid = 'bb:iMessage;-;mixed-grounding-fixture';
+    storeChatMetadata(
+      chatJid,
+      '2026-04-15T18:00:00.000Z',
+      'Planning',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'mixed-grounding-dinner',
+      chat_jid: chatJid,
+      sender: 'planning-contact',
+      sender_name: 'Planning contact',
+      content: 'The dinner address is still an open question.',
+      timestamp: '2026-04-15T17:50:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'mixed-grounding-fallout',
+      chat_jid: chatJid,
+      sender: 'planning-contact',
+      sender_name: 'Planning contact',
+      content: 'Fallout worldbuilding is the topic Friday.',
+      timestamp: '2026-04-15T18:00:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain('OpenAI draft was rejected');
+    expect(result.replyText).not.toContain('garden renovation');
+    expect(result.trace?.notes).toContain(
+      'digest_source:local_untrusted_provider',
+    );
+  });
+
+  it('rejects a mixed broad digest when one anchored claim inverts evidence polarity', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output_text: JSON.stringify({
+              lead: 'Dinner planning and the pickup schedule were discussed.',
+              digest:
+                'The dinner plan is confirmed, while the pickup remains scheduled.',
+              bullets: [
+                'The pickup remains scheduled.',
+                'The dinner plan is confirmed.',
+              ],
+              suggestedReplies: [],
+            }),
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as typeof fetch;
+    const chatJid = 'bb:iMessage;-;polarity-grounding-fixture';
+    storeChatMetadata(
+      chatJid,
+      '2026-04-15T18:10:00.000Z',
+      'Plan status',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'polarity-grounding-dinner',
+      chat_jid: chatJid,
+      sender: 'planning-contact',
+      sender_name: 'Planning contact',
+      content: 'The dinner plan is not confirmed.',
+      timestamp: '2026-04-15T18:00:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'polarity-grounding-pickup',
+      chat_jid: chatJid,
+      sender: 'planning-contact',
+      sender_name: 'Planning contact',
+      content: 'The pickup remains scheduled.',
+      timestamp: '2026-04-15T18:10:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain('OpenAI draft was rejected');
+    expect(result.replyText).not.toContain('The dinner plan is confirmed.');
+    expect(result.trace?.notes).toContain(
+      'digest_source:local_untrusted_provider',
+    );
+  });
+
+  it('rejects a near-grounded digest that invents an amount or deadline', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_MODEL_STANDARD', 'gpt-5.4');
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output_text: JSON.stringify({
+              lead: 'A rent payment needs attention.',
+              digest: 'A $2,500 rent payment is due Friday.',
+              bullets: ['Pay $2,500 by Friday.'],
+              suggestedReplies: [],
+            }),
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as typeof fetch;
+    storeChatMetadata(
+      'bb:SMS;-;rent-notice-fixture',
+      '2026-04-15T16:50:00.000Z',
+      'Rent notice',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'rent-notice-grounding',
+      chat_jid: 'bb:SMS;-;rent-notice-fixture',
+      sender: 'rent-notice',
+      sender_name: 'Rent notice',
+      content: 'Your rent payment is due.',
+      timestamp: '2026-04-15T16:50:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain('Your rent payment is due.');
+    expect(result.replyText).not.toContain('$2,500');
+    expect(result.replyText).not.toContain('Friday');
+    expect(result.trace?.notes).toContain(
+      'digest_source:local_untrusted_provider',
+    );
+  });
+
+  it('does not report a superseded or explicitly unconfirmed plan as a current decision', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const changedChat = 'bb:iMessage;-;changed-plan-fixture';
+    storeChatMetadata(
+      changedChat,
+      '2026-04-15T17:10:00.000Z',
+      'Changed plan',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'changed-plan-old',
+      chat_jid: changedChat,
+      sender: 'planner',
+      sender_name: 'Planner',
+      content: 'We decided to meet Friday.',
+      timestamp: '2026-04-15T17:00:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'changed-plan-new',
+      chat_jid: changedChat,
+      sender: 'planner',
+      sender_name: 'Planner',
+      content: 'Change of plans — Saturday instead.',
+      timestamp: '2026-04-15T17:10:00.000Z',
+      is_from_me: false,
+    });
+    const unconfirmedChat = 'bb:iMessage;-;unconfirmed-plan-fixture';
+    storeChatMetadata(
+      unconfirmedChat,
+      '2026-04-15T17:15:00.000Z',
+      'Unconfirmed plan',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'unconfirmed-plan-message',
+      chat_jid: unconfirmedChat,
+      sender: 'planner-two',
+      sender_name: 'Planner two',
+      content: "We haven't confirmed Friday.",
+      timestamp: '2026-04-15T17:15:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    const decisions =
+      result.replyText
+        ?.split('\n\nCommitments and decisions\n')[1]
+        ?.split('\n\nOpen questions')[0] || '';
+    expect(decisions).toContain(
+      'No explicit commitments, decisions, or pending proposals were captured',
+    );
+    expect(decisions).not.toContain('We decided to meet Friday.');
+    expect(decisions).not.toContain("haven't confirmed Friday");
+  });
+
+  it('keeps short but decisive turns in the local named-thread fallback', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const chatJid = 'bb:iMessage;-;short-logistics-fixture';
+    storeChatMetadata(
+      chatJid,
+      '2026-04-15T17:20:00.000Z',
+      'Short Logistics',
+      'bluebubbles',
+      false,
+    );
+    for (const [index, content] of [
+      '7 works.',
+      'No.',
+      '8 instead.',
+      'Done.',
+    ].entries()) {
+      storeMessage({
+        id: `short-logistics-${index}`,
+        chat_jid: chatJid,
+        sender: index % 2 === 0 ? 'other' : 'me',
+        sender_name: index % 2 === 0 ? 'Other person' : 'Me',
+        content,
+        timestamp: `2026-04-15T17:${String(10 + index).padStart(2, '0')}:00.000Z`,
+        is_from_me: index % 2 === 1,
+      });
+    }
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize Short Logistics from today',
+        targetChatName: 'Short Logistics',
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain('7 works.');
+    expect(result.replyText).toContain('8 instead.');
+    expect(result.replyText).toContain('Done.');
+  });
+
+  it('keeps the latest current-state turn in the compact BlueBubbles named-thread fallback', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const chatJid = 'bb:iMessage;-;latest-current-state-fixture';
+    storeChatMetadata(
+      chatJid,
+      '2026-04-15T17:13:00.000Z',
+      'Entrance Update',
+      'bluebubbles',
+      false,
+    );
+    for (const [index, content] of [
+      'Let us meet at the north entrance.',
+      'I can be there around six.',
+      'Actually, parking is closed on that side.',
+      'CURRENT STATE: use the east entrance instead.',
+    ].entries()) {
+      const isFromMe = index % 2 === 1;
+      storeMessage({
+        id: `latest-current-state-${index}`,
+        chat_jid: chatJid,
+        sender: isFromMe ? 'me' : 'other',
+        sender_name: isFromMe ? 'Jeff' : 'Other person',
+        content,
+        timestamp: `2026-04-15T17:${String(10 + index).padStart(2, '0')}:00.000Z`,
+        is_from_me: isFromMe,
+      });
+    }
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;owner-self-thread',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize Entrance Update from today',
+        targetChatName: 'Entrance Update',
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain(
+      'CURRENT STATE: use the east entrance instead.',
+    );
+    expect(result.replyText).toContain('By the end');
+    expect(result.replyText).toContain('Latest turn');
+    expect(result.trace?.notes).toContain('digest_source:fallback');
   });
 
   it('does not treat cancelled questions or automated surveys as reply priorities', async () => {
@@ -812,6 +2217,7 @@ describe('assistant capabilities', () => {
         channel: 'telegram',
         groupFolder: 'main',
         chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
         now: new Date('2026-04-15T19:00:00-05:00'),
       },
       input: {
@@ -828,6 +2234,190 @@ describe('assistant capabilities', () => {
       'No reply looks clearly due from the latest turns.',
     );
     expect(result.replyText).not.toContain('respond to');
+  });
+
+  it('keeps a person-to-person survey request as an open reply priority', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const chatJid = 'bb:iMessage;-;reunion-survey-request';
+    storeChatMetadata(
+      chatJid,
+      '2026-04-15T16:10:00.000Z',
+      'Reunion planning',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'human-survey-request-1',
+      chat_jid: chatJid,
+      sender: 'planner',
+      sender_name: 'Planner',
+      content: 'Can you fill out the reunion survey by tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain(
+      'Can you fill out the reunion survey by tonight?',
+    );
+    expect(result.replyText).toContain(
+      'Reunion planning — respond to "Can you fill out the reunion survey by tonight?"',
+    );
+  });
+
+  it('does not assign a general group question to the owner without a reply binding', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const generalGroup = 'bb:iMessage;+;general-group-question';
+    storeChatMetadata(
+      generalGroup,
+      '2026-04-15T16:10:00.000Z',
+      'General group',
+      'bluebubbles',
+      true,
+    );
+    storeMessage({
+      id: 'general-group-question-1',
+      chat_jid: generalGroup,
+      sender: 'group-member',
+      sender_name: 'Group member',
+      content: 'Can someone bring ice tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+
+    const replyBoundGroup = 'bb:iMessage;+;owner-bound-group-question';
+    storeChatMetadata(
+      replyBoundGroup,
+      '2026-04-15T16:20:00.000Z',
+      'Reply-bound group',
+      'bluebubbles',
+      true,
+    );
+    storeMessage({
+      id: 'owner-group-turn',
+      chat_jid: replyBoundGroup,
+      sender: 'owner',
+      sender_name: 'Me',
+      content: 'I can help with setup.',
+      timestamp: '2026-04-15T16:15:00.000Z',
+      is_from_me: true,
+    });
+    storeMessage({
+      id: 'owner-bound-group-question-1',
+      chat_jid: replyBoundGroup,
+      sender: 'group-member-two',
+      sender_name: 'Group member two',
+      content: 'Could you bring the folding table?',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+      reply_to_id: 'owner-group-turn',
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).not.toContain(
+      'General group — respond to "Can someone bring ice tonight?"',
+    );
+    expect(result.replyText).toContain(
+      'Reply-bound group — respond to "Could you bring the folding table?"',
+    );
+  });
+
+  it('keeps an earlier unanswered request visible after a later inbound addendum', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const chatJid = 'bb:iMessage;-;venue-addendum';
+    storeChatMetadata(
+      chatJid,
+      '2026-04-15T16:12:00.000Z',
+      'Riley',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'broad-addendum-owner-context',
+      chat_jid: chatJid,
+      sender: 'me',
+      sender_name: 'Jeff',
+      content: 'I am heading over after work.',
+      timestamp: '2026-04-15T16:00:00.000Z',
+      is_from_me: true,
+    });
+    storeMessage({
+      id: 'broad-addendum-open-request',
+      chat_jid: chatJid,
+      sender: 'Riley',
+      sender_name: 'Riley',
+      content: 'Please send the venue address.',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'broad-addendum-latest-inbound',
+      chat_jid: chatJid,
+      sender: 'Riley',
+      sender_name: 'Riley',
+      content: 'The doors open at six.',
+      timestamp: '2026-04-15T16:12:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T19:00:00-05:00'),
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.replyText).toContain('Open questions');
+    expect(result.replyText).toContain('Please send the venue address.');
+    expect(result.replyText).toContain(
+      'Riley — respond to "Please send the venue address."',
+    );
+    expect(result.replyText).not.toContain(
+      'respond to "The doors open at six."',
+    );
+    expect(result.replyText).not.toContain('Suggested replies');
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
   });
 
   it('keeps the all-synced digest compact on BlueBubbles', async () => {
@@ -867,6 +2457,7 @@ describe('assistant capabilities', () => {
         channel: 'bluebubbles',
         groupFolder: 'main',
         chatJid: 'bb:iMessage;-;owner-self-thread',
+        ownerReviewAllowed: true,
         now: new Date('2026-04-15T19:00:00-05:00'),
       },
       input: {
@@ -884,7 +2475,7 @@ describe('assistant capabilities', () => {
     expect(result.trace?.notes).toContain('digest_source:local');
   });
 
-  it('reviews recent texts without creating message actions until a selected draft follow-up', async () => {
+  it('withholds a draft when a recent-text question needs the owner answer', async () => {
     seedRecentTextSafeSendRule();
     storeChatMetadata(
       'bb:iMessage;-;+14695550123',
@@ -909,6 +2500,7 @@ describe('assistant capabilities', () => {
         channel: 'telegram',
         groupFolder: 'main',
         chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
         now: new Date('2026-04-15T17:00:00.000Z'),
       },
       input: {
@@ -919,10 +2511,11 @@ describe('assistant capabilities', () => {
 
     expect(review.handled).toBe(true);
     expect(review.replyText).toContain('Needs reply');
-    expect(review.replyText).toContain('draft #1');
+    expect(review.replyText).not.toContain('draft #1');
+    expect(review.replyText).toContain('answer you want to send for #1');
     expect(review.outcomeMetadata).toMatchObject({
       source: 'recent_text_review',
-      outcomeKind: 'suggested',
+      outcomeKind: 'reviewed',
       counts: {
         needsReply: 1,
         worthWatching: 0,
@@ -945,6 +2538,11 @@ describe('assistant capabilities', () => {
         groupFolder: 'main',
         chatJid: 'tg:100000001',
         now: new Date('2026-04-15T17:05:00.000Z'),
+        primeMessagesChatHistory: async (chatJid) => ({
+          chatJid,
+          storedCount: 1,
+          totalCount: 1,
+        }),
         priorSubjectData: review.conversationSeed?.subjectData,
       },
       input: {
@@ -954,19 +2552,18 @@ describe('assistant capabilities', () => {
     });
 
     expect(draft.handled).toBe(true);
-    expect(draft.messageAction).toMatchObject({
-      targetChannel: 'bluebubbles',
-      targetKind: 'external_thread',
-      sendStatus: 'drafted',
-      requiresApproval: true,
-      delegationRuleId: null,
-    });
+    expect(draft.replyText).toContain('asks for your actual answer');
+    expect(draft.replyText).toContain('did not create or send a draft');
+    expect(draft.messageAction).toBeUndefined();
     expect(draft.outcomeMetadata).toMatchObject({
       source: 'recent_text_review',
-      outcomeKind: 'drafted',
-      sendStatus: 'drafted',
+      outcomeKind: 'reviewed',
+      handled: false,
       itemRank: 1,
     });
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
   });
 
   it('handles numbered recent text review follow-ups without sending messages', async () => {
@@ -985,9 +2582,66 @@ describe('assistant capabilities', () => {
       title: 'Morgan',
       channelChatJid: 'bb:iMessage;-;+14695550125',
     });
+    for (const fixture of [
+      {
+        jid: 'bb:iMessage;-;+14695550123',
+        name: 'Candace',
+        messageId: 'review-candace-current',
+        content: 'Can you confirm whether dinner still works tonight?',
+        timestamp: '2026-04-15T16:00:00.000Z',
+      },
+      {
+        jid: 'bb:iMessage;-;+14695550124',
+        name: 'Alex',
+        messageId: 'review-alex-current',
+        content: 'Please send the latest set list when you can.',
+        timestamp: '2026-04-15T16:10:00.000Z',
+      },
+      {
+        jid: 'bb:iMessage;-;+14695550125',
+        name: 'Morgan',
+        messageId: 'review-morgan-current',
+        content: 'The loose follow-up can wait until tonight.',
+        timestamp: '2026-04-15T16:20:00.000Z',
+      },
+    ]) {
+      storeChatMetadata(
+        fixture.jid,
+        fixture.timestamp,
+        fixture.name,
+        'bluebubbles',
+        false,
+      );
+      storeMessage({
+        id: fixture.messageId,
+        chat_jid: fixture.jid,
+        sender: fixture.name,
+        sender_name: fixture.name,
+        content: fixture.content,
+        timestamp: fixture.timestamp,
+        is_from_me: false,
+      });
+    }
+    const freshnessReview = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+    const freshnessByThreadId = new Map(
+      freshnessReview.items.map((item) => [
+        item.communicationThreadId,
+        item.freshnessSnapshot,
+      ]),
+    );
+    expect(freshnessByThreadId.get('comm-candace-review')).toBeTruthy();
+    expect(freshnessByThreadId.get('comm-alex-review')).toBeTruthy();
+    expect(freshnessByThreadId.get('comm-morgan-review')).toBeTruthy();
     const recentTextReviewJson = JSON.stringify({
       version: 1,
-      reviewedAt: '2026-04-15T17:00:00.000Z',
+      reviewedAt: freshnessReview.reviewedAt,
+      windowStartTimestamp: freshnessReview.window.startTimestamp,
+      windowEndTimestamp: freshnessReview.window.endTimestamp,
       items: [
         {
           itemId: 'review-1',
@@ -1001,6 +2655,7 @@ describe('assistant capabilities', () => {
           recommendedAction: 'Draft a reply.',
           linkedSubjectIds: [],
           linkedLifeThreadIds: [],
+          freshnessSnapshot: freshnessByThreadId.get('comm-candace-review'),
         },
         {
           itemId: 'review-2',
@@ -1015,6 +2670,7 @@ describe('assistant capabilities', () => {
           suggestedReply: 'I saw this and will send it shortly.',
           linkedSubjectIds: [],
           linkedLifeThreadIds: [],
+          freshnessSnapshot: freshnessByThreadId.get('comm-alex-review'),
         },
         {
           itemId: 'review-3',
@@ -1028,6 +2684,7 @@ describe('assistant capabilities', () => {
           recommendedAction: 'Set a reminder if useful.',
           linkedSubjectIds: [],
           linkedLifeThreadIds: [],
+          freshnessSnapshot: freshnessByThreadId.get('comm-morgan-review'),
         },
       ],
     });
@@ -1036,6 +2693,11 @@ describe('assistant capabilities', () => {
       groupFolder: 'main',
       chatJid: 'tg:100000001',
       now: new Date('2026-04-15T17:05:00.000Z'),
+      primeMessagesChatHistory: async (chatJid: string) => ({
+        chatJid,
+        storedCount: 1,
+        totalCount: 1,
+      }),
       priorSubjectData: {
         activeCapabilityId: 'communication.review_recent_texts' as const,
         recentTextReviewJson,
@@ -1132,13 +2794,11 @@ describe('assistant capabilities', () => {
     });
 
     expect(skipped.handled).toBe(true);
-    expect(skipped.messageAction).toMatchObject({
-      sendStatus: 'skipped',
-      lastActionKind: 'skipped',
-    });
+    expect(skipped.replyText).toContain('I did not draft or send anything');
+    expect(skipped.messageAction).toBeUndefined();
     expect(skipped.outcomeMetadata).toMatchObject({
       outcomeKind: 'skipped',
-      lastActionKind: 'skipped',
+      handled: true,
       itemRank: 1,
     });
     expect(getCommunicationThread('comm-candace-review')).toMatchObject({
@@ -1194,6 +2854,282 @@ describe('assistant capabilities', () => {
         signal.summaryText.includes('handled'),
       ),
     ).toBe(true);
+  });
+
+  it('routes telegram recent text review follow-up drafts to telegram', async () => {
+    seedCommunicationThread({
+      id: 'comm-telegram-review',
+      title: 'Olive',
+      channel: 'telegram',
+      channelChatJid: 'tg:555555501',
+    });
+    storeChatMetadata(
+      'tg:555555501',
+      '2026-04-15T16:00:00.000Z',
+      'Olive',
+      'telegram',
+      false,
+    );
+    storeMessage({
+      id: 'review-olive-current',
+      chat_jid: 'tg:555555501',
+      sender: 'Olive',
+      sender_name: 'Olive',
+      content: 'Can we connect later this afternoon?',
+      timestamp: '2026-04-15T16:00:00.000Z',
+      is_from_me: false,
+    });
+
+    const review = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+    const [seededItem] = review.items;
+    if (!seededItem) {
+      throw new Error('expected seeded telegram review item');
+    }
+
+    const telegramReviewJson = JSON.stringify({
+      version: 1,
+      reviewedAt: review.reviewedAt,
+      windowStartTimestamp: review.window.startTimestamp,
+      windowEndTimestamp: review.window.endTimestamp,
+      items: [
+        {
+          ...seededItem,
+          itemId: 'review-1',
+          rank: 1,
+          communicationThreadId: 'comm-telegram-review',
+          summaryText: 'Olive asked if we can connect.',
+          whyText: 'asks for a response',
+          section: 'needs_reply',
+          linkedSubjectIds: [],
+          linkedLifeThreadIds: [],
+          sourceChannel: 'telegram',
+          recommendedAction: 'Draft a warmer reply.',
+          riskFlags: [],
+        },
+      ],
+    });
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        primeMessagesChatHistory: async (chatJid) => ({
+          chatJid,
+          storedCount: 1,
+          totalCount: 1,
+        }),
+        priorSubjectData: {
+          activeCapabilityId: 'communication.review_recent_texts' as const,
+          recentTextReviewJson: telegramReviewJson,
+        },
+      },
+      input: {
+        text: 'make #1 warmer',
+        canonicalText: 'make #1 warmer',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.messageAction).toMatchObject({
+      targetChannel: 'telegram',
+      targetKind: 'external_thread',
+      sendStatus: 'drafted',
+      requiresApproval: true,
+    });
+  });
+
+  it('keeps a numbered recent-text group reply draft-only with no send controls or dispatch follow-up', async () => {
+    const groupChatJid = 'bb:iMessage;+;review-group-logistics';
+    seedCommunicationThread({
+      id: 'comm-review-group-logistics',
+      title: 'Band Logistics',
+      channelChatJid: groupChatJid,
+    });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:100000001',
+      sourceType: 'communication_thread',
+      sourceKey: 'text-review:group-logistics',
+      sourceSummary: 'Recent text review #1: Band Logistics',
+      draftText: 'Got it—seven tonight. Thanks for the update.',
+      personName: 'Band Logistics',
+      threadTitle: 'Band Logistics',
+      communicationThreadId: 'comm-review-group-logistics',
+      communicationContext: 'reply_followthrough',
+      forceApproval: true,
+      targetOverride: {
+        kind: 'external_thread',
+        chatJid: groupChatJid,
+        isGroup: true,
+        personName: 'Band Logistics',
+      },
+      targetChannelOverride: 'bluebubbles',
+      now: new Date('2026-04-15T17:05:00.000Z'),
+    });
+
+    expect(action).toMatchObject({
+      targetChannel: 'bluebubbles',
+      targetKind: 'external_thread',
+      trustLevel: 'draft_only',
+      sendStatus: 'drafted',
+      requiresApproval: true,
+    });
+    expect(JSON.parse(action.targetConversationJson)).toMatchObject({
+      chatJid: groupChatJid,
+      isGroup: true,
+    });
+    const presentation = buildMessageActionPresentation(action, 'telegram');
+    const controlLabels = presentation.inlineActionRows
+      .flat()
+      .map((control) => control.label);
+    expect(presentation.text).toContain('group draft only');
+    expect(controlLabels).not.toContain('Send now');
+    expect(controlLabels).not.toContain('Send later');
+    expect(controlLabels).toContain('Show draft');
+    expect(controlLabels).toContain('More direct');
+
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'tg:review-group-card',
+      lastUpdatedAt: '2026-04-15T17:05:01.000Z',
+    });
+    const sendToTarget = vi.fn();
+    const deps = {
+      groupFolder: 'main',
+      channel: 'telegram' as const,
+      chatJid: 'tg:100000001',
+      currentTime: new Date('2026-04-15T17:06:00.000Z'),
+      ownerAuthorizationAt: '2026-04-15T17:06:00.000Z',
+      sendToTarget,
+    };
+    for (const operation of [
+      { kind: 'send' } as const,
+      { kind: 'defer', timingHint: 'tonight' } as const,
+      { kind: 'rewrite_and_send', style: 'warmer' } as const,
+    ]) {
+      const blocked = await applyMessageActionOperation(
+        action.messageActionId,
+        operation,
+        deps,
+      );
+      expect(blocked.replyText).toContain('group draft only');
+      expect(blocked.presentation?.inlineActionRows.flat()).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: expect.stringMatching(/^Send/) }),
+        ]),
+      );
+    }
+    const directDispatch = await executeExplicitlyAuthorizedMessageAction(
+      action.messageActionId,
+      deps,
+    );
+    expect(directDispatch.replyText).toContain('group draft only');
+    expect(directDispatch.action?.sendStatus).toBe('drafted');
+    expect(sendToTarget).not.toHaveBeenCalled();
+  });
+
+  it('resolves a mismatched-surface review follow-up to the thread channel target', async () => {
+    seedCommunicationThread({
+      id: 'comm-cross-surface-review',
+      title: 'Nate',
+      channel: 'bluebubbles',
+      channelChatJid: 'bb:iMessage;-;+555555502',
+    });
+    storeChatMetadata(
+      'bb:iMessage;-;+555555502',
+      '2026-04-15T16:00:00.000Z',
+      'Nate',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'review-nate-current',
+      chat_jid: 'bb:iMessage;-;+555555502',
+      sender: 'Nate',
+      sender_name: 'Nate',
+      content: 'Can you confirm the pickup window?',
+      timestamp: '2026-04-15T16:00:00.000Z',
+      is_from_me: false,
+    });
+
+    const review = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+    const [seededItem] = review.items;
+    if (!seededItem) {
+      throw new Error('expected seeded text-review item');
+    }
+
+    const mismatchedReviewJson = JSON.stringify({
+      version: 1,
+      reviewedAt: review.reviewedAt,
+      windowStartTimestamp: review.window.startTimestamp,
+      windowEndTimestamp: review.window.endTimestamp,
+      items: [
+        {
+          ...seededItem,
+          itemId: 'review-2',
+          rank: 1,
+          communicationThreadId: 'comm-cross-surface-review',
+          summaryText: 'Nate asked for pickup confirmation.',
+          whyText: 'asks for a response',
+          section: 'needs_reply',
+          linkedSubjectIds: [],
+          linkedLifeThreadIds: [],
+          sourceChannel: 'telegram',
+          recommendedAction: 'Draft a warmer reply.',
+          riskFlags: [],
+        },
+      ],
+    });
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        primeMessagesChatHistory: async (chatJid) => ({
+          chatJid,
+          storedCount: 1,
+          totalCount: 1,
+        }),
+        priorSubjectData: {
+          activeCapabilityId: 'communication.review_recent_texts' as const,
+          recentTextReviewJson: mismatchedReviewJson,
+        },
+      },
+      input: {
+        text: 'make #1 warmer',
+        canonicalText: 'make #1 warmer',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.messageAction).toMatchObject({
+      targetChannel: 'bluebubbles',
+      targetKind: 'external_thread',
+      sendStatus: 'drafted',
+      requiresApproval: true,
+    });
+    expect(
+      JSON.parse(draft.messageAction!.targetConversationJson),
+    ).toMatchObject({
+      chatJid: 'bb:iMessage;-;+555555502',
+      kind: 'external_thread',
+    });
   });
 
   it('blocks stale selected recent-text items before drafting', async () => {
@@ -1313,6 +3249,132 @@ describe('assistant capabilities', () => {
     ).toHaveLength(0);
   });
 
+  it('refreshes the exact quiet review target and blocks a newly discovered update before drafting', async () => {
+    const targetChatJid = 'bb:iMessage;-;quiet-review-target';
+    storeChatMetadata(
+      targetChatJid,
+      '2026-04-15T16:10:00.000Z',
+      'Quiet Review Target',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'quiet-review-before-refresh',
+      chat_jid: targetChatJid,
+      sender: 'Quiet Review Target',
+      sender_name: 'Quiet Review Target',
+      content: 'Can you confirm the pickup plan tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+    const review = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+    const recentTextReviewJson = buildRecentTextReviewSeedJson(review);
+    const primeMessagesChatHistory = vi.fn(async (chatJid: string) => {
+      expect(chatJid).toBe(targetChatJid);
+      storeMessage({
+        id: 'quiet-review-discovered-by-targeted-refresh',
+        chat_jid: chatJid,
+        sender: 'Quiet Review Target',
+        sender_name: 'Quiet Review Target',
+        content: 'Never mind, the pickup plan is handled.',
+        timestamp: '2026-04-15T17:03:00.000Z',
+        is_from_me: false,
+      });
+      return { chatJid, storedCount: 1, totalCount: 1 };
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        primeMessagesChatHistory,
+        priorSubjectData: {
+          activeCapabilityId: 'communication.review_recent_texts',
+          recentTextReviewJson,
+        },
+      },
+      input: {
+        text: 'draft #1',
+        canonicalText: 'draft #1',
+      },
+    });
+
+    expect(primeMessagesChatHistory).toHaveBeenCalledTimes(1);
+    expect(result.replyText).toContain('thread changed');
+    expect(result.messageAction).toBeUndefined();
+    expect(result.sendOptions).toBeUndefined();
+    expect(result.outcomeMetadata).toMatchObject({
+      outcomeKind: 'blocked_stale',
+      handled: false,
+      itemRank: 1,
+    });
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('blocks a fresh numbered review continuation when no exact-thread refresh callback is available', async () => {
+    const targetChatJid = 'bb:iMessage;-;review-refresh-unavailable';
+    storeChatMetadata(
+      targetChatJid,
+      '2026-04-15T16:10:00.000Z',
+      'Refresh Required',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'review-refresh-unavailable-inbound',
+      chat_jid: targetChatJid,
+      sender: 'Refresh Required',
+      sender_name: 'Refresh Required',
+      content: 'Can you confirm the plan tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+    const review = await reviewRecentTexts({
+      groupFolder: 'main',
+      now: new Date('2026-04-15T17:00:00.000Z'),
+      timeWindowKind: 'today',
+      cloudAnalysisMode: 'disabled',
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        priorSubjectData: {
+          activeCapabilityId: 'communication.review_recent_texts',
+          recentTextReviewJson: buildRecentTextReviewSeedJson(review),
+        },
+      },
+      input: {
+        text: 'draft #1',
+        canonicalText: 'draft #1',
+      },
+    });
+
+    expect(result.replyText).toContain(
+      'could not refresh the exact Messages thread',
+    );
+    expect(result.trace?.notes).toContain('targeted_refresh_failed');
+    expect(result.messageAction).toBeUndefined();
+    expect(result.sendOptions).toBeUndefined();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
   it('blocks mark-handled when a selected review item loses its Messages binding', async () => {
     storeChatMetadata(
       'bb:iMessage;-;+14695550123',
@@ -1364,10 +3426,12 @@ describe('assistant capabilities', () => {
     });
 
     expect(result.handled).toBe(true);
-    expect(result.replyText).toContain('current Messages thread binding');
+    expect(result.replyText).toMatch(
+      /current Messages thread binding|could not refresh the exact Messages thread/,
+    );
     expect(result.messageAction).toBeUndefined();
     expect(result.outcomeMetadata).toMatchObject({
-      outcomeKind: 'blocked_unbound',
+      outcomeKind: expect.stringMatching(/^blocked_(unbound|stale)$/),
       handled: false,
       itemRank: 1,
     });
@@ -1430,6 +3494,7 @@ describe('assistant capabilities', () => {
         channel: 'telegram',
         groupFolder: 'main',
         chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
         now: new Date('2026-04-15T12:00:00-05:00'),
       },
       input: {
@@ -1767,6 +3832,79 @@ describe('assistant capabilities', () => {
     expect(pulse.handled).toBe(true);
     expect(pulse.trace?.responseSource).toBe('pulse_local');
     expect(pulse.replyText).toContain('\n');
+  });
+
+  it('keeps synced Messages reviews out of non-owner Telegram and Messages surfaces', async () => {
+    const privateBody =
+      'Private pickup details that must not leave the owner surface.';
+    storeChatMetadata(
+      'bb:iMessage;-;private-owner-review-fixture',
+      '2026-04-15T16:10:00.000Z',
+      'Private conversation',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'private-owner-review-message',
+      chat_jid: 'bb:iMessage;-;private-owner-review-fixture',
+      sender: 'private-contact',
+      sender_name: 'Private contact',
+      content: privateBody,
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as typeof fetch;
+
+    const telegram = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:-100123456789',
+        ownerReviewAllowed: false,
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+    const bluebubbles = await executeAssistantCapability({
+      capabilityId: 'communication.review_recent_texts',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:iMessage;-;ordinary-contact-thread',
+        ownerReviewAllowed: false,
+      },
+      input: {
+        canonicalText: 'review recent text messages from the last 24 hours',
+      },
+    });
+    const missingProvenance = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:unverified-owner-looking-chat',
+      },
+      input: {
+        canonicalText: 'summarize all synced text messages from today',
+        targetChatJid: ALL_SYNCED_MESSAGES_TARGET,
+        timeWindowKind: 'today',
+      },
+    });
+
+    for (const result of [telegram, bluebubbles, missingProvenance]) {
+      expect(result.handled).toBe(true);
+      expect(result.replyText).toContain('registered owner control chat');
+      expect(result.replyText).toContain('did not read or summarize');
+      expect(result.replyText).not.toContain(privateBody);
+      expect(result.replyText).not.toContain('Private conversation');
+      expect(result.trace?.reason).toContain('blocked private Messages review');
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('formats research answers richly for Telegram and briefly for Alexa', async () => {
@@ -2192,18 +4330,14 @@ describe('assistant capabilities', () => {
     });
 
     expect(draft.handled).toBe(true);
-    expect(draft.replyText).toContain('Draft:');
-    expect(draft.handoffPayload?.kind).toBe('message');
-    expect(draft.messageAction?.messageActionId).toBeTruthy();
+    expect(draft.replyText).toContain(
+      'What answer do you want to give Candace?',
+    );
+    expect(draft.handoffPayload).toBeUndefined();
+    expect(draft.messageAction).toBeUndefined();
     expect(
       listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
-    ).toContainEqual(
-      expect.objectContaining({
-        messageActionId: draft.messageAction?.messageActionId,
-        presentationChatJid: 'bb:chat-1',
-        sendStatus: 'drafted',
-      }),
-    );
+    ).toHaveLength(0);
 
     const openLoops = await executeAssistantCapability({
       capabilityId: 'communication.open_loops',
@@ -2297,10 +4431,10 @@ describe('assistant capabilities', () => {
     expect(draft.replyText).not.toContain('circle back on What do I');
   });
 
-  it('uses the Messages model lane for BlueBubbles draft replies when available', async () => {
+  it('asks for the owner answer before entering the Messages model draft lane', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
     vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
-    globalThis.fetch = vi.fn(
+    const fetchSpy = vi.fn(
       async () =>
         new Response(
           JSON.stringify({
@@ -2312,7 +4446,8 @@ describe('assistant capabilities', () => {
             headers: { 'Content-Type': 'application/json' },
           },
         ),
-    ) as typeof fetch;
+    );
+    globalThis.fetch = fetchSpy as typeof fetch;
 
     const draft = await executeAssistantCapability({
       capabilityId: 'communication.draft_reply',
@@ -2328,8 +4463,53 @@ describe('assistant capabilities', () => {
     });
 
     expect(draft.handled).toBe(true);
-    expect(draft.replyText).toContain('tonight still works for me');
-    expect(draft.messageAction?.messageActionId).toBeTruthy();
+    expect(draft.replyText).toContain(
+      'What answer do you want to give Candace?',
+    );
+    expect(draft.messageAction).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('stages exact owner-supplied reply bytes without provider rewriting', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as typeof fetch;
+
+    const understand = await executeAssistantCapability({
+      capabilityId: 'communication.understand_message',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:chat-1',
+      },
+      input: {
+        canonicalText:
+          'Candace: Can you let me know if dinner still works tonight?',
+      },
+    });
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'bluebubbles',
+        groupFolder: 'main',
+        chatJid: 'bb:chat-1',
+        priorSubjectData: understand.conversationSeed?.subjectData,
+      },
+      input: {
+        canonicalText:
+          'Draft this reply: Yes, dinner still works for me tonight.',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.messageAction?.draftText).toBe(
+      'Yes, dinner still works for me tonight.',
+    );
+    expect(
+      JSON.parse(draft.messageAction?.explanationJson || '{}'),
+    ).toMatchObject({ draftProvenance: 'owner_literal' });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('preserves explicit library titles and explains matched sources by topic', async () => {

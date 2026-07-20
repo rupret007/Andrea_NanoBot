@@ -46,7 +46,7 @@ npm run openclaw:bridge:status -- --json
 npm run openclaw:bridge:probe -- --json
 ```
 
-The installer registers the local stdio command and then applies OpenClaw's native tool filter. It exposes read/status tools, media metadata/analysis tools, and `bluebubbles_execute_message_action`; it intentionally excludes `bluebubbles_send`, so send-like work must still go through Andrea's same-thread message-action gates.
+The installer registers the local stdio command and then applies OpenClaw's native tool filter. It exposes read/status tools, media metadata/analysis tools, and `bluebubbles_execute_message_action` for non-send operations. Ordinary recipient actions allow only `remind_instead` and `save_to_thread`; `defer` is reserved for the special proof-drill action, where it records a no-send decision. The MCP schema and control API reject `send` and `send_again`, reject ordinary external `defer`, and require every operable action to be presented in the explicitly configured owner self-thread. An autonomous client therefore cannot deliver its own card and then dispatch or schedule an external message. A real send requires a fresh owner-authored approval in the registered Telegram chat or configured Messages self-thread. The MCP server no longer registers `bluebubbles_send`, and the legacy exclusion remains in the OpenClaw filter as defense in depth. The old direct-send HTTP route returns `410 Gone` without contacting the provider.
 
 In the explicitly configured private self-thread, an `@OpenClaw` ask may use
 those filtered tools and return the result in that same Messages conversation.
@@ -70,13 +70,18 @@ BLUEBUBBLES_CONTROL_TOKEN=<local random token>
 
 ## V1 Scope
 
-BlueBubbles V1 is intentionally narrower than Telegram, but it is no longer pinned to one linked thread.
+BlueBubbles V1 is intentionally narrower than Telegram. Its private control
+surface is one explicitly configured owner self-thread, while synced contact
+and group threads are communication data and outbound destinations.
 
 Andrea now supports:
 
-- all synced personal and group chats when `BLUEBUBBLES_CHAT_SCOPE=all_synced`
-- `@Andrea` mention required, with `@OpenClaw` accepted as the default OpenClaw/helper alias
-- ordinary chat when it is clearly directed at Andrea
+- all synced personal and group chats as data/destinations when
+  `BLUEBUBBLES_CHAT_SCOPE=all_synced`
+- bounded owner controls from the configured self-thread, with `@Andrea` and
+  `@OpenClaw` accepted there as explicit assistant/helper aliases
+- ordinary contact text, including text containing those alias strings, stored
+  for summaries and reviews without ever waking Andrea in the contact thread
 - daily guidance
 - communication-companion help like:
   - `summarize this`
@@ -126,31 +131,40 @@ If a BlueBubbles chat tries to use operator-only controls, Andrea should answer 
 
 ## Reply Gate
 
-Andrea does **not** auto-reply to ordinary social chatter on BlueBubbles.
+Andrea does **not** reply inside ordinary contact or group threads. Those
+threads are data sources and explicit owner-selected destinations only; body
+text such as `@Andrea` never turns one into a control surface.
 
-Andrea replies only when the message explicitly mentions `@Andrea` or `@OpenClaw`, for example:
+Use the registered main Telegram chat or the configured private Messages
+self-thread for controls. In the self-thread, examples include:
 
 - `@Andrea hi`
 - `@Andrea what am I forgetting`
-- `@Andrea summarize this`
+- `@Andrea summarize my recent texts`
+- `summarize Candace from the last 2 days`
 - `@Andrea what should I say back`
 - `@Andrea help me plan tonight`
 - `@OpenClaw search for a skill`
 
-Messages that are just normal conversation without an Andrea ask are ignored.
+The mention is optional for bounded direct asks and fresh continuations in the
+configured self-thread. Contact-thread activity is synced, not ignored; it is
+simply never routed as an assistant prompt.
 
-## Current-Chat Summaries
+## Contact And Cross-Chat Summaries
 
-`summarize this` on BlueBubbles should use the current chat's recent context.
-Telegram-origin broad asks such as `summarize my texts from the past 48 hours`
-summarize across all synced BlueBubbles chats in that requested window.
+From Telegram or the configured self-thread, a named ask such as `summarize
+Candace from the last 2 days` stays bounded to that synced contact thread.
+Broad asks such as `summarize my texts from the past 48 hours` summarize across
+synced BlueBubbles contact and group chats in that requested window, excluding
+the private self-thread control conversation.
 
 Behavior:
 
 - use recent stored `bb:` messages first
-- ignore the `summarize this` ask itself when looking for the actual text to summarize
-- if local context is thin, Andrea now primes recent current-chat history from the live BlueBubbles server on demand
-- stay bounded to the current chat only
+- exclude the configured self-thread and its control prompts from contact summaries
+- preserve ordinary contact text even if its body contains `@Andrea` or `@OpenClaw`
+- if local context is thin, prime bounded recent contact history from the live BlueBubbles server on demand
+- keep a named summary bounded to the selected contact chat only
 - produce a fuller recap of the conversation flow and current state, not just activity counts
 - suggest useful next actions like draft, revise, remind-later, send-later, save, or Telegram escalation
 
@@ -170,8 +184,9 @@ override those defaults with the `ANDREA_MEDIA_*` settings in `.env`.
 
 Expected behavior:
 
-- `@Andrea analyze this photo`, `@Andrea what is in this video`, and similar
-  asks use the most recent current-chat image/video attachments
+- media attached to a Telegram or configured-self-thread owner ask can be
+  analyzed from that trusted control surface; media observed in ordinary
+  contact threads remains synced data and never wakes Andrea there
 - images are sent to the OpenAI vision path directly from the local cache
 - videos are summarized by sampling frames with the bundled `ffmpeg-static` and
   `ffprobe-static` binaries before sending those frames to vision
@@ -185,9 +200,14 @@ Expected behavior:
 
 ## Suggested Replies
 
-BlueBubbles communication asks such as `@Andrea what should I say back`,
-`@Andrea summarize this`, and recent-text review follow-ups should show grounded
-reply options when a reply appears useful.
+Communication asks from Telegram or the configured self-thread, such as
+`review my recent texts`, `what should I say back to Candace`, and numbered
+recent-text review follow-ups, should show grounded reply options when useful.
+The registered owner Telegram chat and configured Messages self-thread share
+the short-lived recent-summary continuation seed only when they resolve to the
+same companion group folder. Contact/group threads and other Telegram chats
+cannot access or mutate that seed, and an expired seed is removed for both
+owner surfaces.
 
 Expected behavior:
 
@@ -317,6 +337,16 @@ Meaning:
 - configure the canonical self-thread and aliases explicitly before self-thread
   drafts, proof, or sends; source defaults are reserved fictional placeholders
   and do not identify a real destination
+- every trusted self-thread JID must be a direct/private BlueBubbles JID in
+  `bb:<service>;-;<identifier>` form; group (`;+;`) and opaque JIDs are rejected
+  even if they are mistakenly placed in the self-thread environment variables
+- treat those configured JIDs as a security trust root: BlueBubbles uses the
+  same direct-JID shape for an ordinary person. Before enabling sends, verify
+  in Messages that every canonical/alias identifier is one of the owner's own
+  reachable handles and that a message to it opens the owner's private
+  self-conversation—not a conversation with another person. Code cannot infer
+  that ownership from the JID shape alone; if the check is uncertain, leave
+  the self-thread unconfigured and use Telegram only
 - `BLUEBUBBLES_CHAT_SCOPE=all_synced` allows all synced personal and group chats
 - `BLUEBUBBLES_ALLOWED_CHAT_GUIDS` and `BLUEBUBBLES_ALLOWED_CHAT_GUID` are only for optional allowlist mode
 - `BLUEBUBBLES_SEND_ENABLED=true` is required for real reply-back
@@ -336,7 +366,10 @@ Inbound:
 - append the configured secret to the BlueBubbles callback URL as `?secret=...`
 - Andrea accepts supported new-message webhook events only
 - messages from chats outside the configured scope are ignored
-- messages from the user that do not explicitly mention `@Andrea` or `@OpenClaw` are stored but do not wake Andrea
+- ordinary contact/group messages are stored as data but never wake Andrea,
+  regardless of whether their body contains `@Andrea` or `@OpenClaw`
+- only owner-authored traffic in the explicitly configured self-thread enters
+  native BlueBubbles control routing
 
 BlueBubbles must retain the main callback and have a **second** webhook whose
 URL is exactly
@@ -350,21 +383,33 @@ are specified in
 Outbound:
 
 - Andrea sends bounded text replies only
+- every new recipient/body instruction is staged unsent; provider dispatch
+  requires a separate fresh `Send now` or `send it` approval bound to that card
 - send path is `/api/v1/message/text`
 - auth is sent with compatible `guid`, `password`, and `token` query parameters
 - Andrea includes both `text` and `message` fields in the payload for compatibility
 - if reply threading is rejected, Andrea retries once without reply metadata
 - approved real outbound user messages bypass the `Andrea:` prefix so the delivered text reads like the user's reply, while Andrea-authored companion/status messages keep the label
 
+Emergency owner pause:
+
+- a trusted owner instruction such as `stop sending messages` or `stop texting
+real people` records a durable outbound pause before normal command routing
+- the pause blocks BlueBubbles text, artifact, immediate-action, and scheduled
+  delivery before provider dispatch while leaving inbound sync and Telegram
+  review/summaries available
+- acknowledgements like `okay` or `yes` never clear it; only an explicit command
+  such as `resume message sending` does
+
 ## Proof Bar
 
 BlueBubbles is `live_proven` only after all of these happen on this host:
 
-1. one real inbound BlueBubbles message reaches Andrea
-2. Andrea replies into that same BlueBubbles conversation
-3. one same-thread follow-up preserves continuity
+1. one real owner-authored message in the configured self-thread reaches Andrea
+2. Andrea replies into that configured self-thread
+3. one self-thread follow-up preserves continuity
 4. the flow stays companion-safe
-5. one same-thread message-action decision is recorded in the same chat, such as `send it`, `send it later tonight`, `remind me instead`, or `save under thread`
+5. one self-thread message-action decision is recorded there, such as `send it`, `send it later tonight`, `remind me instead`, or `save under thread`
 6. if the user approves a real reply, that same-thread outbound send lands without the companion prefix
 
 If config is present and the server, webhook, and recent-activity shadow poll are ready but the fresh same-thread proof chain is still incomplete, BlueBubbles stays below `live_proven` and should read as `degraded_but_usable` on that host. If this host cannot reach the configured endpoint at all, the bridge should read as `externally_blocked` with `transport_unreachable`, and Telegram should be treated as the dependable main path.
@@ -376,23 +421,34 @@ must not be promoted into a fresh host claim.
 
 ## Operator Proof Steps
 
-Use this exact proof sequence:
+This is a future verification checklist, not permission to send. Do not run it
+while an owner stop/pause is active. It requires a new explicit owner
+authorization for live proof, an explicit resume command recorded through the
+trusted owner surface, and `BLUEBUBBLES_SEND_ENABLED=true`; never infer a
+resume from ordinary conversation or from this document.
+
+After those conditions are independently satisfied, use this exact proof
+sequence:
 
 1. Confirm `npm run debug:bluebubbles -- --live` shows:
    - `transport: ready`
    - `webhook_registration: registered`
-2. Send a real BlueBubbles message in any synced chat:
+2. Send a real BlueBubbles message in the explicitly configured self-thread:
    - `@Andrea hi`
    - or `@OpenClaw search for a skill` when proving the OpenClaw/helper alias
-3. Confirm Andrea replies in that same Messages thread.
-4. Send a same-thread follow-up:
+3. Confirm Andrea replies in that self-thread and nowhere in an ordinary
+   contact conversation.
+4. Send a self-thread follow-up:
    - `@Andrea what am I forgetting`
 5. Prove the summary/suggested-reply leg:
-   - `@Andrea summarize this`
-   - then `@Andrea what should I say back`
-   - or, after a recent-text review, `@Andrea draft #1 option 2`
-6. Confirm Andrea shows a fuller recap plus suggested replies and does not
-   treat the `@Andrea` wake text as part of the conversation.
+   - `@Andrea review my recent texts`
+   - then `@Andrea what should I say back to #1`
+   - or, only when the review actually offers numbered reply options,
+     `@Andrea draft #1 option 2`
+6. Confirm Andrea shows a fuller contact recap, offers suggested replies only
+   when the available message evidence supports a real answer, excludes the
+   self-thread controls, and preserves ordinary contact text that happens to
+   contain `@Andrea` as message data.
 7. Send:
    - `@Andrea what should I say back`
 8. Make one same-thread message-action decision:
@@ -415,7 +471,7 @@ Success should show:
 - a recent `bluebubbles_most_recent_chat`
 - non-`none` `bluebubbles_last_inbound`
 - non-`none` `bluebubbles_last_outbound`
-  - `message_action_proof_state=fresh`
+- `message_action_proof_state=fresh`
 
 Use `npm run debug:bluebubbles -- --proof-timeline` when the proof state does
 not promote. It prints a metadata-only reconciliation of the canonical

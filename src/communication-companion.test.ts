@@ -275,11 +275,10 @@ describe('communication companion', () => {
       now: new Date('2026-04-10T00:04:30.000Z'),
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.summaryText).toContain('Saturday');
-    expect(result.thread?.channelChatJid).toBe(
-      'bb:iMessage;-;owner@example.com',
-    );
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain('What answer');
+    expect(result.clarificationQuestion).toContain("I won't guess");
   });
 
   it('uses quoted message text instead of the command wrapper for direct reply-help asks', () => {
@@ -297,7 +296,7 @@ describe('communication companion', () => {
     expect(result.draftText).not.toContain('circle back');
   });
 
-  it('uses context-first message text before trailing reply-help asks', () => {
+  it('asks for the owner answer instead of mirroring an unanswered contact question', () => {
     const result = draftCommunicationReply({
       channel: 'telegram',
       groupFolder: 'main',
@@ -305,9 +304,12 @@ describe('communication companion', () => {
       now: new Date('2026-04-14T12:51:36.900Z'),
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.draftText).toMatch(/dinner still works tonight/i);
-    expect(result.draftText).not.toContain('what should I say back');
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain(
+      'What answer do you want to give Candace?',
+    );
+    expect(result.clarificationQuestion).toContain("I won't guess");
   });
 
   it('does not append generic setup thread actions to direct reply drafts', () => {
@@ -348,13 +350,61 @@ describe('communication companion', () => {
       now: new Date('2026-04-14T12:51:36.900Z'),
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.draftText).toMatch(/dinner still works tonight/i);
-    expect(result.draftText).not.toContain('Use this setup');
-    expect(result.draftText).not.toContain('daily-agent');
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain(
+      'What answer do you want to give Candace?',
+    );
+    expect(result.clarificationQuestion).not.toContain('Use this setup');
+    expect(result.clarificationQuestion).not.toContain('daily-agent');
   });
 
-  it('reuses the best open communication thread when Telegram main chat only has control prompts', () => {
+  it('keeps an explicitly supplied owner answer available for drafting', () => {
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      text: 'Draft this reply: Yes, dinner still works for me tonight.',
+      now: new Date('2026-04-14T12:51:36.900Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toBe('Yes, dinner still works for me tonight.');
+    expect(result.draftProvenance).toBe('owner_literal');
+    expect(result.clarificationQuestion).toBeUndefined();
+  });
+
+  it('preserves an explicit owner-supplied BlueBubbles body without a provider rewrite', async () => {
+    seedCandace();
+    const analyzed = analyzeCommunicationMessage({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:candace',
+      text: 'Candace: Can you let me know if dinner still works tonight?',
+      now: new Date('2026-04-14T12:50:00.000Z'),
+    });
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as typeof fetch;
+
+    const result = await draftCommunicationReplyWithChannelFluidity({
+      channel: 'bluebubbles',
+      groupFolder: 'main',
+      chatJid: 'bb:candace',
+      text: 'Draft this reply: Yes, dinner still works for me tonight.',
+      priorContext: {
+        communicationThreadId: analyzed.thread?.id,
+        communicationSubjectIds: ['subject-candace'],
+        lastCommunicationSummary: analyzed.summaryText,
+      },
+      now: new Date('2026-04-14T12:51:36.900Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toBe('Yes, dinner still works for me tonight.');
+    expect(result.draftProvenance).toBe('owner_literal');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('reuses the right open thread but asks for the missing owner answer', () => {
     seedCandace();
     analyzeCommunicationMessage({
       channel: 'telegram',
@@ -402,10 +452,12 @@ describe('communication companion', () => {
       now: new Date('2026-04-14T11:51:00.000Z'),
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.draftText).toContain('Candace');
-    expect(result.draftText).toContain('dinner still works tonight');
-    expect(result.draftText).not.toContain('what am I forgetting');
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain(
+      'What answer do you want to give Candace?',
+    );
+    expect(result.clarificationQuestion).not.toContain('what am I forgetting');
   });
 
   it('recovers reply-help from linked life thread context when the stored thread summary is malformed', () => {
@@ -463,11 +515,14 @@ describe('communication companion', () => {
       now: new Date('2026-04-14T11:51:00.000Z'),
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.summaryText).toContain('Candace wants a follow-up');
-    expect(result.draftText).toContain('Candace');
-    expect(result.draftText).toContain('dinner still works tonight');
-    expect(result.draftText).not.toContain('They wants an answer about .');
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain(
+      'What answer do you want to give Candace?',
+    );
+    expect(result.clarificationQuestion).not.toContain(
+      'They wants an answer about .',
+    );
 
     const repaired = listCommunicationThreadsForGroup({
       groupFolder: 'main',
@@ -611,7 +666,7 @@ describe('communication companion', () => {
     expect(result.draftText).not.toContain('What do I');
   });
 
-  it('builds warmer drafts from relationship-aware message context', () => {
+  it('preserves warmer style while asking for the missing owner answer', () => {
     seedCandace();
 
     const result = draftCommunicationReply({
@@ -621,10 +676,12 @@ describe('communication companion', () => {
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.style).toBe('warmer');
-    expect(result.draftText).toContain('Hey Candace,');
-    expect(result.draftText).toMatch(/let me know/i);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain(
+      'What answer do you want to give Candace?',
+    );
   });
 
   it('asks to clarify before rewrite-only prompts invent a fresh communication thread', () => {
@@ -644,7 +701,7 @@ describe('communication companion', () => {
     );
   });
 
-  it('uses direct rewrite style once a real communication thread is active', () => {
+  it('preserves direct style without rewriting an unanswered question', () => {
     seedCandace();
 
     const result = draftCommunicationReply({
@@ -661,16 +718,19 @@ describe('communication companion', () => {
       now: new Date('2026-04-16T18:32:00.000Z'),
     });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.style).toBe('direct');
-    expect(result.draftText).toContain('Candace');
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain(
+      'What answer do you want to give Candace?',
+    );
   });
 
-  it('uses the Messages model lane for BlueBubbles drafts when OpenAI is available', async () => {
+  it('does not call the model when the owner answer was not supplied', async () => {
     seedCandace();
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
     vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
-    globalThis.fetch = vi.fn(
+    const fetchSpy = vi.fn(
       async () =>
         new Response(
           JSON.stringify({
@@ -682,7 +742,8 @@ describe('communication companion', () => {
             headers: { 'Content-Type': 'application/json' },
           },
         ),
-    ) as typeof fetch;
+    );
+    globalThis.fetch = fetchSpy as typeof fetch;
 
     const result = await draftCommunicationReplyWithChannelFluidity({
       channel: 'bluebubbles',
@@ -692,10 +753,10 @@ describe('communication companion', () => {
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.draftMode).toBe('openai');
-    expect(result.draftText).toContain('tonight still works for me');
-    expect(result.fallbackNote).toBeUndefined();
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain('What answer');
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('uses profile facts only as closed style choices without exposing self or recipient facts', async () => {
@@ -714,7 +775,7 @@ describe('communication companion', () => {
       style: 'direct',
     });
 
-    const deterministic = draftCommunicationReply({
+    const deterministic = analyzeCommunicationMessage({
       channel: 'telegram',
       groupFolder: 'main',
       text: 'Candace: Can you let me know if dinner still works tonight?',
@@ -735,7 +796,7 @@ describe('communication companion', () => {
       return new Response(
         JSON.stringify({
           output_text:
-            '{"draftText":"Hey Candace, dinner still works for me."}',
+            '{"draftText":"Thanks Candace, dinner works for me tonight."}',
         }),
         {
           status: 200,
@@ -747,16 +808,22 @@ describe('communication companion', () => {
       channel: 'bluebubbles',
       groupFolder: 'main',
       chatJid: 'bb:self',
-      text: 'Candace: Can you let me know if dinner still works tonight?',
+      text: 'Draft a reply to Candace about confirming dinner still works tonight.',
+      priorContext: {
+        personName: 'Candace',
+        communicationSubjectIds: ['subject-candace'],
+      },
       now: new Date('2026-04-06T09:01:00.000Z'),
     });
     expect(modelDraft.ok).toBe(true);
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
     expect(providerBody).not.toContain('PRIVATE-PROFILE-CANARY');
     expect(providerBody).not.toContain('prefers a');
   });
 
   it('keeps a newly linked sensitive life-thread title out of provider input', async () => {
     const canary = 'PRIVATE-THREAD-TITLE-CANARY-NEW';
+    seedCandace();
     seedSensitiveTitleLifeThread('private-title-new', canary);
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
     vi.stubEnv('OPENAI_BASE_URL', 'https://openai.test/v1');
@@ -779,26 +846,30 @@ describe('communication companion', () => {
       channel: 'bluebubbles',
       groupFolder: 'main',
       chatJid: 'bb:self',
-      text: 'Draft this reply: Can you confirm whether dinner still works tonight?',
+      text: 'Draft a reply to Candace about confirming whether dinner still works tonight.',
       priorContext: {
+        communicationSubjectIds: ['subject-candace'],
         communicationLifeThreadIds: ['private-title-new'],
       },
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
     expect(result.ok).toBe(true);
-    expect(result.thread?.title).toBe('Communication follow-up');
+    expect(result.thread?.title).toBe('Candace conversation');
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
     expect(providerBody).not.toContain(canary);
   });
 
   it('purges a legacy sensitive life-thread title before BlueBubbles provider use', async () => {
     const canary = 'PRIVATE-THREAD-TITLE-CANARY-LEGACY';
+    seedCandace();
     seedSensitiveTitleLifeThread('private-title-legacy', canary);
     const seeded = analyzeCommunicationMessage({
       channel: 'telegram',
       groupFolder: 'main',
-      text: 'Can you confirm whether dinner still works tonight?',
+      text: 'Candace: Can you confirm whether dinner still works tonight?',
       priorContext: {
+        communicationSubjectIds: ['subject-candace'],
         communicationLifeThreadIds: ['private-title-legacy'],
       },
       now: new Date('2026-04-06T08:30:00.000Z'),
@@ -828,18 +899,20 @@ describe('communication companion', () => {
       channel: 'bluebubbles',
       groupFolder: 'main',
       chatJid: 'bb:self',
-      text: 'Draft this reply: Can you confirm whether dinner still works tonight?',
+      text: 'Draft a reply to Candace about confirming whether dinner still works tonight.',
       priorContext: {
         communicationThreadId: seeded.thread!.id,
+        communicationSubjectIds: ['subject-candace'],
         communicationLifeThreadIds: ['private-title-legacy'],
       },
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
     expect(result.ok).toBe(true);
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
     expect(providerBody).not.toContain(canary);
     expect(getCommunicationThread(seeded.thread!.id)?.title).toBe(
-      'Communication follow-up',
+      'Candace conversation',
     );
     expect(getCommunicationThread(seeded.thread!.id)?.toneStyleHints).toEqual(
       [],
@@ -908,10 +981,11 @@ describe('communication companion', () => {
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.draftText).toContain('dinner still works tonight');
-    expect(result.draftText).not.toContain('divorce');
-    expect(result.draftText).not.toContain('lawyer');
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain('What answer');
+    expect(result.clarificationQuestion).not.toContain('divorce');
+    expect(result.clarificationQuestion).not.toContain('lawyer');
     expect(providerBody).not.toContain('Confidential divorce plan');
     expect(providerBody).not.toContain('Call the lawyer');
     expect(providerBody).not.toContain('filing');
@@ -958,11 +1032,12 @@ describe('communication companion', () => {
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.draftText).not.toContain('divorce');
-    expect(result.draftText).not.toContain('lawyer');
-    expect(result.draftText).not.toContain('filing');
-    expect(result.summaryText).not.toContain('divorce');
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain('What answer');
+    expect(result.clarificationQuestion).not.toContain('divorce');
+    expect(result.clarificationQuestion).not.toContain('lawyer');
+    expect(result.clarificationQuestion).not.toContain('filing');
   });
 
   it('does not reuse a legacy summary linked to unsafe private planning state', () => {
@@ -1024,10 +1099,10 @@ describe('communication companion', () => {
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.summaryText).not.toContain('ULTRA-PRIVATE');
-    expect(result.draftText).not.toContain('ULTRA-PRIVATE');
-    expect(result.draftText).not.toContain('lawyer');
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).not.toContain('ULTRA-PRIVATE');
+    expect(result.clarificationQuestion).not.toContain('lawyer');
     expect(getCommunicationThread(seeded.thread!.id)?.lastInboundSummary).toBe(
       contaminated,
     );
@@ -1085,8 +1160,7 @@ describe('communication companion', () => {
       groupFolder: 'main',
       chatJid: 'bb:self',
       text: 'what should I say back',
-      conversationSummary:
-        'Candace wants a follow-up about whether dinner still works tonight.',
+      conversationSummary: 'Candace: Dinner moved to 7 tonight.',
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
@@ -1107,8 +1181,7 @@ describe('communication companion', () => {
       groupFolder: 'main',
       chatJid: 'bb:self',
       text: 'what should I say back',
-      conversationSummary:
-        'Candace wants a follow-up about whether dinner still works tonight.',
+      conversationSummary: 'Candace: Dinner moved to 7 tonight.',
       now: new Date('2026-04-06T09:00:00.000Z'),
     });
 
@@ -1119,7 +1192,7 @@ describe('communication companion', () => {
     expect(replyText).not.toContain("Here's what I'm thinking.");
   });
 
-  it('phrases confirmation asks more naturally in summaries and drafts', () => {
+  it('phrases confirmation asks naturally without mirroring the question', () => {
     const analysis = analyzeCommunicationMessage({
       channel: 'bluebubbles',
       groupFolder: 'main',
@@ -1146,11 +1219,12 @@ describe('communication companion', () => {
     expect(analysis.ok).toBe(true);
     expect(analysis.summaryText).toContain('whether you are in by 6 tonight');
     expect(analysis.summaryText).not.toContain('about confirm');
-    expect(draft.ok).toBe(true);
-    expect(draft.draftText).toContain('whether you are in by 6 tonight');
+    expect(draft.ok).toBe(false);
+    expect(draft.draftText).toBeUndefined();
+    expect(draft.clarificationQuestion).toContain('What answer');
   });
 
-  it('trims trailing move-it clauses out of follow-up summaries and drafts', () => {
+  it('trims trailing move-it clauses and asks for the owner answer', () => {
     const analysis = analyzeCommunicationMessage({
       channel: 'bluebubbles',
       groupFolder: 'main',
@@ -1179,9 +1253,12 @@ describe('communication companion', () => {
       'whether dinner still works tonight',
     );
     expect(analysis.summaryText).not.toContain('if not');
-    expect(draft.ok).toBe(true);
-    expect(draft.draftText).toContain('whether dinner still works tonight');
-    expect(draft.draftText).not.toContain('if not, we should move it');
+    expect(draft.ok).toBe(false);
+    expect(draft.draftText).toBeUndefined();
+    expect(draft.clarificationQuestion).toContain('What answer');
+    expect(draft.clarificationQuestion).not.toContain(
+      'if not, we should move it',
+    );
   });
 
   it('strips saved-note command wording from relationship-aware draft support lines', () => {
@@ -1217,10 +1294,12 @@ describe('communication companion', () => {
     const result = draftCommunicationReply({
       channel: 'telegram',
       groupFolder: 'main',
-      text: 'what should I say back',
+      text: 'What should I say back to Candace about dinner tonight?',
       conversationSummary:
         'Candace wants a follow-up about whether dinner still works tonight.',
       priorContext: {
+        personName: 'Candace',
+        communicationSubjectIds: ['subject-candace'],
         communicationLifeThreadIds: ['thread-candace-dinner-proof'],
         lastCommunicationSummary:
           'Candace wants a follow-up about whether dinner still works tonight.',
@@ -1254,7 +1333,7 @@ describe('communication companion', () => {
       sourceKind: 'explicit',
       confidenceKind: 'high',
       userConfirmed: true,
-      sensitivity: 'sensitive',
+      sensitivity: 'normal',
       surfaceMode: 'default',
       followthroughMode: 'important_only',
       lastSurfacedAt: null,
@@ -1269,10 +1348,13 @@ describe('communication companion', () => {
     const result = draftCommunicationReply({
       channel: 'telegram',
       groupFolder: 'main',
-      text: 'what should I say back',
+      text: 'What should I say back to Candace about dinner tonight?',
       conversationSummary:
         'Candace wants a follow-up about whether dinner still works tonight.',
       priorContext: {
+        personName: 'Candace',
+        communicationSubjectIds: ['subject-candace'],
+        communicationLifeThreadIds: ['thread-candace-dirty-draft'],
         lastCommunicationSummary:
           'Candace wants a follow-up about whether dinner still works tonight.',
       },
@@ -1318,9 +1400,12 @@ describe('communication companion', () => {
       now: new Date('2026-04-06T10:05:00.000Z'),
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.draftText).toContain('dinner still works tonight');
-    expect(result.draftText).not.toContain("With Candace, I'd");
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeUndefined();
+    expect(result.clarificationQuestion).toContain(
+      'What answer do you want to give Candace?',
+    );
+    expect(result.clarificationQuestion).not.toContain("With Candace, I'd");
   });
 
   it('strips programmatic open-loop phrasing out of Alexa-safe draft topics', () => {

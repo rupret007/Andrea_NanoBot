@@ -136,6 +136,16 @@ export interface ReleaseCanonicalSelfThreadIngressClaimInput {
   processingLeaseToken: string;
 }
 
+export interface IgnoreCanonicalSelfThreadIngressClaimInput {
+  claimId: string;
+  /**
+   * Immutable local receipt time returned with the claim. Requiring it keeps
+   * a stale-recovery tombstone bound to the exact durable row it inspected.
+   */
+  claimedAt: string | number | Date;
+  ignoredAt?: Date;
+}
+
 export interface BlueBubblesReceiptInboxStoreHealth {
   status: 'ok';
   schemaVersion: number;
@@ -1166,6 +1176,61 @@ export class BlueBubblesReceiptInboxStore {
       )
       .run(acceptedAt.iso, claimId, processingLeaseToken);
     return result.changes === 1;
+  }
+
+  /**
+   * Permanently suppress a claim that recovery determined must never be
+   * routed. `accepted_at` is the schema's existing terminal tombstone; this
+   * path intentionally does not imply that a main-store callback ran.
+   *
+   * Unlike normal acceptance, stale recovery may encounter an active lease
+   * left by another crashed process. Matching the immutable `claimed_at`
+   * value lets it terminalize that exact old row without waiting or allowing
+   * a later lease resume to turn it back into an actionable command.
+   */
+  ignoreCanonicalSelfThreadIngressClaim(
+    input: IgnoreCanonicalSelfThreadIngressClaimInput,
+  ): boolean {
+    this.assertOpen();
+    const claimId = requireBoundedString(
+      input.claimId,
+      'claimId',
+      MAX_IDENTIFIER_LENGTH,
+    );
+    const claimedAt = normalizeDate(input.claimedAt, 'claimedAt');
+    const ignoredAt = normalizeDate(input.ignoredAt || new Date(), 'ignoredAt');
+    const ignore = this.database.transaction(() => {
+      const existing = this.database
+        .prepare(
+          `
+            SELECT claimed_at, accepted_at
+            FROM bluebubbles_canonical_ingress_claim
+            WHERE claim_id = ?
+            LIMIT 1
+          `,
+        )
+        .get(claimId) as
+        | { claimed_at: string; accepted_at: string | null }
+        | undefined;
+      if (!existing || existing.claimed_at !== claimedAt.iso) return false;
+      if (existing.accepted_at) return true;
+      const result = this.database
+        .prepare(
+          `
+            UPDATE bluebubbles_canonical_ingress_claim
+            SET accepted_at = ?,
+                processing_lease_token = NULL,
+                processing_lease_expires_at = NULL,
+                processing_lease_expires_at_ms = NULL
+            WHERE claim_id = ?
+              AND claimed_at = ?
+              AND accepted_at IS NULL
+          `,
+        )
+        .run(ignoredAt.iso, claimId, claimedAt.iso);
+      return result.changes === 1;
+    });
+    return ignore.immediate();
   }
 
   releaseCanonicalSelfThreadIngressClaim(

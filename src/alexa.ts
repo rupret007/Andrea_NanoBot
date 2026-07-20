@@ -138,6 +138,7 @@ import {
 import { readEnvFile } from './env.js';
 import { assertValidGroupFolder } from './group-folder.js';
 import { handleLifeThreadCommand } from './life-threads.js';
+import { logicalTurnSerializer } from './keyed-turn-serializer.js';
 import { logger } from './logger.js';
 import {
   completePilotJourney,
@@ -7535,7 +7536,7 @@ export function createAlexaSkill(
     },
   };
 
-  return SkillBuilders.custom()
+  const skill: SkillLike = SkillBuilders.custom()
     .withSkillId(config.skillId)
     .addRequestHandlers(
       LaunchRequestHandler,
@@ -7551,6 +7552,29 @@ export function createAlexaSkill(
     )
     .addErrorHandlers(ErrorHandler)
     .create();
+
+  return {
+    invoke(requestEnvelope, context) {
+      const authorization = authorizeAlexaRequest(
+        requestEnvelope,
+        config,
+        assistantName,
+      );
+      if (!authorization.ok) {
+        return skill.invoke(requestEnvelope, context);
+      }
+      const linked = resolveAlexaLinkedAccount(
+        authorization.principal,
+        assistantName,
+      );
+      if (!linked.ok) {
+        return skill.invoke(requestEnvelope, context);
+      }
+      return logicalTurnSerializer.run(linked.account.groupFolder, () =>
+        skill.invoke(requestEnvelope, context),
+      );
+    },
+  };
 }
 
 async function readRawBody(request: http.IncomingMessage): Promise<string> {

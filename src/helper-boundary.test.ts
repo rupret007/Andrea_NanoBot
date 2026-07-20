@@ -138,7 +138,7 @@ describe('helper boundary wiring', () => {
     expect(source).toContain('clearSharedAssistantCapabilitySeed(chatJid);');
   });
 
-  it('lets pending BlueBubbles local continuations bypass the fresh @Andrea wake gate without widening ordinary chatter', () => {
+  it('lets pending BlueBubbles local continuations continue only inside the configured owner self-thread', () => {
     const source = readRepoFile('src/index.ts');
 
     expect(source).toContain('const pendingLocalContinuationKind =');
@@ -150,12 +150,15 @@ describe('helper boundary wiring', () => {
       'Enqueued BlueBubbles same-thread follow-up for pending local continuation',
     );
     expect(source).toContain(
-      'Ignored BlueBubbles chatter without an @Andrea mention or pending local continuation',
+      'Ignored non-actionable BlueBubbles owner self-thread chatter',
     );
   });
 
   it('routes private BlueBubbles self-thread OpenClaw asks before the companion container queue', () => {
     const source = readRepoFile('src/index.ts');
+    const ownerGuardIndex = source.indexOf(
+      "disposition: 'bluebubbles_self_thread_rejected_non_owner'",
+    );
     const ingressIndex = source.indexOf(
       "if (companionIngressDecision.kind === 'explicit_ask') {",
     );
@@ -168,7 +171,8 @@ describe('helper boundary wiring', () => {
       openClawRouteIndex,
     );
 
-    expect(ingressIndex).toBeGreaterThan(-1);
+    expect(ownerGuardIndex).toBeGreaterThan(-1);
+    expect(ingressIndex).toBeGreaterThan(ownerGuardIndex);
     expect(openClawRouteIndex).toBeGreaterThan(ingressIndex);
     expect(companionQueueIndex).toBeGreaterThan(openClawRouteIndex);
     expect(source).toContain(
@@ -180,10 +184,6 @@ describe('helper boundary wiring', () => {
     expect(source).toContain(
       'msg.is_from_me === true &&\n          isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)',
     );
-    expect(source).toContain(
-      "'BlueBubbles self-thread OpenClaw delegation error'",
-    );
-
     const durableRouteIndex = source.indexOf(
       'const queuedOpenClawRoute = resolveOpenClawDelegationRoute({',
     );
@@ -204,6 +204,16 @@ describe('helper boundary wiring', () => {
     expect(durableRouteSource).toContain(
       'OpenClaw delegation prepared for same-chat delivery',
     );
+    expect(durableRouteSource).toContain(
+      'await deliverQueuedResponseWithIngressCommit({',
+    );
+    expect(durableRouteSource).toContain(
+      "'delivery_unverified_pre_dispatch_quarantine'",
+    );
+    expect(durableRouteSource).toContain(
+      "quarantineBeforeDispatch: conversationChannel === 'bluebubbles'",
+    );
+    expect(durableRouteSource).toContain('throw err;');
     expect(durableRouteSource).not.toContain('replyToMessageId:');
     expect(durableRouteSource).not.toContain('Asking OpenClaw…');
     expect(source).toContain(

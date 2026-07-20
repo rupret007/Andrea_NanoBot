@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 
+import { adaptiveEvidence } from '../src/adaptive-cognition-engine.js';
 import {
   beginCognitiveKernelRun,
   finalizeCognitiveKernelOutcome,
@@ -15,6 +16,37 @@ import {
 _initTestDatabase();
 
 const base = Date.now().toString(36);
+
+function explicitTestCompletionEvidence(
+  kernel: ReturnType<typeof beginCognitiveKernelRun>,
+) {
+  const frame = kernel.taskGraph.adaptiveFrame;
+  const criterion = frame?.successCriteria.at(-1);
+  if (!frame || !criterion) return [];
+  const targetPrefix = `target:${criterion.criterionId}:`;
+  const target = frame.contextRefs
+    .find((ref) => ref.startsWith(targetPrefix))
+    ?.slice(targetPrefix.length);
+  if (!target) return [];
+  return [
+    adaptiveEvidence({
+      origin: 'synthetic',
+      evidenceId: `adaptive:test-receipt:${kernel.run.runId}`,
+      evidenceClass: 'observed',
+      source: 'trusted_test_receipt_adapter',
+      claim: 'The bounded test outcome was independently observed.',
+      subject: target,
+      predicate: 'postcondition',
+      value: 'verified',
+      confidence: 0.98,
+      freshness: 'fresh',
+      scope: frame.authority.actorScope,
+      verification: 'verified',
+      supportsCriterionIds: [criterion.criterionId],
+      provenanceRefs: [`verification_receipt:${kernel.run.runId}`],
+    }),
+  ];
+}
 
 function runSuccess(iteration: number) {
   const kernel = beginCognitiveKernelRun({
@@ -38,6 +70,7 @@ function runSuccess(iteration: number) {
     evaluatorFlags: ['none'],
     routeUsed: 'research.live_or_saved',
     answerClass: 'handled',
+    completionEvidence: explicitTestCompletionEvidence(kernel),
   });
   return kernel;
 }

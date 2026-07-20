@@ -18,6 +18,21 @@ function toNullableString(value: string | null | undefined): string | null {
   return value && value.trim() ? value.trim() : null;
 }
 
+function resolveMcpMessageActionOperation(
+  value: unknown,
+): BlueBubblesExecuteMessageActionRequest['operation'] {
+  if (
+    value === 'defer' ||
+    value === 'remind_instead' ||
+    value === 'save_to_thread'
+  ) {
+    return value;
+  }
+  throw new Error(
+    'BlueBubbles MCP cannot execute send or send_again. Use a fresh owner-authored approval in Telegram or the configured Messages self-thread.',
+  );
+}
+
 function toTextResult(payload: unknown): {
   content: Array<{ type: 'text'; text: string }>;
 } {
@@ -161,14 +176,6 @@ export class BlueBubblesControlClient {
     });
   }
 
-  async send(input: {
-    chatJid: string;
-    text: string;
-    replyToMessageId?: string | null;
-  }): Promise<unknown> {
-    return this.request('POST', '/v1/bluebubbles/send', input);
-  }
-
   async executeMessageAction(
     actionId: string,
     request: BlueBubblesExecuteMessageActionRequest,
@@ -218,23 +225,9 @@ export function createBlueBubblesMcpToolHandlers(
       client.startProofDrill(
         typeof args.chatJid === 'string' ? args.chatJid : null,
       ),
-    bluebubbles_send: async (args) =>
-      client.send({
-        chatJid: String(args.chatJid || ''),
-        text: String(args.text || ''),
-        replyToMessageId:
-          typeof args.replyToMessageId === 'string'
-            ? args.replyToMessageId
-            : null,
-      }),
     bluebubbles_execute_message_action: async (args) =>
       client.executeMessageAction(String(args.actionId || ''), {
-        operation:
-          args.operation === 'defer' ||
-          args.operation === 'remind_instead' ||
-          args.operation === 'save_to_thread'
-            ? args.operation
-            : 'send',
+        operation: resolveMcpMessageActionOperation(args.operation),
         timingHint:
           typeof args.timingHint === 'string' ? args.timingHint : null,
       }),
@@ -343,22 +336,11 @@ export async function startBlueBubblesControlMcpServer(): Promise<void> {
   );
 
   server.tool(
-    'bluebubbles_send',
-    'Send a direct BlueBubbles 1:1 message through the safe control surface.',
-    {
-      chatJid: z.string(),
-      text: z.string(),
-      replyToMessageId: z.string().optional(),
-    },
-    async (args) => toTextResult(await handlers.bluebubbles_send(args)),
-  );
-
-  server.tool(
     'bluebubbles_execute_message_action',
-    'Execute a safe BlueBubbles message-action operation such as send, defer, remind_instead, or save_to_thread.',
+    'Apply a non-send BlueBubbles message-action operation. Ordinary recipient actions allow remind_instead or save_to_thread; defer is reserved for the no-send proof drill. Sending requires a fresh owner-authored approval in Telegram or the configured Messages self-thread.',
     {
       actionId: z.string(),
-      operation: z.enum(['send', 'defer', 'remind_instead', 'save_to_thread']),
+      operation: z.enum(['defer', 'remind_instead', 'save_to_thread']),
       timingHint: z.string().optional(),
     },
     async (args) =>

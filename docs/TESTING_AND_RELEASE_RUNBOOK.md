@@ -174,11 +174,15 @@ On the Mac mini, prefer local `127.0.0.1:1234` first and keep the Cloudflare Blu
 
 For BlueBubbles communication-summary or suggested-reply changes, verify:
 
-- current-thread and named-thread summaries produce a fuller recap, not only
-  activity counts
-- wake/control text such as `@Andrea summarize this` is excluded from the
-  summarized conversation body
-- recent-text review shows two or three suggested replies when useful
+- named-thread and broad cross-chat summaries, requested only from Telegram or
+  the configured owner self-thread, produce a fuller recap, not only activity
+  counts
+- the configured owner self-thread is excluded from contact summaries, while
+  ordinary contact text containing `@Andrea` or `@OpenClaw` remains ordinary
+  message evidence and never wakes Andrea in that contact thread
+- recent-text review shows suggested replies only when the available message
+  evidence supports a real answer; it must not invent canned acknowledgements
+  for unanswered questions
 - `draft #1`, `draft #1 option 2`, `make #2 warmer`, `send it`, and
   `send it later` remain same-thread and approval-first
 - group, low-confidence, and sensitive threads stay draft/caution-first
@@ -1249,15 +1253,18 @@ Important pilot-mode limits:
 - `degraded_but_usable` means Andrea stayed useful on a bounded fallback path and should be treated as a refinement target, not a clean live-proof pass
 - set `ANDREA_PILOT_LOGGING_ENABLED=0` on a host if you need to disable pilot journey logging and explicit issue capture entirely
 
-If BlueBubbles is configured on that host, add:
+If BlueBubbles is configured on that host, add the following only after the
+owner explicitly authorizes a live proof and the durable outbound pause is
+explicitly lifted:
 
-- one real inbound BlueBubbles message
-- one real reply back into that same BlueBubbles conversation
+- one real inbound message in the configured owner self-thread
+- one bounded reply back into that same owner self-thread
 - one safe companion flow such as `what am I forgetting`
-- one same-thread message-action decision such as `send it` or `send it later tonight`
+- one same-thread message-action decision that does not contact another person,
+  such as `send it later tonight` for the dedicated proof-drill action
 - one explicit BlueBubbles -> Telegram handoff if you are validating cross-channel continuity
 - one explicit communication-companion flow such as:
-  - `summarize this`
+  - `summarize Candace from the last 2 days`
   - `what should I say back`
   - `what do I owe people`
   - `remind me to reply later`

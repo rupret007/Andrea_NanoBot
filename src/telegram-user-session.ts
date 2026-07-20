@@ -11,6 +11,10 @@ import { StringSession } from 'telegram/sessions/index.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import {
+  readMessagingOutboundPauseStateFromStore,
+  type MessagingOutboundPauseState,
+} from './messaging-outbound-pause.js';
+import {
   TELEGRAM_PING_PROBE_MESSAGE,
   evaluateTelegramPingReplies,
   getTelegramRoundtripAssessment,
@@ -123,6 +127,44 @@ export interface TelegramTapCommandArgs {
 export interface TelegramTapButtonTarget {
   index: number;
   label: string;
+}
+
+export type TelegramUserSessionPauseStateReader =
+  () => MessagingOutboundPauseState | null;
+
+/**
+ * Provider-side operator actions share the same durable owner stop as the
+ * service. The standalone CLI must fail closed when that durable record cannot
+ * be read; otherwise a stopped service could still text from the owner's user
+ * session.
+ */
+export function assertTelegramUserSessionOutboundAllowed(
+  readPauseState: TelegramUserSessionPauseStateReader = readMessagingOutboundPauseStateFromStore,
+): void {
+  let pauseState: MessagingOutboundPauseState | null;
+  try {
+    pauseState = readPauseState();
+  } catch (error) {
+    throw new Error(
+      'Telegram user-session outbound action is blocked because the durable owner-pause state is unavailable.',
+      { cause: error },
+    );
+  }
+  if (!pauseState) {
+    throw new Error(
+      'Telegram user-session outbound action is blocked because the durable owner-pause state is unavailable.',
+    );
+  }
+  if (pauseState.paused) {
+    const unavailable =
+      pauseState.reason === 'pause_state_unavailable_fail_closed' ||
+      pauseState.reason === 'pause_state_corrupt_fail_closed';
+    throw new Error(
+      unavailable
+        ? 'Telegram user-session outbound action is blocked because the durable owner-pause state is unavailable.'
+        : 'Telegram user-session outbound action is paused by the owner.',
+    );
+  }
 }
 
 interface TelegramButtonRef extends TelegramTapButtonTarget {
@@ -955,7 +997,10 @@ export async function sendTelegramUserMessageAndCaptureReplies(
   message: string,
   timeoutMs: number,
   settleMs: number,
-  options: { replyToMessageId?: number } = {},
+  options: {
+    replyToMessageId?: number;
+    assertOutboundAllowed?: () => void;
+  } = {},
 ): Promise<TelegramSendAndCaptureResult> {
   let beforeSnapshot: TelegramLiveReply | undefined;
   if (options.replyToMessageId) {
@@ -969,6 +1014,8 @@ export async function sendTelegramUserMessageAndCaptureReplies(
       beforeSnapshot = extractReplyMetadata(repliedMessage, buttonLabels);
     }
   }
+  // Final durable stop check sits immediately adjacent to the provider call.
+  (options.assertOutboundAllowed || assertTelegramUserSessionOutboundAllowed)();
   const sent = await client.sendMessage(target, {
     message,
     ...(options.replyToMessageId ? { replyTo: options.replyToMessageId } : {}),
@@ -1067,6 +1114,7 @@ export async function tapTelegramMessageButtonAndCaptureReplies(
   selection: string,
   timeoutMs: number,
   settleMs: number,
+  options: { assertOutboundAllowed?: () => void } = {},
 ): Promise<TelegramTapAndCaptureResult> {
   const message = await fetchTelegramMessageById(client, target, messageId);
   if (!message) {
@@ -1093,6 +1141,9 @@ export async function tapTelegramMessageButtonAndCaptureReplies(
     await getLatestTelegramMessageId(client, target),
     messageId,
   );
+  // Button callbacks can trigger real effects, so they share the same final
+  // durable owner-stop boundary as text sends.
+  (options.assertOutboundAllowed || assertTelegramUserSessionOutboundAllowed)();
   await chosenButton.click();
   const replies = await captureTelegramReplies(
     client,

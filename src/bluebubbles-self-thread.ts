@@ -23,6 +23,18 @@ function normalizeBlueBubblesSelfThreadJid(
   return trimmed.startsWith('bb:') ? trimmed : `bb:${trimmed}`;
 }
 
+function isStructurallyDirectBlueBubblesJid(
+  value: string | null | undefined,
+): value is string {
+  return /^bb:[^;]+;-;.+$/.test(value || '');
+}
+
+function isReservedBlueBubblesSelfThreadFixture(value: string): boolean {
+  return UNCONFIGURED_BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS.some(
+    (reservedAlias) => reservedAlias === value,
+  );
+}
+
 function splitAliasList(value: string | null | undefined): string[] {
   return (value || '')
     .split(/[,\n|]/)
@@ -40,15 +52,24 @@ export function resolveBlueBubblesSelfThreadConfig(
     ? {}
     : readEnvFile(SELF_THREAD_ENV_KEYS),
 ): BlueBubblesSelfThreadConfig {
-  const configuredCanonical = normalizeBlueBubblesSelfThreadJid(
+  const configuredCanonicalCandidate = normalizeBlueBubblesSelfThreadJid(
     process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID ||
       env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID,
   );
+  const configuredCanonical = isStructurallyDirectBlueBubblesJid(
+    configuredCanonicalCandidate,
+  )
+    ? configuredCanonicalCandidate
+    : null;
   const canonical =
     configuredCanonical || UNCONFIGURED_BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
   const configuredAliases = splitAliasList(
     process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS ||
       env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS,
+  ).filter(
+    (alias) =>
+      isStructurallyDirectBlueBubblesJid(alias) &&
+      !isReservedBlueBubblesSelfThreadFixture(alias),
   );
   const aliases = new Set<string>([
     canonical,
@@ -82,7 +103,7 @@ export function isBlueBubblesSelfThreadAliasJid(
   chatJid: string | null | undefined,
 ): boolean {
   const normalized = normalizeBlueBubblesSelfThreadJid(chatJid);
-  if (!normalized) return false;
+  if (!isStructurallyDirectBlueBubblesJid(normalized)) return false;
   return getBlueBubblesSelfThreadAliasJids().includes(normalized);
 }
 
@@ -104,10 +125,11 @@ export function isConfiguredBlueBubblesSelfThreadAliasJid(
   );
   const normalized = normalizeBlueBubblesSelfThreadJid(chatJid);
   if (
-    !configuredCanonical ||
+    !isStructurallyDirectBlueBubblesJid(configuredCanonical) ||
     configuredCanonical ===
       UNCONFIGURED_BLUEBUBBLES_CANONICAL_SELF_THREAD_JID ||
-    !normalized
+    !isStructurallyDirectBlueBubblesJid(normalized) ||
+    isReservedBlueBubblesSelfThreadFixture(normalized)
   ) {
     return false;
   }

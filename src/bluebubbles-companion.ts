@@ -3,19 +3,8 @@ import { matchAssistantCapabilityRequest } from './assistant-capability-router.j
 import {
   expandBlueBubblesLogicalSelfThreadJids,
   getBlueBubblesCanonicalSelfThreadJid,
-  isBlueBubblesSelfThreadAliasJid,
-  canonicalizeBlueBubblesSelfThreadJid,
+  isConfiguredBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
-import {
-  getAllChats,
-  listMessageActionsForGroup,
-  listRecentMessagesForChat,
-  listRecentPilotJourneyEvents,
-} from './db.js';
-import {
-  listBlueBubblesMessageActionContinuitySnapshots,
-  reconcileBlueBubblesSelfThreadContinuity,
-} from './message-actions.js';
 import { resolveOrdinaryChatPilotJourney } from './pilot-mode.js';
 
 const BLUEBUBBLES_FOLLOWUP_STATE = {
@@ -79,16 +68,11 @@ function hasAndreaMention(normalized: string): boolean {
 
 function resolveBlueBubblesCompanionConversationKind(
   chatJid: string | null | undefined,
-): 'self_thread' | 'direct_1to1' | 'group' {
-  if (isBlueBubblesSelfThreadAliasJid(chatJid)) {
+): 'self_thread' | 'data_only' {
+  if (isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)) {
     return 'self_thread';
   }
-  const normalizedChatJid =
-    canonicalizeBlueBubblesSelfThreadJid(chatJid) || chatJid || null;
-  const knownChat = normalizedChatJid
-    ? getAllChats().find((chat) => chat.jid === normalizedChatJid)
-    : null;
-  return knownChat?.is_group ? 'group' : 'direct_1to1';
+  return 'data_only';
 }
 
 export function hasBlueBubblesAndreaMention(text: string): boolean {
@@ -126,14 +110,12 @@ export function isBlueBubblesExplicitAsk(
   const conversationKind = resolveBlueBubblesCompanionConversationKind(
     options.chatJid,
   );
-  const directSelfThread = conversationKind === 'self_thread';
-  const recentConversationalDirectChat =
-    conversationKind === 'direct_1to1' &&
-    Boolean(options.hasRecentCompanionContext);
+  // Ordinary contact and group conversations are passive Messages data. This
+  // helper is a second fence behind the runtime ingress policy: neither an
+  // @Andrea token nor stale companion context may turn a real person's thread
+  // into an assistant command surface.
+  if (conversationKind !== 'self_thread') return false;
   const hasMention = hasBlueBubblesAndreaMention(text);
-  if (!hasMention && !directSelfThread && !recentConversationalDirectChat) {
-    return false;
-  }
   if (matchAssistantCapabilityRequest(text)) return true;
   if (resolveOrdinaryChatPilotJourney(text)) return true;
   if (
@@ -208,6 +190,9 @@ export function resolveBlueBubblesPendingLocalContinuationKind(input: {
   hasActionReminder(chatJid: string): boolean;
   hasActionDraft(chatJid: string): boolean;
 }): BlueBubblesPendingLocalContinuationKind | null {
+  if (!isConfiguredBlueBubblesSelfThreadAliasJid(input.chatJid)) {
+    return null;
+  }
   const candidateChatJids = resolveBlueBubblesContinuationChatJids(
     input.chatJid,
   );
@@ -245,39 +230,6 @@ export function resolveBlueBubblesPendingLocalContinuationKind(input: {
   return null;
 }
 
-function parseJsonSafe<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function resolveBlueBubblesActionPresentationChat(action: {
-  presentationChatJid?: string | null;
-  targetConversationJson: string;
-}): string | null {
-  const presentationChatJid = canonicalizeBlueBubblesSelfThreadJid(
-    action.presentationChatJid,
-  );
-  if (
-    presentationChatJid &&
-    isBlueBubblesSelfThreadAliasJid(presentationChatJid)
-  ) {
-    return presentationChatJid;
-  }
-  const target = parseJsonSafe<{ chatJid?: string | null }>(
-    action.targetConversationJson,
-    {},
-  );
-  const targetChatJid = canonicalizeBlueBubblesSelfThreadJid(target.chatJid);
-  if (targetChatJid && isBlueBubblesSelfThreadAliasJid(targetChatJid)) {
-    return targetChatJid;
-  }
-  return presentationChatJid || targetChatJid;
-}
-
 export function decideBlueBubblesCompanionIngress(
   text: string,
   options: {
@@ -287,6 +239,9 @@ export function decideBlueBubblesCompanionIngress(
     chatJid?: string | null;
   } = {},
 ): BlueBubblesCompanionIngressDecision {
+  if (!isConfiguredBlueBubblesSelfThreadAliasJid(options.chatJid)) {
+    return { kind: 'ignored_chatter' };
+  }
   if (options.hasOpenMessageActionFollowup) {
     return {
       kind: 'pending_local_continuation',
@@ -316,156 +271,16 @@ export function resolveMostRecentBlueBubblesCompanionChat(params: {
   now?: Date;
 }): { chatJid: string; engagedAt: string } | null {
   const now = params.now || new Date();
-  const cutoff =
-    now.getTime() - Math.max(1, params.maxAgeHours || 12) * 60 * 60 * 1000;
-  const continuitySnapshots = listBlueBubblesMessageActionContinuitySnapshots({
-    groupFolder: params.groupFolder,
-    now,
-    allowRehydrate: true,
-  });
-  const prioritizedContinuity = continuitySnapshots.find((snapshot) => {
-    const recentTargetAt = Date.parse(snapshot.recentTargetAt || '');
-    return (
-      snapshot.recentTargetChatJid !== 'none' &&
-      Number.isFinite(recentTargetAt) &&
-      recentTargetAt >= cutoff
-    );
-  });
-  if (prioritizedContinuity) {
-    return {
-      chatJid: prioritizedContinuity.recentTargetChatJid,
-      engagedAt: prioritizedContinuity.recentTargetAt,
-    };
-  }
-  const continuity = reconcileBlueBubblesSelfThreadContinuity({
-    groupFolder: params.groupFolder,
-    chatJid: getBlueBubblesCanonicalSelfThreadJid(),
-    now,
-    allowRehydrate: true,
-  });
-  const continuityEngagedAt = Date.parse(continuity.recentTargetAt || '');
-  if (
-    continuity.recentTargetChatJid !== 'none' &&
-    Number.isFinite(continuityEngagedAt) &&
-    continuityEngagedAt >= cutoff
-  ) {
-    return {
-      chatJid: continuity.recentTargetChatJid,
-      engagedAt: continuity.recentTargetAt,
-    };
+  const canonicalSelfThreadJid = getBlueBubblesCanonicalSelfThreadJid();
+  if (!isConfiguredBlueBubblesSelfThreadAliasJid(canonicalSelfThreadJid)) {
+    return null;
   }
 
-  const recentOpenAction = listMessageActionsForGroup({
-    groupFolder: params.groupFolder,
-    includeSent: false,
-    limit: 80,
-  })
-    .filter((action) => action.targetChannel === 'bluebubbles')
-    .map((action) => {
-      const engagedAt =
-        action.lastActionAt || action.lastUpdatedAt || action.createdAt;
-      const engagedAtMs = Date.parse(engagedAt || '');
-      const chatJid = resolveBlueBubblesActionPresentationChat(action);
-      return chatJid &&
-        engagedAt &&
-        Number.isFinite(engagedAtMs) &&
-        engagedAtMs >= cutoff
-        ? { chatJid, engagedAt }
-        : null;
-    })
-    .filter((entry): entry is { chatJid: string; engagedAt: string } =>
-      Boolean(entry),
-    )
-    .sort(
-      (left, right) =>
-        Date.parse(right.engagedAt || '') - Date.parse(left.engagedAt || ''),
-    )[0];
-
-  if (recentOpenAction) {
-    return recentOpenAction;
-  }
-
-  const recentProofAction = listMessageActionsForGroup({
-    groupFolder: params.groupFolder,
-    includeSent: true,
-    limit: 80,
-  })
-    .filter(
-      (action) =>
-        ['sent', 'deferred'].includes(action.sendStatus) ||
-        ['sent', 'scheduled_send', 'remind_instead', 'save_to_thread'].includes(
-          action.lastActionKind || '',
-        ),
-    )
-    .filter((action) => action.targetChannel === 'bluebubbles')
-    .map((action) => {
-      const engagedAt =
-        action.lastActionAt ||
-        action.sentAt ||
-        action.lastUpdatedAt ||
-        action.createdAt;
-      const engagedAtMs = Date.parse(engagedAt || '');
-      const chatJid = resolveBlueBubblesActionPresentationChat(action);
-      return chatJid &&
-        engagedAt &&
-        Number.isFinite(engagedAtMs) &&
-        engagedAtMs >= cutoff
-        ? { chatJid, engagedAt }
-        : null;
-    })
-    .filter((entry): entry is { chatJid: string; engagedAt: string } =>
-      Boolean(entry),
-    )
-    .sort(
-      (left, right) =>
-        Date.parse(right.engagedAt || '') - Date.parse(left.engagedAt || ''),
-    )[0];
-
-  if (recentProofAction) {
-    return recentProofAction;
-  }
-
-  const candidate = listRecentPilotJourneyEvents({
-    channel: 'bluebubbles',
-    limit: 200,
-  }).find((event) => {
-    const engagedAt = Date.parse(event.completedAt || event.startedAt);
-    return (
-      event.groupFolder === params.groupFolder &&
-      event.chatJid?.startsWith('bb:') === true &&
-      (event.outcome === 'success' || event.outcome === 'degraded_usable') &&
-      Number.isFinite(engagedAt) &&
-      engagedAt >= cutoff
-    );
-  });
-
-  if (candidate?.chatJid) {
-    return {
-      chatJid:
-        canonicalizeBlueBubblesSelfThreadJid(candidate.chatJid) ||
-        candidate.chatJid,
-      engagedAt: candidate.completedAt || candidate.startedAt,
-    };
-  }
-
-  const recentSelfThreadActivity = expandBlueBubblesLogicalSelfThreadJids(
-    getBlueBubblesCanonicalSelfThreadJid(),
-  )
-    .flatMap((chatJid) => listRecentMessagesForChat(chatJid, 8))
-    .map((message) => ({
-      chatJid:
-        canonicalizeBlueBubblesSelfThreadJid(message.chat_jid) ||
-        message.chat_jid,
-      engagedAt: message.timestamp,
-    }))
-    .filter((entry) => {
-      const engagedAt = Date.parse(entry.engagedAt || '');
-      return Number.isFinite(engagedAt) && engagedAt >= cutoff;
-    })
-    .sort(
-      (left, right) =>
-        Date.parse(right.engagedAt || '') - Date.parse(left.engagedAt || ''),
-    )[0];
-
-  return recentSelfThreadActivity || null;
+  // A handoff is assistant content, not a recipient-approved message action.
+  // Never inherit its destination from contact/group continuity, pilot history,
+  // or whichever external Messages conversation was active most recently.
+  return {
+    chatJid: canonicalSelfThreadJid,
+    engagedAt: now.toISOString(),
+  };
 }

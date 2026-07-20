@@ -1,5 +1,6 @@
 import {
   canonicalizeBlueBubblesSelfThreadJid,
+  isConfiguredBlueBubblesSelfThreadAliasJid,
   isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
 import { clipCouncilText } from './council-safety.js';
@@ -18,6 +19,7 @@ import {
   isOpenAiModelRejection,
 } from './openai-model-routing.js';
 import { recordOpenAiUsageState } from './openai-usage-state.js';
+import { hasMessagesGroundingPolarityConflict } from './messages-grounding-polarity.js';
 import type {
   BlueBubblesReplyGateMode,
   MessagesDirectTurnEnvelope,
@@ -26,6 +28,8 @@ import type {
 
 const THREAD_SUMMARY_FALLBACK_NOTE =
   "I kept this one grounded locally because the richer Messages summary lane isn't available right now.";
+const DRAFT_GROUNDING_FALLBACK_NOTE =
+  'I kept this draft grounded locally because the richer Messages draft added unsupported details.';
 const THREAD_SUMMARY_OPENAI_TIMEOUT_MS = 12_000;
 const BLUEBUBBLES_COUNCIL_SNIPPET_LIMIT = 900;
 
@@ -83,6 +87,8 @@ const THREAD_DIGEST_ALLOWED_CAPITALIZED_WORDS = new Set([
   'conversation',
   'digest',
   'finally',
+  'hello',
+  'hey',
   'here',
   'i',
   'in',
@@ -94,7 +100,10 @@ const THREAD_DIGEST_ALLOWED_CAPITALIZED_WORDS = new Set([
   'one',
   'people',
   'reply',
+  'sorry',
   'someone',
+  'thank',
+  'thanks',
   'the',
   'they',
   'this',
@@ -156,6 +165,36 @@ function isProviderThreadDigestGrounded(input: {
   digest: string;
   bullets: string[];
 }): boolean {
+  const normalizedEvidence = normalizeText(input.evidenceText).toLowerCase();
+  const evidenceNumbers = new Set(
+    normalizedEvidence.match(/\b\d+(?:[.,:]\d+)?\b/g) || [],
+  );
+  const sensitiveFactTerms = [
+    'not',
+    'never',
+    'cancelled',
+    'canceled',
+    'confirmed',
+    'decided',
+    'booked',
+    'scheduled',
+    'paid',
+    'due',
+    'overdue',
+    'sent',
+    'completed',
+    'delayed',
+    'today',
+    'tomorrow',
+    'tonight',
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday',
+    'sunday',
+  ];
   const evidenceTokens = new Set(
     threadDigestGroundingTokens(input.evidenceText),
   );
@@ -166,6 +205,27 @@ function isProviderThreadDigestGrounded(input: {
     ...input.bullets.map((text) => ({ kind: 'bullet' as const, text })),
   ].filter((claim) => threadDigestGroundingTokens(claim.text).length > 0);
   if (claims.length === 0) return false;
+  for (const claim of claims) {
+    const normalizedClaim = normalizeText(claim.text).toLowerCase();
+    const unsupportedNumber = (
+      normalizedClaim.match(/\b\d+(?:[.,:]\d+)?\b/g) || []
+    ).some((number) => !evidenceNumbers.has(number));
+    const unsupportedSensitiveFact = sensitiveFactTerms.some(
+      (term) =>
+        new RegExp(`\\b${term}\\b`, 'i').test(normalizedClaim) &&
+        !new RegExp(`\\b${term}\\b`, 'i').test(normalizedEvidence),
+    );
+    if (
+      unsupportedNumber ||
+      unsupportedSensitiveFact ||
+      hasMessagesGroundingPolarityConflict({
+        claimText: claim.text,
+        evidenceText: input.evidenceText,
+      })
+    ) {
+      return false;
+    }
+  }
   if (
     claims.some((claim) =>
       hasUnsupportedThreadDigestProperNoun(claim.text, input.evidenceText),
@@ -226,17 +286,128 @@ function isProviderThreadDigestGrounded(input: {
   }
   const primaryClaim =
     claims.find((claim) => claim.kind === 'digest') || claims[0];
-  const groundedCount = [...grounded.values()].filter(Boolean).length;
   return (
     Boolean(primaryClaim && grounded.get(primaryClaim)) &&
     totalAnchors.size >= Math.min(2, evidenceTokens.size) &&
-    groundedCount >= Math.ceil((claims.length * 2) / 3)
+    claims.every((claim) => grounded.get(claim) === true)
   );
 }
 
 function containsUnsupportedThreadReplyPromise(value: string): boolean {
   return /\b(?:(?:i am|i'm)\s+(?:checking|confirming|looking(?: into)?|working on)|(?:i |we )?(?:will|'ll)\s+(?:check|confirm|get back|follow up|look into|review|verify)|let me\s+(?:check|confirm|look into|review|verify))\b/i.test(
     normalizeText(value),
+  );
+}
+
+const DRAFT_POLITENESS_TOKENS = new Set([
+  'appreciate',
+  'hello',
+  'thanks',
+  'thank',
+  'okay',
+  'please',
+  'sorry',
+]);
+
+const DRAFT_STATE_OR_TIME_TERMS = [
+  'not',
+  'never',
+  'cancelled',
+  'canceled',
+  'confirmed',
+  'decided',
+  'booked',
+  'scheduled',
+  'paid',
+  'due',
+  'overdue',
+  'sent',
+  'completed',
+  'delayed',
+  'today',
+  'tomorrow',
+  'tonight',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+];
+
+function isProviderCommunicationDraftGrounded(input: {
+  draftText: string;
+  evidenceText: string;
+}): boolean {
+  const draftText = normalizeText(input.draftText);
+  const evidenceText = normalizeText(input.evidenceText);
+  if (!draftText || !evidenceText) return false;
+  if (containsUnsupportedThreadReplyPromise(draftText)) return false;
+  if (
+    hasMessagesGroundingPolarityConflict({
+      claimText: draftText,
+      evidenceText,
+    })
+  ) {
+    return false;
+  }
+  if (hasUnsupportedThreadDigestProperNoun(draftText, evidenceText)) {
+    return false;
+  }
+
+  const normalizedDraft = draftText.toLowerCase();
+  const normalizedEvidence = evidenceText.toLowerCase();
+  const evidenceNumbers = new Set(
+    normalizedEvidence.match(/\b\d+(?:[.,:]\d+)?\b/g) || [],
+  );
+  if (
+    (normalizedDraft.match(/\b\d+(?:[.,:]\d+)?\b/g) || []).some(
+      (number) => !evidenceNumbers.has(number),
+    )
+  ) {
+    return false;
+  }
+  const evidenceUrls = new Set(
+    normalizedEvidence.match(/\bhttps?:\/\/\S+|\bwww\.\S+/g) || [],
+  );
+  if (
+    (normalizedDraft.match(/\bhttps?:\/\/\S+|\bwww\.\S+/g) || []).some(
+      (url) => !evidenceUrls.has(url),
+    )
+  ) {
+    return false;
+  }
+  if (
+    DRAFT_STATE_OR_TIME_TERMS.some(
+      (term) =>
+        new RegExp(`\\b${term}\\b`, 'i').test(normalizedDraft) &&
+        !new RegExp(`\\b${term}\\b`, 'i').test(normalizedEvidence),
+    )
+  ) {
+    return false;
+  }
+
+  const unsupportedOwnerAssertion = [
+    /\b(?:yes|no)\b/i,
+    /\b(?:works?|doesn['’]t work) for me\b/i,
+    /\b(?:i|we)\s+(?:can(?:not)?|can['’]t|will|won['’]t|am|are|have|haven['’]t|need|want|agree|accept|decline)\b/i,
+  ].some((pattern) => pattern.test(draftText) && !pattern.test(evidenceText));
+  if (unsupportedOwnerAssertion) return false;
+
+  const evidenceTokens = new Set(threadDigestGroundingTokens(evidenceText));
+  const claimTokens = threadDigestGroundingTokens(draftText).filter(
+    (token) => !DRAFT_POLITENESS_TOKENS.has(token),
+  );
+  if (claimTokens.length === 0) {
+    return draftText.length <= 120;
+  }
+  const anchors = new Set(
+    claimTokens.filter((token) => evidenceTokens.has(token)),
+  );
+  const minimumAnchors = claimTokens.length <= 6 ? 1 : 2;
+  return (
+    anchors.size >= minimumAnchors && anchors.size / claimTokens.length >= 0.25
   );
 }
 
@@ -281,7 +452,7 @@ async function runBlueBubblesMessagesCouncil(input: {
   snippet: string;
   threadTitle?: string | null;
   style?: string | null;
-}): Promise<string | null> {
+}): Promise<Awaited<ReturnType<typeof runObservableProviderCouncil>>> {
   const council = await runObservableProviderCouncil({
     goal: input.goal,
     taskFamily: 'communication',
@@ -301,7 +472,7 @@ async function runBlueBubblesMessagesCouncil(input: {
       private_bodies_persisted: 'false',
     },
   });
-  return council?.answerGuidance?.visibleVerdict || null;
+  return council;
 }
 
 function safeJsonParse<T>(value: string, fallback: T): T {
@@ -352,6 +523,11 @@ function stripJsonFences(value: string): string {
 
 function buildThreadSummaryFallbackResult(
   fallbackReason: 'unavailable' | 'ungrounded' = 'unavailable',
+  attempts: {
+    providerAttempted?: boolean;
+    councilAttempted?: boolean;
+    councilProviderUsed?: boolean;
+  } = {},
 ): {
   lead: null;
   digest: null;
@@ -360,6 +536,9 @@ function buildThreadSummaryFallbackResult(
   source: 'fallback';
   fallbackNote: string;
   fallbackReason: 'unavailable' | 'ungrounded';
+  providerAttempted: boolean;
+  councilAttempted: boolean;
+  councilProviderUsed: boolean;
 } {
   return {
     lead: null,
@@ -369,6 +548,9 @@ function buildThreadSummaryFallbackResult(
     source: 'fallback',
     fallbackNote: THREAD_SUMMARY_FALLBACK_NOTE,
     fallbackReason,
+    providerAttempted: Boolean(attempts.providerAttempted),
+    councilAttempted: Boolean(attempts.councilAttempted),
+    councilProviderUsed: Boolean(attempts.councilProviderUsed),
   };
 }
 
@@ -379,7 +561,7 @@ export function resolveBlueBubblesReplyGateMode(params: {
   if (params.isGroup) {
     return 'mention_required';
   }
-  return isBlueBubblesSelfThreadAliasJid(params.chatJid)
+  return isConfiguredBlueBubblesSelfThreadAliasJid(params.chatJid)
     ? 'direct_1to1'
     : 'mention_required';
 }
@@ -475,6 +657,9 @@ export async function summarizeBlueBubblesThreadDigest(input: {
   source: 'openai' | 'fallback';
   fallbackNote?: string;
   fallbackReason?: 'unavailable' | 'ungrounded';
+  providerAttempted: boolean;
+  councilAttempted: boolean;
+  councilProviderUsed: boolean;
 }> {
   const shouldUseCouncil =
     input.thinkingMode === 'deep' ||
@@ -483,18 +668,24 @@ export async function summarizeBlueBubblesThreadDigest(input: {
         text: `${input.chatName} ${input.windowLabel}`,
         transcript: input.transcript,
       }));
-  if (shouldUseCouncil) {
-    await runBlueBubblesMessagesCouncil({
-      kind: 'thread_summary',
-      goal: 'Review a private BlueBubbles thread-summary request and return concise guidance for a safe, grounded digest.',
-      snippet: input.transcript,
-      threadTitle: input.chatName,
-    }).catch(() => null);
-  }
+  const councilResult = shouldUseCouncil
+    ? await runBlueBubblesMessagesCouncil({
+        kind: 'thread_summary',
+        goal: 'Review a private BlueBubbles thread-summary request and return concise guidance for a safe, grounded digest.',
+        snippet: input.transcript,
+        threadTitle: input.chatName,
+      }).catch(() => null)
+    : null;
+  const councilProviderUsed = Boolean(
+    Number(councilResult?.structuredVerdict?.usableMemberCount || 0) > 0,
+  );
 
   const openAi = resolveOpenAiProviderConfig();
   if (!openAi) {
-    return buildThreadSummaryFallbackResult();
+    return buildThreadSummaryFallbackResult('unavailable', {
+      councilAttempted: shouldUseCouncil,
+      councilProviderUsed,
+    });
   }
 
   const prompt = [
@@ -553,7 +744,11 @@ export async function summarizeBlueBubblesThreadDigest(input: {
               ? `thread_summary timed out after ${timeoutMs}ms`
               : 'thread_summary request failed before a response arrived',
         });
-        return buildThreadSummaryFallbackResult();
+        return buildThreadSummaryFallbackResult('unavailable', {
+          providerAttempted: true,
+          councilAttempted: shouldUseCouncil,
+          councilProviderUsed,
+        });
       }
       if (!response.ok) {
         const body = await response.text();
@@ -578,7 +773,11 @@ export async function summarizeBlueBubblesThreadDigest(input: {
             'research',
           ),
         });
-        return buildThreadSummaryFallbackResult();
+        return buildThreadSummaryFallbackResult('unavailable', {
+          providerAttempted: true,
+          councilAttempted: shouldUseCouncil,
+          councilProviderUsed,
+        });
       }
       const payload = (await response.json()) as unknown;
       const rawOutput = stripJsonFences(extractResponseOutputText(payload));
@@ -597,7 +796,7 @@ export async function summarizeBlueBubblesThreadDigest(input: {
       if (!lead && !digest && bullets.length === 0) {
         continue;
       }
-      const evidenceText = `${input.chatName}\n${input.transcript}`;
+      const evidenceText = `${input.chatName}\n${input.windowLabel}\n${input.transcript}`;
       if (
         !isProviderThreadDigestGrounded({
           evidenceText,
@@ -615,7 +814,11 @@ export async function summarizeBlueBubblesThreadDigest(input: {
           outcome: 'failed',
           detail: 'thread_summary rejected as ungrounded',
         });
-        return buildThreadSummaryFallbackResult('ungrounded');
+        return buildThreadSummaryFallbackResult('ungrounded', {
+          providerAttempted: true,
+          councilAttempted: shouldUseCouncil,
+          councilProviderUsed,
+        });
       }
       const suggestedReplies = normalizeSuggestedReplies(
         parsed.suggestedReplies,
@@ -639,12 +842,19 @@ export async function summarizeBlueBubblesThreadDigest(input: {
         bullets,
         suggestedReplies,
         source: 'openai',
+        providerAttempted: true,
+        councilAttempted: shouldUseCouncil,
+        councilProviderUsed,
       };
     }
   } catch {
     // Fall through to the honest local fallback.
   }
-  return buildThreadSummaryFallbackResult();
+  return buildThreadSummaryFallbackResult('unavailable', {
+    providerAttempted: true,
+    councilAttempted: shouldUseCouncil,
+    councilProviderUsed,
+  });
 }
 
 export async function draftBlueBubblesCommunicationReply(input: {
@@ -757,6 +967,37 @@ export async function draftBlueBubblesCommunicationReply(input: {
       const draftText = normalizeText(parsed.draftText);
       if (!draftText) {
         continue;
+      }
+      const evidenceText = [
+        input.messageText,
+        input.summaryText,
+        input.personName,
+        input.threadTitle,
+        ...(input.toneHints || []),
+        input.linkedLifeThreadSummary,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      if (
+        !isProviderCommunicationDraftGrounded({
+          draftText,
+          evidenceText,
+        })
+      ) {
+        recordOpenAiUsageState({
+          at: new Date().toISOString(),
+          surface: 'messages_fluidity',
+          selectedModelTier: candidate.tier,
+          selectedModel: candidate.model,
+          providerMode,
+          outcome: 'failed',
+          detail: 'draft_reply rejected as ungrounded',
+        });
+        return {
+          draftText: null,
+          source: 'fallback',
+          fallbackNote: DRAFT_GROUNDING_FALLBACK_NOTE,
+        };
       }
       recordOpenAiUsageState({
         at: new Date().toISOString(),

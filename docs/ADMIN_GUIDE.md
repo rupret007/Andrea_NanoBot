@@ -242,8 +242,14 @@ Windows startup truth:
 - If Windows policy blocks task creation, the installer writes a repo-owned Startup-folder launcher instead.
 - On this machine, the validated login path is the Startup-folder launcher because Scheduled Task creation is denied.
 - The host launcher now keeps a repo-owned watchdog running in the background and calls `ensure` periodically so a stale or degraded assistant can be restarted without waiting for the next manual intervention.
-- Telegram is only considered truly responsive once a real round-trip succeeds. The watchdog now drives a real `/ping` roundtrip probe against the main operator chat every 30 minutes when there has not been a more recent successful Telegram exchange.
-- If the first due probe fails, the watchdog retries once after a short backoff and then restarts Andrea automatically if Telegram still does not reply.
+- Telegram is only considered truly responsive once a real round-trip succeeds,
+  but the watchdog never originates traffic from the owner's Telegram user
+  session. Round-trip truth is refreshed by organic traffic or the explicit
+  operator-only `npm run telegram:user:smoke` command.
+- A failed explicit smoke check is diagnostic evidence only. It does not give
+  the watchdog permission to retry messages or restart Andrea because a bot
+  reply was absent; use the normal process-health status before any manual
+  restart decision.
 - If Telegram itself is degraded but the operator-side roundtrip harness is still unconfigured, `services:ensure` now reports `degraded` plus `telegram_roundtrip=unconfigured` instead of pretending Telegram is healthy or thrashing Andrea with blind restart loops.
 - `npm run services:status` now includes `assistant_health`, local Alexa listener and OAuth health when Alexa is configured, `telegram_roundtrip_health`, `telegram_roundtrip_last_ok_at`, `telegram_roundtrip_last_probe_at`, `telegram_roundtrip_next_due_at`, `watchdog_running`, plus the active repo root, branch, commit, DB path, assistant name source, and the currently registered main Telegram chat so runtime/state drift is visible immediately instead of looking falsely healthy.
 
@@ -500,7 +506,10 @@ Keep this tooling operator-only and pointed at your own DM or a dedicated test c
 Important truth:
 
 - `npm run telegram:user:smoke` is now the canonical operator proof that Telegram is actually working end to end.
-- It sends a real `/ping` from the operator Telegram user session, waits for the real bot reply, exits non-zero on failure, and writes the same roundtrip state the watchdog uses.
+- It sends a real `/ping` from the operator Telegram user session, waits for the
+  real bot reply, exits non-zero on failure, and writes the round-trip state
+  shown by operator diagnostics. The watchdog reads health but does not run the
+  user-session probe itself.
 - Normal unit tests and the default full test suite remain offline; the live Telegram smoke check is credentialed and explicit on purpose.
 
 If `npm run telegram:user:runtime` fails immediately, check these in order:

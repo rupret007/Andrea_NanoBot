@@ -2,6 +2,12 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { AssistantCapabilityId } from './assistant-capabilities.js';
 import {
+  ADAPTIVE_COGNITION_VERSION,
+  buildAdaptivePlanGraph,
+  createAdaptiveProblemFrame,
+  type AdaptiveActionCandidate,
+} from './adaptive-cognition-engine.js';
+import {
   continueAssistantCapabilityFromPriorSubjectData,
   matchAssistantCapabilityRequest,
   type AssistantCapabilityContinuationSubjectData,
@@ -1094,6 +1100,170 @@ function buildPlan(input: {
           : 'Local executive explanation.',
     },
   ];
+  const adaptiveFrame = createAdaptiveProblemFrame({
+    createdAt: input.request.createdAt,
+    objective: summarizeAsk({
+      text: input.request.normalizedAsk,
+      channel: input.request.channel,
+      intentFamily: input.request.intentFamily,
+    }),
+    taskFamily: input.request.intentFamily,
+    channel: input.request.channel,
+    route: provisionalRouteKey,
+    successCriteria: [
+      {
+        description:
+          'The selected route addresses the bounded request with fresh evidence or asks one concrete clarification.',
+        requiredEvidenceClasses: ['observed', 'user_attested'],
+        minimumConfidence: 0.65,
+      },
+      {
+        description:
+          'Approval, tool health, reliability caps, and privacy constraints remain satisfied.',
+        requiredEvidenceClasses: ['observed'],
+        minimumConfidence: 0.8,
+      },
+    ],
+    constraints: [
+      'The deterministic route policy is the maximum authority envelope.',
+      'A route-confidence score can narrow action but cannot grant mutation authority.',
+      'Do not persist raw asks, private bodies, hidden reasoning, raw tool output, or secrets.',
+    ],
+    assumptions: [
+      `intent:${input.request.intentFamily}`,
+      `route_confidence:${routeScore.confidence.toFixed(3)}`,
+    ],
+    unknowns:
+      routeClass === 'clarify'
+        ? [
+            {
+              description: concreteClarifyingQuestion(input.request),
+              impact: 'blocking',
+              resolvableBy: ['user_clarification'],
+            },
+          ]
+        : selectedToolStatus === 'blocked'
+          ? [
+              {
+                description: `${selectedTool} is blocked for the selected route.`,
+                impact: 'degrading',
+                resolvableBy: ['tool_health_observation', 'fallback_route'],
+              },
+            ]
+          : [],
+    authority: {
+      actorScope: `${input.request.channel}:${input.request.groupFolder}`,
+      maximumActionClass: approvalRequired
+        ? 'approval_gated_mutation'
+        : routeClass === 'clarify' || routeClass === 'direct_answer'
+          ? 'reasoning_only'
+          : 'read_only',
+      approvedActionIds: [],
+    },
+    risk: {
+      level: approvalRequired
+        ? 'high'
+        : selectedToolStatus === 'blocked'
+          ? 'medium'
+          : 'low',
+      flags: selectedRiskFlags,
+    },
+    contextRefs: [
+      input.snapshot.snapshotId,
+      ...input.snapshotItems.slice(0, 5).map((item) => item.itemId),
+    ],
+  });
+  const executiveOutcomeCriterionId =
+    adaptiveFrame.successCriteria[0]!.criterionId;
+  adaptiveFrame.contextRefs.push(
+    `target:${executiveOutcomeCriterionId}:${hashId('cogexec:target', input.request.requestId)}`,
+  );
+  if (approvalRequired) {
+    adaptiveFrame.contextRefs.push(
+      `receipt_required:${executiveOutcomeCriterionId}`,
+    );
+  }
+  const routeActionId = `executive:${provisionalRouteKey}`;
+  const adaptiveActions: AdaptiveActionCandidate[] = [
+    {
+      actionId: 'executive:observe-policy',
+      title: 'Observe bounded context and enforced route policy',
+      purpose:
+        'Use the compact world snapshot, route reliability, and integration health as typed observations.',
+      toolId: 'local_direct_answer',
+      actionClass: 'local_lookup',
+      mutationClass: 'none',
+      approvalRequired: false,
+      requiredEvidence: ['snapshot', 'route_reliability', 'integration_health'],
+      producesCriterionIds: [adaptiveFrame.successCriteria[1]!.criterionId],
+      expectedEvidenceClass: 'observed',
+      priority: 1,
+      maxAttempts: 1,
+      timeoutMs: 2_000,
+    },
+    {
+      actionId: routeActionId,
+      title:
+        routeClass === 'clarify'
+          ? 'Ask one concrete clarification'
+          : `Route through ${selectedTool}`,
+      purpose:
+        routeClass === 'clarify'
+          ? concreteClarifyingQuestion(input.request)
+          : `Use ${selectedTool} only within the selected route and policy envelope.`,
+      toolId: selectedTool,
+      actionClass:
+        routeClass === 'clarify'
+          ? 'clarification'
+          : routeClass === 'direct_answer'
+            ? 'reasoning'
+            : approvalRequired
+              ? 'approval_gate'
+              : 'read_only_integration',
+      mutationClass: 'none',
+      approvalRequired,
+      requiredEvidence: ['route_result', 'completion_verification'],
+      producesCriterionIds: [adaptiveFrame.successCriteria[0]!.criterionId],
+      expectedEvidenceClass: 'observed',
+      priority: 0.95,
+      maxAttempts: selectedToolStatus === 'degraded' ? 2 : 1,
+      timeoutMs: 15_000,
+    },
+    ...(reliabilityFallback
+      ? [
+          {
+            actionId: `executive:fallback:${reliabilityFallback}`,
+            title: 'Use the bounded fallback route',
+            purpose: reliabilityFallback,
+            toolId: 'clarifying_question' as const,
+            actionClass: 'clarification' as const,
+            mutationClass: 'none' as const,
+            approvalRequired: false,
+            requiredEvidence: ['explicit_blocker_or_clarification'],
+            producesCriterionIds: [
+              adaptiveFrame.successCriteria[0]!.criterionId,
+            ],
+            expectedEvidenceClass: 'user_attested' as const,
+            priority: 0.8,
+            maxAttempts: 1,
+            timeoutMs: 5_000,
+            alternativeForActionId: routeActionId,
+            recoveryForFailureClasses: [
+              'tool_blocked',
+              'tool_degraded',
+              'low_route_reliability',
+            ],
+          },
+        ]
+      : []),
+  ];
+  const adaptivePlan = buildAdaptivePlanGraph({
+    createdAt: input.request.createdAt,
+    frame: adaptiveFrame,
+    actions: adaptiveActions,
+    maxNodeExecutions: 12,
+    maxRuntimeMs: 20_000,
+  });
   const plan: CognitivePlan = {
     planId: hashId('cogexec:plan', input.request.requestId),
     createdAt: input.request.createdAt,
@@ -1104,7 +1274,15 @@ function buildPlan(input: {
       routeScore.confidence,
       input.metacognition?.calibration.score ?? routeScore.confidence,
     ),
-    stepsJson: safeJson(steps, 2400),
+    stepsJson: safeJson(
+      {
+        adaptiveEngineVersion: ADAPTIVE_COGNITION_VERSION,
+        adaptiveFrame,
+        adaptivePlan,
+        compatibilitySteps: steps,
+      },
+      12_000,
+    ),
     involvedToolsJson: safeJson([selectedTool], 1200),
     approvalRequired,
     fallbackRoute: reliabilityFallback,

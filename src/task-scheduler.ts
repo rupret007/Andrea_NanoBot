@@ -1,6 +1,7 @@
 import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
+import { createHash } from 'node:crypto';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
@@ -13,11 +14,16 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  claimScheduledTaskOutboundDispatch,
+  completeScheduledTaskOutboundDispatch,
   getCalendarAutomationByTaskId,
   getAllTasks,
   getDueTasks,
   getTaskById,
+  isScheduledTaskOutboundDispatchClaimCurrent,
   logTaskRun,
+  recoverClaimedScheduledTaskOutboundDispatches,
+  terminallyBlockScheduledTaskOutboundDispatch,
   updateCalendarAutomation,
   updateTask,
   updateTaskAfterRun,
@@ -27,6 +33,7 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { classifyScheduledTaskRequest } from './assistant-routing.js';
 import { getAssistantSessionStorageKey } from './assistant-session.js';
+import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
 import type { ContainerIpcContext } from './container-ipc-auth.js';
 import { runScheduledMessageActionByTaskId } from './message-actions.js';
 import { buildPlainReminderDeliveryText } from './scheduled-reminder-delivery.js';
@@ -34,6 +41,8 @@ import { buildScheduledSelfImprovementStatusUpdate } from './self-improvement-st
 import { refreshRecentResponseFeedbackTruth } from './response-feedback.js';
 import { emitAndreaPlatformDiagnosis } from './andrea-platform-bridge.js';
 import { formatOutbound } from './router.js';
+import { validateMessagingOutboundAuthorizationFence } from './messaging-outbound-pause.js';
+import { requireCompleteChannelDelivery } from './channel-delivery.js';
 import {
   executeCalendarAutomation,
   parseCalendarAutomationRecord,
@@ -144,6 +153,22 @@ export interface SchedulerDependencies {
   ) => Promise<SendMessageResult>;
 }
 
+function isBlockedGenericBlueBubblesTaskTarget(chatJid: string): boolean {
+  return (
+    chatJid.startsWith('bb:') &&
+    !isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)
+  );
+}
+
+interface GenericBlueBubblesTaskDispatch {
+  runKey: string;
+  claimToken: string;
+  idempotencyKey: string;
+  authorizationAt: string;
+  pauseGeneration: number;
+  providerCallStarted: boolean;
+}
+
 async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
@@ -213,56 +238,6 @@ async function runTask(
     return;
   }
 
-  logger.info(
-    { taskId: task.id, group: task.group_folder },
-    'Running scheduled task',
-  );
-
-  const automationRecord = getCalendarAutomationByTaskId(task.id);
-  if (automationRecord) {
-    let resultSummary = 'Completed';
-    let error: string | null = null;
-    try {
-      const automation = parseCalendarAutomationRecord(automationRecord);
-      const execution = await executeCalendarAutomation(automation);
-      if (execution.message) {
-        await deps.sendMessage(task.chat_jid, execution.message);
-      }
-      resultSummary = execution.summary;
-      updateCalendarAutomation(task.id, {
-        dedupe_state_json: execution.dedupeState
-          ? JSON.stringify(execution.dedupeState)
-          : null,
-        updated_at: new Date().toISOString(),
-      });
-      logger.info(
-        { taskId: task.id, durationMs: Date.now() - startTime },
-        'Calendar automation task completed',
-      );
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
-      resultSummary = `Error: ${error}`;
-      logger.error(
-        { taskId: task.id, error },
-        'Calendar automation task failed',
-      );
-    }
-
-    const durationMs = Date.now() - startTime;
-    logTaskRun({
-      task_id: task.id,
-      run_at: new Date().toISOString(),
-      duration_ms: durationMs,
-      status: error ? 'error' : 'success',
-      result: error ? null : resultSummary,
-      error,
-    });
-
-    const nextRun = computeNextRun(task);
-    updateTaskAfterRun(task.id, nextRun, resultSummary);
-    return;
-  }
-
   const scheduledMessageResult = await runScheduledMessageActionByTaskId(
     task.id,
     {
@@ -303,6 +278,200 @@ async function runTask(
     updateTaskAfterRun(task.id, null, scheduledMessageResult.resultSummary);
     return;
   }
+
+  if (isBlockedGenericBlueBubblesTaskTarget(task.chat_jid)) {
+    const error =
+      'Generic scheduled tasks cannot target a BlueBubbles contact or group; use the explicitly configured owner self-thread or a recipient-bound scheduled message action.';
+    updateTask(task.id, { status: 'paused' });
+    updateTaskAfterRun(task.id, task.next_run, `Error: ${error}`);
+    logger.error(
+      { taskId: task.id, groupFolder: task.group_folder },
+      'Paused generic scheduled task targeting an external BlueBubbles thread',
+    );
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: Date.now() - startTime,
+      status: 'error',
+      result: null,
+      error,
+    });
+    return;
+  }
+
+  let blueBubblesDispatch: GenericBlueBubblesTaskDispatch | null = null;
+  if (isConfiguredBlueBubblesSelfThreadAliasJid(task.chat_jid)) {
+    const authorizationFence = {
+      authorizationAt: task.outbound_authorization_at || '',
+      pauseGeneration: task.outbound_pause_generation ?? -1,
+    };
+    const authorization =
+      validateMessagingOutboundAuthorizationFence(authorizationFence);
+    if (!authorization.ok || !task.next_run) {
+      const error =
+        authorization.reason ||
+        'Scheduled self-thread delivery is missing an exact durable occurrence key.';
+      terminallyBlockScheduledTaskOutboundDispatch({
+        taskId: task.id,
+        lastResult: `Blocked: ${error}`,
+      });
+      logger.warn(
+        { taskId: task.id, groupFolder: task.group_folder },
+        'Terminally blocked generic BlueBubbles task with stale owner authority',
+      );
+      logTaskRun({
+        task_id: task.id,
+        run_at: new Date().toISOString(),
+        duration_ms: Date.now() - startTime,
+        status: 'error',
+        result: null,
+        error,
+      });
+      return;
+    }
+
+    const runKey = task.next_run;
+    const claim = claimScheduledTaskOutboundDispatch({
+      taskId: task.id,
+      runKey,
+    });
+    if (claim.status !== 'claimed' || !claim.claimToken) {
+      logger.warn(
+        { taskId: task.id, runKey, claimStatus: claim.status },
+        'Skipped generic BlueBubbles task because its durable occurrence is already claimed or stale',
+      );
+      return;
+    }
+    blueBubblesDispatch = {
+      runKey,
+      claimToken: claim.claimToken,
+      idempotencyKey: `scheduled-task:${createHash('sha256')
+        .update(task.id)
+        .update('\u0000')
+        .update(runKey)
+        .digest('hex')
+        .slice(0, 32)}`,
+      authorizationAt: authorizationFence.authorizationAt,
+      pauseGeneration: authorizationFence.pauseGeneration,
+      providerCallStarted: false,
+    };
+  }
+
+  const finishTask = (nextRun: string | null, lastResult: string): void => {
+    if (!blueBubblesDispatch) {
+      updateTaskAfterRun(task.id, nextRun, lastResult);
+      return;
+    }
+    const completed = completeScheduledTaskOutboundDispatch({
+      taskId: task.id,
+      runKey: blueBubblesDispatch.runKey,
+      claimToken: blueBubblesDispatch.claimToken,
+      nextRun,
+      lastResult,
+    });
+    if (!completed) {
+      logger.warn(
+        { taskId: task.id, runKey: blueBubblesDispatch.runKey },
+        'Could not commit generic BlueBubbles task result because its durable claim changed',
+      );
+    }
+  };
+
+  const sendTaskMessage = async (text: string): Promise<void> => {
+    if (!blueBubblesDispatch) {
+      await deps.sendMessage(task.chat_jid, text);
+      return;
+    }
+    if (blueBubblesDispatch.providerCallStarted) {
+      throw new Error(
+        'A generic scheduled self-thread occurrence may dispatch at most one message.',
+      );
+    }
+    if (
+      !isScheduledTaskOutboundDispatchClaimCurrent({
+        taskId: task.id,
+        runKey: blueBubblesDispatch.runKey,
+        claimToken: blueBubblesDispatch.claimToken,
+      })
+    ) {
+      throw new Error(
+        'Scheduled self-thread delivery lost its durable dispatch claim before provider execution.',
+      );
+    }
+    const authorization = validateMessagingOutboundAuthorizationFence({
+      authorizationAt: blueBubblesDispatch.authorizationAt,
+      pauseGeneration: blueBubblesDispatch.pauseGeneration,
+    });
+    if (!authorization.ok) {
+      terminallyBlockScheduledTaskOutboundDispatch({
+        taskId: task.id,
+        lastResult: `Blocked: ${authorization.reason || 'owner authorization is no longer valid'}`,
+      });
+      throw new Error(
+        authorization.reason ||
+          'Scheduled self-thread owner authorization is no longer valid.',
+      );
+    }
+    blueBubblesDispatch.providerCallStarted = true;
+    requireCompleteChannelDelivery(
+      await deps.sendToTarget('bluebubbles', task.chat_jid, text, {
+        idempotencyKey: blueBubblesDispatch.idempotencyKey,
+        blueBubblesAuthorizationAt: blueBubblesDispatch.authorizationAt,
+        blueBubblesPauseGeneration: blueBubblesDispatch.pauseGeneration,
+      }),
+    );
+  };
+
+  logger.info(
+    { taskId: task.id, group: task.group_folder },
+    'Running scheduled task',
+  );
+
+  const automationRecord = getCalendarAutomationByTaskId(task.id);
+  if (automationRecord) {
+    let resultSummary = 'Completed';
+    let error: string | null = null;
+    try {
+      const automation = parseCalendarAutomationRecord(automationRecord);
+      const execution = await executeCalendarAutomation(automation);
+      if (execution.message) {
+        await sendTaskMessage(execution.message);
+      }
+      resultSummary = execution.summary;
+      updateCalendarAutomation(task.id, {
+        dedupe_state_json: execution.dedupeState
+          ? JSON.stringify(execution.dedupeState)
+          : null,
+        updated_at: new Date().toISOString(),
+      });
+      logger.info(
+        { taskId: task.id, durationMs: Date.now() - startTime },
+        'Calendar automation task completed',
+      );
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      resultSummary = `Error: ${error}`;
+      logger.error(
+        { taskId: task.id, error },
+        'Calendar automation task failed',
+      );
+    }
+
+    const durationMs = Date.now() - startTime;
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: durationMs,
+      status: error ? 'error' : 'success',
+      result: error ? null : resultSummary,
+      error,
+    });
+
+    const nextRun = computeNextRun(task);
+    finishTask(nextRun, resultSummary);
+    return;
+  }
+
   if (task.prompt.startsWith('Scheduled message send for ')) {
     const durationMs = Date.now() - startTime;
     logTaskRun({
@@ -313,18 +482,14 @@ async function runTask(
       result: null,
       error: 'Scheduled message task lost its linked message action.',
     });
-    updateTaskAfterRun(
-      task.id,
-      null,
-      'Scheduled message task lost its linked message action.',
-    );
+    finishTask(null, 'Scheduled message task lost its linked message action.');
     return;
   }
 
   const plainReminderText = buildPlainReminderDeliveryText(task);
   if (plainReminderText) {
     try {
-      await deps.sendMessage(task.chat_jid, plainReminderText);
+      await sendTaskMessage(plainReminderText);
       const durationMs = Date.now() - startTime;
       logTaskRun({
         task_id: task.id,
@@ -334,7 +499,7 @@ async function runTask(
         result: plainReminderText,
         error: null,
       });
-      updateTaskAfterRun(task.id, computeNextRun(task), plainReminderText);
+      finishTask(computeNextRun(task), plainReminderText);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       const durationMs = Date.now() - startTime;
@@ -346,7 +511,7 @@ async function runTask(
         result: null,
         error,
       });
-      updateTaskAfterRun(task.id, computeNextRun(task), `Error: ${error}`);
+      finishTask(computeNextRun(task), `Error: ${error}`);
       await emitReminderDeliveryFailureDiagnostic({
         task,
         error,
@@ -365,7 +530,7 @@ async function runTask(
   );
   if (selfImprovementStatusText) {
     try {
-      await deps.sendMessage(task.chat_jid, selfImprovementStatusText);
+      await sendTaskMessage(selfImprovementStatusText);
       const durationMs = Date.now() - startTime;
       logTaskRun({
         task_id: task.id,
@@ -375,11 +540,7 @@ async function runTask(
         result: selfImprovementStatusText.slice(0, 200),
         error: null,
       });
-      updateTaskAfterRun(
-        task.id,
-        computeNextRun(task),
-        selfImprovementStatusText.slice(0, 200),
-      );
+      finishTask(computeNextRun(task), selfImprovementStatusText.slice(0, 200));
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       const durationMs = Date.now() - startTime;
@@ -391,7 +552,7 @@ async function runTask(
         result: null,
         error,
       });
-      updateTaskAfterRun(task.id, computeNextRun(task), `Error: ${error}`);
+      finishTask(computeNextRun(task), `Error: ${error}`);
       await emitReminderDeliveryFailureDiagnostic({
         task,
         error,
@@ -480,7 +641,7 @@ async function runTask(
           const outbound = formatOutbound(streamedOutput.result);
           result = outbound || null;
           if (outbound) {
-            await deps.sendMessage(task.chat_jid, outbound);
+            await sendTaskMessage(outbound);
           }
           scheduleClose();
         }
@@ -530,7 +691,7 @@ async function runTask(
     : result
       ? result.slice(0, 200)
       : 'Completed';
-  updateTaskAfterRun(task.id, nextRun, resultSummary);
+  finishTask(nextRun, resultSummary);
 }
 
 let schedulerRunning = false;
@@ -539,6 +700,13 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
   if (schedulerRunning) {
     logger.debug('Scheduler loop already running, skipping duplicate start');
     return;
+  }
+  const recoveredDispatches = recoverClaimedScheduledTaskOutboundDispatches();
+  if (recoveredDispatches > 0) {
+    logger.warn(
+      { count: recoveredDispatches },
+      'Blocked prior-process scheduled self-thread claims without replay',
+    );
   }
   schedulerRunning = true;
   logger.info('Scheduler loop started');
