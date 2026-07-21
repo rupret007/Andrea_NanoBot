@@ -884,7 +884,7 @@ export function evaluateGroundedResponse(
     packet.intents.some((intent) =>
       /\b(?:cite|citation|source|sources)\b/i.test(intent.originalClause),
     ) &&
-    !/\b(?:source|citation|according to|https?:\/\/|\[[^\]]+\]\([^\)]+\))\b/i.test(
+    !/\b(?:source|citation|according to|https?:\/\/|\[[^\]]+\]\([^)]+\))\b/i.test(
       reply,
     )
   ) {
