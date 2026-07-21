@@ -8915,3 +8915,74 @@ export interface StoredGroundedCalibrationSample {
   source: 'outcome_verification' | 'correction';
   privacyJson: string;
 }
+
+export interface StoredGroundedMemoryRecord {
+  recordId: string;
+  createdAt: string;
+  updatedAt: string;
+  kind:
+    | 'fact'
+    | 'preference'
+    | 'commitment'
+    | 'outcome'
+    | 'constraint'
+    | 'open_question';
+  subjectKey: string;
+  statement: string;
+  value: string;
+  confidence: number;
+  sourceType:
+    | 'direct_observation'
+    | 'user_statement'
+    | 'inference'
+    | 'assumption';
+  provenanceRefsJson: string;
+  observedAt: string;
+  effectiveFrom: string | null;
+  effectiveUntil: string | null;
+  state: 'active' | 'uncertain' | 'superseded' | 'revoked';
+  stateReason: string;
+  supersededByRecordId: string | null;
+  conflictingRecordIdsJson: string;
+  sensitivity: RealitySensitivity;
+  groupFolder: string | null;
+  sourceTurnId: string | null;
+  privacyJson: string;
+}
+
+export interface StoredGroundedGoal {
+  goalId: string;
+  parentGoalId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  title: string;
+  objective: string;
+  state:
+    | 'proposed'
+    | 'active'
+    | 'blocked'
+    | 'completed'
+    | 'cancelled'
+    | 'stale';
+  stateReason: string;
+  owner: 'user' | 'andrea_proposed';
+  sourceType:
+    | 'direct_observation'
+    | 'user_statement'
+    | 'inference'
+    | 'assumption';
+  evidenceRefsJson: string;
+  constraintsJson: string;
+  successCriteriaJson: string;
+  blockersJson: string;
+  nextProposedStep: string | null;
+  /** Schema-enforced false: goals are informational and grant no authority. */
+  executionAuthority: false;
+  lastVerifiedOutcome: string | null;
+  lastVerifiedAt: string | null;
+  reviewBy: string | null;
+  sensitivity: RealitySensitivity;
+  groupFolder: string | null;
+  sourceTurnId: string | null;
+  privacyJson: string;
+}

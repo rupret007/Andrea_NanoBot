@@ -304,7 +304,9 @@ import {
   StoredGroundedBeliefJournalEntry,
   StoredGroundedCalibrationSample,
   StoredGroundedDecisionJournalEntry,
+  StoredGroundedGoal,
   StoredGroundedLearningRecord,
+  StoredGroundedMemoryRecord,
   TaskRunLog,
 } from './types.js';
 import type { CalendarAutomationRecordInput } from './calendar-automations.js';
@@ -4149,6 +4151,63 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_grounded_calibration_samples_context
       ON grounded_calibration_samples(context_key, created_at DESC);
+    CREATE TABLE IF NOT EXISTS grounded_memory_records (
+      record_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      statement TEXT NOT NULL,
+      value TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      source_type TEXT NOT NULL,
+      provenance_refs_json TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      effective_from TEXT,
+      effective_until TEXT,
+      state TEXT NOT NULL,
+      state_reason TEXT NOT NULL,
+      superseded_by_record_id TEXT,
+      conflicting_record_ids_json TEXT NOT NULL,
+      sensitivity TEXT NOT NULL,
+      group_folder TEXT,
+      source_turn_id TEXT,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_grounded_memory_records_subject
+      ON grounded_memory_records(subject_key, state, observed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_grounded_memory_records_kind
+      ON grounded_memory_records(kind, state, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS grounded_goals (
+      goal_id TEXT PRIMARY KEY,
+      parent_goal_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      title TEXT NOT NULL,
+      objective TEXT NOT NULL,
+      state TEXT NOT NULL,
+      state_reason TEXT NOT NULL,
+      owner TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      constraints_json TEXT NOT NULL,
+      success_criteria_json TEXT NOT NULL,
+      blockers_json TEXT NOT NULL,
+      next_proposed_step TEXT,
+      execution_authority INTEGER NOT NULL DEFAULT 0
+        CHECK (execution_authority = 0),
+      last_verified_outcome TEXT,
+      last_verified_at TEXT,
+      review_by TEXT,
+      sensitivity TEXT NOT NULL,
+      group_folder TEXT,
+      source_turn_id TEXT,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_grounded_goals_state
+      ON grounded_goals(state, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_grounded_goals_parent
+      ON grounded_goals(parent_goal_id, updated_at DESC);
     CREATE TABLE IF NOT EXISTS deliberation_records (
       deliberation_id TEXT PRIMARY KEY,
       frame_id TEXT NOT NULL,
@@ -29612,6 +29671,350 @@ export function listGroundedCalibrationSamples(
     Parameters<typeof mapGroundedCalibrationSampleRow>[0]
   >;
   return rows.map((row) => mapGroundedCalibrationSampleRow(row));
+}
+
+function mapGroundedMemoryRecordRow(row: {
+  record_id: string;
+  created_at: string;
+  updated_at: string;
+  kind: StoredGroundedMemoryRecord['kind'];
+  subject_key: string;
+  statement: string;
+  value: string;
+  confidence: number;
+  source_type: StoredGroundedMemoryRecord['sourceType'];
+  provenance_refs_json: string;
+  observed_at: string;
+  effective_from: string | null;
+  effective_until: string | null;
+  state: StoredGroundedMemoryRecord['state'];
+  state_reason: string;
+  superseded_by_record_id: string | null;
+  conflicting_record_ids_json: string;
+  sensitivity: StoredGroundedMemoryRecord['sensitivity'];
+  group_folder: string | null;
+  source_turn_id: string | null;
+  privacy_json: string;
+}): StoredGroundedMemoryRecord {
+  return {
+    recordId: row.record_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    kind: row.kind,
+    subjectKey: row.subject_key,
+    statement: row.statement,
+    value: row.value,
+    confidence: row.confidence,
+    sourceType: row.source_type,
+    provenanceRefsJson: row.provenance_refs_json,
+    observedAt: row.observed_at,
+    effectiveFrom: row.effective_from,
+    effectiveUntil: row.effective_until,
+    state: row.state,
+    stateReason: row.state_reason,
+    supersededByRecordId: row.superseded_by_record_id,
+    conflictingRecordIdsJson: row.conflicting_record_ids_json,
+    sensitivity: row.sensitivity,
+    groupFolder: row.group_folder,
+    sourceTurnId: row.source_turn_id,
+    privacyJson: row.privacy_json,
+  };
+}
+
+const GROUNDED_MEMORY_STATE_TRANSITIONS: Record<
+  StoredGroundedMemoryRecord['state'],
+  Array<StoredGroundedMemoryRecord['state']>
+> = {
+  active: ['active', 'uncertain', 'superseded', 'revoked'],
+  uncertain: ['uncertain', 'active', 'superseded', 'revoked'],
+  superseded: ['superseded', 'revoked'],
+  revoked: ['revoked'],
+};
+
+export function upsertGroundedMemoryRecord(
+  record: StoredGroundedMemoryRecord,
+): void {
+  const existing = db
+    .prepare(`SELECT state FROM grounded_memory_records WHERE record_id = ?`)
+    .get(record.recordId) as
+    | { state: StoredGroundedMemoryRecord['state'] }
+    | undefined;
+  if (
+    existing &&
+    !GROUNDED_MEMORY_STATE_TRANSITIONS[existing.state].includes(record.state)
+  ) {
+    throw new Error(
+      `Grounded memory state transition ${existing.state} -> ${record.state} is not allowed.`,
+    );
+  }
+  db.prepare(
+    `
+      INSERT INTO grounded_memory_records (
+        record_id, created_at, updated_at, kind, subject_key, statement,
+        value, confidence, source_type, provenance_refs_json, observed_at,
+        effective_from, effective_until, state, state_reason,
+        superseded_by_record_id, conflicting_record_ids_json, sensitivity,
+        group_folder, source_turn_id, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(record_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        statement = excluded.statement,
+        value = excluded.value,
+        confidence = excluded.confidence,
+        provenance_refs_json = excluded.provenance_refs_json,
+        observed_at = excluded.observed_at,
+        effective_from = excluded.effective_from,
+        effective_until = excluded.effective_until,
+        state = excluded.state,
+        state_reason = excluded.state_reason,
+        superseded_by_record_id = excluded.superseded_by_record_id,
+        conflicting_record_ids_json = excluded.conflicting_record_ids_json,
+        sensitivity = excluded.sensitivity
+    `,
+  ).run(
+    record.recordId,
+    record.createdAt,
+    record.updatedAt,
+    record.kind,
+    redactStoredCognitiveMetadata(record.subjectKey, 200),
+    redactStoredCognitiveMetadata(record.statement, 900),
+    redactStoredCognitiveMetadata(record.value, 400),
+    record.confidence,
+    record.sourceType,
+    redactStoredCognitiveMetadata(record.provenanceRefsJson),
+    record.observedAt,
+    record.effectiveFrom,
+    record.effectiveUntil,
+    record.state,
+    redactStoredCognitiveMetadata(record.stateReason, 900),
+    record.supersededByRecordId,
+    redactStoredCognitiveMetadata(record.conflictingRecordIdsJson),
+    record.sensitivity,
+    record.groupFolder,
+    record.sourceTurnId,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listGroundedMemoryRecords(
+  params: {
+    subjectKey?: string;
+    subjectKeyPrefix?: string;
+    kind?: StoredGroundedMemoryRecord['kind'];
+    state?: StoredGroundedMemoryRecord['state'];
+    groupFolder?: string;
+    limit?: number;
+  } = {},
+): StoredGroundedMemoryRecord[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.subjectKey) {
+    clauses.push('subject_key = ?');
+    args.push(params.subjectKey);
+  }
+  if (params.subjectKeyPrefix) {
+    clauses.push('subject_key LIKE ?');
+    args.push(`${params.subjectKeyPrefix}%`);
+  }
+  if (params.kind) {
+    clauses.push('kind = ?');
+    args.push(params.kind);
+  }
+  if (params.state) {
+    clauses.push('state = ?');
+    args.push(params.state);
+  }
+  if (params.groupFolder) {
+    clauses.push('group_folder = ?');
+    args.push(params.groupFolder);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM grounded_memory_records
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY observed_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapGroundedMemoryRecordRow>[0]>;
+  return rows.map((row) => mapGroundedMemoryRecordRow(row));
+}
+
+function mapGroundedGoalRow(row: {
+  goal_id: string;
+  parent_goal_id: string | null;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  objective: string;
+  state: StoredGroundedGoal['state'];
+  state_reason: string;
+  owner: StoredGroundedGoal['owner'];
+  source_type: StoredGroundedGoal['sourceType'];
+  evidence_refs_json: string;
+  constraints_json: string;
+  success_criteria_json: string;
+  blockers_json: string;
+  next_proposed_step: string | null;
+  execution_authority: number;
+  last_verified_outcome: string | null;
+  last_verified_at: string | null;
+  review_by: string | null;
+  sensitivity: StoredGroundedGoal['sensitivity'];
+  group_folder: string | null;
+  source_turn_id: string | null;
+  privacy_json: string;
+}): StoredGroundedGoal {
+  return {
+    goalId: row.goal_id,
+    parentGoalId: row.parent_goal_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    title: row.title,
+    objective: row.objective,
+    state: row.state,
+    stateReason: row.state_reason,
+    owner: row.owner,
+    sourceType: row.source_type,
+    evidenceRefsJson: row.evidence_refs_json,
+    constraintsJson: row.constraints_json,
+    successCriteriaJson: row.success_criteria_json,
+    blockersJson: row.blockers_json,
+    nextProposedStep: row.next_proposed_step,
+    executionAuthority: false,
+    lastVerifiedOutcome: row.last_verified_outcome,
+    lastVerifiedAt: row.last_verified_at,
+    reviewBy: row.review_by,
+    sensitivity: row.sensitivity,
+    groupFolder: row.group_folder,
+    sourceTurnId: row.source_turn_id,
+    privacyJson: row.privacy_json,
+  };
+}
+
+// Kept in sync with GROUNDED_GOAL_TRANSITIONS in grounded-memory.ts; db.ts
+// stays import-free of application modules, so the map is duplicated here
+// as the last-line schema guard.
+const GROUNDED_GOAL_DB_TRANSITIONS: Record<
+  StoredGroundedGoal['state'],
+  Array<StoredGroundedGoal['state']>
+> = {
+  proposed: ['proposed', 'active', 'cancelled'],
+  active: ['active', 'blocked', 'completed', 'cancelled', 'stale'],
+  blocked: ['blocked', 'active', 'cancelled', 'stale'],
+  stale: ['stale', 'active', 'cancelled'],
+  completed: ['completed'],
+  cancelled: ['cancelled'],
+};
+
+export function upsertGroundedGoal(goal: StoredGroundedGoal): void {
+  const existing = db
+    .prepare(`SELECT state FROM grounded_goals WHERE goal_id = ?`)
+    .get(goal.goalId) as { state: StoredGroundedGoal['state'] } | undefined;
+  if (
+    existing &&
+    !GROUNDED_GOAL_DB_TRANSITIONS[existing.state].includes(goal.state)
+  ) {
+    throw new Error(
+      `Grounded goal state transition ${existing.state} -> ${goal.state} is not allowed.`,
+    );
+  }
+  db.prepare(
+    `
+      INSERT INTO grounded_goals (
+        goal_id, parent_goal_id, created_at, updated_at, title, objective,
+        state, state_reason, owner, source_type, evidence_refs_json,
+        constraints_json, success_criteria_json, blockers_json,
+        next_proposed_step, execution_authority, last_verified_outcome,
+        last_verified_at, review_by, sensitivity, group_folder,
+        source_turn_id, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(goal_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        title = excluded.title,
+        objective = excluded.objective,
+        state = excluded.state,
+        state_reason = excluded.state_reason,
+        evidence_refs_json = excluded.evidence_refs_json,
+        constraints_json = excluded.constraints_json,
+        success_criteria_json = excluded.success_criteria_json,
+        blockers_json = excluded.blockers_json,
+        next_proposed_step = excluded.next_proposed_step,
+        last_verified_outcome = excluded.last_verified_outcome,
+        last_verified_at = excluded.last_verified_at,
+        review_by = excluded.review_by,
+        sensitivity = excluded.sensitivity
+    `,
+  ).run(
+    goal.goalId,
+    goal.parentGoalId,
+    goal.createdAt,
+    goal.updatedAt,
+    redactStoredCognitiveMetadata(goal.title, 300),
+    redactStoredCognitiveMetadata(goal.objective, 900),
+    goal.state,
+    redactStoredCognitiveMetadata(goal.stateReason, 900),
+    goal.owner,
+    goal.sourceType,
+    redactStoredCognitiveMetadata(goal.evidenceRefsJson),
+    redactStoredCognitiveMetadata(goal.constraintsJson),
+    redactStoredCognitiveMetadata(goal.successCriteriaJson),
+    redactStoredCognitiveMetadata(goal.blockersJson),
+    goal.nextProposedStep
+      ? redactStoredCognitiveMetadata(goal.nextProposedStep, 900)
+      : null,
+    goal.lastVerifiedOutcome
+      ? redactStoredCognitiveMetadata(goal.lastVerifiedOutcome, 900)
+      : null,
+    goal.lastVerifiedAt,
+    goal.reviewBy,
+    goal.sensitivity,
+    goal.groupFolder,
+    goal.sourceTurnId,
+    redactStoredCognitiveMetadata(goal.privacyJson),
+  );
+}
+
+export function listGroundedGoals(
+  params: {
+    state?: StoredGroundedGoal['state'];
+    parentGoalId?: string;
+    groupFolder?: string;
+    limit?: number;
+  } = {},
+): StoredGroundedGoal[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.state) {
+    clauses.push('state = ?');
+    args.push(params.state);
+  }
+  if (params.parentGoalId) {
+    clauses.push('parent_goal_id = ?');
+    args.push(params.parentGoalId);
+  }
+  if (params.groupFolder) {
+    clauses.push('group_folder = ?');
+    args.push(params.groupFolder);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM grounded_goals
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapGroundedGoalRow>[0]>;
+  return rows.map((row) => mapGroundedGoalRow(row));
 }
 
 function mapDeliberationRecordRow(row: {
