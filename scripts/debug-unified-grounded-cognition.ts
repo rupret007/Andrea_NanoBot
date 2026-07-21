@@ -3,7 +3,7 @@ import { loadGroundedContextBundle } from '../src/grounded-memory-durable-adapte
 import {
   buildUnifiedGroundedCognitiveFrame,
   resolveUnifiedGroundedCognitionMode,
-  unifiedCognitionDiagnostics,
+  unifiedGroundedCognitionDiagnostics,
 } from '../src/unified-grounded-cognition.js';
 
 /**
@@ -45,7 +45,9 @@ function main(): void {
       mode: resolveUnifiedGroundedCognitionMode(),
       memoryBundle,
     });
-    console.log(JSON.stringify(unifiedCognitionDiagnostics(frame), null, 2));
+    console.log(
+      JSON.stringify(unifiedGroundedCognitionDiagnostics(frame), null, 2),
+    );
   } finally {
     _closeDatabase();
   }
