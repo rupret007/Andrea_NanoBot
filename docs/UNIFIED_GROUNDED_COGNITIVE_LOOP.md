@@ -125,12 +125,16 @@ route, or create durable work.
 
 ## Storage, privacy, and migration
 
-The frame is in-memory. Existing turn metadata and grounded learning journals
-receive bounded redacted projections and stable links. Existing grounded tables
-remain authoritative, so v1 requires no database schema migration. Goal context
-projection is additively extended with bounded terminal-goal history to prevent
-completed or cancelled work from being resurrected. Reads remain compatible
-with older bundles where that optional field is absent.
+The v1 frame itself is in-memory. Existing turn metadata and grounded learning
+journals receive bounded redacted projections and stable links; the original
+unified-loop release therefore required no database schema migration. The later
+[Adaptive Grounded Intelligence](ADAPTIVE_GROUNDED_INTELLIGENCE.md) extension
+additively expands the existing episode and learning tables and adds an
+append-only lifecycle-event table. Its migration preserves legacy rows and
+defaults them to non-production adaptive eligibility. Goal context projection is
+additively extended with bounded terminal-goal history to prevent completed or
+cancelled work from being resurrected. Reads remain compatible with older
+bundles where optional fields are absent.
 
 Synthetic and replay frames cannot create production-eligible learning. Every
 candidate remains `proposed`, reversible, review-required, and carries
@@ -147,11 +151,13 @@ rejected recommendations can create bounded candidates. Candidates are
 redacted, scoped, evidence-linked, confidence-calibrated, deduplicated, and
 limited to 16 per frame.
 
-Candidate creation is not learning promotion. The existing reviewed memory and
-learning policy remains the only promotion path. A candidate cannot change tool
-routing, approval behavior, execution policy, autonomous capability, or durable
-memory on its own. Synthetic and replay outcomes always remain ineligible for
-production promotion.
+Candidate creation is not learning promotion. The adaptive extension adds
+evidence accumulation, expiry, supersession, rejection, explicit owner
+acceptance, bounded use, and rollback while preserving the reviewed memory and
+learning policy as authority. A candidate cannot change tool routing, approval
+behavior, execution policy, autonomous capability, or durable memory on its
+own. Synthetic and replay outcomes always remain ineligible for production
+promotion.
 
 ## Evaluation boundary
 

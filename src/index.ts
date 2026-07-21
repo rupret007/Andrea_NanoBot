@@ -911,6 +911,7 @@ import {
   shouldCancelPendingContinuationForFeedback,
   shouldPreferLocalResponseFeedbackReview,
 } from './response-feedback.js';
+import { reconcileAdaptiveOwnerFeedbackByTurn } from './adaptive-grounded-intelligence-durable-adapter.js';
 import {
   buildReviewedOutcomeProgress,
   createRegressionFixtureFromFeedback,
@@ -15366,6 +15367,29 @@ async function main(): Promise<void> {
         existing.userMessageId ||
         undefined,
     };
+    const reconcileAdaptiveFeedback = (input: {
+      verdict: 'accepted' | 'rejected';
+      completionVerified?: boolean;
+      correction?: boolean;
+    }): void => {
+      try {
+        reconcileAdaptiveOwnerFeedbackByTurn({
+          turnId: linkedRefs.userMessageId || existing?.userMessageId || null,
+          feedbackId: existing!.feedbackId,
+          verdict: input.verdict,
+          routeKey: existing?.routeKey || null,
+          completionVerified: input.completionVerified,
+          correction: input.correction,
+          observedAt: feedbackNow.toISOString(),
+        });
+        // eslint-disable-next-line no-catch-all/no-catch-all
+      } catch (error) {
+        logger.warn(
+          { error, feedbackId: existing?.feedbackId },
+          'Adaptive owner-feedback reconciliation failed closed',
+        );
+      }
+    };
     const recordLinkedMemoryJudgment = (): boolean =>
       options.memoryCorrectness !== undefined &&
       Boolean(
@@ -15433,6 +15457,10 @@ async function main(): Promise<void> {
             : {}),
         },
         now: feedbackNow,
+      });
+      reconcileAdaptiveFeedback({
+        verdict: 'accepted',
+        completionVerified: options.completionVerified,
       });
       if (acknowledge) {
         const linkedMission = linkedRefs.verifiedDeepWorkPacketId
@@ -15581,6 +15609,10 @@ async function main(): Promise<void> {
             : {}),
         },
         now: feedbackNow,
+      });
+      reconcileAdaptiveFeedback({
+        verdict: 'rejected',
+        correction: true,
       });
       if (acknowledge) {
         const progressText = formatReviewedOutcomeProgress(

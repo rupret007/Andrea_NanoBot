@@ -6,6 +6,8 @@ import {
   listGroundedBeliefJournal,
   listGroundedCalibrationSamples,
   listGroundedDecisionJournal,
+  listCognitiveEpisodes,
+  listGroundedLearningRecords,
 } from './db.js';
 import {
   beginTurnAgentHarness,
@@ -107,6 +109,10 @@ describe('turn-agent-harness grounded hooks (observe-only)', () => {
         runOrigin: 'live',
       });
       expect(context?.unifiedGroundedCognition).not.toBeNull();
+      expect(context?.adaptiveGroundedEpisode).not.toBeNull();
+      expect(context?.adaptiveGroundedEpisode?.frameId).toBe(
+        context?.unifiedGroundedCognition?.frameId,
+      );
       expect(context?.groundedExecutive).not.toBeNull();
       expect(context?.groundedDeliberation).not.toBeNull();
       expect(context?.groundedDeliberation?.intents).toEqual(
@@ -148,6 +154,60 @@ describe('turn-agent-harness grounded hooks (observe-only)', () => {
         delete process.env.GROUNDED_ADVISORY_MODE;
       else process.env.GROUNDED_ADVISORY_MODE = priorAdvisory;
     }
+  });
+
+  it('reconciles and persists the unified post-turn outcome through the adaptive episode', async () => {
+    const context = await beginTurnAgentHarness({
+      turnId: 'adaptive-integrated-turn',
+      channel: 'telegram',
+      text: 'Explain the architecture and summarize the risks.',
+      runOrigin: 'live',
+    });
+    expect(context?.adaptiveGroundedEpisode).not.toBeNull();
+    evaluateTurnReply({
+      context,
+      text: 'The architecture coordinates evidence. The risks include stale context.',
+      responseSource: 'container_agent',
+    });
+    await reflectTurnAgentOutcome({
+      context,
+      evaluation: passEvaluation(),
+      routeUsed: 'container_agent',
+      answerClass: 'handled',
+      completionEvidence: [
+        adaptiveEvidence({
+          evidenceClass: 'observed',
+          origin: 'live',
+          source: 'tool_runtime',
+          claim: 'The response runtime returned successfully.',
+          confidence: 0.95,
+          createdAt: NOW,
+          verification: 'verified',
+        }),
+      ],
+    });
+    expect(context?.adaptiveGroundedEpisode?.observations).toHaveLength(1);
+    expect(context?.adaptiveGroundedEpisode?.outcome).toMatchObject({
+      toolTechnicallySuccessful: true,
+      requestedOutcomeVerified: false,
+      goalAchieved: false,
+      status: 'unknown',
+      toolSuccessIsGoalSuccess: false,
+    });
+    expect(
+      listCognitiveEpisodes({ turnId: 'adaptive-integrated-turn', limit: 10 }),
+    ).toHaveLength(1);
+    expect(
+      listGroundedLearningRecords({
+        adaptiveStatus: 'proposed',
+        limit: 100,
+      }).some(
+        (item) => item.adaptiveKind === 'technical_success_unverified_goal',
+      ),
+    ).toBe(true);
+    expect(context?.contextCompile.metadata.adaptive_execution_authority).toBe(
+      'none',
+    );
   });
 
   it('reconcileTurnRuntimeEvidence folds runtime outcomes into shadow beliefs without changing its result', () => {

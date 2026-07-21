@@ -86,19 +86,165 @@ per-record and global bounds, retention windows, and pruning. Pinned owner
 decisions retain only bounded metadata; expired episode detail and old events
 are removed without changing current accepted/rejected/rolled-back state.
 
-## Implementation sequence
+## Learning lifecycle and thresholds
 
-1. Add pure deterministic episode reconciliation, candidate generation,
-   lifecycle, bounded application, diagnostics, and activation-governor types.
-2. Extend existing episode and grounded-learning persistence additively and add
-   a compact append-only lifecycle-event journal.
-3. Integrate construction, accepted-guidance projection, post-turn outcome
-   observation, persistence, and diagnostics into the existing turn harness.
-4. Add frozen 60+ scenario counterfactual replay with three identical runs and
-   focused migration/integration tests.
-5. Complete the operational review, canary/pause/rollback procedure, measured
-   results, and release-gate record in this guide.
+New observations start as `proposed`. Deterministic recurrence and confidence
+may move a production-eligible candidate through `accumulating_evidence` to
+`ready_for_review`; they can never move it to `accepted`. Explicit canonical
+owner review is the only acceptance path. Terminal or protective states are
+`rejected`, `expired`, `superseded`, and `rolled_back`.
 
-Production configuration is intentionally unchanged. Assistive mode remains
-disabled unless a future owner-reviewed canary separately satisfies the
-governor and production activation procedure.
+Promotion readiness requires three consistent occurrences, confidence of at
+least 0.72, bounded supporting evidence, no unresolved counter-evidence, live
+provenance, and no privacy, secret, authority, messaging, external-instruction,
+or unverified-outcome blocker. Rejected duplicates remain suppressed until
+materially new evidence appears. A late authoritative recovery supersedes an
+earlier failure-oriented lesson rather than leaving obsolete advice active.
+
+Accepted lessons retain their original conversation, group, channel, task,
+subject, and route scope. At most eight bounded guidance statements are
+projected into response planning. Every application is journaled; no lesson can
+change action policy, approval requirements, tool selection authority, delivery,
+or completion truth.
+
+## Operator diagnostics and owner review
+
+The diagnostic command is read-only unless all explicit review flags are
+present:
+
+```bash
+npm run debug:adaptive-grounded-intelligence
+npm run debug:adaptive-grounded-intelligence -- --turn <turn-id>
+npm run debug:adaptive-grounded-intelligence -- --episode <episode-id>
+npm run debug:adaptive-grounded-intelligence -- --candidate <candidate-id>
+```
+
+It reports the reconciled outcome, why goal success is or is not verified,
+candidate status and blockers, owner-review state, affected modules, application
+counts, lifecycle events, readiness, and structural no-authority invariants. It
+does not emit raw private message bodies.
+
+An owner review is a separate deliberate write:
+
+```bash
+npm run debug:adaptive-grounded-intelligence -- \
+  --candidate <candidate-id> \
+  --review accept \
+  --explicit-owner-review \
+  --reviewer owner \
+  --note "Accepted for this exact response-planning scope"
+```
+
+`--review` also accepts `reject`, `supersede`, or `rollback`. Supersession may
+name `--replacement <candidate-id>`. The reviewer must be the canonical `owner`
+identity (or an `owner:<id>` identity), and the candidate must be in a legal
+lifecycle state. None of these decisions approves an external action.
+
+## Evaluation and measured repository evidence
+
+Run the isolated deterministic suite and focused unit/migration/integration
+checks with:
+
+```bash
+npm run test:adaptive-grounded-intelligence:unit
+npm run test:adaptive-grounded-intelligence
+```
+
+The frozen v1 counterfactual suite has 68 scenarios across 34 categories and
+runs every fixture three times. The implementation record for this version is:
+
+| Measure                            | Result                    |
+| ---------------------------------- | ------------------------- |
+| Frozen pre-unified baseline        | 74.06                     |
+| Unified shadow                     | 89.22                     |
+| Learned shadow                     | 100.00                    |
+| Simulated response-only canary     | 100.00                    |
+| Learning-relevant improvement      | +13.58 percentage points  |
+| Promotion precision                | 100%                      |
+| Authority/privacy violations       | 0 / 0                     |
+| Unsupported completion claims      | 0                         |
+| Lost clauses or targets            | 0                         |
+| Fixture p95 adaptive overhead      | 3.21 ms (300 ms gate)     |
+| Maximum bounded context            | 2,259 characters          |
+| Maximum persisted metadata fixture | 818 characters            |
+| Repeated-run digests               | identical (`db1c9d0d` x3) |
+| Deterministic readiness            | `shadow_ready`            |
+
+These are repository fixture results, not production activation evidence,
+live-provider proof, real owner usefulness, or an AGI claim. Genuine dogfood
+and time-based evidence cannot be simulated or backfilled.
+
+## Assistive canary, pause, and rollback
+
+Production remains shadow by default. Merely requesting assistive mode is not
+enough: the activation governor deterministically fails the turn back to shadow
+unless all of the following are present together:
+
+- a fresh readiness result of `canary_candidate`
+- an explicit owner approval identifier
+- the exact `response_planning_only` scope
+- canary mode, not simulation mode
+- a percentage from 1 through 10
+- a deterministic turn bucket inside that percentage
+
+The configuration surface is deliberately narrow:
+
+```text
+UNIFIED_GROUNDED_COGNITION_MODE=assistive
+ADAPTIVE_ASSISTIVE_CANARY_MODE=disabled|simulate|canary
+ADAPTIVE_ASSISTIVE_READINESS_STATUS=not_ready|shadow_ready|canary_candidate|canary_paused|rollback_required
+ADAPTIVE_ASSISTIVE_OWNER_APPROVAL_ID=owner:<review-id>
+ADAPTIVE_ASSISTIVE_SCOPE=response_planning_only
+ADAPTIVE_ASSISTIVE_MAX_PERCENT=1..10
+```
+
+Replay and synthetic runs may select response-only assistive behavior as an
+explicit simulation without any canary environment settings. They remain
+non-live, cannot promote production learning, and never change production
+configuration. Live turns always pass through the full fail-closed governor.
+
+Do not set these from a test result alone. First inspect representative
+episodes and accepted lessons, collect genuine owner-reviewed dogfood, record a
+separate activation decision, and begin with simulation. A noncritical gate
+failure while canarying yields `canary_paused`; any authority, privacy,
+unsupported-completion, intent/target-loss, or other critical failure yields
+`rollback_required`.
+
+Pause or rollback by changing the unified mode to `shadow` (or `off`) and the
+adaptive canary mode to `disabled`, then restarting through the normal
+owner-authorized release procedure. Roll back an unsafe lesson explicitly with
+the review command. No schema downgrade is required. The existing approval,
+outbound-pause, provider-receipt, durable-work, privacy, and completion-claim
+systems continue to govern independently.
+
+## Migration and compatibility verification
+
+The database change is additive. Existing `cognitive_episodes` and
+`grounded_learning_records` rows are preserved; missing adaptive fields are
+added with fail-closed defaults, and the append-only
+`grounded_learning_lifecycle_events` table is created. Legacy learning rows do
+not become production-eligible merely because the schema was upgraded.
+
+The focused migration fixture creates an actual pre-adaptive schema, preserves
+legacy rows, reopens it through the current migration, and verifies column/table
+creation and fail-closed defaults. Back up the production database through the
+normal release process before any future deployment; this feature does not
+require or authorize a live migration in its repository test task.
+
+## Known limitations and remaining activation evidence
+
+- The candidate generator recognizes bounded evidence patterns; it is not an
+  unrestricted learner and does not invent new tools or policies.
+- Sparse, ambiguous, sensitive, synthetic, replayed, maliciously retrieved, or
+  contradicted evidence stays blocked or uncertain.
+- Technical success and provider acceptance never establish requested-outcome
+  or goal success without the corresponding authoritative evidence.
+- Owner review quality, longer-term usefulness, recurrence stability, and
+  canary rollback behavior still need genuine dogfood evidence.
+- The ten-day dogfood gate remains separate and cannot be satisfied by fixtures.
+- Response-planning guidance may improve wording and continuity only; it has no
+  execution, approval, messaging, or learning-promotion authority.
+
+Production configuration was intentionally unchanged by this implementation.
+No production restart, deployment, provider mutation, outbound message, or live
+assistive activation is part of the repository release evidence above.

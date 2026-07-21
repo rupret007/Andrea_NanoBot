@@ -27,6 +27,8 @@ import {
   appendAdaptiveOutcomeObservation,
   buildAdaptiveLearningGuidance,
   recordAdaptiveLessonApplication,
+  reconcileAdaptiveOwnerFeedback,
+  reconcileAdaptiveLearningWithLateOutcome,
   refreshAdaptiveLearningLifecycle,
   reviewAdaptiveLearningCandidate,
 } from './adaptive-grounded-intelligence.js';
@@ -42,6 +44,9 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
   try {
     return JSON.parse(value) as T;
+    // Corrupt legacy metadata is intentionally treated as absent and cannot
+    // become production-eligible learning evidence.
+    // eslint-disable-next-line no-catch-all/no-catch-all
   } catch {
     return fallback;
   }
@@ -248,8 +253,64 @@ export function reconcileAndPersistAdaptiveObservation(input: {
     input.episode,
     input.observation,
   );
+  const candidates = loadAdaptiveLearningCandidates({
+    scopeKey: episode.scopeKey,
+    limit: 500,
+  });
+  const reconciled = candidates.map((candidate) =>
+    reconcileAdaptiveLearningWithLateOutcome({
+      candidate,
+      episode,
+      observation: input.observation,
+      now: input.observation.observedAt,
+    }),
+  );
+  const changed = reconciled.filter((item) => Boolean(item.event));
+  if (changed.length > 0) {
+    persistAdaptiveLearning({
+      candidates: changed.map((item) => item.candidate),
+      events: changed
+        .map((item) => item.event)
+        .filter((item): item is AdaptiveLearningLifecycleEvent =>
+          Boolean(item),
+        ),
+    });
+  }
   persistAdaptiveCognitiveEpisode(episode);
   return episode;
+}
+
+export function reconcileAdaptiveOwnerFeedbackByTurn(input: {
+  turnId: string | null | undefined;
+  feedbackId: string;
+  verdict: 'accepted' | 'rejected';
+  routeKey?: string | null;
+  completionVerified?: boolean;
+  correction?: boolean;
+  reason?: string | null;
+  observedAt: string;
+}): AdaptiveCognitiveEpisode | null {
+  if (!input.turnId || !isDatabaseInitialized()) return null;
+  const episode = loadAdaptiveCognitiveEpisode({ turnId: input.turnId });
+  if (!episode || episode.runOrigin !== 'live') return null;
+  const existingCandidates = loadAdaptiveLearningCandidates({
+    scopeKey: episode.scopeKey,
+    limit: 500,
+  });
+  const reconciled = reconcileAdaptiveOwnerFeedback({
+    episode,
+    feedbackId: input.feedbackId,
+    verdict: input.verdict,
+    routeKey: input.routeKey,
+    completionVerified: input.completionVerified,
+    correction: input.correction,
+    reason: input.reason,
+    existingCandidates,
+    observedAt: input.observedAt,
+  });
+  persistAdaptiveLearning(reconciled);
+  persistAdaptiveCognitiveEpisode(reconciled.episode);
+  return reconciled.episode;
 }
 
 function baseKind(

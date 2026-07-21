@@ -10,7 +10,9 @@ import {
   buildAdaptiveLearningGuidance,
   createAdaptiveCognitiveEpisode,
   generateAdaptiveLearningCandidates,
+  governAdaptiveAssistiveActivation,
   observationFromUnifiedOutcome,
+  resolveAdaptiveAssistiveCanaryConfiguration,
   reviewAdaptiveLearningCandidate,
   type AdaptiveLearningCandidate,
 } from './adaptive-grounded-intelligence.js';
@@ -446,6 +448,67 @@ describe('adaptive grounded intelligence', () => {
         privacyViolations: 1,
       }).status,
     ).toBe('rollback_required');
+  });
+
+  it('fails assistive activation closed and supports only a narrow deterministic response canary', () => {
+    const disabled = governAdaptiveAssistiveActivation({
+      requestedMode: 'assistive',
+      turnId: 'turn-disabled',
+      configuration: resolveAdaptiveAssistiveCanaryConfiguration({}),
+    });
+    expect(disabled).toMatchObject({
+      effectiveMode: 'shadow',
+      eligible: false,
+      executionAuthority: false,
+      productionConfigurationChanged: false,
+    });
+    expect(
+      governAdaptiveAssistiveActivation({
+        requestedMode: 'assistive',
+        turnId: 'turn-replay',
+        runOrigin: 'replay',
+        configuration: resolveAdaptiveAssistiveCanaryConfiguration({}),
+      }),
+    ).toMatchObject({
+      effectiveMode: 'assistive',
+      canaryMode: 'simulate',
+      eligible: true,
+      maxPercent: 100,
+      productionConfigurationChanged: false,
+      executionAuthority: false,
+    });
+    const configuration = resolveAdaptiveAssistiveCanaryConfiguration({
+      ADAPTIVE_ASSISTIVE_CANARY_MODE: 'canary',
+      ADAPTIVE_ASSISTIVE_READINESS_STATUS: 'canary_candidate',
+      ADAPTIVE_ASSISTIVE_OWNER_APPROVAL_ID: 'owner:review-123',
+      ADAPTIVE_ASSISTIVE_SCOPE: 'response_planning_only',
+      ADAPTIVE_ASSISTIVE_MAX_PERCENT: '10',
+    });
+    const decisions = Array.from({ length: 200 }, (_, index) =>
+      governAdaptiveAssistiveActivation({
+        requestedMode: 'assistive',
+        turnId: `turn-canary-${index}`,
+        configuration,
+      }),
+    );
+    expect(decisions.some((item) => item.effectiveMode === 'assistive')).toBe(
+      true,
+    );
+    expect(decisions.some((item) => item.effectiveMode === 'shadow')).toBe(
+      true,
+    );
+    expect(
+      decisions
+        .filter((item) => item.effectiveMode === 'assistive')
+        .every((item) => item.turnBucket < 10),
+    ).toBe(true);
+    expect(
+      governAdaptiveAssistiveActivation({
+        requestedMode: 'assistive',
+        turnId: 'turn-simulate',
+        configuration: { ...configuration, mode: 'simulate' },
+      }).effectiveMode,
+    ).toBe('shadow');
   });
 
   it('provides bounded diagnostics without raw secret material', () => {

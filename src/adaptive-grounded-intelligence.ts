@@ -279,6 +279,10 @@ export interface AdaptiveLearningGenerationResult {
   suppressedRejectedCandidateIds: string[];
 }
 
+export interface AdaptiveOwnerFeedbackReconciliationResult extends AdaptiveLearningGenerationResult {
+  episode: AdaptiveCognitiveEpisode;
+}
+
 export interface AdaptiveLearningGuidance {
   generatedAt: string;
   scopeKey: string;
@@ -340,6 +344,26 @@ export interface AdaptiveAssistiveReadinessAssessment {
   };
   rollbackRequired: boolean;
   ownerApprovalRequired: boolean;
+}
+
+export interface AdaptiveAssistiveCanaryConfiguration {
+  mode: 'disabled' | 'simulate' | 'canary';
+  readinessStatus: AdaptiveAssistiveReadinessStatus;
+  ownerApprovalId: string | null;
+  scope: 'response_planning_only' | 'invalid';
+  maxPercent: number;
+}
+
+export interface AdaptiveAssistiveActivationDecision {
+  requestedMode: 'off' | 'shadow' | 'assistive';
+  effectiveMode: 'off' | 'shadow' | 'assistive';
+  canaryMode: AdaptiveAssistiveCanaryConfiguration['mode'];
+  eligible: boolean;
+  turnBucket: number;
+  maxPercent: number;
+  reason: string;
+  productionConfigurationChanged: false;
+  executionAuthority: false;
 }
 
 const SECRET_RE =
@@ -1318,6 +1342,159 @@ export function generateAdaptiveLearningCandidates(input: {
   };
 }
 
+/**
+ * Joins an explicit trusted-owner verdict to an existing episode when the
+ * original full frame is no longer in memory. This path intentionally learns
+ * only the narrow verdict/correction signal; it cannot reconstruct or invent
+ * missing intent, tool, or goal evidence.
+ */
+export function reconcileAdaptiveOwnerFeedback(input: {
+  episode: AdaptiveCognitiveEpisode;
+  feedbackId: string;
+  verdict: 'accepted' | 'rejected';
+  routeKey?: string | null;
+  completionVerified?: boolean;
+  correction?: boolean;
+  reason?: string | null;
+  existingCandidates?: AdaptiveLearningCandidate[];
+  observedAt: string;
+}): AdaptiveOwnerFeedbackReconciliationResult {
+  const recommendation: AdaptiveRecommendationFeedback = {
+    recommendationId: bounded(input.routeKey || input.feedbackId, 180),
+    verdict: input.verdict,
+    reason: input.reason ? bounded(input.reason, 360) : null,
+  };
+  const observation = adaptiveObservation({
+    episodeId: input.episode.episodeId,
+    observedAt: input.observedAt,
+    origin: input.episode.runOrigin,
+    source: 'owner_feedback',
+    authoritative: input.episode.runOrigin === 'live',
+    facts: input.completionVerified
+      ? {
+          requestedOutcomeVerified: true,
+          // A response verdict verifies the reported requested outcome, not a
+          // potentially broader durable goal.
+          goalAchieved: false,
+        }
+      : {},
+    evidenceRefs: [`feedback:${bounded(input.feedbackId, 180)}`],
+    ownerCorrection:
+      input.verdict === 'rejected' && input.correction
+        ? 'The owner explicitly rejected or corrected the prior response.'
+        : null,
+    recommendationFeedback: recommendation,
+    summary:
+      input.verdict === 'accepted'
+        ? 'The owner explicitly accepted the prior response or recommendation.'
+        : 'The owner explicitly rejected or corrected the prior response or recommendation.',
+  });
+  let episode = appendAdaptiveOutcomeObservation(input.episode, observation);
+  const evidenceRefs = observation.evidenceRefs;
+  const seeds: CandidateSeed[] = [
+    {
+      kind:
+        input.verdict === 'accepted'
+          ? 'accepted_recommendation'
+          : 'rejected_recommendation',
+      subject: input.routeKey || input.episode.scopeKey,
+      lesson:
+        input.verdict === 'accepted'
+          ? 'The owner explicitly accepted this scoped response or recommendation; preserve the useful pattern only when future evidence is comparable.'
+          : 'The owner explicitly rejected this scoped response or recommendation; do not repeat it without materially new evidence.',
+      evidenceRefs,
+      confidence: 0.98,
+      expectedBenefit:
+        input.verdict === 'accepted'
+          ? 'Retain response patterns repeatedly confirmed as useful by the owner.'
+          : 'Reduce recurrence of owner-rejected response patterns.',
+      possibleHarm:
+        'Overgeneralizing one response verdict into an unrelated preference.',
+      affectedModules: ['response_contract', 'confidence_calibration'],
+      evidenceAuthoritative: input.episode.runOrigin === 'live',
+    },
+  ];
+  if (input.verdict === 'rejected' && input.correction) {
+    seeds.push({
+      kind: 'explicit_owner_correction',
+      subject: input.routeKey || input.episode.scopeKey,
+      lesson:
+        'The owner explicitly corrected the prior response; retain the correction as review-required evidence and avoid assuming the same interpretation next time.',
+      evidenceRefs,
+      confidence: 1,
+      expectedBenefit:
+        'Honor explicit corrections in the same bounded response context.',
+      possibleHarm:
+        'Applying a response-specific correction outside its original scope.',
+      affectedModules: ['unified_frame', 'response_contract'],
+      evidenceAuthoritative: input.episode.runOrigin === 'live',
+    });
+  }
+  const existingByKey = new Map<string, AdaptiveLearningCandidate>();
+  for (const candidate of input.existingCandidates || []) {
+    existingByKey.set(
+      `${candidate.kind}|${candidate.subject.toLowerCase()}|${candidate.scopeKey}`,
+      candidate,
+    );
+  }
+  const candidates: AdaptiveLearningCandidate[] = [];
+  const events: AdaptiveLearningLifecycleEvent[] = [];
+  const suppressedRejectedCandidateIds: string[] = [];
+  for (const seed of seeds) {
+    const key = candidateKey(seed, episode.scopeKey);
+    const existing = existingByKey.get(key);
+    const generated = candidateFromSeed({
+      seed,
+      episode,
+      existing,
+      now: input.observedAt,
+    });
+    if (
+      existing?.status === 'rejected' &&
+      !generated.materiallyNewEvidence &&
+      existing.rejectionEvidenceFingerprint ===
+        generated.candidate.evidenceFingerprint
+    ) {
+      suppressedRejectedCandidateIds.push(existing.candidateId);
+      continue;
+    }
+    candidates.push(generated.candidate);
+    events.push(
+      lifecycleEvent({
+        candidate: generated.candidate,
+        episodeId: episode.episodeId,
+        createdAt: input.observedAt,
+        kind: existing ? 'evidence_accumulated' : 'proposed',
+        fromStatus: existing?.status || null,
+        toStatus: generated.candidate.status,
+        evidenceRefs,
+        note: 'Explicit trusted-owner response feedback was linked to its originating episode.',
+        synthetic: episode.runOrigin !== 'live',
+      }),
+    );
+  }
+  episode = {
+    ...episode,
+    learningCandidateIds: unique(
+      [
+        ...episode.learningCandidateIds,
+        ...candidates.map((candidate) => candidate.candidateId),
+      ],
+      24,
+    ),
+    promotionEventIds: unique(
+      [...episode.promotionEventIds, ...events.map((event) => event.eventId)],
+      48,
+    ),
+  };
+  return {
+    episode,
+    candidates,
+    events,
+    suppressedRejectedCandidateIds,
+  };
+}
+
 function lifecycleEvent(input: {
   candidate: AdaptiveLearningCandidate;
   episodeId: string | null;
@@ -1359,7 +1536,7 @@ export function refreshAdaptiveLearningLifecycle(
   event: AdaptiveLearningLifecycleEvent | null;
 } {
   if (
-    ['accepted', 'rejected', 'expired', 'superseded', 'rolled_back'].includes(
+    ['rejected', 'expired', 'superseded', 'rolled_back'].includes(
       candidate.status,
     ) ||
     Date.parse(now) < Date.parse(candidate.expiresAt)
@@ -1386,6 +1563,67 @@ export function refreshAdaptiveLearningLifecycle(
   };
 }
 
+export function reconcileAdaptiveLearningWithLateOutcome(input: {
+  candidate: AdaptiveLearningCandidate;
+  episode: AdaptiveCognitiveEpisode;
+  observation: AdaptiveOutcomeObservation;
+  now: string;
+}): {
+  candidate: AdaptiveLearningCandidate;
+  event: AdaptiveLearningLifecycleEvent | null;
+} {
+  const failureKinds: AdaptiveLearningKind[] = [
+    'technical_success_unverified_goal',
+    'verified_goal_failure',
+    'partial_failure',
+    'route_or_provider_unreliability',
+    'failed_follow_through',
+  ];
+  const linked = input.candidate.sourceEpisodeIds.includes(
+    input.episode.episodeId,
+  );
+  const authoritativeRecovery =
+    input.observation.authoritative &&
+    input.episode.outcome.requestedOutcomeVerified &&
+    input.episode.outcome.goalAchieved;
+  if (
+    !linked ||
+    !authoritativeRecovery ||
+    !failureKinds.includes(input.candidate.kind) ||
+    ['expired', 'superseded', 'rolled_back'].includes(input.candidate.status)
+  ) {
+    return { candidate: input.candidate, event: null };
+  }
+  const updated: AdaptiveLearningCandidate = {
+    ...input.candidate,
+    updatedAt: input.now,
+    status: 'superseded',
+    counterEvidenceRefs: unique(
+      [
+        ...input.candidate.counterEvidenceRefs,
+        ...input.observation.evidenceRefs,
+      ],
+      ADAPTIVE_MAX_CANDIDATE_EVIDENCE_REFS,
+    ),
+    productionEligible: false,
+    supersededByCandidateId: `outcome:${input.observation.observationId}`,
+  };
+  return {
+    candidate: updated,
+    event: lifecycleEvent({
+      candidate: updated,
+      episodeId: input.episode.episodeId,
+      createdAt: input.now,
+      kind: 'superseded',
+      fromStatus: input.candidate.status,
+      toStatus: 'superseded',
+      evidenceRefs: input.observation.evidenceRefs,
+      note: 'Later authoritative evidence verified recovery, so the earlier failure-oriented lesson was superseded without rewriting its history.',
+      synthetic: input.observation.synthetic,
+    }),
+  };
+}
+
 export function reviewAdaptiveLearningCandidate(input: {
   candidate: AdaptiveLearningCandidate;
   decision: 'accept' | 'reject' | 'supersede' | 'rollback';
@@ -1402,6 +1640,11 @@ export function reviewAdaptiveLearningCandidate(input: {
   if (!input.explicitOwnerDecision) {
     throw new Error(
       'Adaptive learning review requires an explicit owner decision.',
+    );
+  }
+  if (!/^owner(?::[a-z0-9][a-z0-9:_-]{1,})?$/i.test(input.reviewerId)) {
+    throw new Error(
+      'Adaptive learning review requires a canonical owner reviewer ID.',
     );
   }
   let status: AdaptiveLearningStatus;
@@ -1631,6 +1874,36 @@ export function applyAdaptiveGuidanceToResponseContract(
   };
 }
 
+export function applyAdaptiveGuidanceToUnifiedFrame(
+  frame: UnifiedGroundedCognitiveFrame,
+  guidance: AdaptiveLearningGuidance,
+  now = guidance.generatedAt,
+): UnifiedGroundedCognitiveFrame {
+  const responseRequirements = frame.responseRequirements
+    ? applyAdaptiveGuidanceToResponseContract(
+        frame.responseRequirements,
+        guidance,
+      )
+    : null;
+  return {
+    ...frame,
+    updatedAt: now,
+    responseRequirements,
+    prohibitedCompletionClaims: unique(
+      [...frame.prohibitedCompletionClaims, ...guidance.prohibitedClaims],
+      24,
+    ),
+    acceptedLearningGuidance: unique(
+      [...frame.acceptedLearningGuidance, ...guidance.responseGuidance],
+      12,
+    ),
+    appliedLearningCandidateIds: unique(
+      [...frame.appliedLearningCandidateIds, ...guidance.appliedLessonIds],
+      ADAPTIVE_MAX_APPLIED_LESSONS,
+    ),
+  };
+}
+
 export function recordAdaptiveLessonApplication(input: {
   candidate: AdaptiveLearningCandidate;
   episodeId: string;
@@ -1740,6 +2013,128 @@ export function assessAdaptiveAssistiveReadiness(
     },
     rollbackRequired: status === 'rollback_required',
     ownerApprovalRequired: !input.ownerApprovedCanary,
+  };
+}
+
+export function resolveAdaptiveAssistiveCanaryConfiguration(
+  env: NodeJS.ProcessEnv = process.env,
+): AdaptiveAssistiveCanaryConfiguration {
+  const rawMode = String(env.ADAPTIVE_ASSISTIVE_CANARY_MODE || '')
+    .trim()
+    .toLowerCase();
+  const mode =
+    rawMode === 'simulate' || rawMode === 'canary' ? rawMode : 'disabled';
+  const rawReadiness = String(env.ADAPTIVE_ASSISTIVE_READINESS_STATUS || '')
+    .trim()
+    .toLowerCase();
+  const readinessStatus: AdaptiveAssistiveReadinessStatus = [
+    'not_ready',
+    'shadow_ready',
+    'canary_candidate',
+    'canary_paused',
+    'rollback_required',
+  ].includes(rawReadiness)
+    ? (rawReadiness as AdaptiveAssistiveReadinessStatus)
+    : 'not_ready';
+  const ownerApprovalId = bounded(
+    env.ADAPTIVE_ASSISTIVE_OWNER_APPROVAL_ID,
+    180,
+  );
+  const scope =
+    String(env.ADAPTIVE_ASSISTIVE_SCOPE || '')
+      .trim()
+      .toLowerCase() === 'response_planning_only'
+      ? 'response_planning_only'
+      : 'invalid';
+  const parsedPercent = Number(env.ADAPTIVE_ASSISTIVE_MAX_PERCENT || 0);
+  const maxPercent = Number.isFinite(parsedPercent)
+    ? Math.max(0, Math.min(10, Math.floor(parsedPercent)))
+    : 0;
+  return {
+    mode,
+    readinessStatus,
+    ownerApprovalId: ownerApprovalId || null,
+    scope,
+    maxPercent,
+  };
+}
+
+export function governAdaptiveAssistiveActivation(input: {
+  requestedMode: 'off' | 'shadow' | 'assistive';
+  turnId: string;
+  runOrigin?: 'live' | 'replay' | 'synthetic';
+  configuration?: AdaptiveAssistiveCanaryConfiguration;
+}): AdaptiveAssistiveActivationDecision {
+  const configuration =
+    input.configuration || resolveAdaptiveAssistiveCanaryConfiguration();
+  const turnBucket =
+    Number.parseInt(
+      createHash('sha256').update(input.turnId).digest('hex').slice(0, 8),
+      16,
+    ) % 100;
+  if (
+    input.requestedMode === 'assistive' &&
+    input.runOrigin !== undefined &&
+    input.runOrigin !== 'live'
+  ) {
+    return {
+      requestedMode: input.requestedMode,
+      effectiveMode: 'assistive',
+      canaryMode: 'simulate',
+      eligible: true,
+      turnBucket,
+      maxPercent: 100,
+      reason:
+        'Non-live replay/synthetic evaluation may simulate response-only assistive guidance; production configuration is unchanged.',
+      productionConfigurationChanged: false,
+      executionAuthority: false,
+    };
+  }
+  if (input.requestedMode !== 'assistive') {
+    return {
+      requestedMode: input.requestedMode,
+      effectiveMode: input.requestedMode,
+      canaryMode: configuration.mode,
+      eligible: input.requestedMode !== 'off',
+      turnBucket,
+      maxPercent: configuration.maxPercent,
+      reason: 'Assistive mode was not requested.',
+      productionConfigurationChanged: false,
+      executionAuthority: false,
+    };
+  }
+  const ownerApprovalValid =
+    Boolean(configuration.ownerApprovalId) &&
+    /^owner:[a-z0-9][a-z0-9:_-]{5,}$/i.test(
+      configuration.ownerApprovalId || '',
+    );
+  const gatesPass =
+    configuration.readinessStatus === 'canary_candidate' &&
+    ownerApprovalValid &&
+    configuration.scope === 'response_planning_only' &&
+    configuration.maxPercent > 0;
+  const selected = gatesPass && turnBucket < configuration.maxPercent;
+  const effectiveMode =
+    configuration.mode === 'canary' && selected ? 'assistive' : 'shadow';
+  const reason = !gatesPass
+    ? 'Assistive activation failed closed because readiness, explicit owner approval, response-only scope, or canary percentage was missing.'
+    : configuration.mode === 'simulate'
+      ? 'Canary is simulation-only; this turn remains shadow regardless of bucket.'
+      : configuration.mode !== 'canary'
+        ? 'Adaptive assistive canary is disabled; this turn remains shadow.'
+        : selected
+          ? `This deterministic turn bucket is inside the ${configuration.maxPercent}% response-planning-only canary.`
+          : `This deterministic turn bucket is outside the ${configuration.maxPercent}% canary and remains shadow.`;
+  return {
+    requestedMode: input.requestedMode,
+    effectiveMode,
+    canaryMode: configuration.mode,
+    eligible: selected,
+    turnBucket,
+    maxPercent: configuration.maxPercent,
+    reason,
+    productionConfigurationChanged: false,
+    executionAuthority: false,
   };
 }
 

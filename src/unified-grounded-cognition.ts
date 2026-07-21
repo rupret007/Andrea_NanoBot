@@ -300,6 +300,9 @@ export interface UnifiedGroundedCognitiveFrame {
   outcome: UnifiedOutcomeObservation | null;
   followThrough: string[];
   learningCandidates: UnifiedLearningCandidate[];
+  /** Owner-accepted adaptive lessons projected as bounded advice only. */
+  acceptedLearningGuidance: string[];
+  appliedLearningCandidateIds: string[];
   trace: UnifiedCognitiveTraceLinks;
   budgets: UnifiedCognitiveBudgets;
   invariants: {
@@ -1287,6 +1290,8 @@ export function buildUnifiedGroundedCognitiveFrame(
       .filter(Boolean)
       .slice(0, 12),
     learningCandidates: [],
+    acceptedLearningGuidance: [],
+    appliedLearningCandidateIds: [],
     trace: {
       frameId,
       turnId: input.turnId,
@@ -1809,6 +1814,8 @@ export function unifiedGroundedCognitionDiagnostics(
       reviewRequired: item.reviewRequired,
       executionAuthority: item.executionAuthority,
     })),
+    acceptedLearningGuidance: frame.acceptedLearningGuidance,
+    appliedLearningCandidateIds: frame.appliedLearningCandidateIds,
     trace: frame.trace,
     budgets: frame.budgets,
   };
@@ -1860,6 +1867,9 @@ export function unifiedPersistedMetadata(
     ),
     unified_cognition_learning_candidates: String(
       frame.learningCandidates.length,
+    ),
+    unified_cognition_applied_learning: String(
+      frame.appliedLearningCandidateIds.length,
     ),
     unified_cognition_context_chars: String(frame.budgets.contextChars),
     unified_cognition_budget_truncated: String(frame.budgets.truncated),

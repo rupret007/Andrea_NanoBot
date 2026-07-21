@@ -23,9 +23,13 @@ import {
   persistAdaptiveLearning,
   pruneAdaptiveGroundedIntelligence,
   reconcileAndPersistAdaptiveObservation,
+  reconcileAdaptiveOwnerFeedbackByTurn,
   reviewAdaptiveLearningCandidateDurably,
 } from './adaptive-grounded-intelligence-durable-adapter.js';
-import { buildUnifiedGroundedCognitiveFrame } from './unified-grounded-cognition.js';
+import {
+  buildUnifiedGroundedCognitiveFrame,
+  observeUnifiedOutcome,
+} from './unified-grounded-cognition.js';
 
 const NOW = '2026-07-21T18:00:00.000Z';
 
@@ -150,6 +154,69 @@ describe('adaptive grounded intelligence durable adapter', () => {
     });
   });
 
+  it('supersedes an earlier failure lesson when late authoritative recovery arrives', () => {
+    const baseFrame = frame();
+    const observedFrame = observeUnifiedOutcome(baseFrame, {
+      observedAt: '2026-07-21T18:01:00.000Z',
+      routeUsed: 'provider:test',
+      responseStatus: 'pass',
+      toolCallAccepted: true,
+      toolReturnedSuccess: true,
+      providerReceiptIds: ['receipt:technical'],
+      requestedOutcomeVerified: false,
+      goalAchieved: false,
+      evidenceRefs: ['tool:success'],
+    });
+    let episode = createAdaptiveCognitiveEpisode(observedFrame, NOW);
+    episode = appendAdaptiveOutcomeObservation(
+      episode,
+      adaptiveObservation({
+        episodeId: episode.episodeId,
+        observedAt: '2026-07-21T18:01:00.000Z',
+        origin: 'live',
+        source: 'tool_runtime',
+        authoritative: true,
+        facts: { toolTechnicallySuccessful: true },
+        evidenceRefs: ['tool:success'],
+        summary: 'Technical success without requested-outcome verification.',
+      }),
+    );
+    const generated = generateAdaptiveLearningCandidates({
+      episode,
+      frame: observedFrame,
+      signals: { routeUsed: 'provider:test' },
+      now: '2026-07-21T18:01:00.000Z',
+    });
+    persistAdaptiveCognitiveEpisode(episode);
+    persistAdaptiveLearning(generated);
+    const failureCandidate = generated.candidates.find(
+      (item) => item.kind === 'technical_success_unverified_goal',
+    );
+    expect(failureCandidate).toBeDefined();
+
+    reconcileAndPersistAdaptiveObservation({
+      episode,
+      observation: adaptiveObservation({
+        episodeId: episode.episodeId,
+        observedAt: '2026-07-21T18:10:00.000Z',
+        origin: 'live',
+        source: 'goal_verification',
+        authoritative: true,
+        facts: { requestedOutcomeVerified: true, goalAchieved: true },
+        evidenceRefs: ['goal:recovered'],
+        summary: 'Late authoritative recovery verified the goal.',
+      }),
+    });
+    const superseded = loadAdaptiveLearningCandidates().find(
+      (item) => item.candidateId === failureCandidate!.candidateId,
+    );
+    expect(superseded).toMatchObject({
+      status: 'superseded',
+      productionEligible: false,
+    });
+    expect(superseded?.counterEvidenceRefs).toContain('goal:recovered');
+  });
+
   it('persists rich candidates and append-only lifecycle events with no authority', () => {
     const { candidate, events } = readyCandidate();
     const persisted = persistAdaptiveLearning({
@@ -181,6 +248,37 @@ describe('adaptive grounded intelligence durable adapter', () => {
       candidateId: candidate.candidateId,
       kind: 'ready_for_review',
       executionAuthority: false,
+    });
+  });
+
+  it('joins explicit owner feedback to the originating turn without inferring broad goal success', () => {
+    const episode = createAdaptiveCognitiveEpisode(frame(), NOW);
+    persistAdaptiveCognitiveEpisode(episode);
+    const reconciled = reconcileAdaptiveOwnerFeedbackByTurn({
+      turnId: episode.turnId,
+      feedbackId: 'feedback-1',
+      verdict: 'accepted',
+      routeKey: 'direct_assistant',
+      completionVerified: true,
+      observedAt: '2026-07-21T18:10:00.000Z',
+    });
+    expect(reconciled?.outcome).toMatchObject({
+      requestedOutcomeVerified: true,
+      goalAchieved: false,
+      status: 'unknown',
+    });
+    expect(reconciled?.observations[0]).toMatchObject({
+      source: 'owner_feedback',
+      authoritative: true,
+      recommendationFeedback: {
+        verdict: 'accepted',
+      },
+    });
+    expect(loadAdaptiveLearningCandidates()[0]).toMatchObject({
+      kind: 'accepted_recommendation',
+      status: 'proposed',
+      recurrenceCount: 1,
+      ownerReviewMandatory: true,
     });
   });
 

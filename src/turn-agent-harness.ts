@@ -90,6 +90,27 @@ import {
   type UnifiedResponsePosture,
 } from './unified-grounded-cognition.js';
 import {
+  adaptivePersistedMetadata,
+  applyAdaptiveGuidanceToResponseContract,
+  applyAdaptiveGuidanceToUnifiedFrame,
+  createAdaptiveCognitiveEpisode,
+  generateAdaptiveLearningCandidates,
+  governAdaptiveAssistiveActivation,
+  observationFromUnifiedOutcome,
+  appendAdaptiveOutcomeObservation,
+  type AdaptiveCognitiveEpisode,
+  type AdaptiveLearningCandidate,
+  type AdaptiveLearningGuidance,
+  type AdaptiveLearningLifecycleEvent,
+} from './adaptive-grounded-intelligence.js';
+import {
+  loadAdaptiveGuidanceForFrame,
+  loadAdaptiveLearningCandidates,
+  persistAdaptiveCognitiveEpisode,
+  persistAdaptiveLearning,
+  persistAdaptiveLessonApplications,
+} from './adaptive-grounded-intelligence-durable-adapter.js';
+import {
   beginLogicKernelRun,
   evaluateLogicAnswerSupport,
   type LogicKernelResult,
@@ -291,6 +312,12 @@ export interface TurnAgentHarnessContext {
    * and evidence projections but has structurally no execution authority.
    */
   unifiedGroundedCognition?: UnifiedGroundedCognitiveFrame | null;
+  /** Append-only reconciled episode linked to the canonical unified frame. */
+  adaptiveGroundedEpisode?: AdaptiveCognitiveEpisode | null;
+  /** Owner-accepted, scoped response/planning advice with no action authority. */
+  adaptiveLearningGuidance?: AdaptiveLearningGuidance | null;
+  adaptiveLearningCandidates?: AdaptiveLearningCandidate[];
+  adaptiveLearningEvents?: AdaptiveLearningLifecycleEvent[];
 }
 
 export interface BeginTurnAgentHarnessInput {
@@ -1403,7 +1430,13 @@ export async function beginTurnAgentHarness(
       capabilityAcquisition.durableWorkLinked,
     );
   }
-  const unifiedMode = resolveUnifiedGroundedCognitionMode();
+  const requestedUnifiedMode = resolveUnifiedGroundedCognitionMode();
+  const adaptiveActivation = governAdaptiveAssistiveActivation({
+    requestedMode: requestedUnifiedMode,
+    turnId: input.turnId,
+    runOrigin,
+  });
+  const unifiedMode = adaptiveActivation.effectiveMode;
   const requestedGroundedAdvisoryMode = resolveGroundedAdvisoryMode();
   const modeValidation = validateUnifiedCognitionModes({
     unifiedMode,
@@ -1417,6 +1450,23 @@ export async function beginTurnAgentHarness(
   contextCompile.metadata.unified_cognition_mode_reason = sanitizeMetadataValue(
     modeValidation.reason,
   );
+  contextCompile.metadata.adaptive_activation_requested = requestedUnifiedMode;
+  contextCompile.metadata.adaptive_activation_effective = unifiedMode;
+  contextCompile.metadata.adaptive_activation_canary_mode =
+    adaptiveActivation.canaryMode;
+  contextCompile.metadata.adaptive_activation_turn_bucket = String(
+    adaptiveActivation.turnBucket,
+  );
+  contextCompile.metadata.adaptive_activation_max_percent = String(
+    adaptiveActivation.maxPercent,
+  );
+  contextCompile.metadata.adaptive_activation_eligible = String(
+    adaptiveActivation.eligible,
+  );
+  contextCompile.metadata.adaptive_activation_reason = sanitizeMetadataValue(
+    adaptiveActivation.reason,
+  );
+  contextCompile.metadata.adaptive_activation_authority = 'none';
   const unifiedStartedAt = performance.now();
   const canonicalMemoryBundle =
     unifiedMode !== 'off' && isDatabaseInitialized() && runOrigin === 'live'
@@ -1428,6 +1478,10 @@ export async function beginTurnAgentHarness(
         })
       : null;
   let unifiedGroundedCognition: UnifiedGroundedCognitiveFrame | null = null;
+  let adaptiveGroundedEpisode: AdaptiveCognitiveEpisode | null = null;
+  let adaptiveLearningGuidance: AdaptiveLearningGuidance | null = null;
+  let adaptiveLearningCandidates: AdaptiveLearningCandidate[] = [];
+  let adaptiveLearningEvents: AdaptiveLearningLifecycleEvent[] = [];
   if (unifiedMode !== 'off') {
     try {
       unifiedGroundedCognition = buildUnifiedGroundedCognitiveFrame({
@@ -1456,13 +1510,29 @@ export async function beginTurnAgentHarness(
         cognitiveRunId: cognitiveRun?.run.runId || null,
         durableWorkId: runtimeSpine?.durableWork?.workId || null,
       });
+      adaptiveGroundedEpisode = createAdaptiveCognitiveEpisode(
+        unifiedGroundedCognition,
+      );
+      const adaptiveGuidance = loadAdaptiveGuidanceForFrame(
+        unifiedGroundedCognition,
+      );
+      adaptiveLearningGuidance = adaptiveGuidance.guidance;
+      adaptiveLearningCandidates = adaptiveGuidance.candidates;
+      adaptiveLearningEvents = adaptiveGuidance.expirationEvents;
       Object.assign(
         contextCompile.metadata,
         unifiedPersistedMetadata(unifiedGroundedCognition),
+        adaptivePersistedMetadata({
+          episode: adaptiveGroundedEpisode,
+          guidance: adaptiveLearningGuidance,
+        }),
       );
       contextCompile.metadata.unified_cognition_build_latency_ms = String(
         Math.round((performance.now() - unifiedStartedAt) * 100) / 100,
       );
+      // The advisory loop is optional and must fail closed without changing
+      // the authoritative response or action path.
+      // eslint-disable-next-line no-catch-all/no-catch-all
     } catch {
       contextCompile.metadata.unified_cognition_frame_state = 'build_failed';
     }
@@ -1505,12 +1575,27 @@ export async function beginTurnAgentHarness(
         blockers: input.knownBlockers,
         unifiedFrame: unifiedGroundedCognition,
       });
+      if (adaptiveLearningGuidance) {
+        groundedDeliberation = {
+          ...groundedDeliberation,
+          responseContract: applyAdaptiveGuidanceToResponseContract(
+            groundedDeliberation.responseContract,
+            adaptiveLearningGuidance,
+          ),
+        };
+      }
       if (unifiedGroundedCognition) {
         unifiedGroundedCognition = attachUnifiedResponseContract(
           unifiedGroundedCognition,
           groundedDeliberation.packetId,
           groundedDeliberation.responseContract,
         );
+        if (adaptiveLearningGuidance) {
+          unifiedGroundedCognition = applyAdaptiveGuidanceToUnifiedFrame(
+            unifiedGroundedCognition,
+            adaptiveLearningGuidance,
+          );
+        }
         Object.assign(
           contextCompile.metadata,
           unifiedPersistedMetadata(unifiedGroundedCognition),
@@ -1550,6 +1635,10 @@ export async function beginTurnAgentHarness(
       contextCompile.metadata.grounded_advisory_build_latency_ms = String(
         Math.round((performance.now() - advisoryStartedAt) * 100) / 100,
       );
+      contextCompile.metadata.adaptive_learning_guidance_count = String(
+        adaptiveLearningGuidance?.appliedLessonIds.length || 0,
+      );
+      contextCompile.metadata.adaptive_learning_guidance_authority = 'none';
       // The advisory layer must never replace the existing response path.
       // eslint-disable-next-line no-catch-all/no-catch-all
     } catch {
@@ -1595,6 +1684,10 @@ export async function beginTurnAgentHarness(
     groundedExecutive,
     groundedDeliberation,
     unifiedGroundedCognition,
+    adaptiveGroundedEpisode,
+    adaptiveLearningGuidance,
+    adaptiveLearningCandidates,
+    adaptiveLearningEvents,
   };
 }
 
@@ -2375,6 +2468,10 @@ export async function reflectTurnAgentOutcome(input: {
         unifiedPersistedMetadata(context.unifiedGroundedCognition),
       );
     }
+    learnAdaptiveTurnOutcome({
+      context,
+      routeUsed: input.routeUsed,
+    });
     learnGroundedTurnOutcome({
       context,
       evaluationStatus: input.evaluation.status,
@@ -2961,6 +3058,118 @@ function observeGroundedRuntimeOutcome(
 }
 
 /**
+ * Canonical adaptive reconciliation hook. It consumes the already-authoritative
+ * unified outcome projection, appends history, stages conservative learning,
+ * and records accepted guidance use. It cannot alter routing or delivery.
+ */
+function learnAdaptiveTurnOutcome(input: {
+  context: TurnAgentHarnessContext;
+  routeUsed: string;
+}): void {
+  const frame = input.context.unifiedGroundedCognition;
+  let episode = input.context.adaptiveGroundedEpisode;
+  if (!frame || !episode || !frame.outcome) return;
+  try {
+    const now = frame.outcome.observedAt;
+    episode = {
+      ...episode,
+      updatedAt: now,
+      responseContractId: frame.trace.deliberationPacketId,
+      responseEvaluationId: frame.trace.responseEvaluationId,
+      providerReceiptIds: frame.trace.providerReceiptIds,
+      goalIds: frame.trace.goalIds,
+      commitmentIds: frame.trace.commitmentIds,
+    };
+    episode = appendAdaptiveOutcomeObservation(
+      episode,
+      observationFromUnifiedOutcome({ episode, frame, outcome: frame.outcome }),
+    );
+    const existing = loadAdaptiveLearningCandidates({
+      scopeKey: episode.scopeKey,
+      limit: 500,
+    });
+    const groundedDecision = input.context.groundedExecutive?.decisions.at(-1);
+    const repairCount = Number(
+      input.context.contextCompile.metadata.grounded_advisory_repair_attempts ||
+        0,
+    );
+    const generated = generateAdaptiveLearningCandidates({
+      episode,
+      frame,
+      evaluation: frame.responseEvaluation,
+      existingCandidates: existing,
+      signals: {
+        routeUsed: input.routeUsed,
+        responseRepairCount: Number.isFinite(repairCount) ? repairCount : 0,
+        confidencePrediction: groundedDecision?.confidence ?? null,
+        confidenceOutcome: frame.responseEvaluation?.status === 'pass' ? 1 : 0,
+        privacyNearMiss:
+          frame.responseEvaluation?.invariantResults.noPrivacyViolation ===
+          false,
+        authorityNearMiss:
+          frame.responseEvaluation?.invariantResults.noExecutionAuthority ===
+          false,
+      },
+      now,
+    });
+    episode = {
+      ...episode,
+      learningCandidateIds: Array.from(
+        new Set([
+          ...episode.learningCandidateIds,
+          ...generated.candidates.map((item) => item.candidateId),
+        ]),
+      ).slice(0, 24),
+      promotionEventIds: Array.from(
+        new Set([
+          ...episode.promotionEventIds,
+          ...generated.events.map((item) => item.eventId),
+        ]),
+      ).slice(0, 48),
+    };
+    const persisted = persistAdaptiveLearning(generated);
+    input.context.adaptiveLearningCandidates = generated.candidates;
+    input.context.adaptiveLearningEvents = [
+      ...(input.context.adaptiveLearningEvents || []),
+      ...generated.events,
+    ].slice(-48);
+    const guidance = input.context.adaptiveLearningGuidance;
+    if (guidance && guidance.appliedLessonIds.length > 0) {
+      const application = persistAdaptiveLessonApplications({
+        episode,
+        candidates: input.context.adaptiveLearningCandidates.concat(
+          existing.filter((candidate) => candidate.status === 'accepted'),
+        ),
+        guidance,
+        now,
+      });
+      episode = application.episode;
+      input.context.adaptiveLearningCandidates = application.candidates;
+      input.context.adaptiveLearningEvents = [
+        ...(input.context.adaptiveLearningEvents || []),
+        ...application.events,
+      ].slice(-48);
+    } else {
+      persistAdaptiveCognitiveEpisode(episode);
+    }
+    input.context.adaptiveGroundedEpisode = episode;
+    input.context.contextCompile.metadata.adaptive_learning_persisted = String(
+      persisted.candidatesPersisted,
+    );
+    input.context.contextCompile.metadata.adaptive_learning_events_persisted =
+      String(persisted.eventsPersisted);
+    Object.assign(
+      input.context.contextCompile.metadata,
+      adaptivePersistedMetadata({ episode, guidance }),
+    );
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    input.context.contextCompile.metadata.adaptive_learning_state =
+      'hook_failed';
+  }
+}
+
+/**
  * Observe-only reflect hook: journals the shadow state, records a
  * decision-vs-outcome calibration sample, and stages proposed (never
  * auto-accepted) learning records. Planning truth only — no authority.
@@ -3017,6 +3226,7 @@ function learnGroundedTurnOutcome(input: {
     }
     if (
       input.context.unifiedGroundedCognition?.runOrigin === 'live' &&
+      !input.context.adaptiveGroundedEpisode &&
       input.context.unifiedGroundedCognition.learningCandidates.length > 0
     ) {
       lessons.push(
