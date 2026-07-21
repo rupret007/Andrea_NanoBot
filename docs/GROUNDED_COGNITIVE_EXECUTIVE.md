@@ -1,5 +1,9 @@
 # Grounded Cognitive Executive
 
+See also: [GROUNDED_MEMORY_GOAL_CONTINUITY.md](GROUNDED_MEMORY_GOAL_CONTINUITY.md)
+— the durable memory and goal-continuity layer that feeds this loop's
+shadow turns with evidence-backed context across restarts.
+
 A closed cognitive loop that turns observations and goals into
 evidence-backed beliefs, inspectable plans, verified outcomes, and
 reviewable learning records. It composes the pure primitives in
