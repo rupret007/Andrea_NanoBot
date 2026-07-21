@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { adaptiveEvidence } from './adaptive-cognition-engine.js';
 import { createAdaptiveDurableWork } from './adaptive-cognition-durable-adapter.js';
@@ -145,6 +145,8 @@ describe('cognitive kernel', () => {
   });
 
   it('blocks pre-send completion text until typed adaptive evidence authorizes it', () => {
+    vi.stubEnv('BRAVE_SEARCH_API_KEY', 'synthetic-test-key');
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'true');
     const kernel = beginCognitiveKernelRun({
       turnId: 'cog-pre-send-gate',
       channel: 'telegram',
@@ -232,7 +234,10 @@ describe('cognitive kernel', () => {
     });
   });
   beforeEach(() => _initTestDatabase());
-  afterEach(() => _closeDatabase());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    _closeDatabase();
+  });
 
   it('prepares without tool execution and advances only through exact durable node leases', async () => {
     const beginInput = {
@@ -677,6 +682,8 @@ describe('cognitive kernel', () => {
   });
 
   it('records internal outcome rewards without self-promoting repeated successes', () => {
+    vi.stubEnv('BRAVE_SEARCH_API_KEY', 'synthetic-test-key');
+    vi.stubEnv('BRAVE_SEARCH_ENABLED', 'true');
     function runSuccess(turnId: string) {
       const kernel = beginCognitiveKernelRun({
         turnId,
