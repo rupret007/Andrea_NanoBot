@@ -234,6 +234,8 @@
     "test:cognition:loop": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-loop.ts",
     "test:cognition:adapters": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-adapters.ts",
     "test:adaptive-cognition": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-adaptive-cognition-certification.ts",
+    "test:grounded-executive": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-grounded-executive.ts",
+    "test:grounded-executive:unit": "node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/grounded-cognitive-executive.test.ts src/grounded-executive-durable-adapter.test.ts src/turn-agent-harness-grounded.test.ts",
     "test:adaptive-cognition:dogfood": "node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/adaptive-cognition-dogfood.test.ts",
     "test:cognition:trajectory": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-trajectory.ts",
     "test:cognition:governance": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/test-cognition-governance.ts",
