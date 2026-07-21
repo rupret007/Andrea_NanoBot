@@ -1,5 +1,10 @@
 # Adaptive Cognitive Core v1
 
+See also: [GROUNDED_COGNITIVE_EXECUTIVE.md](GROUNDED_COGNITIVE_EXECUTIVE.md) —
+a closed observe → believe → plan → check → verify → learn loop composed
+from this engine's primitives, with durable belief/decision journals,
+reviewable learning records, and a deterministic evaluation harness.
+
 ## Status and scope
 
 Adaptive Cognition v1 introduces a typed, privacy-bounded state machine for framing a task, compiling a plan graph, recording evidence and beliefs, handling bounded recovery, and refusing completion without criterion-level evidence. The canonical implementation is `src/adaptive-cognition-engine.ts`, version `1.0.0`.
