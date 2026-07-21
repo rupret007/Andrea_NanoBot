@@ -584,6 +584,36 @@ describe('grounded context bundle', () => {
     expect(text).toContain('Grounded context bundle');
     expect(text).toContain('next(informational)');
   });
+
+  it('projects bounded terminal goal history without a resumable next step', () => {
+    let cancelled = createGroundedGoal({
+      title: 'Cancelled launch',
+      objective: 'Do not resume this launch.',
+      nextProposedStep: 'Publish the release.',
+      now: T0,
+    });
+    cancelled = transitionGroundedGoal({
+      goal: cancelled,
+      state: 'cancelled',
+      reason: 'The owner cancelled the launch.',
+      now: T1,
+    });
+    const bundle = buildGroundedContextBundle({
+      records: [],
+      goals: [cancelled],
+      topics: ['launch'],
+      now: T2,
+    });
+    expect(bundle.goals).toHaveLength(0);
+    expect(bundle.terminalGoals).toEqual([
+      expect.objectContaining({
+        goalId: cancelled.goalId,
+        state: 'cancelled',
+        nextProposedStep: null,
+        executionAuthority: false,
+      }),
+    ]);
+  });
 });
 
 describe('explainGroundedMemoryTopic', () => {

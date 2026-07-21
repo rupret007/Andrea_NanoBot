@@ -75,6 +75,21 @@ import {
   type GroundedResponseEvaluation,
 } from './grounded-response-intelligence.js';
 import {
+  attachUnifiedGroundedDecision,
+  attachUnifiedResponseContract,
+  attachUnifiedResponseEvaluation,
+  buildUnifiedGroundedCognitiveFrame,
+  observeUnifiedOutcome,
+  projectUnifiedEvidenceToGroundedExecutive,
+  resolveUnifiedGroundedCognitionMode,
+  unifiedLearningAsGroundedRecords,
+  unifiedPersistedMetadata,
+  validateUnifiedCognitionModes,
+  type UnifiedGroundedCognitiveFrame,
+  type UnifiedModuleRecommendation,
+  type UnifiedResponsePosture,
+} from './unified-grounded-cognition.js';
+import {
   beginLogicKernelRun,
   evaluateLogicAnswerSupport,
   type LogicKernelResult,
@@ -271,6 +286,11 @@ export interface TurnAgentHarnessContext {
    * text-only pre-send repair after existing authority checks.
    */
   groundedDeliberation?: GroundedDeliberationPacket | null;
+  /**
+   * Canonical bounded turn frame. It coordinates existing cognition outputs
+   * and evidence projections but has structurally no execution authority.
+   */
+  unifiedGroundedCognition?: UnifiedGroundedCognitiveFrame | null;
 }
 
 export interface BeginTurnAgentHarnessInput {
@@ -938,6 +958,131 @@ function sideEffectsForCouncil(
   return 'read_only';
 }
 
+function unifiedPostureFromText(
+  value: string | null | undefined,
+  fallback: UnifiedResponsePosture = 'present_plan',
+): UnifiedResponsePosture {
+  const normalized = String(value || '').toLowerCase();
+  if (/stop|block|refuse|hold/.test(normalized)) return 'stop_safely';
+  if (/clarif|question|ask/.test(normalized)) return 'ask_clarification';
+  if (/approval|confirm/.test(normalized)) return 'request_approval';
+  if (/research|inspect|read|lookup|evidence/.test(normalized))
+    return 'research_read_only';
+  if (/defer|wait|precondition/.test(normalized))
+    return 'defer_missing_precondition';
+  if (/partial|progress/.test(normalized)) return 'report_partial_progress';
+  if (/complete|verified/.test(normalized)) return 'report_verified_completion';
+  if (/answer|direct/.test(normalized)) return 'answer_directly';
+  return fallback;
+}
+
+function buildUnifiedModuleRecommendations(input: {
+  deliberation: AndreaPlatformDeliberationResult | null;
+  providerCouncil: AndreaPlatformProviderCouncilResult | null;
+  cognitiveRun: CognitiveKernelResult | null;
+  logicRun: LogicKernelResult | null;
+  runtimeSpine: AgentRuntimeSpineResult | null;
+}): UnifiedModuleRecommendation[] {
+  const recommendations: UnifiedModuleRecommendation[] = [];
+  if (input.deliberation) {
+    recommendations.push({
+      module: 'platform_deliberation',
+      posture: unifiedPostureFromText(
+        input.deliberation.executionPosture ||
+          input.deliberation.answerStrategy ||
+          input.deliberation.selectedRoute,
+      ),
+      confidence: input.deliberation.confidence ?? 0.65,
+      reason:
+        input.deliberation.policyHoldReason ||
+        input.deliberation.missingInformation?.[0] ||
+        `Platform selected ${input.deliberation.executionPosture || input.deliberation.selectedRoute || 'a bounded plan'}.`,
+      evidenceRefs: (input.deliberation.evidenceCards || [])
+        .map((item) => item.routeId)
+        .slice(0, 12),
+      advisoryOnly: true,
+    });
+  }
+  const guidance = input.providerCouncil?.answerGuidance;
+  if (guidance) {
+    recommendations.push({
+      module: 'provider_council',
+      posture:
+        guidance.status === 'block'
+          ? 'stop_safely'
+          : guidance.status === 'clarify'
+            ? 'ask_clarification'
+            : unifiedPostureFromText(
+                guidance.recommendedAction || guidance.answerDirection,
+                'answer_directly',
+              ),
+      confidence: guidance.confidence,
+      reason:
+        guidance.blocker || guidance.uncertainty || guidance.answerDirection,
+      evidenceRefs: (guidance.evidenceIds || []).slice(0, 12),
+      advisoryOnly: true,
+    });
+  }
+  if (input.cognitiveRun) {
+    const blockingGovernance = input.cognitiveRun.governanceDecisions.find(
+      (item) => item.status === 'block',
+    );
+    recommendations.push({
+      module: 'cognitive_kernel',
+      posture: blockingGovernance
+        ? 'stop_safely'
+        : input.cognitiveRun.approvalPackets.length > 0
+          ? 'request_approval'
+          : 'present_plan',
+      confidence: Math.max(
+        0,
+        Math.min(1, input.cognitiveRun.trajectoryScore.overallScore || 0.65),
+      ),
+      reason:
+        blockingGovernance?.reason ||
+        'The cognitive kernel prepared a bounded task graph; execution remains governed elsewhere.',
+      evidenceRefs: input.cognitiveRun.evidenceArtifacts
+        .map((item) => item.artifactId)
+        .slice(0, 12),
+      advisoryOnly: true,
+    });
+  }
+  if (input.logicRun?.report) {
+    recommendations.push({
+      module: 'logic_kernel',
+      posture:
+        input.logicRun.report.contradictions.length > 0 ||
+        input.logicRun.report.missingPremises.length > 0
+          ? 'ask_clarification'
+          : unifiedPostureFromText(
+              input.logicRun.report.selectedNextAction,
+              'present_plan',
+            ),
+      confidence: input.logicRun.report.confidence,
+      reason: input.logicRun.report.summary,
+      evidenceRefs: input.logicRun.report.evidenceLinks
+        .map((item) => item.evidenceId)
+        .slice(0, 12),
+      advisoryOnly: true,
+    });
+  }
+  if (input.runtimeSpine) {
+    recommendations.push({
+      module: 'runtime_spine',
+      posture: input.runtimeSpine.report.ok
+        ? 'present_plan'
+        : 'defer_missing_precondition',
+      confidence: input.runtimeSpine.report.ok ? 0.7 : 0.85,
+      reason:
+        input.runtimeSpine.report.nextAction ||
+        'Runtime spine is prepared; authoritative durable execution remains separate.',
+      evidenceRefs: [input.runtimeSpine.run.runtimeRunId],
+      advisoryOnly: true,
+    });
+  }
+  return recommendations.slice(0, 12);
+}
+
 export async function beginTurnAgentHarness(
   input: BeginTurnAgentHarnessInput,
 ): Promise<TurnAgentHarnessContext | null> {
@@ -1258,6 +1403,72 @@ export async function beginTurnAgentHarness(
       capabilityAcquisition.durableWorkLinked,
     );
   }
+  const unifiedMode = resolveUnifiedGroundedCognitionMode();
+  const requestedGroundedAdvisoryMode = resolveGroundedAdvisoryMode();
+  const modeValidation = validateUnifiedCognitionModes({
+    unifiedMode,
+    groundedAdvisoryMode: requestedGroundedAdvisoryMode,
+  });
+  const groundedAdvisoryMode = modeValidation.valid
+    ? modeValidation.effectiveAdvisoryMode
+    : 'shadow';
+  contextCompile.metadata.unified_cognition_mode_validation =
+    modeValidation.valid ? 'pass' : 'fail_closed';
+  contextCompile.metadata.unified_cognition_mode_reason = sanitizeMetadataValue(
+    modeValidation.reason,
+  );
+  const unifiedStartedAt = performance.now();
+  const canonicalMemoryBundle =
+    unifiedMode !== 'off' && isDatabaseInitialized() && runOrigin === 'live'
+      ? loadGroundedContextBundle({
+          topics: [taskFamily, input.text],
+          now: new Date().toISOString(),
+          maxItems: 10,
+          maxChars: 5_000,
+        })
+      : null;
+  let unifiedGroundedCognition: UnifiedGroundedCognitiveFrame | null = null;
+  if (unifiedMode !== 'off') {
+    try {
+      unifiedGroundedCognition = buildUnifiedGroundedCognitiveFrame({
+        turnId: input.turnId,
+        conversationId: input.chatId || input.groupFolder || input.turnId,
+        channel: input.channel,
+        actorId: input.actorId,
+        groupFolder: input.groupFolder,
+        text: input.text,
+        runOrigin,
+        taskFamily,
+        requestRoute: input.requestRoute,
+        mode: groundedAdvisoryMode,
+        memoryBundle: canonicalMemoryBundle,
+        personalContextPacket,
+        blockers: input.knownBlockers,
+        approvalRequired:
+          contextCompile.selectedSkill.approvalNeed === 'explicit',
+        moduleRecommendations: buildUnifiedModuleRecommendations({
+          deliberation,
+          providerCouncil,
+          cognitiveRun,
+          logicRun,
+          runtimeSpine,
+        }),
+        cognitiveRunId: cognitiveRun?.run.runId || null,
+        durableWorkId: runtimeSpine?.durableWork?.workId || null,
+      });
+      Object.assign(
+        contextCompile.metadata,
+        unifiedPersistedMetadata(unifiedGroundedCognition),
+      );
+      contextCompile.metadata.unified_cognition_build_latency_ms = String(
+        Math.round((performance.now() - unifiedStartedAt) * 100) / 100,
+      );
+    } catch {
+      contextCompile.metadata.unified_cognition_frame_state = 'build_failed';
+    }
+  } else {
+    contextCompile.metadata.unified_cognition_mode = 'off';
+  }
   const groundedExecutive = tryBeginGroundedExecutiveForTurn({
     turnId: input.turnId,
     channel: input.channel,
@@ -1268,32 +1479,43 @@ export async function beginTurnAgentHarness(
     personalContextPacket,
     knownBlockers: input.knownBlockers,
     metadata: contextCompile.metadata,
+    unifiedFrame: unifiedGroundedCognition,
   });
-  const groundedAdvisoryMode = resolveGroundedAdvisoryMode();
+  const groundedDecision = groundedExecutive?.decisions.at(-1) || null;
+  if (unifiedGroundedCognition && groundedDecision && groundedExecutive) {
+    unifiedGroundedCognition = attachUnifiedGroundedDecision(
+      unifiedGroundedCognition,
+      groundedExecutive.stateId,
+      groundedDecision,
+    );
+  }
   let groundedDeliberation: GroundedDeliberationPacket | null = null;
   if (groundedAdvisoryMode !== 'off') {
     const advisoryStartedAt = performance.now();
     try {
       const now = new Date().toISOString();
-      const memoryBundle =
-        isDatabaseInitialized() && runOrigin === 'live'
-          ? loadGroundedContextBundle({
-              topics: [taskFamily, input.text],
-              now,
-              maxItems: 8,
-              maxChars: 4_000,
-            })
-          : null;
       groundedDeliberation = buildGroundedDeliberationPacket({
         turnId: input.turnId,
         text: input.text,
         mode: groundedAdvisoryMode,
         now,
-        memoryBundle,
+        memoryBundle: canonicalMemoryBundle,
         personalContextPacket,
-        executiveDecision: groundedExecutive?.decisions.at(-1)?.kind || null,
+        executiveDecision: groundedDecision?.kind || null,
         blockers: input.knownBlockers,
+        unifiedFrame: unifiedGroundedCognition,
       });
+      if (unifiedGroundedCognition) {
+        unifiedGroundedCognition = attachUnifiedResponseContract(
+          unifiedGroundedCognition,
+          groundedDeliberation.packetId,
+          groundedDeliberation.responseContract,
+        );
+        Object.assign(
+          contextCompile.metadata,
+          unifiedPersistedMetadata(unifiedGroundedCognition),
+        );
+      }
       contextCompile.metadata.grounded_advisory_mode = groundedAdvisoryMode;
       contextCompile.metadata.grounded_advisory_packet_id =
         groundedDeliberation.packetId;
@@ -1372,6 +1594,7 @@ export async function beginTurnAgentHarness(
     capabilityAcquisition,
     groundedExecutive,
     groundedDeliberation,
+    unifiedGroundedCognition,
   };
 }
 
@@ -1944,6 +2167,16 @@ export function evaluateTurnReply(
     ].every(Boolean)
       ? 'pass'
       : 'fail';
+    if (input.context!.unifiedGroundedCognition) {
+      input.context!.unifiedGroundedCognition = attachUnifiedResponseEvaluation(
+        input.context!.unifiedGroundedCognition,
+        groundedResponseEvaluation,
+      );
+      Object.assign(
+        input.context!.contextCompile.metadata,
+        unifiedPersistedMetadata(input.context!.unifiedGroundedCognition),
+      );
+    }
   }
 
   const actualEvidence = evidence[0]?.actualLevel || 'unknown';
@@ -2101,6 +2334,47 @@ export async function reflectTurnAgentOutcome(input: {
     blockerClass: input.blockerClass,
   });
   if (context) {
+    if (context.unifiedGroundedCognition) {
+      const verifiedCompletionEvidence = (
+        input.completionEvidence || []
+      ).filter(
+        (item) =>
+          item.verification === 'verified' && item.freshness === 'fresh',
+      );
+      const providerReceiptIds = verifiedCompletionEvidence
+        .filter((item) => /receipt|provider/i.test(item.source))
+        .map((item) => item.evidenceId);
+      const requestedOutcomeVerified = verifiedCompletionEvidence.some(
+        (item) => item.supportsCriterionIds.length > 0,
+      );
+      context.unifiedGroundedCognition = observeUnifiedOutcome(
+        context.unifiedGroundedCognition,
+        {
+          routeUsed: input.routeUsed,
+          blockerClass: input.blockerClass,
+          responseStatus: input.evaluation.status,
+          toolCallAccepted: (input.completionEvidence || []).length > 0,
+          toolReturnedSuccess: verifiedCompletionEvidence.length > 0,
+          providerReceiptIds,
+          requestedOutcomeVerified,
+          goalAchieved:
+            requestedOutcomeVerified &&
+            context.contextCompile.metadata.grounded_completion_authorized ===
+              'true',
+          partial:
+            input.answerClass === 'degraded' ||
+            input.evaluation.evidenceGap === 'minor' ||
+            input.evaluation.evidenceGap === 'major',
+          evidenceRefs: verifiedCompletionEvidence.map(
+            (item) => item.evidenceId,
+          ),
+        },
+      );
+      Object.assign(
+        context.contextCompile.metadata,
+        unifiedPersistedMetadata(context.unifiedGroundedCognition),
+      );
+    }
     learnGroundedTurnOutcome({
       context,
       evaluationStatus: input.evaluation.status,
@@ -2452,61 +2726,64 @@ export function tryBeginGroundedExecutiveForTurn(input: {
   personalContextPacket: PersonalContextPacket | null;
   knownBlockers?: string[];
   metadata: Record<string, string>;
+  unifiedFrame?: UnifiedGroundedCognitiveFrame | null;
 }): GroundedExecutiveState | null {
   if (!groundedExecutiveEnabled() || input.runOrigin !== 'live') return null;
   try {
     const now = new Date().toISOString();
     const conflictCount = input.personalContextPacket?.conflicts.length || 0;
-    const seedEvidence = [
-      groundedEvidence({
-        evidenceClass: 'user_attested',
-        origin: 'live',
-        source: `channel:${input.channel}`,
-        claim: input.objective,
-        subject: `turn:${input.turnId}`,
-        predicate: 'objective',
-        value: input.taskFamily,
-        confidence: 0.9,
-        createdAt: now,
-      }),
-      ...(conflictCount > 0
-        ? [
+    const seedEvidence = input.unifiedFrame
+      ? projectUnifiedEvidenceToGroundedExecutive(input.unifiedFrame)
+      : [
+          groundedEvidence({
+            evidenceClass: 'user_attested',
+            origin: 'live',
+            source: `channel:${input.channel}`,
+            claim: input.objective,
+            subject: `turn:${input.turnId}`,
+            predicate: 'objective',
+            value: input.taskFamily,
+            confidence: 0.9,
+            createdAt: now,
+          }),
+          ...(conflictCount > 0
+            ? [
+                groundedEvidence({
+                  evidenceClass: 'observed',
+                  origin: 'live',
+                  source: 'personal_context_packet',
+                  claim: `Personal context has ${conflictCount} conflicting item group(s) requiring review.`,
+                  subject: `turn:${input.turnId}`,
+                  predicate: 'personal_context_conflicts',
+                  value: String(conflictCount),
+                  confidence: 0.9,
+                  verification: 'verified',
+                  createdAt: now,
+                }),
+              ]
+            : []),
+          ...(input.knownBlockers || []).slice(0, 3).map((blocker) =>
             groundedEvidence({
               evidenceClass: 'observed',
               origin: 'live',
-              source: 'personal_context_packet',
-              claim: `Personal context has ${conflictCount} conflicting item group(s) requiring review.`,
+              source: 'known_blockers',
+              claim: `A known blocker is active: ${blocker}`,
               subject: `turn:${input.turnId}`,
-              predicate: 'personal_context_conflicts',
-              value: String(conflictCount),
-              confidence: 0.9,
-              verification: 'verified',
+              predicate: 'known_blocker',
+              value: blocker,
+              confidence: 0.8,
               createdAt: now,
             }),
-          ]
-        : []),
-      ...(input.knownBlockers || []).slice(0, 3).map((blocker) =>
-        groundedEvidence({
-          evidenceClass: 'observed',
-          origin: 'live',
-          source: 'known_blockers',
-          claim: `A known blocker is active: ${blocker}`,
-          subject: `turn:${input.turnId}`,
-          predicate: 'known_blocker',
-          value: blocker,
-          confidence: 0.8,
-          createdAt: now,
-        }),
-      ),
-    ];
-    // Bounded, read-only durable memory retrieval: relevant active records
-    // and informational goals become shadow evidence with full provenance.
-    const memoryBundle = loadGroundedContextBundle({
-      topics: [input.taskFamily, input.objective],
-      now,
-      maxItems: 8,
-    });
-    const memoryEvidence = memoryBundle.items.map((item) =>
+          ),
+        ];
+    const legacyMemoryBundle = input.unifiedFrame
+      ? null
+      : loadGroundedContextBundle({
+          topics: [input.taskFamily, input.objective],
+          now,
+          maxItems: 8,
+        });
+    const legacyMemoryEvidence = (legacyMemoryBundle?.items || []).map((item) =>
       groundedEvidence({
         evidenceClass:
           item.sourceType === 'user_statement'
@@ -2532,7 +2809,7 @@ export function tryBeginGroundedExecutiveForTurn(input: {
       channel: input.channel,
       route: input.requestRoute ?? null,
       turnRef: input.turnId,
-      evidence: [...seedEvidence, ...memoryEvidence],
+      evidence: [...seedEvidence, ...legacyMemoryEvidence],
       unknowns: [
         ...(conflictCount > 0
           ? [
@@ -2543,10 +2820,26 @@ export function tryBeginGroundedExecutiveForTurn(input: {
               },
             ]
           : []),
-        ...memoryBundle.contradictions.slice(0, 2).map((entry) => ({
-          description: `Durable memory holds conflicting records for ${entry.subjectKey}; neither value is settled.`,
-          impact: 'degrading' as const,
-        })),
+        ...(input.unifiedFrame?.arbitrations || [])
+          .filter((entry) =>
+            [
+              'contradicted',
+              'stale',
+              'insufficient_evidence',
+              'requires_user_clarification',
+            ].includes(entry.outcome),
+          )
+          .slice(0, 4)
+          .map((entry) => ({
+            description: entry.reason,
+            impact: 'degrading' as const,
+          })),
+        ...(legacyMemoryBundle?.contradictions || [])
+          .slice(0, 2)
+          .map((entry) => ({
+            description: `Durable memory holds conflicting records for ${entry.subjectKey}; neither value is settled.`,
+            impact: 'degrading' as const,
+          })),
       ],
       now,
     });
@@ -2557,17 +2850,35 @@ export function tryBeginGroundedExecutiveForTurn(input: {
     input.metadata.grounded_decision_confidence =
       decided.decision.confidence.toFixed(2);
     input.metadata.grounded_memory_retrieved = String(
-      memoryBundle.items.length,
+      input.unifiedFrame
+        ? input.unifiedFrame.evidence.filter((item) =>
+            [
+              'accepted_durable_memory',
+              'recent_direct_observation',
+              'reviewed_inference',
+            ].includes(item.sourceClass),
+          ).length
+        : legacyMemoryBundle?.items.length || 0,
     );
     input.metadata.grounded_memory_excluded = String(
-      memoryBundle.excluded.length,
+      input.unifiedFrame?.excludedEvidence.length ||
+        legacyMemoryBundle?.excluded.length ||
+        0,
     );
     input.metadata.grounded_memory_contradictions = String(
-      memoryBundle.contradictions.length,
+      input.unifiedFrame
+        ? input.unifiedFrame.arbitrations.filter(
+            (item) => item.outcome === 'contradicted',
+          ).length
+        : legacyMemoryBundle?.contradictions.length || 0,
     );
-    input.metadata.grounded_memory_goals = String(memoryBundle.goals.length);
-    if (memoryBundle.goals.length > 0) {
-      input.metadata.grounded_goal_review_suggested = memoryBundle.goals
+    input.metadata.grounded_memory_goals = String(
+      input.unifiedFrame?.goals.length || legacyMemoryBundle?.goals.length || 0,
+    );
+    const reviewGoals =
+      input.unifiedFrame?.goals || legacyMemoryBundle?.goals || [];
+    if (reviewGoals.length > 0) {
+      input.metadata.grounded_goal_review_suggested = reviewGoals
         .slice(0, 3)
         .map((goal) => goal.goalId)
         .join(',');
@@ -2703,6 +3014,16 @@ function learnGroundedTurnOutcome(input: {
         reviewNote: null,
         sourceTurnId: state.turnRef,
       });
+    }
+    if (
+      input.context.unifiedGroundedCognition?.runOrigin === 'live' &&
+      input.context.unifiedGroundedCognition.learningCandidates.length > 0
+    ) {
+      lessons.push(
+        ...unifiedLearningAsGroundedRecords(
+          input.context.unifiedGroundedCognition,
+        ),
+      );
     }
     const learningCount = persistGroundedLearning(lessons, now);
     // Durable memory candidates: only beliefs grounded at `likely` or better,

@@ -8,7 +8,9 @@ import {
   listGroundedDecisionJournal,
 } from './db.js';
 import {
+  beginTurnAgentHarness,
   compileTurnContext,
+  evaluateTurnReply,
   reconcileTurnRuntimeEvidence,
   reflectTurnAgentOutcome,
   tryBeginGroundedExecutiveForTurn,
@@ -90,6 +92,62 @@ describe('turn-agent-harness grounded hooks (observe-only)', () => {
 
   afterEach(() => {
     _closeDatabase();
+  });
+
+  it('uses one canonical frame for the grounded executive and response contract', async () => {
+    const priorUnified = process.env.UNIFIED_GROUNDED_COGNITION_MODE;
+    const priorAdvisory = process.env.GROUNDED_ADVISORY_MODE;
+    process.env.UNIFIED_GROUNDED_COGNITION_MODE = 'shadow';
+    process.env.GROUNDED_ADVISORY_MODE = 'shadow';
+    try {
+      const context = await beginTurnAgentHarness({
+        turnId: 'unified-turn',
+        channel: 'telegram',
+        text: 'Explain the architecture and summarize the risks.',
+        runOrigin: 'live',
+      });
+      expect(context?.unifiedGroundedCognition).not.toBeNull();
+      expect(context?.groundedExecutive).not.toBeNull();
+      expect(context?.groundedDeliberation).not.toBeNull();
+      expect(context?.groundedDeliberation?.intents).toEqual(
+        context?.unifiedGroundedCognition?.intents,
+      );
+      expect(
+        context?.groundedDeliberation?.selectedEvidence.map((item) => item.ref),
+      ).toEqual(
+        context?.unifiedGroundedCognition?.evidence.map(
+          (item) => item.evidenceId,
+        ),
+      );
+      expect(
+        context?.unifiedGroundedCognition?.trace.groundedDecisionId,
+      ).toBeTruthy();
+      expect(
+        context?.unifiedGroundedCognition?.trace.deliberationPacketId,
+      ).toBe(context?.groundedDeliberation?.packetId);
+      expect(context?.contextCompile.metadata.unified_cognition_mode).toBe(
+        'shadow',
+      );
+
+      evaluateTurnReply({
+        context,
+        text: 'The architecture coordinates evidence. The risks include stale context.',
+        responseSource: 'container_agent',
+      });
+      expect(
+        context?.unifiedGroundedCognition?.trace.responseEvaluationId,
+      ).toBeTruthy();
+      expect(
+        context?.unifiedGroundedCognition?.invariants.executionAuthority,
+      ).toBe(false);
+    } finally {
+      if (priorUnified === undefined)
+        delete process.env.UNIFIED_GROUNDED_COGNITION_MODE;
+      else process.env.UNIFIED_GROUNDED_COGNITION_MODE = priorUnified;
+      if (priorAdvisory === undefined)
+        delete process.env.GROUNDED_ADVISORY_MODE;
+      else process.env.GROUNDED_ADVISORY_MODE = priorAdvisory;
+    }
   });
 
   it('reconcileTurnRuntimeEvidence folds runtime outcomes into shadow beliefs without changing its result', () => {
