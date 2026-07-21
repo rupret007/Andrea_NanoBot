@@ -2,7 +2,9 @@
 
 See also: [GROUNDED_MEMORY_GOAL_CONTINUITY.md](GROUNDED_MEMORY_GOAL_CONTINUITY.md)
 — the durable memory and goal-continuity layer that feeds this loop's
-shadow turns with evidence-backed context across restarts.
+shadow turns with evidence-backed context across restarts—and
+[GROUNDED_RESPONSE_INTELLIGENCE.md](GROUNDED_RESPONSE_INTELLIGENCE.md), which
+uses the executive's posture in a bounded shadow-by-default response contract.
 
 A closed cognitive loop that turns observations and goals into
 evidence-backed beliefs, inspectable plans, verified outcomes, and

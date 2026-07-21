@@ -67,6 +67,14 @@ import {
   rememberGroundedMemory,
 } from './grounded-memory-durable-adapter.js';
 import {
+  buildGroundedDeliberationPacket,
+  evaluateGroundedResponse,
+  repairGroundedResponse,
+  resolveGroundedAdvisoryMode,
+  type GroundedDeliberationPacket,
+  type GroundedResponseEvaluation,
+} from './grounded-response-intelligence.js';
+import {
   beginLogicKernelRun,
   evaluateLogicAnswerSupport,
   type LogicKernelResult,
@@ -197,6 +205,7 @@ export interface PreSendEvaluation {
   memoryEffect: 'helpful' | 'neutral' | 'harmful' | 'unknown';
   summary: string;
   truthVerdict?: TruthVerdict | null;
+  groundedResponseEvaluation?: GroundedResponseEvaluation | null;
 }
 
 export interface CouncilGuidedReply {
@@ -256,6 +265,12 @@ export interface TurnAgentHarnessContext {
    * never alters routing, gating, delivery, or approval results.
    */
   groundedExecutive?: GroundedExecutiveState | null;
+  /**
+   * Bounded advisory packet. `executionAuthority` is structurally false; in
+   * shadow mode it is observed only, and in assistive mode it may drive one
+   * text-only pre-send repair after existing authority checks.
+   */
+  groundedDeliberation?: GroundedDeliberationPacket | null;
 }
 
 export interface BeginTurnAgentHarnessInput {
@@ -1243,6 +1258,85 @@ export async function beginTurnAgentHarness(
       capabilityAcquisition.durableWorkLinked,
     );
   }
+  const groundedExecutive = tryBeginGroundedExecutiveForTurn({
+    turnId: input.turnId,
+    channel: input.channel,
+    objective: buildSanitizedGoal(input, taskFamily),
+    taskFamily,
+    requestRoute: input.requestRoute,
+    runOrigin,
+    personalContextPacket,
+    knownBlockers: input.knownBlockers,
+    metadata: contextCompile.metadata,
+  });
+  const groundedAdvisoryMode = resolveGroundedAdvisoryMode();
+  let groundedDeliberation: GroundedDeliberationPacket | null = null;
+  if (groundedAdvisoryMode !== 'off') {
+    const advisoryStartedAt = performance.now();
+    try {
+      const now = new Date().toISOString();
+      const memoryBundle =
+        isDatabaseInitialized() && runOrigin === 'live'
+          ? loadGroundedContextBundle({
+              topics: [taskFamily, input.text],
+              now,
+              maxItems: 8,
+              maxChars: 4_000,
+            })
+          : null;
+      groundedDeliberation = buildGroundedDeliberationPacket({
+        turnId: input.turnId,
+        text: input.text,
+        mode: groundedAdvisoryMode,
+        now,
+        memoryBundle,
+        personalContextPacket,
+        executiveDecision: groundedExecutive?.decisions.at(-1)?.kind || null,
+        blockers: input.knownBlockers,
+      });
+      contextCompile.metadata.grounded_advisory_mode = groundedAdvisoryMode;
+      contextCompile.metadata.grounded_advisory_packet_id =
+        groundedDeliberation.packetId;
+      contextCompile.metadata.grounded_advisory_intent_count = String(
+        groundedDeliberation.intents.length,
+      );
+      contextCompile.metadata.grounded_advisory_intent_classes =
+        groundedDeliberation.intents
+          .map((intent) => intent.actionClass)
+          .join(',') || 'none';
+      contextCompile.metadata.grounded_advisory_memory_included = String(
+        groundedDeliberation.selectedEvidence.filter(
+          (item) => item.source === 'grounded_memory',
+        ).length,
+      );
+      contextCompile.metadata.grounded_advisory_memory_excluded = String(
+        groundedDeliberation.excludedEvidence.length,
+      );
+      contextCompile.metadata.grounded_advisory_contradictions = String(
+        groundedDeliberation.contradictions.length,
+      );
+      contextCompile.metadata.grounded_advisory_unknowns = String(
+        groundedDeliberation.unknowns.length,
+      );
+      contextCompile.metadata.grounded_advisory_posture =
+        groundedDeliberation.recommendedPosture;
+      contextCompile.metadata.grounded_advisory_context_chars = String(
+        groundedDeliberation.budgets.contextChars,
+      );
+      contextCompile.metadata.grounded_advisory_authority = 'none';
+      contextCompile.metadata.grounded_advisory_raw_messages_stored = 'false';
+      contextCompile.metadata.grounded_advisory_build_latency_ms = String(
+        Math.round((performance.now() - advisoryStartedAt) * 100) / 100,
+      );
+      // The advisory layer must never replace the existing response path.
+      // eslint-disable-next-line no-catch-all/no-catch-all
+    } catch {
+      contextCompile.metadata.grounded_advisory_mode = groundedAdvisoryMode;
+      contextCompile.metadata.grounded_advisory_packet_state = 'build_failed';
+    }
+  } else {
+    contextCompile.metadata.grounded_advisory_mode = 'off';
+  }
   return {
     turnId: input.turnId,
     channel: input.channel,
@@ -1276,17 +1370,8 @@ export async function beginTurnAgentHarness(
     personalContextPacket,
     verifiedDeepWorkPacket,
     capabilityAcquisition,
-    groundedExecutive: tryBeginGroundedExecutiveForTurn({
-      turnId: input.turnId,
-      channel: input.channel,
-      objective: buildSanitizedGoal(input, taskFamily),
-      taskFamily,
-      requestRoute: input.requestRoute,
-      runOrigin,
-      personalContextPacket,
-      knownBlockers: input.knownBlockers,
-      metadata: contextCompile.metadata,
-    }),
+    groundedExecutive,
+    groundedDeliberation,
   };
 }
 
@@ -1712,6 +1797,9 @@ export function evaluateTurnReply(
     flags.push('operator_leakage_repaired');
     safeRewriteApplied = true;
   }
+
+  let groundedResponseEvaluation: GroundedResponseEvaluation | null = null;
+  const groundedDeliberation = input.context?.groundedDeliberation;
   if (directives.has('strip_internal_leakage')) {
     flags.push('directive:strip_internal_leakage_active');
   }
@@ -1797,6 +1885,67 @@ export function evaluateTurnReply(
     safeRewriteApplied = true;
   }
 
+  if (groundedDeliberation) {
+    const groundedEvaluationStartedAt = performance.now();
+    const baselineEvaluation = evaluateGroundedResponse(
+      groundedDeliberation,
+      rewritten,
+    );
+    groundedResponseEvaluation = baselineEvaluation;
+    input.context!.contextCompile.metadata.grounded_advisory_baseline_status =
+      baselineEvaluation.status;
+    input.context!.contextCompile.metadata.grounded_advisory_baseline_score =
+      String(baselineEvaluation.score);
+    input.context!.contextCompile.metadata.grounded_advisory_baseline_issues =
+      baselineEvaluation.issues.map((issue) => issue.kind).join(',') || 'none';
+    input.context!.contextCompile.metadata.grounded_advisory_covered_intents =
+      String(baselineEvaluation.coveredIntentIds.length);
+    input.context!.contextCompile.metadata.grounded_advisory_missed_intents =
+      String(baselineEvaluation.missedIntentIds.length);
+    if (
+      groundedDeliberation.mode === 'assistive' &&
+      baselineEvaluation.status !== 'pass'
+    ) {
+      const repair = repairGroundedResponse(
+        groundedDeliberation,
+        rewritten,
+        baselineEvaluation,
+      );
+      rewritten = repair.text;
+      groundedResponseEvaluation = repair.evaluation;
+      if (repair.applied) {
+        safeRewriteApplied = true;
+        flags.push('grounded_advisory_repair');
+      }
+      input.context!.contextCompile.metadata.grounded_advisory_repair_reason =
+        repair.reason;
+      input.context!.contextCompile.metadata.grounded_advisory_repair_attempts =
+        String(repair.attempts);
+      input.context!.contextCompile.metadata.grounded_advisory_assistive_status =
+        repair.evaluation.status;
+      input.context!.contextCompile.metadata.grounded_advisory_assistive_score =
+        String(repair.evaluation.score);
+    } else {
+      input.context!.contextCompile.metadata.grounded_advisory_repair_attempts =
+        '0';
+      input.context!.contextCompile.metadata.grounded_advisory_assistive_status =
+        'not_applied';
+    }
+    input.context!.contextCompile.metadata.grounded_advisory_eval_latency_ms =
+      String(
+        Math.round((performance.now() - groundedEvaluationStartedAt) * 100) /
+          100,
+      );
+    input.context!.contextCompile.metadata.grounded_advisory_invariants = [
+      groundedResponseEvaluation.invariantResults.noExecutionAuthority,
+      groundedResponseEvaluation.invariantResults.noPrivacyViolation,
+      groundedResponseEvaluation.invariantResults.noUnsupportedCompletion,
+      groundedResponseEvaluation.invariantResults.allOriginalClausesRetained,
+    ].every(Boolean)
+      ? 'pass'
+      : 'fail';
+  }
+
   const actualEvidence = evidence[0]?.actualLevel || 'unknown';
   const councilDirectives =
     input.context?.providerCouncil?.structuredVerdict?.actionDirectives ||
@@ -1813,25 +1962,38 @@ export function evaluateTurnReply(
         : truthVerdict.calibration.status === 'warn'
           ? 'minor'
           : 'none';
+  const groundedAssistiveBlock =
+    groundedDeliberation?.mode === 'assistive' &&
+    groundedResponseEvaluation?.status === 'block';
+  const groundedAssistiveRepairRemaining =
+    groundedDeliberation?.mode === 'assistive' &&
+    groundedResponseEvaluation?.status === 'repair';
   const evidenceGap =
-    verifierStop || input.blockerClass || actualEvidence === 'weak'
+    groundedAssistiveBlock ||
+    verifierStop ||
+    input.blockerClass ||
+    actualEvidence === 'weak'
       ? 'blocked'
-      : truthEvidenceGap !== 'none'
-        ? truthEvidenceGap
-        : input.context?.deliberation?.expectedEvidence === 'strong' &&
-            actualEvidence !== 'strong'
-          ? 'minor'
-          : 'none';
+      : groundedAssistiveRepairRemaining
+        ? 'major'
+        : truthEvidenceGap !== 'none'
+          ? truthEvidenceGap
+          : input.context?.deliberation?.expectedEvidence === 'strong' &&
+              actualEvidence !== 'strong'
+            ? 'minor'
+            : 'none';
   const status = verifierStop
     ? 'block'
-    : truthVerdict.calibration.status === 'block'
+    : groundedAssistiveBlock
       ? 'block'
-      : evidenceGap === 'blocked'
-        ? 'warn'
-        : truthVerdict.calibration.status === 'clarify' ||
-            truthVerdict.calibration.status === 'warn'
+      : truthVerdict.calibration.status === 'block'
+        ? 'block'
+        : evidenceGap === 'blocked'
           ? 'warn'
-          : 'pass';
+          : truthVerdict.calibration.status === 'clarify' ||
+              truthVerdict.calibration.status === 'warn'
+            ? 'warn'
+            : 'pass';
   return {
     status,
     evidenceLevel: actualEvidence,
@@ -1848,6 +2010,7 @@ export function evaluateTurnReply(
         ? `Pre-send evaluator applied ${flags.join(', ')}.`
         : 'Pre-send evaluator found no blocking issue.',
     truthVerdict,
+    groundedResponseEvaluation,
   };
 }
 

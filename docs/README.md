@@ -133,6 +133,7 @@ Use these when you are enabling or validating specific capabilities:
 | Telegram operator live testing         | [TELEGRAM_OPERATOR_LIVE_TESTING.md](TELEGRAM_OPERATOR_LIVE_TESTING.md)                     |
 | Follow-Through Reviews / Approvals     | [ACTION_BUNDLES.md](ACTION_BUNDLES.md)                                                     |
 | Delegation Rules / Safe Automation     | [DELEGATION_RULES_AND_SAFE_AUTOMATION.md](DELEGATION_RULES_AND_SAFE_AUTOMATION.md)         |
+| Grounded response intelligence         | [GROUNDED_RESPONSE_INTELLIGENCE.md](GROUNDED_RESPONSE_INTELLIGENCE.md)                     |
 | Messaging Trust Ladder / Live Delivery | [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md) |
 | Outcome Tracking / Reviews             | [OUTCOME_TRACKING_AND_REVIEWS.md](OUTCOME_TRACKING_AND_REVIEWS.md)                         |
 | Adaptive cognition core and rollout    | [ADAPTIVE_COGNITIVE_CORE.md](ADAPTIVE_COGNITIVE_CORE.md)                                   |

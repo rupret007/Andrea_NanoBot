@@ -257,6 +257,7 @@ import {
   type PreSendEvaluation,
   type TurnAgentHarnessContext,
 } from './turn-agent-harness.js';
+import { formatGroundedDeliberationGuidance } from './grounded-response-intelligence.js';
 import { TurnRuntimeEvidenceScope } from './turn-runtime-evidence-scope.js';
 import {
   buildPendingPostDeliveryReflectionRefs,
@@ -5145,7 +5146,7 @@ async function processClaimedGroupMessages(
       ? maybeBuildDirectQuickReply(missedMessages)
       : null;
 
-  const prompt = buildAssistantPromptWithPersonalization(
+  let prompt = buildAssistantPromptWithPersonalization(
     formatMessages(promptMessages, TIMEZONE),
     {
       channel: conversationChannel,
@@ -5288,6 +5289,20 @@ async function processClaimedGroupMessages(
           chatId: chatJid,
         });
   const turnHarnessCompletedAt = Date.now();
+  if (turnAgentHarness?.groundedDeliberation?.mode === 'assistive') {
+    prompt = [
+      prompt,
+      '',
+      '<grounded-response-advisory>',
+      formatGroundedDeliberationGuidance(turnAgentHarness.groundedDeliberation),
+      '</grounded-response-advisory>',
+    ].join('\n');
+    turnAgentHarness.contextCompile.metadata.grounded_advisory_prompt_injected =
+      'true';
+  } else if (turnAgentHarness) {
+    turnAgentHarness.contextCompile.metadata.grounded_advisory_prompt_injected =
+      'false';
+  }
   const interactionTurnId = randomUUID();
   let primaryDeliveryCompleted = false;
   let latestDeliveredTurnEvaluation: PreSendEvaluation | null = null;
