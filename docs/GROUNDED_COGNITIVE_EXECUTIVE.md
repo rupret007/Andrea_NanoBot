@@ -5,6 +5,10 @@ See also: [GROUNDED_MEMORY_GOAL_CONTINUITY.md](GROUNDED_MEMORY_GOAL_CONTINUITY.m
 shadow turns with evidence-backed context across restarts—and
 [GROUNDED_RESPONSE_INTELLIGENCE.md](GROUNDED_RESPONSE_INTELLIGENCE.md), which
 uses the executive's posture in a bounded shadow-by-default response contract.
+The integrated live path is coordinated by
+[UNIFIED_GROUNDED_COGNITIVE_LOOP.md](UNIFIED_GROUNDED_COGNITIVE_LOOP.md), which
+projects one canonical evidence selection into both systems without replacing
+this executive or granting action authority.
 
 A closed cognitive loop that turns observations and goals into
 evidence-backed beliefs, inspectable plans, verified outcomes, and
@@ -40,13 +44,13 @@ Learning / Calibration ─── durable journals, calibration samples, and
 
 ## Modules
 
-| File                                        | Role                                                                       |
-| ------------------------------------------- | -------------------------------------------------------------------------- |
-| `src/grounded-cognitive-executive.ts`       | Pure, deterministic loop composed from adaptive-cognition-engine           |
-| `src/grounded-executive-durable-adapter.ts` | Persistence: journals, learning lifecycle, tool-reliability bridge         |
-| `src/turn-agent-harness.ts` (hooks)         | Observe-only shadow state per live turn                                    |
-| `src/grounded-executive-eval.ts`            | Deterministic 12-scenario evaluation harness                               |
-| `scripts/test-grounded-executive.ts`        | Runner: eval + durable round-trip (`npm run test:grounded-executive`)      |
+| File                                        | Role                                                                  |
+| ------------------------------------------- | --------------------------------------------------------------------- |
+| `src/grounded-cognitive-executive.ts`       | Pure, deterministic loop composed from adaptive-cognition-engine      |
+| `src/grounded-executive-durable-adapter.ts` | Persistence: journals, learning lifecycle, tool-reliability bridge    |
+| `src/turn-agent-harness.ts` (hooks)         | Observe-only shadow state per live turn                               |
+| `src/grounded-executive-eval.ts`            | Deterministic 12-scenario evaluation harness                          |
+| `scripts/test-grounded-executive.ts`        | Runner: eval + durable round-trip (`npm run test:grounded-executive`) |
 
 ## Epistemic tiers
 
@@ -103,8 +107,8 @@ back into planning, and `applyGroundedLearningToPlanning` may adjust only
 planning estimates (success probability, tool health, information gain) —
 approval requirements and action identity pass through untouched.
 
-Per [`docs/SECURITY.md`](SECURITY.md) §7, learning changes *planning
-truth, never action authority*:
+Per [`docs/SECURITY.md`](SECURITY.md) §7, learning changes _planning
+truth, never action authority_:
 
 - `grounded_learning_records.applies_to_authority` is pinned to `0` by a
   schema `CHECK` constraint; the insert path hardcodes it.
@@ -120,12 +124,12 @@ truth, never action authority*:
 
 Four tables in `store/messages.db` (schema in `src/db.ts`):
 
-| Table                         | Purpose                                     | Mutability                        |
-| ----------------------------- | ------------------------------------------- | --------------------------------- |
-| `grounded_learning_records`   | Reviewable lessons                          | status transitions only, guarded  |
-| `grounded_belief_journal`     | Why each belief changed                     | append-only                       |
-| `grounded_decision_journal`   | Why each decision was chosen                | append-only                       |
-| `grounded_calibration_samples`| Predicted confidence vs verified outcome    | append-only (corrections add new) |
+| Table                          | Purpose                                  | Mutability                        |
+| ------------------------------ | ---------------------------------------- | --------------------------------- |
+| `grounded_learning_records`    | Reviewable lessons                       | status transitions only, guarded  |
+| `grounded_belief_journal`      | Why each belief changed                  | append-only                       |
+| `grounded_decision_journal`    | Why each decision was chosen             | append-only                       |
+| `grounded_calibration_samples` | Predicted confidence vs verified outcome | append-only (corrections add new) |
 
 All rows are bounded, redacted metadata (`redactStoredCognitiveMetadata`);
 no raw message content is stored.

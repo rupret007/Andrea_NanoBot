@@ -681,10 +681,24 @@ export interface GroundedContextItem {
 
 export interface GroundedContextGoalItem {
   goalId: string;
+  parentGoalId?: string | null;
   title: string;
+  objective?: string;
   state: GroundedGoalState;
+  stateReason?: string;
+  owner?: GroundedGoalRecord['owner'];
+  sourceType?: GroundedMemorySourceType;
+  evidenceRefs?: string[];
+  constraints?: string[];
+  successCriteria?: string[];
   blockers: string[];
   nextProposedStep: string | null;
+  approvalState?: 'not_applicable';
+  lastVerifiedOutcome?: string | null;
+  lastVerifiedAt?: string | null;
+  reviewBy?: string | null;
+  sourceTurnId?: string | null;
+  executionAuthority?: false;
   inclusionReason: string;
 }
 
@@ -694,6 +708,11 @@ export interface GroundedContextBundle {
   topics: string[];
   items: GroundedContextItem[];
   goals: GroundedContextGoalItem[];
+  /**
+   * Bounded terminal history prevents completed or cancelled goals from being
+   * silently resurrected by a later planner. It remains informational only.
+   */
+  terminalGoals?: GroundedContextGoalItem[];
   contradictions: Array<{
     subjectKey: string;
     recordIds: string[];
@@ -899,26 +918,53 @@ export function buildGroundedContextBundle(
       ),
     ...contradictions.map((entry) => entry.note),
   ]);
-  const goalItems: GroundedContextGoalItem[] = (input.goals || [])
+  const projectGoal = (goal: GroundedGoalRecord): GroundedContextGoalItem => ({
+    goalId: goal.goalId,
+    parentGoalId: goal.parentGoalId,
+    title: goal.title,
+    objective: goal.objective,
+    state: groundedGoalEffectiveState(goal, input.now),
+    stateReason: goal.stateReason,
+    owner: goal.owner,
+    sourceType: goal.sourceType,
+    evidenceRefs: goal.evidenceRefs,
+    constraints: goal.constraints,
+    successCriteria: goal.successCriteria,
+    blockers: goal.blockers,
+    nextProposedStep: ['completed', 'cancelled'].includes(
+      groundedGoalEffectiveState(goal, input.now),
+    )
+      ? null
+      : goal.nextProposedStep,
+    approvalState: 'not_applicable',
+    lastVerifiedOutcome: goal.lastVerifiedOutcome,
+    lastVerifiedAt: goal.lastVerifiedAt,
+    reviewBy: goal.reviewBy,
+    sourceTurnId: goal.sourceTurnId,
+    executionAuthority: false,
+    inclusionReason: `Included: ${groundedGoalEffectiveState(goal, input.now)} goal, informational only (no execution authority).`,
+  });
+  const sortedGoals = [...(input.goals || [])].sort(
+    (left, right) =>
+      Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
+      left.goalId.localeCompare(right.goalId),
+  );
+  const goalItems: GroundedContextGoalItem[] = sortedGoals
     .filter((goal) =>
       ['active', 'blocked', 'proposed'].includes(
         groundedGoalEffectiveState(goal, input.now),
       ),
     )
-    .sort(
-      (left, right) =>
-        Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
-        left.goalId.localeCompare(right.goalId),
+    .slice(0, Math.max(1, Math.min(10, maxItems)))
+    .map(projectGoal);
+  const terminalGoals: GroundedContextGoalItem[] = sortedGoals
+    .filter((goal) =>
+      ['completed', 'cancelled'].includes(
+        groundedGoalEffectiveState(goal, input.now),
+      ),
     )
     .slice(0, Math.max(1, Math.min(10, maxItems)))
-    .map((goal) => ({
-      goalId: goal.goalId,
-      title: goal.title,
-      state: groundedGoalEffectiveState(goal, input.now),
-      blockers: goal.blockers,
-      nextProposedStep: goal.nextProposedStep,
-      inclusionReason: `Included: ${groundedGoalEffectiveState(goal, input.now)} goal, informational only (no execution authority).`,
-    }));
+    .map(projectGoal);
   reasoning.push(
     `Included ${items.length} record(s) and ${goalItems.length} goal(s); excluded ${excluded.length} (${summarizeExclusions(excluded)}).`,
   );
@@ -931,6 +977,7 @@ export function buildGroundedContextBundle(
     topics: tokens,
     items,
     goals: goalItems,
+    terminalGoals,
     contradictions,
     uncertainties,
     excluded,

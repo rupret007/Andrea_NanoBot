@@ -1,5 +1,10 @@
 # Grounded Response Intelligence v1
 
+See [UNIFIED_GROUNDED_COGNITIVE_LOOP.md](UNIFIED_GROUNDED_COGNITIVE_LOOP.md)
+for the integrated path in which one canonical bounded frame supplies both the
+grounded executive and this response contract. The standalone builder remains
+available for compatibility and focused tests.
+
 ## Purpose
 
 Grounded Response Intelligence turns Andrea's existing shadow cognition into a bounded response-planning advisor. It improves clause coverage, target preservation, memory calibration, follow-through, approval wording, and partial-failure honesty. It does not add execution authority.

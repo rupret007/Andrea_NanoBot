@@ -22,6 +22,7 @@ const DEFAULT_RECEIPT_INBOX_PATH = '/bluebubbles/receipt-inbox';
 const DEFAULT_RECEIPT_INBOX_HEALTH_PATH = '/health';
 const MAX_RECEIPT_INBOX_PATH_LENGTH = 1_024;
 const MAX_WEBHOOK_SECRET_LENGTH = 4_096;
+const SUPPORTS_POSIX_PERMISSION_BITS = process.platform !== 'win32';
 
 export interface BlueBubblesReceiptInboxCliConfig {
   databasePath: string;
@@ -105,7 +106,9 @@ function hardenDatabaseFile(filePath: string): void {
       `BlueBubbles receipt inbox database file must be a regular file: ${filePath}`,
     );
   }
-  fs.chmodSync(filePath, 0o600);
+  if (SUPPORTS_POSIX_PERMISSION_BITS) {
+    fs.chmodSync(filePath, 0o600);
+  }
 }
 
 /**
@@ -126,7 +129,7 @@ export function prepareBlueBubblesReceiptInboxDatabasePath(
     );
   }
   const parentMode = parentStat.mode & 0o777;
-  if (parentMode !== 0o700) {
+  if (SUPPORTS_POSIX_PERMISSION_BITS && parentMode !== 0o700) {
     throw new Error(
       `BlueBubbles receipt inbox database directory must have mode 0700: ${parentDirectory}`,
     );

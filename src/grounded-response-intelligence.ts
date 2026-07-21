@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { GroundedDecisionKind } from './grounded-cognitive-executive.js';
 import type { GroundedContextBundle } from './grounded-memory.js';
 import type { PersonalContextPacket } from './types.js';
+import type { UnifiedGroundedCognitiveFrame } from './unified-grounded-cognition.js';
 
 /**
  * Grounded Response Intelligence is an advisory-only layer. It may describe
@@ -63,6 +64,9 @@ export interface GroundedSelectedEvidence {
     | 'context_graph'
     | 'goal'
     | 'route_health'
+    | 'tool_health'
+    | 'provider_receipt'
+    | 'approval'
     | 'blocker';
   summary: string;
   confidence: number;
@@ -170,9 +174,9 @@ export interface GroundedResponseRepairResult {
 }
 
 const REQUEST_VERBS =
-  /\b(?:tell|show|explain|find|look|research|check|compare|summarize|list|cite|confirm|continue|resume|save|transfer|what|when|where|which|who|why|how|can|could|would|please|schedule|book|create|add|move|reschedule|cancel|delete|remove|remind|message|text|send|reply|email|call|implement|fix|debug|diagnose|commit|push|deploy|restart|buy|purchase|order|post)\b/i;
-const MUTATION_VERBS =
-  /\b(?:send|message|text|email|reply|schedule|book|create|add|move|reschedule|cancel|delete|remove|change|edit|update|remind|save|transfer|post|implement|fix|commit|push|deploy|restart|buy|purchase|order)\b/i;
+  /\b(?:tell|show|explain|find|look|research|check|compare|summarize|list|cite|confirm|continue|resume|report|outline|review|read|answer|use|treat|record|evaluate|prefer|correction|what|when|where|which|who|why|how|is|are|was|were|did|does|can|could|would|please|schedule|book|create|add|move|reschedule|cancel|delete|remove|remind|message|text|send|reply|email|call|implement|fix|debug|diagnose|commit|push|deploy|restart|save|transfer|buy|purchase|order|post)\b/i;
+const MUTATION_REQUEST =
+  /^(?:(?:and|then|also)\s+)*(?:(?:can|could|would|will)\s+you\s+|(?:i\s+(?:want|need)\s+you\s+to\s+)|please\s+)?(?:send|message|text|email|reply|schedule|book|create|add|move|reschedule|cancel|delete|remove|change|edit|update|remind|save|transfer|post|implement|fix|commit|push|deploy|restart|buy|purchase|order)\b/i;
 const COMPLETION_CLAIMS =
   /\b(?:i(?:'ve| have)?|we(?:'ve| have)?)\s+(?:sent|scheduled|booked|created|added|moved|rescheduled|cancelled|canceled|deleted|updated|fixed|implemented|committed|pushed|deployed|restarted|purchased|ordered)\b|\b(?:done|completed successfully|all set)\b/i;
 const UNCERTAINTY_LANGUAGE =
@@ -333,7 +337,11 @@ function classifyAction(clause: string): {
   evidence: string[];
 } {
   const text = clause.toLowerCase();
-  const mutation = MUTATION_VERBS.test(text);
+  // Mutation words are frequently nouns or historical references (for
+  // example, "was the message delivered?" or "after restart"). Authority
+  // classification therefore requires a request-shaped leading verb instead
+  // of treating any mention of a mutation as a request to perform one.
+  const mutation = MUTATION_REQUEST.test(text);
   if (
     /^(?:(?:can|could|would)\s+you\s+|please\s+)?(?:schedule|book|reschedule)\b/.test(
       text,
@@ -434,9 +442,7 @@ function classifyAction(clause: string): {
           evidence: ['fresh repository or runtime evidence'],
         };
   }
-  if (
-    /\b(?:research|look up|search|find|compare|latest|current)\b/.test(text)
-  ) {
+  if (/\b(?:research|look up|search|find|latest|current)\b/.test(text)) {
     return {
       actionClass: 'research',
       mutability: 'read_only',
@@ -566,13 +572,19 @@ export function buildGroundedDeliberationPacket(input: {
   executiveDecision?: GroundedDecisionKind | null;
   routeHealth?: Array<{ route: string; status: string; detail?: string }>;
   blockers?: string[];
+  /**
+   * When present, this is the canonical evidence/intents source. Memory and
+   * context inputs remain for backward-compatible standalone diagnostics.
+   */
+  unifiedFrame?: UnifiedGroundedCognitiveFrame | null;
 }): GroundedDeliberationPacket {
   const createdAt = input.now || new Date().toISOString();
-  const mode = input.mode || resolveGroundedAdvisoryMode();
-  const intents = decomposeGroundedIntents(input.text);
+  const frame = input.unifiedFrame || null;
+  const mode = frame?.mode || input.mode || resolveGroundedAdvisoryMode();
+  const intents = frame?.intents || decomposeGroundedIntents(input.text);
   const bundle = input.memoryBundle || null;
   const personal = input.personalContextPacket || null;
-  const selectedEvidence: GroundedSelectedEvidence[] = [
+  const legacySelectedEvidence: GroundedSelectedEvidence[] = [
     {
       ref: `turn:${input.turnId}`,
       source: 'current_turn',
@@ -627,31 +639,106 @@ export function buildGroundedDeliberationPacket(input: {
       mayStateAsFact: true,
     })),
   ];
-  const contradictions = unique([
-    ...(bundle?.contradictions || []).map((item) => item.note),
-    ...(personal?.conflicts || []).map(
-      (item) => `Context graph has unresolved conflict for ${item.subjectKey}.`,
-    ),
-  ]).slice(0, 8);
-  const unknowns = unique([
-    ...(bundle?.uncertainties || []),
-    ...selectedEvidence
-      .filter((item) => !item.mayStateAsFact)
-      .map(
-        (item) => `${item.ref} is ${item.epistemicStatus}, not verified fact.`,
-      ),
-  ]).slice(0, 10);
+  const unifiedSelectedEvidence: GroundedSelectedEvidence[] = (
+    frame?.evidence || []
+  ).map((item) => ({
+    ref: item.evidenceId,
+    source:
+      item.sourceClass === 'current_user_statement'
+        ? ('current_turn' as const)
+        : item.sourceClass === 'accepted_durable_memory' ||
+            item.sourceClass === 'reviewed_inference' ||
+            item.sourceClass === 'unresolved_assumption'
+          ? ('grounded_memory' as const)
+          : item.sourceClass === 'commitment_or_goal' ||
+              item.sourceClass === 'verified_goal_outcome'
+            ? ('goal' as const)
+            : item.sourceClass === 'tool_health_observation'
+              ? ('tool_health' as const)
+              : item.sourceClass === 'verified_provider_receipt'
+                ? ('provider_receipt' as const)
+                : item.sourceClass === 'approval_record'
+                  ? ('approval' as const)
+                  : ('route_health' as const),
+    summary: bounded(item.claim, 240),
+    confidence: item.confidence,
+    epistemicStatus:
+      item.epistemicStatus === 'direct'
+        ? ('direct' as const)
+        : item.epistemicStatus === 'observed' ||
+            item.epistemicStatus === 'verified'
+          ? ('observed' as const)
+          : item.epistemicStatus === 'accepted'
+            ? ('accepted' as const)
+            : item.epistemicStatus === 'inferred'
+              ? ('inferred' as const)
+              : ('uncertain' as const),
+    mayStateAsFact: item.mayStateToUser,
+  }));
+  const selectedEvidence = frame
+    ? unifiedSelectedEvidence
+    : legacySelectedEvidence;
+  const contradictions = frame
+    ? unique(
+        frame.arbitrations
+          .filter((item) => item.outcome === 'contradicted')
+          .map((item) => item.reason),
+      ).slice(0, 8)
+    : unique([
+        ...(bundle?.contradictions || []).map((item) => item.note),
+        ...(personal?.conflicts || []).map(
+          (item) =>
+            `Context graph has unresolved conflict for ${item.subjectKey}.`,
+        ),
+      ]).slice(0, 8);
+  const unknowns = frame
+    ? unique(
+        frame.arbitrations
+          .filter((item) =>
+            [
+              'accepted_with_uncertainty',
+              'stale',
+              'insufficient_evidence',
+              'requires_user_clarification',
+            ].includes(item.outcome),
+          )
+          .map((item) => item.reason),
+      ).slice(0, 10)
+    : unique([
+        ...(bundle?.uncertainties || []),
+        ...selectedEvidence
+          .filter((item) => !item.mayStateAsFact)
+          .map(
+            (item) =>
+              `${item.ref} is ${item.epistemicStatus}, not verified fact.`,
+          ),
+      ]).slice(0, 10);
   const blockers = unique(input.blockers || []).slice(0, 8);
-  const commitments = (bundle?.goals || [])
-    .filter((goal) => ['active', 'blocked'].includes(goal.state))
-    .map((goal) => `${goal.goalId}: ${goal.title} (${goal.state})`)
-    .slice(0, 8);
-  const recommendedPosture = postureFrom(
-    intents,
-    input.executiveDecision,
-    contradictions,
-    blockers,
-  );
+  const commitments = frame
+    ? unique([
+        ...frame.commitments.map(
+          (item) => `${item.commitmentId}: ${item.summary} (${item.state})`,
+        ),
+        ...frame.goals
+          .filter((goal) => ['active', 'blocked', 'stale'].includes(goal.state))
+          .map((goal) => `${goal.goalId}: ${goal.title} (${goal.state})`),
+      ]).slice(0, 8)
+    : (bundle?.goals || [])
+        .filter((goal) => ['active', 'blocked'].includes(goal.state))
+        .map((goal) => `${goal.goalId}: ${goal.title} (${goal.state})`)
+        .slice(0, 8);
+  const recommendedPosture: GroundedResponsePosture = frame
+    ? frame.chosenPosture === 'ask_clarification' ||
+      frame.chosenPosture === 'request_approval'
+      ? 'ask'
+      : frame.chosenPosture === 'research_read_only'
+        ? 'research'
+        : frame.chosenPosture === 'defer_missing_precondition'
+          ? 'defer'
+          : frame.chosenPosture === 'stop_safely'
+            ? 'stop_safely'
+            : 'answer'
+    : postureFrom(intents, input.executiveDecision, contradictions, blockers);
   const mutating = intents.filter((intent) => intent.approvalRequired);
   const responseContract: GroundedResponseContract = {
     requiredIntentIds: intents.map((intent) => intent.intentId),
@@ -665,6 +752,7 @@ export function buildGroundedDeliberationPacket(input: {
       8,
     ),
     prohibitedClaims: unique([
+      ...(frame?.prohibitedCompletionClaims || []),
       'Do not claim an external mutation completed without authoritative same-target evidence.',
       'Do not present inference, stale context, or unresolved contradiction as verified fact.',
       'Do not imply that this advisory packet grants approval or execution authority.',
@@ -672,10 +760,13 @@ export function buildGroundedDeliberationPacket(input: {
         ? ['Do not hide a blocker or describe a partial outcome as complete.']
         : []),
     ]),
-    approvalBoundaries: mutating.map(
-      (intent) =>
-        `Intent ${intent.intentId} requires existing action-specific approval; this packet cannot satisfy or consume it.`,
-    ),
+    approvalBoundaries: unique([
+      ...(frame?.approvalBoundaries || []),
+      ...mutating.map(
+        (intent) =>
+          `Intent ${intent.intentId} requires existing action-specific approval; this packet cannot satisfy or consume it.`,
+      ),
+    ]),
     usefulReadOnlyWork: intents
       .filter(
         (intent) =>
@@ -725,9 +816,13 @@ export function buildGroundedDeliberationPacket(input: {
     mode,
     intents,
     selectedEvidence: boundedEvidence,
-    excludedEvidence: (bundle?.excluded || [])
-      .slice(0, 20)
-      .map((item) => ({ ref: item.recordId, reason: item.reason })),
+    excludedEvidence: frame
+      ? frame.excludedEvidence
+          .slice(0, 20)
+          .map((item) => ({ ref: item.ref, reason: item.reason }))
+      : (bundle?.excluded || [])
+          .slice(0, 20)
+          .map((item) => ({ ref: item.recordId, reason: item.reason })),
     contradictions,
     unknowns,
     commitments,

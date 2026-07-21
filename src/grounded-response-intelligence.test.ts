@@ -65,6 +65,22 @@ describe('grounded response intelligence', () => {
     ).toHaveLength(1);
   });
 
+  it('distinguishes an action request from a historical mutation reference', () => {
+    expect(decomposeGroundedIntents('Send Sam the report.')[0]).toMatchObject({
+      actionClass: 'communication_write',
+      approvalRequired: true,
+    });
+    expect(
+      decomposeGroundedIntents('Was the message actually delivered?')[0],
+    ).toMatchObject({
+      actionClass: 'communication_read',
+      approvalRequired: false,
+    });
+    expect(
+      decomposeGroundedIntents('Continue the active goal after restart.')[0],
+    ).toMatchObject({ approvalRequired: false });
+  });
+
   it('keeps execution authority structurally false and context bounded', () => {
     const result = packet('Research this and send a message to Sam.');
     expect(result.executionAuthority).toBe(false);

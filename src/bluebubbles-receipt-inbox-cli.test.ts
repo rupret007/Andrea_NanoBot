@@ -80,27 +80,36 @@ describe('BlueBubbles receipt inbox CLI config', () => {
     ).toBe('::1');
   });
 
-  it('creates a 0700 database parent and hardens SQLite files to 0600', () => {
+  it('creates a private database parent and hardens SQLite files where POSIX modes are supported', () => {
     const root = temporaryDirectory('permissions');
     const databasePath = path.join(root, 'private', 'receipt-inbox.sqlite3');
 
     prepareBlueBubblesReceiptInboxDatabasePath(databasePath);
-    expect(fs.statSync(path.dirname(databasePath)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(path.dirname(databasePath)).isDirectory()).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(path.dirname(databasePath)).mode & 0o777).toBe(0o700);
+    }
 
     fs.writeFileSync(databasePath, 'fixture', { mode: 0o644 });
     prepareBlueBubblesReceiptInboxDatabasePath(databasePath);
-    expect(fs.statSync(databasePath).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(databasePath).isFile()).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(databasePath).mode & 0o777).toBe(0o600);
+    }
   });
 
-  it('refuses an existing permissive custom database parent', () => {
-    const parent = path.join(temporaryDirectory('unsafe-parent'), 'shared');
-    fs.mkdirSync(parent, { mode: 0o755 });
-    fs.chmodSync(parent, 0o755);
+  it.skipIf(process.platform === 'win32')(
+    'refuses an existing permissive custom database parent',
+    () => {
+      const parent = path.join(temporaryDirectory('unsafe-parent'), 'shared');
+      fs.mkdirSync(parent, { mode: 0o755 });
+      fs.chmodSync(parent, 0o755);
 
-    expect(() =>
-      prepareBlueBubblesReceiptInboxDatabasePath(
-        path.join(parent, 'receipt-inbox.sqlite3'),
-      ),
-    ).toThrow(/must have mode 0700/i);
-  });
+      expect(() =>
+        prepareBlueBubblesReceiptInboxDatabasePath(
+          path.join(parent, 'receipt-inbox.sqlite3'),
+        ),
+      ).toThrow(/must have mode 0700/i);
+    },
+  );
 });
