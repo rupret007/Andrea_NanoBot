@@ -8843,3 +8843,75 @@ export interface AgiGauntletResultRecord {
   detail: string;
   privacyJson: string;
 }
+
+export interface StoredGroundedLearningRecord {
+  recordId: string;
+  createdAt: string;
+  updatedAt: string;
+  kind:
+    | 'missing_evidence'
+    | 'wrong_assumption'
+    | 'tool_reliability'
+    | 'plan_pattern'
+    | 'calibration';
+  status: 'proposed' | 'accepted' | 'retired';
+  subject: string;
+  contextKey: string;
+  lesson: string;
+  evidenceRefsJson: string;
+  counterEvidenceRefsJson: string;
+  /** Schema-enforced false: learning can never grant action authority. */
+  appliesToAuthority: false;
+  reviewNote: string | null;
+  sourceTurnId: string | null;
+  privacyJson: string;
+}
+
+export interface StoredGroundedBeliefJournalEntry {
+  entryId: string;
+  createdAt: string;
+  turnId: string | null;
+  beliefId: string;
+  subject: string;
+  predicate: string;
+  value: string;
+  previousTier: 'unknown' | 'uncertain' | 'likely' | 'verified' | null;
+  newTier: 'unknown' | 'uncertain' | 'likely' | 'verified';
+  previousConfidence: number | null;
+  newConfidence: number;
+  cause:
+    | 'new_evidence'
+    | 'contradiction'
+    | 'staleness'
+    | 'verification'
+    | 'correction';
+  explanation: string;
+  evidenceRefsJson: string;
+  privacyJson: string;
+}
+
+export interface StoredGroundedDecisionJournalEntry {
+  entryId: string;
+  createdAt: string;
+  turnId: string | null;
+  decisionId: string;
+  kind: 'act' | 'research' | 'ask' | 'defer' | 'stop_safely';
+  confidence: number;
+  reason: string;
+  whatWouldChangeMindJson: string;
+  candidateScoresJson: string;
+  selectedRef: string | null;
+  privacyJson: string;
+}
+
+export interface StoredGroundedCalibrationSample {
+  sampleId: string;
+  createdAt: string;
+  turnId: string | null;
+  contextKey: string;
+  predictedConfidence: number;
+  outcome: 0 | 1;
+  verdict: 'verified' | 'failed' | 'partial' | 'blocked' | 'uncertain';
+  source: 'outcome_verification' | 'correction';
+  privacyJson: string;
+}

@@ -301,6 +301,10 @@ import {
   RuntimeBackendChatSelectionRecord,
   RuntimeBackendJobCacheRecord,
   ScheduledTask,
+  StoredGroundedBeliefJournalEntry,
+  StoredGroundedCalibrationSample,
+  StoredGroundedDecisionJournalEntry,
+  StoredGroundedLearningRecord,
   TaskRunLog,
 } from './types.js';
 import type { CalendarAutomationRecordInput } from './calendar-automations.js';
@@ -4075,6 +4079,76 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_confidence_calibrations_frame
       ON confidence_calibrations(frame_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS grounded_learning_records (
+      record_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      context_key TEXT NOT NULL,
+      lesson TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      counter_evidence_refs_json TEXT NOT NULL,
+      applies_to_authority INTEGER NOT NULL DEFAULT 0
+        CHECK (applies_to_authority = 0),
+      review_note TEXT,
+      source_turn_id TEXT,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_grounded_learning_records_kind
+      ON grounded_learning_records(kind, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_grounded_learning_records_context
+      ON grounded_learning_records(context_key, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS grounded_belief_journal (
+      entry_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      turn_id TEXT,
+      belief_id TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      predicate TEXT NOT NULL,
+      value TEXT NOT NULL,
+      previous_tier TEXT,
+      new_tier TEXT NOT NULL,
+      previous_confidence REAL,
+      new_confidence REAL NOT NULL,
+      cause TEXT NOT NULL,
+      explanation TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_grounded_belief_journal_belief
+      ON grounded_belief_journal(belief_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_grounded_belief_journal_turn
+      ON grounded_belief_journal(turn_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS grounded_decision_journal (
+      entry_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      turn_id TEXT,
+      decision_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      reason TEXT NOT NULL,
+      what_would_change_mind_json TEXT NOT NULL,
+      candidate_scores_json TEXT NOT NULL,
+      selected_ref TEXT,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_grounded_decision_journal_turn
+      ON grounded_decision_journal(turn_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS grounded_calibration_samples (
+      sample_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      turn_id TEXT,
+      context_key TEXT NOT NULL,
+      predicted_confidence REAL NOT NULL,
+      outcome INTEGER NOT NULL CHECK (outcome IN (0, 1)),
+      verdict TEXT NOT NULL,
+      source TEXT NOT NULL,
+      privacy_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_grounded_calibration_samples_context
+      ON grounded_calibration_samples(context_key, created_at DESC);
     CREATE TABLE IF NOT EXISTS deliberation_records (
       deliberation_id TEXT PRIMARY KEY,
       frame_id TEXT NOT NULL,
@@ -29153,6 +29227,391 @@ export function listConfidenceCalibrations(
     )
     .all(...args) as Array<Parameters<typeof mapConfidenceCalibrationRow>[0]>;
   return rows.map((row) => mapConfidenceCalibrationRow(row));
+}
+
+function mapGroundedLearningRecordRow(row: {
+  record_id: string;
+  created_at: string;
+  updated_at: string;
+  kind: StoredGroundedLearningRecord['kind'];
+  status: StoredGroundedLearningRecord['status'];
+  subject: string;
+  context_key: string;
+  lesson: string;
+  evidence_refs_json: string;
+  counter_evidence_refs_json: string;
+  applies_to_authority: number;
+  review_note: string | null;
+  source_turn_id: string | null;
+  privacy_json: string;
+}): StoredGroundedLearningRecord {
+  return {
+    recordId: row.record_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    kind: row.kind,
+    status: row.status,
+    subject: row.subject,
+    contextKey: row.context_key,
+    lesson: row.lesson,
+    evidenceRefsJson: row.evidence_refs_json,
+    counterEvidenceRefsJson: row.counter_evidence_refs_json,
+    appliesToAuthority: false,
+    reviewNote: row.review_note,
+    sourceTurnId: row.source_turn_id,
+    privacyJson: row.privacy_json,
+  };
+}
+
+const GROUNDED_LEARNING_STATUS_TRANSITIONS: Record<
+  StoredGroundedLearningRecord['status'],
+  Array<StoredGroundedLearningRecord['status']>
+> = {
+  proposed: ['proposed', 'accepted', 'retired'],
+  accepted: ['accepted', 'retired'],
+  retired: ['retired'],
+};
+
+export function upsertGroundedLearningRecord(
+  record: StoredGroundedLearningRecord,
+): void {
+  const existing = db
+    .prepare(`SELECT status FROM grounded_learning_records WHERE record_id = ?`)
+    .get(record.recordId) as
+    | { status: StoredGroundedLearningRecord['status'] }
+    | undefined;
+  if (
+    existing &&
+    !GROUNDED_LEARNING_STATUS_TRANSITIONS[existing.status].includes(
+      record.status,
+    )
+  ) {
+    throw new Error(
+      `Grounded learning status transition ${existing.status} -> ${record.status} is not allowed.`,
+    );
+  }
+  db.prepare(
+    `
+      INSERT INTO grounded_learning_records (
+        record_id, created_at, updated_at, kind, status, subject,
+        context_key, lesson, evidence_refs_json, counter_evidence_refs_json,
+        applies_to_authority, review_note, source_turn_id, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+      ON CONFLICT(record_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        status = excluded.status,
+        review_note = excluded.review_note,
+        counter_evidence_refs_json = excluded.counter_evidence_refs_json
+    `,
+  ).run(
+    record.recordId,
+    record.createdAt,
+    record.updatedAt,
+    record.kind,
+    record.status,
+    redactStoredCognitiveMetadata(record.subject, 200),
+    redactStoredCognitiveMetadata(record.contextKey, 200),
+    redactStoredCognitiveMetadata(record.lesson, 900),
+    redactStoredCognitiveMetadata(record.evidenceRefsJson),
+    redactStoredCognitiveMetadata(record.counterEvidenceRefsJson),
+    record.reviewNote
+      ? redactStoredCognitiveMetadata(record.reviewNote, 900)
+      : null,
+    record.sourceTurnId,
+    redactStoredCognitiveMetadata(record.privacyJson),
+  );
+}
+
+export function listGroundedLearningRecords(
+  params: {
+    kind?: StoredGroundedLearningRecord['kind'];
+    status?: StoredGroundedLearningRecord['status'];
+    contextKey?: string;
+    limit?: number;
+  } = {},
+): StoredGroundedLearningRecord[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.kind) {
+    clauses.push('kind = ?');
+    args.push(params.kind);
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    args.push(params.status);
+  }
+  if (params.contextKey) {
+    clauses.push('context_key = ?');
+    args.push(params.contextKey);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM grounded_learning_records
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapGroundedLearningRecordRow>[0]>;
+  return rows.map((row) => mapGroundedLearningRecordRow(row));
+}
+
+function mapGroundedBeliefJournalRow(row: {
+  entry_id: string;
+  created_at: string;
+  turn_id: string | null;
+  belief_id: string;
+  subject: string;
+  predicate: string;
+  value: string;
+  previous_tier: StoredGroundedBeliefJournalEntry['previousTier'];
+  new_tier: StoredGroundedBeliefJournalEntry['newTier'];
+  previous_confidence: number | null;
+  new_confidence: number;
+  cause: StoredGroundedBeliefJournalEntry['cause'];
+  explanation: string;
+  evidence_refs_json: string;
+  privacy_json: string;
+}): StoredGroundedBeliefJournalEntry {
+  return {
+    entryId: row.entry_id,
+    createdAt: row.created_at,
+    turnId: row.turn_id,
+    beliefId: row.belief_id,
+    subject: row.subject,
+    predicate: row.predicate,
+    value: row.value,
+    previousTier: row.previous_tier,
+    newTier: row.new_tier,
+    previousConfidence: row.previous_confidence,
+    newConfidence: row.new_confidence,
+    cause: row.cause,
+    explanation: row.explanation,
+    evidenceRefsJson: row.evidence_refs_json,
+    privacyJson: row.privacy_json,
+  };
+}
+
+/** Append-only: existing journal entries are never updated or deleted. */
+export function insertGroundedBeliefJournalEntry(
+  entry: StoredGroundedBeliefJournalEntry,
+): void {
+  db.prepare(
+    `
+      INSERT INTO grounded_belief_journal (
+        entry_id, created_at, turn_id, belief_id, subject, predicate, value,
+        previous_tier, new_tier, previous_confidence, new_confidence,
+        cause, explanation, evidence_refs_json, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(entry_id) DO NOTHING
+    `,
+  ).run(
+    entry.entryId,
+    entry.createdAt,
+    entry.turnId,
+    entry.beliefId,
+    redactStoredCognitiveMetadata(entry.subject, 200),
+    redactStoredCognitiveMetadata(entry.predicate, 200),
+    redactStoredCognitiveMetadata(entry.value, 400),
+    entry.previousTier,
+    entry.newTier,
+    entry.previousConfidence,
+    entry.newConfidence,
+    entry.cause,
+    redactStoredCognitiveMetadata(entry.explanation, 900),
+    redactStoredCognitiveMetadata(entry.evidenceRefsJson),
+    redactStoredCognitiveMetadata(entry.privacyJson),
+  );
+}
+
+export function listGroundedBeliefJournal(
+  params: { beliefId?: string; turnId?: string; limit?: number } = {},
+): StoredGroundedBeliefJournalEntry[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.beliefId) {
+    clauses.push('belief_id = ?');
+    args.push(params.beliefId);
+  }
+  if (params.turnId) {
+    clauses.push('turn_id = ?');
+    args.push(params.turnId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM grounded_belief_journal
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapGroundedBeliefJournalRow>[0]>;
+  return rows.map((row) => mapGroundedBeliefJournalRow(row));
+}
+
+function mapGroundedDecisionJournalRow(row: {
+  entry_id: string;
+  created_at: string;
+  turn_id: string | null;
+  decision_id: string;
+  kind: StoredGroundedDecisionJournalEntry['kind'];
+  confidence: number;
+  reason: string;
+  what_would_change_mind_json: string;
+  candidate_scores_json: string;
+  selected_ref: string | null;
+  privacy_json: string;
+}): StoredGroundedDecisionJournalEntry {
+  return {
+    entryId: row.entry_id,
+    createdAt: row.created_at,
+    turnId: row.turn_id,
+    decisionId: row.decision_id,
+    kind: row.kind,
+    confidence: row.confidence,
+    reason: row.reason,
+    whatWouldChangeMindJson: row.what_would_change_mind_json,
+    candidateScoresJson: row.candidate_scores_json,
+    selectedRef: row.selected_ref,
+    privacyJson: row.privacy_json,
+  };
+}
+
+/** Append-only: existing journal entries are never updated or deleted. */
+export function insertGroundedDecisionJournalEntry(
+  entry: StoredGroundedDecisionJournalEntry,
+): void {
+  db.prepare(
+    `
+      INSERT INTO grounded_decision_journal (
+        entry_id, created_at, turn_id, decision_id, kind, confidence,
+        reason, what_would_change_mind_json, candidate_scores_json,
+        selected_ref, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(entry_id) DO NOTHING
+    `,
+  ).run(
+    entry.entryId,
+    entry.createdAt,
+    entry.turnId,
+    entry.decisionId,
+    entry.kind,
+    entry.confidence,
+    redactStoredCognitiveMetadata(entry.reason, 900),
+    redactStoredCognitiveMetadata(entry.whatWouldChangeMindJson),
+    redactStoredCognitiveMetadata(entry.candidateScoresJson),
+    entry.selectedRef,
+    redactStoredCognitiveMetadata(entry.privacyJson),
+  );
+}
+
+export function listGroundedDecisionJournal(
+  params: { turnId?: string; limit?: number } = {},
+): StoredGroundedDecisionJournalEntry[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.turnId) {
+    clauses.push('turn_id = ?');
+    args.push(params.turnId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM grounded_decision_journal
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<Parameters<typeof mapGroundedDecisionJournalRow>[0]>;
+  return rows.map((row) => mapGroundedDecisionJournalRow(row));
+}
+
+function mapGroundedCalibrationSampleRow(row: {
+  sample_id: string;
+  created_at: string;
+  turn_id: string | null;
+  context_key: string;
+  predicted_confidence: number;
+  outcome: number;
+  verdict: StoredGroundedCalibrationSample['verdict'];
+  source: StoredGroundedCalibrationSample['source'];
+  privacy_json: string;
+}): StoredGroundedCalibrationSample {
+  return {
+    sampleId: row.sample_id,
+    createdAt: row.created_at,
+    turnId: row.turn_id,
+    contextKey: row.context_key,
+    predictedConfidence: row.predicted_confidence,
+    outcome: row.outcome === 1 ? 1 : 0,
+    verdict: row.verdict,
+    source: row.source,
+    privacyJson: row.privacy_json,
+  };
+}
+
+/** Append-only: corrections add new samples; originals stay visible. */
+export function insertGroundedCalibrationSample(
+  sample: StoredGroundedCalibrationSample,
+): void {
+  db.prepare(
+    `
+      INSERT INTO grounded_calibration_samples (
+        sample_id, created_at, turn_id, context_key,
+        predicted_confidence, outcome, verdict, source, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(sample_id) DO NOTHING
+    `,
+  ).run(
+    sample.sampleId,
+    sample.createdAt,
+    sample.turnId,
+    redactStoredCognitiveMetadata(sample.contextKey, 200),
+    sample.predictedConfidence,
+    sample.outcome,
+    sample.verdict,
+    sample.source,
+    redactStoredCognitiveMetadata(sample.privacyJson),
+  );
+}
+
+export function listGroundedCalibrationSamples(
+  params: { contextKey?: string; limit?: number } = {},
+): StoredGroundedCalibrationSample[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.contextKey) {
+    clauses.push('context_key = ?');
+    args.push(params.contextKey);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM grounded_calibration_samples
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapGroundedCalibrationSampleRow>[0]
+  >;
+  return rows.map((row) => mapGroundedCalibrationSampleRow(row));
 }
 
 function mapDeliberationRecordRow(row: {
