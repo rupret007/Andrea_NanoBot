@@ -27,7 +27,7 @@ const NOW = '2026-07-20T12:00:00.000Z';
 
 function buildContext(): TurnAgentHarnessContext {
   const contextCompile = compileTurnContext({
-    taskFamily: 'diagnostics',
+    taskFamily: 'assistant',
     channel: 'telegram',
     text: 'Why did the backup fail last night?',
     stateChanging: false,
@@ -56,7 +56,7 @@ function buildContext(): TurnAgentHarnessContext {
   return {
     turnId: 'turn-grounded-1',
     channel: 'telegram',
-    taskFamily: 'diagnostics',
+    taskFamily: 'assistant',
     meaningful: true,
     selectedSkill: contextCompile.selectedSkill,
     contextCompile,
@@ -155,7 +155,7 @@ describe('turn-agent-harness grounded hooks (observe-only)', () => {
       context,
       evaluation: passEvaluation(),
       routeUsed: 'local_companion',
-      answerClass: 'answer',
+      answerClass: 'handled',
     });
     expect(reflection.routeUsed).toBe('local_companion');
     expect(context.contextCompile.metadata.grounded_journal_persisted).toBe(
@@ -187,7 +187,7 @@ describe('turn-agent-harness grounded hooks (observe-only)', () => {
       context,
       evaluation: passEvaluation(),
       routeUsed: 'local_companion',
-      answerClass: 'answer',
+      answerClass: 'handled',
     });
     expect(
       context.contextCompile.metadata.grounded_runtime_evidence,

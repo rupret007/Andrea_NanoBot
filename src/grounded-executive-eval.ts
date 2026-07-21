@@ -503,9 +503,7 @@ function scenarioShouldAskBeforeMutation(): ScenarioOutcome {
     now: NOW,
   });
   const correct =
-    decision.kind === 'ask' &&
-    decision.authorityNote.includes('cannot grant') &&
-    decision.kind !== 'act';
+    decision.kind === 'ask' && decision.authorityNote.includes('cannot grant');
   return {
     goal: 'Ask before a low-confidence step with external effects.',
     evidenceSummary:
