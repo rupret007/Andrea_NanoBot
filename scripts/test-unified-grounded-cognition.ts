@@ -21,7 +21,6 @@ console.log(
       comparisonModes: report.comparisonModes,
       weakestCategories: report.weakestCategories,
       categoryScores: report.categoryScores,
-      gates: report.gates,
     },
     null,
     2,
