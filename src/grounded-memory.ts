@@ -779,6 +779,10 @@ export function buildGroundedContextBundle(
     record: GroundedMemoryRecord;
     relevance: number;
   }> = [];
+  // Topic-relevant records excluded as uncertain/low-confidence still count
+  // for contradiction visibility: a conflict must never disappear just
+  // because both sides were too unsettled to include.
+  const relevantConflicted = new Set<string>();
   for (const record of input.records) {
     const effectiveState = groundedMemoryEffectiveState(record, input.now);
     if (effectiveState === 'revoked') {
@@ -802,10 +806,22 @@ export function buildGroundedContextBundle(
         recordId: record.recordId,
         reason: 'uncertain_by_default',
       });
+      if (
+        record.conflictingRecordIds.length > 0 &&
+        relevanceFor(record, tokens, input.now) > 0
+      ) {
+        relevantConflicted.add(record.recordId);
+      }
       continue;
     }
     if (record.confidence < minimumConfidence) {
       excluded.push({ recordId: record.recordId, reason: 'low_confidence' });
+      if (
+        record.conflictingRecordIds.length > 0 &&
+        relevanceFor(record, tokens, input.now) > 0
+      ) {
+        relevantConflicted.add(record.recordId);
+      }
       continue;
     }
     const relevance = relevanceFor(record, tokens, input.now);
@@ -855,7 +871,10 @@ export function buildGroundedContextBundle(
     if (record.conflictingRecordIds.length === 0) continue;
     if (
       !includedIds.has(record.recordId) &&
-      !record.conflictingRecordIds.some((id) => includedIds.has(id))
+      !relevantConflicted.has(record.recordId) &&
+      !record.conflictingRecordIds.some(
+        (id) => includedIds.has(id) || relevantConflicted.has(id),
+      )
     ) {
       continue;
     }

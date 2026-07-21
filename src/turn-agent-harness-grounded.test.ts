@@ -11,6 +11,7 @@ import {
   compileTurnContext,
   reconcileTurnRuntimeEvidence,
   reflectTurnAgentOutcome,
+  tryBeginGroundedExecutiveForTurn,
   verifyTurnAgentAdaptiveCompletion,
   type PreSendEvaluation,
   type TurnAgentHarnessContext,
@@ -22,6 +23,10 @@ import {
   groundedEvidence,
 } from './grounded-cognitive-executive.js';
 import { adaptiveEvidence } from './adaptive-cognition-engine.js';
+import {
+  loadGroundedMemoryRecords,
+  rememberGroundedMemory,
+} from './grounded-memory-durable-adapter.js';
 
 const NOW = '2026-07-20T12:00:00.000Z';
 
@@ -196,5 +201,118 @@ describe('turn-agent-harness grounded hooks (observe-only)', () => {
       context.contextCompile.metadata.grounded_journal_persisted,
     ).toBeUndefined();
     expect(listGroundedDecisionJournal({ limit: 10 }).length).toBe(0);
+  });
+
+  it('reflectTurnAgentOutcome stages durable memory candidates from grounded beliefs', async () => {
+    const context = buildContext();
+    // A verified route-health observation produces a likely/verified belief
+    // whose subject is not turn-scoped, so it becomes a memory candidate.
+    reconcileTurnRuntimeEvidence({
+      context,
+      evaluation: null,
+      runtimeStatus: 'success',
+      routeUsed: 'local_companion',
+    });
+    await reflectTurnAgentOutcome({
+      context,
+      evaluation: passEvaluation(),
+      routeUsed: 'local_companion',
+      answerClass: 'handled',
+    });
+    expect(
+      Number(context.contextCompile.metadata.grounded_memory_candidates),
+    ).toBeGreaterThan(0);
+    const remembered = loadGroundedMemoryRecords({
+      subjectKeyPrefix: 'route:local_companion',
+    });
+    expect(remembered.length).toBe(1);
+    expect(remembered[0]!.sourceType).toBe('direct_observation');
+    expect(remembered[0]!.sourceTurnId).toBe('turn-grounded-1');
+  });
+
+  it('retrieved durable memory feeds the next turn shadow beliefs with provenance', () => {
+    rememberGroundedMemory({
+      candidates: [
+        {
+          kind: 'fact',
+          subjectKey: 'fact:backup_disk',
+          statement: 'The backup disk was replaced and verified last week.',
+          value: 'replaced_and_verified',
+          confidence: 0.9,
+          sourceType: 'direct_observation',
+          observedAt: NOW,
+        },
+      ],
+      now: NOW,
+    });
+    const metadata: Record<string, string> = {};
+    const state = tryBeginGroundedExecutiveForTurn({
+      turnId: 'turn-grounded-2',
+      channel: 'telegram',
+      objective: 'Check the backup disk health.',
+      taskFamily: 'assistant',
+      runOrigin: 'live',
+      personalContextPacket: null,
+      metadata,
+    });
+    expect(state).not.toBeNull();
+    expect(Number(metadata.grounded_memory_retrieved)).toBeGreaterThan(0);
+    const memoryBelief = state!.beliefs.find(
+      (belief) => belief.subject === 'fact:backup_disk',
+    );
+    expect(memoryBelief).toBeDefined();
+    const evidence = state!.evidenceRecords.find((record) =>
+      memoryBelief!.supportingEvidenceIds.includes(record.evidence.evidenceId),
+    );
+    expect(evidence!.evidence.source).toBe('grounded_memory');
+    expect(evidence!.evidence.provenanceRefs.length).toBeGreaterThan(0);
+  });
+
+  it('durable memory contradictions surface as unknowns in the next turn frame', () => {
+    rememberGroundedMemory({
+      candidates: [
+        {
+          kind: 'fact',
+          subjectKey: 'fact:backup_disk',
+          statement: 'The backup disk is healthy.',
+          value: 'healthy',
+          confidence: 0.9,
+          sourceType: 'direct_observation',
+          observedAt: NOW,
+        },
+      ],
+      now: NOW,
+    });
+    rememberGroundedMemory({
+      candidates: [
+        {
+          kind: 'fact',
+          subjectKey: 'fact:backup_disk',
+          statement: 'The backup disk is failing.',
+          value: 'failing',
+          confidence: 0.9,
+          sourceType: 'direct_observation',
+          observedAt: NOW,
+        },
+      ],
+      now: '2026-07-20T12:30:00.000Z',
+    });
+    const metadata: Record<string, string> = {};
+    const state = tryBeginGroundedExecutiveForTurn({
+      turnId: 'turn-grounded-3',
+      channel: 'telegram',
+      objective: 'Check the backup disk health.',
+      taskFamily: 'assistant',
+      runOrigin: 'live',
+      personalContextPacket: null,
+      metadata,
+    });
+    expect(state).not.toBeNull();
+    expect(Number(metadata.grounded_memory_contradictions)).toBeGreaterThan(0);
+    expect(
+      state!.frame.unknowns.some((unknown) =>
+        unknown.description.includes('conflicting records'),
+      ),
+    ).toBe(true);
   });
 });

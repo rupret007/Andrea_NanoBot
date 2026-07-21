@@ -49,6 +49,7 @@ import type { AdaptiveDurableNodeBinding } from './adaptive-cognition-durable-ad
 import {
   beginGroundedExecutive,
   decideGroundedNextStep,
+  groundedBeliefTier,
   groundedEvidence,
   observeGroundedEvidence,
   verifyGroundedCompletion,
@@ -60,6 +61,11 @@ import {
   persistGroundedLearning,
   persistGroundedTurnJournal,
 } from './grounded-executive-durable-adapter.js';
+import type { GroundedMemoryCandidate } from './grounded-memory.js';
+import {
+  loadGroundedContextBundle,
+  rememberGroundedMemory,
+} from './grounded-memory-durable-adapter.js';
 import {
   beginLogicKernelRun,
   evaluateLogicAnswerSupport,
@@ -2269,10 +2275,11 @@ function groundedExecutiveEnabled(): boolean {
 
 /**
  * Observe-only begin hook. The shadow executive frames the turn, folds
- * bounded metadata evidence into beliefs, and records what it would do next.
- * It cannot execute anything and never changes the harness result.
+ * bounded metadata evidence and retrieved durable memory into beliefs, and
+ * records what it would do next. It cannot execute anything and never
+ * changes the harness result. Exported for deterministic tests only.
  */
-function tryBeginGroundedExecutiveForTurn(input: {
+export function tryBeginGroundedExecutiveForTurn(input: {
   turnId: string;
   channel: TurnAgentChannel;
   objective: string;
@@ -2329,23 +2336,55 @@ function tryBeginGroundedExecutiveForTurn(input: {
         }),
       ),
     ];
+    // Bounded, read-only durable memory retrieval: relevant active records
+    // and informational goals become shadow evidence with full provenance.
+    const memoryBundle = loadGroundedContextBundle({
+      topics: [input.taskFamily, input.objective],
+      now,
+      maxItems: 8,
+    });
+    const memoryEvidence = memoryBundle.items.map((item) =>
+      groundedEvidence({
+        evidenceClass:
+          item.sourceType === 'user_statement'
+            ? 'user_attested'
+            : item.sourceType === 'direct_observation'
+              ? 'observed'
+              : 'inferred',
+        origin: 'live',
+        source: 'grounded_memory',
+        claim: item.statement,
+        subject: item.subjectKey,
+        predicate: 'memory_value',
+        value: item.value,
+        confidence: item.confidence,
+        verification: 'accepted',
+        provenanceRefs: [item.recordId, ...item.provenanceRefs],
+        createdAt: now,
+      }),
+    );
     let state = beginGroundedExecutive({
       objective: input.objective,
       taskFamily: input.taskFamily,
       channel: input.channel,
       route: input.requestRoute ?? null,
       turnRef: input.turnId,
-      evidence: seedEvidence,
-      unknowns:
-        conflictCount > 0
+      evidence: [...seedEvidence, ...memoryEvidence],
+      unknowns: [
+        ...(conflictCount > 0
           ? [
               {
                 description:
                   'Conflicting personal-context items must be reconciled before they are treated as truth.',
-                impact: 'degrading',
+                impact: 'degrading' as const,
               },
             ]
-          : [],
+          : []),
+        ...memoryBundle.contradictions.slice(0, 2).map((entry) => ({
+          description: `Durable memory holds conflicting records for ${entry.subjectKey}; neither value is settled.`,
+          impact: 'degrading' as const,
+        })),
+      ],
       now,
     });
     const decided = decideGroundedNextStep(state, { now });
@@ -2354,6 +2393,22 @@ function tryBeginGroundedExecutiveForTurn(input: {
     input.metadata.grounded_decision = decided.decision.kind;
     input.metadata.grounded_decision_confidence =
       decided.decision.confidence.toFixed(2);
+    input.metadata.grounded_memory_retrieved = String(
+      memoryBundle.items.length,
+    );
+    input.metadata.grounded_memory_excluded = String(
+      memoryBundle.excluded.length,
+    );
+    input.metadata.grounded_memory_contradictions = String(
+      memoryBundle.contradictions.length,
+    );
+    input.metadata.grounded_memory_goals = String(memoryBundle.goals.length);
+    if (memoryBundle.goals.length > 0) {
+      input.metadata.grounded_goal_review_suggested = memoryBundle.goals
+        .slice(0, 3)
+        .map((goal) => goal.goalId)
+        .join(',');
+    }
     return state;
     // The shadow executive is diagnostics-only; any failure here must never
     // affect the turn.
@@ -2487,6 +2542,43 @@ function learnGroundedTurnOutcome(input: {
       });
     }
     const learningCount = persistGroundedLearning(lessons, now);
+    // Durable memory candidates: only beliefs grounded at `likely` or better,
+    // never turn-scoped bookkeeping. Reconciliation (not this hook) decides
+    // whether they refresh, supersede, or stay uncertain — and they carry no
+    // execution authority.
+    const turnEvidence = stateToPersist.evidenceRecords.map(
+      (record) => record.evidence,
+    );
+    const memoryCandidates: GroundedMemoryCandidate[] = stateToPersist.beliefs
+      .filter(
+        (belief) =>
+          !belief.subject.startsWith('turn:') &&
+          belief.predicate !== 'memory_value' &&
+          ['likely', 'verified'].includes(
+            groundedBeliefTier(belief, turnEvidence),
+          ),
+      )
+      .slice(0, 8)
+      .map((belief) => ({
+        kind: 'fact' as const,
+        subjectKey: `${belief.subject}:${belief.predicate}`,
+        statement: `${belief.subject} ${belief.predicate} ${belief.value}`,
+        value: belief.value,
+        confidence: belief.confidence,
+        sourceType:
+          belief.evidenceClass === 'user_attested'
+            ? ('user_statement' as const)
+            : belief.evidenceClass === 'observed'
+              ? ('direct_observation' as const)
+              : ('inference' as const),
+        provenanceRefs: belief.supportingEvidenceIds,
+        observedAt: belief.updatedAt,
+        sourceTurnId: state.turnRef,
+      }));
+    const remembered = rememberGroundedMemory({
+      candidates: memoryCandidates,
+      now,
+    });
     input.context.contextCompile.metadata.grounded_journal_persisted = String(
       journal.persisted,
     );
@@ -2495,6 +2587,11 @@ function learnGroundedTurnOutcome(input: {
     );
     input.context.contextCompile.metadata.grounded_learning_count =
       String(learningCount);
+    input.context.contextCompile.metadata.grounded_memory_candidates = String(
+      memoryCandidates.length,
+    );
+    input.context.contextCompile.metadata.grounded_memory_changes =
+      remembered.changes.map((change) => change.kind).join(',') || 'none';
     // eslint-disable-next-line no-catch-all/no-catch-all
   } catch {
     input.context.contextCompile.metadata.grounded_journal_persisted =
