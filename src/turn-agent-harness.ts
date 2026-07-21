@@ -47,6 +47,20 @@ import {
 import type { AdaptiveEvidence } from './adaptive-cognition-engine.js';
 import type { AdaptiveDurableNodeBinding } from './adaptive-cognition-durable-adapter.js';
 import {
+  beginGroundedExecutive,
+  decideGroundedNextStep,
+  groundedEvidence,
+  observeGroundedEvidence,
+  verifyGroundedCompletion,
+  type GroundedCalibrationSample,
+  type GroundedExecutiveState,
+  type GroundedLearningRecord,
+} from './grounded-cognitive-executive.js';
+import {
+  persistGroundedLearning,
+  persistGroundedTurnJournal,
+} from './grounded-executive-durable-adapter.js';
+import {
   beginLogicKernelRun,
   evaluateLogicAnswerSupport,
   type LogicKernelResult,
@@ -230,6 +244,12 @@ export interface TurnAgentHarnessContext {
   personalContextPacket?: PersonalContextPacket | null;
   verifiedDeepWorkPacket?: VerifiedDeepWorkPacket | null;
   capabilityAcquisition?: TurnCapabilityAcquisitionStatus | null;
+  /**
+   * Observe-only grounded cognitive executive shadow state. It journals
+   * beliefs, decisions, and calibration for diagnostics and learning, and
+   * never alters routing, gating, delivery, or approval results.
+   */
+  groundedExecutive?: GroundedExecutiveState | null;
 }
 
 export interface BeginTurnAgentHarnessInput {
@@ -1250,6 +1270,17 @@ export async function beginTurnAgentHarness(
     personalContextPacket,
     verifiedDeepWorkPacket,
     capabilityAcquisition,
+    groundedExecutive: tryBeginGroundedExecutiveForTurn({
+      turnId: input.turnId,
+      channel: input.channel,
+      objective: buildSanitizedGoal(input, taskFamily),
+      taskFamily,
+      requestRoute: input.requestRoute,
+      runOrigin,
+      personalContextPacket,
+      knownBlockers: input.knownBlockers,
+      metadata: contextCompile.metadata,
+    }),
   };
 }
 
@@ -1900,6 +1931,14 @@ export async function reflectTurnAgentOutcome(input: {
     answerClass: input.answerClass || 'unknown',
     blockerClass: input.blockerClass,
   });
+  if (context) {
+    learnGroundedTurnOutcome({
+      context,
+      evaluationStatus: input.evaluation.status,
+      routeUsed: input.routeUsed,
+      blockerClass: input.blockerClass,
+    });
+  }
   if (!context?.deliberation?.taskLedgerId) {
     return {
       routeUsed: input.routeUsed,
@@ -2136,6 +2175,9 @@ export async function verifyTurnAgentAdaptiveCompletion(input: {
     input.now instanceof Date
       ? input.now.toISOString()
       : input.now || new Date().toISOString();
+  // Observe-only: the grounded shadow executive sees the same completion
+  // evidence but has no influence on the result of this gate.
+  observeGroundedCompletionEvidence(context, input.completionEvidence, now);
   if (
     !reconcileCognitiveKernelCompletionEvidence({
       cognitiveRun: kernel,
@@ -2190,6 +2232,16 @@ export function reconcileTurnRuntimeEvidence(
   input: ReconcileTurnRuntimeEvidenceInput,
 ): VerifiedDeepWorkPacket | null {
   const context = input.context;
+  if (context) {
+    // Observe-only: route health flows into shadow beliefs regardless of
+    // whether a deep-work packet exists.
+    observeGroundedRuntimeOutcome(
+      context,
+      input.runtimeStatus,
+      input.routeUsed,
+      input.blockerClass,
+    );
+  }
   const packet = context?.verifiedDeepWorkPacket;
   if (!context || !packet || !isDatabaseInitialized()) return packet || null;
   const evaluation = input.evaluation;
@@ -2207,6 +2259,247 @@ export function reconcileTurnRuntimeEvidence(
     durableWorkId: context.runtimeSpine?.durableWork?.workId || null,
   });
   return context.verifiedDeepWorkPacket;
+}
+
+function groundedExecutiveEnabled(): boolean {
+  return (
+    (process.env.GROUNDED_EXECUTIVE_ENABLED || 'true').toLowerCase() !== 'false'
+  );
+}
+
+/**
+ * Observe-only begin hook. The shadow executive frames the turn, folds
+ * bounded metadata evidence into beliefs, and records what it would do next.
+ * It cannot execute anything and never changes the harness result.
+ */
+function tryBeginGroundedExecutiveForTurn(input: {
+  turnId: string;
+  channel: TurnAgentChannel;
+  objective: string;
+  taskFamily: PlatformTaskFamily;
+  requestRoute?: string | null;
+  runOrigin: CognitiveRunOrigin;
+  personalContextPacket: PersonalContextPacket | null;
+  knownBlockers?: string[];
+  metadata: Record<string, string>;
+}): GroundedExecutiveState | null {
+  if (!groundedExecutiveEnabled() || input.runOrigin !== 'live') return null;
+  try {
+    const now = new Date().toISOString();
+    const conflictCount = input.personalContextPacket?.conflicts.length || 0;
+    const seedEvidence = [
+      groundedEvidence({
+        evidenceClass: 'user_attested',
+        origin: 'live',
+        source: `channel:${input.channel}`,
+        claim: input.objective,
+        subject: `turn:${input.turnId}`,
+        predicate: 'objective',
+        value: input.taskFamily,
+        confidence: 0.9,
+        createdAt: now,
+      }),
+      ...(conflictCount > 0
+        ? [
+            groundedEvidence({
+              evidenceClass: 'observed',
+              origin: 'live',
+              source: 'personal_context_packet',
+              claim: `Personal context has ${conflictCount} conflicting item group(s) requiring review.`,
+              subject: `turn:${input.turnId}`,
+              predicate: 'personal_context_conflicts',
+              value: String(conflictCount),
+              confidence: 0.9,
+              verification: 'verified',
+              createdAt: now,
+            }),
+          ]
+        : []),
+      ...(input.knownBlockers || []).slice(0, 3).map((blocker) =>
+        groundedEvidence({
+          evidenceClass: 'observed',
+          origin: 'live',
+          source: 'known_blockers',
+          claim: `A known blocker is active: ${blocker}`,
+          subject: `turn:${input.turnId}`,
+          predicate: 'known_blocker',
+          value: blocker,
+          confidence: 0.8,
+          createdAt: now,
+        }),
+      ),
+    ];
+    let state = beginGroundedExecutive({
+      objective: input.objective,
+      taskFamily: input.taskFamily,
+      channel: input.channel,
+      route: input.requestRoute ?? null,
+      turnRef: input.turnId,
+      evidence: seedEvidence,
+      unknowns:
+        conflictCount > 0
+          ? [
+              {
+                description:
+                  'Conflicting personal-context items must be reconciled before they are treated as truth.',
+                impact: 'degrading',
+              },
+            ]
+          : [],
+      now,
+    });
+    const decided = decideGroundedNextStep(state, { now });
+    state = decided.state;
+    input.metadata.grounded_executive = 'active';
+    input.metadata.grounded_decision = decided.decision.kind;
+    input.metadata.grounded_decision_confidence =
+      decided.decision.confidence.toFixed(2);
+    return state;
+    // The shadow executive is diagnostics-only; any failure here must never
+    // affect the turn.
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    input.metadata.grounded_executive = 'begin_failed';
+    return null;
+  }
+}
+
+/** Observe-only completion-evidence hook; never alters the caller's result. */
+function observeGroundedCompletionEvidence(
+  context: TurnAgentHarnessContext,
+  completionEvidence: AdaptiveEvidence[],
+  now: string,
+): void {
+  if (!context.groundedExecutive || completionEvidence.length === 0) return;
+  try {
+    const observed = observeGroundedEvidence(
+      context.groundedExecutive,
+      completionEvidence.map((evidence) => ({
+        evidence,
+        disproofConditions: [],
+        staleAfterMs: null,
+      })),
+      now,
+    );
+    const completion = verifyGroundedCompletion(observed.state);
+    context.groundedExecutive = completion.state;
+    context.contextCompile.metadata.grounded_verdict = completion.report.status;
+    context.contextCompile.metadata.grounded_completion_authorized = String(
+      completion.report.completionAuthorized,
+    );
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    context.contextCompile.metadata.grounded_verdict = 'hook_failed';
+  }
+}
+
+/** Observe-only runtime-outcome hook feeding route health beliefs. */
+function observeGroundedRuntimeOutcome(
+  context: TurnAgentHarnessContext,
+  runtimeStatus: 'success' | 'error',
+  routeUsed: string,
+  blockerClass: string | null | undefined,
+): void {
+  if (!context.groundedExecutive) return;
+  try {
+    const now = new Date().toISOString();
+    const observed = observeGroundedEvidence(
+      context.groundedExecutive,
+      [
+        groundedEvidence({
+          evidenceClass: 'observed',
+          origin: 'live',
+          source: 'runtime_evidence_scope',
+          claim: `Runtime finished with ${runtimeStatus} on ${routeUsed}${
+            blockerClass ? ` (blocker: ${blockerClass})` : ''
+          }.`,
+          subject: `route:${routeUsed}`,
+          predicate: 'runtime_status',
+          value: runtimeStatus,
+          confidence: 0.85,
+          verification: 'verified',
+          createdAt: now,
+        }),
+      ],
+      now,
+    );
+    context.groundedExecutive = observed.state;
+    context.contextCompile.metadata.grounded_runtime_evidence = runtimeStatus;
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    context.contextCompile.metadata.grounded_runtime_evidence = 'hook_failed';
+  }
+}
+
+/**
+ * Observe-only reflect hook: journals the shadow state, records a
+ * decision-vs-outcome calibration sample, and stages proposed (never
+ * auto-accepted) learning records. Planning truth only — no authority.
+ */
+function learnGroundedTurnOutcome(input: {
+  context: TurnAgentHarnessContext;
+  evaluationStatus: 'pass' | 'warn' | 'block';
+  routeUsed: string;
+  blockerClass?: string | null;
+}): void {
+  const state = input.context.groundedExecutive;
+  if (!state) return;
+  try {
+    const now = new Date().toISOString();
+    const lastDecision = state.decisions[state.decisions.length - 1] || null;
+    const outcome: 0 | 1 = input.evaluationStatus === 'pass' ? 1 : 0;
+    const turnSample: GroundedCalibrationSample | null = lastDecision
+      ? {
+          sampleId: `grounded:sample:turn:${state.turnRef || state.stateId}`,
+          createdAt: now,
+          contextKey: state.contextKey,
+          predictedConfidence: lastDecision.confidence,
+          outcome,
+          verdict: outcome === 1 ? 'verified' : 'uncertain',
+          source: 'outcome_verification',
+          decisionId: lastDecision.decisionId,
+          verificationId: null,
+        }
+      : null;
+    const stateToPersist: GroundedExecutiveState = turnSample
+      ? {
+          ...state,
+          calibrationSamples: [...state.calibrationSamples, turnSample],
+        }
+      : state;
+    input.context.groundedExecutive = stateToPersist;
+    const journal = persistGroundedTurnJournal(stateToPersist);
+    const lessons: GroundedLearningRecord[] = [...stateToPersist.learning];
+    if (input.blockerClass && input.evaluationStatus !== 'pass') {
+      lessons.push({
+        recordId: `grounded:learning:blocker:${state.turnRef || state.stateId}`,
+        createdAt: now,
+        kind: 'tool_reliability',
+        status: 'proposed',
+        subject: input.routeUsed,
+        contextKey: state.contextKey,
+        lesson: `Route ${input.routeUsed} ended ${input.evaluationStatus} with blocker ${input.blockerClass} in context ${state.contextKey}.`,
+        evidenceRefs: [],
+        counterEvidenceRefs: [],
+        appliesToAuthority: false,
+        reviewNote: null,
+        sourceTurnId: state.turnRef,
+      });
+    }
+    const learningCount = persistGroundedLearning(lessons, now);
+    input.context.contextCompile.metadata.grounded_journal_persisted = String(
+      journal.persisted,
+    );
+    input.context.contextCompile.metadata.grounded_calibration_count = String(
+      journal.calibrationSamples,
+    );
+    input.context.contextCompile.metadata.grounded_learning_count =
+      String(learningCount);
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    input.context.contextCompile.metadata.grounded_journal_persisted =
+      'hook_failed';
+  }
 }
 
 export function listSkillAffordances(): SkillAffordanceCard[] {
