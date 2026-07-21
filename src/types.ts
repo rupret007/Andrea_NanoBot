@@ -8322,6 +8322,31 @@ export interface ActionPreflightRecord {
 export interface CognitiveEpisodeRecord {
   episodeId: string;
   createdAt: string;
+  /** Additive adaptive-grounded episode projection. Legacy rows omit it. */
+  updatedAt?: string | null;
+  schemaVersion?: string | null;
+  unifiedFrameId?: string | null;
+  turnId?: string | null;
+  conversationId?: string | null;
+  groupFolder?: string | null;
+  scopeKey?: string | null;
+  runOrigin?: 'live' | 'replay' | 'synthetic' | null;
+  intentRefsJson?: string | null;
+  responseContractId?: string | null;
+  responseEvaluationId?: string | null;
+  actionEvidenceRefsJson?: string | null;
+  providerReceiptIdsJson?: string | null;
+  goalIdsJson?: string | null;
+  commitmentIdsJson?: string | null;
+  observationsJson?: string | null;
+  reconciledOutcomeJson?: string | null;
+  ownerFeedbackJson?: string | null;
+  learningCandidateIdsJson?: string | null;
+  appliedLessonIdsJson?: string | null;
+  lifecycleEventIdsJson?: string | null;
+  rollbackEventIdsJson?: string | null;
+  expiresAt?: string | null;
+  boundsJson?: string | null;
   askSummary: string;
   channel: ControlPlaneChannel;
   goalId?: string | null;
@@ -8864,6 +8889,51 @@ export interface StoredGroundedLearningRecord {
   appliesToAuthority: false;
   reviewNote: string | null;
   sourceTurnId: string | null;
+  /** Rich adaptive lifecycle fields; absent on legacy grounded lessons. */
+  adaptiveStatus?:
+    | 'proposed'
+    | 'accumulating_evidence'
+    | 'ready_for_review'
+    | 'accepted'
+    | 'rejected'
+    | 'expired'
+    | 'superseded'
+    | 'rolled_back'
+    | null;
+  adaptiveKind?: string | null;
+  adaptiveMetadataJson?: string | null;
+  expiresAt?: string | null;
+  reviewAfter?: string | null;
+  ownerReviewRequired?: boolean;
+  productionEligible?: boolean;
+  appliedCount?: number;
+  lastAppliedAt?: string | null;
+  privacyJson: string;
+}
+
+export interface StoredAdaptiveLearningLifecycleEvent {
+  eventId: string;
+  candidateId: string;
+  episodeId: string | null;
+  createdAt: string;
+  kind:
+    | 'proposed'
+    | 'evidence_accumulated'
+    | 'ready_for_review'
+    | 'owner_accepted'
+    | 'owner_rejected'
+    | 'expired'
+    | 'superseded'
+    | 'applied'
+    | 'rolled_back';
+  fromStatus: string | null;
+  toStatus: string;
+  evidenceRefsJson: string;
+  actorId: string | null;
+  explicitOwnerDecision: boolean;
+  note: string;
+  synthetic: boolean;
+  executionAuthority: false;
   privacyJson: string;
 }
 

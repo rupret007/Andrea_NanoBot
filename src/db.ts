@@ -306,6 +306,7 @@ import {
   StoredGroundedDecisionJournalEntry,
   StoredGroundedGoal,
   StoredGroundedLearningRecord,
+  StoredAdaptiveLearningLifecycleEvent,
   StoredGroundedMemoryRecord,
   TaskRunLog,
 } from './types.js';
@@ -4096,12 +4097,44 @@ function createSchema(database: Database.Database): void {
         CHECK (applies_to_authority = 0),
       review_note TEXT,
       source_turn_id TEXT,
+      adaptive_status TEXT,
+      adaptive_kind TEXT,
+      adaptive_metadata_json TEXT NOT NULL DEFAULT '{}',
+      expires_at TEXT,
+      review_after TEXT,
+      owner_review_required INTEGER NOT NULL DEFAULT 1,
+      production_eligible INTEGER NOT NULL DEFAULT 0,
+      applied_count INTEGER NOT NULL DEFAULT 0,
+      last_applied_at TEXT,
       privacy_json TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_grounded_learning_records_kind
       ON grounded_learning_records(kind, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_grounded_learning_records_context
       ON grounded_learning_records(context_key, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS grounded_learning_lifecycle_events (
+      event_id TEXT PRIMARY KEY,
+      candidate_id TEXT NOT NULL,
+      episode_id TEXT,
+      created_at TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      from_status TEXT,
+      to_status TEXT NOT NULL,
+      evidence_refs_json TEXT NOT NULL,
+      actor_id TEXT,
+      explicit_owner_decision INTEGER NOT NULL DEFAULT 0,
+      note TEXT NOT NULL,
+      synthetic INTEGER NOT NULL DEFAULT 0,
+      execution_authority INTEGER NOT NULL DEFAULT 0
+        CHECK (execution_authority = 0),
+      privacy_json TEXT NOT NULL,
+      FOREIGN KEY (candidate_id) REFERENCES grounded_learning_records(record_id)
+        ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_grounded_learning_events_candidate
+      ON grounded_learning_lifecycle_events(candidate_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_grounded_learning_events_created
+      ON grounded_learning_lifecycle_events(created_at DESC);
     CREATE TABLE IF NOT EXISTS grounded_belief_journal (
       entry_id TEXT PRIMARY KEY,
       created_at TEXT NOT NULL,
@@ -4443,6 +4476,30 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS cognitive_episodes (
       episode_id TEXT PRIMARY KEY,
       created_at TEXT NOT NULL,
+      updated_at TEXT,
+      schema_version TEXT,
+      unified_frame_id TEXT,
+      turn_id TEXT,
+      conversation_id TEXT,
+      group_folder TEXT,
+      scope_key TEXT,
+      run_origin TEXT,
+      intent_refs_json TEXT,
+      response_contract_id TEXT,
+      response_evaluation_id TEXT,
+      action_evidence_refs_json TEXT,
+      provider_receipt_ids_json TEXT,
+      goal_ids_json TEXT,
+      commitment_ids_json TEXT,
+      observations_json TEXT,
+      reconciled_outcome_json TEXT,
+      owner_feedback_json TEXT,
+      learning_candidate_ids_json TEXT,
+      applied_lesson_ids_json TEXT,
+      lifecycle_event_ids_json TEXT,
+      rollback_event_ids_json TEXT,
+      expires_at TEXT,
+      bounds_json TEXT,
       ask_summary TEXT NOT NULL,
       channel TEXT NOT NULL,
       goal_id TEXT,
@@ -6867,6 +6924,64 @@ function createSchema(database: Database.Database): void {
   database.exec(
     `CREATE INDEX IF NOT EXISTS idx_cognitive_runs_origin_updated ON cognitive_runs(run_origin, updated_at DESC)`,
   );
+
+  // Adaptive grounded intelligence extends the existing bounded episode and
+  // grounded-learning stores. All columns are additive so legacy rows retain
+  // their original semantics and fail closed for production learning.
+  for (const statement of [
+    `ALTER TABLE grounded_learning_records ADD COLUMN adaptive_status TEXT`,
+    `ALTER TABLE grounded_learning_records ADD COLUMN adaptive_kind TEXT`,
+    `ALTER TABLE grounded_learning_records ADD COLUMN adaptive_metadata_json TEXT NOT NULL DEFAULT '{}'`,
+    `ALTER TABLE grounded_learning_records ADD COLUMN expires_at TEXT`,
+    `ALTER TABLE grounded_learning_records ADD COLUMN review_after TEXT`,
+    `ALTER TABLE grounded_learning_records ADD COLUMN owner_review_required INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE grounded_learning_records ADD COLUMN production_eligible INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE grounded_learning_records ADD COLUMN applied_count INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE grounded_learning_records ADD COLUMN last_applied_at TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN updated_at TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN schema_version TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN unified_frame_id TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN turn_id TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN conversation_id TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN group_folder TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN scope_key TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN run_origin TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN intent_refs_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN response_contract_id TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN response_evaluation_id TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN action_evidence_refs_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN provider_receipt_ids_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN goal_ids_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN commitment_ids_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN observations_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN reconciled_outcome_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN owner_feedback_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN learning_candidate_ids_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN applied_lesson_ids_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN lifecycle_event_ids_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN rollback_event_ids_json TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN expires_at TEXT`,
+    `ALTER TABLE cognitive_episodes ADD COLUMN bounds_json TEXT`,
+  ]) {
+    try {
+      database.exec(statement);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !/duplicate column name/i.test(error.message)
+      ) {
+        throw error;
+      }
+    }
+  }
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_grounded_learning_records_adaptive
+      ON grounded_learning_records(adaptive_status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_episodes_turn
+      ON cognitive_episodes(turn_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cognitive_episodes_frame
+      ON cognitive_episodes(unified_frame_id, updated_at DESC);
+  `);
 }
 
 export function initDatabase(): void {
@@ -29302,6 +29417,15 @@ function mapGroundedLearningRecordRow(row: {
   applies_to_authority: number;
   review_note: string | null;
   source_turn_id: string | null;
+  adaptive_status: StoredGroundedLearningRecord['adaptiveStatus'];
+  adaptive_kind: string | null;
+  adaptive_metadata_json: string;
+  expires_at: string | null;
+  review_after: string | null;
+  owner_review_required: number;
+  production_eligible: number;
+  applied_count: number;
+  last_applied_at: string | null;
   privacy_json: string;
 }): StoredGroundedLearningRecord {
   return {
@@ -29318,6 +29442,15 @@ function mapGroundedLearningRecordRow(row: {
     appliesToAuthority: false,
     reviewNote: row.review_note,
     sourceTurnId: row.source_turn_id,
+    adaptiveStatus: row.adaptive_status,
+    adaptiveKind: row.adaptive_kind,
+    adaptiveMetadataJson: row.adaptive_metadata_json,
+    expiresAt: row.expires_at,
+    reviewAfter: row.review_after,
+    ownerReviewRequired: row.owner_review_required === 1,
+    productionEligible: row.production_eligible === 1,
+    appliedCount: row.applied_count,
+    lastAppliedAt: row.last_applied_at,
     privacyJson: row.privacy_json,
   };
 }
@@ -29354,13 +29487,29 @@ export function upsertGroundedLearningRecord(
       INSERT INTO grounded_learning_records (
         record_id, created_at, updated_at, kind, status, subject,
         context_key, lesson, evidence_refs_json, counter_evidence_refs_json,
-        applies_to_authority, review_note, source_turn_id, privacy_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+        applies_to_authority, review_note, source_turn_id, adaptive_status,
+        adaptive_kind, adaptive_metadata_json, expires_at, review_after,
+        owner_review_required, production_eligible, applied_count,
+        last_applied_at, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(record_id) DO UPDATE SET
         updated_at = excluded.updated_at,
         status = excluded.status,
+        subject = excluded.subject,
+        context_key = excluded.context_key,
+        lesson = excluded.lesson,
+        evidence_refs_json = excluded.evidence_refs_json,
         review_note = excluded.review_note,
-        counter_evidence_refs_json = excluded.counter_evidence_refs_json
+        counter_evidence_refs_json = excluded.counter_evidence_refs_json,
+        adaptive_status = excluded.adaptive_status,
+        adaptive_kind = excluded.adaptive_kind,
+        adaptive_metadata_json = excluded.adaptive_metadata_json,
+        expires_at = excluded.expires_at,
+        review_after = excluded.review_after,
+        owner_review_required = excluded.owner_review_required,
+        production_eligible = excluded.production_eligible,
+        applied_count = excluded.applied_count,
+        last_applied_at = excluded.last_applied_at
     `,
   ).run(
     record.recordId,
@@ -29377,6 +29526,21 @@ export function upsertGroundedLearningRecord(
       ? redactStoredCognitiveMetadata(record.reviewNote, 900)
       : null,
     record.sourceTurnId,
+    record.adaptiveStatus ?? null,
+    record.adaptiveKind
+      ? redactStoredCognitiveMetadata(record.adaptiveKind, 120)
+      : null,
+    sanitizeStoredStructuredJson(
+      record.adaptiveMetadataJson || '{}',
+      'grounded_learning_records.adaptive_metadata_json',
+      16_000,
+    ),
+    record.expiresAt ?? null,
+    record.reviewAfter ?? null,
+    record.ownerReviewRequired === false ? 0 : 1,
+    record.productionEligible === true ? 1 : 0,
+    Math.max(0, Math.floor(record.appliedCount || 0)),
+    record.lastAppliedAt ?? null,
     redactStoredCognitiveMetadata(record.privacyJson),
   );
 }
@@ -29385,6 +29549,9 @@ export function listGroundedLearningRecords(
   params: {
     kind?: StoredGroundedLearningRecord['kind'];
     status?: StoredGroundedLearningRecord['status'];
+    adaptiveStatus?: NonNullable<
+      StoredGroundedLearningRecord['adaptiveStatus']
+    >;
     contextKey?: string;
     limit?: number;
   } = {},
@@ -29399,6 +29566,10 @@ export function listGroundedLearningRecords(
   if (params.status) {
     clauses.push('status = ?');
     args.push(params.status);
+  }
+  if (params.adaptiveStatus) {
+    clauses.push('adaptive_status = ?');
+    args.push(params.adaptiveStatus);
   }
   if (params.contextKey) {
     clauses.push('context_key = ?');
@@ -29417,6 +29588,169 @@ export function listGroundedLearningRecords(
     )
     .all(...args) as Array<Parameters<typeof mapGroundedLearningRecordRow>[0]>;
   return rows.map((row) => mapGroundedLearningRecordRow(row));
+}
+
+function mapAdaptiveLearningLifecycleEventRow(row: {
+  event_id: string;
+  candidate_id: string;
+  episode_id: string | null;
+  created_at: string;
+  kind: StoredAdaptiveLearningLifecycleEvent['kind'];
+  from_status: string | null;
+  to_status: string;
+  evidence_refs_json: string;
+  actor_id: string | null;
+  explicit_owner_decision: number;
+  note: string;
+  synthetic: number;
+  execution_authority: number;
+  privacy_json: string;
+}): StoredAdaptiveLearningLifecycleEvent {
+  return {
+    eventId: row.event_id,
+    candidateId: row.candidate_id,
+    episodeId: row.episode_id,
+    createdAt: row.created_at,
+    kind: row.kind,
+    fromStatus: row.from_status,
+    toStatus: row.to_status,
+    evidenceRefsJson: row.evidence_refs_json,
+    actorId: row.actor_id,
+    explicitOwnerDecision: row.explicit_owner_decision === 1,
+    note: row.note,
+    synthetic: row.synthetic === 1,
+    executionAuthority: false,
+    privacyJson: row.privacy_json,
+  };
+}
+
+/** Append-only audit history for adaptive evidence, review, application, and rollback. */
+export function insertAdaptiveLearningLifecycleEvent(
+  event: StoredAdaptiveLearningLifecycleEvent,
+): void {
+  db.prepare(
+    `
+      INSERT INTO grounded_learning_lifecycle_events (
+        event_id, candidate_id, episode_id, created_at, kind, from_status,
+        to_status, evidence_refs_json, actor_id, explicit_owner_decision,
+        note, synthetic, execution_authority, privacy_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+      ON CONFLICT(event_id) DO NOTHING
+    `,
+  ).run(
+    event.eventId,
+    event.candidateId,
+    event.episodeId,
+    event.createdAt,
+    event.kind,
+    event.fromStatus,
+    event.toStatus,
+    sanitizeStoredIdArrayJson(event.evidenceRefsJson, 4_000),
+    event.actorId ? redactStoredCognitiveMetadata(event.actorId, 160) : null,
+    event.explicitOwnerDecision ? 1 : 0,
+    redactStoredCognitiveMetadata(event.note, 900),
+    event.synthetic ? 1 : 0,
+    redactStoredCognitiveMetadata(event.privacyJson),
+  );
+}
+
+export function listAdaptiveLearningLifecycleEvents(
+  params: { candidateId?: string; episodeId?: string; limit?: number } = {},
+): StoredAdaptiveLearningLifecycleEvent[] {
+  if (!isDatabaseInitialized()) return [];
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (params.candidateId) {
+    clauses.push('candidate_id = ?');
+    args.push(params.candidateId);
+  }
+  if (params.episodeId) {
+    clauses.push('episode_id = ?');
+    args.push(params.episodeId);
+  }
+  args.push(workspaceLimit(params.limit));
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM grounded_learning_lifecycle_events
+        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC, event_id DESC
+        LIMIT ?
+      `,
+    )
+    .all(...args) as Array<
+    Parameters<typeof mapAdaptiveLearningLifecycleEventRow>[0]
+  >;
+  return rows.map((row) => mapAdaptiveLearningLifecycleEventRow(row));
+}
+
+export function pruneAdaptiveLearningLifecycleEvents(input: {
+  cutoffIso: string;
+  retainLimit?: number;
+}): number {
+  if (!isDatabaseInitialized()) return 0;
+  const retainLimit = Math.max(
+    100,
+    Math.min(10_000, input.retainLimit || 5_000),
+  );
+  const old = db
+    .prepare(
+      `DELETE FROM grounded_learning_lifecycle_events WHERE created_at < ?`,
+    )
+    .run(input.cutoffIso).changes;
+  const excess = db
+    .prepare(
+      `
+        DELETE FROM grounded_learning_lifecycle_events
+        WHERE event_id NOT IN (
+          SELECT event_id
+          FROM grounded_learning_lifecycle_events
+          ORDER BY created_at DESC, event_id DESC
+          LIMIT ?
+        )
+      `,
+    )
+    .run(retainLimit).changes;
+  return old + excess;
+}
+
+export function pruneAdaptiveGroundedLearningRecords(input: {
+  cutoffIso: string;
+  retainLimit?: number;
+}): number {
+  if (!isDatabaseInitialized()) return 0;
+  const retainLimit = Math.max(
+    100,
+    Math.min(5_000, input.retainLimit || 2_000),
+  );
+  const terminal = db
+    .prepare(
+      `
+        DELETE FROM grounded_learning_records
+        WHERE adaptive_status IN ('rejected', 'expired', 'superseded', 'rolled_back')
+          AND updated_at < ?
+      `,
+    )
+    .run(input.cutoffIso).changes;
+  const excess = db
+    .prepare(
+      `
+        DELETE FROM grounded_learning_records
+        WHERE adaptive_status IS NOT NULL
+          AND adaptive_status NOT IN ('accepted', 'ready_for_review')
+          AND record_id NOT IN (
+            SELECT record_id
+            FROM grounded_learning_records
+            WHERE adaptive_status IS NOT NULL
+              AND adaptive_status NOT IN ('accepted', 'ready_for_review')
+            ORDER BY updated_at DESC, record_id DESC
+            LIMIT ?
+          )
+      `,
+    )
+    .run(retainLimit).changes;
+  return terminal + excess;
 }
 
 function mapGroundedBeliefJournalRow(row: {
@@ -31377,6 +31711,30 @@ export function listActionPreflights(
 function mapCognitiveEpisodeRow(row: {
   episode_id: string;
   created_at: string;
+  updated_at: string | null;
+  schema_version: string | null;
+  unified_frame_id: string | null;
+  turn_id: string | null;
+  conversation_id: string | null;
+  group_folder: string | null;
+  scope_key: string | null;
+  run_origin: CognitiveEpisodeRecord['runOrigin'];
+  intent_refs_json: string | null;
+  response_contract_id: string | null;
+  response_evaluation_id: string | null;
+  action_evidence_refs_json: string | null;
+  provider_receipt_ids_json: string | null;
+  goal_ids_json: string | null;
+  commitment_ids_json: string | null;
+  observations_json: string | null;
+  reconciled_outcome_json: string | null;
+  owner_feedback_json: string | null;
+  learning_candidate_ids_json: string | null;
+  applied_lesson_ids_json: string | null;
+  lifecycle_event_ids_json: string | null;
+  rollback_event_ids_json: string | null;
+  expires_at: string | null;
+  bounds_json: string | null;
   ask_summary: string;
   channel: CognitiveEpisodeRecord['channel'];
   goal_id: string | null;
@@ -31395,6 +31753,30 @@ function mapCognitiveEpisodeRow(row: {
   return {
     episodeId: row.episode_id,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    schemaVersion: row.schema_version,
+    unifiedFrameId: row.unified_frame_id,
+    turnId: row.turn_id,
+    conversationId: row.conversation_id,
+    groupFolder: row.group_folder,
+    scopeKey: row.scope_key,
+    runOrigin: row.run_origin,
+    intentRefsJson: row.intent_refs_json,
+    responseContractId: row.response_contract_id,
+    responseEvaluationId: row.response_evaluation_id,
+    actionEvidenceRefsJson: row.action_evidence_refs_json,
+    providerReceiptIdsJson: row.provider_receipt_ids_json,
+    goalIdsJson: row.goal_ids_json,
+    commitmentIdsJson: row.commitment_ids_json,
+    observationsJson: row.observations_json,
+    reconciledOutcomeJson: row.reconciled_outcome_json,
+    ownerFeedbackJson: row.owner_feedback_json,
+    learningCandidateIdsJson: row.learning_candidate_ids_json,
+    appliedLessonIdsJson: row.applied_lesson_ids_json,
+    lifecycleEventIdsJson: row.lifecycle_event_ids_json,
+    rollbackEventIdsJson: row.rollback_event_ids_json,
+    expiresAt: row.expires_at,
+    boundsJson: row.bounds_json,
     askSummary: row.ask_summary,
     channel: row.channel,
     goalId: row.goal_id,
@@ -31453,11 +31835,121 @@ export function upsertCognitiveEpisode(record: CognitiveEpisodeRecord): void {
     record.retentionPolicy,
     redactStoredCognitiveMetadata(record.privacyJson),
   );
+  db.prepare(
+    `
+      UPDATE cognitive_episodes
+      SET updated_at = ?,
+          schema_version = ?,
+          unified_frame_id = ?,
+          turn_id = ?,
+          conversation_id = ?,
+          group_folder = ?,
+          scope_key = ?,
+          run_origin = ?,
+          intent_refs_json = ?,
+          response_contract_id = ?,
+          response_evaluation_id = ?,
+          action_evidence_refs_json = ?,
+          provider_receipt_ids_json = ?,
+          goal_ids_json = ?,
+          commitment_ids_json = ?,
+          observations_json = ?,
+          reconciled_outcome_json = ?,
+          owner_feedback_json = ?,
+          learning_candidate_ids_json = ?,
+          applied_lesson_ids_json = ?,
+          lifecycle_event_ids_json = ?,
+          rollback_event_ids_json = ?,
+          expires_at = ?,
+          bounds_json = ?
+      WHERE episode_id = ?
+    `,
+  ).run(
+    record.updatedAt ?? record.createdAt,
+    record.schemaVersion ?? null,
+    record.unifiedFrameId ?? null,
+    record.turnId ?? null,
+    record.conversationId
+      ? redactStoredCognitiveMetadata(record.conversationId, 240)
+      : null,
+    record.groupFolder
+      ? redactStoredCognitiveMetadata(record.groupFolder, 160)
+      : null,
+    record.scopeKey
+      ? redactStoredCognitiveMetadata(record.scopeKey, 240)
+      : null,
+    record.runOrigin ?? null,
+    record.intentRefsJson
+      ? sanitizeStoredStructuredJson(
+          record.intentRefsJson,
+          'cognitive_episodes.intent_refs_json',
+          5_000,
+        )
+      : null,
+    record.responseContractId ?? null,
+    record.responseEvaluationId ?? null,
+    record.actionEvidenceRefsJson
+      ? sanitizeStoredIdArrayJson(record.actionEvidenceRefsJson, 4_000)
+      : null,
+    record.providerReceiptIdsJson
+      ? sanitizeStoredIdArrayJson(record.providerReceiptIdsJson, 4_000)
+      : null,
+    record.goalIdsJson
+      ? sanitizeStoredIdArrayJson(record.goalIdsJson, 4_000)
+      : null,
+    record.commitmentIdsJson
+      ? sanitizeStoredIdArrayJson(record.commitmentIdsJson, 4_000)
+      : null,
+    record.observationsJson
+      ? sanitizeStoredStructuredJson(
+          record.observationsJson,
+          'cognitive_episodes.observations_json',
+          32_000,
+        )
+      : null,
+    record.reconciledOutcomeJson
+      ? sanitizeStoredStructuredJson(
+          record.reconciledOutcomeJson,
+          'cognitive_episodes.reconciled_outcome_json',
+          8_000,
+        )
+      : null,
+    record.ownerFeedbackJson
+      ? sanitizeStoredStructuredJson(
+          record.ownerFeedbackJson,
+          'cognitive_episodes.owner_feedback_json',
+          4_000,
+        )
+      : null,
+    record.learningCandidateIdsJson
+      ? sanitizeStoredIdArrayJson(record.learningCandidateIdsJson, 4_000)
+      : null,
+    record.appliedLessonIdsJson
+      ? sanitizeStoredIdArrayJson(record.appliedLessonIdsJson, 4_000)
+      : null,
+    record.lifecycleEventIdsJson
+      ? sanitizeStoredIdArrayJson(record.lifecycleEventIdsJson, 4_000)
+      : null,
+    record.rollbackEventIdsJson
+      ? sanitizeStoredIdArrayJson(record.rollbackEventIdsJson, 4_000)
+      : null,
+    record.expiresAt ?? null,
+    record.boundsJson
+      ? sanitizeStoredStructuredJson(
+          record.boundsJson,
+          'cognitive_episodes.bounds_json',
+          4_000,
+        )
+      : null,
+    record.episodeId,
+  );
 }
 
 export function listCognitiveEpisodes(
   params: {
     channel?: CognitiveEpisodeRecord['channel'];
+    turnId?: string;
+    unifiedFrameId?: string;
     withCorrectionsOnly?: boolean;
     limit?: number;
   } = {},
@@ -31467,6 +31959,14 @@ export function listCognitiveEpisodes(
   if (params.channel) {
     clauses.push('channel = ?');
     args.push(params.channel);
+  }
+  if (params.turnId) {
+    clauses.push('turn_id = ?');
+    args.push(params.turnId);
+  }
+  if (params.unifiedFrameId) {
+    clauses.push('unified_frame_id = ?');
+    args.push(params.unifiedFrameId);
   }
   if (params.withCorrectionsOnly) {
     clauses.push('user_correction IS NOT NULL');
@@ -31494,16 +31994,32 @@ export function pruneCognitiveEpisodes(params: { now?: string } = {}): number {
   const standardCutoff = new Date(
     new Date(now).getTime() - 90 * 24 * 60 * 60 * 1000,
   ).toISOString();
-  const result = db
+  const expired = db
     .prepare(
       `
         DELETE FROM cognitive_episodes
-        WHERE (retention_policy = 'short_7d' AND created_at < ?)
+        WHERE (expires_at IS NOT NULL AND expires_at < ?)
+           OR (retention_policy = 'short_7d' AND created_at < ?)
            OR (retention_policy = 'standard_90d' AND created_at < ?)
       `,
     )
-    .run(shortCutoff, standardCutoff);
-  return result.changes;
+    .run(now, shortCutoff, standardCutoff).changes;
+  const excess = db
+    .prepare(
+      `
+        DELETE FROM cognitive_episodes
+        WHERE retention_policy != 'pinned'
+          AND episode_id NOT IN (
+            SELECT episode_id
+            FROM cognitive_episodes
+            WHERE retention_policy != 'pinned'
+            ORDER BY COALESCE(updated_at, created_at) DESC, episode_id DESC
+            LIMIT 5000
+          )
+      `,
+    )
+    .run().changes;
+  return expired + excess;
 }
 
 function mapCapabilityStateRow(row: {
