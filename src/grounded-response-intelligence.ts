@@ -174,7 +174,7 @@ export interface GroundedResponseRepairResult {
 }
 
 const REQUEST_VERBS =
-  /\b(?:tell|show|explain|find|look|research|check|compare|summarize|list|cite|confirm|continue|resume|report|outline|review|read|answer|use|treat|record|evaluate|prefer|correction|what|when|where|which|who|why|how|is|are|was|were|did|does|can|could|would|please|schedule|book|create|add|move|reschedule|cancel|delete|remove|remind|message|text|send|reply|email|call|implement|fix|debug|diagnose|commit|push|deploy|restart|buy|purchase|order|post)\b/i;
+  /\b(?:tell|show|explain|find|look|research|check|compare|summarize|list|cite|confirm|continue|resume|report|outline|review|read|answer|use|treat|record|evaluate|prefer|correction|what|when|where|which|who|why|how|is|are|was|were|did|does|can|could|would|please|schedule|book|create|add|move|reschedule|cancel|delete|remove|remind|message|text|send|reply|email|call|implement|fix|debug|diagnose|commit|push|deploy|restart|save|transfer|buy|purchase|order|post)\b/i;
 const MUTATION_REQUEST =
   /^(?:(?:and|then|also)\s+)*(?:(?:can|could|would|will)\s+you\s+|(?:i\s+(?:want|need)\s+you\s+to\s+)|please\s+)?(?:send|message|text|email|reply|schedule|book|create|add|move|reschedule|cancel|delete|remove|change|edit|update|remind|save|transfer|post|implement|fix|commit|push|deploy|restart|buy|purchase|order)\b/i;
 const COMPLETION_CLAIMS =

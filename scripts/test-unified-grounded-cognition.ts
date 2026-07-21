@@ -18,6 +18,7 @@ console.log(
       p95LatencyMs: report.p95LatencyMs,
       maxContextChars: report.maxContextChars,
       maxMetadataChars: report.maxMetadataChars,
+      comparisonModes: report.comparisonModes,
       weakestCategories: report.weakestCategories,
       categoryScores: report.categoryScores,
       gates: report.gates,

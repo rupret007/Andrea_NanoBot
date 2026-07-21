@@ -201,6 +201,7 @@ export interface UnifiedOutcomeObservation {
   providerReceiptObserved: boolean;
   requestedOutcomeVerified: boolean;
   goalAchieved: boolean;
+  goalFailureVerified: boolean;
   responseStatus: 'pass' | 'warn' | 'block';
   partial: boolean;
   evidenceRefs: string[];
@@ -213,7 +214,9 @@ export type UnifiedLearningKind =
   | 'evidence_calibration'
   | 'tool_reliability'
   | 'goal_follow_through'
-  | 'owner_correction';
+  | 'owner_correction'
+  | 'clarification_efficiency'
+  | 'recommendation_calibration';
 
 export interface UnifiedLearningCandidate {
   candidateId: string;
@@ -1442,9 +1445,18 @@ export interface ObserveUnifiedOutcomeInput {
   providerReceiptIds?: string[];
   requestedOutcomeVerified?: boolean;
   goalAchieved?: boolean;
+  goalFailureVerified?: boolean;
   partial?: boolean;
   evidenceRefs?: string[];
   explicitOwnerCorrection?: string | null;
+  explicitOwnerFeedback?: string | null;
+  clarificationFailureCount?: number;
+  recommendationFeedback?: Array<{
+    recommendationId: string;
+    outcome: 'accepted' | 'rejected';
+    reason?: string | null;
+    evidenceRefs?: string[];
+  }>;
 }
 
 function learningCandidate(input: {
@@ -1487,6 +1499,7 @@ export function observeUnifiedOutcome(
   // Goal achievement requires explicit outcome verification; neither a tool
   // return nor a provider acceptance receipt is enough on its own.
   const goalAchieved = requestedOutcomeVerified && input.goalAchieved === true;
+  const goalFailureVerified = input.goalFailureVerified === true;
   const outcome: UnifiedOutcomeObservation = {
     observedAt: now,
     routeUsed: bounded(input.routeUsed, 160),
@@ -1496,16 +1509,19 @@ export function observeUnifiedOutcome(
     providerReceiptObserved: receiptIds.length > 0,
     requestedOutcomeVerified,
     goalAchieved,
+    goalFailureVerified,
     responseStatus: input.responseStatus,
     partial: input.partial === true,
     evidenceRefs: unique([...(input.evidenceRefs || []), ...receiptIds], 24),
     explanation: goalAchieved
       ? 'The requested outcome and broader goal were explicitly verified.'
-      : input.toolReturnedSuccess || receiptIds.length > 0
-        ? 'Technical or provider success was observed, but broader goal achievement remains unverified.'
-        : input.blockerClass
-          ? `The outcome remains blocked by ${input.blockerClass}.`
-          : 'No authoritative evidence established broader goal achievement.',
+      : goalFailureVerified
+        ? 'Authoritative outcome evidence verified that the broader goal failed.'
+        : input.toolReturnedSuccess || receiptIds.length > 0
+          ? 'Technical or provider success was observed, but broader goal achievement remains unverified.'
+          : input.blockerClass
+            ? `The outcome remains blocked by ${input.blockerClass}.`
+            : 'No authoritative evidence established broader goal achievement.',
   };
   const candidates: UnifiedLearningCandidate[] = [];
   for (const issue of frame.responseEvaluation?.issues || []) {
@@ -1572,6 +1588,66 @@ export function observeUnifiedOutcome(
         lesson: input.explicitOwnerCorrection,
         confidence: 1,
         evidenceRefs: [`turn:${frame.turnId}`],
+      }),
+    );
+  }
+  if (input.explicitOwnerFeedback) {
+    candidates.push(
+      learningCandidate({
+        frame,
+        now,
+        kind: 'response_quality',
+        subject: frame.taskFamily,
+        lesson: input.explicitOwnerFeedback,
+        confidence: 0.95,
+        evidenceRefs: [`turn:${frame.turnId}`],
+      }),
+    );
+  }
+  if ((input.clarificationFailureCount || 0) >= 2) {
+    candidates.push(
+      learningCandidate({
+        frame,
+        now,
+        kind: 'clarification_efficiency',
+        subject: frame.taskFamily,
+        lesson:
+          'Repeated clarification attempts did not resolve the target; ask one narrower evidence-seeking question or defer safely.',
+        confidence: Math.min(
+          0.95,
+          0.65 + (input.clarificationFailureCount || 0) * 0.1,
+        ),
+        evidenceRefs: [`turn:${frame.turnId}`],
+      }),
+    );
+  }
+  for (const feedback of (input.recommendationFeedback || []).slice(0, 8)) {
+    candidates.push(
+      learningCandidate({
+        frame,
+        now,
+        kind: 'recommendation_calibration',
+        subject: feedback.recommendationId,
+        lesson: `Recommendation was ${feedback.outcome}${feedback.reason ? `: ${feedback.reason}` : '.'}`,
+        confidence: feedback.outcome === 'rejected' ? 0.9 : 0.8,
+        evidenceRefs: unique(
+          [...(feedback.evidenceRefs || []), `turn:${frame.turnId}`],
+          20,
+        ),
+      }),
+    );
+  }
+  if (goalFailureVerified) {
+    candidates.push(
+      learningCandidate({
+        frame,
+        now,
+        kind: 'goal_follow_through',
+        subject: input.routeUsed,
+        lesson:
+          'The broader goal failed with authoritative evidence; retain the failure and blocker instead of treating technical progress as completion.',
+        confidence: 0.95,
+        evidenceRefs: outcome.evidenceRefs,
       }),
     );
   }

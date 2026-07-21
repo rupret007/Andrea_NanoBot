@@ -425,6 +425,44 @@ describe('unified grounded cognition', () => {
     });
   });
 
+  it('creates bounded review candidates from clarification and recommendation outcomes', () => {
+    const learned = observeUnifiedOutcome(frame(), {
+      observedAt: NOW,
+      routeUsed: 'direct',
+      responseStatus: 'warn',
+      goalFailureVerified: true,
+      clarificationFailureCount: 3,
+      recommendationFeedback: [
+        {
+          recommendationId: 'recommendation:one',
+          outcome: 'rejected',
+          reason: 'It did not preserve the requested target.',
+          evidenceRefs: ['feedback:one'],
+        },
+      ],
+    });
+    expect(learned.outcome).toMatchObject({
+      goalAchieved: false,
+      goalFailureVerified: true,
+    });
+    expect(learned.learningCandidates.map((item) => item.kind)).toEqual(
+      expect.arrayContaining([
+        'clarification_efficiency',
+        'recommendation_calibration',
+        'goal_follow_through',
+      ]),
+    );
+    expect(
+      learned.learningCandidates.every(
+        (item) =>
+          item.reviewRequired &&
+          item.reversible &&
+          !item.syntheticProductionEligible &&
+          !item.executionAuthority,
+      ),
+    ).toBe(true);
+  });
+
   it('projects only planning-admissible evidence into the grounded executive', () => {
     const built = frame({
       additionalEvidence: [

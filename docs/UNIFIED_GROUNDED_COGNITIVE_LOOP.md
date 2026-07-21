@@ -50,6 +50,23 @@ turn -> existing platform/cognitive paths
           -> review-required learning candidates
 ```
 
+## Module integration map
+
+| Existing module                             | Unified-loop integration                                                                                                     |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Personal context graph                      | Contributes scoped, redacted context before evidence arbitration                                                             |
+| Grounded Memory and Goal Continuity         | Supplies one bounded bundle of accepted memory, active goals, terminal goals, commitments, contradictions, and uncertainties |
+| Platform deliberation and cognitive kernel  | Contribute advisory posture recommendations and trace links                                                                  |
+| Grounded Cognitive Executive                | Receives the canonical accepted-evidence projection instead of performing a second integrated retrieval                      |
+| Grounded Response Intelligence              | Receives the canonical frame and produces the response contract and deterministic response evaluation                        |
+| Runtime/tool evidence                       | Supplies technical outcomes without implying provider or goal success                                                        |
+| Provider receipts and completion-claim gate | Supply authoritative delivery and completion evidence while retaining their existing authority                               |
+| Durable work and approvals                  | Remain independent authorities; the frame records only bounded references and boundaries                                     |
+
+The turn harness constructs the frame once and passes projections downstream.
+Standalone module entry points remain supported for tests and compatibility, but
+they do not become competing authorities in the integrated turn path.
+
 ## Authority matrix
 
 | Decision              | Authoritative system                                              | Unified-loop role                                                  |
@@ -119,6 +136,23 @@ Synthetic and replay frames cannot create production-eligible learning. Every
 candidate remains `proposed`, reversible, review-required, and carries
 `executionAuthority=false`.
 
+## Outcome and learning-candidate lifecycle
+
+Post-turn observation keeps tool acceptance, tool success, provider receipts,
+requested-outcome verification, goal success, and verified goal failure as
+separate fields. Response-evaluation failures, missed intents, stale evidence,
+owner corrections or feedback, route blockers, unverified technical success,
+verified goal failure, repeated clarification failures, and accepted or
+rejected recommendations can create bounded candidates. Candidates are
+redacted, scoped, evidence-linked, confidence-calibrated, deduplicated, and
+limited to 16 per frame.
+
+Candidate creation is not learning promotion. The existing reviewed memory and
+learning policy remains the only promotion path. A candidate cannot change tool
+routing, approval behavior, execution policy, autonomous capability, or durable
+memory on its own. Synthetic and replay outcomes always remain ineligible for
+production promotion.
+
 ## Evaluation boundary
 
 The whole-loop suite is deterministic, isolated, and network-denied. It compares
@@ -135,9 +169,12 @@ npm run test:unified-grounded-cognition:unit
 npm run test:unified-grounded-cognition
 ```
 
-The frozen v1 suite has 84 cases across 32 categories. The first passing
-baseline comparison scored 82.98 for the pre-integration path and 100 for the
-unified candidate, a 17.02-point improvement. All authority, privacy,
+The frozen v1 suite has 92 cases across 35 categories. It explicitly compares a
+faithfully captured current-main baseline, existing disconnected shadow
+cognition, unified shadow cognition, and deterministic simulated assistive
+response evaluation. The final baseline comparison scored 83.11 for the
+pre-integration path and 100 for the unified candidate, a 16.89-point
+improvement. All authority, privacy,
 unsupported-completion, clause/target, synthetic-learning, stale-approval,
 terminal-goal, and provider-versus-goal gates passed. Fixture p95 was below 1
 ms, compared with the 350 ms acceptance ceiling; the largest context was 3,435
@@ -156,3 +193,20 @@ gates, owner review, and genuine dogfood evidence are complete. Rollback is a
 configuration change to `off` or a code rollback; no schema downgrade is needed.
 Existing approval, action, receipt, truth, durable-work, and outbound systems
 continue to operate independently of this advisory frame.
+
+## Known limitations and assistive activation criteria
+
+The deterministic fixtures measure bounded integration behavior, not open-ended
+intelligence or real-world usefulness. The loop does not resolve every semantic
+reference, invent unsupported compound routes, verify a provider outcome without
+a receipt, or infer goal success from technical success. It does not automate
+learning promotion, approvals, delivery, scheduling, deployment, or any other
+mutation. No deterministic score establishes AGI.
+
+Assistive mode requires a separate owner decision after all deterministic gates
+remain green, an owner reviews representative diagnostics and repaired replies,
+genuine dogfood evidence shows no authority/privacy regression, latency and
+context budgets remain bounded, and the ten-day dogfood requirement completes
+without simulation or backfill. Model self-grading cannot substitute for owner
+feedback. Rollback must remain a tested configuration change to `shadow` or
+`off`, with no schema dependency.
