@@ -8,6 +8,7 @@ import {
   buildCursorDesktopCliArgs,
   buildCursorDesktopSpawnSpec,
   CursorDesktopBridge,
+  resolveCursorDesktopBridgeRuntimeConfig,
   resolveCursorDesktopCliMode,
   shouldUseShellForCursorDesktopCli,
 } from './cursor-desktop-bridge.js';
@@ -40,6 +41,17 @@ function createFakeRun() {
 }
 
 describe('CursorDesktopBridge', () => {
+  it('keeps a launcher-only installation out of the agent execution subset', () => {
+    const config = resolveCursorDesktopBridgeRuntimeConfig({
+      PATH: '',
+      CURSOR_DESKTOP_BRIDGE_TOKEN: 'fixture-token',
+      CURSOR_DESKTOP_CLI_PATH:
+        '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
+    });
+    expect(config.agentExecutionAvailable).toBe(false);
+    expect(config.force).toBe(false);
+  });
+
   it('detects the installed Cursor CLI as a subcommand-based bridge runner', () => {
     expect(resolveCursorDesktopCliMode('cursor-agent')).toBe('cursor-agent');
     expect(resolveCursorDesktopCliMode('cursor.cmd')).toBe('cursor-subcommand');
@@ -187,6 +199,35 @@ describe('CursorDesktopBridge', () => {
       agentJobDetail: null,
     });
     expect(writes.length).toBeGreaterThan(0);
+  });
+
+  it('refuses agent sessions when only terminal/session bridge support is proven', () => {
+    const bridge = new CursorDesktopBridge(
+      {
+        host: '127.0.0.1',
+        port: 4124,
+        token: 'bridge-token',
+        cliPath: '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
+        defaultCwd: '/workspace',
+        force: false,
+        stateFile: '/tmp/cursor-desktop-bridge-test.json',
+        agentExecutionAvailable: false,
+      },
+      {
+        existsSync: () => false,
+        mkdirSync: () => undefined as never,
+        readFileSync: (() => '') as unknown as typeof import('fs').readFileSync,
+        writeFileSync: () => undefined,
+      },
+    );
+
+    expect(() =>
+      bridge.createSession({ promptText: 'Implement this' }),
+    ).toThrow(/no standalone cursor agent executable/i);
+    expect(bridge.getHealth()).toMatchObject({
+      terminalAvailable: true,
+      agentJobCompatibility: 'failed',
+    });
   });
 
   it('supports follow-up and stop flows', () => {

@@ -6,6 +6,7 @@ import os from 'os';
 import path from 'path';
 
 import { logger, sanitizeLogString } from './logger.js';
+import { inspectCursorDesktopEntrypoints } from './cursor-desktop-entrypoints.js';
 
 import type {
   CursorDesktopAgentJobCompatibility,
@@ -23,7 +24,7 @@ type TerminalStatus = 'IDLE' | 'RUNNING' | 'FAILED' | 'STOPPED';
 const MAX_TERMINAL_OUTPUT_LINES = 400;
 const MAX_TERMINAL_LINE_LENGTH = 4_000;
 
-interface CursorDesktopBridgeRuntimeConfig {
+export interface CursorDesktopBridgeRuntimeConfig {
   host: string;
   port: number;
   token: string;
@@ -31,6 +32,7 @@ interface CursorDesktopBridgeRuntimeConfig {
   defaultCwd: string | null;
   force: boolean;
   stateFile: string;
+  agentExecutionAvailable?: boolean;
 }
 
 interface CursorDesktopBridgeStoredState {
@@ -337,18 +339,34 @@ function createTerminalChildRun(options: {
   };
 }
 
-function resolveRuntimeConfigFromEnv(): CursorDesktopBridgeRuntimeConfig {
+export function resolveCursorDesktopBridgeRuntimeConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): CursorDesktopBridgeRuntimeConfig {
+  const entrypoints = inspectCursorDesktopEntrypoints(env);
   const stateFile =
-    process.env.CURSOR_DESKTOP_BRIDGE_STATE_FILE ||
+    env.CURSOR_DESKTOP_BRIDGE_STATE_FILE ||
     path.join(os.homedir(), '.cursor-desktop-bridge', 'state.json');
+  const explicitLegacy = env.CURSOR_DESKTOP_CLI_PATH?.trim() || '';
+  const legacyIsStandaloneAgent =
+    path.basename(explicitLegacy).toLowerCase() === 'cursor-agent';
   return {
-    host: process.env.CURSOR_DESKTOP_BRIDGE_HOST || '127.0.0.1',
-    port: normalizePort(process.env.CURSOR_DESKTOP_BRIDGE_PORT),
-    token: process.env.CURSOR_DESKTOP_BRIDGE_TOKEN || '',
-    cliPath: process.env.CURSOR_DESKTOP_CLI_PATH || 'cursor-agent',
-    defaultCwd: toNullableString(process.env.CURSOR_DESKTOP_DEFAULT_CWD),
-    force: parseBoolean(process.env.CURSOR_DESKTOP_FORCE, true),
+    host: env.CURSOR_DESKTOP_BRIDGE_HOST || '127.0.0.1',
+    port: normalizePort(env.CURSOR_DESKTOP_BRIDGE_PORT),
+    token: env.CURSOR_DESKTOP_BRIDGE_TOKEN || '',
+    cliPath:
+      env.CURSOR_DESKTOP_AGENT_CLI_PATH ||
+      (legacyIsStandaloneAgent ? explicitLegacy : '') ||
+      entrypoints.agentCliPath ||
+      entrypoints.desktopCliPath ||
+      'unavailable',
+    defaultCwd: toNullableString(env.CURSOR_DESKTOP_DEFAULT_CWD),
+    force: parseBoolean(env.CURSOR_DESKTOP_FORCE, false),
     stateFile,
+    agentExecutionAvailable: Boolean(
+      env.CURSOR_DESKTOP_AGENT_CLI_PATH ||
+      (legacyIsStandaloneAgent ? explicitLegacy : '') ||
+      entrypoints.agentCliPath,
+    ),
   };
 }
 
@@ -527,6 +545,11 @@ export class CursorDesktopBridge {
       mkdirSync: deps.mkdirSync ?? fs.mkdirSync,
     };
     this.loadState();
+    if (this.config.agentExecutionAvailable === false) {
+      this.agentJobCompatibility = 'failed';
+      this.agentJobDetail =
+        'No standalone Cursor agent executable is configured. Cursor desktop/launcher presence enables neither agent execution nor automatic installation.';
+    }
   }
 
   private loadState(): void {
@@ -797,6 +820,7 @@ export class CursorDesktopBridge {
   getHealth(): CursorDesktopHealth {
     return {
       ok: true,
+      processId: process.pid,
       machineName: this.deps.hostname(),
       cliPath: this.config.cliPath,
       activeRuns: this.activeRuns.size,
@@ -817,6 +841,12 @@ export class CursorDesktopBridge {
   }
 
   createSession(input: CreateSessionInput): CursorDesktopSession {
+    if (this.config.agentExecutionAvailable === false) {
+      throw new Error(
+        this.agentJobDetail ||
+          'Cursor desktop agent execution is unavailable on this machine.',
+      );
+    }
     const promptText = toNullableString(input.promptText);
     if (!promptText) {
       throw new Error('Prompt text is required.');
@@ -1258,10 +1288,15 @@ export class CursorDesktopBridge {
 export function startCursorDesktopBridge(
   deps: CursorDesktopBridgeDeps = {},
 ): http.Server {
-  const config = resolveRuntimeConfigFromEnv();
+  const config = resolveCursorDesktopBridgeRuntimeConfig();
   if (!config.token.trim()) {
     throw new Error(
       'CURSOR_DESKTOP_BRIDGE_TOKEN is required to start the Cursor desktop bridge.',
+    );
+  }
+  if (!['127.0.0.1', '::1', 'localhost'].includes(config.host)) {
+    throw new Error(
+      'CURSOR_DESKTOP_BRIDGE_HOST must be loopback-only. Use a separately authenticated private tunnel if remote access is required.',
     );
   }
 

@@ -45,6 +45,14 @@ const duplicateOrInteractive = new Map<string, string>([
   ['test:agent-runner', 'container package gate; run separately'],
   ['test:agi', 'AGI Vitest suite; run separately'],
   ['test:deterministic:sweep', 'this runner'],
+  [
+    'test:verified-coding-agency',
+    'aggregate gate; deterministic fixtures are included separately',
+  ],
+  [
+    'test:verified-coding-agency:real-git',
+    'local child-process Git proof; run separately outside the network guard',
+  ],
 ]);
 
 const credentialedCouncilTiers = new Set([

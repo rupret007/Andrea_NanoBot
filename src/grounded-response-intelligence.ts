@@ -4,6 +4,10 @@ import type { GroundedDecisionKind } from './grounded-cognitive-executive.js';
 import type { GroundedContextBundle } from './grounded-memory.js';
 import type { PersonalContextPacket } from './types.js';
 import type { UnifiedGroundedCognitiveFrame } from './unified-grounded-cognition.js';
+import {
+  claimMayBeStatedAsFact,
+  type CodingWorkResult,
+} from './coding-work-contract.js';
 
 /**
  * Grounded Response Intelligence is an advisory-only layer. It may describe
@@ -67,6 +71,7 @@ export interface GroundedSelectedEvidence {
     | 'tool_health'
     | 'provider_receipt'
     | 'approval'
+    | 'coding_result'
     | 'blocker';
   summary: string;
   confidence: number;
@@ -572,6 +577,7 @@ export function buildGroundedDeliberationPacket(input: {
   executiveDecision?: GroundedDecisionKind | null;
   routeHealth?: Array<{ route: string; status: string; detail?: string }>;
   blockers?: string[];
+  codingWorkResults?: readonly CodingWorkResult[];
   /**
    * When present, this is the canonical evidence/intents source. Memory and
    * context inputs remain for backward-compatible standalone diagnostics.
@@ -584,6 +590,30 @@ export function buildGroundedDeliberationPacket(input: {
   const intents = frame?.intents || decomposeGroundedIntents(input.text);
   const bundle = input.memoryBundle || null;
   const personal = input.personalContextPacket || null;
+  const codingSelectedEvidence: GroundedSelectedEvidence[] = (
+    input.codingWorkResults || []
+  ).flatMap((result) =>
+    result.claims
+      .filter((claim) => claimMayBeStatedAsFact(result, claim.claimId))
+      .map((claim) => ({
+        ref: `coding:${result.resultId}:${claim.claimId}`,
+        source: 'coding_result' as const,
+        summary: bounded(claim.text, 240),
+        confidence: 1,
+        epistemicStatus: 'observed' as const,
+        mayStateAsFact: true,
+      })),
+  );
+  const codingExcludedEvidence = (input.codingWorkResults || []).flatMap(
+    (result) =>
+      result.claims
+        .filter((claim) => !claimMayBeStatedAsFact(result, claim.claimId))
+        .map((claim) => ({
+          ref: `coding:${result.resultId}:${claim.claimId}`,
+          reason:
+            'Coding-agent claim lacks independent supporting evidence or violated an authority invariant.',
+        })),
+  );
   const legacySelectedEvidence: GroundedSelectedEvidence[] = [
     {
       ref: `turn:${input.turnId}`,
@@ -638,6 +668,7 @@ export function buildGroundedDeliberationPacket(input: {
       epistemicStatus: 'observed' as const,
       mayStateAsFact: true,
     })),
+    ...codingSelectedEvidence,
   ];
   const unifiedSelectedEvidence: GroundedSelectedEvidence[] = (
     frame?.evidence || []
@@ -676,7 +707,7 @@ export function buildGroundedDeliberationPacket(input: {
     mayStateAsFact: item.mayStateToUser,
   }));
   const selectedEvidence = frame
-    ? unifiedSelectedEvidence
+    ? [...unifiedSelectedEvidence, ...codingSelectedEvidence]
     : legacySelectedEvidence;
   const contradictions = frame
     ? unique(
@@ -756,6 +787,11 @@ export function buildGroundedDeliberationPacket(input: {
       'Do not claim an external mutation completed without authoritative same-target evidence.',
       'Do not present inference, stale context, or unresolved contradiction as verified fact.',
       'Do not imply that this advisory packet grants approval or execution authority.',
+      ...(codingExcludedEvidence.length > 0
+        ? [
+            'Do not repeat a coding agent completion claim unless independent filesystem, Git, process, test, artifact, or provider evidence verifies it.',
+          ]
+        : []),
       ...(blockers.length > 0
         ? ['Do not hide a blocker or describe a partial outcome as complete.']
         : []),
@@ -816,13 +852,18 @@ export function buildGroundedDeliberationPacket(input: {
     mode,
     intents,
     selectedEvidence: boundedEvidence,
-    excludedEvidence: frame
-      ? frame.excludedEvidence
-          .slice(0, 20)
-          .map((item) => ({ ref: item.ref, reason: item.reason }))
-      : (bundle?.excluded || [])
-          .slice(0, 20)
-          .map((item) => ({ ref: item.recordId, reason: item.reason })),
+    excludedEvidence: [
+      ...(frame
+        ? frame.excludedEvidence.map((item) => ({
+            ref: item.ref,
+            reason: item.reason,
+          }))
+        : (bundle?.excluded || []).map((item) => ({
+            ref: item.recordId,
+            reason: item.reason,
+          }))),
+      ...codingExcludedEvidence,
+    ].slice(0, 20),
     contradictions,
     unknowns,
     commitments,

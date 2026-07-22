@@ -248,6 +248,9 @@ export interface RuntimeBackendJob {
   finishedAt?: string | null;
   updatedAt: string;
   capabilities: RuntimeJobCapabilities;
+  codingWorkResult?:
+    | import('./coding-work-contract.js').CodingWorkResult
+    | null;
 }
 
 export interface RuntimeBackendJobList {

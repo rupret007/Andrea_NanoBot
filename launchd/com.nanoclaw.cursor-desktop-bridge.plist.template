@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nanoclaw.cursor-desktop-bridge</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{PROJECT_ROOT}}/scripts/cursor-desktop-bridge-runner.sh</string>
+        <string>{{PROJECT_ROOT}}</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{{PROJECT_ROOT}}</string>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>ThrottleInterval</key><integer>15</integer>
+    <key>ProcessType</key><string>Background</string>
+    <key>Umask</key><integer>63</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key><string>{{HOME}}</string>
+        <key>PATH</key><string>{{PATH}}</string>
+        <key>CURSOR_DESKTOP_BRIDGE_STATE_FILE</key><string>{{STATE_FILE}}</string>
+        <key>CURSOR_DESKTOP_BRIDGE_LOG_DIR</key><string>{{LOG_DIR}}</string>
+    </dict>
+
+    <key>StandardOutPath</key><string>{{LOG_DIR}}/stdout.log</string>
+    <key>StandardErrorPath</key><string>{{LOG_DIR}}/stderr.log</string>
+</dict>
+</plist>

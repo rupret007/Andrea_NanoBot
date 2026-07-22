@@ -9,6 +9,7 @@ import {
   resolveGroundedAdvisoryMode,
 } from './grounded-response-intelligence.js';
 import type { GroundedContextBundle } from './grounded-memory.js';
+import type { CodingWorkResult } from './coding-work-contract.js';
 import {
   beginTurnAgentHarness,
   evaluateTurnReply,
@@ -18,7 +19,7 @@ const NOW = '2026-07-21T12:00:00.000Z';
 
 function packet(
   text: string,
-  options?: Parameters<typeof buildGroundedDeliberationPacket>[0],
+  options?: Partial<Parameters<typeof buildGroundedDeliberationPacket>[0]>,
 ) {
   return buildGroundedDeliberationPacket({
     turnId: 'turn-test',
@@ -91,6 +92,66 @@ describe('grounded response intelligence', () => {
     expect(
       formatGroundedDeliberationGuidance(result).length,
     ).toBeLessThanOrEqual(4_000);
+  });
+
+  it('states only independently verified coding claims and excludes agent assertions', () => {
+    const codingResult: CodingWorkResult = {
+      version: 1,
+      resultId: 'result-coding-1',
+      packetId: 'coding-packet-1',
+      jobId: 'codex-job-1',
+      lane: 'codex',
+      status: 'partial',
+      startedAt: NOW,
+      completedAt: NOW,
+      changedPathFingerprints: ['sha256:path'],
+      testSummaries: [],
+      artifactFingerprints: [],
+      failures: [],
+      claims: [
+        {
+          claimId: 'files',
+          kind: 'files_changed',
+          text: 'Two changed paths were independently observed.',
+          evidenceIds: ['filesystem', 'diff'],
+        },
+        {
+          claimId: 'push',
+          kind: 'pushed',
+          text: 'The branch was pushed.',
+          evidenceIds: [],
+        },
+      ],
+      evidence: [],
+      verification: {
+        status: 'partial',
+        verifiedClaimIds: ['files'],
+        unsupportedClaimIds: ['push'],
+        invariantFailures: [],
+        checkedAt: NOW,
+      },
+      agentOutputTrusted: false,
+    };
+    const result = packet('What did the coding job finish?', {
+      codingWorkResults: [codingResult],
+    });
+
+    expect(result.selectedEvidence).toContainEqual(
+      expect.objectContaining({
+        source: 'coding_result',
+        summary: 'Two changed paths were independently observed.',
+        mayStateAsFact: true,
+      }),
+    );
+    expect(
+      result.selectedEvidence.some((item) => /pushed/i.test(item.summary)),
+    ).toBe(false);
+    expect(result.excludedEvidence).toContainEqual(
+      expect.objectContaining({ ref: 'coding:result-coding-1:push' }),
+    );
+    expect(result.responseContract.prohibitedClaims.join(' ')).toMatch(
+      /coding agent completion claim/i,
+    );
   });
 
   it('excludes unsafe memory and exposes contradiction metadata from the bundle', () => {

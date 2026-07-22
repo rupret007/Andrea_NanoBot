@@ -104,6 +104,7 @@ export interface CursorDesktopSession {
 
 export interface CursorDesktopHealth {
   ok: boolean;
+  processId?: number | null;
   machineName: string | null;
   cliPath: string | null;
   activeRuns: number;
@@ -220,6 +221,7 @@ function mapHealth(value: unknown): CursorDesktopHealth {
 
   return {
     ok: row.ok !== false,
+    processId: toNonNegativeInt(row.processId),
     machineName: toNullableString(row.machineName),
     cliPath: toNullableString(row.cliPath),
     activeRuns,

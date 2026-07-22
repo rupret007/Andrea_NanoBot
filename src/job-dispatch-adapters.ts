@@ -72,6 +72,22 @@ function normaliseRuntimeStatus(
   }
 }
 
+export function formatUnverifiedCursorProviderOutput(
+  view: Pick<CursorAgentView, 'summary' | 'targetPrUrl' | 'targetUrl'>,
+): string | null {
+  const providerValues = [
+    view.summary ? `summary: ${view.summary}` : null,
+    view.targetUrl ? `provider URL: ${view.targetUrl}` : null,
+    view.targetPrUrl ? `provider-reported PR URL: ${view.targetPrUrl}` : null,
+  ].filter((value): value is string => Boolean(value));
+  if (providerValues.length === 0) return null;
+  return [
+    'Cursor provider output (untrusted until independently verified):',
+    ...providerValues.map((value) => `- ${value}`),
+    'This does not prove local file changes, tests, artifacts, a push/PR, deployment, or goal completion.',
+  ].join('\n');
+}
+
 function cursorViewToUnified(view: CursorAgentView): UnifiedJobView {
   return {
     jobId: view.id,
@@ -79,8 +95,9 @@ function cursorViewToUnified(view: CursorAgentView): UnifiedJobView {
     lastUpdate: view.summary,
     outputTail: null, // Cursor's structured output flows via conversation/artifacts; we surface artifacts on completion via finalOutput.
     errorText: null,
-    finalOutput: view.targetPrUrl || view.targetUrl || view.summary || null,
+    finalOutput: formatUnverifiedCursorProviderOutput(view),
     pctComplete: null,
+    codingWorkResult: null,
   };
 }
 
@@ -106,6 +123,7 @@ function runtimeJobToUnified(job: RuntimeBackendJob): UnifiedJobView {
     errorText: job.errorText || null,
     finalOutput: job.finalOutputText || null,
     pctComplete: null,
+    codingWorkResult: job.codingWorkResult || null,
   };
 }
 

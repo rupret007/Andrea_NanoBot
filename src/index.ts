@@ -712,6 +712,13 @@ import {
 } from './cursor-command-parser.js';
 import { dispatchUnifiedJob } from './job-dispatch.js';
 import { buildJobDispatchAdapters } from './job-dispatch-adapters.js';
+import {
+  formatCodingCapabilityAnswer,
+  formatCodingCapabilityRegistry,
+  inspectCodingCapabilities,
+  isCodingCapabilityQuestion,
+} from './coding-capability-registry.js';
+import { parseCodingWorkResult } from './coding-work-contract.js';
 import { parseUnifiedJobCommand } from './unified-job-command-parser.js';
 import {
   formatUserFacingOperationFailure,
@@ -5142,9 +5149,18 @@ async function processClaimedGroupMessages(
           rewriteApplied: directAssistantRewriteApplied,
         })
       : null;
+  const codingCapabilityQuestion = missedMessages.at(-1)?.content || '';
+  const codingCapabilityQuickReply =
+    requestPolicy.route === 'direct_assistant' &&
+    isCodingCapabilityQuestion(codingCapabilityQuestion)
+      ? formatCodingCapabilityAnswer(
+          await inspectCodingCapabilities({ probe: true }),
+          codingCapabilityQuestion,
+        )
+      : null;
   const quickReply =
     requestPolicy.route === 'direct_assistant'
-      ? maybeBuildDirectQuickReply(missedMessages)
+      ? codingCapabilityQuickReply || maybeBuildDirectQuickReply(missedMessages)
       : null;
 
   let prompt = buildAssistantPromptWithPersonalization(
@@ -5262,6 +5278,25 @@ async function processClaimedGroupMessages(
   const shouldHandleReleaseReadinessReuseLocally =
     isReleaseReadinessActiveReuseRequest(lastContent);
   const turnHarnessStartedAt = Date.now();
+  const currentCodingWorkSelection = getCurrentWorkSelection(
+    chatJid,
+    group.folder,
+    latestUserMessage?.thread_id,
+  );
+  const currentCodingWorkResult = (() => {
+    if (currentCodingWorkSelection?.laneId !== 'andrea_runtime') return null;
+    const cached = getRuntimeBackendJob(
+      ANDREA_OPENAI_BACKEND_ID,
+      currentCodingWorkSelection.jobId,
+    );
+    if (!cached?.raw_json) return null;
+    try {
+      const parsed = JSON.parse(cached.raw_json) as Record<string, unknown>;
+      return parseCodingWorkResult(parsed.codingWorkResult);
+    } catch {
+      return null;
+    }
+  })();
   const turnAgentHarness: TurnAgentHarnessContext | null =
     shouldHandleProofDrillLocally ||
     shouldHandleOutcomeReviewLocally ||
@@ -5288,6 +5323,9 @@ async function processClaimedGroupMessages(
           // state actually accumulates per actor instead of staying empty.
           actorId: latestUserMessage?.sender || chatJid,
           chatId: chatJid,
+          codingWorkResults: currentCodingWorkResult
+            ? [currentCodingWorkResult]
+            : [],
         });
   const turnHarnessCompletedAt = Date.now();
   if (turnAgentHarness?.groundedDeliberation?.mode === 'assistive') {
@@ -14765,36 +14803,31 @@ async function main(): Promise<void> {
   async function selectCurrentResponseFeedbackRepairLane(
     record: ResponseFeedbackRecord,
   ): Promise<ResponseFeedbackLaneSelection> {
-    const runtimeStatus = await getAndreaOpenAiBackendStatus();
-    const cursorCloudStatus = getCursorCloudStatus();
-    const cursorDesktopStatus = await getCursorDesktopStatus({ probe: true });
+    const codingCapabilities = await inspectCodingCapabilities({
+      probe: true,
+    });
+    const codexBackend = codingCapabilities.get('codex_local_backend');
+    const openAiFallback = codingCapabilities.get('openai_fallback');
+    const cursorCloud = codingCapabilities.get('cursor_cloud');
+    const cursorDesktopAgent = codingCapabilities.get('cursor_desktop_agent');
     return selectResponseFeedbackRetryLane({
       record,
       availability: {
-        runtimeAvailable: runtimeStatus.state === 'available',
-        runtimeLocalPreferred:
-          runtimeStatus.state === 'available' &&
-          runtimeStatus.meta?.localExecutionState === 'available_authenticated',
-        runtimeCloudAllowed: runtimeStatus.state === 'available',
+        runtimeAvailable: codexBackend.state === 'ready',
+        runtimeLocalPreferred: codexBackend.state === 'ready',
+        runtimeCloudAllowed: openAiFallback.state === 'ready',
         runtimeDetail:
-          runtimeStatus.meta?.localExecutionState === 'available_authenticated'
-            ? 'Codex local is healthy and authenticated on this host.'
-            : runtimeStatus.detail ||
-              runtimeStatus.meta?.operatorGuidance ||
-              null,
-        cursorCloudAvailable:
-          cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey,
+          codexBackend.state === 'ready'
+            ? 'The supervised local Codex backend is ready and authenticated.'
+            : codexBackend.blocker || codexBackend.nextAction,
+        cursorCloudAvailable: cursorCloud.state === 'ready',
         cursorCloudDetail:
-          cursorCloudStatus.enabled && cursorCloudStatus.hasApiKey
-            ? 'Cursor Cloud is configured and ready for queued coding jobs.'
-            : null,
-        cursorDesktopAvailable:
-          cursorDesktopStatus.enabled &&
-          cursorDesktopStatus.hasToken &&
-          cursorDesktopStatus.probeStatus === 'ok' &&
-          cursorDesktopStatus.agentJobCompatibility === 'validated',
+          cursorCloud.state === 'ready'
+            ? 'Cursor Cloud passed its authenticated read-only capability probe.'
+            : cursorCloud.blocker || cursorCloud.nextAction,
+        cursorDesktopAvailable: cursorDesktopAgent.state === 'ready',
         cursorDesktopDetail:
-          cursorDesktopStatus.agentJobDetail || cursorDesktopStatus.probeDetail,
+          cursorDesktopAgent.blocker || cursorDesktopAgent.nextAction,
       },
     });
   }
@@ -16560,23 +16593,26 @@ async function main(): Promise<void> {
     runtimeBackendStatus: Awaited<
       ReturnType<typeof getAndreaOpenAiBackendStatus>
     >;
+    codingCapabilities: Awaited<ReturnType<typeof inspectCodingCapabilities>>;
   }): {
     cloudLine: string;
     desktopLine: string;
     runtimeRouteLine: string;
     codexRuntimeLine: string;
   } {
-    const cloudLine =
-      params.cloudStatus.enabled && params.cloudStatus.hasApiKey
-        ? 'ready'
-        : 'unavailable (add CURSOR_API_KEY)';
-    const desktopLine = params.desktopStatus.terminalAvailable
-      ? 'ready'
-      : params.desktopStatus.enabled
-        ? params.desktopStatus.probeDetail
-          ? `conditional (${params.desktopStatus.probeDetail})`
-          : 'conditional'
-        : 'optional and unavailable';
+    const cloudCapability = params.codingCapabilities.get('cursor_cloud');
+    const desktopCapability = params.codingCapabilities.get(
+      'cursor_desktop_terminal',
+    );
+    const codexCapability = params.codingCapabilities.get(
+      'codex_local_backend',
+    );
+    const cloudLine = cloudCapability.blocker
+      ? `${cloudCapability.state} (${cloudCapability.blocker})`
+      : cloudCapability.state;
+    const desktopLine = desktopCapability.blocker
+      ? `${desktopCapability.state} (${desktopCapability.blocker})`
+      : desktopCapability.state;
     const runtimeRouteLine =
       params.gatewayStatus.mode === 'configured'
         ? params.gatewayStatus.probeStatus === 'ok'
@@ -16587,16 +16623,9 @@ async function main(): Promise<void> {
         : params.gatewayStatus.mode === 'partial'
           ? 'partial'
           : 'optional and off';
-    const codexRuntimeLine =
-      params.runtimeBackendStatus.state === 'available'
-        ? 'available and authenticated'
-        : params.runtimeBackendStatus.state === 'auth_required'
-          ? 'available but needs codex login'
-          : params.runtimeBackendStatus.state === 'not_ready'
-            ? `degraded (${params.runtimeBackendStatus.detail || 'backend not ready'})`
-            : params.runtimeBackendStatus.state === 'not_enabled'
-              ? 'disabled in this NanoBot runtime'
-              : `unavailable (${params.runtimeBackendStatus.detail || 'loopback unreachable'})`;
+    const codexRuntimeLine = codexCapability.blocker
+      ? `${codexCapability.state} (${codexCapability.blocker})`
+      : codexCapability.state;
     return { cloudLine, desktopLine, runtimeRouteLine, codexRuntimeLine };
   }
 
@@ -16825,12 +16854,17 @@ async function main(): Promise<void> {
     }
 
     if (params.state.kind === 'home') {
-      const [desktopStatus, gatewayStatus, runtimeBackendStatus] =
-        await Promise.all([
-          getCursorDesktopStatus({ probe: false }),
-          getCursorGatewayStatus({ probe: false }),
-          getAndreaOpenAiBackendStatus(),
-        ]);
+      const [
+        desktopStatus,
+        gatewayStatus,
+        runtimeBackendStatus,
+        codingCapabilities,
+      ] = await Promise.all([
+        getCursorDesktopStatus({ probe: true }),
+        getCursorGatewayStatus({ probe: true }),
+        getAndreaOpenAiBackendStatus(),
+        inspectCodingCapabilities({ probe: true }),
+      ]);
       const cloudStatus = getCursorCloudStatus();
       const [selection, runtimeSelection] = await Promise.all([
         getCursorSelectedAgentRecord(
@@ -16870,6 +16904,7 @@ async function main(): Promise<void> {
           desktopStatus,
           gatewayStatus,
           runtimeBackendStatus,
+          codingCapabilities,
         }),
         currentJob: selection?.selected || undefined,
         currentRuntimeTask: runtimeSelection?.selected || undefined,
@@ -16891,13 +16926,19 @@ async function main(): Promise<void> {
       const desktopStatus = await getCursorDesktopStatus({ probe: true });
       const gatewayStatus = await getCursorGatewayStatus({ probe: true });
       const cloudStatus = getCursorCloudStatus();
+      const codingCapabilities = await inspectCodingCapabilities({
+        probe: true,
+      });
       const capabilitySummary = summarizeCursorCapabilities({
         desktopStatus,
         cloudStatus,
         gatewayStatus,
       });
       const render = buildCursorDashboardStatus(
-        formatCursorCapabilitySummaryMessage(capabilitySummary),
+        [
+          formatCodingCapabilityRegistry(codingCapabilities),
+          formatCursorCapabilitySummaryMessage(capabilitySummary),
+        ].join('\n\n'),
       );
       return upsertCursorDashboardMessage({
         chatJid: params.chatJid,
@@ -17710,6 +17751,9 @@ async function main(): Promise<void> {
       resolveGroup: (jid: string) => registeredGroups[jid] ?? null,
     });
     try {
+      const codingCapabilities = await inspectCodingCapabilities({
+        probe: true,
+      });
       const dispatchResult = await dispatchUnifiedJob({
         channel: {
           sendMessage: channel.sendMessage.bind(channel),
@@ -17724,6 +17768,7 @@ async function main(): Promise<void> {
           actorId: msg.sender || chatJid,
         },
         adapters,
+        capabilityRegistry: codingCapabilities,
       });
       if (dispatchResult.outcome === 'notification_blocked') {
         logger.error(
@@ -18000,6 +18045,9 @@ async function main(): Promise<void> {
     const desktopStatus = await getCursorDesktopStatus({ probe: true });
     const gatewayStatus = await getCursorGatewayStatus({ probe: true });
     const cloudStatus = getCursorCloudStatus();
+    const codingCapabilities = await inspectCodingCapabilities({
+      probe: true,
+    });
     const capabilitySummary = summarizeCursorCapabilities({
       desktopStatus,
       cloudStatus,
@@ -18010,6 +18058,7 @@ async function main(): Promise<void> {
       formatWorkPanel({
         title: '*Cursor Status*',
         sections: [
+          formatCodingCapabilityRegistry(codingCapabilities),
           formatCursorCapabilitySummaryMessage(capabilitySummary),
           formatCursorDesktopStatusMessage(desktopStatus),
           formatCursorGatewayStatusMessage(gatewayStatus),

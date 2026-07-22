@@ -374,6 +374,8 @@ If you only read one doc, use the one that matches your role:
 
 ## Cursor In One Minute
 
+For the unified capability registry, supervised local Codex service, separate Cursor surfaces, verified result contract, lifecycle commands, and activation posture, see [docs/VERIFIED_CODING_AGENCY.md](docs/VERIFIED_CODING_AGENCY.md).
+
 Andrea now documents Cursor as three separate surfaces:
 
 - **Cursor Cloud**

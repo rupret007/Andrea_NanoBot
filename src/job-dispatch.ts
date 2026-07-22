@@ -25,6 +25,11 @@ import {
   type JobStatusCardChannel,
   type JobStatusCardState,
 } from './job-status-card.js';
+import type { CodingCapabilityRegistry } from './coding-capability-registry.js';
+import {
+  classifyCodingOperations,
+  type CodingWorkResult,
+} from './coding-work-contract.js';
 
 export interface UnifiedJobView {
   jobId: string;
@@ -34,6 +39,7 @@ export interface UnifiedJobView {
   errorText: string | null;
   finalOutput: string | null;
   pctComplete: number | null;
+  codingWorkResult?: CodingWorkResult | null;
 }
 
 export interface JobDispatchInput {
@@ -114,6 +120,7 @@ export async function dispatchUnifiedJob(args: {
   channel: JobStatusCardChannel;
   input: JobDispatchInput;
   adapters: JobDispatchAdapters;
+  capabilityRegistry?: Pick<CodingCapabilityRegistry, 'selectLane'>;
   config?: JobDispatchConfig;
 }): Promise<JobDispatchResult> {
   const { channel, input, adapters } = args;
@@ -142,7 +149,28 @@ export async function dispatchUnifiedJob(args: {
     };
   }
 
-  const lane: JobLane = lanePick.lane;
+  let lane: JobLane = lanePick.lane;
+  if (args.capabilityRegistry) {
+    const selection = args.capabilityRegistry.selectLane({
+      requestedLane:
+        input.laneOverride === 'cursor' || input.laneOverride === 'codex'
+          ? input.laneOverride
+          : 'auto',
+      preferredLane: lanePick.lane,
+      operations: classifyCodingOperations(input.prompt),
+    });
+    if (selection.outcome !== 'selected' || !selection.lane) {
+      await channel.sendMessage(input.chatJid, selection.disclosure);
+      return {
+        outcome: 'failed',
+        lane: null,
+        jobId: null,
+        summary: 'lane:none failure:capability_unavailable',
+      };
+    }
+    lane = selection.lane;
+    await channel.sendMessage(input.chatJid, selection.disclosure);
+  }
   const adapter = adapters[lane];
 
   let initialJob: UnifiedJobView;

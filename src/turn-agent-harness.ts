@@ -74,6 +74,7 @@ import {
   type GroundedDeliberationPacket,
   type GroundedResponseEvaluation,
 } from './grounded-response-intelligence.js';
+import type { CodingWorkResult } from './coding-work-contract.js';
 import {
   attachUnifiedGroundedDecision,
   attachUnifiedResponseContract,
@@ -331,6 +332,7 @@ export interface BeginTurnAgentHarnessInput {
   knownBlockers?: string[];
   actorId?: string | null;
   chatId?: string | null;
+  codingWorkResults?: readonly CodingWorkResult[];
 }
 
 export interface EvaluateTurnReplyInput {
@@ -1574,6 +1576,7 @@ export async function beginTurnAgentHarness(
         executiveDecision: groundedDecision?.kind || null,
         blockers: input.knownBlockers,
         unifiedFrame: unifiedGroundedCognition,
+        codingWorkResults: input.codingWorkResults,
       });
       if (adaptiveLearningGuidance) {
         groundedDeliberation = {

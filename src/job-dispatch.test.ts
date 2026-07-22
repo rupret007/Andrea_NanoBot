@@ -7,6 +7,53 @@ import {
   type UnifiedJobView,
 } from './job-dispatch.js';
 import type { SendMessageResult } from './types.js';
+import { CodingCapabilityRegistry } from './coding-capability-registry.js';
+
+function capabilityRegistry(input: {
+  cursorReady?: boolean;
+  codexReady?: boolean;
+}): CodingCapabilityRegistry {
+  return new CodingCapabilityRegistry({
+    observedAt: '2026-07-22T12:00:00.000Z',
+    cursorCloud: {
+      configured: Boolean(input.cursorReady),
+      probed: Boolean(input.cursorReady),
+      reachable: Boolean(input.cursorReady),
+      authenticated: Boolean(input.cursorReady),
+      detail: null,
+    },
+    cursorDesktop: {
+      appInstalled: false,
+      configured: false,
+      probed: false,
+      reachable: false,
+      terminalAvailable: false,
+      agentCompatibility: 'unknown',
+      cliPath: null,
+      detail: null,
+    },
+    codexCli: {
+      installed: Boolean(input.codexReady),
+      binaryPath: input.codexReady ? '/codex' : null,
+      version: input.codexReady ? 'test' : null,
+      authMaterialPresent: Boolean(input.codexReady),
+      authProbed: Boolean(input.codexReady),
+      authenticated: Boolean(input.codexReady),
+      detail: null,
+    },
+    codexBackend: {
+      enabled: Boolean(input.codexReady),
+      configured: true,
+      probed: Boolean(input.codexReady),
+      reachable: Boolean(input.codexReady),
+      authenticated: Boolean(input.codexReady),
+      executionReady: Boolean(input.codexReady),
+      version: input.codexReady ? 'test' : null,
+      detail: null,
+    },
+    openAiFallback: { configured: false },
+  });
+}
 
 interface CapturedSend {
   jid: string;
@@ -135,6 +182,64 @@ describe('dispatchUnifiedJob — clarification path', () => {
 });
 
 describe('dispatchUnifiedJob — auto routing', () => {
+  it('does not create work when the explicit lane is unavailable', async () => {
+    const { channel, sends } = makeChannel();
+    let creates = 0;
+    const adapter = makeAdapter('Codex', []);
+    const adapters: JobDispatchAdapters = {
+      cursor: makeAdapter('Cursor', []),
+      codex: {
+        ...adapter,
+        async createJob(prompt, context) {
+          creates += 1;
+          return adapter.createJob(prompt, context);
+        },
+      },
+    };
+    const result = await dispatchUnifiedJob({
+      channel,
+      input: {
+        chatJid: 'tg:1',
+        prompt: 'run npm test',
+        laneOverride: 'codex',
+      },
+      adapters,
+      capabilityRegistry: capabilityRegistry({ cursorReady: true }),
+    });
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      lane: null,
+      jobId: null,
+    });
+    expect(creates).toBe(0);
+    expect(sends[0].text).toMatch(/no lane was substituted/i);
+  });
+
+  it('discloses an auto fallback and creates work only on the ready lane', async () => {
+    const { channel, sends } = makeChannel();
+    const completed: UnifiedJobView = {
+      jobId: 'cursor-fallback',
+      status: 'completed',
+      lastUpdate: null,
+      outputTail: null,
+      errorText: null,
+      finalOutput: null,
+      pctComplete: null,
+    };
+    const result = await dispatchUnifiedJob({
+      channel,
+      input: {
+        chatJid: 'tg:1',
+        prompt: 'run npm test on the project',
+        laneOverride: null,
+      },
+      adapters: buildAdapters([completed], []),
+      capabilityRegistry: capabilityRegistry({ cursorReady: true }),
+    });
+    expect(result).toMatchObject({ outcome: 'dispatched', lane: 'cursor' });
+    expect(sends[0].text).toMatch(/auto routing used cursor/i);
+  });
+
   it('routes code-edit prompts to cursor', async () => {
     const { channel } = makeChannel();
     const cursorJob: UnifiedJobView = {
