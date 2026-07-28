@@ -139,6 +139,19 @@ npm run setup -- --step google-calendar discover --select all
 npm run setup -- --step google-calendar validate
 ```
 
+For reauthorization when the current repo already has the matching client ID
+and client secret, no JSON download is needed:
+
+```bash
+npm run setup -- --step google-calendar auth --from-env
+npm run setup -- --step google-calendar discover --select all
+npm run setup -- --step google-calendar validate
+```
+
+The `--from-env` flow reads the existing credentials without copying the secret
+into the pending OAuth state file. Use it after publishing the OAuth app to
+Production when an older refresh token has expired or been revoked.
+
 If the browser reaches the localhost callback but the auth step still times out, finish the same current-repo OAuth run with:
 
 ```bash

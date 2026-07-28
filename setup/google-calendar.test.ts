@@ -12,7 +12,9 @@ import {
   getGoogleCalendarPendingAuthStatePath,
   parseGoogleInstalledClientSecretJson,
   parseGoogleCalendarAuthCallbackUrl,
+  resolveGoogleCalendarAuthClient,
   resolveCalendarSelection,
+  shouldPersistGoogleCalendarValidationProof,
   waitForAuthCode,
 } from './google-calendar.js';
 
@@ -33,6 +35,50 @@ describe('parseGoogleInstalledClientSecretJson', () => {
     expect(parsed.clientSecret).toBe('client-secret');
     expect(parsed.authUri).toContain('accounts.google.com');
     expect(parsed.tokenUri).toContain('oauth2.googleapis.com/token');
+  });
+
+  it('reuses existing env credentials without requiring a JSON download', () => {
+    const resolved = resolveGoogleCalendarAuthClient({
+      fromEnv: true,
+      env: {
+        GOOGLE_CALENDAR_CLIENT_ID: 'stored-client-id',
+        GOOGLE_CALENDAR_CLIENT_SECRET: 'stored-client-secret',
+      },
+    });
+
+    expect(resolved.credentialSource).toBe('env');
+    expect(resolved.clientSecretJsonPath).toBeNull();
+    expect(resolved.client).toEqual({
+      clientId: 'stored-client-id',
+      clientSecret: 'stored-client-secret',
+      authUri: 'https://accounts.google.com/o/oauth2/v2/auth',
+      tokenUri: 'https://oauth2.googleapis.com/token',
+    });
+  });
+
+  it('rejects ambiguous OAuth credential sources', () => {
+    expect(() =>
+      resolveGoogleCalendarAuthClient({
+        fromEnv: true,
+        clientSecretJsonPath: 'client-secret.json',
+      }),
+    ).toThrow('Choose exactly one Google OAuth credential source');
+  });
+});
+
+describe('Google Calendar validation proof precedence', () => {
+  it('does not downgrade stronger read/write proof after read-only validation', () => {
+    expect(
+      shouldPersistGoogleCalendarValidationProof({
+        proofState: 'live_proven',
+      }),
+    ).toBe(false);
+    expect(
+      shouldPersistGoogleCalendarValidationProof({
+        proofState: 'externally_blocked',
+      }),
+    ).toBe(true);
+    expect(shouldPersistGoogleCalendarValidationProof(null)).toBe(true);
   });
 });
 
@@ -74,9 +120,7 @@ describe('resolveCalendarSelection', () => {
   });
 
   it('supports selecting the concrete primary calendar by the primary alias', () => {
-    expect(resolveCalendarSelection('primary', calendars)).toEqual([
-      'primary',
-    ]);
+    expect(resolveCalendarSelection('primary', calendars)).toEqual(['primary']);
   });
 });
 
@@ -222,8 +266,75 @@ describe('Google Calendar OAuth callback recovery', () => {
 
     const envContents = fs.readFileSync(path.join(tempDir, '.env'), 'utf8');
     expect(envContents).toContain('GOOGLE_CALENDAR_CLIENT_ID="client-id"');
-    expect(envContents).toContain('GOOGLE_CALENDAR_CLIENT_SECRET="client-secret"');
-    expect(envContents).toContain('GOOGLE_CALENDAR_REFRESH_TOKEN="refresh-token"');
+    expect(envContents).toContain(
+      'GOOGLE_CALENDAR_CLIENT_SECRET="client-secret"',
+    );
+    expect(envContents).toContain(
+      'GOOGLE_CALENDAR_REFRESH_TOKEN="refresh-token"',
+    );
+    expect(fs.existsSync(getGoogleCalendarPendingAuthStatePath(tempDir))).toBe(
+      false,
+    );
+  });
+
+  it('completes auth from env credentials without persisting the client secret', async () => {
+    fs.writeFileSync(
+      path.join(tempDir, '.env'),
+      [
+        'GOOGLE_CALENDAR_CLIENT_ID="stored-client-id"',
+        'GOOGLE_CALENDAR_CLIENT_SECRET="stored-client-secret"',
+        'GOOGLE_CALENDAR_REFRESH_TOKEN="expired-refresh-token"',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.mkdirSync(path.dirname(getGoogleCalendarPendingAuthStatePath(tempDir)), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      getGoogleCalendarPendingAuthStatePath(tempDir),
+      JSON.stringify({
+        credentialSource: 'env',
+        clientSecretJsonPath: null,
+        redirectUri: 'http://127.0.0.1:60955',
+        state: 'state-env',
+        codeVerifier: 'verifier-env',
+        createdAt: '2026-07-28T14:00:00.000Z',
+      }),
+      'utf8',
+    );
+
+    const pendingContents = fs.readFileSync(
+      getGoogleCalendarPendingAuthStatePath(tempDir),
+      'utf8',
+    );
+    expect(pendingContents).not.toContain('stored-client-id');
+    expect(pendingContents).not.toContain('stored-client-secret');
+
+    vi.stubGlobal('fetch', async () => {
+      return new Response(
+        JSON.stringify({
+          access_token: 'access-token',
+          refresh_token: 'permanent-refresh-token',
+        }),
+        { status: 200 },
+      );
+    });
+
+    const result = await completeGoogleCalendarAuthFromCallbackUrl(
+      'http://127.0.0.1:60955/?state=state-env&code=code-env',
+      tempDir,
+    );
+
+    expect(result.credentialSource).toBe('env');
+    expect(result.clientSecretJsonPath).toBeNull();
+    const envContents = fs.readFileSync(path.join(tempDir, '.env'), 'utf8');
+    expect(envContents).toContain(
+      'GOOGLE_CALENDAR_REFRESH_TOKEN="permanent-refresh-token"',
+    );
+    expect(envContents).toContain(
+      'GOOGLE_CALENDAR_CLIENT_SECRET="stored-client-secret"',
+    );
     expect(fs.existsSync(getGoogleCalendarPendingAuthStatePath(tempDir))).toBe(
       false,
     );

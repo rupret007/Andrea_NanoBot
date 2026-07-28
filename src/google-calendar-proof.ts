@@ -88,7 +88,7 @@ export function buildGoogleCalendarBlockedProofSurface(
           compact ||
           'Andrea_NanoBot does not currently have usable Google Calendar credentials in its own .env.',
         nextAction:
-          'Run `npm run setup -- --step google-calendar auth --client-secret-json "<client-secret.json>"`, then `npm run setup -- --step google-calendar discover --select primary`, then `npm run setup -- --step google-calendar validate`.',
+          'If the client ID and secret are already stored, run `npm run setup -- --step google-calendar auth --from-env`; otherwise start auth with a client-secret JSON. Then discover calendars and validate.',
         checkedAt,
         source,
       };

@@ -3,11 +3,14 @@ import { spawn } from 'child_process';
 import { TIMEZONE } from './config.js';
 import { readEnvFile } from './env.js';
 import {
+  classifyGoogleCalendarFailureDetail,
   listGoogleCalendarEvents,
   listGoogleCalendars,
   type GoogleCalendarMetadata,
   resolveGoogleCalendarConfig,
 } from './google-calendar.js';
+import { buildGoogleCalendarBlockedProofSurface } from './google-calendar-proof.js';
+import { writeProviderProofSurface } from './provider-proof-state.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
 
 const CALENDAR_ENV_KEYS = [
@@ -199,6 +202,11 @@ interface CalendarAssistantDeps {
   env?: Record<string, string | undefined>;
   fetchImpl?: FetchLike;
   platform?: NodeJS.Platform;
+  /**
+   * When supplied by the live runtime, provider auth failures replace stale
+   * persisted health proof. Tests and library callers stay side-effect free.
+   */
+  proofProjectRoot?: string;
   activeEventContext?: CalendarActiveEventContext | null;
   runAppleCalendarScript?: (
     startIso: string,
@@ -2092,6 +2100,29 @@ export async function lookupCalendarAssistantEvents(
   ]);
 
   const statuses = providerResults.map((result) => result.status);
+  const googleStatus = statuses.find(
+    (status) => status.id === 'google_calendar',
+  );
+  if (
+    deps.proofProjectRoot &&
+    googleStatus?.state === 'error' &&
+    [
+      'invalid_refresh_token',
+      'token_refresh_failed',
+      'calendar_access_denied',
+      'calendar_not_found',
+    ].includes(classifyGoogleCalendarFailureDetail(googleStatus.detail))
+  ) {
+    writeProviderProofSurface(
+      'googleCalendar',
+      buildGoogleCalendarBlockedProofSurface(
+        googleStatus.detail,
+        new Date().toISOString(),
+        'verify',
+      ),
+      deps.proofProjectRoot,
+    );
+  }
   const filteredEvents = filterEventsForPlan(
     dedupeEvents(providerResults.flatMap((result) => result.events)),
     plan,

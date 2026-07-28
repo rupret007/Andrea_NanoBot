@@ -16,8 +16,11 @@ import {
   buildGoogleCalendarBlockedProofSurface,
   buildGoogleCalendarNearLiveSurface,
 } from '../src/google-calendar-proof.js';
-import { writeProviderProofSurface } from '../src/provider-proof-state.js';
-import { upsertEnvFileValues } from '../src/env.js';
+import {
+  readProviderProofState,
+  writeProviderProofSurface,
+} from '../src/provider-proof-state.js';
+import { readEnvFile, upsertEnvFileValues } from '../src/env.js';
 import { logger } from '../src/logger.js';
 import { emitStatus } from './status.js';
 
@@ -27,9 +30,10 @@ const GOOGLE_CALENDAR_SCOPES = [
 ] as const;
 
 const GOOGLE_NATIVE_AUTH_URI = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_TOKEN_URI = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_CALENDAR_OAUTH_LOOPBACK_HOST = '127.0.0.1';
 
-interface InstalledGoogleClientSecret {
+export interface InstalledGoogleClientSecret {
   clientId: string;
   clientSecret: string;
   authUri: string;
@@ -39,16 +43,24 @@ interface InstalledGoogleClientSecret {
 interface GoogleCalendarSetupArgs {
   action: 'auth' | 'auth-complete' | 'discover' | 'validate' | '';
   clientSecretJsonPath: string | null;
+  fromEnv: boolean;
   select: string | null;
   callbackUrl: string | null;
 }
 
 interface PendingGoogleCalendarAuthState {
-  clientSecretJsonPath: string;
+  credentialSource?: 'client_secret_json' | 'env';
+  clientSecretJsonPath?: string | null;
   redirectUri: string;
   state: string;
   codeVerifier: string;
   createdAt: string;
+}
+
+export function shouldPersistGoogleCalendarValidationProof(
+  existingProof: { proofState?: string } | null | undefined,
+): boolean {
+  return existingProof?.proofState !== 'live_proven';
 }
 
 function toErrorDetail(error: unknown): string {
@@ -85,6 +97,7 @@ function parseArgs(args: string[]): GoogleCalendarSetupArgs {
   const result: GoogleCalendarSetupArgs = {
     action: (args[0] || '').toLowerCase() as GoogleCalendarSetupArgs['action'],
     clientSecretJsonPath: null,
+    fromEnv: false,
     select: null,
     callbackUrl: null,
   };
@@ -94,6 +107,10 @@ function parseArgs(args: string[]): GoogleCalendarSetupArgs {
     if (current === '--client-secret-json') {
       result.clientSecretJsonPath = args[i + 1] || null;
       i += 1;
+      continue;
+    }
+    if (current === '--from-env') {
+      result.fromEnv = true;
       continue;
     }
     if (current === '--select') {
@@ -139,6 +156,63 @@ export function parseGoogleInstalledClientSecretJson(
     clientSecret: installed.client_secret,
     authUri: installed.auth_uri,
     tokenUri: installed.token_uri,
+  };
+}
+
+export function resolveGoogleCalendarAuthClient(input: {
+  clientSecretJsonPath?: string | null;
+  fromEnv?: boolean;
+  projectRoot?: string;
+  env?: Record<string, string | undefined>;
+}): {
+  client: InstalledGoogleClientSecret;
+  credentialSource: 'client_secret_json' | 'env';
+  clientSecretJsonPath: string | null;
+} {
+  const projectRoot = input.projectRoot || process.cwd();
+  if (input.fromEnv && input.clientSecretJsonPath) {
+    throw new Error(
+      'Choose exactly one Google OAuth credential source: --from-env or --client-secret-json.',
+    );
+  }
+
+  if (input.fromEnv) {
+    const env =
+      input.env ||
+      readEnvFile(
+        ['GOOGLE_CALENDAR_CLIENT_ID', 'GOOGLE_CALENDAR_CLIENT_SECRET'],
+        projectRoot,
+      );
+    const config = resolveGoogleCalendarConfig(env);
+    if (!config.clientId || !config.clientSecret) {
+      throw new Error(
+        'GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET must already be present in Andrea_NanoBot .env before using --from-env.',
+      );
+    }
+    return {
+      client: {
+        clientId: config.clientId,
+        clientSecret: config.clientSecret,
+        authUri: GOOGLE_NATIVE_AUTH_URI,
+        tokenUri: GOOGLE_TOKEN_URI,
+      },
+      credentialSource: 'env',
+      clientSecretJsonPath: null,
+    };
+  }
+
+  if (!input.clientSecretJsonPath) {
+    throw new Error(
+      'Choose a Google OAuth credential source with --from-env or --client-secret-json <path>.',
+    );
+  }
+
+  const absolutePath = path.resolve(projectRoot, input.clientSecretJsonPath);
+  const raw = fs.readFileSync(absolutePath, 'utf-8');
+  return {
+    client: parseGoogleInstalledClientSecretJson(raw),
+    credentialSource: 'client_secret_json',
+    clientSecretJsonPath: absolutePath,
   };
 }
 
@@ -213,7 +287,11 @@ function writeGoogleCalendarPendingAuthState(
 ): void {
   const targetPath = getGoogleCalendarPendingAuthStatePath(projectRoot);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.writeFileSync(`${targetPath}`, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(
+    `${targetPath}`,
+    `${JSON.stringify(state, null, 2)}\n`,
+    'utf8',
+  );
 }
 
 export function readGoogleCalendarPendingAuthState(
@@ -223,11 +301,17 @@ export function readGoogleCalendarPendingAuthState(
   if (!fs.existsSync(targetPath)) {
     return null;
   }
-  return JSON.parse(fs.readFileSync(targetPath, 'utf8')) as PendingGoogleCalendarAuthState;
+  return JSON.parse(
+    fs.readFileSync(targetPath, 'utf8'),
+  ) as PendingGoogleCalendarAuthState;
 }
 
-function clearGoogleCalendarPendingAuthState(projectRoot = process.cwd()): void {
-  fs.rmSync(getGoogleCalendarPendingAuthStatePath(projectRoot), { force: true });
+function clearGoogleCalendarPendingAuthState(
+  projectRoot = process.cwd(),
+): void {
+  fs.rmSync(getGoogleCalendarPendingAuthStatePath(projectRoot), {
+    force: true,
+  });
 }
 
 export function parseGoogleCalendarAuthCallbackUrl(input: string): {
@@ -443,13 +527,24 @@ export function resolveCalendarSelection(
   return [...new Set(ids)];
 }
 
-async function runAuth(clientSecretJsonPath: string): Promise<void> {
-  const absolutePath = path.resolve(clientSecretJsonPath);
+async function runAuth(
+  clientSecretJsonPath: string | null,
+  fromEnv: boolean,
+): Promise<void> {
   let server: http.Server | null = null;
   let redirectUri = '';
+  let credentialSource: 'client_secret_json' | 'env' = fromEnv
+    ? 'env'
+    : 'client_secret_json';
+  let resolvedClientSecretJsonPath: string | null = null;
   try {
-    const raw = fs.readFileSync(absolutePath, 'utf-8');
-    const client = parseGoogleInstalledClientSecretJson(raw);
+    const resolved = resolveGoogleCalendarAuthClient({
+      clientSecretJsonPath,
+      fromEnv,
+    });
+    const client = resolved.client;
+    credentialSource = resolved.credentialSource;
+    resolvedClientSecretJsonPath = resolved.clientSecretJsonPath;
     const state = crypto.randomBytes(16).toString('hex');
     const pkce = createGooglePkcePair();
     server = http.createServer();
@@ -468,7 +563,8 @@ async function runAuth(clientSecretJsonPath: string): Promise<void> {
 
     redirectUri = buildGoogleCalendarLoopbackRedirectUri(address.port);
     writeGoogleCalendarPendingAuthState({
-      clientSecretJsonPath: absolutePath,
+      credentialSource,
+      clientSecretJsonPath: resolvedClientSecretJsonPath,
       redirectUri,
       state,
       codeVerifier: pkce.codeVerifier,
@@ -511,14 +607,16 @@ async function runAuth(clientSecretJsonPath: string): Promise<void> {
     emitStatus('GOOGLE_CALENDAR', {
       ACTION: 'auth',
       STATUS: 'success',
-      CLIENT_SECRET_JSON: absolutePath,
+      CREDENTIAL_SOURCE: credentialSource,
+      CLIENT_SECRET_JSON: resolvedClientSecretJsonPath || 'existing_env',
       STORED_CLIENT_ID: 'true',
       STORED_REFRESH_TOKEN: 'true',
       SCOPES: GOOGLE_CALENDAR_SCOPES.join(' '),
     });
   } catch (error) {
     emitGoogleCalendarFailureStatus('auth', error, {
-      CLIENT_SECRET_JSON: absolutePath,
+      CREDENTIAL_SOURCE: credentialSource,
+      CLIENT_SECRET_JSON: resolvedClientSecretJsonPath || 'existing_env',
       CALLBACK_HOST: GOOGLE_CALENDAR_OAUTH_LOOPBACK_HOST,
       CALLBACK_URL:
         redirectUri ||
@@ -535,13 +633,14 @@ export async function completeGoogleCalendarAuthFromCallbackUrl(
   callbackUrl: string,
   projectRoot = process.cwd(),
 ): Promise<{
-  clientSecretJsonPath: string;
+  credentialSource: 'client_secret_json' | 'env';
+  clientSecretJsonPath: string | null;
   redirectUri: string;
 }> {
   const pending = readGoogleCalendarPendingAuthState(projectRoot);
   if (!pending) {
     throw new Error(
-      'No pending Google Calendar OAuth session was found. Run `npm run setup -- --step google-calendar auth --client-secret-json "<client-secret.json>"` first.',
+      'No pending Google Calendar OAuth session was found. Run `npm run setup -- --step google-calendar auth --from-env` or start auth with a client-secret JSON first.',
     );
   }
 
@@ -558,12 +657,15 @@ export async function completeGoogleCalendarAuthFromCallbackUrl(
     );
   }
 
-  const clientSecretJsonPath = path.resolve(
+  const credentialSource =
+    pending.credentialSource ||
+    (pending.clientSecretJsonPath ? 'client_secret_json' : 'env');
+  const resolved = resolveGoogleCalendarAuthClient({
+    clientSecretJsonPath: pending.clientSecretJsonPath,
+    fromEnv: credentialSource === 'env',
     projectRoot,
-    pending.clientSecretJsonPath,
-  );
-  const raw = fs.readFileSync(clientSecretJsonPath, 'utf-8');
-  const client = parseGoogleInstalledClientSecretJson(raw);
+  });
+  const client = resolved.client;
   const token = await exchangeAuthCode({
     code: parsed.code,
     clientId: client.clientId,
@@ -581,19 +683,22 @@ export async function completeGoogleCalendarAuthFromCallbackUrl(
   clearGoogleCalendarPendingAuthState(projectRoot);
 
   return {
-    clientSecretJsonPath,
+    credentialSource,
+    clientSecretJsonPath: resolved.clientSecretJsonPath,
     redirectUri: pending.redirectUri,
   };
 }
 
 async function runAuthComplete(callbackUrl: string): Promise<void> {
   try {
-    const completed = await completeGoogleCalendarAuthFromCallbackUrl(callbackUrl);
+    const completed =
+      await completeGoogleCalendarAuthFromCallbackUrl(callbackUrl);
 
     emitStatus('GOOGLE_CALENDAR', {
       ACTION: 'auth-complete',
       STATUS: 'success',
-      CLIENT_SECRET_JSON: completed.clientSecretJsonPath,
+      CREDENTIAL_SOURCE: completed.credentialSource,
+      CLIENT_SECRET_JSON: completed.clientSecretJsonPath || 'existing_env',
       CALLBACK_URL: completed.redirectUri,
       STORED_CLIENT_ID: 'true',
       STORED_REFRESH_TOKEN: 'true',
@@ -697,15 +802,19 @@ async function runValidate(): Promise<void> {
     });
 
     if (result.complete) {
-      writeProviderProofSurface(
-        'googleCalendar',
-        buildGoogleCalendarNearLiveSurface({
-          checkedAt: new Date().toISOString(),
-          source: 'verify',
-          validatedCalendars: result.validatedCalendars,
-        }),
-        process.cwd(),
-      );
+      const existingProof =
+        readProviderProofState(process.cwd())?.googleCalendar || null;
+      if (shouldPersistGoogleCalendarValidationProof(existingProof)) {
+        writeProviderProofSurface(
+          'googleCalendar',
+          buildGoogleCalendarNearLiveSurface({
+            checkedAt: new Date().toISOString(),
+            source: 'verify',
+            validatedCalendars: result.validatedCalendars,
+          }),
+          process.cwd(),
+        );
+      }
     } else if (result.failures.length > 0) {
       writeProviderProofSurface(
         'googleCalendar',
@@ -736,21 +845,25 @@ export async function run(args: string[]): Promise<void> {
     emitStatus('GOOGLE_CALENDAR', {
       STATUS: 'failed',
       ERROR:
-        'usage: setup --step google-calendar auth --client-secret-json <path> | auth-complete --callback-url <url> | discover [--select all|1,2|id,id] | validate',
+        'usage: setup --step google-calendar auth (--from-env | --client-secret-json <path>) | auth-complete --callback-url <url> | discover [--select all|1,2|id,id] | validate',
     });
     process.exit(4);
   }
 
   if (parsed.action === 'auth') {
-    if (!parsed.clientSecretJsonPath) {
+    if (
+      (!parsed.clientSecretJsonPath && !parsed.fromEnv) ||
+      (parsed.clientSecretJsonPath && parsed.fromEnv)
+    ) {
       emitStatus('GOOGLE_CALENDAR', {
         ACTION: 'auth',
         STATUS: 'failed',
-        ERROR: 'missing_client_secret_json_path',
+        ERROR:
+          'choose_exactly_one_credential_source: --from-env or --client-secret-json <path>',
       });
       process.exit(4);
     }
-    await runAuth(parsed.clientSecretJsonPath);
+    await runAuth(parsed.clientSecretJsonPath, parsed.fromEnv);
     return;
   }
 

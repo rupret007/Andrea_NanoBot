@@ -9241,6 +9241,7 @@ async function processClaimedGroupMessages(
     const calendarResponse = await buildCalendarAssistantResponse(lastContent, {
       now,
       timeZone: TIMEZONE,
+      proofProjectRoot: process.cwd(),
       activeEventContext: activeEventContext
         ? {
             providerId: 'google_calendar',

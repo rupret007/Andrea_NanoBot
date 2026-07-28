@@ -1,3 +1,7 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,6 +11,7 @@ import {
   lookupCalendarAssistantEvents,
   planCalendarAssistantLookup,
 } from './calendar-assistant.js';
+import { readProviderProofState } from './provider-proof-state.js';
 
 function createGoogleCalendarFetchMock(input: {
   calendarList?: Array<{
@@ -1463,6 +1468,9 @@ END:VCALENDAR</c:calendar-data>
   });
 
   it('names Google reauthorization when the refresh token is invalid_grant', async () => {
+    const proofProjectRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'andrea-calendar-proof-'),
+    );
     const fetchImpl = vi.fn(
       async () =>
         new Response(
@@ -1474,24 +1482,35 @@ END:VCALENDAR</c:calendar-data>
         ),
     );
 
-    const reply = await buildCalendarAssistantReply(
-      "What's on my agenda for today?",
-      {
-        now: new Date('2026-03-31T09:00:00-05:00'),
-        timeZone: 'America/Chicago',
-        platform: 'win32',
-        env: {
-          GOOGLE_CALENDAR_REFRESH_TOKEN: 'expired-refresh-token',
-          GOOGLE_CALENDAR_CLIENT_ID: 'client-id',
-          GOOGLE_CALENDAR_CLIENT_SECRET: 'client-secret',
+    try {
+      const reply = await buildCalendarAssistantReply(
+        "What's on my agenda for today?",
+        {
+          now: new Date('2026-03-31T09:00:00-05:00'),
+          timeZone: 'America/Chicago',
+          platform: 'win32',
+          proofProjectRoot,
+          env: {
+            GOOGLE_CALENDAR_REFRESH_TOKEN: 'expired-refresh-token',
+            GOOGLE_CALENDAR_CLIENT_ID: 'client-id',
+            GOOGLE_CALENDAR_CLIENT_SECRET: 'client-secret',
+          },
+          fetchImpl,
         },
-        fetchImpl,
-      },
-    );
+      );
 
-    expect(reply).toContain('Google Calendar needs a fresh sign-in');
-    expect(reply).toContain('reauthorize Google Calendar');
-    expect(reply).not.toContain("I didn't find anything");
+      expect(reply).toContain('Google Calendar needs a fresh sign-in');
+      expect(reply).toContain('reauthorize Google Calendar');
+      expect(reply).not.toContain("I didn't find anything");
+      expect(
+        readProviderProofState(proofProjectRoot)?.googleCalendar?.proofState,
+      ).toBe('externally_blocked');
+      expect(
+        readProviderProofState(proofProjectRoot)?.googleCalendar?.detail,
+      ).toContain('invalid_grant');
+    } finally {
+      fs.rmSync(proofProjectRoot, { recursive: true, force: true });
+    }
   });
 
   it('shows confirmed Google events with a partial warning when one configured calendar fails', async () => {
