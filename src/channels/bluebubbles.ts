@@ -3946,12 +3946,14 @@ export class BlueBubblesChannel implements Channel {
   }
 
   private async maybeEscalateCrossSurfaceFallback(): Promise<void> {
+    // A shadow-poll failure only means the diagnostic history read was
+    // inconclusive. It must not tell the owner that messaging is unreliable
+    // without separate evidence of transport or message-delivery impact.
     const recentQualifyingEvidence = this.monitorState.recentEvidence.filter(
       (entry) =>
         entry.kind === 'missed_inbound' ||
         entry.kind === 'reply_delivery_failed' ||
-        entry.kind === 'transport_unreachable' ||
-        entry.kind === 'shadow_poll_unstable',
+        entry.kind === 'transport_unreachable',
     );
     const nowMs = Date.now();
     const lastSentMs = this.monitorState.crossSurfaceFallbackLastSentAt

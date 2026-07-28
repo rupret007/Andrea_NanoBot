@@ -5859,6 +5859,88 @@ describe('BlueBubbles channel', () => {
     }
   });
 
+  it('does not send a Telegram fallback notice for diagnostic shadow-poll failures alone', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-12T20:10:00.000Z'));
+
+    let recentActivityAttempts = 0;
+    const onCrossSurfaceFallback = vi.fn(async () => ({
+      sent: true,
+      detail: 'sent fallback notice to tg:main',
+    }));
+    const apiStub = await startBlueBubblesApiStub(async (req, _body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: 7,
+                url: 'http://127.0.0.1:4305/bluebubbles/webhook?secret=hook-secret',
+                events: ['new-message'],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: { private_api: true } }));
+        return;
+      }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        recentActivityAttempts += 1;
+        res.statusCode = recentActivityAttempts === 1 ? 500 : 503;
+        res.end(`temporary history read failure ${recentActivityAttempts}`);
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+
+    const channel = new BlueBubblesChannel(
+      buildConfig({
+        baseUrl: apiStub.baseUrl,
+        webhookPublicBaseUrl: 'http://127.0.0.1:4305',
+        chatScope: 'all_synced',
+        allowedChatGuids: [],
+        allowedChatGuid: null,
+      }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: vi.fn(),
+        onCrossSurfaceFallback,
+      },
+    );
+
+    try {
+      await channel.connect();
+
+      vi.setSystemTime(new Date('2026-04-12T20:11:20.000Z'));
+      await (channel as any).runShadowMonitorOnce();
+
+      const monitorState = readBlueBubblesMonitorState();
+      expect(
+        monitorState.recentEvidence.filter(
+          (entry) => entry.kind === 'shadow_poll_unstable',
+        ),
+      ).toHaveLength(2);
+      expect(onCrossSurfaceFallback).not.toHaveBeenCalled();
+      expect(monitorState.crossSurfaceFallbackState).toBe('armed');
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
   it('passes owner-authored contact text to the data-only ingress policy without triggering fallback', async () => {
     const onCrossSurfaceFallback = vi.fn(async () => ({
       sent: true,
