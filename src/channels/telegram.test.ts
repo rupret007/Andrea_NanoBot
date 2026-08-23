@@ -7,6 +7,7 @@ import { Bot, GrammyError, HttpError } from 'grammy';
 
 import {
   TelegramChannel,
+  TELEGRAM_STATIC_BOT_COMMANDS,
   buildTelegramBlueBubblesStatusText,
   buildTelegramChatIdText,
   buildTelegramCognitionText,
@@ -27,6 +28,7 @@ import {
   extractTelegramLeadingCommand,
   splitTelegramMessage,
 } from './telegram.js';
+import type { RegisteredGroup } from '../types.js';
 import {
   PUBLIC_TELEGRAM_COMMAND_SURFACES,
   getTelegramBotGroupMenuCommands,
@@ -112,22 +114,30 @@ function buildTelegramInboundFixture(
   };
 }
 
+const TELEGRAM_INBOUND_TEST_MAIN_GROUP: RegisteredGroup = {
+  name: 'Main',
+  folder: 'main',
+  trigger: '@Andrea',
+  added_at: '2026-07-16T00:00:00.000Z',
+  requiresTrigger: false,
+  isMain: true,
+};
+
 async function createTelegramInboundTestBot(
   onMessage: ConstructorParameters<typeof TelegramChannel>[1]['onMessage'],
+  options?: {
+    registeredGroups?: () => Record<string, RegisteredGroup>;
+  },
 ): Promise<Bot> {
   const channel = new TelegramChannel('test-token', {
     onMessage,
     onChatMetadata: vi.fn(),
-    registeredGroups: () => ({
-      [`tg:${TELEGRAM_INBOUND_TEST_CHAT_ID}`]: {
-        name: 'Main',
-        folder: 'main',
-        trigger: '@Andrea',
-        added_at: '2026-07-16T00:00:00.000Z',
-        requiresTrigger: false,
-        isMain: true,
-      },
-    }),
+    registeredGroups:
+      options?.registeredGroups ??
+      (() => ({
+        [`tg:${TELEGRAM_INBOUND_TEST_CHAT_ID}`]:
+          TELEGRAM_INBOUND_TEST_MAIN_GROUP,
+      })),
   });
   (
     channel as unknown as {
@@ -156,6 +166,20 @@ async function createTelegramInboundTestBot(
         typeof previous
       >;
     }
+    if (method === 'sendMessage') {
+      return Promise.resolve({
+        ok: true,
+        result: {
+          message_id: 1,
+          date: 1_776_000_000,
+          chat: {
+            id: TELEGRAM_INBOUND_TEST_CHAT_ID,
+            type: 'private',
+          },
+          text: String((payload as { text?: string }).text || ''),
+        },
+      }) as ReturnType<typeof previous>;
+    }
     return previous(method, payload, signal);
   });
   return bot;
@@ -172,6 +196,19 @@ describe('extractTelegramLeadingCommand', () => {
 
   it('extracts /bluebubbles as a plain slash command', () => {
     expect(extractTelegramLeadingCommand('/bluebubbles')).toBe('bluebubbles');
+  });
+
+  it('extracts /council and /cognition as static bot commands', () => {
+    expect(extractTelegramLeadingCommand('/council')).toBe('council');
+    expect(extractTelegramLeadingCommand('/cognition')).toBe('cognition');
+    expect(
+      extractTelegramLeadingCommand(
+        '@andrea_test_bot /council',
+        'andrea_test_bot',
+      ),
+    ).toBe('council');
+    expect(TELEGRAM_STATIC_BOT_COMMANDS.has('council')).toBe(true);
+    expect(TELEGRAM_STATIC_BOT_COMMANDS.has('cognition')).toBe(true);
   });
 
   it('extracts slash commands targeted to this bot', () => {
@@ -486,6 +523,55 @@ describe('splitTelegramMessage', () => {
 });
 
 describe('TelegramChannel inbound acceptance', () => {
+  it('does not ingest mention-prefixed /council or /cognition as agent turns', async () => {
+    const onMessage = vi.fn<
+      ConstructorParameters<typeof TelegramChannel>[1]['onMessage']
+    >(async () => undefined);
+    const bot = await createTelegramInboundTestBot(onMessage);
+
+    const updates = [
+      '@andrea_test_bot /council',
+      '@andrea_test_bot /cognition',
+      '/council',
+      '/cognition',
+    ];
+    for (const [index, text] of updates.entries()) {
+      await bot.handleUpdate({
+        update_id: 10 + index,
+        message: {
+          message_id: 201 + index,
+          date: 1_776_000_000,
+          chat: {
+            id: TELEGRAM_INBOUND_TEST_CHAT_ID,
+            type: 'private',
+            first_name: 'Owner',
+          },
+          from: {
+            id: 77,
+            is_bot: false,
+            first_name: 'Owner',
+          },
+          text,
+        },
+      });
+    }
+
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it('drops callbacks from unregistered Telegram chats before onMessage', async () => {
+    const onMessage = vi.fn<
+      ConstructorParameters<typeof TelegramChannel>[1]['onMessage']
+    >(async () => undefined);
+    const bot = await createTelegramInboundTestBot(onMessage, {
+      registeredGroups: () => ({}),
+    });
+
+    await bot.handleUpdate(buildTelegramInboundFixture('callback'));
+
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
   it('uses the original Telegram card time as callback authorization time', async () => {
     const onMessage = vi.fn<
       ConstructorParameters<typeof TelegramChannel>[1]['onMessage']

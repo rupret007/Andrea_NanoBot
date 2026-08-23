@@ -8,6 +8,7 @@ import {
   updateMessageAction,
 } from './db.js';
 import { readEnvFile } from './env.js';
+import { secureEqual } from './secure-equal.js';
 import {
   getBlueBubblesCanonicalSelfThreadJid,
   isConfiguredBlueBubblesSelfThreadAliasJid,
@@ -605,7 +606,7 @@ export function resolveBlueBubblesControlApiConfig(
   const host =
     process.env.BLUEBUBBLES_CONTROL_HOST ||
     env.BLUEBUBBLES_CONTROL_HOST ||
-    '0.0.0.0';
+    '127.0.0.1';
   const port = parsePort(
     process.env.BLUEBUBBLES_CONTROL_PORT || env.BLUEBUBBLES_CONTROL_PORT,
     4315,
@@ -669,8 +670,14 @@ export class BlueBubblesControlServer {
   }
 
   private ensureAuthorized(req: IncomingMessage, res: ServerResponse): boolean {
+    const expectedToken = this.config.token.trim();
+    if (!expectedToken) {
+      writeJson(res, 401, { error: 'Unauthorized' });
+      return false;
+    }
     const authHeader = req.headers.authorization || '';
-    if (authHeader !== `Bearer ${this.config.token}`) {
+    const expectedHeader = `Bearer ${expectedToken}`;
+    if (!secureEqual(authHeader, expectedHeader)) {
       writeJson(res, 401, { error: 'Unauthorized' });
       return false;
     }

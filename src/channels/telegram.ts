@@ -97,6 +97,24 @@ function escapeTelegramMarkdownText(text: string): string {
     .join('');
 }
 
+export const TELEGRAM_STATIC_BOT_COMMANDS = new Set([
+  'chatid',
+  'bluebubbles',
+  'cognition',
+  'commands',
+  'council',
+  'features',
+  'forget',
+  'help',
+  'learning',
+  'mainchat',
+  'memory',
+  'ping',
+  'registermain',
+  'start',
+  'thinking',
+]);
+
 export function extractTelegramLeadingCommand(
   text: string,
   botUsername?: string,
@@ -1280,29 +1298,15 @@ export class TelegramChannel implements Channel {
       );
     });
 
-    const TELEGRAM_BOT_COMMANDS = new Set([
-      'chatid',
-      'bluebubbles',
-      'commands',
-      'features',
-      'forget',
-      'help',
-      'learning',
-      'mainchat',
-      'memory',
-      'ping',
-      'registermain',
-      'start',
-      'thinking',
-    ]);
-
     this.bot.on('message:text', async (ctx) => {
       const botUsername = ctx.me?.username?.toLowerCase();
       const leadingCommand = extractTelegramLeadingCommand(
         ctx.message.text,
         botUsername,
       );
-      if (leadingCommand && TELEGRAM_BOT_COMMANDS.has(leadingCommand)) return;
+      if (leadingCommand && TELEGRAM_STATIC_BOT_COMMANDS.has(leadingCommand)) {
+        return;
+      }
 
       const chatJid = `tg:${ctx.chat.id}`;
       let content = ctx.message.text;
@@ -1655,6 +1659,18 @@ export class TelegramChannel implements Channel {
         callbackMessage.chat.type === 'private'
           ? senderName
           : ((callbackMessage.chat as { title?: string }).title ?? chatJid);
+
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) {
+        logger.debug(
+          { component: 'telegram', chatJid, chatName },
+          'Callback from unregistered Telegram chat',
+        );
+        await ctx.answerCallbackQuery({
+          text: 'This chat is not registered with Andrea.',
+        });
+        return;
+      }
 
       this.opts.onChatMetadata(
         chatJid,

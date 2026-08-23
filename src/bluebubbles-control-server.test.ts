@@ -6,7 +6,10 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { clearBlueBubblesMonitorState } from './bluebubbles-monitor-state.js';
-import { BlueBubblesControlServer } from './bluebubbles-control-server.js';
+import {
+  BlueBubblesControlServer,
+  resolveBlueBubblesControlApiConfig,
+} from './bluebubbles-control-server.js';
 import { BlueBubblesChannel } from './channels/bluebubbles.js';
 import {
   _closeDatabase,
@@ -292,6 +295,40 @@ async function startControlServer(params: {
   };
 }
 
+describe('resolveBlueBubblesControlApiConfig', () => {
+  it('defaults the control API host to loopback', () => {
+    const previous = process.env.BLUEBUBBLES_CONTROL_HOST;
+    delete process.env.BLUEBUBBLES_CONTROL_HOST;
+    try {
+      expect(resolveBlueBubblesControlApiConfig({}).host).toBe('127.0.0.1');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.BLUEBUBBLES_CONTROL_HOST;
+      } else {
+        process.env.BLUEBUBBLES_CONTROL_HOST = previous;
+      }
+    }
+  });
+
+  it('still honors an explicit non-loopback host', () => {
+    const previous = process.env.BLUEBUBBLES_CONTROL_HOST;
+    delete process.env.BLUEBUBBLES_CONTROL_HOST;
+    try {
+      expect(
+        resolveBlueBubblesControlApiConfig({
+          BLUEBUBBLES_CONTROL_HOST: '0.0.0.0',
+        }).host,
+      ).toBe('0.0.0.0');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.BLUEBUBBLES_CONTROL_HOST;
+      } else {
+        process.env.BLUEBUBBLES_CONTROL_HOST = previous;
+      }
+    }
+  });
+});
+
 describe('BlueBubbles control server', () => {
   let tempProjectRoot: string;
 
@@ -318,6 +355,45 @@ describe('BlueBubbles control server', () => {
     clearBlueBubblesMonitorState();
     _closeDatabase();
     fs.rmSync(tempProjectRoot, { recursive: true, force: true });
+  });
+
+  it('rejects control requests when the configured token is empty', async () => {
+    const control = new BlueBubblesControlServer(
+      {
+        enabled: true,
+        host: '127.0.0.1',
+        port: 0,
+        token: '   ',
+        baseUrl: null,
+      },
+      {
+        getChannel: () => null,
+      },
+    );
+    const server = http.createServer((req, res) => {
+      control.handleRequest(req, res).catch(() => {
+        res.statusCode = 500;
+        res.end('error');
+      });
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', () => resolve()),
+    );
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Failed to resolve empty-token control server address');
+    }
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const response = await fetch(`${baseUrl}/health`, {
+        headers: { Authorization: 'Bearer    ' },
+      });
+      expect(response.status).toBe(401);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 
   it('requires bearer auth and returns sanitized status/proof with configured and effective gates', async () => {
