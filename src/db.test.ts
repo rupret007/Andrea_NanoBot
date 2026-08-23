@@ -9,6 +9,7 @@ import {
   deleteRegisteredGroup,
   deleteTask,
   getAllChats,
+  getChatName,
   findOpenCognitiveCheckpoint,
   getCursorMessageContext,
   getCursorOperatorContext,
@@ -1036,6 +1037,22 @@ describe('storeChatMetadata', () => {
     storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z', 'My Group');
     const chats = getAllChats();
     expect(chats[0].name).toBe('My Group');
+    expect(getChatName('group@g.us')).toBe('My Group');
+    expect(getChatName('tg:missing')).toBeNull();
+    expect(getChatName('')).toBeNull();
+  });
+
+  it('does not treat a placeholder chat JID as a display name', () => {
+    storeChatMetadata('tg:900100200', '2024-01-01T00:00:00.000Z');
+    expect(getChatName('tg:900100200')).toBeNull();
+    storeChatMetadata(
+      'tg:900100200',
+      '2024-01-01T00:00:01.000Z',
+      'QA',
+      'telegram',
+      false,
+    );
+    expect(getChatName('tg:900100200')).toBe('QA');
   });
 
   it('updates name on subsequent call with name', () => {

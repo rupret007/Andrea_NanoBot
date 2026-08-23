@@ -265,7 +265,8 @@ When changing behavior, keep these rules intact:
   never selects a send method
 - do not treat QA, Karen, or ordinary contact/group threads as
   send-authorization surfaces, including Telegram JIDs such as `tg:qa` or
-  `tg:karen` that reuse a main-looking group record. Contact sends still
-  require a fresh owner `send it` / `Send now` in the registered Telegram
-  front-door chat (Bob) or the configured Messages self-thread. Dispatch
-  also fail-closes those callers at send time.
+  `tg:karen` that reuse a main-looking group record, and numeric Telegram
+  JIDs whose stored title is QA or Karen. Contact sends still require a
+  fresh owner `send it` / `Send now` in the registered Telegram front-door
+  chat (Bob) or the configured Messages self-thread. Dispatch also
+  fail-closes those callers at send time.
