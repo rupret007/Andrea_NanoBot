@@ -8,6 +8,7 @@ import {
   _closeDatabase,
   _initTestDatabaseAtPath,
   getLifeThread,
+  isDatabaseInitialized,
   listLifeThreadSignals,
   listLifeThreadsForGroup,
   upsertProfileFact,
@@ -59,9 +60,21 @@ beforeEach(() => {
 }, 30_000);
 
 afterEach(() => {
-  _closeDatabase();
-  fs.rmSync(directory, { recursive: true, force: true });
-});
+  if (isDatabaseInitialized()) {
+    _closeDatabase();
+  }
+  if (directory) {
+    // Windows can keep better-sqlite3 WAL/SHM files locked after close; the
+    // connection busy timeout is 15s, longer than Vitest's default 10s hook.
+    fs.rmSync(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
+    directory = '';
+  }
+}, 30_000);
 
 function save(title: string, summary: string, at = reference): LifeThread {
   const result = handleLifeThreadCommand({
