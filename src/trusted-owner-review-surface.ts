@@ -1,5 +1,9 @@
 import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
-import { getChatName } from './db.js';
+import {
+  getChatName,
+  getRegisteredMainChat,
+  isDatabaseInitialized,
+} from './db.js';
 import type { RegisteredGroup } from './types.js';
 
 export interface TrustedOwnerReviewSurfaceInput {
@@ -83,12 +87,33 @@ export function neverAuthorizeChatJidLabel(
   return raw.startsWith('tg:') ? raw : null;
 }
 
+/**
+ * Bob's registered Telegram front-door JID, when one is recorded. Missing
+ * database or a non-Telegram main registration never invents a front-door
+ * and therefore never grants authority.
+ */
+export function resolveRegisteredTelegramFrontDoorJid(): string | null {
+  if (!isDatabaseInitialized()) return null;
+  const jid = (getRegisteredMainChat()?.jid ?? '').trim();
+  if (!jid.startsWith('tg:') || jid.startsWith('tg:-')) return null;
+  return jid;
+}
+
+export function isRegisteredTelegramFrontDoorJid(
+  chatJid: string | null | undefined,
+): boolean {
+  const frontDoorJid = resolveRegisteredTelegramFrontDoorJid();
+  const normalized = (chatJid ?? '').trim();
+  return Boolean(frontDoorJid && normalized && frontDoorJid === normalized);
+}
+
 function resolveStoredNeverAuthorizeTelegramTitle(
   extras?: NeverAuthorizeSendSurfaceExtras,
 ): string | null {
-  if (extras?.chatTitle) return extras.chatTitle;
   // Real Telegram JIDs are numeric (`tg:847392018`). Canary names live in the
-  // stored title, not the JID. BlueBubbles addresses are never parsed here.
+  // stored title, not the JID. A provided chatTitle is checked separately and
+  // must never hide a stored QA/Karen title. BlueBubbles addresses are never
+  // parsed here.
   if (!neverAuthorizeChatJidLabel(extras?.chatJid)) return null;
   return getChatName(extras?.chatJid);
 }
@@ -99,7 +124,8 @@ function resolveStoredNeverAuthorizeTelegramTitle(
  * Chat JIDs and stored titles are part of the same fail-closed set so a
  * `tg:qa` / `tg:karen` thread cannot borrow Bob's main-group registration,
  * including a numeric Telegram JID whose stored title is QA or Karen.
- * Bob's registered Telegram front-door stays the yes-fence.
+ * A provided title cannot hide that stored canary. Bob's registered
+ * Telegram front-door stays the yes-fence.
  */
 export function isNeverAuthorizeSendSurface(
   group: RegisteredGroup | null | undefined,
@@ -127,7 +153,14 @@ export function isNeverAuthorizeSendCaller(
     readonly group?: RegisteredGroup | null;
   },
 ): boolean {
-  return isNeverAuthorizeSendSurface(extras.group, extras);
+  if (isNeverAuthorizeSendSurface(extras.group, extras)) return true;
+  // A numeric Telegram JID that is not Bob's registered front-door cannot
+  // borrow isMain to authorize a send.
+  const chatJid = (extras.chatJid ?? '').trim();
+  const frontDoorJid = resolveRegisteredTelegramFrontDoorJid();
+  return Boolean(
+    frontDoorJid && chatJid.startsWith('tg:') && chatJid !== frontDoorJid,
+  );
 }
 
 /**
@@ -152,11 +185,15 @@ export function isTrustedOwnerReviewSurface(
     return false;
   }
   if (input.channelName === 'telegram') {
-    return (
-      input.chatJid.startsWith('tg:') &&
-      !input.chatJid.startsWith('tg:-') &&
-      input.group.isMain === true
-    );
+    if (
+      !input.chatJid.startsWith('tg:') ||
+      input.chatJid.startsWith('tg:-') ||
+      input.group.isMain !== true
+    ) {
+      return false;
+    }
+    const frontDoorJid = resolveRegisteredTelegramFrontDoorJid();
+    return frontDoorJid ? input.chatJid === frontDoorJid : true;
   }
   return (
     input.channelName === 'bluebubbles' &&

@@ -1,9 +1,18 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
 import {
+  _closeDatabase,
+  _initTestDatabase,
+  setRegisteredGroup,
+  storeChatMetadata,
+} from './db.js';
+import {
+  isNeverAuthorizeSendCaller,
   isNeverAuthorizeSendSurface,
+  isRegisteredTelegramFrontDoorJid,
   isTrustedOwnerReviewSurface,
+  resolveRegisteredTelegramFrontDoorJid,
 } from './trusted-owner-review-surface.js';
 import type { RegisteredGroup } from './types.js';
 
@@ -266,5 +275,68 @@ describe('trusted owner review surface', () => {
     expect(isNeverAuthorizeSendSurface(mainGroup, { chatJid: 'tg:main' })).toBe(
       false,
     );
+  });
+});
+
+describe('registered Telegram front-door send fence', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  afterEach(() => {
+    _closeDatabase();
+  });
+
+  it('does not let a numeric JID borrow the registered front-door', () => {
+    setRegisteredGroup('tg:main', mainGroup);
+    expect(resolveRegisteredTelegramFrontDoorJid()).toBe('tg:main');
+    expect(isRegisteredTelegramFrontDoorJid('tg:main')).toBe(true);
+    expect(
+      isNeverAuthorizeSendSurface(mainGroup, { chatJid: 'tg:847392018' }),
+    ).toBe(false);
+    expect(
+      isNeverAuthorizeSendCaller({
+        group: mainGroup,
+        chatJid: 'tg:847392018',
+      }),
+    ).toBe(true);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:847392018',
+        group: mainGroup,
+      }),
+    ).toBe(false);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:main',
+        group: mainGroup,
+      }),
+    ).toBe(true);
+  });
+
+  it('still refuses a stored QA title when a benign chatTitle is provided', () => {
+    storeChatMetadata(
+      'tg:900100200',
+      '2026-08-23T00:00:00.000Z',
+      'QA',
+      'telegram',
+      false,
+    );
+    expect(
+      isNeverAuthorizeSendSurface(mainGroup, {
+        chatJid: 'tg:900100200',
+        chatTitle: 'Main',
+      }),
+    ).toBe(true);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:900100200',
+        group: mainGroup,
+        chatTitle: 'Main',
+      }),
+    ).toBe(false);
   });
 });

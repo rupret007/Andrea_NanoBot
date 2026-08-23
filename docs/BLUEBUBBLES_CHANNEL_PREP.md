@@ -125,8 +125,11 @@ real contact send still requires a fresh owner-authored `send it` / `Send now`
 in the registered Telegram front-door chat (Bob / `@andrea_nanobot`) or the
 configured Messages self-thread. QA, Karen, and ordinary contact threads never
 authorize a send, even if they reply `yes` or `send it`, and a `tg:qa` or
-`tg:karen` JID cannot borrow the main group record. Stored QA/Karen titles on
-numeric Telegram JIDs fail closed the same way.
+`tg:karen` JID cannot borrow the main group record. A numeric Telegram JID
+that is not that registered front-door fails closed the same way, including
+when no title is stored yet or a provided title tries to hide a stored
+QA/Karen canary. Stored QA/Karen titles on numeric Telegram JIDs still fail
+closed, and those callers cannot defer or fire a scheduled send.
 
 Handoff-only or blocked:
 

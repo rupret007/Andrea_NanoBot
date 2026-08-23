@@ -90,11 +90,13 @@ card contract.
   presented action; a direct send imperative stages the card but does not supply
   dispatch approval
 - QA, Karen, and ordinary contact/group threads never authorize a send,
-  including a `tg:qa` / `tg:karen` JID that borrows the main group record
-  and a numeric Telegram JID whose stored title is QA or Karen. The
-  registered Telegram front-door chat (Bob) or the configured Messages
-  self-thread is the only yes-fence. Send dispatch fail-closes those callers
-  again even if a draft already exists.
+  including a `tg:qa` / `tg:karen` JID that borrows the main group record,
+  a numeric Telegram JID that is not the registered front-door chat, and a
+  numeric Telegram JID whose stored title is QA or Karen. A provided title
+  cannot hide that stored canary. The registered Telegram front-door chat
+  (Bob) or the configured Messages self-thread is the only yes-fence. Send
+  dispatch and scheduled-send deferral fail-close those callers again even
+  if a draft already exists.
 - saved delegation rules may shape a draft, but never auto-send to an external
   recipient or replace the separately presented fresh approval
 - high-risk emotional, calendar, money, medical, or commitment-changing messages stay draft/approval-first
