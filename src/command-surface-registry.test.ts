@@ -228,7 +228,7 @@ describe('command surface registry', () => {
     expect(help).not.toContain('Benchmark-Guided Packs');
     expect(help).not.toContain('Not helpful');
 
-    expect(features).toContain('calendar');
+    expect(features).toContain('Calendar');
     expect(features).toContain('planning');
     expect(features).toContain('quick reply help');
     expect(features).toContain('pills');
@@ -236,7 +236,7 @@ describe('command surface registry', () => {
     expect(features).toContain('repo check-ins');
     expect(features).toContain('does not auto-reply to contacts');
     expect(features).toContain(
-      'ordinary contact and group threads remain data-only',
+      'Ordinary contact and group threads remain data-only',
     );
   });
 

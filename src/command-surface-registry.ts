@@ -2482,19 +2482,26 @@ export function getTelegramBotMenuCommands(): Array<{
   command: string;
   description: string;
 }> {
-  const dmMenuIds = new Set([
+  const dmMenuIds = [
     'telegram_help',
     'telegram_registermain',
     'telegram_mainchat',
     'telegram_features',
     'telegram_ping',
-  ]);
-  return PUBLIC_TELEGRAM_COMMAND_SURFACES.filter((entry) =>
-    dmMenuIds.has(entry.id),
-  ).map((entry) => ({
-    command: entry.preferredAlias.replace(/^\//, ''),
-    description: entry.menuDescription ?? entry.summary,
-  }));
+  ];
+  const surfaceById = new Map(
+    PUBLIC_TELEGRAM_COMMAND_SURFACES.map((entry) => [entry.id, entry] as const),
+  );
+  return dmMenuIds.map((id) => {
+    const entry = surfaceById.get(id);
+    if (!entry) {
+      throw new Error(`Missing Telegram DM menu surface: ${id}`);
+    }
+    return {
+      command: entry.preferredAlias.replace(/^\//, ''),
+      description: entry.menuDescription ?? entry.summary,
+    };
+  });
 }
 
 export function getTelegramBotGroupMenuCommands(): Array<{

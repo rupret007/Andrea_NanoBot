@@ -459,10 +459,10 @@ describe('buildTelegramFeaturesText', () => {
     const features = buildTelegramFeaturesText('Andrea');
 
     expect(features).toContain('*Best Here*');
-    expect(features).toContain('calendar');
+    expect(features).toContain('Calendar');
     expect(features).toContain('does not auto-reply to contacts');
     expect(features).toContain(
-      'ordinary contact and group threads remain data-only',
+      'Ordinary contact and group threads remain data-only',
     );
     expect(features).toContain('configured owner Messages self-thread');
     expect(features).toContain(
