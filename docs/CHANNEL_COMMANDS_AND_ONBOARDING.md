@@ -35,8 +35,8 @@ UX defaults for Telegram:
 
 - `/start` should feel like a quick welcome and a few example asks, not a wall of help text or a programmed menu
 - `/help` should explain how to use Andrea here in one screen
-- `/commands` should stay focused on setup and status, not become the primary way to talk to Andrea
-- `/thinking`, `/council`, `/cognition`, `/memory`, and `/learning` should explain how Andrea reasons, plans tasks, and learns without exposing hidden provider traces
+- `/commands` should stay focused on setup and status, not become the primary way to talk to Andrea or a thinking-command wall
+- `/thinking`, `/council`, `/cognition`, `/memory`, and `/learning` still work if typed; they should explain how Andrea reasons, plans tasks, and learns without exposing hidden provider traces
 - `/features` should answer what Andrea is best at here and when another surface is better
 - group menus should stay slimmer than DM menus so the bot feels lighter in shared chats
 - list capture should work without setup friction and seed sensible default groups on first use

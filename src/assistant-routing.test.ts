@@ -117,6 +117,8 @@ describe('assistant request routing', () => {
     expect(policy.builtinTools).toEqual([]);
     expect(policy.builtinTools).not.toContain('Bash');
     expect(policy.guidance).toContain('use the task MCP tools');
+    expect(policy.guidance).toContain('short enough for a phone');
+    expect(policy.guidance).toContain('Do not open with a menu');
     expect(policy.guidance).toContain(
       'Do not claim a reminder, schedule, or task update is complete',
     );

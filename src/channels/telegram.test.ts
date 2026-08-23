@@ -326,20 +326,23 @@ describe('buildTelegramCommandsText', () => {
     expect(commands).toContain('*Telegram Commands*');
     expect(commands).toContain('*Start Here*');
     expect(commands).toContain('*Useful Checks*');
-    expect(commands).toContain('*Thinking and Memory*');
     expect(commands).toContain('*In Groups*');
     expect(commands).toContain('/cursor_status');
     expect(commands).toContain('/bluebubbles');
-    expect(commands).toContain('/thinking');
-    expect(commands).toContain('/council');
-    expect(commands).toContain('/cognition');
-    expect(commands).toContain('/memory');
-    expect(commands).toContain('/learning');
-    expect(commands).toContain('/forget');
     expect(commands).toContain(
       'Most people can ignore commands and just type normally.',
     );
     expect(commands).toContain(
+      'Thinking, memory, and learning commands still work if you type them.',
+    );
+    expect(commands).not.toContain('*Thinking and Memory*');
+    expect(commands).not.toContain('/thinking');
+    expect(commands).not.toContain('/council');
+    expect(commands).not.toContain('/cognition');
+    expect(commands).not.toContain('/memory');
+    expect(commands).not.toContain('/learning');
+    expect(commands).not.toContain('/forget');
+    expect(commands).not.toContain(
       'Deeper operator/admin controls stay out of normal help',
     );
     expect(commands).not.toContain('/cursor_models [filter]');

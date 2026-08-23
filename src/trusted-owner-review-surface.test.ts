@@ -213,4 +213,45 @@ describe('trusted owner review surface', () => {
       }),
     ).toBe(true);
   });
+
+  it('never lets a QA or Karen Telegram JID borrow the main group record', () => {
+    for (const chatJid of ['tg:qa', 'tg:karen', 'tg:andrea-qa', 'tg:qa_bot']) {
+      expect(isNeverAuthorizeSendSurface(mainGroup, { chatJid })).toBe(true);
+      expect(
+        isTrustedOwnerReviewSurface({
+          channelName: 'telegram',
+          chatJid,
+          group: mainGroup,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it('never authorizes from stored QA or Karen titles while ignoring email local-parts', () => {
+    expect(isNeverAuthorizeSendSurface(mainGroup, { chatTitle: 'Karen' })).toBe(
+      true,
+    );
+    expect(
+      isNeverAuthorizeSendSurface(mainGroup, { surfaceLabels: ['QA'] }),
+    ).toBe(true);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:main',
+        group: mainGroup,
+        chatTitle: 'Andrea QA',
+      }),
+    ).toBe(false);
+    expect(
+      isNeverAuthorizeSendSurface(mainGroup, {
+        chatJid: 'bb:iMessage;-;karen@example.invalid',
+      }),
+    ).toBe(false);
+    expect(
+      isNeverAuthorizeSendSurface(mainGroup, { chatTitle: 'quality' }),
+    ).toBe(false);
+    expect(isNeverAuthorizeSendSurface(mainGroup, { chatJid: 'tg:main' })).toBe(
+      false,
+    );
+  });
 });

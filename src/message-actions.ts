@@ -1867,7 +1867,7 @@ export function buildBlueBubblesProofDrillPresentationText(
     action.draftText,
     '',
     'Status: ready for a deferred same-thread decision. I will not send this immediately.',
-    'Next: show it again, make it shorter, make it more direct, save that, remind me instead, or send it later tonight.',
+    `Next: ${BLUEBUBBLES_PROOF_DRILL_NEXT_STEP}`,
   ].join('\n');
 }
 
@@ -2581,8 +2581,8 @@ function buildStateNote(record: MessageActionRecord): string | null {
 function nextStepLine(record: MessageActionRecord): string {
   if (isBlueBubblesProofDrillAction(record)) {
     return record.sendStatus === 'deferred'
-      ? 'Next: proof drill decision is recorded; I will keep the action unsent unless you explicitly ask for a fresh drill.'
-      : 'Next: show it again, make it shorter, make it more direct, save that, remind me instead, or send it later tonight.';
+      ? 'Next: proof drill decision is recorded. I will keep this unsent.'
+      : `Next: ${BLUEBUBBLES_PROOF_DRILL_NEXT_STEP}`;
   }
   if (record.sendStatus === 'sent') {
     return record.targetChannel === 'bluebubbles'
@@ -2599,25 +2599,25 @@ function nextStepLine(record: MessageActionRecord): string {
     isGroupExternalMessageAction(record) &&
     isOpenMessageActionStatus(record.sendStatus)
   ) {
-    return 'Next: show it again, rewrite it, save it, set a reminder, or discard it.';
+    return 'Next: discard this group draft. I will not send it.';
   }
   if (isScheduledSendAction(record)) {
-    return 'Next: send it now, cancel the scheduled send, remind yourself instead, or revise it.';
+    return 'Next: say send it now or cancel.';
   }
   if (
     record.sendStatus === 'deferred' &&
     record.lastActionKind === 'save_to_thread'
   ) {
-    return 'Next: show the draft again, send it, send it later, or remind yourself instead.';
+    return 'Next: say send it when you are ready, or discard.';
   }
   if (
     record.sendStatus === 'deferred' &&
     record.lastActionKind === 'remind_instead'
   ) {
-    return 'Next: send it when you are ready, change the reminder, save it under the thread, or keep editing it.';
+    return 'Next: say send it when you are ready, or discard.';
   }
   if (record.sendStatus === 'deferred') {
-    return 'Next: I can show the draft again, remind you instead, or send it when you are ready.';
+    return 'Next: say send it when you are ready, or discard.';
   }
   return 'Next: say send it or discard. I can also make it shorter.';
 }
@@ -2633,30 +2633,8 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
     return [
       [
         {
-          label: 'Show drill',
-          actionId: `/message-show ${record.messageActionId}`,
-        },
-        {
-          label: 'Shorter',
-          actionId: `/message-rewrite ${record.messageActionId} shorter`,
-        },
-        {
-          label: 'More direct',
-          actionId: `/message-rewrite ${record.messageActionId} direct`,
-        },
-      ],
-      [
-        {
           label: 'Send later tonight',
           actionId: `/message-later ${record.messageActionId}`,
-        },
-        {
-          label: 'Remind me instead',
-          actionId: `/message-remind ${record.messageActionId}`,
-        },
-        {
-          label: 'Save under thread',
-          actionId: `/message-save-thread ${record.messageActionId}`,
         },
       ],
     ];
