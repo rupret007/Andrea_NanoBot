@@ -40,10 +40,7 @@ import {
   RUNTIME_STATUS_COMMANDS,
   RUNTIME_STOP_COMMANDS,
 } from './operator-command-gate.js';
-import {
-  buildAndreaCapabilityPackagingLine,
-  getAndreaCapabilityDiscoveryPrompts,
-} from './assistant-profile-pack.js';
+import { buildAndreaCapabilityPackagingLine } from './assistant-profile-pack.js';
 
 export type CommandSurfaceAudience = 'user' | 'operator' | 'internal';
 export type CommandSurfaceKind =
@@ -2485,7 +2482,16 @@ export function getTelegramBotMenuCommands(): Array<{
   command: string;
   description: string;
 }> {
-  return PUBLIC_TELEGRAM_COMMAND_SURFACES.map((entry) => ({
+  const dmMenuIds = new Set([
+    'telegram_help',
+    'telegram_registermain',
+    'telegram_mainchat',
+    'telegram_features',
+    'telegram_ping',
+  ]);
+  return PUBLIC_TELEGRAM_COMMAND_SURFACES.filter((entry) =>
+    dmMenuIds.has(entry.id),
+  ).map((entry) => ({
     command: entry.preferredAlias.replace(/^\//, ''),
     description: entry.menuDescription ?? entry.summary,
   }));
@@ -2511,70 +2517,38 @@ export function getTelegramBotGroupMenuCommands(): Array<{
 
 export function buildTelegramWelcomeLines(assistantName: string): string[] {
   const examples = getPracticalDiscoverySpotlights('telegram')
-    .slice(0, 5)
+    .slice(0, 3)
     .map((entry) => `- \`${entry.prompt}\``);
-  const benchmarkPackExamples = getAndreaCapabilityDiscoveryPrompts()
-    .slice(1, 5)
-    .map((prompt) => `- \`${prompt}\``);
   return [
     `*Welcome to ${assistantName}*`,
     '',
-    '- Start with a normal request in plain language.',
-    `- Telegram is Andrea's richest surface for ${buildAndreaCapabilityPackagingLine()}, plus groceries, errands, pills, bills, and deeper answers.`,
+    'Just send a normal message. I will answer here.',
+    'If this DM should be your main Andrea chat, run `/registermain` once.',
     '',
-    '*Start Here*',
-    '- In a direct chat: send a normal message. If this will be your main Andrea chat, run `/registermain` once.',
-    '- Use `/mainchat` for an exact control-chat check and switch guidance.',
-    '- In a group: mention my Telegram username when you want me to jump in.',
-    '- Use `/commands` for setup and status commands, and `/features` for the short capability guide.',
-    '- In your main control chat, substantive Andrea replies can show `Not helpful` so you can save a private pilot issue and prep a fix job.',
-    '- Say `review recent answers` to review one recent answer at a time; opening the queue never records a verdict.',
-    '- In the registered owner control chat, try `review my recent texts` for a prioritized, bounded view of synced Messages without sending anything.',
-    '',
-    '*Best First Asks*',
+    'Try:',
     ...examples,
     '',
-    '*Benchmark-Guided Packs*',
-    ...benchmarkPackExamples,
+    'Contact texts stay unsent until you say `send it` in this chat.',
   ];
 }
 
 export function buildTelegramHelpLines(assistantName: string): string[] {
   const examples = getPracticalDiscoverySpotlights('telegram')
-    .slice(0, 5)
+    .slice(0, 3)
     .map((entry) => `- \`${entry.prompt}\``);
-  const benchmarkPackExamples = getAndreaCapabilityDiscoveryPrompts()
-    .slice(0, 6)
-    .map((prompt) => `- \`${prompt}\``);
   return [
     `*How ${assistantName} Works Here*`,
     '',
-    '- Most people should just send a normal message.',
-    `- Telegram is Andrea's richest surface for ${buildAndreaCapabilityPackagingLine()}, plus grounded follow-through and richer detail.`,
+    'Most people should just send a normal message.',
+    '- `/registermain` once if this should be your main chat.',
+    '- `/mainchat` if a chat says it is not set up.',
+    '- In a group, mention my Telegram username.',
+    '- `/commands` or `/features` if you want the longer lists.',
     '',
-    '*Best Habits*',
-    '- In a DM: ask normally, or run `/registermain` once if this should be your main Andrea chat.',
-    '- Run `/mainchat` for exact recovery guidance when a chat says it is not set up yet.',
-    '- After a restart: run `/mainchat`, then `/ping`, then retry the plain-language ask.',
-    '- In a group: mention my Telegram username when you want a reply.',
-    '- Use `/commands` for setup and status commands.',
-    '- Use `/thinking`, `/council`, `/cognition`, `/memory`, and `/learning` when you want to inspect or steer deeper reasoning, council quality, task planning, and durable learning.',
-    '- Use `/features` for the short guide to what Andrea is best at here.',
-    '- In the main control chat, `Not helpful` on a real Andrea reply saves a private issue and can prep a remediation task.',
-    '- Say `review recent answers` to revisit one recent answer without backfilling or auto-recording an outcome.',
+    'Messages sends: I stage the exact text first. Say `send it` here to authorize. QA, Karen, and ordinary contact threads never authorize a send.',
     '',
-    '*Messages Review*',
-    '- In the registered owner control chat, `review my recent texts` ranks likely reply needs, action requests, notices, and closed loops from the available local synced snapshot.',
-    '- `summarize all my texts today` gives a compact cross-conversation digest; `summarize <chat name> from the last 2 days` stays within one matched conversation.',
-    '- Coverage is bounded and sync completeness is stated honestly; these are activity and actionability views, not device unread status.',
-    '- `draft #1` keeps wording unsent. A new `Text <name>: <body>` request stages the exact recipient and body, then waits for a separate `Send now` or `send it` decision.',
-    '- Private Messages content is available only in the registered owner Telegram DM or configured owner Messages self-thread, never in groups or ordinary contact threads.',
-    '',
-    '*Good Next Messages*',
+    'Try:',
     ...examples,
-    '',
-    '*Capability Packs*',
-    ...benchmarkPackExamples,
   ];
 }
 
@@ -2627,25 +2601,16 @@ export function buildTelegramFeatureLines(assistantName: string): string[] {
   return [
     `*What ${assistantName} Is Best At*`,
     '',
-    '- Telegram is the deepest day-to-day surface. Use it when you want a real answer, a concrete next step, or richer follow-through.',
+    'Telegram is the day-to-day chat. Ask in plain language.',
     '',
     '*Best Here*',
-    '- Check your schedule, add or move something on your calendar, and set reminders that actually stick.',
-    '- Figure out what matters today, what bills or other follow-through are still open, and what to do next.',
-    '- Keep groceries, errands, meals, pills, and household checklists in view without turning it into a giant planning ritual.',
-    '- Review or summarize synced Messages, draft a numbered reply without sending it, and keep communication follow-through clean. Andrea does not auto-reply to contacts.',
-    '- Prep for your next meeting, keep repo and project work in view, and ask what changed when you want a compact status readout.',
-    '- Capture ideas, keep life threads inspectable, and use saved context without turning Andrea into a slash-command maze.',
-    '- Compare options, explain a decision, and get source-grounded summaries when those lanes are available.',
-    '- Keep track of open follow-through across people, home, pills, bills, and projects without making that the whole public story.',
+    '- Calendar, reminders, groceries, errands, pills, and bills.',
+    '- Review or summarize synced Messages and draft a reply. Andrea does not auto-reply to contacts.',
+    '- Planning, meeting prep, and repo check-ins when you ask.',
     '',
-    '*Surface Map*',
-    '- Telegram is the richest surface for detailed answers and action completion.',
-    '- Alexa is concise voice help for schedule, reminders, list capture and readout, planning, open follow-through, and quick reply help.',
-    '- When healthy, the configured owner Messages self-thread is a bounded companion control surface; ordinary contact and group threads remain data-only, and Telegram stays the richer control surface.',
-    '- Research and image generation are optional lanes when those provider paths are available.',
-    '- `/cursor_status` is the safe readiness check for coding and work help. Deeper operator controls stay in Telegram admin surfaces.',
-    '- In the main control chat, `Not helpful` on a substantive Andrea reply saves a private pilot issue and can prepare a queued fix task.',
+    '*Surfaces*',
+    '- Alexa is concise voice help for schedule, reminders, list capture and readout, planning, and quick reply help.',
+    '- Ordinary contact and group threads remain data-only. Only this registered chat or the configured owner Messages self-thread can authorize a send.',
   ];
 }
 

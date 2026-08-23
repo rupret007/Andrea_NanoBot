@@ -261,4 +261,9 @@ When changing behavior, keep these rules intact:
 - do not document a feature as baseline if it still depends on same-day validation
 - do not send BlueBubbles/Messages traffic through Private API; AppleScript is
   the only outbound send path, including when the server advertises Private API
-  or the server-info probe fails
+  or the server-info probe fails. The Private API probe is diagnostic only and
+  never selects a send method
+- do not treat QA, Karen, or ordinary contact/group threads as
+  send-authorization surfaces. Contact sends still require a fresh owner
+  `send it` / `Send now` in the registered Telegram front-door chat (Bob) or
+  the configured Messages self-thread

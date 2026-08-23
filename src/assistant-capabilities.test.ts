@@ -2995,7 +2995,8 @@ describe('assistant capabilities', () => {
     expect(controlLabels).not.toContain('Send now');
     expect(controlLabels).not.toContain('Send later');
     expect(controlLabels).toContain('Show draft');
-    expect(controlLabels).toContain('More direct');
+    expect(controlLabels).toContain('Discard draft');
+    expect(controlLabels).not.toContain('More direct');
 
     updateMessageAction(action.messageActionId, {
       presentationMessageId: 'tg:review-group-card',

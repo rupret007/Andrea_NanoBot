@@ -35,11 +35,9 @@ Andrea is strongest at:
 ## First Five Minutes In Telegram
 
 1. Open a direct message with `@andrea_nanobot`.
-2. Run `/start`.
-3. Run `/registermain`.
-4. Run `/mainchat`.
-5. Run `/help` or `/commands`.
-6. Send one plain-language request.
+2. Send one plain-language request. `/start` is optional and short.
+3. Run `/registermain` once if this DM should be the main Andrea chat.
+4. Run `/mainchat` only if a chat says it is not set up.
 
 `/registermain` should make that same DM Andrea's main control chat. If it says another main chat is already registered, run `/mainchat`; it will show the registered chat, whether this DM is it, and the next step. If you ask something like `What's on my calendar tomorrow?` from a non-main DM, move to the DM shown by `/mainchat` or run `/registermain` in the DM you want to use.
 

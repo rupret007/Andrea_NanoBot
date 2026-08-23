@@ -2,6 +2,7 @@ import http from 'http';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -173,7 +174,25 @@ describe('resolveBlueBubblesSendMethod', () => {
     expect(resolveBlueBubblesSendMethod()).toBe('apple-script');
     expect(resolveBlueBubblesSendMethod(null)).toBe('apple-script');
     expect(resolveBlueBubblesSendMethod('private-api')).toBe('apple-script');
+    expect(resolveBlueBubblesSendMethod('PRIVATE-API')).toBe('apple-script');
+    expect(resolveBlueBubblesSendMethod('private_api')).toBe('apple-script');
+    expect(resolveBlueBubblesSendMethod('  private-api  ')).toBe(
+      'apple-script',
+    );
     expect(resolveBlueBubblesSendMethod('apple-script')).toBe('apple-script');
+  });
+
+  it('keeps every outbound send body on the AppleScript resolver', () => {
+    const source = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), 'bluebubbles.ts'),
+      'utf8',
+    );
+    expect(source).toContain('method: resolveBlueBubblesSendMethod');
+    expect(source).toContain("form.set('method', resolveBlueBubblesSendMethod");
+    expect(source).not.toMatch(/method:\s*['"]private-api['"]/);
+    expect(source).not.toMatch(
+      /form\.set\(\s*['"]method['"]\s*,\s*['"]private-api['"]/,
+    );
   });
 });
 

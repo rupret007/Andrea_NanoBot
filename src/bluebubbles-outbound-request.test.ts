@@ -201,12 +201,10 @@ describe('BlueBubbles outbound requests', () => {
       'Target: Avery Example in Messages.',
     );
     expect(staged.presentation.text).toContain('waiting for your approval');
-    expect(staged.presentation.inlineActionRows.flat()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ label: 'Send now' }),
-        expect.objectContaining({ label: 'Send later' }),
-      ]),
-    );
+    expect(staged.presentation.inlineActionRows.flat()).toEqual([
+      expect.objectContaining({ label: 'Send now' }),
+      expect.objectContaining({ label: 'Discard draft' }),
+    ]);
   });
 
   it.each([
@@ -1442,6 +1440,43 @@ describe('BlueBubbles outbound requests', () => {
 
     expect(result).toMatchObject({ handled: true, state: 'restricted' });
     expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(0);
+  });
+
+  it('never authorizes sends from QA or Karen even if those chats are marked main', () => {
+    seedRecipient();
+
+    for (const surface of [
+      {
+        name: 'QA',
+        folder: 'qa',
+        chatJid: 'tg:qa',
+      },
+      {
+        name: 'Karen',
+        folder: 'karen',
+        chatJid: 'tg:karen',
+      },
+    ]) {
+      const result = stageBlueBubblesOutboundRequest({
+        groupFolder: surface.folder,
+        channel: 'telegram',
+        chatJid: surface.chatJid,
+        group: {
+          ...mainGroup,
+          name: surface.name,
+          folder: surface.folder,
+          isMain: true,
+        },
+        rawText: 'Text Avery Example: Dinner is ready.',
+      });
+
+      expect(result).toMatchObject({ handled: true, state: 'restricted' });
+    }
+
+    expect(listMessageActionsForGroup({ groupFolder: 'qa' })).toHaveLength(0);
+    expect(listMessageActionsForGroup({ groupFolder: 'karen' })).toHaveLength(
+      0,
+    );
   });
 
   it('allows the configured Messages self-thread but refuses another BlueBubbles chat', () => {

@@ -33,7 +33,7 @@ Surface roles:
 
 UX defaults for Telegram:
 
-- `/start` should feel like a quick welcome and example launcher, not a wall of help text
+- `/start` should feel like a quick welcome and a few example asks, not a wall of help text or a programmed menu
 - `/help` should explain how to use Andrea here in one screen
 - `/commands` should stay focused on setup and status, not become the primary way to talk to Andrea
 - `/thinking`, `/council`, `/cognition`, `/memory`, and `/learning` should explain how Andrea reasons, plans tasks, and learns without exposing hidden provider traces
@@ -48,12 +48,11 @@ UX defaults for Telegram:
 
 Recommended direct-message flow:
 
-1. Open a DM with the bot.
-2. Run `/start`.
-3. Run `/registermain`.
-4. Run `/mainchat` to confirm this DM is the registered main control chat.
-5. Run `/help` or `/commands`.
-6. Send a plain-language request.
+1. Open a DM with `@andrea_nanobot`.
+2. Send a plain-language request. `/start` is a short welcome, not a menu wall.
+3. Run `/registermain` once if this DM should be the main Andrea chat.
+4. Run `/mainchat` only if a chat says it is not set up.
+5. Use `/help` or `/commands` only when you want setup or status.
 
 If `/registermain` says a main chat is already registered, that is not a failure by itself. Run `/mainchat`; it will print the current registered main chat and whether the current DM matches it. If you ask for calendar or operator features from a different DM, Andrea should tell you the current main chat and send you back through `/mainchat` plus `/registermain` instead of replying with generic setup text.
 

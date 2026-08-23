@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
-import { isTrustedOwnerReviewSurface } from './trusted-owner-review-surface.js';
+import {
+  isNeverAuthorizeSendSurface,
+  isTrustedOwnerReviewSurface,
+} from './trusted-owner-review-surface.js';
 import type { RegisteredGroup } from './types.js';
 
 const mainGroup: RegisteredGroup = {
@@ -182,5 +185,32 @@ describe('trusted owner review surface', () => {
         group: null,
       }),
     ).toBe(false);
+  });
+
+  it('never treats QA or Karen as send-authorization surfaces', () => {
+    for (const group of [
+      { ...mainGroup, name: 'QA', folder: 'qa', isMain: true },
+      { ...mainGroup, name: 'Karen', folder: 'karen', isMain: true },
+      { ...mainGroup, name: 'Andrea QA', folder: 'andrea_qa', isMain: true },
+      { ...mainGroup, name: 'QA Bot', folder: 'telegram_qa', isMain: true },
+    ]) {
+      expect(isNeverAuthorizeSendSurface(group)).toBe(true);
+      expect(
+        isTrustedOwnerReviewSurface({
+          channelName: 'telegram',
+          chatJid: 'tg:main',
+          group,
+        }),
+      ).toBe(false);
+    }
+
+    expect(isNeverAuthorizeSendSurface(mainGroup)).toBe(false);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:main',
+        group: mainGroup,
+      }),
+    ).toBe(true);
   });
 });

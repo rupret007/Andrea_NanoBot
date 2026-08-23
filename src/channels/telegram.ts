@@ -246,7 +246,7 @@ export function buildTelegramChatIdText(
 export function buildTelegramUnregisteredDmText(
   assistantName = ASSISTANT_NAME,
 ): string {
-  return `I'm ${assistantName}, but this chat is not set up yet. Run /start for the quick guide, then either /registermain here or /mainchat to see the exact control-chat status.`;
+  return `I'm ${assistantName}. This chat is not set up yet. Run /registermain here, or /mainchat to see the registered one.`;
 }
 
 export interface TelegramMainChatStatus {

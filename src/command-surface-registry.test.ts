@@ -52,12 +52,28 @@ describe('command surface registry', () => {
       '/cursor_status',
     ]);
 
-    expect(getTelegramBotMenuCommands()).toEqual(
-      PUBLIC_TELEGRAM_COMMAND_SURFACES.map((entry) => ({
-        command: entry.preferredAlias.replace(/^\//, ''),
-        description: entry.menuDescription ?? entry.summary,
-      })),
-    );
+    expect(getTelegramBotMenuCommands()).toEqual([
+      {
+        command: 'help',
+        description: 'How Andrea works here',
+      },
+      {
+        command: 'registermain',
+        description: 'Make this DM your main chat',
+      },
+      {
+        command: 'mainchat',
+        description: 'Show the current main control chat',
+      },
+      {
+        command: 'features',
+        description: 'What Andrea is best at',
+      },
+      {
+        command: 'ping',
+        description: 'Check if Andrea is online',
+      },
+    ]);
 
     expect(getTelegramBotGroupMenuCommands()).toEqual([
       {
@@ -201,26 +217,23 @@ describe('command surface registry', () => {
     expect(welcome).toContain("what's on my calendar tomorrow");
     expect(welcome).toContain('remind me to take my pills at 9');
     expect(welcome).toContain('what bills do I need to pay this week');
-    expect(welcome).toContain('prep me for my next meeting');
-    expect(welcome).toContain('what life threads are open');
+    expect(welcome).toContain('Just send a normal message');
+    expect(welcome).toContain('send it');
+    expect(welcome).not.toContain('Benchmark-Guided Packs');
     expect(welcome).not.toContain('Candace');
 
-    expect(help).toContain('meeting prep');
-    expect(help).toContain('reply help');
-    expect(help).toContain('repo check-ins');
-    expect(help).toContain('Not helpful');
-    expect(help).toContain('capture this idea');
-    expect(help).toContain('review my recent texts');
-    expect(help).toContain('draft #1');
-    expect(help).toContain('registered owner Telegram DM');
+    expect(help).toContain('Most people should just send a normal message.');
+    expect(help).toContain('send it');
+    expect(help).toContain('QA, Karen');
+    expect(help).not.toContain('Benchmark-Guided Packs');
+    expect(help).not.toContain('Not helpful');
 
     expect(features).toContain('calendar');
     expect(features).toContain('planning');
     expect(features).toContain('quick reply help');
     expect(features).toContain('pills');
-    expect(features).toContain('life threads');
-    expect(features).toContain('repo and project work');
-    expect(features).toContain('private pilot issue');
+    expect(features).toContain('meeting prep');
+    expect(features).toContain('repo check-ins');
     expect(features).toContain('does not auto-reply to contacts');
     expect(features).toContain(
       'ordinary contact and group threads remain data-only',

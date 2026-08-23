@@ -28,6 +28,8 @@ describe('assistant request routing', () => {
     expect(policy.builtinTools).not.toContain('Edit');
     expect(policy.builtinTools).not.toContain('Read');
     expect(policy.guidance).toContain('lightly witty tone');
+    expect(policy.guidance).toContain('short enough for a phone');
+    expect(policy.guidance).toContain('Do not open with a menu');
     expect(policy.guidance).toContain('This route is tool-free');
   });
 
