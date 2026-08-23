@@ -266,9 +266,11 @@ When changing behavior, keep these rules intact:
 - do not treat QA, Karen, or ordinary contact/group threads as
   send-authorization surfaces, including Telegram JIDs such as `tg:qa` or
   `tg:karen` that reuse a main-looking group record, numeric Telegram JIDs
-  that are not the registered front-door chat, and numeric Telegram JIDs
-  whose stored title is QA or Karen. A provided title cannot hide that
-  stored canary. Contact sends still require a fresh owner `send it` /
-  `Send now` in the registered Telegram front-door chat (Bob) or the
-  configured Messages self-thread. Dispatch and scheduled-send deferral
-  also fail-close those callers.
+  that are not the registered front-door chat, numeric Telegram JIDs that
+  borrow `isMain` when no front-door is registered yet, and numeric
+  Telegram JIDs whose stored title is QA or Karen. A provided title cannot
+  hide that stored canary. A missing caller JID cannot authorize. Contact
+  sends still require a fresh owner `send it` / `Send now` in the
+  registered Telegram front-door chat (Bob) or the configured Messages
+  self-thread. Dispatch and scheduled-send deferral also fail-close those
+  callers.

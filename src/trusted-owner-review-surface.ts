@@ -107,6 +107,30 @@ export function isRegisteredTelegramFrontDoorJid(
   return Boolean(frontDoorJid && normalized && frontDoorJid === normalized);
 }
 
+/**
+ * Production Telegram chats use long numeric IDs. Short or named JIDs such
+ * as `tg:main` / `tg:100` are unit-test fixtures and must not become a
+ * production trust grant.
+ */
+const PRODUCTION_TELEGRAM_NUMERIC_JID = /^tg:\d{6,}$/;
+
+/**
+ * Telegram send-auth allow-list. A recorded front-door JID is required in
+ * production. When none is recorded, production-shaped numeric JIDs cannot
+ * borrow isMain.
+ */
+export function isAuthorizedTelegramSendCallerJid(
+  chatJid: string | null | undefined,
+): boolean {
+  const normalized = (chatJid ?? '').trim();
+  if (!normalized.startsWith('tg:') || normalized.startsWith('tg:-')) {
+    return false;
+  }
+  const frontDoorJid = resolveRegisteredTelegramFrontDoorJid();
+  if (frontDoorJid) return normalized === frontDoorJid;
+  return !PRODUCTION_TELEGRAM_NUMERIC_JID.test(normalized);
+}
+
 function resolveStoredNeverAuthorizeTelegramTitle(
   extras?: NeverAuthorizeSendSurfaceExtras,
 ): string | null {
@@ -124,7 +148,8 @@ function resolveStoredNeverAuthorizeTelegramTitle(
  * Chat JIDs and stored titles are part of the same fail-closed set so a
  * `tg:qa` / `tg:karen` thread cannot borrow Bob's main-group registration,
  * including a numeric Telegram JID whose stored title is QA or Karen.
- * A provided title cannot hide that stored canary. Bob's registered
+ * A provided title cannot hide that stored canary. A numeric JID cannot
+ * borrow isMain when no front-door is recorded. Bob's registered
  * Telegram front-door stays the yes-fence.
  */
 export function isNeverAuthorizeSendSurface(
@@ -154,13 +179,16 @@ export function isNeverAuthorizeSendCaller(
   },
 ): boolean {
   if (isNeverAuthorizeSendSurface(extras.group, extras)) return true;
-  // A numeric Telegram JID that is not Bob's registered front-door cannot
-  // borrow isMain to authorize a send.
   const chatJid = (extras.chatJid ?? '').trim();
-  const frontDoorJid = resolveRegisteredTelegramFrontDoorJid();
-  return Boolean(
-    frontDoorJid && chatJid.startsWith('tg:') && chatJid !== frontDoorJid,
-  );
+  // Missing caller identity cannot authorize a send.
+  if (!chatJid) return true;
+  // A production-shaped numeric Telegram JID that is not Bob's registered
+  // front-door cannot borrow isMain to authorize a send, including when no
+  // front-door is recorded yet.
+  if (chatJid.startsWith('tg:')) {
+    return !isAuthorizedTelegramSendCallerJid(chatJid);
+  }
+  return false;
 }
 
 /**
@@ -173,10 +201,11 @@ export function isNeverAuthorizeSendCaller(
 export function isTrustedOwnerReviewSurface(
   input: TrustedOwnerReviewSurfaceInput,
 ): boolean {
-  if (!input.group || !input.chatJid) return false;
+  const chatJid = (input.chatJid ?? '').trim();
+  if (!input.group || !chatJid) return false;
   if (
     isNeverAuthorizeSendSurface(input.group, {
-      chatJid: input.chatJid,
+      chatJid,
       chatTitle: input.chatTitle,
       senderName: input.senderName,
       surfaceLabels: input.surfaceLabels,
@@ -186,19 +215,18 @@ export function isTrustedOwnerReviewSurface(
   }
   if (input.channelName === 'telegram') {
     if (
-      !input.chatJid.startsWith('tg:') ||
-      input.chatJid.startsWith('tg:-') ||
+      !chatJid.startsWith('tg:') ||
+      chatJid.startsWith('tg:-') ||
       input.group.isMain !== true
     ) {
       return false;
     }
-    const frontDoorJid = resolveRegisteredTelegramFrontDoorJid();
-    return frontDoorJid ? input.chatJid === frontDoorJid : true;
+    return isAuthorizedTelegramSendCallerJid(chatJid);
   }
   return (
     input.channelName === 'bluebubbles' &&
     input.ownerAuthored === true &&
-    input.chatJid.startsWith('bb:') &&
-    isConfiguredBlueBubblesSelfThreadAliasJid(input.chatJid)
+    chatJid.startsWith('bb:') &&
+    isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)
   );
 }

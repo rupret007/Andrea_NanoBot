@@ -8,6 +8,7 @@ import {
   storeChatMetadata,
 } from './db.js';
 import {
+  isAuthorizedTelegramSendCallerJid,
   isNeverAuthorizeSendCaller,
   isNeverAuthorizeSendSurface,
   isRegisteredTelegramFrontDoorJid,
@@ -241,12 +242,18 @@ describe('trusted owner review surface', () => {
       isNeverAuthorizeSendSurface(mainGroup, { chatJid: 'tg:847392018' }),
     ).toBe(false);
     expect(
+      isNeverAuthorizeSendCaller({
+        group: mainGroup,
+        chatJid: 'tg:847392018',
+      }),
+    ).toBe(true);
+    expect(
       isTrustedOwnerReviewSurface({
         channelName: 'telegram',
         chatJid: 'tg:847392018',
         group: mainGroup,
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('never authorizes from stored QA or Karen titles while ignoring email local-parts', () => {
@@ -285,6 +292,35 @@ describe('registered Telegram front-door send fence', () => {
 
   afterEach(() => {
     _closeDatabase();
+  });
+
+  it('does not let an unregistered numeric JID borrow isMain', () => {
+    expect(resolveRegisteredTelegramFrontDoorJid()).toBeNull();
+    expect(isAuthorizedTelegramSendCallerJid('tg:main')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:100')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:owner')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:847392018')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:100000')).toBe(false);
+    expect(
+      isNeverAuthorizeSendCaller({
+        group: mainGroup,
+        chatJid: 'tg:847392018',
+      }),
+    ).toBe(true);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:847392018',
+        group: mainGroup,
+      }),
+    ).toBe(false);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:main',
+        group: mainGroup,
+      }),
+    ).toBe(true);
   });
 
   it('does not let a numeric JID borrow the registered front-door', () => {
