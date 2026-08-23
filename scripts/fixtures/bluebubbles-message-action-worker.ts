@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 
 import '../../src/channels/index.js';
+import { BLUEBUBBLES_PREFERRED_SEND_METHOD } from '../../src/channels/bluebubbles.js';
 
 import {
   executeBlueBubblesOutboundRequest,
@@ -175,7 +176,7 @@ async function postToFakeProvider(
     ? {
         addresses: [firstContactAddress],
         message: text,
-        method: 'private-api',
+        method: BLUEBUBBLES_PREFERRED_SEND_METHOD,
         service: 'iMessage',
         tempGuid: options?.idempotencyKey,
       }
@@ -183,7 +184,7 @@ async function postToFakeProvider(
         chatGuid: chatJid.replace(/^bb:/, ''),
         message: text,
         tempGuid: options?.idempotencyKey,
-        method: 'private-api',
+        method: BLUEBUBBLES_PREFERRED_SEND_METHOD,
       };
   const response = await fetch(new URL(endpoint, providerBaseUrl), {
     method: 'POST',

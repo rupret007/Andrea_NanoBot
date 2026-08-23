@@ -519,7 +519,17 @@ interface BlueBubblesOutboundTargetCandidate {
   chatGuid: string;
 }
 
-type BlueBubblesSendMethod = 'private-api' | 'apple-script';
+export type BlueBubblesSendMethod = 'private-api' | 'apple-script';
+
+export const BLUEBUBBLES_PREFERRED_SEND_METHOD = 'apple-script' as const;
+
+export function resolveBlueBubblesSendMethod(
+  _requested?: string | null,
+): typeof BLUEBUBBLES_PREFERRED_SEND_METHOD {
+  // Fail closed: Private API is never an allowed outbound send path, including
+  // when the server advertises it or the server-info probe fails.
+  return BLUEBUBBLES_PREFERRED_SEND_METHOD;
+}
 
 function extractBlueBubblesServiceFromChatGuid(
   chatGuid: string | null | undefined,
@@ -2519,7 +2529,7 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
       chatGuid: request.chatGuid,
       message: request.text,
       tempGuid: request.idempotencyKey || randomUUID(),
-      method: request.sendMethod,
+      method: resolveBlueBubblesSendMethod(request.sendMethod),
     };
     if (request.replyToGuid) {
       body.selectedMessageGuid = request.replyToGuid;
@@ -2607,7 +2617,7 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
     const body = {
       addresses: [request.address],
       message: request.text,
-      method: request.sendMethod,
+      method: resolveBlueBubblesSendMethod(request.sendMethod),
       service: request.service,
       tempGuid: request.idempotencyKey || randomUUID(),
     };
@@ -2697,14 +2707,14 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
         webhookRegistrationDetail:
           'skipped because no reachable BlueBubbles endpoint is available yet',
         privateApiAvailable: null,
-        sendMethod: 'private-api',
+        sendMethod: resolveBlueBubblesSendMethod(),
       };
     }
 
     const webhookInspection =
       await inspectBlueBubblesWebhookRegistration(config);
     let privateApiAvailable: boolean | null = null;
-    let sendMethod: BlueBubblesSendMethod = 'private-api';
+    const sendMethod = resolveBlueBubblesSendMethod();
 
     const url = new URL('/api/v1/server/info', config.baseUrl);
     for (const [key, value] of buildAuthSearchParams(
@@ -2720,21 +2730,19 @@ class BlueBubblesMessagesProvider implements AppleMessagesProvider {
         privateApiAvailable = extractBlueBubblesPrivateApiState(
           parseBlueBubblesJson(responseText),
         );
-        sendMethod =
-          privateApiAvailable === false ? 'apple-script' : 'private-api';
       } else {
         logger.info(
           {
             status: response.status,
             detail: extractBlueBubblesErrorText(response.status, responseText),
           },
-          'BlueBubbles server info probe failed; keeping private-api send mode',
+          'BlueBubbles server info probe failed; keeping apple-script send mode',
         );
       }
     } catch (error) {
       logger.info(
         { err: error },
-        'BlueBubbles server info probe failed; keeping private-api send mode',
+        'BlueBubbles server info probe failed; keeping apple-script send mode',
       );
     }
 
@@ -3102,7 +3110,7 @@ export class BlueBubblesChannel implements Channel {
 
   private lastAttemptedTargetSequence: string[] = [];
 
-  private sendMethod: BlueBubblesSendMethod = 'private-api';
+  private sendMethod: BlueBubblesSendMethod = BLUEBUBBLES_PREFERRED_SEND_METHOD;
 
   private privateApiAvailable: boolean | null = null;
 
@@ -3321,7 +3329,7 @@ export class BlueBubblesChannel implements Channel {
       readiness.webhookRegistrationState as BlueBubblesWebhookRegistrationState;
     this.webhookRegistrationDetail = readiness.webhookRegistrationDetail;
     this.privateApiAvailable = readiness.privateApiAvailable;
-    this.sendMethod = readiness.sendMethod as BlueBubblesSendMethod;
+    this.sendMethod = resolveBlueBubblesSendMethod(readiness.sendMethod);
   }
 
   private buildDirectChatMetadata(input: {
@@ -4921,7 +4929,7 @@ export class BlueBubblesChannel implements Channel {
     const form = new FormData();
     form.set('chatGuid', chatGuid);
     form.set('tempGuid', options?.idempotencyKey?.trim() || randomUUID());
-    form.set('method', this.sendMethod);
+    form.set('method', resolveBlueBubblesSendMethod(this.sendMethod));
     if (replyToGuid) {
       form.set('selectedMessageGuid', replyToGuid);
     }

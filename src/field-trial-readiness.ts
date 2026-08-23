@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 
 import {
+  BLUEBUBBLES_PREFERRED_SEND_METHOD,
   buildBlueBubblesHealthSnapshot,
   buildBlueBubblesWebhookUrl,
   redactBlueBubblesWebhookUrl,
@@ -654,7 +655,8 @@ function deriveBlueBubblesTransportDiagnostics(detail: string): {
     lastSendErrorDetail:
       extractBlueBubblesDetailField(detail, 'last send error') || 'none',
     sendMethod:
-      extractBlueBubblesDetailField(detail, 'send method') || 'private-api',
+      extractBlueBubblesDetailField(detail, 'send method') ||
+      BLUEBUBBLES_PREFERRED_SEND_METHOD,
     privateApiAvailable:
       extractBlueBubblesDetailField(detail, 'private api available') ||
       'unknown',
@@ -2528,7 +2530,7 @@ function buildBlueBubblesTruth(
           ? ` Metadata hydration: ${base.lastMetadataHydrationSource}.`
           : '';
       const sendMethodDetail =
-        base.sendMethod !== 'private-api' ||
+        base.sendMethod !== BLUEBUBBLES_PREFERRED_SEND_METHOD ||
         base.privateApiAvailable !== 'unknown'
           ? ` Send method: ${base.sendMethod} (private_api=${base.privateApiAvailable}).`
           : '';

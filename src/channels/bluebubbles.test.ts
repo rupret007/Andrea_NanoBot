@@ -55,6 +55,7 @@ import {
   probeBlueBubblesReceiptInbox,
   redactBlueBubblesWebhookUrl,
   resolveBlueBubblesConfig,
+  resolveBlueBubblesSendMethod,
 } from './bluebubbles.js';
 
 registerProductionRuntimeCapabilitySurfaces(runtimeCapabilityRegistry);
@@ -166,6 +167,15 @@ function buildBlueBubblesAuthorizationOptions(
     blueBubblesPauseGeneration: fence.pauseGeneration,
   };
 }
+
+describe('resolveBlueBubblesSendMethod', () => {
+  it('never selects Private API, including unknown or advertised-available probes', () => {
+    expect(resolveBlueBubblesSendMethod()).toBe('apple-script');
+    expect(resolveBlueBubblesSendMethod(null)).toBe('apple-script');
+    expect(resolveBlueBubblesSendMethod('private-api')).toBe('apple-script');
+    expect(resolveBlueBubblesSendMethod('apple-script')).toBe('apple-script');
+  });
+});
 
 describe('BlueBubbles channel', () => {
   let tempProjectRoot: string;
@@ -3915,7 +3925,7 @@ describe('BlueBubbles channel', () => {
     }
   });
 
-  it('uses the stable dispatch key and preserves Unicode in an existing-chat send', async () => {
+  it('uses AppleScript even when BlueBubbles advertises Private API, and preserves Unicode', async () => {
     const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
     const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {
       if ((req.url || '').startsWith('/api/v1/webhook')) {
@@ -3988,7 +3998,7 @@ describe('BlueBubbles channel', () => {
       expect(requests[0]?.body).toMatchObject({
         chatGuid: 'iMessage;-;fixture-chat-1',
         message: `Andrea: ${unicodeMessage}`,
-        method: 'private-api',
+        method: 'apple-script',
         tempGuid: 'message-action:stable-existing-1',
       });
       expect(
@@ -4002,6 +4012,85 @@ describe('BlueBubbles channel', () => {
           provider_idempotency_key: 'message-action:stable-existing-1',
         }),
       );
+    } finally {
+      await channel.disconnect();
+      await apiStub.close();
+    }
+  });
+
+  it('keeps AppleScript send mode when the server-info probe fails', async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const apiStub = await startBlueBubblesApiStub(async (req, body, res) => {
+      if ((req.url || '').startsWith('/api/v1/webhook')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      if ((req.url || '').startsWith('/api/v1/server/info')) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'server info unavailable' }));
+        return;
+      }
+      if (
+        (req.method || 'GET').toUpperCase() === 'GET' &&
+        (req.url || '').startsWith('/api/v1/message')
+      ) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
+      requests.push({
+        url: req.url || '',
+        body: JSON.parse(body) as Record<string, unknown>,
+      });
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ data: { guid: 'server-msg-probe-fail' } }));
+    });
+
+    const healthDetails: string[] = [];
+    const channel = new BlueBubblesChannel(
+      buildConfig({ baseUrl: apiStub.baseUrl }),
+      {
+        onMessage: vi.fn(),
+        onChatMetadata: vi.fn(),
+        registeredGroups: () => ({}),
+        onHealthUpdate: (snapshot) => {
+          if (snapshot.detail) healthDetails.push(snapshot.detail);
+        },
+      },
+    );
+
+    try {
+      await channel.connect();
+      const result = await channel.sendMessage(
+        'bb:iMessage;-;fixture-chat-1',
+        'Probe failed but AppleScript still sends.',
+        {
+          idempotencyKey: 'message-action:probe-fail-applescript-1',
+        },
+      );
+
+      expect(result.platformMessageId).toBe('bb:server-msg-probe-fail');
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.body).toMatchObject({
+        chatGuid: 'iMessage;-;fixture-chat-1',
+        method: 'apple-script',
+        tempGuid: 'message-action:probe-fail-applescript-1',
+      });
+      expect(
+        healthDetails.some((detail) =>
+          detail.includes('send method apple-script'),
+        ),
+      ).toBe(true);
+      expect(
+        healthDetails.every(
+          (detail) => !detail.includes('send method private-api'),
+        ),
+      ).toBe(true);
     } finally {
       await channel.disconnect();
       await apiStub.close();
