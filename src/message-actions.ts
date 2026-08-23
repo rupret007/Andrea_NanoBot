@@ -225,6 +225,18 @@ export interface MessageActionExecutionDeps {
   readonly senderName?: string | null;
 }
 
+const UNAUTHORIZED_SEND_CALLER_REPLY =
+  'Andrea: QA, Karen, and ordinary contact threads cannot authorize a send. I did not send anything. Say `send it` in Bob if you still want this to go out.';
+
+function isUnauthorizedSendCaller(deps: MessageActionExecutionDeps): boolean {
+  return isNeverAuthorizeSendCaller({
+    group: deps.ownerReviewGroup,
+    chatJid: deps.chatJid,
+    chatTitle: deps.chatTitle,
+    senderName: deps.senderName,
+  });
+}
+
 export function isMessageActionBoundToPresentationSurface(params: {
   action: Pick<MessageActionRecord, 'presentationChatJid'>;
   channel: PresentationChannel;
@@ -3218,6 +3230,13 @@ async function createScheduledSend(params: {
   updatedAction: MessageActionRecord;
   applied: boolean;
 }> {
+  if (isUnauthorizedSendCaller(params.deps)) {
+    return {
+      replyText: UNAUTHORIZED_SEND_CALLER_REPLY,
+      updatedAction: params.action,
+      applied: false,
+    };
+  }
   const { planned } = planMessageFollowupTiming({
     timingHint: params.timingHint,
     fallbackHint: 'today tonight',
@@ -3631,18 +3650,10 @@ async function executeSendOperationUnlocked(params: {
       didSend: false,
     };
   }
-  if (
-    isNeverAuthorizeSendCaller({
-      group: params.deps.ownerReviewGroup,
-      chatJid: params.deps.chatJid,
-      chatTitle: params.deps.chatTitle,
-      senderName: params.deps.senderName,
-    })
-  ) {
+  if (isUnauthorizedSendCaller(params.deps)) {
     return {
       action: params.action,
-      replyText:
-        'Andrea: QA, Karen, and ordinary contact threads cannot authorize a send. I did not send anything. Say `send it` in Bob if you still want this to go out.',
+      replyText: UNAUTHORIZED_SEND_CALLER_REPLY,
       target,
       didSend: false,
     };
@@ -4650,6 +4661,23 @@ export async function applyMessageActionOperation(
       handled: true,
       action,
       replyText: GROUP_DRAFT_ONLY_REPLY,
+      presentation: buildMessageActionPresentation(
+        action,
+        deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
+      ),
+    };
+  }
+  if (
+    (operation.kind === 'send' ||
+      operation.kind === 'send_again' ||
+      operation.kind === 'rewrite_and_send' ||
+      operation.kind === 'defer') &&
+    isUnauthorizedSendCaller(deps)
+  ) {
+    return {
+      handled: true,
+      action,
+      replyText: UNAUTHORIZED_SEND_CALLER_REPLY,
       presentation: buildMessageActionPresentation(
         action,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
