@@ -30,7 +30,6 @@ import {
 } from './telegram.js';
 import type { RegisteredGroup } from '../types.js';
 import {
-  PUBLIC_TELEGRAM_COMMAND_SURFACES,
   getTelegramBotGroupMenuCommands,
   getTelegramBotMenuCommands,
 } from '../command-surface-registry.js';
@@ -263,13 +262,11 @@ describe('buildTelegramHelpText', () => {
     expect(help).toContain('/commands');
     expect(help).toContain('/features');
     expect(help).toContain('Most people should just send a normal message.');
-    expect(help).toContain('help me plan meals this week');
+    expect(help).toContain("what's on my calendar tomorrow");
     expect(help).toContain('what bills do I need to pay this week');
-    expect(help).toContain('reply help');
-    expect(help).toContain('Not helpful');
-    expect(help).toContain('review my recent texts');
-    expect(help).toContain('draft #1');
-    expect(help).toContain('registered owner Telegram DM');
+    expect(help).toContain('send it');
+    expect(help).toContain('QA, Karen');
+    expect(help).not.toContain('Benchmark-Guided Packs');
     expect(help).not.toContain('/alexa_status');
     expect(help).not.toContain('/amazon_status');
     expect(help).not.toContain('/amazon_search');
@@ -312,13 +309,11 @@ describe('buildTelegramWelcomeText', () => {
 
     expect(welcome).toContain('*Welcome to Andrea*');
     expect(welcome).toContain('/registermain');
-    expect(welcome).toContain('/commands');
-    expect(welcome).toContain('/features');
-    expect(welcome).toContain('*Start Here*');
-    expect(welcome).toContain('mention my Telegram username');
-    expect(welcome).toContain('Not helpful');
+    expect(welcome).toContain('Just send a normal message');
     expect(welcome).toContain("what's on my calendar tomorrow");
-    expect(welcome).toContain('what should I say back');
+    expect(welcome).toContain('remind me to take my pills at 9');
+    expect(welcome).toContain('send it');
+    expect(welcome).not.toContain('Benchmark-Guided Packs');
     expect(welcome).not.toContain('Candace');
     expect(welcome).not.toContain('@Andrea');
   });
@@ -410,9 +405,9 @@ describe('buildTelegramUnregisteredDmText', () => {
     const text = buildTelegramUnregisteredDmText('Andrea');
 
     expect(text).toContain('this chat is not set up yet');
-    expect(text).toContain('/start');
     expect(text).toContain('/registermain');
     expect(text).toContain('/mainchat');
+    expect(text).not.toContain('/start for the quick guide');
   });
 });
 
@@ -464,20 +459,14 @@ describe('buildTelegramFeaturesText', () => {
     const features = buildTelegramFeaturesText('Andrea');
 
     expect(features).toContain('*Best Here*');
-    expect(features).toContain('calendar');
-    expect(features).toContain('source-grounded summaries');
+    expect(features).toContain('Calendar');
+    expect(features).toContain('does not auto-reply to contacts');
     expect(features).toContain(
-      'open follow-through across people, home, pills, bills, and projects',
+      'Ordinary contact and group threads remain data-only',
     );
+    expect(features).toContain('configured owner Messages self-thread');
     expect(features).toContain(
-      'configured owner Messages self-thread is a bounded companion control surface',
-    );
-    expect(features).toContain(
-      'ordinary contact and group threads remain data-only',
-    );
-    expect(features).toContain('private pilot issue');
-    expect(features).toContain(
-      'Alexa is concise voice help for schedule, reminders, list capture and readout, planning, open follow-through, and quick reply help',
+      'Alexa is concise voice help for schedule, reminders, list capture and readout, planning, and quick reply help',
     );
     expect(features).not.toContain('Amazon shopping search');
     expect(features).not.toContain('Apple Calendar');
@@ -708,13 +697,22 @@ describe('TelegramChannel polling hardening', () => {
     );
   });
 
-  it('registers the Telegram bot menu from the shared public registry', async () => {
-    expect(getTelegramBotMenuCommands()).toEqual(
-      PUBLIC_TELEGRAM_COMMAND_SURFACES.map((entry) => ({
-        command: entry.preferredAlias.replace(/^\//, ''),
-        description: entry.menuDescription ?? entry.summary,
-      })),
-    );
+  it('registers a small chat-first Telegram DM menu from the shared public registry', async () => {
+    expect(getTelegramBotMenuCommands().map((entry) => entry.command)).toEqual([
+      'help',
+      'registermain',
+      'mainchat',
+      'features',
+      'ping',
+    ]);
+    expect(
+      getTelegramBotMenuCommands().some((entry) => entry.command === 'start'),
+    ).toBe(false);
+    expect(
+      getTelegramBotMenuCommands().some(
+        (entry) => entry.command === 'cognition',
+      ),
+    ).toBe(false);
   });
 });
 

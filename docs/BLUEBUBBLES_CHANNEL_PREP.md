@@ -119,9 +119,12 @@ Allowed directly:
 
 Outbound Messages sends use the BlueBubbles AppleScript path only. Private API
 is never selected, including when the server advertises it or the server-info
-probe fails. That send-path rule does not replace the existing approval fence:
-a real contact send still requires a fresh owner-authored yes in the registered
-Telegram front-door chat or configured Messages self-thread.
+probe fails. The Private API probe is diagnostic only; it never chooses a send
+method. That send-path rule does not replace the existing approval fence: a
+real contact send still requires a fresh owner-authored `send it` / `Send now`
+in the registered Telegram front-door chat (Bob / `@andrea_nanobot`) or the
+configured Messages self-thread. QA, Karen, and ordinary contact threads never
+authorize a send, even if they reply `yes` or `send it`.
 
 Handoff-only or blocked:
 

@@ -97,6 +97,68 @@ describe('BlueBubbles ingress policy', () => {
     },
   );
 
+  it.each([
+    {
+      name: 'QA',
+      chatJid: 'bb:iMessage;-;+15550002222',
+      content: 'send it',
+      isFromMe: false,
+    },
+    {
+      name: 'Karen',
+      chatJid: 'bb:iMessage;-;+15550003333',
+      content: 'yes',
+      isFromMe: false,
+    },
+    {
+      name: 'QA',
+      chatJid: 'bb:iMessage;-;+15550002223',
+      content: 'Send now',
+      isFromMe: true,
+    },
+  ])(
+    'never lets $name contact-thread "$content" become a send-authorization surface',
+    (input) => {
+      storeChatMetadata(
+        input.chatJid,
+        '2026-07-16T19:02:00.000Z',
+        input.name,
+        'bluebubbles',
+        false,
+      );
+      const enqueue = vi.fn();
+      const send = vi.fn();
+      const result = applyBlueBubblesIngressPolicy({
+        channelName: 'bluebubbles',
+        chatJid: input.chatJid,
+        message: {
+          id: `bb:${input.name.toLowerCase()}-approval`,
+          chat_jid: input.chatJid,
+          sender: input.isFromMe ? 'bb:owner' : input.chatJid,
+          sender_name: input.isFromMe ? 'Owner' : input.name,
+          content: input.content,
+          timestamp: '2026-07-16T19:02:00.000Z',
+          is_from_me: input.isFromMe,
+        },
+      });
+
+      if (result.kind === 'continue_control_routing') {
+        enqueue();
+        send();
+      }
+
+      expect(result).toEqual({
+        kind: 'stored_contact_data_only',
+        stored: true,
+      });
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      expect(getActionableMessagesSince(input.chatJid, '', 'Andrea')).toEqual(
+        [],
+      );
+    },
+  );
+
   it('keeps a configured owner self-thread live and actionable', () => {
     const chatJid = 'bb:iMessage;-;owner@example.invalid';
     storeChatMetadata(

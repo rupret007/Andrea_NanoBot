@@ -2619,7 +2619,7 @@ function nextStepLine(record: MessageActionRecord): string {
   if (record.sendStatus === 'deferred') {
     return 'Next: I can show the draft again, remind you instead, or send it when you are ready.';
   }
-  return 'Next: send it, send it later, remind me instead, save it under the thread, or keep editing it.';
+  return 'Next: say send it or discard. I can also make it shorter.';
 }
 
 function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
@@ -2672,30 +2672,6 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
           actionId: `/message-show ${record.messageActionId}`,
         },
         {
-          label: 'Shorter',
-          actionId: `/message-rewrite ${record.messageActionId} shorter`,
-        },
-        {
-          label: 'Warmer',
-          actionId: `/message-rewrite ${record.messageActionId} warmer`,
-        },
-      ],
-      [
-        {
-          label: 'More direct',
-          actionId: `/message-rewrite ${record.messageActionId} direct`,
-        },
-        {
-          label: 'Remind me instead',
-          actionId: `/message-remind ${record.messageActionId}`,
-        },
-        {
-          label: 'Save under thread',
-          actionId: `/message-save-thread ${record.messageActionId}`,
-        },
-      ],
-      [
-        {
           label: 'Discard draft',
           actionId: `/message-skip ${record.messageActionId}`,
         },
@@ -2730,10 +2706,6 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
     return [
       [
         {
-          label: 'Show draft',
-          actionId: `/message-show ${record.messageActionId}`,
-        },
-        {
           label: 'Send now',
           actionId: `/message-send ${record.messageActionId}`,
         },
@@ -2742,66 +2714,14 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
           actionId: `/message-cancel-later ${record.messageActionId}`,
         },
       ],
-      [
-        {
-          label: 'Shorter',
-          actionId: `/message-rewrite ${record.messageActionId} shorter`,
-        },
-        {
-          label: 'Warmer',
-          actionId: `/message-rewrite ${record.messageActionId} warmer`,
-        },
-        {
-          label: 'Remind me instead',
-          actionId: `/message-remind ${record.messageActionId}`,
-        },
-      ],
     ];
   }
   return [
     [
       {
-        label: 'Show draft',
-        actionId: `/message-show ${record.messageActionId}`,
-      },
-      {
-        label: 'Shorter',
-        actionId: `/message-rewrite ${record.messageActionId} shorter`,
-      },
-      {
-        label: 'Warmer',
-        actionId: `/message-rewrite ${record.messageActionId} warmer`,
-      },
-    ],
-    [
-      {
-        label: 'More direct',
-        actionId: `/message-rewrite ${record.messageActionId} direct`,
-      },
-      {
         label: 'Send now',
         actionId: `/message-send ${record.messageActionId}`,
       },
-      {
-        label: 'Send later',
-        actionId: `/message-later ${record.messageActionId}`,
-      },
-    ],
-    [
-      {
-        label: 'Remind me instead',
-        actionId: `/message-remind ${record.messageActionId}`,
-      },
-      {
-        label: 'Save under thread',
-        actionId: `/message-save-thread ${record.messageActionId}`,
-      },
-      {
-        label: 'Why this needs approval',
-        actionId: `/message-why ${record.messageActionId}`,
-      },
-    ],
-    [
       {
         label: 'Discard draft',
         actionId: `/message-skip ${record.messageActionId}`,

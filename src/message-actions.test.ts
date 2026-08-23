@@ -1263,10 +1263,10 @@ describe('message actions', () => {
       action,
       'telegram',
     ).inlineActionRows.flat();
-    expect(openControls).toContainEqual({
-      label: 'Discard draft',
-      actionId: `/message-skip ${action.messageActionId}`,
-    });
+    expect(openControls.map((control) => control.label)).toEqual([
+      'Send now',
+      'Discard draft',
+    ]);
     updateMessageAction(action.messageActionId, {
       sendStatus: 'skipped',
       requiresApproval: false,

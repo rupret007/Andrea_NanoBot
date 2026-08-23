@@ -89,6 +89,9 @@ card contract.
 - all external sends require a separate fresh owner authorization on the current
   presented action; a direct send imperative stages the card but does not supply
   dispatch approval
+- QA, Karen, and ordinary contact/group threads never authorize a send. The
+  registered Telegram front-door chat (Bob) or the configured Messages
+  self-thread is the only yes-fence
 - saved delegation rules may shape a draft, but never auto-send to an external
   recipient or replace the separately presented fresh approval
 - high-risk emotional, calendar, money, medical, or commitment-changing messages stay draft/approval-first
@@ -114,16 +117,10 @@ Telegram is the rich message-management surface.
 
 Andrea can:
 
-- show the draft
-- make it shorter
-- make it warmer
-- make it more direct
-- send now
-- send later
+- stage the exact recipient and body without sending
+- let the owner say `send it`, `shorter`, or `discard` in natural language
+- show a small `Send now` / `Discard draft` pair on Telegram, not a menu wall
 - send this to an already known BlueBubbles conversation when the target is explicit
-- remind me instead
-- save it under the thread
-- explain why approval is still required
 - show what messages are still unsent through review
 
 The registered main Telegram chat can also start a new message to an existing
