@@ -2866,6 +2866,7 @@ async function applyAndPresentMessageAction(params: {
       chatJid: params.chatJid,
       currentTime: params.now,
       ownerAuthorizationAt: params.ownerAuthorizationAt,
+      ownerReviewGroup: group,
       ...(messagesHistoryChannel?.primeChatHistory
         ? {
             primeMessagesChatHistory: (targetChatJid: string) =>

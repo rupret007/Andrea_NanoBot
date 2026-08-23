@@ -104,6 +104,19 @@ export function isNeverAuthorizeSendSurface(
 }
 
 /**
+ * Execution-time alias so send dispatch can refuse a caller without granting
+ * authority from a missing group record. Group-only checks stay available
+ * through {@link isNeverAuthorizeSendSurface}.
+ */
+export function isNeverAuthorizeSendCaller(
+  extras: NeverAuthorizeSendSurfaceExtras & {
+    readonly group?: RegisteredGroup | null;
+  },
+): boolean {
+  return isNeverAuthorizeSendSurface(extras.group, extras);
+}
+
+/**
  * Protected owner judgments may originate only from Andrea's registered main
  * Telegram chat or the explicitly configured BlueBubbles self-thread. Group
  * membership by itself and BlueBubbles' deterministic fallback aliases do not

@@ -82,10 +82,6 @@ describe('command surface registry', () => {
         description: 'How Andrea works here',
       },
       {
-        command: 'commands',
-        description: 'Setup and status commands',
-      },
-      {
         command: 'features',
         description: 'What Andrea is best at',
       },

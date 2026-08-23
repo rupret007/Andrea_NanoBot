@@ -1497,6 +1497,37 @@ describe('BlueBubbles outbound requests', () => {
     expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(0);
   });
 
+  it('never lets an unauthorized Telegram caller dispatch a send', async () => {
+    seedRecipient();
+    const sendToTarget = vi.fn();
+
+    for (const chatJid of ['tg:qa', 'tg:karen', 'tg:other']) {
+      const result = await executeBlueBubblesOutboundRequest({
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid,
+        group:
+          chatJid === 'tg:other' ? { ...mainGroup, isMain: false } : mainGroup,
+        rawText: 'Text Avery Example: Dinner is ready. Send it.',
+        inboundMessageId: `unauth-send-${chatJid}`,
+        capabilityFacts: readyCapabilityFacts,
+        executionDeps: {
+          groupFolder: 'main',
+          channel: 'telegram',
+          chatJid,
+          sendToTarget,
+        },
+      });
+
+      expect(result).toMatchObject({ handled: true, state: 'restricted' });
+    }
+
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
   it('allows the configured Messages self-thread but refuses another BlueBubbles chat', () => {
     seedRecipient();
     const trusted = stageBlueBubblesOutboundRequest({

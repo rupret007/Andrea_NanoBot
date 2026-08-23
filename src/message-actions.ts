@@ -56,6 +56,7 @@ import {
   isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
 import { rewriteBlueBubblesMessageDraft } from './messages-fluidity.js';
+import { isNeverAuthorizeSendCaller } from './trusted-owner-review-surface.js';
 import {
   isExactNonEmptyMessagesHistoryRefreshReceipt,
   validateMessagesThreadSnapshotBinding,
@@ -82,6 +83,7 @@ import type {
   MessageActionTargetChannel,
   MessageActionTargetKind,
   MessageActionTrustLevel,
+  RegisteredGroup,
   ScheduledTask,
   SendMessageOptions,
   SendMessageResult,
@@ -214,6 +216,13 @@ export interface MessageActionExecutionDeps {
    * or dispatch a message and must never be consulted before provider proof.
    */
   onVerifiedSend?: (action: MessageActionRecord) => void;
+  /**
+   * Optional registered group for the current caller. Missing group never
+   * grants send authority; Telegram canary JIDs still fail closed.
+   */
+  readonly ownerReviewGroup?: RegisteredGroup | null;
+  readonly chatTitle?: string | null;
+  readonly senderName?: string | null;
 }
 
 export function isMessageActionBoundToPresentationSurface(params: {
@@ -3618,6 +3627,22 @@ async function executeSendOperationUnlocked(params: {
     return {
       action: params.action,
       replyText: GROUP_DRAFT_ONLY_REPLY,
+      target,
+      didSend: false,
+    };
+  }
+  if (
+    isNeverAuthorizeSendCaller({
+      group: params.deps.ownerReviewGroup,
+      chatJid: params.deps.chatJid,
+      chatTitle: params.deps.chatTitle,
+      senderName: params.deps.senderName,
+    })
+  ) {
+    return {
+      action: params.action,
+      replyText:
+        'Andrea: QA, Karen, and ordinary contact threads cannot authorize a send. I did not send anything. Say `send it` in Bob if you still want this to go out.',
       target,
       didSend: false,
     };

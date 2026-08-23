@@ -2510,7 +2510,6 @@ export function getTelegramBotGroupMenuCommands(): Array<{
 }> {
   const groupMenuIds = new Set([
     'telegram_help',
-    'telegram_commands',
     'telegram_features',
     'telegram_ping',
   ]);
