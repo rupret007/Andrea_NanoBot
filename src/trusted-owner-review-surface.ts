@@ -1,4 +1,5 @@
 import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
+import { getChatName } from './db.js';
 import type { RegisteredGroup } from './types.js';
 
 export interface TrustedOwnerReviewSurfaceInput {
@@ -69,9 +70,10 @@ export function isNeverAuthorizeSendSurfaceLabel(
 }
 
 /**
- * Telegram JIDs may carry canary names (`tg:qa`). BlueBubbles JIDs often
- * embed owner emails or phone handles, so those addresses are never parsed
- * as canary labels.
+ * Telegram JIDs may carry canary names (`tg:qa`). Production Telegram chats
+ * use numeric IDs, so stored titles are consulted separately. BlueBubbles
+ * JIDs often embed owner emails or phone handles, so those addresses are
+ * never parsed as canary labels.
  */
 export function neverAuthorizeChatJidLabel(
   chatJid: string | null | undefined,
@@ -81,11 +83,22 @@ export function neverAuthorizeChatJidLabel(
   return raw.startsWith('tg:') ? raw : null;
 }
 
+function resolveStoredNeverAuthorizeTelegramTitle(
+  extras?: NeverAuthorizeSendSurfaceExtras,
+): string | null {
+  if (extras?.chatTitle) return extras.chatTitle;
+  // Real Telegram JIDs are numeric (`tg:847392018`). Canary names live in the
+  // stored title, not the JID. BlueBubbles addresses are never parsed here.
+  if (!neverAuthorizeChatJidLabel(extras?.chatJid)) return null;
+  return getChatName(extras?.chatJid);
+}
+
 /**
  * QA and Karen are operator canary / non-owner surfaces. A yes, send it, or
  * accidental isMain registration there must never authorize a contact send.
  * Chat JIDs and stored titles are part of the same fail-closed set so a
- * `tg:qa` / `tg:karen` thread cannot borrow Bob's main-group registration.
+ * `tg:qa` / `tg:karen` thread cannot borrow Bob's main-group registration,
+ * including a numeric Telegram JID whose stored title is QA or Karen.
  * Bob's registered Telegram front-door stays the yes-fence.
  */
 export function isNeverAuthorizeSendSurface(
@@ -98,6 +111,7 @@ export function isNeverAuthorizeSendSurface(
     neverAuthorizeChatJidLabel(extras?.chatJid),
     extras?.chatTitle,
     extras?.senderName,
+    resolveStoredNeverAuthorizeTelegramTitle(extras),
     ...(extras?.surfaceLabels ?? []),
   ];
   return labels.some((label) => isNeverAuthorizeSendSurfaceLabel(label));

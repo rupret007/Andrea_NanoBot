@@ -7245,6 +7245,25 @@ export function getAllChats(): ChatInfo[] {
     .all() as ChatInfo[];
 }
 
+/**
+ * Stored display name for one chat. Missing, placeholder, or uninitialized
+ * database rows never invent a name and therefore never grant authority.
+ */
+export function getChatName(chatJid: string | null | undefined): string | null {
+  const normalized = (chatJid ?? '').trim();
+  if (!normalized || !isDatabaseInitialized()) {
+    return null;
+  }
+  const row = db
+    .prepare(`SELECT name FROM chats WHERE jid = ?`)
+    .get(normalized) as { name?: string | null } | undefined;
+  const name = normalizeChatNameCandidate(row?.name);
+  if (!name || isPlaceholderChatName(normalized, name)) {
+    return null;
+  }
+  return name;
+}
+
 /** Correct legacy BlueBubbles `;+;` group GUIDs without touching timestamps. */
 export function reconcileBlueBubblesGroupChatMetadata(): number {
   if (!isDatabaseInitialized()) return 0;

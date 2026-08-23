@@ -227,6 +227,19 @@ describe('trusted owner review surface', () => {
     }
   });
 
+  it('does not treat a numeric Telegram JID as a canary by itself', () => {
+    expect(
+      isNeverAuthorizeSendSurface(mainGroup, { chatJid: 'tg:847392018' }),
+    ).toBe(false);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:847392018',
+        group: mainGroup,
+      }),
+    ).toBe(true);
+  });
+
   it('never authorizes from stored QA or Karen titles while ignoring email local-parts', () => {
     expect(isNeverAuthorizeSendSurface(mainGroup, { chatTitle: 'Karen' })).toBe(
       true,
