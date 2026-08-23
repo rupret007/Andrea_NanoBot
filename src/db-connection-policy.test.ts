@@ -36,10 +36,11 @@ describe('file database connection policy', () => {
   });
 
   it('checkpoints WAL on close so disposable file DBs can be deleted immediately', () => {
-    tempDir = fs.mkdtempSync(
+    const isolatedDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'andrea-db-connection-close-'),
     );
-    const databasePath = path.join(tempDir, 'messages.db');
+    tempDir = isolatedDir;
+    const databasePath = path.join(isolatedDir, 'messages.db');
     _initTestDatabaseAtPath(databasePath);
     expect(isDatabaseInitialized()).toBe(true);
 
@@ -48,9 +49,9 @@ describe('file database connection policy', () => {
     _closeDatabase();
 
     expect(() =>
-      fs.rmSync(tempDir, { recursive: true, force: true }),
+      fs.rmSync(isolatedDir, { recursive: true, force: true }),
     ).not.toThrow();
-    expect(fs.existsSync(tempDir)).toBe(false);
+    expect(fs.existsSync(isolatedDir)).toBe(false);
     tempDir = null;
   });
 });
