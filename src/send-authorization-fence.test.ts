@@ -620,7 +620,9 @@ describe('send authorization fence', () => {
     seedRecipient();
     expect(resolveRegisteredTelegramFrontDoorJid()).toBeNull();
     expect(isAuthorizedTelegramSendCallerJid('tg:main')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:100')).toBe(true);
     expect(isAuthorizedTelegramSendCallerJid('tg:847392018')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:100000')).toBe(false);
 
     const sendToTarget = vi.fn();
     for (const chatJid of ['tg:847392018', 'tg:900100200']) {

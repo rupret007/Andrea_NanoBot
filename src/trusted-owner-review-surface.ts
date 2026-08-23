@@ -108,15 +108,16 @@ export function isRegisteredTelegramFrontDoorJid(
 }
 
 /**
- * Unit-test fixture used only when no Telegram front-door is recorded.
- * Production Telegram chats are numeric and must never borrow isMain.
+ * Production Telegram chats use long numeric IDs. Short or named JIDs such
+ * as `tg:main` / `tg:100` are unit-test fixtures and must not become a
+ * production trust grant.
  */
-const TELEGRAM_SEND_AUTH_FIXTURE_JID = 'tg:main';
+const PRODUCTION_TELEGRAM_NUMERIC_JID = /^tg:\d{6,}$/;
 
 /**
  * Telegram send-auth allow-list. A recorded front-door JID is required in
- * production. When none is recorded, only the `tg:main` fixture may
- * authorize; numeric JIDs cannot borrow isMain.
+ * production. When none is recorded, production-shaped numeric JIDs cannot
+ * borrow isMain.
  */
 export function isAuthorizedTelegramSendCallerJid(
   chatJid: string | null | undefined,
@@ -127,7 +128,7 @@ export function isAuthorizedTelegramSendCallerJid(
   }
   const frontDoorJid = resolveRegisteredTelegramFrontDoorJid();
   if (frontDoorJid) return normalized === frontDoorJid;
-  return normalized === TELEGRAM_SEND_AUTH_FIXTURE_JID;
+  return !PRODUCTION_TELEGRAM_NUMERIC_JID.test(normalized);
 }
 
 function resolveStoredNeverAuthorizeTelegramTitle(
@@ -181,9 +182,9 @@ export function isNeverAuthorizeSendCaller(
   const chatJid = (extras.chatJid ?? '').trim();
   // Missing caller identity cannot authorize a send.
   if (!chatJid) return true;
-  // A numeric Telegram JID that is not Bob's registered front-door cannot
-  // borrow isMain to authorize a send, including when no front-door is
-  // recorded yet.
+  // A production-shaped numeric Telegram JID that is not Bob's registered
+  // front-door cannot borrow isMain to authorize a send, including when no
+  // front-door is recorded yet.
   if (chatJid.startsWith('tg:')) {
     return !isAuthorizedTelegramSendCallerJid(chatJid);
   }

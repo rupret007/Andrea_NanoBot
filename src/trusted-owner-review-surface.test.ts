@@ -297,7 +297,10 @@ describe('registered Telegram front-door send fence', () => {
   it('does not let an unregistered numeric JID borrow isMain', () => {
     expect(resolveRegisteredTelegramFrontDoorJid()).toBeNull();
     expect(isAuthorizedTelegramSendCallerJid('tg:main')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:100')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:owner')).toBe(true);
     expect(isAuthorizedTelegramSendCallerJid('tg:847392018')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:100000')).toBe(false);
     expect(
       isNeverAuthorizeSendCaller({
         group: mainGroup,
