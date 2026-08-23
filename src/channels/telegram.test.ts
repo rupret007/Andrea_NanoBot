@@ -135,7 +135,8 @@ async function createTelegramInboundTestBot(
     registeredGroups:
       options?.registeredGroups ??
       (() => ({
-        [`tg:${TELEGRAM_INBOUND_TEST_CHAT_ID}`]: TELEGRAM_INBOUND_TEST_MAIN_GROUP,
+        [`tg:${TELEGRAM_INBOUND_TEST_CHAT_ID}`]:
+          TELEGRAM_INBOUND_TEST_MAIN_GROUP,
       })),
   });
   (

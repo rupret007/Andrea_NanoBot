@@ -1304,10 +1304,7 @@ export class TelegramChannel implements Channel {
         ctx.message.text,
         botUsername,
       );
-      if (
-        leadingCommand &&
-        TELEGRAM_STATIC_BOT_COMMANDS.has(leadingCommand)
-      ) {
+      if (leadingCommand && TELEGRAM_STATIC_BOT_COMMANDS.has(leadingCommand)) {
         return;
       }
 
