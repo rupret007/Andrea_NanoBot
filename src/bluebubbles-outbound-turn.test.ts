@@ -408,6 +408,43 @@ describe('BlueBubbles production outbound turn boundary', () => {
     expect(sendToTarget).not.toHaveBeenCalled();
   });
 
+  it('never lets a QA or Karen Telegram JID send even when the group looks like main', async () => {
+    const refreshControlState = vi.fn(async () => controlSnapshot());
+    const resolveStoredRecipient = vi.fn();
+    const resolveLiveRecipient = vi.fn();
+    const sendToTarget = vi.fn();
+
+    for (const chatJid of ['tg:qa', 'tg:karen', 'tg:andrea-qa']) {
+      const result = await executeBlueBubblesOutboundTurn({
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid,
+        group: mainGroup,
+        rawText: 'Text Avery Example: Dinner is ready. Send it.',
+        inboundMessageId: `tg-unauth-${chatJid}`,
+        blueBubblesChannel: {
+          getControlSnapshot: () => controlSnapshot(),
+          refreshControlState,
+        },
+        resolveStoredRecipient,
+        resolveLiveRecipient,
+        executionDeps: {
+          groupFolder: 'main',
+          channel: 'telegram',
+          chatJid,
+          sendToTarget,
+        },
+      });
+
+      expect(result).toMatchObject({ handled: true, state: 'restricted' });
+    }
+
+    expect(refreshControlState).not.toHaveBeenCalled();
+    expect(resolveStoredRecipient).not.toHaveBeenCalled();
+    expect(resolveLiveRecipient).not.toHaveBeenCalled();
+    expect(sendToTarget).not.toHaveBeenCalled();
+  });
+
   it('replays a verified numbered-review send before rebinding changed context', async () => {
     const resolveContextBoundRecipient = vi.fn(async () => ({
       state: 'resolved' as const,

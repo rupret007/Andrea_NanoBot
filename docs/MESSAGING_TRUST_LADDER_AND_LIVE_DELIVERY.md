@@ -92,7 +92,8 @@ card contract.
 - QA, Karen, and ordinary contact/group threads never authorize a send,
   including a `tg:qa` / `tg:karen` JID that borrows the main group record.
   The registered Telegram front-door chat (Bob) or the configured Messages
-  self-thread is the only yes-fence
+  self-thread is the only yes-fence. Send dispatch fail-closes those callers
+  again even if a draft already exists.
 - saved delegation rules may shape a draft, but never auto-send to an external
   recipient or replace the separately presented fresh approval
 - high-risk emotional, calendar, money, medical, or commitment-changing messages stay draft/approval-first
