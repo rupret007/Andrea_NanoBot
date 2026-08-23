@@ -434,7 +434,11 @@ describe('send authorization fence', () => {
       },
     );
 
-    expect(blockedAgain.replyText).toContain('cannot authorize a send');
+    expect(blockedAgain.handled).toBe(true);
+    expect(blockedAgain.action?.sendStatus).toBe('sent');
+    expect(blockedAgain.replyText).toMatch(
+      /cannot authorize a send|will not resend/,
+    );
     expect(sendToTarget).toHaveBeenCalledTimes(1);
   });
 
