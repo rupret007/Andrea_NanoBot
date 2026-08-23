@@ -80,9 +80,9 @@ describe('send authorization fence', () => {
 
   it('refuses QA, Karen, and ordinary callers as send authorizers', () => {
     for (const chatJid of ['tg:qa', 'tg:karen', 'tg:andrea-qa']) {
-      expect(
-        isNeverAuthorizeSendCaller({ group: mainGroup, chatJid }),
-      ).toBe(true);
+      expect(isNeverAuthorizeSendCaller({ group: mainGroup, chatJid })).toBe(
+        true,
+      );
       expect(
         isTrustedOwnerReviewSurface({
           channelName: 'telegram',
