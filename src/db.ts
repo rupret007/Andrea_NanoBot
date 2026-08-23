@@ -7085,6 +7085,20 @@ export function _initTestDatabaseAtPath(dbPath: string): void {
 
 /** @internal - for tests only. */
 export function _closeDatabase(): void {
+  if (!db || !db.open) {
+    databaseMode = 'uninitialized';
+    return;
+  }
+  try {
+    if (db.name && db.name !== ':memory:') {
+      // Isolated file DBs use WAL. Close must not inherit the 15s operator
+      // busy timeout or Windows afterEach hooks hang on checkpoint/lock.
+      db.pragma('busy_timeout = 50');
+      db.pragma('wal_checkpoint(TRUNCATE)');
+    }
+  } catch {
+    // Close even if checkpoint is blocked so teardown cannot hang.
+  }
   db.close();
   databaseMode = 'uninitialized';
 }

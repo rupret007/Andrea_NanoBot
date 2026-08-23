@@ -34,4 +34,24 @@ describe('file database connection policy', () => {
       journalSizeLimitBytes: 64 * 1024 * 1024,
     });
   });
+
+  it('checkpoints WAL on close so disposable file DBs can be deleted immediately', () => {
+    const isolatedDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'andrea-db-connection-close-'),
+    );
+    tempDir = isolatedDir;
+    const databasePath = path.join(isolatedDir, 'messages.db');
+    _initTestDatabaseAtPath(databasePath);
+    expect(isDatabaseInitialized()).toBe(true);
+
+    _closeDatabase();
+    expect(isDatabaseInitialized()).toBe(false);
+    _closeDatabase();
+
+    expect(() =>
+      fs.rmSync(isolatedDir, { recursive: true, force: true }),
+    ).not.toThrow();
+    expect(fs.existsSync(isolatedDir)).toBe(false);
+    tempDir = null;
+  });
 });

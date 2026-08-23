@@ -259,3 +259,6 @@ When changing behavior, keep these rules intact:
   in for action approval
 - do not store a raw conversation merely to justify a commitment transition
 - do not document a feature as baseline if it still depends on same-day validation
+- do not send BlueBubbles/Messages traffic through Private API; AppleScript is
+  the only outbound send path, including when the server advertises Private API
+  or the server-info probe fails

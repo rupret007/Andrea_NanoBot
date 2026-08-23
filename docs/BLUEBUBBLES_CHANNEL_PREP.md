@@ -117,6 +117,12 @@ Allowed directly:
 - save / remind / track flows
 - explicit text handoffs
 
+Outbound Messages sends use the BlueBubbles AppleScript path only. Private API
+is never selected, including when the server advertises it or the server-info
+probe fails. That send-path rule does not replace the existing approval fence:
+a real contact send still requires a fresh owner-authored yes in the registered
+Telegram front-door chat or configured Messages self-thread.
+
 Handoff-only or blocked:
 
 - work cockpit

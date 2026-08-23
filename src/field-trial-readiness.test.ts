@@ -1248,6 +1248,55 @@ describe('field-trial readiness', () => {
     );
   });
 
+  it('defaults a missing BlueBubbles send-method field to AppleScript', () => {
+    stubConfiguredBlueBubblesSelfThread();
+    vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');
+    vi.stubEnv('BLUEBUBBLES_BASE_URL', 'http://macbook-pro.local:1234');
+    vi.stubEnv('BLUEBUBBLES_PASSWORD', 'secret');
+    vi.stubEnv('BLUEBUBBLES_GROUP_FOLDER', 'main');
+    vi.stubEnv('BLUEBUBBLES_CHAT_SCOPE', 'all_synced');
+    vi.stubEnv(
+      'BLUEBUBBLES_WEBHOOK_PUBLIC_BASE_URL',
+      'http://192.168.5.136:4305',
+    );
+    vi.stubEnv('BLUEBUBBLES_WEBHOOK_SECRET', 'hook-secret');
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+
+    const snapshot: HostControlSnapshot = {
+      paths: resolveHostControlPaths(tempDir),
+      nodeRuntime: null,
+      hostState: null,
+      readyState: null,
+      assistantHealthState: {
+        bootId: 'boot-blue-missing-send-method',
+        pid: process.pid,
+        appVersion: '1.0.0-test',
+        updatedAt: '2026-04-10T00:12:00.000Z',
+        channels: [
+          {
+            name: 'bluebubbles',
+            configured: true,
+            state: 'ready',
+            updatedAt: '2026-04-10T00:12:00.000Z',
+            detail: `listener 0.0.0.0:4305/bluebubbles/webhook | scope all_synced | reply gate mention_required | transport reachable/auth ok (200) | last inbound 2026-04-10T00:10:00.000Z | last inbound chat ${TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID} | last inbound self_authored yes | last outbound 2026-04-10T00:11:00.000Z (${TEST_BLUEBUBBLES_SELF_THREAD_ALIAS_JID}) | last outbound target kind chat_guid | last outbound target value iMessage;-;owner-alias@example.invalid | last send error none | private api available unknown | last metadata hydration none | attempted target sequence chat_guid`,
+          },
+        ],
+      },
+      telegramRoundtripState: null,
+      telegramTransportState: null,
+      runtimeAuditState: null,
+    };
+
+    const truth = buildFieldTrialOperatorTruth({
+      projectRoot: tempDir,
+      hostSnapshot: snapshot,
+      windowsHost: null,
+    });
+
+    expect(truth.bluebubbles.sendMethod).toBe('apple-script');
+    expect(truth.bluebubbles.privateApiAvailable).toBe('unknown');
+  });
+
   it('prefers active self-thread message-action continuity over stale pilot-only targeting', () => {
     stubConfiguredBlueBubblesSelfThread();
     vi.stubEnv('BLUEBUBBLES_ENABLED', 'true');

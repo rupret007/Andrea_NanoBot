@@ -370,7 +370,7 @@ describe('BlueBubbles first-contact durable subprocess recovery', () => {
     expect(provider.posts).toHaveLength(1);
     expect(provider.posts[0]?.endpoint).toBe('/api/v1/chat/new');
     expect(provider.posts[0]?.addresses).toEqual(['+12025550123']);
-    expect(provider.posts[0]?.method).toBe('private-api');
+    expect(provider.posts[0]?.method).toBe('apple-script');
     expect(provider.posts[0]?.service).toBe('iMessage');
     expect(provider.posts[0]?.tempGuid).toBe(action.messageActionId);
     expect(provider.posts[0]?.message).toBe(action.draftText);
@@ -527,7 +527,7 @@ describe('BlueBubbles first-contact durable subprocess recovery', () => {
     expect(provider.posts).toHaveLength(1);
     expect(provider.posts[0]?.endpoint).toBe('/api/v1/chat/new');
     expect(provider.posts[0]?.addresses).toEqual(['+12025550123']);
-    expect(provider.posts[0]?.method).toBe('private-api');
+    expect(provider.posts[0]?.method).toBe('apple-script');
     expect(provider.posts[0]?.service).toBe('iMessage');
     expect(provider.posts[0]?.tempGuid).toBe(firstAction.messageActionId);
 

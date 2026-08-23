@@ -8,6 +8,7 @@ import {
   _closeDatabase,
   _initTestDatabaseAtPath,
   getLifeThread,
+  isDatabaseInitialized,
   listLifeThreadSignals,
   listLifeThreadsForGroup,
   upsertProfileFact,
@@ -59,8 +60,18 @@ beforeEach(() => {
 }, 30_000);
 
 afterEach(() => {
-  _closeDatabase();
-  fs.rmSync(directory, { recursive: true, force: true });
+  if (isDatabaseInitialized()) {
+    _closeDatabase();
+  }
+  if (directory) {
+    fs.rmSync(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 50,
+    });
+    directory = '';
+  }
 });
 
 function save(title: string, summary: string, at = reference): LifeThread {
