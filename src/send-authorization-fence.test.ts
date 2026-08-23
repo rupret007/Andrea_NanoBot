@@ -26,6 +26,7 @@ import {
 import { runtimeCapabilityRegistry } from './runtime-capability-registry.js';
 import { registerProductionRuntimeCapabilitySurfaces } from './runtime-capability-production-surfaces.js';
 import {
+  isAuthorizedBlueBubblesSendCallerJid,
   isAuthorizedTelegramSendCallerJid,
   isNeverAuthorizeSendCaller,
   isNeverAuthorizeSendSurface,
@@ -126,6 +127,27 @@ describe('send authorization fence', () => {
         chatJid: 'bb:iMessage;-;karen@example.invalid',
       }),
     ).toBe(false);
+    expect(
+      isNeverAuthorizeSendCaller({
+        group: mainGroup,
+        chatJid: 'bb:iMessage;-;karen@example.invalid',
+      }),
+    ).toBe(true);
+    expect(
+      isAuthorizedBlueBubblesSendCallerJid(
+        'bb:iMessage;-;owner@example.invalid',
+      ),
+    ).toBe(true);
+    expect(
+      isAuthorizedBlueBubblesSendCallerJid('bb:iMessage;-;+12025550123'),
+    ).toBe(false);
+    expect(isAuthorizedBlueBubblesSendCallerJid('bb:chat-1')).toBe(true);
+    expect(
+      isNeverAuthorizeSendCaller({
+        group: mainGroup,
+        chatJid: 'slack:general',
+      }),
+    ).toBe(true);
   });
 
   it('does not let an unauthorized caller stage or send', async () => {
@@ -1069,6 +1091,181 @@ describe('send authorization fence', () => {
         groupFolder: 'main',
         channel: 'telegram',
         chatJid: 'tg:900100200',
+        currentTime: new Date('2026-08-23T21:00:00.000Z'),
+        sendToTarget,
+      },
+    );
+
+    expect(runResult.handled).toBe(true);
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getMessageAction(action.messageActionId)?.sendStatus).not.toBe(
+      'sent',
+    );
+    expect(runResult.resultSummary).not.toMatch(/^Sent scheduled message/);
+  });
+
+  it('does not let a BlueBubbles contact JID approve or defer a draft Bob already staged', async () => {
+    seedRecipient();
+    const staged = stageBlueBubblesOutboundRequest({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: 'Text Avery Example: Dinner is ready.',
+      inboundMessageId: 'bob-staged-bb-contact-card',
+      now: new Date('2026-08-23T18:18:00.000Z'),
+    });
+    if (!staged.handled || staged.state !== 'staged') {
+      throw new Error('expected Bob fixture to stage a draft');
+    }
+    updateMessageAction(staged.action.messageActionId, {
+      presentationMessageId: 'tg:bob-bb-contact-card',
+      lastUpdatedAt: '2026-08-23T18:18:30.000Z',
+    });
+
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:should-not-send-contact',
+    }));
+    const contactJid = 'bb:iMessage;-;+12025550123';
+    expect(getChatName(contactJid)).toBe('Avery Example');
+    expect(
+      isNeverAuthorizeSendCaller({ group: mainGroup, chatJid: contactJid }),
+    ).toBe(true);
+
+    const blockedSend = await applyMessageActionOperation(
+      staged.action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: contactJid,
+        currentTime: new Date('2026-08-23T18:19:00.000Z'),
+        ownerReviewGroup: mainGroup,
+        sendToTarget,
+      },
+    );
+    const blockedRewrite = await applyMessageActionOperation(
+      staged.action.messageActionId,
+      { kind: 'rewrite_and_send', style: 'shorter' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: contactJid,
+        currentTime: new Date('2026-08-23T18:19:10.000Z'),
+        ownerReviewGroup: mainGroup,
+        sendToTarget,
+      },
+    );
+    const blockedDefer = await applyMessageActionOperation(
+      staged.action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: contactJid,
+        currentTime: new Date('2026-08-23T18:19:20.000Z'),
+        ownerReviewGroup: mainGroup,
+        ownerAuthorizationAt: '2026-08-23T18:19:15.000Z',
+        sendToTarget,
+      },
+    );
+
+    expect(blockedSend.replyText).toContain('cannot authorize a send');
+    expect(blockedRewrite.replyText).toContain('cannot authorize a send');
+    expect(blockedDefer.replyText).toContain('cannot authorize a send');
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getMessageAction(staged.action.messageActionId)).toMatchObject({
+      sendStatus: 'drafted',
+      scheduledTaskId: null,
+    });
+  });
+
+  it('does not let a stored QA BlueBubbles title fire a scheduled send', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    seedRecipient();
+    storeChatMetadata(
+      'bb:iMessage;-;owner@example.invalid',
+      '2026-08-23T00:00:00.000Z',
+      'QA',
+      'bluebubbles',
+      false,
+    );
+    expect(getChatName('bb:iMessage;-;owner@example.invalid')).toBe('QA');
+    expect(
+      isNeverAuthorizeSendCaller({
+        group: mainGroup,
+        chatJid: 'bb:iMessage;-;owner@example.invalid',
+      }),
+    ).toBe(true);
+
+    const thread = {
+      id: 'comm-fence-scheduled-bb-qa-title',
+      groupFolder: 'main',
+      title: 'Avery Example',
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      channel: 'bluebubbles' as const,
+      channelChatJid: 'bb:iMessage;-;+12025550123',
+      lastInboundSummary: 'Avery asked about dinner.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed' as const,
+      urgency: 'tonight' as const,
+      followupDueAt: '2026-08-23T22:00:00.000Z',
+      suggestedNextAction: 'draft_reply' as const,
+      toneStyleHints: [],
+      lastContactAt: '2026-08-23T17:00:00.000Z',
+      lastMessageId: 'bb:last-msg-bb-qa-title',
+      linkedTaskId: null,
+      inferenceState: 'user_confirmed' as const,
+      trackingMode: 'default' as const,
+      createdAt: '2026-08-23T16:30:00.000Z',
+      updatedAt: '2026-08-23T18:30:00.000Z',
+      disabledAt: null,
+    };
+    upsertCommunicationThread(thread);
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Avery still needs a dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Avery Example',
+      threadTitle: 'Avery Example',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-08-23T18:20:00.000Z'),
+    });
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'tg:bob-scheduled-bb-qa-title-card',
+      lastUpdatedAt: '2026-08-23T18:20:10.000Z',
+    });
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-08-23T18:20:20.000Z'),
+        ownerAuthorizationAt: '2026-08-23T18:20:15.000Z',
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+    const scheduled = getMessageAction(action.messageActionId)!;
+    expect(scheduled.sendStatus).toBe('deferred');
+    expect(scheduled.scheduledTaskId).toBeTruthy();
+
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:should-not-schedule-bb-qa-title',
+    }));
+    const runResult = await runScheduledMessageActionByTaskId(
+      scheduled.scheduledTaskId!,
+      {
+        groupFolder: 'main',
+        channel: 'bluebubbles',
+        chatJid: 'bb:iMessage;-;owner@example.invalid',
         currentTime: new Date('2026-08-23T21:00:00.000Z'),
         sendToTarget,
       },

@@ -131,15 +131,34 @@ export function isAuthorizedTelegramSendCallerJid(
   return !PRODUCTION_TELEGRAM_NUMERIC_JID.test(normalized);
 }
 
-function resolveStoredNeverAuthorizeTelegramTitle(
+function resolveStoredNeverAuthorizeChatTitle(
   extras?: NeverAuthorizeSendSurfaceExtras,
 ): string | null {
-  // Real Telegram JIDs are numeric (`tg:847392018`). Canary names live in the
-  // stored title, not the JID. A provided chatTitle is checked separately and
-  // must never hide a stored QA/Karen title. BlueBubbles addresses are never
-  // parsed here.
-  if (!neverAuthorizeChatJidLabel(extras?.chatJid)) return null;
-  return getChatName(extras?.chatJid);
+  // Canary names live in the stored title, not in provider addresses.
+  // Telegram JIDs are numeric (`tg:847392018`). BlueBubbles JIDs embed
+  // emails or phone handles and must never be parsed as labels. A provided
+  // chatTitle is checked separately and must never hide a stored QA/Karen
+  // title on Telegram or BlueBubbles.
+  const chatJid = (extras?.chatJid ?? '').trim();
+  if (!chatJid) return null;
+  return getChatName(chatJid);
+}
+
+/**
+ * BlueBubbles send-auth allow-list. The configured Messages self-thread is
+ * the only production yes-fence. Provider-shaped GUIDs (`bb:iMessage;-;…`)
+ * cannot authorize when that self-thread is missing or when they are an
+ * ordinary contact/group thread. Short fixtures such as `bb:chat-1` may
+ * still work until a self-thread is the caller.
+ */
+export function isAuthorizedBlueBubblesSendCallerJid(
+  chatJid: string | null | undefined,
+): boolean {
+  const normalized = (chatJid ?? '').trim();
+  if (!normalized.startsWith('bb:')) return false;
+  if (isConfiguredBlueBubblesSelfThreadAliasJid(normalized)) return true;
+  // Provider GUIDs use `service;direction;handle`. Fixture JIDs do not.
+  return !normalized.includes(';');
 }
 
 /**
@@ -149,7 +168,10 @@ function resolveStoredNeverAuthorizeTelegramTitle(
  * `tg:qa` / `tg:karen` thread cannot borrow Bob's main-group registration,
  * including a numeric Telegram JID whose stored title is QA or Karen.
  * A provided title cannot hide that stored canary. A numeric JID cannot
- * borrow isMain when no front-door is recorded. Bob's registered
+ * borrow isMain when no front-door is recorded. A BlueBubbles contact or
+ * group GUID cannot authorize when it is not the configured self-thread,
+ * including when no self-thread is recorded yet. Stored QA/Karen titles on
+ * BlueBubbles chats fail closed without parsing the JID. Bob's registered
  * Telegram front-door stays the yes-fence.
  */
 export function isNeverAuthorizeSendSurface(
@@ -162,7 +184,7 @@ export function isNeverAuthorizeSendSurface(
     neverAuthorizeChatJidLabel(extras?.chatJid),
     extras?.chatTitle,
     extras?.senderName,
-    resolveStoredNeverAuthorizeTelegramTitle(extras),
+    resolveStoredNeverAuthorizeChatTitle(extras),
     ...(extras?.surfaceLabels ?? []),
   ];
   return labels.some((label) => isNeverAuthorizeSendSurfaceLabel(label));
@@ -188,7 +210,13 @@ export function isNeverAuthorizeSendCaller(
   if (chatJid.startsWith('tg:')) {
     return !isAuthorizedTelegramSendCallerJid(chatJid);
   }
-  return false;
+  // A production-shaped BlueBubbles GUID that is not the configured
+  // self-thread cannot authorize a send, including when no self-thread is
+  // recorded yet. Unknown channel prefixes also fail closed.
+  if (chatJid.startsWith('bb:')) {
+    return !isAuthorizedBlueBubblesSendCallerJid(chatJid);
+  }
+  return true;
 }
 
 /**

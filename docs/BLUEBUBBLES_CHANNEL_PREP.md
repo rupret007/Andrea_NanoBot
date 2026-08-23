@@ -128,9 +128,13 @@ authorize a send, even if they reply `yes` or `send it`, and a `tg:qa` or
 `tg:karen` JID cannot borrow the main group record. A numeric Telegram JID
 that is not that registered front-door fails closed the same way, including
 when no front-door is registered yet, no title is stored yet, or a provided
-title tries to hide a stored QA/Karen canary. A missing caller JID cannot
-authorize. Stored QA/Karen titles on numeric Telegram JIDs still fail
-closed, and those callers cannot defer or fire a scheduled send.
+title tries to hide a stored QA/Karen canary. A BlueBubbles contact or
+group GUID that is not the configured Messages self-thread fails closed
+the same way, including when no self-thread is recorded yet. A missing
+caller JID cannot authorize. Stored QA/Karen titles on numeric Telegram
+JIDs and on BlueBubbles chats still fail closed without parsing
+BlueBubbles addresses as labels, and those callers cannot defer or fire a
+scheduled send. Unknown channel prefixes cannot authorize.
 
 Handoff-only or blocked:
 
