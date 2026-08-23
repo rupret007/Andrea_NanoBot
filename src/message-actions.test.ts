@@ -644,6 +644,17 @@ describe('message actions', () => {
     expect(buildBlueBubblesProofDrillPresentationText(second.action)).toContain(
       'send it later tonight',
     );
+    expect(
+      buildMessageActionPresentation(second.action, 'telegram')
+        .inlineActionRows.flat()
+        .map((control) => control.label),
+    ).toEqual(['Send later tonight']);
+    expect(
+      buildMessageActionPresentation(second.action, 'telegram').text,
+    ).toContain('say `send it later tonight`');
+    expect(
+      buildMessageActionPresentation(second.action, 'telegram').text,
+    ).not.toContain('make it more direct');
   });
 
   it('keeps BlueBubbles proof drills deferred-only and rejects immediate send', async () => {

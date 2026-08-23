@@ -189,9 +189,9 @@ describe('resolveBlueBubblesSendMethod', () => {
     );
     expect(source).toContain('method: resolveBlueBubblesSendMethod');
     expect(source).toContain("form.set('method', resolveBlueBubblesSendMethod");
-    expect(source).not.toMatch(/method:\s*['"]private-api['"]/);
+    expect(source).not.toMatch(/method:\s*['"]private[-_]?api['"]/i);
     expect(source).not.toMatch(
-      /form\.set\(\s*['"]method['"]\s*,\s*['"]private-api['"]/,
+      /form\.set\(\s*['"]method['"]\s*,\s*['"][^'"]*['"]/,
     );
   });
 });

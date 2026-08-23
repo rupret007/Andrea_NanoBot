@@ -1479,6 +1479,24 @@ describe('BlueBubbles outbound requests', () => {
     );
   });
 
+  it('never authorizes a QA or Karen Telegram JID even when the group looks like main', () => {
+    seedRecipient();
+
+    for (const chatJid of ['tg:qa', 'tg:karen', 'tg:andrea-qa']) {
+      const result = stageBlueBubblesOutboundRequest({
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid,
+        group: mainGroup,
+        rawText: 'Text Avery Example: Dinner is ready.',
+      });
+
+      expect(result).toMatchObject({ handled: true, state: 'restricted' });
+    }
+
+    expect(listMessageActionsForGroup({ groupFolder: 'main' })).toHaveLength(0);
+  });
+
   it('allows the configured Messages self-thread but refuses another BlueBubbles chat', () => {
     seedRecipient();
     const trusted = stageBlueBubblesOutboundRequest({

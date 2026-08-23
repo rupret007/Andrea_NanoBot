@@ -264,6 +264,7 @@ When changing behavior, keep these rules intact:
   or the server-info probe fails. The Private API probe is diagnostic only and
   never selects a send method
 - do not treat QA, Karen, or ordinary contact/group threads as
-  send-authorization surfaces. Contact sends still require a fresh owner
-  `send it` / `Send now` in the registered Telegram front-door chat (Bob) or
-  the configured Messages self-thread
+  send-authorization surfaces, including Telegram JIDs such as `tg:qa` or
+  `tg:karen` that reuse a main-looking group record. Contact sends still
+  require a fresh owner `send it` / `Send now` in the registered Telegram
+  front-door chat (Bob) or the configured Messages self-thread

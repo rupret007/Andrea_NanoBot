@@ -89,8 +89,9 @@ card contract.
 - all external sends require a separate fresh owner authorization on the current
   presented action; a direct send imperative stages the card but does not supply
   dispatch approval
-- QA, Karen, and ordinary contact/group threads never authorize a send. The
-  registered Telegram front-door chat (Bob) or the configured Messages
+- QA, Karen, and ordinary contact/group threads never authorize a send,
+  including a `tg:qa` / `tg:karen` JID that borrows the main group record.
+  The registered Telegram front-door chat (Bob) or the configured Messages
   self-thread is the only yes-fence
 - saved delegation rules may shape a draft, but never auto-send to an external
   recipient or replace the separately presented fresh approval

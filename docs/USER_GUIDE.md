@@ -79,7 +79,9 @@ Only the configured owner BlueBubbles/Messages self-thread is assistant-directed
 
 ## Public-Safe Commands
 
-These are the commands normal users should rely on:
+These are the commands normal users should rely on. In Telegram, `/commands`
+stays a short setup and status list; thinking and memory commands still work
+if you type them.
 
 - `/start` - quick onboarding
 - `/help` - short in-chat guide

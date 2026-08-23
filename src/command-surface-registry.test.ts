@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildTelegramCommandLines,
   buildTelegramFeatureLines,
   buildTelegramHelpLines,
   buildTelegramWelcomeLines,
@@ -225,8 +226,17 @@ describe('command surface registry', () => {
     expect(help).toContain('Most people should just send a normal message.');
     expect(help).toContain('send it');
     expect(help).toContain('QA, Karen');
+    expect(help).toContain('setup or status');
     expect(help).not.toContain('Benchmark-Guided Packs');
     expect(help).not.toContain('Not helpful');
+
+    const commands = buildTelegramCommandLines().join('\n');
+    expect(commands).toContain('/cursor_status');
+    expect(commands).toContain(
+      'Thinking, memory, and learning commands still work if you type them.',
+    );
+    expect(commands).not.toContain('*Thinking and Memory*');
+    expect(commands).not.toContain('/thinking');
 
     expect(features).toContain('Calendar');
     expect(features).toContain('planning');

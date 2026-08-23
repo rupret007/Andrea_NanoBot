@@ -124,7 +124,8 @@ method. That send-path rule does not replace the existing approval fence: a
 real contact send still requires a fresh owner-authored `send it` / `Send now`
 in the registered Telegram front-door chat (Bob / `@andrea_nanobot`) or the
 configured Messages self-thread. QA, Karen, and ordinary contact threads never
-authorize a send, even if they reply `yes` or `send it`.
+authorize a send, even if they reply `yes` or `send it`, and a `tg:qa` or
+`tg:karen` JID cannot borrow the main group record.
 
 Handoff-only or blocked:
 
