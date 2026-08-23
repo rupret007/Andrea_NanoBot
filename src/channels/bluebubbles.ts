@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+
+import { secureEqual } from '../secure-equal.js';
 import http, {
   type IncomingMessage,
   type Server,
@@ -4467,7 +4469,10 @@ export class BlueBubblesChannel implements Channel {
       reqUrl.searchParams.get('secret') ||
       reqUrl.searchParams.get('token') ||
       reqUrl.searchParams.get('guid');
-    return incoming === this.config.webhookSecret;
+    if (!incoming) {
+      return false;
+    }
+    return secureEqual(incoming, this.config.webhookSecret);
   }
 
   private async handleWebhookRequest(
