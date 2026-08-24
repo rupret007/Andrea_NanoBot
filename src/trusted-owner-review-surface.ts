@@ -155,7 +155,7 @@ export function isAuthorizedBlueBubblesSendCallerJid(
   chatJid: string | null | undefined,
 ): boolean {
   const normalized = (chatJid ?? '').trim();
-  if (!normalized.startsWith('bb:')) return false;
+  if (!normalized.startsWith('bb:') || normalized === 'bb:') return false;
   if (isConfiguredBlueBubblesSelfThreadAliasJid(normalized)) return true;
   // Provider GUIDs use `service;direction;handle`. Fixture JIDs do not.
   return !normalized.includes(';');

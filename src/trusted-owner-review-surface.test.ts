@@ -297,6 +297,13 @@ describe('trusted owner review surface', () => {
     delete process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
 
     expect(isAuthorizedBlueBubblesSendCallerJid('bb:chat-1')).toBe(true);
+    expect(isAuthorizedBlueBubblesSendCallerJid('bb:')).toBe(false);
+    expect(
+      isNeverAuthorizeSendCaller({
+        group: companionGroup,
+        chatJid: 'bb:',
+      }),
+    ).toBe(true);
     expect(
       isAuthorizedBlueBubblesSendCallerJid('bb:iMessage;-;+12025550123'),
     ).toBe(false);

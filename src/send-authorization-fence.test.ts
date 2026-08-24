@@ -142,6 +142,10 @@ describe('send authorization fence', () => {
       isAuthorizedBlueBubblesSendCallerJid('bb:iMessage;-;+12025550123'),
     ).toBe(false);
     expect(isAuthorizedBlueBubblesSendCallerJid('bb:chat-1')).toBe(true);
+    expect(isAuthorizedBlueBubblesSendCallerJid('bb:')).toBe(false);
+    expect(
+      isNeverAuthorizeSendCaller({ group: mainGroup, chatJid: 'bb:' }),
+    ).toBe(true);
     expect(
       isNeverAuthorizeSendCaller({
         group: mainGroup,
