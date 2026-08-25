@@ -93,12 +93,16 @@ card contract.
   including a `tg:qa` / `tg:karen` JID that borrows the main group record,
   a numeric Telegram JID that is not the registered front-door chat, a
   numeric Telegram JID that borrows `isMain` when no front-door is
-  registered yet, and a numeric Telegram JID whose stored title is QA or
-  Karen. A provided title cannot hide that stored canary. A missing caller
-  JID cannot authorize. The registered Telegram front-door chat (Bob) or
-  the configured Messages self-thread is the only yes-fence. Send dispatch
-  and scheduled-send deferral fail-close those callers again even if a
-  draft already exists.
+  registered yet, a numeric Telegram JID whose stored title is QA or
+  Karen, a BlueBubbles contact or group GUID that is not the configured
+  Messages self-thread (including when no self-thread is recorded yet), a
+  stored QA/Karen title on a BlueBubbles chat, and an unknown channel
+  prefix. A provided title cannot hide that stored canary, and
+  BlueBubbles addresses are never parsed as canary labels. A missing
+  caller JID cannot authorize. The registered Telegram front-door chat
+  (Bob) or the configured Messages self-thread is the only yes-fence.
+  Send dispatch and scheduled-send deferral fail-close those callers
+  again even if a draft already exists.
 - saved delegation rules may shape a draft, but never auto-send to an external
   recipient or replace the separately presented fresh approval
 - high-risk emotional, calendar, money, medical, or commitment-changing messages stay draft/approval-first

@@ -8,6 +8,7 @@ import {
   storeChatMetadata,
 } from './db.js';
 import {
+  isAuthorizedBlueBubblesSendCallerJid,
   isAuthorizedTelegramSendCallerJid,
   isNeverAuthorizeSendCaller,
   isNeverAuthorizeSendSurface,
@@ -277,11 +278,49 @@ describe('trusted owner review surface', () => {
       }),
     ).toBe(false);
     expect(
+      isNeverAuthorizeSendCaller({
+        group: mainGroup,
+        chatJid: 'bb:iMessage;-;karen@example.invalid',
+      }),
+    ).toBe(true);
+    expect(
       isNeverAuthorizeSendSurface(mainGroup, { chatTitle: 'quality' }),
     ).toBe(false);
     expect(isNeverAuthorizeSendSurface(mainGroup, { chatJid: 'tg:main' })).toBe(
       false,
     );
+  });
+
+  it('does not let a production BlueBubbles contact JID authorize when no self-thread is recorded', () => {
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+    delete process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
+    delete process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;
+
+    expect(isAuthorizedBlueBubblesSendCallerJid('bb:chat-1')).toBe(true);
+    expect(isAuthorizedBlueBubblesSendCallerJid('bb:')).toBe(false);
+    expect(
+      isNeverAuthorizeSendCaller({
+        group: companionGroup,
+        chatJid: 'bb:',
+      }),
+    ).toBe(true);
+    expect(
+      isAuthorizedBlueBubblesSendCallerJid('bb:iMessage;-;+12025550123'),
+    ).toBe(false);
+    expect(
+      isNeverAuthorizeSendCaller({
+        group: companionGroup,
+        chatJid: 'bb:iMessage;-;+12025550123',
+      }),
+    ).toBe(true);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'bluebubbles',
+        chatJid: 'bb:iMessage;-;+12025550123',
+        group: companionGroup,
+        ownerAuthored: true,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -374,5 +413,42 @@ describe('registered Telegram front-door send fence', () => {
         chatTitle: 'Main',
       }),
     ).toBe(false);
+  });
+
+  it('still refuses a stored BlueBubbles QA title when the JID looks ordinary', () => {
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+    process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID =
+      'iMessage;-;owner@example.invalid';
+    storeChatMetadata(
+      'bb:iMessage;-;+12025550123',
+      '2026-08-23T00:00:00.000Z',
+      'QA',
+      'bluebubbles',
+      false,
+    );
+    expect(
+      isNeverAuthorizeSendSurface(mainGroup, {
+        chatJid: 'bb:iMessage;-;+12025550123',
+        chatTitle: 'Main',
+      }),
+    ).toBe(true);
+    expect(
+      isNeverAuthorizeSendCaller({
+        group: mainGroup,
+        chatJid: 'bb:iMessage;-;+12025550123',
+        chatTitle: 'Main',
+      }),
+    ).toBe(true);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'bluebubbles',
+        chatJid: 'bb:iMessage;-;+12025550123',
+        group: companionGroup,
+        ownerAuthored: true,
+        chatTitle: 'Main',
+      }),
+    ).toBe(false);
+    delete process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE;
+    delete process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
   });
 });
