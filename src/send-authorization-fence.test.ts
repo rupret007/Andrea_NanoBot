@@ -168,6 +168,265 @@ describe('send authorization fence', () => {
     expect(isAuthorizedBlueBubblesSendCallerJid('bb:chat\n1')).toBe(false);
   });
 
+  it('keeps short Telegram caller JIDs inside the hermetic test boundary', () => {
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+    vi.stubEnv('NODE_ENV', 'production');
+
+    expect(isAuthorizedTelegramSendCallerJid('tg:main')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:100')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:12345')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:undefined')).toBe(false);
+    expect(isNeverAuthorizeSendCaller({ group: mainGroup, chatJid: 'tg:main' })).toBe(
+      true,
+    );
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:main',
+        group: mainGroup,
+      }),
+    ).toBe(false);
+
+    vi.stubEnv('NODE_ENV', 'test');
+    expect(isAuthorizedTelegramSendCallerJid('tg:main')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:100')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:undefined')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:null')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:NaN')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:mai\nn')).toBe(false);
+  });
+
+  it('does not let empty, sentinel, or control-character Telegram JIDs stage or send', async () => {
+    seedRecipient();
+    const sendToTarget = vi.fn();
+    const leftoverCallers = ['tg:', 'tg:undefined', 'tg:null', 'tg:NaN', 'tg:mai\nn'];
+
+    for (const chatJid of leftoverCallers) {
+      expect(isNeverAuthorizeSendCaller({ group: mainGroup, chatJid })).toBe(
+        true,
+      );
+      expect(
+        isTrustedOwnerReviewSurface({
+          channelName: 'telegram',
+          chatJid,
+          group: mainGroup,
+        }),
+      ).toBe(false);
+
+      const staged = stageBlueBubblesOutboundRequest({
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid,
+        group: mainGroup,
+        rawText: 'Text Avery Example: Dinner is ready.',
+      });
+      const executed = await executeBlueBubblesOutboundRequest({
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid,
+        group: mainGroup,
+        rawText: 'Text Avery Example: Dinner is ready.',
+        inboundMessageId: `leftover-exec-${encodeURIComponent(chatJid)}`,
+        capabilityFacts: {
+          toolRegistered: true,
+          toolExposed: true,
+          providerHealth: 'healthy',
+          writePermission: 'granted',
+          confirmation: 'satisfied',
+        },
+        executionDeps: {
+          groupFolder: 'main',
+          channel: 'telegram',
+          chatJid,
+          sendToTarget,
+        },
+      });
+      const turned = await executeBlueBubblesOutboundTurn({
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid,
+        group: mainGroup,
+        rawText: 'Text Avery Example: Dinner is ready.',
+        inboundMessageId: `leftover-turn-${encodeURIComponent(chatJid)}`,
+        executionDeps: {
+          groupFolder: 'main',
+          channel: 'telegram',
+          chatJid,
+          sendToTarget,
+        },
+      });
+
+      expect(staged).toMatchObject({ handled: true, state: 'restricted' });
+      expect(executed).toMatchObject({ handled: true, state: 'restricted' });
+      expect(turned).toMatchObject({ handled: true, state: 'restricted' });
+    }
+
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('does not let empty or sentinel Telegram JIDs approve or defer a Bob draft', async () => {
+    seedRecipient();
+    const staged = stageBlueBubblesOutboundRequest({
+      groupFolder: 'main',
+      channel: 'telegram',
+      chatJid: 'tg:main',
+      group: mainGroup,
+      rawText: 'Text Avery Example: Dinner is ready.',
+      inboundMessageId: 'bob-staged-leftover-card',
+      now: new Date('2026-08-26T18:12:00.000Z'),
+    });
+    if (!staged.handled || staged.state !== 'staged') {
+      throw new Error('expected Bob fixture to stage a draft');
+    }
+    updateMessageAction(staged.action.messageActionId, {
+      presentationMessageId: 'tg:bob-leftover-card',
+      lastUpdatedAt: '2026-08-26T18:12:30.000Z',
+    });
+
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:should-not-send-leftover',
+    }));
+
+    for (const chatJid of ['tg:', 'tg:undefined', 'tg:null', 'tg:NaN']) {
+      const blockedSend = await applyMessageActionOperation(
+        staged.action.messageActionId,
+        { kind: 'send' },
+        {
+          groupFolder: 'main',
+          channel: 'telegram',
+          chatJid,
+          currentTime: new Date('2026-08-26T18:13:00.000Z'),
+          ownerReviewGroup: mainGroup,
+          sendToTarget,
+        },
+      );
+      const blockedRewrite = await applyMessageActionOperation(
+        staged.action.messageActionId,
+        { kind: 'rewrite_and_send', style: 'shorter' },
+        {
+          groupFolder: 'main',
+          channel: 'telegram',
+          chatJid,
+          currentTime: new Date('2026-08-26T18:13:10.000Z'),
+          ownerReviewGroup: mainGroup,
+          sendToTarget,
+        },
+      );
+      const blockedDefer = await applyMessageActionOperation(
+        staged.action.messageActionId,
+        { kind: 'defer' },
+        {
+          groupFolder: 'main',
+          channel: 'telegram',
+          chatJid,
+          currentTime: new Date('2026-08-26T18:13:20.000Z'),
+          ownerReviewGroup: mainGroup,
+          ownerAuthorizationAt: '2026-08-26T18:13:15.000Z',
+          sendToTarget,
+        },
+      );
+
+      expect(blockedSend.replyText).toContain('cannot authorize a send');
+      expect(blockedRewrite.replyText).toContain('cannot authorize a send');
+      expect(blockedDefer.replyText).toContain('cannot authorize a send');
+    }
+
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getMessageAction(staged.action.messageActionId)).toMatchObject({
+      sendStatus: 'drafted',
+      scheduledTaskId: null,
+    });
+  });
+
+  it('does not let a sentinel Telegram JID fire a scheduled send', async () => {
+    vi.stubEnv('BLUEBUBBLES_SEND_ENABLED', 'true');
+    seedRecipient();
+    const thread = {
+      id: 'comm-fence-scheduled-leftover',
+      groupFolder: 'main',
+      title: 'Avery Example',
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      channel: 'bluebubbles' as const,
+      channelChatJid: 'bb:iMessage;-;+12025550123',
+      lastInboundSummary: 'Avery asked about dinner.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed' as const,
+      urgency: 'tonight' as const,
+      followupDueAt: '2026-08-26T22:00:00.000Z',
+      suggestedNextAction: 'draft_reply' as const,
+      toneStyleHints: [],
+      lastContactAt: '2026-08-26T17:00:00.000Z',
+      lastMessageId: 'bb:last-msg-leftover',
+      linkedTaskId: null,
+      inferenceState: 'user_confirmed' as const,
+      trackingMode: 'default' as const,
+      createdAt: '2026-08-26T16:30:00.000Z',
+      updatedAt: '2026-08-26T18:30:00.000Z',
+      disabledAt: null,
+    };
+    upsertCommunicationThread(thread);
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Avery still needs a dinner answer.',
+      draftText: 'Yes, tonight still works for me.',
+      personName: 'Avery Example',
+      threadTitle: 'Avery Example',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-08-26T18:14:00.000Z'),
+    });
+    updateMessageAction(action.messageActionId, {
+      presentationMessageId: 'tg:bob-scheduled-leftover-card',
+      lastUpdatedAt: '2026-08-26T18:14:10.000Z',
+    });
+    await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'defer' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-08-26T18:14:20.000Z'),
+        ownerAuthorizationAt: '2026-08-26T18:14:15.000Z',
+        sendToTarget: vi.fn(async () => ({ platformMessageId: 'unused' })),
+      },
+    );
+    const scheduled = getMessageAction(action.messageActionId)!;
+    expect(scheduled.sendStatus).toBe('deferred');
+    expect(scheduled.scheduledTaskId).toBeTruthy();
+
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'bb:should-not-schedule-leftover',
+    }));
+    const runResult = await runScheduledMessageActionByTaskId(
+      scheduled.scheduledTaskId!,
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:undefined',
+        currentTime: new Date('2026-08-26T21:00:00.000Z'),
+        sendToTarget,
+      },
+    );
+
+    expect(runResult.handled).toBe(true);
+    expect(sendToTarget).not.toHaveBeenCalled();
+    expect(getMessageAction(action.messageActionId)?.sendStatus).not.toBe(
+      'sent',
+    );
+    expect(runResult.resultSummary).not.toMatch(/^Sent scheduled message/);
+  });
+
   it('does not let an unauthorized caller stage or send', async () => {
     seedRecipient();
     const sendToTarget = vi.fn();

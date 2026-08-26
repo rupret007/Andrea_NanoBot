@@ -338,6 +338,11 @@ describe('registered Telegram front-door send fence', () => {
     expect(isAuthorizedTelegramSendCallerJid('tg:main')).toBe(true);
     expect(isAuthorizedTelegramSendCallerJid('tg:100')).toBe(true);
     expect(isAuthorizedTelegramSendCallerJid('tg:owner')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:undefined')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:null')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:NaN')).toBe(false);
+    expect(isAuthorizedTelegramSendCallerJid('tg:mai\nn')).toBe(false);
     expect(isAuthorizedTelegramSendCallerJid('tg:847392018')).toBe(false);
     expect(isAuthorizedTelegramSendCallerJid('tg:100000')).toBe(false);
     expect(
@@ -360,6 +365,25 @@ describe('registered Telegram front-door send fence', () => {
         group: mainGroup,
       }),
     ).toBe(true);
+  });
+
+  it('does not let a stored sentinel or empty Telegram JID become the front-door', () => {
+    for (const chatJid of ['tg:', 'tg:undefined', 'tg:null', 'tg:NaN']) {
+      setRegisteredGroup(chatJid, mainGroup);
+      expect(resolveRegisteredTelegramFrontDoorJid()).toBeNull();
+      expect(isRegisteredTelegramFrontDoorJid(chatJid)).toBe(false);
+      expect(isAuthorizedTelegramSendCallerJid(chatJid)).toBe(false);
+      expect(isNeverAuthorizeSendCaller({ group: mainGroup, chatJid })).toBe(
+        true,
+      );
+      expect(
+        isTrustedOwnerReviewSurface({
+          channelName: 'telegram',
+          chatJid,
+          group: mainGroup,
+        }),
+      ).toBe(false);
+    }
   });
 
   it('does not let a numeric JID borrow the registered front-door', () => {
