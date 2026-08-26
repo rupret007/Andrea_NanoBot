@@ -262,15 +262,19 @@ This shows up in daily and weekly review, especially under:
 Focused repo-side proof:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/bluebubbles-outbound-request.test.ts src/bluebubbles-recipient-directory.test.ts src/message-actions.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/channels/bluebubbles.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/send-authorization-fence.test.ts src/trusted-owner-review-surface.test.ts src/bluebubbles-outbound-request.test.ts src/bluebubbles-recipient-directory.test.ts src/message-actions.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/channels/bluebubbles.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts
 npm run typecheck
 npm run build
 npm run test
 npm run telegram:user:smoke
-npm run debug:bluebubbles -- --live
 ```
 
-Strong near-live proof:
+The repository checks are offline and never authorize from short
+BlueBubbles fixture JIDs outside the explicit hermetic-test boundary. The
+remaining proof is owner-only and live; run it only when provider access and a
+real delivery check have been deliberately approved.
+
+Strong owner-only near-live proof:
 
 1. from the registered main Telegram chat, request a text to an existing
    synced one-to-one conversation or exact contact
