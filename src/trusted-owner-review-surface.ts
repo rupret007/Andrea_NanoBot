@@ -123,12 +123,20 @@ function isHermeticTestSendFenceBoundary(): boolean {
  * Bob's registered Telegram front-door JID, when one is recorded. Missing
  * database or a non-Telegram main registration never invents a front-door
  * and therefore never grants authority. Empty, sentinel, or control-character
- * JIDs also never become a front-door.
+ * JIDs also never become a front-door. Named or short fixtures such as
+ * `tg:main` / `tg:100` may be the front-door only inside the hermetic test
+ * boundary; production yes-fence requires a production-shaped numeric JID.
  */
 export function resolveRegisteredTelegramFrontDoorJid(): string | null {
   if (!isDatabaseInitialized()) return null;
   const jid = (getRegisteredMainChat()?.jid ?? '').trim();
   if (!isCanonicalTelegramCallerJid(jid)) return null;
+  if (
+    !PRODUCTION_TELEGRAM_NUMERIC_JID.test(jid) &&
+    !isHermeticTestSendFenceBoundary()
+  ) {
+    return null;
+  }
   return jid;
 }
 
@@ -142,9 +150,10 @@ export function isRegisteredTelegramFrontDoorJid(
 
 /**
  * Telegram send-auth allow-list. A recorded front-door JID is required in
- * production. When none is recorded, production-shaped numeric JIDs cannot
- * borrow isMain, and empty, sentinel, control-character, or named/short
- * fixture JIDs authorize only inside the hermetic test boundary.
+ * production, and that front-door must itself be a production-shaped numeric
+ * JID. When none is recorded, production-shaped numeric JIDs cannot borrow
+ * isMain, and empty, sentinel, control-character, or named/short fixture
+ * JIDs authorize only inside the hermetic test boundary.
  */
 export function isAuthorizedTelegramSendCallerJid(
   chatJid: string | null | undefined,
@@ -201,7 +210,8 @@ export function isAuthorizedBlueBubblesSendCallerJid(
  * borrow isMain when no front-door is recorded. Empty `tg:`, sentinel
  * (`tg:undefined` / `tg:null` / `tg:NaN`), and control-character Telegram
  * JIDs cannot authorize, including when stored as the main chat. Named or
- * short Telegram fixtures authorize only inside the hermetic test boundary.
+ * short Telegram fixtures authorize only inside the hermetic test boundary
+ * and cannot become the production yes-fence.
  * A BlueBubbles contact or group GUID cannot authorize when it is not the
  * configured self-thread, including when no self-thread is recorded yet.
  * Stored QA/Karen titles on BlueBubbles chats fail closed without parsing

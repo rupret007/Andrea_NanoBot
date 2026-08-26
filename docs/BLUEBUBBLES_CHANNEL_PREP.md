@@ -132,7 +132,8 @@ title tries to hide a stored QA/Karen canary. An empty `tg:` prefix,
 sentinel Telegram JIDs such as `tg:undefined` / `tg:null` / `tg:NaN`
 (including when stored as the main chat), control-character Telegram JIDs,
 and named or short Telegram fixture JIDs outside the hermetic test
-boundary fail closed the same way. A BlueBubbles contact or
+boundary (including when stored as the main chat) fail closed the same
+way. A BlueBubbles contact or
 group GUID that is not the configured Messages self-thread fails closed
 the same way, including when no self-thread is recorded yet. A missing
 caller JID cannot authorize. Stored QA/Karen titles on numeric Telegram

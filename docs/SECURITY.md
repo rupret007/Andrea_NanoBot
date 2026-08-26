@@ -272,9 +272,10 @@ When changing behavior, keep these rules intact:
   sentinel Telegram JIDs such as `tg:undefined` / `tg:null` / `tg:NaN`
   (including when stored as the main chat), control-character Telegram
   JIDs, named or short Telegram fixture JIDs outside the hermetic test
-  boundary, BlueBubbles contact or group GUIDs that are not the
-  configured Messages self-thread (including when no self-thread is
-  recorded yet), stored QA/Karen titles on BlueBubbles chats, and unknown
+  boundary (including when stored as the main chat), BlueBubbles contact
+  or group GUIDs that are not the configured Messages self-thread
+  (including when no self-thread is recorded yet), stored QA/Karen titles
+  on BlueBubbles chats, and unknown
   channel prefixes. A provided title cannot hide that stored canary, and
   BlueBubbles addresses are never parsed as canary labels. A missing
   caller JID cannot authorize. Contact
