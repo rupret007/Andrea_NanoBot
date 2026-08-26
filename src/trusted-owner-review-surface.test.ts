@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
 import {
   _closeDatabase,
   _initTestDatabase,
+  deleteRegisteredGroup,
   setRegisteredGroup,
   storeChatMetadata,
 } from './db.js';
@@ -331,6 +332,7 @@ describe('registered Telegram front-door send fence', () => {
 
   afterEach(() => {
     _closeDatabase();
+    vi.unstubAllEnvs();
   });
 
   it('does not let an unregistered numeric JID borrow isMain', () => {
@@ -384,6 +386,47 @@ describe('registered Telegram front-door send fence', () => {
         }),
       ).toBe(false);
     }
+  });
+
+  it('does not let a stored named or short Telegram fixture become the production front-door', () => {
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+    vi.stubEnv('NODE_ENV', 'production');
+
+    for (const chatJid of ['tg:main', 'tg:100', 'tg:runtime-proof']) {
+      setRegisteredGroup(chatJid, mainGroup);
+      expect(resolveRegisteredTelegramFrontDoorJid()).toBeNull();
+      expect(isRegisteredTelegramFrontDoorJid(chatJid)).toBe(false);
+      expect(isAuthorizedTelegramSendCallerJid(chatJid)).toBe(false);
+      expect(isNeverAuthorizeSendCaller({ group: mainGroup, chatJid })).toBe(
+        true,
+      );
+      expect(
+        isTrustedOwnerReviewSurface({
+          channelName: 'telegram',
+          chatJid,
+          group: mainGroup,
+        }),
+      ).toBe(false);
+      deleteRegisteredGroup(chatJid);
+    }
+
+    setRegisteredGroup('tg:-100123456789', mainGroup);
+    expect(resolveRegisteredTelegramFrontDoorJid()).toBeNull();
+    expect(isAuthorizedTelegramSendCallerJid('tg:-100123456789')).toBe(false);
+    deleteRegisteredGroup('tg:-100123456789');
+
+    setRegisteredGroup('tg:847392018', mainGroup);
+    expect(resolveRegisteredTelegramFrontDoorJid()).toBe('tg:847392018');
+    expect(isRegisteredTelegramFrontDoorJid('tg:847392018')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:847392018')).toBe(true);
+    expect(isAuthorizedTelegramSendCallerJid('tg:main')).toBe(false);
+    expect(
+      isTrustedOwnerReviewSurface({
+        channelName: 'telegram',
+        chatJid: 'tg:847392018',
+        group: mainGroup,
+      }),
+    ).toBe(true);
   });
 
   it('does not let a numeric JID borrow the registered front-door', () => {

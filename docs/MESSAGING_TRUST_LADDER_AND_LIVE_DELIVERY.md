@@ -100,7 +100,8 @@ card contract.
   sentinel Telegram JID such as `tg:undefined` / `tg:null` / `tg:NaN`
   (including when stored as the main chat), a control-character Telegram
   JID, a named or short Telegram fixture JID outside the hermetic test
-  boundary, and an unknown channel prefix. A provided title cannot hide
+  boundary (including when stored as the main chat), and an unknown
+  channel prefix. A provided title cannot hide
   that stored canary, and BlueBubbles addresses are never parsed as
   canary labels. A missing caller JID cannot authorize. The registered
   Telegram front-door chat (Bob) or the configured Messages self-thread
