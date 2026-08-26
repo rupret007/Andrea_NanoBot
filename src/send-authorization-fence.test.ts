@@ -177,9 +177,9 @@ describe('send authorization fence', () => {
     expect(isAuthorizedTelegramSendCallerJid('tg:12345')).toBe(false);
     expect(isAuthorizedTelegramSendCallerJid('tg:')).toBe(false);
     expect(isAuthorizedTelegramSendCallerJid('tg:undefined')).toBe(false);
-    expect(isNeverAuthorizeSendCaller({ group: mainGroup, chatJid: 'tg:main' })).toBe(
-      true,
-    );
+    expect(
+      isNeverAuthorizeSendCaller({ group: mainGroup, chatJid: 'tg:main' }),
+    ).toBe(true);
     expect(
       isTrustedOwnerReviewSurface({
         channelName: 'telegram',
@@ -201,7 +201,13 @@ describe('send authorization fence', () => {
   it('does not let empty, sentinel, or control-character Telegram JIDs stage or send', async () => {
     seedRecipient();
     const sendToTarget = vi.fn();
-    const leftoverCallers = ['tg:', 'tg:undefined', 'tg:null', 'tg:NaN', 'tg:mai\nn'];
+    const leftoverCallers = [
+      'tg:',
+      'tg:undefined',
+      'tg:null',
+      'tg:NaN',
+      'tg:mai\nn',
+    ];
 
     for (const chatJid of leftoverCallers) {
       expect(isNeverAuthorizeSendCaller({ group: mainGroup, chatJid })).toBe(
