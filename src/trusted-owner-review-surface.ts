@@ -88,14 +88,47 @@ export function neverAuthorizeChatJidLabel(
 }
 
 /**
+ * Production Telegram chats use long numeric IDs. Short or named JIDs such
+ * as `tg:main` / `tg:100` are unit-test fixtures and must not become a
+ * production trust grant. Empty, sentinel, or control-character JIDs are
+ * never a front-door.
+ */
+const PRODUCTION_TELEGRAM_NUMERIC_JID = /^tg:\d{6,}$/;
+const TEST_TELEGRAM_CALLER_JID = /^tg:[a-z0-9][a-z0-9._-]{0,127}$/i;
+const TEST_BLUEBUBBLES_CALLER_JID = /^bb:[a-z0-9][a-z0-9._-]{0,127}$/i;
+const TELEGRAM_SENTINEL_CALLER_BODY = /^(undefined|null|nan)$/i;
+
+function isTelegramSentinelCallerJid(chatJid: string): boolean {
+  return TELEGRAM_SENTINEL_CALLER_BODY.test(chatJid.slice('tg:'.length));
+}
+
+function isCanonicalTelegramCallerJid(chatJid: string): boolean {
+  return (
+    chatJid.startsWith('tg:') &&
+    chatJid !== 'tg:' &&
+    !chatJid.startsWith('tg:-') &&
+    TEST_TELEGRAM_CALLER_JID.test(chatJid) &&
+    !isTelegramSentinelCallerJid(chatJid)
+  );
+}
+
+function isHermeticTestSendFenceBoundary(): boolean {
+  return (
+    process.env.NODE_ENV === 'test' &&
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE === '1'
+  );
+}
+
+/**
  * Bob's registered Telegram front-door JID, when one is recorded. Missing
  * database or a non-Telegram main registration never invents a front-door
- * and therefore never grants authority.
+ * and therefore never grants authority. Empty, sentinel, or control-character
+ * JIDs also never become a front-door.
  */
 export function resolveRegisteredTelegramFrontDoorJid(): string | null {
   if (!isDatabaseInitialized()) return null;
   const jid = (getRegisteredMainChat()?.jid ?? '').trim();
-  if (!jid.startsWith('tg:') || jid.startsWith('tg:-')) return null;
+  if (!isCanonicalTelegramCallerJid(jid)) return null;
   return jid;
 }
 
@@ -108,28 +141,22 @@ export function isRegisteredTelegramFrontDoorJid(
 }
 
 /**
- * Production Telegram chats use long numeric IDs. Short or named JIDs such
- * as `tg:main` / `tg:100` are unit-test fixtures and must not become a
- * production trust grant.
- */
-const PRODUCTION_TELEGRAM_NUMERIC_JID = /^tg:\d{6,}$/;
-const TEST_BLUEBUBBLES_CALLER_JID = /^bb:[a-z0-9][a-z0-9._-]{0,127}$/i;
-
-/**
  * Telegram send-auth allow-list. A recorded front-door JID is required in
  * production. When none is recorded, production-shaped numeric JIDs cannot
- * borrow isMain.
+ * borrow isMain, and empty, sentinel, control-character, or named/short
+ * fixture JIDs authorize only inside the hermetic test boundary.
  */
 export function isAuthorizedTelegramSendCallerJid(
   chatJid: string | null | undefined,
 ): boolean {
   const normalized = (chatJid ?? '').trim();
-  if (!normalized.startsWith('tg:') || normalized.startsWith('tg:-')) {
-    return false;
-  }
+  if (!isCanonicalTelegramCallerJid(normalized)) return false;
   const frontDoorJid = resolveRegisteredTelegramFrontDoorJid();
   if (frontDoorJid) return normalized === frontDoorJid;
-  return !PRODUCTION_TELEGRAM_NUMERIC_JID.test(normalized);
+  return (
+    isHermeticTestSendFenceBoundary() &&
+    !PRODUCTION_TELEGRAM_NUMERIC_JID.test(normalized)
+  );
 }
 
 function resolveStoredNeverAuthorizeChatTitle(
@@ -159,8 +186,7 @@ export function isAuthorizedBlueBubblesSendCallerJid(
   if (!normalized.startsWith('bb:') || normalized === 'bb:') return false;
   if (isConfiguredBlueBubblesSelfThreadAliasJid(normalized)) return true;
   return (
-    process.env.NODE_ENV === 'test' &&
-    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE === '1' &&
+    isHermeticTestSendFenceBoundary() &&
     TEST_BLUEBUBBLES_CALLER_JID.test(normalized)
   );
 }
@@ -172,11 +198,14 @@ export function isAuthorizedBlueBubblesSendCallerJid(
  * `tg:qa` / `tg:karen` thread cannot borrow Bob's main-group registration,
  * including a numeric Telegram JID whose stored title is QA or Karen.
  * A provided title cannot hide that stored canary. A numeric JID cannot
- * borrow isMain when no front-door is recorded. A BlueBubbles contact or
- * group GUID cannot authorize when it is not the configured self-thread,
- * including when no self-thread is recorded yet. Stored QA/Karen titles on
- * BlueBubbles chats fail closed without parsing the JID. Bob's registered
- * Telegram front-door stays the yes-fence.
+ * borrow isMain when no front-door is recorded. Empty `tg:`, sentinel
+ * (`tg:undefined` / `tg:null` / `tg:NaN`), and control-character Telegram
+ * JIDs cannot authorize, including when stored as the main chat. Named or
+ * short Telegram fixtures authorize only inside the hermetic test boundary.
+ * A BlueBubbles contact or group GUID cannot authorize when it is not the
+ * configured self-thread, including when no self-thread is recorded yet.
+ * Stored QA/Karen titles on BlueBubbles chats fail closed without parsing
+ * the JID. Bob's registered Telegram front-door stays the yes-fence.
  */
 export function isNeverAuthorizeSendSurface(
   group: RegisteredGroup | null | undefined,
@@ -208,9 +237,9 @@ export function isNeverAuthorizeSendCaller(
   const chatJid = (extras.chatJid ?? '').trim();
   // Missing caller identity cannot authorize a send.
   if (!chatJid) return true;
-  // A production-shaped numeric Telegram JID that is not Bob's registered
-  // front-door cannot borrow isMain to authorize a send, including when no
-  // front-door is recorded yet.
+  // A Telegram JID that is not Bob's registered front-door cannot borrow
+  // isMain, including empty, sentinel, control-character, and production
+  // numeric callers when no front-door is recorded yet.
   if (chatJid.startsWith('tg:')) {
     return !isAuthorizedTelegramSendCallerJid(chatJid);
   }

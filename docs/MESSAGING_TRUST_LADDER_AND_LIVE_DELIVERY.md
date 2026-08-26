@@ -96,11 +96,15 @@ card contract.
   registered yet, a numeric Telegram JID whose stored title is QA or
   Karen, a BlueBubbles contact or group GUID that is not the configured
   Messages self-thread (including when no self-thread is recorded yet), a
-  stored QA/Karen title on a BlueBubbles chat, and an unknown channel
-  prefix. A provided title cannot hide that stored canary, and
-  BlueBubbles addresses are never parsed as canary labels. A missing
-  caller JID cannot authorize. The registered Telegram front-door chat
-  (Bob) or the configured Messages self-thread is the only yes-fence.
+  stored QA/Karen title on a BlueBubbles chat, an empty `tg:` prefix, a
+  sentinel Telegram JID such as `tg:undefined` / `tg:null` / `tg:NaN`
+  (including when stored as the main chat), a control-character Telegram
+  JID, a named or short Telegram fixture JID outside the hermetic test
+  boundary, and an unknown channel prefix. A provided title cannot hide
+  that stored canary, and BlueBubbles addresses are never parsed as
+  canary labels. A missing caller JID cannot authorize. The registered
+  Telegram front-door chat (Bob) or the configured Messages self-thread
+  is the only yes-fence.
   Send dispatch and scheduled-send deferral fail-close those callers
   again even if a draft already exists.
 - saved delegation rules may shape a draft, but never auto-send to an external
@@ -270,9 +274,9 @@ npm run telegram:user:smoke
 ```
 
 The repository checks are offline and never authorize from short
-BlueBubbles fixture JIDs outside the explicit hermetic-test boundary. The
-remaining proof is owner-only and live; run it only when provider access and a
-real delivery check have been deliberately approved.
+BlueBubbles or Telegram fixture JIDs outside the explicit hermetic-test
+boundary. The remaining proof is owner-only and live; run it only when
+provider access and a real delivery check have been deliberately approved.
 
 Strong owner-only near-live proof:
 

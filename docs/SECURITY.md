@@ -268,12 +268,16 @@ When changing behavior, keep these rules intact:
   `tg:karen` that reuse a main-looking group record, numeric Telegram JIDs
   that are not the registered front-door chat, numeric Telegram JIDs that
   borrow `isMain` when no front-door is registered yet, numeric
-  Telegram JIDs whose stored title is QA or Karen, BlueBubbles contact or
-  group GUIDs that are not the configured Messages self-thread (including
-  when no self-thread is recorded yet), stored QA/Karen titles on
-  BlueBubbles chats, and unknown channel prefixes. A provided title cannot
-  hide that stored canary, and BlueBubbles addresses are never parsed as
-  canary labels. A missing caller JID cannot authorize. Contact
+  Telegram JIDs whose stored title is QA or Karen, empty `tg:` prefixes,
+  sentinel Telegram JIDs such as `tg:undefined` / `tg:null` / `tg:NaN`
+  (including when stored as the main chat), control-character Telegram
+  JIDs, named or short Telegram fixture JIDs outside the hermetic test
+  boundary, BlueBubbles contact or group GUIDs that are not the
+  configured Messages self-thread (including when no self-thread is
+  recorded yet), stored QA/Karen titles on BlueBubbles chats, and unknown
+  channel prefixes. A provided title cannot hide that stored canary, and
+  BlueBubbles addresses are never parsed as canary labels. A missing
+  caller JID cannot authorize. Contact
   sends still require a fresh owner `send it` / `Send now` in the
   registered Telegram front-door chat (Bob) or the configured Messages
   self-thread. Dispatch and scheduled-send deferral also fail-close those
