@@ -291,7 +291,7 @@ describe('trusted owner review surface', () => {
     );
   });
 
-  it('does not let a production BlueBubbles contact JID authorize when no self-thread is recorded', () => {
+  it('fails closed for provider JIDs while retaining an explicit hermetic fixture', () => {
     process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
     delete process.env.BLUEBUBBLES_CANONICAL_SELF_THREAD_JID;
     delete process.env.BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS;

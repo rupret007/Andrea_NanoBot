@@ -113,6 +113,7 @@ export function isRegisteredTelegramFrontDoorJid(
  * production trust grant.
  */
 const PRODUCTION_TELEGRAM_NUMERIC_JID = /^tg:\d{6,}$/;
+const TEST_BLUEBUBBLES_CALLER_JID = /^bb:[a-z0-9][a-z0-9._-]{0,127}$/i;
 
 /**
  * Telegram send-auth allow-list. A recorded front-door JID is required in
@@ -148,8 +149,8 @@ function resolveStoredNeverAuthorizeChatTitle(
  * BlueBubbles send-auth allow-list. The configured Messages self-thread is
  * the only production yes-fence. Provider-shaped GUIDs (`bb:iMessage;-;…`)
  * cannot authorize when that self-thread is missing or when they are an
- * ordinary contact/group thread. Short fixtures such as `bb:chat-1` may
- * still work until a self-thread is the caller.
+ * ordinary contact/group thread. Short fixtures such as `bb:chat-1` are
+ * accepted only while the explicit hermetic-test switch is enabled.
  */
 export function isAuthorizedBlueBubblesSendCallerJid(
   chatJid: string | null | undefined,
@@ -157,8 +158,11 @@ export function isAuthorizedBlueBubblesSendCallerJid(
   const normalized = (chatJid ?? '').trim();
   if (!normalized.startsWith('bb:') || normalized === 'bb:') return false;
   if (isConfiguredBlueBubblesSelfThreadAliasJid(normalized)) return true;
-  // Provider GUIDs use `service;direction;handle`. Fixture JIDs do not.
-  return !normalized.includes(';');
+  return (
+    process.env.NODE_ENV === 'test' &&
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE === '1' &&
+    TEST_BLUEBUBBLES_CALLER_JID.test(normalized)
+  );
 }
 
 /**

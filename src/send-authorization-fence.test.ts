@@ -154,6 +154,20 @@ describe('send authorization fence', () => {
     ).toBe(true);
   });
 
+  it('keeps short BlueBubbles caller JIDs inside the hermetic test boundary', () => {
+    process.env.ANDREA_TEST_DISABLE_OWNER_ENV_FILE = '1';
+    vi.stubEnv('NODE_ENV', 'production');
+
+    expect(isAuthorizedBlueBubblesSendCallerJid('bb:chat-1')).toBe(false);
+    expect(
+      isNeverAuthorizeSendCaller({ group: mainGroup, chatJid: 'bb:chat-1' }),
+    ).toBe(true);
+
+    vi.stubEnv('NODE_ENV', 'test');
+    expect(isAuthorizedBlueBubblesSendCallerJid('bb:chat-1')).toBe(true);
+    expect(isAuthorizedBlueBubblesSendCallerJid('bb:chat\n1')).toBe(false);
+  });
+
   it('does not let an unauthorized caller stage or send', async () => {
     seedRecipient();
     const sendToTarget = vi.fn();
