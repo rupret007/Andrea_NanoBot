@@ -1447,9 +1447,7 @@ describe('assistant capabilities', () => {
       expect(providerInput).toContain('First chronological turn.');
       expect(providerInput).toContain('Second chronological turn.');
       expect(providerInput).not.toContain('[redacted number] UTC');
-      expect(providerInput).not.toMatch(
-        /\[2026 Apr 15 16:0[01]0?:00 UTC\]/,
-      );
+      expect(providerInput).not.toMatch(/\[2026 Apr 15 16:0[01]0?:00 UTC\]/);
     }
   });
 

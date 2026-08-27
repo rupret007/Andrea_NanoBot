@@ -2705,7 +2705,9 @@ function clipThreadSummaryEvidence(
 function formatThreadSummaryTranscriptTimestamp(
   value: string | null | undefined,
 ): string {
-  return formatRecentTextReviewLocalTimestamp(value, TIMEZONE) || 'time unknown';
+  return (
+    formatRecentTextReviewLocalTimestamp(value, TIMEZONE) || 'time unknown'
+  );
 }
 
 function getThreadSummarySpeakerKey(message: NewMessage): string {
