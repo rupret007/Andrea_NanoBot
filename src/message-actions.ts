@@ -4566,11 +4566,7 @@ export async function applyMessageActionOperation(
       ),
     };
   }
-  if (
-    operation.kind === 'send' ||
-    operation.kind === 'send_again' ||
-    operation.kind === 'rewrite_and_send'
-  ) {
+  if (operation.kind === 'send' || operation.kind === 'rewrite_and_send') {
     // A replayed inbound platform event must observe the durable fence instead
     // of waiting on process-local state. Ordinary simultaneous UI approvals
     // can still share the same in-flight promise below.
@@ -4601,9 +4597,7 @@ export async function applyMessageActionOperation(
   }
   if (
     isBlueBubblesProofDrillAction(action) &&
-    (operation.kind === 'send' ||
-      operation.kind === 'send_again' ||
-      operation.kind === 'rewrite_and_send')
+    (operation.kind === 'send' || operation.kind === 'rewrite_and_send')
   ) {
     return {
       handled: true,
@@ -4619,7 +4613,6 @@ export async function applyMessageActionOperation(
   if (
     isGroupExternalMessageAction(action) &&
     (operation.kind === 'send' ||
-      operation.kind === 'send_again' ||
       operation.kind === 'rewrite_and_send' ||
       operation.kind === 'defer')
   ) {
@@ -4635,7 +4628,6 @@ export async function applyMessageActionOperation(
   }
   if (
     (operation.kind === 'send' ||
-      operation.kind === 'send_again' ||
       operation.kind === 'rewrite_and_send' ||
       operation.kind === 'defer') &&
     isUnauthorizedSendCaller(deps)
@@ -4682,7 +4674,6 @@ export async function applyMessageActionOperation(
     action.targetKind === 'external_thread' &&
     !normalizeText(action.presentationMessageId) &&
     (operation.kind === 'send' ||
-      operation.kind === 'send_again' ||
       operation.kind === 'rewrite_and_send' ||
       operation.kind === 'defer');
   if (requiresConfirmedOutboundPresentation) {
