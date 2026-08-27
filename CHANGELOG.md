@@ -5,6 +5,10 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Closed the post-#23 send-again leftover: leftover Telegram `Send again`
+  chrome and `send it again` copy cannot authorize a resend. Typed approval
+  stays `send it`, `send it now`, or `Send now`. Bare `yes`/`ok` remain
+  non-authorizing.
 - Closed the post-#22 send-fence leftover: typed message-action approval now
   accepts only `send it`, `send it now`, or `Send now`; provider, recipient,
   resend, and rewrite-and-send wording cannot authorize dispatch. Bare

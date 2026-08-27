@@ -1656,6 +1656,7 @@ describe('message actions', () => {
     );
 
     expect(duplicate.replyText).toContain('already went out');
+    expect(duplicate.replyText).not.toMatch(/say send it again/i);
     expect(sendAgain.replyText).toContain('fresh message action');
     expect(sendAgain.replyText).toContain('idempotency key');
     expect(
@@ -1664,6 +1665,74 @@ describe('message actions', () => {
         .map((control) => control.label),
     ).not.toContain('Send again');
     expect(sendToTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let leftover Telegram send-again chrome authorize a resend', async () => {
+    const thread = seedCommunicationThread({
+      id: 'comm-tg-leftover-send-again',
+      channel: 'telegram',
+      channelChatJid: 'tg:alice',
+      title: 'Alice',
+    });
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Alice asked about dinner.',
+      draftText: 'Dinner is at 7.',
+      personName: 'Alice',
+      threadTitle: 'Alice',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-08-27T03:10:00.000Z'),
+    });
+    updateMessageAction(action.messageActionId, {
+      sendStatus: 'sent',
+      presentationMessageId: 'tg:leftover-send-again-card',
+      lastUpdatedAt: '2026-08-27T03:10:30.000Z',
+    });
+    const sent = getMessageAction(action.messageActionId)!;
+    expect(sent.targetChannel).toBe('telegram');
+    expect(
+      buildMessageActionPresentation(sent, 'telegram')
+        .inlineActionRows.flat()
+        .map((control) => control.label),
+    ).toEqual(['Show draft']);
+    expect(interpretMessageActionFollowup('send it again')).toBeNull();
+
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'tg:must-not-resend',
+    }));
+    const leftoverResend = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send_again' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-08-27T03:11:00.000Z'),
+        sendToTarget,
+      },
+    );
+    const leftoverTypedSend = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-08-27T03:11:30.000Z'),
+        sendToTarget,
+      },
+    );
+
+    expect(leftoverResend.replyText).toContain('will not resend');
+    expect(leftoverResend.replyText).not.toMatch(/say send it again/i);
+    expect(leftoverTypedSend.replyText).toContain('already went out');
+    expect(leftoverTypedSend.replyText).not.toMatch(/say send it again/i);
+    expect(sendToTarget).not.toHaveBeenCalled();
   });
 
   it('collapses concurrent approvals into one outbound delivery attempt', async () => {

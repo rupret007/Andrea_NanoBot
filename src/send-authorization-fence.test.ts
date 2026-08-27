@@ -24,6 +24,7 @@ import {
 } from './db.js';
 import {
   applyMessageActionOperation,
+  buildMessageActionPresentation,
   createOrRefreshMessageActionFromDraft,
   interpretMessageActionFollowup,
   runScheduledMessageActionByTaskId,
@@ -765,6 +766,103 @@ describe('send authorization fence', () => {
     ]) {
       expect(interpretMessageActionFollowup(utterance)).toBeNull();
     }
+  });
+
+  it('does not let leftover send-again chrome authorize a Telegram resend', async () => {
+    registerBobFrontDoor();
+    const thread = {
+      id: 'comm-leftover-send-again',
+      groupFolder: 'main',
+      title: 'Alice',
+      linkedSubjectIds: [],
+      linkedLifeThreadIds: [],
+      channel: 'telegram' as const,
+      channelChatJid: 'tg:alice',
+      lastInboundSummary: 'Alice asked about dinner.',
+      lastOutboundSummary: null,
+      followupState: 'reply_needed' as const,
+      urgency: 'tonight' as const,
+      followupDueAt: null,
+      suggestedNextAction: 'draft_reply' as const,
+      toneStyleHints: [],
+      lastContactAt: '2026-08-27T03:10:00.000Z',
+      lastMessageId: 'tg:alice-last',
+      linkedTaskId: null,
+      inferenceState: 'user_confirmed' as const,
+      trackingMode: 'default' as const,
+      createdAt: '2026-08-27T03:10:00.000Z',
+      updatedAt: '2026-08-27T03:10:00.000Z',
+      disabledAt: null,
+    };
+    upsertCommunicationThread(thread);
+    const action = createOrRefreshMessageActionFromDraft({
+      groupFolder: 'main',
+      presentationChannel: 'telegram',
+      presentationChatJid: 'tg:main',
+      sourceType: 'communication_thread',
+      sourceKey: thread.id,
+      sourceSummary: 'Alice asked about dinner.',
+      draftText: 'Dinner is at 7.',
+      personName: 'Alice',
+      threadTitle: 'Alice',
+      communicationThreadId: thread.id,
+      communicationContext: 'reply_followthrough',
+      now: new Date('2026-08-27T03:10:00.000Z'),
+    });
+    updateMessageAction(action.messageActionId, {
+      sendStatus: 'sent',
+      presentationMessageId: 'tg:leftover-send-again-card',
+      lastUpdatedAt: '2026-08-27T03:10:30.000Z',
+    });
+    const sent = getMessageAction(action.messageActionId)!;
+    expect(sent.targetChannel).toBe('telegram');
+    expect(
+      buildMessageActionPresentation(sent, 'telegram')
+        .inlineActionRows.flat()
+        .map((control) => control.label),
+    ).not.toContain('Send again');
+    expect(interpretMessageActionFollowup('send it again')).toBeNull();
+    expect(interpretMessageActionFollowup('yes')).toBeNull();
+    expect(interpretMessageActionFollowup('ok')).toBeNull();
+
+    const sendToTarget = vi.fn(async () => ({
+      platformMessageId: 'tg:must-not-resend',
+    }));
+    const leftoverResend = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send_again' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-08-27T03:11:00.000Z'),
+        ownerReviewGroup: mainGroup,
+        sendToTarget,
+      },
+    );
+    expect(leftoverResend.handled).toBe(true);
+    expect(leftoverResend.replyText).toContain('will not resend');
+    expect(leftoverResend.replyText).toContain('fresh message action');
+    expect(leftoverResend.replyText).not.toMatch(/say send it again/i);
+    expect(leftoverResend.action?.sendStatus).toBe('sent');
+    expect(sendToTarget).not.toHaveBeenCalled();
+
+    const leftoverTypedSend = await applyMessageActionOperation(
+      action.messageActionId,
+      { kind: 'send' },
+      {
+        groupFolder: 'main',
+        channel: 'telegram',
+        chatJid: 'tg:main',
+        currentTime: new Date('2026-08-27T03:11:30.000Z'),
+        ownerReviewGroup: mainGroup,
+        sendToTarget,
+      },
+    );
+    expect(leftoverTypedSend.replyText).toContain('already went out');
+    expect(leftoverTypedSend.replyText).toContain('fresh message action');
+    expect(leftoverTypedSend.replyText).not.toMatch(/say send it again/i);
+    expect(sendToTarget).not.toHaveBeenCalled();
   });
 
   it('does not let leftover Telegram chrome authorize a send without the Bob yes-fence', () => {
