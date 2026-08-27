@@ -3,11 +3,6 @@ import {
   buildGracefulDegradedReply,
   type ConversationalChannel,
 } from './conversational-core.js';
-import {
-  buildAndreaCapabilityPackagingLine,
-  getAndreaCapabilityDiscoveryPrompts,
-} from './assistant-profile-pack.js';
-import { getPracticalDiscoverySpotlights } from './command-surface-registry.js';
 import { buildAndreaPingPresenceReply } from './ping-presence.js';
 import {
   buildRuntimeModelInventory,
@@ -237,7 +232,7 @@ export function maybeBuildDirectQuickReply(
   if (
     isStandalonePrompt(normalized, /^what are you (?:best|good) at[?.! ]*$/, 6)
   ) {
-    return `Schedule help, reminders, meeting prep, reply drafting, repo check-ins, life threads, idea capture, and keeping follow-through like pills, bills, and open loops clean. Give me one concrete ask and I will keep it moving.`;
+    return 'Schedule, reminders, drafts, follow-through. Give me one ask.';
   }
 
   if (
@@ -282,9 +277,9 @@ export function maybeBuildDirectQuickReply(
     )
   ) {
     return pickDeterministicVariant(normalized, [
-      "Hi. I'm here. What do you want to tackle?",
-      "Hey. I'm here and ready.",
-      "Hi. Give me one thing and I'll keep it simple.",
+      "Hi. I'm here.",
+      "Hey. I'm here.",
+      'Hi.',
     ]);
   }
 
@@ -296,9 +291,9 @@ export function maybeBuildDirectQuickReply(
     )
   ) {
     return pickDeterministicVariant(normalized, [
-      'Doing well and ready. What do you want to tackle?',
-      "Doing well over here. What's the move?",
-      'Doing well and ready to help. What are we working on?',
+      'Doing well.',
+      'Doing well over here.',
+      'Doing well and ready.',
     ]);
   }
 
@@ -310,9 +305,9 @@ export function maybeBuildDirectQuickReply(
     )
   ) {
     return pickDeterministicVariant(normalized, [
-      'Doing well and ready. What do you want to tackle?',
-      "Doing well over here. What's the move?",
-      'Doing well and ready to help. What are we working on?',
+      'Doing well.',
+      'Doing well over here.',
+      'Doing well and ready.',
     ]);
   }
 
@@ -325,8 +320,8 @@ export function maybeBuildDirectQuickReply(
   ) {
     return pickDeterministicVariant(normalized, [
       'Not much. I am here if you need me.',
-      "Pretty calm here. What's going on with you?",
-      'Just here and ready to help.',
+      'Pretty calm here.',
+      'Just here.',
     ]);
   }
 
@@ -338,9 +333,9 @@ export function maybeBuildDirectQuickReply(
     )
   ) {
     return pickDeterministicVariant(normalized, [
-      'Keeping an eye on things and ready to help.',
-      'Hanging out quietly until you throw me something useful.',
-      'Staying ready and trying not to make your chat weird.',
+      'Keeping an eye on things.',
+      'Hanging out quietly.',
+      'Staying ready.',
     ]);
   }
 
@@ -417,14 +412,7 @@ export function maybeBuildDirectQuickReply(
       10,
     )
   ) {
-    const spotlight = getPracticalDiscoverySpotlights('telegram')
-      .slice(0, 5)
-      .map((entry) => entry.prompt)
-      .join(', ');
-    const benchmarkGuidedPrompts = getAndreaCapabilityDiscoveryPrompts()
-      .slice(1, 5)
-      .join(', ');
-    return `I'm Andrea. I help most with ${buildAndreaCapabilityPackagingLine()}. Good starting asks are ${spotlight}. If you want the richer benchmark-style lanes, try ${benchmarkGuidedPrompts}. Telegram is my richest lane, Alexa is best for short voice check-ins, and Messages is a bounded bridge when it's healthy.`;
+    return "I'm Andrea. Ask me something. I don't send texts unless you say send it here.";
   }
 
   if (
@@ -444,7 +432,7 @@ export function maybeBuildDirectQuickReply(
       6,
     )
   ) {
-    return 'Use /commands for the short list and /help for the fuller guide.';
+    return 'Just talk. /registermain if this DM is not bound yet.';
   }
 
   if (

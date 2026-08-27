@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { telegramTextLooksLikeProgrammedChrome } from './command-surface-registry.js';
 import {
   buildDirectAssistantRuntimeFailureReply,
   maybeBuildDirectQuickReply,
@@ -103,6 +104,8 @@ describe('direct quick reply', () => {
 
     expect(reply).toBeTruthy();
     expect(reply?.toLowerCase()).toContain('hi');
+    expect(reply).not.toContain('What do you want to tackle');
+    expect(telegramTextLooksLikeProgrammedChrome(reply || '')).toBe(false);
   });
 
   it('returns a casual morning check-in response for the exact live failure phrasing', () => {
@@ -243,15 +246,14 @@ describe('direct quick reply', () => {
     const reply = maybeBuildDirectQuickReply([{ content: 'what can you do?' }]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('meeting prep');
-    expect(reply).toContain('save-for-later');
-    expect(reply).toContain('life threads');
-    expect(reply).toContain('idea capture');
-    expect(reply).toContain('what should I say back');
-    expect(reply).toContain('Telegram');
-    expect(reply).toContain('Messages');
-    expect(reply).toContain('Alexa');
+    expect(reply).toContain('Ask me something');
+    expect(reply).toContain('send it');
     expect(reply).not.toContain('Candace');
+    expect(reply).not.toContain('meeting prep');
+    expect(reply).not.toContain('Good starting asks are');
+    expect(reply).not.toContain('/help');
+    expect(reply).not.toContain('/commands');
+    expect(telegramTextLooksLikeProgrammedChrome(reply || '')).toBe(false);
   });
 
   it('keeps broader handle-again phrasing in the local capability lane', () => {
@@ -260,10 +262,10 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('repo check-ins');
-    expect(reply).toContain('quick reply help');
+    expect(reply).toContain('Ask me something');
     expect(reply).not.toContain('coding');
     expect(reply).not.toContain('inspect your files');
+    expect(reply).not.toContain('repo check-ins');
   });
 
   it('keeps casual what-can-you-actually-do phrasing in the local capability lane', () => {
@@ -272,10 +274,10 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('meeting prep');
-    expect(reply).toContain('Messages');
+    expect(reply).toContain('Ask me something');
     expect(reply).not.toContain('coding');
     expect(reply).not.toContain('inspect your files');
+    expect(reply).not.toContain('meeting prep');
   });
 
   it('keeps useful-right-now discovery phrasing in the local capability lane', () => {
@@ -284,9 +286,9 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('life threads');
-    expect(reply).toContain('Telegram');
+    expect(reply).toContain('Ask me something');
     expect(reply).not.toContain('Writing, editing, and explaining code');
+    expect(reply).not.toContain('life threads');
   });
 
   it('keeps help-me-with-today discovery phrasing in the local capability lane', () => {
@@ -295,9 +297,9 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('quick reply help');
-    expect(reply).toContain('meeting prep');
-    expect(reply).toContain('Alexa');
+    expect(reply).toContain('Ask me something');
+    expect(reply).not.toContain('quick reply help');
+    expect(reply).not.toContain('meeting prep');
     expect(reply).not.toContain('big or small');
   });
 
@@ -307,8 +309,8 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('repo check-ins');
-    expect(reply).toContain('quick reply help');
+    expect(reply).toContain('Ask me something');
+    expect(reply).not.toContain('repo check-ins');
   });
 
   it('keeps use-you-for-tonight discovery phrasing in the local capability lane', () => {
@@ -317,9 +319,9 @@ describe('direct quick reply', () => {
     ]);
 
     expect(reply).toContain("I'm Andrea");
-    expect(reply).toContain('save-for-later');
-    expect(reply).toContain('life threads');
-    expect(reply).toContain('quick reply help');
+    expect(reply).toContain('Ask me something');
+    expect(reply).not.toContain('save-for-later');
+    expect(reply).not.toContain('life threads');
   });
 
   it('returns a bounded coding-capability response for cursor and codex asks', () => {
@@ -336,8 +338,10 @@ describe('direct quick reply', () => {
       { content: 'What commands do you have?' },
     ]);
 
-    expect(reply).toContain('/commands');
-    expect(reply).toContain('/help');
+    expect(reply).toContain('Just talk');
+    expect(reply).toContain('/registermain');
+    expect(reply).not.toContain('/commands');
+    expect(reply).not.toContain('/help');
   });
 
   it('returns a strongest-capabilities response for best-at asks', () => {
@@ -345,10 +349,11 @@ describe('direct quick reply', () => {
       { content: 'what are you best at?' },
     ]);
 
-    expect(reply).toContain('Schedule help');
-    expect(reply).toContain('meeting prep');
-    expect(reply).toContain('reply drafting');
-    expect(reply).toContain('repo check-ins');
+    expect(reply).toContain('Schedule');
+    expect(reply).toContain('reminders');
+    expect(reply).toContain('Give me one ask');
+    expect(reply).not.toContain('meeting prep');
+    expect(reply).not.toContain('repo check-ins');
   });
 
   it('returns a stable response for funny-or-pretending asks', () => {

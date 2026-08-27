@@ -33,12 +33,12 @@ Surface roles:
 
 UX defaults for Telegram:
 
-- `/start` should feel like a quick welcome and a few example asks, not a wall of help text or a programmed menu
-- `/help` should explain how to use Andrea here in one screen
+- `/start` should be a one-line bind reminder, not a wall of help text or a programmed menu
+- `/help` should stay the same short reminder: just talk, and `/registermain` if the DM is not bound
 - `/commands` should stay focused on setup and status, not become the primary way to talk to Andrea or a thinking-command wall
 - `/thinking`, `/council`, `/cognition`, `/memory`, and `/learning` still work if typed; they should explain how Andrea reasons, plans tasks, and learns without exposing hidden provider traces
-- `/features` should answer what Andrea is best at here and when another surface is better
-- group menus should stay slimmer than DM menus so the bot feels lighter in shared chats
+- `/features` still works if typed; it should not appear in the Telegram command menu
+- Telegram menus stay bind-only in DMs (`/registermain`, `/mainchat`) and empty in groups
 - list capture should work without setup friction and seed sensible default groups on first use
 - Telegram may show bounded inline actions like `Done`, `Reopen`, `Defer`, `Remind`, `Move`, or `Convert` after a natural-language list readout
 - longer list review should stay grouped by practical buckets like Groceries, Errands, Bills This Week, Meals This Week, Household Open, Tonight, and Weekend instead of becoming a flat dump
@@ -52,7 +52,7 @@ Recommended direct-message flow:
 2. Send a plain-language request. `/start` is a short welcome, not a menu wall.
 3. Run `/registermain` once if this DM should be the main Andrea chat.
 4. Run `/mainchat` only if a chat says it is not set up.
-5. Use `/help` or `/commands` only when you want setup or status.
+5. Type `/help` or `/commands` only if you want setup or status. Ordinary chat should just be Bob talking.
 
 If `/registermain` says a main chat is already registered, that is not a failure by itself. Run `/mainchat`; it will print the current registered main chat and whether the current DM matches it. If you ask for calendar or operator features from a different DM, Andrea should tell you the current main chat and send you back through `/mainchat` plus `/registermain` instead of replying with generic setup text.
 
@@ -80,7 +80,7 @@ In groups:
 - mention Andrea when you want action
 - use her for reminders, summaries, research, and project help
 - keep high-trust admin actions in the main control chat
-- keep the visible command menu small; group chats should mostly feel conversation-first
+- keep the visible command menu empty; group chats should feel conversation-first
 
 Examples:
 
@@ -93,8 +93,8 @@ Examples:
 These commands are for onboarding, setup, and status.
 Most users should still start with a plain-language request.
 
-- `/start` - quick-start welcome
-- `/help` - one-screen "how Andrea works here" guide
+- `/start` - short bind reminder
+- `/help` - short "just talk" reminder
 - `/commands` - setup and status commands
 - `/features` - what Andrea is best at in Telegram
 - `/ping` - basic health check
@@ -111,8 +111,8 @@ Most users should still start with a plain-language request.
 
 Menu behavior:
 
-- in DMs, the command menu can stay a little richer because setup and status are more relevant
-- in groups, the command menu should stay intentionally smaller and push people toward mention-based conversation
+- in DMs, the Telegram command menu stays bind-only: `/registermain` and `/mainchat`
+- in groups, the Telegram command menu stays empty so shared chats stay conversation-first
 
 Important boundary:
 

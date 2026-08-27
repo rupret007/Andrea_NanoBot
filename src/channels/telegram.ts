@@ -1094,7 +1094,7 @@ export class TelegramChannel implements Channel {
           );
           console.log(`\n  Telegram bot: @${botInfo.username}`);
           console.log(
-            '  Send /help for usage, /chatid for chat ID, or /registermain in DM to bootstrap main chat\n',
+            '  Send a normal message, or /registermain in DM to bind the main chat\n',
           );
           settleReady();
         },

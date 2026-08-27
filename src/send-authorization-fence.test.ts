@@ -7,6 +7,10 @@ import {
 import { executeBlueBubblesOutboundTurn } from './bluebubbles-outbound-turn.js';
 import { resolveBlueBubblesSendMethod } from './channels/bluebubbles.js';
 import {
+  buildTelegramHelpLines,
+  buildTelegramWelcomeLines,
+} from './command-surface-registry.js';
+import {
   _closeDatabase,
   _initTestDatabase,
   deleteRegisteredGroup,
@@ -728,6 +732,25 @@ describe('send authorization fence', () => {
       kind: 'send',
     });
     expect(interpretMessageActionFollowup('Send now')).toEqual({
+      kind: 'send',
+    });
+  });
+
+  it('does not let leftover Telegram chrome authorize a send without the Bob yes-fence', () => {
+    for (const utterance of [
+      '/help',
+      '/start',
+      '/commands',
+      '/features',
+      'what can you do',
+      'what can I do',
+      'hey',
+      buildTelegramWelcomeLines('Andrea').join('\n'),
+      buildTelegramHelpLines('Andrea').join('\n'),
+    ]) {
+      expect(interpretMessageActionFollowup(utterance)).toBeNull();
+    }
+    expect(interpretMessageActionFollowup('send it')).toEqual({
       kind: 'send',
     });
   });

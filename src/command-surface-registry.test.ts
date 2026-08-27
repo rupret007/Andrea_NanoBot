@@ -19,6 +19,8 @@ import {
   getPracticalDiscoverySpotlights,
   getTelegramBotGroupMenuCommands,
   getTelegramBotMenuCommands,
+  TELEGRAM_BIND_MENU_SURFACE_IDS,
+  telegramTextLooksLikeProgrammedChrome,
 } from './command-surface-registry.js';
 
 const repoRoot = path.resolve(
@@ -55,10 +57,6 @@ describe('command surface registry', () => {
 
     expect(getTelegramBotMenuCommands()).toEqual([
       {
-        command: 'help',
-        description: 'How Andrea works here',
-      },
-      {
         command: 'registermain',
         description: 'Make this DM your main chat',
       },
@@ -66,29 +64,12 @@ describe('command surface registry', () => {
         command: 'mainchat',
         description: 'Show the current main control chat',
       },
-      {
-        command: 'features',
-        description: 'What Andrea is best at',
-      },
-      {
-        command: 'ping',
-        description: 'Check if Andrea is online',
-      },
     ]);
 
-    expect(getTelegramBotGroupMenuCommands()).toEqual([
-      {
-        command: 'help',
-        description: 'How Andrea works here',
-      },
-      {
-        command: 'features',
-        description: 'What Andrea is best at',
-      },
-      {
-        command: 'ping',
-        description: 'Check if Andrea is online',
-      },
+    expect(getTelegramBotGroupMenuCommands()).toEqual([]);
+    expect(TELEGRAM_BIND_MENU_SURFACE_IDS).toEqual([
+      'telegram_registermain',
+      'telegram_mainchat',
     ]);
   });
 
@@ -211,18 +192,17 @@ describe('command surface registry', () => {
     const help = buildTelegramHelpLines('Andrea').join('\n');
     const features = buildTelegramFeatureLines('Andrea').join('\n');
 
-    expect(welcome).toContain("what's on my calendar tomorrow");
-    expect(welcome).toContain('remind me to take my pills at 9');
-    expect(welcome).toContain('what bills do I need to pay this week');
-    expect(welcome).toContain('Just send a normal message');
-    expect(welcome).toContain('send it');
+    expect(welcome).toContain('Just talk');
+    expect(welcome).toContain('/registermain');
+    expect(telegramTextLooksLikeProgrammedChrome(welcome)).toBe(false);
+    expect(welcome).not.toContain("what's on my calendar tomorrow");
     expect(welcome).not.toContain('Benchmark-Guided Packs');
     expect(welcome).not.toContain('Candace');
 
-    expect(help).toContain('Most people should just send a normal message.');
+    expect(help).toContain('Just talk');
     expect(help).toContain('send it');
-    expect(help).toContain('QA, Karen');
-    expect(help).toContain('setup or status');
+    expect(help).toContain('/registermain');
+    expect(telegramTextLooksLikeProgrammedChrome(help)).toBe(false);
     expect(help).not.toContain('Benchmark-Guided Packs');
     expect(help).not.toContain('Not helpful');
 

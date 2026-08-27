@@ -127,8 +127,8 @@ export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] =
       channelScope: ['telegram'],
       discoverability: ['/start', '/help', '/commands'],
       truthClass: 'live_proven',
-      summary: 'Quick start for new chats and first asks.',
-      menuDescription: 'Quick start and example asks',
+      summary: 'Short welcome. Just talk.',
+      menuDescription: 'Just talk',
     },
     {
       id: 'telegram_help',
@@ -139,8 +139,9 @@ export const PUBLIC_TELEGRAM_COMMAND_SURFACES: readonly CommandSurfaceEntry[] =
       channelScope: ['telegram'],
       discoverability: ['/start', '/help', '/commands'],
       truthClass: 'live_proven',
-      summary: 'How Andrea works in Telegram, in one screen.',
-      menuDescription: 'How Andrea works here',
+      summary:
+        'Short reminder to just talk. Bind with /registermain if needed.',
+      menuDescription: 'Just talk',
     },
     {
       id: 'telegram_commands',
@@ -2478,24 +2479,44 @@ export const COMMAND_SURFACE_REGISTRY: readonly CommandSurfaceEntry[] = [
   ...OPERATOR_SCRIPT_SURFACES,
 ];
 
-export function getTelegramBotMenuCommands(): Array<{
-  command: string;
-  description: string;
-}> {
-  const dmMenuIds = [
-    'telegram_help',
-    'telegram_registermain',
-    'telegram_mainchat',
-    'telegram_features',
-    'telegram_ping',
-  ];
+export const TELEGRAM_BIND_MENU_SURFACE_IDS = [
+  'telegram_registermain',
+  'telegram_mainchat',
+] as const;
+
+export const TELEGRAM_PROGRAMMED_CHROME_MARKERS = [
+  '*How Andrea Works Here*',
+  '*Welcome to',
+  '*Telegram Commands*',
+  '*What Andrea Is Best At*',
+  '*Start Here*',
+  '*Useful Checks*',
+  'Most people should just send a normal message.',
+  'Benchmark-Guided Packs',
+  'What would you like me to help you with next',
+  'what can I do for you',
+  'Good starting asks are',
+  'If you want the richer benchmark-style lanes',
+  'Try:',
+] as const;
+
+export function telegramTextLooksLikeProgrammedChrome(text: string): boolean {
+  const haystack = text.toLowerCase();
+  return TELEGRAM_PROGRAMMED_CHROME_MARKERS.some((marker) =>
+    haystack.includes(marker.toLowerCase()),
+  );
+}
+
+function renderTelegramMenuCommands(
+  surfaceIds: readonly string[],
+): Array<{ command: string; description: string }> {
   const surfaceById = new Map(
     PUBLIC_TELEGRAM_COMMAND_SURFACES.map((entry) => [entry.id, entry] as const),
   );
-  return dmMenuIds.map((id) => {
+  return surfaceIds.map((id) => {
     const entry = surfaceById.get(id);
     if (!entry) {
-      throw new Error(`Missing Telegram DM menu surface: ${id}`);
+      throw new Error(`Missing Telegram menu surface: ${id}`);
     }
     return {
       command: entry.preferredAlias.replace(/^\//, ''),
@@ -2504,57 +2525,28 @@ export function getTelegramBotMenuCommands(): Array<{
   });
 }
 
+export function getTelegramBotMenuCommands(): Array<{
+  command: string;
+  description: string;
+}> {
+  return renderTelegramMenuCommands(TELEGRAM_BIND_MENU_SURFACE_IDS);
+}
+
 export function getTelegramBotGroupMenuCommands(): Array<{
   command: string;
   description: string;
 }> {
-  const groupMenuIds = new Set([
-    'telegram_help',
-    'telegram_features',
-    'telegram_ping',
-  ]);
-  return PUBLIC_TELEGRAM_COMMAND_SURFACES.filter((entry) =>
-    groupMenuIds.has(entry.id),
-  ).map((entry) => ({
-    command: entry.preferredAlias.replace(/^\//, ''),
-    description: entry.menuDescription ?? entry.summary,
-  }));
+  return [];
 }
 
-export function buildTelegramWelcomeLines(assistantName: string): string[] {
-  const examples = getPracticalDiscoverySpotlights('telegram')
-    .slice(0, 3)
-    .map((entry) => `- \`${entry.prompt}\``);
-  return [
-    `*Welcome to ${assistantName}*`,
-    '',
-    'Just send a normal message. I will answer here.',
-    'If this DM should be your main Andrea chat, run `/registermain` once.',
-    '',
-    'Try:',
-    ...examples,
-    '',
-    'Contact texts stay unsent until you say `send it` in this chat.',
-  ];
+export function buildTelegramWelcomeLines(_assistantName: string): string[] {
+  return ['Just talk. If this DM should be the main chat, /registermain.'];
 }
 
-export function buildTelegramHelpLines(assistantName: string): string[] {
-  const examples = getPracticalDiscoverySpotlights('telegram')
-    .slice(0, 3)
-    .map((entry) => `- \`${entry.prompt}\``);
+export function buildTelegramHelpLines(_assistantName: string): string[] {
   return [
-    `*How ${assistantName} Works Here*`,
-    '',
-    'Most people should just send a normal message.',
-    '- `/registermain` once if this should be your main chat.',
-    '- `/mainchat` if a chat says it is not set up.',
-    '- In a group, mention my Telegram username.',
-    '- `/commands` or `/features` only if you want setup or status.',
-    '',
-    'Messages sends: I stage the exact text first. Say `send it` here to authorize. QA, Karen, and ordinary contact threads never authorize a send.',
-    '',
-    'Try:',
-    ...examples,
+    'Just talk. /registermain if this DM is not bound yet.',
+    "I don't send texts until you say send it here.",
   ];
 }
 
