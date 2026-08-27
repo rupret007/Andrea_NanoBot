@@ -3354,13 +3354,16 @@ describe('message actions', () => {
     });
   });
 
-  it('treats BlueBubbles send-using phrasing as a send follow-up', () => {
-    expect(interpretMessageActionFollowup('send using blue bubbles')).toEqual({
-      kind: 'send',
-    });
+  it('does not let provider wording widen the exact send fence', () => {
+    expect(
+      interpretMessageActionFollowup('send using blue bubbles'),
+    ).toBeNull();
     expect(isBlueBubblesExplicitSendAlias('send that using blue bubbles')).toBe(
-      true,
+      false,
     );
+    expect(isBlueBubblesExplicitSendAlias('send it')).toBe(true);
+    expect(isBlueBubblesExplicitSendAlias('send it now')).toBe(true);
+    expect(isBlueBubblesExplicitSendAlias('Send now')).toBe(true);
   });
 
   it('accepts @Andrea-prefixed BlueBubbles action follow-ups', () => {
@@ -3378,7 +3381,7 @@ describe('message actions', () => {
     });
     expect(
       isBlueBubblesExplicitSendAlias('@Andrea send that using blue bubbles'),
-    ).toBe(true);
+    ).toBe(false);
     expect(interpretMessageActionFollowup('send it later tonight.')).toEqual({
       kind: 'defer',
       timingHint: 'today tonight',

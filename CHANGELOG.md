@@ -5,6 +5,10 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Closed the post-#22 send-fence leftover: typed message-action approval now
+  accepts only `send it`, `send it now`, or `Send now`; provider, recipient,
+  resend, and rewrite-and-send wording cannot authorize dispatch. Bare
+  `yes`/`ok` remain non-authorizing.
 - Added conservative calendar-plus-research decomposition: only the calendar
   clause becomes the approval-bound event draft, while a separately traced,
   read-only research leg can run promptly and report its own result or blocker

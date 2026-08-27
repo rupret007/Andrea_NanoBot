@@ -750,6 +750,23 @@ describe('send authorization fence', () => {
     });
   });
 
+  it('rejects every leftover textual send alias outside the exact fence', () => {
+    for (const utterance of [
+      'send that',
+      'send that reply',
+      'send this reply',
+      'send it again',
+      'send using blue bubbles',
+      'send that using blue bubbles',
+      'send this to Candace',
+      'send the shorter version',
+      'send the warmer version to Candace',
+      'send the more direct version',
+    ]) {
+      expect(interpretMessageActionFollowup(utterance)).toBeNull();
+    }
+  });
+
   it('does not let leftover Telegram chrome authorize a send without the Bob yes-fence', () => {
     for (const utterance of [
       '/help',
