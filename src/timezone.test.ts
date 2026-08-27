@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   formatLocalTime,
   isValidTimezone,
+  resolveOwnerCalendarWindow,
   resolveTimezone,
 } from './timezone.js';
 
@@ -69,5 +70,64 @@ describe('resolveTimezone', () => {
   it('falls back to UTC for invalid timezone', () => {
     expect(resolveTimezone('IST-2')).toBe('UTC');
     expect(resolveTimezone('')).toBe('UTC');
+  });
+});
+
+describe('resolveOwnerCalendarWindow', () => {
+  const chicagoEvening = new Date('2026-04-15T19:00:00-05:00');
+  const ownerTodayMessage = '2026-04-15T16:46:28.314Z';
+
+  it('keeps today on the owner calendar even when host midnight has already rolled', () => {
+    const chicago = resolveOwnerCalendarWindow({
+      now: chicagoEvening,
+      kind: 'today',
+      timeZone: 'America/Chicago',
+    });
+    const utc = resolveOwnerCalendarWindow({
+      now: chicagoEvening,
+      kind: 'today',
+      timeZone: 'UTC',
+    });
+
+    expect(chicago.startTimestamp).toBe('2026-04-15T05:00:00.000Z');
+    expect(chicago.endTimestamp).toBeNull();
+    expect(ownerTodayMessage >= chicago.startTimestamp).toBe(true);
+    expect(utc.startTimestamp).toBe('2026-04-16T00:00:00.000Z');
+    expect(ownerTodayMessage >= utc.startTimestamp).toBe(false);
+  });
+
+  it('bounds yesterday to the owner calendar day, not the host day', () => {
+    const chicago = resolveOwnerCalendarWindow({
+      now: chicagoEvening,
+      kind: 'yesterday',
+      timeZone: 'America/Chicago',
+    });
+
+    expect(chicago.startTimestamp).toBe('2026-04-14T05:00:00.000Z');
+    expect(chicago.endTimestamp).toBe('2026-04-15T05:00:00.000Z');
+    expect(ownerTodayMessage >= chicago.endTimestamp!).toBe(true);
+  });
+
+  it('starts this week on Monday midnight in the owner timezone', () => {
+    const chicago = resolveOwnerCalendarWindow({
+      now: chicagoEvening,
+      kind: 'this_week',
+      timeZone: 'America/Chicago',
+    });
+
+    expect(chicago.startTimestamp).toBe('2026-04-13T05:00:00.000Z');
+    expect(chicago.endTimestamp).toBeNull();
+  });
+
+  it('keeps last-hours windows as exact durations from now', () => {
+    const window = resolveOwnerCalendarWindow({
+      now: chicagoEvening,
+      kind: 'last_hours',
+      value: 6,
+      timeZone: 'UTC',
+    });
+
+    expect(window.startTimestamp).toBe('2026-04-15T18:00:00.000Z');
+    expect(window.endTimestamp).toBeNull();
   });
 });
