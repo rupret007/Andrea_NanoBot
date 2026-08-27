@@ -2891,30 +2891,8 @@ export function interpretMessageActionFollowup(
   ) {
     return { kind: 'show_draft' };
   }
-  if (/^send it again$/.test(normalized)) {
-    return { kind: 'send_again' };
-  }
-  if (
-    /^(send using blue bubbles|send (?:it|that|this)(?: reply)? using blue bubbles|send (?:it|that|this)(?: reply)? with blue bubbles)$/.test(
-      normalized,
-    ) ||
-    /^(send it|send it now|send now|send that|send that reply|send this reply)$/.test(
-      normalized,
-    ) ||
-    /^send (?:this|that|it)(?: reply)? to [a-z][a-z' -]+$/i.test(normalized)
-  ) {
+  if (/^(send it|send it now|send now)$/.test(normalized)) {
     return { kind: 'send' };
-  }
-  if (/^send the shorter version(?: to [a-z][a-z' -]+)?$/i.test(normalized)) {
-    return { kind: 'rewrite_and_send', style: 'shorter' };
-  }
-  if (/^send the warmer version(?: to [a-z][a-z' -]+)?$/i.test(normalized)) {
-    return { kind: 'rewrite_and_send', style: 'warmer' };
-  }
-  if (
-    /^send the more direct version(?: to [a-z][a-z' -]+)?$/i.test(normalized)
-  ) {
-    return { kind: 'rewrite_and_send', style: 'more_direct' };
   }
   if (/^send it later\b/.test(normalized)) {
     return { kind: 'defer', timingHint: parseTimingHintFromUtterance(rawText) };
@@ -2974,9 +2952,10 @@ export function interpretMessageActionFollowup(
 
 export function isBlueBubblesExplicitSendAlias(rawText: string): boolean {
   const normalized = normalizeMessageActionCommand(rawText).toLowerCase();
-  return /^(send using blue bubbles|send (?:it|that|this)(?: reply)? using blue bubbles|send (?:it|that|this)(?: reply)? with blue bubbles)$/.test(
-    normalized,
-  );
+  // This helper also gates bare self-thread follow-ups. Keep it aligned with
+  // the same three owner approval phrases accepted by the message-action
+  // parser; naming a provider must never widen the send fence.
+  return /^(send it|send it now|send now)$/.test(normalized);
 }
 
 export function parseExplicitBlueBubblesThreadSendIntent(
