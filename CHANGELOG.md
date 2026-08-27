@@ -5,6 +5,10 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Closed the post-#24 Texts leftover: named-thread and recent-text
+  `today` / `yesterday` / `this week` windows now use the configured owner
+  timezone instead of host-local midnight, so recaps stay honest when the
+  process TZ differs from Andrea's `TIMEZONE`.
 - Closed the post-#23 send-again leftover: leftover Telegram `Send again`
   chrome and `send it again` copy cannot authorize a resend. Typed approval
   stays `send it`, `send it now`, or `Send now`. Bare `yes`/`ok` remain

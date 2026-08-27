@@ -160,6 +160,7 @@ import type {
 import { normalizeVoicePrompt } from './voice-ready.js';
 import { formatThreadSummaryWindowLabel } from './thread-summary-routing.js';
 import { TIMEZONE } from './config.js';
+import { resolveOwnerCalendarWindow } from './timezone.js';
 
 export type AssistantCapabilityId =
   | 'daily.morning_brief'
@@ -2664,40 +2665,16 @@ function resolveThreadSummaryWindow(params: {
   now: Date;
   kind: CompanionRouteTimeWindowKind | null | undefined;
   value: number | null | undefined;
+  timeZone?: string;
 }): { startTimestamp: string; endTimestamp: string | null; label: string } {
-  const start = new Date(params.now);
-  let end: Date | null = null;
-  switch (params.kind) {
-    case 'last_hours':
-      start.setHours(start.getHours() - Math.max(1, params.value || 1));
-      break;
-    case 'last_days':
-      start.setDate(start.getDate() - Math.max(1, params.value || 1));
-      break;
-    case 'today':
-      start.setHours(0, 0, 0, 0);
-      break;
-    case 'yesterday':
-      end = new Date(start);
-      end.setHours(0, 0, 0, 0);
-      start.setDate(start.getDate() - 1);
-      start.setHours(0, 0, 0, 0);
-      break;
-    case 'this_week': {
-      const day = start.getDay();
-      const offset = day === 0 ? 6 : day - 1;
-      start.setDate(start.getDate() - offset);
-      start.setHours(0, 0, 0, 0);
-      break;
-    }
-    case 'default_24h':
-    default:
-      start.setHours(start.getHours() - 24);
-      break;
-  }
+  const window = resolveOwnerCalendarWindow({
+    now: params.now,
+    kind: params.kind,
+    value: params.value,
+    timeZone: params.timeZone ?? TIMEZONE,
+  });
   return {
-    startTimestamp: start.toISOString(),
-    endTimestamp: end ? end.toISOString() : null,
+    ...window,
     label: formatThreadSummaryWindowLabel(params.kind, params.value),
   };
 }

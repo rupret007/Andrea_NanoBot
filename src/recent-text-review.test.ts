@@ -14,6 +14,7 @@ import {
   redactRecentTextReviewText,
   recordRecentTextReviewOutcome,
   resolveRecentTextReviewFollowupTarget,
+  resolveRecentTextReviewWindow,
   reviewRecentTexts,
   validateRecentTextReviewFollowupFreshness,
   validateRecentTextReviewFollowupFreshnessAfterTargetedRefresh,
@@ -32,6 +33,20 @@ import {
   upsertProfileSubject,
   _initTestDatabase,
 } from './db.js';
+
+describe('recent text review windows', () => {
+  it('includes owner-timezone today messages after UTC midnight', () => {
+    const window = resolveRecentTextReviewWindow({
+      now: new Date('2026-04-15T19:00:00-05:00'),
+      kind: 'today',
+      timeZone: 'America/Chicago',
+    });
+
+    expect(window.label).toBe('today');
+    expect(window.startTimestamp).toBe('2026-04-15T05:00:00.000Z');
+    expect('2026-04-15T16:46:28.314Z' >= window.startTimestamp).toBe(true);
+  });
+});
 
 describe('recent text review', () => {
   beforeEach(() => {
