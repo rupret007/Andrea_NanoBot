@@ -14,8 +14,11 @@ import {
 } from './message-actions.js';
 import {
   buildRecentTextReviewSeedJson,
+  formatRecentTextReviewLocalTimestamp,
   reviewRecentTexts,
 } from './recent-text-review.js';
+import { TIMEZONE } from './config.js';
+import { resolveOwnerCalendarWindow } from './timezone.js';
 import {
   createTask,
   getCommunicationThread,
@@ -591,6 +594,198 @@ describe('assistant capabilities', () => {
       ).toBeTruthy();
     },
   );
+
+  it('keeps a yesterday named-summary freshness snapshot inside the recap window', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    vi.stubEnv(
+      'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+      'bb:iMessage;-;owner-self-yesterday-summary',
+    );
+    vi.stubEnv(
+      'BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS',
+      'bb:iMessage;-;owner-self-yesterday-summary',
+    );
+    const now = new Date('2026-04-16T19:00:00-05:00');
+    const window = resolveOwnerCalendarWindow({
+      now,
+      kind: 'yesterday',
+      timeZone: TIMEZONE,
+    });
+    expect(window.endTimestamp).toBeTruthy();
+    const yesterdayAt = new Date(
+      Date.parse(window.startTimestamp) + 12 * 60 * 60 * 1000,
+    ).toISOString();
+    const todayAt = new Date(
+      Date.parse(window.endTimestamp!) + 6 * 60 * 60 * 1000,
+    ).toISOString();
+    const targetChatJid = 'bb:iMessage;-;yesterday-window-honesty';
+    storeChatMetadata(
+      targetChatJid,
+      todayAt,
+      'Yesterday Honesty',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'yesterday-window-honesty-old',
+      chat_jid: targetChatJid,
+      sender: 'Avery',
+      sender_name: 'Yesterday Honesty',
+      content: 'Can you still make dinner yesterday evening?',
+      timestamp: yesterdayAt,
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'yesterday-window-honesty-new',
+      chat_jid: targetChatJid,
+      sender: 'Avery',
+      sender_name: 'Yesterday Honesty',
+      content: 'Never mind, dinner is already handled today.',
+      timestamp: todayAt,
+      is_from_me: false,
+    });
+
+    const summary = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:yesterday-window-owner',
+        ownerReviewAllowed: true,
+        now,
+      },
+      input: {
+        canonicalText: 'summarize Yesterday Honesty from yesterday',
+        targetChatName: 'Yesterday Honesty',
+        timeWindowKind: 'yesterday',
+      },
+    });
+
+    const seed = JSON.parse(
+      summary.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson ||
+        '{}',
+    ) as {
+      historyStartTimestamp?: string;
+      freshnessSnapshot?: {
+        latestMessageAt?: string;
+        messageCount?: number;
+      };
+    };
+    expect(summary.replyText).toContain('yesterday evening');
+    expect(summary.replyText).not.toContain('already handled today');
+    expect(seed.historyStartTimestamp).toBe(window.startTimestamp);
+    expect(seed.freshnessSnapshot?.latestMessageAt).toBe(yesterdayAt);
+    expect(seed.freshnessSnapshot?.messageCount).toBe(1);
+
+    const primeMessagesChatHistory = vi.fn(async (chatJid: string) => {
+      expect(chatJid).toBe(targetChatJid);
+      return { chatJid, storedCount: 2, totalCount: 2 };
+    });
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:yesterday-window-owner',
+        primeMessagesChatHistory,
+        priorSubjectData: summary.conversationSeed?.subjectData,
+        now,
+      },
+      input: {
+        text: 'Draft this reply: Yes, dinner still works.',
+        canonicalText: 'Draft this reply: Yes, dinner still works.',
+      },
+    });
+
+    expect(primeMessagesChatHistory).toHaveBeenCalled();
+    expect(draft.messageAction).toBeUndefined();
+    expect(draft.sendOptions).toBeUndefined();
+    expect(draft.followupActions).toEqual([]);
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('still drafts from a yesterday named-summary when no later turns exist', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    vi.stubEnv(
+      'BLUEBUBBLES_CANONICAL_SELF_THREAD_JID',
+      'bb:iMessage;-;owner-self-yesterday-draft',
+    );
+    vi.stubEnv(
+      'BLUEBUBBLES_SELF_THREAD_ALIAS_JIDS',
+      'bb:iMessage;-;owner-self-yesterday-draft',
+    );
+    const now = new Date('2026-04-16T19:00:00-05:00');
+    const window = resolveOwnerCalendarWindow({
+      now,
+      kind: 'yesterday',
+      timeZone: TIMEZONE,
+    });
+    const yesterdayAt = new Date(
+      Date.parse(window.startTimestamp) + 12 * 60 * 60 * 1000,
+    ).toISOString();
+    const targetChatJid = 'bb:iMessage;-;yesterday-window-draft';
+    storeChatMetadata(
+      targetChatJid,
+      yesterdayAt,
+      'Yesterday Draft',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'yesterday-window-draft-inbound',
+      chat_jid: targetChatJid,
+      sender: 'Avery',
+      sender_name: 'Yesterday Draft',
+      content: 'Can you still make dinner tomorrow night?',
+      timestamp: yesterdayAt,
+      is_from_me: false,
+    });
+
+    const summary = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:yesterday-draft-owner',
+        ownerReviewAllowed: true,
+        now,
+      },
+      input: {
+        canonicalText: 'summarize Yesterday Draft from yesterday',
+        targetChatName: 'Yesterday Draft',
+        timeWindowKind: 'yesterday',
+      },
+    });
+    const primeMessagesChatHistory = vi.fn(async (chatJid: string) => {
+      expect(chatJid).toBe(targetChatJid);
+      return { chatJid, storedCount: 1, totalCount: 1 };
+    });
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:yesterday-draft-owner',
+        primeMessagesChatHistory,
+        priorSubjectData: summary.conversationSeed?.subjectData,
+        now,
+      },
+      input: {
+        text: 'Draft this reply: Yes, tomorrow night still works.',
+        canonicalText: 'Draft this reply: Yes, tomorrow night still works.',
+      },
+    });
+
+    expect(primeMessagesChatHistory).toHaveBeenCalledTimes(2);
+    expect(draft.messageAction).toMatchObject({
+      sendStatus: 'drafted',
+      requiresApproval: true,
+      draftText: 'Yes, tomorrow night still works.',
+    });
+    expect(draft.sendOptions).toBeUndefined();
+  });
 
   it('drops a named-summary draft when the exact thread changes during the async draft window', async () => {
     vi.stubEnv('OPENAI_API_KEY', ' ');
@@ -1234,18 +1429,27 @@ describe('assistant capabilities', () => {
       expect(result.replyText).toContain('OpenAI synthesis was attempted');
       expect(result.replyText).not.toContain('No OpenAI synthesis was used');
     }
+    const firstStamp = formatRecentTextReviewLocalTimestamp(
+      '2026-04-15T16:00:00.000Z',
+      TIMEZONE,
+    );
+    const secondStamp = formatRecentTextReviewLocalTimestamp(
+      '2026-04-15T16:10:00.000Z',
+      TIMEZONE,
+    );
+    expect(firstStamp).toBeTruthy();
+    expect(secondStamp).toBeTruthy();
     for (const providerInput of providerInputs) {
-      const firstTimestamp = providerInput.indexOf(
-        '[2026 Apr 15 16:00:00 UTC]',
-      );
-      const secondTimestamp = providerInput.indexOf(
-        '[2026 Apr 15 16:10:00 UTC]',
-      );
+      const firstTimestamp = providerInput.indexOf(`[${firstStamp}]`);
+      const secondTimestamp = providerInput.indexOf(`[${secondStamp}]`);
       expect(firstTimestamp).toBeGreaterThanOrEqual(0);
       expect(secondTimestamp).toBeGreaterThan(firstTimestamp);
       expect(providerInput).toContain('First chronological turn.');
       expect(providerInput).toContain('Second chronological turn.');
       expect(providerInput).not.toContain('[redacted number] UTC');
+      expect(providerInput).not.toMatch(
+        /\[2026 Apr 15 16:0[01]0?:00 UTC\]/,
+      );
     }
   });
 

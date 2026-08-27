@@ -130,4 +130,16 @@ describe('resolveOwnerCalendarWindow', () => {
     expect(window.startTimestamp).toBe('2026-04-15T18:00:00.000Z');
     expect(window.endTimestamp).toBeNull();
   });
+
+  it('counts last-days as owner-civil clock time, not host-local setDate', () => {
+    const chicago = resolveOwnerCalendarWindow({
+      now: chicagoEvening,
+      kind: 'last_days',
+      value: 2,
+      timeZone: 'America/Chicago',
+    });
+
+    expect(chicago.startTimestamp).toBe('2026-04-14T00:00:00.000Z');
+    expect(chicago.endTimestamp).toBeNull();
+  });
 });

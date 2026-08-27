@@ -176,7 +176,8 @@ For BlueBubbles communication-summary or suggested-reply changes, verify:
 
 - named-thread and broad cross-chat summaries, requested only from Telegram or
   the configured owner self-thread, produce a fuller recap, not only activity
-  counts
+  counts; `today` / `yesterday` / `this week` recaps must match the configured
+  owner `TIMEZONE` calendar, not the process host midnight
 - the configured owner self-thread is excluded from contact summaries, while
   ordinary contact text containing `@Andrea` or `@OpenClaw` remains ordinary
   message evidence and never wakes Andrea in that contact thread

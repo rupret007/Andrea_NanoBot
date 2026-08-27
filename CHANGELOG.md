@@ -5,6 +5,11 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Closed the post-#25 Texts leftover: named-thread `yesterday` freshness
+  now matches the owner-timezone recap window instead of silently including
+  later turns, and named/all-synced model transcripts use the configured
+  owner timezone instead of hardcoded UTC. Operator docs now describe those
+  windows and the AppleScript-only send path honestly.
 - Closed the post-#24 Texts leftover: named-thread and recent-text
   `today` / `yesterday` / `this week` windows now use the configured owner
   timezone instead of host-local midnight, so recaps stay honest when the
