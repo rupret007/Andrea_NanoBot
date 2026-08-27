@@ -2678,25 +2678,11 @@ function buildInlineRows(record: MessageActionRecord): ChannelInlineAction[][] {
     ];
   }
   if (record.sendStatus === 'sent') {
-    if (record.targetChannel === 'bluebubbles') {
-      return [
-        [
-          {
-            label: 'Show draft',
-            actionId: `/message-show ${record.messageActionId}`,
-          },
-        ],
-      ];
-    }
     return [
       [
         {
           label: 'Show draft',
           actionId: `/message-show ${record.messageActionId}`,
-        },
-        {
-          label: 'Send again',
-          actionId: `/message-send-again ${record.messageActionId}`,
         },
       ],
     ];
@@ -4547,7 +4533,9 @@ export async function applyMessageActionOperation(
     operation.kind !== 'cancel_deferred' &&
     !(
       action.sendStatus === 'sent' &&
-      (operation.kind === 'send' || operation.kind === 'rewrite_and_send')
+      (operation.kind === 'send' ||
+        operation.kind === 'send_again' ||
+        operation.kind === 'rewrite_and_send')
     );
   if (requiresFreshFollowupContext) {
     const contextValidation = validateMessageActionFollowupContext({
@@ -4564,15 +4552,14 @@ export async function applyMessageActionOperation(
       };
     }
   }
-  if (
-    action.targetChannel === 'bluebubbles' &&
-    operation.kind === 'send_again'
-  ) {
+  if (operation.kind === 'send_again') {
     return {
       handled: true,
       action,
       replyText:
-        'Andrea: I will not resend from or reuse this BlueBubbles action or its idempotency key; create a new draft as a fresh message action if you want to send another message.',
+        action.targetChannel === 'bluebubbles'
+          ? 'Andrea: I will not resend from or reuse this BlueBubbles action or its idempotency key; create a new draft as a fresh message action if you want to send another message.'
+          : 'Andrea: I will not resend from this action. Create a new draft as a fresh message action if you want to send another message.',
       presentation: buildMessageActionPresentation(
         action,
         deps.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
@@ -5154,16 +5141,14 @@ export async function applyMessageActionOperation(
     };
   }
 
-  if (operation.kind === 'send' || operation.kind === 'send_again') {
-    if (action.sendStatus === 'sent' && operation.kind !== 'send_again') {
+  if (operation.kind === 'send') {
+    if (action.sendStatus === 'sent') {
       notifyVerifiedSend(deps, action);
       return {
         handled: true,
         action,
         replyText:
-          action.targetChannel === 'bluebubbles'
-            ? 'Andrea: That one already went out. Create a fresh message action if you want to send something else.'
-            : 'Andrea: That one already went out. Say send it again if you really want me to resend it.',
+          'Andrea: That one already went out. Create a fresh message action if you want to send something else.',
       };
     }
     const executed = await executeSendOperation({
