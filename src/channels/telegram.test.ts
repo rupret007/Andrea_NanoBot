@@ -749,6 +749,17 @@ describe('Telegram leftover chrome mop', () => {
           first_name: 'Owner',
         },
         text,
+        ...(text.startsWith('/')
+          ? {
+              entities: [
+                {
+                  type: 'bot_command' as const,
+                  offset: 0,
+                  length: text.split(/\s/)[0]?.length || text.length,
+                },
+              ],
+            }
+          : {}),
       },
     };
   }
