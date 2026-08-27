@@ -1802,6 +1802,12 @@ describe('message actions', () => {
     expect(updated.approvedAt).toBeTruthy();
     expect(getTaskById(updated.scheduledTaskId!)?.next_run).toBeTruthy();
     expect(getCommunicationThread(thread.id)?.followupState).toBe('scheduled');
+    expect(buildMessageActionPresentation(updated, 'telegram').text).toContain(
+      'Next: say send it now or cancel.',
+    );
+    expect(interpretMessageActionFollowup('send it now')).toEqual({
+      kind: 'send',
+    });
   });
 
   it('does not queue a scheduled send while the owner pause is active', async () => {
@@ -3337,6 +3343,15 @@ describe('message actions', () => {
         now: new Date('2026-04-08T20:00:01.000Z'),
       }),
     ).toBeUndefined();
+  });
+
+  it('treats the scheduled-card send it now phrase as a send follow-up', () => {
+    expect(interpretMessageActionFollowup('send it now')).toEqual({
+      kind: 'send',
+    });
+    expect(interpretMessageActionFollowup('Send it now.')).toEqual({
+      kind: 'send',
+    });
   });
 
   it('treats BlueBubbles send-using phrasing as a send follow-up', () => {

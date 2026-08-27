@@ -736,6 +736,20 @@ describe('send authorization fence', () => {
     });
   });
 
+  it('treats the scheduled-card send it now phrase as the same Bob yes-fence', () => {
+    for (const utterance of ['send it now', 'Send it now', 'send it now.']) {
+      expect(interpretMessageActionFollowup(utterance)).toEqual({
+        kind: 'send',
+      });
+    }
+    expect(interpretMessageActionFollowup('yes')).toBeNull();
+    expect(interpretMessageActionFollowup('ok')).toBeNull();
+    expect(interpretMessageActionFollowup('send it later')).toEqual({
+      kind: 'defer',
+      timingHint: null,
+    });
+  });
+
   it('does not let leftover Telegram chrome authorize a send without the Bob yes-fence', () => {
     for (const utterance of [
       '/help',
