@@ -83,8 +83,8 @@ These are the commands normal users should rely on. In Telegram, `/commands`
 stays a short setup and status list; thinking and memory commands still work
 if you type them.
 
-- `/start` - quick onboarding
-- `/help` - short in-chat guide
+- `/start` - short bind reminder
+- `/help` - short "just talk" reminder
 - `/commands` - safe command list
 - `/features` - short capability overview
 - `/ping` - basic health check

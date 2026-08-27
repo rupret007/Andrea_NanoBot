@@ -32,6 +32,7 @@ import type { RegisteredGroup } from '../types.js';
 import {
   getTelegramBotGroupMenuCommands,
   getTelegramBotMenuCommands,
+  telegramTextLooksLikeProgrammedChrome,
 } from '../command-surface-registry.js';
 import {
   persistNanoclawHostState,
@@ -126,6 +127,7 @@ async function createTelegramInboundTestBot(
   onMessage: ConstructorParameters<typeof TelegramChannel>[1]['onMessage'],
   options?: {
     registeredGroups?: () => Record<string, RegisteredGroup>;
+    sentReplies?: string[];
   },
 ): Promise<Bot> {
   const channel = new TelegramChannel('test-token', {
@@ -165,7 +167,19 @@ async function createTelegramInboundTestBot(
         typeof previous
       >;
     }
+    if (method === 'getFile') {
+      return Promise.resolve({
+        ok: true,
+        result: {
+          file_id: String((payload as { file_id?: string }).file_id || ''),
+          file_unique_id: 'photo-unique-1',
+          file_size: 12,
+        },
+      }) as ReturnType<typeof previous>;
+    }
     if (method === 'sendMessage') {
+      const text = String((payload as { text?: string }).text || '');
+      options?.sentReplies?.push(text);
       return Promise.resolve({
         ok: true,
         result: {
@@ -175,7 +189,7 @@ async function createTelegramInboundTestBot(
             id: TELEGRAM_INBOUND_TEST_CHAT_ID,
             type: 'private',
           },
-          text: String((payload as { text?: string }).text || ''),
+          text,
         },
       }) as ReturnType<typeof previous>;
     }
@@ -254,22 +268,18 @@ describe('extractTelegramLeadingCommand', () => {
 });
 
 describe('buildTelegramHelpText', () => {
-  it('keeps help short and focused on how to use Telegram well', () => {
+  it('keeps help to a short bind reminder instead of a menu wall', () => {
     const help = buildTelegramHelpText('Andrea');
 
-    expect(help).toContain('*How Andrea Works Here*');
+    expect(help).toContain('Just talk');
     expect(help).toContain('/registermain');
-    expect(help).toContain('/commands');
-    expect(help).toContain('/features');
-    expect(help).toContain('Most people should just send a normal message.');
-    expect(help).toContain("what's on my calendar tomorrow");
-    expect(help).toContain('what bills do I need to pay this week');
     expect(help).toContain('send it');
-    expect(help).toContain('QA, Karen');
+    expect(telegramTextLooksLikeProgrammedChrome(help)).toBe(false);
+    expect(help).not.toContain('/commands');
+    expect(help).not.toContain('/features');
+    expect(help).not.toContain("what's on my calendar tomorrow");
     expect(help).not.toContain('Benchmark-Guided Packs');
     expect(help).not.toContain('/alexa_status');
-    expect(help).not.toContain('/amazon_status');
-    expect(help).not.toContain('/amazon_search');
   });
 });
 
@@ -304,15 +314,13 @@ describe('extractTelegramReplyRef', () => {
 });
 
 describe('buildTelegramWelcomeText', () => {
-  it('shows quick-start instructions for new users', () => {
+  it('stays a one-line bind reminder instead of a welcome wall', () => {
     const welcome = buildTelegramWelcomeText('Andrea');
 
-    expect(welcome).toContain('*Welcome to Andrea*');
+    expect(welcome).toContain('Just talk');
     expect(welcome).toContain('/registermain');
-    expect(welcome).toContain('Just send a normal message');
-    expect(welcome).toContain("what's on my calendar tomorrow");
-    expect(welcome).toContain('remind me to take my pills at 9');
-    expect(welcome).toContain('send it');
+    expect(telegramTextLooksLikeProgrammedChrome(welcome)).toBe(false);
+    expect(welcome).not.toContain("what's on my calendar tomorrow");
     expect(welcome).not.toContain('Benchmark-Guided Packs');
     expect(welcome).not.toContain('Candace');
     expect(welcome).not.toContain('@Andrea');
@@ -700,22 +708,124 @@ describe('TelegramChannel polling hardening', () => {
     );
   });
 
-  it('registers a small chat-first Telegram DM menu from the shared public registry', async () => {
+  it('registers only bind commands in the Telegram DM menu', async () => {
     expect(getTelegramBotMenuCommands().map((entry) => entry.command)).toEqual([
-      'help',
       'registermain',
       'mainchat',
-      'features',
-      'ping',
     ]);
+    expect(getTelegramBotGroupMenuCommands()).toEqual([]);
+    expect(
+      getTelegramBotMenuCommands().some((entry) => entry.command === 'help'),
+    ).toBe(false);
     expect(
       getTelegramBotMenuCommands().some((entry) => entry.command === 'start'),
     ).toBe(false);
     expect(
       getTelegramBotMenuCommands().some(
-        (entry) => entry.command === 'cognition',
+        (entry) => entry.command === 'features',
       ),
     ).toBe(false);
+    expect(
+      getTelegramBotMenuCommands().some((entry) => entry.command === 'ping'),
+    ).toBe(false);
+  });
+});
+
+describe('Telegram leftover chrome mop', () => {
+  function buildOwnerTextUpdate(text: string, updateId = 40) {
+    return {
+      update_id: updateId,
+      message: {
+        message_id: 300 + updateId,
+        date: 1_776_000_000,
+        chat: {
+          id: TELEGRAM_INBOUND_TEST_CHAT_ID,
+          type: 'private' as const,
+          first_name: 'Owner',
+        },
+        from: {
+          id: 77,
+          is_bot: false,
+          first_name: 'Owner',
+        },
+        text,
+      },
+    };
+  }
+
+  it('does not inject a programmed menu or help wall into a normal owner chat', async () => {
+    const sentReplies: string[] = [];
+    const onMessage = vi.fn<
+      ConstructorParameters<typeof TelegramChannel>[1]['onMessage']
+    >(async () => undefined);
+    const bot = await createTelegramInboundTestBot(onMessage, { sentReplies });
+
+    await bot.handleUpdate(buildOwnerTextUpdate('hey, what is for dinner?'));
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0]?.[1].content).toBe(
+      'hey, what is for dinner?',
+    );
+    expect(sentReplies).toEqual([]);
+  });
+
+  it('keeps owner photos on the free-chat path without a help wall', async () => {
+    const sentReplies: string[] = [];
+    const onMessage = vi.fn<
+      ConstructorParameters<typeof TelegramChannel>[1]['onMessage']
+    >(async () => undefined);
+    const bot = await createTelegramInboundTestBot(onMessage, { sentReplies });
+
+    await bot.handleUpdate({
+      update_id: 41,
+      message: {
+        message_id: 341,
+        date: 1_776_000_000,
+        chat: {
+          id: TELEGRAM_INBOUND_TEST_CHAT_ID,
+          type: 'private',
+          first_name: 'Owner',
+        },
+        from: {
+          id: 77,
+          is_bot: false,
+          first_name: 'Owner',
+        },
+        photo: [
+          {
+            file_id: 'photo-1',
+            file_unique_id: 'photo-unique-1',
+            width: 100,
+            height: 100,
+            file_size: 12,
+          },
+        ],
+      },
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0]?.[1].content).toContain('[Photo]');
+    expect(sentReplies).toEqual([]);
+  });
+
+  it('keeps explicit /start and /help replies short and off the agent turn', async () => {
+    const sentReplies: string[] = [];
+    const onMessage = vi.fn<
+      ConstructorParameters<typeof TelegramChannel>[1]['onMessage']
+    >(async () => undefined);
+    const bot = await createTelegramInboundTestBot(onMessage, { sentReplies });
+
+    await bot.handleUpdate(buildOwnerTextUpdate('/start', 42));
+    await bot.handleUpdate(buildOwnerTextUpdate('/help', 43));
+
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(sentReplies).toHaveLength(2);
+    expect(sentReplies[0]).toContain('Just talk');
+    expect(sentReplies[1]).toContain('Just talk');
+    expect(sentReplies[1]).toContain('send it');
+    for (const reply of sentReplies) {
+      expect(telegramTextLooksLikeProgrammedChrome(reply)).toBe(false);
+    }
   });
 });
 
