@@ -95,6 +95,7 @@ import {
   buildReviewDraftPrompt,
   findLatestUnresolvedInboundAsk,
   formatRecentTextReviewFreshnessBlockedReply,
+  formatRecentTextReviewLocalTimestamp,
   formatRecentTextReviewUnboundReply,
   formatRecentTextReviewItemWhyReply,
   formatRecentTextReviewReply,
@@ -2704,24 +2705,9 @@ function clipThreadSummaryEvidence(
 function formatThreadSummaryTranscriptTimestamp(
   value: string | null | undefined,
 ): string {
-  const date = new Date(value || '');
-  if (!Number.isFinite(date.getTime())) return 'time unknown';
-  const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-  const pad = (part: number): string => String(part).padStart(2, '0');
-  return `${date.getUTCFullYear()} ${months[date.getUTCMonth()]} ${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())} UTC`;
+  return (
+    formatRecentTextReviewLocalTimestamp(value, TIMEZONE) || 'time unknown'
+  );
 }
 
 function getThreadSummarySpeakerKey(message: NewMessage): string {
@@ -4223,7 +4209,7 @@ async function runCommunicationThreadSummaryCapability(
   const latestTranscriptMessages = listMessagesForChatWindow({
     chatJid: resolution.target.chatJid,
     startTimestamp: window.startTimestamp,
-    endTimestamp: null,
+    endTimestamp: window.endTimestamp,
     limit: 400,
   })
     .filter(

@@ -279,7 +279,7 @@ When changing behavior, keep these rules intact:
   channel prefixes. A provided title cannot hide that stored canary, and
   BlueBubbles addresses are never parsed as canary labels. A missing
   caller JID cannot authorize. Contact
-  sends still require a fresh owner `send it` / `Send now` in the
-  registered Telegram front-door chat (Bob) or the configured Messages
+  sends still require a fresh owner `send it` / `send it now` / `send now`
+  in the registered Telegram front-door chat (Bob) or the configured Messages
   self-thread. Dispatch and scheduled-send deferral also fail-close those
   callers.

@@ -121,9 +121,9 @@ Outbound Messages sends use the BlueBubbles AppleScript path only. Private API
 is never selected, including when the server advertises it or the server-info
 probe fails. The Private API probe is diagnostic only; it never chooses a send
 method. That send-path rule does not replace the existing approval fence: a
-real contact send still requires a fresh owner-authored `send it` / `Send now`
-in the registered Telegram front-door chat (Bob / `@andrea_nanobot`) or the
-configured Messages self-thread. QA, Karen, and ordinary contact threads never
+real contact send still requires a fresh owner-authored `send it` /
+`send it now` / `send now` in the registered Telegram front-door chat
+(Bob / `@andrea_nanobot`) or the configured Messages self-thread. QA, Karen, and ordinary contact threads never
 authorize a send, even if they reply `yes` or `send it`, and a `tg:qa` or
 `tg:karen` JID cannot borrow the main group record. A numeric Telegram JID
 that is not that registered front-door fails closed the same way, including
@@ -180,7 +180,10 @@ From Telegram or the configured self-thread, a named ask such as `summarize
 Candace from the last 2 days` stays bounded to that synced contact thread.
 Broad asks such as `summarize my texts from the past 48 hours` summarize across
 synced BlueBubbles contact and group chats in that requested window, excluding
-the private self-thread control conversation.
+the private self-thread control conversation. Named-thread and recent-text
+`today` / `yesterday` / `this week` windows use the configured owner
+`TIMEZONE`, not the process host calendar. Relative `last N hours` and the
+default 24-hour window stay duration-based.
 
 Behavior:
 
@@ -408,10 +411,14 @@ Outbound:
 
 - Andrea sends bounded text replies only
 - every new recipient/body instruction is staged unsent; provider dispatch
-  requires a separate fresh `Send now` or `send it` approval bound to that card
-- send path is `/api/v1/message/text`
+  requires a separate fresh `send it`, `send it now`, or `send now` approval
+  bound to that card
+- live Messages send uses AppleScript only; Private API stays off, including
+  when the server advertises it or the server-info probe fails
+- BlueBubbles local HTTP is only the transport that requests AppleScript send;
+  it is not a Private API or alternate send method, and group send is not
+  implemented
 - auth is sent with compatible `guid`, `password`, and `token` query parameters
-- Andrea includes both `text` and `message` fields in the payload for compatibility
 - if reply threading is rejected, Andrea retries once without reply metadata
 - approved real outbound user messages bypass the `Andrea:` prefix so the delivered text reads like the user's reply, while Andrea-authored companion/status messages keep the label
 
