@@ -2898,7 +2898,7 @@ export function interpretMessageActionFollowup(
     /^(send using blue bubbles|send (?:it|that|this)(?: reply)? using blue bubbles|send (?:it|that|this)(?: reply)? with blue bubbles)$/.test(
       normalized,
     ) ||
-    /^(send it|send now|send that|send that reply|send this reply)$/.test(
+    /^(send it|send it now|send now|send that|send that reply|send this reply)$/.test(
       normalized,
     ) ||
     /^send (?:this|that|it)(?: reply)? to [a-z][a-z' -]+$/i.test(normalized)
