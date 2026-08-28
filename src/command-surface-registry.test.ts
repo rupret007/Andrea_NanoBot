@@ -301,6 +301,31 @@ describe('command surface docs', () => {
     );
   });
 
+  it('keeps send-path docs on the exact fence and AppleScript-only delivery', () => {
+    const companionGuide = readDoc('docs', 'COMMUNICATION_COMPANION.md');
+    const messagingGuide = readDoc(
+      'docs',
+      'MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md',
+    );
+    const bluebubblesGuide = readDoc('docs', 'BLUEBUBBLES_CHANNEL_PREP.md');
+    const securityGuide = readDoc('docs', 'SECURITY.md');
+
+    for (const phrase of ['`send it`', '`send it now`', '`send now`']) {
+      expect(companionGuide).toContain(phrase);
+      expect(messagingGuide).toContain(phrase);
+      expect(bluebubblesGuide).toContain(phrase);
+      expect(securityGuide).toContain(phrase);
+    }
+
+    expect(companionGuide).toContain('AppleScript-only Messages path');
+    expect(messagingGuide).toContain(
+      'Every Messages delivery is AppleScript-only',
+    );
+    expect(bluebubblesGuide).toContain('AppleScript path only');
+    expect(securityGuide).toContain('only outbound send path');
+    expect(messagingGuide).not.toContain('/api/v1/chat/new');
+  });
+
   it('documents hidden backing commands in the operator reference', () => {
     const commandReference = readDoc('docs', 'COMMAND_SURFACE_REFERENCE.md');
 

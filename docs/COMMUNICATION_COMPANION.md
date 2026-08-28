@@ -177,13 +177,16 @@ Telegram:
   registered main chat
 - treats a direct owner send imperative as recipient/body selection only; all
   `Text`, `draft`, and `prepare` wording stays unsent until a separate fresh
-  `Send now` or `send it` approval is bound to the presented action
+  approval is bound to the presented action. On the Bob text path, the only
+  accepted approval phrases are `send it`, `send it now`, and `send now`
 - reports success only after binding a provider receipt to the immutable
   approved recipient/body snapshot; missing, partial, group, or ambiguous
   recipients fail closed
-- creates a new direct chat in one BlueBubbles request after explicit
-  authorization and
+- creates a new direct chat through the AppleScript-only Messages path after
+  explicit authorization and
   blocks automatic replay when delivery cannot be verified
+- never selects Private API or a direct HTTP send path, and never dispatches to
+  a group recipient
 
 BlueBubbles:
 
@@ -209,8 +212,8 @@ BlueBubbles:
   receive unrelated profile or life-thread memory
 - a fresh direct imperative such as `Text Avery Example: Dinner is ready.`
   selects and displays the exact recipient/body but does not send; only a
-  separate fresh `Send now`/`send it` approval on that presented action may
-  enter provider dispatch
+  separate fresh `send it`, `send it now`, or `send now` approval on that
+  presented action may enter provider dispatch
 - style or authoring instructions remain review-staged. Andrea never appends a
   generic canned joke or other unrelated recipient-facing prose
 
