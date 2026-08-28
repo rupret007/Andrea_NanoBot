@@ -5,6 +5,11 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Closed the Windows CI honesty leftover without weakening the product
+  invariant: the durable-work SQLite fixture hooks now have a bounded 30-second
+  budget under the full hosted suite, while the assertions still run once with
+  no retry or skip. Send-path docs now name the exact `send it` / `send it now`
+  / `send now` fence and the AppleScript-only, no-Private-API, no-group path.
 - Closed the post-#25 Texts leftover: named-thread `yesterday` freshness
   now matches the owner-timezone recap window instead of silently including
   later turns, and named/all-synced model transcripts use the configured

@@ -59,18 +59,24 @@ The default BlueBubbles flow is:
 4. wait for explicit user approval to send now, send later, remind later, save,
    or keep as draft
 
-`send it` and `send it later` apply only to the current same-thread draft/action.
-They do not approve unrelated suggestions or older stale reviews.
+On the registered Bob text path, only the exact fresh phrases `send it`,
+`send it now`, and `send now` authorize immediate dispatch for the current
+presented action. `send it later` is a separate defer operation. None of these
+phrases approve unrelated suggestions or older stale reviews.
 
 A separate host-owned staging flow handles direct imperatives such as
 `Text Avery Example: Dinner is ready` or `Have BlueBubbles send Avery Example a
 message saying ...`. The initial utterance selects and presents the exact
 recipient/body but never authorizes provider dispatch. Only a separate fresh
-`Send now`/`send it` action bound to that presented card may enter the fenced
-send path. That approval checks current registration, provider health, write
-permission, pause generation, recipient, and exact body before at most one
-provider attempt. `Draft...` and `Prepare...` wording use the same non-sending
-card contract.
+`send it`, `send it now`, or `send now` approval bound to that presented card
+may enter the fenced send path. The rendered `Send now` control is bound to the
+same immutable action; it is not an additional free-text alias. That approval
+checks current registration, provider health, write permission, pause
+generation, recipient, and exact body before at most one provider attempt.
+`Draft...` and `Prepare...` wording use the same non-sending card contract.
+
+Every Messages delivery is AppleScript-only. Private API stays off, no direct
+HTTP-send path is allowed, and group recipients never enter dispatch.
 
 ### Supported in V1
 
@@ -112,7 +118,7 @@ card contract.
   recipient or replace the separately presented fresh approval
 - high-risk emotional, calendar, money, medical, or commitment-changing messages stay draft/approval-first
 - group and ambiguous recipients fail closed; first-contact delivery uses one
-  fenced provider POST and verify-before-resend handling
+  fenced AppleScript-only provider attempt and verify-before-resend handling
 - `send later` is one-off, same-thread, existing-thread only, and revalidated at send time
 - failed, stale, unsent, and scheduled sends stay visible in review/outcome surfaces
 
@@ -149,7 +155,8 @@ address. For example:
 
 Andrea resolves the exact conversation/contact/address and displays one
 recipient-bound action card without sending. The owner must then use that
-card's `Send now` control or say `send it` as a separate fresh approval.
+card's `Send now` control or say exactly `send it`, `send it now`, or `send now`
+as a separate fresh approval.
 `Draft a message...`, `Prepare a message...`, and direct imperatives therefore
 all begin with review controls. A first-contact message is never queued for
 later.
@@ -162,14 +169,15 @@ the exact phone/email. BlueBubbles contact hydration may attach a derived
 display name to an existing local chat record, but it does not store contact
 cards, avatars, or a second address-book archive. For a first contact, only the
 selected recipient name/address pair enters the normal message-action record.
-After the separate fresh authorization, Andrea permits one fenced BlueBubbles
-`/api/v1/chat/new` POST for that action. It requires both the created chat
-identifier and message receipt before marking
-the action sent. Before the network call, it durably enters a verify-before-
-resend state, so a process or machine failure inside the external side-effect
-window cannot reopen the action for automatic replay. A timeout, uncertain
-response, malformed receipt, or lost response remains `delivery_unverified`;
-Andrea tells the owner to inspect the conversation and blocks automatic retry.
+After the separate fresh authorization, Andrea permits one fenced direct-chat
+creation through the BlueBubbles bridge with the send method forced to
+AppleScript. No direct HTTP-send or Private API path is allowed. Andrea requires
+both the created chat identifier and message receipt before marking the action
+sent. Before the provider attempt, it durably enters a verify-before-resend
+state, so a process or machine failure inside the external side-effect window
+cannot reopen the action for automatic replay. A timeout, uncertain response,
+malformed receipt, or lost response remains `delivery_unverified`; Andrea tells
+the owner to inspect the conversation and blocks automatic retry.
 
 ### BlueBubbles
 

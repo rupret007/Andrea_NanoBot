@@ -26,6 +26,7 @@ import {
 } from './durable-work-continuity.js';
 
 const NOW = '2026-07-13T12:00:00.000Z';
+const DATABASE_HOOK_TIMEOUT_MS = 30_000;
 const binding = {
   ownerId: 'adversarial-owner',
   chatId: 'adversarial-chat',
@@ -37,16 +38,22 @@ const binding = {
 let testDirectory = '';
 let databasePath = '';
 
-beforeEach(() => {
-  testDirectory = mkdtempSync(join(tmpdir(), 'andrea-durable-adversarial-'));
-  databasePath = join(testDirectory, 'messages.db');
-  _initTestDatabaseAtPath(databasePath);
-});
+beforeEach(
+  () => {
+    testDirectory = mkdtempSync(join(tmpdir(), 'andrea-durable-adversarial-'));
+    databasePath = join(testDirectory, 'messages.db');
+    _initTestDatabaseAtPath(databasePath);
+  },
+  // Windows hosted runners can exceed Vitest's 10-second default while the
+  // full suite initializes SQLite. Keep the hook bounded without retrying,
+  // skipping, or weakening any durable-work invariant.
+  DATABASE_HOOK_TIMEOUT_MS,
+);
 
 afterEach(() => {
   _closeDatabase();
   rmSync(testDirectory, { recursive: true, force: true });
-});
+}, DATABASE_HOOK_TIMEOUT_MS);
 
 function seedCheckpoint(input: {
   turnId: string;
