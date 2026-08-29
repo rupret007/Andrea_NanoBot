@@ -225,8 +225,8 @@ These are intentionally different:
   - keep the draft unsent, but attach it to the tracked thread so Andrea can bring it back in follow-through and review
 - `keep as draft`
   - keep the text as a draft only, with no send queue and no implied reminder
-- `approve and send now`
-  - real delivery through the live channel
+- `send it`, `send it now`, or `send now`
+  - real delivery through the live channel after a separate yes in Bob chat
 
 Andrea should not blur these together.
 
