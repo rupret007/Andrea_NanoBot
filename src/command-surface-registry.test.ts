@@ -324,6 +324,10 @@ describe('command surface docs', () => {
     expect(bluebubblesGuide).toContain('AppleScript path only');
     expect(securityGuide).toContain('only outbound send path');
     expect(messagingGuide).not.toContain('/api/v1/chat/new');
+    expect(messagingGuide).not.toContain('approve and send now');
+    expect(companionGuide).not.toContain('approve and send now');
+    expect(bluebubblesGuide).not.toContain('approve and send now');
+    expect(securityGuide).not.toContain('approve and send now');
   });
 
   it('documents hidden backing commands in the operator reference', () => {
