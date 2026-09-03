@@ -482,7 +482,7 @@ export function buildThreadGroundedSummaryGist(input: {
   const evidenceTurns = [
     latestInbound,
     ...turns
-      .filter((turn, index) => index !== latestInboundIndex)
+      .filter((_turn, index) => index !== latestInboundIndex)
       .slice(-Math.max(0, bulletLimit)),
   ];
   for (const turn of evidenceTurns) {
