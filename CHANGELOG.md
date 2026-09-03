@@ -5,6 +5,16 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Named iMessage/SMS summarize now gives Jeff a useful thread-grounded gist
+  (`Bob told you: Practice at eight tonight. You haven't replied yet.`)
+  instead of repeating the same inbound quote. Suggested replies stay unsent.
+  `draft Bob` still drafts Jeff's reply to Bob and does not send. Questions
+  and requests still withhold a canned answer. Send-path source blobs stay
+  SHA-256-identical to leftover #29 unless a later leftover proves the exact
+  Bob fence is still `send it` / `send it now` / `send now`. Bare `yes` / `ok`
+  never authorize. Private API stays off. AppleScript is the only send path.
+  QA and Karen still cannot authorize a send. Telegram stays Bot the Bot.
+  No merge and no live send in this leftover.
 - Closed the post-#29 Texts leftover: named-person routing stays in place,
   and summarize/draft wording is now person- and thread-grounded for
   informational updates (`Dinner at seven tonight`, `Load-in at six tonight`)

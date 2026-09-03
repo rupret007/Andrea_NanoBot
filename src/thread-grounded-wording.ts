@@ -335,3 +335,173 @@ export function companionStyleToThreadAckStyle(
   if (/\bconcise|direct/.test(tone)) return 'direct';
   return 'warm';
 }
+
+export interface ThreadGroundedSummaryTurn {
+  content: string;
+  isFromMe: boolean;
+  isBot?: boolean;
+  speakerLabel: string;
+}
+
+export interface ThreadGroundedSummaryGist {
+  digestSentences: string[];
+  bullets: string[];
+  ownerOwesReply: boolean;
+}
+
+const TOPIC_TITLE_RE =
+  /\b(?:plans?|update|logistics|project|chat|group|thread|team|band)\b/i;
+
+function looksLikePersonChatLabel(label: string): boolean {
+  const normalized = normalizeText(label);
+  return (
+    /^[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2}$/.test(normalized) &&
+    !TOPIC_TITLE_RE.test(normalized)
+  );
+}
+
+export function threadGroundedPersonLabel(
+  chatName: string,
+  isGroup: boolean,
+  speakerLabel: string,
+): string {
+  const speaker = normalizeText(speakerLabel);
+  const chat = normalizeText(chatName);
+  if (isGroup) return speaker || chat || 'Someone';
+  if (looksLikePersonChatLabel(speaker)) return speaker;
+  if (looksLikePersonChatLabel(chat)) return chat;
+  return speaker || chat || 'They';
+}
+
+function isShortLogisticsArc(turns: ThreadGroundedSummaryTurn[]): boolean {
+  if (turns.length < 2 || turns.length > 6) return false;
+  return turns.every((turn) => {
+    const content = normalizeText(turn.content);
+    return content.length > 0 && content.length <= 28;
+  });
+}
+
+function digestAlreadyIncludes(
+  digestSentences: string[],
+  value: string,
+): boolean {
+  const needle = normalizeText(value).toLowerCase();
+  if (!needle) return true;
+  return digestSentences.some((sentence) =>
+    normalizeText(sentence).toLowerCase().includes(needle),
+  );
+}
+
+/**
+ * Jeff-facing local gist for a named iMessage/SMS thread.
+ * Andrea is the engine: this wording is for Jeff, not a send.
+ * Suggested replies and drafts stay unsent and are built separately.
+ */
+export function buildThreadGroundedSummaryGist(input: {
+  chatName: string;
+  isGroup: boolean;
+  turns: ThreadGroundedSummaryTurn[];
+  bulletLimit?: number;
+}): ThreadGroundedSummaryGist {
+  const turns = input.turns.filter(
+    (turn) => !turn.isBot && normalizeText(turn.content),
+  );
+  let latestInboundIndex = -1;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (!turns[index]?.isFromMe) {
+      latestInboundIndex = index;
+      break;
+    }
+  }
+  const latestInbound = turns[latestInboundIndex];
+  const ownerOwesReply = Boolean(
+    latestInbound &&
+    !turns.slice(latestInboundIndex + 1).some((turn) => turn.isFromMe),
+  );
+  const person = threadGroundedPersonLabel(
+    input.chatName,
+    input.isGroup,
+    latestInbound?.speakerLabel || input.chatName,
+  );
+  const digestSentences: string[] = [];
+  const bullets: string[] = [];
+  const bulletLimit = input.bulletLimit ?? 4;
+
+  if (!latestInbound) {
+    return {
+      digestSentences: ['No inbound update in this window.'],
+      bullets: [],
+      ownerOwesReply: false,
+    };
+  }
+
+  if (isShortLogisticsArc(turns)) {
+    const inboundTurns = turns.filter((turn) => !turn.isFromMe);
+    const lastOutbound = [...turns].reverse().find((turn) => turn.isFromMe);
+    const inboundParts = inboundTurns.map((turn, index) => {
+      const content = normalizeText(turn.content);
+      return index === 0 ? `${person} said ${content}` : `Then ${content}`;
+    });
+    const logistics = [
+      ...inboundParts,
+      lastOutbound ? `You said ${normalizeText(lastOutbound.content)}` : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    digestSentences.push(logistics);
+    if (ownerOwesReply) {
+      digestSentences.push("You haven't replied yet.");
+    }
+  } else {
+    const cleaned = cleanedInformationalInbound(latestInbound.content);
+    const concrete = extractConcreteThreadUpdateAnchor(latestInbound.content);
+    const withhold = shouldWithholdThreadGroundedReply(latestInbound.content);
+    const askedGroup = input.isGroup && withhold;
+    const askedYou = !input.isGroup && withhold;
+    if (askedGroup) {
+      digestSentences.push(`${person} asked the group: ${cleaned}.`);
+    } else if (askedYou) {
+      digestSentences.push(`${person} asked you: ${cleaned}.`);
+    } else if (concrete) {
+      digestSentences.push(`${person} told you: ${concrete}.`);
+    } else {
+      digestSentences.push(`${person} told you: ${cleaned}.`);
+    }
+    if (ownerOwesReply) {
+      digestSentences.push("You haven't replied yet.");
+    } else {
+      const latestTurn = turns.at(-1);
+      digestSentences.push(
+        latestTurn?.isFromMe
+          ? `You said: ${normalizeText(latestTurn.content).replace(/[.!?]+$/g, '')}.`
+          : 'You already replied.',
+      );
+    }
+  }
+
+  const evidenceTurns = [
+    latestInbound,
+    ...turns
+      .filter((_turn, index) => index !== latestInboundIndex)
+      .slice(-Math.max(0, bulletLimit)),
+  ];
+  for (const turn of evidenceTurns) {
+    if (bullets.length >= bulletLimit) break;
+    const content = normalizeText(turn.content);
+    if (!content || digestAlreadyIncludes(digestSentences, content)) continue;
+    const label = turn.isFromMe
+      ? 'You'
+      : threadGroundedPersonLabel(
+          input.chatName,
+          input.isGroup,
+          turn.speakerLabel,
+        );
+    bullets.push(
+      ownerOwesReply && turn === latestInbound
+        ? `Open: ${label}: ${content}`
+        : `${label}: ${content}`,
+    );
+  }
+
+  return { digestSentences, bullets, ownerOwesReply };
+}

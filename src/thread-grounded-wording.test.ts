@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildThreadGroundedAcknowledgement,
   buildThreadGroundedSuggestedReplies,
+  buildThreadGroundedSummaryGist,
   extractThreadUpdateAnchor,
   shouldWithholdThreadGroundedReply,
 } from './thread-grounded-wording.js';
@@ -81,6 +82,94 @@ describe('thread-grounded wording', () => {
     ]);
     expect(replies.join(' ')).not.toMatch(
       /\b(?:checking|will confirm|will get back|yes I can)\b/i,
+    );
+  });
+
+  it('builds a Jeff-facing Bob gist instead of a quote dump', () => {
+    const gist = buildThreadGroundedSummaryGist({
+      chatName: 'Bob',
+      isGroup: false,
+      turns: [
+        {
+          content: 'Practice moved to eight tonight, just keeping you posted.',
+          isFromMe: false,
+          speakerLabel: 'Bob',
+        },
+      ],
+    });
+    expect(gist.ownerOwesReply).toBe(true);
+    expect(gist.digestSentences.join(' ')).toContain(
+      'Bob told you: Practice at eight tonight.',
+    );
+    expect(gist.digestSentences.join(' ')).toContain(
+      "You haven't replied yet.",
+    );
+    expect(gist.digestSentences.join(' ')).not.toMatch(
+      /opened with|latest open turn|By the end/i,
+    );
+  });
+
+  it('keeps a short Jeff/Bob logistics arc without inventing an answer', () => {
+    const gist = buildThreadGroundedSummaryGist({
+      chatName: 'Bob',
+      isGroup: false,
+      turns: [
+        { content: '7 works.', isFromMe: false, speakerLabel: 'Bob' },
+        { content: 'No.', isFromMe: true, speakerLabel: 'You' },
+        { content: '8 instead.', isFromMe: false, speakerLabel: 'Bob' },
+        { content: 'Done.', isFromMe: true, speakerLabel: 'You' },
+      ],
+    });
+    expect(gist.ownerOwesReply).toBe(false);
+    expect(gist.digestSentences.join(' ')).toContain('7 works.');
+    expect(gist.digestSentences.join(' ')).toContain('8 instead.');
+    expect(gist.digestSentences.join(' ')).toContain('Done.');
+    expect(gist.digestSentences.join(' ')).not.toMatch(/opened with/i);
+  });
+
+  it("keeps Jeff's latest outbound as the current-state gist", () => {
+    const gist = buildThreadGroundedSummaryGist({
+      chatName: 'Bob',
+      isGroup: false,
+      turns: [
+        {
+          content: 'Actually, parking is closed on that side.',
+          isFromMe: false,
+          speakerLabel: 'Bob',
+        },
+        {
+          content: 'CURRENT STATE: use the east entrance instead.',
+          isFromMe: true,
+          speakerLabel: 'You',
+        },
+      ],
+    });
+    expect(gist.ownerOwesReply).toBe(false);
+    expect(gist.digestSentences.join(' ')).toContain(
+      'You said: CURRENT STATE: use the east entrance instead.',
+    );
+    expect(gist.digestSentences.join(' ')).not.toMatch(
+      /opened with|latest open turn|By the end/i,
+    );
+  });
+
+  it('withholds a canned gist answer when Bob asked a question', () => {
+    const gist = buildThreadGroundedSummaryGist({
+      chatName: 'Bob',
+      isGroup: false,
+      turns: [
+        {
+          content: 'Can you make practice at seven tonight?',
+          isFromMe: false,
+          speakerLabel: 'Bob',
+        },
+      ],
+    });
+    expect(gist.digestSentences.join(' ')).toContain(
+      'Bob asked you: Can you make practice at seven tonight',
+    );
+    expect(gist.digestSentences.join(' ')).not.toMatch(
+      /\b(?:yes I can|I will be there)\b/i,
     );
   });
 });

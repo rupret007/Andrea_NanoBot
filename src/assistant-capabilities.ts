@@ -167,6 +167,7 @@ import { TIMEZONE } from './config.js';
 import { resolveOwnerCalendarWindow } from './timezone.js';
 import {
   buildThreadGroundedSuggestedReplies,
+  buildThreadGroundedSummaryGist,
   shouldWithholdThreadGroundedReply,
 } from './thread-grounded-wording.js';
 
@@ -2903,36 +2904,6 @@ function pickRepresentativeThreadMessages(
     .filter((message): message is NewMessage => Boolean(message));
 }
 
-function inferThreadReplyNeed(messages: NewMessage[]): string | null {
-  let latestInboundIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message && !message.is_from_me && !message.is_bot_message) {
-      latestInboundIndex = index;
-      break;
-    }
-  }
-  const latestInbound = messages[latestInboundIndex];
-  if (!latestInbound) return null;
-  if (
-    messages.slice(latestInboundIndex + 1).some((message) => message.is_from_me)
-  ) {
-    return null;
-  }
-  const content = redactRecentTextReviewText(
-    latestInbound.content || '',
-  ).toLowerCase();
-  if (
-    /\?/.test(content) ||
-    /\b(?:can you|could you|would you|will you|do you|did you|are you|were you|should we|should i|do you want|let me know|lmk|need you to|please\s+(?:send|share|confirm|call|bring|reply|tell)|send me|share with me|tell me|confirm)\b/.test(
-      content,
-    )
-  ) {
-    return `The latest open ask looks like: "${clipThreadSummaryEvidence(latestInbound.content, 180)}".`;
-  }
-  return null;
-}
-
 function buildFallbackThreadSummaryReply(params: {
   chatName: string;
   windowLabel: string;
@@ -2942,21 +2913,6 @@ function buildFallbackThreadSummaryReply(params: {
   isGroup?: boolean;
   planFacts?: GroundedMessagesPlanFact[];
 }): string {
-  const highlights = pickRepresentativeThreadMessages(params.messages);
-  const selectHighlightsIncludingLatest = (limit: number): NewMessage[] => {
-    if (highlights.length <= limit) return highlights;
-    return [
-      ...highlights.slice(0, Math.max(0, limit - 1)),
-      highlights.at(-1),
-    ].filter((message): message is NewMessage => Boolean(message));
-  };
-  const digestHighlights = selectHighlightsIncludingLatest(
-    params.channel === 'bluebubbles' ? 2 : 3,
-  );
-  const bulletHighlights = selectHighlightsIncludingLatest(
-    params.channel === 'bluebubbles' ? 2 : 4,
-  );
-  const replyNeed = inferThreadReplyNeed(params.messages);
   const latestPlanFact = params.planFacts?.at(-1);
   const planSentence = latestPlanFact
     ? clipThreadSummaryEvidence(
@@ -2964,70 +2920,25 @@ function buildFallbackThreadSummaryReply(params: {
         180,
       )
     : null;
-  let latestInbound: NewMessage | undefined;
-  for (let index = params.messages.length - 1; index >= 0; index -= 1) {
-    const message = params.messages[index];
-    if (message && !message.is_from_me && !message.is_bot_message) {
-      latestInbound = message;
-      break;
-    }
-  }
-  const latestInboundSpeaker = latestInbound
-    ? params.speakerLabels.get(getThreadSummarySpeakerKey(latestInbound)) ||
-      params.chatName
-    : null;
-  const latestInboundIndex = latestInbound
-    ? params.messages.findIndex((message) => message.id === latestInbound.id)
-    : -1;
-  const currentState =
-    latestInbound &&
-    latestInboundIndex >= 0 &&
-    !params.messages
-      .slice(latestInboundIndex + 1)
-      .some((message) => message.is_from_me)
-      ? `Current state: ${clipThreadSummaryEvidence(latestInboundSpeaker || params.chatName, 72)}'s latest open turn is "${clipThreadSummaryEvidence(latestInbound.content, 140)}".`
-      : null;
-  const lead = `Here’s the gist from ${params.chatName} ${params.windowLabel === 'today' ? 'today' : `over ${params.windowLabel}`}.`;
-  const digestSentences = digestHighlights.map((message, index) => {
-    const speaker =
-      params.speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
-      'Someone';
-    const content = clipThreadSummaryEvidence(
-      message.content,
-      params.channel === 'bluebubbles' ? 90 : 140,
-    );
-    if (index === 0) {
-      return `${clipThreadSummaryEvidence(speaker, 72)} opened with "${content}".`;
-    }
-    if (index === digestHighlights.length - 1) {
-      return `By the end, ${clipThreadSummaryEvidence(speaker, 72)} was saying "${content}".`;
-    }
-    return `Later, ${clipThreadSummaryEvidence(speaker, 72)} added "${content}".`;
+  const gist = buildThreadGroundedSummaryGist({
+    chatName: params.chatName,
+    isGroup: Boolean(params.isGroup),
+    turns: params.messages.map((message) => ({
+      content: clipThreadSummaryEvidence(message.content, 180),
+      isFromMe: Boolean(message.is_from_me),
+      isBot: Boolean(message.is_bot_message),
+      speakerLabel:
+        params.speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
+        params.chatName,
+    })),
+    bulletLimit: params.channel === 'bluebubbles' ? 2 : 4,
   });
+  const lead = `Here’s the gist from ${params.chatName} ${params.windowLabel === 'today' ? 'today' : `over ${params.windowLabel}`}.`;
+  const digestSentences = [...gist.digestSentences];
   if (planSentence) {
     digestSentences.push(planSentence);
   }
-  if (currentState) {
-    digestSentences.push(currentState);
-  }
-  const latestHighlightId = highlights.at(-1)?.id;
-  const bullets = bulletHighlights
-    .map((message, index) => {
-      const speaker =
-        params.speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
-        'Someone';
-      const prefix =
-        index === 0
-          ? 'Early on'
-          : message.id === latestHighlightId
-            ? 'Latest turn'
-            : 'Later';
-      return `${prefix}: ${clipThreadSummaryEvidence(speaker, 72)} said "${clipThreadSummaryEvidence(message.content, 120)}".`;
-    })
-    .slice(0, params.channel === 'bluebubbles' ? 2 : 4);
-  if (replyNeed) {
-    bullets.push(replyNeed);
-  }
+  const bullets = [...gist.bullets];
   const suggestedReplies = buildLocalThreadSummarySuggestedReplies(
     params.messages,
     { isGroup: Boolean(params.isGroup) },

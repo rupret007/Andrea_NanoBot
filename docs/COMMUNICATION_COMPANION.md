@@ -195,10 +195,13 @@ BlueBubbles:
 
 ## Safety And Trust
 
-- informational one-to-one updates get person/thread-grounded unsent wording
-  that names the concrete update (`Dinner at seven tonight`) instead of generic
-  `Thanks for the update.` / `Got it.` / `circle back`; questions, requests,
-  and automated notices still withhold a canned answer
+- informational one-to-one updates get a useful thread-grounded gist for Jeff
+  (`Bob told you: Practice at eight tonight. You haven't replied yet.`) plus
+  unsent person/thread-grounded wording that names the concrete update
+  (`Dinner at seven tonight`, `Practice at eight tonight`) instead of generic
+  `Thanks for the update.` / `Got it.` / `circle back` or a quote dump;
+  questions, requests, and automated notices still withhold a canned answer.
+  Suggested replies stay unsent. Jeff talks to Bob; Andrea is the engine.
 - no outbound send without explicit user intent
 - live delivery now follows the Messaging Trust Ladder rather than ad hoc draft text
 - no passive message surveillance
