@@ -183,6 +183,20 @@ const BARE_CHAT_NAME_CLAUSE_TOKENS = new Set([
   'would',
 ]);
 
+const COLLECTIVE_OPEN_LOOP_NAMES = new Set([
+  'everybody',
+  'everyone',
+  'family',
+  'folks',
+  'home',
+  'my family',
+  'people',
+  'the family',
+  'the house',
+  'the team',
+  'them',
+]);
+
 const BARE_CHAT_NAME_SOLO_REJECT = new Set([
   'afternoon',
   'agenda',
@@ -473,6 +487,89 @@ export function parseThreadSummaryIntent(
       threadTitle: targetChatName,
       timeWindowKind: kind,
       timeWindowValue: value,
+    },
+  };
+}
+
+/**
+ * Named who-do-I-owe phrasing such as `what's still open with Bob`.
+ * Collective asks (`what do I owe people`, `my family`) stay unnamed so
+ * they cannot become a silent inbox crawl.
+ */
+export function parseNamedOpenLoopIntent(
+  rawText: string | null | undefined,
+): ThreadSummaryIntent | null {
+  const normalized = normalizeForMatch(rawText || '');
+  if (!normalized) {
+    return null;
+  }
+  const { cleanedText, kind, value } = parseWindow(normalized);
+  const cleaned = stripTrailingWindowGlue(
+    normalizeText(
+      cleanedText.replace(/[?]+$/g, '').replace(/\b(?:right now|now)$/i, ''),
+    ),
+  );
+  if (!cleaned) {
+    return null;
+  }
+
+  const extractionPatterns = [
+    /^what(?:'s| is)? still open with (.+)$/i,
+    /^what still open with (.+)$/i,
+    /^what should i talk to (.+?) about$/i,
+    /^what do i need to follow up on with (.+)$/i,
+    /^do i owe a reply to (.+)$/i,
+    /^do i owe (.+?) a reply$/i,
+    /^what do i owe (.+)$/i,
+  ];
+
+  let rawName = '';
+  for (const pattern of extractionPatterns) {
+    const match = cleaned.match(pattern);
+    if (match?.[1]) {
+      rawName = match[1];
+      break;
+    }
+  }
+  if (!rawName) {
+    return null;
+  }
+
+  const targetChatName = cleanChatName(rawName);
+  if (!targetChatName || !isPlausibleBareChatName(targetChatName)) {
+    return null;
+  }
+  const normalizedName = targetChatName.toLowerCase();
+  const firstNameToken = normalizedName.split(/\s+/)[0] || '';
+  if (
+    COLLECTIVE_OPEN_LOOP_NAMES.has(normalizedName) ||
+    COLLECTIVE_OPEN_LOOP_NAMES.has(firstNameToken)
+  ) {
+    return null;
+  }
+
+  const hasExplicitWindow = kind !== 'default_24h';
+  const canonicalText = hasExplicitWindow
+    ? kind === 'last_hours'
+      ? `what's still open with ${targetChatName} from the last ${value || 1} hours`
+      : kind === 'last_days'
+        ? `what's still open with ${targetChatName} from the last ${value || 1} days`
+        : kind === 'today'
+          ? `what's still open with ${targetChatName} today`
+          : kind === 'yesterday'
+            ? `what's still open with ${targetChatName} yesterday`
+            : `what's still open with ${targetChatName} this week`
+    : `what's still open with ${targetChatName}`;
+
+  return {
+    canonicalText,
+    arguments: {
+      targetChatName,
+      threadTitle: targetChatName,
+      personName: targetChatName,
+      ...(hasExplicitWindow
+        ? { timeWindowKind: kind, timeWindowValue: value }
+        : {}),
     },
   };
 }

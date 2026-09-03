@@ -87,7 +87,10 @@ import {
   type MessageActionOperation,
   type ResolvedBlueBubblesThreadTarget,
 } from './message-actions.js';
-import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
+import {
+  ALL_SYNCED_MESSAGES_TARGET,
+  parseNamedOpenLoopIntent,
+} from './thread-summary-routing.js';
 import { isConfiguredBlueBubblesSelfThreadAliasJid } from './bluebubbles-self-thread.js';
 import {
   buildRecentTextReviewSeedJson,
@@ -169,6 +172,7 @@ import {
   buildThreadGroundedSuggestedReplies,
   buildThreadGroundedSummaryGist,
   shouldWithholdThreadGroundedReply,
+  threadGroundedPersonLabel,
 } from './thread-grounded-wording.js';
 
 export type AssistantCapabilityId =
@@ -265,10 +269,7 @@ export type AssistantCapabilityOutputShape =
   | 'artifact_only';
 
 export type AssistantCapabilityHandlerKind =
-  | 'local'
-  | 'research'
-  | 'backend_lane'
-  | 'edge_only';
+  'local' | 'research' | 'backend_lane' | 'edge_only';
 
 type AssistantConversationTaskKind =
   | 'calendar_read'
@@ -461,12 +462,7 @@ export interface AssistantCapabilityConversationSeed {
   };
   supportedFollowups?: AlexaConversationFollowupAction[];
   prioritizationLens?:
-    | 'general'
-    | 'calendar'
-    | 'family'
-    | 'meeting'
-    | 'work'
-    | 'evening';
+    'general' | 'calendar' | 'family' | 'meeting' | 'work' | 'evening';
   hasActionItem?: boolean;
   hasRiskSignal?: boolean;
   reminderCandidate?: boolean;
@@ -5459,8 +5455,7 @@ async function runCommunicationDraftCapability(
     : replyText;
   let finalMessageAction = messageAction;
   let finalSendOptions:
-    | Pick<SendMessageOptions, 'inlineActions' | 'inlineActionRows'>
-    | undefined;
+    Pick<SendMessageOptions, 'inlineActions' | 'inlineActionRows'> | undefined;
   const operationChatJid =
     context.chatJid || messageAction?.presentationChatJid;
   if (reviewOperation && messageAction && operationChatJid) {
@@ -5590,12 +5585,305 @@ async function runCommunicationDraftCapability(
   };
 }
 
+function loadNamedThreadWindowMessages(params: {
+  chatJid: string;
+  startTimestamp: string;
+  endTimestamp: string | null;
+}): NewMessage[] {
+  return listMessagesForChatWindow({
+    chatJid: params.chatJid,
+    startTimestamp: params.startTimestamp,
+    endTimestamp: params.endTimestamp,
+    limit: 400,
+  })
+    .filter(
+      (message) =>
+        !message.is_bot_message && describeMessageForSummary(message),
+    )
+    .map((message) => ({
+      ...message,
+      content: describeMessageForSummary(message),
+    }));
+}
+
+function formatNamedMessagesOpenLoopReply(params: {
+  channel: AssistantCapabilityContext['channel'];
+  personLabel: string;
+  isGroup: boolean;
+  gist: ReturnType<typeof buildThreadGroundedSummaryGist>;
+  latestInboundText: string;
+}): string {
+  const digest = params.gist.digestSentences.join(' ');
+  const withheld = shouldWithholdThreadGroundedReply(params.latestInboundText);
+  const lead = params.gist.ownerOwesReply
+    ? params.isGroup
+      ? `${params.personLabel} still has an open turn in that group.`
+      : `You owe ${params.personLabel} a reply.`
+    : `Nothing open with ${params.personLabel}.`;
+  const nextStep = params.gist.ownerOwesReply
+    ? withheld
+      ? "I won't guess your answer. Tell me what you want to say, and I can draft it unsent."
+      : params.isGroup
+        ? 'I can draft wording, but I will not create send controls for a group.'
+        : 'I can draft a reply. It stays unsent until you say send it in this chat.'
+    : undefined;
+  const coverage =
+    'This is the current thread state from the available local synced snapshot, not device unread status. I did not send anything.';
+  if (params.channel === 'alexa') {
+    return [lead, digest, nextStep].filter(Boolean).join(' ');
+  }
+  if (params.channel === 'bluebubbles') {
+    return [lead, digest, nextStep, coverage].filter(Boolean).join('\n');
+  }
+  return [lead, '', digest, nextStep ? '' : null, nextStep, '', coverage]
+    .filter((line) => line !== null)
+    .join('\n');
+}
+
+async function tryNamedMessagesOpenLoop(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult | null> {
+  if (context.ownerReviewAllowed !== true) {
+    return null;
+  }
+  const priorSeedJson =
+    context.priorSubjectData?.namedMessagesSummaryTargetJson;
+  const priorSeed = parseNamedMessagesSummaryTargetSeed(priorSeedJson);
+  const namedIntent = parseNamedOpenLoopIntent(
+    input.text || input.canonicalText || '',
+  );
+  const explicitQuery =
+    normalizeText(input.targetChatName || '') ||
+    normalizeText(namedIntent?.arguments.targetChatName || '');
+  const chatQuery = explicitQuery || normalizeText(priorSeed?.query || '');
+  if (!chatQuery) {
+    return null;
+  }
+
+  const sameSeedQuery =
+    Boolean(priorSeed) &&
+    (!explicitQuery ||
+      explicitQuery.toLowerCase() ===
+        normalizeText(priorSeed?.query).toLowerCase());
+  const seedValidation = sameSeedQuery
+    ? validateNamedMessagesSummaryTarget({
+        seedJson: priorSeedJson,
+        presentationChatJid: context.chatJid,
+      })
+    : null;
+  if (seedValidation && seedValidation.state !== 'resolved' && !explicitQuery) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'I can no longer bind that summary to one exact current Messages chat. Ask me to summarize the named conversation again. I did not read other conversations or create any send controls.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'blocked a named Messages open-loop continuation without an exact current external target',
+        [`target_validation:${seedValidation.state}`, seedValidation.detail],
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
+
+  const resolution =
+    seedValidation?.state === 'resolved'
+      ? {
+          state: 'resolved' as const,
+          target: seedValidation.target,
+        }
+      : resolveBlueBubblesThreadTargetByName(chatQuery);
+  if (resolution.state === 'missing') {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: `I couldn't match "${chatQuery}" to a synced Messages chat yet. I did not read other conversations or create any send controls.`,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'could not match the requested synced Messages chat for an open-loop ask',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
+  if (resolution.state === 'ambiguous') {
+    const matches = resolution.matches
+      .map((match) =>
+        formatSafeSyncedThreadLabel({
+          jid: match.chatJid,
+          name: match.displayName,
+          isGroup: match.isGroup,
+        }),
+      )
+      .join(', ');
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: `I found more than one synced Messages chat that could be "${chatQuery}". Which one do you want: ${matches}? I did not create a draft or any send controls.`,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'asked to clarify an ambiguous synced Messages chat match for an open-loop ask',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
+
+  const safeDisplayName = formatSafeSyncedThreadLabel({
+    jid: resolution.target.chatJid,
+    name: resolution.target.displayName,
+    isGroup: resolution.target.isGroup,
+  });
+  const explicitWindowKind =
+    input.timeWindowKind || namedIntent?.arguments.timeWindowKind || null;
+  const sameSeedTarget =
+    priorSeed &&
+    priorSeed.target.chatJid === resolution.target.chatJid &&
+    priorSeed.target.isGroup === resolution.target.isGroup;
+  const window = explicitWindowKind
+    ? resolveThreadSummaryWindow({
+        now: context.now || new Date(),
+        kind: explicitWindowKind,
+        value:
+          input.timeWindowValue ??
+          namedIntent?.arguments.timeWindowValue ??
+          null,
+      })
+    : sameSeedTarget
+      ? {
+          startTimestamp: priorSeed.historyStartTimestamp,
+          endTimestamp: null,
+          label: 'this thread',
+        }
+      : resolveThreadSummaryWindow({
+          now: context.now || new Date(),
+          kind: 'last_days',
+          value: 7,
+        });
+  const messages = loadNamedThreadWindowMessages({
+    chatJid: resolution.target.chatJid,
+    startTimestamp: window.startTimestamp,
+    endTimestamp: window.endTimestamp,
+  });
+  if (messages.length === 0) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: `Nothing open with ${safeDisplayName} in the available local Messages snapshot over ${window.label}. I did not read other conversations or create any send controls.`,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'found no synced Messages history inside the requested open-loop window',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
+
+  const speakerLabels = buildThreadSummarySpeakerLabels({
+    messages,
+    isGroup: resolution.target.isGroup,
+  });
+  const gist = buildThreadGroundedSummaryGist({
+    chatName: safeDisplayName,
+    isGroup: resolution.target.isGroup,
+    turns: messages.map((message) => ({
+      content: clipThreadSummaryEvidence(message.content, 180),
+      isFromMe: Boolean(message.is_from_me),
+      isBot: Boolean(message.is_bot_message),
+      speakerLabel:
+        speakerLabels.get(getThreadSummarySpeakerKey(message)) ||
+        safeDisplayName,
+    })),
+    bulletLimit: context.channel === 'bluebubbles' ? 2 : 4,
+  });
+  const latestInbound = [...messages]
+    .reverse()
+    .find((message) => !message.is_from_me);
+  const replyText = formatNamedMessagesOpenLoopReply({
+    channel: context.channel,
+    personLabel: threadGroundedPersonLabel(
+      safeDisplayName,
+      resolution.target.isGroup,
+      latestInbound
+        ? speakerLabels.get(getThreadSummarySpeakerKey(latestInbound)) ||
+            safeDisplayName
+        : safeDisplayName,
+    ),
+    isGroup: resolution.target.isGroup,
+    gist,
+    latestInboundText: latestInbound?.content || '',
+  });
+  const namedSummaryFreshnessSnapshot = requireMessagesSummaryFreshnessSnapshot(
+    buildMessagesThreadFreshnessSnapshot({
+      chatJid: resolution.target.chatJid,
+      messages,
+    }),
+  );
+  const namedMessagesSummaryTargetJson = namedSummaryFreshnessSnapshot
+    ? buildNamedMessagesSummaryTargetSeedJson({
+        query: chatQuery,
+        target: resolution.target,
+        historyStartTimestamp: window.startTimestamp,
+        freshnessSnapshot: namedSummaryFreshnessSnapshot,
+      })
+    : undefined;
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: buildCommunicationConversationSeed({
+      descriptor,
+      summaryText: replyText,
+      conversationFocus: chatQuery,
+      personName: resolution.target.isGroup ? undefined : safeDisplayName,
+      threadTitle: safeDisplayName,
+      lastCommunicationSummary: gist.digestSentences.join(' '),
+      namedMessagesSummaryTargetJson,
+      supportedFollowups: descriptor.followupActions,
+    }),
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'local_companion',
+      'summarized a named synced Messages open loop from raw BlueBubbles history',
+      [
+        `chat:${safeDisplayName}`,
+        `window:${window.label}`,
+        `owes_reply:${gist.ownerOwesReply}`,
+        `messages:${messages.length}`,
+      ],
+    ),
+    followupActions: descriptor.followupActions,
+  };
+}
+
 async function runCommunicationOpenLoopsCapability(
   descriptor: AssistantCapabilityDescriptor,
   context: AssistantCapabilityContext,
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const namedMessagesOpenLoop = await tryNamedMessagesOpenLoop(
+    descriptor,
+    context,
+    input,
+  );
+  if (namedMessagesOpenLoop) {
+    return namedMessagesOpenLoop;
+  }
   const rawCommunicationText = input.text || input.canonicalText || '';
   const openLoops = buildCommunicationOpenLoops({
     channel: context.channel,

@@ -179,8 +179,12 @@ For BlueBubbles communication-summary or suggested-reply changes, verify:
   Jeff, not a quote dump or activity counts; `today` / `yesterday` /
   `this week` recaps must match the configured owner `TIMEZONE` calendar, not
   the process host midnight
-- suggested replies stay unsent; `draft Bob` drafts Jeff's reply and does not
-  send. Jeff talks to Bob; Andrea is the engine.
+- suggested replies stay unsent; `what's still open with Bob` and a
+  `what do I owe people` follow-up after that named thread use the same gist;
+  `draft Bob` drafts Jeff's reply and does not send. Jeff talks to Bob;
+  Andrea is the engine. Generic who-do-I-owe asks must not crawl unnamed
+  inbox threads, and Karen cannot read those Messages bodies or authorize a
+  send.
 - the configured owner self-thread is excluded from contact summaries, while
   ordinary contact text containing `@Andrea` or `@OpenClaw` remains ordinary
   message evidence and never wakes Andrea in that contact thread

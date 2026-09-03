@@ -5,6 +5,18 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Named iMessage/SMS who-do-I-owe now uses the same thread-grounded gist as
+  leftover #31 (`You owe Bob a reply. Bob told you: Practice at eight tonight.`)
+  so Jeff can ask `what's still open with Bob` or continue `what do I owe people`
+  after `summarize Bob`. `draft Bob` after that still drafts Jeff's reply and
+  does not send. Generic `what do I owe people` does not crawl unnamed inbox
+  threads. Karen and other non-owner surfaces cannot read those Messages
+  bodies or authorize a send. Suggested replies stay unsent. Questions still
+  withhold a canned answer. Send-path source blobs stay SHA-256-identical to
+  leftover #29 unless a later leftover proves the exact Bob fence is still
+  `send it` / `send it now` / `send now`. Bare `yes` / `ok` never authorize.
+  Private API stays off. AppleScript is the only send path. Telegram stays Bot
+  the Bot. No merge and no live send in this leftover.
 - Named iMessage/SMS summarize now gives Jeff a useful thread-grounded gist
   (`Bob told you: Practice at eight tonight. You haven't replied yet.`)
   instead of repeating the same inbound quote. Suggested replies stay unsent.

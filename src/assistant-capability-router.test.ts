@@ -303,7 +303,28 @@ describe('assistant capability router', () => {
       matchAssistantCapabilityRequest("What's still open with Candace?"),
     ).toMatchObject({
       capabilityId: 'communication.open_loops',
+      arguments: expect.objectContaining({
+        targetChatName: 'Candace',
+        personName: 'Candace',
+      }),
     });
+    expect(
+      matchAssistantCapabilityRequest("What's still open with Bob?"),
+    ).toMatchObject({
+      capabilityId: 'communication.open_loops',
+      arguments: expect.objectContaining({
+        targetChatName: 'Bob',
+        personName: 'Bob',
+      }),
+    });
+    expect(matchAssistantCapabilityRequest('What do I owe Bob?')).toMatchObject(
+      {
+        capabilityId: 'communication.open_loops',
+        arguments: expect.objectContaining({
+          targetChatName: 'Bob',
+        }),
+      },
+    );
     expect(
       matchAssistantCapabilityRequest('What is still open around the house?'),
     ).toMatchObject({

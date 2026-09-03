@@ -10031,9 +10031,17 @@ async function processClaimedGroupMessages(
       let historyRefreshDisclosure: MessagesHistoryRefreshDisclosureInput | null =
         null;
       let historyRefreshTargetChatJid: string | null = null;
+      const namedOpenLoopQuery =
+        capabilityMatch.capabilityId === 'communication.open_loops'
+          ? capabilityInput.targetChatName ||
+            capabilityInput.threadTitle ||
+            capabilityInput.personName ||
+            null
+          : null;
       const historyCapability =
         capabilityMatch.capabilityId === 'communication.summarize_thread' ||
-        capabilityMatch.capabilityId === 'communication.review_recent_texts';
+        capabilityMatch.capabilityId === 'communication.review_recent_texts' ||
+        Boolean(namedOpenLoopQuery);
 
       // Keep provider history reads inside the exact owner-only privacy gate.
       // A known named thread gets its own bounded read so a quiet conversation
@@ -10095,8 +10103,9 @@ async function processClaimedGroupMessages(
           };
 
         const namedChatQuery =
-          capabilityMatch.capabilityId === 'communication.summarize_thread' &&
-          capabilityInput.targetChatJid !== ALL_SYNCED_MESSAGES_TARGET
+          (capabilityMatch.capabilityId === 'communication.summarize_thread' &&
+            capabilityInput.targetChatJid !== ALL_SYNCED_MESSAGES_TARGET) ||
+          Boolean(namedOpenLoopQuery)
             ? capabilityInput.targetChatJid ||
               capabilityInput.targetChatName ||
               capabilityInput.threadTitle ||
