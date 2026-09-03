@@ -30,11 +30,13 @@ describe('thread-grounded wording', () => {
       ),
     ).toBe(true);
     expect(
-      extractThreadUpdateAnchor('Can you confirm if dinner still works tonight?'),
+      extractThreadUpdateAnchor(
+        'Can you confirm if dinner still works tonight?',
+      ),
     ).toBeNull();
-    expect(
-      shouldWithholdThreadGroundedReply('Please bring ice tonight.'),
-    ).toBe(true);
+    expect(shouldWithholdThreadGroundedReply('Please bring ice tonight.')).toBe(
+      true,
+    );
     expect(
       buildThreadGroundedAcknowledgement({
         inboundText: 'The main thing still open with Candace is dinner plans.',

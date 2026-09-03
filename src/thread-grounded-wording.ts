@@ -51,9 +51,18 @@ function normalizeText(value: string | null | undefined): string {
 }
 
 function clipAnchor(value: string, max = 80): string {
-  const normalized = normalizeText(value).replace(/[.!]+$/g, '');
+  const normalized = normalizeText(value).replace(/[\s,;:.!]+$/g, '');
   if (normalized.length <= max) return normalized;
   return `${normalized.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+function cleanedInformationalInbound(
+  inboundText: string | null | undefined,
+): string {
+  return clipAnchor(
+    normalizeText(inboundText).replace(INFORMATIONAL_GLUE_RE, ' '),
+    160,
+  );
 }
 
 function capitalizeAnchor(value: string): string {
@@ -75,10 +84,7 @@ export function extractConcreteThreadUpdateAnchor(
   inboundText: string | null | undefined,
 ): string | null {
   if (shouldWithholdThreadGroundedReply(inboundText)) return null;
-  const cleaned = clipAnchor(
-    normalizeText(inboundText).replace(INFORMATIONAL_GLUE_RE, ' '),
-    160,
-  );
+  const cleaned = cleanedInformationalInbound(inboundText);
   if (!cleaned) return null;
 
   const moved = cleaned.match(/^(.{2,48}?)\s+moved to\s+(.+)$/i);
@@ -100,10 +106,7 @@ export function extractThreadUpdateAnchor(
   const concrete = extractConcreteThreadUpdateAnchor(inboundText);
   if (concrete) return concrete;
   if (shouldWithholdThreadGroundedReply(inboundText)) return null;
-  const cleaned = clipAnchor(
-    normalizeText(inboundText).replace(INFORMATIONAL_GLUE_RE, ' '),
-    160,
-  );
+  const cleaned = cleanedInformationalInbound(inboundText);
   if (!cleaned) return null;
 
   for (const match of cleaned.matchAll(
@@ -179,10 +182,7 @@ export function buildThreadGroundedSuggestedReplies(input: {
   const preferWarm = /\bwarm|careful|avoid_overcommitment/.test(tone);
   const preferDirect = /\bconcise|direct/.test(tone);
 
-  if (
-    input.isGroup ||
-    input.contextConfidence === 'low'
-  ) {
+  if (input.isGroup || input.contextConfidence === 'low') {
     return [
       {
         label: input.isGroup ? 'careful' : 'careful',
@@ -215,7 +215,7 @@ export function buildThreadGroundedSuggestedReplies(input: {
       },
       {
         label: 'direct',
-        text: 'I hear what you\'re saying.',
+        text: "I hear what you're saying.",
       },
       {
         label: 'brief',

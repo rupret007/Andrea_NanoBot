@@ -2959,7 +2959,10 @@ function buildFallbackThreadSummaryReply(params: {
   const replyNeed = inferThreadReplyNeed(params.messages);
   const latestPlanFact = params.planFacts?.at(-1);
   const planSentence = latestPlanFact
-    ? clipThreadSummaryEvidence(formatGroundedMessagesPlanFact(latestPlanFact), 180)
+    ? clipThreadSummaryEvidence(
+        formatGroundedMessagesPlanFact(latestPlanFact),
+        180,
+      )
     : null;
   let latestInbound: NewMessage | undefined;
   for (let index = params.messages.length - 1; index >= 0; index -= 1) {
@@ -5200,9 +5203,7 @@ async function runCommunicationDraftCapability(
     ? ('bluebubbles' as const)
     : context.channel;
   const draftContextChatJid =
-    boundDraftChatJid ||
-    namedSummaryTarget?.target.chatJid ||
-    context.chatJid;
+    boundDraftChatJid || namedSummaryTarget?.target.chatJid || context.chatJid;
   const draft =
     context.channel === 'bluebubbles'
       ? await draftCommunicationReplyWithChannelFluidity({
@@ -5210,9 +5211,7 @@ async function runCommunicationDraftCapability(
           groupFolder: context.groupFolder,
           chatJid: draftContextChatJid,
           text: rawCommunicationText,
-          replyText: boundInboundSafe
-            ? boundInboundText
-            : context.replyText,
+          replyText: boundInboundSafe ? boundInboundText : context.replyText,
           conversationSummary: context.conversationSummary,
           priorContext: priorContextForDraft,
           now: context.now,
@@ -5222,9 +5221,7 @@ async function runCommunicationDraftCapability(
           groupFolder: context.groupFolder,
           chatJid: draftContextChatJid,
           text: rawCommunicationText,
-          replyText: boundInboundSafe
-            ? boundInboundText
-            : context.replyText,
+          replyText: boundInboundSafe ? boundInboundText : context.replyText,
           conversationSummary: context.conversationSummary,
           priorContext: priorContextForDraft,
           now: context.now,

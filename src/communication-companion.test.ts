@@ -1472,6 +1472,7 @@ describe('communication companion', () => {
       groupFolder: 'main',
       chatJid: 'bb:chat-dinner-update-short',
       text: 'give me a short reply',
+      replyText: 'Dinner moved to seven tonight, just keeping you posted.',
       priorContext: {
         personName: 'Candace',
         threadTitle: 'Candace',

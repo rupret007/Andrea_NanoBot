@@ -1043,6 +1043,21 @@ function isGroupAskExplicitlyAddressedToOwner(input: {
   });
 }
 
+function recapOtherPossessive(chatLabel: string, isGroup: boolean): string {
+  if (isGroup) return 'their';
+  const label = normalizeText(chatLabel);
+  if (
+    !label ||
+    /^(?:messages? chat|messages? group|they|their)$/i.test(label)
+  ) {
+    return 'their';
+  }
+  if (/^[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2}$/.test(label)) {
+    return `${label}'s`;
+  }
+  return 'their';
+}
+
 function buildConversationRecap(input: {
   chatLabel: string;
   isGroup: boolean;
@@ -1078,6 +1093,7 @@ function buildConversationRecap(input: {
       )} Recent exchange: `
     : '';
   const otherLabel = input.isGroup ? null : input.chatLabel;
+  const otherPossessive = recapOtherPossessive(input.chatLabel, input.isGroup);
   const turns = input.messages
     .filter((message) => substantiveMessage(message.content || ''))
     .slice(-4)
@@ -1096,7 +1112,6 @@ function buildConversationRecap(input: {
         ? `${input.isGroup ? safeGroupParticipantLabel(input.latestInbound) : otherLabel || 'They'}: "${messageContent(input.latestInbound)}"`
         : 'There was recent synced Messages activity.';
   const boundedOpenAsks = input.unresolvedInboundAsks.slice(-3);
-  const personAskLabel = otherLabel || 'their';
   const openAskState =
     boundedOpenAsks.length > 1
       ? input.isGroup
@@ -1106,22 +1121,22 @@ function buildConversationRecap(input: {
                 `${safeGroupParticipantLabel(message)}: "${messageContent(message)}"`,
             )
             .join('; ')}.`
-        : `Current state: ${personAskLabel}'s open asks remain: ${boundedOpenAsks
+        : `Current state: ${otherPossessive} open asks remain: ${boundedOpenAsks
             .map((message) => `"${messageContent(message)}"`)
             .join('; ')}.`
       : input.unresolvedInboundAsk
         ? input.isGroup
           ? `Current state: ${safeGroupParticipantLabel(input.unresolvedInboundAsk)}'s open ask is "${messageContent(input.unresolvedInboundAsk)}".`
           : input.unresolvedInboundAsk === input.latestInbound
-            ? `Current state: ${personAskLabel}'s latest open ask is "${messageContent(input.unresolvedInboundAsk)}".`
-            : `Current state: ${personAskLabel}'s earlier ask "${messageContent(input.unresolvedInboundAsk)}" is still open; ${personAskLabel}'s latest message adds "${messageContent(input.latestInbound)}".`
+            ? `Current state: ${otherPossessive} latest open ask is "${messageContent(input.unresolvedInboundAsk)}".`
+            : `Current state: ${otherPossessive} earlier ask "${messageContent(input.unresolvedInboundAsk)}" is still open; ${otherPossessive} latest message adds "${messageContent(input.latestInbound)}".`
         : null;
   const state =
     input.section === 'needs_reply'
       ? openAskState
         ? openAskState
         : input.latestInbound
-          ? `Current state: ${personAskLabel}'s latest open turn is "${messageContent(input.latestInbound)}".`
+          ? `Current state: ${otherPossessive} latest open turn is "${messageContent(input.latestInbound)}".`
           : 'Current state: there may be an open reply owed.'
       : input.section === 'worth_watching'
         ? input.groupQuestionAudienceUnclear && boundedOpenAsks.length > 0
