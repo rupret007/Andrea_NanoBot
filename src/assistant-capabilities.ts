@@ -269,7 +269,10 @@ export type AssistantCapabilityOutputShape =
   | 'artifact_only';
 
 export type AssistantCapabilityHandlerKind =
-  'local' | 'research' | 'backend_lane' | 'edge_only';
+  | 'local'
+  | 'research'
+  | 'backend_lane'
+  | 'edge_only';
 
 type AssistantConversationTaskKind =
   | 'calendar_read'
@@ -462,7 +465,12 @@ export interface AssistantCapabilityConversationSeed {
   };
   supportedFollowups?: AlexaConversationFollowupAction[];
   prioritizationLens?:
-    'general' | 'calendar' | 'family' | 'meeting' | 'work' | 'evening';
+    | 'general'
+    | 'calendar'
+    | 'family'
+    | 'meeting'
+    | 'work'
+    | 'evening';
   hasActionItem?: boolean;
   hasRiskSignal?: boolean;
   reminderCandidate?: boolean;
@@ -5455,7 +5463,8 @@ async function runCommunicationDraftCapability(
     : replyText;
   let finalMessageAction = messageAction;
   let finalSendOptions:
-    Pick<SendMessageOptions, 'inlineActions' | 'inlineActionRows'> | undefined;
+    | Pick<SendMessageOptions, 'inlineActions' | 'inlineActionRows'>
+    | undefined;
   const operationChatJid =
     context.chatJid || messageAction?.presentationChatJid;
   if (reviewOperation && messageAction && operationChatJid) {
