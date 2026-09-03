@@ -26,6 +26,7 @@ import {
   parseRecentTextReviewIntent,
   parseThreadSummaryIntent,
 } from './thread-summary-routing.js';
+import { parseRecentTextReviewItemFollowup } from './recent-text-review.js';
 import type { CompanionRouteArguments } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
 
@@ -88,7 +89,16 @@ function isBareCommunicationDraftFollowup(value: string): boolean {
   );
 }
 
-function isReviewItemFollowup(value: string): boolean {
+function isReviewItemFollowup(
+  value: string,
+  seedJson?: string | null,
+): boolean {
+  if (
+    seedJson &&
+    parseRecentTextReviewItemFollowup({ seedJson, userText: value })
+  ) {
+    return true;
+  }
   const trimmed = value.trim();
   const pronounTarget =
     '(?:it|this|this one|that|that one|the first one|first one)';
@@ -1662,7 +1672,10 @@ export function continueAssistantCapabilityFromPriorSubjectData(
     !subjectData.activeCapabilityId?.startsWith('capture.') &&
     isSharedAssistantCompletionFollowup(normalized.toLowerCase())
   ) {
-    if (subjectData.recentTextReviewJson && isReviewItemFollowup(normalized)) {
+    if (
+      subjectData.recentTextReviewJson &&
+      isReviewItemFollowup(normalized, subjectData.recentTextReviewJson)
+    ) {
       return {
         capabilityId: 'communication.draft_reply',
         normalizedText: normalized,
@@ -1686,7 +1699,10 @@ export function continueAssistantCapabilityFromPriorSubjectData(
     }
     return null;
   }
-  if (subjectData.recentTextReviewJson && isReviewItemFollowup(normalized)) {
+  if (
+    subjectData.recentTextReviewJson &&
+    isReviewItemFollowup(normalized, subjectData.recentTextReviewJson)
+  ) {
     return {
       capabilityId: 'communication.draft_reply',
       normalizedText: normalized,

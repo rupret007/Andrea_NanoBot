@@ -2768,6 +2768,124 @@ describe('assistant capabilities', () => {
     ).toHaveLength(0);
   });
 
+  it('binds a unique named recent-text follow-up without sending', async () => {
+    seedRecentTextSafeSendRule();
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:10:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'named-review-candace-1',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Can you confirm if dinner still works tonight?',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+
+    const review = await executeAssistantCapability({
+      capabilityId: 'communication.review_recent_texts',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'review recent text messages from today',
+        timeWindowKind: 'today',
+      },
+    });
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        primeMessagesChatHistory: async (chatJid) => ({
+          chatJid,
+          storedCount: 1,
+          totalCount: 1,
+        }),
+        priorSubjectData: review.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'draft Candace',
+        canonicalText: 'draft Candace',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.replyText).toContain('asks for your actual answer');
+    expect(draft.replyText).toContain('did not create or send a draft');
+    expect(draft.messageAction).toBeUndefined();
+    expect(draft.outcomeMetadata).toMatchObject({
+      source: 'recent_text_review',
+      itemRank: 1,
+    });
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('refuses an ambiguous named recent-text follow-up without drafting or sending', async () => {
+    const recentTextReviewJson = JSON.stringify({
+      version: 1,
+      reviewedAt: '2026-04-15T17:00:00.000Z',
+      items: [
+        {
+          itemId: 'review-alex-1',
+          rank: 1,
+          section: 'needs_reply',
+          chatLabel: 'Alex Rivera',
+          summaryText: 'Alex asked for the set list.',
+        },
+        {
+          itemId: 'review-alex-2',
+          rank: 2,
+          section: 'needs_reply',
+          chatLabel: 'Alex Chen',
+          summaryText: 'Alex asked about pickup.',
+        },
+      ],
+    });
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        priorSubjectData: {
+          activeCapabilityId: 'communication.review_recent_texts',
+          recentTextReviewJson,
+        },
+      },
+      input: {
+        text: 'draft Alex',
+        canonicalText: 'draft Alex',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.replyText).toContain('more than one conversation');
+    expect(draft.replyText).toContain('draft #1');
+    expect(draft.replyText).toContain('did not draft or send');
+    expect(draft.messageAction).toBeUndefined();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
   it('handles numbered recent text review follow-ups without sending messages', async () => {
     seedCommunicationThread({
       id: 'comm-candace-review',

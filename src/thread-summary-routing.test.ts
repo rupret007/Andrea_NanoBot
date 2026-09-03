@@ -58,6 +58,52 @@ describe('thread summary routing', () => {
     });
   });
 
+  it('honors documented named-person summarize phrasing without requiring texts/thread', () => {
+    expect(
+      parseThreadSummaryIntent('summarize Candace from the last 2 days'),
+    ).toMatchObject({
+      canonicalText:
+        'summarize my text messages in Candace from the last 2 days',
+      arguments: {
+        targetChatName: 'Candace',
+        timeWindowKind: 'last_days',
+        timeWindowValue: 2,
+      },
+    });
+    expect(
+      parseThreadSummaryIntent('summarize Pops of Punk from the last 2 days'),
+    ).toMatchObject({
+      arguments: {
+        targetChatName: 'Pops of Punk',
+        timeWindowKind: 'last_days',
+        timeWindowValue: 2,
+      },
+    });
+    expect(
+      parseThreadSummaryIntent(
+        'Summarize my text messages in Pops of Punk from the last 2 days',
+      ),
+    ).toMatchObject({
+      arguments: {
+        targetChatName: 'Pops of Punk',
+        timeWindowKind: 'last_days',
+        timeWindowValue: 2,
+      },
+    });
+    expect(parseThreadSummaryIntent('summarize Candace')).toMatchObject({
+      arguments: {
+        targetChatName: 'Candace',
+        timeWindowKind: 'default_24h',
+      },
+    });
+    expect(parseThreadSummaryIntent('summarize my day')).toBeNull();
+    expect(
+      parseThreadSummaryIntent('summarize that we need to leave by 5'),
+    ).toBeNull();
+    expect(parseThreadSummaryIntent('summarize this')).toBeNull();
+    expect(parseAllSyncedMessagesSummaryIntent('summarize Candace')).toBeNull();
+  });
+
   it('recognizes recent text review phrasing with a time window', () => {
     expect(
       parseRecentTextReviewIntent(

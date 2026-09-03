@@ -369,6 +369,30 @@ describe('assistant capability router', () => {
       }),
     });
     expect(
+      matchAssistantCapabilityRequest('summarize Candace from the last 2 days'),
+    ).toMatchObject({
+      capabilityId: 'communication.summarize_thread',
+      canonicalText:
+        'summarize my text messages in Candace from the last 2 days',
+      arguments: expect.objectContaining({
+        targetChatName: 'Candace',
+        timeWindowKind: 'last_days',
+        timeWindowValue: 2,
+      }),
+    });
+    expect(
+      matchAssistantCapabilityRequest(
+        'summarize Pops of Punk from the last 2 days',
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.summarize_thread',
+      arguments: expect.objectContaining({
+        targetChatName: 'Pops of Punk',
+        timeWindowKind: 'last_days',
+        timeWindowValue: 2,
+      }),
+    });
+    expect(
       matchAssistantCapabilityRequest('Summarize my text messages for today'),
     ).toMatchObject({
       capabilityId: 'communication.summarize_thread',
@@ -1255,6 +1279,11 @@ describe('assistant capability router', () => {
       'skip it',
       'mark handled',
       'why that',
+      'draft Candace',
+      'reply to Candace',
+      'remind me about Candace tonight',
+      'skip Candace',
+      'why Candace',
     ]) {
       expect(
         continueAssistantCapabilityFromPriorSubjectData(prompt, subjectData),

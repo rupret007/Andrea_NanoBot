@@ -60,13 +60,26 @@ function normalizeForMatch(value: string): string {
   return stripAssistantAddressing(normalizeVoicePrompt(normalizeText(value)));
 }
 
+function stripTrailingWindowGlue(value: string): string {
+  let current = normalizeText(value);
+  let previous = '';
+  while (current && current !== previous) {
+    previous = current;
+    current = normalizeText(
+      current
+        .replace(/\b(?:from|in|for|over)(?:\s+the)?\s*$/i, '')
+        .replace(/\bthe\s*$/i, ''),
+    );
+  }
+  return current;
+}
+
 function parseWindow(text: string): {
   cleanedText: string;
   kind: CompanionRouteTimeWindowKind;
   value: number | null;
 } {
   const normalized = normalizeText(text);
-  const lower = normalized.toLowerCase();
   const patterns: Array<{
     pattern: RegExp;
     kind: CompanionRouteTimeWindowKind;
@@ -100,7 +113,7 @@ function parseWindow(text: string): {
     const match = normalized.match(candidate.pattern);
     if (!match) continue;
     return {
-      cleanedText: normalizeText(
+      cleanedText: stripTrailingWindowGlue(
         normalized.replace(candidate.pattern, ' ').replace(/[.,!?]+$/g, ''),
       ),
       kind: candidate.kind,
@@ -109,26 +122,25 @@ function parseWindow(text: string): {
   }
 
   return {
-    cleanedText: lower.replace(/[.,!?]+$/g, '').trim(),
+    cleanedText: stripTrailingWindowGlue(normalized.replace(/[.,!?]+$/g, '')),
     kind: 'default_24h',
     value: 24,
   };
 }
 
 function cleanChatName(value: string): string {
-  return normalizeText(value)
-    .replace(/^(?:from|in)\s+/i, '')
-    .replace(/^the\s+/i, '')
-    .replace(
-      /\b(?:text(?: message)?s?|messages?|message|thread|chat|conversation|group(?: chat)?|space)\b/gi,
-      ' ',
-    )
-    .replace(/\b(?:please|pls)\b/gi, ' ')
-    .replace(/["']/g, '')
-    .replace(/\b(?:from|in)\b\s*$/i, '')
-    .replace(/[.,!?]+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return stripTrailingWindowGlue(
+    normalizeText(value)
+      .replace(/^(?:from|in|for|over)\s+/i, '')
+      .replace(/^the\s+/i, '')
+      .replace(
+        /\b(?:text(?: message)?s?|messages?|message|thread|chat|conversation|group(?: chat)?|space)\b/gi,
+        ' ',
+      )
+      .replace(/\b(?:please|pls)\b/gi, ' ')
+      .replace(/["']/g, '')
+      .replace(/[.,!?]+$/g, ''),
+  );
 }
 
 function isSpecificChatName(value: string): boolean {
@@ -147,6 +159,83 @@ function isSpecificChatName(value: string): boolean {
   return tokens.some((token) => !GENERIC_THREAD_NAME_TOKENS.has(token));
 }
 
+const BARE_CHAT_NAME_CLAUSE_TOKENS = new Set([
+  'about',
+  'because',
+  'could',
+  'everything',
+  'how',
+  'if',
+  'it',
+  'leave',
+  'need',
+  'needs',
+  'said',
+  'says',
+  'should',
+  'stuff',
+  'that',
+  'want',
+  'we',
+  'what',
+  'whether',
+  'why',
+  'would',
+]);
+
+const BARE_CHAT_NAME_SOLO_REJECT = new Set([
+  'afternoon',
+  'agenda',
+  'article',
+  'brief',
+  'calendar',
+  'day',
+  'days',
+  'email',
+  'emails',
+  'evening',
+  'inbox',
+  'mail',
+  'month',
+  'morning',
+  'news',
+  'schedule',
+  'tonight',
+  'week',
+  'weekend',
+  'weeks',
+  'year',
+]);
+
+function isPlausibleBareChatName(value: string): boolean {
+  if (!isSpecificChatName(value)) {
+    return false;
+  }
+  const tokens = cleanChatName(value)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length === 0 || tokens.length > 5) {
+    return false;
+  }
+  if (tokens.length === 1 && BARE_CHAT_NAME_SOLO_REJECT.has(tokens[0] || '')) {
+    return false;
+  }
+  if (tokens.some((token) => BARE_CHAT_NAME_CLAUSE_TOKENS.has(token))) {
+    return false;
+  }
+  return tokens.every((token) => /^[a-z][a-z0-9'&.-]*$/i.test(token));
+}
+
+function looksLikeSummarizeThisPrompt(lower: string): boolean {
+  return (
+    /^summari[sz]e this\b/.test(lower) ||
+    /^summerize this\b/.test(lower) ||
+    /^sumarize this\b/.test(lower) ||
+    /^summari[sz]e this message\b/.test(lower)
+  );
+}
+
 function looksLikeThreadSummaryPrompt(value: string): boolean {
   const lower = value.toLowerCase();
   if (!SUMMARY_RE.test(lower) && !/\bsummary of\b/.test(lower)) {
@@ -155,12 +244,7 @@ function looksLikeThreadSummaryPrompt(value: string): boolean {
   if (/\b(news|article|website|page|video|podcast)\b/.test(lower)) {
     return false;
   }
-  if (
-    /^summari[sz]e this\b/.test(lower) ||
-    /^summerize this\b/.test(lower) ||
-    /^sumarize this\b/.test(lower) ||
-    /^summari[sz]e this message\b/.test(lower)
-  ) {
+  if (looksLikeSummarizeThisPrompt(lower)) {
     return false;
   }
   return (
@@ -315,20 +399,36 @@ export function parseThreadSummaryIntent(
   rawText: string | null | undefined,
 ): ThreadSummaryIntent | null {
   const normalized = normalizeForMatch(rawText || '');
-  if (!normalized || !looksLikeThreadSummaryPrompt(normalized)) {
+  if (!normalized) {
+    return null;
+  }
+  const lower = normalized.toLowerCase();
+  if (!SUMMARY_RE.test(lower) && !/\bsummary of\b/.test(lower)) {
+    return null;
+  }
+  if (/\b(news|article|website|page|video|podcast|email|mail)\b/.test(lower)) {
+    return null;
+  }
+  if (looksLikeSummarizeThisPrompt(lower)) {
     return null;
   }
 
+  const hasThreadCue =
+    TEXT_MESSAGE_RE.test(lower) ||
+    /\b(?:thread|chat|conversation)\b/.test(lower);
+
   const { cleanedText, kind, value } = parseWindow(normalized);
-  const withoutLead = normalizeText(
+  const withoutLead = stripTrailingWindowGlue(
     normalizeText(
-      cleanedText
-        .replace(/^(?:can you|could you|please|hey|hi|hello)\s+/i, '')
-        .replace(/\b(?:summari[sz]e|summerize|sumarize)\b/i, ''),
-    )
-      .replace(/^my\s+/i, '')
-      .replace(/^(?:the\s+)?(?:text(?: message)?s?|messages?|texts?)\s+/i, '')
-      .replace(/^(?:in|from)\s+/i, ''),
+      normalizeText(
+        cleanedText
+          .replace(/^(?:can you|could you|please|hey|hi|hello)\s+/i, '')
+          .replace(/\b(?:summari[sz]e|summerize|sumarize|summary of)\b/i, ''),
+      )
+        .replace(/^my\s+/i, '')
+        .replace(/^(?:the\s+)?(?:text(?: message)?s?|messages?|texts?)\s+/i, '')
+        .replace(/^(?:in|from|for|over)\s+/i, ''),
+    ),
   );
 
   const extractionPatterns = [
@@ -347,6 +447,9 @@ export function parseThreadSummaryIntent(
   }
 
   if (!targetChatName || !isSpecificChatName(targetChatName)) {
+    return null;
+  }
+  if (!hasThreadCue && !isPlausibleBareChatName(targetChatName)) {
     return null;
   }
 

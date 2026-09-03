@@ -104,12 +104,14 @@ import {
   isExactNonEmptyMessagesHistoryRefreshReceipt,
   parseRecentTextReviewItemFollowup,
   parseRecentTextReviewSeedJson,
+  isBoundRecentTextReviewItemFollowup,
   recordRecentTextReviewOutcome,
   redactRecentTextReviewText,
   resolveRecentTextReviewFollowupTarget,
   reviewRecentTexts,
   validateRecentTextReviewFollowupFreshnessAfterTargetedRefresh,
   validateMessagesThreadSnapshotBinding,
+  type BoundRecentTextReviewItemFollowup,
   type RecentTextReviewOutcome,
   type RecentTextReviewFreshnessSnapshot,
 } from './recent-text-review.js';
@@ -4476,7 +4478,7 @@ async function runCommunicationUnderstandCapability(
 function mapRecentTextReviewFollowupToMessageOperation(
   followup: ReturnType<typeof parseRecentTextReviewItemFollowup>,
 ): MessageActionOperation | null {
-  if (!followup) return null;
+  if (!followup || followup.kind === 'ambiguous_name') return null;
   if (followup.kind === 'remind') {
     return {
       kind: 'remind_instead',
@@ -4492,6 +4494,7 @@ function mapRecentTextReviewFollowupToOutcome(
   followup: ReturnType<typeof parseRecentTextReviewItemFollowup>,
 ): RecentTextReviewOutcome {
   if (!followup) return 'drafted';
+  if (followup.kind === 'ambiguous_name') return 'reviewed';
   if (followup.kind === 'remind') return 'reminded';
   if (followup.kind === 'save') return 'saved';
   if (followup.kind === 'skip') return 'skipped';
@@ -4503,9 +4506,7 @@ function buildRecentTextReviewFollowupSeed(input: {
   descriptor: AssistantCapabilityDescriptor;
   context: AssistantCapabilityContext;
   summaryText: string;
-  item: NonNullable<
-    ReturnType<typeof parseRecentTextReviewItemFollowup>
-  >['item'];
+  item: BoundRecentTextReviewItemFollowup['item'];
 }): AssistantCapabilityConversationSeed {
   return {
     flowKey: 'communication_review_recent_texts',
@@ -4675,7 +4676,54 @@ async function runCommunicationDraftCapability(
     seedJson: context.priorSubjectData?.recentTextReviewJson,
     userText: input.text || input.canonicalText || '',
   });
-  if (reviewItemFollowup && reviewItemFollowup.kind !== 'why') {
+  if (reviewItemFollowup?.kind === 'ambiguous_name') {
+    const displayQuery = reviewItemFollowup.query.replace(/\b[a-z]/g, (ch) =>
+      ch.toUpperCase(),
+    );
+    const labels = reviewItemFollowup.candidates
+      .map((candidate) => `#${candidate.rank} ${candidate.chatLabel}`)
+      .join(', ');
+    const replyText = [
+      `I matched "${displayQuery}" to more than one conversation (${labels}).`,
+      'Tell me the number, like `draft #1`. I did not draft or send anything.',
+    ].join(' ');
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'refused to bind an ambiguous named recent text review follow-up',
+        ['ambiguous_review_name'],
+      ),
+      conversationSeed: {
+        flowKey: 'communication_review_recent_texts',
+        subjectKind: 'communication_thread',
+        summaryText: replyText,
+        guidanceGoal: 'action_follow_through',
+        subjectData: {
+          ...context.priorSubjectData,
+          activeCapabilityId: 'communication.review_recent_texts',
+        },
+        supportedFollowups: descriptor.followupActions,
+        responseSource: 'local_companion',
+      },
+      followupActions: descriptor.followupActions,
+      outcomeMetadata: {
+        source: 'recent_text_review',
+        outcomeKind: 'reviewed',
+        handled: false,
+        capabilityId: descriptor.id,
+      },
+    };
+  }
+  if (
+    isBoundRecentTextReviewItemFollowup(reviewItemFollowup) &&
+    reviewItemFollowup.kind !== 'why'
+  ) {
     const freshness =
       await validateRecentTextReviewFollowupFreshnessAfterTargetedRefresh({
         seedJson: context.priorSubjectData?.recentTextReviewJson,
@@ -4836,7 +4884,10 @@ async function runCommunicationDraftCapability(
     userText: input.text || input.canonicalText || '',
   });
   const selectedReviewItem =
-    reviewDraftPrompt?.item || reviewItemFollowup?.item || null;
+    reviewDraftPrompt?.item ||
+    (isBoundRecentTextReviewItemFollowup(reviewItemFollowup)
+      ? reviewItemFollowup.item
+      : null);
   const selectedReviewTarget = selectedReviewItem
     ? resolveRecentTextReviewFollowupTarget(selectedReviewItem)
     : null;
@@ -4894,7 +4945,9 @@ async function runCommunicationDraftCapability(
           item: selectedReviewItem,
           outcome: mapRecentTextReviewFollowupToOutcome(reviewItemFollowup),
           now: context.now,
-          timingHint: reviewItemFollowup?.timingHint || null,
+          timingHint: isBoundRecentTextReviewItemFollowup(reviewItemFollowup)
+            ? reviewItemFollowup.timingHint || null
+            : null,
         });
       }
       return {
