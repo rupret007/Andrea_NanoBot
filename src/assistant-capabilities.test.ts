@@ -2365,7 +2365,9 @@ describe('assistant capabilities', () => {
     expect(result.replyText).toContain(
       'CURRENT STATE: use the east entrance instead.',
     );
-    expect(result.replyText).toContain("You haven't replied yet.");
+    expect(result.replyText).toContain(
+      'You said: CURRENT STATE: use the east entrance instead.',
+    );
     expect(result.replyText).not.toContain('By the end');
     expect(result.replyText).not.toContain('Latest turn');
     expect(result.trace?.notes).toContain('digest_source:fallback');

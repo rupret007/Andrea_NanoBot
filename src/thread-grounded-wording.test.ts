@@ -127,6 +127,32 @@ describe('thread-grounded wording', () => {
     expect(gist.digestSentences.join(' ')).not.toMatch(/opened with/i);
   });
 
+  it("keeps Jeff's latest outbound as the current-state gist", () => {
+    const gist = buildThreadGroundedSummaryGist({
+      chatName: 'Bob',
+      isGroup: false,
+      turns: [
+        {
+          content: 'Actually, parking is closed on that side.',
+          isFromMe: false,
+          speakerLabel: 'Bob',
+        },
+        {
+          content: 'CURRENT STATE: use the east entrance instead.',
+          isFromMe: true,
+          speakerLabel: 'You',
+        },
+      ],
+    });
+    expect(gist.ownerOwesReply).toBe(false);
+    expect(gist.digestSentences.join(' ')).toContain(
+      'You said: CURRENT STATE: use the east entrance instead.',
+    );
+    expect(gist.digestSentences.join(' ')).not.toMatch(
+      /opened with|latest open turn|By the end/i,
+    );
+  });
+
   it('withholds a canned gist answer when Bob asked a question', () => {
     const gist = buildThreadGroundedSummaryGist({
       chatName: 'Bob',

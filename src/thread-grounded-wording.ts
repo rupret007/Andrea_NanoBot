@@ -467,9 +467,16 @@ export function buildThreadGroundedSummaryGist(input: {
     } else {
       digestSentences.push(`${person} told you: ${cleaned}.`);
     }
-    digestSentences.push(
-      ownerOwesReply ? "You haven't replied yet." : 'You already replied.',
-    );
+    if (ownerOwesReply) {
+      digestSentences.push("You haven't replied yet.");
+    } else {
+      const latestTurn = turns.at(-1);
+      digestSentences.push(
+        latestTurn?.isFromMe
+          ? `You said: ${normalizeText(latestTurn.content).replace(/[.!?]+$/g, '')}.`
+          : 'You already replied.',
+      );
+    }
   }
 
   const evidenceTurns = [
