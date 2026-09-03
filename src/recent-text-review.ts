@@ -3358,14 +3358,31 @@ export type RecentTextReviewItemFollowupKind =
   | 'save'
   | 'skip'
   | 'why'
-  | 'handled';
+  | 'handled'
+  | 'ambiguous_name';
 
-export interface RecentTextReviewItemFollowup {
-  kind: RecentTextReviewItemFollowupKind;
-  item: ParsedRecentTextReviewSeed['items'][number];
+type RecentTextReviewSeedItem = ParsedRecentTextReviewSeed['items'][number];
+
+export type BoundRecentTextReviewItemFollowup = {
+  kind: Exclude<RecentTextReviewItemFollowupKind, 'ambiguous_name'>;
+  item: RecentTextReviewSeedItem;
   style?: 'shorter' | 'warmer' | 'more_direct' | null;
   timingHint?: string | null;
   suggestedReply?: RecentTextReviewSuggestedReply | null;
+};
+
+export type RecentTextReviewItemFollowup =
+  | BoundRecentTextReviewItemFollowup
+  | {
+      kind: 'ambiguous_name';
+      query: string;
+      candidates: Array<Pick<RecentTextReviewSeedItem, 'rank' | 'chatLabel'>>;
+    };
+
+export function isBoundRecentTextReviewItemFollowup(
+  followup: RecentTextReviewItemFollowup | null | undefined,
+): followup is BoundRecentTextReviewItemFollowup {
+  return Boolean(followup && followup.kind !== 'ambiguous_name');
 }
 
 function findReviewSeedItemByRank(
@@ -3390,12 +3407,144 @@ function findCurrentReviewSeedItem(
 
 function inferReviewDraftStyle(
   normalized: string,
-): RecentTextReviewItemFollowup['style'] {
+): 'shorter' | 'warmer' | 'more_direct' | null {
   if (/\bwarmer|less stiff\b/.test(normalized)) return 'warmer';
   if (/\bmore direct|blunt\b/.test(normalized)) return 'more_direct';
   if (/\bshorter\b/.test(normalized)) return 'shorter';
   return null;
 }
+
+const REVIEW_FOLLOWUP_NAME_REJECT = new Set([
+  'a',
+  'about',
+  'an',
+  'as',
+  'done',
+  'first',
+  'for',
+  'handled',
+  'it',
+  'item',
+  'later',
+  'me',
+  'my',
+  'now',
+  'number',
+  'one',
+  'option',
+  'reply',
+  'resolved',
+  'response',
+  'send',
+  'that',
+  'the',
+  'this',
+  'to',
+]);
+
+function normalizeReviewFollowupName(value: string): string {
+  return normalizeText(
+    value
+      .replace(/^(?:the|my|our)\s+/i, '')
+      .replace(/\b(?:thread|chat|conversation|texts?|messages?)\b/gi, ' ')
+      .replace(
+        /\b(?:warmer|shorter|more direct|less stiff|more blunt|for me)\b/gi,
+        ' ',
+      )
+      .replace(/[.,!?]+$/g, ''),
+  );
+}
+
+function isUsableReviewFollowupName(value: string): boolean {
+  const normalized = normalizeReviewFollowupName(value).toLowerCase();
+  if (!normalized || normalized.length < 2 || /^\d+$/.test(normalized)) {
+    return false;
+  }
+  if (/^(?:#|number\s*)\d+$/i.test(normalized)) {
+    return false;
+  }
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0 || tokens.length > 5) {
+    return false;
+  }
+  if (tokens.every((token) => REVIEW_FOLLOWUP_NAME_REJECT.has(token))) {
+    return false;
+  }
+  return !/\bsend it(?: now)?\b|\bsend now\b/i.test(normalized);
+}
+
+type ReviewSeedNameMatch =
+  | { state: 'unique'; item: RecentTextReviewSeedItem }
+  | {
+      state: 'ambiguous';
+      query: string;
+      candidates: Array<Pick<RecentTextReviewSeedItem, 'rank' | 'chatLabel'>>;
+    }
+  | { state: 'missing' };
+
+function findReviewSeedItemByName(
+  seed: ParsedRecentTextReviewSeed,
+  rawName: string,
+): ReviewSeedNameMatch {
+  const query = normalizeReviewFollowupName(rawName).toLowerCase();
+  if (!isUsableReviewFollowupName(query)) {
+    return { state: 'missing' };
+  }
+  const exact = seed.items.filter(
+    (candidate) => normalizeText(candidate.chatLabel).toLowerCase() === query,
+  );
+  if (exact.length === 1 && exact[0]) {
+    return { state: 'unique', item: exact[0] };
+  }
+  if (exact.length > 1) {
+    return {
+      state: 'ambiguous',
+      query: normalizeReviewFollowupName(rawName),
+      candidates: exact.map((candidate) => ({
+        rank: candidate.rank,
+        chatLabel: candidate.chatLabel,
+      })),
+    };
+  }
+  const tokenBoundary = seed.items.filter((candidate) => {
+    const label = normalizeText(candidate.chatLabel).toLowerCase();
+    return label === query || label.startsWith(`${query} `);
+  });
+  if (tokenBoundary.length === 1 && tokenBoundary[0]) {
+    return { state: 'unique', item: tokenBoundary[0] };
+  }
+  if (tokenBoundary.length > 1) {
+    return {
+      state: 'ambiguous',
+      query: normalizeReviewFollowupName(rawName),
+      candidates: tokenBoundary.map((candidate) => ({
+        rank: candidate.rank,
+        chatLabel: candidate.chatLabel,
+      })),
+    };
+  }
+  return { state: 'missing' };
+}
+
+function followupFromNameMatch(
+  match: ReviewSeedNameMatch,
+  bound: Omit<BoundRecentTextReviewItemFollowup, 'item'>,
+): RecentTextReviewItemFollowup | null {
+  if (match.state === 'missing') {
+    return null;
+  }
+  if (match.state === 'ambiguous') {
+    return {
+      kind: 'ambiguous_name',
+      query: match.query,
+      candidates: match.candidates,
+    };
+  }
+  return { ...bound, item: match.item };
+}
+
+const REVIEW_FOLLOWUP_TIMING_RE =
+  /\s+(tonight|tomorrow|later|this evening|this afternoon|this morning|in the morning)$/i;
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -3587,6 +3736,93 @@ export function parseRecentTextReviewItemFollowup(input: {
     const item = findReviewSeedItemByRank(seed, whyMatch[1]);
     if (!item) return null;
     return { kind: 'why', item };
+  }
+
+  const namedDraftMatch =
+    normalized.match(
+      /^(?:draft|reply to|respond to|rewrite)(?:\s+(?:a\s+)?(?:reply|response)(?:\s+to)?)?(?:\s+for)?\s+(.+)$/i,
+    ) ||
+    normalized.match(
+      /^(?:make|rewrite)\s+(.+?)\s+(?:warmer|shorter|more direct|less stiff|more blunt)$/i,
+    );
+  if (namedDraftMatch) {
+    const named = followupFromNameMatch(
+      findReviewSeedItemByName(
+        seed,
+        (namedDraftMatch[1] || '').replace(/\s+about\b.*$/i, ''),
+      ),
+      {
+        kind: 'draft',
+        style: inferReviewDraftStyle(normalized),
+        suggestedReply: null,
+      },
+    );
+    if (named?.kind === 'draft') {
+      named.suggestedReply = inferSuggestedReplySelection(
+        normalized,
+        named.item,
+      );
+    }
+    if (named) return named;
+  }
+
+  const namedRemindMatch = normalized.match(
+    /^remind me(?:\s+(?:about|to review|to reply to|on|for))?\s+(.+)$/i,
+  );
+  if (namedRemindMatch) {
+    const remainder = normalizeText(namedRemindMatch[1] || '');
+    const timingMatch = remainder.match(REVIEW_FOLLOWUP_TIMING_RE);
+    const nameText = timingMatch
+      ? remainder.replace(REVIEW_FOLLOWUP_TIMING_RE, '')
+      : remainder.replace(/\s+about\b.*$/i, '');
+    const named = followupFromNameMatch(
+      findReviewSeedItemByName(seed, nameText),
+      {
+        kind: 'remind',
+        timingHint: timingMatch ? normalizeText(timingMatch[1] || '') : null,
+      },
+    );
+    if (named) return named;
+  }
+
+  const namedSaveMatch = normalized.match(
+    /^(?:save|remember|track|keep track of)\s+(.+)$/i,
+  );
+  if (namedSaveMatch) {
+    const named = followupFromNameMatch(
+      findReviewSeedItemByName(seed, namedSaveMatch[1] || ''),
+      { kind: 'save' },
+    );
+    if (named) return named;
+  }
+
+  const namedSkipMatch = normalized.match(/^(?:skip|dismiss|ignore)\s+(.+)$/i);
+  if (namedSkipMatch) {
+    const named = followupFromNameMatch(
+      findReviewSeedItemByName(seed, namedSkipMatch[1] || ''),
+      { kind: 'skip' },
+    );
+    if (named) return named;
+  }
+
+  const namedHandledMatch = normalized.match(
+    /^(?:mark\s+)?(.+?)\s+(?:as\s*)?(?:handled|done|resolved)$/i,
+  );
+  if (namedHandledMatch) {
+    const named = followupFromNameMatch(
+      findReviewSeedItemByName(seed, namedHandledMatch[1] || ''),
+      { kind: 'handled' },
+    );
+    if (named) return named;
+  }
+
+  const namedWhyMatch = normalized.match(/^(?:why|explain)\s+(.+)$/i);
+  if (namedWhyMatch) {
+    const named = followupFromNameMatch(
+      findReviewSeedItemByName(seed, namedWhyMatch[1] || ''),
+      { kind: 'why' },
+    );
+    if (named) return named;
   }
 
   return null;

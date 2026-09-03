@@ -675,6 +675,7 @@ import {
   formatRecentTextReviewFreshnessBlockedReply,
   parseRecentTextReviewItemFollowup,
   parseRecentTextReviewSeedJson,
+  isBoundRecentTextReviewItemFollowup,
   recordRecentTextReviewOutcome,
   resolveRecentTextReviewFollowupTarget,
   validateRecentTextReviewFollowupFreshnessAfterTargetedRefresh,
@@ -6386,7 +6387,7 @@ async function processClaimedGroupMessages(
         });
         if (
           !seedJson ||
-          !reviewFollowup ||
+          !isBoundRecentTextReviewItemFollowup(reviewFollowup) ||
           reviewFollowup.item.rank !== itemNumber
         ) {
           return {
