@@ -36,6 +36,11 @@ import {
   buildSignaturePostActionConfirmation,
 } from './signature-flows.js';
 import { draftBlueBubblesCommunicationReply } from './messages-fluidity.js';
+import {
+  buildThreadGroundedAcknowledgement,
+  companionStyleToThreadAckStyle,
+  extractConcreteThreadUpdateAnchor,
+} from './thread-grounded-wording.js';
 import type {
   CommunicationFollowupState,
   CommunicationInferenceState,
@@ -537,10 +542,13 @@ function looksLikeCommunicationMessageBody(value: string): boolean {
   if (looksLikeNonCommunicationCompanionPrompt(normalized)) return false;
   if (/^[^:]{1,40}:\s+\S+/.test(normalized)) return true;
   if (
-    /\b(?:let me know|can you|could you|would you|are you free|are we still|does that work|what do you think|should we|can we|need you to|when you get a chance|circle back|follow up|works tonight|works for me|sounds good|see you (?:at|then)|thank you|thanks)\b/i.test(
+    /\b(?:let me know|can you|could you|would you|are you free|are we still|does that work|what do you think|should we|can we|need you to|when you get a chance|circle back|follow up|works tonight|works for me|sounds good|see you (?:at|then)|thank you|thanks|moved to|starts? at|is at|are at|keeping you posted|sharing the update|letting you know|heads-?up)\b/i.test(
       normalized,
     )
   ) {
+    return true;
+  }
+  if (extractConcreteThreadUpdateAnchor(normalized)) {
     return true;
   }
   return /\?/.test(normalized);
@@ -589,7 +597,10 @@ function extractLatestInboundMessage(chatJid: string | undefined): {
     if (item.is_from_me || item.is_bot_message || !item.content?.trim()) {
       return false;
     }
-    return looksLikeCommunicationMessageBody(item.content);
+    return (
+      looksLikeCommunicationMessageBody(item.content) ||
+      Boolean(extractConcreteThreadUpdateAnchor(item.content))
+    );
   });
   if (!message) return {};
   if (
@@ -1649,6 +1660,14 @@ function buildRelationshipAwareDraft(input: {
   if (resolvedAcknowledgement) {
     return resolvedAcknowledgement.trim();
   }
+  const inboundAcknowledgement = buildThreadGroundedAcknowledgement({
+    inboundText: input.messageText,
+    style: companionStyleToThreadAckStyle(effectiveStyle, input.toneHints),
+    requireConcreteUpdate: true,
+  });
+  if (inboundAcknowledgement && !draftTopic.startsWith('whether ')) {
+    return inboundAcknowledgement;
+  }
   const baseBody = draftTopic.startsWith('whether ')
     ? opener
       ? `can you let me know ${draftTopic}?`
@@ -1703,6 +1722,12 @@ function extractExplicitOwnerSuppliedDraftBody(
 
 function isExplicitOwnerSuppliedDraftBody(value: string | undefined): boolean {
   return Boolean(extractExplicitOwnerSuppliedDraftBody(value));
+}
+
+export function hasExplicitOwnerSuppliedDraftBody(
+  value: string | undefined,
+): boolean {
+  return isExplicitOwnerSuppliedDraftBody(value);
 }
 
 function draftNeedsOwnerAnswer(input: {

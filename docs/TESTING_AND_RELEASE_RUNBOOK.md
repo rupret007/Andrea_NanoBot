@@ -184,6 +184,9 @@ For BlueBubbles communication-summary or suggested-reply changes, verify:
 - recent-text review shows suggested replies only when the available message
   evidence supports a real answer; it must not invent canned acknowledgements
   for unanswered questions
+- informational updates produce person/thread-grounded acknowledgements that
+  name the concrete update (`Dinner at seven tonight`); questions, requests,
+  and automated notices still get no canned answer
 - `draft #1`, `draft #1 option 2`, `make #2 warmer`, `send it`, and
   `send it later` remain same-thread and approval-first
 - group, low-confidence, and sensitive threads stay draft/caution-first

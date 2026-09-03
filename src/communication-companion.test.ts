@@ -1408,6 +1408,83 @@ describe('communication companion', () => {
     expect(result.clarificationQuestion).not.toContain("With Candace, I'd");
   });
 
+  it('drafts a thread-grounded acknowledgement for an informational inbound update', () => {
+    seedCandace();
+    storeChatMetadata(
+      'bb:chat-dinner-update',
+      '2026-04-06T10:00:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:msg-dinner-update',
+      chat_jid: 'bb:chat-dinner-update',
+      sender: '+15551234567',
+      sender_name: 'Candace',
+      content: 'Dinner moved to seven tonight, just keeping you posted.',
+      timestamp: '2026-04-06T10:00:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'bb:chat-dinner-update',
+      text: 'draft a reply',
+      priorContext: {
+        personName: 'Candace',
+        threadTitle: 'Candace',
+      },
+      now: new Date('2026-04-06T10:05:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toBe(
+      'Thanks for the heads-up — Dinner at seven tonight.',
+    );
+    expect(result.draftText).not.toContain('circle back');
+  });
+
+  it('keeps a short informational draft on the concrete inbound update', () => {
+    seedCandace();
+    storeChatMetadata(
+      'bb:chat-dinner-update-short',
+      '2026-04-06T10:00:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessageDirect({
+      id: 'bb:msg-dinner-update-short',
+      chat_jid: 'bb:chat-dinner-update-short',
+      sender: '+15551234567',
+      sender_name: 'Candace',
+      content: 'Dinner moved to seven tonight, just keeping you posted.',
+      timestamp: '2026-04-06T10:00:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+
+    const result = draftCommunicationReply({
+      channel: 'telegram',
+      groupFolder: 'main',
+      chatJid: 'bb:chat-dinner-update-short',
+      text: 'give me a short reply',
+      replyText: 'Dinner moved to seven tonight, just keeping you posted.',
+      priorContext: {
+        personName: 'Candace',
+        threadTitle: 'Candace',
+      },
+      now: new Date('2026-04-06T10:05:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.draftText).toBe('Got it—Dinner at seven tonight.');
+    expect(result.draftText).not.toContain('circle back');
+  });
+
   it('strips programmatic open-loop phrasing out of Alexa-safe draft topics', () => {
     seedCandace();
 
