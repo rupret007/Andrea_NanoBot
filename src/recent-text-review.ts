@@ -37,6 +37,7 @@ import {
   formatGroundedMessagesPlanFact,
 } from './messages-commitment-summary.js';
 import { hasMessagesGroundingPolarityConflict } from './messages-grounding-polarity.js';
+import { buildThreadGroundedSuggestedReplies } from './thread-grounded-wording.js';
 import type {
   CommunicationFollowupState,
   CommunicationIdentityReviewRecord,
@@ -1076,6 +1077,7 @@ function buildConversationRecap(input: {
         170,
       )} Recent exchange: `
     : '';
+  const otherLabel = input.isGroup ? null : input.chatLabel;
   const turns = input.messages
     .filter((message) => substantiveMessage(message.content || ''))
     .slice(-4)
@@ -1084,16 +1086,17 @@ function buildConversationRecap(input: {
         ? safeGroupParticipantLabel(message)
         : message.is_from_me
           ? 'You'
-          : 'They';
+          : otherLabel || 'They';
       return `${speaker}: "${sanitizeSnippet(message.content, 120)}"`;
     });
   const flow =
     turns.length > 0
       ? turns.join(' ')
       : input.latestInbound
-        ? `${input.isGroup ? safeGroupParticipantLabel(input.latestInbound) : 'They'}: "${messageContent(input.latestInbound)}"`
+        ? `${input.isGroup ? safeGroupParticipantLabel(input.latestInbound) : otherLabel || 'They'}: "${messageContent(input.latestInbound)}"`
         : 'There was recent synced Messages activity.';
   const boundedOpenAsks = input.unresolvedInboundAsks.slice(-3);
+  const personAskLabel = otherLabel || 'their';
   const openAskState =
     boundedOpenAsks.length > 1
       ? input.isGroup
@@ -1103,22 +1106,22 @@ function buildConversationRecap(input: {
                 `${safeGroupParticipantLabel(message)}: "${messageContent(message)}"`,
             )
             .join('; ')}.`
-        : `Current state: their open asks remain: ${boundedOpenAsks
+        : `Current state: ${personAskLabel}'s open asks remain: ${boundedOpenAsks
             .map((message) => `"${messageContent(message)}"`)
             .join('; ')}.`
       : input.unresolvedInboundAsk
         ? input.isGroup
           ? `Current state: ${safeGroupParticipantLabel(input.unresolvedInboundAsk)}'s open ask is "${messageContent(input.unresolvedInboundAsk)}".`
           : input.unresolvedInboundAsk === input.latestInbound
-            ? `Current state: their latest open ask is "${messageContent(input.unresolvedInboundAsk)}".`
-            : `Current state: their earlier ask "${messageContent(input.unresolvedInboundAsk)}" is still open; their latest message adds "${messageContent(input.latestInbound)}".`
+            ? `Current state: ${personAskLabel}'s latest open ask is "${messageContent(input.unresolvedInboundAsk)}".`
+            : `Current state: ${personAskLabel}'s earlier ask "${messageContent(input.unresolvedInboundAsk)}" is still open; ${personAskLabel}'s latest message adds "${messageContent(input.latestInbound)}".`
         : null;
   const state =
     input.section === 'needs_reply'
       ? openAskState
         ? openAskState
         : input.latestInbound
-          ? `Current state: their latest open turn is "${messageContent(input.latestInbound)}".`
+          ? `Current state: ${personAskLabel}'s latest open turn is "${messageContent(input.latestInbound)}".`
           : 'Current state: there may be an open reply owed.'
       : input.section === 'worth_watching'
         ? input.groupQuestionAudienceUnclear && boundedOpenAsks.length > 0
@@ -1452,104 +1455,16 @@ function buildSuggestedReplyOptions(input: {
     // masquerading as an answer is not a safe draft option.
     return [];
   }
-  if (input.isGroup) {
-    return [
-      {
-        label: 'careful',
-        text: 'Thanks for the update.',
-      },
-      {
-        label: 'brief',
-        text: 'Got it.',
-      },
-    ];
-  }
-  if (
-    input.contextConfidence === 'low' ||
-    input.riskFlags.includes('ambiguous_identity')
-  ) {
-    return [
-      {
-        label: 'careful',
-        text: 'Thanks for the update.',
-      },
-      {
-        label: 'brief',
-        text: 'Got it.',
-      },
-    ];
-  }
-  if (input.sensitive) {
-    return [
-      {
-        label: 'warm',
-        text: 'I hear you. Thanks for telling me directly.',
-      },
-      {
-        label: 'direct',
-        text: "I hear what you're saying.",
-      },
-      {
-        label: 'brief',
-        text: 'I saw your message. I hear you.',
-      },
-    ];
-  }
-  const tone = input.toneStyleHints.join(' ').toLowerCase();
-  if (/\bwarm|careful|avoid_overcommitment/.test(tone)) {
-    return [
-      {
-        label: 'warm',
-        text: 'Thanks for the heads-up. I appreciate it.',
-      },
-      {
-        label: 'direct',
-        text: 'Thanks for the update.',
-      },
-      {
-        label: 'brief',
-        text: 'Got it.',
-      },
-    ];
-  }
-  if (/\bconcise|direct/.test(tone)) {
-    return [
-      {
-        label: 'direct',
-        text: 'Thanks for the update.',
-      },
-      {
-        label: 'brief',
-        text: 'Got it.',
-      },
-    ];
-  }
-  if (input.deadline) {
-    return [
-      {
-        label: 'warm',
-        text: 'Thanks for the timing update.',
-      },
-      {
-        label: 'direct',
-        text: 'Got the timing update.',
-      },
-      {
-        label: 'brief',
-        text: 'Got it.',
-      },
-    ];
-  }
-  return [
-    {
-      label: 'warm',
-      text: 'Thanks for the update.',
-    },
-    {
-      label: 'brief',
-      text: 'Got it.',
-    },
-  ];
+  return buildThreadGroundedSuggestedReplies({
+    inboundText: text,
+    isGroup: input.isGroup,
+    sensitive: input.sensitive,
+    deadline: input.deadline,
+    toneStyleHints: input.toneStyleHints,
+    contextConfidence: input.riskFlags.includes('ambiguous_identity')
+      ? 'low'
+      : input.contextConfidence,
+  });
 }
 
 function withAvailableReplyContext(

@@ -456,10 +456,10 @@ describe('recent text review', () => {
     expect(item?.whyText).toContain('asks for an answer');
     expect(item?.whyText).toContain('after your last reply');
     expect(item?.summaryText).toContain(
-      'their earlier ask "Please send the venue address." is still open',
+      'Riley\'s earlier ask "Please send the venue address." is still open',
     );
     expect(item?.summaryText).toContain(
-      'their latest message adds "The doors open at six."',
+      'Riley\'s latest message adds "The doors open at six."',
     );
     expect(item?.recommendedAction).toContain('No draft suggested');
   });
@@ -2012,8 +2012,14 @@ describe('recent text review', () => {
     });
 
     expect(result.needsReply[0]?.linkedSubjectIds).toContain('subject-candace');
+    expect(result.needsReply[0]?.summaryText).toContain(
+      "Candace's latest open turn",
+    );
+    expect(result.needsReply[0]?.summaryText).not.toContain(
+      'their latest open turn',
+    );
     expect(result.needsReply[0]?.suggestedReply).toBe(
-      'Thanks for the heads-up. I appreciate it.',
+      'Thanks for the heads-up — Dinner at seven tonight.',
     );
     expect(result.needsReply[0]?.suggestedReply).not.toMatch(
       /\b(?:checking|will confirm|will get back)\b/i,
@@ -2105,7 +2111,7 @@ describe('recent text review', () => {
 
     expect(result.needsReply[0]?.linkedSubjectIds).toEqual(['subject-alex']);
     expect(result.needsReply[0]?.suggestedReply).toBe(
-      'Thanks for the timing update.',
+      'Thanks for the timing update on Load-in at six tonight.',
     );
     expect(result.needsReply[0]?.suggestedReply).not.toContain('appreciate');
   });

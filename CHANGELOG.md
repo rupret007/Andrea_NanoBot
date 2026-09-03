@@ -5,6 +5,16 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Closed the post-#29 Texts leftover: named-person routing stays in place,
+  and summarize/draft wording is now person- and thread-grounded for
+  informational updates (`Dinner at seven tonight`, `Load-in at six tonight`)
+  instead of generic `Thanks for the update.` / `Got it.` / `circle back`.
+  Questions, requests, and automated notices still withhold a canned answer.
+  Send-path source blobs stay SHA-256-identical to leftover #29 unless a later
+  leftover proves the exact Bob fence is still `send it` / `send it now` /
+  `send now`. Bare `yes` / `ok` never authorize. Private API stays off.
+  AppleScript is the only send path. QA and Karen still cannot authorize a
+  send. Telegram stays Bot the Bot. No merge and no live send in this leftover.
 - Closed the Windows CI honesty leftover without weakening the product
   invariant: the durable-work SQLite fixture hooks now have a bounded 30-second
   budget under the full hosted suite, while the assertions still run once with

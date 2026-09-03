@@ -66,6 +66,7 @@ import {
   formatCommunicationAnalysisReply,
   formatCommunicationDraftReply,
   formatCommunicationOpenLoopsReply,
+  hasExplicitOwnerSuppliedDraftBody,
   manageCommunicationTracking,
 } from './communication-companion.js';
 import { handleCommunicationIdentityReview } from './communication-identity-review.js';
@@ -164,6 +165,10 @@ import { normalizeVoicePrompt } from './voice-ready.js';
 import { formatThreadSummaryWindowLabel } from './thread-summary-routing.js';
 import { TIMEZONE } from './config.js';
 import { resolveOwnerCalendarWindow } from './timezone.js';
+import {
+  buildThreadGroundedSuggestedReplies,
+  shouldWithholdThreadGroundedReply,
+} from './thread-grounded-wording.js';
 
 export type AssistantCapabilityId =
   | 'daily.morning_brief'
@@ -2822,6 +2827,7 @@ function buildThreadSummaryTranscript(params: {
 
 function buildLocalThreadSummarySuggestedReplies(
   messages: NewMessage[],
+  options: { isGroup?: boolean } = {},
 ): BlueBubblesSuggestedReply[] {
   let latestInboundIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -2858,16 +2864,10 @@ function buildLocalThreadSummarySuggestedReplies(
   ) {
     return [];
   }
-  return [
-    {
-      label: 'warm',
-      text: 'Thanks for the update.',
-    },
-    {
-      label: 'brief',
-      text: 'Got it.',
-    },
-  ];
+  return buildThreadGroundedSuggestedReplies({
+    inboundText: content,
+    isGroup: Boolean(options.isGroup),
+  });
 }
 
 function pickRepresentativeThreadMessages(
@@ -2939,6 +2939,8 @@ function buildFallbackThreadSummaryReply(params: {
   messages: NewMessage[];
   speakerLabels: Map<string, string>;
   channel: AssistantCapabilityContext['channel'];
+  isGroup?: boolean;
+  planFacts?: GroundedMessagesPlanFact[];
 }): string {
   const highlights = pickRepresentativeThreadMessages(params.messages);
   const selectHighlightsIncludingLatest = (limit: number): NewMessage[] => {
@@ -2955,6 +2957,33 @@ function buildFallbackThreadSummaryReply(params: {
     params.channel === 'bluebubbles' ? 2 : 4,
   );
   const replyNeed = inferThreadReplyNeed(params.messages);
+  const latestPlanFact = params.planFacts?.at(-1);
+  const planSentence = latestPlanFact
+    ? clipThreadSummaryEvidence(formatGroundedMessagesPlanFact(latestPlanFact), 180)
+    : null;
+  let latestInbound: NewMessage | undefined;
+  for (let index = params.messages.length - 1; index >= 0; index -= 1) {
+    const message = params.messages[index];
+    if (message && !message.is_from_me && !message.is_bot_message) {
+      latestInbound = message;
+      break;
+    }
+  }
+  const latestInboundSpeaker = latestInbound
+    ? params.speakerLabels.get(getThreadSummarySpeakerKey(latestInbound)) ||
+      params.chatName
+    : null;
+  const latestInboundIndex = latestInbound
+    ? params.messages.findIndex((message) => message.id === latestInbound.id)
+    : -1;
+  const currentState =
+    latestInbound &&
+    latestInboundIndex >= 0 &&
+    !params.messages
+      .slice(latestInboundIndex + 1)
+      .some((message) => message.is_from_me)
+      ? `Current state: ${clipThreadSummaryEvidence(latestInboundSpeaker || params.chatName, 72)}'s latest open turn is "${clipThreadSummaryEvidence(latestInbound.content, 140)}".`
+      : null;
   const lead = `Here’s the gist from ${params.chatName} ${params.windowLabel === 'today' ? 'today' : `over ${params.windowLabel}`}.`;
   const digestSentences = digestHighlights.map((message, index) => {
     const speaker =
@@ -2972,6 +3001,12 @@ function buildFallbackThreadSummaryReply(params: {
     }
     return `Later, ${clipThreadSummaryEvidence(speaker, 72)} added "${content}".`;
   });
+  if (planSentence) {
+    digestSentences.push(planSentence);
+  }
+  if (currentState) {
+    digestSentences.push(currentState);
+  }
   const latestHighlightId = highlights.at(-1)?.id;
   const bullets = bulletHighlights
     .map((message, index) => {
@@ -2992,6 +3027,7 @@ function buildFallbackThreadSummaryReply(params: {
   }
   const suggestedReplies = buildLocalThreadSummarySuggestedReplies(
     params.messages,
+    { isGroup: Boolean(params.isGroup) },
   );
   const suggestedReplyLines =
     suggestedReplies.length > 0
@@ -4147,6 +4183,12 @@ async function runCommunicationThreadSummaryCapability(
     messages,
     isGroup: resolution.target.isGroup,
   });
+  const groundedPlanFacts = extractThreadSummaryPlanFacts({
+    messages,
+    speakerLabels,
+    isGroup: resolution.target.isGroup,
+    directOtherLabel: safeDisplayName,
+  });
   const transcript = buildThreadSummaryTranscript({
     messages,
     speakerLabels,
@@ -4157,8 +4199,10 @@ async function runCommunicationThreadSummaryCapability(
     transcript,
     channel: context.channel === 'bluebubbles' ? 'bluebubbles' : 'telegram',
   });
-  const safeSuggestedReplies =
-    buildLocalThreadSummarySuggestedReplies(messages);
+  const safeSuggestedReplies = buildLocalThreadSummarySuggestedReplies(
+    messages,
+    { isGroup: resolution.target.isGroup },
+  );
   const usedOpenAiSynthesis =
     synthesizedDigest.source === 'openai' &&
     Boolean(
@@ -4182,13 +4226,9 @@ async function runCommunicationThreadSummaryCapability(
         messages,
         speakerLabels,
         channel: context.channel,
+        isGroup: resolution.target.isGroup,
+        planFacts: groundedPlanFacts,
       });
-  const groundedPlanFacts = extractThreadSummaryPlanFacts({
-    messages,
-    speakerLabels,
-    isGroup: resolution.target.isGroup,
-    directOtherLabel: safeDisplayName,
-  });
   const planSection = formatThreadSummaryPlanSection({
     facts: groundedPlanFacts,
     limit: context.channel === 'bluebubbles' ? 2 : 4,
@@ -5065,11 +5105,51 @@ async function runCommunicationDraftCapability(
       },
     };
   }
-  const rawCommunicationText =
-    reviewDraftPrompt?.text ||
-    (selectedReviewItem
-      ? `Use this recent text review item without sending anything yet. Thread: ${selectedReviewItem.chatLabel}. Context: ${selectedReviewItem.summaryText}. Why it matters: ${selectedReviewItem.whyText || selectedReviewItem.recommendedAction || 'recent synced Messages review'}.`
-      : input.text || input.canonicalText || '');
+  const userDraftText = input.text || input.canonicalText || '';
+  const ownerSuppliedDraft = hasExplicitOwnerSuppliedDraftBody(userDraftText);
+  const boundDraftChatJid =
+    namedSummaryTarget?.target.chatJid ||
+    (selectedReviewTarget?.ok ? selectedReviewTarget.chatJid : null) ||
+    null;
+  const boundWindowMessages =
+    boundDraftChatJid && !ownerSuppliedDraft
+      ? listMessagesForChatWindow({
+          chatJid: boundDraftChatJid,
+          startTimestamp: '2000-01-01T00:00:00.000Z',
+          limit: 80,
+        })
+      : [];
+  let boundInbound: NewMessage | undefined;
+  for (let index = boundWindowMessages.length - 1; index >= 0; index -= 1) {
+    const message = boundWindowMessages[index];
+    if (message && !message.is_from_me && !message.is_bot_message) {
+      boundInbound = message;
+      break;
+    }
+  }
+  const boundInboundText = boundInbound
+    ? describeMessageForSummary(boundInbound) || boundInbound.content || ''
+    : '';
+  const boundInboundSafe =
+    Boolean(boundInboundText) &&
+    !shouldWithholdThreadGroundedReply(boundInboundText);
+  const boundDraftStyleCommand = reviewDraftPrompt?.text?.startsWith(
+    'Make it warmer',
+  )
+    ? 'Make it warmer.'
+    : reviewDraftPrompt?.text?.startsWith('Make it more direct')
+      ? 'Make it more direct.'
+      : reviewDraftPrompt?.text?.startsWith('Make it shorter')
+        ? 'give me a short reply'
+        : 'draft a reply';
+  const rawCommunicationText = ownerSuppliedDraft
+    ? userDraftText
+    : boundInboundSafe && (namedSummaryTarget || selectedReviewItem)
+      ? boundDraftStyleCommand
+      : reviewDraftPrompt?.text ||
+        (selectedReviewItem
+          ? `Use this recent text review item without sending anything yet. Thread: ${selectedReviewItem.chatLabel}. Context: ${selectedReviewItem.summaryText}. Why it matters: ${selectedReviewItem.whyText || selectedReviewItem.recommendedAction || 'recent synced Messages review'}.`
+          : userDraftText);
   const priorContextForDraft = namedSummaryTarget
     ? {
         ...context.priorSubjectData,
@@ -5120,7 +5200,9 @@ async function runCommunicationDraftCapability(
     ? ('bluebubbles' as const)
     : context.channel;
   const draftContextChatJid =
-    namedSummaryTarget?.target.chatJid || context.chatJid;
+    boundDraftChatJid ||
+    namedSummaryTarget?.target.chatJid ||
+    context.chatJid;
   const draft =
     context.channel === 'bluebubbles'
       ? await draftCommunicationReplyWithChannelFluidity({
@@ -5128,7 +5210,9 @@ async function runCommunicationDraftCapability(
           groupFolder: context.groupFolder,
           chatJid: draftContextChatJid,
           text: rawCommunicationText,
-          replyText: context.replyText,
+          replyText: boundInboundSafe
+            ? boundInboundText
+            : context.replyText,
           conversationSummary: context.conversationSummary,
           priorContext: priorContextForDraft,
           now: context.now,
@@ -5138,7 +5222,9 @@ async function runCommunicationDraftCapability(
           groupFolder: context.groupFolder,
           chatJid: draftContextChatJid,
           text: rawCommunicationText,
-          replyText: context.replyText,
+          replyText: boundInboundSafe
+            ? boundInboundText
+            : context.replyText,
           conversationSummary: context.conversationSummary,
           priorContext: priorContextForDraft,
           now: context.now,

@@ -1221,7 +1221,8 @@ describe('assistant capabilities', () => {
       'Here’s the gist from Pops of Punk today.',
     );
     expect(result.replyText).toContain('Suggested replies');
-    expect(result.replyText).toContain('Thanks for the update.');
+    expect(result.replyText).toContain('Fallout');
+    expect(result.replyText).not.toContain('Thanks for the update.');
     expect(result.replyText).not.toContain('+12025550102');
     expect(result.replyText).not.toContain('+12025550103');
     expect(result.replyText).not.toContain(
@@ -2833,6 +2834,262 @@ describe('assistant capabilities', () => {
     expect(
       listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
     ).toHaveLength(0);
+  });
+
+  it('summarizes a named person with thread-grounded wording and no send', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:10:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'named-summary-candace-dinner',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Dinner moved to seven tonight, just keeping you posted.',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+
+    const result = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'summarize Candace from today',
+        targetChatName: 'Candace',
+        timeWindowKind: 'today',
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.replyText).toContain('Here’s the gist from Candace today.');
+    expect(result.replyText).toContain("Candace's latest open turn");
+    expect(result.replyText).toContain('Dinner at seven tonight');
+    expect(result.replyText).toContain(
+      'Thanks for the heads-up — Dinner at seven tonight.',
+    );
+    expect(result.replyText).not.toContain('Thanks for the update.');
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('drafts a named-person informational update from that thread without sending', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:10:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'named-draft-candace-dinner',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Dinner moved to seven tonight, just keeping you posted.',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+
+    const summary = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'summarize Candace from today',
+        targetChatName: 'Candace',
+        timeWindowKind: 'today',
+      },
+    });
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        primeMessagesChatHistory: async (chatJid) => ({
+          chatJid,
+          storedCount: 1,
+          totalCount: 1,
+        }),
+        priorSubjectData: summary.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'draft Candace',
+        canonicalText: 'draft Candace',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.replyText).toContain(
+      'Thanks for the heads-up — Dinner at seven tonight.',
+    );
+    expect(draft.replyText).not.toContain('circle back');
+    expect(draft.replyText).not.toContain('I did not create or send a draft');
+    expect(draft.messageAction?.sendStatus).toBe('drafted');
+    expect(draft.messageAction?.requiresApproval).toBe(true);
+    expect(
+      JSON.parse(draft.messageAction?.targetConversationJson || '{}'),
+    ).toMatchObject({
+      chatJid: 'bb:iMessage;-;+14695550123',
+      isGroup: false,
+    });
+  });
+
+  it('drafts from the latest inbound on a named thread, not an older update', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:20:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'named-draft-candace-practice',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Practice is at the usual spot.',
+      timestamp: '2026-04-15T15:40:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'named-draft-candace-dinner-latest',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Dinner moved to seven tonight, just keeping you posted.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+
+    const summary = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'summarize Candace from today',
+        targetChatName: 'Candace',
+        timeWindowKind: 'today',
+      },
+    });
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        primeMessagesChatHistory: async (chatJid) => ({
+          chatJid,
+          storedCount: 2,
+          totalCount: 2,
+        }),
+        priorSubjectData: summary.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'draft Candace',
+        canonicalText: 'draft Candace',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.replyText).toContain(
+      'Thanks for the heads-up — Dinner at seven tonight.',
+    );
+    expect(draft.replyText).not.toContain('Practice at the usual spot');
+    expect(draft.replyText).not.toContain('circle back');
+    expect(draft.messageAction?.sendStatus).toBe('drafted');
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(1);
+  });
+
+  it('makes a named-review informational draft shorter from the bound inbound without sending', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550123',
+      '2026-04-15T16:10:00.000Z',
+      'Candace',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'review-short-candace-dinner',
+      chat_jid: 'bb:iMessage;-;+14695550123',
+      sender: 'bb:+14695550123',
+      sender_name: 'Candace',
+      content: 'Dinner moved to seven tonight, just keeping you posted.',
+      timestamp: '2026-04-15T16:10:00.000Z',
+      is_from_me: false,
+    });
+
+    const review = await executeAssistantCapability({
+      capabilityId: 'communication.review_recent_texts',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'review recent text messages from today',
+        timeWindowKind: 'today',
+      },
+    });
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        primeMessagesChatHistory: async (chatJid) => ({
+          chatJid,
+          storedCount: 1,
+          totalCount: 1,
+        }),
+        priorSubjectData: review.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'make #1 shorter',
+        canonicalText: 'make #1 shorter',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.replyText).toContain('Got it—Dinner at seven tonight.');
+    expect(draft.replyText).not.toContain('circle back');
+    expect(draft.messageAction?.sendStatus).toBe('drafted');
+    expect(draft.messageAction?.requiresApproval).toBe(true);
   });
 
   it('refuses an ambiguous named recent-text follow-up without drafting or sending', async () => {
