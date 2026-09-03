@@ -192,8 +192,10 @@ Behavior:
 - preserve ordinary contact text even if its body contains `@Andrea` or `@OpenClaw`
 - if local context is thin, prime bounded recent contact history from the live BlueBubbles server on demand
 - keep a named summary bounded to the selected contact chat only
-- produce a fuller recap of the conversation flow and current state, not just activity counts
+- produce a useful thread-grounded gist of the conversation and current
+  state for Jeff, not a quote dump or activity counts
 - suggest useful next actions like draft, revise, remind-later, send-later, save, or Telegram escalation
+- keep suggested replies unsent; Jeff talks to Bob, Andrea is the engine
 
 This keeps BlueBubbles useful for real text-message help without turning it into passive inbox surveillance.
 
