@@ -3386,7 +3386,7 @@ describe('assistant capabilities', () => {
       input: {
         text: 'yes',
         canonicalText: routed?.canonicalText || 'draft Bob',
-        personName: routed?.arguments?.personName,
+        personName: routed?.arguments?.personName || undefined,
         targetChatName: routed?.arguments?.targetChatName,
       },
     });
