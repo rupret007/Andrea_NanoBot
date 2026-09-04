@@ -25,13 +25,35 @@ export type NamedOpenLoopDraftFollowup =
   | { kind: 'denied'; reason: 'untrusted_named' }
   | { kind: 'draft'; query: string; source: 'named_command' | 'soft_yes' };
 
+export type NamedOpenLoopRemindTiming =
+  | 'tonight'
+  | 'today_morning'
+  | 'today_afternoon'
+  | 'tomorrow'
+  | 'tomorrow_morning'
+  | 'tomorrow_afternoon'
+  | 'tomorrow_evening';
+
+export type NamedOpenLoopRemindFollowup =
+  | { kind: 'none' }
+  | { kind: 'denied'; reason: 'untrusted_named' }
+  | {
+      kind: 'remind';
+      query: string;
+      timing: NamedOpenLoopRemindTiming;
+      source: 'later' | 'timed';
+    };
+
 export const GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE =
   'I did not crawl unnamed inbox threads.';
 export const GENERIC_OPEN_LOOP_NAMED_HANDOFF =
   "Next: name one person — for example, `what's still open with Bob?`";
 export const NAMED_OPEN_LOOP_DRAFT_YES_NOTICE = 'Yes will not send.';
+export const NAMED_OPEN_LOOP_REMIND_LATER_PROMPT = 'remind me later';
 
 const NAMED_OPEN_LOOP_SOFT_YES_RE = /^(?:yes|ok|okay|yeah|yep|yup)[.!]?$/i;
+const NAMED_OPEN_LOOP_REMIND_RE =
+  /^(?:remind me(?: to (?:reply|answer))?(?: later)?(?: (tonight|tomorrow(?: (?:morning|afternoon|evening))?|today(?: (?:morning|afternoon|evening))?))?|remind me about (?:that|this|it)(?: later)?(?: (tonight|tomorrow(?: (?:morning|afternoon|evening))?))?)[.!]?$/i;
 
 function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
@@ -117,6 +139,53 @@ export function namedOpenLoopDraftWasOffered(params: {
   );
 }
 
+export function namedOpenLoopRemindWasOffered(params: {
+  gist: ThreadGroundedSummaryGist;
+  isGroup: boolean;
+}): boolean {
+  return Boolean(params.gist.ownerOwesReply) && !params.isGroup;
+}
+
+export function parseNamedOpenLoopRemindTiming(
+  value: string | null | undefined,
+): NamedOpenLoopRemindTiming | null {
+  const text = normalizeText(value);
+  const match = text.match(NAMED_OPEN_LOOP_REMIND_RE);
+  if (!match) {
+    return null;
+  }
+  const when = normalizeText(match[1] || match[2]).toLowerCase();
+  if (when === 'today morning') return 'today_morning';
+  if (when === 'today afternoon') return 'today_afternoon';
+  if (when === 'tomorrow') return 'tomorrow';
+  if (when === 'tomorrow morning') return 'tomorrow_morning';
+  if (when === 'tomorrow afternoon') return 'tomorrow_afternoon';
+  if (when === 'tomorrow evening') return 'tomorrow_evening';
+  return 'tonight';
+}
+
+export function namedOpenLoopRemindTimingCandidates(
+  timing: NamedOpenLoopRemindTiming,
+): string[] {
+  switch (timing) {
+    case 'today_morning':
+      return ['today morning', 'tomorrow morning'];
+    case 'today_afternoon':
+      return ['today afternoon', 'tonight', 'tomorrow afternoon'];
+    case 'tomorrow':
+      return ['tomorrow evening', 'tomorrow morning'];
+    case 'tomorrow_morning':
+      return ['tomorrow morning'];
+    case 'tomorrow_afternoon':
+      return ['tomorrow afternoon'];
+    case 'tomorrow_evening':
+      return ['tomorrow evening'];
+    case 'tonight':
+    default:
+      return ['tonight', 'today evening', 'tomorrow evening'];
+  }
+}
+
 /**
  * After a named owed-reply, `draft Bob` or a soft yes creates an unsent
  * draft. Soft yes never sends, never binds leftover person titles, and
@@ -165,6 +234,49 @@ export function resolveNamedOpenLoopDraftFollowup(input: {
   };
 }
 
+/**
+ * After a named owed-reply, `remind me later` / `remind me to reply later
+ * tonight` creates a local Jeff reminder. It never sends and never binds
+ * leftover person titles from an unnamed inbox.
+ */
+export function resolveNamedOpenLoopRemindFollowup(input: {
+  text?: string | null;
+  ownerReviewAllowed?: boolean;
+  priorNamedSeedJson?: string | null;
+  remindOffered?: boolean;
+  activeCapabilityId?: string | null;
+}): NamedOpenLoopRemindFollowup {
+  const timing = parseNamedOpenLoopRemindTiming(input.text);
+  const seedQuery = readNamedOpenLoopSeedQuery(input.priorNamedSeedJson);
+  if (!timing) {
+    return { kind: 'none' };
+  }
+
+  if (input.ownerReviewAllowed === false) {
+    if (seedQuery) {
+      return { kind: 'denied', reason: 'untrusted_named' };
+    }
+    return { kind: 'none' };
+  }
+
+  const active = input.activeCapabilityId || '';
+  if (
+    active !== 'communication.open_loops' &&
+    active !== 'communication.summarize_thread'
+  ) {
+    return { kind: 'none' };
+  }
+  if (!seedQuery || input.remindOffered !== true) {
+    return { kind: 'none' };
+  }
+  return {
+    kind: 'remind',
+    query: seedQuery,
+    timing,
+    source: timing === 'tonight' ? 'later' : 'timed',
+  };
+}
+
 export function formatNamedOpenLoopDraftNextStep(params: {
   channel: NamedOpenLoopChannel;
   personLabel: string;
@@ -176,15 +288,21 @@ export function formatNamedOpenLoopDraftNextStep(params: {
     return undefined;
   }
   if (params.withheld) {
-    return "I won't guess your answer. Tell me what you want to say, and I can draft it unsent.";
+    if (params.isGroup) {
+      return "I won't guess your answer. Tell me what you want to say, and I can draft it unsent.";
+    }
+    if (params.channel === 'alexa') {
+      return `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}.`;
+    }
+    return `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say \`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\` for a tonight reminder.`;
   }
   if (params.isGroup) {
     return 'I can draft wording, but I will not create send controls for a group.';
   }
   if (params.channel === 'alexa') {
-    return `Say draft ${params.personLabel} to create an unsent draft. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
+    return `Say draft ${params.personLabel} to create an unsent draft, or ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
   }
-  return `Next: say \`draft ${params.personLabel}\` or yes to create an unsent draft. That draft stays unsent and requires approval. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
+  return `Next: say \`draft ${params.personLabel}\` or yes for an unsent draft, or \`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\` for a tonight reminder. That draft stays unsent and requires approval. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
 }
 
 export function appendNamedOpenLoopDraftCreatedNotice(
@@ -196,6 +314,17 @@ export function appendNamedOpenLoopDraftCreatedNotice(
     return `${replyText} This draft for ${personLabel} stays unsent. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
   }
   return `${replyText}\n\nNext: this draft for ${personLabel} stays unsent. Review it first. Only \`send it\`, \`send it now\`, or \`send now\` can send. Yes still will not send.`;
+}
+
+export function appendNamedOpenLoopRemindCreatedNotice(
+  channel: NamedOpenLoopChannel,
+  replyText: string,
+  personLabel: string,
+): string {
+  if (channel === 'alexa') {
+    return `${replyText} I did not send anything. Say draft ${personLabel} when you want an unsent draft.`;
+  }
+  return `${replyText}\n\nI did not send anything. Next: say \`draft ${personLabel}\` when you want an unsent draft. Only \`send it\`, \`send it now\`, or \`send now\` can send.`;
 }
 
 export function appendGenericOpenLoopNoCrawlNotice(

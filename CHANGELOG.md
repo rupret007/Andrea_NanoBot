@@ -5,6 +5,21 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- After leftover-squash #35, a named owed-reply now has a second unsent
+  next step: `remind me later` or `remind me to reply later tonight`
+  creates one local Jeff reminder bound to that named thread. Default
+  timing is tonight, with tomorrow evening as the fallback if tonight
+  has already passed. That reminder does not send, does not create a
+  draft or action card, and does not bind leftover person titles from
+  an empty generic who-do-I-owe. Withheld questions offer remind-me-later
+  but still withhold yes-to-draft. Already-replied threads do not offer
+  it. Karen / non-owner surfaces still get no bodies, seed, reminders,
+  or actions. After the reminder exists, the next human step is still
+  `draft Bob` for an unsent draft; only standalone `send it` /
+  `send it now` / `send now` can send. Private API stays off.
+  AppleScript is the only send path. Send-path source blobs stay
+  SHA-256-identical to leftover #35 / main tip
+  `12b66ed543d9e86e1579e20c6b1062f4acec9dfb`.
 - After leftover-squash #34, a named owed-reply now has one obvious next
   human step: `draft Bob` or a seed-bound `yes` creates one unsent
   `requiresApproval` draft. That yes is draft-for-Bob-yes and still does

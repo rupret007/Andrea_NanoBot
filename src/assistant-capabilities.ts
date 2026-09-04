@@ -58,6 +58,7 @@ import {
 } from './knowledge-library.js';
 import { handleRitualCommand } from './rituals.js';
 import { planContextualReminder } from './local-reminder.js';
+import { persistReminderOperation } from './reminder-operation.js';
 import {
   analyzeCommunicationMessage,
   buildCommunicationOpenLoops,
@@ -171,11 +172,15 @@ import { resolveOwnerCalendarWindow } from './timezone.js';
 import {
   appendGenericOpenLoopNoCrawlNotice,
   appendNamedOpenLoopDraftCreatedNotice,
+  appendNamedOpenLoopRemindCreatedNotice,
   formatNamedMessagesOpenLoopReply,
   formatNamedOpenLoopDeniedReply,
   namedOpenLoopDraftWasOffered,
+  namedOpenLoopRemindTimingCandidates,
+  namedOpenLoopRemindWasOffered,
   resolveNamedOpenLoopBinding,
   resolveNamedOpenLoopDraftFollowup,
+  resolveNamedOpenLoopRemindFollowup,
 } from './named-open-loop.js';
 import {
   buildThreadGroundedSuggestedReplies,
@@ -349,6 +354,7 @@ export interface AssistantCapabilityContext {
     lastCommunicationSummary?: string;
     namedMessagesSummaryTargetJson?: string;
     namedOpenLoopDraftOffered?: boolean;
+    namedOpenLoopRemindOffered?: boolean;
     recentTextReviewJson?: string;
     followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
@@ -450,6 +456,7 @@ export interface AssistantCapabilityConversationSeed {
     lastCommunicationSummary?: string;
     namedMessagesSummaryTargetJson?: string;
     namedOpenLoopDraftOffered?: boolean;
+    namedOpenLoopRemindOffered?: boolean;
     recentTextReviewJson?: string;
     followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
@@ -2065,6 +2072,7 @@ function buildCommunicationConversationSeed(input: {
   lastCommunicationSummary?: string;
   namedMessagesSummaryTargetJson?: string;
   namedOpenLoopDraftOffered?: boolean;
+  namedOpenLoopRemindOffered?: boolean;
   messageActionId?: string;
   messageActionSummary?: string;
   recentTextReviewJson?: string;
@@ -2089,6 +2097,7 @@ function buildCommunicationConversationSeed(input: {
         input.lastCommunicationSummary || input.summaryText,
       namedMessagesSummaryTargetJson: input.namedMessagesSummaryTargetJson,
       namedOpenLoopDraftOffered: input.namedOpenLoopDraftOffered,
+      namedOpenLoopRemindOffered: input.namedOpenLoopRemindOffered,
       recentTextReviewJson: input.recentTextReviewJson,
       messageActionId: input.messageActionId,
       messageActionSummary: input.messageActionSummary,
@@ -5861,6 +5870,10 @@ async function tryNamedMessagesOpenLoop(
     latestInboundText,
     isGroup: resolution.target.isGroup,
   });
+  const remindOffered = namedOpenLoopRemindWasOffered({
+    gist,
+    isGroup: resolution.target.isGroup,
+  });
   const replyText = formatNamedMessagesOpenLoopReply({
     channel: context.channel,
     personLabel,
@@ -5897,6 +5910,7 @@ async function tryNamedMessagesOpenLoop(
       lastCommunicationSummary: gist.digestSentences.join(' '),
       namedMessagesSummaryTargetJson,
       namedOpenLoopDraftOffered: draftOffered,
+      namedOpenLoopRemindOffered: remindOffered,
       supportedFollowups: descriptor.followupActions,
     }),
     trace: buildCapabilityTrace(
@@ -5990,12 +6004,147 @@ async function runCommunicationOpenLoopsCapability(
   };
 }
 
+function reminderChannelForNamedOpenLoop(
+  channel: AssistantCapabilityContext['channel'],
+): 'telegram' | 'bluebubbles' | 'alexa' | 'internal' {
+  return channel === 'telegram' ||
+    channel === 'bluebubbles' ||
+    channel === 'alexa'
+    ? channel
+    : 'internal';
+}
+
+function tryNamedOpenLoopRemind(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): AssistantCapabilityResult | null {
+  const followup = resolveNamedOpenLoopRemindFollowup({
+    text: input.text || input.canonicalText || '',
+    ownerReviewAllowed: context.ownerReviewAllowed,
+    priorNamedSeedJson:
+      context.priorSubjectData?.namedMessagesSummaryTargetJson,
+    remindOffered:
+      context.priorSubjectData?.namedOpenLoopRemindOffered === true,
+    activeCapabilityId: context.priorSubjectData?.activeCapabilityId,
+  });
+  if (followup.kind === 'none') {
+    return null;
+  }
+  if (followup.kind === 'denied') {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: formatNamedOpenLoopDeniedReply(),
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'blocked a named Messages reminder outside a trusted owner surface',
+      ),
+      followupActions: [],
+    };
+  }
+  if (!context.groupFolder || !context.chatJid) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'I can set that reply reminder when we are in a chat that can hold it. I did not send anything.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'named open-loop remind lacked a control-chat delivery target',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
+
+  const reminderBody = `reply to ${followup.query}`;
+  const now = context.now || new Date();
+  let planned = null;
+  for (const timing of namedOpenLoopRemindTimingCandidates(followup.timing)) {
+    planned = planContextualReminder(
+      timing,
+      reminderBody,
+      context.groupFolder,
+      context.chatJid,
+      now,
+      {
+        channel: reminderChannelForNamedOpenLoop(context.channel),
+        inboundId: `named-open-loop-remind:${followup.query}:${followup.timing}:${context.chatJid}`,
+      },
+    );
+    if (planned) {
+      break;
+    }
+  }
+  if (!planned) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'Tell me when you want that reply reminder. I did not send anything.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'named open-loop remind could not pin down timing',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
+
+  persistReminderOperation(planned);
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: appendNamedOpenLoopRemindCreatedNotice(
+      context.channel,
+      planned.confirmation,
+      followup.query,
+    ),
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: buildCommunicationConversationSeed({
+      descriptor,
+      summaryText: planned.confirmation,
+      conversationFocus: reminderBody,
+      personName: followup.query,
+      threadTitle: followup.query,
+      lastCommunicationSummary:
+        context.priorSubjectData?.lastCommunicationSummary || reminderBody,
+      namedMessagesSummaryTargetJson:
+        context.priorSubjectData?.namedMessagesSummaryTargetJson,
+      namedOpenLoopDraftOffered:
+        context.priorSubjectData?.namedOpenLoopDraftOffered,
+      namedOpenLoopRemindOffered: false,
+      supportedFollowups: ['draft_follow_up', 'anything_else'],
+    }),
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'local_companion',
+      'created a local named open-loop reply reminder without sending',
+      [`person:${followup.query}`, `when:${followup.timing}`],
+    ),
+    followupActions: ['draft_follow_up', 'anything_else'],
+  };
+}
+
 async function runCommunicationManageCapability(
   descriptor: AssistantCapabilityDescriptor,
   context: AssistantCapabilityContext,
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const namedRemind = tryNamedOpenLoopRemind(descriptor, context, input);
+  if (namedRemind) {
+    return namedRemind;
+  }
   const rawCommunicationText = input.text || input.canonicalText || '';
   const result = manageCommunicationTracking({
     channel: context.channel,

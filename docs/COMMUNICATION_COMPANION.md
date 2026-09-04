@@ -9,6 +9,7 @@ Communication companion is the core of journeys like:
 - `What's still open with Candace?`
 - `What do I owe people right now?`
 - `What should I say back?`
+- `Remind me later.`
 - `Remind me to reply later tonight.`
 
 The flagship product goal is that Andrea can move from open loop -> draft -> approve/send or defer without making the user restate the whole conversation.
@@ -210,17 +211,21 @@ BlueBubbles:
   named who-do-I-owe asks (`what's still open with Bob`, or `what do I owe
   people` after that named summarize) use the same gist and make the next
   human step explicit: `draft Bob` or `yes` creates one unsent
-  `requiresApproval` draft. That yes is draft-for-Bob-yes, not a send.
-  After the draft exists, only standalone `send it` / `send it now` /
-  `send now` can send. Bare `yes` / `ok` never authorize a send. Generic
-  `what do I owe people` stays on explicitly brought-in companion threads
-  and does not crawl unnamed inbox threads. An empty generic result asks
-  Jeff to name one person (for example, `what's still open with Bob?`)
-  instead of ending at the privacy boundary; that handoff does not read a
-  thread, create a draft, or create send controls, and a leftover `yes`
-  there does not draft. Already-replied named threads and withheld
-  questions do not offer yes-to-draft. Karen and other non-owner surfaces
-  get no Messages bodies, seed, or actions.
+  `requiresApproval` draft, and `remind me later` or `remind me to
+  reply later tonight` creates a local tonight reminder for Jeff.
+  That yes is draft-for-Bob-yes, not a send. Remind-me-later is not a
+  send either. After the draft exists, only standalone `send it` /
+  `send it now` / `send now` can send. Bare `yes` / `ok` never authorize
+  a send. Generic `what do I owe people` stays on explicitly brought-in
+  companion threads and does not crawl unnamed inbox threads. An empty
+  generic result asks Jeff to name one person (for example, `what's
+  still open with Bob?`) instead of ending at the privacy boundary;
+  that handoff does not read a thread, create a draft, reminder, or
+  send controls, and a leftover `yes` or `remind me later` there does
+  not draft or remind. Already-replied named threads do not offer
+  yes-to-draft or remind-me-later. Withheld questions still offer
+  `remind me later` but not yes-to-draft. Karen and other non-owner
+  surfaces get no Messages bodies, seed, reminders, or actions.
   Questions, requests, and automated notices still withhold a canned answer.
   Suggested replies stay unsent. Jeff talks to Bob; Andrea is the engine.
 - no outbound send without explicit user intent
@@ -258,6 +263,7 @@ For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AN
 - `What do I owe people right now?`
 - `What's still open with Bob?`
 - `What's still open with Candace?`
+- `Remind me later.`
 - `Remind me to reply later tonight.`
 - `Save this conversation under the Candace thread.`
 - `Keep that as a draft for now.`

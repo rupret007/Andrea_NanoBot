@@ -23,6 +23,7 @@ import { TIMEZONE } from './config.js';
 import { resolveOwnerCalendarWindow } from './timezone.js';
 import {
   createTask,
+  getAllTasks,
   getCommunicationThread,
   getTaskById,
   listCommunicationSignalsForThread,
@@ -3262,7 +3263,8 @@ describe('assistant capabilities', () => {
     );
     expect(openLoops.replyText).toContain("You haven't replied yet.");
     expect(openLoops.replyText).toContain('draft Bob');
-    expect(openLoops.replyText).toContain('or yes to create an unsent draft');
+    expect(openLoops.replyText).toContain('or yes for an unsent draft');
+    expect(openLoops.replyText).toContain('remind me later');
     expect(openLoops.replyText).toContain('stays unsent and requires approval');
     expect(openLoops.replyText).toContain('Yes will not send');
     expect(openLoops.replyText).not.toMatch(/until you say send it/i);
@@ -3277,6 +3279,9 @@ describe('assistant capabilities', () => {
     ).toBeTruthy();
     expect(
       openLoops.conversationSeed?.subjectData?.namedOpenLoopDraftOffered,
+    ).toBe(true);
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopRemindOffered,
     ).toBe(true);
 
     const draft = await executeAssistantCapability({
@@ -3400,6 +3405,122 @@ describe('assistant capabilities', () => {
     expect(
       listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
     ).toHaveLength(1);
+  });
+
+  it('treats remind me later after a named owed Bob loop as a local reminder, not a send', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as typeof fetch;
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550199',
+      '2026-04-15T16:20:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-remind-later-practice',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'bb:+14695550199',
+      sender_name: 'Bob',
+      content: 'Practice moved to eight tonight, just keeping you posted.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        text: "what's still open with Bob",
+        canonicalText: "what's still open with Bob",
+        targetChatName: 'Bob',
+      },
+    });
+    const routed = continueAssistantCapabilityFromPriorSubjectData(
+      'remind me later',
+      openLoops.conversationSeed?.subjectData,
+    );
+
+    expect(routed).toMatchObject({
+      capabilityId: 'communication.manage_tracking',
+      canonicalText: 'remind me to reply later tonight',
+    });
+    expect(interpretMessageActionFollowup('remind me later')).not.toEqual({
+      kind: 'send',
+    });
+
+    const reminder = await executeAssistantCapability({
+      capabilityId: 'communication.manage_tracking',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'remind me later',
+        canonicalText:
+          routed?.canonicalText || 'remind me to reply later tonight',
+      },
+    });
+
+    expect(reminder.handled).toBe(true);
+    expect(reminder.replyText).toContain(
+      "I'll remind you tonight to reply to Bob",
+    );
+    expect(reminder.replyText).toContain('I did not send anything');
+    expect(reminder.replyText).toContain('`draft Bob`');
+    expect(reminder.replyText).toContain('`send it`');
+    expect(reminder.replyText).not.toContain('Yes still will not send');
+    expect(reminder.replyText).not.toContain('Practice at eight tonight');
+    expect(reminder.messageAction).toBeUndefined();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+    const tasks = getAllTasks().filter((task) => task.group_folder === 'main');
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]?.prompt).toContain('reply to Bob');
+    expect(tasks[0]?.chat_jid).toBe('tg:100000001');
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    const leftover = continueAssistantCapabilityFromPriorSubjectData(
+      'remind me later',
+      {
+        activeCapabilityId: 'communication.open_loops',
+        personName: 'Bob',
+      },
+    );
+    expect(leftover).toBeNull();
+
+    const karen = await executeAssistantCapability({
+      capabilityId: 'communication.manage_tracking',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:karen',
+        ownerReviewAllowed: false,
+        now: new Date('2026-04-15T17:10:00.000Z'),
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'remind me later',
+        canonicalText: 'remind me later',
+      },
+    });
+    expect(karen.replyText).toContain('registered owner control chat');
+    expect(karen.replyText).not.toContain("I'll remind you");
+    expect(
+      getAllTasks().filter((task) => task.chat_jid === 'tg:karen'),
+    ).toHaveLength(0);
   });
 
   it('does not let Karen draft Bob or authorize a seed-bound yes', async () => {
@@ -3555,6 +3676,7 @@ describe('assistant capabilities', () => {
     );
     expect(openLoops.replyText).not.toContain('draft Bob');
     expect(openLoops.replyText).not.toContain('or yes to create');
+    expect(openLoops.replyText).not.toContain('remind me later');
     expect(openLoops.replyText).not.toContain('send it');
     expect(
       openLoops.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
@@ -3683,8 +3805,12 @@ describe('assistant capabilities', () => {
     expect(openLoops.replyText).not.toContain('You owe Bob a reply.');
     expect(openLoops.replyText).not.toContain('draft Bob');
     expect(openLoops.replyText).not.toContain('or yes to create');
+    expect(openLoops.replyText).not.toContain('remind me later');
     expect(
       openLoops.conversationSeed?.subjectData?.namedOpenLoopDraftOffered,
+    ).toBeFalsy();
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopRemindOffered,
     ).toBeFalsy();
     expect(openLoops.messageAction).toBeUndefined();
   });
@@ -3731,9 +3857,13 @@ describe('assistant capabilities', () => {
     );
     expect(openLoops.replyText).toContain("I won't guess your answer.");
     expect(openLoops.replyText).not.toContain('or yes to create');
+    expect(openLoops.replyText).toContain('remind me later');
     expect(
       openLoops.conversationSeed?.subjectData?.namedOpenLoopDraftOffered,
     ).toBeFalsy();
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopRemindOffered,
+    ).toBe(true);
     expect(openLoops.replyText).not.toMatch(
       /\b(?:yes I can|I will be there)\b/i,
     );

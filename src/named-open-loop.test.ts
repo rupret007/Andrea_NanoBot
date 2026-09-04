@@ -4,6 +4,7 @@ import { interpretMessageActionFollowup } from './message-actions.js';
 import {
   appendGenericOpenLoopNoCrawlNotice,
   appendNamedOpenLoopDraftCreatedNotice,
+  appendNamedOpenLoopRemindCreatedNotice,
   formatNamedMessagesOpenLoopReply,
   formatNamedOpenLoopDeniedReply,
   GENERIC_OPEN_LOOP_NAMED_HANDOFF,
@@ -12,9 +13,13 @@ import {
   namedOpenLoopDraftWasOffered,
   namedOpenLoopHistoryQuery,
   NAMED_OPEN_LOOP_DRAFT_YES_NOTICE,
+  NAMED_OPEN_LOOP_REMIND_LATER_PROMPT,
+  namedOpenLoopRemindWasOffered,
+  parseNamedOpenLoopRemindTiming,
   readNamedOpenLoopSeedQuery,
   resolveNamedOpenLoopBinding,
   resolveNamedOpenLoopDraftFollowup,
+  resolveNamedOpenLoopRemindFollowup,
 } from './named-open-loop.js';
 import { buildThreadGroundedSummaryGist } from './thread-grounded-wording.js';
 
@@ -137,7 +142,8 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).toContain('You owe Bob a reply.');
     expect(reply).toContain('Bob told you: Practice at eight tonight.');
     expect(reply).toContain('draft Bob');
-    expect(reply).toContain('or yes to create an unsent draft');
+    expect(reply).toContain('or yes for an unsent draft');
+    expect(reply).toContain(NAMED_OPEN_LOOP_REMIND_LATER_PROMPT);
     expect(reply).toContain('stays unsent and requires approval');
     expect(reply).toContain(NAMED_OPEN_LOOP_DRAFT_YES_NOTICE);
     expect(reply).not.toMatch(/until you say send it/i);
@@ -172,6 +178,7 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).toContain('Nothing open with Bob.');
     expect(reply).not.toContain('You owe Bob a reply.');
     expect(reply).not.toContain('draft Bob');
+    expect(reply).not.toContain(NAMED_OPEN_LOOP_REMIND_LATER_PROMPT);
     expect(reply).not.toContain('send it');
   });
 
@@ -186,6 +193,7 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).toContain("what's still open with Bob?");
     expect(reply).not.toContain('send it');
     expect(reply).not.toContain('draft Bob');
+    expect(reply).not.toContain(NAMED_OPEN_LOOP_REMIND_LATER_PROMPT);
   });
 
   it('keeps Alexa concise and does not add the handoff after real tracked items', () => {
@@ -223,9 +231,12 @@ describe('named who-do-I-owe copy without sending', () => {
       latestInboundText:
         'Practice moved to eight tonight, just keeping you posted.',
     });
-    expect(reply).toContain('Say draft Bob to create an unsent draft.');
+    expect(reply).toContain(
+      'Say draft Bob to create an unsent draft, or remind me later.',
+    );
     expect(reply).toContain(NAMED_OPEN_LOOP_DRAFT_YES_NOTICE);
     expect(reply).not.toContain('or yes to create');
+    expect(reply).not.toContain('or yes for an unsent draft');
     expect(reply).not.toContain('send it');
   });
 });
@@ -242,6 +253,12 @@ describe('draft-for-Bob-yes stays off the send fence', () => {
     expect(interpretMessageActionFollowup('yes')).toBeNull();
     expect(interpretMessageActionFollowup('ok')).toBeNull();
     expect(interpretMessageActionFollowup('draft Bob')).toBeNull();
+    expect(interpretMessageActionFollowup('remind me later')).not.toEqual({
+      kind: 'send',
+    });
+    expect(
+      interpretMessageActionFollowup('remind me to reply later tonight'),
+    ).not.toEqual({ kind: 'send' });
   });
 });
 
@@ -393,6 +410,184 @@ describe('draft-for-Bob-yes creates an unsent draft, not a send', () => {
       ),
     ).toBe(
       'I drafted a reply. This draft for Bob stays unsent. Yes will not send.',
+    );
+  });
+});
+
+describe('named open-loop remind-me-later stays off the send fence', () => {
+  const owedGist = buildThreadGroundedSummaryGist({
+    chatName: 'Bob',
+    isGroup: false,
+    turns: [
+      {
+        content: 'Practice moved to eight tonight, just keeping you posted.',
+        isFromMe: false,
+        speakerLabel: 'Bob',
+      },
+    ],
+  });
+
+  it('offers remind-me-later on a named owed one-to-one, including withheld questions', () => {
+    expect(
+      namedOpenLoopRemindWasOffered({
+        gist: owedGist,
+        isGroup: false,
+      }),
+    ).toBe(true);
+    expect(
+      namedOpenLoopRemindWasOffered({
+        gist: buildThreadGroundedSummaryGist({
+          chatName: 'Bob',
+          isGroup: false,
+          turns: [
+            {
+              content: 'Can you make practice at seven tonight?',
+              isFromMe: false,
+              speakerLabel: 'Bob',
+            },
+          ],
+        }),
+        isGroup: false,
+      }),
+    ).toBe(true);
+    expect(
+      namedOpenLoopRemindWasOffered({
+        gist: owedGist,
+        isGroup: true,
+      }),
+    ).toBe(false);
+    expect(parseNamedOpenLoopRemindTiming('remind me later')).toBe('tonight');
+    expect(
+      parseNamedOpenLoopRemindTiming('remind me to reply later tonight'),
+    ).toBe('tonight');
+    expect(parseNamedOpenLoopRemindTiming('remind me tomorrow')).toBe(
+      'tomorrow',
+    );
+    expect(
+      parseNamedOpenLoopRemindTiming('remind me to call Sam tomorrow at 3'),
+    ).toBeNull();
+    expect(parseNamedOpenLoopRemindTiming('send it')).toBeNull();
+    expect(parseNamedOpenLoopRemindTiming('yes')).toBeNull();
+  });
+
+  it('binds remind-me-later to the named seed without leftover person titles', () => {
+    expect(
+      resolveNamedOpenLoopRemindFollowup({
+        text: 'remind me later',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        remindOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({
+      kind: 'remind',
+      query: 'Bob',
+      timing: 'tonight',
+      source: 'later',
+    });
+    expect(
+      resolveNamedOpenLoopRemindFollowup({
+        text: 'remind me to reply later tonight',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        remindOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toMatchObject({
+      kind: 'remind',
+      query: 'Bob',
+      timing: 'tonight',
+    });
+    expect(
+      resolveNamedOpenLoopRemindFollowup({
+        text: 'remind me later',
+        ownerReviewAllowed: true,
+        remindOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'none' });
+    expect(
+      resolveNamedOpenLoopRemindFollowup({
+        text: 'remind me later',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        remindOffered: false,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'none' });
+    expect(
+      resolveNamedOpenLoopRemindFollowup({
+        text: 'remind me later',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        remindOffered: true,
+        activeCapabilityId: 'communication.draft_reply',
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('denies Karen a named remind-me-later', () => {
+    expect(
+      resolveNamedOpenLoopRemindFollowup({
+        text: 'remind me later',
+        ownerReviewAllowed: false,
+        priorNamedSeedJson: bobSeedJson,
+        remindOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'denied', reason: 'untrusted_named' });
+    expect(
+      resolveNamedOpenLoopRemindFollowup({
+        text: 'remind me later',
+        ownerReviewAllowed: false,
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('keeps withheld named questions on remind-me-later, not yes-to-draft', () => {
+    const gist = buildThreadGroundedSummaryGist({
+      chatName: 'Bob',
+      isGroup: false,
+      turns: [
+        {
+          content: 'Can you make practice at seven tonight?',
+          isFromMe: false,
+          speakerLabel: 'Bob',
+        },
+      ],
+    });
+    const reply = formatNamedMessagesOpenLoopReply({
+      channel: 'telegram',
+      personLabel: 'Bob',
+      isGroup: false,
+      gist,
+      latestInboundText: 'Can you make practice at seven tonight?',
+    });
+    expect(reply).toContain("I won't guess your answer.");
+    expect(reply).toContain(NAMED_OPEN_LOOP_REMIND_LATER_PROMPT);
+    expect(reply).not.toContain('or yes for an unsent draft');
+    expect(reply).not.toContain('send it');
+  });
+
+  it('makes the next step after a reminder the unsent draft, not a send', () => {
+    const reply = appendNamedOpenLoopRemindCreatedNotice(
+      'telegram',
+      "Okay. I'll remind you tonight to reply to Bob.",
+      'Bob',
+    );
+    expect(reply).toContain('I did not send anything');
+    expect(reply).toContain('`draft Bob`');
+    expect(reply).toContain('`send it`');
+    expect(reply).toContain('`send it now`');
+    expect(reply).toContain('`send now`');
+    expect(
+      appendNamedOpenLoopRemindCreatedNotice(
+        'alexa',
+        "Okay. I'll remind you tonight to reply to Bob.",
+        'Bob',
+      ),
+    ).toBe(
+      "Okay. I'll remind you tonight to reply to Bob. I did not send anything. Say draft Bob when you want an unsent draft.",
     );
   });
 });
