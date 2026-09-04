@@ -1340,6 +1340,100 @@ describe('assistant capability router', () => {
     ).toBeNull();
   });
 
+  it('routes named-open-loop remind me later to an unsent reminder, not a send', () => {
+    const bobSeedJson = JSON.stringify({
+      version: 2,
+      query: 'Bob',
+      target: {
+        chatJid: 'bb:iMessage;-;+14695550199',
+        displayName: 'Bob',
+        isGroup: false,
+      },
+    });
+    const namedOpenLoop = {
+      activeCapabilityId: 'communication.open_loops' as const,
+      namedMessagesSummaryTargetJson: bobSeedJson,
+      namedOpenLoopDraftOffered: true,
+      namedOpenLoopRemindOffered: true,
+      personName: 'Bob',
+    };
+
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'remind me later',
+        namedOpenLoop,
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_tracking',
+      canonicalText: 'remind me to reply later tonight',
+      reason: 'continuing a named open-loop with remind-me-later',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'remind me to reply later tonight',
+        namedOpenLoop,
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_tracking',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('send it', namedOpenLoop),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('remind me later', {
+        activeCapabilityId: 'communication.open_loops',
+        namedMessagesSummaryTargetJson: bobSeedJson,
+        namedOpenLoopRemindOffered: false,
+      }),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('remind me later', {
+        activeCapabilityId: 'communication.open_loops',
+        personName: 'Bob',
+      }),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromAlexaState('remind me later', {
+        flowKey: 'communication_open_loops',
+        subjectKind: 'communication_thread',
+        subjectData: {
+          activeCapabilityId: 'communication.open_loops',
+          namedMessagesSummaryTargetJson: bobSeedJson,
+          namedOpenLoopRemindOffered: true,
+        },
+        summaryText: 'You owe Bob a reply.',
+        supportedFollowups: ['create_reminder', 'draft_follow_up'],
+        styleHints: {
+          channelMode: 'alexa_companion',
+          responseSource: 'local_companion',
+        },
+      }),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_tracking',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromAlexaState('yes', {
+        flowKey: 'communication_open_loops',
+        subjectKind: 'communication_thread',
+        subjectData: {
+          activeCapabilityId: 'communication.open_loops',
+          namedMessagesSummaryTargetJson: bobSeedJson,
+          namedOpenLoopDraftOffered: true,
+          namedOpenLoopRemindOffered: true,
+        },
+        summaryText: 'You owe Bob a reply.',
+        supportedFollowups: ['draft_follow_up'],
+        styleHints: {
+          channelMode: 'alexa_companion',
+          responseSource: 'local_companion',
+        },
+      }),
+    ).toBeNull();
+  });
+
   it('binds selected item follow-ups to the recent text review context', () => {
     const subjectData = {
       activeCapabilityId: 'communication.review_recent_texts' as const,

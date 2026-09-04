@@ -28,7 +28,10 @@ import {
   parseRecentTextReviewIntent,
   parseThreadSummaryIntent,
 } from './thread-summary-routing.js';
-import { resolveNamedOpenLoopDraftFollowup } from './named-open-loop.js';
+import {
+  resolveNamedOpenLoopDraftFollowup,
+  resolveNamedOpenLoopRemindFollowup,
+} from './named-open-loop.js';
 import { parseRecentTextReviewItemFollowup } from './recent-text-review.js';
 import type { CompanionRouteArguments } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
@@ -54,6 +57,7 @@ export interface AssistantCapabilityContinuationSubjectData {
   followthroughReviewJson?: string;
   namedMessagesSummaryTargetJson?: string;
   namedOpenLoopDraftOffered?: boolean;
+  namedOpenLoopRemindOffered?: boolean;
   personName?: string;
 }
 
@@ -121,6 +125,43 @@ function matchNamedOpenLoopDraftFollowup(
       followup.source === 'soft_yes'
         ? 'continuing a named open-loop with draft-for-Bob-yes'
         : 'continuing a named open-loop with a named draft command',
+    continuation: true,
+  };
+}
+
+function matchNamedOpenLoopRemindFollowup(
+  text: string,
+  subjectData: AssistantCapabilityContinuationSubjectData,
+): AssistantCapabilityMatch | null {
+  const followup = resolveNamedOpenLoopRemindFollowup({
+    text,
+    priorNamedSeedJson: subjectData.namedMessagesSummaryTargetJson,
+    remindOffered: subjectData.namedOpenLoopRemindOffered === true,
+    activeCapabilityId: subjectData.activeCapabilityId,
+  });
+  if (followup.kind !== 'remind') {
+    return null;
+  }
+  const canonicalText =
+    followup.timing === 'tonight'
+      ? 'remind me to reply later tonight'
+      : followup.timing === 'tomorrow'
+        ? 'remind me to reply later tomorrow'
+        : followup.timing.startsWith('tomorrow_')
+          ? `remind me to reply later ${followup.timing.replace('_', ' ')}`
+          : followup.timing.startsWith('today_')
+            ? `remind me to reply later ${followup.timing.replace('_', ' ')}`
+            : 'remind me to reply later tonight';
+  return {
+    capabilityId: 'communication.manage_tracking',
+    normalizedText: text,
+    canonicalText,
+    arguments: {
+      targetChatName: followup.query,
+      personName: followup.query,
+      threadTitle: followup.query,
+    },
+    reason: 'continuing a named open-loop with remind-me-later',
     continuation: true,
   };
 }
@@ -1787,6 +1828,13 @@ export function continueAssistantCapabilityFromPriorSubjectData(
   if (namedDraftFollowup) {
     return namedDraftFollowup;
   }
+  const namedRemindFollowup = matchNamedOpenLoopRemindFollowup(
+    normalized,
+    subjectData,
+  );
+  if (namedRemindFollowup) {
+    return namedRemindFollowup;
+  }
   return continueAssistantCapabilityFromActiveCapability(
     normalized,
     subjectData.activeCapabilityId,
@@ -1798,6 +1846,13 @@ export function continueAssistantCapabilityFromAlexaState(
   state: AlexaConversationState | undefined,
 ): AssistantCapabilityMatch | null {
   if (!state) return null;
+  const namedRemindFollowup = matchNamedOpenLoopRemindFollowup(
+    text,
+    state.subjectData,
+  );
+  if (namedRemindFollowup) {
+    return namedRemindFollowup;
+  }
   return continueAssistantCapabilityFromActiveCapability(
     text,
     state.subjectData.activeCapabilityId,
