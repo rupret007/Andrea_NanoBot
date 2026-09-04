@@ -3416,6 +3416,11 @@ describe('assistant capabilities', () => {
     expect(openLoops.replyText).toContain(
       'I did not crawl unnamed inbox threads.',
     );
+    expect(openLoops.replyText).toContain(
+      "Next: name one person — for example, `what's still open with Bob?`",
+    );
+    expect(openLoops.replyText).not.toContain('draft Bob');
+    expect(openLoops.replyText).not.toContain('send it');
     expect(
       openLoops.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
     ).toBeUndefined();

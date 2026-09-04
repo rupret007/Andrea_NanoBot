@@ -5,6 +5,12 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Empty generic `what do I owe people?` results now end with one clear,
+  channel-appropriate next step: name one person and use the existing named
+  thread check. The generic turn still does not crawl Messages, expose a body,
+  create a draft, or create send controls; replies that already contain real
+  tracked open loops do not add the extra prompt. The exact send fence and
+  AppleScript-only delivery path are unchanged.
 - Named who-do-I-owe / draft-for-Bob-yes is now locally testable without
   sending: named open-loop stays thread-grounded, generic `what do I owe
   people` does not crawl unnamed inbox or leftover person titles, already-

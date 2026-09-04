@@ -19,6 +19,8 @@ export type NamedOpenLoopBinding =
 
 export const GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE =
   'I did not crawl unnamed inbox threads.';
+export const GENERIC_OPEN_LOOP_NAMED_HANDOFF =
+  "Next: name one person — for example, `what's still open with Bob?`";
 
 function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
@@ -89,11 +91,17 @@ export function formatNamedOpenLoopDeniedReply(): string {
 export function appendGenericOpenLoopNoCrawlNotice(
   channel: NamedOpenLoopChannel,
   replyText: string,
+  offerNamedHandoff = false,
 ): string {
+  const handoff = offerNamedHandoff
+    ? channel === 'alexa'
+      ? " Name one person and ask what's still open with them."
+      : `\n${GENERIC_OPEN_LOOP_NAMED_HANDOFF}`
+    : '';
   if (channel === 'alexa') {
-    return `${replyText} ${GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE}`;
+    return `${replyText} ${GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE}${handoff}`;
   }
-  return `${replyText}\n\n${GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE}`;
+  return `${replyText}\n\n${GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE}${handoff}`;
 }
 
 export function formatNamedMessagesOpenLoopReply(params: {

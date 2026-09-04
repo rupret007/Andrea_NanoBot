@@ -100,6 +100,8 @@ Current communication capabilities:
   - continue `what do I owe people` after `summarize Bob` on that same thread
   - report `Nothing open` when Jeff already replied on that named thread
   - keep generic `what do I owe people` from crawling unnamed inbox threads
+  - when that generic result is empty, give one exact next prompt that names a
+    single person and enters the existing owner-only named-thread path
   - withhold named Messages bodies, seed, and actions from Karen / non-owner surfaces
   - answer `anything I need to reply to`
   - answer `what conversations are still open`
@@ -211,7 +213,10 @@ BlueBubbles:
   approvals are standalone `send it` / `send it now` / `send now`. Bare
   `yes` / `ok` never authorize. Generic `what do I owe people` stays on
   explicitly brought-in companion threads and does not crawl unnamed inbox
-  threads. Already-replied named threads report `Nothing open`. Karen and
+  threads. An empty generic result asks Jeff to name one person (for example,
+  `what's still open with Bob?`) instead of ending at the privacy boundary;
+  that handoff does not read a thread, create a draft, or create send controls.
+  Already-replied named threads report `Nothing open`. Karen and
   other non-owner surfaces get no Messages bodies, seed, or actions.
   Questions, requests, and automated notices still withhold a canned answer.
   Suggested replies stay unsent. Jeff talks to Bob; Andrea is the engine.
