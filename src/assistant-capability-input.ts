@@ -23,6 +23,7 @@ export function buildAssistantCapabilityExecutionInput(params: {
     ![
       'communication.summarize_thread',
       'communication.review_recent_texts',
+      'communication.open_loops',
     ].includes(params.capabilityMatch.capabilityId) || hasExplicitThreadTarget;
 
   return {

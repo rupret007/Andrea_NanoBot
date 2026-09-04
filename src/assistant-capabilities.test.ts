@@ -3218,6 +3218,8 @@ describe('assistant capabilities', () => {
 
   it('grounds a named who-do-I-owe ask in that iMessage thread without sending', async () => {
     vi.stubEnv('OPENAI_API_KEY', ' ');
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as typeof fetch;
     storeChatMetadata(
       'bb:iMessage;-;+14695550199',
       '2026-04-15T16:20:00.000Z',
@@ -3257,7 +3259,10 @@ describe('assistant capabilities', () => {
       'Bob told you: Practice at eight tonight.',
     );
     expect(openLoops.replyText).toContain("You haven't replied yet.");
-    expect(openLoops.replyText).toContain('stays unsent until you say send it');
+    expect(openLoops.replyText).toContain('draft Bob');
+    expect(openLoops.replyText).toContain('stays unsent and requires approval');
+    expect(openLoops.replyText).toContain('Saying yes or ok will not send');
+    expect(openLoops.replyText).not.toMatch(/until you say send it/i);
     expect(openLoops.replyText).not.toMatch(/opened with|latest open turn/i);
     expect(openLoops.replyText).not.toContain('needs attention');
     expect(openLoops.messageAction).toBeUndefined();
@@ -3304,6 +3309,7 @@ describe('assistant capabilities', () => {
     expect(
       listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
     ).toHaveLength(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('keeps what-do-I-owe after a named Bob summarize on that thread', async () => {
@@ -3407,6 +3413,9 @@ describe('assistant capabilities', () => {
     expect(openLoops.handled).toBe(true);
     expect(openLoops.replyText).not.toContain('Practice at eight tonight');
     expect(openLoops.replyText).not.toContain('You owe Bob a reply.');
+    expect(openLoops.replyText).toContain(
+      'I did not crawl unnamed inbox threads.',
+    );
     expect(
       openLoops.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
     ).toBeUndefined();
@@ -3465,6 +3474,8 @@ describe('assistant capabilities', () => {
       },
     });
 
+    expect(karen.replyText).toContain('registered owner control chat');
+    expect(karen.conversationSeed).toBeUndefined();
     for (const result of [karen, missingProvenance]) {
       expect(result.handled).toBe(true);
       expect(result.replyText).not.toContain(privateBody);
@@ -3530,6 +3541,7 @@ describe('assistant capabilities', () => {
       'You said: CURRENT STATE: use the east entrance instead.',
     );
     expect(openLoops.replyText).not.toContain('You owe Bob a reply.');
+    expect(openLoops.replyText).not.toContain('draft Bob');
     expect(openLoops.messageAction).toBeUndefined();
   });
 

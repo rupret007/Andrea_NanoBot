@@ -169,6 +169,12 @@ import { formatThreadSummaryWindowLabel } from './thread-summary-routing.js';
 import { TIMEZONE } from './config.js';
 import { resolveOwnerCalendarWindow } from './timezone.js';
 import {
+  appendGenericOpenLoopNoCrawlNotice,
+  formatNamedMessagesOpenLoopReply,
+  formatNamedOpenLoopDeniedReply,
+  resolveNamedOpenLoopBinding,
+} from './named-open-loop.js';
+import {
   buildThreadGroundedSuggestedReplies,
   buildThreadGroundedSummaryGist,
   shouldWithholdThreadGroundedReply,
@@ -5615,46 +5621,35 @@ function loadNamedThreadWindowMessages(params: {
     }));
 }
 
-function formatNamedMessagesOpenLoopReply(params: {
-  channel: AssistantCapabilityContext['channel'];
-  personLabel: string;
-  isGroup: boolean;
-  gist: ReturnType<typeof buildThreadGroundedSummaryGist>;
-  latestInboundText: string;
-}): string {
-  const digest = params.gist.digestSentences.join(' ');
-  const withheld = shouldWithholdThreadGroundedReply(params.latestInboundText);
-  const lead = params.gist.ownerOwesReply
-    ? params.isGroup
-      ? `${params.personLabel} still has an open turn in that group.`
-      : `You owe ${params.personLabel} a reply.`
-    : `Nothing open with ${params.personLabel}.`;
-  const nextStep = params.gist.ownerOwesReply
-    ? withheld
-      ? "I won't guess your answer. Tell me what you want to say, and I can draft it unsent."
-      : params.isGroup
-        ? 'I can draft wording, but I will not create send controls for a group.'
-        : 'I can draft a reply. It stays unsent until you say send it in this chat.'
-    : undefined;
-  const coverage =
-    'This is the current thread state from the available local synced snapshot, not device unread status. I did not send anything.';
-  if (params.channel === 'alexa') {
-    return [lead, digest, nextStep].filter(Boolean).join(' ');
-  }
-  if (params.channel === 'bluebubbles') {
-    return [lead, digest, nextStep, coverage].filter(Boolean).join('\n');
-  }
-  return [lead, '', digest, nextStep ? '' : null, nextStep, '', coverage]
-    .filter((line) => line !== null)
-    .join('\n');
-}
-
 async function tryNamedMessagesOpenLoop(
   descriptor: AssistantCapabilityDescriptor,
   context: AssistantCapabilityContext,
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult | null> {
-  if (context.ownerReviewAllowed !== true) {
+  const binding = resolveNamedOpenLoopBinding({
+    text: input.text || input.canonicalText || '',
+    canonicalText: input.canonicalText,
+    targetChatName: input.targetChatName,
+    ownerReviewAllowed: context.ownerReviewAllowed,
+    priorNamedSeedJson:
+      context.priorSubjectData?.namedMessagesSummaryTargetJson,
+  });
+  if (binding.kind === 'denied') {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: formatNamedOpenLoopDeniedReply(),
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'blocked a named Messages open-loop ask outside a trusted owner surface',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
+  if (binding.kind !== 'named') {
     return null;
   }
   const priorSeedJson =
@@ -5666,10 +5661,7 @@ async function tryNamedMessagesOpenLoop(
   const explicitQuery =
     normalizeText(input.targetChatName || '') ||
     normalizeText(namedIntent?.arguments.targetChatName || '');
-  const chatQuery = explicitQuery || normalizeText(priorSeed?.query || '');
-  if (!chatQuery) {
-    return null;
-  }
+  const chatQuery = binding.query;
 
   const sameSeedQuery =
     Boolean(priorSeed) &&
@@ -5904,9 +5896,9 @@ async function runCommunicationOpenLoopsCapability(
     priorContext: context.priorSubjectData,
     now: context.now,
   });
-  const replyText = formatCommunicationOpenLoopsReply(
+  const replyText = appendGenericOpenLoopNoCrawlNotice(
     context.channel,
-    openLoops,
+    formatCommunicationOpenLoopsReply(context.channel, openLoops),
   );
   const firstItem = openLoops.items[0];
   const continuationCandidate = firstItem

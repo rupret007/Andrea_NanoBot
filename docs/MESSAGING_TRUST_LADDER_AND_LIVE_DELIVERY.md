@@ -59,10 +59,12 @@ The default BlueBubbles flow is:
 4. wait for explicit user approval to send now, send later, remind later, save,
    or keep as draft
 
-On the registered Bob text path, only the exact fresh phrases `send it`,
-`send it now`, and `send now` authorize immediate dispatch for the current
-presented action. `send it later` is a separate defer operation. None of these
-phrases approve unrelated suggestions or older stale reviews.
+On the registered Bob text path, only the exact fresh standalone phrases
+`send it`, `send it now`, and `send now` authorize immediate dispatch for
+the current presented action. Bare `yes` / `ok` never authorize. Named
+who-do-I-owe and `draft Bob` stay `requiresApproval` until that fence.
+`send it later` is a separate defer operation. None of these phrases approve
+unrelated suggestions or older stale reviews.
 
 A separate host-owned staging flow handles direct imperatives such as
 `Text Avery Example: Dinner is ready` or `Have BlueBubbles send Avery Example a
