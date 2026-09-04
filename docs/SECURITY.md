@@ -287,4 +287,6 @@ When changing behavior, keep these rules intact:
   generic who-do-I-owe does not crawl unnamed inbox threads. `draft Bob`
   stays `requiresApproval` until that exact standalone fence. Karen, QA, and
   other untrusted callers cannot receive that gist, seed, or actions, and
-  cannot authorize the later draft.
+  cannot authorize the later draft. An empty generic result may suggest an
+  exact named-person follow-up prompt, but that suggestion itself reads no
+  Messages body and creates no draft or send control.

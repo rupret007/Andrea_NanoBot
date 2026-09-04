@@ -5,6 +5,7 @@ import {
   appendGenericOpenLoopNoCrawlNotice,
   formatNamedMessagesOpenLoopReply,
   formatNamedOpenLoopDeniedReply,
+  GENERIC_OPEN_LOOP_NAMED_HANDOFF,
   GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE,
   namedOpenLoopHistoryQuery,
   readNamedOpenLoopSeedQuery,
@@ -168,13 +169,32 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).not.toContain('send it');
   });
 
-  it('marks generic companion open loops as no unnamed inbox crawl', () => {
+  it('turns an empty generic result into one named, privacy-safe next step', () => {
+    const reply = appendGenericOpenLoopNoCrawlNotice(
+      'telegram',
+      'Nothing important is standing out as an owed reply right now.',
+      true,
+    );
+    expect(reply).toContain(GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE);
+    expect(reply).toContain(GENERIC_OPEN_LOOP_NAMED_HANDOFF);
+    expect(reply).toContain("what's still open with Bob?");
+    expect(reply).not.toContain('send it');
+    expect(reply).not.toContain('draft Bob');
+  });
+
+  it('keeps Alexa concise and does not add the handoff after real tracked items', () => {
     expect(
-      appendGenericOpenLoopNoCrawlNotice(
-        'telegram',
-        'Nothing important is standing out as an owed reply right now.',
-      ),
-    ).toContain(GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE);
+      appendGenericOpenLoopNoCrawlNotice('alexa', 'Nothing is open.', true),
+    ).toBe(
+      "Nothing is open. I did not crawl unnamed inbox threads. Name one person and ask what's still open with them.",
+    );
+    const withTrackedItems = appendGenericOpenLoopNoCrawlNotice(
+      'bluebubbles',
+      'You still owe one reply.',
+      false,
+    );
+    expect(withTrackedItems).toContain(GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE);
+    expect(withTrackedItems).not.toContain('Next: name one person');
   });
 });
 

@@ -5899,6 +5899,7 @@ async function runCommunicationOpenLoopsCapability(
   const replyText = appendGenericOpenLoopNoCrawlNotice(
     context.channel,
     formatCommunicationOpenLoopsReply(context.channel, openLoops),
+    openLoops.items.length === 0,
   );
   const firstItem = openLoops.items[0];
   const continuationCandidate = firstItem
