@@ -196,9 +196,14 @@ Behavior:
   state for Jeff, not a quote dump or activity counts
 - answer named who-do-I-owe asks (`what's still open with Bob`) from that
   same gist, and keep a `what do I owe people` follow-up on the named thread
-  after summarize; generic who-do-I-owe stays explicit-only
+  after summarize; generic who-do-I-owe stays explicit-only and does not
+  crawl unnamed inbox threads
+- already-replied named threads report `Nothing open`
 - suggest useful next actions like draft, revise, remind-later, send-later, save, or Telegram escalation
-- keep suggested replies unsent; `draft Bob` stays approval-gated. Jeff talks to Bob, Andrea is the engine
+- keep suggested replies unsent; `draft Bob` stays `requiresApproval`. The
+  only send approvals are standalone `send it` / `send it now` / `send now`.
+  Bare `yes` / `ok` never authorize. Karen cannot read those Messages bodies
+  or authorize a send. Jeff talks to Bob, Andrea is the engine
 
 This keeps BlueBubbles useful for real text-message help without turning it into passive inbox surveillance.
 

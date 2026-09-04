@@ -181,10 +181,13 @@ For BlueBubbles communication-summary or suggested-reply changes, verify:
   the process host midnight
 - suggested replies stay unsent; `what's still open with Bob` and a
   `what do I owe people` follow-up after that named thread use the same gist;
-  `draft Bob` drafts Jeff's reply and does not send. Jeff talks to Bob;
-  Andrea is the engine. Generic who-do-I-owe asks must not crawl unnamed
-  inbox threads, and Karen cannot read those Messages bodies or authorize a
-  send.
+  already-replied named threads report `Nothing open`; `draft Bob` drafts
+  Jeff's reply, stays `requiresApproval`, and does not send. The only send
+  approvals are standalone `send it` / `send it now` / `send now`. Bare
+  `yes` / `ok` never authorize. Jeff talks to Bob; Andrea is the engine.
+  Generic who-do-I-owe asks must not crawl unnamed inbox threads, and Karen
+  cannot read those Messages bodies, receive a named-thread seed, or
+  authorize a send.
 - the configured owner self-thread is excluded from contact summaries, while
   ordinary contact text containing `@Andrea` or `@OpenClaw` remains ordinary
   message evidence and never wakes Andrea in that contact thread

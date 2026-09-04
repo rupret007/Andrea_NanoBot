@@ -98,6 +98,9 @@ Current communication capabilities:
   - answer `what do I owe people`
   - answer `what's still open with Bob` from the named synced Messages thread
   - continue `what do I owe people` after `summarize Bob` on that same thread
+  - report `Nothing open` when Jeff already replied on that named thread
+  - keep generic `what do I owe people` from crawling unnamed inbox threads
+  - withhold named Messages bodies, seed, and actions from Karen / non-owner surfaces
   - answer `anything I need to reply to`
   - answer `what conversations are still open`
 - `communication.manage_tracking`
@@ -204,8 +207,12 @@ BlueBubbles:
   `Thanks for the update.` / `Got it.` / `circle back` or a quote dump;
   named who-do-I-owe asks (`what's still open with Bob`, or `what do I owe
   people` after that named summarize) use the same gist and can seed `draft
-  Bob` for a second yes. Generic `what do I owe people` stays on explicitly
-  brought-in companion threads and does not crawl unnamed inbox threads.
+  Bob` for a second yes. That draft stays `requiresApproval`. The only send
+  approvals are standalone `send it` / `send it now` / `send now`. Bare
+  `yes` / `ok` never authorize. Generic `what do I owe people` stays on
+  explicitly brought-in companion threads and does not crawl unnamed inbox
+  threads. Already-replied named threads report `Nothing open`. Karen and
+  other non-owner surfaces get no Messages bodies, seed, or actions.
   Questions, requests, and automated notices still withhold a canned answer.
   Suggested replies stay unsent. Jeff talks to Bob; Andrea is the engine.
 - no outbound send without explicit user intent

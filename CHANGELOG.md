@@ -5,6 +5,18 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Named who-do-I-owe / draft-for-Bob-yes is now locally testable without
+  sending: named open-loop stays thread-grounded, generic `what do I owe
+  people` does not crawl unnamed inbox or leftover person titles, already-
+  replied reports `Nothing open`, and Karen / non-owner surfaces get no
+  Messages bodies, seed, or actions. `draft Bob` stays `requiresApproval`.
+  Open-loop copy no longer invites a leftover `send it` before a draft
+  exists. The only send approvals remain standalone `send it` /
+  `send it now` / `send now`. Bare `yes` / `ok` never authorize. Private
+  API stays off. AppleScript is the only send path. Send-path source blobs
+  stay SHA-256-identical to leftover #32 / main tip
+  `e64b43968b52e7479c606182bfdf8aab1466fc95`. No merge and no live send
+  in this leftover.
 - Named iMessage/SMS who-do-I-owe now uses the same thread-grounded gist as
   leftover #31 (`You owe Bob a reply. Bob told you: Practice at eight tonight.`)
   so Jeff can ask `what's still open with Bob` or continue `what do I owe people`

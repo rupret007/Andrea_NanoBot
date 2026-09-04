@@ -183,6 +183,10 @@ import {
   matchAssistantCapabilityRequest,
 } from './assistant-capability-router.js';
 import { buildAssistantCapabilityExecutionInput } from './assistant-capability-input.js';
+import {
+  namedOpenLoopHistoryQuery,
+  resolveNamedOpenLoopBinding,
+} from './named-open-loop.js';
 import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
 import {
   formatMessagesHistoryRefreshDisclosure,
@@ -10033,10 +10037,17 @@ async function processClaimedGroupMessages(
       let historyRefreshTargetChatJid: string | null = null;
       const namedOpenLoopQuery =
         capabilityMatch.capabilityId === 'communication.open_loops'
-          ? capabilityInput.targetChatName ||
-            capabilityInput.threadTitle ||
-            capabilityInput.personName ||
-            null
+          ? namedOpenLoopHistoryQuery(
+              resolveNamedOpenLoopBinding({
+                text: lastContent,
+                canonicalText: capabilityMatch.canonicalText,
+                targetChatName: capabilityInput.targetChatName,
+                ownerReviewAllowed,
+                priorNamedSeedJson:
+                  priorAssistantCapabilitySeed?.subjectData
+                    ?.namedMessagesSummaryTargetJson,
+              }),
+            )
           : null;
       const historyCapability =
         capabilityMatch.capabilityId === 'communication.summarize_thread' ||

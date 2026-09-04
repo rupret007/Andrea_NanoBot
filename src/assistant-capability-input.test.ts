@@ -79,7 +79,7 @@ describe('buildAssistantCapabilityExecutionInput', () => {
     expect(result.personName).toBe('Candace');
   });
 
-  it('reuses a prior named-thread target for what-do-I-owe follow-ups', () => {
+  it('does not inherit leftover person titles for generic what-do-I-owe asks', () => {
     const result = buildAssistantCapabilityExecutionInput({
       lastContent: 'What do I owe people?',
       capabilityMatch: {
@@ -92,6 +92,30 @@ describe('buildAssistantCapabilityExecutionInput', () => {
       },
     });
 
+    expect(result.threadTitle).toBeNull();
+    expect(result.personName).toBeUndefined();
+    expect(result.targetChatName).toBeNull();
+  });
+
+  it('keeps an explicit named who-do-I-owe target', () => {
+    const result = buildAssistantCapabilityExecutionInput({
+      lastContent: "What's still open with Bob?",
+      capabilityMatch: {
+        capabilityId: 'communication.open_loops',
+        canonicalText: "what's still open with Bob",
+        arguments: {
+          targetChatName: 'Bob',
+          threadTitle: 'Bob',
+          personName: 'Bob',
+        },
+      },
+      priorSubjectData: {
+        threadTitle: 'Older thread',
+        personName: 'Older thread',
+      },
+    });
+
+    expect(result.targetChatName).toBe('Bob');
     expect(result.threadTitle).toBe('Bob');
     expect(result.personName).toBe('Bob');
   });
