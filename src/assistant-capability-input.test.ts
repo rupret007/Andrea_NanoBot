@@ -78,4 +78,21 @@ describe('buildAssistantCapabilityExecutionInput', () => {
     expect(result.threadTitle).toBe('Candace');
     expect(result.personName).toBe('Candace');
   });
+
+  it('reuses a prior named-thread target for what-do-I-owe follow-ups', () => {
+    const result = buildAssistantCapabilityExecutionInput({
+      lastContent: 'What do I owe people?',
+      capabilityMatch: {
+        capabilityId: 'communication.open_loops',
+        canonicalText: 'what do I owe people',
+      },
+      priorSubjectData: {
+        threadTitle: 'Bob',
+        personName: 'Bob',
+      },
+    });
+
+    expect(result.threadTitle).toBe('Bob');
+    expect(result.personName).toBe('Bob');
+  });
 });

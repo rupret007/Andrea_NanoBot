@@ -282,4 +282,6 @@ When changing behavior, keep these rules intact:
   sends still require a fresh owner `send it` / `send it now` / `send now`
   in the registered Telegram front-door chat (Bob) or the configured Messages
   self-thread. Dispatch and scheduled-send deferral also fail-close those
-  callers.
+  callers. Named who-do-I-owe grounding may read a synced Messages thread
+  only from that same trusted owner surface; Karen, QA, and other untrusted
+  callers cannot receive that gist or authorize the later draft.

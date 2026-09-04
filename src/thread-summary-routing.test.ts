@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ALL_SYNCED_MESSAGES_TARGET,
   parseAllSyncedMessagesSummaryIntent,
+  parseNamedOpenLoopIntent,
   parseRecentTextReviewIntent,
   parseThreadSummaryIntent,
 } from './thread-summary-routing.js';
@@ -119,6 +120,39 @@ describe('thread summary routing', () => {
     });
     expect(
       parseRecentTextReviewIntent('summarize the latest news today'),
+    ).toBeNull();
+  });
+
+  it('honors named who-do-I-owe phrasing without crawling collective asks', () => {
+    expect(
+      parseNamedOpenLoopIntent("what's still open with Bob"),
+    ).toMatchObject({
+      canonicalText: "what's still open with Bob",
+      arguments: {
+        targetChatName: 'Bob',
+        personName: 'Bob',
+      },
+    });
+    expect(
+      parseNamedOpenLoopIntent("what's still open with Bob today"),
+    ).toMatchObject({
+      arguments: {
+        targetChatName: 'Bob',
+        timeWindowKind: 'today',
+      },
+    });
+    expect(parseNamedOpenLoopIntent('what do I owe Bob')).toMatchObject({
+      arguments: { targetChatName: 'Bob' },
+    });
+    expect(parseNamedOpenLoopIntent('do I owe Bob a reply')).toMatchObject({
+      arguments: { targetChatName: 'Bob' },
+    });
+    expect(parseNamedOpenLoopIntent('what do I owe people')).toBeNull();
+    expect(
+      parseNamedOpenLoopIntent("what's still open with my family"),
+    ).toBeNull();
+    expect(
+      parseNamedOpenLoopIntent('what do I owe people right now'),
     ).toBeNull();
   });
 });

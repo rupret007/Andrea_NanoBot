@@ -96,6 +96,8 @@ Current communication capabilities:
   - turn the draft into a tracked message action for send/defer/review
 - `communication.open_loops`
   - answer `what do I owe people`
+  - answer `what's still open with Bob` from the named synced Messages thread
+  - continue `what do I owe people` after `summarize Bob` on that same thread
   - answer `anything I need to reply to`
   - answer `what conversations are still open`
 - `communication.manage_tracking`
@@ -200,7 +202,11 @@ BlueBubbles:
   unsent person/thread-grounded wording that names the concrete update
   (`Dinner at seven tonight`, `Practice at eight tonight`) instead of generic
   `Thanks for the update.` / `Got it.` / `circle back` or a quote dump;
-  questions, requests, and automated notices still withhold a canned answer.
+  named who-do-I-owe asks (`what's still open with Bob`, or `what do I owe
+  people` after that named summarize) use the same gist and can seed `draft
+  Bob` for a second yes. Generic `what do I owe people` stays on explicitly
+  brought-in companion threads and does not crawl unnamed inbox threads.
+  Questions, requests, and automated notices still withhold a canned answer.
   Suggested replies stay unsent. Jeff talks to Bob; Andrea is the engine.
 - no outbound send without explicit user intent
 - live delivery now follows the Messaging Trust Ladder rather than ad hoc draft text
@@ -235,6 +241,7 @@ For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AN
 - `Give me a short reply.`
 - `Make it warmer.`
 - `What do I owe people right now?`
+- `What's still open with Bob?`
 - `What's still open with Candace?`
 - `Remind me to reply later tonight.`
 - `Save this conversation under the Candace thread.`

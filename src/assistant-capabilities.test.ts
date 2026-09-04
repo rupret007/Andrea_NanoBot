@@ -3216,6 +3216,370 @@ describe('assistant capabilities', () => {
     });
   });
 
+  it('grounds a named who-do-I-owe ask in that iMessage thread without sending', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550199',
+      '2026-04-15T16:20:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-open-loop-practice',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'bb:+14695550199',
+      sender_name: 'Bob',
+      content: 'Practice moved to eight tonight, just keeping you posted.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        text: "what's still open with Bob",
+        canonicalText: "what's still open with Bob",
+        targetChatName: 'Bob',
+      },
+    });
+
+    expect(openLoops.handled).toBe(true);
+    expect(openLoops.replyText).toContain('You owe Bob a reply.');
+    expect(openLoops.replyText).toContain(
+      'Bob told you: Practice at eight tonight.',
+    );
+    expect(openLoops.replyText).toContain("You haven't replied yet.");
+    expect(openLoops.replyText).toContain('stays unsent until you say send it');
+    expect(openLoops.replyText).not.toMatch(/opened with|latest open turn/i);
+    expect(openLoops.replyText).not.toContain('needs attention');
+    expect(openLoops.messageAction).toBeUndefined();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
+    ).toBeTruthy();
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        primeMessagesChatHistory: async (chatJid) => ({
+          chatJid,
+          storedCount: 1,
+          totalCount: 1,
+        }),
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'draft Bob',
+        canonicalText: 'draft Bob',
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.replyText).toContain(
+      'Thanks for the heads-up — Practice at eight tonight.',
+    );
+    expect(draft.replyText).not.toContain('circle back');
+    expect(draft.messageAction?.sendStatus).toBe('drafted');
+    expect(draft.messageAction?.requiresApproval).toBe(true);
+    expect(
+      JSON.parse(draft.messageAction?.targetConversationJson || '{}'),
+    ).toMatchObject({
+      chatJid: 'bb:iMessage;-;+14695550199',
+      isGroup: false,
+    });
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(1);
+  });
+
+  it('keeps what-do-I-owe after a named Bob summarize on that thread', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:SMS;-;+14695550198',
+      '2026-04-15T16:15:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-owe-after-summary',
+      chat_jid: 'bb:SMS;-;+14695550198',
+      sender: 'bb:+14695550198',
+      sender_name: 'Bob',
+      content: 'Load-in moved to six tonight, just sharing the update.',
+      timestamp: '2026-04-15T16:15:00.000Z',
+      is_from_me: false,
+    });
+
+    const summary = await executeAssistantCapability({
+      capabilityId: 'communication.summarize_thread',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        canonicalText: 'summarize Bob from today',
+        targetChatName: 'Bob',
+        timeWindowKind: 'today',
+      },
+    });
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:02:00.000Z'),
+        priorSubjectData: summary.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'what do I owe people',
+        canonicalText: 'what do I owe people',
+      },
+    });
+
+    expect(openLoops.handled).toBe(true);
+    expect(openLoops.replyText).toContain('You owe Bob a reply.');
+    expect(openLoops.replyText).toContain('Load-in at six tonight');
+    expect(openLoops.replyText).not.toContain('needs attention');
+    expect(openLoops.messageAction).toBeUndefined();
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
+    ).toBeTruthy();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('does not crawl unnamed Messages threads for a generic what-do-I-owe ask', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550199',
+      '2026-04-15T16:20:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-no-crawl-practice',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'bb:+14695550199',
+      sender_name: 'Bob',
+      content: 'Practice moved to eight tonight, just keeping you posted.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        text: 'what do I owe people',
+        canonicalText: 'what do I owe people',
+      },
+    });
+
+    expect(openLoops.handled).toBe(true);
+    expect(openLoops.replyText).not.toContain('Practice at eight tonight');
+    expect(openLoops.replyText).not.toContain('You owe Bob a reply.');
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
+    ).toBeUndefined();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('keeps named Messages open loops out of Karen and other non-owner surfaces', async () => {
+    const privateBody =
+      'Practice moved to eight tonight, just keeping you posted.';
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550199',
+      '2026-04-15T16:20:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-karen-cannot-read',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'bb:+14695550199',
+      sender_name: 'Bob',
+      content: privateBody,
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+
+    const karen = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:karen',
+        ownerReviewAllowed: false,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        text: "what's still open with Bob",
+        canonicalText: "what's still open with Bob",
+        targetChatName: 'Bob',
+      },
+    });
+    const missingProvenance = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:unverified-owner-looking-chat',
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        text: "what's still open with Bob",
+        canonicalText: "what's still open with Bob",
+        targetChatName: 'Bob',
+      },
+    });
+
+    for (const result of [karen, missingProvenance]) {
+      expect(result.handled).toBe(true);
+      expect(result.replyText).not.toContain(privateBody);
+      expect(result.replyText).not.toContain('Practice at eight tonight');
+      expect(result.replyText).not.toContain('You owe Bob a reply.');
+      expect(result.messageAction).toBeUndefined();
+      expect(
+        result.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
+      ).toBeUndefined();
+    }
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+  });
+
+  it('says nothing is open when Jeff already replied on that named thread', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550199',
+      '2026-04-15T16:25:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-already-replied-inbound',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'bb:+14695550199',
+      sender_name: 'Bob',
+      content: 'Actually, parking is closed on that side.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+    storeMessage({
+      id: 'bob-already-replied-outbound',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'me',
+      sender_name: 'Jeff',
+      content: 'CURRENT STATE: use the east entrance instead.',
+      timestamp: '2026-04-15T16:25:00.000Z',
+      is_from_me: true,
+    });
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        text: "what's still open with Bob",
+        canonicalText: "what's still open with Bob",
+        targetChatName: 'Bob',
+      },
+    });
+
+    expect(openLoops.handled).toBe(true);
+    expect(openLoops.replyText).toContain('Nothing open with Bob.');
+    expect(openLoops.replyText).toContain(
+      'You said: CURRENT STATE: use the east entrance instead.',
+    );
+    expect(openLoops.replyText).not.toContain('You owe Bob a reply.');
+    expect(openLoops.messageAction).toBeUndefined();
+  });
+
+  it('withholds a canned answer when the named open loop is a question', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550199',
+      '2026-04-15T16:20:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-open-loop-question',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'bb:+14695550199',
+      sender_name: 'Bob',
+      content: 'Can you make practice at seven tonight?',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        text: "what's still open with Bob",
+        canonicalText: "what's still open with Bob",
+        targetChatName: 'Bob',
+      },
+    });
+
+    expect(openLoops.handled).toBe(true);
+    expect(openLoops.replyText).toContain('You owe Bob a reply.');
+    expect(openLoops.replyText).toContain(
+      'Bob asked you: Can you make practice at seven tonight',
+    );
+    expect(openLoops.replyText).toContain("I won't guess your answer.");
+    expect(openLoops.replyText).not.toMatch(
+      /\b(?:yes I can|I will be there)\b/i,
+    );
+    expect(openLoops.messageAction).toBeUndefined();
+  });
+
   it('makes a named-review informational draft shorter from the bound inbound without sending', async () => {
     vi.stubEnv('OPENAI_API_KEY', ' ');
     storeChatMetadata(

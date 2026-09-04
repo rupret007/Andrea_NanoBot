@@ -23,6 +23,7 @@ import {
 import {
   parseAllSyncedMessagesSummaryIntent,
   looksLikeGenericThreadSummaryPrompt,
+  parseNamedOpenLoopIntent,
   parseRecentTextReviewIntent,
   parseThreadSummaryIntent,
 } from './thread-summary-routing.js';
@@ -978,6 +979,16 @@ function matchCommunicationPrompt(
       normalizedText: normalized,
       canonicalText: normalized,
       reason: 'matched relationship-aware draft phrasing',
+    };
+  }
+  const namedOpenLoopIntent = parseNamedOpenLoopIntent(normalized);
+  if (namedOpenLoopIntent) {
+    return {
+      capabilityId: 'communication.open_loops',
+      normalizedText: normalized,
+      canonicalText: namedOpenLoopIntent.canonicalText,
+      arguments: namedOpenLoopIntent.arguments,
+      reason: 'matched named-thread communication open-loop phrasing',
     };
   }
   if (

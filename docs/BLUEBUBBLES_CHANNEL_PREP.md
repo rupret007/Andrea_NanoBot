@@ -194,8 +194,11 @@ Behavior:
 - keep a named summary bounded to the selected contact chat only
 - produce a useful thread-grounded gist of the conversation and current
   state for Jeff, not a quote dump or activity counts
+- answer named who-do-I-owe asks (`what's still open with Bob`) from that
+  same gist, and keep a `what do I owe people` follow-up on the named thread
+  after summarize; generic who-do-I-owe stays explicit-only
 - suggest useful next actions like draft, revise, remind-later, send-later, save, or Telegram escalation
-- keep suggested replies unsent; Jeff talks to Bob, Andrea is the engine
+- keep suggested replies unsent; `draft Bob` stays approval-gated. Jeff talks to Bob, Andrea is the engine
 
 This keeps BlueBubbles useful for real text-message help without turning it into passive inbox surveillance.
 
