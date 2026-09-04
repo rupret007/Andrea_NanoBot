@@ -170,9 +170,12 @@ import { TIMEZONE } from './config.js';
 import { resolveOwnerCalendarWindow } from './timezone.js';
 import {
   appendGenericOpenLoopNoCrawlNotice,
+  appendNamedOpenLoopDraftCreatedNotice,
   formatNamedMessagesOpenLoopReply,
   formatNamedOpenLoopDeniedReply,
+  namedOpenLoopDraftWasOffered,
   resolveNamedOpenLoopBinding,
+  resolveNamedOpenLoopDraftFollowup,
 } from './named-open-loop.js';
 import {
   buildThreadGroundedSuggestedReplies,
@@ -345,6 +348,7 @@ export interface AssistantCapabilityContext {
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
     namedMessagesSummaryTargetJson?: string;
+    namedOpenLoopDraftOffered?: boolean;
     recentTextReviewJson?: string;
     followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
@@ -445,6 +449,7 @@ export interface AssistantCapabilityConversationSeed {
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
     namedMessagesSummaryTargetJson?: string;
+    namedOpenLoopDraftOffered?: boolean;
     recentTextReviewJson?: string;
     followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
@@ -2059,6 +2064,7 @@ function buildCommunicationConversationSeed(input: {
   communicationLifeThreadIds?: string[];
   lastCommunicationSummary?: string;
   namedMessagesSummaryTargetJson?: string;
+  namedOpenLoopDraftOffered?: boolean;
   messageActionId?: string;
   messageActionSummary?: string;
   recentTextReviewJson?: string;
@@ -2082,6 +2088,7 @@ function buildCommunicationConversationSeed(input: {
       lastCommunicationSummary:
         input.lastCommunicationSummary || input.summaryText,
       namedMessagesSummaryTargetJson: input.namedMessagesSummaryTargetJson,
+      namedOpenLoopDraftOffered: input.namedOpenLoopDraftOffered,
       recentTextReviewJson: input.recentTextReviewJson,
       messageActionId: input.messageActionId,
       messageActionSummary: input.messageActionSummary,
@@ -4501,6 +4508,29 @@ async function runCommunicationDraftCapability(
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const namedDraftFollowup = resolveNamedOpenLoopDraftFollowup({
+    text: input.text || input.canonicalText || '',
+    ownerReviewAllowed: context.ownerReviewAllowed,
+    priorNamedSeedJson:
+      context.priorSubjectData?.namedMessagesSummaryTargetJson,
+    draftOffered: context.priorSubjectData?.namedOpenLoopDraftOffered === true,
+    activeCapabilityId: context.priorSubjectData?.activeCapabilityId,
+  });
+  if (namedDraftFollowup.kind === 'denied') {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: formatNamedOpenLoopDeniedReply(),
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'blocked a named Messages draft outside a trusted owner surface',
+      ),
+      followupActions: [],
+    };
+  }
   const namedSummarySeedJson =
     context.priorSubjectData?.namedMessagesSummaryTargetJson;
   const expectsNamedSummaryTarget =
@@ -5466,7 +5496,13 @@ async function runCommunicationDraftCapability(
 
   let finalReplyText = namedSummaryTarget?.target.isGroup
     ? `${replyText}\n\nGroup draft only: this is unsent and not sendable from Andrea. I did not create any send controls.`
-    : replyText;
+    : namedSummaryTarget
+      ? appendNamedOpenLoopDraftCreatedNotice(
+          context.channel,
+          replyText,
+          namedSummaryTarget.target.displayName,
+        )
+      : replyText;
   let finalMessageAction = messageAction;
   let finalSendOptions:
     | Pick<SendMessageOptions, 'inlineActions' | 'inlineActionRows'>
@@ -5811,19 +5847,26 @@ async function tryNamedMessagesOpenLoop(
   const latestInbound = [...messages]
     .reverse()
     .find((message) => !message.is_from_me);
+  const latestInboundText = latestInbound?.content || '';
+  const personLabel = threadGroundedPersonLabel(
+    safeDisplayName,
+    resolution.target.isGroup,
+    latestInbound
+      ? speakerLabels.get(getThreadSummarySpeakerKey(latestInbound)) ||
+          safeDisplayName
+      : safeDisplayName,
+  );
+  const draftOffered = namedOpenLoopDraftWasOffered({
+    gist,
+    latestInboundText,
+    isGroup: resolution.target.isGroup,
+  });
   const replyText = formatNamedMessagesOpenLoopReply({
     channel: context.channel,
-    personLabel: threadGroundedPersonLabel(
-      safeDisplayName,
-      resolution.target.isGroup,
-      latestInbound
-        ? speakerLabels.get(getThreadSummarySpeakerKey(latestInbound)) ||
-            safeDisplayName
-        : safeDisplayName,
-    ),
+    personLabel,
     isGroup: resolution.target.isGroup,
     gist,
-    latestInboundText: latestInbound?.content || '',
+    latestInboundText,
   });
   const namedSummaryFreshnessSnapshot = requireMessagesSummaryFreshnessSnapshot(
     buildMessagesThreadFreshnessSnapshot({
@@ -5853,6 +5896,7 @@ async function tryNamedMessagesOpenLoop(
       threadTitle: safeDisplayName,
       lastCommunicationSummary: gist.digestSentences.join(' '),
       namedMessagesSummaryTargetJson,
+      namedOpenLoopDraftOffered: draftOffered,
       supportedFollowups: descriptor.followupActions,
     }),
     trace: buildCapabilityTrace(

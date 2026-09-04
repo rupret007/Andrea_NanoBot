@@ -574,6 +574,55 @@ export function parseNamedOpenLoopIntent(
   };
 }
 
+const NAMED_DRAFT_RESERVED_LEAD =
+  /^(?:a\s+)?(?:reply|response|message|follow-?up|that|this|it|them|me)\b/i;
+
+/**
+ * Named draft phrasing such as `draft Bob`. Generic `draft a reply` /
+ * `draft that` / `draft #1` stay on the existing draft and review paths.
+ */
+export function parseNamedDraftIntent(
+  rawText: string | null | undefined,
+): ThreadSummaryIntent | null {
+  const normalized = normalizeForMatch(rawText || '');
+  if (!normalized) {
+    return null;
+  }
+  const cleaned = normalizeText(normalized.replace(/[?]+$/g, ''));
+  const match = /^(?:please\s+)?draft\s+(.+)$/i.exec(cleaned);
+  if (!match?.[1]) {
+    return null;
+  }
+  const rawName = normalizeText(match[1]);
+  if (
+    !rawName ||
+    NAMED_DRAFT_RESERVED_LEAD.test(rawName) ||
+    /^(?:#|number\s*)?\d+\b/i.test(rawName)
+  ) {
+    return null;
+  }
+  const targetChatName = cleanChatName(rawName);
+  if (!targetChatName || !isPlausibleBareChatName(targetChatName)) {
+    return null;
+  }
+  const normalizedName = targetChatName.toLowerCase();
+  const firstNameToken = normalizedName.split(/\s+/)[0] || '';
+  if (
+    COLLECTIVE_OPEN_LOOP_NAMES.has(normalizedName) ||
+    COLLECTIVE_OPEN_LOOP_NAMES.has(firstNameToken)
+  ) {
+    return null;
+  }
+  return {
+    canonicalText: `draft ${targetChatName}`,
+    arguments: {
+      targetChatName,
+      threadTitle: targetChatName,
+      personName: targetChatName,
+    },
+  };
+}
+
 export function formatThreadSummaryWindowLabel(
   kind: CompanionRouteTimeWindowKind | null | undefined,
   value: number | null | undefined,

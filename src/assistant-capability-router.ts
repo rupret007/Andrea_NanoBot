@@ -23,10 +23,12 @@ import {
 import {
   parseAllSyncedMessagesSummaryIntent,
   looksLikeGenericThreadSummaryPrompt,
+  parseNamedDraftIntent,
   parseNamedOpenLoopIntent,
   parseRecentTextReviewIntent,
   parseThreadSummaryIntent,
 } from './thread-summary-routing.js';
+import { resolveNamedOpenLoopDraftFollowup } from './named-open-loop.js';
 import { parseRecentTextReviewItemFollowup } from './recent-text-review.js';
 import type { CompanionRouteArguments } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
@@ -50,6 +52,9 @@ export interface AssistantCapabilityContinuationSubjectData {
   activeListGroupId?: string;
   recentTextReviewJson?: string;
   followthroughReviewJson?: string;
+  namedMessagesSummaryTargetJson?: string;
+  namedOpenLoopDraftOffered?: boolean;
+  personName?: string;
 }
 
 function stripAndreaAddressing(value: string): string {
@@ -88,6 +93,36 @@ function isBareCommunicationDraftFollowup(value: string): boolean {
   return /^(?:what should i say back|what should i send back|draft that for me|give me a short reply|make (?:it|that)(?: a little)? warmer|warmer|make (?:it|that) more direct|more direct|make (?:it|that) less stiff|less stiff|make (?:it|that) more blunt|more blunt)[?.! ]*$/i.test(
     value.trim(),
   );
+}
+
+function matchNamedOpenLoopDraftFollowup(
+  text: string,
+  subjectData: AssistantCapabilityContinuationSubjectData,
+): AssistantCapabilityMatch | null {
+  const followup = resolveNamedOpenLoopDraftFollowup({
+    text,
+    priorNamedSeedJson: subjectData.namedMessagesSummaryTargetJson,
+    draftOffered: subjectData.namedOpenLoopDraftOffered === true,
+    activeCapabilityId: subjectData.activeCapabilityId,
+  });
+  if (followup.kind !== 'draft') {
+    return null;
+  }
+  return {
+    capabilityId: 'communication.draft_reply',
+    normalizedText: text,
+    canonicalText: `draft ${followup.query}`,
+    arguments: {
+      targetChatName: followup.query,
+      personName: followup.query,
+      threadTitle: followup.query,
+    },
+    reason:
+      followup.source === 'soft_yes'
+        ? 'continuing a named open-loop with draft-for-Bob-yes'
+        : 'continuing a named open-loop with a named draft command',
+    continuation: true,
+  };
 }
 
 function isReviewItemFollowup(
@@ -981,6 +1016,16 @@ function matchCommunicationPrompt(
       reason: 'matched relationship-aware draft phrasing',
     };
   }
+  const namedDraftIntent = parseNamedDraftIntent(normalized);
+  if (namedDraftIntent) {
+    return {
+      capabilityId: 'communication.draft_reply',
+      normalizedText: normalized,
+      canonicalText: namedDraftIntent.canonicalText,
+      arguments: namedDraftIntent.arguments,
+      reason: 'matched named-person draft phrasing',
+    };
+  }
   const namedOpenLoopIntent = parseNamedOpenLoopIntent(normalized);
   if (namedOpenLoopIntent) {
     return {
@@ -1734,6 +1779,13 @@ export function continueAssistantCapabilityFromPriorSubjectData(
       reason: 'continuing the follow-through review with a selected item',
       continuation: true,
     };
+  }
+  const namedDraftFollowup = matchNamedOpenLoopDraftFollowup(
+    normalized,
+    subjectData,
+  );
+  if (namedDraftFollowup) {
+    return namedDraftFollowup;
   }
   return continueAssistantCapabilityFromActiveCapability(
     normalized,

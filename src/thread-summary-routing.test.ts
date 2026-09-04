@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ALL_SYNCED_MESSAGES_TARGET,
   parseAllSyncedMessagesSummaryIntent,
+  parseNamedDraftIntent,
   parseNamedOpenLoopIntent,
   parseRecentTextReviewIntent,
   parseThreadSummaryIntent,
@@ -154,5 +155,23 @@ describe('thread summary routing', () => {
     expect(
       parseNamedOpenLoopIntent('what do I owe people right now'),
     ).toBeNull();
+  });
+
+  it('matches draft Bob without treating generic draft phrasing as a named crawl', () => {
+    expect(parseNamedDraftIntent('draft Bob')).toMatchObject({
+      canonicalText: 'draft Bob',
+      arguments: {
+        targetChatName: 'Bob',
+        personName: 'Bob',
+      },
+    });
+    expect(parseNamedDraftIntent('please draft Candace')).toMatchObject({
+      arguments: { targetChatName: 'Candace' },
+    });
+    expect(parseNamedDraftIntent('draft a reply')).toBeNull();
+    expect(parseNamedDraftIntent('draft that for me')).toBeNull();
+    expect(parseNamedDraftIntent('draft #1')).toBeNull();
+    expect(parseNamedDraftIntent('draft people')).toBeNull();
+    expect(parseNamedDraftIntent('yes')).toBeNull();
   });
 });

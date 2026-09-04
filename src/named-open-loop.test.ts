@@ -3,13 +3,18 @@ import { describe, expect, it } from 'vitest';
 import { interpretMessageActionFollowup } from './message-actions.js';
 import {
   appendGenericOpenLoopNoCrawlNotice,
+  appendNamedOpenLoopDraftCreatedNotice,
   formatNamedMessagesOpenLoopReply,
   formatNamedOpenLoopDeniedReply,
   GENERIC_OPEN_LOOP_NAMED_HANDOFF,
   GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE,
+  isNamedOpenLoopSoftYes,
+  namedOpenLoopDraftWasOffered,
   namedOpenLoopHistoryQuery,
+  NAMED_OPEN_LOOP_DRAFT_YES_NOTICE,
   readNamedOpenLoopSeedQuery,
   resolveNamedOpenLoopBinding,
+  resolveNamedOpenLoopDraftFollowup,
 } from './named-open-loop.js';
 import { buildThreadGroundedSummaryGist } from './thread-grounded-wording.js';
 
@@ -132,8 +137,9 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).toContain('You owe Bob a reply.');
     expect(reply).toContain('Bob told you: Practice at eight tonight.');
     expect(reply).toContain('draft Bob');
+    expect(reply).toContain('or yes to create an unsent draft');
     expect(reply).toContain('stays unsent and requires approval');
-    expect(reply).toContain('Saying yes or ok will not send');
+    expect(reply).toContain(NAMED_OPEN_LOOP_DRAFT_YES_NOTICE);
     expect(reply).not.toMatch(/until you say send it/i);
     expect(reply).not.toMatch(/opened with|latest open turn/i);
   });
@@ -196,6 +202,32 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(withTrackedItems).toContain(GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE);
     expect(withTrackedItems).not.toContain('Next: name one person');
   });
+
+  it('keeps Alexa named-open-loop next step off yes-to-draft', () => {
+    const gist = buildThreadGroundedSummaryGist({
+      chatName: 'Bob',
+      isGroup: false,
+      turns: [
+        {
+          content: 'Practice moved to eight tonight, just keeping you posted.',
+          isFromMe: false,
+          speakerLabel: 'Bob',
+        },
+      ],
+    });
+    const reply = formatNamedMessagesOpenLoopReply({
+      channel: 'alexa',
+      personLabel: 'Bob',
+      isGroup: false,
+      gist,
+      latestInboundText:
+        'Practice moved to eight tonight, just keeping you posted.',
+    });
+    expect(reply).toContain('Say draft Bob to create an unsent draft.');
+    expect(reply).toContain(NAMED_OPEN_LOOP_DRAFT_YES_NOTICE);
+    expect(reply).not.toContain('or yes to create');
+    expect(reply).not.toContain('send it');
+  });
 });
 
 describe('draft-for-Bob-yes stays off the send fence', () => {
@@ -210,5 +242,157 @@ describe('draft-for-Bob-yes stays off the send fence', () => {
     expect(interpretMessageActionFollowup('yes')).toBeNull();
     expect(interpretMessageActionFollowup('ok')).toBeNull();
     expect(interpretMessageActionFollowup('draft Bob')).toBeNull();
+  });
+});
+
+describe('draft-for-Bob-yes creates an unsent draft, not a send', () => {
+  const owedGist = buildThreadGroundedSummaryGist({
+    chatName: 'Bob',
+    isGroup: false,
+    turns: [
+      {
+        content: 'Practice moved to eight tonight, just keeping you posted.',
+        isFromMe: false,
+        speakerLabel: 'Bob',
+      },
+    ],
+  });
+
+  it('offers draft Bob or yes only when a named one-to-one reply is owed', () => {
+    expect(
+      namedOpenLoopDraftWasOffered({
+        gist: owedGist,
+        latestInboundText:
+          'Practice moved to eight tonight, just keeping you posted.',
+        isGroup: false,
+      }),
+    ).toBe(true);
+    expect(
+      namedOpenLoopDraftWasOffered({
+        gist: owedGist,
+        latestInboundText: 'Can you make practice at seven tonight?',
+        isGroup: false,
+      }),
+    ).toBe(false);
+    expect(isNamedOpenLoopSoftYes('yes')).toBe(true);
+    expect(isNamedOpenLoopSoftYes('ok')).toBe(true);
+    expect(isNamedOpenLoopSoftYes('send it')).toBe(false);
+    expect(isNamedOpenLoopSoftYes('yes send it')).toBe(false);
+  });
+
+  it('binds draft Bob or yes to the named seed without leftover person titles', () => {
+    expect(
+      resolveNamedOpenLoopDraftFollowup({
+        text: 'draft Bob',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        draftOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({
+      kind: 'draft',
+      query: 'Bob',
+      source: 'named_command',
+    });
+    expect(
+      resolveNamedOpenLoopDraftFollowup({
+        text: 'yes',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        draftOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({
+      kind: 'draft',
+      query: 'Bob',
+      source: 'soft_yes',
+    });
+    expect(
+      resolveNamedOpenLoopDraftFollowup({
+        text: 'yes',
+        ownerReviewAllowed: true,
+        draftOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'none' });
+    expect(
+      resolveNamedOpenLoopDraftFollowup({
+        text: 'yes',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        draftOffered: false,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'none' });
+    expect(
+      resolveNamedOpenLoopDraftFollowup({
+        text: 'yes',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        draftOffered: true,
+        activeCapabilityId: 'communication.draft_reply',
+      }),
+    ).toEqual({ kind: 'none' });
+    expect(
+      resolveNamedOpenLoopDraftFollowup({
+        text: 'yes',
+        priorNamedSeedJson: bobSeedJson,
+        draftOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({
+      kind: 'draft',
+      query: 'Bob',
+      source: 'soft_yes',
+    });
+  });
+
+  it('denies Karen a named draft or seed-bound yes', () => {
+    expect(
+      resolveNamedOpenLoopDraftFollowup({
+        text: 'draft Bob',
+        ownerReviewAllowed: false,
+        priorNamedSeedJson: bobSeedJson,
+        draftOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'denied', reason: 'untrusted_named' });
+    expect(
+      resolveNamedOpenLoopDraftFollowup({
+        text: 'yes',
+        ownerReviewAllowed: false,
+        priorNamedSeedJson: bobSeedJson,
+        draftOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'denied', reason: 'untrusted_named' });
+    expect(
+      resolveNamedOpenLoopDraftFollowup({
+        text: 'yes',
+        ownerReviewAllowed: false,
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('makes the next step after an unsent draft the exact send fence', () => {
+    const reply = appendNamedOpenLoopDraftCreatedNotice(
+      'telegram',
+      'Draft: Thanks for the heads-up — Practice at eight tonight.',
+      'Bob',
+    );
+    expect(reply).toContain('this draft for Bob stays unsent');
+    expect(reply).toContain('`send it`');
+    expect(reply).toContain('`send it now`');
+    expect(reply).toContain('`send now`');
+    expect(reply).toContain('Yes still will not send');
+    expect(
+      appendNamedOpenLoopDraftCreatedNotice(
+        'alexa',
+        'I drafted a reply.',
+        'Bob',
+      ),
+    ).toBe(
+      'I drafted a reply. This draft for Bob stays unsent. Yes will not send.',
+    );
   });
 });
