@@ -227,6 +227,15 @@ describe('assistant capability router', () => {
     ).toMatchObject({
       capabilityId: 'communication.draft_reply',
     });
+    expect(matchAssistantCapabilityRequest('draft Bob')).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+      canonicalText: 'draft Bob',
+      arguments: expect.objectContaining({
+        targetChatName: 'Bob',
+        personName: 'Bob',
+      }),
+    });
+    expect(matchAssistantCapabilityRequest('yes')).toBeNull();
     expect(
       matchAssistantCapabilityRequest('What should I send back to Candace?'),
     ).toMatchObject({
@@ -1247,6 +1256,88 @@ describe('assistant capability router', () => {
       capabilityId: 'communication.draft_reply',
       reason: 'matched relationship-aware draft phrasing',
     });
+  });
+
+  it('routes draft Bob and a named-open-loop yes to an unsent draft, not a send', () => {
+    const bobSeedJson = JSON.stringify({
+      version: 2,
+      query: 'Bob',
+      target: {
+        chatJid: 'bb:iMessage;-;+14695550199',
+        displayName: 'Bob',
+        isGroup: false,
+      },
+    });
+    const namedOpenLoop = {
+      activeCapabilityId: 'communication.open_loops' as const,
+      namedMessagesSummaryTargetJson: bobSeedJson,
+      namedOpenLoopDraftOffered: true,
+      personName: 'Bob',
+    };
+
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'draft Bob',
+        namedOpenLoop,
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+      canonicalText: 'draft Bob',
+      continuation: true,
+      arguments: expect.objectContaining({ personName: 'Bob' }),
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('yes', namedOpenLoop),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+      canonicalText: 'draft Bob',
+      reason: 'continuing a named open-loop with draft-for-Bob-yes',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('ok', namedOpenLoop),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('send it', namedOpenLoop),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('yes', {
+        activeCapabilityId: 'communication.open_loops',
+        personName: 'Bob',
+      }),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('yes', {
+        activeCapabilityId: 'communication.open_loops',
+        namedMessagesSummaryTargetJson: bobSeedJson,
+        namedOpenLoopDraftOffered: false,
+      }),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('yes', {
+        activeCapabilityId: 'communication.draft_reply',
+        namedMessagesSummaryTargetJson: bobSeedJson,
+        namedOpenLoopDraftOffered: true,
+      }),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromAlexaState('yes', {
+        flowKey: 'communication_open_loops',
+        subjectKind: 'communication_thread',
+        subjectData: {
+          activeCapabilityId: 'communication.open_loops',
+        },
+        summaryText: 'You owe Bob a reply.',
+        supportedFollowups: ['draft_follow_up'],
+        styleHints: {
+          channelMode: 'alexa_companion',
+          responseSource: 'local_companion',
+        },
+      }),
+    ).toBeNull();
   });
 
   it('binds selected item follow-ups to the recent text review context', () => {

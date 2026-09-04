@@ -208,16 +208,19 @@ BlueBubbles:
   (`Dinner at seven tonight`, `Practice at eight tonight`) instead of generic
   `Thanks for the update.` / `Got it.` / `circle back` or a quote dump;
   named who-do-I-owe asks (`what's still open with Bob`, or `what do I owe
-  people` after that named summarize) use the same gist and can seed `draft
-  Bob` for a second yes. That draft stays `requiresApproval`. The only send
-  approvals are standalone `send it` / `send it now` / `send now`. Bare
-  `yes` / `ok` never authorize. Generic `what do I owe people` stays on
-  explicitly brought-in companion threads and does not crawl unnamed inbox
-  threads. An empty generic result asks Jeff to name one person (for example,
-  `what's still open with Bob?`) instead of ending at the privacy boundary;
-  that handoff does not read a thread, create a draft, or create send controls.
-  Already-replied named threads report `Nothing open`. Karen and
-  other non-owner surfaces get no Messages bodies, seed, or actions.
+  people` after that named summarize) use the same gist and make the next
+  human step explicit: `draft Bob` or `yes` creates one unsent
+  `requiresApproval` draft. That yes is draft-for-Bob-yes, not a send.
+  After the draft exists, only standalone `send it` / `send it now` /
+  `send now` can send. Bare `yes` / `ok` never authorize a send. Generic
+  `what do I owe people` stays on explicitly brought-in companion threads
+  and does not crawl unnamed inbox threads. An empty generic result asks
+  Jeff to name one person (for example, `what's still open with Bob?`)
+  instead of ending at the privacy boundary; that handoff does not read a
+  thread, create a draft, or create send controls, and a leftover `yes`
+  there does not draft. Already-replied named threads and withheld
+  questions do not offer yes-to-draft. Karen and other non-owner surfaces
+  get no Messages bodies, seed, or actions.
   Questions, requests, and automated notices still withhold a canned answer.
   Suggested replies stay unsent. Jeff talks to Bob; Andrea is the engine.
 - no outbound send without explicit user intent

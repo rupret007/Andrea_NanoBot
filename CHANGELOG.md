@@ -5,6 +5,18 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- After leftover-squash #34, a named owed-reply now has one obvious next
+  human step: `draft Bob` or a seed-bound `yes` creates one unsent
+  `requiresApproval` draft. That yes is draft-for-Bob-yes and still does
+  not send. After the draft exists, the next step is the exact standalone
+  fence (`send it` / `send it now` / `send now`). Generic empty who-do-I-owe
+  still only asks Jeff to name one person and does not treat leftover `yes`
+  or person titles as a Messages crawl or send. Withheld questions and
+  already-replied threads do not offer yes-to-draft. Karen / non-owner
+  surfaces still get no bodies, seed, or actions. Private API stays off.
+  AppleScript is the only send path. Send-path source blobs stay
+  SHA-256-identical to leftover #34 / main tip
+  `403fcb8f103af57d80da22a4d41ca7ea402111fe`.
 - Empty generic `what do I owe people?` results now end with one clear,
   channel-appropriate next step: name one person and use the existing named
   thread check. The generic turn still does not crawl Messages, expose a body,

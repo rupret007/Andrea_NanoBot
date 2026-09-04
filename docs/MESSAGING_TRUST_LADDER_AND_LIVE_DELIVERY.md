@@ -62,10 +62,12 @@ The default BlueBubbles flow is:
 On the registered Bob text path, only the exact fresh standalone phrases
 `send it`, `send it now`, and `send now` authorize immediate dispatch for
 the current presented action. Bare `yes` / `ok` never authorize. Named
-who-do-I-owe and `draft Bob` stay `requiresApproval` until that fence.
-An empty generic who-do-I-owe answer may point Jeff to the existing named
-thread flow with one explicit example; the generic turn still reads no unnamed
-Messages thread and creates no draft or send controls.
+who-do-I-owe can take `draft Bob` or a seed-bound `yes` as
+draft-for-Bob-yes: that creates one unsent `requiresApproval` draft and
+still does not send. An empty generic who-do-I-owe answer may point Jeff
+to the existing named thread flow with one explicit example; the generic
+turn still reads no unnamed Messages thread and creates no draft or send
+controls.
 `send it later` is a separate defer operation. None of these phrases approve
 unrelated suggestions or older stale reviews.
 

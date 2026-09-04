@@ -6,11 +6,13 @@ import {
   getAssistantCapability,
   getAssistantCapabilityRegistry,
 } from './assistant-capabilities.js';
+import { continueAssistantCapabilityFromPriorSubjectData } from './assistant-capability-router.js';
 import {
   applyMessageActionOperation,
   buildMessageActionPresentation,
   createOrRefreshMessageActionFromDraft,
   executeExplicitlyAuthorizedMessageAction,
+  interpretMessageActionFollowup,
 } from './message-actions.js';
 import {
   buildRecentTextReviewSeedJson,
@@ -3260,8 +3262,9 @@ describe('assistant capabilities', () => {
     );
     expect(openLoops.replyText).toContain("You haven't replied yet.");
     expect(openLoops.replyText).toContain('draft Bob');
+    expect(openLoops.replyText).toContain('or yes to create an unsent draft');
     expect(openLoops.replyText).toContain('stays unsent and requires approval');
-    expect(openLoops.replyText).toContain('Saying yes or ok will not send');
+    expect(openLoops.replyText).toContain('Yes will not send');
     expect(openLoops.replyText).not.toMatch(/until you say send it/i);
     expect(openLoops.replyText).not.toMatch(/opened with|latest open turn/i);
     expect(openLoops.replyText).not.toContain('needs attention');
@@ -3272,6 +3275,9 @@ describe('assistant capabilities', () => {
     expect(
       openLoops.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
     ).toBeTruthy();
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopDraftOffered,
+    ).toBe(true);
 
     const draft = await executeAssistantCapability({
       capabilityId: 'communication.draft_reply',
@@ -3297,6 +3303,9 @@ describe('assistant capabilities', () => {
     expect(draft.replyText).toContain(
       'Thanks for the heads-up — Practice at eight tonight.',
     );
+    expect(draft.replyText).toContain('this draft for Bob stays unsent');
+    expect(draft.replyText).toContain('`send it`');
+    expect(draft.replyText).toContain('Yes still will not send');
     expect(draft.replyText).not.toContain('circle back');
     expect(draft.messageAction?.sendStatus).toBe('drafted');
     expect(draft.messageAction?.requiresApproval).toBe(true);
@@ -3310,6 +3319,131 @@ describe('assistant capabilities', () => {
       listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
     ).toHaveLength(1);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('treats yes after a named owed Bob loop as an unsent draft, not a send', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as typeof fetch;
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550199',
+      '2026-04-15T16:20:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-yes-draft-practice',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'bb:+14695550199',
+      sender_name: 'Bob',
+      content: 'Practice moved to eight tonight, just keeping you posted.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        text: "what's still open with Bob",
+        canonicalText: "what's still open with Bob",
+        targetChatName: 'Bob',
+      },
+    });
+    const routed = continueAssistantCapabilityFromPriorSubjectData(
+      'yes',
+      openLoops.conversationSeed?.subjectData,
+    );
+
+    expect(routed).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+      canonicalText: 'draft Bob',
+    });
+    expect(interpretMessageActionFollowup('yes')).toBeNull();
+
+    const draft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        primeMessagesChatHistory: async (chatJid) => ({
+          chatJid,
+          storedCount: 1,
+          totalCount: 1,
+        }),
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'yes',
+        canonicalText: routed?.canonicalText || 'draft Bob',
+        personName: routed?.arguments?.personName || undefined,
+        targetChatName: routed?.arguments?.targetChatName,
+      },
+    });
+
+    expect(draft.handled).toBe(true);
+    expect(draft.messageAction?.sendStatus).toBe('drafted');
+    expect(draft.messageAction?.requiresApproval).toBe(true);
+    expect(draft.replyText).toContain('this draft for Bob stays unsent');
+    expect(draft.replyText).toContain('Yes still will not send');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(1);
+  });
+
+  it('does not let Karen draft Bob or authorize a seed-bound yes', async () => {
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550199',
+      '2026-04-15T16:20:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-karen-cannot-draft',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'bb:+14695550199',
+      sender_name: 'Bob',
+      content: 'Practice moved to eight tonight, just keeping you posted.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+
+    const karenDraft = await executeAssistantCapability({
+      capabilityId: 'communication.draft_reply',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:karen',
+        ownerReviewAllowed: false,
+        now: new Date('2026-04-15T17:05:00.000Z'),
+      },
+      input: {
+        text: 'draft Bob',
+        canonicalText: 'draft Bob',
+        targetChatName: 'Bob',
+        personName: 'Bob',
+      },
+    });
+
+    expect(karenDraft.handled).toBe(true);
+    expect(karenDraft.replyText).toContain('registered owner control chat');
+    expect(karenDraft.replyText).not.toContain('Practice at eight tonight');
+    expect(karenDraft.messageAction).toBeUndefined();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
   });
 
   it('keeps what-do-I-owe after a named Bob summarize on that thread', async () => {
@@ -3420,6 +3554,7 @@ describe('assistant capabilities', () => {
       "Next: name one person — for example, `what's still open with Bob?`",
     );
     expect(openLoops.replyText).not.toContain('draft Bob');
+    expect(openLoops.replyText).not.toContain('or yes to create');
     expect(openLoops.replyText).not.toContain('send it');
     expect(
       openLoops.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
@@ -3547,6 +3682,10 @@ describe('assistant capabilities', () => {
     );
     expect(openLoops.replyText).not.toContain('You owe Bob a reply.');
     expect(openLoops.replyText).not.toContain('draft Bob');
+    expect(openLoops.replyText).not.toContain('or yes to create');
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopDraftOffered,
+    ).toBeFalsy();
     expect(openLoops.messageAction).toBeUndefined();
   });
 
@@ -3591,6 +3730,10 @@ describe('assistant capabilities', () => {
       'Bob asked you: Can you make practice at seven tonight',
     );
     expect(openLoops.replyText).toContain("I won't guess your answer.");
+    expect(openLoops.replyText).not.toContain('or yes to create');
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopDraftOffered,
+    ).toBeFalsy();
     expect(openLoops.replyText).not.toMatch(
       /\b(?:yes I can|I will be there)\b/i,
     );
