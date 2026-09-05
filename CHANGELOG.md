@@ -5,6 +5,20 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- After leftover-squash #37, a named owed-reply now has a third unsent
+  next step: `save under thread` or `save that` creates one local Jeff
+  life-thread save bound to that named person. That save does not send,
+  does not create a draft or action card, and does not bind leftover
+  person titles from an empty generic who-do-I-owe. Withheld questions
+  offer save-under-thread and remind-me-later but still withhold
+  yes-to-draft. Already-replied threads do not offer it. Karen /
+  non-owner surfaces still get no bodies, seed, reminders, saves, or
+  actions. After the save exists, the next human step is still
+  `draft Bob` for an unsent draft; only standalone `send it` /
+  `send it now` / `send now` can send. Private API stays off.
+  AppleScript is the only send path. Send-path source blobs stay
+  SHA-256-identical to leftover #37 / main tip
+  `8adde5c2db71389569d31bd61d27953ad5b28e2e`.
 - After leftover-squash #35, a named owed-reply now has a second unsent
   next step: `remind me later` or `remind me to reply later tonight`
   creates one local Jeff reminder bound to that named thread. Default

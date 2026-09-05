@@ -31,6 +31,7 @@ import {
 import {
   resolveNamedOpenLoopDraftFollowup,
   resolveNamedOpenLoopRemindFollowup,
+  resolveNamedOpenLoopSaveFollowup,
 } from './named-open-loop.js';
 import { parseRecentTextReviewItemFollowup } from './recent-text-review.js';
 import type { CompanionRouteArguments } from './types.js';
@@ -58,6 +59,7 @@ export interface AssistantCapabilityContinuationSubjectData {
   namedMessagesSummaryTargetJson?: string;
   namedOpenLoopDraftOffered?: boolean;
   namedOpenLoopRemindOffered?: boolean;
+  namedOpenLoopSaveOffered?: boolean;
   personName?: string;
 }
 
@@ -162,6 +164,33 @@ function matchNamedOpenLoopRemindFollowup(
       threadTitle: followup.query,
     },
     reason: 'continuing a named open-loop with remind-me-later',
+    continuation: true,
+  };
+}
+
+function matchNamedOpenLoopSaveFollowup(
+  text: string,
+  subjectData: AssistantCapabilityContinuationSubjectData,
+): AssistantCapabilityMatch | null {
+  const followup = resolveNamedOpenLoopSaveFollowup({
+    text,
+    priorNamedSeedJson: subjectData.namedMessagesSummaryTargetJson,
+    saveOffered: subjectData.namedOpenLoopSaveOffered === true,
+    activeCapabilityId: subjectData.activeCapabilityId,
+  });
+  if (followup.kind !== 'save') {
+    return null;
+  }
+  return {
+    capabilityId: 'communication.manage_tracking',
+    normalizedText: text,
+    canonicalText: 'save under thread',
+    arguments: {
+      targetChatName: followup.query,
+      personName: followup.query,
+      threadTitle: followup.query,
+    },
+    reason: 'continuing a named open-loop with save-under-thread',
     continuation: true,
   };
 }
@@ -1835,6 +1864,13 @@ export function continueAssistantCapabilityFromPriorSubjectData(
   if (namedRemindFollowup) {
     return namedRemindFollowup;
   }
+  const namedSaveFollowup = matchNamedOpenLoopSaveFollowup(
+    normalized,
+    subjectData,
+  );
+  if (namedSaveFollowup) {
+    return namedSaveFollowup;
+  }
   return continueAssistantCapabilityFromActiveCapability(
     normalized,
     subjectData.activeCapabilityId,
@@ -1852,6 +1888,13 @@ export function continueAssistantCapabilityFromAlexaState(
   );
   if (namedRemindFollowup) {
     return namedRemindFollowup;
+  }
+  const namedSaveFollowup = matchNamedOpenLoopSaveFollowup(
+    text,
+    state.subjectData,
+  );
+  if (namedSaveFollowup) {
+    return namedSaveFollowup;
   }
   return continueAssistantCapabilityFromActiveCapability(
     text,

@@ -5,21 +5,26 @@ import {
   appendGenericOpenLoopNoCrawlNotice,
   appendNamedOpenLoopDraftCreatedNotice,
   appendNamedOpenLoopRemindCreatedNotice,
+  appendNamedOpenLoopSaveCreatedNotice,
   formatNamedMessagesOpenLoopReply,
   formatNamedOpenLoopDeniedReply,
   GENERIC_OPEN_LOOP_NAMED_HANDOFF,
   GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE,
+  isNamedOpenLoopSavePrompt,
   isNamedOpenLoopSoftYes,
   namedOpenLoopDraftWasOffered,
   namedOpenLoopHistoryQuery,
   NAMED_OPEN_LOOP_DRAFT_YES_NOTICE,
   NAMED_OPEN_LOOP_REMIND_LATER_PROMPT,
+  NAMED_OPEN_LOOP_SAVE_PROMPT,
   namedOpenLoopRemindWasOffered,
+  namedOpenLoopSaveWasOffered,
   parseNamedOpenLoopRemindTiming,
   readNamedOpenLoopSeedQuery,
   resolveNamedOpenLoopBinding,
   resolveNamedOpenLoopDraftFollowup,
   resolveNamedOpenLoopRemindFollowup,
+  resolveNamedOpenLoopSaveFollowup,
 } from './named-open-loop.js';
 import { buildThreadGroundedSummaryGist } from './thread-grounded-wording.js';
 
@@ -144,6 +149,8 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).toContain('draft Bob');
     expect(reply).toContain('or yes for an unsent draft');
     expect(reply).toContain(NAMED_OPEN_LOOP_REMIND_LATER_PROMPT);
+    expect(reply).toContain(NAMED_OPEN_LOOP_SAVE_PROMPT);
+    expect(reply).toContain('keep this under Bob');
     expect(reply).toContain('stays unsent and requires approval');
     expect(reply).toContain(NAMED_OPEN_LOOP_DRAFT_YES_NOTICE);
     expect(reply).not.toMatch(/until you say send it/i);
@@ -179,6 +186,7 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).not.toContain('You owe Bob a reply.');
     expect(reply).not.toContain('draft Bob');
     expect(reply).not.toContain(NAMED_OPEN_LOOP_REMIND_LATER_PROMPT);
+    expect(reply).not.toContain(NAMED_OPEN_LOOP_SAVE_PROMPT);
     expect(reply).not.toContain('send it');
   });
 
@@ -194,6 +202,7 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).not.toContain('send it');
     expect(reply).not.toContain('draft Bob');
     expect(reply).not.toContain(NAMED_OPEN_LOOP_REMIND_LATER_PROMPT);
+    expect(reply).not.toContain(NAMED_OPEN_LOOP_SAVE_PROMPT);
   });
 
   it('keeps Alexa concise and does not add the handoff after real tracked items', () => {
@@ -232,7 +241,7 @@ describe('named who-do-I-owe copy without sending', () => {
         'Practice moved to eight tonight, just keeping you posted.',
     });
     expect(reply).toContain(
-      'Say draft Bob to create an unsent draft, or remind me later.',
+      'Say draft Bob to create an unsent draft, or remind me later, or save under thread.',
     );
     expect(reply).toContain(NAMED_OPEN_LOOP_DRAFT_YES_NOTICE);
     expect(reply).not.toContain('or yes to create');
@@ -565,6 +574,7 @@ describe('named open-loop remind-me-later stays off the send fence', () => {
     });
     expect(reply).toContain("I won't guess your answer.");
     expect(reply).toContain(NAMED_OPEN_LOOP_REMIND_LATER_PROMPT);
+    expect(reply).toContain(NAMED_OPEN_LOOP_SAVE_PROMPT);
     expect(reply).not.toContain('or yes for an unsent draft');
     expect(reply).not.toContain('send it');
   });
@@ -588,6 +598,155 @@ describe('named open-loop remind-me-later stays off the send fence', () => {
       ),
     ).toBe(
       "Okay. I'll remind you tonight to reply to Bob. I did not send anything. Say draft Bob when you want an unsent draft.",
+    );
+  });
+});
+
+describe('named open-loop save-under-thread stays off the send fence', () => {
+  const owedGist = buildThreadGroundedSummaryGist({
+    chatName: 'Bob',
+    isGroup: false,
+    turns: [
+      {
+        content: 'Practice moved to eight tonight, just keeping you posted.',
+        isFromMe: false,
+        speakerLabel: 'Bob',
+      },
+    ],
+  });
+
+  it('offers save-under-thread on a named owed one-to-one, including withheld questions', () => {
+    expect(
+      namedOpenLoopSaveWasOffered({
+        gist: owedGist,
+        isGroup: false,
+      }),
+    ).toBe(true);
+    expect(
+      namedOpenLoopSaveWasOffered({
+        gist: buildThreadGroundedSummaryGist({
+          chatName: 'Bob',
+          isGroup: false,
+          turns: [
+            {
+              content: 'Can you make practice at seven tonight?',
+              isFromMe: false,
+              speakerLabel: 'Bob',
+            },
+          ],
+        }),
+        isGroup: false,
+      }),
+    ).toBe(true);
+    expect(
+      namedOpenLoopSaveWasOffered({
+        gist: owedGist,
+        isGroup: true,
+      }),
+    ).toBe(false);
+    expect(isNamedOpenLoopSavePrompt('save under thread')).toBe(true);
+    expect(isNamedOpenLoopSavePrompt('save that')).toBe(true);
+    expect(isNamedOpenLoopSavePrompt('save it under the thread')).toBe(true);
+    expect(isNamedOpenLoopSavePrompt('save that for later')).toBe(false);
+    expect(isNamedOpenLoopSavePrompt('save that under the household thread')).toBe(
+      false,
+    );
+    expect(isNamedOpenLoopSavePrompt('send it')).toBe(false);
+    expect(isNamedOpenLoopSavePrompt('yes')).toBe(false);
+    expect(isNamedOpenLoopSavePrompt('remind me later')).toBe(false);
+  });
+
+  it('binds save-under-thread to the named seed without leftover person titles', () => {
+    expect(
+      resolveNamedOpenLoopSaveFollowup({
+        text: 'save under thread',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        saveOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({
+      kind: 'save',
+      query: 'Bob',
+    });
+    expect(
+      resolveNamedOpenLoopSaveFollowup({
+        text: 'save that',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        saveOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({
+      kind: 'save',
+      query: 'Bob',
+    });
+    expect(
+      resolveNamedOpenLoopSaveFollowup({
+        text: 'save under thread',
+        ownerReviewAllowed: true,
+        saveOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'none' });
+    expect(
+      resolveNamedOpenLoopSaveFollowup({
+        text: 'save under thread',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        saveOffered: false,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'none' });
+    expect(
+      resolveNamedOpenLoopSaveFollowup({
+        text: 'save under thread',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        saveOffered: true,
+        activeCapabilityId: 'communication.draft_reply',
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('denies Karen a named save-under-thread', () => {
+    expect(
+      resolveNamedOpenLoopSaveFollowup({
+        text: 'save under thread',
+        ownerReviewAllowed: false,
+        priorNamedSeedJson: bobSeedJson,
+        saveOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'denied', reason: 'untrusted_named' });
+    expect(
+      resolveNamedOpenLoopSaveFollowup({
+        text: 'save under thread',
+        ownerReviewAllowed: false,
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('makes the next step after a thread save the unsent draft, not a send', () => {
+    const reply = appendNamedOpenLoopSaveCreatedNotice(
+      'telegram',
+      'Okay. I saved that under the Bob thread.\n- Practice at eight tonight.',
+      'Bob',
+    );
+    expect(reply).toContain('I saved that under the Bob thread');
+    expect(reply).toContain('I did not send anything');
+    expect(reply).toContain('`draft Bob`');
+    expect(reply).toContain('`send it`');
+    expect(reply).toContain('`send it now`');
+    expect(reply).toContain('`send now`');
+    expect(
+      appendNamedOpenLoopSaveCreatedNotice(
+        'alexa',
+        'Okay. I saved that under Bob.',
+        'Bob',
+      ),
+    ).toBe(
+      'Okay. I saved that under Bob. I did not send anything. Say draft Bob when you want an unsent draft.',
     );
   });
 });

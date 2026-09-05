@@ -173,14 +173,17 @@ import {
   appendGenericOpenLoopNoCrawlNotice,
   appendNamedOpenLoopDraftCreatedNotice,
   appendNamedOpenLoopRemindCreatedNotice,
+  appendNamedOpenLoopSaveCreatedNotice,
   formatNamedMessagesOpenLoopReply,
   formatNamedOpenLoopDeniedReply,
   namedOpenLoopDraftWasOffered,
   namedOpenLoopRemindTimingCandidates,
   namedOpenLoopRemindWasOffered,
+  namedOpenLoopSaveWasOffered,
   resolveNamedOpenLoopBinding,
   resolveNamedOpenLoopDraftFollowup,
   resolveNamedOpenLoopRemindFollowup,
+  resolveNamedOpenLoopSaveFollowup,
 } from './named-open-loop.js';
 import {
   buildThreadGroundedSuggestedReplies,
@@ -355,6 +358,7 @@ export interface AssistantCapabilityContext {
     namedMessagesSummaryTargetJson?: string;
     namedOpenLoopDraftOffered?: boolean;
     namedOpenLoopRemindOffered?: boolean;
+    namedOpenLoopSaveOffered?: boolean;
     recentTextReviewJson?: string;
     followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
@@ -457,6 +461,7 @@ export interface AssistantCapabilityConversationSeed {
     namedMessagesSummaryTargetJson?: string;
     namedOpenLoopDraftOffered?: boolean;
     namedOpenLoopRemindOffered?: boolean;
+    namedOpenLoopSaveOffered?: boolean;
     recentTextReviewJson?: string;
     followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
@@ -2073,6 +2078,7 @@ function buildCommunicationConversationSeed(input: {
   namedMessagesSummaryTargetJson?: string;
   namedOpenLoopDraftOffered?: boolean;
   namedOpenLoopRemindOffered?: boolean;
+  namedOpenLoopSaveOffered?: boolean;
   messageActionId?: string;
   messageActionSummary?: string;
   recentTextReviewJson?: string;
@@ -2098,6 +2104,7 @@ function buildCommunicationConversationSeed(input: {
       namedMessagesSummaryTargetJson: input.namedMessagesSummaryTargetJson,
       namedOpenLoopDraftOffered: input.namedOpenLoopDraftOffered,
       namedOpenLoopRemindOffered: input.namedOpenLoopRemindOffered,
+      namedOpenLoopSaveOffered: input.namedOpenLoopSaveOffered,
       recentTextReviewJson: input.recentTextReviewJson,
       messageActionId: input.messageActionId,
       messageActionSummary: input.messageActionSummary,
@@ -5874,6 +5881,10 @@ async function tryNamedMessagesOpenLoop(
     gist,
     isGroup: resolution.target.isGroup,
   });
+  const saveOffered = namedOpenLoopSaveWasOffered({
+    gist,
+    isGroup: resolution.target.isGroup,
+  });
   const replyText = formatNamedMessagesOpenLoopReply({
     channel: context.channel,
     personLabel,
@@ -5911,6 +5922,7 @@ async function tryNamedMessagesOpenLoop(
       namedMessagesSummaryTargetJson,
       namedOpenLoopDraftOffered: draftOffered,
       namedOpenLoopRemindOffered: remindOffered,
+      namedOpenLoopSaveOffered: saveOffered,
       supportedFollowups: descriptor.followupActions,
     }),
     trace: buildCapabilityTrace(
@@ -6122,7 +6134,9 @@ function tryNamedOpenLoopRemind(
       namedOpenLoopDraftOffered:
         context.priorSubjectData?.namedOpenLoopDraftOffered,
       namedOpenLoopRemindOffered: false,
-      supportedFollowups: ['draft_follow_up', 'anything_else'],
+      namedOpenLoopSaveOffered:
+        context.priorSubjectData?.namedOpenLoopSaveOffered,
+      supportedFollowups: ['draft_follow_up', 'save_for_later', 'anything_else'],
     }),
     trace: buildCapabilityTrace(
       descriptor,
@@ -6131,7 +6145,124 @@ function tryNamedOpenLoopRemind(
       'created a local named open-loop reply reminder without sending',
       [`person:${followup.query}`, `when:${followup.timing}`],
     ),
-    followupActions: ['draft_follow_up', 'anything_else'],
+    followupActions: ['draft_follow_up', 'save_for_later', 'anything_else'],
+  };
+}
+
+function tryNamedOpenLoopSave(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): AssistantCapabilityResult | null {
+  const followup = resolveNamedOpenLoopSaveFollowup({
+    text: input.text || input.canonicalText || '',
+    ownerReviewAllowed: context.ownerReviewAllowed,
+    priorNamedSeedJson:
+      context.priorSubjectData?.namedMessagesSummaryTargetJson,
+    saveOffered: context.priorSubjectData?.namedOpenLoopSaveOffered === true,
+    activeCapabilityId: context.priorSubjectData?.activeCapabilityId,
+  });
+  if (followup.kind === 'none') {
+    return null;
+  }
+  if (followup.kind === 'denied') {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: formatNamedOpenLoopDeniedReply(),
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'blocked a named Messages thread save outside a trusted owner surface',
+      ),
+      followupActions: [],
+    };
+  }
+  if (!context.groupFolder) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'I can save that under the thread when we are in a chat that can hold it. I did not send anything.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'named open-loop save lacked a group folder',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
+
+  const summary =
+    context.priorSubjectData?.lastCommunicationSummary ||
+    `owed reply to ${followup.query}`;
+  const result = handleLifeThreadCommand({
+    groupFolder: context.groupFolder,
+    channel: context.channel,
+    chatJid: context.chatJid,
+    text: `save that under the ${followup.query} thread`,
+    replyText: summary,
+    conversationSummary: summary,
+    now: context.now,
+  });
+  if (!result.handled) {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'Tell me what you want saved under that thread. I did not send anything.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'named open-loop save could not persist a life thread',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText: appendNamedOpenLoopSaveCreatedNotice(
+      context.channel,
+      result.responseText ||
+        `Okay. I saved that under the ${followup.query} thread.`,
+      followup.query,
+    ),
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: buildCommunicationConversationSeed({
+      descriptor,
+      summaryText:
+        result.responseText ||
+        `Okay. I saved that under the ${followup.query} thread.`,
+      conversationFocus: summary,
+      personName: followup.query,
+      threadTitle: followup.query,
+      threadId: result.referencedThread?.id,
+      lastCommunicationSummary: summary,
+      namedMessagesSummaryTargetJson:
+        context.priorSubjectData?.namedMessagesSummaryTargetJson,
+      namedOpenLoopDraftOffered:
+        context.priorSubjectData?.namedOpenLoopDraftOffered,
+      namedOpenLoopRemindOffered:
+        context.priorSubjectData?.namedOpenLoopRemindOffered,
+      namedOpenLoopSaveOffered: false,
+      supportedFollowups: ['draft_follow_up', 'create_reminder', 'anything_else'],
+    }),
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      'local_companion',
+      'saved a named open-loop under the thread without sending',
+      [`person:${followup.query}`],
+    ),
+    followupActions: ['draft_follow_up', 'create_reminder', 'anything_else'],
   };
 }
 
@@ -6144,6 +6275,10 @@ async function runCommunicationManageCapability(
   const namedRemind = tryNamedOpenLoopRemind(descriptor, context, input);
   if (namedRemind) {
     return namedRemind;
+  }
+  const namedSave = tryNamedOpenLoopSave(descriptor, context, input);
+  if (namedSave) {
+    return namedSave;
   }
   const rawCommunicationText = input.text || input.canonicalText || '';
   const result = manageCommunicationTracking({
@@ -8260,6 +8395,7 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
       'send_details',
       'draft_follow_up',
       'create_reminder',
+      'save_for_later',
     ],
     handlerKind: 'local',
     execute: (context, input) =>

@@ -39,7 +39,10 @@ import {
   upsertProfileSubject,
 } from './db.js';
 import { planSimpleReminder } from './local-reminder.js';
-import { handleLifeThreadCommand } from './life-threads.js';
+import {
+  handleLifeThreadCommand,
+  listLifeThreadsForGroup,
+} from './life-threads.js';
 import { cacheInboundMediaBytes } from './media-cache.js';
 import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
 import type {
@@ -3265,6 +3268,7 @@ describe('assistant capabilities', () => {
     expect(openLoops.replyText).toContain('draft Bob');
     expect(openLoops.replyText).toContain('or yes for an unsent draft');
     expect(openLoops.replyText).toContain('remind me later');
+    expect(openLoops.replyText).toContain('save under thread');
     expect(openLoops.replyText).toContain('stays unsent and requires approval');
     expect(openLoops.replyText).toContain('Yes will not send');
     expect(openLoops.replyText).not.toMatch(/until you say send it/i);
@@ -3282,6 +3286,9 @@ describe('assistant capabilities', () => {
     ).toBe(true);
     expect(
       openLoops.conversationSeed?.subjectData?.namedOpenLoopRemindOffered,
+    ).toBe(true);
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopSaveOffered,
     ).toBe(true);
 
     const draft = await executeAssistantCapability({
@@ -3523,6 +3530,116 @@ describe('assistant capabilities', () => {
     ).toHaveLength(0);
   });
 
+  it('treats save under thread after a named owed Bob loop as a local thread save, not a send', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as typeof fetch;
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550199',
+      '2026-04-15T16:20:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-save-under-thread-practice',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'bb:+14695550199',
+      sender_name: 'Bob',
+      content: 'Practice moved to eight tonight, just keeping you posted.',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+    });
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        text: "what's still open with Bob",
+        canonicalText: "what's still open with Bob",
+        targetChatName: 'Bob',
+      },
+    });
+    const routed = continueAssistantCapabilityFromPriorSubjectData(
+      'save under thread',
+      openLoops.conversationSeed?.subjectData,
+    );
+
+    expect(routed).toMatchObject({
+      capabilityId: 'communication.manage_tracking',
+      canonicalText: 'save under thread',
+    });
+    expect(interpretMessageActionFollowup('save under thread')).not.toEqual({
+      kind: 'send',
+    });
+
+    const saved = await executeAssistantCapability({
+      capabilityId: 'communication.manage_tracking',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'save under thread',
+        canonicalText: routed?.canonicalText || 'save under thread',
+      },
+    });
+
+    expect(saved.handled).toBe(true);
+    expect(saved.replyText).toContain('I saved that under the Bob thread');
+    expect(saved.replyText).toContain('I did not send anything');
+    expect(saved.replyText).toContain('`draft Bob`');
+    expect(saved.replyText).toContain('`send it`');
+    expect(saved.replyText).not.toContain('Yes still will not send');
+    expect(saved.messageAction).toBeUndefined();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+    const threads = listLifeThreadsForGroup('main', ['active']);
+    expect(threads).toHaveLength(1);
+    expect(threads[0]?.title).toBe('Bob');
+    expect(threads[0]?.summary).toMatch(/Practice at eight tonight/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    const leftover = continueAssistantCapabilityFromPriorSubjectData(
+      'save under thread',
+      {
+        activeCapabilityId: 'communication.open_loops',
+        personName: 'Bob',
+      },
+    );
+    expect(leftover).toBeNull();
+
+    const karen = await executeAssistantCapability({
+      capabilityId: 'communication.manage_tracking',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:karen',
+        ownerReviewAllowed: false,
+        now: new Date('2026-04-15T17:10:00.000Z'),
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'save under thread',
+        canonicalText: 'save under thread',
+      },
+    });
+    expect(karen.replyText).toContain('registered owner control chat');
+    expect(karen.replyText).not.toContain('I saved that under');
+    expect(listLifeThreadsForGroup('main', ['active'])).toHaveLength(1);
+  });
+
   it('does not let Karen draft Bob or authorize a seed-bound yes', async () => {
     storeChatMetadata(
       'bb:iMessage;-;+14695550199',
@@ -3677,10 +3794,17 @@ describe('assistant capabilities', () => {
     expect(openLoops.replyText).not.toContain('draft Bob');
     expect(openLoops.replyText).not.toContain('or yes to create');
     expect(openLoops.replyText).not.toContain('remind me later');
+    expect(openLoops.replyText).not.toContain('save under thread');
     expect(openLoops.replyText).not.toContain('send it');
     expect(
       openLoops.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
     ).toBeUndefined();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('save under thread', {
+        ...openLoops.conversationSeed?.subjectData,
+        personName: 'Bob',
+      }),
+    ).toBeNull();
     expect(
       listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
     ).toHaveLength(0);
@@ -3806,11 +3930,15 @@ describe('assistant capabilities', () => {
     expect(openLoops.replyText).not.toContain('draft Bob');
     expect(openLoops.replyText).not.toContain('or yes to create');
     expect(openLoops.replyText).not.toContain('remind me later');
+    expect(openLoops.replyText).not.toContain('save under thread');
     expect(
       openLoops.conversationSeed?.subjectData?.namedOpenLoopDraftOffered,
     ).toBeFalsy();
     expect(
       openLoops.conversationSeed?.subjectData?.namedOpenLoopRemindOffered,
+    ).toBeFalsy();
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopSaveOffered,
     ).toBeFalsy();
     expect(openLoops.messageAction).toBeUndefined();
   });
@@ -3858,11 +3986,15 @@ describe('assistant capabilities', () => {
     expect(openLoops.replyText).toContain("I won't guess your answer.");
     expect(openLoops.replyText).not.toContain('or yes to create');
     expect(openLoops.replyText).toContain('remind me later');
+    expect(openLoops.replyText).toContain('save under thread');
     expect(
       openLoops.conversationSeed?.subjectData?.namedOpenLoopDraftOffered,
     ).toBeFalsy();
     expect(
       openLoops.conversationSeed?.subjectData?.namedOpenLoopRemindOffered,
+    ).toBe(true);
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopSaveOffered,
     ).toBe(true);
     expect(openLoops.replyText).not.toMatch(
       /\b(?:yes I can|I will be there)\b/i,
