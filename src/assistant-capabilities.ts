@@ -6120,11 +6120,12 @@ async function tryNamedOpenLoopMedia(
     };
   }
 
-  const { attachments, mediaObject } =
-    latestNamedOpenLoopAnalyzableAttachments({
+  const { attachments, mediaObject } = latestNamedOpenLoopAnalyzableAttachments(
+    {
       chatJid: seed.target.chatJid,
       historyStartTimestamp: seed.historyStartTimestamp,
-    });
+    },
+  );
   const analysis =
     attachments.length > 0
       ? await analyzeMessageMedia({
