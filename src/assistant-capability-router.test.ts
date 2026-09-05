@@ -1434,6 +1434,88 @@ describe('assistant capability router', () => {
     ).toBeNull();
   });
 
+  it('routes named-open-loop save under thread to a local thread save, not a send', () => {
+    const bobSeedJson = JSON.stringify({
+      version: 2,
+      query: 'Bob',
+      target: {
+        chatJid: 'bb:iMessage;-;+14695550199',
+        displayName: 'Bob',
+        isGroup: false,
+      },
+    });
+    const namedOpenLoop = {
+      activeCapabilityId: 'communication.open_loops' as const,
+      namedMessagesSummaryTargetJson: bobSeedJson,
+      namedOpenLoopDraftOffered: true,
+      namedOpenLoopRemindOffered: true,
+      namedOpenLoopSaveOffered: true,
+      personName: 'Bob',
+    };
+
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'save under thread',
+        namedOpenLoop,
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_tracking',
+      canonicalText: 'save under thread',
+      reason: 'continuing a named open-loop with save-under-thread',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'save that',
+        namedOpenLoop,
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_tracking',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('send it', namedOpenLoop),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('yes', namedOpenLoop),
+    ).toMatchObject({
+      capabilityId: 'communication.draft_reply',
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('save under thread', {
+        activeCapabilityId: 'communication.open_loops',
+        namedMessagesSummaryTargetJson: bobSeedJson,
+        namedOpenLoopSaveOffered: false,
+      }),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('save under thread', {
+        activeCapabilityId: 'communication.open_loops',
+        personName: 'Bob',
+      }),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromAlexaState('save under thread', {
+        flowKey: 'communication_open_loops',
+        subjectKind: 'communication_thread',
+        subjectData: {
+          activeCapabilityId: 'communication.open_loops',
+          namedMessagesSummaryTargetJson: bobSeedJson,
+          namedOpenLoopSaveOffered: true,
+        },
+        summaryText: 'You owe Bob a reply.',
+        supportedFollowups: ['save_for_later', 'draft_follow_up'],
+        styleHints: {
+          channelMode: 'alexa_companion',
+          responseSource: 'local_companion',
+        },
+      }),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_tracking',
+      continuation: true,
+    });
+  });
+
   it('binds selected item follow-ups to the recent text review context', () => {
     const subjectData = {
       activeCapabilityId: 'communication.review_recent_texts' as const,

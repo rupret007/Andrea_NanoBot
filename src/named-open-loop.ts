@@ -44,16 +44,24 @@ export type NamedOpenLoopRemindFollowup =
       source: 'later' | 'timed';
     };
 
+export type NamedOpenLoopSaveFollowup =
+  | { kind: 'none' }
+  | { kind: 'denied'; reason: 'untrusted_named' }
+  | { kind: 'save'; query: string };
+
 export const GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE =
   'I did not crawl unnamed inbox threads.';
 export const GENERIC_OPEN_LOOP_NAMED_HANDOFF =
   "Next: name one person — for example, `what's still open with Bob?`";
 export const NAMED_OPEN_LOOP_DRAFT_YES_NOTICE = 'Yes will not send.';
 export const NAMED_OPEN_LOOP_REMIND_LATER_PROMPT = 'remind me later';
+export const NAMED_OPEN_LOOP_SAVE_PROMPT = 'save under thread';
 
 const NAMED_OPEN_LOOP_SOFT_YES_RE = /^(?:yes|ok|okay|yeah|yep|yup)[.!]?$/i;
 const NAMED_OPEN_LOOP_REMIND_RE =
   /^(?:remind me(?: to (?:reply|answer))?(?: later)?(?: (tonight|tomorrow(?: (?:morning|afternoon|evening))?|today(?: (?:morning|afternoon|evening))?))?|remind me about (?:that|this|it)(?: later)?(?: (tonight|tomorrow(?: (?:morning|afternoon|evening))?))?)[.!]?$/i;
+const NAMED_OPEN_LOOP_SAVE_RE =
+  /^(?:save under(?: the)? thread|save it under(?: the)? thread|save that under(?: the)? thread|save this under(?: the)? thread|save that|save this)[.!]?$/i;
 
 function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
@@ -146,6 +154,13 @@ export function namedOpenLoopRemindWasOffered(params: {
   return Boolean(params.gist.ownerOwesReply) && !params.isGroup;
 }
 
+export function namedOpenLoopSaveWasOffered(params: {
+  gist: ThreadGroundedSummaryGist;
+  isGroup: boolean;
+}): boolean {
+  return Boolean(params.gist.ownerOwesReply) && !params.isGroup;
+}
+
 export function parseNamedOpenLoopRemindTiming(
   value: string | null | undefined,
 ): NamedOpenLoopRemindTiming | null {
@@ -162,6 +177,12 @@ export function parseNamedOpenLoopRemindTiming(
   if (when === 'tomorrow afternoon') return 'tomorrow_afternoon';
   if (when === 'tomorrow evening') return 'tomorrow_evening';
   return 'tonight';
+}
+
+export function isNamedOpenLoopSavePrompt(
+  value: string | null | undefined,
+): boolean {
+  return NAMED_OPEN_LOOP_SAVE_RE.test(normalizeText(value));
 }
 
 export function namedOpenLoopRemindTimingCandidates(
@@ -277,6 +298,43 @@ export function resolveNamedOpenLoopRemindFollowup(input: {
   };
 }
 
+/**
+ * After a named owed-reply, `save under thread` / `save that` keeps the
+ * thread locally under that named person. It never sends, never creates a
+ * draft or action card, and never binds leftover person titles.
+ */
+export function resolveNamedOpenLoopSaveFollowup(input: {
+  text?: string | null;
+  ownerReviewAllowed?: boolean;
+  priorNamedSeedJson?: string | null;
+  saveOffered?: boolean;
+  activeCapabilityId?: string | null;
+}): NamedOpenLoopSaveFollowup {
+  if (!isNamedOpenLoopSavePrompt(input.text)) {
+    return { kind: 'none' };
+  }
+
+  const seedQuery = readNamedOpenLoopSeedQuery(input.priorNamedSeedJson);
+  if (input.ownerReviewAllowed === false) {
+    if (seedQuery) {
+      return { kind: 'denied', reason: 'untrusted_named' };
+    }
+    return { kind: 'none' };
+  }
+
+  const active = input.activeCapabilityId || '';
+  if (
+    active !== 'communication.open_loops' &&
+    active !== 'communication.summarize_thread'
+  ) {
+    return { kind: 'none' };
+  }
+  if (!seedQuery || input.saveOffered !== true) {
+    return { kind: 'none' };
+  }
+  return { kind: 'save', query: seedQuery };
+}
+
 export function formatNamedOpenLoopDraftNextStep(params: {
   channel: NamedOpenLoopChannel;
   personLabel: string;
@@ -292,17 +350,17 @@ export function formatNamedOpenLoopDraftNextStep(params: {
       return "I won't guess your answer. Tell me what you want to say, and I can draft it unsent.";
     }
     if (params.channel === 'alexa') {
-      return `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}.`;
+      return `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT} or ${NAMED_OPEN_LOOP_SAVE_PROMPT}.`;
     }
-    return `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say \`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\` for a tonight reminder.`;
+    return `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say \`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\` for a tonight reminder, or \`${NAMED_OPEN_LOOP_SAVE_PROMPT}\` to keep this under ${params.personLabel}.`;
   }
   if (params.isGroup) {
     return 'I can draft wording, but I will not create send controls for a group.';
   }
   if (params.channel === 'alexa') {
-    return `Say draft ${params.personLabel} to create an unsent draft, or ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
+    return `Say draft ${params.personLabel} to create an unsent draft, or ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}, or ${NAMED_OPEN_LOOP_SAVE_PROMPT}. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
   }
-  return `Next: say \`draft ${params.personLabel}\` or yes for an unsent draft, or \`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\` for a tonight reminder. That draft stays unsent and requires approval. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
+  return `Next: say \`draft ${params.personLabel}\` or yes for an unsent draft, \`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\` for a tonight reminder, or \`${NAMED_OPEN_LOOP_SAVE_PROMPT}\` to keep this under ${params.personLabel}. That draft stays unsent and requires approval. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
 }
 
 export function appendNamedOpenLoopDraftCreatedNotice(
@@ -317,6 +375,17 @@ export function appendNamedOpenLoopDraftCreatedNotice(
 }
 
 export function appendNamedOpenLoopRemindCreatedNotice(
+  channel: NamedOpenLoopChannel,
+  replyText: string,
+  personLabel: string,
+): string {
+  if (channel === 'alexa') {
+    return `${replyText} I did not send anything. Say draft ${personLabel} when you want an unsent draft.`;
+  }
+  return `${replyText}\n\nI did not send anything. Next: say \`draft ${personLabel}\` when you want an unsent draft. Only \`send it\`, \`send it now\`, or \`send now\` can send.`;
+}
+
+export function appendNamedOpenLoopSaveCreatedNotice(
   channel: NamedOpenLoopChannel,
   replyText: string,
   personLabel: string,

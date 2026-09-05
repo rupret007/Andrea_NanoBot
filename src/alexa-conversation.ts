@@ -81,6 +81,7 @@ export interface AlexaConversationSubjectData {
   namedMessagesSummaryTargetJson?: string;
   namedOpenLoopDraftOffered?: boolean;
   namedOpenLoopRemindOffered?: boolean;
+  namedOpenLoopSaveOffered?: boolean;
   chiefOfStaffContextJson?: string;
   missionId?: string;
   missionSummary?: string;
