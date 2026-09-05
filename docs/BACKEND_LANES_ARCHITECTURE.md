@@ -60,6 +60,15 @@ Rules:
 - replying to a fresh task card always continues that specific task; otherwise the shell uses the current work selected in the opened lane
 - explicit backend ids always win over the current-work pointer
 - if the shell discovers that a selected `current` target is gone, it clears that stale selection instead of pretending the old task still exists
+- a failed status read is not a missing target: the exact runtime selection
+  survives an outage, while cached metadata remains explicitly historical and
+  never supplies execution controls; a late read cannot clear a newer choice
+
+The current-task read uses the exact runtime `getJob`, not an inventory read.
+It does not invoke the list route's group-registration bootstrap. Recent Work
+still uses the existing inventory route, but a failed list is shown as
+unavailable rather than as an empty history. See
+[work cockpit recovery](WORK_COCKPIT_RECOVERY.md).
 
 ## Persistence
 

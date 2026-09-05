@@ -11,6 +11,47 @@ export interface WorkCockpitCurrentSelection {
   jobId: string;
 }
 
+/** Orders read-only presentation updates; it never grants execution authority. */
+export function createWorkCockpitReadGuard(): {
+  begin(key: string): () => boolean;
+} {
+  const newestReads = new Map<string, symbol>();
+  return {
+    begin(key) {
+      const token = Symbol();
+      newestReads.delete(key);
+      newestReads.set(key, token);
+      if (newestReads.size > 256) {
+        const oldestKey = newestReads.keys().next().value;
+        if (oldestKey !== undefined) newestReads.delete(oldestKey);
+      }
+      return () => newestReads.get(key) === token;
+    },
+  };
+}
+
+/** Keeps a delivered card and its stored action context in the same order. */
+export function createWorkCockpitPresentationQueue(): {
+  run<T>(key: string, callback: () => Promise<T>): Promise<T>;
+} {
+  const pending = new Map<string, Promise<void>>();
+  return {
+    run<T>(key: string, callback: () => Promise<T>): Promise<T> {
+      const previous = pending.get(key) ?? Promise.resolve();
+      const result = previous.then(callback);
+      const settled = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      pending.set(key, settled);
+      void settled.then(() => {
+        if (pending.get(key) === settled) pending.delete(key);
+      });
+      return result;
+    },
+  };
+}
+
 export function resolveRuntimeDashboardJobId(
   context: RuntimeDashboardActionContext | null,
 ): string | null {

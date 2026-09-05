@@ -10,7 +10,9 @@ import {
   buildCursorDashboardRuntime,
   buildCursorDashboardRuntimeCurrent,
   buildCursorDashboardRuntimeCurrentEmpty,
+  buildCursorDashboardRuntimeCurrentUnavailable,
   buildCursorDashboardRuntimeJobs,
+  buildCursorDashboardRuntimeJobsUnavailable,
   buildCursorDashboardWizardConfirm,
   formatCursorDashboardState,
   parseCursorDashboardState,
@@ -20,6 +22,7 @@ import type {
   BackendJobSummary,
 } from './backend-lanes/types.js';
 import type { FlattenedCursorJobEntry } from './cursor-operator-context.js';
+import type { RuntimeWorkRecovery } from './work-cockpit-recovery.js';
 
 const cloudJob: FlattenedCursorJobEntry = {
   laneId: 'cursor',
@@ -85,6 +88,21 @@ const runtimeJob: BackendJobDetails = {
   metadata: {
     selectedRuntime: 'codex_local',
     groupFolder: 'main',
+  },
+};
+
+const runtimeUnavailable: Extract<
+  RuntimeWorkRecovery,
+  { kind: 'unavailable' }
+> = {
+  kind: 'unavailable',
+  selectedJobId: runtimeJob.handle.jobId,
+  reason: 'unavailable',
+  cached: {
+    jobId: runtimeJob.handle.jobId,
+    status: 'running',
+    updatedAt: '2026-03-30T12:03:00.000Z',
+    freshness: 'stale',
   },
 };
 
@@ -274,6 +292,186 @@ describe('cursor dashboard helpers', () => {
     );
   });
 
+  it('distinguishes an unavailable runtime list from a successfully empty list', () => {
+    const unavailable = buildCursorDashboardRuntimeJobsUnavailable();
+    const empty = buildCursorDashboardRuntimeJobs({ jobs: [], page: 0 });
+
+    expect(unavailable.text).toContain(
+      'Recent work is temporarily unavailable',
+    );
+    expect(unavailable.text).toContain('This is not an empty work list');
+    expect(unavailable.text).not.toContain(
+      'No recent Codex/OpenAI tasks were found',
+    );
+    expect(unavailable.text).toContain(
+      'will not start, continue, or stop any task',
+    );
+    expect(unavailable.inlineActionRows).toEqual([
+      [{ label: 'Check again', actionId: '/cursor-ui runtime-jobs' }],
+      [{ label: 'Back', actionId: '/cursor-ui runtime' }],
+    ]);
+    expect(unavailable.selectedAgentId).toBeUndefined();
+    expect(empty.text).toContain('No recent Codex/OpenAI tasks were found');
+  });
+
+  it('retains the exact selected runtime task during an outage without stale execution controls', () => {
+    const render = buildCursorDashboardWorkCurrent({
+      currentFocusLaneId: 'andrea_runtime',
+      currentRuntimeRecovery: runtimeUnavailable,
+      executionEnabled: true,
+    });
+
+    expect(render.text).toContain('*Current Work*');
+    expect(render.text).toContain('Selected task temporarily unavailable.');
+    expect(render.text).toContain(`Job ID: ${runtimeJob.handle.jobId}`);
+    expect(render.text).toContain('Execution status: unknown');
+    expect(render.text).toContain('Your selection is retained.');
+    expect(render.text).toContain(
+      'Last recorded task update: 2026-03-30T12:03:00.000Z (cached, not current)',
+    );
+    expect(render.text).not.toMatch(
+      /last checked|Status: Working|System status: running|No current work|Reply with plain text/,
+    );
+    expect(render.selectedAgentId).toBe(runtimeJob.handle.jobId);
+    expect(render.inlineActionRows).toEqual([
+      [{ label: 'Check again', actionId: '/cursor-ui work-current' }],
+      [{ label: 'Back', actionId: '/cursor-ui home' }],
+    ]);
+  });
+
+  it('prefers outage truth over an accidentally supplied stale runtime card', () => {
+    const staleTask = {
+      ...runtimeJob,
+      status: 'succeeded',
+      title: 'PRIVATE_CACHED_PROMPT',
+      summary: 'PRIVATE_CACHED_SUMMARY',
+      metadata: { finalOutputText: 'PRIVATE_CACHED_OUTPUT' },
+    };
+    const render = buildCursorDashboardWorkCurrent({
+      currentFocusLaneId: 'andrea_runtime',
+      currentRuntimeTask: staleTask,
+      currentRuntimeRecovery: runtimeUnavailable,
+      executionEnabled: true,
+    });
+
+    expect(render.text).toContain('Execution status: unknown');
+    expect(render.text).not.toContain('PRIVATE_CACHED');
+    expect(render.text).not.toContain('Status: Done');
+    expect(
+      render.inlineActionRows.flat().map((action) => action.label),
+    ).toEqual(['Check again', 'Back']);
+  });
+
+  it('does not invent task history when no matching cache is available', () => {
+    for (const cached of [
+      null,
+      { ...runtimeUnavailable.cached!, jobId: 'another-task' },
+    ]) {
+      const render = buildCursorDashboardRuntimeCurrentUnavailable({
+        ...runtimeUnavailable,
+        cached,
+      });
+
+      expect(render.text).toContain('*Current Task*');
+      expect(render.text).toContain(`Job ID: ${runtimeJob.handle.jobId}`);
+      expect(render.text).not.toContain('Last recorded task update');
+      expect(render.text).not.toContain('another-task');
+      expect(render.inlineActionRows).toEqual([
+        [{ label: 'Check again', actionId: '/cursor-ui work-current' }],
+        [{ label: 'Back', actionId: '/cursor-ui runtime' }],
+      ]);
+    }
+  });
+
+  it('labels recovery on the home and runtime overview without replacing a Cursor focus', () => {
+    const homeParams = {
+      cloudLine: 'ready',
+      desktopLine: 'optional and unavailable',
+      runtimeRouteLine: 'optional and off',
+      codexRuntimeLine: 'temporarily unavailable',
+      currentJob: cloudJob,
+      currentRuntimeTask: runtimeJob,
+      currentRuntimeRecovery: runtimeUnavailable,
+    };
+    const runtimeHome = buildCursorDashboardHome({
+      ...homeParams,
+      currentFocusLaneId: 'andrea_runtime',
+    });
+    const cursorHome = buildCursorDashboardHome({
+      ...homeParams,
+      currentFocusLaneId: 'cursor',
+    });
+    const overview = buildCursorDashboardRuntime({
+      executionEnabled: true,
+      readinessLine: 'temporarily unavailable',
+      currentTask: runtimeJob,
+      currentTaskRecovery: runtimeUnavailable,
+    });
+
+    expect(runtimeHome.text).toContain(
+      `Current work: Codex/OpenAI runtime ${runtimeJob.handle.jobId} — temporarily unavailable`,
+    );
+    expect(runtimeHome.text).toContain(
+      'Check again; that only reads the backend.',
+    );
+    expect(runtimeHome.text).not.toContain(
+      'Current Codex/OpenAI task: none selected yet',
+    );
+    expect(runtimeHome.text).not.toContain(
+      'Replying to a task card always continues',
+    );
+    expect(cursorHome.text).toContain('Current work: Cursor Cloud');
+    expect(cursorHome.text).toContain('Current focus: Cursor');
+    expect(cursorHome.text).not.toContain('Current work: Codex/OpenAI runtime');
+    expect(overview.text).toContain(
+      `Current task: Codex/OpenAI runtime ${runtimeJob.handle.jobId} — temporarily unavailable`,
+    );
+    expect(overview.text).toContain(
+      'enabled locally; backend state unverified',
+    );
+    expect(overview.text).not.toContain('ready on this host');
+    expect(overview.text).not.toContain('Current task: none selected yet');
+  });
+
+  it('does not hide an available Cursor card when another lane is unavailable', () => {
+    const params = {
+      currentFocusLaneId: 'cursor' as const,
+      currentJob: cloudJob,
+      executionEnabled: true,
+      currentJobResultCount: 3,
+    };
+    expect(
+      buildCursorDashboardWorkCurrent({
+        ...params,
+        currentRuntimeRecovery: runtimeUnavailable,
+      }),
+    ).toEqual(buildCursorDashboardWorkCurrent(params));
+  });
+
+  it('preserves unusual opaque handles without injecting card content or commands', () => {
+    const selectedJobId =
+      'runtime_[x](https://invalid.example)\\odd`*\nStop Run\u202e';
+    const render = buildCursorDashboardRuntimeCurrentUnavailable({
+      ...runtimeUnavailable,
+      selectedJobId,
+      cached: null,
+    });
+    const idLine = render.text
+      .split('\n')
+      .find((line) => line.startsWith('Job ID: '))!;
+    const encoded = idLine
+      .slice('Job ID: '.length)
+      .replace(/ \(JSON-escaped\)$/, '');
+
+    expect(JSON.parse(encoded)).toBe(selectedJobId);
+    expect(render.selectedAgentId).toBe(selectedJobId);
+    expect(idLine).not.toMatch(/[`*[\]\u202e]/);
+    expect(render.text).not.toContain('\nStop Run');
+    expect(
+      render.inlineActionRows.flat().map((action) => action.actionId),
+    ).toEqual(['/cursor-ui work-current', '/cursor-ui runtime']);
+  });
+
   it('shows repo and prompt preview in the create confirmation view', () => {
     const render = buildCursorDashboardWizardConfirm({
       sourceRepository: 'owner/repo',
@@ -287,4 +485,49 @@ describe('cursor dashboard helpers', () => {
       'Edit Repo',
     ]);
   });
+
+  it('shows a full safe 512-character handle without shortening it', () => {
+    const selectedJobId = 'runtime-'.padEnd(512, 'x');
+    const render = buildCursorDashboardRuntimeCurrentUnavailable({
+      ...runtimeUnavailable,
+      selectedJobId,
+      cached: null,
+    });
+
+    expect(render.text).toContain(`Job ID: ${selectedJobId}\n`);
+    expect(render.text).not.toContain('omitted');
+    expect(render.selectedAgentId).toBe(selectedJobId);
+    expect(render.text.length).toBeLessThan(4096);
+  });
+
+  it.each([
+    'runtime-'.padEnd(513, 'x'),
+    'runtime-'.padEnd(4097, 'x'),
+    '`'.repeat(512),
+    '',
+    '   ',
+  ])(
+    'keeps an oversized or invalid reference bound without breaking the recovery card',
+    (selectedJobId) => {
+      const recovery = { ...runtimeUnavailable, selectedJobId, cached: null };
+      const current = buildCursorDashboardRuntimeCurrentUnavailable(recovery);
+      const home = buildCursorDashboardHome({
+        cloudLine: 'ready',
+        desktopLine: 'optional',
+        runtimeRouteLine: 'off',
+        codexRuntimeLine: 'unavailable',
+        currentFocusLaneId: 'andrea_runtime',
+        currentRuntimeRecovery: recovery,
+      });
+
+      expect(current.text).toContain('omitted; selection retained');
+      expect(current.selectedAgentId).toBe(selectedJobId);
+      expect(current.text.length).toBeLessThan(4096);
+      expect(home.text.length).toBeLessThan(4096);
+      expect(current.text).not.toContain(`Job ID: ${selectedJobId}\n`);
+      expect(current.inlineActionRows[0]).toEqual([
+        { label: 'Check again', actionId: '/cursor-ui work-current' },
+      ]);
+    },
+  );
 });

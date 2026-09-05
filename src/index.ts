@@ -792,7 +792,9 @@ import {
   buildCursorDashboardRuntime,
   buildCursorDashboardRuntimeCurrent,
   buildCursorDashboardRuntimeCurrentEmpty,
+  buildCursorDashboardRuntimeCurrentUnavailable,
   buildCursorDashboardRuntimeJobs,
+  buildCursorDashboardRuntimeJobsUnavailable,
   buildCursorDashboardStatus,
   buildCursorDashboardWizardConfirm,
   buildCursorDashboardWizardPrompt,
@@ -811,10 +813,17 @@ import {
   formatTaskReplyPrompt,
 } from './task-presentation.js';
 import {
+  createWorkCockpitReadGuard,
+  createWorkCockpitPresentationQueue,
   reconcileWorkCockpitCurrentSelection,
   resolveRuntimeDashboardJobId,
   shouldClearStaleWorkCockpitSelection,
 } from './work-cockpit-targets.js';
+import {
+  getRuntimeWorkRecoveryReply,
+  resolveRuntimeWorkRecovery,
+  type RuntimeWorkRecovery,
+} from './work-cockpit-recovery.js';
 import {
   buildTaskOutputSuggestion,
   getTaskContextType,
@@ -4365,6 +4374,72 @@ function clearCurrentWorkSelection(params: {
   ) {
     clearLegacyRuntimeSelection(params.chatJid);
   }
+}
+
+/** Read one selected task without listing, bootstrapping, or resuming work. */
+export async function getRuntimeWorkCockpitSelection(params: {
+  chatJid: string;
+  groupFolder: string;
+  threadId?: string;
+  getJob: Parameters<typeof resolveRuntimeWorkRecovery>[0]['getJob'];
+  getCachedJob?: Parameters<
+    typeof resolveRuntimeWorkRecovery
+  >[0]['getCachedJob'];
+  isCurrentRead?: () => boolean;
+}): Promise<{
+  selected: BackendJobDetails | null;
+  recovery: RuntimeWorkRecovery;
+  superseded: boolean;
+}> {
+  const readSelection = () =>
+    getSelectedLaneJobId(params.chatJid, params.threadId, 'andrea_runtime') ||
+    getLegacyRuntimeSelection(params.chatJid, params.groupFolder);
+  const selectedJobId = readSelection();
+  const focus = getActiveCursorOperatorContext(params.chatJid, params.threadId);
+  const recovery = await resolveRuntimeWorkRecovery({
+    ...params,
+    selectedJobId,
+    getCachedJob:
+      params.getCachedJob ||
+      ((jobId) => getRuntimeBackendJob(ANDREA_OPENAI_BACKEND_ID, jobId)),
+  });
+  const latestFocus = getActiveCursorOperatorContext(
+    params.chatJid,
+    params.threadId,
+  );
+  const superseded =
+    (params.isCurrentRead ? !params.isCurrentRead() : false) ||
+    readSelection() !== selectedJobId ||
+    latestFocus?.selectedLaneId !== focus?.selectedLaneId ||
+    latestFocus?.selectedAgentId !== focus?.selectedAgentId;
+  if (!superseded && recovery.kind === 'missing' && selectedJobId) {
+    // Clear only the exact confirmed-missing pointer, never a newer choice.
+    if (
+      getSelectedLaneJobId(
+        params.chatJid,
+        params.threadId,
+        'andrea_runtime',
+      ) === selectedJobId
+    ) {
+      clearSelectedLaneJob({
+        chatJid: params.chatJid,
+        threadId: params.threadId,
+        laneId: 'andrea_runtime',
+      });
+    }
+    if (
+      getLegacyRuntimeSelection(params.chatJid, params.groupFolder) ===
+      selectedJobId
+    ) {
+      clearLegacyRuntimeSelection(params.chatJid);
+    }
+  }
+  return {
+    selected:
+      !superseded && recovery.kind === 'available' ? recovery.job : null,
+    recovery,
+    superseded,
+  };
 }
 
 async function getSelectedDailyWorkContext(
@@ -16560,6 +16635,7 @@ async function main(): Promise<void> {
     agentId: string | null;
     laneId: 'cursor' | 'andrea_runtime';
     state: CursorDashboardState;
+    recoveryReply: string | null;
   } | null {
     const context = getActiveCursorMessageContext(chatJid, platformMessageId);
     if (!context || context.contextKind !== 'cursor_dashboard') {
@@ -16572,6 +16648,7 @@ async function main(): Promise<void> {
       agentId: context.agentId,
       laneId: context.laneId === 'andrea_runtime' ? 'andrea_runtime' : 'cursor',
       state,
+      recoveryReply: getRuntimeWorkRecoveryReply(context.payload),
     };
   }
 
@@ -16686,78 +16763,23 @@ async function main(): Promise<void> {
   async function getRuntimeSelectedJobRecord(
     chatJid: string,
     threadId?: string,
-  ): Promise<{
-    jobs: BackendJobSummary[];
-    selected: BackendJobDetails | null;
-  } | null> {
+    isCurrentRead?: () => boolean,
+  ): Promise<Awaited<
+    ReturnType<typeof getRuntimeWorkCockpitSelection>
+  > | null> {
     const group = registeredGroups[chatJid];
     if (!group) return null;
-
     const runtimeLane = getAndreaRuntimeLane();
-    const selectedJobId =
-      getSelectedLaneJobId(chatJid, threadId, 'andrea_runtime') ||
-      getLegacyRuntimeSelection(chatJid, group.folder);
-    if (
-      selectedJobId &&
-      !getSelectedLaneJobId(chatJid, threadId, 'andrea_runtime')
-    ) {
-      rememberCursorOperatorSelection({
-        chatJid,
-        threadId,
-        laneId: 'andrea_runtime',
-        agentId: selectedJobId,
-      });
-    }
-    let jobs: BackendJobSummary[];
-    let selected: BackendJobDetails | null;
-    try {
-      jobs = await runtimeLane.listJobs({
-        groupFolder: group.folder,
-        chatJid,
-        limit: 50,
-      });
-      selected = selectedJobId
-        ? await runtimeLane.getJob({
-            handle: { laneId: 'andrea_runtime', jobId: selectedJobId },
-            groupFolder: group.folder,
-            chatJid,
-          })
-        : null;
-    } catch (err) {
-      if (
-        err instanceof AndreaOpenAiRuntimeError &&
-        (err.kind === 'not_enabled' ||
-          err.kind === 'unavailable' ||
-          err.kind === 'not_ready')
-      ) {
-        logger.debug(
-          { chatJid, kind: err.kind },
-          'Runtime lane unavailable for work cockpit; continuing without runtime jobs',
-        );
-        return null;
-      }
-      throw err;
-    }
-    if (
-      shouldClearStaleWorkCockpitSelection({
-        selectedJobId,
-        selectedExists: Boolean(selected),
-        status: selected?.status || null,
-      })
-    ) {
-      clearCurrentWorkSelection({
-        chatJid,
-        threadId,
-        laneId: 'andrea_runtime',
-        source: getSelectedLaneJobId(chatJid, threadId, 'andrea_runtime')
-          ? 'shared'
-          : 'legacy_runtime_fallback',
-      });
-      return { jobs, selected: null };
-    }
-
-    return { jobs, selected };
+    return getRuntimeWorkCockpitSelection({
+      chatJid,
+      groupFolder: group.folder,
+      threadId,
+      isCurrentRead,
+      getJob: (params) => runtimeLane.getJob(params),
+    });
   }
+
+  const workCockpitPresentationQueue = createWorkCockpitPresentationQueue();
 
   async function upsertCursorDashboardMessage(params: {
     chatJid: string;
@@ -16767,69 +16789,102 @@ async function main(): Promise<void> {
     inlineActionRows: SendMessageOptions['inlineActionRows'];
     selectedAgentId?: string | null;
     selectedLaneId?: 'cursor' | 'andrea_runtime';
+    readOnlyRecovery?: boolean;
+    preserveSelection?: boolean;
+    isCurrentRead?: () => boolean;
     forceNew?: boolean;
   }): Promise<string | undefined> {
-    const channel = findChannel(channels, params.chatJid);
-    if (!channel) return undefined;
+    return workCockpitPresentationQueue.run(
+      JSON.stringify([params.chatJid, params.sourceMessage?.thread_id || null]),
+      async () => {
+        if (params.isCurrentRead && !params.isCurrentRead()) return undefined;
+        const channel = findChannel(channels, params.chatJid);
+        if (!channel) return undefined;
 
-    const activeContext = getActiveCursorOperatorContext(
-      params.chatJid,
-      params.sourceMessage?.thread_id,
-    );
-    const existingDashboardMessageId = params.forceNew
-      ? null
-      : activeContext?.dashboardMessageId || null;
-
-    let platformMessageId: string | undefined;
-    if (existingDashboardMessageId && channel.editMessage) {
-      const edited = await channel.editMessage(
-        params.chatJid,
-        existingDashboardMessageId,
-        params.text,
-        {
-          inlineActionRows: params.inlineActionRows,
-        },
-      );
-      platformMessageId = edited.platformMessageId;
-    }
-
-    if (!platformMessageId) {
-      const sent = acceptConfirmedPresentationDelivery({
-        result: await channel.sendMessage(
+        const activeContext = getActiveCursorOperatorContext(
           params.chatJid,
-          params.text,
-          buildOperatorSendOptions(params.sourceMessage, {
-            inlineActionRows: params.inlineActionRows,
-          }),
-        ),
-        channel: channel.name,
-        chatJid: params.chatJid,
-        workflow: 'cursor_dashboard_presentation',
-      });
-      if (!sent) return undefined;
-      platformMessageId = sent.platformMessageId;
-    }
+          params.sourceMessage?.thread_id,
+        );
+        const existingDashboardMessageId = params.forceNew
+          ? null
+          : activeContext?.dashboardMessageId || null;
 
-    if (!platformMessageId) return undefined;
+        let platformMessageId: string | undefined;
+        if (existingDashboardMessageId && channel.editMessage) {
+          if (params.readOnlyRecovery) {
+            // Pause old controls before an edit whose transport result may be
+            // uncertain. Only a later confirmed healthy card can re-arm them.
+            rememberCursorMessageContext({
+              chatJid: params.chatJid,
+              platformMessageId: existingDashboardMessageId,
+              threadId: params.sourceMessage?.thread_id,
+              contextKind: 'cursor_dashboard',
+              laneId: params.selectedLaneId || 'andrea_runtime',
+              agentId: params.selectedAgentId || null,
+              payload: {
+                ...formatCursorDashboardState(params.state),
+                readOnlyRecovery: true,
+              },
+            });
+          }
+          const edited = await channel.editMessage(
+            params.chatJid,
+            existingDashboardMessageId,
+            params.text,
+            {
+              inlineActionRows: params.inlineActionRows,
+            },
+          );
+          platformMessageId = edited.platformMessageId;
+        }
 
-    rememberCursorDashboardMessage({
-      chatJid: params.chatJid,
-      threadId: params.sourceMessage?.thread_id,
-      dashboardMessageId: platformMessageId,
-      selectedAgentId: params.selectedAgentId,
-      selectedLaneId: params.selectedLaneId,
-    });
-    rememberCursorMessageContext({
-      chatJid: params.chatJid,
-      platformMessageId,
-      threadId: params.sourceMessage?.thread_id,
-      contextKind: 'cursor_dashboard',
-      laneId: params.selectedLaneId || 'cursor',
-      agentId: params.selectedAgentId || null,
-      payload: formatCursorDashboardState(params.state),
-    });
-    return platformMessageId;
+        if (!platformMessageId) {
+          const sent = acceptConfirmedPresentationDelivery({
+            result: await channel.sendMessage(
+              params.chatJid,
+              params.text,
+              buildOperatorSendOptions(params.sourceMessage, {
+                inlineActionRows: params.inlineActionRows,
+              }),
+            ),
+            channel: channel.name,
+            chatJid: params.chatJid,
+            workflow: 'cursor_dashboard_presentation',
+          });
+          if (!sent) return undefined;
+          platformMessageId = sent.platformMessageId;
+        }
+
+        if (!platformMessageId) return undefined;
+        rememberCursorDashboardMessage({
+          chatJid: params.chatJid,
+          threadId: params.sourceMessage?.thread_id,
+          dashboardMessageId: platformMessageId,
+          ...(params.preserveSelection
+            ? {}
+            : {
+                selectedAgentId: params.selectedAgentId,
+                selectedLaneId: params.selectedLaneId,
+              }),
+        });
+        rememberCursorMessageContext({
+          chatJid: params.chatJid,
+          platformMessageId,
+          threadId: params.sourceMessage?.thread_id,
+          contextKind: 'cursor_dashboard',
+          laneId: params.selectedLaneId || 'cursor',
+          agentId: params.selectedAgentId || null,
+          payload: {
+            ...formatCursorDashboardState(params.state),
+            ...(params.readOnlyRecovery ? { readOnlyRecovery: true } : {}),
+          },
+        });
+        return platformMessageId;
+      },
+    );
   }
+
+  const { begin: beginWorkCockpitRead } = createWorkCockpitReadGuard();
 
   async function openCursorDashboard(params: {
     chatJid: string;
@@ -16837,6 +16892,17 @@ async function main(): Promise<void> {
     state: CursorDashboardState;
     forceNew?: boolean;
   }): Promise<string | undefined> {
+    const isCurrentRead = beginWorkCockpitRead(
+      JSON.stringify([params.chatJid, params.sourceMessage?.thread_id || null]),
+    );
+    const presentRead = (
+      presentation: Parameters<typeof upsertCursorDashboardMessage>[0],
+    ) =>
+      upsertCursorDashboardMessage({
+        preserveSelection: true,
+        ...presentation,
+        isCurrentRead,
+      });
     const group = registeredGroups[params.chatJid];
     if (!group) {
       return sendCursorMessage(
@@ -16862,8 +16928,10 @@ async function main(): Promise<void> {
         getRuntimeSelectedJobRecord(
           params.chatJid,
           params.sourceMessage?.thread_id,
+          isCurrentRead,
         ),
       ]);
+      if (runtimeSelection?.superseded) return undefined;
       const currentWorkSelection = getCurrentWorkSelection(
         params.chatJid,
         group.folder,
@@ -16895,9 +16963,13 @@ async function main(): Promise<void> {
         }),
         currentJob: selection?.selected || undefined,
         currentRuntimeTask: runtimeSelection?.selected || undefined,
+        currentRuntimeRecovery:
+          runtimeSelection?.recovery.kind === 'unavailable'
+            ? runtimeSelection.recovery
+            : undefined,
         currentFocusLaneId: effectiveCurrentWorkSelection?.laneId || null,
       });
-      return upsertCursorDashboardMessage({
+      return presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: params.state,
@@ -16905,6 +16977,10 @@ async function main(): Promise<void> {
         inlineActionRows: render.inlineActionRows,
         selectedAgentId: effectiveCurrentWorkSelection?.jobId || null,
         selectedLaneId: effectiveCurrentWorkSelection?.laneId,
+        preserveSelection: true,
+        readOnlyRecovery:
+          effectiveCurrentWorkSelection?.laneId === 'andrea_runtime' &&
+          runtimeSelection?.recovery.kind === 'unavailable',
         forceNew: params.forceNew,
       });
     }
@@ -16921,7 +16997,7 @@ async function main(): Promise<void> {
       const render = buildCursorDashboardStatus(
         formatCursorCapabilitySummaryMessage(capabilitySummary),
       );
-      return upsertCursorDashboardMessage({
+      return presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: params.state,
@@ -16948,7 +17024,7 @@ async function main(): Promise<void> {
           'cursor',
         ),
       });
-      const platformMessageId = await upsertCursorDashboardMessage({
+      const platformMessageId = await presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: {
@@ -16960,6 +17036,7 @@ async function main(): Promise<void> {
         selectedAgentId: render.selectedAgentId,
         forceNew: params.forceNew,
       });
+      if (!platformMessageId || !isCurrentRead()) return undefined;
       rememberCursorJobList({
         chatJid: params.chatJid,
         threadId: params.sourceMessage?.thread_id,
@@ -16989,7 +17066,7 @@ async function main(): Promise<void> {
               : 0,
           )
         : buildCursorDashboardCurrentJobEmpty();
-      return upsertCursorDashboardMessage({
+      return presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: params.state,
@@ -17011,9 +17088,11 @@ async function main(): Promise<void> {
           getRuntimeSelectedJobRecord(
             params.chatJid,
             params.sourceMessage?.thread_id,
+            isCurrentRead,
           ),
           getAndreaOpenAiBackendStatus(),
         ]);
+      if (runtimeSelection?.superseded) return undefined;
       const currentWorkSelection = getCurrentWorkSelection(
         params.chatJid,
         group.folder,
@@ -17040,13 +17119,17 @@ async function main(): Promise<void> {
         currentFocusLaneId: effectiveCurrentWorkSelection?.laneId || null,
         currentJob: selection?.selected || undefined,
         currentRuntimeTask: runtimeSelection?.selected || undefined,
+        currentRuntimeRecovery:
+          runtimeSelection?.recovery.kind === 'unavailable'
+            ? runtimeSelection.recovery
+            : undefined,
         executionEnabled: runtimeBackendStatus.state === 'available',
         currentJobResultCount:
           selection?.selected?.provider === 'cloud'
             ? cursorBackendLane.getTrackedArtifactCount(selection.selected.id)
             : 0,
       });
-      return upsertCursorDashboardMessage({
+      return presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: params.state,
@@ -17055,6 +17138,10 @@ async function main(): Promise<void> {
         selectedAgentId:
           effectiveCurrentWorkSelection?.jobId || render.selectedAgentId,
         selectedLaneId: effectiveCurrentWorkSelection?.laneId,
+        preserveSelection: true,
+        readOnlyRecovery:
+          effectiveCurrentWorkSelection?.laneId === 'andrea_runtime' &&
+          runtimeSelection?.recovery.kind === 'unavailable',
         forceNew: params.forceNew,
       });
     }
@@ -17064,9 +17151,11 @@ async function main(): Promise<void> {
         getRuntimeSelectedJobRecord(
           params.chatJid,
           params.sourceMessage?.thread_id,
+          isCurrentRead,
         ),
         getAndreaOpenAiBackendStatus(),
       ]);
+      if (runtimeSelection?.superseded) return undefined;
       const render = buildCursorDashboardRuntime({
         executionEnabled: runtimeBackendStatus.state === 'available',
         readinessLine:
@@ -17080,15 +17169,24 @@ async function main(): Promise<void> {
                 : runtimeBackendStatus.detail ||
                   'historical review is available, but live runtime execution is currently unavailable',
         currentTask: runtimeSelection?.selected || undefined,
+        currentTaskRecovery:
+          runtimeSelection?.recovery.kind === 'unavailable'
+            ? runtimeSelection.recovery
+            : undefined,
       });
-      return upsertCursorDashboardMessage({
+      return presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: params.state,
         text: render.text,
         inlineActionRows: render.inlineActionRows,
-        selectedAgentId: runtimeSelection?.selected?.handle.jobId || null,
+        selectedAgentId:
+          runtimeSelection?.recovery.kind === 'missing'
+            ? null
+            : runtimeSelection?.recovery.selectedJobId || null,
         selectedLaneId: 'andrea_runtime',
+        preserveSelection: true,
+        readOnlyRecovery: runtimeSelection?.recovery.kind === 'unavailable',
         forceNew: params.forceNew,
       });
     }
@@ -17097,15 +17195,42 @@ async function main(): Promise<void> {
       const runtimeSelection = await getRuntimeSelectedJobRecord(
         params.chatJid,
         params.sourceMessage?.thread_id,
+        isCurrentRead,
       );
-      const jobs = runtimeSelection?.jobs || [];
+      if (runtimeSelection?.superseded) return undefined;
+      let jobs: BackendJobSummary[];
+      try {
+        jobs = await getAndreaRuntimeLane().listJobs({
+          groupFolder: group.folder,
+          chatJid: params.chatJid,
+          limit: 50,
+        });
+      } catch {
+        // An unavailable inventory is not proof that there are no tasks.
+        const render = buildCursorDashboardRuntimeJobsUnavailable();
+        return presentRead({
+          ...params,
+          text: render.text,
+          inlineActionRows: render.inlineActionRows,
+          selectedAgentId:
+            runtimeSelection?.recovery.kind === 'missing'
+              ? null
+              : runtimeSelection?.recovery.selectedJobId || null,
+          selectedLaneId: 'andrea_runtime',
+          readOnlyRecovery: true,
+          preserveSelection: true,
+        });
+      }
       const render = buildCursorDashboardRuntimeJobs({
         jobs,
         page: params.state.page || 0,
         pageSize: CURSOR_DASHBOARD_PAGE_SIZE,
-        selectedJobId: runtimeSelection?.selected?.handle.jobId || null,
+        selectedJobId:
+          runtimeSelection?.recovery.kind === 'missing'
+            ? null
+            : runtimeSelection?.recovery.selectedJobId || null,
       });
-      const platformMessageId = await upsertCursorDashboardMessage({
+      const platformMessageId = await presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: {
@@ -17116,8 +17241,10 @@ async function main(): Promise<void> {
         inlineActionRows: render.inlineActionRows,
         selectedAgentId: render.selectedAgentId,
         selectedLaneId: 'andrea_runtime',
+        preserveSelection: true,
         forceNew: params.forceNew,
       });
+      if (!platformMessageId || !isCurrentRead()) return undefined;
       rememberCursorJobList({
         chatJid: params.chatJid,
         threadId: params.sourceMessage?.thread_id,
@@ -17129,6 +17256,7 @@ async function main(): Promise<void> {
         })),
         selectedAgentId: render.selectedAgentId || null,
         selectedLaneId: 'andrea_runtime',
+        preserveSelection: true,
       });
       return platformMessageId;
     }
@@ -17138,24 +17266,36 @@ async function main(): Promise<void> {
         getRuntimeSelectedJobRecord(
           params.chatJid,
           params.sourceMessage?.thread_id,
+          isCurrentRead,
         ),
         getAndreaOpenAiBackendStatus(),
       ]);
-      const render = runtimeSelection?.selected
-        ? buildCursorDashboardRuntimeCurrent(
-            runtimeSelection.selected,
-            runtimeBackendStatus.state === 'available',
-          )
-        : buildCursorDashboardRuntimeCurrentEmpty();
-      return upsertCursorDashboardMessage({
+      if (runtimeSelection?.superseded) return undefined;
+      const render =
+        runtimeSelection?.recovery.kind === 'unavailable'
+          ? buildCursorDashboardRuntimeCurrentUnavailable(
+              runtimeSelection.recovery,
+            )
+          : runtimeSelection?.selected
+            ? buildCursorDashboardRuntimeCurrent(
+                runtimeSelection.selected,
+                runtimeBackendStatus.state === 'available',
+              )
+            : buildCursorDashboardRuntimeCurrentEmpty();
+      return presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: params.state,
         text: render.text,
         inlineActionRows: render.inlineActionRows,
         selectedAgentId:
-          runtimeSelection?.selected?.handle.jobId || render.selectedAgentId,
+          runtimeSelection?.recovery.kind === 'missing'
+            ? null
+            : runtimeSelection?.recovery.selectedJobId ||
+              render.selectedAgentId,
         selectedLaneId: 'andrea_runtime',
+        readOnlyRecovery: runtimeSelection?.recovery.kind === 'unavailable',
+        preserveSelection: true,
         forceNew: params.forceNew,
       });
     }
@@ -17165,7 +17305,7 @@ async function main(): Promise<void> {
       const render = buildCursorDashboardDesktop(
         formatCursorDesktopStatusMessage(desktopStatus),
       );
-      return upsertCursorDashboardMessage({
+      return presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: params.state,
@@ -17177,7 +17317,7 @@ async function main(): Promise<void> {
 
     if (params.state.kind === 'help') {
       const render = buildCursorDashboardHelp();
-      return upsertCursorDashboardMessage({
+      return presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: params.state,
@@ -17198,7 +17338,7 @@ async function main(): Promise<void> {
             ? params.state.wizard.sourceRepository
             : selection?.selected?.sourceRepository || null,
       });
-      return upsertCursorDashboardMessage({
+      return presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: params.state,
@@ -17213,7 +17353,7 @@ async function main(): Promise<void> {
       const render = buildCursorDashboardWizardPrompt({
         sourceRepository: params.state.wizard?.sourceRepository || null,
       });
-      return upsertCursorDashboardMessage({
+      return presentRead({
         chatJid: params.chatJid,
         sourceMessage: params.sourceMessage,
         state: params.state,
@@ -17227,7 +17367,7 @@ async function main(): Promise<void> {
       sourceRepository: params.state.wizard?.sourceRepository || null,
       promptText: params.state.wizard?.promptText || '',
     });
-    return upsertCursorDashboardMessage({
+    return presentRead({
       chatJid: params.chatJid,
       sourceMessage: params.sourceMessage,
       state: params.state,
@@ -18468,6 +18608,26 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (
+      dashboardContext?.recoveryReply &&
+      ![
+        'home',
+        'work-current',
+        'runtime',
+        'runtime-current',
+        'runtime-jobs',
+        'jobs',
+        'status',
+      ].includes(action)
+    ) {
+      await sendCursorMessage(
+        chatJid,
+        dashboardContext.recoveryReply,
+        sourceMessage,
+      );
+      return;
+    }
+
     const activeSelection = await getCursorSelectedAgentRecord(
       chatJid,
       sourceMessage?.thread_id,
@@ -18760,16 +18920,35 @@ async function main(): Promise<void> {
       const runtimeSelection = dashboardRuntimeJobId
         ? null
         : await getRuntimeSelectedJobRecord(chatJid, sourceMessage?.thread_id);
-      const selectedRuntimeJob = dashboardRuntimeJobId
-        ? await runtimeLane.getJob({
-            handle: {
-              laneId: 'andrea_runtime',
-              jobId: dashboardRuntimeJobId,
-            },
+      if (runtimeSelection?.superseded) return;
+      const runtimeRecovery = dashboardRuntimeJobId
+        ? await resolveRuntimeWorkRecovery({
+            selectedJobId: dashboardRuntimeJobId,
             groupFolder: registeredGroups[chatJid].folder,
             chatJid,
+            getJob: (params) => runtimeLane.getJob(params),
+            getCachedJob: (jobId) =>
+              getRuntimeBackendJob(ANDREA_OPENAI_BACKEND_ID, jobId),
           })
-        : runtimeSelection?.selected || null;
+        : runtimeSelection?.recovery;
+      if (runtimeRecovery?.kind === 'unavailable') {
+        const render =
+          buildCursorDashboardRuntimeCurrentUnavailable(runtimeRecovery);
+        await upsertCursorDashboardMessage({
+          chatJid,
+          sourceMessage,
+          state: { kind: 'runtime_current' },
+          text: render.text,
+          inlineActionRows: render.inlineActionRows,
+          readOnlyRecovery: true,
+          preserveSelection: true,
+          selectedLaneId: 'andrea_runtime',
+          // A failed action read must not switch the current task to an old card.
+        });
+        return;
+      }
+      const selectedRuntimeJob =
+        runtimeRecovery?.kind === 'available' ? runtimeRecovery.job : null;
       if (!selectedRuntimeJob) {
         await sendCursorMessage(
           chatJid,
@@ -21350,6 +21529,21 @@ async function main(): Promise<void> {
         return;
       }
 
+      const repliedCursorDashboard =
+        mainControlChat && !isSlashCommand && rawTrimmed
+          ? getCursorDashboardMessageContext(chatJid, msg.reply_to_id)
+          : null;
+      if (repliedCursorDashboard?.recoveryReply) {
+        sendCursorMessage(
+          chatJid,
+          repliedCursorDashboard.recoveryReply,
+          msg,
+        ).catch((err) =>
+          logger.error({ err, chatJid }, 'Work recovery guidance send failed'),
+        );
+        return;
+      }
+
       try {
         if (await maybeHandleRuntimeReplyContext(chatJid, msg)) {
           return;
@@ -21359,10 +21553,6 @@ async function main(): Promise<void> {
         return;
       }
 
-      const repliedCursorDashboard =
-        mainControlChat && !isSlashCommand && rawTrimmed
-          ? getCursorDashboardMessageContext(chatJid, msg.reply_to_id)
-          : null;
       if (repliedCursorDashboard) {
         if (repliedCursorDashboard.state.kind === 'wizard_repo') {
           const normalizedRepo =

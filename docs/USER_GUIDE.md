@@ -420,6 +420,14 @@ Those voice features stay linked-account only and use explicit personalization c
 
 If your admin enabled the work cockpit, Andrea can also keep one chat-scoped current work item across Cursor and Codex/OpenAI. That selection is operator-facing convenience only; explicit job or task ids still win whenever an admin uses them.
 
+If the Codex/OpenAI backend is temporarily unavailable, **Current Work** keeps
+your selected task and says its execution status is unknown. Tap **Check again**
+to read the task's status; it will not start, continue, or stop work. A cached
+task-update timestamp is historical, not a claim that the task is still running.
+Replies to that recovery card ask you to check first rather than continuing the
+task. Once the read succeeds, the normal current-task controls return. Only a
+confirmed missing task clears the matching selection.
+
 ## Life Threads
 
 Andrea can keep a small set of active **life threads** so she can remember what is still open without turning every chat into a giant memory blob.
