@@ -1570,12 +1570,13 @@ describe('assistant capabilities', () => {
       },
     });
 
-    for (const result of [named, broad]) {
-      expect(result.replyText).toContain(
-        '[Attached: audio clip, file; contents not included in this text summary]',
-      );
-      expect(result.replyText).not.toMatch(/transcript|heard in the audio/i);
-    }
+    expect(named.replyText).toContain('sent you an audio clip and a file');
+    expect(named.replyText).not.toContain('[Attached:');
+    expect(named.replyText).not.toMatch(/transcript|heard in the audio/i);
+    expect(broad.replyText).toContain(
+      '[Attached: audio clip, file; contents not included in this text summary]',
+    );
+    expect(broad.replyText).not.toMatch(/transcript|heard in the audio/i);
   });
 
   it('semantically summarizes all synced Messages for broad today requests', async () => {
@@ -3638,6 +3639,138 @@ describe('assistant capabilities', () => {
     expect(listLifeThreadsForGroup('main', ['active'])).toHaveLength(1);
   });
 
+  it('treats look at that after a named owed Bob photo as a local media look, not a send', async () => {
+    vi.stubEnv('OPENAI_API_KEY', ' ');
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as typeof fetch;
+    storeChatMetadata(
+      'bb:iMessage;-;+14695550199',
+      '2026-04-15T16:20:00.000Z',
+      'Bob',
+      'bluebubbles',
+      false,
+    );
+    storeMessage({
+      id: 'bob-open-loop-photo',
+      chat_jid: 'bb:iMessage;-;+14695550199',
+      sender: 'bb:+14695550199',
+      sender_name: 'Bob',
+      content: '',
+      timestamp: '2026-04-15T16:20:00.000Z',
+      is_from_me: false,
+      attachments: [
+        {
+          attachmentId: 'media:bob-open-loop-photo',
+          chatJid: 'bb:iMessage;-;+14695550199',
+          messageId: 'bob-open-loop-photo',
+          sourceChannel: 'bluebubbles',
+          kind: 'image',
+          fetchStatus: 'metadata_only',
+        },
+      ],
+    });
+
+    const openLoops = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:00:00.000Z'),
+      },
+      input: {
+        text: "what's still open with Bob",
+        canonicalText: "what's still open with Bob",
+        targetChatName: 'Bob',
+      },
+    });
+
+    expect(openLoops.replyText).toContain('Bob sent you a photo.');
+    expect(openLoops.replyText).toContain('look at that');
+    expect(openLoops.replyText).toContain('remind me later');
+    expect(openLoops.replyText).toContain('save under thread');
+    expect(openLoops.replyText).not.toContain('or yes for an unsent draft');
+    expect(openLoops.replyText).not.toContain('[Attached:');
+    expect(openLoops.replyText).not.toContain('send it');
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopDraftOffered,
+    ).toBeFalsy();
+    expect(
+      openLoops.conversationSeed?.subjectData?.namedOpenLoopMediaOffered,
+    ).toBe(true);
+    expect(openLoops.messageAction).toBeUndefined();
+
+    const routed = continueAssistantCapabilityFromPriorSubjectData(
+      'look at that',
+      openLoops.conversationSeed?.subjectData,
+    );
+    expect(routed).toMatchObject({
+      capabilityId: 'communication.open_loops',
+      canonicalText: 'look at that',
+    });
+    expect(interpretMessageActionFollowup('look at that')).not.toEqual({
+      kind: 'send',
+    });
+
+    const looked = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:100000001',
+        ownerReviewAllowed: true,
+        now: new Date('2026-04-15T17:05:00.000Z'),
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'look at that',
+        canonicalText: routed?.canonicalText || 'look at that',
+      },
+    });
+
+    expect(looked.handled).toBe(true);
+    expect(looked.replyText).toContain('Bob sent you a photo.');
+    expect(looked.replyText).toContain('cannot read the image itself');
+    expect(looked.replyText).toContain('I did not send anything');
+    expect(looked.replyText).toContain('`draft Bob`');
+    expect(looked.replyText).toContain('`send it`');
+    expect(looked.replyText).not.toContain('Yes still will not send');
+    expect(looked.messageAction).toBeUndefined();
+    expect(
+      listMessageActionsForGroup({ groupFolder: 'main', includeSent: true }),
+    ).toHaveLength(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    const leftover = continueAssistantCapabilityFromPriorSubjectData(
+      'look at that',
+      {
+        activeCapabilityId: 'communication.open_loops',
+        personName: 'Bob',
+      },
+    );
+    expect(leftover).toBeNull();
+
+    const karen = await executeAssistantCapability({
+      capabilityId: 'communication.open_loops',
+      context: {
+        channel: 'telegram',
+        groupFolder: 'main',
+        chatJid: 'tg:karen',
+        ownerReviewAllowed: false,
+        now: new Date('2026-04-15T17:10:00.000Z'),
+        priorSubjectData: openLoops.conversationSeed?.subjectData,
+      },
+      input: {
+        text: 'look at that',
+        canonicalText: 'look at that',
+      },
+    });
+    expect(karen.replyText).toContain('registered owner control chat');
+    expect(karen.replyText).not.toContain('Bob sent you a photo.');
+    expect(karen.replyText).not.toContain('cannot read the image');
+  });
+
   it('does not let Karen draft Bob or authorize a seed-bound yes', async () => {
     storeChatMetadata(
       'bb:iMessage;-;+14695550199',
@@ -3793,12 +3926,19 @@ describe('assistant capabilities', () => {
     expect(openLoops.replyText).not.toContain('or yes to create');
     expect(openLoops.replyText).not.toContain('remind me later');
     expect(openLoops.replyText).not.toContain('save under thread');
+    expect(openLoops.replyText).not.toContain('look at that');
     expect(openLoops.replyText).not.toContain('send it');
     expect(
       openLoops.conversationSeed?.subjectData?.namedMessagesSummaryTargetJson,
     ).toBeUndefined();
     expect(
       continueAssistantCapabilityFromPriorSubjectData('save under thread', {
+        ...openLoops.conversationSeed?.subjectData,
+        personName: 'Bob',
+      }),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('look at that', {
         ...openLoops.conversationSeed?.subjectData,
         personName: 'Bob',
       }),

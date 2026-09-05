@@ -153,6 +153,52 @@ describe('thread-grounded wording', () => {
     );
   });
 
+  it('names unseen inbound media instead of dumping the attachment descriptor', () => {
+    const photoOnly = buildThreadGroundedSummaryGist({
+      chatName: 'Bob',
+      isGroup: false,
+      turns: [
+        {
+          content:
+            '[Attached: photo; contents not included in this text summary]',
+          isFromMe: false,
+          speakerLabel: 'Bob',
+        },
+      ],
+    });
+    expect(photoOnly.ownerOwesReply).toBe(true);
+    expect(photoOnly.digestSentences.join(' ')).toContain(
+      'Bob sent you a photo.',
+    );
+    expect(photoOnly.digestSentences.join(' ')).not.toContain('[Attached:');
+    expect(
+      shouldWithholdThreadGroundedReply(
+        '[Attached: photo; contents not included in this text summary]',
+      ),
+    ).toBe(true);
+    expect(
+      shouldWithholdThreadGroundedReply(
+        'Dinner moved to seven tonight, just keeping you posted. [Attached: photo; contents not included in this text summary]',
+      ),
+    ).toBe(false);
+    const withCaption = buildThreadGroundedSummaryGist({
+      chatName: 'Bob',
+      isGroup: false,
+      turns: [
+        {
+          content:
+            'Dinner moved to seven tonight, just keeping you posted. [Attached: photo; contents not included in this text summary]',
+          isFromMe: false,
+          speakerLabel: 'Bob',
+        },
+      ],
+    });
+    expect(withCaption.digestSentences.join(' ')).toContain(
+      'Bob told you: Dinner at seven tonight.',
+    );
+    expect(withCaption.digestSentences.join(' ')).not.toContain('[Attached:');
+  });
+
   it('withholds a canned gist answer when Bob asked a question', () => {
     const gist = buildThreadGroundedSummaryGist({
       chatName: 'Bob',

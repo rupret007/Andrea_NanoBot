@@ -637,6 +637,7 @@ Treat that messaging suite as the fast proof that Andrea can:
 - send a BlueBubbles same-thread reply without the Andrea prefix
 - keep one-off scheduled send distinct from remind-later
 - keep save-under-thread distinct from remind-later and scheduled send
+- keep named-thread look-at-that distinct from current-chat media analysis and from yes-to-draft
 - surface sent vs deferred messaging honestly in review
 
 Artifact delivery is a separate residual-risk check. A file/media transport
