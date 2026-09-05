@@ -189,6 +189,13 @@ Andrea should be presented as a practical personal assistant with proof-gated ch
 
 Advanced lanes such as research, image generation, self-improvement, and broad provider diagnostics are useful, but they are not the core launch story.
 
+Work cockpit continuity also distinguishes an unavailable Codex/OpenAI backend
+from a confirmed missing task. A temporary outage keeps the exact selection,
+labels execution status unknown, and offers a read-only **Check again** action.
+It does not restart work or turn cached history into current execution proof.
+See [work cockpit recovery](docs/WORK_COCKPIT_RECOVERY.md) for the behavior and
+offline verification boundary.
+
 These flows are now backed by one shared capability graph, one continuation/handoff layer, and one productized proof harness:
 
 ```bash

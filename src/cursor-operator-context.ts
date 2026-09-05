@@ -359,16 +359,21 @@ export function rememberCursorJobList(params: {
   items: CursorListSnapshotItem[];
   selectedAgentId?: string | null;
   selectedLaneId?: BackendLaneId | null;
+  preserveSelection?: boolean;
 }): void {
   const existing = getCursorOperatorContext(params.chatJid, params.threadId);
   const selectedLaneId = params.selectedLaneId || CURSOR_LANE_ID;
   upsertCursorOperatorContext({
     chatJid: params.chatJid,
     threadId: params.threadId,
-    selectedLaneId,
-    selectedAgentId: params.selectedAgentId,
+    selectedLaneId: params.preserveSelection
+      ? (existing?.selected_lane_id as BackendLaneId | null) || null
+      : selectedLaneId,
+    selectedAgentId: params.preserveSelection
+      ? existing?.selected_agent_id || null
+      : params.selectedAgentId,
     selectedJobsByLaneJson:
-      params.selectedAgentId === undefined
+      params.preserveSelection || params.selectedAgentId === undefined
         ? existing?.selected_jobs_by_lane_json || null
         : formatSelectedJobsByLaneJson(
             selectedLaneId,

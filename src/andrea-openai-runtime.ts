@@ -425,10 +425,45 @@ export async function getAndreaOpenAiRuntimeJob(
   ensureBackendEnabled(client);
   try {
     const job = await client.getJob(input.jobId);
+    if (
+      !job ||
+      job.backend !== ANDREA_OPENAI_BACKEND_ID ||
+      job.jobId !== input.jobId
+    ) {
+      throw new AndreaOpenAiRuntimeError(
+        'context_mismatch',
+        'The runtime did not return the requested backend task.',
+        null,
+        input.group.folder,
+      );
+    }
     ensureContextMatches(input.chatJid, input.group, job);
     cacheJob(input.chatJid, job);
     return job;
   } catch (err) {
+    if (
+      (err instanceof AndreaOpenAiBackendHttpError && err.status === 404) ||
+      (err instanceof AndreaOpenAiRuntimeError && err.kind === 'not_found')
+    ) {
+      // An item, route, proxy, or missing group can all return HTTP 404. Only
+      // the existing item-specific error contract proves this task is absent.
+      // getJob uses this path for direct and coordinator-backed requests alike.
+      if (
+        !(
+          err instanceof AndreaOpenAiBackendHttpError &&
+          err.code === 'not_found' &&
+          err.route === `/jobs/${encodeURIComponent(input.jobId)}` &&
+          err.message === `No runtime job found for "${input.jobId}".`
+        )
+      ) {
+        throw new AndreaOpenAiRuntimeError(
+          'unavailable',
+          'The runtime could not confirm whether the selected task exists.',
+          null,
+          input.group.folder,
+        );
+      }
+    }
     throw classifyBackendError(err, input.group.folder);
   }
 }

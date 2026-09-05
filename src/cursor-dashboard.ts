@@ -18,6 +18,12 @@ import {
   formatOpaqueTaskId,
 } from './task-presentation.js';
 import type { ChannelInlineAction } from './types.js';
+import type { RuntimeWorkRecovery } from './work-cockpit-recovery.js';
+
+type RuntimeWorkUnavailable = Extract<
+  RuntimeWorkRecovery,
+  { kind: 'unavailable' }
+>;
 
 export const CURSOR_DASHBOARD_PAGE_SIZE = 6;
 export const CURSOR_DASHBOARD_EXPIRED_MESSAGE =
@@ -170,7 +176,14 @@ function summarizeCurrentWork(params: {
   currentFocusLaneId?: BackendLaneId | null;
   currentJob?: CursorAgentView | null;
   currentRuntimeTask?: BackendJobDetails | null;
+  currentRuntimeRecovery?: RuntimeWorkUnavailable | null;
 }): string {
+  if (
+    params.currentFocusLaneId === 'andrea_runtime' &&
+    params.currentRuntimeRecovery
+  ) {
+    return summarizeUnavailableRuntimeTask(params.currentRuntimeRecovery);
+  }
   if (
     params.currentFocusLaneId === 'andrea_runtime' &&
     params.currentRuntimeTask
@@ -181,6 +194,68 @@ function summarizeCurrentWork(params: {
     return `Cursor ${summarizeCurrentJob(params.currentJob)}`;
   }
   return 'none selected yet';
+}
+
+function formatRetainedRuntimeJobId(jobId: string): string {
+  if (jobId.length > 512) {
+    return 'Saved reference is too long to display (omitted; selection retained)';
+  }
+  if (!jobId.trim()) {
+    return 'Saved reference is empty or invalid (omitted; selection retained)';
+  }
+  if (/^[A-Za-z0-9._:/-]+$/.test(jobId)) return jobId;
+  // Preserve the complete opaque handle without allowing control characters or
+  // Markdown in an unusual handle to impersonate card content or an action.
+  const encoded = JSON.stringify(jobId).replace(
+    /[`*_[\]\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,
+    (character) =>
+      `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+  if (encoded.length > 1024) {
+    return 'Saved reference is too long to display safely (omitted; selection retained)';
+  }
+  return `${encoded} (JSON-escaped)`;
+}
+
+function summarizeUnavailableRuntimeTask(
+  recovery: RuntimeWorkUnavailable,
+): string {
+  return `Codex/OpenAI runtime ${formatRetainedRuntimeJobId(recovery.selectedJobId)} — temporarily unavailable; execution status unknown`;
+}
+
+function buildRuntimeWorkUnavailable(
+  recovery: RuntimeWorkUnavailable,
+  title: '*Current Work*' | '*Current Task*',
+  backAction: '/cursor-ui home' | '/cursor-ui runtime',
+): CursorDashboardRender {
+  const recordedUpdate =
+    recovery.cached?.jobId === recovery.selectedJobId &&
+    recovery.cached.freshness === 'stale'
+      ? recovery.cached.updatedAt
+      : null;
+  return {
+    text: [
+      title,
+      '',
+      'Selected task temporarily unavailable.',
+      'Lane: Codex/OpenAI runtime',
+      `Job ID: ${formatRetainedRuntimeJobId(recovery.selectedJobId)}`,
+      'Execution status: unknown — Andrea could not check the backend.',
+      recordedUpdate
+        ? `Last recorded task update: ${recordedUpdate} (cached, not current)`
+        : null,
+      '',
+      'Your selection is retained. An unavailable backend does not mean this task stopped or finished.',
+      'Tap Check again to read its current state. This will not start, continue, or stop the task.',
+    ]
+      .filter((line): line is string => line !== null)
+      .join('\n'),
+    inlineActionRows: [
+      [{ label: 'Check again', actionId: '/cursor-ui work-current' }],
+      [{ label: 'Back', actionId: backAction }],
+    ],
+    selectedAgentId: recovery.selectedJobId,
+  };
 }
 
 function summarizeJobLine(record: FlattenedCursorJobEntry): string {
@@ -207,6 +282,7 @@ export function buildCursorDashboardHome(params: {
   codexRuntimeLine: string;
   currentJob?: CursorAgentView | null;
   currentRuntimeTask?: BackendJobDetails | null;
+  currentRuntimeRecovery?: RuntimeWorkUnavailable | null;
   currentFocusLaneId?: BackendLaneId | null;
 }): CursorDashboardRender {
   return {
@@ -225,12 +301,17 @@ export function buildCursorDashboardHome(params: {
       params.currentJob
         ? `- Current Cursor task: ${summarizeCurrentJob(params.currentJob)}`
         : '- Current Cursor task: none selected yet',
-      params.currentRuntimeTask
-        ? `- Current Codex/OpenAI task: ${summarizeRuntimeTask(params.currentRuntimeTask)}`
-        : '- Current Codex/OpenAI task: none selected yet',
+      params.currentRuntimeRecovery
+        ? `- Current Codex/OpenAI task: ${summarizeUnavailableRuntimeTask(params.currentRuntimeRecovery)}`
+        : params.currentRuntimeTask
+          ? `- Current Codex/OpenAI task: ${summarizeRuntimeTask(params.currentRuntimeTask)}`
+          : '- Current Codex/OpenAI task: none selected yet',
       `- Current focus: ${formatCurrentFocusLabel(params.currentFocusLaneId)}`,
       '',
-      formatTaskReplyRoutingGuidance(),
+      params.currentFocusLaneId === 'andrea_runtime' &&
+      params.currentRuntimeRecovery
+        ? 'The selected task is retained, but its current execution state is unknown. Open Current Work and tap Check again; that only reads the backend.'
+        : formatTaskReplyRoutingGuidance(),
       '',
       'Tap `Current Work` to stay with the selected item, or browse `Jobs` and `Codex/OpenAI` to switch lanes.',
     ].join('\n'),
@@ -392,9 +473,20 @@ export function buildCursorDashboardWorkCurrent(params: {
   currentFocusLaneId?: BackendLaneId | null;
   currentJob?: CursorAgentView | null;
   currentRuntimeTask?: BackendJobDetails | null;
+  currentRuntimeRecovery?: RuntimeWorkUnavailable | null;
   executionEnabled: boolean;
   currentJobResultCount?: number;
 }): CursorDashboardRender {
+  if (
+    params.currentFocusLaneId === 'andrea_runtime' &&
+    params.currentRuntimeRecovery
+  ) {
+    return buildRuntimeWorkUnavailable(
+      params.currentRuntimeRecovery,
+      '*Current Work*',
+      '/cursor-ui home',
+    );
+  }
   if (
     params.currentFocusLaneId === 'andrea_runtime' &&
     params.currentRuntimeTask
@@ -568,21 +660,26 @@ export function buildCursorDashboardRuntime(params: {
   executionEnabled: boolean;
   readinessLine: string;
   currentTask?: BackendJobDetails | null;
+  currentTaskRecovery?: RuntimeWorkUnavailable | null;
 }): CursorDashboardRender {
   return {
     text: [
       '*Codex/OpenAI Runtime*',
       '',
       "Andrea's Codex/OpenAI runtime lane lives inside the same work cockpit as Cursor.",
-      `- Host execution: ${params.executionEnabled ? 'ready on this host' : 'disabled on this host'}`,
+      `- Host execution: ${params.executionEnabled ? (params.currentTaskRecovery ? 'enabled locally; backend state unverified' : 'ready on this host') : 'disabled on this host'}`,
       `- Readiness: ${params.readinessLine}`,
-      params.currentTask
-        ? `- Current task: ${summarizeRuntimeTask(params.currentTask)}`
-        : '- Current task: none selected yet',
+      params.currentTaskRecovery
+        ? `- Current task: ${summarizeUnavailableRuntimeTask(params.currentTaskRecovery)}`
+        : params.currentTask
+          ? `- Current task: ${summarizeRuntimeTask(params.currentTask)}`
+          : '- Current task: none selected yet',
       '',
-      params.executionEnabled
-        ? 'Use this lane when you want Andrea to continue deeper Codex/OpenAI work in the current workspace.'
-        : 'You can still review existing runtime work here. New runtime execution remains unavailable until this host is validated.',
+      params.currentTaskRecovery
+        ? 'Your task selection is retained. Open Current Task, then tap Check again to read its state before trying to continue work.'
+        : params.executionEnabled
+          ? 'Use this lane when you want Andrea to continue deeper Codex/OpenAI work in the current workspace.'
+          : 'You can still review existing runtime work here. New runtime execution remains unavailable until this host is validated.',
     ].join('\n'),
     inlineActionRows: [
       [
@@ -675,6 +772,23 @@ export function buildCursorDashboardRuntimeJobs(params: {
   };
 }
 
+export function buildCursorDashboardRuntimeJobsUnavailable(): CursorDashboardRender {
+  return {
+    text: [
+      '*Codex/OpenAI Work*',
+      '',
+      'Recent work is temporarily unavailable.',
+      'Andrea could not check the runtime backend. This is not an empty work list, and it does not tell us whether a task is running or finished.',
+      '',
+      'Tap Check again to read the list again. This will not start, continue, or stop any task.',
+    ].join('\n'),
+    inlineActionRows: [
+      [{ label: 'Check again', actionId: '/cursor-ui runtime-jobs' }],
+      [{ label: 'Back', actionId: '/cursor-ui runtime' }],
+    ],
+  };
+}
+
 export function buildCursorDashboardRuntimeCurrent(
   job: BackendJobDetails,
   executionEnabled: boolean,
@@ -730,6 +844,16 @@ export function buildCursorDashboardRuntimeCurrentEmpty(): CursorDashboardRender
       ],
     ],
   };
+}
+
+export function buildCursorDashboardRuntimeCurrentUnavailable(
+  recovery: RuntimeWorkUnavailable,
+): CursorDashboardRender {
+  return buildRuntimeWorkUnavailable(
+    recovery,
+    '*Current Task*',
+    '/cursor-ui runtime',
+  );
 }
 
 export function buildCursorDashboardWizardRepo(params: {
