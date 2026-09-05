@@ -648,9 +648,9 @@ describe('named open-loop save-under-thread stays off the send fence', () => {
     expect(isNamedOpenLoopSavePrompt('save that')).toBe(true);
     expect(isNamedOpenLoopSavePrompt('save it under the thread')).toBe(true);
     expect(isNamedOpenLoopSavePrompt('save that for later')).toBe(false);
-    expect(isNamedOpenLoopSavePrompt('save that under the household thread')).toBe(
-      false,
-    );
+    expect(
+      isNamedOpenLoopSavePrompt('save that under the household thread'),
+    ).toBe(false);
     expect(isNamedOpenLoopSavePrompt('send it')).toBe(false);
     expect(isNamedOpenLoopSavePrompt('yes')).toBe(false);
     expect(isNamedOpenLoopSavePrompt('remind me later')).toBe(false);

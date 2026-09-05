@@ -28,6 +28,7 @@ import {
   getTaskById,
   listCommunicationSignalsForThread,
   listKnowledgeSourcesForGroup,
+  listLifeThreadsForGroup,
   listMessageActionsForGroup,
   storeChatMetadata,
   storeMessage,
@@ -39,10 +40,7 @@ import {
   upsertProfileSubject,
 } from './db.js';
 import { planSimpleReminder } from './local-reminder.js';
-import {
-  handleLifeThreadCommand,
-  listLifeThreadsForGroup,
-} from './life-threads.js';
+import { handleLifeThreadCommand } from './life-threads.js';
 import { cacheInboundMediaBytes } from './media-cache.js';
 import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
 import type {

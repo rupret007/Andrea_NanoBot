@@ -6136,7 +6136,11 @@ function tryNamedOpenLoopRemind(
       namedOpenLoopRemindOffered: false,
       namedOpenLoopSaveOffered:
         context.priorSubjectData?.namedOpenLoopSaveOffered,
-      supportedFollowups: ['draft_follow_up', 'save_for_later', 'anything_else'],
+      supportedFollowups: [
+        'draft_follow_up',
+        'save_for_later',
+        'anything_else',
+      ],
     }),
     trace: buildCapabilityTrace(
       descriptor,
@@ -6253,7 +6257,11 @@ function tryNamedOpenLoopSave(
       namedOpenLoopRemindOffered:
         context.priorSubjectData?.namedOpenLoopRemindOffered,
       namedOpenLoopSaveOffered: false,
-      supportedFollowups: ['draft_follow_up', 'create_reminder', 'anything_else'],
+      supportedFollowups: [
+        'draft_follow_up',
+        'create_reminder',
+        'anything_else',
+      ],
     }),
     trace: buildCapabilityTrace(
       descriptor,
