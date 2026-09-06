@@ -1516,6 +1516,87 @@ describe('assistant capability router', () => {
     });
   });
 
+  it('routes named-open-loop look at that to the named thread, not a send', () => {
+    const bobSeedJson = JSON.stringify({
+      version: 2,
+      query: 'Bob',
+      target: {
+        chatJid: 'bb:iMessage;-;+14695550199',
+        displayName: 'Bob',
+        isGroup: false,
+      },
+    });
+    const namedOpenLoop = {
+      activeCapabilityId: 'communication.open_loops' as const,
+      namedMessagesSummaryTargetJson: bobSeedJson,
+      namedOpenLoopDraftOffered: false,
+      namedOpenLoopRemindOffered: true,
+      namedOpenLoopSaveOffered: true,
+      namedOpenLoopMediaOffered: true,
+      personName: 'Bob',
+    };
+
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'look at that',
+        namedOpenLoop,
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.open_loops',
+      canonicalText: 'look at that',
+      reason: 'continuing a named open-loop with look-at-that inbound media',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        "what's in that photo",
+        namedOpenLoop,
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.open_loops',
+      continuation: true,
+    });
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('send it', namedOpenLoop),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('yes', namedOpenLoop),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('look at that', {
+        activeCapabilityId: 'communication.open_loops',
+        namedMessagesSummaryTargetJson: bobSeedJson,
+        namedOpenLoopMediaOffered: false,
+      }),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromPriorSubjectData('look at that', {
+        activeCapabilityId: 'communication.open_loops',
+        personName: 'Bob',
+      }),
+    ).toBeNull();
+    expect(
+      continueAssistantCapabilityFromAlexaState('look at that', {
+        flowKey: 'communication_open_loops',
+        subjectKind: 'communication_thread',
+        subjectData: {
+          activeCapabilityId: 'communication.open_loops',
+          namedMessagesSummaryTargetJson: bobSeedJson,
+          namedOpenLoopMediaOffered: true,
+        },
+        summaryText: 'You owe Bob a reply.',
+        supportedFollowups: ['draft_follow_up'],
+        styleHints: {
+          channelMode: 'alexa_companion',
+          responseSource: 'local_companion',
+        },
+      }),
+    ).toMatchObject({
+      capabilityId: 'communication.open_loops',
+      continuation: true,
+    });
+  });
+
   it('binds selected item follow-ups to the recent text review context', () => {
     const subjectData = {
       activeCapabilityId: 'communication.review_recent_texts' as const,

@@ -9,7 +9,12 @@ import {
   parseNamedOpenLoopIntent,
 } from './thread-summary-routing.js';
 import {
+  formatInboundMediaObjectPhrase,
+  hasAnalyzableInboundMedia,
+  hasUnseenInboundMedia,
+  unseenInboundMediaLabels,
   shouldWithholdThreadGroundedReply,
+  stripUnseenInboundMediaDescriptor,
   type ThreadGroundedSummaryGist,
 } from './thread-grounded-wording.js';
 
@@ -49,6 +54,11 @@ export type NamedOpenLoopSaveFollowup =
   | { kind: 'denied'; reason: 'untrusted_named' }
   | { kind: 'save'; query: string };
 
+export type NamedOpenLoopMediaFollowup =
+  | { kind: 'none' }
+  | { kind: 'denied'; reason: 'untrusted_named' }
+  | { kind: 'look'; query: string };
+
 export const GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE =
   'I did not crawl unnamed inbox threads.';
 export const GENERIC_OPEN_LOOP_NAMED_HANDOFF =
@@ -56,12 +66,15 @@ export const GENERIC_OPEN_LOOP_NAMED_HANDOFF =
 export const NAMED_OPEN_LOOP_DRAFT_YES_NOTICE = 'Yes will not send.';
 export const NAMED_OPEN_LOOP_REMIND_LATER_PROMPT = 'remind me later';
 export const NAMED_OPEN_LOOP_SAVE_PROMPT = 'save under thread';
+export const NAMED_OPEN_LOOP_LOOK_PROMPT = 'look at that';
 
 const NAMED_OPEN_LOOP_SOFT_YES_RE = /^(?:yes|ok|okay|yeah|yep|yup)[.!]?$/i;
 const NAMED_OPEN_LOOP_REMIND_RE =
   /^(?:remind me(?: to (?:reply|answer))?(?: later)?(?: (tonight|tomorrow(?: (?:morning|afternoon|evening))?|today(?: (?:morning|afternoon|evening))?))?|remind me about (?:that|this|it)(?: later)?(?: (tonight|tomorrow(?: (?:morning|afternoon|evening))?))?)[.!]?$/i;
 const NAMED_OPEN_LOOP_SAVE_RE =
   /^(?:save under(?: the)? thread|save it under(?: the)? thread|save that under(?: the)? thread|save this under(?: the)? thread|save that|save this)[.!]?$/i;
+const NAMED_OPEN_LOOP_LOOK_RE =
+  /^(?:look at (?:that|this)(?: (?:photo|picture|image|screenshot|video|attachment|media))?|what(?:'s| is) in (?:that|the|this)(?: (?:photo|picture|image|screenshot|video|attachment|media))?|describe (?:that|this|the)(?: (?:photo|picture|image|screenshot|video|attachment|media))?|analy[sz]e (?:that|this|the)(?: (?:photo|picture|image|screenshot|video|attachment|media))?)$/i;
 
 function normalizeText(value: string | null | undefined): string {
   return (value || '').replace(/\s+/g, ' ').trim();
@@ -161,6 +174,18 @@ export function namedOpenLoopSaveWasOffered(params: {
   return Boolean(params.gist.ownerOwesReply) && !params.isGroup;
 }
 
+export function namedOpenLoopMediaWasOffered(params: {
+  gist: ThreadGroundedSummaryGist;
+  latestInboundText: string;
+  isGroup: boolean;
+}): boolean {
+  return (
+    Boolean(params.gist.ownerOwesReply) &&
+    !params.isGroup &&
+    hasAnalyzableInboundMedia(params.latestInboundText)
+  );
+}
+
 export function parseNamedOpenLoopRemindTiming(
   value: string | null | undefined,
 ): NamedOpenLoopRemindTiming | null {
@@ -183,6 +208,12 @@ export function isNamedOpenLoopSavePrompt(
   value: string | null | undefined,
 ): boolean {
   return NAMED_OPEN_LOOP_SAVE_RE.test(normalizeText(value));
+}
+
+export function isNamedOpenLoopLookPrompt(
+  value: string | null | undefined,
+): boolean {
+  return NAMED_OPEN_LOOP_LOOK_RE.test(normalizeText(value));
 }
 
 export function namedOpenLoopRemindTimingCandidates(
@@ -335,32 +366,113 @@ export function resolveNamedOpenLoopSaveFollowup(input: {
   return { kind: 'save', query: seedQuery };
 }
 
+/**
+ * After a named owed-reply with unseen inbound image/video, `look at that`
+ * / `what's in that photo` tries to read that named-thread attachment. It
+ * never sends, never drafts a canned yes, and never binds leftover titles.
+ */
+export function resolveNamedOpenLoopMediaFollowup(input: {
+  text?: string | null;
+  ownerReviewAllowed?: boolean;
+  priorNamedSeedJson?: string | null;
+  mediaOffered?: boolean;
+  activeCapabilityId?: string | null;
+}): NamedOpenLoopMediaFollowup {
+  if (!isNamedOpenLoopLookPrompt(input.text)) {
+    return { kind: 'none' };
+  }
+
+  const seedQuery = readNamedOpenLoopSeedQuery(input.priorNamedSeedJson);
+  if (input.ownerReviewAllowed === false) {
+    if (seedQuery) {
+      return { kind: 'denied', reason: 'untrusted_named' };
+    }
+    return { kind: 'none' };
+  }
+
+  const active = input.activeCapabilityId || '';
+  if (
+    active !== 'communication.open_loops' &&
+    active !== 'communication.summarize_thread'
+  ) {
+    return { kind: 'none' };
+  }
+  if (!seedQuery || input.mediaOffered !== true) {
+    return { kind: 'none' };
+  }
+  return { kind: 'look', query: seedQuery };
+}
+
 export function formatNamedOpenLoopDraftNextStep(params: {
   channel: NamedOpenLoopChannel;
   personLabel: string;
   withheld: boolean;
   ownerOwesReply: boolean;
   isGroup: boolean;
+  latestInboundText?: string | null;
 }): string | undefined {
   if (!params.ownerOwesReply) {
     return undefined;
   }
+  const inboundText = params.latestInboundText || '';
+  const unseenMedia = hasUnseenInboundMedia(inboundText);
+  const analyzableMedia = hasAnalyzableInboundMedia(inboundText);
+  const mediaOnly =
+    unseenMedia && !stripUnseenInboundMediaDescriptor(inboundText);
+  const mediaObject =
+    formatInboundMediaObjectPhrase(inboundText) || 'an attachment';
+  const firstMediaLabel = unseenInboundMediaLabels(inboundText)[0] || 'photo';
+  const thatMedia = /^\d/.test(firstMediaLabel)
+    ? `those ${firstMediaLabel}`
+    : `that ${firstMediaLabel}`;
+  const lookPrompt =
+    params.channel === 'alexa'
+      ? NAMED_OPEN_LOOP_LOOK_PROMPT
+      : `\`${NAMED_OPEN_LOOP_LOOK_PROMPT}\``;
+  const remindPrompt =
+    params.channel === 'alexa'
+      ? NAMED_OPEN_LOOP_REMIND_LATER_PROMPT
+      : `\`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\``;
+  const savePrompt =
+    params.channel === 'alexa'
+      ? NAMED_OPEN_LOOP_SAVE_PROMPT
+      : `\`${NAMED_OPEN_LOOP_SAVE_PROMPT}\``;
   if (params.withheld) {
     if (params.isGroup) {
       return "I won't guess your answer. Tell me what you want to say, and I can draft it unsent.";
     }
-    if (params.channel === 'alexa') {
-      return `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT} or ${NAMED_OPEN_LOOP_SAVE_PROMPT}.`;
+    if (mediaOnly && analyzableMedia) {
+      if (params.channel === 'alexa') {
+        return `I haven't looked at ${thatMedia} yet. Say ${NAMED_OPEN_LOOP_LOOK_PROMPT} and I can try. Or say ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT} or ${NAMED_OPEN_LOOP_SAVE_PROMPT}.`;
+      }
+      return `I haven't looked at ${thatMedia} yet. Say ${lookPrompt} and I can try. Or say ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}.`;
     }
-    return `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say \`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\` for a tonight reminder, or \`${NAMED_OPEN_LOOP_SAVE_PROMPT}\` to keep this under ${params.personLabel}.`;
+    if (mediaOnly) {
+      if (params.channel === 'alexa') {
+        return `I can see ${params.personLabel} sent ${mediaObject}, but I cannot play it here. Tell me what you want to say, or say ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT} or ${NAMED_OPEN_LOOP_SAVE_PROMPT}.`;
+      }
+      return `I can see ${params.personLabel} sent ${mediaObject}, but I cannot play it here. Tell me what you want to say, or say ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}.`;
+    }
+    if (params.channel === 'alexa') {
+      return analyzableMedia
+        ? `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${NAMED_OPEN_LOOP_LOOK_PROMPT}, ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}, or ${NAMED_OPEN_LOOP_SAVE_PROMPT}.`
+        : `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT} or ${NAMED_OPEN_LOOP_SAVE_PROMPT}.`;
+    }
+    return analyzableMedia
+      ? `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${lookPrompt} if you want me to try to read ${thatMedia}, ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}.`
+      : `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}.`;
   }
   if (params.isGroup) {
     return 'I can draft wording, but I will not create send controls for a group.';
   }
   if (params.channel === 'alexa') {
-    return `Say draft ${params.personLabel} to create an unsent draft, or ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}, or ${NAMED_OPEN_LOOP_SAVE_PROMPT}. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
+    return analyzableMedia
+      ? `Say draft ${params.personLabel} to create an unsent draft, or ${NAMED_OPEN_LOOP_LOOK_PROMPT}, or ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}, or ${NAMED_OPEN_LOOP_SAVE_PROMPT}. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`
+      : `Say draft ${params.personLabel} to create an unsent draft, or ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}, or ${NAMED_OPEN_LOOP_SAVE_PROMPT}. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
   }
-  return `Next: say \`draft ${params.personLabel}\` or yes for an unsent draft, \`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\` for a tonight reminder, or \`${NAMED_OPEN_LOOP_SAVE_PROMPT}\` to keep this under ${params.personLabel}. That draft stays unsent and requires approval. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
+  return analyzableMedia
+    ? `Next: say \`draft ${params.personLabel}\` or yes for an unsent draft, ${lookPrompt} to try to read ${thatMedia}, ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}. That draft stays unsent and requires approval. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`
+    : `Next: say \`draft ${params.personLabel}\` or yes for an unsent draft, ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}. That draft stays unsent and requires approval. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
 }
 
 export function appendNamedOpenLoopDraftCreatedNotice(
@@ -394,6 +506,32 @@ export function appendNamedOpenLoopSaveCreatedNotice(
     return `${replyText} I did not send anything. Say draft ${personLabel} when you want an unsent draft.`;
   }
   return `${replyText}\n\nI did not send anything. Next: say \`draft ${personLabel}\` when you want an unsent draft. Only \`send it\`, \`send it now\`, or \`send now\` can send.`;
+}
+
+export function appendNamedOpenLoopMediaLookedNotice(
+  channel: NamedOpenLoopChannel,
+  replyText: string,
+  personLabel: string,
+): string {
+  if (channel === 'alexa') {
+    return `${replyText} I did not send anything. Say draft ${personLabel} when you want an unsent draft.`;
+  }
+  return `${replyText}\n\nI did not send anything. Next: say \`draft ${personLabel}\` when you want an unsent draft. Only \`send it\`, \`send it now\`, or \`send now\` can send.`;
+}
+
+export function formatNamedOpenLoopMediaLookReply(params: {
+  personLabel: string;
+  mediaObject: string;
+  summaryText?: string | null;
+  looked: boolean;
+}): string {
+  if (params.summaryText?.trim()) {
+    return `I looked at that ${params.mediaObject} from ${params.personLabel}. ${params.summaryText.trim()}`;
+  }
+  if (params.looked) {
+    return `${params.personLabel} sent you ${params.mediaObject}. I can see it is there, but I cannot read the image itself from here yet.`;
+  }
+  return `I do not have a photo from that ${params.personLabel} thread to look at.`;
 }
 
 export function appendGenericOpenLoopNoCrawlNotice(
@@ -432,6 +570,7 @@ export function formatNamedMessagesOpenLoopReply(params: {
     withheld,
     ownerOwesReply: params.gist.ownerOwesReply,
     isGroup: params.isGroup,
+    latestInboundText: params.latestInboundText,
   });
   const coverage =
     'This is the current thread state from the available local synced snapshot, not device unread status. I did not send anything.';

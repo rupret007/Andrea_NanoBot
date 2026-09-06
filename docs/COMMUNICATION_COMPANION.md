@@ -164,8 +164,9 @@ Communication follow-through should keep these paths distinct:
 - `put this on my calendar` should go to the calendar create path when Google Calendar is configured
 - `remind me later` should create a reminder, not a calendar event
 - `save that for later` or `save that under the thread` should keep the follow-through unsent and non-calendar
+- `look at that` or `what's in that photo` after a named owed-reply with unseen inbound image/video should try to read that named-thread attachment, not the current control-chat media and not invent file contents
 
-Andrea should never talk as if a calendar event was created when the real result was only a reminder or saved thread follow-through.
+Andrea should never talk as if a calendar event was created when the real result was only a reminder or saved thread follow-through. A photo-only owed turn should not offer yes-to-draft before Jeff has wording or a real look.
 
 ## Channel Behavior
 
@@ -214,21 +215,26 @@ BlueBubbles:
   `requiresApproval` draft, `remind me later` or `remind me to
   reply later tonight` creates a local tonight reminder for Jeff, and
   `save under thread` or `save that` keeps the owed turn under that
-  named person. That yes is draft-for-Bob-yes, not a send. Remind-me-later
-  and save-under-thread are not sends either. After the draft exists,
-  only standalone `send it` / `send it now` / `send now` can send. Bare
-  `yes` / `ok` never authorize a send. Generic `what do I owe people`
-  stays on explicitly brought-in companion threads and does not crawl
-  unnamed inbox threads. An empty generic result asks Jeff to name one
-  person (for example, `what's still open with Bob?`) instead of ending
-  at the privacy boundary; that handoff does not read a thread, create
-  a draft, reminder, save, or send controls, and a leftover `yes`,
-  `remind me later`, or `save under thread` there does not draft, remind,
-  or save. Already-replied named threads do not offer yes-to-draft,
-  remind-me-later, or save-under-thread. Withheld questions still offer
-  `remind me later` and `save under thread` but not yes-to-draft. Karen
-  and other non-owner surfaces get no Messages bodies, seed, reminders,
-  saves, or actions.
+  named person, and `look at that` or `what's in that photo` tries to
+  read unseen inbound image/video from that named thread. Photo-only
+  owed turns say `Bob sent you a photo` and withhold yes-to-draft.
+  That yes is draft-for-Bob-yes, not a send. Remind-me-later,
+  save-under-thread, and look-at-that are not sends either. After the
+  draft exists, only standalone `send it` / `send it now` / `send now`
+  can send. Bare `yes` / `ok` never authorize a send. Generic `what do
+  I owe people` stays on explicitly brought-in companion threads and
+  does not crawl unnamed inbox threads. An empty generic result asks
+  Jeff to name one person (for example, `what's still open with Bob?`)
+  instead of ending at the privacy boundary; that handoff does not read
+  a thread, create a draft, reminder, save, media look, or send
+  controls, and a leftover `yes`, `remind me later`, `save under
+  thread`, or `look at that` there does not draft, remind, save, or
+  look. Already-replied named threads do not offer yes-to-draft,
+  remind-me-later, save-under-thread, or look-at-that. Withheld
+  questions and unseen photo-only turns still offer `remind me later`
+  and `save under thread` but not yes-to-draft. Karen and other
+  non-owner surfaces get no Messages bodies, attachments, seed,
+  reminders, saves, media looks, or actions.
   Questions, requests, and automated notices still withhold a canned answer.
   Suggested replies stay unsent. Jeff talks to Bob; Andrea is the engine.
 - no outbound send without explicit user intent

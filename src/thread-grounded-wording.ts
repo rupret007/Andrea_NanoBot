@@ -25,6 +25,9 @@ const ACK_ONLY_RE =
 const INFORMATIONAL_GLUE_RE =
   /\b(?:just (?:keeping you posted|sharing the update|letting you know|an update)|fyi|heads-?up)\b/gi;
 
+export const UNSEEN_INBOUND_MEDIA_DESCRIPTOR_RE =
+  /\[Attached:\s*([^[\];]+);\s*contents not included in this text summary\]/i;
+
 const GENERIC_ANCHOR_WORDS = new Set([
   'a',
   'an',
@@ -56,11 +59,71 @@ function clipAnchor(value: string, max = 80): string {
   return `${normalized.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
+export function stripUnseenInboundMediaDescriptor(
+  value: string | null | undefined,
+): string {
+  return normalizeText(value).replace(UNSEEN_INBOUND_MEDIA_DESCRIPTOR_RE, ' ');
+}
+
+export function unseenInboundMediaLabels(
+  value: string | null | undefined,
+): string[] {
+  const match = normalizeText(value).match(UNSEEN_INBOUND_MEDIA_DESCRIPTOR_RE);
+  if (!match?.[1]) return [];
+  return match[1]
+    .split(',')
+    .map((part) => normalizeText(part).toLowerCase())
+    .filter(Boolean);
+}
+
+export function hasUnseenInboundMedia(
+  value: string | null | undefined,
+): boolean {
+  return unseenInboundMediaLabels(value).length > 0;
+}
+
+export function hasAnalyzableInboundMedia(
+  value: string | null | undefined,
+): boolean {
+  return unseenInboundMediaLabels(value).some((label) =>
+    /\b(?:photo|photos|image|images|picture|pictures|screenshot|screenshots|video|videos)\b/.test(
+      label,
+    ),
+  );
+}
+
+function withIndefiniteArticle(label: string): string {
+  if (/^\d/.test(label)) return label;
+  return /^[aeiou]/i.test(label) ? `an ${label}` : `a ${label}`;
+}
+
+export function formatInboundMediaObjectPhrase(
+  value: string | null | undefined,
+): string | null {
+  const labels = unseenInboundMediaLabels(value);
+  if (labels.length === 0) return null;
+  const parts = labels.map((label) => withIndefiniteArticle(label));
+  if (parts.length === 1) return parts[0] || null;
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}`;
+}
+
+export function formatInboundMediaSentSentence(
+  personLabel: string,
+  value: string | null | undefined,
+): string | null {
+  const objectPhrase = formatInboundMediaObjectPhrase(value);
+  if (!objectPhrase) return null;
+  return `${personLabel} sent you ${objectPhrase}.`;
+}
+
 function cleanedInformationalInbound(
   inboundText: string | null | undefined,
 ): string {
   return clipAnchor(
-    normalizeText(inboundText).replace(INFORMATIONAL_GLUE_RE, ' '),
+    stripUnseenInboundMediaDescriptor(
+      normalizeText(inboundText).replace(INFORMATIONAL_GLUE_RE, ' '),
+    ),
     160,
   );
 }
@@ -74,10 +137,10 @@ function capitalizeAnchor(value: string): string {
 export function shouldWithholdThreadGroundedReply(
   inboundText: string | null | undefined,
 ): boolean {
-  const content = normalizeText(inboundText);
-  if (!content || content.length < 8) return true;
-  if (ACK_ONLY_RE.test(content)) return true;
-  return OWNER_ANSWER_RE.test(content);
+  const stripped = stripUnseenInboundMediaDescriptor(inboundText);
+  if (!stripped || stripped.length < 8) return true;
+  if (ACK_ONLY_RE.test(stripped)) return true;
+  return OWNER_ANSWER_RE.test(stripped);
 }
 
 export function extractConcreteThreadUpdateAnchor(
@@ -456,9 +519,15 @@ export function buildThreadGroundedSummaryGist(input: {
     const cleaned = cleanedInformationalInbound(latestInbound.content);
     const concrete = extractConcreteThreadUpdateAnchor(latestInbound.content);
     const withhold = shouldWithholdThreadGroundedReply(latestInbound.content);
+    const mediaSentence = formatInboundMediaSentSentence(
+      person,
+      latestInbound.content,
+    );
     const askedGroup = input.isGroup && withhold;
     const askedYou = !input.isGroup && withhold;
-    if (askedGroup) {
+    if (mediaSentence && !cleaned) {
+      digestSentences.push(mediaSentence);
+    } else if (askedGroup) {
       digestSentences.push(`${person} asked the group: ${cleaned}.`);
     } else if (askedYou) {
       digestSentences.push(`${person} asked you: ${cleaned}.`);
@@ -487,7 +556,10 @@ export function buildThreadGroundedSummaryGist(input: {
   ];
   for (const turn of evidenceTurns) {
     if (bullets.length >= bulletLimit) break;
-    const content = normalizeText(turn.content);
+    const content =
+      stripUnseenInboundMediaDescriptor(turn.content) ||
+      formatInboundMediaObjectPhrase(turn.content) ||
+      normalizeText(turn.content);
     if (!content || digestAlreadyIncludes(digestSentences, content)) continue;
     const label = turn.isFromMe
       ? 'You'

@@ -5,6 +5,21 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- After leftover-squash #38, a named owed-reply with unseen inbound
+  image/video now stays honest: the gist says `Bob sent you a photo`
+  instead of dumping the internal attachment descriptor, yes-to-draft
+  is withheld until Jeff has wording, and `look at that` /
+  `what's in that photo` tries to read that named-thread attachment
+  locally. That look does not send, does not create a draft or action
+  card, and does not bind leftover person titles from an empty generic
+  who-do-I-owe. Remind-me-later and save-under-thread stay available.
+  Already-replied threads do not offer it. Karen / non-owner surfaces
+  still get no bodies, attachments, seed, or actions. After the look,
+  the next human step is still `draft Bob` for an unsent draft; only
+  standalone `send it` / `send it now` / `send now` can send. Private
+  API stays off. AppleScript is the only send path. Send-path source
+  blobs stay SHA-256-identical to leftover #38 / main tip
+  `f2f6cf97f09cc909fc036e531cd080cbb4b32087`.
 - After leftover-squash #37, a named owed-reply now has a third unsent
   next step: `save under thread` or `save that` creates one local Jeff
   life-thread save bound to that named person. That save does not send,

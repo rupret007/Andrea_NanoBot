@@ -172,22 +172,27 @@ import { resolveOwnerCalendarWindow } from './timezone.js';
 import {
   appendGenericOpenLoopNoCrawlNotice,
   appendNamedOpenLoopDraftCreatedNotice,
+  appendNamedOpenLoopMediaLookedNotice,
   appendNamedOpenLoopRemindCreatedNotice,
   appendNamedOpenLoopSaveCreatedNotice,
   formatNamedMessagesOpenLoopReply,
   formatNamedOpenLoopDeniedReply,
+  formatNamedOpenLoopMediaLookReply,
   namedOpenLoopDraftWasOffered,
+  namedOpenLoopMediaWasOffered,
   namedOpenLoopRemindTimingCandidates,
   namedOpenLoopRemindWasOffered,
   namedOpenLoopSaveWasOffered,
   resolveNamedOpenLoopBinding,
   resolveNamedOpenLoopDraftFollowup,
+  resolveNamedOpenLoopMediaFollowup,
   resolveNamedOpenLoopRemindFollowup,
   resolveNamedOpenLoopSaveFollowup,
 } from './named-open-loop.js';
 import {
   buildThreadGroundedSuggestedReplies,
   buildThreadGroundedSummaryGist,
+  formatInboundMediaObjectPhrase,
   shouldWithholdThreadGroundedReply,
   threadGroundedPersonLabel,
 } from './thread-grounded-wording.js';
@@ -359,6 +364,7 @@ export interface AssistantCapabilityContext {
     namedOpenLoopDraftOffered?: boolean;
     namedOpenLoopRemindOffered?: boolean;
     namedOpenLoopSaveOffered?: boolean;
+    namedOpenLoopMediaOffered?: boolean;
     recentTextReviewJson?: string;
     followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
@@ -462,6 +468,7 @@ export interface AssistantCapabilityConversationSeed {
     namedOpenLoopDraftOffered?: boolean;
     namedOpenLoopRemindOffered?: boolean;
     namedOpenLoopSaveOffered?: boolean;
+    namedOpenLoopMediaOffered?: boolean;
     recentTextReviewJson?: string;
     followthroughReviewJson?: string;
     chiefOfStaffContextJson?: string;
@@ -2079,6 +2086,7 @@ function buildCommunicationConversationSeed(input: {
   namedOpenLoopDraftOffered?: boolean;
   namedOpenLoopRemindOffered?: boolean;
   namedOpenLoopSaveOffered?: boolean;
+  namedOpenLoopMediaOffered?: boolean;
   messageActionId?: string;
   messageActionSummary?: string;
   recentTextReviewJson?: string;
@@ -2105,6 +2113,7 @@ function buildCommunicationConversationSeed(input: {
       namedOpenLoopDraftOffered: input.namedOpenLoopDraftOffered,
       namedOpenLoopRemindOffered: input.namedOpenLoopRemindOffered,
       namedOpenLoopSaveOffered: input.namedOpenLoopSaveOffered,
+      namedOpenLoopMediaOffered: input.namedOpenLoopMediaOffered,
       recentTextReviewJson: input.recentTextReviewJson,
       messageActionId: input.messageActionId,
       messageActionSummary: input.messageActionSummary,
@@ -5885,6 +5894,11 @@ async function tryNamedMessagesOpenLoop(
     gist,
     isGroup: resolution.target.isGroup,
   });
+  const mediaOffered = namedOpenLoopMediaWasOffered({
+    gist,
+    latestInboundText,
+    isGroup: resolution.target.isGroup,
+  });
   const replyText = formatNamedMessagesOpenLoopReply({
     channel: context.channel,
     personLabel,
@@ -5923,6 +5937,7 @@ async function tryNamedMessagesOpenLoop(
       namedOpenLoopDraftOffered: draftOffered,
       namedOpenLoopRemindOffered: remindOffered,
       namedOpenLoopSaveOffered: saveOffered,
+      namedOpenLoopMediaOffered: mediaOffered,
       supportedFollowups: descriptor.followupActions,
     }),
     trace: buildCapabilityTrace(
@@ -5947,6 +5962,14 @@ async function runCommunicationOpenLoopsCapability(
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const namedMediaLook = await tryNamedOpenLoopMedia(
+    descriptor,
+    context,
+    input,
+  );
+  if (namedMediaLook) {
+    return namedMediaLook;
+  }
   const namedMessagesOpenLoop = await tryNamedMessagesOpenLoop(
     descriptor,
     context,
@@ -6013,6 +6036,164 @@ async function runCommunicationOpenLoopsCapability(
     followupActions: supportedFollowups,
     handoffPayload: continuationCandidate?.handoffPayload,
     continuationCandidate,
+  };
+}
+
+function latestNamedOpenLoopAnalyzableAttachments(params: {
+  chatJid: string;
+  historyStartTimestamp: string;
+}): {
+  attachments: NonNullable<NewMessage['attachments']>;
+  mediaObject: string;
+} {
+  const messages = loadNamedThreadWindowMessages({
+    chatJid: params.chatJid,
+    startTimestamp: params.historyStartTimestamp,
+    endTimestamp: null,
+  });
+  const latestInbound = [...messages]
+    .reverse()
+    .find((message) => !message.is_from_me);
+  const attachments = (latestInbound?.attachments || []).filter((attachment) =>
+    ['image', 'video'].includes(attachment.kind),
+  );
+  const mediaObject =
+    formatInboundMediaObjectPhrase(latestInbound?.content) ||
+    (attachments.some((attachment) => attachment.kind === 'video')
+      ? 'a video'
+      : 'a photo');
+  return { attachments, mediaObject };
+}
+
+async function tryNamedOpenLoopMedia(
+  descriptor: AssistantCapabilityDescriptor,
+  context: AssistantCapabilityContext,
+  input: AssistantCapabilityInput,
+): Promise<AssistantCapabilityResult | null> {
+  const followup = resolveNamedOpenLoopMediaFollowup({
+    text: input.text || input.canonicalText || '',
+    ownerReviewAllowed: context.ownerReviewAllowed,
+    priorNamedSeedJson:
+      context.priorSubjectData?.namedMessagesSummaryTargetJson,
+    mediaOffered: context.priorSubjectData?.namedOpenLoopMediaOffered === true,
+    activeCapabilityId: context.priorSubjectData?.activeCapabilityId,
+  });
+  if (followup.kind === 'none') {
+    return null;
+  }
+  if (followup.kind === 'denied') {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: formatNamedOpenLoopDeniedReply(),
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'blocked a named Messages media look outside a trusted owner surface',
+      ),
+      followupActions: [],
+    };
+  }
+
+  const seedJson = context.priorSubjectData?.namedMessagesSummaryTargetJson;
+  const seed = parseNamedMessagesSummaryTargetSeed(seedJson);
+  const seedValidation = validateNamedMessagesSummaryTarget({
+    seedJson,
+    presentationChatJid: context.chatJid,
+  });
+  if (!seed || seedValidation.state !== 'resolved') {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'I can no longer bind that photo to one exact current Messages chat. Ask me what is still open with that person again. I did not send anything.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        'named open-loop media look lost its exact Messages target',
+      ),
+      followupActions: descriptor.followupActions,
+    };
+  }
+
+  const { attachments, mediaObject } = latestNamedOpenLoopAnalyzableAttachments(
+    {
+      chatJid: seed.target.chatJid,
+      historyStartTimestamp: seed.historyStartTimestamp,
+    },
+  );
+  const analysis =
+    attachments.length > 0
+      ? await analyzeMessageMedia({
+          attachmentIds: attachments.map(
+            (attachment) => attachment.attachmentId,
+          ),
+          prompt: input.text || input.canonicalText || 'look at that',
+          requester: 'andrea',
+        })
+      : null;
+  const looked = Boolean(analysis && attachments.length > 0);
+  const replyText = appendNamedOpenLoopMediaLookedNotice(
+    context.channel,
+    formatNamedOpenLoopMediaLookReply({
+      personLabel: followup.query,
+      mediaObject,
+      summaryText: analysis?.summaryText,
+      looked,
+    }),
+    followup.query,
+  );
+
+  return {
+    handled: true,
+    capabilityId: descriptor.id,
+    replyText,
+    outputShape: descriptor.preferredOutputShape[context.channel],
+    conversationSeed: buildCommunicationConversationSeed({
+      descriptor,
+      summaryText: replyText,
+      conversationFocus:
+        context.priorSubjectData?.lastCommunicationSummary ||
+        `look at that from ${followup.query}`,
+      personName: followup.query,
+      threadTitle: followup.query,
+      lastCommunicationSummary:
+        context.priorSubjectData?.lastCommunicationSummary ||
+        `${followup.query} sent ${mediaObject}`,
+      namedMessagesSummaryTargetJson: seedJson,
+      namedOpenLoopDraftOffered:
+        context.priorSubjectData?.namedOpenLoopDraftOffered,
+      namedOpenLoopRemindOffered:
+        context.priorSubjectData?.namedOpenLoopRemindOffered,
+      namedOpenLoopSaveOffered:
+        context.priorSubjectData?.namedOpenLoopSaveOffered,
+      namedOpenLoopMediaOffered: !analysis?.summaryText,
+      supportedFollowups: [
+        'draft_follow_up',
+        'create_reminder',
+        'save_for_later',
+        'anything_else',
+      ],
+    }),
+    trace: buildCapabilityTrace(
+      descriptor,
+      context,
+      analysis?.handled ? 'media_openai' : 'local_companion',
+      analysis?.summaryText
+        ? 'looked at named open-loop inbound media without sending'
+        : 'reported named open-loop inbound media without claiming a read',
+      [`person:${followup.query}`, `attachments:${attachments.length}`],
+    ),
+    followupActions: [
+      'draft_follow_up',
+      'create_reminder',
+      'save_for_later',
+      'anything_else',
+    ],
   };
 }
 
@@ -6136,6 +6317,8 @@ function tryNamedOpenLoopRemind(
       namedOpenLoopRemindOffered: false,
       namedOpenLoopSaveOffered:
         context.priorSubjectData?.namedOpenLoopSaveOffered,
+      namedOpenLoopMediaOffered:
+        context.priorSubjectData?.namedOpenLoopMediaOffered,
       supportedFollowups: [
         'draft_follow_up',
         'save_for_later',
@@ -6257,6 +6440,8 @@ function tryNamedOpenLoopSave(
       namedOpenLoopRemindOffered:
         context.priorSubjectData?.namedOpenLoopRemindOffered,
       namedOpenLoopSaveOffered: false,
+      namedOpenLoopMediaOffered:
+        context.priorSubjectData?.namedOpenLoopMediaOffered,
       supportedFollowups: [
         'draft_follow_up',
         'create_reminder',

@@ -30,6 +30,7 @@ import {
 } from './thread-summary-routing.js';
 import {
   resolveNamedOpenLoopDraftFollowup,
+  resolveNamedOpenLoopMediaFollowup,
   resolveNamedOpenLoopRemindFollowup,
   resolveNamedOpenLoopSaveFollowup,
 } from './named-open-loop.js';
@@ -60,6 +61,7 @@ export interface AssistantCapabilityContinuationSubjectData {
   namedOpenLoopDraftOffered?: boolean;
   namedOpenLoopRemindOffered?: boolean;
   namedOpenLoopSaveOffered?: boolean;
+  namedOpenLoopMediaOffered?: boolean;
   personName?: string;
 }
 
@@ -191,6 +193,33 @@ function matchNamedOpenLoopSaveFollowup(
       threadTitle: followup.query,
     },
     reason: 'continuing a named open-loop with save-under-thread',
+    continuation: true,
+  };
+}
+
+function matchNamedOpenLoopMediaFollowup(
+  text: string,
+  subjectData: AssistantCapabilityContinuationSubjectData,
+): AssistantCapabilityMatch | null {
+  const followup = resolveNamedOpenLoopMediaFollowup({
+    text,
+    priorNamedSeedJson: subjectData.namedMessagesSummaryTargetJson,
+    mediaOffered: subjectData.namedOpenLoopMediaOffered === true,
+    activeCapabilityId: subjectData.activeCapabilityId,
+  });
+  if (followup.kind !== 'look') {
+    return null;
+  }
+  return {
+    capabilityId: 'communication.open_loops',
+    normalizedText: text,
+    canonicalText: 'look at that',
+    arguments: {
+      targetChatName: followup.query,
+      personName: followup.query,
+      threadTitle: followup.query,
+    },
+    reason: 'continuing a named open-loop with look-at-that inbound media',
     continuation: true,
   };
 }
@@ -1871,6 +1900,13 @@ export function continueAssistantCapabilityFromPriorSubjectData(
   if (namedSaveFollowup) {
     return namedSaveFollowup;
   }
+  const namedMediaFollowup = matchNamedOpenLoopMediaFollowup(
+    normalized,
+    subjectData,
+  );
+  if (namedMediaFollowup) {
+    return namedMediaFollowup;
+  }
   return continueAssistantCapabilityFromActiveCapability(
     normalized,
     subjectData.activeCapabilityId,
@@ -1895,6 +1931,13 @@ export function continueAssistantCapabilityFromAlexaState(
   );
   if (namedSaveFollowup) {
     return namedSaveFollowup;
+  }
+  const namedMediaFollowup = matchNamedOpenLoopMediaFollowup(
+    text,
+    state.subjectData,
+  );
+  if (namedMediaFollowup) {
+    return namedMediaFollowup;
   }
   return continueAssistantCapabilityFromActiveCapability(
     text,

@@ -5,24 +5,29 @@ import {
   appendGenericOpenLoopNoCrawlNotice,
   appendNamedOpenLoopDraftCreatedNotice,
   appendNamedOpenLoopRemindCreatedNotice,
+  appendNamedOpenLoopMediaLookedNotice,
   appendNamedOpenLoopSaveCreatedNotice,
   formatNamedMessagesOpenLoopReply,
   formatNamedOpenLoopDeniedReply,
   GENERIC_OPEN_LOOP_NAMED_HANDOFF,
   GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE,
+  isNamedOpenLoopLookPrompt,
   isNamedOpenLoopSavePrompt,
   isNamedOpenLoopSoftYes,
   namedOpenLoopDraftWasOffered,
   namedOpenLoopHistoryQuery,
   NAMED_OPEN_LOOP_DRAFT_YES_NOTICE,
+  NAMED_OPEN_LOOP_LOOK_PROMPT,
   NAMED_OPEN_LOOP_REMIND_LATER_PROMPT,
   NAMED_OPEN_LOOP_SAVE_PROMPT,
+  namedOpenLoopMediaWasOffered,
   namedOpenLoopRemindWasOffered,
   namedOpenLoopSaveWasOffered,
   parseNamedOpenLoopRemindTiming,
   readNamedOpenLoopSeedQuery,
   resolveNamedOpenLoopBinding,
   resolveNamedOpenLoopDraftFollowup,
+  resolveNamedOpenLoopMediaFollowup,
   resolveNamedOpenLoopRemindFollowup,
   resolveNamedOpenLoopSaveFollowup,
 } from './named-open-loop.js';
@@ -748,5 +753,146 @@ describe('named open-loop save-under-thread stays off the send fence', () => {
     ).toBe(
       'Okay. I saved that under Bob. I did not send anything. Say draft Bob when you want an unsent draft.',
     );
+  });
+});
+
+describe('named open-loop inbound media stays off the send fence', () => {
+  const photoDescriptor =
+    '[Attached: photo; contents not included in this text summary]';
+  const photoGist = buildThreadGroundedSummaryGist({
+    chatName: 'Bob',
+    isGroup: false,
+    turns: [
+      {
+        content: photoDescriptor,
+        isFromMe: false,
+        speakerLabel: 'Bob',
+      },
+    ],
+  });
+
+  it('offers look-at-that on unseen inbound photo and withholds yes-to-draft', () => {
+    expect(
+      namedOpenLoopMediaWasOffered({
+        gist: photoGist,
+        latestInboundText: photoDescriptor,
+        isGroup: false,
+      }),
+    ).toBe(true);
+    expect(
+      namedOpenLoopDraftWasOffered({
+        gist: photoGist,
+        latestInboundText: photoDescriptor,
+        isGroup: false,
+      }),
+    ).toBe(false);
+    expect(
+      namedOpenLoopMediaWasOffered({
+        gist: photoGist,
+        latestInboundText: photoDescriptor,
+        isGroup: true,
+      }),
+    ).toBe(false);
+    expect(isNamedOpenLoopLookPrompt('look at that')).toBe(true);
+    expect(isNamedOpenLoopLookPrompt("what's in that photo")).toBe(true);
+    expect(isNamedOpenLoopLookPrompt('describe that photo')).toBe(true);
+    expect(isNamedOpenLoopLookPrompt('save that')).toBe(false);
+    expect(isNamedOpenLoopLookPrompt('yes')).toBe(false);
+    expect(isNamedOpenLoopLookPrompt('send it')).toBe(false);
+  });
+
+  it('binds look-at-that to the named seed without leftover person titles', () => {
+    expect(
+      resolveNamedOpenLoopMediaFollowup({
+        text: 'look at that',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        mediaOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({
+      kind: 'look',
+      query: 'Bob',
+    });
+    expect(
+      resolveNamedOpenLoopMediaFollowup({
+        text: "what's in that photo",
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        mediaOffered: true,
+        activeCapabilityId: 'communication.summarize_thread',
+      }),
+    ).toEqual({
+      kind: 'look',
+      query: 'Bob',
+    });
+    expect(
+      resolveNamedOpenLoopMediaFollowup({
+        text: 'look at that',
+        ownerReviewAllowed: true,
+        mediaOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'none' });
+    expect(
+      resolveNamedOpenLoopMediaFollowup({
+        text: 'look at that',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        mediaOffered: false,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'none' });
+    expect(
+      resolveNamedOpenLoopMediaFollowup({
+        text: 'look at that',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        mediaOffered: true,
+        activeCapabilityId: 'communication.draft_reply',
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('denies Karen a named look-at-that', () => {
+    expect(
+      resolveNamedOpenLoopMediaFollowup({
+        text: 'look at that',
+        ownerReviewAllowed: false,
+        priorNamedSeedJson: bobSeedJson,
+        mediaOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({ kind: 'denied', reason: 'untrusted_named' });
+    expect(
+      resolveNamedOpenLoopMediaFollowup({
+        text: 'look at that',
+        ownerReviewAllowed: false,
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('keeps photo-only named open-loop off yes-to-draft and off the send fence', () => {
+    const reply = formatNamedMessagesOpenLoopReply({
+      channel: 'telegram',
+      personLabel: 'Bob',
+      isGroup: false,
+      gist: photoGist,
+      latestInboundText: photoDescriptor,
+    });
+    expect(reply).toContain('Bob sent you a photo.');
+    expect(reply).toContain(NAMED_OPEN_LOOP_LOOK_PROMPT);
+    expect(reply).toContain(NAMED_OPEN_LOOP_REMIND_LATER_PROMPT);
+    expect(reply).toContain(NAMED_OPEN_LOOP_SAVE_PROMPT);
+    expect(reply).not.toContain('or yes for an unsent draft');
+    expect(reply).not.toContain('[Attached:');
+    expect(reply).not.toContain('send it');
+    expect(
+      appendNamedOpenLoopMediaLookedNotice(
+        'telegram',
+        'Bob sent you a photo. I can see it is there, but I cannot read the image itself from here yet.',
+        'Bob',
+      ),
+    ).toContain('I did not send anything');
   });
 });
