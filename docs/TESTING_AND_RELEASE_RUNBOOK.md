@@ -21,6 +21,28 @@ This repo has three different validation layers:
 
 Do not treat optional integration checks as baseline unless that integration is actually configured.
 
+## Exact Named Reply Reminder Proof
+
+For the owner conversation journey after `what's still open with Bob`, run:
+
+```bash
+npm test -- src/named-reply-reminder.test.ts src/named-reply-reminder-flow.test.ts src/named-open-loop.test.ts src/assistant-capability-router.test.ts src/assistant-capabilities.test.ts
+```
+
+The pure clock suite checks valid AM/PM input, owner-day boundaries independent
+of host timezone, summer/winter offsets, midnight/noon, past times, invalid
+zones, and daylight-saving gaps/repeats. The real SQLite capability journey
+checks named routing, exact UTC task time, Telegram/Messages owner delivery,
+retry convergence, no draft/provider/history call, and no task for untrusted,
+malformed, changed, group or already-answered contexts. Existing send-path and
+fence suites remain required; `src/message-actions.ts` and
+`src/channels/bluebubbles.ts` are unchanged by this slice.
+
+These fixtures prove local planning and persistence. They do not run the
+scheduler or prove real Telegram/Messages delivery, owner acceptance, service
+restart or deployment. Keep Private API OFF and never use live BlueBubbles
+send HTTP for this validation.
+
 ## 1. Fast Local Checks
 
 ```bash

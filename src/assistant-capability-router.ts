@@ -28,6 +28,7 @@ import {
   parseRecentTextReviewIntent,
   parseThreadSummaryIntent,
 } from './thread-summary-routing.js';
+import { formatNamedReplyClockTiming } from './named-reply-reminder.js';
 import {
   resolveNamedOpenLoopDraftFollowup,
   resolveNamedOpenLoopMediaFollowup,
@@ -147,15 +148,19 @@ function matchNamedOpenLoopRemindFollowup(
     return null;
   }
   const canonicalText =
-    followup.timing === 'tonight'
-      ? 'remind me to reply later tonight'
-      : followup.timing === 'tomorrow'
-        ? 'remind me to reply later tomorrow'
-        : followup.timing.startsWith('tomorrow_')
-          ? `remind me to reply later ${followup.timing.replace('_', ' ')}`
-          : followup.timing.startsWith('today_')
+    typeof followup.timing !== 'string'
+      ? followup.timing.kind === 'clock'
+        ? `remind me to reply ${formatNamedReplyClockTiming(followup.timing)}`
+        : text
+      : followup.timing === 'tonight'
+        ? 'remind me to reply later tonight'
+        : followup.timing === 'tomorrow'
+          ? 'remind me to reply later tomorrow'
+          : followup.timing.startsWith('tomorrow_')
             ? `remind me to reply later ${followup.timing.replace('_', ' ')}`
-            : 'remind me to reply later tonight';
+            : followup.timing.startsWith('today_')
+              ? `remind me to reply later ${followup.timing.replace('_', ' ')}`
+              : 'remind me to reply later tonight';
   return {
     capabilityId: 'communication.manage_tracking',
     normalizedText: text,
