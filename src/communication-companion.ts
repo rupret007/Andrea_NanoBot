@@ -2,7 +2,6 @@ import { randomUUID } from 'crypto';
 
 import {
   createTask,
-  deleteCommunicationThread,
   getAllChats,
   getCommunicationThread,
   getProfileSubjectByKey,
@@ -54,6 +53,10 @@ import type {
   ProfileSubject,
 } from './types.js';
 import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
+import {
+  forgetReviewedCommunication,
+  mentionsCompleteCommunicationForget,
+} from './communication-forget.js';
 
 export interface CommunicationPriorContext {
   personName?: string;
@@ -61,12 +64,14 @@ export interface CommunicationPriorContext {
   lastAnswerSummary?: string;
   conversationFocus?: string;
   communicationThreadId?: string;
+  communicationForgetReviewJson?: string;
   communicationSubjectIds?: string[];
   communicationLifeThreadIds?: string[];
   lastCommunicationSummary?: string;
 }
 
 export interface CommunicationContextInput {
+  ownerReviewAllowed?: boolean;
   channel: 'alexa' | 'telegram' | 'bluebubbles';
   groupFolder: string;
   chatJid?: string;
@@ -2464,6 +2469,14 @@ export function buildCommunicationOpenLoops(
 export function manageCommunicationTracking(
   input: CommunicationContextInput,
 ): CommunicationManageTrackingResult {
+  if (mentionsCompleteCommunicationForget(input.text || '')) {
+    return forgetReviewedCommunication({
+      ...input,
+      text: input.text || '',
+      threadId: input.priorContext?.communicationThreadId,
+      reviewJson: input.priorContext?.communicationForgetReviewJson,
+    });
+  }
   const now = input.now || new Date();
   const analysis = analyzeCommunicationMessage(input);
   const thread = analysis.thread;
@@ -2533,13 +2546,6 @@ export function manageCommunicationTracking(
         nextSuggestion: 'If anything changes, ask what is still open here.',
       }),
       thread: readUpdatedThread(),
-    };
-  }
-  if (/forget this conversation thread completely/i.test(utterance)) {
-    deleteCommunicationThread(thread.id);
-    return {
-      ok: true,
-      replyText: 'Okay. I removed that conversation thread entirely.',
     };
   }
   if (/save this conversation under .+ thread/i.test(utterance)) {

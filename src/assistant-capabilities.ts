@@ -170,6 +170,11 @@ import type {
   CompanionRouteTimeWindowKind,
 } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
+import {
+  buildCommunicationForgetReview,
+  forgetReviewedCommunication,
+  mentionsCompleteCommunicationForget,
+} from './communication-forget.js';
 import { formatThreadSummaryWindowLabel } from './thread-summary-routing.js';
 import { TIMEZONE } from './config.js';
 import { resolveOwnerCalendarWindow } from './timezone.js';
@@ -361,6 +366,7 @@ export interface AssistantCapabilityContext {
     knowledgeSourceMatches?: string[];
     knowledgeLastQuery?: string;
     communicationThreadId?: string;
+    communicationForgetReviewJson?: string;
     communicationSubjectIds?: string[];
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
@@ -396,6 +402,8 @@ export interface AssistantCapabilityContext {
 }
 
 export interface AssistantCapabilityInput {
+  /** Immutable inbound text, before any optional interpreter rewrite. */
+  rawText?: string;
   text?: string;
   canonicalText?: string;
   personName?: string;
@@ -465,6 +473,7 @@ export interface AssistantCapabilityConversationSeed {
     knowledgeSourceMatches?: string[];
     knowledgeLastQuery?: string;
     communicationThreadId?: string;
+    communicationForgetReviewJson?: string;
     communicationSubjectIds?: string[];
     communicationLifeThreadIds?: string[];
     lastCommunicationSummary?: string;
@@ -513,6 +522,11 @@ export interface AssistantCapabilityConversationSeed {
 }
 
 export interface AssistantCapabilityResult {
+  /** Exact deterministic local tracking status, not autonomous task completion. */
+  communicationTrackingPresentation?: {
+    kind: 'review' | 'forget_status';
+    text: string;
+  };
   handled: boolean;
   capabilityId?: AssistantCapabilityId;
   replyText?: string;
@@ -2076,6 +2090,7 @@ function buildCommunicationContinuationCandidate(input: {
 }
 
 function buildCommunicationConversationSeed(input: {
+  reviewContext?: AssistantCapabilityContext;
   descriptor: AssistantCapabilityDescriptor;
   summaryText: string;
   conversationFocus: string;
@@ -2109,6 +2124,13 @@ function buildCommunicationConversationSeed(input: {
       activeCapabilityId: input.descriptor.id,
       conversationFocus: input.conversationFocus,
       communicationThreadId: input.communicationThreadId,
+      communicationForgetReviewJson: input.reviewContext?.groupFolder
+        ? buildCommunicationForgetReview({
+            ...input.reviewContext,
+            groupFolder: input.reviewContext.groupFolder,
+            threadId: input.communicationThreadId,
+          })
+        : undefined,
       communicationSubjectIds: input.communicationSubjectIds,
       communicationLifeThreadIds: input.communicationLifeThreadIds,
       lastCommunicationSummary:
@@ -4446,6 +4468,7 @@ async function runCommunicationUnderstandCapability(
     conversationSeed: buildCommunicationConversationSeed({
       descriptor,
       summaryText: analysis.summaryText || 'I looked at the conversation.',
+      reviewContext: context,
       conversationFocus: analysis.messageText || rawCommunicationText,
       personName: analysis.linkedSubjects[0]?.displayName,
       threadId: analysis.linkedLifeThreads[0]?.id,
@@ -4462,6 +4485,7 @@ async function runCommunicationUnderstandCapability(
       continuationCandidate,
       supportedFollowups,
     }),
+    communicationTrackingPresentation: { kind: 'review', text: replyText },
     trace: buildCapabilityTrace(
       descriptor,
       context,
@@ -6021,6 +6045,7 @@ async function runCommunicationOpenLoopsCapability(
     conversationSeed: buildCommunicationConversationSeed({
       descriptor,
       summaryText: openLoops.summaryText,
+      reviewContext: openLoops.items.length === 1 ? context : undefined,
       conversationFocus:
         input.canonicalText || input.text || openLoops.summaryText,
       personName: firstItem?.personName,
@@ -6030,6 +6055,7 @@ async function runCommunicationOpenLoopsCapability(
       continuationCandidate,
       supportedFollowups,
     }),
+    communicationTrackingPresentation: { kind: 'review', text: replyText },
     trace: buildCapabilityTrace(
       descriptor,
       context,
@@ -6519,6 +6545,45 @@ async function runCommunicationManageCapability(
   input: AssistantCapabilityInput,
 ): Promise<AssistantCapabilityResult> {
   if (!context.groupFolder) return { handled: false };
+  const rawCommunicationText =
+    input.rawText ?? input.text ?? input.canonicalText ?? '';
+  if (
+    mentionsCompleteCommunicationForget(rawCommunicationText) ||
+    mentionsCompleteCommunicationForget(input.text || '') ||
+    mentionsCompleteCommunicationForget(input.canonicalText || '')
+  ) {
+    const result = forgetReviewedCommunication({
+      channel: context.channel,
+      groupFolder: context.groupFolder,
+      chatJid: context.chatJid,
+      ownerReviewAllowed: context.ownerReviewAllowed,
+      text: rawCommunicationText,
+      threadId: context.priorSubjectData?.communicationThreadId,
+      reviewJson: context.priorSubjectData?.communicationForgetReviewJson,
+      now: context.now,
+    });
+    // Both success and refusal retire the destructive review. Never reconstruct
+    // a conversation seed or follow-up from a forgotten summary or stale target.
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText: result.replyText,
+      outputShape: descriptor.preferredOutputShape[context.channel],
+      followupActions: [],
+      communicationTrackingPresentation: {
+        kind: 'forget_status',
+        text: result.replyText,
+      },
+      trace: buildCapabilityTrace(
+        descriptor,
+        context,
+        'local_companion',
+        result.ok
+          ? 'removed owner-reviewed local communication tracking'
+          : 'refused unbound or unsafe complete-forget',
+      ),
+    };
+  }
   const namedRemind = tryNamedOpenLoopRemind(descriptor, context, input);
   if (namedRemind) {
     return namedRemind;
@@ -6527,7 +6592,6 @@ async function runCommunicationManageCapability(
   if (namedSave) {
     return namedSave;
   }
-  const rawCommunicationText = input.text || input.canonicalText || '';
   const result = manageCommunicationTracking({
     channel: context.channel,
     groupFolder: context.groupFolder,
