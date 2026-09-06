@@ -583,7 +583,7 @@ export function formatNamedMessagesOpenLoopReply(params: {
   });
   const clockHint =
     params.gist.ownerOwesReply && !params.isGroup && params.channel !== 'alexa'
-      ? 'For a specific time, say `remind me to reply tomorrow at 9am`.'
+      ? 'For a specific time, say `remind me to reply tomorrow at 9am` or `remind me Friday at 9am`.'
       : undefined;
   const coverage =
     'This is the current thread state from the available local synced snapshot, not device unread status. I did not send anything.';

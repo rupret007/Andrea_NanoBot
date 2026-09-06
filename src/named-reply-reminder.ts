@@ -5,26 +5,69 @@ import type {
   ReminderOperationIdentity,
 } from './local-reminder.js';
 
+export const NAMED_REPLY_WEEKDAYS = [
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+] as const;
+
+export type NamedReplyWeekday = (typeof NAMED_REPLY_WEEKDAYS)[number];
+export type NamedReplyClockDay = 'today' | 'tomorrow' | NamedReplyWeekday;
+
 export type NamedReplyClockTiming =
   | {
       kind: 'clock';
-      day: 'today' | 'tomorrow';
+      day: NamedReplyClockDay;
       hour24: number;
       minute: number;
     }
   | { kind: 'invalid_clock' };
 
+const WEEKDAY_INDEX: Record<NamedReplyWeekday, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
 const CLOCK_SHAPE = '[+-]?\\d+(?::\\d+)?\\s*(?:am|pm)?';
 const REMIND_LEAD =
   'remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))?';
+const WEEKDAY = NAMED_REPLY_WEEKDAYS.join('|');
+const DAY_TOKEN = `today|tomorrow|(?:on\\s+)?(?:${WEEKDAY})`;
 const DAY_FIRST = new RegExp(
-  `^${REMIND_LEAD} (today|tomorrow) at\\s*(${CLOCK_SHAPE})[.!?]?$`,
+  `^${REMIND_LEAD} (${DAY_TOKEN}) at\\s*(${CLOCK_SHAPE})[.!?]?$`,
   'i',
 );
 const CLOCK_FIRST = new RegExp(
-  `^${REMIND_LEAD} at\\s*(${CLOCK_SHAPE}) (today|tomorrow)[.!?]?$`,
+  `^${REMIND_LEAD} at\\s*(${CLOCK_SHAPE}) (${DAY_TOKEN})[.!?]?$`,
   'i',
 );
+
+function isNamedReplyWeekday(value: string): value is NamedReplyWeekday {
+  return (NAMED_REPLY_WEEKDAYS as readonly string[]).includes(value);
+}
+
+function normalizeClockDay(raw: string): NamedReplyClockDay | null {
+  const cleaned = raw.replace(/^on\s+/i, '').toLowerCase();
+  if (cleaned === 'today' || cleaned === 'tomorrow') return cleaned;
+  return isNamedReplyWeekday(cleaned) ? cleaned : null;
+}
+
+export function isNamedReplyClockDay(
+  value: string,
+): value is NamedReplyClockDay {
+  return (
+    value === 'today' || value === 'tomorrow' || isNamedReplyWeekday(value)
+  );
+}
 
 /** Only a standalone timing choice may inherit the named reply target. */
 export function parseNamedReplyClockTiming(
@@ -34,12 +77,10 @@ export function parseNamedReplyClockTiming(
   const dayFirst = normalized.match(DAY_FIRST);
   const clockFirst = dayFirst ? null : normalized.match(CLOCK_FIRST);
   if (!dayFirst && !clockFirst) return null;
-  const day = (dayFirst?.[1] || clockFirst?.[2] || '').toLowerCase() as
-    | 'today'
-    | 'tomorrow';
+  const day = normalizeClockDay(dayFirst?.[1] || clockFirst?.[2] || '');
   const clockText = dayFirst?.[2] || clockFirst?.[1] || '';
   const clock = clockText.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
-  if (!clock) return { kind: 'invalid_clock' };
+  if (!day || !clock) return { kind: 'invalid_clock' };
   const hour = Number(clock[1]);
   const minute = Number(clock[2] || '0');
   if (hour < 1 || hour > 12 || minute < 0 || minute > 59) {
@@ -125,6 +166,53 @@ function resolveExactCivilMinute(
   return matches.size === 1 ? new Date([...matches][0]) : null;
 }
 
+function ownerWeekdayIndex(today: CivilMinute): number {
+  return new Date(Date.UTC(today.year, today.month - 1, today.day)).getUTCDay();
+}
+
+function namedReplyDayOffset(
+  day: NamedReplyClockDay,
+  today: CivilMinute,
+): number {
+  if (day === 'today') return 0;
+  if (day === 'tomorrow') return 1;
+  return (WEEKDAY_INDEX[day] - ownerWeekdayIndex(today) + 7) % 7;
+}
+
+function resolveNamedReplyClockInstant(
+  timing: Extract<NamedReplyClockTiming, { kind: 'clock' }>,
+  today: CivilMinute,
+  now: Date,
+  formatter: Intl.DateTimeFormat,
+): Date | null {
+  const resolveOffset = (dayOffset: number): Date | null => {
+    const civilDate = new Date(
+      Date.UTC(today.year, today.month - 1, today.day + dayOffset),
+    );
+    return resolveExactCivilMinute(
+      {
+        year: civilDate.getUTCFullYear(),
+        month: civilDate.getUTCMonth() + 1,
+        day: civilDate.getUTCDate(),
+        hour: timing.hour24,
+        minute: timing.minute,
+      },
+      formatter,
+    );
+  };
+
+  const dayOffset = namedReplyDayOffset(timing.day, today);
+  const first = resolveOffset(dayOffset);
+  if (
+    first &&
+    first.getTime() <= now.getTime() &&
+    isNamedReplyWeekday(timing.day)
+  ) {
+    return resolveOffset(dayOffset + 7);
+  }
+  return first;
+}
+
 /** Build a local, owner-addressed task; this function never persists or sends. */
 export function planNamedReplyClockReminder(input: {
   timing: NamedReplyClockTiming;
@@ -140,7 +228,7 @@ export function planNamedReplyClockReminder(input: {
   const timeZone = input.timeZone.trim();
   if (
     timing.kind !== 'clock' ||
-    !['today', 'tomorrow'].includes(timing.day) ||
+    !isNamedReplyClockDay(timing.day) ||
     !Number.isInteger(timing.hour24) ||
     timing.hour24 < 0 ||
     timing.hour24 > 23 ||
@@ -172,21 +260,10 @@ export function planNamedReplyClockReminder(input: {
     throw error;
   }
   const today = readCivilMinute(now, formatter);
-  const civilDate = new Date(
-    Date.UTC(
-      today.year,
-      today.month - 1,
-      today.day + (timing.day === 'tomorrow' ? 1 : 0),
-    ),
-  );
-  const scheduledAt = resolveExactCivilMinute(
-    {
-      year: civilDate.getUTCFullYear(),
-      month: civilDate.getUTCMonth() + 1,
-      day: civilDate.getUTCDate(),
-      hour: timing.hour24,
-      minute: timing.minute,
-    },
+  const scheduledAt = resolveNamedReplyClockInstant(
+    timing,
+    today,
+    now,
     formatter,
   );
   if (!scheduledAt || scheduledAt.getTime() <= now.getTime()) return null;

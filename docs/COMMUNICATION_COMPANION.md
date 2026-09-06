@@ -11,6 +11,7 @@ Communication companion is the core of journeys like:
 - `What should I say back?`
 - `Remind me later.`
 - `Remind me to reply later tonight.`
+- `Remind me Friday at 9am.`
 
 The flagship product goal is that Andrea can move from open loop -> draft -> approve/send or defer without making the user restate the whole conversation.
 The registered owner Telegram chat and explicitly configured Messages self-thread share the same short-lived recent-summary continuation seed when both are bound to the same companion group folder. That lets a recent-text review or summary started on either owner surface continue on the other without restating it. Named-thread and recent-text `today` / `yesterday` / `this week` windows follow the configured owner `TIMEZONE`, not the process host calendar. Ordinary Messages contacts/groups, non-owner Telegram chats, unconfigured self-thread placeholders, and differently bound folders cannot read, write, or clear that owner seed. Generic seeds expire after ten minutes; review-backed seeds retain only their independently validated review window. Other conversation state remains scoped according to its own feature contract.
@@ -177,19 +178,24 @@ Bob's name:
 - `remind me to reply tomorrow at 9am`
 - `remind me at 9:30pm today`
 - `remind me about that tomorrow at 12pm`
+- `remind me Friday at 9am`
+- `remind me at 9:30pm on Monday`
 
-Use **today or tomorrow**, a valid clock time, and explicit **AM or PM**.
-The new exact-time path uses the configured owner `TIMEZONE` even when the
-host runs in another timezone. It confirms the concrete date, time and zone
-and stores that exact UTC instant. The reminder says to reply to Bob and is
-addressed to the current registered owner control chat. It does not send Bob
-a message or create a draft or calendar event.
+Use **today, tomorrow, or a weekday**, a valid clock time, and explicit
+**AM or PM**. The exact-time path uses the configured owner `TIMEZONE`
+even when the host runs in another timezone. It confirms the concrete
+date, time and zone and stores that exact UTC instant. A weekday whose
+clock has already passed this week uses the next occurrence of that
+weekday. The reminder says to reply to Bob and is addressed to the
+current registered owner control chat. It does not send Bob a message
+or create a draft or calendar event.
 
-An invalid or past time, a spring clock gap, or a repeated fall clock hour
-creates no reminder. Ask what is still open with that person again and choose
-a future unambiguous time. This path never silently replaces an exact choice
-with tonight. The existing `remind me later` daypart behavior is unchanged.
-Relative delays and weekday/date requests are not added by this slice.
+An invalid or past today/tomorrow time, a spring clock gap, or a
+repeated fall clock hour creates no reminder. Ask what is still open
+with that person again and choose a future unambiguous time. This path
+never silently replaces an exact choice with tonight. The existing
+`remind me later` daypart behavior is unchanged. Relative delays and
+calendar-date requests are not added by this slice.
 
 The named continuation must still have an offered reminder and one valid
 current direct-conversation target. Missing or changed targets, groups,
@@ -241,10 +247,10 @@ BlueBubbles:
   (`Dinner at seven tonight`, `Practice at eight tonight`) instead of generic
   `Thanks for the update.` / `Got it.` / `circle back` or a quote dump;
   named who-do-I-owe asks (`what's still open with Bob`, or `what do I owe
-  people` after that named summarize) use the same gist and make the next
+people` after that named summarize) use the same gist and make the next
   human step explicit: `draft Bob` or `yes` creates one unsent
   `requiresApproval` draft, `remind me later` or `remind me to
-  reply later tonight` creates a local tonight reminder for Jeff, and
+reply later tonight` creates a local tonight reminder for Jeff, and
   `save under thread` or `save that` keeps the owed turn under that
   named person, and `look at that` or `what's in that photo` tries to
   read unseen inbound image/video from that named thread. Photo-only
@@ -253,13 +259,13 @@ BlueBubbles:
   save-under-thread, and look-at-that are not sends either. After the
   draft exists, only standalone `send it` / `send it now` / `send now`
   can send. Bare `yes` / `ok` never authorize a send. Generic `what do
-  I owe people` stays on explicitly brought-in companion threads and
+I owe people` stays on explicitly brought-in companion threads and
   does not crawl unnamed inbox threads. An empty generic result asks
   Jeff to name one person (for example, `what's still open with Bob?`)
   instead of ending at the privacy boundary; that handoff does not read
   a thread, create a draft, reminder, save, media look, or send
   controls, and a leftover `yes`, `remind me later`, `save under
-  thread`, or `look at that` there does not draft, remind, save, or
+thread`, or `look at that` there does not draft, remind, save, or
   look. Already-replied named threads do not offer yes-to-draft,
   remind-me-later, save-under-thread, or look-at-that. Withheld
   questions and unseen photo-only turns still offer `remind me later`
@@ -305,6 +311,7 @@ For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AN
 - `What's still open with Candace?`
 - `Remind me later.`
 - `Remind me to reply later tonight.`
+- `Remind me Friday at 9am.`
 - `Save this conversation under the Candace thread.`
 - `Keep that as a draft for now.`
 - `Don't surface this automatically.`

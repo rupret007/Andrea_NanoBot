@@ -5,6 +5,18 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Named owed replies now accept a weekday clock as well as today or
+  tomorrow: after `what's still open with Bob`, say `remind me Friday at
+9am` or `remind me at 9:30pm on Monday`. The reminder still keeps Bob
+  as the subject and the registered owner control chat as its
+  destination. Weekdays follow the configured owner timezone; if that
+  weekday's clock has already passed, Andrea uses the next occurrence
+  instead of inventing tonight. Invalid, past today/tomorrow, nonexistent
+  or repeated daylight-saving clock times still create no task. No
+  message draft, send, calendar event, provider call or history refresh
+  is introduced. Private API remains off and both send-path files remain
+  unchanged.
+
 - Named owed replies now accept an exact local reminder time: after
   `what's still open with Bob`, say `remind me to reply tomorrow at 9am`
   or `remind me at 9:30pm today`. The reminder keeps Bob as the subject
@@ -80,7 +92,7 @@ upstream NanoClaw names that were current when those changes shipped.
   AppleScript-only delivery path are unchanged.
 - Named who-do-I-owe / draft-for-Bob-yes is now locally testable without
   sending: named open-loop stays thread-grounded, generic `what do I owe
-  people` does not crawl unnamed inbox or leftover person titles, already-
+people` does not crawl unnamed inbox or leftover person titles, already-
   replied reports `Nothing open`, and Karen / non-owner surfaces get no
   Messages bodies, seed, or actions. `draft Bob` stays `requiresApproval`.
   Open-loop copy no longer invites a leftover `send it` before a draft
