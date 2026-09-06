@@ -13525,6 +13525,108 @@ export function decideCommunicationThreadIdentity(params: {
   return transact();
 }
 
+/** A versioned snapshot of the entire persisted tracking record, not just its timestamp. */
+export function communicationThreadFingerprint(
+  record: CommunicationThreadRecord,
+): string {
+  const snapshot: Required<CommunicationThreadRecord> = {
+    id: record.id,
+    groupFolder: record.groupFolder,
+    title: record.title,
+    linkedSubjectIds: record.linkedSubjectIds || [],
+    linkedLifeThreadIds: record.linkedLifeThreadIds || [],
+    channel: record.channel,
+    channelChatJid: record.channelChatJid || null,
+    lastInboundSummary: record.lastInboundSummary || null,
+    lastOutboundSummary: record.lastOutboundSummary || null,
+    followupState: record.followupState,
+    urgency: record.urgency,
+    followupDueAt: record.followupDueAt || null,
+    suggestedNextAction: record.suggestedNextAction || null,
+    toneStyleHints: record.toneStyleHints || [],
+    lastContactAt: record.lastContactAt || null,
+    lastMessageId: record.lastMessageId || null,
+    linkedTaskId: record.linkedTaskId || null,
+    inferenceState: record.inferenceState,
+    trackingMode: record.trackingMode,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    disabledAt: record.disabledAt || null,
+  };
+  return createHash('sha256')
+    .update(JSON.stringify({ version: 1, thread: snapshot }))
+    .digest('hex');
+}
+
+/**
+ * Removes only an unchanged, explicitly reviewed local tracking record and
+ * its directly derived records. The caller must separately authorize the
+ * owner surface and the freshness/presentation of that review. Independent
+ * messages, profiles, life threads, reminders, drafts, and outcomes survive.
+ * A database failure rolls back the entire operation and is not a success.
+ */
+export function deleteReviewedCommunicationThread(params: {
+  groupFolder: string;
+  threadId: string;
+  expectedFingerprint: string;
+}): boolean {
+  if (
+    typeof params.groupFolder !== 'string' ||
+    !isValidGroupFolder(params.groupFolder) ||
+    typeof params.threadId !== 'string' ||
+    !params.threadId.trim() ||
+    typeof params.expectedFingerprint !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(params.expectedFingerprint)
+  ) {
+    return false;
+  }
+  const transact = db.transaction(() => {
+    const thread = getCommunicationThread(params.threadId);
+    if (
+      !thread ||
+      thread.groupFolder !== params.groupFolder ||
+      communicationThreadFingerprint(thread) !== params.expectedFingerprint
+    ) {
+      return false;
+    }
+    // Legacy/corrupt child rows must not let ON DELETE CASCADE cross a group
+    // boundary. Refuse the whole deletion instead of sweeping another group.
+    const foreignChild = db
+      .prepare(
+        `
+      SELECT 1 FROM communication_signals
+      WHERE communication_thread_id = ? AND group_folder <> ?
+      UNION ALL
+      SELECT 1 FROM communication_identity_reviews
+      WHERE thread_id = ? AND group_folder <> ?
+      LIMIT 1
+    `,
+      )
+      .get(thread.id, params.groupFolder, thread.id, params.groupFolder);
+    if (foreignChild) return false;
+    db.prepare(
+      'DELETE FROM communication_identity_reviews WHERE thread_id = ?',
+    ).run(thread.id);
+    db.prepare(
+      'DELETE FROM communication_signals WHERE communication_thread_id = ?',
+    ).run(thread.id);
+    db.prepare(
+      `DELETE FROM outcomes
+       WHERE group_folder = ? AND source_type = 'communication_thread' AND source_key = ?`,
+    ).run(params.groupFolder, thread.id);
+    const deleted = db
+      .prepare(
+        'DELETE FROM communication_threads WHERE id = ? AND group_folder = ?',
+      )
+      .run(thread.id, params.groupFolder);
+    if (deleted.changes !== 1) {
+      throw new Error('Reviewed communication thread was not deleted.');
+    }
+    return true;
+  });
+  return transact.immediate();
+}
+
 export function deleteCommunicationThread(id: string): boolean {
   db.prepare(
     'DELETE FROM communication_identity_reviews WHERE thread_id = ?',

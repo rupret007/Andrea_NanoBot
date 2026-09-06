@@ -182,7 +182,13 @@ import {
   continueAssistantCapabilityFromPriorSubjectData,
   matchAssistantCapabilityRequest,
 } from './assistant-capability-router.js';
-import { buildAssistantCapabilityExecutionInput } from './assistant-capability-input.js';
+import {
+  buildAssistantCapabilityExecutionInput,
+  hasCompleteCommunicationForgetInput,
+  isExactConfirmedCommunicationTrackingPresentation,
+  resolveCommunicationTrackingPresentation,
+  shouldRetireCommunicationForgetContext,
+} from './assistant-capability-input.js';
 import {
   namedOpenLoopHistoryQuery,
   resolveNamedOpenLoopBinding,
@@ -5076,17 +5082,22 @@ async function processClaimedGroupMessages(
             queuedBlueBubblesAuthorizationFence.pauseGeneration,
         }
       : task;
-  const queuedOpenClawRoute = resolveOpenClawDelegationRoute({
-    rawMessage: queuedLatestMessage?.content || '',
-    mainControlChat: isOpenClawOwnerControlSurface({
-      mainControlChat: false,
-      channelName: channel.name,
-      blueBubblesSelfThread:
-        queuedLatestMessage?.is_from_me === true &&
-        isConfiguredBlueBubblesSelfThreadAliasJid(chatJid),
-    }),
-    delegationEnabled: isOpenClawDelegationEnabled(),
+  const queuedCompleteForget = hasCompleteCommunicationForgetInput({
+    rawText: queuedLatestMessage?.content || '',
   });
+  const queuedOpenClawRoute = queuedCompleteForget
+    ? { action: 'none' as const }
+    : resolveOpenClawDelegationRoute({
+        rawMessage: queuedLatestMessage?.content || '',
+        mainControlChat: isOpenClawOwnerControlSurface({
+          mainControlChat: false,
+          channelName: channel.name,
+          blueBubblesSelfThread:
+            queuedLatestMessage?.is_from_me === true &&
+            isConfiguredBlueBubblesSelfThreadAliasJid(chatJid),
+        }),
+        delegationEnabled: isOpenClawDelegationEnabled(),
+      });
   if (queuedOpenClawRoute.action === 'delegate' && queuedLatestMessage) {
     const startedAt = Date.now();
     lastAgentTimestamp[chatJid] = latestObservedTimestamp;
@@ -5272,6 +5283,9 @@ async function processClaimedGroupMessages(
   const latestUserMessage = missedMessages.at(-1);
   const currentTurnOwnerAuthored = latestUserMessage?.is_from_me === true;
   const rawLastContent = latestUserMessage?.content ?? '';
+  const shouldHandleCompleteForgetLocally = hasCompleteCommunicationForgetInput(
+    { rawText: rawLastContent },
+  );
   let lastContent = chatJid.startsWith('bb:')
     ? normalizeBlueBubblesCompanionPrompt(rawLastContent)
     : rawLastContent;
@@ -5311,7 +5325,7 @@ async function processClaimedGroupMessages(
     reminderOperationIdentity,
   );
   const preHarnessMessageActionOperation =
-    conversationChannel === 'bluebubbles'
+    !shouldHandleCompleteForgetLocally && conversationChannel === 'bluebubbles'
       ? interpretMessageActionFollowup(lastContent)
       : null;
   const preHarnessMessageAction = preHarnessMessageActionOperation
@@ -5328,6 +5342,7 @@ async function processClaimedGroupMessages(
       ? 'replay'
       : 'live';
   const shouldHandleProofDrillLocally =
+    !shouldHandleCompleteForgetLocally &&
     shouldHandleBlueBubblesProofDrillLocally({
       conversationChannel,
       requestRoute: requestPolicy.route,
@@ -5344,6 +5359,7 @@ async function processClaimedGroupMessages(
     isReleaseReadinessActiveReuseRequest(lastContent);
   const turnHarnessStartedAt = Date.now();
   const turnAgentHarness: TurnAgentHarnessContext | null =
+    shouldHandleCompleteForgetLocally ||
     shouldHandleProofDrillLocally ||
     shouldHandleOutcomeReviewLocally ||
     shouldHandleDurableContinuityLocally ||
@@ -5475,6 +5491,7 @@ async function processClaimedGroupMessages(
     replyKind?: CognitiveReplyKind;
     completionEvidence?: AdaptiveEvidence[];
     durableCompletionVerified?: boolean;
+    onExactConfirmedPresentation?: (presented: boolean) => void;
   }) => {
     const requestedReplyKind = params.replyKind || 'completion';
     const authorizationNow = new Date();
@@ -5648,6 +5665,14 @@ async function processClaimedGroupMessages(
         nextUnconfirmedChunkIndex: sent.nextUnconfirmedChunkIndex,
       });
     }
+    params.onExactConfirmedPresentation?.(
+      isExactConfirmedCommunicationTrackingPresentation({
+        authorizationAllowed: deliveryAuthorization.allowed,
+        requestedText: params.text,
+        deliveredText: replyText,
+        deliveryOutcome: delivery.deliveryOutcome,
+      }),
+    );
     latestDeliveredTurnEvaluation = turnEvaluation;
     await runPostDeliveryEnrichment({
       run: async () => {
@@ -5864,7 +5889,9 @@ async function processClaimedGroupMessages(
       replyKind: params.replyKind,
     });
 
-  const openClawPresenceReply = maybeBuildOpenClawPresenceReply(missedMessages);
+  const openClawPresenceReply = shouldHandleCompleteForgetLocally
+    ? null
+    : maybeBuildOpenClawPresenceReply(missedMessages);
   if (openClawPresenceReply) {
     try {
       await sendAssistantReplyWithFeedback({
@@ -9914,12 +9941,13 @@ async function processClaimedGroupMessages(
       chatJid,
       now,
     );
-    let capabilityMatch =
-      currentInboundMediaCapabilityMatch ||
-      continueAssistantCapabilityFromPriorSubjectData(
-        lastContent,
-        priorAssistantCapabilitySeed?.subjectData,
-      );
+    let capabilityMatch = shouldHandleCompleteForgetLocally
+      ? matchAssistantCapabilityRequest(rawLastContent)
+      : currentInboundMediaCapabilityMatch ||
+        continueAssistantCapabilityFromPriorSubjectData(
+          lastContent,
+          priorAssistantCapabilitySeed?.subjectData,
+        );
     let capabilityRouteSource:
       | 'local_fast_path'
       | 'openai_router'
@@ -9989,33 +10017,36 @@ async function processClaimedGroupMessages(
         }
         return selectedWork;
       };
-    const executiveContext = isCognitiveExecutiveCandidate(lastContent)
-      ? beginCognitiveExecutiveTurn({
-          rawAsk: lastContent,
-          channel: conversationChannel,
-          groupFolder: group.folder,
-          chatJid,
-          threadId: missedMessages.at(-1)?.thread_id || null,
-          actorId: missedMessages.at(-1)?.sender || null,
-          turnId: missedMessages.at(-1)?.id || null,
-          requestRoute: requestPolicy.route,
-          selectedWork: await loadSelectedWorkForExecutive(),
-          activeContextSummary:
-            priorAssistantCapabilitySeed?.summaryText ||
-            (priorDailyContext = getDailyCompanionContext(chatJid, now))
-              ?.summaryText ||
-            null,
-          priorSubjectData: priorAssistantCapabilitySeed?.subjectData as Record<
-            string,
-            unknown
-          > | null,
-          replyTo: missedMessages.at(-1)?.reply_to || null,
-          capabilityMatchOverride: capabilityMatch,
-          now,
-          personalContextPacket:
-            turnAgentHarness?.personalContextPacket || null,
-        })
-      : null;
+    const executiveContext =
+      !shouldHandleCompleteForgetLocally &&
+      isCognitiveExecutiveCandidate(lastContent)
+        ? beginCognitiveExecutiveTurn({
+            rawAsk: lastContent,
+            channel: conversationChannel,
+            groupFolder: group.folder,
+            chatJid,
+            threadId: missedMessages.at(-1)?.thread_id || null,
+            actorId: missedMessages.at(-1)?.sender || null,
+            turnId: missedMessages.at(-1)?.id || null,
+            requestRoute: requestPolicy.route,
+            selectedWork: await loadSelectedWorkForExecutive(),
+            activeContextSummary:
+              priorAssistantCapabilitySeed?.summaryText ||
+              (priorDailyContext = getDailyCompanionContext(chatJid, now))
+                ?.summaryText ||
+              null,
+            priorSubjectData:
+              priorAssistantCapabilitySeed?.subjectData as Record<
+                string,
+                unknown
+              > | null,
+            replyTo: missedMessages.at(-1)?.reply_to || null,
+            capabilityMatchOverride: capabilityMatch,
+            now,
+            personalContextPacket:
+              turnAgentHarness?.personalContextPacket || null,
+          })
+        : null;
     if (executiveContext?.capabilityMatch) {
       capabilityMatch = executiveContext.capabilityMatch;
       if (capabilityRouteSource === 'deterministic_fallback') {
@@ -10104,6 +10135,7 @@ async function processClaimedGroupMessages(
       );
       const capabilityInput = buildAssistantCapabilityExecutionInput({
         lastContent,
+        rawLastContent,
         capabilityMatch,
         priorSubjectData: priorAssistantCapabilitySeed?.subjectData,
       });
@@ -10304,6 +10336,17 @@ async function processClaimedGroupMessages(
         },
         input: capabilityInput,
       });
+      if (
+        shouldRetireCommunicationForgetContext({
+          input: capabilityInput,
+          handled: result.handled,
+          capabilityId: result.capabilityId,
+        })
+      ) {
+        // Deletion/refusal is settled locally. Retire the old summary and
+        // receipt before delivery can fail; a failed reply must not revive it.
+        clearSharedAssistantCapabilitySeed(chatJid);
+      }
       if (historyRefreshDisclosure && result.replyText) {
         const disclosure = formatMessagesHistoryRefreshDisclosure({
           ...historyRefreshDisclosure,
@@ -10360,6 +10403,17 @@ async function processClaimedGroupMessages(
       return false;
     }
 
+    const trackingPresentation =
+      resolveCommunicationTrackingPresentation(result);
+    const pendingTrackingReview =
+      result.conversationSeed?.subjectData?.communicationForgetReviewJson;
+    if (pendingTrackingReview && result.conversationSeed?.subjectData) {
+      // A generated review is not authority until its exact text is presented.
+      // Also retire the previous review so failed delivery cannot target it.
+      delete result.conversationSeed.subjectData.communicationForgetReviewJson;
+      clearSharedAssistantCapabilitySeed(chatJid);
+    }
+    let trackingReviewPresented = false;
     try {
       const explicitHandoffTarget = resolveExplicitCompanionHandoffTarget(
         lastContent,
@@ -10572,8 +10626,25 @@ async function processClaimedGroupMessages(
           traceReason:
             result.trace?.reason || 'handled shared assistant capability',
           traceNotes: result.trace?.notes || [],
-          replyKind: 'completion',
+          replyKind: trackingPresentation?.replyKind || 'completion',
+          preserveStructuredText: trackingPresentation?.preserveStructuredText,
+          skipBlueBubblesActionRehydration: Boolean(trackingPresentation),
+          onExactConfirmedPresentation: trackingPresentation
+            ? (presented) => {
+                trackingReviewPresented =
+                  presented && trackingPresentation.kind === 'review';
+              }
+            : undefined,
         });
+      }
+
+      if (
+        pendingTrackingReview &&
+        trackingReviewPresented &&
+        result.conversationSeed?.subjectData
+      ) {
+        result.conversationSeed.subjectData.communicationForgetReviewJson =
+          pendingTrackingReview;
       }
 
       const actionBundle = result.messageAction
@@ -11069,6 +11140,20 @@ async function processClaimedGroupMessages(
     );
     return true;
   };
+
+  if (shouldHandleCompleteForgetLocally) {
+    // Raw complete-forget language cannot be rewritten into authorization or
+    // consumed as a mixed reminder, draft, calendar, or message-action request.
+    // The shared handler still checks current owner authority and review binding.
+    if (
+      requestPolicy.route === 'direct_assistant' ||
+      requestPolicy.route === 'protected_assistant'
+    ) {
+      return await tryHandleSharedAssistantCapability();
+    }
+    clearSharedAssistantCapabilitySeed(chatJid);
+    return true;
+  }
 
   if (await tryHandleLocalCalendarAutomation()) {
     return true;
@@ -20772,6 +20857,26 @@ async function main(): Promise<void> {
         return;
       }
 
+      const callbackCompleteForget = hasCompleteCommunicationForgetInput({
+        rawText: msg.content,
+      });
+      if (callbackCompleteForget) {
+        // Keep control-looking quotes/compound requests out of every provider
+        // and admin command path. Only the durable local handler may decide.
+        storeMessage(msg);
+        if (trustedInboundOwnerSurface) {
+          queue.enqueueMessageCheck(chatJid);
+        } else {
+          ignorePendingActionableIngressMessage({
+            chatJid,
+            messageId: msg.id,
+            disposition: 'complete_forget_rejected_non_owner',
+            now: new Date(),
+          });
+        }
+        return;
+      }
+
       const agiConfirmMatch = rawTrimmed.match(
         /^\/agi-(confirm|decline)\s+(\S+)/i,
       );
@@ -21844,6 +21949,13 @@ async function main(): Promise<void> {
             { chatJid, messageId: msg.id },
             'Ignored non-owner-authored BlueBubbles self-thread activity as control input',
           );
+          return;
+        }
+        const selfThreadCompleteForget = hasCompleteCommunicationForgetInput({
+          rawText: msg.content,
+        });
+        if (selfThreadCompleteForget) {
+          queue.enqueueMessageCheck(chatJid);
           return;
         }
         if (isBlueBubblesProofDrillStartRequest(msg.content)) {

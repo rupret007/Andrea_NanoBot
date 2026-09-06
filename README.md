@@ -529,6 +529,7 @@ Andrea now has a bounded communication-companion layer for real conversations an
 - Telegram and BlueBubbles are the richer communication surfaces
 - Alexa stays concise and can orient you around `what do I owe people`, `what's still open with Candace`, or `draft that for me`
 - open conversations can feed into daily guidance and evening carryover without creating passive inbox surveillance
+- after reviewing one local conversation, the standalone `forget this conversation thread completely` removes its tracking record and directly derived history from the same trusted owner control chat; original messages, saved profiles/life threads, reminders, and drafts remain. Changed, expired, or ambiguous reviews cannot authorize removal. `stop tracking that` still retains a disabled record.
 - relationship-aware guidance counts a conversation identity as resolved only after an existing person is explicitly linked or the owner dismisses the single-person link as not applicable; every decision is reversible
 
 Communication threads stay distinct from:

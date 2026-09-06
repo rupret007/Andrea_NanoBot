@@ -38,6 +38,7 @@ import {
 import { parseRecentTextReviewItemFollowup } from './recent-text-review.js';
 import type { CompanionRouteArguments } from './types.js';
 import { normalizeVoicePrompt } from './voice-ready.js';
+import { mentionsCompleteCommunicationForget } from './communication-forget.js';
 
 export interface AssistantCapabilityMatch {
   capabilityId: AssistantCapabilityId;
@@ -1505,6 +1506,15 @@ export function matchAssistantCapabilityRequest(
   text: string,
   context: AssistantCapabilityRequestContext = {},
 ): AssistantCapabilityMatch | null {
+  if (mentionsCompleteCommunicationForget(text)) {
+    return {
+      capabilityId: 'communication.manage_tracking',
+      normalizedText: text,
+      canonicalText: text,
+      reason:
+        'complete-forget language requires exact owner-reviewed tracking control',
+    };
+  }
   const normalized = normalizeText(text);
   if (!normalized) return null;
   const currentMediaMatch = matchMediaPrompt(normalized, context);

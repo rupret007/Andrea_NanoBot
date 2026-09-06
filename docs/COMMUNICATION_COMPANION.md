@@ -300,6 +300,33 @@ For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AN
 
 ## Practical Prompts
 
+### Remove local tracking, without deleting the inbox
+
+1. Review one conversation in the registered owner control chat: summarize an
+   explicitly supplied message, or use the generic `what do I owe people` view
+   when it shows exactly one local conversation.
+2. Within ten minutes, in that same control chat, say
+   `forget this conversation thread completely` on its own.
+3. Andrea removes only that unchanged tracking record, its signals and identity
+   review, and its directly derived outcome summary. The deletion is atomic;
+   a database failure leaves the records intact.
+
+Original messages, saved profile facts and life threads, reminders, drafts, and
+independently sourced outcomes remain. This is not inbox deletion or a permanent
+suppression rule: explicitly reviewing the original message again can create new
+tracking. `stop tracking that` keeps its existing meaning: disable tracking while
+retaining the record.
+
+Missing, expired, changed, cross-owner-surface, or multi-conversation reviews
+fail closed without analysis, fallback selection, or new tracking. Quotes,
+negations, questions, and compound commands do not authorize deletion. A
+recipient's Messages chat may differ from the owner's control chat; both are
+bound separately. Reply drafts and named inbox summaries do not grant a deletion
+review: ask for a fresh local single-conversation review first. Private API and
+the separate explicit-send fence are unchanged.
+
+### Other companion prompts
+
 - `Text Avery Example: Dinner is ready.`
 - `Send a text message to Avery Example saying Dinner is ready.`
 - `Summarize this message: Candace: Can you let me know if dinner still works tonight?`
@@ -320,6 +347,8 @@ For the draft -> approve -> send boundary itself, see [MESSAGING_TRUST_LADDER_AN
 ## Testing
 
 Focused validation:
+
+- `node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/communication-forget.test.ts src/communication-forget-db.test.ts src/assistant-capability-input.test.ts`
 
 - `node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/communication-companion.test.ts src/assistant-capabilities.test.ts src/assistant-capability-router.test.ts src/alexa-conversation.test.ts src/daily-companion.test.ts`
 - `npm run debug:communication-companion`
