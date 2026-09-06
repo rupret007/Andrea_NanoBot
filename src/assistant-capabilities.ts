@@ -58,6 +58,10 @@ import {
 } from './knowledge-library.js';
 import { handleRitualCommand } from './rituals.js';
 import { planContextualReminder } from './local-reminder.js';
+import {
+  parseNamedReplyClockTiming,
+  planNamedReplyClockReminder,
+} from './named-reply-reminder.js';
 import { persistReminderOperation } from './reminder-operation.js';
 import {
   analyzeCommunicationMessage,
@@ -6221,10 +6225,23 @@ function tryNamedOpenLoopRemind(
       context.priorSubjectData?.namedOpenLoopRemindOffered === true,
     activeCapabilityId: context.priorSubjectData?.activeCapabilityId,
   });
+  const clockTiming = parseNamedReplyClockTiming(
+    input.text || input.canonicalText || '',
+  );
   if (followup.kind === 'none') {
-    return null;
+    if (!clockTiming) return null;
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'Ask me what is still open with one person first, then give the reply reminder time. I did not create a reminder or send anything.',
+      followupActions: [],
+    };
   }
-  if (followup.kind === 'denied') {
+  if (
+    followup.kind === 'denied' ||
+    (clockTiming && context.ownerReviewAllowed !== true)
+  ) {
     return {
       handled: true,
       capabilityId: descriptor.id,
@@ -6256,9 +6273,42 @@ function tryNamedOpenLoopRemind(
     };
   }
 
+  if (clockTiming) {
+    const validation = validateNamedMessagesSummaryTarget({
+      seedJson: context.priorSubjectData?.namedMessagesSummaryTargetJson,
+      presentationChatJid: context.chatJid,
+    });
+    if (validation.state !== 'resolved' || validation.target.isGroup) {
+      return {
+        handled: true,
+        capabilityId: descriptor.id,
+        replyText:
+          'Ask me what is still open with that person again so I can bind the reminder to one current conversation. I did not create a reminder or send anything.',
+        followupActions: [],
+      };
+    }
+  }
+
   const reminderBody = `reply to ${followup.query}`;
   const now = context.now || new Date();
-  let planned = null;
+  const ownerTimeZone = context.calendarDeps?.timeZone || TIMEZONE;
+  let planned = clockTiming
+    ? planNamedReplyClockReminder({
+        timing: clockTiming,
+        reminderBody,
+        groupFolder: context.groupFolder,
+        chatJid: context.chatJid,
+        now,
+        timeZone: ownerTimeZone,
+        identity: {
+          channel: reminderChannelForNamedOpenLoop(context.channel),
+          inboundId:
+            context.currentMessageId ||
+            `named-open-loop-clock:${followup.query}:${context.chatJid}`,
+          timeZone: ownerTimeZone,
+        },
+      })
+    : null;
   for (const timing of namedOpenLoopRemindTimingCandidates(followup.timing)) {
     planned = planContextualReminder(
       timing,
@@ -6279,8 +6329,9 @@ function tryNamedOpenLoopRemind(
     return {
       handled: true,
       capabilityId: descriptor.id,
-      replyText:
-        'Tell me when you want that reply reminder. I did not send anything.',
+      replyText: clockTiming
+        ? 'I could not set that exact reply reminder. Use a future, unambiguous time today or tomorrow with AM or PM, for example `remind me to reply tomorrow at 9am`. Ask what is still open with that person again, then give the time. I did not create a reminder or send anything.'
+        : 'Tell me when you want that reply reminder. I did not send anything.',
       outputShape: descriptor.preferredOutputShape[context.channel],
       trace: buildCapabilityTrace(
         descriptor,
@@ -6330,7 +6381,10 @@ function tryNamedOpenLoopRemind(
       context,
       'local_companion',
       'created a local named open-loop reply reminder without sending',
-      [`person:${followup.query}`, `when:${followup.timing}`],
+      [
+        `person:${followup.query}`,
+        `when:${typeof followup.timing === 'string' ? followup.timing : JSON.stringify(followup.timing)}`,
+      ],
     ),
     followupActions: ['draft_follow_up', 'save_for_later', 'anything_else'],
   };

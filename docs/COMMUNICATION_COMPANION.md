@@ -168,6 +168,37 @@ Communication follow-through should keep these paths distinct:
 
 Andrea should never talk as if a calendar event was created when the real result was only a reminder or saved thread follow-through. A photo-only owed turn should not offer yes-to-draft before Jeff has wording or a real look.
 
+## Exact Reply Reminder Times
+
+In the registered Telegram owner chat or configured Messages self-thread,
+after `what's still open with Bob`, choose a precise time without repeating
+Bob's name:
+
+- `remind me to reply tomorrow at 9am`
+- `remind me at 9:30pm today`
+- `remind me about that tomorrow at 12pm`
+
+Use **today or tomorrow**, a valid clock time, and explicit **AM or PM**.
+The new exact-time path uses the configured owner `TIMEZONE` even when the
+host runs in another timezone. It confirms the concrete date, time and zone
+and stores that exact UTC instant. The reminder says to reply to Bob and is
+addressed to the current registered owner control chat. It does not send Bob
+a message or create a draft or calendar event.
+
+An invalid or past time, a spring clock gap, or a repeated fall clock hour
+creates no reminder. Ask what is still open with that person again and choose
+a future unambiguous time. This path never silently replaces an exact choice
+with tonight. The existing `remind me later` daypart behavior is unchanged.
+Relative delays and weekday/date requests are not added by this slice.
+
+The named continuation must still have an offered reminder and one valid
+current direct-conversation target. Missing or changed targets, groups,
+non-owner callers and already-answered summaries cannot create the exact
+reminder. The continuation rechecks local target metadata, with no history
+refresh, provider call, Messages send or Private API change. Duplicate delivery
+with the same operation identity and resolved due instant reuses one local
+task. The normal conversation continuation lifetime still applies.
+
 ## Channel Behavior
 
 Alexa:

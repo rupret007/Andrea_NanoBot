@@ -18,6 +18,11 @@ import {
   type ThreadGroundedSummaryGist,
 } from './thread-grounded-wording.js';
 
+import {
+  parseNamedReplyClockTiming,
+  type NamedReplyClockTiming,
+} from './named-reply-reminder.js';
+
 export type NamedOpenLoopChannel = 'alexa' | 'telegram' | 'bluebubbles';
 
 export type NamedOpenLoopBinding =
@@ -37,7 +42,8 @@ export type NamedOpenLoopRemindTiming =
   | 'tomorrow'
   | 'tomorrow_morning'
   | 'tomorrow_afternoon'
-  | 'tomorrow_evening';
+  | 'tomorrow_evening'
+  | NamedReplyClockTiming;
 
 export type NamedOpenLoopRemindFollowup =
   | { kind: 'none' }
@@ -190,6 +196,8 @@ export function parseNamedOpenLoopRemindTiming(
   value: string | null | undefined,
 ): NamedOpenLoopRemindTiming | null {
   const text = normalizeText(value);
+  const exactClock = parseNamedReplyClockTiming(text);
+  if (exactClock) return exactClock;
   const match = text.match(NAMED_OPEN_LOOP_REMIND_RE);
   if (!match) {
     return null;
@@ -219,6 +227,7 @@ export function isNamedOpenLoopLookPrompt(
 export function namedOpenLoopRemindTimingCandidates(
   timing: NamedOpenLoopRemindTiming,
 ): string[] {
+  if (typeof timing !== 'string') return [];
   switch (timing) {
     case 'today_morning':
       return ['today morning', 'tomorrow morning'];
@@ -572,15 +581,30 @@ export function formatNamedMessagesOpenLoopReply(params: {
     isGroup: params.isGroup,
     latestInboundText: params.latestInboundText,
   });
+  const clockHint =
+    params.gist.ownerOwesReply && !params.isGroup && params.channel !== 'alexa'
+      ? 'For a specific time, say `remind me to reply tomorrow at 9am`.'
+      : undefined;
   const coverage =
     'This is the current thread state from the available local synced snapshot, not device unread status. I did not send anything.';
   if (params.channel === 'alexa') {
-    return [lead, digest, nextStep].filter(Boolean).join(' ');
+    return [lead, digest, nextStep, clockHint].filter(Boolean).join(' ');
   }
   if (params.channel === 'bluebubbles') {
-    return [lead, digest, nextStep, coverage].filter(Boolean).join('\n');
+    return [lead, digest, nextStep, clockHint, coverage]
+      .filter(Boolean)
+      .join('\n');
   }
-  return [lead, '', digest, nextStep ? '' : null, nextStep, '', coverage]
+  return [
+    lead,
+    '',
+    digest,
+    nextStep ? '' : null,
+    nextStep,
+    clockHint || null,
+    '',
+    coverage,
+  ]
     .filter((line) => line !== null)
     .join('\n');
 }

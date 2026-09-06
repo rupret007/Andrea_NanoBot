@@ -5,6 +5,17 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Named owed replies now accept an exact local reminder time: after
+  `what's still open with Bob`, say `remind me to reply tomorrow at 9am`
+  or `remind me at 9:30pm today`. The reminder keeps Bob as the subject
+  and the registered owner control chat as its destination. Today and
+  tomorrow follow the configured owner timezone, and the confirmation
+  shows the concrete date, clock time and timezone. Invalid, past,
+  nonexistent or repeated daylight-saving clock times create no task and
+  ask for another time; they never fall back to tonight. No message draft,
+  send, calendar event, provider call or history refresh is introduced.
+  Private API remains off and both send-path files remain unchanged.
+
 - After leftover-squash #38, a named owed-reply with unseen inbound
   image/video now stays honest: the gist says `Bob sent you a photo`
   instead of dumping the internal attachment descriptor, yes-to-draft
