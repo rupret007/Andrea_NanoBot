@@ -100,12 +100,25 @@ describe('named reply clock reminder journey', () => {
       'remind me at 9:30pm today',
       '2026-09-06T02:30:00.000Z',
     ],
+    [
+      'telegram',
+      'tg:100000001',
+      'remind me Friday at 9am',
+      '2026-09-11T14:00:00.000Z',
+    ],
+    [
+      'bluebubbles',
+      'bb:owner-self-test',
+      'remind me at 9:30pm on Saturday',
+      '2026-09-06T02:30:00.000Z',
+    ],
   ] as const)(
-    'keeps the person, owner chat and exact owner clock on %s',
+    'keeps the person, owner chat and exact owner clock on %s for %s',
     async (channel, chatJid, text, due) => {
       const context = { ...baseContext, channel, chatJid };
       const opened = await openBob(context);
       expect(opened.replyText).toContain('remind me to reply tomorrow at 9am');
+      expect(opened.replyText).toContain('remind me Friday at 9am');
       const seed = opened.conversationSeed?.subjectData;
       const routed = continueAssistantCapabilityFromPriorSubjectData(
         text,
@@ -117,7 +130,13 @@ describe('named reply clock reminder journey', () => {
         arguments: { personName: 'Bob' },
       });
       expect(routed?.canonicalText).toContain(
-        text.includes('tomorrow') ? 'tomorrow at 9:00am' : 'today at 9:30pm',
+        text.includes('tomorrow')
+          ? 'tomorrow at 9:00am'
+          : text.includes('Friday')
+            ? 'friday at 9:00am'
+            : text.includes('Saturday')
+              ? 'saturday at 9:30pm'
+              : 'today at 9:30pm',
       );
       const history = vi.fn();
       const reminder = await remind(text, seed, {
@@ -153,6 +172,8 @@ describe('named reply clock reminder journey', () => {
     'remind me tomorrow at 25am',
     'remind me tomorrow at 9:60am',
     'remind me tomorrow at 9',
+    'remind me Friday at 25am',
+    'remind me Friday at 9',
   ])(
     'asks for another time without falling back to tonight: %s',
     async (text) => {
@@ -240,7 +261,9 @@ describe('named reply clock reminder journey', () => {
     const opened = await openBob();
     for (const text of [
       'remind me tomorrow at 9am and send it',
+      'remind me Friday at 9am and send it',
       'remind me to pay Bob tomorrow at 9am',
+      'remind me to pay Bob Friday at 9am',
       'send it',
     ]) {
       expect(

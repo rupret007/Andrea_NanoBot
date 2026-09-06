@@ -1379,6 +1379,18 @@ describe('assistant capability router', () => {
       continuation: true,
     });
     expect(
+      continueAssistantCapabilityFromPriorSubjectData(
+        'remind me Friday at 9am',
+        namedOpenLoop,
+      ),
+    ).toMatchObject({
+      capabilityId: 'communication.manage_tracking',
+      canonicalText: 'remind me to reply friday at 9:00am',
+      arguments: { personName: 'Bob' },
+      reason: 'continuing a named open-loop with remind-me-later',
+      continuation: true,
+    });
+    expect(
       continueAssistantCapabilityFromPriorSubjectData('send it', namedOpenLoop),
     ).toBeNull();
     expect(

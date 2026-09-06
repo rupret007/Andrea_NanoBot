@@ -30,13 +30,14 @@ npm test -- src/named-reply-reminder.test.ts src/named-reply-reminder-flow.test.
 ```
 
 The pure clock suite checks valid AM/PM input, owner-day boundaries independent
-of host timezone, summer/winter offsets, midnight/noon, past times, invalid
-zones, and daylight-saving gaps/repeats. The real SQLite capability journey
-checks named routing, exact UTC task time, Telegram/Messages owner delivery,
-retry convergence, no draft/provider/history call, and no task for untrusted,
-malformed, changed, group or already-answered contexts. Existing send-path and
-fence suites remain required; `src/message-actions.ts` and
-`src/channels/bluebubbles.ts` are unchanged by this slice.
+of host timezone, summer/winter offsets, midnight/noon, past times, weekday
+roll-forward, invalid zones, and daylight-saving gaps/repeats. The real SQLite
+capability journey checks named routing, exact UTC task time,
+Telegram/Messages owner delivery, retry convergence, no draft/provider/history
+call, and no task for untrusted, malformed, changed, group or already-answered
+contexts. Existing send-path and fence suites remain required;
+`src/message-actions.ts` and `src/channels/bluebubbles.ts` are unchanged by
+this slice.
 
 These fixtures prove local planning and persistence. They do not run the
 scheduler or prove real Telegram/Messages delivery, owner acceptance, service

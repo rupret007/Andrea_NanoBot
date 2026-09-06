@@ -158,6 +158,7 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).toContain('keep this under Bob');
     expect(reply).toContain('stays unsent and requires approval');
     expect(reply).toContain(NAMED_OPEN_LOOP_DRAFT_YES_NOTICE);
+    expect(reply).toContain('remind me Friday at 9am');
     expect(reply).not.toMatch(/until you say send it/i);
     expect(reply).not.toMatch(/opened with|latest open turn/i);
   });
@@ -252,6 +253,7 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).not.toContain('or yes to create');
     expect(reply).not.toContain('or yes for an unsent draft');
     expect(reply).not.toContain('send it');
+    expect(reply).not.toContain('remind me Friday at 9am');
   });
 });
 
@@ -477,8 +479,17 @@ describe('named open-loop remind-me-later stays off the send fence', () => {
     expect(parseNamedOpenLoopRemindTiming('remind me tomorrow')).toBe(
       'tomorrow',
     );
+    expect(parseNamedOpenLoopRemindTiming('remind me Friday at 9am')).toEqual({
+      kind: 'clock',
+      day: 'friday',
+      hour24: 9,
+      minute: 0,
+    });
     expect(
       parseNamedOpenLoopRemindTiming('remind me to call Sam tomorrow at 3'),
+    ).toBeNull();
+    expect(
+      parseNamedOpenLoopRemindTiming('remind me to call Sam Friday at 9am'),
     ).toBeNull();
     expect(parseNamedOpenLoopRemindTiming('send it')).toBeNull();
     expect(parseNamedOpenLoopRemindTiming('yes')).toBeNull();
@@ -511,6 +522,20 @@ describe('named open-loop remind-me-later stays off the send fence', () => {
       kind: 'remind',
       query: 'Bob',
       timing: 'tonight',
+    });
+    expect(
+      resolveNamedOpenLoopRemindFollowup({
+        text: 'remind me Friday at 9am',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        remindOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({
+      kind: 'remind',
+      query: 'Bob',
+      timing: { kind: 'clock', day: 'friday', hour24: 9, minute: 0 },
+      source: 'timed',
     });
     expect(
       resolveNamedOpenLoopRemindFollowup({
