@@ -175,8 +175,8 @@ describe('helper boundary wiring', () => {
     expect(ingressIndex).toBeGreaterThan(ownerGuardIndex);
     expect(openClawRouteIndex).toBeGreaterThan(ingressIndex);
     expect(companionQueueIndex).toBeGreaterThan(openClawRouteIndex);
-    expect(source).toContain(
-      'queuedLatestMessage?.is_from_me === true &&\n        isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)',
+    expect(source).toMatch(
+      /queuedLatestMessage\?\.is_from_me === true &&\s*isConfiguredBlueBubblesSelfThreadAliasJid\(chatJid\)/,
     );
     expect(source).toContain(
       'msg.is_from_me === true &&\n                isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)',
@@ -185,7 +185,7 @@ describe('helper boundary wiring', () => {
       'msg.is_from_me === true &&\n          isConfiguredBlueBubblesSelfThreadAliasJid(chatJid)',
     );
     const durableRouteIndex = source.indexOf(
-      'const queuedOpenClawRoute = resolveOpenClawDelegationRoute({',
+      'const queuedOpenClawRoute = queuedCompleteForget',
     );
     const genericTurnIndex = source.indexOf(
       'const turnDequeuedAt = Date.now();',
@@ -196,6 +196,14 @@ describe('helper boundary wiring', () => {
     const durableRouteSource = source.slice(
       durableRouteIndex,
       genericTurnIndex,
+    );
+    // Raw complete-forget mentions stay local, while ordinary owner-authorized
+    // delegation retains its pre-container ordering and durable delivery fence.
+    expect(source).toMatch(
+      /const queuedCompleteForget = hasCompleteCommunicationForgetInput\(\{\s*rawText: queuedLatestMessage\?\.content \|\| '',\s*\}\)/,
+    );
+    expect(durableRouteSource).toMatch(
+      /queuedCompleteForget\s*\? \{ action: 'none' as const \}\s*: resolveOpenClawDelegationRoute\(/,
     );
     expect(durableRouteSource).toContain("ingress: 'durable_queue'");
     expect(durableRouteSource).toContain(
