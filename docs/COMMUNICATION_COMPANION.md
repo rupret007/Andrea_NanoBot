@@ -219,8 +219,14 @@ Telegram owner chat or configured Messages self-thread can say:
 - `remind me in 30 minutes`
 - `remind me to reply in 2 hours`
 - `remind me about that in 1 hour`
+- `remind me in an hour` / `remind me in a minute`
+- `remind me in half an hour`
+- `remind me in 45 mins` / `remind me in 2 hrs`
 
-Use whole numbers from **1 to 1,440 minutes** or **1 to 24 hours**. The delay
+Use whole numbers from **1 to 1,440 minutes** or **1 to 24 hours**, or the
+natural shorthands `a`/`an`, `half an hour`, and the `min`/`mins`/`hr`/`hrs`
+abbreviations. `half a minute`, `an hour and a half`, `in a bit`, and any
+non-whole minute count are refused rather than rounded. The delay
 means elapsed time from the original live arrival of this timing choice,
 including across daylight-saving changes. Andrea confirms the actual date,
 time and configured owner timezone and stores the UTC instant. Processing or

@@ -7,7 +7,7 @@ export type NamedReplyDelayTiming =
   | { kind: 'invalid_delay' };
 
 const DELAY_PATTERN =
-  /^remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))? in ([+-]?\d+(?:\.\d+)?|Infinity|NaN) (minutes?|hours?)[.!?]?$/i;
+  /^remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))? in (half an|an?|[+-]?\d+(?:\.\d+)?|Infinity|NaN) (minutes?|mins?|hours?|hrs?)[.!?]?$/i;
 
 /** Only a standalone timing choice may inherit the offered reply target. */
 export function parseNamedReplyDelayTiming(
@@ -15,8 +15,21 @@ export function parseNamedReplyDelayTiming(
 ): NamedReplyDelayTiming | null {
   const match = text.replace(/\s+/g, ' ').trim().match(DELAY_PATTERN);
   if (!match) return null;
-  const minutes = Number(match[1]) * (/^hour/i.test(match[2]) ? 60 : 1);
-  if (!/^\d+$/.test(match[1]) || minutes < 1 || minutes > 1440) {
+  const quantity = match[1].toLowerCase();
+  const perUnit = /^h/i.test(match[2]) ? 60 : 1;
+  let minutes: number;
+  if (quantity === 'a' || quantity === 'an') {
+    minutes = perUnit;
+  } else if (quantity === 'half an') {
+    // Only a half hour maps to a whole minute count; "half a minute" is not offered.
+    if (perUnit !== 60) return { kind: 'invalid_delay' };
+    minutes = 30;
+  } else if (/^\d+$/.test(quantity)) {
+    minutes = Number(quantity) * perUnit;
+  } else {
+    return { kind: 'invalid_delay' };
+  }
+  if (minutes < 1 || minutes > 1440) {
     return { kind: 'invalid_delay' };
   }
   return { kind: 'delay', minutes };
