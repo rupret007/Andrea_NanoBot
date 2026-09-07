@@ -11,6 +11,9 @@ import {
   listMessageActionsForGroup,
   storeChatMetadata,
   storeMessage,
+  storeMessageDirect,
+  getActionableMessageReceivedAt,
+  updateTask,
 } from './db.js';
 
 const bobJid = 'bb:iMessage;-;+14695550199';
@@ -72,6 +75,37 @@ async function remind(
   });
 }
 
+function storeTimingChoice(
+  text: string,
+  context = baseContext,
+  historyOnly = false,
+  receivedAt = now.toISOString(),
+) {
+  storeChatMetadata(
+    context.chatJid!,
+    receivedAt,
+    'Synthetic owner',
+    context.channel,
+    false,
+  );
+  const message = {
+    id: context.currentMessageId!,
+    chat_jid: context.chatJid!,
+    sender: 'synthetic-owner',
+    sender_name: 'Synthetic owner',
+    content: text,
+    timestamp: receivedAt,
+    ingress_received_at: receivedAt,
+    is_from_me: context.channel === 'bluebubbles',
+  };
+  if (historyOnly)
+    storeMessageDirect({
+      ...message,
+      message_ingress_origin: 'history_hydration',
+    });
+  else storeMessage(message);
+}
+
 describe('named reply clock reminder journey', () => {
   beforeEach(() => {
     _initTestDatabase();
@@ -85,6 +119,213 @@ describe('named reply clock reminder journey', () => {
     ).toHaveLength(0);
     globalThis.fetch = originalFetch;
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    [
+      'telegram',
+      'tg:100000001',
+      'remind me in 30 minutes',
+      '2026-09-06T01:00:00.000Z',
+    ],
+    [
+      'bluebubbles',
+      'bb:owner-self-test',
+      'remind me to reply in 2 hours',
+      '2026-09-06T02:30:00.000Z',
+    ],
+  ] as const)(
+    'retains the named reply for a relative delay on %s',
+    async (channel, chatJid, text, due) => {
+      const context = { ...baseContext, channel, chatJid };
+      const opened = await openBob(context);
+      const seed = opened.conversationSeed?.subjectData;
+      expect(opened.replyText).toContain('remind me in 30 minutes');
+      expect(
+        continueAssistantCapabilityFromPriorSubjectData(text, seed),
+      ).toMatchObject({
+        capabilityId: 'communication.manage_tracking',
+        canonicalText: text,
+        arguments: { personName: 'Bob' },
+      });
+      storeTimingChoice(text, context);
+      const history = vi.fn();
+      const result = await remind(text, seed, {
+        ...context,
+        primeMessagesChatHistory: history,
+      });
+      expect(result.replyText).toContain('reply to Bob');
+      expect(result.replyText).toContain('America/Chicago');
+      expect(result.replyText).toContain('CDT');
+      expect(result.replyText).toContain('draft Bob');
+      expect(result.messageAction).toBeUndefined();
+      expect(history).not.toHaveBeenCalled();
+      expect(getAllTasks()).toHaveLength(1);
+      expect(getAllTasks()[0]).toMatchObject({
+        chat_jid: chatJid,
+        next_run: due,
+        schedule_value: due,
+        status: 'active',
+      });
+
+      // A provider retry can update the message row but not its original receipt.
+      storeTimingChoice(text, context, false, '2026-09-06T00:31:00.000Z');
+      expect(
+        getActionableMessageReceivedAt(chatJid, context.currentMessageId!),
+      ).toBe(now.toISOString());
+      await remind(text, seed, {
+        ...context,
+        now: new Date('2026-09-06T00:31:00.000Z'),
+      });
+      expect(getAllTasks()).toHaveLength(1);
+      expect(getAllTasks()[0].next_run).toBe(due);
+    },
+  );
+
+  it.each([
+    'remind me in 0 minutes',
+    'remind me in -1 hour',
+    'remind me in 1.5 hours',
+    'remind me in 1441 minutes',
+    'remind me in 25 hours',
+  ])('refuses an invalid delay rather than using tonight: %s', async (text) => {
+    const opened = await openBob();
+    storeTimingChoice(text);
+    const result = await remind(text, opened.conversationSeed?.subjectData);
+    expect(result.replyText).toContain('could not set that reply reminder');
+    expect(getAllTasks()).toHaveLength(0);
+  });
+
+  it('requires a matching durable live receipt, not another chat or hydrated history', async () => {
+    const text = 'remind me in 30 minutes';
+    const opened = await openBob();
+    const seed = opened.conversationSeed?.subjectData;
+    await remind(text, seed);
+    expect(getAllTasks()).toHaveLength(0);
+    storeTimingChoice(text, { ...baseContext, chatJid: 'tg:another-chat' });
+    await remind(text, seed);
+    expect(getAllTasks()).toHaveLength(0);
+    storeTimingChoice(text, baseContext, true);
+    expect(
+      getActionableMessageReceivedAt(
+        baseContext.chatJid!,
+        baseContext.currentMessageId!,
+      ),
+    ).toBeNull();
+    await remind(text, seed);
+    expect(getAllTasks()).toHaveLength(0);
+    storeTimingChoice(text);
+    await remind(text, seed, { currentMessageId: undefined });
+    expect(getAllTasks()).toHaveLength(0);
+    await remind(text, seed);
+    expect(getAllTasks()).toHaveLength(1);
+  });
+
+  it('does not use assistant-outbound evidence as an owner timing choice', async () => {
+    const text = 'remind me in 30 minutes';
+    const opened = await openBob();
+    storeTimingChoice(text);
+    storeMessageDirect({
+      id: baseContext.currentMessageId!,
+      chat_jid: baseContext.chatJid!,
+      sender: 'assistant',
+      sender_name: 'Andrea',
+      content: text,
+      timestamp: now.toISOString(),
+      is_from_me: true,
+      message_ingress_origin: 'assistant_outbound',
+    });
+    expect(
+      getActionableMessageReceivedAt(
+        baseContext.chatJid!,
+        baseContext.currentMessageId!,
+      ),
+    ).toBeNull();
+    await remind(text, opened.conversationSeed?.subjectData);
+    expect(getAllTasks()).toHaveLength(0);
+  });
+
+  it.each([false, undefined])(
+    'requires explicit owner authority for a delay (%s)',
+    async (ownerReviewAllowed) => {
+      const text = 'remind me in 30 minutes';
+      const opened = await openBob();
+      storeTimingChoice(text);
+      const result = await remind(text, opened.conversationSeed?.subjectData, {
+        ownerReviewAllowed,
+      });
+      expect(result.replyText).toContain('registered owner control chat');
+      expect(result.replyText).not.toContain('reply to Bob');
+      expect(getAllTasks()).toHaveLength(0);
+    },
+  );
+
+  it('refuses expired or future receipts and never rearms a paused relative reminder', async () => {
+    const text = 'remind me in 30 minutes';
+    const opened = await openBob();
+    storeTimingChoice(text);
+    const seed = opened.conversationSeed?.subjectData;
+    await remind(text, seed, { now: new Date('2026-09-06T01:00:00.000Z') });
+    await remind(text, seed, { now: new Date('2026-09-06T00:29:00.000Z') });
+    expect(getAllTasks()).toHaveLength(0);
+    await remind(text, seed);
+    const original = getAllTasks()[0];
+    updateTask(original.id, { status: 'paused' });
+    const retry = await remind(text, seed, {
+      now: new Date('2026-09-06T00:31:00.000Z'),
+    });
+    expect(retry.replyText).toContain('no longer active');
+    expect(getAllTasks()).toHaveLength(1);
+    expect(getAllTasks()[0].status).toBe('paused');
+  });
+
+  it('refuses relative timing without an offered reply, or after the exact target changes', async () => {
+    const text = 'remind me in 30 minutes';
+    const answered = await openBob(baseContext, true);
+    storeTimingChoice(text);
+    await remind(text, answered.conversationSeed?.subjectData);
+    expect(getAllTasks()).toHaveLength(0);
+    _initTestDatabase();
+    const opened = await openBob();
+    storeTimingChoice(text);
+    const seed = opened.conversationSeed?.subjectData;
+    await remind(text, { ...seed, namedOpenLoopRemindOffered: false });
+    await remind(text, {
+      ...seed,
+      namedMessagesSummaryTargetJson: JSON.stringify({ query: 'Bob' }),
+    });
+    expect(getAllTasks()).toHaveLength(0);
+    storeChatMetadata(bobJid, now.toISOString(), 'Bob', 'bluebubbles', true);
+    await remind(text, seed);
+    expect(getAllTasks()).toHaveLength(0);
+    storeChatMetadata(
+      bobJid,
+      now.toISOString(),
+      'Different person',
+      'bluebubbles',
+      false,
+    );
+    await remind(text, seed);
+    expect(getAllTasks()).toHaveLength(0);
+  });
+
+  it('does not inherit a person for compound or substituted delay requests', async () => {
+    const opened = await openBob();
+    for (const text of [
+      'remind me in 30 minutes and send it',
+      'remind me in 30 minutes; send now',
+      'remind me in 2 hours to call Sam',
+      'remind me to reply to Sam in 30 minutes',
+      'send it in 30 minutes',
+    ]) {
+      expect(
+        continueAssistantCapabilityFromPriorSubjectData(
+          text,
+          opened.conversationSeed?.subjectData,
+        ),
+      ).toBeNull();
+    }
+    expect(getAllTasks()).toHaveLength(0);
   });
 
   it.each([

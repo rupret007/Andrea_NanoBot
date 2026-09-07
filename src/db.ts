@@ -7678,6 +7678,27 @@ export function hasStoredMessage(chatJid: string, messageId: string): boolean {
   return Boolean(row);
 }
 
+/** Stable local receipt time only; never infer an actionable clock from history. */
+export function getActionableMessageReceivedAt(
+  chatJid: string,
+  messageId: string,
+): string | null {
+  const row = db
+    .prepare(
+      `SELECT ingress.received_at
+       FROM actionable_message_ingress AS ingress
+       JOIN messages ON messages.chat_jid = ingress.chat_jid
+         AND messages.id = ingress.message_id
+       WHERE ingress.chat_jid = ? AND ingress.message_id = ?
+         AND ingress.state != 'ignored'
+         AND messages.message_ingress_origin = 'live'
+         AND messages.is_bot_message = 0
+       LIMIT 1`,
+    )
+    .get(chatJid, messageId) as { received_at: string } | undefined;
+  return row?.received_at || null;
+}
+
 /**
  * Return true only after a live callback has been transactionally persisted
  * with its durable actionable-ingress record. History hydration and other
