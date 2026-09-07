@@ -9,13 +9,13 @@ import {
 
 describe('named reply exact-clock timing grammar', () => {
   it.each([
-    ['remind me tomorrow at 9am', 'tomorrow', 9, 0],
-    ['remind me to reply tomorrow at 9:05am', 'tomorrow', 9, 5],
-    ['remind me to answer at 8:45PM today.', 'today', 20, 45],
-    ['remind me about that tomorrow at 12am', 'tomorrow', 0, 0],
-    ['remind me about this today at12pm', 'today', 12, 0],
-    ['remind me about it at 11:59pm tomorrow!', 'tomorrow', 23, 59],
-    ['  REMIND  ME to reply today at 09:00 AM  ', 'today', 9, 0],
+    ['remind me tomorrow at 9am', 'tomorrow', 9, 0, undefined],
+    ['remind me to reply tomorrow at 9:05am', 'tomorrow', 9, 5, undefined],
+    ['remind me to answer at 8:45PM today.', 'today', 20, 45, undefined],
+    ['remind me about that tomorrow at 12am', 'tomorrow', 0, 0, undefined],
+    ['remind me about this today at12pm', 'today', 12, 0, undefined],
+    ['remind me about it at 11:59pm tomorrow!', 'tomorrow', 23, 59, undefined],
+    ['  REMIND  ME to reply today at 09:00 AM  ', 'today', 9, 0, undefined],
     ['remind me Friday at 9am', 'friday', 9, 0, undefined],
     ['remind me on monday at 9:30pm', 'monday', 21, 30, undefined],
     ['remind me to reply Saturday at 12pm', 'saturday', 12, 0, undefined],
