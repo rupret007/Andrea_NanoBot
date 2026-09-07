@@ -22,6 +22,7 @@ import {
   createTask,
   getAllChats,
   getAllTasks,
+  getActionableMessageReceivedAt,
   getMessageActionBySource,
   listMessageMediaAttachments,
   listMessagesForChatWindow,
@@ -62,6 +63,10 @@ import {
   parseNamedReplyClockTiming,
   planNamedReplyClockReminder,
 } from './named-reply-reminder.js';
+import {
+  parseNamedReplyDelayTiming,
+  planNamedReplyDelayReminder,
+} from './named-reply-delay.js';
 import { persistReminderOperation } from './reminder-operation.js';
 import {
   analyzeCommunicationMessage,
@@ -6254,8 +6259,12 @@ function tryNamedOpenLoopRemind(
   const clockTiming = parseNamedReplyClockTiming(
     input.text || input.canonicalText || '',
   );
+  const delayTiming = parseNamedReplyDelayTiming(
+    input.text || input.canonicalText || '',
+  );
+  const exactTiming = clockTiming || delayTiming;
   if (followup.kind === 'none') {
-    if (!clockTiming) return null;
+    if (!exactTiming) return null;
     return {
       handled: true,
       capabilityId: descriptor.id,
@@ -6266,7 +6275,8 @@ function tryNamedOpenLoopRemind(
   }
   if (
     followup.kind === 'denied' ||
-    (clockTiming && context.ownerReviewAllowed !== true)
+    (exactTiming && context.ownerReviewAllowed !== true) ||
+    (delayTiming && context.channel === 'alexa')
   ) {
     return {
       handled: true,
@@ -6299,7 +6309,7 @@ function tryNamedOpenLoopRemind(
     };
   }
 
-  if (clockTiming) {
+  if (exactTiming) {
     const validation = validateNamedMessagesSummaryTarget({
       seedJson: context.priorSubjectData?.namedMessagesSummaryTargetJson,
       presentationChatJid: context.chatJid,
@@ -6334,7 +6344,24 @@ function tryNamedOpenLoopRemind(
           timeZone: ownerTimeZone,
         },
       })
-    : null;
+    : delayTiming && context.channel !== 'alexa'
+      ? planNamedReplyDelayReminder({
+          timing: delayTiming,
+          receivedAt: context.currentMessageId
+            ? getActionableMessageReceivedAt(
+                context.chatJid,
+                context.currentMessageId,
+              )
+            : null,
+          now,
+          reminderBody,
+          groupFolder: context.groupFolder,
+          chatJid: context.chatJid,
+          timeZone: ownerTimeZone,
+          channel: context.channel,
+          inboundId: context.currentMessageId || '',
+        })
+      : null;
   for (const timing of namedOpenLoopRemindTimingCandidates(followup.timing)) {
     planned = planContextualReminder(
       timing,
@@ -6355,9 +6382,11 @@ function tryNamedOpenLoopRemind(
     return {
       handled: true,
       capabilityId: descriptor.id,
-      replyText: clockTiming
-        ? 'I could not set that exact reply reminder. Use a future, unambiguous time today, tomorrow, a weekday, or next weekday with AM or PM, for example `remind me to reply tomorrow at 9am`, `remind me Friday at 9am`, or `remind me next Friday at 9am`. Ask what is still open with that person again, then give the time. I did not create a reminder or send anything.'
-        : 'Tell me when you want that reply reminder. I did not send anything.',
+      replyText: delayTiming
+        ? 'I could not set that reply reminder. Use a whole-number delay from 1 to 1,440 minutes or 1 to 24 hours, for example `remind me in 30 minutes`. Ask what is still open with that person again, then give a fresh timing choice so I can verify a future time. I did not create a reminder or send anything.'
+        : clockTiming
+          ? 'I could not set that exact reply reminder. Use a future, unambiguous time today, tomorrow, a weekday, or next weekday with AM or PM, for example `remind me to reply tomorrow at 9am`, `remind me Friday at 9am`, or `remind me next Friday at 9am`. Ask what is still open with that person again, then give the time. I did not create a reminder or send anything.'
+          : 'Tell me when you want that reply reminder. I did not send anything.',
       outputShape: descriptor.preferredOutputShape[context.channel],
       trace: buildCapabilityTrace(
         descriptor,
@@ -6369,7 +6398,16 @@ function tryNamedOpenLoopRemind(
     };
   }
 
-  persistReminderOperation(planned);
+  const receipt = persistReminderOperation(planned);
+  if (delayTiming && receipt.task.status !== 'active') {
+    return {
+      handled: true,
+      capabilityId: descriptor.id,
+      replyText:
+        'That earlier reply reminder is no longer active. I did not reactivate it or create another reminder.',
+      followupActions: [],
+    };
+  }
   return {
     handled: true,
     capabilityId: descriptor.id,

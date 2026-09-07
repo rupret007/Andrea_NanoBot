@@ -26,7 +26,7 @@ Do not treat optional integration checks as baseline unless that integration is 
 For the owner conversation journey after `what's still open with Bob`, run:
 
 ```bash
-npm test -- src/named-reply-reminder.test.ts src/named-reply-reminder-flow.test.ts src/named-open-loop.test.ts src/assistant-capability-router.test.ts src/assistant-capabilities.test.ts
+npm test -- src/named-reply-reminder.test.ts src/named-reply-delay.test.ts src/named-reply-reminder-flow.test.ts src/named-open-loop.test.ts src/assistant-capability-router.test.ts src/assistant-capabilities.test.ts src/send-authorization-fence.test.ts
 ```
 
 The pure clock suite checks valid AM/PM input, owner-day boundaries independent
@@ -44,6 +44,14 @@ These fixtures prove local planning and persistence. They do not run the
 scheduler or prove real Telegram/Messages delivery, owner acceptance, service
 restart or deployment. Keep Private API OFF and never use live BlueBubbles
 send HTTP for this validation.
+
+The relative-delay cases exercise 1–1,440 minutes / 1–24 hours, elapsed time
+across daylight-saving transitions, exact owner-timezone confirmation, and
+retries anchored to the durable arrival receipt. SQLite fixtures prove that
+another chat, missing receipt, imported history or assistant-outbound record
+cannot provide the timing anchor. Replayed live messages retain their first
+arrival time; expired choices create no task and paused reminders are not
+reactivated. The original clock/daypart paths and send fence remain covered.
 
 ## 1. Fast Local Checks
 

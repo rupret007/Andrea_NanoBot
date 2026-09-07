@@ -5,6 +5,17 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- After a named owed reply, `remind me in 30 minutes` or `remind me to reply
+  in 2 hours` keeps the person and creates one local reminder to the owner
+  control chat. Whole-number delays are bounded to 1–1,440 minutes or 1–24
+  hours. Timing starts from the existing durable live-message arrival receipt,
+  so delayed processing and duplicate delivery do not move the reminder.
+  Confirmation shows the actual date, time and configured owner timezone.
+  Invalid, expired, missing-receipt and untrusted choices create no task;
+  history-only messages cannot supply the timing anchor. Paused reminders
+  are not reactivated on retry. No schema migration, provider access,
+  message draft, calendar event or send-path change is introduced.
+
 - Named owed replies now accept an explicit next-weekday clock: after
   `what's still open with Bob`, say `remind me next Friday at 9am` or
   `remind me at 9:30pm on next Monday`. That keeps Bob as the subject

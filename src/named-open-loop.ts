@@ -22,6 +22,10 @@ import {
   parseNamedReplyClockTiming,
   type NamedReplyClockTiming,
 } from './named-reply-reminder.js';
+import {
+  parseNamedReplyDelayTiming,
+  type NamedReplyDelayTiming,
+} from './named-reply-delay.js';
 
 export type NamedOpenLoopChannel = 'alexa' | 'telegram' | 'bluebubbles';
 
@@ -43,7 +47,8 @@ export type NamedOpenLoopRemindTiming =
   | 'tomorrow_morning'
   | 'tomorrow_afternoon'
   | 'tomorrow_evening'
-  | NamedReplyClockTiming;
+  | NamedReplyClockTiming
+  | NamedReplyDelayTiming;
 
 export type NamedOpenLoopRemindFollowup =
   | { kind: 'none' }
@@ -198,6 +203,8 @@ export function parseNamedOpenLoopRemindTiming(
   const text = normalizeText(value);
   const exactClock = parseNamedReplyClockTiming(text);
   if (exactClock) return exactClock;
+  const delay = parseNamedReplyDelayTiming(text);
+  if (delay) return delay;
   const match = text.match(NAMED_OPEN_LOOP_REMIND_RE);
   if (!match) {
     return null;
@@ -583,7 +590,7 @@ export function formatNamedMessagesOpenLoopReply(params: {
   });
   const clockHint =
     params.gist.ownerOwesReply && !params.isGroup && params.channel !== 'alexa'
-      ? 'For a specific time, say `remind me to reply tomorrow at 9am`, `remind me Friday at 9am`, or `remind me next Friday at 9am`.'
+      ? 'For a specific time, say `remind me to reply tomorrow at 9am`, `remind me Friday at 9am`, or `remind me next Friday at 9am`. For a short delay, say `remind me in 30 minutes`.'
       : undefined;
   const coverage =
     'This is the current thread state from the available local synced snapshot, not device unread status. I did not send anything.';

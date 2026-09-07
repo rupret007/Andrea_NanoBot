@@ -199,9 +199,9 @@ An invalid or past today/tomorrow time, a spring clock gap, or a
 repeated fall clock hour creates no reminder. Ask what is still open
 with that person again and choose a future unambiguous time. This path
 never silently replaces an exact choice with tonight. The existing
-`remind me later` daypart behavior is unchanged. Relative delays,
-calendar-date requests, clock-only `remind me at 9am`, and `this Friday`
-are not added by this slice.
+`remind me later` daypart behavior is unchanged. Calendar-date requests,
+clock-only `remind me at 9am`, and `this Friday` remain unsupported here.
+Short relative delays have their own bounded path below.
 
 The named continuation must still have an offered reminder and one valid
 current direct-conversation target. Missing or changed targets, groups,
@@ -210,6 +210,35 @@ reminder. The continuation rechecks local target metadata, with no history
 refresh, provider call, Messages send or Private API change. Duplicate delivery
 with the same operation identity and resolved due instant reuses one local
 task. The normal conversation continuation lifetime still applies.
+
+## Short Reply Delays
+
+After an offered reminder for `what's still open with Bob`, the registered
+Telegram owner chat or configured Messages self-thread can say:
+
+- `remind me in 30 minutes`
+- `remind me to reply in 2 hours`
+- `remind me about that in 1 hour`
+
+Use whole numbers from **1 to 1,440 minutes** or **1 to 24 hours**. The delay
+means elapsed time from the original live arrival of this timing choice,
+including across daylight-saving changes. Andrea confirms the actual date,
+time and configured owner timezone and stores the UTC instant. Processing or
+retrying the same incoming message later cannot slide that instant forward
+or create another task. A paused reminder stays paused on retry.
+
+A missing live arrival receipt, a future receipt, or a due time that has
+already passed creates no new reminder. Ask what is still open with the
+person again and give a fresh timing choice. Imported history and assistant
+outbound messages cannot supply the receipt. No new schema is needed.
+
+The reminder must still be offered for one valid current named direct
+conversation. Empty, already-answered, changed, group or untrusted contexts
+cannot create it. A different reminder body or compound command such as
+`remind me in 30 minutes and send it` does not inherit the named person.
+Alexa does not gain this path. Timing alone creates no draft, calendar event,
+contact message, provider call or history refresh. The next human step is
+still `draft Bob`; the existing exact send fence remains unchanged.
 
 ## Channel Behavior
 
