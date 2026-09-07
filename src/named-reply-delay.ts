@@ -7,7 +7,7 @@ export type NamedReplyDelayTiming =
   | { kind: 'invalid_delay' };
 
 const DELAY_PATTERN =
-  /^remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))? in (half an|a couple(?: of)?|an?|[+-]?\d+(?:\.\d+)?|Infinity|NaN) (minutes?|mins?|hours?|hrs?)[.!?]?$/i;
+  /^remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))? in (half an|a couple(?: of)?|an?|[+-]?\d+(?:\.\d+)?|Infinity|NaN) (minutes?|mins?|hours?|hrs?)( and a half)?[.!?]?$/i;
 
 /** Only a standalone timing choice may inherit the offered reply target. */
 export function parseNamedReplyDelayTiming(
@@ -17,20 +17,33 @@ export function parseNamedReplyDelayTiming(
   if (!match) return null;
   const quantity = match[1].toLowerCase();
   const perUnit = /^h/i.test(match[2]) ? 60 : 1;
+  const trailingHalf = Boolean(match[3]);
   let minutes: number;
+  // Whether the pre-half amount is a whole number of hours, so a trailing
+  // "and a half" can add exactly 30 minutes without inventing a fraction.
+  let wholeHourBase = false;
   if (quantity === 'a' || quantity === 'an') {
     minutes = perUnit;
+    wholeHourBase = perUnit === 60;
   } else if (quantity === 'a couple' || quantity === 'a couple of') {
     // "a couple" is a whole count of two in a text; "a few" stays ambiguous.
     minutes = 2 * perUnit;
+    wholeHourBase = perUnit === 60;
   } else if (quantity === 'half an') {
     // Only a half hour maps to a whole minute count; "half a minute" is not offered.
     if (perUnit !== 60) return { kind: 'invalid_delay' };
     minutes = 30;
   } else if (/^\d+$/.test(quantity)) {
     minutes = Number(quantity) * perUnit;
+    wholeHourBase = perUnit === 60;
   } else {
     return { kind: 'invalid_delay' };
+  }
+  if (trailingHalf) {
+    // "an hour and a half" is an unambiguous 90 minutes; only a whole hour
+    // count takes the extra half. "half an hour and a half" does not.
+    if (!wholeHourBase) return { kind: 'invalid_delay' };
+    minutes += 30;
   }
   if (minutes < 1 || minutes > 1440) {
     return { kind: 'invalid_delay' };
