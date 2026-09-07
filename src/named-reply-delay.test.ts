@@ -20,6 +20,9 @@ describe('bounded named reply delay grammar', () => {
     ['remind me in 45 mins', 45],
     ['remind me to reply in 2 hrs', 120],
     ['remind me in 90 min', 90],
+    ['remind me in a couple hours', 120],
+    ['remind me to reply in a couple of hours', 120],
+    ['remind me in a couple minutes', 2],
   ])('inherits timing only for %s', (text, minutes) => {
     expect(parseNamedReplyDelayTiming(text as string)).toEqual({
       kind: 'delay',
@@ -53,6 +56,8 @@ describe('bounded named reply delay grammar', () => {
     'remind me in 2 days',
     'remind me in a day',
     'remind me in an hour and a half',
+    'remind me in a few hours',
+    'remind me in a couple of days',
     'remind me in a bit',
     'send it in 30 minutes',
     'remind me later',

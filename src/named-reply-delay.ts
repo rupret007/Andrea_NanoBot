@@ -7,7 +7,7 @@ export type NamedReplyDelayTiming =
   | { kind: 'invalid_delay' };
 
 const DELAY_PATTERN =
-  /^remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))? in (half an|an?|[+-]?\d+(?:\.\d+)?|Infinity|NaN) (minutes?|mins?|hours?|hrs?)[.!?]?$/i;
+  /^remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))? in (half an|a couple(?: of)?|an?|[+-]?\d+(?:\.\d+)?|Infinity|NaN) (minutes?|mins?|hours?|hrs?)[.!?]?$/i;
 
 /** Only a standalone timing choice may inherit the offered reply target. */
 export function parseNamedReplyDelayTiming(
@@ -20,6 +20,9 @@ export function parseNamedReplyDelayTiming(
   let minutes: number;
   if (quantity === 'a' || quantity === 'an') {
     minutes = perUnit;
+  } else if (quantity === 'a couple' || quantity === 'a couple of') {
+    // "a couple" is a whole count of two in a text; "a few" stays ambiguous.
+    minutes = 2 * perUnit;
   } else if (quantity === 'half an') {
     // Only a half hour maps to a whole minute count; "half a minute" is not offered.
     if (perUnit !== 60) return { kind: 'invalid_delay' };
