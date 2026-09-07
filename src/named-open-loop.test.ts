@@ -159,6 +159,7 @@ describe('named who-do-I-owe copy without sending', () => {
     expect(reply).toContain('stays unsent and requires approval');
     expect(reply).toContain(NAMED_OPEN_LOOP_DRAFT_YES_NOTICE);
     expect(reply).toContain('remind me Friday at 9am');
+    expect(reply).toContain('remind me next Friday at 9am');
     expect(reply).not.toMatch(/until you say send it/i);
     expect(reply).not.toMatch(/opened with|latest open turn/i);
   });
@@ -486,6 +487,15 @@ describe('named open-loop remind-me-later stays off the send fence', () => {
       minute: 0,
     });
     expect(
+      parseNamedOpenLoopRemindTiming('remind me next Friday at 9am'),
+    ).toEqual({
+      kind: 'clock',
+      day: 'friday',
+      hour24: 9,
+      minute: 0,
+      nextWeek: true,
+    });
+    expect(
       parseNamedOpenLoopRemindTiming('remind me to call Sam tomorrow at 3'),
     ).toBeNull();
     expect(
@@ -535,6 +545,26 @@ describe('named open-loop remind-me-later stays off the send fence', () => {
       kind: 'remind',
       query: 'Bob',
       timing: { kind: 'clock', day: 'friday', hour24: 9, minute: 0 },
+      source: 'timed',
+    });
+    expect(
+      resolveNamedOpenLoopRemindFollowup({
+        text: 'remind me next Friday at 9am',
+        ownerReviewAllowed: true,
+        priorNamedSeedJson: bobSeedJson,
+        remindOffered: true,
+        activeCapabilityId: 'communication.open_loops',
+      }),
+    ).toEqual({
+      kind: 'remind',
+      query: 'Bob',
+      timing: {
+        kind: 'clock',
+        day: 'friday',
+        hour24: 9,
+        minute: 0,
+        nextWeek: true,
+      },
       source: 'timed',
     });
     expect(

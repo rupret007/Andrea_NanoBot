@@ -9,26 +9,35 @@ import {
 
 describe('named reply exact-clock timing grammar', () => {
   it.each([
-    ['remind me tomorrow at 9am', 'tomorrow', 9, 0],
-    ['remind me to reply tomorrow at 9:05am', 'tomorrow', 9, 5],
-    ['remind me to answer at 8:45PM today.', 'today', 20, 45],
-    ['remind me about that tomorrow at 12am', 'tomorrow', 0, 0],
-    ['remind me about this today at12pm', 'today', 12, 0],
-    ['remind me about it at 11:59pm tomorrow!', 'tomorrow', 23, 59],
-    ['  REMIND  ME to reply today at 09:00 AM  ', 'today', 9, 0],
-    ['remind me Friday at 9am', 'friday', 9, 0],
-    ['remind me on monday at 9:30pm', 'monday', 21, 30],
-    ['remind me to reply Saturday at 12pm', 'saturday', 12, 0],
-    ['remind me about that at 8:15AM on Sunday', 'sunday', 8, 15],
-    ['remind me at 7pm Wednesday', 'wednesday', 19, 0],
-  ])('parses only the selected timing in %s', (text, day, hour24, minute) => {
-    expect(parseNamedReplyClockTiming(text as string)).toEqual({
-      kind: 'clock',
-      day,
-      hour24,
-      minute,
-    });
-  });
+    ['remind me tomorrow at 9am', 'tomorrow', 9, 0, undefined],
+    ['remind me to reply tomorrow at 9:05am', 'tomorrow', 9, 5, undefined],
+    ['remind me to answer at 8:45PM today.', 'today', 20, 45, undefined],
+    ['remind me about that tomorrow at 12am', 'tomorrow', 0, 0, undefined],
+    ['remind me about this today at12pm', 'today', 12, 0, undefined],
+    ['remind me about it at 11:59pm tomorrow!', 'tomorrow', 23, 59, undefined],
+    ['  REMIND  ME to reply today at 09:00 AM  ', 'today', 9, 0, undefined],
+    ['remind me Friday at 9am', 'friday', 9, 0, undefined],
+    ['remind me on monday at 9:30pm', 'monday', 21, 30, undefined],
+    ['remind me to reply Saturday at 12pm', 'saturday', 12, 0, undefined],
+    ['remind me about that at 8:15AM on Sunday', 'sunday', 8, 15, undefined],
+    ['remind me at 7pm Wednesday', 'wednesday', 19, 0, undefined],
+    ['remind me next Friday at 9am', 'friday', 9, 0, true],
+    ['remind me on next monday at 9:30pm', 'monday', 21, 30, true],
+    ['remind me to reply next Saturday at 12pm', 'saturday', 12, 0, true],
+    ['remind me about that at 8:15AM on next Sunday', 'sunday', 8, 15, true],
+    ['remind me at 7pm next Wednesday', 'wednesday', 19, 0, true],
+  ])(
+    'parses only the selected timing in %s',
+    (text, day, hour24, minute, nextWeek) => {
+      expect(parseNamedReplyClockTiming(text as string)).toEqual({
+        kind: 'clock',
+        day,
+        hour24,
+        minute,
+        ...(nextWeek ? { nextWeek: true } : {}),
+      });
+    },
+  );
 
   it.each([
     'remind me tomorrow at 0am',
@@ -46,6 +55,10 @@ describe('named reply exact-clock timing grammar', () => {
     'remind me Friday at 13pm',
     'remind me Friday at 9:60am',
     'remind me Friday at 21:00',
+    'remind me next Friday at 0am',
+    'remind me next Friday at 13pm',
+    'remind me next Friday at 9:60am',
+    'remind me next Friday at 21:00',
   ])('keeps invalid clock-shaped input from a daypart fallback: %s', (text) => {
     expect(parseNamedReplyClockTiming(text)).toEqual({ kind: 'invalid_clock' });
   });
@@ -54,14 +67,20 @@ describe('named reply exact-clock timing grammar', () => {
     'remind me later',
     'remind me in 30 minutes',
     'remind me tomorrow morning',
-    'remind me next Friday at 9am',
+    'remind me this Friday at 9am',
+    'remind me the next Friday at 9am',
+    'remind me next week at 9am',
+    'remind me next next Friday at 9am',
     'remind me September 8 at 9am',
     'remind me at 9am',
     'remind me to call Sam Friday at 9am',
+    'remind me to call Sam next Friday at 9am',
     'remind me to reply to Sam Friday at 9am',
     'remind me about my bills Friday at 9am',
     'remind me Friday at 9am to buy milk',
+    'remind me next Friday at 9am to buy milk',
     'remind me Friday at 9am and send it',
+    'remind me next Friday at 9am and send it',
     'remind me Friday at 9am; send it',
     'send it Friday at 9am',
     'yes',
@@ -82,6 +101,17 @@ describe('named reply exact-clock timing grammar', () => {
     expect(parseNamedReplyClockTiming('remind me friday at 9:00am')).toEqual(
       weekday,
     );
+    const nextWeekday = parseNamedReplyClockTiming(
+      'remind me next Friday at 9am',
+    );
+    expect(formatNamedReplyClockTiming(nextWeekday!)).toBe(
+      'next friday at 9:00am',
+    );
+    expect(
+      parseNamedReplyClockTiming(
+        `remind me ${formatNamedReplyClockTiming(nextWeekday!)}`,
+      ),
+    ).toEqual(nextWeekday);
     expect(formatNamedReplyClockTiming({ kind: 'invalid_clock' })).toBe(
       'at an invalid time',
     );
@@ -175,6 +205,12 @@ describe('named reply clock planning uses the owner calendar', () => {
     ['remind me on Sunday at 9am', '2026-09-06T14:00:00.000Z'],
     ['remind me Monday at 9am', '2026-09-07T14:00:00.000Z'],
     ['remind me at 9am Friday', '2026-09-11T14:00:00.000Z'],
+    ['remind me next Friday at 9am', '2026-09-18T14:00:00.000Z'],
+    ['remind me next Saturday at 9am', '2026-09-12T14:00:00.000Z'],
+    ['remind me next Saturday at 9:30pm', '2026-09-13T02:30:00.000Z'],
+    ['remind me on next Sunday at 9am', '2026-09-13T14:00:00.000Z'],
+    ['remind me next Monday at 9am', '2026-09-14T14:00:00.000Z'],
+    ['remind me at 9am next Friday', '2026-09-18T14:00:00.000Z'],
   ])('keeps weekday %s on the owner calendar', (text, expected) => {
     const result = plan(text);
     expect(result?.task.next_run).toBe(expected);
@@ -183,12 +219,32 @@ describe('named reply clock planning uses the owner calendar', () => {
     expect(result?.confirmation).toContain('to reply to Bob');
   });
 
+  it('keeps next Friday one week after this Friday without a second roll', () => {
+    const fridayEvening = { now: new Date('2026-09-12T03:00:00.000Z') };
+    const fridayMorning = { now: new Date('2026-09-11T13:00:00.000Z') };
+    expect(plan('remind me Friday at 9am', fridayEvening)?.task.next_run).toBe(
+      '2026-09-18T14:00:00.000Z',
+    );
+    expect(
+      plan('remind me next Friday at 9am', fridayEvening)?.task.next_run,
+    ).toBe('2026-09-18T14:00:00.000Z');
+    expect(plan('remind me Friday at 9am', fridayMorning)?.task.next_run).toBe(
+      '2026-09-11T14:00:00.000Z',
+    );
+    expect(
+      plan('remind me next Friday at 9am', fridayMorning)?.task.next_run,
+    ).toBe('2026-09-18T14:00:00.000Z');
+  });
+
   it.each(['UTC', 'Pacific/Honolulu', 'Asia/Tokyo'])(
     'does not use the process timezone %s to choose a weekday due instant',
     (hostTimeZone) => {
       process.env.TZ = hostTimeZone;
       expect(plan('remind me Friday at 9am')?.task.next_run).toBe(
         '2026-09-11T14:00:00.000Z',
+      );
+      expect(plan('remind me next Friday at 9am')?.task.next_run).toBe(
+        '2026-09-18T14:00:00.000Z',
       );
     },
   );
@@ -212,6 +268,11 @@ describe('named reply clock planning uses the owner calendar', () => {
       }),
     ).toBeNull();
     expect(
+      plan('remind me next Sunday at 2:30am', {
+        now: new Date('2026-03-07T18:00:00.000Z'),
+      })?.task.next_run,
+    ).toBe('2026-03-15T07:30:00.000Z');
+    expect(
       plan('remind me tomorrow at 3:30am', {
         now: new Date('2026-03-07T18:00:00.000Z'),
       })?.task.next_run,
@@ -234,6 +295,11 @@ describe('named reply clock planning uses the owner calendar', () => {
         now: new Date('2026-10-31T18:00:00.000Z'),
       }),
     ).toBeNull();
+    expect(
+      plan('remind me next Sunday at 1:30am', {
+        now: new Date('2026-10-31T18:00:00.000Z'),
+      })?.task.next_run,
+    ).toBe('2026-11-08T07:30:00.000Z');
     expect(
       plan('remind me tomorrow at 2:30am', {
         now: new Date('2026-10-31T18:00:00.000Z'),
