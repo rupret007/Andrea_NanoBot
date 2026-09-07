@@ -7,11 +7,13 @@ upstream NanoClaw names that were current when those changes shipped.
 
 - Short named-reply delays now also accept natural texting shorthands:
   `remind me in an hour`, `remind me in a minute`, `remind me in half an hour`,
+  `remind me in a couple hours` / `a couple of hours` (a whole count of two),
   and the `min`/`mins`/`hr`/`hrs` abbreviations. Bounds (1–1,440 minutes /
   1–24 hours), the durable-receipt anchor, identity, and every fail-closed
-  guard are unchanged; `half a minute`, `an hour and a half`, `in a bit`, and
-  fractional counts are still refused rather than rounded. No schema, provider,
-  draft, calendar or send-path change.
+  guard are unchanged; `a few`, `half a minute`, `an hour and a half`,
+  `in a bit`, `a couple of days`, and fractional counts are still refused
+  rather than rounded. No schema, provider, draft, calendar or send-path
+  change.
 
 - After a named owed reply, `remind me in 30 minutes` or `remind me to reply
   in 2 hours` keeps the person and creates one local reminder to the owner

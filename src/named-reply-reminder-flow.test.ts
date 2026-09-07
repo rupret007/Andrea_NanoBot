@@ -146,6 +146,12 @@ describe('named reply clock reminder journey', () => {
       'remind me in half an hour',
       '2026-09-06T01:00:00.000Z',
     ],
+    [
+      'telegram',
+      'tg:100000001',
+      'remind me in a couple hours',
+      '2026-09-06T02:30:00.000Z',
+    ],
   ] as const)(
     'retains the named reply for a relative delay on %s',
     async (channel, chatJid, text, due) => {
