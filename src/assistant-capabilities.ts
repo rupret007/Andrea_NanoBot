@@ -6383,7 +6383,7 @@ function tryNamedOpenLoopRemind(
       handled: true,
       capabilityId: descriptor.id,
       replyText: delayTiming
-        ? 'I could not set that reply reminder. Use a whole-number delay from 1 to 1,440 minutes or 1 to 24 hours, for example `remind me in 30 minutes`. Ask what is still open with that person again, then give a fresh timing choice so I can verify a future time. I did not create a reminder or send anything.'
+        ? 'I could not set that reply reminder. Use a delay from 1 to 1,440 minutes or 1 to 24 hours, for example `remind me in 30 minutes`, `remind me in an hour`, or `remind me in half an hour`. Ask what is still open with that person again, then give a fresh timing choice so I can verify a future time. I did not create a reminder or send anything.'
         : clockTiming
           ? 'I could not set that exact reply reminder. Use a future, unambiguous time today, tomorrow, a weekday, or next weekday with AM or PM, for example `remind me to reply tomorrow at 9am`, `remind me Friday at 9am`, or `remind me next Friday at 9am`. Ask what is still open with that person again, then give the time. I did not create a reminder or send anything.'
           : 'Tell me when you want that reply reminder. I did not send anything.',
