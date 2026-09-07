@@ -24,6 +24,7 @@ export type NamedReplyClockTiming =
       day: NamedReplyClockDay;
       hour24: number;
       minute: number;
+      nextWeek?: true;
     }
   | { kind: 'invalid_clock' };
 
@@ -41,7 +42,7 @@ const CLOCK_SHAPE = '[+-]?\\d+(?::\\d+)?\\s*(?:am|pm)?';
 const REMIND_LEAD =
   'remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))?';
 const WEEKDAY = NAMED_REPLY_WEEKDAYS.join('|');
-const DAY_TOKEN = `today|tomorrow|(?:on\\s+)?(?:${WEEKDAY})`;
+const DAY_TOKEN = `today|tomorrow|(?:on\\s+)?(?:next\\s+)?(?:${WEEKDAY})`;
 const DAY_FIRST = new RegExp(
   `^${REMIND_LEAD} (${DAY_TOKEN}) at\\s*(${CLOCK_SHAPE})[.!?]?$`,
   'i',
@@ -55,10 +56,18 @@ function isNamedReplyWeekday(value: string): value is NamedReplyWeekday {
   return (NAMED_REPLY_WEEKDAYS as readonly string[]).includes(value);
 }
 
-function normalizeClockDay(raw: string): NamedReplyClockDay | null {
+function normalizeClockDay(
+  raw: string,
+): { day: NamedReplyClockDay; nextWeek: boolean } | null {
   const cleaned = raw.replace(/^on\s+/i, '').toLowerCase();
-  if (cleaned === 'today' || cleaned === 'tomorrow') return cleaned;
-  return isNamedReplyWeekday(cleaned) ? cleaned : null;
+  const nextMatch = cleaned.match(/^next\s+(.+)$/);
+  const dayToken = nextMatch?.[1] || cleaned;
+  if (dayToken === 'today' || dayToken === 'tomorrow') {
+    return nextMatch ? null : { day: dayToken, nextWeek: false };
+  }
+  return isNamedReplyWeekday(dayToken)
+    ? { day: dayToken, nextWeek: Boolean(nextMatch) }
+    : null;
 }
 
 export function isNamedReplyClockDay(
@@ -88,9 +97,10 @@ export function parseNamedReplyClockTiming(
   }
   return {
     kind: 'clock',
-    day,
+    day: day.day,
     hour24: (hour % 12) + (clock[3].toLowerCase() === 'pm' ? 12 : 0),
     minute,
+    ...(day.nextWeek ? { nextWeek: true as const } : {}),
   };
 }
 
@@ -100,7 +110,8 @@ export function formatNamedReplyClockTiming(
   if (timing.kind === 'invalid_clock') return 'at an invalid time';
   const hour = timing.hour24 % 12 || 12;
   const minute = String(timing.minute).padStart(2, '0');
-  return `${timing.day} at ${hour}:${minute}${timing.hour24 >= 12 ? 'pm' : 'am'}`;
+  const dayLabel = timing.nextWeek ? `next ${timing.day}` : timing.day;
+  return `${dayLabel} at ${hour}:${minute}${timing.hour24 >= 12 ? 'pm' : 'am'}`;
 }
 
 interface CivilMinute {
@@ -173,10 +184,11 @@ function ownerWeekdayIndex(today: CivilMinute): number {
 function namedReplyDayOffset(
   day: NamedReplyClockDay,
   today: CivilMinute,
+  nextWeek = false,
 ): number {
-  if (day === 'today') return 0;
-  if (day === 'tomorrow') return 1;
-  return (WEEKDAY_INDEX[day] - ownerWeekdayIndex(today) + 7) % 7;
+  if (day === 'today' || day === 'tomorrow') return day === 'today' ? 0 : 1;
+  const thisWeek = (WEEKDAY_INDEX[day] - ownerWeekdayIndex(today) + 7) % 7;
+  return nextWeek ? thisWeek + 7 : thisWeek;
 }
 
 function resolveNamedReplyClockInstant(
@@ -201,12 +213,13 @@ function resolveNamedReplyClockInstant(
     );
   };
 
-  const dayOffset = namedReplyDayOffset(timing.day, today);
+  const dayOffset = namedReplyDayOffset(timing.day, today, timing.nextWeek);
   const first = resolveOffset(dayOffset);
   if (
     first &&
     first.getTime() <= now.getTime() &&
-    isNamedReplyWeekday(timing.day)
+    isNamedReplyWeekday(timing.day) &&
+    !timing.nextWeek
   ) {
     return resolveOffset(dayOffset + 7);
   }

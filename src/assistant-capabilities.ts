@@ -6356,7 +6356,7 @@ function tryNamedOpenLoopRemind(
       handled: true,
       capabilityId: descriptor.id,
       replyText: clockTiming
-        ? 'I could not set that exact reply reminder. Use a future, unambiguous time today, tomorrow, or a weekday with AM or PM, for example `remind me to reply tomorrow at 9am` or `remind me Friday at 9am`. Ask what is still open with that person again, then give the time. I did not create a reminder or send anything.'
+        ? 'I could not set that exact reply reminder. Use a future, unambiguous time today, tomorrow, a weekday, or next weekday with AM or PM, for example `remind me to reply tomorrow at 9am`, `remind me Friday at 9am`, or `remind me next Friday at 9am`. Ask what is still open with that person again, then give the time. I did not create a reminder or send anything.'
         : 'Tell me when you want that reply reminder. I did not send anything.',
       outputShape: descriptor.preferredOutputShape[context.channel],
       trace: buildCapabilityTrace(

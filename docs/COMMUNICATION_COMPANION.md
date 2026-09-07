@@ -12,6 +12,7 @@ Communication companion is the core of journeys like:
 - `Remind me later.`
 - `Remind me to reply later tonight.`
 - `Remind me Friday at 9am.`
+- `Remind me next Friday at 9am.`
 
 The flagship product goal is that Andrea can move from open loop -> draft -> approve/send or defer without making the user restate the whole conversation.
 The registered owner Telegram chat and explicitly configured Messages self-thread share the same short-lived recent-summary continuation seed when both are bound to the same companion group folder. That lets a recent-text review or summary started on either owner surface continue on the other without restating it. Named-thread and recent-text `today` / `yesterday` / `this week` windows follow the configured owner `TIMEZONE`, not the process host calendar. Ordinary Messages contacts/groups, non-owner Telegram chats, unconfigured self-thread placeholders, and differently bound folders cannot read, write, or clear that owner seed. Generic seeds expire after ten minutes; review-backed seeds retain only their independently validated review window. Other conversation state remains scoped according to its own feature contract.
@@ -180,22 +181,27 @@ Bob's name:
 - `remind me about that tomorrow at 12pm`
 - `remind me Friday at 9am`
 - `remind me at 9:30pm on Monday`
+- `remind me next Friday at 9am`
+- `remind me at 9:30pm on next Monday`
 
-Use **today, tomorrow, or a weekday**, a valid clock time, and explicit
-**AM or PM**. The exact-time path uses the configured owner `TIMEZONE`
-even when the host runs in another timezone. It confirms the concrete
-date, time and zone and stores that exact UTC instant. A weekday whose
-clock has already passed this week uses the next occurrence of that
-weekday. The reminder says to reply to Bob and is addressed to the
-current registered owner control chat. It does not send Bob a message
-or create a draft or calendar event.
+Use **today, tomorrow, a weekday, or next weekday**, a valid clock time,
+and explicit **AM or PM**. The exact-time path uses the configured owner
+`TIMEZONE` even when the host runs in another timezone. It confirms the
+concrete date, time and zone and stores that exact UTC instant. A
+weekday whose clock has already passed this week uses the next
+occurrence of that weekday. `next Friday` is always the Friday of the
+following week, even when this Friday is still ahead. The reminder says
+to reply to Bob and is addressed to the current registered owner
+control chat. It does not send Bob a message or create a draft or
+calendar event.
 
 An invalid or past today/tomorrow time, a spring clock gap, or a
 repeated fall clock hour creates no reminder. Ask what is still open
 with that person again and choose a future unambiguous time. This path
 never silently replaces an exact choice with tonight. The existing
-`remind me later` daypart behavior is unchanged. Relative delays and
-calendar-date requests are not added by this slice.
+`remind me later` daypart behavior is unchanged. Relative delays,
+calendar-date requests, clock-only `remind me at 9am`, and `this Friday`
+are not added by this slice.
 
 The named continuation must still have an offered reminder and one valid
 current direct-conversation target. Missing or changed targets, groups,
@@ -339,6 +345,7 @@ the separate explicit-send fence are unchanged.
 - `Remind me later.`
 - `Remind me to reply later tonight.`
 - `Remind me Friday at 9am.`
+- `Remind me next Friday at 9am.`
 - `Save this conversation under the Candace thread.`
 - `Keep that as a draft for now.`
 - `Don't surface this automatically.`
