@@ -6,8 +6,11 @@ export type NamedReplyDelayTiming =
   | { kind: 'delay'; minutes: number }
   | { kind: 'invalid_delay' };
 
+// An optional "about"/"around"/"roughly"/"~" hedge and a trailing "or so" are
+// accepted and ignored: the delay still resolves to one exact bounded instant
+// rather than silently dropping the reminder on a casual phone phrasing.
 const DELAY_PATTERN =
-  /^remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))? in (half an|a couple(?: of)?|an?|[+-]?\d+(?:\.\d+)?|Infinity|NaN) (minutes?|mins?|hours?|hrs?)( and a half)?[.!?]?$/i;
+  /^remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))? in (?:(?:about|around|roughly|approximately|approx\.?) |~ ?)?(half an|a couple(?: of)?|an?|[+-]?\d+(?:\.\d+)?|Infinity|NaN) (minutes?|mins?|hours?|hrs?)( and a half)?(?: or so)?[.!?]?$/i;
 
 /** Only a standalone timing choice may inherit the offered reply target. */
 export function parseNamedReplyDelayTiming(

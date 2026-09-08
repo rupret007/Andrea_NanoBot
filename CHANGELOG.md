@@ -5,6 +5,15 @@ upstream NanoClaw names that were current when those changes shipped.
 
 ## [Unreleased]
 
+- Short named-reply delays now tolerate a casual approximation hedge:
+  `remind me in about an hour`, `in around 30 minutes`, `in roughly 2 hours`,
+  `in ~30 minutes`, and a trailing `... or so` all resolve to the same one
+  exact bounded instant instead of the whole reminder silently dropping.
+  The hedge is ignored, not fuzzed; bounds (1–1,440 minutes / 1–24 hours),
+  the durable-receipt anchor, identity, and every fail-closed guard are
+  unchanged. `like an hour`, `an hour-ish`, and out-of-range hedged delays
+  are still refused. No schema, provider, draft, calendar or send-path change.
+
 - Short named-reply delays now also accept natural texting shorthands:
   `remind me in an hour`, `remind me in a minute`, `remind me in half an hour`,
   `remind me in a couple hours` / `a couple of hours` (a whole count of two),

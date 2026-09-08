@@ -501,6 +501,21 @@ describe('named open-loop remind-me-later stays off the send fence', () => {
     expect(
       parseNamedOpenLoopRemindTiming('remind me to call Sam Friday at 9am'),
     ).toBeNull();
+    expect(
+      parseNamedOpenLoopRemindTiming('remind me in an hour or so'),
+    ).toEqual({
+      kind: 'delay',
+      minutes: 60,
+    });
+    expect(
+      parseNamedOpenLoopRemindTiming('remind me in about 30 minutes'),
+    ).toEqual({ kind: 'delay', minutes: 30 });
+    expect(
+      parseNamedOpenLoopRemindTiming('remind me in roughly 25 hours'),
+    ).toEqual({ kind: 'invalid_delay' });
+    expect(
+      parseNamedOpenLoopRemindTiming('remind me in like an hour'),
+    ).toBeNull();
     expect(parseNamedOpenLoopRemindTiming('send it')).toBeNull();
     expect(parseNamedOpenLoopRemindTiming('yes')).toBeNull();
   });

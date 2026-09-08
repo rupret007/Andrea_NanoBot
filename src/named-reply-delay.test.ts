@@ -27,6 +27,16 @@ describe('bounded named reply delay grammar', () => {
     ['remind me to reply in an hour and a half.', 90],
     ['remind me in 2 hours and a half', 150],
     ['remind me in a couple of hours and a half', 150],
+    ['remind me in about an hour', 60],
+    ['remind me in around 30 minutes', 30],
+    ['remind me to reply in roughly 2 hours', 120],
+    ['remind me in approximately 45 mins', 45],
+    ['remind me in ~30 minutes', 30],
+    ['remind me in ~ 20 minutes', 20],
+    ['remind me in an hour or so', 60],
+    ['remind me in 30 minutes or so', 30],
+    ['remind me in a couple hours or so', 120],
+    ['remind me in about an hour and a half', 90],
   ])('inherits timing only for %s', (text, minutes) => {
     expect(parseNamedReplyDelayTiming(text as string)).toEqual({
       kind: 'delay',
@@ -49,6 +59,10 @@ describe('bounded named reply delay grammar', () => {
     'remind me in half an hour and a half',
     'remind me in 30 minutes and a half',
     'remind me in 24 hours and a half',
+    'remind me in about 25 hours',
+    'remind me in roughly 0 minutes',
+    'remind me in ~1.5 hours',
+    'remind me in around 1441 minutes or so',
   ])('refuses invalid delays without a tonight fallback: %s', (text) => {
     expect(parseNamedReplyDelayTiming(text)).toEqual({ kind: 'invalid_delay' });
   });
@@ -68,6 +82,10 @@ describe('bounded named reply delay grammar', () => {
     'send it in 30 minutes',
     'remind me later',
     'remind me next Friday at 9am',
+    'remind me in like an hour',
+    'remind me in an hour ish',
+    'remind me in an hour or so and send it',
+    'remind me in a bit or so',
   ])('does not substitute a body or inherit another request: %s', (text) => {
     expect(parseNamedReplyDelayTiming(text)).toBeNull();
   });
