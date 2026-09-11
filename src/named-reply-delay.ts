@@ -10,7 +10,7 @@ export type NamedReplyDelayTiming =
 // accepted and ignored: the delay still resolves to one exact bounded instant
 // rather than silently dropping the reminder on a casual phone phrasing.
 const DELAY_PATTERN =
-  /^remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))? in (?:(?:about|around|roughly|approximately|approx\.?) |~ ?)?(half an|a couple(?: of)?|an?|[+-]?\d+(?:\.\d+)?|Infinity|NaN) (minutes?|mins?|hours?|hrs?)( and a half)?(?: or so)?[.!?]?$/i;
+  /^remind me(?:(?: to (?:reply|answer))|(?: about (?:that|this|it)))? in (?:(?:about|around|roughly|approximately|approx\.?) |~ ?)?(half(?: an?)?|a couple(?: of)?|an?|[+-]?\d+(?:\.\d+)?|Infinity|NaN) (minutes?|mins?|hours?|hrs?)( and a half)?(?: or so)?[.!?]?$/i;
 
 /** Only a standalone timing choice may inherit the offered reply target. */
 export function parseNamedReplyDelayTiming(
@@ -32,7 +32,7 @@ export function parseNamedReplyDelayTiming(
     // "a couple" is a whole count of two in a text; "a few" stays ambiguous.
     minutes = 2 * perUnit;
     wholeHourBase = perUnit === 60;
-  } else if (quantity === 'half an') {
+  } else if (quantity.startsWith('half')) {
     // Only a half hour maps to a whole minute count; "half a minute" is not offered.
     if (perUnit !== 60) return { kind: 'invalid_delay' };
     minutes = 30;
