@@ -3,6 +3,7 @@
  * GraphQL API via single POST endpoint, OAuth token.
  */
 
+import { fetchWithTimeout } from './_fetch.js';
 import { redactForError } from './_redact.js';
 import type { Integration, RegisteredTool } from './types.js';
 
@@ -13,7 +14,7 @@ async function gql(
   query: string,
   variables: Record<string, unknown> = {},
 ) {
-  const r = await fetch(LINEAR_GQL, {
+  const r = await fetchWithTimeout(LINEAR_GQL, {
     method: 'POST',
     headers: { Authorization: token, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables }),
