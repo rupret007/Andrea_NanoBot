@@ -160,6 +160,8 @@ async function createTelegramInboundTestBot(
     has_main_web_app: false,
     has_topics_enabled: false,
     allows_users_to_create_topics: false,
+    can_manage_bots: false,
+    supports_join_request_queries: false,
   };
   bot.api.config.use((previous, method, payload, signal) => {
     if (method === 'answerCallbackQuery') {

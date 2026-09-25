@@ -23,3 +23,8 @@ export {
   StdioMcpClient,
 } from './mcp-bridge.js';
 export { redactString, redactForError } from './_redact.js';
+export {
+  fetchWithTimeout,
+  INTEGRATION_FETCH_TIMEOUT_MS,
+  type TimeoutFetchOptions,
+} from './_fetch.js';

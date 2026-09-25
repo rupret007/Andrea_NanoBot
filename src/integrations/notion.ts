@@ -3,6 +3,7 @@
  * Uses the official Notion REST API; auth via integration token.
  */
 
+import { fetchWithTimeout } from './_fetch.js';
 import { redactForError } from './_redact.js';
 import type { Integration, RegisteredTool } from './types.js';
 
@@ -35,7 +36,7 @@ export const NotionIntegration: Integration = {
         },
         handler: async (args) => {
           const token = await ctx.secrets.get('NOTION_TOKEN');
-          const r = await fetch('https://api.notion.com/v1/search', {
+          const r = await fetchWithTimeout('https://api.notion.com/v1/search', {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${token}`,
@@ -81,7 +82,7 @@ export const NotionIntegration: Integration = {
         },
         handler: async (args) => {
           const token = await ctx.secrets.get('NOTION_TOKEN');
-          const r = await fetch(
+          const r = await fetchWithTimeout(
             `https://api.notion.com/v1/blocks/${args.pageId}/children?page_size=100`,
             {
               headers: {
@@ -116,7 +117,7 @@ export const NotionIntegration: Integration = {
         },
         handler: async (args) => {
           const token = await ctx.secrets.get('NOTION_TOKEN');
-          const r = await fetch('https://api.notion.com/v1/pages', {
+          const r = await fetchWithTimeout('https://api.notion.com/v1/pages', {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${token}`,
@@ -155,7 +156,7 @@ export const NotionIntegration: Integration = {
   async health(ctx) {
     const token = await ctx.secrets.get('NOTION_TOKEN');
     if (!token) return { ok: false, detail: 'missing token' };
-    const r = await fetch('https://api.notion.com/v1/users/me', {
+    const r = await fetchWithTimeout('https://api.notion.com/v1/users/me', {
       headers: {
         Authorization: `Bearer ${token}`,
         'Notion-Version': '2022-06-28',

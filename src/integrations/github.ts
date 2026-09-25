@@ -2,6 +2,7 @@
  * GitHub integration - read repos, issues, PRs; create/comment.
  */
 
+import { fetchWithTimeout } from './_fetch.js';
 import { redactForError } from './_redact.js';
 import type { Integration, RegisteredTool } from './types.js';
 
@@ -35,7 +36,7 @@ export const GitHubIntegration: Integration = {
         cost: 'cheap',
         schema: { type: 'object' },
         handler: async () => {
-          const r = await fetch(
+          const r = await fetchWithTimeout(
             `${API}/search/issues?q=is:open+is:pr+author:@me&per_page=30`,
             { headers: await headers() },
           );
@@ -69,7 +70,7 @@ export const GitHubIntegration: Integration = {
           required: ['owner', 'repo', 'number'],
         },
         handler: async (args) => {
-          const r = await fetch(
+          const r = await fetchWithTimeout(
             `${API}/repos/${args.owner}/${args.repo}/issues/${args.number}`,
             { headers: await headers() },
           );
@@ -100,7 +101,7 @@ export const GitHubIntegration: Integration = {
           required: ['owner', 'repo', 'number', 'body'],
         },
         handler: async (args) => {
-          const r = await fetch(
+          const r = await fetchWithTimeout(
             `${API}/repos/${args.owner}/${args.repo}/issues/${args.number}/comments`,
             {
               method: 'POST',
