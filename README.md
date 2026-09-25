@@ -326,6 +326,42 @@ The runtime is still based on NanoClaw, which means the security model matters:
 - model access can run through OneCLI or an Anthropic-compatible gateway
 - shopping credentials stay on the host behind a narrow approval-aware boundary
 
+## Wire-Only Architecture
+
+Andrea NanoBot is the **Messages WIRE only**. It handles BlueBubbles
+send/receive, allowlist enforcement, @andrea mention fencing, and tagged
+delivery. It must not absorb external agent logic.
+
+**Jeff standing architecture (2026-09-24):**
+
+| Component | Role |
+| --------- | ---- |
+| Bob | Front door / conductor |
+| Andrea NanoBot | Thin send/receive engine on Mac |
+| Karen | Separate ship-gate agent (out of scope here) |
+| Instinct | Real-world partner (out of scope here except wire safety) |
+
+**Wire safety boundaries:**
+
+- Instinct numbers are NOT on any allowlist and NanoBot never auto-replies into
+  Instinct threads
+- Band-mates using @andrea stay in-thread only; no bridge to other Jeff chats
+  or Instinct without explicit allowlist path
+- Only documented send phrases authorize delivery: `send it`, `send it now`,
+  `send now`
+- AppleScript is the only outbound send method; private-api is not used
+- QA and Karen surfaces cannot authorize sends
+
+**Build/runtime freshness:**
+
+Bob can verify NanoBot is running the expected code by checking:
+
+- `npm run services:status` shows serving commit, build provenance, and dist
+  mtime
+- Wire health snapshot exposes git tip, package version, and build time so
+  stale binaries after branch flips are detectable (Aug 23 incident: build
+  stayed loaded after Mac switched to main)
+
 ## Why This Repo Exists
 
 The upstream NanoClaw project provides a strong secure runtime.
