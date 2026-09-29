@@ -7,6 +7,11 @@ import {
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
 import { RUNTIME_STATE_DIR } from './config.js';
+import {
+  readCurrentGitCommit,
+  requireVerifiedRuntimeBuild,
+  resolveRuntimeArtifactContext,
+} from './build-provenance.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { WebBobBridge, type WebBobBridgeConfig } from './web-bob-bridge.js';
@@ -101,6 +106,21 @@ export function startWebBobBridgeServer(deps: {
       fs.readFileSync(configPath, 'utf8'),
     ) as WebBobBridgeConfig & { enabled: boolean; port: number };
     if (config.enabled !== true) return null;
+    const artifact = resolveRuntimeArtifactContext(
+      import.meta.url,
+      'web-bob-bridge-server.js',
+    );
+    if (!artifact.isCompiledArtifact)
+      throw new Error(
+        'The enabled owner bridge requires a verified compiled artifact.',
+      );
+    const buildSha = readCurrentGitCommit(artifact.projectRoot);
+    requireVerifiedRuntimeBuild({
+      projectRoot: artifact.projectRoot,
+      expectedGitCommit: buildSha,
+      runnerBuildId: process.env.ANDREA_BUILD_ID,
+      runtimeName: 'Web Bob bridge',
+    });
     const controlToken =
       process.env.BLUEBUBBLES_CONTROL_TOKEN ||
       readEnvFile(['BLUEBUBBLES_CONTROL_TOKEN']).BLUEBUBBLES_CONTROL_TOKEN;
@@ -116,6 +136,7 @@ export function startWebBobBridgeServer(deps: {
       config,
       path.join(RUNTIME_STATE_DIR, 'webbob', 'challenges.db'),
       {
+        buildSha,
         connected: () => deps.getChannel()?.isConnected() === true,
         resolveRecipient: readWebBobRecipient,
         sendToTarget: async (channel, chatJid, text, options) => {

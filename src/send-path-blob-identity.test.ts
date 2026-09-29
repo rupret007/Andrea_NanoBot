@@ -10,14 +10,15 @@ import { isNeverAuthorizeSendCaller } from './trusted-owner-review-surface.js';
 import type { RegisteredGroup } from './types.js';
 
 /**
- * Send-path source blobs at leftover-squash #29
+ * Send-path source blobs at leftover-squash #29, with the explicitly reviewed
+ * message-actions extension for the disabled-by-default Web Bob owner bridge.
  * (main 89459510ba5b5e1ff022c5fb52cb2abd53e4bcda).
  * These hashes may change only when a test in this file still proves the
  * exact Bob fence: send it / send it now / send now.
  */
 const PINNED_SEND_PATH_BLOBS = {
   'src/message-actions.ts':
-    '6d0f14df134bbc430a6770c5c2991d1476e15fb8dfd57fa334d3643064cd7c73',
+    '18d8367f1f0988f4b7b9aebc56bd013300a8df1975b1c21b2bce270c68ea5a0b',
   'src/trusted-owner-review-surface.ts':
     '2e401cb1b0902f56085d8e6e61e07554af79f7cb4572ae0bc7de6630f4a897b1',
   'src/bluebubbles-outbound-request.ts':
@@ -46,7 +47,7 @@ const mainGroup: RegisteredGroup = {
 };
 
 describe('send-path blob identity after named-person leftover', () => {
-  it('keeps send-path source blobs identical to leftover-squash #29', () => {
+  it('pins the reviewed core extension and preserves all other protected transport blobs', () => {
     for (const [relativePath, pinned] of Object.entries(
       PINNED_SEND_PATH_BLOBS,
     )) {

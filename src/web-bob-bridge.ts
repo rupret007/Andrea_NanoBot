@@ -33,6 +33,7 @@ export interface WebBobBridgeConfig {
 }
 
 export interface WebBobBridgeDeps {
+  readonly buildSha?: string;
   connected(): boolean;
   /** Read the real exact thread membership; never trust caller metadata. */
   resolveRecipient(chatGuid: string): Promise<string[]>;
@@ -539,6 +540,7 @@ export class WebBobBridge {
           ok: true,
           protocol: 1,
           service: 'andrea-web-bob',
+          sha: this.deps.buildSha || null,
           connected: this.deps.connected(),
           paused: isMessagingOutboundPaused(),
           instinctReadOnly: true,
