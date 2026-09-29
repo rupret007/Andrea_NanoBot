@@ -310,6 +310,20 @@ describe('Web Bob dedicated Andrea ingress', () => {
     }
   });
 
+  it('late cancellation cannot relabel a consumed or sent action as cancelled', async () => {
+    const input = await approval();
+    send.mockImplementation(async () => {
+      expect(bridge.cancel(input).state).toBe('delivery_unconfirmed');
+      return {
+        platformMessageId: 'receipt-123',
+        threadId: 'bb:iMessage;-;+12025550102',
+      };
+    });
+    await bridge.confirm(input);
+    expect(bridge.cancel(input).state).toBe('sent');
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it('expired cards, pre-draft timestamps and unavailable persistence cannot dispatch', async () => {
     const input = await approval();
     await expect(

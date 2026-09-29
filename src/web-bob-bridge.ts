@@ -360,7 +360,10 @@ export class WebBobBridge {
         "UPDATE webbob_drafts SET state = 'cancelled' WHERE id = ? AND state = 'pending'",
       )
       .run(row.id);
-    return { ok: true, draftId: row.id, state: 'cancelled' };
+    const current = this.db
+      .prepare('SELECT * FROM webbob_drafts WHERE id = ?')
+      .get(row.id) as StoredDraft;
+    return this.receipt(current);
   }
 
   private receipt(row: StoredDraft): Record<string, unknown> {

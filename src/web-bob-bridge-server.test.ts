@@ -27,21 +27,19 @@ describe('optional Web Bob bridge runtime boundary', () => {
   });
 
   it('reads only a bounded exact direct recipient, never a send endpoint', async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            status: 200,
-            data: [
-              {
-                guid: 'iMessage;-;owner@example.invalid',
-                participants: [{ address: 'owner@example.invalid' }],
-              },
-            ],
-          }),
-        ),
-      );
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 200,
+          data: [
+            {
+              guid: 'iMessage;-;owner@example.invalid',
+              participants: [{ address: 'owner@example.invalid' }],
+            },
+          ],
+        }),
+      ),
+    );
     vi.stubGlobal('fetch', fetcher);
     expect(
       await readWebBobRecipient('iMessage;-;owner@example.invalid'),
