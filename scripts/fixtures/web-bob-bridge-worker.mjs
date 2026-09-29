@@ -4,7 +4,12 @@ import http from 'node:http';
 import path from 'node:path';
 import readline from 'node:readline';
 
-import { _closeDatabase, _initTestDatabase } from '../../dist/db.js';
+import {
+  _closeDatabase,
+  _initTestDatabase,
+  storeChatMetadata,
+  storeMessageDirect,
+} from '../../dist/db.js';
 import { WebBobBridge } from '../../dist/web-bob-bridge.js';
 
 if (
@@ -29,16 +34,29 @@ const bridge = new WebBobBridge(
     connected: () => true,
     resolveRecipient: async (guid) =>
       guid === 'iMessage;-;+15550101010' ? ['+15550101010'] : [],
-    sendToTarget: async (_channel, chatJid, _text, options) => {
+    sendToTarget: async (_channel, chatJid, text, options) => {
       // Persist only counts and identity, never private fixture text.
       fs.writeFileSync(
         'provider-count.json',
         JSON.stringify({ sends: ++sends, actionId: options?.idempotencyKey }),
       );
-      return {
-        platformMessageId: 'synthetic-provider-receipt',
-        threadId: chatJid,
-      };
+      // Match the real channel contract: a persisted outbound row, followed
+      // by an ID-only receipt. Fixture message bytes stay in the memory DB.
+      const timestamp = new Date().toISOString();
+      storeChatMetadata(chatJid, timestamp, undefined, 'bluebubbles');
+      storeMessageDirect({
+        id: 'synthetic-provider-receipt',
+        chat_jid: chatJid,
+        sender: 'Me',
+        sender_name: 'You',
+        content: text,
+        timestamp,
+        is_from_me: true,
+        is_bot_message: false,
+        provider_idempotency_key: options?.idempotencyKey,
+        message_ingress_origin: 'assistant_outbound',
+      });
+      return { platformMessageId: 'synthetic-provider-receipt' };
     },
   },
 );

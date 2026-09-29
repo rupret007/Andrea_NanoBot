@@ -9,6 +9,8 @@ import {
   _closeDatabase,
   _initTestDatabase,
   getMessageAction,
+  storeChatMetadata,
+  storeMessageDirect,
   updateMessageAction,
 } from './db.js';
 import { executeExplicitlyAuthorizedMessageAction } from './message-actions.js';
@@ -272,6 +274,69 @@ describe('Web Bob dedicated Andrea ingress', () => {
     expect((await bridge.confirm(input)).state).toBe('delivery_unconfirmed');
     expect(send).toHaveBeenCalledOnce();
   });
+
+  it('reconciles the real channel receipt shape from one exact durable outbound row without resending', async () => {
+    const input = await approval();
+    send.mockImplementation(async (_channel, chatJid, text, options) => {
+      const timestamp = new Date().toISOString();
+      storeChatMetadata(chatJid, timestamp, undefined, 'bluebubbles');
+      storeMessageDirect({
+        id: 'bb:actual-channel-receipt',
+        chat_jid: chatJid,
+        sender: 'Me',
+        sender_name: 'You',
+        content: text,
+        timestamp,
+        is_from_me: true,
+        is_bot_message: false,
+        provider_idempotency_key: options.idempotencyKey,
+        message_ingress_origin: 'assistant_outbound',
+      });
+      return { platformMessageId: 'bb:actual-channel-receipt' };
+    });
+    expect(await bridge.confirm(input)).toMatchObject({
+      state: 'sent',
+      messageGuid: 'bb:actual-channel-receipt',
+    });
+    bridge.close();
+    bridge = open();
+    expect((await bridge.confirm(input)).state).toBe('sent');
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it.each(['recipient', 'body', 'authorship', 'receipt', 'time'])(
+    'rejects a durable row with mismatched %s',
+    async (mismatch) => {
+      const input = await approval();
+      send.mockImplementation(async (_channel, chatJid, text) => {
+        const target =
+          mismatch === 'recipient' ? 'bb:iMessage;-;+12025550103' : chatJid;
+        const timestamp =
+          mismatch === 'time'
+            ? '2020-01-01T00:00:00Z'
+            : new Date().toISOString();
+        storeChatMetadata(target, timestamp, undefined, 'bluebubbles');
+        storeMessageDirect({
+          id:
+            mismatch === 'receipt'
+              ? 'bb:different-receipt'
+              : 'bb:actual-channel-receipt',
+          chat_jid: target,
+          sender: 'Me',
+          sender_name: 'You',
+          content: mismatch === 'body' ? 'Different bytes' : text,
+          timestamp,
+          is_from_me: mismatch !== 'authorship',
+          is_bot_message: false,
+          message_ingress_origin: 'assistant_outbound',
+        });
+        return { platformMessageId: 'bb:actual-channel-receipt' };
+      });
+      expect((await bridge.confirm(input)).state).toBe('delivery_unconfirmed');
+      await bridge.confirm(input);
+      expect(send).toHaveBeenCalledOnce();
+    },
+  );
 
   it('requires a receipt from the exact recipient thread and never retries a mismatch', async () => {
     const input = await approval();

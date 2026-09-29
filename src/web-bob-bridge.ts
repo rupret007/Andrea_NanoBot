@@ -10,6 +10,7 @@ import { ChannelDeliveryUnverifiedError } from './channel-delivery.js';
 import {
   createOrRefreshMessageActionFromDraft,
   executeExplicitlyAuthorizedMessageAction,
+  reconcileBlueBubblesUnverifiedMessageActions,
   type MessageActionExecutionDeps,
 } from './message-actions.js';
 import {
@@ -368,6 +369,13 @@ export class WebBobBridge {
   }
 
   private receipt(row: StoredDraft): Record<string, unknown> {
+    // The existing BlueBubbles send transport may return only a receipt ID.
+    // Its channel persists the exact outbound row before returning. Reconcile
+    // only through the core's ID/body/recipient/authorship/time-bound evidence
+    // matcher; absence or mismatch remains uncertain and can never resend.
+    if (row.state === 'consumed') {
+      reconcileBlueBubblesUnverifiedMessageActions({ groupFolder: 'webbob' });
+    }
     const action = getMessageAction(row.actionId);
     const scope = JSON.parse(row.scope) as Scope;
     const explanation = action?.explanationJson
