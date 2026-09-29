@@ -16,6 +16,22 @@ import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { WebBobBridge, type WebBobBridgeConfig } from './web-bob-bridge.js';
 
+/** Operator maintenance hold for automatic service alerts only. Explicit
+ * owner-approved dispatch still uses the normal message-action fences. The
+ * hold is checked on each alert, so removing it restores the saved setting
+ * without another restart or a queued burst of deployment notifications. */
+export function isWebBobReleaseAlertHold(): boolean {
+  const hold = process.env.ANDREA_WEBBOB_RELEASE_ALERT_HOLD;
+  if (!hold) return false;
+  if (!path.isAbsolute(hold)) return true;
+  try {
+    fs.statSync(hold);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+}
+
 /** Read only; the provider's private API and send HTTP are never used here. */
 export async function readWebBobRecipient(chatGuid: string): Promise<string[]> {
   const config = resolveBlueBubblesConfig();

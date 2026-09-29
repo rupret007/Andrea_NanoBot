@@ -10,11 +10,31 @@ vi.mock('./channels/bluebubbles.js', () => ({
 vi.mock('./env.js', () => ({ readEnvFile: () => ({}) }));
 
 import {
+  isWebBobReleaseAlertHold,
   readWebBobRecipient,
   startWebBobBridgeServer,
 } from './web-bob-bridge-server.js';
 
 describe('optional Web Bob bridge runtime boundary', () => {
+  it('leaves automatic alerts unchanged without an operator hold', () => {
+    vi.stubEnv('ANDREA_WEBBOB_RELEASE_ALERT_HOLD', '');
+    expect(isWebBobReleaseAlertHold()).toBe(false);
+  });
+
+  it('suppresses automatic alerts only while a configured maintenance file exists', () => {
+    vi.stubEnv(
+      'ANDREA_WEBBOB_RELEASE_ALERT_HOLD',
+      new URL(import.meta.url).pathname,
+    );
+    expect(isWebBobReleaseAlertHold()).toBe(true);
+    vi.stubEnv(
+      'ANDREA_WEBBOB_RELEASE_ALERT_HOLD',
+      new URL(import.meta.url).pathname + '.absent',
+    );
+    expect(isWebBobReleaseAlertHold()).toBe(false);
+    vi.stubEnv('ANDREA_WEBBOB_RELEASE_ALERT_HOLD', 'relative');
+    expect(isWebBobReleaseAlertHold()).toBe(true);
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();

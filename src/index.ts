@@ -135,7 +135,10 @@ import {
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
 import { startBlueBubblesControlServer } from './bluebubbles-control-server.js';
-import { startWebBobBridgeServer } from './web-bob-bridge-server.js';
+import {
+  isWebBobReleaseAlertHold,
+  startWebBobBridgeServer,
+} from './web-bob-bridge-server.js';
 import { recordBlueBubblesOutboundDeliveryEvidence } from './bluebubbles-delivery-recovery.js';
 import {
   applyBlueBubblesIngressPolicy,
@@ -13913,7 +13916,7 @@ async function main(): Promise<void> {
     message: string;
   }): Promise<boolean> => {
     const alertConfig = resolveSystemAlertConfig();
-    if (!alertConfig.enabled) return false;
+    if (!alertConfig.enabled || isWebBobReleaseAlertHold()) return false;
 
     const now = Date.now();
     const cooldownMs = alertConfig.cooldownMinutes * 60_000;
