@@ -59,10 +59,10 @@ export async function readWebBobRecipient(chatGuid: string): Promise<string[]> {
     signal: AbortSignal.timeout(12000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      limit: 200,
+      guid: chatGuid,
+      limit: 2,
       offset: 0,
-      with: ['participants', 'lastMessage'],
-      sort: 'lastmessage',
+      with: ['participants'],
     }),
   });
   if (!response.ok || !response.body)
@@ -91,9 +91,10 @@ export async function readWebBobRecipient(chatGuid: string): Promise<string[]> {
     !Array.isArray(parsed.data)
   )
     throw new Error('Recipient verification returned invalid data.');
-  const rows = parsed.data.filter((row) => row?.guid === chatGuid);
+  const rows = parsed.data;
   if (
     rows.length !== 1 ||
+    rows[0]?.guid !== chatGuid ||
     !Array.isArray(rows[0].participants) ||
     rows[0].participants.length !== 1 ||
     typeof rows[0].participants[0]?.address !== 'string'

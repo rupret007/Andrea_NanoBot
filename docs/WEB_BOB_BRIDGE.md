@@ -12,7 +12,10 @@ backend is trusted to attest its own authenticated session. An actor string by
 itself is never an authentication credential.
 
 Andrea reads the actual direct-thread membership before preparing the draft and
-again before confirmation. It binds exact body bytes, recipient, owner-session
+again before confirmation. Each read queries the exact GUID with a two-row
+limit and participants only, so an older thread need not appear in the recent
+chat window. Missing, mismatched, duplicate or non-direct results fail closed.
+It binds exact body bytes, recipient, owner-session
 digest, conversation, Web Bob process epoch, draft ID/revision and original
 request ID to an Andrea-owned random challenge. The challenge expires in five
 minutes. Separate confirmation carries the challenge, a new request ID and a
@@ -55,8 +58,11 @@ Run the full repository checks and the Web Bob suite/evals/browser/staging
 checks on exact committed heads. The Web Bob `release/bridge_probe.py` runs the
 real Python client against Andrea's compiled HTTP server and action store with
 a synthetic provider, under the network-denial test boundary. This proves the
-protocol, not live delivery. The corresponding fixture never loads production
-credentials and records only a synthetic provider-call count.
+protocol, not live delivery. The fixture uses the compiled recipient resolver
+against a local synthetic server whose target is outside its recent 200 chats;
+preparation and confirmation must each verify that exact target. It never loads
+production credentials and records only synthetic query metadata and provider
+call counts.
 
 Activation must retain both predecessor artifacts, service configurations and
 private configuration files, validate the explicitly enabled owner surface,

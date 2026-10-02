@@ -65,14 +65,72 @@ describe('optional Web Bob bridge runtime boundary', () => {
       await readWebBobRecipient('iMessage;-;owner@example.invalid'),
     ).toEqual(['owner@example.invalid']);
     expect(fetcher.mock.calls[0][0].pathname).toBe('/api/v1/chat/query');
-    expect(JSON.parse(fetcher.mock.calls[0][1].body).limit).toBe(200);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({
+      guid: 'iMessage;-;owner@example.invalid',
+      limit: 2,
+      offset: 0,
+      with: ['participants'],
+    });
     expect(fetcher.mock.calls[0][1].redirect).toBe('error');
+  });
+
+  it('finds an older direct thread without scanning the recent window', async () => {
+    const target = {
+      guid: 'SMS;-;+15550101998',
+      participants: [{ address: '+15550101998' }],
+    };
+    const recent = Array.from({ length: 200 }, (_, index) => ({
+      guid: `SMS;-;+1555020${String(index).padStart(4, '0')}`,
+      participants: [{ address: '+15550101000' }],
+    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, options) => {
+        const query = JSON.parse(options.body);
+        return new Response(
+          JSON.stringify({
+            status: 200,
+            data:
+              query.guid === target.guid
+                ? [target]
+                : recent.slice(0, query.limit),
+          }),
+        );
+      }),
+    );
+    expect(await readWebBobRecipient(target.guid)).toEqual(['+15550101998']);
   });
 
   it.each([
     { status: 500, data: [] },
     { data: 'invalid' },
     { data: [] },
+    {
+      data: [
+        {
+          guid: 'SMS;-;+15550101998',
+          participants: [{ address: '+15550101998' }],
+        },
+      ],
+    },
+    {
+      data: [
+        {
+          guid: 'iMessage;-;owner@example.invalid',
+          participants: [{ address: 'owner@example.invalid' }],
+        },
+        {
+          guid: 'SMS;-;+15550101998',
+          participants: [{ address: '+15550101998' }],
+        },
+      ],
+    },
+    {
+      data: Array(2).fill({
+        guid: 'iMessage;-;owner@example.invalid',
+        participants: [{ address: 'owner@example.invalid' }],
+      }),
+    },
     { data: [{ guid: 'iMessage;-;owner@example.invalid', participants: [] }] },
     {
       data: [
