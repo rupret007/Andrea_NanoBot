@@ -135,6 +135,10 @@ import {
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
 import { startBlueBubblesControlServer } from './bluebubbles-control-server.js';
+import {
+  isWebBobReleaseAlertHold,
+  startWebBobBridgeServer,
+} from './web-bob-bridge-server.js';
 import { recordBlueBubblesOutboundDeliveryEvidence } from './bluebubbles-delivery-recovery.js';
 import {
   applyBlueBubblesIngressPolicy,
@@ -13912,7 +13916,7 @@ async function main(): Promise<void> {
     message: string;
   }): Promise<boolean> => {
     const alertConfig = resolveSystemAlertConfig();
-    if (!alertConfig.enabled) return false;
+    if (!alertConfig.enabled || isWebBobReleaseAlertHold()) return false;
 
     const now = Date.now();
     const cooldownMs = alertConfig.cooldownMinutes * 60_000;
@@ -14244,6 +14248,7 @@ async function main(): Promise<void> {
   let blueBubblesReceiptInboxConsumer: BlueBubblesReceiptInboxConsumer | null =
     null;
   let ownerCockpitServer: ReturnType<typeof startOwnerCockpitServer> = null;
+  let webBobBridgeServer: ReturnType<typeof startWebBobBridgeServer> = null;
 
   // This is the final shared cursor mutation during shutdown. The exit hook
   // that follows it is synchronous, so no channel work can interleave before
@@ -14302,6 +14307,11 @@ async function main(): Promise<void> {
         blueBubblesControlServer?.close(() => resolve()),
       ).catch((err) =>
         logger.warn({ err }, 'BlueBubbles control API shutdown failed'),
+      );
+    }
+    if (webBobBridgeServer) {
+      await new Promise<void>((resolve) =>
+        webBobBridgeServer?.close(() => resolve()),
       );
     }
     if (blueBubblesReceiptInboxConsumer) {
@@ -22158,6 +22168,13 @@ async function main(): Promise<void> {
       ) || null,
   });
   ownerCockpitServer = startOwnerCockpitServer();
+  webBobBridgeServer = startWebBobBridgeServer({
+    getChannel: () =>
+      channels.find(
+        (channel): channel is BlueBubblesChannel =>
+          channel instanceof BlueBubblesChannel,
+      ) || null,
+  });
   resolveTelegramMainChatForAlexa = (groupFolder: string) => {
     const telegramEntries = Object.entries(registeredGroups).filter(([jid]) => {
       const channel = findChannel(channels, jid);
