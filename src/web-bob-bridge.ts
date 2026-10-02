@@ -38,7 +38,26 @@ export interface WebBobBridgeDeps {
   connected(): boolean;
   /** Read the real exact thread membership; never trust caller metadata. */
   resolveRecipient(chatGuid: string): Promise<string[]>;
+  readDelivery?(target: WebBobDeliveryTarget): Promise<WebBobDeliveryEvidence>;
   sendToTarget: MessageActionExecutionDeps['sendToTarget'];
+}
+
+export interface WebBobDeliveryTarget {
+  messageGuid: string;
+  chatGuid: string;
+  address: string;
+  text: string;
+}
+
+export interface WebBobDeliveryEvidence {
+  state:
+    | 'submitted'
+    | 'sent'
+    | 'delivered'
+    | 'delivery_failed'
+    | 'delivery_unconfirmed';
+  error: number | null;
+  deliveredAt: number | null;
 }
 
 interface Scope {
@@ -153,6 +172,10 @@ export class WebBobBridge {
   private readonly db: Database.Database;
   private readonly epoch = randomBytes(24).toString('hex');
   private readonly deny: Set<string>;
+  private readonly inspections = new Map<
+    string,
+    Promise<Record<string, unknown>>
+  >();
 
   constructor(
     readonly config: WebBobBridgeConfig,
@@ -186,6 +209,9 @@ export class WebBobBridge {
       challengeHash TEXT NOT NULL, serverEpoch TEXT NOT NULL, expires INTEGER NOT NULL,
       pauseGeneration INTEGER NOT NULL, state TEXT NOT NULL, actionId TEXT NOT NULL,
       confirmationRequestId TEXT
+    )`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS webbob_delivery (
+      draftId TEXT PRIMARY KEY, evidence TEXT NOT NULL
     )`);
     // Restart cannot revive a pending owner decision. Consumed records survive.
     this.db
@@ -393,18 +419,143 @@ export class WebBobBridge {
       receipt.threadId === 'bb:' + scope.chatGuid &&
       receipt.exactContent === scope.text &&
       receipt.idempotencyKey === row.actionId;
+    if (verified) {
+      this.db
+        .prepare('INSERT OR IGNORE INTO webbob_delivery VALUES (?, ?)')
+        .run(
+          row.id,
+          JSON.stringify({
+            state: 'submitted',
+            error: null,
+            deliveredAt: null,
+            checkedAt: null,
+            messageGuid: action.platformMessageId,
+            actionId: row.actionId,
+            digest: row.digest,
+          }),
+        );
+    }
+    const saved = this.db
+      .prepare('SELECT evidence FROM webbob_delivery WHERE draftId = ?')
+      .get(row.id) as { evidence: string } | undefined;
+    const delivery = verified && saved ? JSON.parse(saved.evidence) : null;
+    if (delivery)
+      requireValue(
+        delivery.messageGuid === action?.platformMessageId &&
+          delivery.actionId === row.actionId &&
+          delivery.digest === row.digest,
+        409,
+        'The original submission identity changed; delivery could not be refreshed.',
+      );
     return {
       ok: true,
       draftId: row.id,
       digest: row.digest,
       actionId: row.actionId,
       state: verified
-        ? 'sent'
+        ? delivery?.state || 'submitted'
         : row.state === 'consumed'
           ? 'delivery_unconfirmed'
           : row.state,
       ...(verified ? { messageGuid: action.platformMessageId } : {}),
+      deliveryProtocol: 1,
+      delivery: delivery ? { ...delivery, fresh: false } : null,
     };
+  }
+
+  /** Inspect only an already consumed, exactly correlated submission. No send
+   * method is reachable here. Coalesce concurrent reads so old responses cannot
+   * race newer evidence; retained failures/delivery survive restart/read errors. */
+  private refreshReceipt(row: StoredDraft): Promise<Record<string, unknown>> {
+    const existing = this.inspections.get(row.id);
+    if (existing) return existing;
+    const inspection = (async () => {
+      const result = this.receipt(row);
+      if (row.state !== 'consumed' || !result.messageGuid) return result;
+      const scope = JSON.parse(row.scope) as Scope;
+      try {
+        if (!this.deps.readDelivery)
+          throw new Error('Receipt inspection unavailable.');
+        const observed = await this.deps.readDelivery({
+          messageGuid: result.messageGuid as string,
+          chatGuid: scope.chatGuid,
+          address: scope.addresses[0],
+          text: scope.text,
+        });
+        const current = this.receipt(row);
+        requireValue(
+          current.messageGuid === result.messageGuid &&
+            current.actionId === result.actionId &&
+            current.digest === result.digest,
+          409,
+          'Submission identity changed during inspection.',
+        );
+        const previous = result.delivery as
+          | (WebBobDeliveryEvidence & { checkedAt: number })
+          | null;
+        let retained = false;
+        let evidence = {
+          ...observed,
+          checkedAt: Date.now(),
+          messageGuid: result.messageGuid,
+          actionId: row.actionId,
+          digest: row.digest,
+        };
+        // A row that merely exists cannot erase a known failure or delivery.
+        // Recovery from an error requires a later positive delivery timestamp.
+        if (
+          previous &&
+          (previous.state === 'delivery_failed' ||
+            previous.state === 'delivered') &&
+          (['submitted', 'sent', 'delivery_unconfirmed'].includes(
+            observed.state,
+          ) ||
+            (previous.state === 'delivery_failed' &&
+              observed.state === 'delivered' &&
+              (!observed.deliveredAt ||
+                observed.deliveredAt <= previous.checkedAt)))
+        ) {
+          retained = true;
+          evidence = {
+            state: previous.state,
+            error: previous.error,
+            deliveredAt: previous.deliveredAt,
+            checkedAt: previous.checkedAt,
+            messageGuid: result.messageGuid,
+            actionId: row.actionId,
+            digest: row.digest,
+          };
+        }
+        this.db
+          .prepare('INSERT OR REPLACE INTO webbob_delivery VALUES (?, ?)')
+          .run(row.id, JSON.stringify(evidence));
+        return {
+          ...result,
+          state: evidence.state,
+          delivery: { ...evidence, fresh: !retained, refreshedAt: Date.now() },
+        };
+      } catch {
+        // A failed read never proves failure, delivery, or permission to retry.
+        return {
+          ...result,
+          delivery: result.delivery || null,
+          deliveryRefreshUnavailable: true,
+        };
+      }
+    })();
+    this.inspections.set(row.id, inspection);
+    const cleanup = () => {
+      this.inspections.delete(row.id);
+    };
+    void inspection.then(cleanup, cleanup);
+    return inspection;
+  }
+
+  async status(
+    value: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const { row } = this.bound(value);
+    return this.refreshReceipt(row);
   }
 
   async confirm(
@@ -426,7 +577,7 @@ export class WebBobBridge {
       403,
       'A separate owner confirmation is required.',
     );
-    if (row.state === 'consumed') return this.receipt(row);
+    if (row.state === 'consumed') return this.refreshReceipt(row);
     requireValue(
       row.state === 'pending' &&
         row.serverEpoch === this.epoch &&
@@ -467,7 +618,7 @@ export class WebBobBridge {
         409,
         'This draft confirmation is no longer current.',
       );
-      return this.receipt(current);
+      return this.refreshReceipt(current);
     }
     row.state = 'consumed';
     const action = getMessageAction(row.actionId);
@@ -518,7 +669,7 @@ export class WebBobBridge {
         return receipt;
       },
     });
-    return this.receipt(row);
+    return this.refreshReceipt(row);
   }
 
   async handleRequest(
@@ -552,14 +703,18 @@ export class WebBobBridge {
           connected: this.deps.connected(),
           paused: isMessagingOutboundPaused(),
           instinctReadOnly: true,
+          deliveryProtocol: 1,
         });
         return;
       }
       requireValue(
         req.method === 'POST' &&
-          [PREFIX + 'draft', PREFIX + 'confirm', PREFIX + 'cancel'].includes(
-            req.url || '',
-          ),
+          [
+            PREFIX + 'draft',
+            PREFIX + 'confirm',
+            PREFIX + 'cancel',
+            PREFIX + 'status',
+          ].includes(req.url || ''),
         404,
       );
       requireValue(
@@ -586,7 +741,9 @@ export class WebBobBridge {
           ? await this.prepare(input)
           : req.url === PREFIX + 'confirm'
             ? await this.confirm(input)
-            : this.cancel(input);
+            : req.url === PREFIX + 'status'
+              ? await this.status(input)
+              : this.cancel(input);
       reply(200, output);
     } catch (error) {
       // Never expose request bytes, credentials, SQLite paths or provider errors.

@@ -30,8 +30,27 @@ binds that dispatch to the exact action; serialized objects and caller-selected
 `webbob:` chat IDs cannot create it. Success requires the matching persisted
 action and a complete receipt for the exact recipient thread. Missing, partial,
 lost or mismatched receipts remain unconfirmed; replay cannot call the provider
-again. An uncertain send must be checked in the recipient thread before anyone
-prepares a new draft.
+again. This correlation proves a submission, not arrival on a recipient's phone.
+An uncertain send must be checked before anyone prepares a new draft.
+
+Delivery protocol 1 adds an authenticated, bounded, read-only status inspection.
+It reads the original provider message GUID and verifies exact body, authorship
+and every observed direct-thread alias against the approved address. SMS/RCS
+thread migration does not change that approval. Missing or mismatched evidence
+cannot establish delivery. A nonzero transport error reports `delivery_failed`;
+an explicit delivery flag with zero error reports `delivered`; an explicit sent
+flag with zero error reports `sent`. A GUID with zero error alone reports
+`submitted`, and unsupported error metadata remains `delivery_unconfirmed`.
+Installed provider versions that omit a sent flag cannot prove transport send.
+
+Transport observations are persisted separately from the consumed confirmation,
+bound to the original action, scope digest and provider GUID. Checking status
+never confirms or resends. Weaker acceptance does not erase known failure or
+delivery; recovery from failure requires a newer positive delivery timestamp.
+An unavailable refresh returns the prior observation marked unavailable, not
+fresh success. Legacy receipts without the delivery protocol prove submission
+only. A delivery failure requires a fresh exact owner-approved draft for any
+new send; no automatic retry or transport downgrade is added here.
 
 ## Configuration contract
 
@@ -49,7 +68,9 @@ copy the token into chat, command arguments, PRs, evidence or logs. These drafts
 do not create either production file, change a service pin, or send any text.
 
 The protocol is `GET /web-bob/v1/health`, then `POST .../draft`, followed by
-`POST .../confirm` or `POST .../cancel`. All calls require dedicated bearer
+`POST .../confirm` or `POST .../cancel`. `POST .../status` inspects a bound draft
+without sending, including one whose confirmation was already consumed.
+Health and receipts advertise `deliveryProtocol: 1`. All calls require dedicated bearer
 authentication. Body size is bounded and no user-supplied URL is accepted.
 
 ## Verification and activation
@@ -62,7 +83,9 @@ protocol, not live delivery. The fixture uses the compiled recipient resolver
 against a local synthetic server whose target is outside its recent 200 chats;
 preparation and confirmation must each verify that exact target. It never loads
 production credentials and records only synthetic query metadata and provider
-call counts.
+call counts. The same compiled path must show submission, later failure, retained
+failure after stale acceptance, newer delivery and unavailable mismatched status,
+with a single synthetic submission and verified same-recipient service aliases.
 
 Activation must retain both predecessor artifacts, service configurations and
 private configuration files, validate the explicitly enabled owner surface,
@@ -70,6 +93,8 @@ and verify coordinated rollback. Do not migrate or delete the existing Andrea
 message database to activate this bridge. Run two complete cumulative Web Bob
 live rounds including authenticated bridge health, real recipient verification,
 draft/cancel/revocation and permanent Instinct denial. Those rounds must remain
-no-send. The only authorized real text in the solo parity run is its final
-readiness notification to Jeff, through Andrea; its actual provider receipt
-must be recorded before claiming delivery. No mock is live-send evidence.
+no-send. Real texts require the owner's separate approval of the exact recipient
+and body under the active task's authority. A prior consumed approval cannot be
+reused. Acceptance requires the actual owner outcome as well as supported
+provider evidence; a missed message or manual retry is not unattended delivery.
+No mock is live-send evidence.

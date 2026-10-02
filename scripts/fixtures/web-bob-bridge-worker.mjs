@@ -11,7 +11,7 @@ import {
   storeMessageDirect,
 } from '../../dist/db.js';
 import { WebBobBridge } from '../../dist/web-bob-bridge.js';
-import { readWebBobRecipient } from '../../dist/web-bob-bridge-server.js';
+import { readWebBobRecipient, readWebBobDelivery } from '../../dist/web-bob-bridge-server.js';
 
 if (
   process.env.NODE_ENV !== 'test' ||
@@ -24,6 +24,7 @@ const first = await new Promise((resolve) => input.once('line', resolve));
 const { token } = JSON.parse(first);
 _initTestDatabase();
 let sends = 0;
+let sentText = null;
 const target = {
   guid: 'iMessage;-;+15550101010',
   participants: [{ address: '+15550101010' }],
@@ -35,6 +36,15 @@ const recent = Array.from({ length: 200 }, (_, index) => ({
 const queries = [];
 const messaging = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
+  if (req.method === 'GET' && url.pathname === '/api/v1/message/synthetic-provider-receipt' &&
+      url.searchParams.get('password') === 'synthetic-read-password') {
+    const flags = fs.existsSync('delivery-state.json') ? JSON.parse(fs.readFileSync('delivery-state.json','utf8')) : {};
+    res.setHeader('Content-Type','application/json');
+    res.end(JSON.stringify({status:200,data:{guid:'synthetic-provider-receipt',text:sentText,
+      isFromMe:true,error:0,isDelivered:false,dateDelivered:null,
+      chats:[{guid:target.guid},{guid:target.guid.replace('iMessage;', 'RCS;')}],...flags}}));
+    return;
+  }
   if (
     req.method !== 'POST' ||
     url.pathname !== '/api/v1/chat/query' ||
@@ -49,7 +59,8 @@ const messaging = http.createServer(async (req, res) => {
   queries.push(query);
   fs.writeFileSync('recipient-queries.json', JSON.stringify(queries));
   const rows =
-    query.guid === target.guid ? [target] : recent.slice(0, query.limit);
+    [target.guid,target.guid.replace('iMessage;', 'RCS;')].includes(query.guid)
+      ? [{...target,guid:query.guid}] : recent.slice(0, query.limit);
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify({ status: 200, data: rows }));
 });
@@ -66,7 +77,9 @@ const bridge = new WebBobBridge(
   {
     connected: () => true,
     resolveRecipient: readWebBobRecipient,
+    readDelivery: readWebBobDelivery,
     sendToTarget: async (_channel, chatJid, text, options) => {
+      sentText = text;
       // Persist only counts and identity, never private fixture text.
       fs.writeFileSync(
         'provider-count.json',
