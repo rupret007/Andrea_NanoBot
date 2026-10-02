@@ -14,7 +14,13 @@ import {
 } from './build-provenance.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
-import { WebBobBridge, type WebBobBridgeConfig } from './web-bob-bridge.js';
+import {
+  WebBobBridge,
+  canonicalWebBobAddress,
+  type WebBobBridgeConfig,
+  type WebBobDeliveryTarget,
+  type WebBobDeliveryEvidence,
+} from './web-bob-bridge.js';
 
 /** Operator maintenance hold for automatic service alerts only. Explicit
  * owner-approved dispatch still uses the normal message-action fences. The
@@ -33,7 +39,11 @@ export function isWebBobReleaseAlertHold(): boolean {
 }
 
 /** Read only; the provider's private API and send HTTP are never used here. */
-export async function readWebBobRecipient(chatGuid: string): Promise<string[]> {
+async function readLocalMessaging(
+  route: string,
+  body: unknown,
+  signal: AbortSignal,
+): Promise<unknown> {
   const config = resolveBlueBubblesConfig();
   if (!config.baseUrl || !config.password) {
     throw new Error('Andrea BlueBubbles read configuration is unavailable.');
@@ -51,19 +61,14 @@ export async function readWebBobRecipient(chatGuid: string): Promise<string[]> {
       'Web Bob recipient verification requires local BlueBubbles.',
     );
   }
-  const url = new URL('/api/v1/chat/query', base);
+  const url = new URL(route, base);
   url.searchParams.set('password', config.password);
   const response = await fetch(url, {
-    method: 'POST',
+    method: body === undefined ? 'GET' : 'POST',
     redirect: 'error',
-    signal: AbortSignal.timeout(12000),
+    signal,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      guid: chatGuid,
-      limit: 2,
-      offset: 0,
-      with: ['participants'],
-    }),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok || !response.body)
     throw new Error('Recipient verification unavailable.');
@@ -84,6 +89,29 @@ export async function readWebBobRecipient(chatGuid: string): Promise<string[]> {
   }
   const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
     status?: number;
+    data?: unknown;
+  };
+  if (parsed.status !== undefined && parsed.status !== 200)
+    throw new Error('Messaging verification returned invalid data.');
+  return parsed.data;
+}
+
+export async function readWebBobRecipient(
+  chatGuid: string,
+  signal = AbortSignal.timeout(12000),
+): Promise<string[]> {
+  const data = await readLocalMessaging(
+    '/api/v1/chat/query',
+    {
+      guid: chatGuid,
+      limit: 2,
+      offset: 0,
+      with: ['participants'],
+    },
+    signal,
+  );
+  const parsed = { data } as {
+    status?: number;
     data?: { guid?: unknown; participants?: { address?: unknown }[] }[];
   };
   if (
@@ -102,6 +130,77 @@ export async function readWebBobRecipient(chatGuid: string): Promise<string[]> {
     throw new Error('The direct-thread membership is not uniquely verified.');
   }
   return [rows[0].participants[0].address];
+}
+
+/** The provider GUID is global: Messages can associate a submitted SMS thread
+ * with RCS later. Verify every observed direct alias against the original
+ * approved address without changing that scope or attempting another send. */
+export async function readWebBobDelivery(
+  target: WebBobDeliveryTarget,
+): Promise<WebBobDeliveryEvidence> {
+  const guid = target.messageGuid.replace(/^bb:/, '');
+  if (!/^[a-zA-Z0-9-]{1,128}$/.test(guid))
+    throw new Error('Invalid message identity.');
+  const signal = AbortSignal.timeout(4000);
+  const raw = await readLocalMessaging(
+    '/api/v1/message/' + encodeURIComponent(guid) + '?with=chats',
+    undefined,
+    signal,
+  );
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    throw new Error('Missing message.');
+  const message = raw as Record<string, unknown>;
+  if (
+    message.guid !== guid ||
+    message.text !== target.text ||
+    message.isFromMe !== true ||
+    !Array.isArray(message.chats) ||
+    !message.chats.length ||
+    message.chats.length > 3
+  )
+    throw new Error('Message evidence does not match the approved submission.');
+  const address = canonicalWebBobAddress(target.address);
+  const chats = new Set<string>();
+  for (const chat of message.chats) {
+    if (
+      !chat ||
+      typeof chat.guid !== 'string' ||
+      !/^(iMessage|SMS|RCS);-;[^;\s]+$/.test(chat.guid) ||
+      canonicalWebBobAddress(chat.guid.split(';')[2]) !== address
+    )
+      throw new Error('Message has an unrelated recipient.');
+    chats.add(chat.guid);
+  }
+  for (const chat of chats) {
+    const members = await readWebBobRecipient(chat, signal);
+    if (members.length !== 1 || canonicalWebBobAddress(members[0]) !== address)
+      throw new Error('Message recipient could not be verified.');
+  }
+  const error =
+    typeof message.error === 'number' &&
+    Number.isSafeInteger(message.error) &&
+    message.error >= 0
+      ? message.error
+      : null;
+  const deliveredAt =
+    typeof message.dateDelivered === 'number' &&
+    Number.isFinite(message.dateDelivered) &&
+    message.dateDelivered > 0 &&
+    message.dateDelivered <= Date.now() + 1000
+      ? message.dateDelivered
+      : null;
+  // Installed BlueBubbles omits isSent. Never infer it from a GUID/error0.
+  const state =
+    error !== null && error !== 0
+      ? 'delivery_failed'
+      : error === 0 && message.isDelivered === true
+        ? 'delivered'
+        : error === 0 && message.isSent === true
+          ? 'sent'
+          : error === 0
+            ? 'submitted'
+            : 'delivery_unconfirmed';
+  return { state, error, deliveredAt };
 }
 
 /** Default off. A dedicated private configuration explicitly enables this
@@ -156,6 +255,7 @@ export function startWebBobBridgeServer(deps: {
         buildSha,
         connected: () => deps.getChannel()?.isConnected() === true,
         resolveRecipient: readWebBobRecipient,
+        readDelivery: readWebBobDelivery,
         sendToTarget: async (channel, chatJid, text, options) => {
           const provider = deps.getChannel();
           if (channel !== 'bluebubbles' || !provider?.isConnected())

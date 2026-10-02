@@ -42,10 +42,12 @@ describe('Web Bob dedicated Andrea ingress', () => {
   const send = vi.fn();
   const resolve = vi.fn();
   const connected = vi.fn();
+  const readDelivery = vi.fn();
   const open = () =>
     new WebBobBridge(config, path.join(folder, 'bridge.db'), {
       connected,
       resolveRecipient: resolve,
+      readDelivery,
       sendToTarget: send,
     });
   const approval = async (input = draft()) => {
@@ -64,6 +66,12 @@ describe('Web Bob dedicated Andrea ingress', () => {
     send.mockReset();
     resolve.mockReset();
     connected.mockReset();
+    readDelivery.mockReset();
+    readDelivery.mockResolvedValue({
+      state: 'sent',
+      error: 0,
+      deliveredAt: null,
+    });
     connected.mockReturnValue(true);
     resolve.mockResolvedValue(['+12025550102']);
     send.mockResolvedValue({
@@ -95,6 +103,129 @@ describe('Web Bob dedicated Andrea ingress', () => {
     });
     expect((await bridge.confirm(input)).state).toBe('sent');
     expect(send).toHaveBeenCalledOnce();
+  });
+
+  it('refreshes accepted then failed delivery by stored identity without a second send, including restart', async () => {
+    const input = await approval();
+    readDelivery.mockResolvedValueOnce({
+      state: 'submitted',
+      error: 0,
+      deliveredAt: null,
+    });
+    expect((await bridge.confirm(input)).state).toBe('submitted');
+    readDelivery.mockResolvedValue({
+      state: 'delivery_failed',
+      error: 4,
+      deliveredAt: null,
+    });
+    expect((await bridge.status(input)).state).toBe('delivery_failed');
+    expect(readDelivery.mock.calls[1][0]).toEqual({
+      messageGuid: 'receipt-123',
+      chatGuid: input.chatGuid,
+      address: input.addresses[0],
+      text: input.text,
+    });
+    expect(send).toHaveBeenCalledOnce();
+    bridge.close();
+    bridge = open();
+    readDelivery.mockRejectedValue(new Error('unavailable'));
+    expect(await bridge.status(input)).toMatchObject({
+      state: 'delivery_failed',
+      deliveryRefreshUnavailable: true,
+    });
+    expect((await bridge.confirm(input)).state).toBe('delivery_failed');
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it('does not erase failure with stale acceptance and requires later delivery evidence for recovery', async () => {
+    const input = await approval();
+    readDelivery.mockResolvedValue({
+      state: 'delivery_failed',
+      error: 4,
+      deliveredAt: null,
+    });
+    const failed = await bridge.confirm(input);
+    readDelivery.mockResolvedValue({
+      state: 'submitted',
+      error: 0,
+      deliveredAt: null,
+    });
+    expect((await bridge.status(input)).state).toBe('delivery_failed');
+    readDelivery.mockResolvedValue({
+      state: 'delivered',
+      error: 0,
+      deliveredAt: 1,
+    });
+    expect((await bridge.status(input)).state).toBe('delivery_failed');
+    const checkedAt = (failed.delivery as { checkedAt: number }).checkedAt;
+    readDelivery.mockResolvedValue({
+      state: 'delivered',
+      error: 0,
+      deliveredAt: checkedAt + 1,
+    });
+    expect((await bridge.status(input)).state).toBe('delivered');
+    readDelivery.mockResolvedValue({
+      state: 'submitted',
+      error: 0,
+      deliveredAt: null,
+    });
+    expect((await bridge.status(input)).state).toBe('delivered');
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it('coalesces concurrent status reads, rejects altered scope, and never dispatches pending drafts', async () => {
+    const input = await approval();
+    expect((await bridge.status(input)).state).toBe('pending');
+    expect(readDelivery).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    await bridge.confirm(input);
+    let finish!: (evidence: {
+      state: 'delivered';
+      error: number;
+      deliveredAt: number;
+    }) => void;
+    readDelivery.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const first = bridge.status(input);
+    const second = bridge.status(input);
+    finish({ state: 'delivered', error: 0, deliveredAt: Date.now() });
+    expect((await first).state).toBe('delivered');
+    expect(await second).toEqual(await first);
+    expect(readDelivery).toHaveBeenCalledTimes(2);
+    await expect(
+      bridge.status({ ...input, text: 'unrelated' }),
+    ).rejects.toThrow();
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it('cannot transfer cached delivery to a replacement core receipt, including a change during inspection', async () => {
+    const input = await approval();
+    const result = await bridge.confirm(input);
+    const actionId = result.actionId as string;
+    const replace = () => {
+      const action = getMessageAction(actionId)!;
+      const explanation = JSON.parse(action.explanationJson!);
+      explanation.executionReceipt.providerReceiptId = 'other-receipt';
+      updateMessageAction(actionId, {
+        platformMessageId: 'other-receipt',
+        explanationJson: JSON.stringify(explanation),
+      });
+    };
+    readDelivery.mockImplementationOnce(async () => {
+      replace();
+      return { state: 'delivered', error: 0, deliveredAt: Date.now() };
+    });
+    expect(await bridge.status(input)).toMatchObject({
+      deliveryRefreshUnavailable: true,
+      messageGuid: 'receipt-123',
+    });
+    await expect(bridge.status(input)).rejects.toThrow('identity changed');
+    expect(send).toHaveBeenCalledOnce();
+    expect(readDelivery).toHaveBeenCalledTimes(2);
   });
 
   it.each([
