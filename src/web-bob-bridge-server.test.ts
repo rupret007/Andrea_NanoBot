@@ -12,10 +12,107 @@ vi.mock('./env.js', () => ({ readEnvFile: () => ({}) }));
 import {
   isWebBobReleaseAlertHold,
   readWebBobRecipient,
+  readWebBobDelivery,
   startWebBobBridgeServer,
 } from './web-bob-bridge-server.js';
 
 describe('optional Web Bob bridge runtime boundary', () => {
+  const target = {
+    messageGuid: 'bb:receipt-123',
+    chatGuid: 'SMS;-;+12025550102',
+    address: '+12025550102',
+    text: 'Synthetic exact test.',
+  };
+  function messageFixture(
+    fields: Record<string, unknown> = {},
+    wrongRecipient = false,
+  ) {
+    const fetcher = vi.fn(async (url: URL, options: RequestInit) => {
+      if (url.pathname === '/api/v1/message/receipt-123') {
+        expect(options.method).toBe('GET');
+        expect(url.searchParams.get('with')).toBe('chats');
+        return new Response(
+          JSON.stringify({
+            status: 200,
+            data: {
+              guid: 'receipt-123',
+              text: target.text,
+              isFromMe: true,
+              error: 0,
+              isDelivered: false,
+              dateDelivered: null,
+              chats: [
+                { guid: target.chatGuid },
+                { guid: 'RCS;-;+12025550102' },
+              ],
+              ...fields,
+            },
+          }),
+        );
+      }
+      expect(url.pathname).toBe('/api/v1/chat/query');
+      const query = JSON.parse(options.body as string);
+      return new Response(
+        JSON.stringify({
+          status: 200,
+          data: [
+            {
+              guid: query.guid,
+              participants: [
+                { address: wrongRecipient ? '+12025550103' : target.address },
+              ],
+            },
+          ],
+        }),
+      );
+    });
+    vi.stubGlobal('fetch', fetcher);
+    return fetcher;
+  }
+
+  it('reports acceptance without inventing isSent, and verifies every migrated direct alias', async () => {
+    const fetcher = messageFixture();
+    expect(await readWebBobDelivery(target)).toEqual({
+      state: 'submitted',
+      error: 0,
+      deliveredAt: null,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    [{ error: 4, isDelivered: true }, 'delivery_failed'],
+    [{ isDelivered: true }, 'delivered'],
+    [{ isSent: true }, 'sent'],
+    [{ error: null }, 'delivery_unconfirmed'],
+  ])(
+    'uses explicit status fields without treating row existence as delivery',
+    async (fields, state) => {
+      messageFixture(fields);
+      expect((await readWebBobDelivery(target)).state).toBe(state);
+    },
+  );
+
+  it.each([
+    { guid: 'other-guid' },
+    { text: 'Other text' },
+    { isFromMe: false },
+    { chats: [] },
+    { chats: [{ guid: 'iMessage;+;group' }] },
+    { chats: [{ guid: 'SMS;-;+12025550103' }] },
+  ])('rejects uncorrelated message evidence', async (fields) => {
+    messageFixture(fields);
+    await expect(readWebBobDelivery(target)).rejects.toThrow();
+  });
+
+  it('rejects wrong verified membership and unavailable reads without a send', async () => {
+    messageFixture({}, true);
+    await expect(readWebBobDelivery(target)).rejects.toThrow();
+    const fetcher = vi.fn().mockRejectedValue(new Error('timeout'));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(readWebBobDelivery(target)).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
   it('leaves automatic alerts unchanged without an operator hold', () => {
     vi.stubEnv('ANDREA_WEBBOB_RELEASE_ALERT_HOLD', '');
     expect(isWebBobReleaseAlertHold()).toBe(false);
