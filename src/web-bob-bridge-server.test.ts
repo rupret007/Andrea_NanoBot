@@ -163,6 +163,11 @@ describe('optional Web Bob bridge runtime boundary', () => {
       readWebBobRecipient('iMessage;-;owner@example.invalid'),
     ).rejects.toThrow();
     expect(fetcher).not.toHaveBeenCalled();
+    settings.baseUrl = 'http://[::1]:1234';
+    await expect(
+      readWebBobRecipient('iMessage;-;owner@example.invalid'),
+    ).rejects.toThrow();
+    expect(fetcher).not.toHaveBeenCalled();
     settings.baseUrl = 'http://127.0.0.1:1234';
     fetcher.mockResolvedValue(new Response('x'.repeat(2 * 1024 * 1024 + 1)));
     await expect(

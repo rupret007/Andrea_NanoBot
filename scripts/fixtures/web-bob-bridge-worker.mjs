@@ -44,7 +44,15 @@ const messaging = http.createServer(async (req, res) => {
     return;
   }
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let length = 0;
+  for await (const chunk of req) {
+    length += chunk.length;
+    if (length > 24000) {
+      res.writeHead(413).end();
+      return;
+    }
+    chunks.push(chunk);
+  }
   const query = JSON.parse(Buffer.concat(chunks).toString());
   queries.push(query);
   fs.writeFileSync('recipient-queries.json', JSON.stringify(queries));

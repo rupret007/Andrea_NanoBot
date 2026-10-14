@@ -15,7 +15,7 @@ import {
 } from './db.js';
 import { executeExplicitlyAuthorizedMessageAction } from './message-actions.js';
 import { setMessagingOutboundPaused } from './messaging-outbound-pause.js';
-import { WebBobBridge } from './web-bob-bridge.js';
+import { isWebBobLoopbackAddress, WebBobBridge } from './web-bob-bridge.js';
 
 const config = {
   token: 'test-service-token-'.repeat(4),
@@ -313,7 +313,7 @@ describe('Web Bob dedicated Andrea ingress', () => {
           mismatch === 'recipient' ? 'bb:iMessage;-;+12025550103' : chatJid;
         const timestamp =
           mismatch === 'time'
-            ? '2020-01-01T00:00:00Z'
+            ? new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString()
             : new Date().toISOString();
         storeChatMetadata(target, timestamp, undefined, 'bluebubbles');
         storeMessageDirect({
@@ -394,15 +394,111 @@ describe('Web Bob dedicated Andrea ingress', () => {
     await expect(
       bridge.confirm({ ...input, approvedAt: input.approvedAt - 1000 }),
     ).rejects.toThrow();
-    const db = new (await import('better-sqlite3')).default(
-      path.join(folder, 'bridge.db'),
-    );
-    db.prepare('UPDATE webbob_drafts SET expires = 0').run();
-    db.close();
-    await expect(bridge.confirm(input)).rejects.toThrow();
+    await expect(
+      bridge.confirm(input, Number(input.approvedAt) + 5 * 60_000 + 1),
+    ).rejects.toThrow();
     bridge.close();
     await expect(bridge.confirm(input)).rejects.toThrow();
     bridge = open();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('rejects confirmation when stored digest and scope bytes diverge', async () => {
+    const input = await approval();
+    const db = new (await import('better-sqlite3')).default(
+      path.join(folder, 'bridge.db'),
+    );
+    const original = db
+      .prepare('SELECT scope, digest FROM webbob_drafts')
+      .get() as { scope: string; digest: string };
+    db.prepare('UPDATE webbob_drafts SET digest = ?').run('a'.repeat(64));
+    await expect(bridge.confirm(input)).rejects.toThrow();
+    const tampered = JSON.parse(original.scope);
+    tampered.text = 'Tampered owner bytes.';
+    db.prepare('UPDATE webbob_drafts SET scope = ?, digest = ?').run(
+      JSON.stringify(tampered),
+      original.digest,
+    );
+    db.close();
+    await expect(bridge.confirm(input)).rejects.toThrow();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-loopback peers and forwarded proxy headers at HTTP ingress', async () => {
+    expect(isWebBobLoopbackAddress('127.0.0.1')).toBe(true);
+    expect(isWebBobLoopbackAddress('::ffff:127.0.0.1')).toBe(true);
+    expect(isWebBobLoopbackAddress('8.8.8.8')).toBe(false);
+    expect(isWebBobLoopbackAddress(undefined)).toBe(false);
+    const denied = {
+      statusCode: 0,
+      body: '',
+      writeHead(status: number) {
+        this.statusCode = status;
+      },
+      end(body?: string) {
+        this.body = body || '';
+      },
+    };
+    await bridge.handleRequest(
+      {
+        method: 'GET',
+        url: '/web-bob/v1/health',
+        headers: {
+          authorization: 'Bearer ' + config.token,
+          host: '127.0.0.1',
+        },
+        socket: { remoteAddress: '8.8.8.8', localAddress: '8.8.8.8' },
+      } as unknown as http.IncomingMessage,
+      denied as unknown as http.ServerResponse,
+    );
+    expect(denied.statusCode).toBe(401);
+    const forwarded = {
+      statusCode: 0,
+      body: '',
+      writeHead(status: number) {
+        this.statusCode = status;
+      },
+      end(body?: string) {
+        this.body = body || '';
+      },
+    };
+    await bridge.handleRequest(
+      {
+        method: 'GET',
+        url: '/web-bob/v1/health',
+        headers: {
+          authorization: 'Bearer ' + config.token,
+          host: '127.0.0.1',
+          'x-forwarded-for': '8.8.8.8',
+        },
+        socket: { remoteAddress: '127.0.0.1', localAddress: '127.0.0.1' },
+      } as unknown as http.IncomingMessage,
+      forwarded as unknown as http.ServerResponse,
+    );
+    expect(forwarded.statusCode).toBe(401);
+    const badHost = {
+      statusCode: 0,
+      body: '',
+      writeHead(status: number) {
+        this.statusCode = status;
+      },
+      end(body?: string) {
+        this.body = body || '';
+      },
+    };
+    await bridge.handleRequest(
+      {
+        method: 'GET',
+        url: '/web-bob/v1/health',
+        headers: {
+          authorization: 'Bearer ' + config.token,
+          host: 'evil.invalid',
+        },
+        socket: { remoteAddress: '127.0.0.1', localAddress: '127.0.0.1' },
+      } as unknown as http.IncomingMessage,
+      badHost as unknown as http.ServerResponse,
+    );
+    expect(badHost.statusCode).toBe(401);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -438,6 +534,18 @@ describe('Web Bob dedicated Andrea ingress', () => {
           })
         ).json(),
       ).toMatchObject({ connected: true, instinctReadOnly: true });
+      expect(
+        (
+          await fetch(`http://127.0.0.1:${port}/web-bob/v1/draft`, {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + config.token,
+              'Content-Type': 'application/json',
+            },
+            body: 'x'.repeat(24001),
+          })
+        ).status,
+      ).toBe(413);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

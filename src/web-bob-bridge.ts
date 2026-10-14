@@ -25,7 +25,18 @@ const TTL = 5 * 60_000;
 const ISSUER = 'web-bob';
 const AUDIENCE = 'andrea';
 const PREFIX = '/web-bob/v1/';
+const LOOPBACK_ADDRESSES = new Set([
+  '127.0.0.1',
+  '::1',
+  ':ffff:127.0.0.1',
+  '::ffff:127.0.0.1',
+]);
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
+
+export function isWebBobLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  return LOOPBACK_ADDRESSES.has(address.replace(/^\[|\]$/g, ''));
+}
 
 export interface WebBobBridgeConfig {
   token: string;
@@ -236,6 +247,7 @@ export class WebBobBridge {
 
   async prepare(
     value: Record<string, unknown>,
+    now = Date.now(),
   ): Promise<Record<string, unknown>> {
     const scope = parseScope(value);
     await this.validateRecipient(scope);
@@ -244,7 +256,6 @@ export class WebBobBridge {
       409,
       'Andrea outbound messaging is paused.',
     );
-    const now = Date.now();
     const fence = captureMessagingOutboundAuthorizationFence(
       new Date(now).toISOString(),
     );
@@ -347,8 +358,14 @@ export class WebBobBridge {
       .get(value.bridgeDraftId) as StoredDraft | undefined;
     requireValue(row, 404, 'Unknown Web Bob draft.');
     const scope = parseScope(value);
+    const serialized = JSON.stringify(scope);
     requireValue(
-      secureEqual(hash(JSON.stringify(scope)), row.digest),
+      typeof row.scope === 'string' &&
+        typeof row.digest === 'string' &&
+        /^[a-f0-9]{64}$/.test(row.digest) &&
+        secureEqual(hash(row.scope), row.digest) &&
+        secureEqual(hash(serialized), row.digest) &&
+        secureEqual(serialized, row.scope),
       403,
       'This confirmation does not match the exact draft and login.',
     );
@@ -409,6 +426,7 @@ export class WebBobBridge {
 
   async confirm(
     value: Record<string, unknown>,
+    now = Date.now(),
   ): Promise<Record<string, unknown>> {
     const { row, scope } = this.bound(value);
     requireValue(
@@ -430,15 +448,16 @@ export class WebBobBridge {
     requireValue(
       row.state === 'pending' &&
         row.serverEpoch === this.epoch &&
-        row.expires > Date.now(),
+        row.expires > now,
       409,
       'This draft confirmation is no longer current.',
     );
     requireValue(
       typeof value.approvedAt === 'number' &&
+        Number.isFinite(value.approvedAt) &&
         value.approvedAt >= row.expires - TTL &&
-        value.approvedAt <= Date.now() + 1000 &&
-        value.approvedAt >= Date.now() - 30_000,
+        value.approvedAt <= now + 1000 &&
+        value.approvedAt >= now - 30_000,
       403,
     );
     await this.validateRecipient(scope);
@@ -457,7 +476,7 @@ export class WebBobBridge {
       .prepare(
         "UPDATE webbob_drafts SET state = 'consumed', confirmationRequestId = ? WHERE id = ? AND state = 'pending' AND serverEpoch = ? AND expires > ?",
       )
-      .run(value.confirmationRequestId, row.id, this.epoch, Date.now());
+      .run(value.confirmationRequestId, row.id, this.epoch, now);
     if (!consumed.changes) {
       const current = this.db
         .prepare('SELECT * FROM webbob_drafts WHERE id = ?')
@@ -532,12 +551,20 @@ export class WebBobBridge {
       });
       res.end(JSON.stringify(body));
     };
+    const authorization = req.headers.authorization;
+    const host = req.headers.host;
     if (
       req.headers.origin ||
-      !secureEqual(
-        req.headers.authorization || '',
-        'Bearer ' + this.config.token,
-      )
+      req.headers['x-forwarded-for'] ||
+      req.headers['x-forwarded-host'] ||
+      req.headers['x-real-ip'] ||
+      req.headers.forwarded ||
+      typeof authorization !== 'string' ||
+      typeof host !== 'string' ||
+      !/^127\.0\.0\.1(?::\d+)?$/.test(host) ||
+      !isWebBobLoopbackAddress(req.socket?.remoteAddress) ||
+      !isWebBobLoopbackAddress(req.socket?.localAddress) ||
+      !secureEqual(authorization, 'Bearer ' + this.config.token)
     ) {
       reply(401, { error: 'Unauthorized' });
       return;
