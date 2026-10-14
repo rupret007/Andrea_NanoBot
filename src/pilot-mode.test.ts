@@ -341,6 +341,71 @@ describe('pilot mode', () => {
     ).toBeNull();
   });
 
+  it('does not let newer retired-channel history crowd current records out of the window', () => {
+    const now = new Date('2026-04-07T18:30:00.000Z');
+    const retiredChannel = 'alexa' as PilotIssueRecord['channel'];
+    const issue: PilotIssueRecord = {
+      issueId: 'telegram-issue',
+      createdAt: '2026-04-07T10:00:00.000Z',
+      status: 'open',
+      issueKind: 'manual_pilot_issue',
+      channel: 'telegram',
+      groupFolder: 'main',
+      blockerOwner: 'repo_side',
+      summaryText: 'Repair Telegram follow-through.',
+      assistantContextSummary: 'Telegram follow-through needs repair.',
+      linkedRefs: {},
+    };
+    const event: PilotJourneyEventRecord = {
+      eventId: 'telegram-event',
+      journeyId: 'ordinary_chat',
+      channel: 'telegram',
+      groupFolder: 'main',
+      systemsInvolved: ['assistant_shell'],
+      outcome: 'success',
+      blockerOwner: 'none',
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      summaryText: 'Telegram greeting succeeded.',
+      startedAt: '2026-04-07T10:00:00.000Z',
+      completedAt: '2026-04-07T10:00:02.000Z',
+    };
+    insertPilotIssue(issue);
+    insertPilotJourneyEvent(event);
+    // More newer retired rows than the snapshot's SQL LIMITs (300 / 1000).
+    for (let i = 0; i < 1001; i += 1) {
+      const at = new Date(
+        Date.parse('2026-04-07T11:00:00.000Z') + i * 1000,
+      ).toISOString();
+      insertPilotIssue({
+        ...issue,
+        issueId: `retired-issue-${i}`,
+        createdAt: at,
+        channel: retiredChannel,
+      });
+      if (i < 301) {
+        insertPilotJourneyEvent({
+          ...event,
+          eventId: `retired-event-${i}`,
+          channel: retiredChannel,
+          startedAt: at,
+          completedAt: at,
+        });
+      }
+    }
+
+    const review = buildPilotReviewSnapshot(now);
+    expect(review.openIssueCount).toBe(1);
+    expect(review.openIssues.map((i) => i.issueId)).toEqual(['telegram-issue']);
+    expect(review.recentEvents.map((e) => e.eventId)).toEqual([
+      'telegram-event',
+    ]);
+    expect(listPilotIssues({ status: 'open', limit: 2000 })).toHaveLength(1002);
+  });
+
   it('excludes retired-channel history from current pilot reporting without changing stored records', () => {
     const now = new Date('2026-04-07T18:30:00.000Z');
     // Persisted pre-removal records can have a channel outside today's types.

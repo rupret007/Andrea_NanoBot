@@ -13397,11 +13397,18 @@ export function listRecentPilotJourneyEvents(
     limit?: number;
     journeyId?: PilotJourneyEventRecord['journeyId'];
     channel?: PilotJourneyEventRecord['channel'];
+    /** Restrict to these channels in SQL (applied before LIMIT). */
+    channels?: ReadonlyArray<PilotJourneyEventRecord['channel']>;
     outcome?: PilotJourneyEventRecord['outcome'];
   } = {},
 ): PilotJourneyEventRecord[] {
   const clauses: string[] = [];
   const values: Array<string | number> = [];
+  if (params.channels) {
+    if (params.channels.length === 0) return [];
+    clauses.push(`channel IN (${params.channels.map(() => '?').join(', ')})`);
+    values.push(...params.channels);
+  }
 
   if (params.journeyId) {
     clauses.push('journey_id = ?');
@@ -13618,11 +13625,18 @@ export function insertPilotIssue(record: PilotIssueRecord): void {
 export function listPilotIssues(
   params: {
     status?: PilotIssueRecord['status'];
+    /** Restrict to these channels in SQL (applied before LIMIT). */
+    channels?: ReadonlyArray<PilotIssueRecord['channel']>;
     limit?: number;
   } = {},
 ): PilotIssueRecord[] {
   const clauses: string[] = [];
   const values: Array<string | number> = [];
+  if (params.channels) {
+    if (params.channels.length === 0) return [];
+    clauses.push(`channel IN (${params.channels.map(() => '?').join(', ')})`);
+    values.push(...params.channels);
+  }
   if (params.status) {
     clauses.push('status = ?');
     values.push(params.status);
