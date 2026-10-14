@@ -4,6 +4,7 @@
  * OAuth tokens (drive.readonly + drive.file scopes).
  */
 
+import { fetchWithTimeout } from './_fetch.js';
 import { redactForError } from './_redact.js';
 import type { Integration, RegisteredTool } from './types.js';
 
@@ -37,7 +38,7 @@ export const GoogleDriveIntegration: Integration = {
           required: ['q'],
         },
         handler: async (args) => {
-          const r = await fetch(
+          const r = await fetchWithTimeout(
             `${API}/files?q=${encodeURIComponent(String(args.q))}&pageSize=${args.pageSize ?? 10}&fields=files(id,name,mimeType,modifiedTime,owners,webViewLink)`,
             { headers: await auth() },
           );
@@ -60,7 +61,7 @@ export const GoogleDriveIntegration: Integration = {
           required: ['fileId'],
         },
         handler: async (args) => {
-          const r = await fetch(
+          const r = await fetchWithTimeout(
             `https://docs.googleapis.com/v1/documents/${args.fileId}`,
             { headers: await auth() },
           );
