@@ -753,12 +753,17 @@ describe('cognitive kernel', () => {
       return kernel;
     });
 
+    // Dates are derived from this test's own real-clock 'now' so the fixtures stay
+    // inside the production 90-day lookback window; relative spacing is unchanged.
+    const reviewAnchorMs = Date.now() - 15 * 60_000;
+    const reviewAt = (minutes: number) =>
+      new Date(reviewAnchorMs + minutes * 60_000).toISOString();
     for (const [index, run] of runs.entries()) {
       recordCognitiveOwnerReview({
         runId: run.run.runId,
         feedbackId: `promotion-accept-${index + 1}`,
         verdict: 'accepted',
-        reviewedAt: `2026-07-12T02:0${index}:00.000Z`,
+        reviewedAt: reviewAt(index),
       });
     }
     expect(
@@ -768,13 +773,13 @@ describe('cognitive kernel', () => {
     ).toBe('candidate');
 
     runCognitiveBenchmarkSuite({
-      generatedAt: '2026-07-12T02:10:00.000Z',
+      generatedAt: reviewAt(10),
     });
     const promoted = recordCognitiveOwnerReview({
       runId: runs[4].run.runId,
       feedbackId: 'promotion-accept-5',
       verdict: 'accepted',
-      reviewedAt: '2026-07-12T02:11:00.000Z',
+      reviewedAt: reviewAt(11),
     });
 
     expect(promoted.promotionState).toBe('promoted');
@@ -800,7 +805,7 @@ describe('cognitive kernel', () => {
     expect(
       buildSkillLibraryReport({
         groupFolder: 'main',
-        now: new Date('2026-07-12T02:11:00.000Z'),
+        now: new Date(reviewAt(11)),
       }).active.some((skill) => skill.skillId.includes('daily_guidance')),
     ).toBe(true);
   });

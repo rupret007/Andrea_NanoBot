@@ -189,7 +189,9 @@ describe('personal context packet', () => {
     const packet = await buildPersonalContextPacket({
       groupFolder: 'main',
       query: 'a detail that is not stored',
-      now: new Date('2026-07-10T12:00:00.000Z'),
+      // Derived from the test's own real-clock 'now' so the lookup stays inside
+      // the production 90-day metric lookback window.
+      now: new Date(Date.now() - 60 * 60_000),
     });
     expect(packet.items).toHaveLength(0);
     const events = listAssistantMetricEvents({ groupFolder: 'main' });
