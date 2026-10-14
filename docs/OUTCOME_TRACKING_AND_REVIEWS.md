@@ -244,7 +244,7 @@ of independently rewriting legacy status or next-action fields. See
 For repo-side validation, run:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/alexa.test.ts src/action-bundles.test.ts src/communication-companion.test.ts src/delegation-rules.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/action-bundles.test.ts src/communication-companion.test.ts src/delegation-rules.test.ts
 npm run typecheck
 npm run build
 npm run test

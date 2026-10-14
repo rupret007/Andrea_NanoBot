@@ -1,3 +1,5 @@
+> **Removed (2026-10-14):** Andrea no longer serves the Alexa web endpoint; the `ask-sdk` packages were removed because `ask-sdk-express-adapter` depends on `node-forge` (GHSA-86w9-cpqp-85rv, no fixed release). This document is kept for history only.
+
 # Andrea Alexa Voice Integration
 
 Alexa is a bounded channel for Andrea, not a second assistant and not a public control plane.
@@ -637,8 +639,6 @@ Current truth:
 
 For operator-side conversation tuning, use:
 
-- `npm run debug:alexa-conversation` for a repo-side multi-turn Alexa walkthrough that does not advance live proof
-- `npm run debug:alexa-conversation -- --review` for grouped utterance misses, including no-context references, follow-up binding failures, should-have-routed communication/planning asks, weak clarifiers, and carrier-phrase gaps from recent Alexa pilot events
 - `npm run debug:daily-companion` for grounded local comparison against real `groupFolder=main` data
 - `npm run debug:shared-capabilities` for an isolated, network-denied shared
   Telegram/Alexa capability smoke; add `-- --live` only for intentional

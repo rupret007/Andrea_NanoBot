@@ -156,7 +156,7 @@ either command only for intentional provider-backed use.
 For ordinary companion chat, graceful degraded replies, and no-leakage checks, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/conversational-core.test.ts src/direct-quick-reply.test.ts src/assistant-routing.test.ts src/assistant-capability-router.test.ts src/research-orchestrator.test.ts src/user-facing-fallback.test.ts src/alexa.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/conversational-core.test.ts src/direct-quick-reply.test.ts src/assistant-routing.test.ts src/assistant-capability-router.test.ts src/research-orchestrator.test.ts src/user-facing-fallback.test.ts
 npm run debug:conversational-core
 ```
 
@@ -189,7 +189,7 @@ Treat `debug:pilot` as the operator view for:
 For cross-channel handoff and action-completion changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts src/alexa.test.ts src/assistant-capability-router.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/cross-channel-handoffs.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts src/assistant-capability-router.test.ts
 npm run debug:cross-channel-handoffs
 ```
 
@@ -506,7 +506,7 @@ Treat that review suite as the fast proof that Andrea can:
 For delegation-rule and safe-automation changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/delegation-rules.test.ts src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa.test.ts src/outcome-reviews.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/delegation-rules.test.ts src/action-bundles.test.ts src/assistant-action-completion.test.ts src/outcome-reviews.test.ts
 npm run telegram:user:smoke
 ```
 
@@ -642,7 +642,7 @@ threshold, does not claim to cap provider billing, and remains outside CI.
 For messaging trust-ladder and live-delivery changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/channel-delivery.test.ts src/channels/telegram.test.ts src/interaction-delivery-metrics.test.ts src/in-flight-turn-cursors.test.ts src/group-queue.test.ts src/message-actions.test.ts src/channels/bluebubbles.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/delegation-rules.test.ts src/alexa.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts src/job-status-card.test.ts src/job-dispatch.test.ts src/runtime-card-delivery.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/channel-delivery.test.ts src/channels/telegram.test.ts src/interaction-delivery-metrics.test.ts src/in-flight-turn-cursors.test.ts src/group-queue.test.ts src/message-actions.test.ts src/channels/bluebubbles.test.ts src/action-bundles.test.ts src/outcome-reviews.test.ts src/delegation-rules.test.ts src/field-trial-readiness.test.ts src/task-scheduler.test.ts src/task-scheduler.automation.test.ts src/job-status-card.test.ts src/job-dispatch.test.ts src/runtime-card-delivery.test.ts
 npm run telegram:user:smoke
 npm run debug:bluebubbles -- --live
 ```
@@ -694,7 +694,7 @@ Treat that calendar stack as the fast proof that Andrea can:
 For outcome tracking, carryover, and review-flow changes, add:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/alexa.test.ts src/action-bundles.test.ts src/communication-companion.test.ts src/missions.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/outcome-reviews.test.ts src/action-bundles.test.ts src/communication-companion.test.ts src/missions.test.ts
 npm run telegram:user:smoke
 ```
 
@@ -1504,9 +1504,6 @@ Status-led closeout rules:
 - after this model update, re-test at least one simple local ask like `what's up` or `what time is it` and one broad routed ask like `what should I say back`, `what bills do I need to pay this week`, or `help me figure out tonight`
 - if live voice still falls into `AMAZON.FallbackIntent` after that rebuild, use the Alexa Developer Console Utterance Profiler or Intent History to capture the exact recognized phrase before changing repo code
 - `npm run debug:daily-companion` is the local pinned-Node smoke path for comparing canonical daily-companion prompts like `what am I forgetting` or `what's still open with Candace` against real `groupFolder=main` data
-- `npm run debug:alexa-conversation` is the repo-side pinned-Node harness for checking Alexa-style follow-ups like `anything else`, `what about Candace`, `remember that`, `why`, or `be a little more direct` against the real local routing stack before blaming the live voice surface
-  - include practical assistant turns like `what's on my calendar tomorrow`, `remind me to take my pills at 9`, `what bills do I need to pay this week`, `add dinner with Candace tomorrow at 6:30 PM`, `move dinner to 7`, `what's up`, `what time is it`, `what about that`, `what should I say back`, `help me plan meals this week`, and `save that` when validating recent Alexa router changes
-  - `npm run debug:alexa-conversation -- --review` now groups Alexa misses by blocker class, including no-context references, follow-up binding failures, and communication/planning should-route misses
 
 Dogfood handoff for this week:
 

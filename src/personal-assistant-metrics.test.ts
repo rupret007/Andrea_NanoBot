@@ -595,6 +595,11 @@ describe('personal assistant metrics', () => {
   });
 
   it('keeps v2 latency comparable while requiring complete v3 queue and host attribution', () => {
+    // Dates are derived from this test's own real-clock 'now' so the fixtures stay
+    // inside the production 90-day lookback window; relative spacing is unchanged.
+    const sampleAnchorMs = Date.now() - 60 * 60_000;
+    const sampleAt = (seconds: number) =>
+      new Date(sampleAnchorMs + seconds * 1_000);
     recordAssistantMetric({
       groupFolder: 'main',
       kind: 'latency_sample',
@@ -608,7 +613,7 @@ describe('personal assistant metrics', () => {
         responsePreparationMs: 200,
         channelDeliveryMs: 100,
       },
-      now: new Date('2026-07-13T05:00:00.000Z'),
+      now: sampleAt(0),
     });
     recordAssistantMetric({
       groupFolder: 'main',
@@ -628,7 +633,7 @@ describe('personal assistant metrics', () => {
         hostLoad1mPerCpu: 2.4,
         hostFreeMemoryRatio: 0.02,
       },
-      now: new Date('2026-07-13T05:00:01.000Z'),
+      now: sampleAt(1),
     });
     recordAssistantMetric({
       groupFolder: 'main',
@@ -645,7 +650,7 @@ describe('personal assistant metrics', () => {
         channelDeliveryMs: 100,
         hostPressureClass: 'normal',
       },
-      now: new Date('2026-07-13T05:00:02.000Z'),
+      now: sampleAt(2),
     });
     recordAssistantMetric({
       groupFolder: 'main',
@@ -658,7 +663,7 @@ describe('personal assistant metrics', () => {
         routeKey: 'telegram.partial',
         confirmedReceiptCount: 1,
       },
-      now: new Date('2026-07-13T05:00:03.000Z'),
+      now: sampleAt(3),
     });
 
     const report = buildAssistantIntelligenceReport({ groupFolder: 'main' });
