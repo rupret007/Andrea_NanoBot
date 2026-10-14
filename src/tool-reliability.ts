@@ -569,7 +569,14 @@ export function seedToolReliabilityRegistry(): void {
   for (const item of STATIC_LINKS) upsertToolDependencyLink(item);
 }
 
+// Built-in subjects whose only channel was retired. Matched by id so the
+// exclusion is complete regardless of any query LIMIT; stored rows are kept.
+const RETIRED_BUILTIN_SUBJECT_IDS: ReadonlySet<string> = new Set([
+  'integration:alexa',
+]);
+
 function isCurrentReliabilitySubject(item: ToolReliabilitySubject): boolean {
+  if (RETIRED_BUILTIN_SUBJECT_IDS.has(item.subjectId)) return false;
   // Custom subjects own their lifecycle. Only retire built-in registry entries
   // when every explicitly recorded channel is no longer supported.
   if (
@@ -611,11 +618,12 @@ export function listCurrentToolReliabilitySubjects(
 export function listCurrentToolReliabilityRollups(
   params: Parameters<typeof listToolReliabilityRollups>[0] = {},
 ): ToolReliabilityRollup[] {
-  const retiredSubjectIds = new Set(
-    listToolReliabilitySubjects({ limit: 500 })
+  const retiredSubjectIds = new Set<string>([
+    ...RETIRED_BUILTIN_SUBJECT_IDS,
+    ...listToolReliabilitySubjects({ limit: 500 })
       .filter((item) => !isCurrentReliabilitySubject(item))
       .map((item) => item.subjectId),
-  );
+  ]);
   return listToolReliabilityRollups(params).filter(
     (rollup) => !retiredSubjectIds.has(rollup.subjectId),
   );

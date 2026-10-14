@@ -78,6 +78,62 @@ describe('current reliability subjects', () => {
   beforeEach(() => _initTestDatabase());
   afterEach(() => _closeDatabase());
 
+  it('excludes the retired Alexa subject even when 500+ other subjects precede it', () => {
+    for (let i = 0; i < 500; i += 1) {
+      upsertToolReliabilitySubject({
+        subjectId: `capability:aaa_custom_${String(i).padStart(3, '0')}`,
+        subjectKind: 'capability',
+        displayName: `Custom ${i}`,
+        aliasesJson: '[]',
+        riskLevel: 'low',
+        approvalRequirement: 'none',
+        channelsJson: JSON.stringify(['telegram']),
+        sourceRefsJson: JSON.stringify(['custom']),
+        privacyJson: '{}',
+      });
+    }
+    storeBlockedSubject('integration:alexa', ['alexa']);
+
+    // Stored history is retained.
+    expect(
+      listToolReliabilityRollups().some(
+        (rollup) => rollup.subjectId === 'integration:alexa',
+      ),
+    ).toBe(true);
+    expect(
+      listReliabilityObservations({ subjectId: 'integration:alexa' }),
+    ).toHaveLength(1);
+    expect(
+      listCurrentToolReliabilityRollups({ limit: 500 }).some(
+        (rollup) => rollup.subjectId === 'integration:alexa',
+      ),
+    ).toBe(false);
+    const doctor = JSON.stringify(buildToolReliabilityDoctorReport());
+    expect(doctor).not.toContain('integration:alexa');
+    expect(doctor).not.toMatch(/Prove integration:alexa/);
+    const blackboard = buildCognitiveBlackboard({
+      now: observedAt,
+      persist: false,
+      providerHealthSnapshots: [],
+      integrationReport: {
+        generatedAt: observedAt,
+        statuses: [],
+        summary: {
+          total: 0,
+          healthy: 0,
+          actionNeeded: 0,
+          needsProof: 0,
+          manualOrExternal: 0,
+        },
+        secretsRedacted: true,
+      },
+    });
+    expect(blackboard.toolReliabilitySummary).not.toContain(
+      'integration:alexa',
+    );
+    expect(blackboard.recommendedNextStep).not.toContain('integration:alexa');
+  });
+
   it('keeps retired built-in records intact while excluding them from current blockers', () => {
     const subjectId = 'integration:retired_voice';
     storeBlockedSubject(subjectId, ['retired_voice']);

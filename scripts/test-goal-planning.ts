@@ -120,6 +120,33 @@ assert.doesNotMatch(
   /TELEGRAM_USER_API_ID/,
 );
 
+const manualProofOpportunity: ProactiveOpportunity = {
+  opportunityId: 'opportunity_manual_bluebubbles_proof',
+  createdAt: '2026-06-09T12:05:30.000Z',
+  updatedAt: '2026-06-09T12:05:30.000Z',
+  groupFolder: null,
+  triggerSource: 'proof:bluebubbles_manual',
+  relatedGoalId: null,
+  opportunitySummary: 'BlueBubbles proof requires a real phone turn.',
+  reason: 'Manual proof debt should not become household planning advice.',
+  urgency: 'normal',
+  confidence: 0.8,
+  suggestedAction:
+    'Use a real iPhone and send a same-thread BlueBubbles message.',
+  approvalRequirement: 'manual_external',
+  status: 'proposed',
+  snoozedUntil: null,
+  evidenceRefsJson: JSON.stringify(['proof:bluebubbles']),
+  privacyJson: JSON.stringify({ metadataOnly: true }),
+};
+upsertProactiveOpportunity(manualProofOpportunity);
+const tonight = planGoalDirectedRequest({
+  text: 'help me plan tonight',
+  channel: 'telegram',
+  now: '2026-06-09T12:06:00.000Z',
+});
+assert.doesNotMatch(tonight.response, /real iPhone|same-thread BlueBubbles/);
+
 const staleBraveOpportunity: ProactiveOpportunity = {
   opportunityId: 'opportunity_stale_brave_blocker',
   createdAt: '2026-06-09T12:06:00.000Z',
