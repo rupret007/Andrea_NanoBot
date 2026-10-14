@@ -98,13 +98,6 @@ labels. See [COMMITMENT_INTELLIGENCE.md](COMMITMENT_INTELLIGENCE.md).
 
 Andrea uses the same chief-of-staff synthesis across channels, but shapes it differently.
 
-### Alexa
-
-- short and calm
-- one main thing first
-- one or two support lines
-- optional handoff when richer detail is needed
-
 ### Telegram
 
 - richer priority breakdown

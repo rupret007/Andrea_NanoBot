@@ -21,7 +21,6 @@ import {
 } from './db.js';
 import { buildFieldTrialOperatorTruth } from './field-trial-readiness.js';
 import {
-  getAlexaLastSignedRequestStatePath,
   resolveHostControlPaths,
   type HostControlSnapshot,
   type WindowsHostReconciliation,
@@ -467,54 +466,6 @@ describe('field-trial readiness', () => {
     expect(truth.telegram.blocker).toBe('');
   });
 
-  it('reduces Alexa to one exact next step when no signed turn is recorded', () => {
-    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
-
-    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
-
-    expect(truth.alexa.proofState).toBe('near_live_only');
-    expect(truth.alexa.proofKind).toBe('none');
-    expect(truth.alexa.proofFreshness).toBe('none');
-    expect(truth.alexa.blocker).toContain(
-      'No handled signed Alexa IntentRequest',
-    );
-    expect(truth.alexa.nextAction).toContain('What am I forgetting?');
-    expect(truth.alexa.confirmCommand).toBe('npm run services:status');
-    expect(truth.launchReadiness.coreBlockers.join(' | ')).not.toContain(
-      'alexa',
-    );
-    expect(
-      truth.launchReadiness.optionalManualSurfaceBlockers.join(' | '),
-    ).toContain('alexa');
-    expect(truth.launchReadiness.proofFreshnessGaps.join(' | ')).not.toContain(
-      'alexa_orientation',
-    );
-  });
-
-  it('folds the pending Alexa model sync step into the exact next action when no signed turn is recorded', () => {
-    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
-    const modelSyncPath = path.join(
-      tempDir,
-      'docs',
-      'alexa',
-      'interaction-model.en-US.json',
-    );
-    fs.mkdirSync(path.dirname(modelSyncPath), { recursive: true });
-    fs.writeFileSync(
-      modelSyncPath,
-      '{"interactionModel":{"languageModel":{"invocationName":"andrea assistant"}}}',
-    );
-
-    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
-
-    expect(truth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus).toBe(
-      'pending',
-    );
-    expect(truth.alexa.detail).toContain('interaction model');
-    expect(truth.alexa.nextAction).toContain('alexa-model-sync mark-synced');
-    expect(truth.alexa.nextAction).toContain('What am I forgetting?');
-  });
-
   it('surfaces the latest response-feedback loop state in operator truth', () => {
     upsertResponseFeedback({
       feedbackId: 'feedback-1',
@@ -599,97 +550,6 @@ describe('field-trial readiness', () => {
       'resolved_locally',
     );
     expect(truth.pilotIssues.localHotfixPending).toBe(false);
-  });
-
-  it('keeps LaunchRequest-only Alexa proof below live_proven', () => {
-    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
-    const alexaStatePath = getAlexaLastSignedRequestStatePath(tempDir);
-    fs.mkdirSync(path.dirname(alexaStatePath), { recursive: true });
-    fs.writeFileSync(
-      alexaStatePath,
-      JSON.stringify({
-        updatedAt: '2026-04-07T18:00:00.000Z',
-        requestId: 'launch-1',
-        requestType: 'LaunchRequest',
-        intentName: null,
-        applicationIdVerified: true,
-        linkingResolved: false,
-        groupFolder: null,
-        responseSource: 'launch',
-      }),
-    );
-
-    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
-
-    expect(truth.alexa.proofState).toBe('near_live_only');
-    expect(truth.alexa.proofKind).toBe('launch_only');
-    expect(truth.alexa.lastSignedRequestType).toBe('LaunchRequest');
-  });
-
-  it('requires a handled fresh IntentRequest before Alexa becomes live_proven', () => {
-    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
-    const alexaStatePath = getAlexaLastSignedRequestStatePath(tempDir);
-    fs.mkdirSync(path.dirname(alexaStatePath), { recursive: true });
-    fs.writeFileSync(
-      alexaStatePath,
-      JSON.stringify({
-        updatedAt: new Date().toISOString(),
-        requestId: 'intent-1',
-        requestType: 'IntentRequest',
-        intentName: 'WhatAmIForgettingIntent',
-        applicationIdVerified: true,
-        linkingResolved: true,
-        groupFolder: 'main',
-        responseSource: 'local_companion',
-      }),
-    );
-
-    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
-
-    expect(truth.alexa.proofState).toBe('live_proven');
-    expect(truth.alexa.proofKind).toBe('handled_intent');
-    expect(truth.alexa.proofFreshness).toBe('fresh');
-    expect(truth.alexa.lastSignedIntent).toBe('WhatAmIForgettingIntent');
-    expect(truth.alexa.lastSignedResponseSource).toBe('local_companion');
-  });
-
-  it('keeps Alexa live-proven when a later signed request follows an earlier handled proof intent', () => {
-    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
-    const alexaStatePath = getAlexaLastSignedRequestStatePath(tempDir);
-    fs.mkdirSync(path.dirname(alexaStatePath), { recursive: true });
-    fs.writeFileSync(
-      alexaStatePath,
-      JSON.stringify({
-        lastSignedRequest: {
-          updatedAt: new Date().toISOString(),
-          requestId: 'session-ended-1',
-          requestType: 'SessionEndedRequest',
-          intentName: null,
-          applicationIdVerified: true,
-          linkingResolved: false,
-          groupFolder: null,
-          responseSource: 'fallback',
-        },
-        lastHandledProofIntent: {
-          updatedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
-          requestId: 'intent-1',
-          requestType: 'IntentRequest',
-          intentName: 'WhatAmIForgettingIntent',
-          applicationIdVerified: true,
-          linkingResolved: true,
-          groupFolder: 'main',
-          responseSource: 'local_companion',
-        },
-      }),
-    );
-
-    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
-
-    expect(truth.alexa.proofState).toBe('live_proven');
-    expect(truth.alexa.lastSignedRequestType).toBe('SessionEndedRequest');
-    expect(truth.alexa.lastHandledProofIntent).toBe('WhatAmIForgettingIntent');
-    expect(truth.alexa.lastHandledProofResponseSource).toBe('local_companion');
-    expect(truth.alexa.lastHandledProofAt).not.toBe('none');
   });
 
   it('treats BlueBubbles as externally blocked when it is not installed on this host', () => {
@@ -2804,40 +2664,6 @@ describe('field-trial readiness', () => {
 
     expect(truth.googleCalendar.proofState).toBe('live_proven');
     expect(truth.googleCalendar.detail).toContain('live-proven');
-  });
-
-  it('keeps Alexa live-proven from a recent successful pilot journey when restart cleared the signed-request file', () => {
-    vi.stubEnv('ALEXA_SKILL_ID', 'amzn1.ask.skill.test');
-    const started = startPilotJourney({
-      journeyId: 'alexa_orientation',
-      systemsInvolved: ['alexa', 'assistant_capabilities'],
-      summaryText: 'What am I forgetting?',
-      routeKey: 'WhatAmIForgettingIntent',
-      channel: 'alexa',
-      groupFolder: 'main',
-      chatJid: null,
-      threadId: null,
-      startedAt: '2026-04-08T11:55:00.000Z',
-    });
-    expect(started).toBeTruthy();
-    completePilotJourney({
-      eventId: started!.eventId,
-      outcome: 'success',
-      blockerOwner: 'none',
-      completedAt: '2026-04-08T11:55:12.000Z',
-      summaryText: 'The conversation most likely to slip is Candace.',
-    });
-
-    const truth = buildFieldTrialOperatorTruth({ projectRoot: tempDir });
-
-    expect(truth.alexa.proofState).toBe('live_proven');
-    expect(truth.alexa.lastSignedRequestAt).toBe('none');
-    expect(truth.alexa.lastHandledProofAt).toBe('2026-04-08T11:55:12.000Z');
-    expect(truth.alexa.lastHandledProofIntent).toBe('alexa_orientation');
-    expect(truth.alexa.lastHandledProofResponseSource).toBe(
-      'pilot_recent_success',
-    );
-    expect(truth.journeys.alexa_orientation.proofState).toBe('live_proven');
   });
 
   it('marks work cockpit live-proven from a recent pilot journey and surfaces pilot issue state', () => {

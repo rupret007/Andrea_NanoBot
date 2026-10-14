@@ -520,7 +520,7 @@ export class AndreaOpenAiBackendClient {
 
   async planPlatformConductor(input: {
     goal: string;
-    channel?: 'telegram' | 'bluebubbles' | 'alexa';
+    channel?: 'telegram' | 'bluebubbles';
     groupFolder?: string | null;
     actorType?: string | null;
     actorId?: string | null;

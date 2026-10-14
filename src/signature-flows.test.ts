@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { completeAssistantActionFromAlexa } from './assistant-action-completion.js';
+import { completeAssistantAction } from './assistant-action-completion.js';
 import { continueAssistantCapabilityFromPriorSubjectData } from './assistant-capability-router.js';
 import { executeAssistantCapability } from './assistant-capabilities.js';
 import { analyzeCommunicationMessage } from './communication-companion.js';
@@ -63,7 +63,7 @@ function registerMain(groupFolder: string, chatJid: string): void {
   });
 }
 
-function buildAlexaPriorSubjectData(
+function buildPriorSubjectData(
   candidate: CompanionContinuationCandidate | undefined,
   replyText: string | null | undefined,
 ) {
@@ -101,7 +101,7 @@ describe('signature flows', () => {
     expect(text.match(/usable breathing room\./gi)).toHaveLength(1);
   });
 
-  it('keeps Alexa daily orientation and Telegram follow-through in one flow', async () => {
+  it('keeps shared daily orientation and Telegram follow-through in one flow', async () => {
     const groupFolder = 'signature-daily';
     const chatJid = 'tg:signature-daily';
     const now = new Date('2026-04-06T12:00:00.000Z');
@@ -125,7 +125,7 @@ describe('signature flows', () => {
     const daily = await executeAssistantCapability({
       capabilityId: 'daily.loose_ends',
       context: {
-        channel: 'alexa',
+        channel: 'telegram',
         groupFolder,
         chatJid,
         now,
@@ -156,8 +156,9 @@ describe('signature flows', () => {
       }),
     );
 
-    const handoff = await completeAssistantActionFromAlexa(
+    const handoff = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder,
         action: 'send_details',
         utterance: 'send me the fuller version',
@@ -165,7 +166,7 @@ describe('signature flows', () => {
           daily.conversationSeed?.summaryText ||
           daily.replyText ||
           'Daily summary',
-        priorSubjectData: buildAlexaPriorSubjectData(
+        priorSubjectData: buildPriorSubjectData(
           daily.continuationCandidate,
           daily.replyText,
         ),
@@ -205,7 +206,7 @@ describe('signature flows', () => {
     const daily = await executeAssistantCapability({
       capabilityId: 'daily.loose_ends',
       context: {
-        channel: 'alexa',
+        channel: 'telegram',
         groupFolder,
         chatJid,
         now,
@@ -215,14 +216,15 @@ describe('signature flows', () => {
       },
     });
 
-    const reminder = await completeAssistantActionFromAlexa(
+    const reminder = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder,
         action: 'create_reminder',
         utterance: 'remind me about that tonight',
         conversationSummary:
           daily.conversationSeed?.summaryText || daily.replyText || 'Open loop',
-        priorSubjectData: buildAlexaPriorSubjectData(
+        priorSubjectData: buildPriorSubjectData(
           daily.continuationCandidate,
           daily.replyText,
         ),
@@ -513,7 +515,7 @@ describe('signature flows', () => {
     const research = await executeAssistantCapability({
       capabilityId: 'research.summarize',
       context: {
-        channel: 'alexa',
+        channel: 'telegram',
         groupFolder,
         now,
       },
@@ -534,8 +536,9 @@ describe('signature flows', () => {
       }),
     );
 
-    const handoff = await completeAssistantActionFromAlexa(
+    const handoff = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder,
         action: 'send_details',
         utterance: 'send me the full version',
@@ -543,7 +546,7 @@ describe('signature flows', () => {
           research.conversationSeed?.summaryText ||
           research.replyText ||
           'Research summary',
-        priorSubjectData: buildAlexaPriorSubjectData(
+        priorSubjectData: buildPriorSubjectData(
           research.continuationCandidate,
           research.replyText,
         ),
@@ -555,8 +558,9 @@ describe('signature flows', () => {
       },
     );
 
-    const save = await completeAssistantActionFromAlexa(
+    const save = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder,
         action: 'save_to_library',
         utterance: 'save this to my library',
@@ -564,7 +568,7 @@ describe('signature flows', () => {
           research.conversationSeed?.summaryText ||
           research.replyText ||
           'Research summary',
-        priorSubjectData: buildAlexaPriorSubjectData(
+        priorSubjectData: buildPriorSubjectData(
           research.continuationCandidate,
           research.replyText,
         ),

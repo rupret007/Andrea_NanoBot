@@ -252,14 +252,6 @@ function providerHealthAsRollupHealth(
   return 'unknown';
 }
 
-function isOptionalManualVoiceSubject(
-  subject: string | null | undefined,
-): boolean {
-  return /(^|[:\s])alexa(\b|[:\s])|Alexa signed IntentRequest/i.test(
-    String(subject || ''),
-  );
-}
-
 function confidenceForEffectiveHealth(
   health: ToolReliabilityRollup['currentHealth'],
 ): number {
@@ -297,9 +289,6 @@ function proofEntryForReliabilitySubject(
   }
   if (/^(integration:bluebubbles|tool:message_actions)$/.test(subjectId)) {
     return match(/BlueBubbles/i);
-  }
-  if (subjectId === 'integration:alexa') {
-    return match(/Alexa/i);
   }
   if (subjectId === 'integration:telegram') {
     return match(/Telegram bot/i);
@@ -560,7 +549,7 @@ function buildProofRecords(input: {
           question: `What proof is needed for ${entry.proofName}?`,
           reason: `${entry.proofName} is ${entry.status}.`,
           neededBeforeAction:
-            /message|telegram|alexa|calendar/i.test(entry.proofName) &&
+            /message|telegram|calendar/i.test(entry.proofName) &&
             entry.status !== 'near_live_only',
           tool:
             entry.status === 'missing_config'
@@ -568,9 +557,7 @@ function buildProofRecords(input: {
               : entry.repoWorkRequired
                 ? 'repo repair'
                 : 'manual proof',
-          risk: /message|calendar|alexa/i.test(entry.proofName)
-            ? 'high'
-            : 'medium',
+          risk: /message|calendar/i.test(entry.proofName) ? 'high' : 'medium',
           status:
             entry.status === 'missing_config'
               ? 'manual_proof'
@@ -1013,9 +1000,7 @@ export function buildRealityGroundingReport(
   });
   const confirmed = beliefs.filter((belief) => belief.status === 'confirmed');
   const blocked = beliefs.filter(
-    (belief) =>
-      belief.status === 'externally_blocked' &&
-      !isOptionalManualVoiceSubject(belief.subject),
+    (belief) => belief.status === 'externally_blocked',
   );
   const stale = beliefs.filter((belief) => belief.status === 'stale');
   const confidence =
@@ -1074,16 +1059,14 @@ export function buildRealityGroundingReport(
       (belief) =>
         (belief.beliefType === 'tool_health' ||
           belief.beliefType === 'route_confidence') &&
-        belief.status !== 'confirmed' &&
-        !isOptionalManualVoiceSubject(belief.subject),
+        belief.status !== 'confirmed',
     ).length
       ? reliabilityRecords.beliefs
           .filter(
             (belief) =>
               (belief.beliefType === 'tool_health' ||
                 belief.beliefType === 'route_confidence') &&
-              belief.status !== 'confirmed' &&
-              !isOptionalManualVoiceSubject(belief.subject),
+              belief.status !== 'confirmed',
           )
           .slice(0, 5)
           .map((belief) => `${belief.subject}:${belief.status}`)

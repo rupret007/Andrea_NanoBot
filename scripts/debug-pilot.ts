@@ -1,7 +1,6 @@
 import { initDatabase, listRecentResponseFeedback } from '../src/db.js';
 import { buildFieldTrialOperatorTruth } from '../src/field-trial-readiness.js';
 import {
-  buildAlexaUtteranceReviewDigest,
   buildPilotReviewDigest,
   FLAGSHIP_PILOT_JOURNEYS,
 } from '../src/pilot-mode.js';
@@ -25,7 +24,6 @@ const JOURNEY_LABELS: Record<PilotJourneyId, string> = {
   mission_planning: 'mission_planning',
   work_cockpit: 'work_cockpit',
   cross_channel_handoff: 'cross_channel_handoff',
-  alexa_orientation: 'alexa_orientation',
 };
 
 function formatTimestamp(value: string | null | undefined): string {
@@ -102,7 +100,6 @@ function collectAttentionItems(
   push('work_cockpit', truth.journeys.work_cockpit);
   push('cross_channel_handoff', truth.journeys.cross_channel_handoff);
   push('Telegram', truth.telegram);
-  push('Alexa', truth.alexa);
   push('BlueBubbles', truth.bluebubbles);
   push('Google Calendar', truth.googleCalendar);
   push('Research', truth.research);
@@ -158,24 +155,6 @@ function formatOpenIssues(
   });
 }
 
-function formatAlexaUtteranceReview(
-  digest: ReturnType<typeof buildAlexaUtteranceReviewDigest>,
-): string[] {
-  if (digest.groupedPatterns.length === 0) {
-    return [
-      '- No recent grouped Alexa utterance misses are available on this host yet.',
-      '- Seed new evidence with `npm run debug:alexa-conversation` or `npm run debug:alexa-conversation -- --review` after simulator or live turns.',
-    ];
-  }
-
-  return digest.groupedPatterns
-    .slice(0, 8)
-    .flatMap((item) => [
-      `- ${item.utterance} / family=${item.family} / route=${item.routeOutcome} / blocker=${item.blockerClass} / attempts=${item.attempts} / latest=${item.latestAt}`,
-      `  suggestion: ${item.operatorHint}`,
-    ]);
-}
-
 function formatResponseFeedbackLoop(): string[] {
   const feedback = listRecentResponseFeedback({ limit: 5 });
   if (feedback.length === 0) {
@@ -196,7 +175,6 @@ async function main(): Promise<void> {
   await refreshRecentResponseFeedbackTruth({ limit: 5 });
   const truth = buildFieldTrialOperatorTruth();
   const review = buildPilotReviewDigest();
-  const alexaReview = buildAlexaUtteranceReviewDigest();
   const reliability = buildToolReliabilityDoctorReport();
   const repair = buildRepairDoctorReport();
   const improvement = buildAutonomousImprovementLabReport();
@@ -235,10 +213,6 @@ async function main(): Promise<void> {
     `- Launch status: ${truth.launchReadiness.status}`,
     `- Core status: ${truth.launchReadiness.coreStatus}`,
     `- Launch summary: ${truth.launchReadiness.summary}`,
-    `- Alexa model sync: ${truth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus}`,
-    ...(truth.launchReadiness.manualSyncSteps.length > 0
-      ? [`  manual_sync=${truth.launchReadiness.manualSyncSteps.join(' | ')}`]
-      : []),
     ...(truth.launchReadiness.optionalProviderBlockers.length > 0
       ? [
           `  optional_provider_blockers=${truth.launchReadiness.optionalProviderBlockers.join(' | ')}`,
@@ -257,12 +231,6 @@ async function main(): Promise<void> {
         ]
       : []),
     `- Telegram: ${truth.telegram.proofState}`,
-    `- Alexa: ${truth.alexa.proofState}`,
-    `  kind=${truth.alexa.proofKind} / freshness=${truth.alexa.proofFreshness} / age=${truth.alexa.proofAgeLabel}`,
-    `  last=${truth.alexa.lastSignedRequestType} / intent=${truth.alexa.lastSignedIntent} / source=${truth.alexa.lastSignedResponseSource}`,
-    `  utterance=${truth.alexa.recommendedUtterance}`,
-    `  confirm=${truth.alexa.confirmCommand}`,
-    ...(truth.alexa.blocker ? [`  blocker=${truth.alexa.blocker}`] : []),
     `- BlueBubbles: ${truth.bluebubbles.proofState}`,
     `  provider=${truth.bluebubbles.providerName} / bridge=${truth.bluebubbles.bridgeAvailability}`,
     `  scope=${truth.bluebubbles.chatScope} / reply_gate=${truth.bluebubbles.replyGateMode} / transport=${truth.bluebubbles.transportState}`,
@@ -415,18 +383,6 @@ async function main(): Promise<void> {
     `- Strategy signals: ${metacognition.strategySignals.length}`,
     `- Next safe action: ${metacognition.nextAction}`,
     '',
-    '*Alexa Utterance Review*',
-    `- Signals tracked: ${alexaReview.totalSignals}`,
-    `- Repeated patterns: ${alexaReview.repeatedPatterns.length}`,
-    `- Fallback misses: ${alexaReview.fallbackMisses.length}`,
-    `- Clarifier recoveries: ${alexaReview.clarifierRecoveries.length}`,
-    `- Carrier-phrase gaps: ${alexaReview.carrierPhraseGaps.length}`,
-    `- No-context references: ${alexaReview.noContextReferences.length}`,
-    `- Follow-up binding failures: ${alexaReview.followupBindingFailures.length}`,
-    `- Communication should-route misses: ${alexaReview.communicationShouldRoute.length}`,
-    `- Planning should-route misses: ${alexaReview.planningShouldRoute.length}`,
-    `- Voice-shape repetition: ${alexaReview.voiceShapeRepetition.length}`,
-    ...formatAlexaUtteranceReview(alexaReview),
   ];
   process.stdout.write(`${lines.join('\n')}\n`);
 }

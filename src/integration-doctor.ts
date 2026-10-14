@@ -6,7 +6,6 @@ import {
   type FieldTrialSurfaceTruth,
   type FieldTrialTelegramTruth,
 } from './field-trial-readiness.js';
-import { readEnvFile } from './env.js';
 import { getGoogleCalendarFailureNextAction } from './google-calendar.js';
 import {
   collectProviderHealthSnapshots,
@@ -322,43 +321,6 @@ function normalizeBlueBubbles(
   });
 }
 
-function normalizeAlexa(truth: FieldTrialOperatorTruth): IntegrationStatus {
-  const missingSignedTurn = truth.alexa.proofState !== 'live_proven';
-  const envFile = readEnvFile(['ALEXA_PUBLIC_BASE_URL']);
-  const baseUrlMissing =
-    !process.env.ALEXA_PUBLIC_BASE_URL &&
-    !envFile.ALEXA_PUBLIC_BASE_URL &&
-    !truth.alexa.detail.includes('public');
-  return surfaceStatus({
-    integrationId: 'alexa',
-    label: 'Alexa',
-    truth: truth.alexa,
-    credentialState: 'configured',
-    transportState: missingSignedTurn ? 'degraded' : 'healthy',
-    overrideState: missingSignedTurn ? 'manual_action_required' : undefined,
-    overrideProofState: missingSignedTurn ? 'near_live_only' : undefined,
-    blockerOwner: missingSignedTurn ? 'manual' : undefined,
-    repairability: 'manual_external',
-    safeActions: [
-      'Verify local listener on port 4300 and public tunnel/base URL.',
-      'Confirm Alexa Developer Console endpoint points at the public URL.',
-      'Run npm run debug:alexa-conversation -- --review.',
-      'Send one real signed simulator/device turn; do not fake live_proven.',
-    ],
-    detail: [
-      truth.alexa.detail,
-      baseUrlMissing
-        ? 'ALEXA_PUBLIC_BASE_URL is not loaded in this process.'
-        : '',
-      truth.alexa.failureChecklist,
-    ]
-      .filter(Boolean)
-      .join(' '),
-    nextAction:
-      'Complete the Alexa checklist, then prove one real signed IntentRequest reaches this host.',
-  });
-}
-
 function normalizeProvider(
   provider: ProviderHealthSnapshot,
 ): IntegrationStatus {
@@ -594,7 +556,6 @@ export function buildIntegrationDoctorReport(
     normalizeTelegram(truth),
     normalizeGoogleCalendar(truth),
     normalizeBlueBubbles(truth),
-    normalizeAlexa(truth),
     normalizeRuntime(truth),
     surfaceStatus({
       integrationId: 'research',
@@ -736,11 +697,6 @@ const FIX_GUIDANCE: Record<string, string[]> = {
     'In the canonical self-thread, send @Andrea start bluebubbles proof, then reply send it later tonight.',
     'Keep ordinary Messages contact and group threads data-only. Use @Andrea only in the configured owner self-thread, or use the registered main Telegram chat.',
   ],
-  alexa: [
-    'Alexa needs manual public ingress proof.',
-    'Verify local listener port 4300, ngrok/public URL, ALEXA_PUBLIC_BASE_URL, and Developer Console endpoint.',
-    'Run npm run debug:alexa-conversation -- --review, then make one real signed simulator/device turn.',
-  ],
   self_repair: [
     'Self-repair plans need operator cleanup or approval.',
     'Ask did it fix itself? or self-improvement status.',
@@ -808,11 +764,11 @@ export function isIntegrationDoctorRequest(message: string): boolean {
 export function parseIntegrationFixTarget(message: string): string | null {
   const normalized = message.trim().toLowerCase();
   const match = normalized.match(
-    /\b(?:fix|repair|doctor)\s+(google calendar|calendar|bluebubbles|imessage|messages|alexa|self repair|repairs|repair|telegram|providers?|openai|minimax|brave)\b/,
+    /\b(?:fix|repair|doctor)\s+(google calendar|calendar|bluebubbles|imessage|messages|self repair|repairs|repair|telegram|providers?|openai|minimax|brave)\b/,
   );
   if (match) return match[1] || null;
   const degraded = normalized.match(
-    /\b(google calendar|calendar|bluebubbles|imessage|messages|alexa|telegram|openai|minimax|brave)\s+(?:seems|looks|is)\s+(?:down|broken|offline|unhealthy|unavailable)\b/,
+    /\b(google calendar|calendar|bluebubbles|imessage|messages|telegram|openai|minimax|brave)\s+(?:seems|looks|is)\s+(?:down|broken|offline|unhealthy|unavailable)\b/,
   );
   return degraded ? degraded[1] || null : null;
 }

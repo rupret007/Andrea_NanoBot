@@ -1,5 +1,4 @@
 import {
-  ALEXA_STATUS_COMMANDS,
   AMAZON_SEARCH_COMMANDS,
   AMAZON_STATUS_COMMANDS,
   CURSOR_ARTIFACT_LINK_COMMANDS,
@@ -51,7 +50,6 @@ export type CommandSurfaceKind =
   | 'script';
 export type CommandSurfaceChannel =
   | 'telegram'
-  | 'alexa'
   | 'bluebubbles'
   | 'cross_channel'
   | 'operator';
@@ -328,7 +326,6 @@ export type PracticalCommandFamilyId =
   | 'household_coordination';
 
 export type PracticalCommandSurface =
-  | 'alexa'
   | 'telegram'
   | 'bluebubbles'
   | 'handoff'
@@ -370,11 +367,9 @@ export interface EverydayJobSpec {
   jobTier: EverydayJobTier;
   label: string;
   family: PracticalCommandFamilyId;
-  bestChannels: readonly ('alexa' | 'telegram' | 'bluebubbles')[];
+  bestChannels: readonly ('telegram' | 'bluebubbles')[];
   promptVariants: readonly string[];
-  discoveryPrompts: Partial<
-    Record<'telegram' | 'alexa' | 'bluebubbles', string>
-  >;
+  discoveryPrompts: Partial<Record<'telegram' | 'bluebubbles', string>>;
   expectedOutcome: string;
   whatMakesItExcellent: string;
   successConfirmationStyle: string;
@@ -391,7 +386,7 @@ export interface PracticalCommandEntry {
   discoveryTier: PracticalCommandDiscoveryTier;
   jobId?: EverydayJobId;
   jobTier?: EverydayJobTier;
-  bestChannels?: readonly ('alexa' | 'telegram' | 'bluebubbles')[];
+  bestChannels?: readonly ('telegram' | 'bluebubbles')[];
   successConfirmationStyle?: string;
   blockedFallbackStyle?: string;
   nextStepSuggestions?: readonly string[];
@@ -520,516 +515,498 @@ export const PRACTICAL_COMMAND_FAMILY_FINDINGS: readonly PracticalCommandFamilyF
   ] as const;
 
 export const PRACTICAL_COMMAND_INVENTORY: readonly PracticalCommandEntry[] = [
-  practicalCommand(
-    'local_basics',
-    'what time is it',
-    'alexa',
-    ['telegram'],
-    'local',
-  ),
-  practicalCommand(
-    'local_basics',
-    'what day is it',
-    'alexa',
-    ['telegram'],
-    'local',
-  ),
+  practicalCommand('local_basics', 'what time is it', 'telegram', [], 'local'),
+  practicalCommand('local_basics', 'what day is it', 'telegram', [], 'local'),
   practicalCommand(
     'local_basics',
     "what's up",
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'local',
   ),
   practicalCommand(
     'local_basics',
     'can you help me',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'local',
   ),
   practicalCommand(
     'local_basics',
     'what can you do',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'local',
   ),
 
   practicalCommand(
     'calendar_schedule',
     "what's on my calendar today",
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_read',
   ),
   practicalCommand(
     'calendar_schedule',
     "what's on my calendar tomorrow",
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_read',
   ),
   practicalCommand(
     'calendar_schedule',
     'what do I have this afternoon',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_read',
   ),
   practicalCommand(
     'calendar_schedule',
     'when is my first meeting tomorrow',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_read',
   ),
   practicalCommand(
     'calendar_schedule',
     "what's next on my calendar",
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_read',
   ),
   practicalCommand(
     'calendar_schedule',
     'what should I handle before my next meeting',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_read',
   ),
 
   practicalCommand(
     'calendar_schedule',
     'add dinner tomorrow at 6:30 PM',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_write',
   ),
   practicalCommand(
     'calendar_schedule',
     'put workout on my calendar Friday at 7',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_write',
   ),
   practicalCommand(
     'calendar_schedule',
     'schedule lunch tomorrow at noon',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_write',
   ),
   practicalCommand(
     'calendar_schedule',
     'move that to 7',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_write',
   ),
   practicalCommand(
     'calendar_schedule',
     'move my 3 PM to tomorrow',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_write',
   ),
   practicalCommand(
     'calendar_schedule',
     'cancel dinner tomorrow',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'calendar_write',
   ),
 
   practicalCommand(
     'reminders_save',
     'remind me to call Sam tomorrow at 3',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'reminder_write',
   ),
   practicalCommand(
     'reminders_save',
     'remind me at 4 to text Mom',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'reminder_write',
   ),
   practicalCommand(
     'reminders_save',
     'remind me to take my pills at 9',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'reminder_write',
   ),
   practicalCommand(
     'reminders_save',
     'remind me to pay the water bill Friday',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'reminder_write',
   ),
   practicalCommand(
     'reminders_save',
     'remind me about that tonight',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'reminder_write',
   ),
   practicalCommand(
     'reminders_save',
     'remind me later',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'reminder_write',
   ),
   practicalCommand(
     'reminders_save',
     'save that for later',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'review',
   ),
-  practicalCommand(
-    'reminders_save',
-    'remember this',
-    'alexa',
-    ['telegram'],
-    'review',
-  ),
+  practicalCommand('reminders_save', 'remember this', 'telegram', [], 'review'),
   practicalCommand(
     'reminders_save',
     'add this to my evening reset',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'reminder_write',
   ),
   practicalCommand(
     'reminders_save',
     'send me the fuller version',
     'handoff',
-    ['alexa', 'telegram', 'bluebubbles'],
+    ['telegram', 'bluebubbles'],
     'telegram_handoff',
   ),
 
   practicalCommand(
     'capture_lists',
     'add milk to my shopping list',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'put batteries on my list',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'save this as an errand',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'add pay water bill to my list',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'add dinner idea for Friday',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'add my pills to tonight',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     "what's on my list",
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'what do we need from the store',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'what do I still need to buy',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'what errands do I have',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     "what's left for tonight",
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'what should I handle this weekend',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     "what's missing for dinner",
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'what meals have I planned this week',
     'telegram',
-    ['alexa'],
+    [],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'what recurring things are coming up',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'mark that done',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'capture',
   ),
   practicalCommand(
     'capture_lists',
     'turn that into a reminder',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'capture',
   ),
 
   practicalCommand(
     'orientation_planning',
     'what am I forgetting',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'daily_guidance',
   ),
   practicalCommand(
     'orientation_planning',
     'what matters today',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'planning',
   ),
   practicalCommand(
     'orientation_planning',
     'what should I do next',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'planning',
   ),
   practicalCommand(
     'orientation_planning',
     'what should I remember tonight',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'daily_guidance',
   ),
   practicalCommand(
     'orientation_planning',
     'help me plan tonight',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'planning',
   ),
   practicalCommand(
     'orientation_planning',
     'help me plan meals this week',
     'telegram',
-    ['alexa'],
+    [],
     'planning',
   ),
   practicalCommand(
     'orientation_planning',
     'help me plan this week',
     'telegram',
-    ['alexa'],
+    [],
     'planning',
   ),
   practicalCommand(
     'orientation_planning',
     'help me figure out tomorrow morning',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'planning',
   ),
   practicalCommand(
     'orientation_planning',
     "what's still open",
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'review',
   ),
   practicalCommand(
     'review_followthrough',
     'what bills do I need to pay this week',
     'telegram',
-    ['alexa'],
+    [],
     'review',
   ),
 
   practicalCommand(
     'communication_help',
     'what should I say back',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'communication',
   ),
   practicalCommand(
     'communication_help',
     'give me a short reply',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'communication',
   ),
   practicalCommand(
     'communication_help',
     'make that warmer',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'communication',
   ),
   practicalCommand(
     'communication_help',
     'make that more direct',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'communication',
   ),
   practicalCommand(
     'communication_help',
     'summarize this message',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'communication',
   ),
   practicalCommand(
     'communication_help',
     'who do I still owe a reply',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'communication',
   ),
   practicalCommand(
     'communication_help',
     'what do I owe people',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'communication',
   ),
   practicalCommand(
     'communication_help',
     'remind me to reply later',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'communication',
   ),
 
   practicalCommand(
     'compare_explain',
     'compare meal delivery and grocery delivery for a busy week',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'research_or_knowledge',
   ),
   practicalCommand(
     'compare_explain',
     'what should I know before deciding',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'research_or_knowledge',
   ),
   practicalCommand(
     'compare_explain',
     'explain this simply',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'research_or_knowledge',
   ),
   practicalCommand(
     'compare_explain',
     'tell me something interesting',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'research_or_knowledge',
   ),
   practicalCommand(
     'compare_explain',
     'summarize this',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'research_or_knowledge',
   ),
   practicalCommand(
     'compare_explain',
     'help me think through this choice',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'research_or_knowledge',
   ),
 
   practicalCommand(
     'review_followthrough',
     'anything else',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'review',
   ),
   practicalCommand(
     'review_followthrough',
     'what still needs attention',
-    'alexa',
-    ['telegram', 'bluebubbles'],
+    'telegram',
+    ['bluebubbles'],
     'review',
   ),
   practicalCommand(
     'review_followthrough',
     'what did I save about this',
-    'alexa',
-    ['telegram'],
+    'telegram',
+    [],
     'review',
   ),
   practicalCommand(
     'review_followthrough',
     'send that to Telegram',
     'handoff',
-    ['alexa', 'bluebubbles'],
+    ['bluebubbles'],
     'telegram_handoff',
   ),
 
@@ -1037,7 +1014,7 @@ export const PRACTICAL_COMMAND_INVENTORY: readonly PracticalCommandEntry[] = [
     'household_coordination',
     "what's still open with my family",
     'telegram',
-    ['alexa', 'bluebubbles'],
+    ['bluebubbles'],
     'thread_followup',
     'secondary',
   ),
@@ -1045,7 +1022,7 @@ export const PRACTICAL_COMMAND_INVENTORY: readonly PracticalCommandEntry[] = [
     'household_coordination',
     'what do I need to follow up on at home',
     'telegram',
-    ['alexa', 'bluebubbles'],
+    ['bluebubbles'],
     'thread_followup',
     'secondary',
   ),
@@ -1053,7 +1030,7 @@ export const PRACTICAL_COMMAND_INVENTORY: readonly PracticalCommandEntry[] = [
     'household_coordination',
     'what about Candace',
     'telegram',
-    ['alexa', 'bluebubbles'],
+    ['bluebubbles'],
     'thread_followup',
     'secondary',
   ),
@@ -1061,7 +1038,7 @@ export const PRACTICAL_COMMAND_INVENTORY: readonly PracticalCommandEntry[] = [
     'household_coordination',
     "what's still open with Candace",
     'telegram',
-    ['alexa', 'bluebubbles'],
+    ['bluebubbles'],
     'thread_followup',
     'secondary',
   ),
@@ -1069,7 +1046,7 @@ export const PRACTICAL_COMMAND_INVENTORY: readonly PracticalCommandEntry[] = [
     'household_coordination',
     'what should I say back to Candace',
     'telegram',
-    ['alexa', 'bluebubbles'],
+    ['bluebubbles'],
     'communication',
     'secondary',
   ),
@@ -1085,7 +1062,7 @@ export const PRACTICAL_COMMAND_INVENTORY: readonly PracticalCommandEntry[] = [
     'household_coordination',
     'remind me to check in with Candace tonight',
     'telegram',
-    ['alexa', 'bluebubbles'],
+    ['bluebubbles'],
     'reminder_write',
     'secondary',
   ),
@@ -1093,7 +1070,7 @@ export const PRACTICAL_COMMAND_INVENTORY: readonly PracticalCommandEntry[] = [
     'household_coordination',
     'what do Candace and I have coming up',
     'telegram',
-    ['alexa', 'bluebubbles'],
+    ['bluebubbles'],
     'thread_followup',
     'secondary',
   ),
@@ -1105,7 +1082,7 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     jobTier: 'flagship',
     label: 'Calendar read and what is next',
     family: 'calendar_schedule',
-    bestChannels: ['alexa', 'telegram'],
+    bestChannels: ['telegram'],
     promptVariants: [
       "what's on my calendar tomorrow",
       "what's next on my calendar",
@@ -1113,7 +1090,6 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     ],
     discoveryPrompts: {
       telegram: "what's on my calendar tomorrow",
-      alexa: "what's on my calendar tomorrow",
     },
     expectedOutcome: 'Give one clear schedule answer and one useful next move.',
     whatMakesItExcellent:
@@ -1127,7 +1103,7 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     jobTier: 'flagship',
     label: 'Add or move something on the calendar',
     family: 'calendar_schedule',
-    bestChannels: ['alexa', 'telegram'],
+    bestChannels: ['telegram'],
     promptVariants: [
       'add dinner tomorrow at 6:30 PM',
       'move that to 7',
@@ -1146,7 +1122,7 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     jobTier: 'flagship',
     label: 'Reminders, meds, and save for later',
     family: 'reminders_save',
-    bestChannels: ['alexa', 'telegram'],
+    bestChannels: ['telegram'],
     promptVariants: [
       'remind me to call Sam tomorrow at 3',
       'remind me to take my pills at 9',
@@ -1156,7 +1132,6 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     ],
     discoveryPrompts: {
       telegram: 'remind me to take my pills at 9',
-      alexa: 'remind me to take my pills at 9',
     },
     expectedOutcome: 'Capture the reminder or saved follow-through cleanly.',
     whatMakesItExcellent:
@@ -1170,11 +1145,9 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     jobTier: 'flagship',
     label: 'What am I forgetting and tonight reset',
     family: 'orientation_planning',
-    bestChannels: ['alexa', 'telegram'],
+    bestChannels: ['telegram'],
     promptVariants: ['what am I forgetting', 'what should I remember tonight'],
-    discoveryPrompts: {
-      alexa: 'what am I forgetting',
-    },
+    discoveryPrompts: {},
     expectedOutcome: 'Give one grounded loose end and one next step.',
     whatMakesItExcellent:
       'It feels like a real assistant catching what might slip, not a state dump.',
@@ -1188,7 +1161,7 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     jobTier: 'flagship',
     label: 'What should I do next',
     family: 'orientation_planning',
-    bestChannels: ['alexa', 'telegram'],
+    bestChannels: ['telegram'],
     promptVariants: ['what should I do next', 'what matters today'],
     discoveryPrompts: {},
     expectedOutcome:
@@ -1204,7 +1177,7 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     jobTier: 'flagship',
     label: 'Reply help and message summary',
     family: 'communication_help',
-    bestChannels: ['alexa', 'telegram', 'bluebubbles'],
+    bestChannels: ['telegram', 'bluebubbles'],
     promptVariants: [
       'what should I say back',
       'give me a short reply',
@@ -1212,7 +1185,6 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     ],
     discoveryPrompts: {
       telegram: 'what should I say back',
-      alexa: 'what should I say back',
       bluebubbles: 'what should I say back',
     },
     expectedOutcome:
@@ -1228,7 +1200,7 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     jobTier: 'flagship',
     label: 'Open follow-through, replies, and bills',
     family: 'review_followthrough',
-    bestChannels: ['alexa', 'telegram'],
+    bestChannels: ['telegram'],
     promptVariants: [
       "what's still open",
       'what do I owe people',
@@ -1254,7 +1226,7 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     jobTier: 'flagship',
     label: 'Plan tonight, the week, or meals',
     family: 'orientation_planning',
-    bestChannels: ['alexa', 'telegram'],
+    bestChannels: ['telegram'],
     promptVariants: [
       'help me plan tonight',
       'help me plan meals this week',
@@ -1263,7 +1235,6 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     ],
     discoveryPrompts: {
       telegram: 'help me plan meals this week',
-      alexa: 'help me plan tonight',
     },
     expectedOutcome:
       'Give a short plan with the next step and the main blocker.',
@@ -1279,7 +1250,7 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     jobTier: 'flagship',
     label: 'Compare, explain, and what should I know',
     family: 'compare_explain',
-    bestChannels: ['alexa', 'telegram'],
+    bestChannels: ['telegram'],
     promptVariants: [
       'what should I know before deciding',
       'compare meal delivery and grocery delivery for a busy week',
@@ -1300,7 +1271,7 @@ export const EVERYDAY_JOB_SPECS: readonly EverydayJobSpec[] = [
     jobTier: 'flagship',
     label: 'Send me the fuller version',
     family: 'review_followthrough',
-    bestChannels: ['alexa', 'telegram'],
+    bestChannels: ['telegram'],
     promptVariants: ['send me the fuller version', 'send that to Telegram'],
     discoveryPrompts: {},
     expectedOutcome:
@@ -1376,7 +1347,7 @@ export function getPracticalCommandsForSurface(
 export function getEverydayJobSpecs(
   options: {
     jobTier?: EverydayJobTier;
-    surface?: 'telegram' | 'alexa' | 'bluebubbles';
+    surface?: 'telegram' | 'bluebubbles';
   } = {},
 ): EverydayJobSpec[] {
   return EVERYDAY_JOB_SPECS.filter((job) => {
@@ -1391,7 +1362,7 @@ export function getEverydayJobSpecs(
 }
 
 function getEverydayJobDiscoveryPrompts(
-  surface: 'telegram' | 'alexa' | 'bluebubbles',
+  surface: 'telegram' | 'bluebubbles',
 ): string[] {
   return EVERYDAY_JOB_DISCOVERY_ORDER.map(
     (jobId) =>
@@ -1402,7 +1373,7 @@ function getEverydayJobDiscoveryPrompts(
 }
 
 export function getPracticalDiscoverySpotlights(
-  surface: 'telegram' | 'alexa' | 'bluebubbles',
+  surface: 'telegram' | 'bluebubbles',
 ): PracticalCommandEntry[] {
   const byPrompt = new Map(
     PRACTICAL_COMMAND_INVENTORY.map(
@@ -1686,14 +1657,6 @@ export const OPERATOR_SLASH_COMMAND_SURFACES: readonly CommandSurfaceEntry[] = [
     'operator_only',
   ),
   family(
-    'alexa_status',
-    '/alexa-status',
-    ALEXA_STATUS_COMMANDS,
-    'Show Alexa listener, model-sync, and proof status.',
-    'operator',
-    'operator_only',
-  ),
-  family(
     'amazon_status',
     '/amazon-status',
     AMAZON_STATUS_COMMANDS,
@@ -1834,22 +1797,6 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
         'Best for schedule help, reminders, groceries and errands, pills and bills, meal and week planning, messaging review, and richer execution.',
     },
     {
-      id: 'alexa_voice_surface',
-      preferredAlias: 'Alexa bounded voice surface',
-      acceptedAliases: ['Alexa', 'Andrea custom skill'],
-      audience: 'user',
-      surfaceKind: 'natural_language',
-      channelScope: ['alexa'],
-      discoverability: ['/help', '/features', 'operator_docs'],
-      truthClass: 'live_proven',
-      summary:
-        'Concise voice help for your day, schedule, reminders, and short follow-up.',
-      description:
-        'Best for voice orientation, schedule and reminder asks, groceries and errands, pills and bills, meal or tonight planning, and quick reply help.',
-      statusAuthority:
-        'Check npm run services:status or npm run debug:status for the current live proof and model-sync state.',
-    },
-    {
       id: 'bluebubbles_bounded_surface',
       preferredAlias: 'Messages bridge when available',
       acceptedAliases: ['BlueBubbles', '@Andrea in Messages'],
@@ -1870,7 +1817,7 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
       acceptedAliases: ['hi', "what's up", 'how is it going', 'thanks'],
       audience: 'user',
       surfaceKind: 'natural_language',
-      channelScope: ['telegram', 'bluebubbles', 'alexa'],
+      channelScope: ['telegram', 'bluebubbles'],
       discoverability: ['/features'],
       truthClass: 'live_proven',
       summary: 'Warm ordinary-chat replies and fast local asks.',
@@ -1887,12 +1834,12 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
       ],
       audience: 'user',
       surfaceKind: 'natural_language',
-      channelScope: ['telegram', 'alexa', 'cross_channel'],
+      channelScope: ['telegram', 'cross_channel'],
       discoverability: ['/features'],
       truthClass: 'live_proven',
       summary: 'Calendar reads, adds, moves, and short schedule check-ins.',
       description:
-        'Alexa is strong for quick voice scheduling, and Telegram is richer when you want more detail or completion.',
+        'Telegram supports scheduling with detailed follow-through and completion.',
     },
     {
       id: 'reminders_and_save_for_later',
@@ -1905,7 +1852,7 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
       ],
       audience: 'user',
       surfaceKind: 'natural_language',
-      channelScope: ['telegram', 'alexa', 'bluebubbles', 'cross_channel'],
+      channelScope: ['telegram', 'bluebubbles', 'cross_channel'],
       discoverability: ['/features'],
       truthClass: 'live_proven',
       summary:
@@ -1924,7 +1871,7 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
       ],
       audience: 'user',
       surfaceKind: 'natural_language',
-      channelScope: ['telegram', 'alexa', 'cross_channel'],
+      channelScope: ['telegram', 'cross_channel'],
       discoverability: ['/features'],
       truthClass: 'near_live_only',
       summary: 'Daily orientation, planning, meals, and what to do next.',
@@ -1943,13 +1890,13 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
       ],
       audience: 'user',
       surfaceKind: 'natural_language',
-      channelScope: ['telegram', 'alexa', 'bluebubbles', 'cross_channel'],
+      channelScope: ['telegram', 'bluebubbles', 'cross_channel'],
       discoverability: ['/features'],
       truthClass: 'live_proven',
       summary:
         'Reply drafting, message summaries, and open communication follow-through.',
       description:
-        'Telegram is richer, Messages is a calmer same-thread bridge when available, and Alexa is good for a concise first draft.',
+        'Telegram supports detailed reply help, and Messages is a calmer same-thread bridge when available.',
     },
     {
       id: 'compare_explain_and_saved_context',
@@ -1961,13 +1908,12 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
       ],
       audience: 'user',
       surfaceKind: 'natural_language',
-      channelScope: ['telegram', 'alexa', 'cross_channel'],
+      channelScope: ['telegram', 'cross_channel'],
       discoverability: ['/features'],
       truthClass: 'degraded_but_usable',
       summary:
         'Compare, explain, summarize, and use saved context when it helps.',
-      description:
-        'Telegram is richest for fuller answers, while Alexa keeps it short and bounded.',
+      description: 'Telegram supports fuller answers and saved context.',
       statusAuthority:
         'Provider-backed research is externally blocked on this host right now, but local and saved-context answers still work.',
     },
@@ -1982,7 +1928,7 @@ export const NATURAL_LANGUAGE_DISCOVERY_SURFACES: readonly CommandSurfaceEntry[]
       ],
       audience: 'user',
       surfaceKind: 'natural_language',
-      channelScope: ['telegram', 'alexa', 'bluebubbles', 'cross_channel'],
+      channelScope: ['telegram', 'bluebubbles', 'cross_channel'],
       discoverability: ['/features'],
       truthClass: 'live_proven',
       summary:
@@ -2594,10 +2540,9 @@ export function buildTelegramFeatureLines(assistantName: string): string[] {
     '*Best Here*',
     '- Calendar, reminders, groceries, errands, pills, and bills.',
     '- Review or summarize synced Messages and draft a reply. Andrea does not auto-reply to contacts.',
-    '- Planning, meeting prep, and repo check-ins when you ask.',
+    '- Daily planning, quick reply help, meeting prep, and repo check-ins when you ask.',
     '',
     '*Surfaces*',
-    '- Alexa is concise voice help for schedule, reminders, list capture and readout, planning, and quick reply help.',
     '- Ordinary contact and group threads remain data-only. Only this registered chat or the configured owner Messages self-thread can authorize a send.',
   ];
 }

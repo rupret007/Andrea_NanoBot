@@ -110,8 +110,8 @@ describe('production runtime capability surfaces', () => {
       ['search', runResearchOrchestrator],
       ['open', runResearchOrchestrator],
     ]);
+
     expect(registry.getToolSurface('research.web')?.sourceChannels).toEqual([
-      'alexa',
       'telegram',
     ]);
 

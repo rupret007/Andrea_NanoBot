@@ -1,4 +1,4 @@
-import { completeAssistantActionFromAlexa } from '../src/assistant-action-completion.js';
+import { completeAssistantAction } from '../src/assistant-action-completion.js';
 import { executeAssistantCapability } from '../src/assistant-capabilities.js';
 import { analyzeCommunicationMessage } from '../src/communication-companion.js';
 import { deliverCompanionHandoff } from '../src/cross-channel-handoffs.js';
@@ -76,7 +76,7 @@ function registerMain(groupFolder: string, chatJid: string): void {
   });
 }
 
-function buildAlexaPriorSubjectData(
+function buildPriorSubjectData(
   candidate: CompanionContinuationCandidate | undefined,
   replyText: string | null | undefined,
 ) {
@@ -121,7 +121,7 @@ async function main(): Promise<void> {
   const daily = await executeAssistantCapability({
     capabilityId: 'daily.loose_ends',
     context: {
-      channel: 'alexa',
+      channel: 'bluebubbles',
       groupFolder: dailyGroup,
       chatJid: dailyChat,
       now: dailyNow,
@@ -131,14 +131,17 @@ async function main(): Promise<void> {
       canonicalText: 'what am I forgetting',
     },
   });
-  const dailyHandoff = await completeAssistantActionFromAlexa(
+  const dailyHandoff = await completeAssistantAction(
     {
+      channel: 'bluebubbles',
       groupFolder: dailyGroup,
       action: 'send_details',
       utterance: 'send me the fuller version',
       conversationSummary:
-        daily.conversationSeed?.summaryText || daily.replyText || 'Daily summary',
-      priorSubjectData: buildAlexaPriorSubjectData(
+        daily.conversationSeed?.summaryText ||
+        daily.replyText ||
+        'Daily summary',
+      priorSubjectData: buildPriorSubjectData(
         daily.continuationCandidate,
         daily.replyText,
       ),
@@ -150,21 +153,22 @@ async function main(): Promise<void> {
     },
   );
 
-  printBlock('ALEXA DAILY ORIENTATION -> TELEGRAM', [
+  printBlock('BLUEBUBBLES DAILY ORIENTATION -> TELEGRAM', [
     `prompt: what am I forgetting`,
     `lead_reply: ${daily.replyText || 'none'}`,
     `next_action: ${extractLabelLine(daily.continuationCandidate?.handoffPayload?.text, 'Next')}`,
     `handoff_status: ${dailyHandoff.handoffResult?.status || 'none'}`,
   ]);
 
-  const openLoopReminder = await completeAssistantActionFromAlexa(
+  const openLoopReminder = await completeAssistantAction(
     {
+      channel: 'bluebubbles',
       groupFolder: dailyGroup,
       action: 'create_reminder',
       utterance: 'remind me about that tonight',
       conversationSummary:
         daily.conversationSeed?.summaryText || daily.replyText || 'Open loop',
-      priorSubjectData: buildAlexaPriorSubjectData(
+      priorSubjectData: buildPriorSubjectData(
         daily.continuationCandidate,
         daily.replyText,
       ),
@@ -308,7 +312,7 @@ async function main(): Promise<void> {
   const research = await executeAssistantCapability({
     capabilityId: 'research.summarize',
     context: {
-      channel: 'alexa',
+      channel: 'bluebubbles',
       groupFolder: researchGroup,
       now: researchNow,
     },
@@ -316,8 +320,9 @@ async function main(): Promise<void> {
       canonicalText: 'Summarize what matters from my current context',
     },
   });
-  const researchHandoff = await completeAssistantActionFromAlexa(
+  const researchHandoff = await completeAssistantAction(
     {
+      channel: 'bluebubbles',
       groupFolder: researchGroup,
       action: 'send_details',
       utterance: 'send me the full version',
@@ -325,7 +330,7 @@ async function main(): Promise<void> {
         research.conversationSeed?.summaryText ||
         research.replyText ||
         'Research summary',
-      priorSubjectData: buildAlexaPriorSubjectData(
+      priorSubjectData: buildPriorSubjectData(
         research.continuationCandidate,
         research.replyText,
       ),
@@ -336,8 +341,9 @@ async function main(): Promise<void> {
       sendTelegramMessage,
     },
   );
-  const researchSave = await completeAssistantActionFromAlexa(
+  const researchSave = await completeAssistantAction(
     {
+      channel: 'bluebubbles',
       groupFolder: researchGroup,
       action: 'save_to_library',
       utterance: 'save this to my library',
@@ -345,7 +351,7 @@ async function main(): Promise<void> {
         research.conversationSeed?.summaryText ||
         research.replyText ||
         'Research summary',
-      priorSubjectData: buildAlexaPriorSubjectData(
+      priorSubjectData: buildPriorSubjectData(
         research.continuationCandidate,
         research.replyText,
       ),
@@ -416,8 +422,7 @@ async function main(): Promise<void> {
       targetChannel: 'telegram',
       capabilityId: blueDraft.capabilityId,
       voiceSummary: blueDraft.replyText || 'Draft reply',
-      payload:
-        blueDraft.handoffPayload ||
+      payload: blueDraft.handoffPayload ||
         blueDraft.continuationCandidate?.handoffPayload || {
           kind: 'message',
           title: 'Draft reply',

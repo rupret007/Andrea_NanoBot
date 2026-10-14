@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createOrRefreshActionBundle } from './action-bundles.js';
-import { completeAssistantActionFromAlexa } from './assistant-action-completion.js';
+import { completeAssistantAction } from './assistant-action-completion.js';
 import {
   getAllTasks,
   listKnowledgeSourcesForGroup,
@@ -46,7 +46,7 @@ function seedDelegationRule(
     userConfirmed: overrides.userConfirmed ?? true,
     channelApplicabilityJson:
       overrides.channelApplicabilityJson ||
-      JSON.stringify(['telegram', 'alexa', 'bluebubbles']),
+      JSON.stringify(['telegram', 'bluebubbles']),
     safetyLevel: overrides.safetyLevel || 'safe_to_auto_after_delegation',
   };
   upsertDelegationRule(record);
@@ -58,9 +58,10 @@ describe('assistant action completion', () => {
     _initTestDatabase();
   });
 
-  it('saves the prior Alexa answer to the knowledge library', async () => {
-    const result = await completeAssistantActionFromAlexa(
+  it('saves the prior assistant answer to the knowledge library', async () => {
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'save_to_library',
         utterance: 'save that in my library',
@@ -88,9 +89,10 @@ describe('assistant action completion', () => {
     );
   });
 
-  it('tracks the prior Alexa answer under the requested thread', async () => {
-    const result = await completeAssistantActionFromAlexa(
+  it('tracks the prior assistant answer under the requested thread', async () => {
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'track_thread',
         utterance: 'track that under Candace thread',
@@ -122,8 +124,9 @@ describe('assistant action completion', () => {
       platformMessageId: 'tg-msg-42',
     }));
 
-    const result = await completeAssistantActionFromAlexa(
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'send_details',
         utterance: 'send me the details',
@@ -162,8 +165,9 @@ describe('assistant action completion', () => {
       platformMessageId: 'bb-msg-42',
     }));
 
-    const result = await completeAssistantActionFromAlexa(
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'send_details',
         utterance: 'send that to my messages',
@@ -203,8 +207,9 @@ describe('assistant action completion', () => {
   });
 
   it('creates a reminder when timing is explicit', async () => {
-    const result = await completeAssistantActionFromAlexa(
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'create_reminder',
         utterance: 'turn that into a reminder tonight',
@@ -231,8 +236,9 @@ describe('assistant action completion', () => {
   });
 
   it('routes save-for-later follow-ups through the shared bridge-backed path', async () => {
-    const result = await completeAssistantActionFromAlexa(
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'save_for_later',
         utterance: 'save that for later',
@@ -276,8 +282,9 @@ describe('assistant action completion', () => {
       summary: 'Approved canary verified.',
     });
 
-    const result = await completeAssistantActionFromAlexa(
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'save_for_later',
         utterance: 'save that for later',
@@ -304,8 +311,9 @@ describe('assistant action completion', () => {
   });
 
   it('turns keep-track-tonight follow-ups into bounded evening carryover', async () => {
-    const result = await completeAssistantActionFromAlexa(
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'save_for_later',
         utterance: 'keep track of that for tonight',
@@ -337,9 +345,10 @@ describe('assistant action completion', () => {
     );
   });
 
-  it('prepares a draft-follow-up bridge request from prior Alexa context', async () => {
-    const result = await completeAssistantActionFromAlexa(
+  it('prepares a draft-follow-up bridge request from prior assistant context', async () => {
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'draft_follow_up',
         utterance: 'draft that for me',
@@ -372,8 +381,9 @@ describe('assistant action completion', () => {
       }),
     });
 
-    const result = await completeAssistantActionFromAlexa(
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'create_reminder',
         utterance: 'turn that into a reminder',
@@ -413,8 +423,9 @@ describe('assistant action completion', () => {
       ]),
     });
 
-    const result = await completeAssistantActionFromAlexa(
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'track_thread',
         utterance: 'track that',
@@ -441,10 +452,10 @@ describe('assistant action completion', () => {
     );
   });
 
-  it('can approve an action bundle from Alexa and execute the reminder action', async () => {
+  it('can approve an action bundle from BlueBubbles and execute the reminder action', async () => {
     const bundle = createOrRefreshActionBundle({
       groupFolder: 'main',
-      presentationChannel: 'alexa',
+      presentationChannel: 'telegram',
       capabilityId: 'communication.understand_message',
       continuationCandidate: {
         capabilityId: 'communication.understand_message',
@@ -459,8 +470,9 @@ describe('assistant action completion', () => {
       now: new Date('2026-04-08T10:00:00.000Z'),
     });
 
-    const result = await completeAssistantActionFromAlexa(
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'approve_bundle',
         utterance: 'do that',
@@ -490,10 +502,10 @@ describe('assistant action completion', () => {
     );
   });
 
-  it('can hand the action bundle to Telegram from Alexa', async () => {
+  it('can hand the action bundle to Telegram from BlueBubbles', async () => {
     const bundle = createOrRefreshActionBundle({
       groupFolder: 'main',
-      presentationChannel: 'alexa',
+      presentationChannel: 'telegram',
       capabilityId: 'research.compare',
       continuationCandidate: {
         capabilityId: 'research.compare',
@@ -515,8 +527,9 @@ describe('assistant action completion', () => {
       platformMessageId: 'tg-bundle-1',
     }));
 
-    const result = await completeAssistantActionFromAlexa(
+    const result = await completeAssistantAction(
       {
+        channel: 'bluebubbles',
         groupFolder: 'main',
         action: 'send_details',
         utterance: 'send the details to Telegram',

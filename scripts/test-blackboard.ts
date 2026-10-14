@@ -32,29 +32,6 @@ assert.ok(empty.recommendedNextStep.length > 0);
 assert.ok(!empty.recommendedNextStep.includes('\n'));
 assert.equal(empty.approvalNeedsCount, 0);
 
-upsertToolReliabilityRollup({
-  subjectId: 'integration:alexa',
-  updatedAt: '2026-06-09T13:01:00.000Z',
-  sampleCount: 1,
-  successRate: 0,
-  degradedRate: 0,
-  blockedRate: 1,
-  fallbackRate: 0,
-  reliabilityScore: 0.12,
-  currentHealth: 'blocked',
-  confidenceCap: 0.22,
-  cooldownUntil: null,
-  nextAction: 'Use a real device or authenticated simulator.',
-  privacyJson: '{}',
-});
-const optionalVoiceDebt = buildCognitiveBlackboard({
-  requestText: 'blackboard status',
-  now: '2026-06-09T13:02:00.000Z',
-});
-assert.match(optionalVoiceDebt.toolReliabilitySummary, /optional\/manual/);
-assert.doesNotMatch(optionalVoiceDebt.recommendedNextStep, /alexa/i);
-assert.match(optionalVoiceDebt.recommendedNextStep, /Nothing urgent/i);
-
 // Pending approval surfaces on the blackboard and wins the next step.
 const approvalIntent = createActionIntent({
   title: 'Send practice confirmation to Rad Dad',
@@ -145,11 +122,6 @@ assert.ok(report.split('\n').length <= 20);
 assert.match(report, /Daily snapshot/);
 assert.match(report, /Verification needs: 2/);
 assert.match(report, /Recommended next step/);
-
-// Alexa formatting is a single concise utterance.
-const voice = formatBlackboardReport(withApproval, { channel: 'alexa' });
-assert.ok(!voice.includes('\n'));
-assert.ok(voice.length < 240);
 
 assert.equal(isBlackboardNaturalRequest('what are you doing right now?'), true);
 assert.equal(isBlackboardNaturalRequest('what matters right now?'), true);

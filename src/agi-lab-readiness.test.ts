@@ -359,9 +359,9 @@ describe('agi lab readiness', () => {
               nextAction: '',
             },
             {
-              integrationId: 'alexa',
+              integrationId: 'google_calendar',
               state: 'manual_action_required',
-              nextAction: 'Complete the Alexa checklist.',
+              nextAction: 'Complete the calendar checklist.',
             },
           ],
         }),
@@ -376,7 +376,7 @@ describe('agi lab readiness', () => {
       score: 0.75,
       summary:
         '3/4 integrations operationally available; 1 action-needed; 2 evidence-limited.',
-      nextAction: 'Complete the Alexa checklist.',
+      nextAction: 'Complete the calendar checklist.',
     });
   });
 
@@ -397,7 +397,7 @@ describe('agi lab readiness', () => {
           proofDebtCount: 1,
           dailyCoreLiveProvenCount: 3,
           dailyCoreProofDebtCount: 1,
-          nextAction: 'Refresh Alexa and BlueBubbles proof evidence.',
+          nextAction: 'Refresh BlueBubbles proof evidence.',
         }),
       }),
     );
@@ -407,7 +407,7 @@ describe('agi lab readiness', () => {
       report.gates.find((gate) => gate.gateId === 'live_proof'),
     ).toMatchObject({
       status: 'warn',
-      nextAction: 'Refresh Alexa and BlueBubbles proof evidence.',
+      nextAction: 'Refresh BlueBubbles proof evidence.',
     });
     expect(
       report.gates.find((gate) => gate.gateId === 'regression_stability'),

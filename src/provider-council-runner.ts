@@ -66,7 +66,7 @@ interface TextProviderResult {
 export interface ObservableProviderCouncilInput {
   goal: string;
   taskFamily: PlatformTaskFamily;
-  channel?: 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+  channel?: 'telegram' | 'bluebubbles' | 'system';
   groupFolder?: string | null;
   correlationId?: string | null;
   requestedMode?: AndreaPlatformCouncilMode | null;

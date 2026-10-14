@@ -260,7 +260,7 @@ describe('AGI leap readiness', () => {
         averageConfidence: 0.5,
         lowConfidenceRuns: 3,
       },
-      evidenceGaps: ['integration_alexa', 'feature_proofs'],
+      evidenceGaps: ['integration_google_calendar', 'feature_proofs'],
       taskEase: { ...base.taskEase!, status: 'warn', score: 0.83 },
     };
     const noLiveEvidence: CouncilDoctorReport = {

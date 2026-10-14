@@ -29,6 +29,6 @@ export class KeyedTurnSerializer {
 /**
  * One process-wide lock registry for every surface that can mutate a logical
  * assistant workspace. Sharing the instance is what prevents Telegram,
- * BlueBubbles, and Alexa turns targeting the same folder from overlapping.
+ * and BlueBubbles turns targeting the same folder from overlapping.
  */
 export const logicalTurnSerializer = new KeyedTurnSerializer();

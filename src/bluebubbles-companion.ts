@@ -1,4 +1,4 @@
-import { resolveAlexaConversationFollowup } from './alexa-conversation.js';
+import { resolveAssistantConversationFollowup } from './assistant-conversation.js';
 import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
 import {
   expandBlueBubblesLogicalSelfThreadJids,
@@ -120,7 +120,7 @@ export function isBlueBubblesExplicitAsk(
   if (resolveOrdinaryChatPilotJourney(text)) return true;
   if (
     options.hasRecentCompanionContext &&
-    resolveAlexaConversationFollowup(text, BLUEBUBBLES_FOLLOWUP_STATE).ok
+    resolveAssistantConversationFollowup(text, BLUEBUBBLES_FOLLOWUP_STATE).ok
   ) {
     return true;
   }

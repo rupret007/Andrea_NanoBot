@@ -57,7 +57,6 @@ import type {
   OutcomeStatus,
   ScheduledTask,
 } from './types.js';
-import { buildVoiceReply } from './voice-ready.js';
 
 export interface OutcomeReviewPromptMatch {
   kind:
@@ -1617,47 +1616,10 @@ function buildTelegramReviewText(snapshot: OutcomeReviewSnapshot): string {
   return [lead, '', ...sections].join('\n').trim();
 }
 
-function buildAlexaReviewText(snapshot: OutcomeReviewSnapshot): string {
-  const firstOpen =
-    snapshot.followthroughApproved[0] ||
-    snapshot.followthroughDeferred[0] ||
-    snapshot.stillOpenTonight[0] ||
-    snapshot.carryIntoTomorrow[0] ||
-    snapshot.blocked[0] ||
-    snapshot.owedReplies[0] ||
-    null;
-  const firstDone =
-    snapshot.completedToday[0] || snapshot.weeklyResolved[0] || null;
-  const blocker =
-    snapshot.blocked[0]?.blockerText ||
-    snapshot.slipping[0]?.summaryText ||
-    firstOpen?.nextFollowupText ||
-    null;
-
-  return buildVoiceReply({
-    summary:
-      snapshot.match.kind === 'done_today'
-        ? firstDone
-          ? `Today you did move ${firstDone.sourceLabel.toLowerCase()}.`
-          : 'Nothing major looks closed today yet.'
-        : firstOpen
-          ? `The main thing still open is ${firstOpen.sourceLabel.toLowerCase()}.`
-          : 'Nothing major looks open right now.',
-    details: [
-      blocker ? clipText(blocker, 140) : null,
-      firstDone && firstOpen
-        ? `You did move ${firstDone.sourceLabel.toLowerCase()}, but ${firstOpen.sourceLabel.toLowerCase()} still needs attention.`
-        : null,
-    ],
-    offerMore: false,
-    maxDetails: 2,
-  });
-}
-
 export function buildOutcomeReviewResponse(params: {
   groupFolder: string;
   match: OutcomeReviewPromptMatch;
-  channel: 'telegram' | 'alexa' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   now?: Date;
   timeZone?: string;
 }): OutcomeReviewPresentation {
@@ -1725,17 +1687,6 @@ export function buildOutcomeReviewResponse(params: {
   }
   const dedupedFocus = dedupeReviewItems(focusItems);
   const primaryOutcomeId = dedupedFocus[0]?.outcome.outcomeId;
-
-  if (params.channel === 'alexa') {
-    const text = buildAlexaReviewText(snapshot);
-    return {
-      text,
-      summaryText: text,
-      inlineActionRows: [],
-      focusOutcomeIds: dedupedFocus.map((item) => item.outcome.outcomeId),
-      primaryOutcomeId,
-    };
-  }
 
   if (params.channel === 'bluebubbles') {
     const openLead = dedupedFocus[0];

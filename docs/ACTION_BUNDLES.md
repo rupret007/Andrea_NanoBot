@@ -87,21 +87,6 @@ Conversational follow-ups still work for common phrases like:
 When a saved delegation rule applies, Telegram should say so plainly instead of acting mysteriously.
 For example, a reminder or save action may already arrive approved because Andrea is using your usual safe default.
 
-### Alexa
-
-Alexa keeps follow-through reviews short and orienting.
-
-Andrea does not read a full checklist by voice unless it is small enough to stay usable.
-Instead, Alexa says that a few next steps are ready and supports simple follow-ups like:
-
-- `do that`
-- `just the reminder`
-- `save it for later`
-- `show me the actions again`
-- `send the details to Telegram`
-
-When the full approval surface would be too detailed for voice, Andrea should hand the review to Telegram.
-
 ### BlueBubbles
 
 BlueBubbles stays bounded.
@@ -188,7 +173,7 @@ See [MESSAGING_TRUST_LADDER_AND_LIVE_DELIVERY.md](MESSAGING_TRUST_LADDER_AND_LIV
 For repo-side validation, run:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa-conversation.test.ts src/delegation-rules.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/action-bundles.test.ts src/assistant-action-completion.test.ts src/delegation-rules.test.ts
 npm run typecheck
 npm run build
 npm run test
@@ -211,12 +196,6 @@ For a practical Telegram proof, use a flow that naturally produces multiple next
 4. run one action
 5. skip or defer another
 6. confirm Andrea reports partial success or deferral honestly
-
-For Alexa, use:
-
-1. ask for a flow that produces a follow-through review
-2. say `do that`
-3. or say `send the details to Telegram`
 
 ## Intentionally Out Of Scope
 

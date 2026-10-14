@@ -37,9 +37,6 @@ describe('assistant presentation', () => {
     expect(
       renderAssistantPresentation(presentation, 'bluebubbles'),
     ).not.toContain('*');
-    expect(renderAssistantPresentation(presentation, 'alexa')).not.toContain(
-      '\n',
-    );
   });
 
   it('limits primary controls while retaining details', () => {

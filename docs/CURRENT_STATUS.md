@@ -88,7 +88,7 @@ not replace current Git, hosted-check, or runtime provenance.
   identities remain time-sensitive and must be refreshed with the commands
   above.
 - Post-restart OpenClaw connectivity, 11/11 bridge tools, direct-send exclusion,
-  local Alexa health/OAuth endpoints, BlueBubbles transport/webhook, Telegram
+  BlueBubbles transport/webhook, Telegram
   transport, Google Calendar, research, image generation, cached provider
   health, and Brave Search status all passed. No new error-class log entry or
   false Brave-down transition was found.
@@ -242,8 +242,7 @@ research, image generation, configured cloud-provider health, Brave Search,
 self-repair, BlueBubbles transport, and OpenClaw were operational. Remaining
 truth is proof debt rather than a repository regression: Telegram transport is
 healthy but its roundtrip proof is aged; BlueBubbles transport is healthy but
-its same-thread action proof is stale/missing; Alexa's signed handled intent is
-stale; the life-thread journey still needs a genuine user turn; and host disk
+its same-thread action proof is stale/missing; the life-thread journey still needs a genuine user turn; and host disk
 pressure was warning at that restart snapshot. The later bounded cleanup
 supersedes that storage observation and restored about 69 GiB available.
 
@@ -356,7 +355,6 @@ commit can change repository `HEAD`; use `git rev-parse origin/main` and
 | ---------------------- | --------------------------------------------------------------------------------- | ------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Telegram               | Production `/ping` user-session roundtrip                                         | `VERIFIED`                      | `2026-07-14T15:10:07.618Z` | sent `11709`, reply `11710`                                                                                                                      | `data/runtime/telegram-roundtrip-health.json`                                                                                                            | This was the canonical harmless `/ping` probe, not a mutating task.                                                                                                                                                                                                                                      |
 | BlueBubbles + OpenClaw | Canonical self-thread request for exactly one read-only `bluebubbles_status` call | `FAILED`                        | `2026-07-14T15:42:27.262Z` | `BB-CERT-20260714T154100Z-3A02430C`; request `bb:37AD510B-7645-447C-A299-75A9C7787F1A`; observed reply `bb:01EE530B-943F-4FDB-BC00-73A884AA846C` | `$HOME/.openclaw/agents/main/sessions/d8236900-084d-40f1-91e2-d546f6789721.jsonl` and `abfecee0-3436-4d3f-b927-e2afe3e19d3a.jsonl`; local message ledger | Transport, same physical thread, tool grounding, and delivery worked, but phone/email aliases produced two read-only calls and more than one response path. No mutation occurred. The defect is patched and deterministically tested, but was not re-probed to avoid another provider send in this pass. |
-| Alexa                  | Fresh signed `IntentRequest` through a real device or authenticated simulator     | `BLOCKED` (prior proof `STALE`) | assessed `2026-07-14`      | none                                                                                                                                             | `data/runtime/alexa-last-signed-request.json`; `npm run services:status`                                                                                 | This environment has no authenticated simulator/device client. The last handled signed `WhatAmIForgettingIntent` remains `2026-06-03T13:57:39.518Z`; an unsigned local request is not equivalent.                                                                                                        |
 
 Historical BlueBubbles attempts are retained rather than rewritten:
 
@@ -392,9 +390,6 @@ status commands above instead of carrying these point-in-time states forward.
   OpenClaw currently reports 11/11 bridge tools, a healthy local transport and
   webhook, and no direct-send exposure; none of those substitutes for the
   missing owner-path decision.
-- Alexa: listener/public setup may be available, but the signed
-  `IntentRequest` proof is stale and requires a fresh real-device or
-  authenticated-simulator turn.
 - Life threads: one genuine save/thread-control interaction is still missing.
 - Google Calendar, research, and image generation report live proof in their
   current dedicated commands. Recheck before relying on them.
@@ -441,8 +436,6 @@ status commands above instead of carrying these point-in-time states forward.
    bounded cleanup restored about 69 GiB available, but that value is
    time-sensitive. Never delete owner data or evidence automatically.
 2. After every future release restart, require exact serving-SHA alignment.
-3. Refresh Telegram, BlueBubbles same-thread message-action, Alexa signed
-   intent, and life-thread proofs through genuine user interactions.
 4. Collect five distinct owner reviews before presenting a baseline, and
    complete the ten-working-day reviewed dogfood sequence.
 5. Using the released apprenticeship implementation, run one genuine,

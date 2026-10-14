@@ -7,7 +7,7 @@ import type {
   PulseMode,
   PulsePreference,
 } from './types.js';
-import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
+import { normalizeVoicePrompt } from './voice-ready.js';
 
 export interface AndreaPulseItem {
   id: string;
@@ -158,7 +158,7 @@ export function resolvePulseMode(
 }
 
 export function buildAndreaPulseReply(params: {
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   query: string;
   toneProfile?: CompanionToneProfile;
   now?: Date;
@@ -183,16 +183,9 @@ export function buildAndreaPulseReply(params: {
         lowStakes: true,
       });
 
-  const replyText =
-    params.channel === 'alexa'
-      ? buildVoiceReply({
-          summary: item.summary,
-          details: [textureLine, wantsMore ? item.detail : null],
-          maxDetails: wantsMore ? 2 : 1,
-        })
-      : [item.summary, textureLine, wantsMore ? item.detail : null]
-          .filter((line): line is string => Boolean(line))
-          .join('\n');
+  const replyText = [item.summary, textureLine, wantsMore ? item.detail : null]
+    .filter((line): line is string => Boolean(line))
+    .join('\n');
 
   return {
     item,

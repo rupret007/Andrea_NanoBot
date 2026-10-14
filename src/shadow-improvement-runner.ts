@@ -1,6 +1,5 @@
 import crypto from 'crypto';
 
-import { ALEXA_WHAT_AM_I_FORGETTING_INTENT } from './alexa-v1.js';
 import {
   formatActionPreflight,
   runActionPreflight,
@@ -11,10 +10,7 @@ import {
   isAssistantCapabilityAllowed,
   type AssistantCapabilityId,
 } from './assistant-capabilities.js';
-import {
-  matchAssistantCapabilityRequest,
-  resolveAlexaIntentToCapability,
-} from './assistant-capability-router.js';
+import { matchAssistantCapabilityRequest } from './assistant-capability-router.js';
 import { buildAutonomousImprovementLabReport } from './autonomous-improvement-lab.js';
 import { beginCognitiveExecutiveTurn } from './cognitive-executive.js';
 import type { GroundedDaySnapshot } from './daily-command-center.js';
@@ -86,7 +82,7 @@ export interface SyntheticGauntletScenario {
   relevantFixClasses: ImprovementFixClass[];
   requiresApproval: boolean;
   expectsFallback: boolean;
-  channelShape: 'telegram_rich' | 'bluebubbles_bounded' | 'alexa_concise';
+  channelShape: 'telegram_rich' | 'bluebubbles_bounded';
   baselineWeakness?: string;
 }
 
@@ -101,7 +97,6 @@ export type SyntheticExecutableContract =
       missingRequiredInfo?: string;
     }
   | { kind: 'executive'; expectedSelectedRoute: 'clarify' }
-  | { kind: 'alexa'; intentName: string; expectedCapabilityId: string }
   | { kind: 'integration_fix'; expectedTarget: string }
   | {
       kind: 'learning_default_clarification';
@@ -112,7 +107,6 @@ export type SyntheticArtifactKind =
   | 'capability_route_metadata'
   | 'action_preflight'
   | 'executive_clarification'
-  | 'alexa_route_metadata'
   | 'integration_guidance'
   | 'learning_clarification';
 
@@ -325,22 +319,22 @@ export const SYNTHETIC_USER_GAUNTLET_SCENARIOS: SyntheticGauntletScenario[] = [
     baselineWeakness:
       'Degraded BlueBubbles should produce a calm fallback/handoff, not a false send claim.',
   },
+
   {
-    scenarioId: 'alexa_concise_voice_flow',
-    title: 'Alexa concise voice flow',
-    ask: 'Alexa, ask Andrea what am I forgetting',
-    expectedRoute: 'alexa.daily_orientation',
+    scenarioId: 'daily_loose_ends',
+    title: 'Daily loose ends',
+    ask: 'what am I forgetting',
+    expectedRoute: 'daily.loose_ends',
     executableContract: {
-      kind: 'alexa',
-      intentName: ALEXA_WHAT_AM_I_FORGETTING_INTENT,
+      kind: 'capability',
       expectedCapabilityId: 'daily.loose_ends',
     },
-    expectedCapabilities: ['voice_summary', 'telegram_handoff'],
-    relevantCapabilities: ['alexa_signed_intentrequest', 'integration:alexa'],
-    relevantFixClasses: ['external_manual_proof', 'route_calibration'],
+    expectedCapabilities: ['daily_companion'],
+    relevantCapabilities: ['integration:telegram'],
+    relevantFixClasses: ['route_calibration'],
     requiresApproval: false,
     expectsFallback: true,
-    channelShape: 'alexa_concise',
+    channelShape: 'telegram_rich',
   },
   {
     scenarioId: 'unsafe_ambiguous_action',
@@ -469,11 +463,7 @@ export function scoreSyntheticArtifactQuality(
   const artifact = String(input.artifactText || '').trim();
   const hasArtifact = artifact.length > 0;
   const channelLimit =
-    input.channelShape === 'alexa_concise'
-      ? 320
-      : input.channelShape === 'bluebubbles_bounded'
-        ? 900
-        : 2400;
+    input.channelShape === 'bluebubbles_bounded' ? 900 : 2400;
   const brevityScore = !hasArtifact
     ? 0
     : artifact.length <= channelLimit
@@ -640,7 +630,7 @@ export async function runExecutedSyntheticCapabilityGauntlet(params: {
     'messaging_followthrough',
     'household_command_center',
     'research_provider_blocked',
-    'alexa_concise_voice_flow',
+    'daily_loose_ends',
   ]);
   const scenarios = SYNTHETIC_USER_GAUNTLET_SCENARIOS.filter((scenario) =>
     scenarioIds.has(scenario.scenarioId),
@@ -650,15 +640,11 @@ export async function runExecutedSyntheticCapabilityGauntlet(params: {
   for (const scenario of scenarios) {
     const contract = scenario.executableContract;
     const match =
-      contract.kind === 'alexa'
-        ? resolveAlexaIntentToCapability(contract.intentName)
-        : contract.kind === 'capability'
-          ? matchAssistantCapabilityRequest(scenario.ask)
-          : null;
-    const expectedCapabilityId =
-      contract.kind === 'alexa' || contract.kind === 'capability'
-        ? contract.expectedCapabilityId
+      contract.kind === 'capability'
+        ? matchAssistantCapabilityRequest(scenario.ask)
         : null;
+    const expectedCapabilityId =
+      contract.kind === 'capability' ? contract.expectedCapabilityId : null;
     const capabilityId = match?.capabilityId;
     if (!capabilityId || capabilityId !== expectedCapabilityId) {
       const fallbackId = (expectedCapabilityId ||
@@ -682,11 +668,9 @@ export async function runExecutedSyntheticCapabilityGauntlet(params: {
     }
     const descriptor = getAssistantCapability(capabilityId);
     const channel =
-      scenario.channelShape === 'alexa_concise'
-        ? 'alexa'
-        : scenario.channelShape === 'bluebubbles_bounded'
-          ? 'bluebubbles'
-          : 'telegram';
+      scenario.channelShape === 'bluebubbles_bounded'
+        ? 'bluebubbles'
+        : 'telegram';
     const savedOnlyResearchExecutable =
       scenario.scenarioId === 'research_provider_blocked' &&
       descriptor?.id === 'knowledge.summarize_saved' &&
@@ -1011,11 +995,9 @@ function evaluateExecutableContract(
       descriptor
         ? `descriptor=${descriptor.label};category=${descriptor.category};output=${
             descriptor.preferredOutputShape[
-              scenario.channelShape === 'alexa_concise'
-                ? 'alexa'
-                : scenario.channelShape === 'bluebubbles_bounded'
-                  ? 'bluebubbles'
-                  : 'telegram'
+              scenario.channelShape === 'bluebubbles_bounded'
+                ? 'bluebubbles'
+                : 'telegram'
             ]
           }`
         : 'descriptor=none',
@@ -1038,11 +1020,9 @@ function evaluateExecutableContract(
           descriptor &&
           isAssistantCapabilityAllowed(
             descriptor,
-            scenario.channelShape === 'alexa_concise'
-              ? 'alexa'
-              : scenario.channelShape === 'bluebubbles_bounded'
-                ? 'bluebubbles'
-                : 'telegram',
+            scenario.channelShape === 'bluebubbles_bounded'
+              ? 'bluebubbles'
+              : 'telegram',
           ),
         ),
         // A route match alone cannot prove degraded-tool fallback behavior.
@@ -1150,41 +1130,7 @@ function evaluateExecutableContract(
       }),
     };
   }
-  if (contract.kind === 'alexa') {
-    const match = resolveAlexaIntentToCapability(contract.intentName);
-    const observed = match?.capabilityId;
-    const descriptor = observed
-      ? getAssistantCapability(observed as AssistantCapabilityId)
-      : undefined;
-    const passed = observed === contract.expectedCapabilityId;
-    const artifactText = [
-      `capability=${observed || 'none'}`,
-      `canonical=${match?.canonicalText || match?.normalizedText || 'none'}`,
-      `reason=${match?.reason || 'none'}`,
-      descriptor
-        ? `voice_output=${descriptor.preferredOutputShape.alexa}`
-        : 'voice_output=none',
-    ].join('\n');
-    return {
-      passed,
-      observedRoute: `alexa:${observed || 'none'}`,
-      artifactKind: 'alexa_route_metadata',
-      artifactText,
-      quality: scoreSyntheticArtifactQuality({
-        artifactText,
-        channelShape: scenario.channelShape,
-        expectsFallback: scenario.expectsFallback,
-        contextGrounded: Boolean(passed && descriptor && match?.reason),
-        // Intent routing does not execute or assess the spoken response.
-        usefulnessProven: false,
-        safetyProven: Boolean(
-          descriptor && isAssistantCapabilityAllowed(descriptor, 'alexa'),
-        ),
-        fallbackProven: false,
-        reflectionPresent: Boolean(match?.reason),
-      }),
-    };
-  }
+
   if (contract.kind === 'integration_fix') {
     const target = parseIntegrationFixTarget(scenario.ask);
     const passed =

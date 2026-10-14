@@ -143,7 +143,11 @@ assert.ok(report.run.candidateScore >= report.run.baselineScore);
 const selected = report.selections.filter(
   (selection) => selection.decision === 'selected',
 );
-assert.equal(selected.length, 3, 'top three low-risk repo-side candidates selected');
+assert.equal(
+  selected.length,
+  3,
+  'top three low-risk repo-side candidates selected',
+);
 assert.ok(
   selected.some((selection) => selection.hypothesisId.includes('improve:')),
   'selection ids should link to mined hypotheses',
@@ -157,7 +161,9 @@ assert.ok(
   'first-pass plan-only candidates should not regress the deterministic gauntlet',
 );
 assert.ok(
-  report.externalBlockers.some((item) => item.affectedCapability === 'integration:telegram'),
+  report.externalBlockers.some(
+    (item) => item.affectedCapability === 'integration:telegram',
+  ),
   'external Telegram config blocker should stay classified as external',
 );
 
@@ -182,20 +188,20 @@ const manualProof: ImprovementHypothesis = {
   hypothesisId: 'improve:manual-proof',
   createdAt: now,
   updatedAt: now,
-  title: 'Alexa signed IntentRequest missing',
+  title: 'BlueBubbles same-thread proof missing',
   sourceSignalKind: 'pilot_proof_gap',
-  sourceSignalIdsJson: JSON.stringify(['proof:alexa']),
-  affectedCapability: 'alexa_signed_intentrequest',
+  sourceSignalIdsJson: JSON.stringify(['proof:bluebubbles']),
+  affectedCapability: 'bluebubbles_same_thread',
   expectedBenefit: 'Keep proof debt honest.',
   riskLevel: 'medium',
   confidence: 0.8,
   priorityScore: 0.9,
-  proposedTest: 'Use real Alexa device proof.',
+  proposedTest: 'Use real BlueBubbles same-thread proof.',
   status: 'proposed',
   fixClass: 'external_manual_proof',
   externalBlocker: true,
   safetyNotes: 'Manual external proof only.',
-  nextAction: 'Use Alexa app/device to generate signed IntentRequest.',
+  nextAction: 'Use Messages to complete same-thread proof.',
   privacyJson: JSON.stringify({ metadataOnly: true }),
 };
 const risky: ImprovementHypothesis = {

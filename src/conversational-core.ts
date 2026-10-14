@@ -1,4 +1,4 @@
-export type ConversationalChannel = 'telegram' | 'alexa' | 'bluebubbles';
+export type ConversationalChannel = 'telegram' | 'bluebubbles';
 
 export type ConversationalTurnClass =
   | 'greeting_or_vibe_check'
@@ -42,13 +42,10 @@ function buildChannelVariant(
   channel: ConversationalChannel,
   variants: {
     telegram: string;
-    alexa?: string;
+
     bluebubbles?: string;
   },
 ): string {
-  if (channel === 'alexa') {
-    return variants.alexa || variants.telegram;
-  }
   if (channel === 'bluebubbles') {
     return variants.bluebubbles || variants.telegram;
   }
@@ -275,8 +272,7 @@ export function buildGracefulDegradedReply(params: {
       return buildChannelVariant(channel, {
         telegram:
           "I'm here. The deeper side is being finicky right now, but I can still help with something simple.",
-        alexa:
-          "I'm here. The deeper side is being finicky, but I can still help with something simple.",
+
         bluebubbles:
           "I'm here. The deeper side is being finicky, so keep me to something simple for the moment.",
       });
@@ -289,8 +285,7 @@ export function buildGracefulDegradedReply(params: {
       return buildChannelVariant(channel, {
         telegram:
           "I can't check that live right now. Narrow it a little, or point me at saved material, and I'll keep it grounded.",
-        alexa:
-          "I can't check that live right now. Ask it a little more narrowly and I'll keep it grounded.",
+
         bluebubbles:
           "I can't check that live right now. Give me one narrow question and I'll keep it grounded.",
       });
@@ -299,7 +294,7 @@ export function buildGracefulDegradedReply(params: {
     return buildChannelVariant(channel, {
       telegram:
         "I'm here, but that one didn't come through cleanly. Give me one simple thing and I'll keep it moving.",
-      alexa: "That one didn't come through cleanly. Give me one simple thing.",
+
       bluebubbles:
         "I'm here, but that one didn't come through cleanly. Give me one simple thing and I'll keep it moving.",
     });
@@ -310,8 +305,7 @@ export function buildGracefulDegradedReply(params: {
       return buildChannelVariant(channel, {
         telegram:
           "I can't check that live right now. I can still work from your saved material or tighten the question.",
-        alexa:
-          "I can't check that live right now. I can still use saved material or help narrow it.",
+
         bluebubbles:
           "I can't check that live right now. I can still work from what you've already saved here.",
       });
@@ -320,8 +314,7 @@ export function buildGracefulDegradedReply(params: {
     return buildChannelVariant(channel, {
       telegram:
         "I can't check that live right now. Narrow the question a little and I'll keep the answer grounded.",
-      alexa:
-        "I can't check that live right now. Narrow the question and I'll keep it grounded.",
+
       bluebubbles:
         "I can't check that live right now. Keep it narrow and I'll keep it grounded.",
     });
@@ -331,8 +324,7 @@ export function buildGracefulDegradedReply(params: {
     return buildChannelVariant(channel, {
       telegram:
         "I can't make that image right now. I can still tighten the prompt or help plan the shot.",
-      alexa:
-        "I can't make that image right now. I can still tighten the prompt.",
+
       bluebubbles:
         "I can't make that image right now. I can still tighten the prompt.",
     });
@@ -342,7 +334,7 @@ export function buildGracefulDegradedReply(params: {
     return buildChannelVariant(channel, {
       telegram:
         "I need the account linked before I can do that here. Once that's linked, I can pick it back up.",
-      alexa: 'I need the account linked before I can do that here.',
+
       bluebubbles: 'I need the account linked before I can do that here.',
     });
   }
@@ -351,7 +343,7 @@ export function buildGracefulDegradedReply(params: {
     return buildChannelVariant(channel, {
       telegram:
         "I lost the thread on that. Give me one short line of context and I'll pick it back up.",
-      alexa: 'I lost the thread on that. Give me one short line of context.',
+
       bluebubbles:
         'I lost the thread on that. One short line of context will get me back in.',
     });
@@ -361,9 +353,7 @@ export function buildGracefulDegradedReply(params: {
     telegram: params.targetChannel
       ? `I can't do that cleanly from here. If you want, I can send it to ${params.targetChannel === 'telegram' ? 'Telegram' : 'Messages'}.`
       : "I can't do that cleanly from this channel.",
-    alexa: params.targetChannel
-      ? `I can't do that from here, but I can send it to ${params.targetChannel === 'telegram' ? 'Telegram' : 'Messages'}.`
-      : "I can't do that from this channel.",
+
     bluebubbles: params.targetChannel
       ? `I can't do that from here, but I can send it to ${params.targetChannel === 'telegram' ? 'Telegram' : 'Messages'}.`
       : "I can't do that from this channel.",
@@ -381,10 +371,7 @@ export function buildCalendarCompanionFailureReply(params: {
         params.action === 'create_event'
           ? "I couldn't add that right this second. If you want, I can save that for later or remind Jeff instead."
           : "I couldn't line that reminder up right this second. If you want, I can save that for later or help you remind Jeff instead.",
-      alexa:
-        params.action === 'create_event'
-          ? "I couldn't add that right this second. I can save that for later or remind Jeff instead."
-          : "I couldn't line that reminder up right this second. I can save that for later or help you remind Jeff instead.",
+
       bluebubbles:
         params.action === 'create_event'
           ? "I couldn't add that right this second. If you want, I can save that for later or remind Jeff instead."
@@ -398,10 +385,7 @@ export function buildCalendarCompanionFailureReply(params: {
         params.action === 'create_event'
           ? "I don't have the calendar connected right now. I can still save that for later or remind Jeff instead."
           : "I don't have the calendar connected right now. I can still save that for later or help you remind Jeff instead.",
-      alexa:
-        params.action === 'create_event'
-          ? "I don't have the calendar connected right now. I can save that for later or remind Jeff instead."
-          : "I don't have the calendar connected right now. I can save that for later or help you remind Jeff instead.",
+
       bluebubbles:
         params.action === 'create_event'
           ? "I don't have the calendar connected right now. I can still save that for later or remind Jeff instead."
@@ -414,10 +398,7 @@ export function buildCalendarCompanionFailureReply(params: {
       params.action === 'create_event'
         ? "I can't reach the calendar right now. I can still save that for later or remind Jeff instead."
         : "I can't reach the calendar details I need right now. I can still save that for later or help you remind Jeff instead.",
-    alexa:
-      params.action === 'create_event'
-        ? "I can't reach the calendar right now. I can save that for later or remind Jeff instead."
-        : "I can't reach the calendar details I need right now. I can save that for later or help you remind Jeff instead.",
+
     bluebubbles:
       params.action === 'create_event'
         ? "I can't reach the calendar right now. I can still save that for later or remind Jeff instead."

@@ -145,7 +145,7 @@ import type {
 const COGNITIVE_RETENTION_DAYS = 90;
 const COGNITIVE_RETAIN_LIMIT = 1000;
 
-export type CognitiveChannel = 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+export type CognitiveChannel = 'telegram' | 'bluebubbles' | 'system';
 
 export interface CognitiveFrame {
   runId: string;

@@ -82,24 +82,23 @@ describe('assistant personalization', () => {
     expect(prompt).toContain('Channel: BlueBubbles.');
   });
 
-  it('adds Alexa companion guidance rules and accepted work-context preferences to the prompt', () => {
+  it('adds accepted work-context preferences to the prompt', () => {
     handlePersonalizationCommand({
       groupFolder: 'main',
-      channel: 'alexa',
+      channel: 'telegram',
       text: 'use more work context',
     });
     handlePersonalizationCommand({
       groupFolder: 'main',
-      channel: 'alexa',
+      channel: 'telegram',
       text: 'lead with the main thing',
     });
 
     const prompt = buildAssistantPromptWithPersonalization(
       '<messages><message>hello</message></messages>',
       {
-        channel: 'alexa',
+        channel: 'telegram',
         groupFolder: 'main',
-        channelMode: 'alexa_companion',
         guidanceGoal: 'what_matters_most',
         initiativeLevel: 'measured',
         conversationSummary: 'today and what matters most',
@@ -107,11 +106,8 @@ describe('assistant personalization', () => {
       },
     );
 
-    expect(prompt).toContain('Alexa Companion Mode');
-    expect(prompt).toContain('main thing that matters most');
     expect(prompt).toContain('foreground work context by default');
     expect(prompt).toContain('Lead with the single main thing that matters');
-    expect(prompt).toContain('Avoid sounding like a command menu');
   });
 
   it('remembers explicit relationship facts and can summarize them', () => {
@@ -134,7 +130,7 @@ describe('assistant personalization', () => {
   it('uses conversation context for remember this and disables a referenced fact', () => {
     const remember = handlePersonalizationCommand({
       groupFolder: 'main',
-      channel: 'alexa',
+      channel: 'telegram',
       text: 'remember this',
       conversationSummary: 'Call the school before pickup.',
     });
@@ -143,7 +139,7 @@ describe('assistant personalization', () => {
 
     const forget = handlePersonalizationCommand({
       groupFolder: 'main',
-      channel: 'alexa',
+      channel: 'telegram',
       text: 'forget that',
       factIdHint: remember.referencedFactId,
     });
@@ -227,18 +223,18 @@ describe('assistant personalization', () => {
   it('explains which personalization signals are being used', () => {
     handlePersonalizationCommand({
       groupFolder: 'main',
-      channel: 'alexa',
+      channel: 'telegram',
       text: 'be more direct',
     });
     handlePersonalizationCommand({
       groupFolder: 'main',
-      channel: 'alexa',
+      channel: 'telegram',
       text: 'use less family context',
     });
 
     const explanation = handlePersonalizationCommand({
       groupFolder: 'main',
-      channel: 'alexa',
+      channel: 'telegram',
       text: 'what are you using to personalize this',
       conversationSummary: 'today and what matters most',
     });
@@ -297,7 +293,7 @@ describe('assistant personalization', () => {
     const candidate = maybeCreateProactiveProfileCandidate({
       groupFolder: 'main',
       chatJid: 'tg:1',
-      channel: 'alexa',
+      channel: 'telegram',
       text: 'anything I should know',
       now: new Date('2026-04-03T10:02:00.000Z'),
     });

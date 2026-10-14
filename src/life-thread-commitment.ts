@@ -82,7 +82,6 @@ const SOURCE_KINDS = new Set<LifeThreadSourceKind>([
   'draft',
   'action_layer',
   'daily_companion',
-  'alexa_followup',
 ]);
 const CONFIDENCE_KINDS = new Set<LifeThreadConfidenceKind>([
   'explicit',

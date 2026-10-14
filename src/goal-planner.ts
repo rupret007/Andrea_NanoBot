@@ -833,9 +833,19 @@ function isUserFacingPlannerOpportunity(
   opportunity: ProactiveOpportunity,
 ): boolean {
   if (opportunity.approvalRequirement === 'manual_external') return false;
-  return !/\b(?:alexa developer console|real device|authenticated simulator|services:status|manual proof)\b/i.test(
+  return !/\b(?:real device|authenticated simulator|services:status|manual proof)\b/i.test(
     opportunity.suggestedAction,
   );
+}
+
+function currentRealityForOpportunities(
+  reality: RealityDoctorReport,
+): RealityDoctorReport {
+  // A refreshed snapshot can retain an older derived perception plan. Do not
+  // turn its stale proof-closure steps back into current opportunities.
+  return reality.perceptionPlan.snapshotId === reality.snapshot.snapshotId
+    ? reality
+    : { ...reality, proofClosureSteps: [] };
 }
 
 export function planGoalDirectedRequest(
@@ -870,7 +880,7 @@ export function planGoalDirectedRequest(
     groupFolder,
     now: new Date(now),
     persist,
-    realityReport: reality,
+    realityReport: currentRealityForOpportunities(reality),
   });
 
   let goal: HierarchicalGoal | null | undefined;
@@ -1112,7 +1122,7 @@ export function buildHierarchicalPlannerReport(
     groupFolder: params.groupFolder,
     now: new Date(now),
     persist: false,
-    realityReport: result.reality,
+    realityReport: currentRealityForOpportunities(result.reality),
   });
   const opportunities = opportunityReport.opportunities.slice(0, 10);
   return {

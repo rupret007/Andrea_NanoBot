@@ -1,3 +1,4 @@
+import { listCurrentToolReliabilityRollups } from './tool-reliability.js';
 import { createHash } from 'node:crypto';
 
 import {
@@ -8,7 +9,6 @@ import {
   isDatabaseInitialized,
   listAgentOSToolCards,
   listSkillPlaybooks,
-  listToolReliabilityRollups,
 } from './db.js';
 import {
   durableActionPolicy,
@@ -1214,7 +1214,7 @@ function resolveInventory(request: CapabilityBrokerRequest): ResolvedInventory {
     }
   } else if (databaseReady) {
     try {
-      reliabilityRollups = listToolReliabilityRollups({ limit: 500 });
+      reliabilityRollups = listCurrentToolReliabilityRollups({ limit: 500 });
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       errors.push('Tool reliability inventory could not be read.');
@@ -1575,7 +1575,7 @@ export function classifyCapabilityGap(params: {
     return 'implementation_gap';
   }
   if (
-    /integration|calendar|bluebubbles|telegram|alexa/.test(target) ||
+    /integration|calendar|bluebubbles|telegram/.test(target) ||
     params.rankedCandidates.some((candidate) =>
       ['agent_os_tool', 'openclaw_tool'].includes(candidate.resource.kind),
     )

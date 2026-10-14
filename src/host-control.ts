@@ -176,44 +176,6 @@ export interface RuntimeAuditState {
   mainChatAuditWarning: string | null;
 }
 
-export interface AlexaSignedRequestState {
-  updatedAt: string;
-  requestId: string;
-  requestType: string;
-  intentName: string | null;
-  applicationIdVerified: boolean;
-  linkingResolved: boolean;
-  groupFolder: string | null;
-  responseSource: string;
-}
-
-export interface AlexaSignedRequestProofState {
-  lastSignedRequest: AlexaSignedRequestState | null;
-  lastHandledProofIntent: AlexaSignedRequestState | null;
-}
-
-export type AlexaLiveProofKind =
-  | 'none'
-  | 'launch_only'
-  | 'signed_intent_unhandled'
-  | 'handled_intent';
-
-export type AlexaLiveProofFreshness = 'fresh' | 'stale' | 'none';
-
-export interface AlexaLiveProofAssessment {
-  lastSignedRequest: AlexaSignedRequestState | null;
-  lastHandledProofIntent?: AlexaSignedRequestState | null;
-  proofState: 'live_proven' | 'near_live_only';
-  proofKind: AlexaLiveProofKind;
-  proofFreshness: AlexaLiveProofFreshness;
-  proofAgeMs: number | null;
-  proofAgeMinutes: number | null;
-  proofAgeLabel: string;
-  blocker: string;
-  detail: string;
-  nextAction: string;
-}
-
 export interface RuntimeCommitTruth {
   activeRepoRoot: string;
   activeGitBranch: string;
@@ -321,7 +283,6 @@ export const DEFAULT_ASSISTANT_HEALTH_STALE_AFTER_MS = 3 * 60 * 1000;
 export const DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS = 60 * 60 * 1000;
 export const DEFAULT_TELEGRAM_ROUNDTRIP_STARTUP_GRACE_MS = 5 * 60 * 1000;
 export const DEFAULT_TELEGRAM_ROUNDTRIP_OVERDUE_GRACE_MS = 10 * 60 * 1000;
-export const DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS = 24 * 60 * 60 * 1000;
 
 const TELEGRAM_ROUNDTRIP_SOURCES = new Set<TelegramRoundtripSource>([
   'organic',
@@ -361,13 +322,6 @@ const TELEGRAM_TRANSPORT_ERROR_CLASSES = new Set<TelegramTransportErrorClass>([
 ]);
 
 const selfHostedBootIdByProjectRoot = new Map<string, string>();
-
-const ALEXA_HANDLED_LIVE_PROOF_RESPONSE_SOURCES = new Set([
-  'local_companion',
-  'life_thread_local',
-  'assistant_bridge',
-  'bridge',
-]);
 
 function resolveProjectRoot(projectRoot = process.cwd()): string {
   return path.resolve(projectRoot);
@@ -496,31 +450,6 @@ export function getTelegramTransportStatePath(
 
 export function getRuntimeAuditStatePath(projectRoot = process.cwd()): string {
   return resolveHostControlPaths(projectRoot).runtimeAuditStatePath;
-}
-
-export function getAlexaLastSignedRequestStatePath(
-  projectRoot = process.cwd(),
-): string {
-  return path.join(
-    resolveHostControlPaths(projectRoot).runtimeStateDir,
-    getAlexaLastSignedRequestStateFilename(),
-  );
-}
-
-function getAlexaLastSignedRequestStateFilename(): string {
-  const suffix = process.env.VITEST_WORKER_ID
-    ? `-${process.env.VITEST_WORKER_ID}`
-    : '';
-  return `alexa-last-signed-request${suffix}.json`;
-}
-
-function getLegacyAlexaBackslashStatePath(projectRoot = process.cwd()): string {
-  const paths = resolveHostControlPaths(projectRoot);
-  return path.join(
-    paths.projectRoot,
-    'data',
-    `runtime\\${getAlexaLastSignedRequestStateFilename()}`,
-  );
 }
 
 export function getHostLockPath(projectRoot = process.cwd()): string {
@@ -851,144 +780,6 @@ function normalizeRuntimeAuditState(value: unknown): RuntimeAuditState | null {
   };
 }
 
-function normalizeAlexaSignedRequestState(
-  value: unknown,
-): AlexaSignedRequestState | null {
-  if (!value || typeof value !== 'object') return null;
-  const input = value as Partial<AlexaSignedRequestState>;
-  if (
-    !isNonEmptyString(input.updatedAt) ||
-    !isNonEmptyString(input.requestId) ||
-    !isNonEmptyString(input.requestType) ||
-    !isNonEmptyString(input.responseSource)
-  ) {
-    return null;
-  }
-
-  return {
-    updatedAt: input.updatedAt,
-    requestId: input.requestId,
-    requestType: input.requestType,
-    intentName: isNonEmptyString(input.intentName) ? input.intentName : null,
-    applicationIdVerified: input.applicationIdVerified === true,
-    linkingResolved: input.linkingResolved === true,
-    groupFolder: isNonEmptyString(input.groupFolder) ? input.groupFolder : null,
-    responseSource: input.responseSource,
-  };
-}
-
-function isQualifyingHandledAlexaLiveProofIntent(
-  value: AlexaSignedRequestState | null | undefined,
-): value is AlexaSignedRequestState {
-  return Boolean(
-    value &&
-    value.requestType === 'IntentRequest' &&
-    value.applicationIdVerified &&
-    value.linkingResolved &&
-    ALEXA_HANDLED_LIVE_PROOF_RESPONSE_SOURCES.has(value.responseSource),
-  );
-}
-
-function normalizeAlexaSignedRequestProofState(
-  value: unknown,
-): AlexaSignedRequestProofState {
-  if (!value || typeof value !== 'object') {
-    return {
-      lastSignedRequest: null,
-      lastHandledProofIntent: null,
-    };
-  }
-
-  const input = value as {
-    lastSignedRequest?: unknown;
-    lastHandledProofIntent?: unknown;
-  };
-  const lastSignedRequest = normalizeAlexaSignedRequestState(
-    'lastSignedRequest' in input ? input.lastSignedRequest : value,
-  );
-  const explicitHandledProof = normalizeAlexaSignedRequestState(
-    input.lastHandledProofIntent,
-  );
-
-  return {
-    lastSignedRequest,
-    lastHandledProofIntent:
-      (isQualifyingHandledAlexaLiveProofIntent(explicitHandledProof)
-        ? explicitHandledProof
-        : null) ||
-      (isQualifyingHandledAlexaLiveProofIntent(lastSignedRequest)
-        ? lastSignedRequest
-        : null),
-  };
-}
-
-function parseAlexaStateTime(value: AlexaSignedRequestState | null): number {
-  if (!value) return Number.NEGATIVE_INFINITY;
-  const parsed = new Date(value.updatedAt).getTime();
-  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
-}
-
-function latestAlexaState(
-  left: AlexaSignedRequestState | null,
-  right: AlexaSignedRequestState | null,
-): AlexaSignedRequestState | null {
-  if (!left) return right;
-  if (!right) return left;
-  return parseAlexaStateTime(right) > parseAlexaStateTime(left) ? right : left;
-}
-
-function hasAlexaProofState(state: AlexaSignedRequestProofState): boolean {
-  return Boolean(state.lastSignedRequest || state.lastHandledProofIntent);
-}
-
-function mergeAlexaProofStates(
-  primary: AlexaSignedRequestProofState,
-  legacy: AlexaSignedRequestProofState,
-): AlexaSignedRequestProofState {
-  const lastSignedRequest = latestAlexaState(
-    primary.lastSignedRequest,
-    legacy.lastSignedRequest,
-  );
-  const lastHandledProofIntent = latestAlexaState(
-    primary.lastHandledProofIntent,
-    legacy.lastHandledProofIntent,
-  );
-  return {
-    lastSignedRequest,
-    lastHandledProofIntent:
-      (isQualifyingHandledAlexaLiveProofIntent(lastHandledProofIntent)
-        ? lastHandledProofIntent
-        : null) ||
-      (isQualifyingHandledAlexaLiveProofIntent(lastSignedRequest)
-        ? lastSignedRequest
-        : null),
-  };
-}
-
-function readAlexaSignedRequestProofStateFromDisk(
-  projectRoot = process.cwd(),
-): AlexaSignedRequestProofState {
-  const currentPath = getAlexaLastSignedRequestStatePath(projectRoot);
-  const current = normalizeAlexaSignedRequestProofState(
-    readJsonFile<unknown>(currentPath),
-  );
-  const legacyPath = getLegacyAlexaBackslashStatePath(projectRoot);
-  if (path.resolve(legacyPath) === path.resolve(currentPath)) {
-    return current;
-  }
-
-  const legacy = normalizeAlexaSignedRequestProofState(
-    readJsonFile<unknown>(legacyPath),
-  );
-  if (!hasAlexaProofState(legacy)) return current;
-
-  const merged = mergeAlexaProofStates(current, legacy);
-  if (hasAlexaProofState(merged)) {
-    writeJsonFile(currentPath, merged);
-  }
-  return merged;
-}
-
 function normalizeHostState(
   value: unknown,
   projectRoot = process.cwd(),
@@ -1053,25 +844,6 @@ export function readRuntimeAuditState(
   return normalizeRuntimeAuditState(
     readJsonFile<unknown>(getRuntimeAuditStatePath(projectRoot)),
   );
-}
-
-export function readAlexaLastSignedRequestState(
-  projectRoot = process.cwd(),
-): AlexaSignedRequestState | null {
-  return readAlexaSignedRequestProofStateFromDisk(projectRoot)
-    .lastSignedRequest;
-}
-
-export function readAlexaSignedRequestProofState(
-  projectRoot = process.cwd(),
-): AlexaSignedRequestProofState {
-  return readAlexaSignedRequestProofStateFromDisk(projectRoot);
-}
-
-export function readAlexaLastHandledProofIntentState(
-  projectRoot = process.cwd(),
-): AlexaSignedRequestState | null {
-  return readAlexaSignedRequestProofState(projectRoot).lastHandledProofIntent;
 }
 
 export function readNanoclawHostState(
@@ -1561,194 +1333,6 @@ function parseTime(value: string | null | undefined): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-export function formatAlexaProofAgeLabel(
-  ageMs: number | null | undefined,
-): string {
-  if (ageMs == null || !Number.isFinite(ageMs) || ageMs < 0) return 'none';
-  const totalMinutes = Math.floor(ageMs / 60_000);
-  if (totalMinutes < 1) return '<1m';
-  if (totalMinutes < 60) return `${totalMinutes}m`;
-  const totalHours = Math.floor(totalMinutes / 60);
-  const remainderMinutes = totalMinutes % 60;
-  if (totalHours < 24) {
-    return remainderMinutes > 0
-      ? `${totalHours}h ${remainderMinutes}m`
-      : `${totalHours}h`;
-  }
-  const totalDays = Math.floor(totalHours / 24);
-  const remainderHours = totalHours % 24;
-  return remainderHours > 0
-    ? `${totalDays}d ${remainderHours}h`
-    : `${totalDays}d`;
-}
-
-export function assessAlexaLiveProof(
-  input: {
-    projectRoot?: string;
-    lastSignedRequest?: AlexaSignedRequestState | null;
-    lastHandledProofIntent?: AlexaSignedRequestState | null;
-    now?: Date;
-    freshnessMs?: number;
-  } = {},
-): AlexaLiveProofAssessment {
-  const persistedProofState =
-    input.lastSignedRequest === undefined &&
-    input.lastHandledProofIntent === undefined
-      ? readAlexaSignedRequestProofState(input.projectRoot)
-      : null;
-  const lastSignedRequest =
-    input.lastSignedRequest === undefined
-      ? (persistedProofState?.lastSignedRequest ?? null)
-      : input.lastSignedRequest;
-  const handledProofCandidate =
-    input.lastHandledProofIntent === undefined
-      ? (persistedProofState?.lastHandledProofIntent ??
-        (isQualifyingHandledAlexaLiveProofIntent(lastSignedRequest)
-          ? lastSignedRequest
-          : null))
-      : input.lastHandledProofIntent;
-  const lastHandledProofIntent = isQualifyingHandledAlexaLiveProofIntent(
-    handledProofCandidate,
-  )
-    ? handledProofCandidate
-    : null;
-  const now = input.now ?? new Date();
-  const freshnessMs =
-    input.freshnessMs ?? DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS;
-  const canonicalNextAction =
-    'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.';
-
-  if (!lastSignedRequest && !lastHandledProofIntent) {
-    return {
-      lastSignedRequest: null,
-      lastHandledProofIntent: null,
-      proofState: 'near_live_only',
-      proofKind: 'none',
-      proofFreshness: 'none',
-      proofAgeMs: null,
-      proofAgeMinutes: null,
-      proofAgeLabel: 'none',
-      blocker:
-        'No handled signed Alexa IntentRequest is recorded on this host yet.',
-      detail:
-        'No signed Alexa request has been recorded on this host, so Alexa remains near-live only.',
-      nextAction: canonicalNextAction,
-    };
-  }
-
-  if (lastHandledProofIntent) {
-    const handledProofAgeMsRaw = parseTime(lastHandledProofIntent.updatedAt);
-    const handledProofAgeMs =
-      handledProofAgeMsRaw != null
-        ? Math.max(0, now.getTime() - handledProofAgeMsRaw)
-        : null;
-    const handledProofAgeMinutes =
-      handledProofAgeMs != null ? Math.floor(handledProofAgeMs / 60_000) : null;
-    const handledProofAgeLabel = formatAlexaProofAgeLabel(handledProofAgeMs);
-    const proofFreshness: AlexaLiveProofFreshness =
-      handledProofAgeMs != null && handledProofAgeMs <= freshnessMs
-        ? 'fresh'
-        : 'stale';
-    const laterSignedDetail =
-      lastSignedRequest &&
-      lastSignedRequest.requestId !== lastHandledProofIntent.requestId
-        ? ` The latest signed request is ${lastSignedRequest.requestType}${lastSignedRequest.intentName ? ` / ${lastSignedRequest.intentName}` : ''} with response source ${lastSignedRequest.responseSource}.`
-        : '';
-
-    if (proofFreshness === 'fresh') {
-      return {
-        lastSignedRequest,
-        lastHandledProofIntent,
-        proofState: 'live_proven',
-        proofKind: 'handled_intent',
-        proofFreshness,
-        proofAgeMs: handledProofAgeMs,
-        proofAgeMinutes: handledProofAgeMinutes,
-        proofAgeLabel: handledProofAgeLabel,
-        blocker: '',
-        detail: `A fresh handled signed Alexa IntentRequest was recorded ${handledProofAgeLabel} ago on this host.${laterSignedDetail}`,
-        nextAction: '',
-      };
-    }
-
-    return {
-      lastSignedRequest,
-      lastHandledProofIntent,
-      proofState: 'near_live_only',
-      proofKind: 'handled_intent',
-      proofFreshness,
-      proofAgeMs: handledProofAgeMs,
-      proofAgeMinutes: handledProofAgeMinutes,
-      proofAgeLabel: handledProofAgeLabel,
-      blocker:
-        'Alexa has handled signed Intent proof on this host, but it is older than 24 hours.',
-      detail: `The latest handled signed Alexa intent was recorded at ${lastHandledProofIntent.updatedAt}, so the proof is now stale and Alexa remains near-live only.${laterSignedDetail}`,
-      nextAction: canonicalNextAction,
-    };
-  }
-
-  if (!lastSignedRequest) {
-    return {
-      lastSignedRequest: null,
-      lastHandledProofIntent: null,
-      proofState: 'near_live_only',
-      proofKind: 'none',
-      proofFreshness: 'none',
-      proofAgeMs: null,
-      proofAgeMinutes: null,
-      proofAgeLabel: 'none',
-      blocker:
-        'No handled signed Alexa IntentRequest is recorded on this host yet.',
-      detail:
-        'No signed Alexa request has been recorded on this host, so Alexa remains near-live only.',
-      nextAction: canonicalNextAction,
-    };
-  }
-
-  const proofAgeMsRaw = parseTime(lastSignedRequest.updatedAt);
-  const proofAgeMs =
-    proofAgeMsRaw != null ? Math.max(0, now.getTime() - proofAgeMsRaw) : null;
-  const proofAgeMinutes =
-    proofAgeMs != null ? Math.floor(proofAgeMs / 60_000) : null;
-  const proofAgeLabel = formatAlexaProofAgeLabel(proofAgeMs);
-
-  if (lastSignedRequest.requestType !== 'IntentRequest') {
-    const isLaunch = lastSignedRequest.requestType === 'LaunchRequest';
-    return {
-      lastSignedRequest,
-      lastHandledProofIntent: null,
-      proofState: 'near_live_only',
-      proofKind: isLaunch ? 'launch_only' : 'none',
-      proofFreshness: 'none',
-      proofAgeMs,
-      proofAgeMinutes,
-      proofAgeLabel,
-      blocker: isLaunch
-        ? 'Alexa has only recorded a signed LaunchRequest on this host so far.'
-        : `Alexa has not recorded a qualifying signed IntentRequest on this host. The last signed request type was ${lastSignedRequest.requestType}.`,
-      detail: isLaunch
-        ? 'A launch-only Alexa request was recorded, but launch alone does not count as live proof.'
-        : `The latest signed Alexa request was ${lastSignedRequest.requestType}, which does not count as handled live proof.`,
-      nextAction: canonicalNextAction,
-    };
-  }
-
-  return {
-    lastSignedRequest,
-    lastHandledProofIntent: null,
-    proofState: 'near_live_only',
-    proofKind: 'signed_intent_unhandled',
-    proofFreshness: 'none',
-    proofAgeMs,
-    proofAgeMinutes,
-    proofAgeLabel,
-    blocker:
-      'Alexa recorded a signed IntentRequest, but it did not finish through a qualifying handled response path.',
-    detail: `The latest signed Alexa intent was ${lastSignedRequest.intentName || 'unknown'} with response source ${lastSignedRequest.responseSource}. Live proof requires a handled source such as local_companion, life_thread_local, assistant_bridge, or bridge.`,
-    nextAction: canonicalNextAction,
-  };
 }
 
 export function assessTelegramRoundtripState(input: {

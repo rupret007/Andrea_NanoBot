@@ -311,5 +311,5 @@ Before calling the capability released:
 4. Build from the final clean commit and restart the canonical service.
 5. Confirm the serving SHA, process identity, datastore health, bridge tools,
    and passive integration status.
-6. Record unavailable Telegram, BlueBubbles, Alexa, or other live proof as
+6. Record unavailable Telegram, BlueBubbles, or other live proof as
    operator debt; never substitute synthetic evidence.

@@ -32,7 +32,7 @@ describe('cross-channel handoffs', () => {
     vi.unstubAllEnvs();
   });
 
-  it('creates and delivers a queued Alexa-to-Telegram handoff', async () => {
+  it('creates and delivers a queued BlueBubbles-to-Telegram handoff', async () => {
     const sendTelegramMessage = vi.fn(async () => ({
       platformMessageId: 'tg-msg-1',
     }));
@@ -40,7 +40,7 @@ describe('cross-channel handoffs', () => {
     const result = await deliverCompanionHandoff(
       {
         groupFolder: 'main',
-        originChannel: 'alexa',
+        originChannel: 'bluebubbles',
         capabilityId: 'research.compare',
         voiceSummary: 'Kindle is the safer battery pick.',
         payload: {
@@ -97,7 +97,7 @@ describe('cross-channel handoffs', () => {
     const result = await deliverCompanionHandoff(
       {
         groupFolder: 'main',
-        originChannel: 'alexa',
+        originChannel: 'bluebubbles',
         voiceSummary: 'Dinner follow-up details.',
         payload: {
           kind: 'message',
@@ -126,7 +126,7 @@ describe('cross-channel handoffs', () => {
     const result = await deliverCompanionHandoff(
       {
         groupFolder: 'main',
-        originChannel: 'alexa',
+        originChannel: 'bluebubbles',
         voiceSummary: 'Dinner follow-up details.',
         payload: {
           kind: 'message',
@@ -173,7 +173,7 @@ describe('cross-channel handoffs', () => {
     const result = await deliverCompanionHandoff(
       {
         groupFolder: 'main',
-        originChannel: 'alexa',
+        originChannel: 'bluebubbles',
         voiceSummary: 'Dinner follow-up details.',
         payload: {
           kind: 'message',
@@ -210,7 +210,7 @@ describe('cross-channel handoffs', () => {
   it('can cancel a queued handoff before delivery', () => {
     const record = queueCompanionHandoff({
       groupFolder: 'main',
-      originChannel: 'alexa',
+      originChannel: 'bluebubbles',
       voiceSummary: 'Dinner follow-up details.',
       payload: {
         kind: 'message',
@@ -237,7 +237,7 @@ describe('cross-channel handoffs', () => {
     const result = await deliverCompanionHandoff(
       {
         groupFolder: 'main',
-        originChannel: 'alexa',
+        originChannel: 'bluebubbles',
         targetChannel: 'bluebubbles',
         capabilityId: 'knowledge.summarize_saved',
         voiceSummary: 'Candace still needs a dinner answer tonight.',
@@ -672,7 +672,7 @@ describe('cross-channel handoffs', () => {
     const result = await deliverCompanionHandoff(
       {
         groupFolder: 'main',
-        originChannel: 'alexa',
+        originChannel: 'bluebubbles',
         voiceSummary: 'Reading nook concept.',
         payload: {
           kind: 'artifact',

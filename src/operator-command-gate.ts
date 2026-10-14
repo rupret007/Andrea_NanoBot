@@ -180,12 +180,6 @@ export const INTEGRATION_RECOVERY_COMMANDS = new Set([
   '/repair_integrations',
 ]);
 
-export const ALEXA_STATUS_COMMANDS = new Set([
-  '/alexa',
-  '/alexa-status',
-  '/alexa_status',
-]);
-
 export const AMAZON_STATUS_COMMANDS = new Set([
   '/amazon-status',
   '/amazon_status',
@@ -253,7 +247,6 @@ const MAIN_CONTROL_ONLY_COMMANDS = new Set([
   ...DEBUG_LOGS_COMMANDS,
   ...OPENCLAW_AGENT_COMMANDS,
   ...INTEGRATION_RECOVERY_COMMANDS,
-  ...ALEXA_STATUS_COMMANDS,
   ...AMAZON_STATUS_COMMANDS,
   ...AMAZON_SEARCH_COMMANDS,
   ...PURCHASE_REQUEST_COMMANDS,

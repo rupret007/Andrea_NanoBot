@@ -9,7 +9,6 @@ import {
   resolveBlueBubblesConfig,
 } from './channels/bluebubbles.js';
 import { readBlueBubblesMonitorState } from './bluebubbles-monitor-state.js';
-import { getAlexaModelSyncStatus } from './alexa-model-sync-state.js';
 import {
   getAllChats,
   listMessageActionsForGroup,
@@ -31,7 +30,6 @@ import {
   isBlueBubblesSelfThreadAliasJid,
 } from './bluebubbles-self-thread.js';
 import { buildBlueBubblesProofReconciliationReport } from './bluebubbles-proof-reconciliation.js';
-import { readEnvFile } from './env.js';
 import { parseGitDirtyPaths } from './git-status-paths.js';
 import {
   buildGoogleCalendarBlockedProofSurface,
@@ -40,17 +38,12 @@ import {
 } from './google-calendar-proof.js';
 import { resolveGoogleCalendarConfig } from './google-calendar.js';
 import {
-  assessAlexaLiveProof,
   assessAssistantHealthState,
   assessTelegramRoundtripState,
-  DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS,
   DEFAULT_TELEGRAM_ROUNDTRIP_PROBE_INTERVAL_MS,
-  formatAlexaProofAgeLabel,
   readHostControlSnapshot,
   reconcileWindowsHostState,
   type HostControlSnapshot,
-  type AlexaLiveProofFreshness,
-  type AlexaLiveProofKind,
   type TelegramTransportStatus,
   type WindowsHostReconciliation,
 } from './host-control.js';
@@ -100,64 +93,22 @@ export interface FieldTrialTelegramTruth extends FieldTrialSurfaceTruth {
 
 export type FieldTrialLaunchCandidateStatus =
   | 'core_ready'
-  | 'core_ready_with_manual_surface_sync'
   | 'provider_blocked_but_core_usable'
   | 'near_live_only'
   | 'externally_blocked';
 
-export type FieldTrialCoreStatus =
-  | 'healthy'
-  | 'manual_sync_pending'
-  | 'fresh_proof_gap'
-  | 'blocked';
-
-export interface FieldTrialManualSurfaceSyncTruth {
-  surfaceId: 'alexa';
-  syncStatus: 'synced' | 'pending' | 'not_tracked';
-  interactionModelPath: string;
-  interactionModelHash: string;
-  lastSyncedHash: string;
-  lastSyncedAt: string;
-  lastSyncedBy: string;
-  detail: string;
-  nextAction: string;
-}
+export type FieldTrialCoreStatus = 'healthy' | 'fresh_proof_gap' | 'blocked';
 
 export interface FieldTrialLaunchReadinessTruth {
   status: FieldTrialLaunchCandidateStatus;
   coreStatus: FieldTrialCoreStatus;
   summary: string;
   coreBlockers: string[];
-  manualSyncSteps: string[];
-  optionalManualSurfaceBlockers: string[];
-  optionalManualSurfaceNextActions: string[];
   optionalProviderBlockers: string[];
   optionalProviderNextActions: string[];
   optionalBridgeBlockers: string[];
   optionalBridgeNextActions: string[];
   proofFreshnessGaps: string[];
-  manualSurfaceSyncs: {
-    alexa: FieldTrialManualSurfaceSyncTruth;
-  };
-}
-
-export interface FieldTrialAlexaTruth extends FieldTrialSurfaceTruth {
-  lastSignedRequestAt: string;
-  lastSignedRequestType: string;
-  lastSignedIntent: string;
-  lastSignedResponseSource: string;
-  lastHandledProofAt: string;
-  lastHandledProofIntent: string;
-  lastHandledProofResponseSource: string;
-  proofKind: AlexaLiveProofKind;
-  proofFreshness: AlexaLiveProofFreshness;
-  proofAgeMinutes: number | null;
-  proofAgeLabel: string;
-  recommendedUtterance: string;
-  confirmCommand: string;
-  successShape: string;
-  staleShape: string;
-  failureChecklist: string;
 }
 
 export interface FieldTrialBlueBubblesTruth extends FieldTrialSurfaceTruth {
@@ -676,7 +627,6 @@ export interface FieldTrialJourneyTruthMap {
   mission_planning: FieldTrialSurfaceTruth;
   work_cockpit: FieldTrialSurfaceTruth;
   cross_channel_handoff: FieldTrialSurfaceTruth;
-  alexa_orientation: FieldTrialSurfaceTruth;
 }
 
 export interface FieldTrialPilotIssueTruth {
@@ -691,7 +641,6 @@ export interface FieldTrialPilotIssueTruth {
 
 export interface FieldTrialOperatorTruth {
   telegram: FieldTrialTelegramTruth;
-  alexa: FieldTrialAlexaTruth;
   bluebubbles: FieldTrialBlueBubblesTruth;
   googleCalendar: FieldTrialSurfaceTruth;
   workCockpit: FieldTrialSurfaceTruth;
@@ -822,55 +771,6 @@ function summarizeMessagesBridgeLine(
   return `${prefix}: ${body}`;
 }
 
-function buildAlexaManualSyncTruth(
-  projectRoot: string,
-): FieldTrialManualSurfaceSyncTruth {
-  const status = getAlexaModelSyncStatus(projectRoot);
-  if (status.syncStatus === 'synced') {
-    return {
-      surfaceId: 'alexa',
-      syncStatus: 'synced',
-      interactionModelPath: status.interactionModelPath,
-      interactionModelHash: status.interactionModelHash,
-      lastSyncedHash: status.lastSyncedHash,
-      lastSyncedAt: status.lastSyncedAt,
-      lastSyncedBy: status.lastSyncedBy,
-      detail:
-        'Alexa interaction model hash is marked as synced with the current repo model.',
-      nextAction: '',
-    };
-  }
-
-  if (status.syncStatus === 'pending') {
-    return {
-      surfaceId: 'alexa',
-      syncStatus: 'pending',
-      interactionModelPath: status.interactionModelPath,
-      interactionModelHash: status.interactionModelHash,
-      lastSyncedHash: status.lastSyncedHash,
-      lastSyncedAt: status.lastSyncedAt,
-      lastSyncedBy: status.lastSyncedBy,
-      detail:
-        'Alexa proof is separate from the latest console model sync. The current repo interaction model hash has not been marked as synced yet.',
-      nextAction:
-        'Import docs/alexa/interaction-model.en-US.json in the Alexa Developer Console, run Build Model, then run npm run setup -- --step alexa-model-sync mark-synced.',
-    };
-  }
-
-  return {
-    surfaceId: 'alexa',
-    syncStatus: 'not_tracked',
-    interactionModelPath: status.interactionModelPath,
-    interactionModelHash: status.interactionModelHash,
-    lastSyncedHash: status.lastSyncedHash,
-    lastSyncedAt: status.lastSyncedAt,
-    lastSyncedBy: status.lastSyncedBy,
-    detail:
-      'Alexa model sync is not being tracked from this repo root yet because the interaction-model file is missing here.',
-    nextAction: '',
-  };
-}
-
 function buildActionBundlesDelegationOutcomeReviewTruth(
   review: PilotReviewSnapshotLike,
 ): FieldTrialSurfaceTruth {
@@ -887,7 +787,6 @@ function buildLaunchReadinessTruth(params: {
   hostSnapshot: HostControlSnapshot;
   windowsHost: WindowsHostReconciliation | null;
   telegram: FieldTrialSurfaceTruth;
-  alexa: FieldTrialAlexaTruth;
   bluebubbles: FieldTrialBlueBubblesTruth;
   googleCalendar: FieldTrialSurfaceTruth;
   workCockpit: FieldTrialSurfaceTruth;
@@ -901,7 +800,6 @@ function buildLaunchReadinessTruth(params: {
   journeys: FieldTrialJourneyTruthMap;
   actionBundlesDelegationOutcomeReview: FieldTrialSurfaceTruth;
 }): FieldTrialLaunchReadinessTruth {
-  const alexaManualSync = buildAlexaManualSyncTruth(params.projectRoot);
   const coreSurfaces: Array<[string, FieldTrialSurfaceTruth]> = [
     ['telegram', params.telegram],
     ['google_calendar', params.googleCalendar],
@@ -922,26 +820,11 @@ function buildLaunchReadinessTruth(params: {
   const degradedUsableCoreSurfaces = coreSurfaces.filter(
     ([, state]) => state.proofState === 'degraded_but_usable',
   );
-  const manualSyncSteps =
-    params.alexa.proofState === 'live_proven' &&
-    alexaManualSync.syncStatus === 'pending'
-      ? [alexaManualSync.nextAction]
-      : [];
 
   const optionalProviderBlockers: string[] = [];
   const optionalProviderNextActions: string[] = [];
-  const optionalManualSurfaceBlockers: string[] = [];
-  const optionalManualSurfaceNextActions: string[] = [];
   const optionalBridgeBlockers: string[] = [];
   const optionalBridgeNextActions: string[] = [];
-  if (params.alexa.proofState !== 'live_proven') {
-    optionalManualSurfaceBlockers.push(
-      summarizeTruthLine('optional voice surface (alexa)', params.alexa),
-    );
-    if (params.alexa.nextAction) {
-      optionalManualSurfaceNextActions.push(params.alexa.nextAction);
-    }
-  }
   if (params.research.proofState === 'externally_blocked') {
     optionalProviderBlockers.push(
       summarizeTruthLine('outward_research', params.research),
@@ -988,10 +871,7 @@ function buildLaunchReadinessTruth(params: {
       [keyof FieldTrialJourneyTruthMap, FieldTrialSurfaceTruth]
     >
   )
-    .filter(
-      ([label, state]) =>
-        label !== 'alexa_orientation' && state.proofState === 'near_live_only',
-    )
+    .filter(([, state]) => state.proofState === 'near_live_only')
     .map(([label, state]) => summarizeTruthLine(label, state))
     .concat(
       degradedUsableCoreSurfaces.map(([label, state]) =>
@@ -1018,21 +898,10 @@ function buildLaunchReadinessTruth(params: {
   ) {
     coreStatus = 'fresh_proof_gap';
     status = 'near_live_only';
-    const onlyAlexaNeedsFreshProof =
-      nearLiveCoreSurfaces.length === 1 &&
-      nearLiveCoreSurfaces[0]?.[0] === 'alexa' &&
-      params.telegram.proofState === 'live_proven';
     summary =
       nearLiveCoreSurfaces.length === 0
         ? 'Andrea core companion is usable, but a degraded host condition must be resolved before claiming full readiness.'
-        : onlyAlexaNeedsFreshProof
-          ? 'Andrea core companion is usable on this host. Telegram is already dependable, and Alexa still needs one fresh same-host proof turn.'
-          : 'Andrea core companion is close, but one core surface still needs a same-host fresh proof step.';
-  } else if (manualSyncSteps.length > 0) {
-    coreStatus = 'manual_sync_pending';
-    status = 'core_ready_with_manual_surface_sync';
-    summary =
-      'Andrea core companion is ready, but one manual surface sync step is still pending.';
+        : 'Andrea core companion is close, but one core surface still needs a same-host fresh proof step.';
   } else if (optionalBridgeBlockers.length > 0) {
     coreStatus = 'healthy';
     status = 'provider_blocked_but_core_usable';
@@ -1052,19 +921,11 @@ function buildLaunchReadinessTruth(params: {
     coreStatus,
     summary,
     coreBlockers,
-    manualSyncSteps,
-    optionalManualSurfaceBlockers,
-    optionalManualSurfaceNextActions: [
-      ...new Set(optionalManualSurfaceNextActions),
-    ],
     optionalProviderBlockers,
     optionalProviderNextActions: [...new Set(optionalProviderNextActions)],
     optionalBridgeBlockers,
     optionalBridgeNextActions: [...new Set(optionalBridgeNextActions)],
     proofFreshnessGaps,
-    manualSurfaceSyncs: {
-      alexa: alexaManualSync,
-    },
   };
 }
 
@@ -1152,40 +1013,6 @@ function getJourneyEventById(
     review,
     (event) => event.journeyId === journeyId,
   );
-}
-
-function getAlexaPilotProofFallback(
-  review: PilotReviewSnapshotLike,
-  now = new Date(),
-): {
-  event: PilotJourneyEventRecord;
-  proofAt: string;
-  proofAgeMs: number;
-  proofAgeMinutes: number;
-  proofAgeLabel: string;
-} | null {
-  const event = getRecentJourneyEvent(
-    review,
-    (candidate) =>
-      candidate.journeyId === 'alexa_orientation' &&
-      candidate.channel === 'alexa' &&
-      candidate.outcome === 'success',
-  );
-  if (!event) return null;
-  const proofAt = event.completedAt || event.startedAt;
-  const proofAtMs = parseFieldTrialIsoTime(proofAt);
-  if (proofAtMs == null) return null;
-  const proofAgeMs = Math.max(0, now.getTime() - proofAtMs);
-  if (proofAgeMs > DEFAULT_ALEXA_LIVE_PROOF_FRESHNESS_MS) {
-    return null;
-  }
-  return {
-    event,
-    proofAt,
-    proofAgeMs,
-    proofAgeMinutes: Math.floor(proofAgeMs / 60_000),
-    proofAgeLabel: formatAlexaProofAgeLabel(proofAgeMs),
-  };
 }
 
 function buildJourneyTruthFromEvent(params: {
@@ -1475,141 +1302,6 @@ function buildTelegramTruth(
       transport?.detail ||
       'Telegram live proof needs another same-host confirmation.',
   });
-}
-
-function buildAlexaTruth(
-  projectRoot: string,
-  review: PilotReviewSnapshotLike,
-): FieldTrialAlexaTruth {
-  const env = readEnvFile(['ALEXA_SKILL_ID']);
-  const configured = Boolean(process.env.ALEXA_SKILL_ID || env.ALEXA_SKILL_ID);
-  const recommendedUtterance =
-    '`Open Andrea Assistant` then `What am I forgetting?`';
-  const confirmCommand = 'npm run services:status';
-  const successShape =
-    'Success looks like IntentRequest + WhatAmIForgettingIntent + a handled response source + proof freshness=fresh.';
-  const staleShape =
-    'Stale looks like a handled IntentRequest is still present, but proof freshness=stale and Alexa remains near_live_only.';
-  const failureChecklist =
-    'Check for no IntentRequest, LaunchRequest only, responseSource=received_trusted_request, responseSource=barrier/fallback/help/launch, stale interaction model, endpoint/account-link mismatch, or the signed request never reaching this host.';
-  const alexaModelSync = getAlexaModelSyncStatus(projectRoot);
-  const modelSyncStep =
-    alexaModelSync.syncStatus === 'pending'
-      ? 'Import docs/alexa/interaction-model.en-US.json in the Alexa Developer Console, run Build Model, then run npm run setup -- --step alexa-model-sync mark-synced.'
-      : '';
-
-  if (!configured) {
-    return {
-      ...buildTruth({
-        proofState: 'not_intended_for_trial',
-        detail: 'Alexa is not configured on this host.',
-      }),
-      lastSignedRequestAt: 'none',
-      lastSignedRequestType: 'none',
-      lastSignedIntent: 'none',
-      lastSignedResponseSource: 'none',
-      lastHandledProofAt: 'none',
-      lastHandledProofIntent: 'none',
-      lastHandledProofResponseSource: 'none',
-      proofKind: 'none',
-      proofFreshness: 'none',
-      proofAgeMinutes: null,
-      proofAgeLabel: 'none',
-      recommendedUtterance,
-      confirmCommand,
-      successShape,
-      staleShape,
-      failureChecklist,
-    };
-  }
-
-  const assessment = assessAlexaLiveProof({
-    projectRoot,
-  });
-  const pilotProofFallback =
-    assessment.proofState === 'live_proven'
-      ? null
-      : getAlexaPilotProofFallback(review);
-  const lastSignedRequest = assessment.lastSignedRequest;
-  const lastHandledProofIntent =
-    assessment.lastHandledProofIntent ||
-    (pilotProofFallback
-      ? {
-          updatedAt: pilotProofFallback.proofAt,
-          requestId: `pilot:${pilotProofFallback.event.eventId}`,
-          requestType: 'IntentRequest',
-          intentName: 'alexa_orientation',
-          applicationIdVerified: true,
-          linkingResolved: true,
-          groupFolder: pilotProofFallback.event.groupFolder,
-          responseSource: 'pilot_recent_success',
-        }
-      : null);
-  const proofState = pilotProofFallback ? 'live_proven' : assessment.proofState;
-  const proofKind = pilotProofFallback
-    ? 'handled_intent'
-    : assessment.proofKind;
-  const proofFreshness = pilotProofFallback
-    ? 'fresh'
-    : assessment.proofFreshness;
-  const proofAgeMinutes = pilotProofFallback
-    ? pilotProofFallback.proofAgeMinutes
-    : assessment.proofAgeMinutes;
-  const proofAgeLabel = pilotProofFallback
-    ? pilotProofFallback.proofAgeLabel
-    : formatAlexaProofAgeLabel(assessment.proofAgeMs);
-  const combinedNextAction = pilotProofFallback
-    ? ''
-    : [
-        modelSyncStep,
-        assessment.nextAction ||
-          'Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run `npm run services:status`.',
-      ]
-        .filter(Boolean)
-        .join(' Then ');
-  const detail = pilotProofFallback
-    ? `Alexa is still credited as live-proven on this host because a recent Andrea custom-skill orientation turn succeeded ${formatProofMoment(
-        pilotProofFallback.proofAt,
-      )}, and that proof survives restart while it stays fresh.`
-    : assessment.proofState === 'live_proven'
-      ? assessment.detail
-      : assessment.proofKind === 'launch_only'
-        ? 'Alexa has only recorded a signed LaunchRequest here so far. Open the skill, then ask `What am I forgetting?` to produce a handled proof turn.'
-        : assessment.proofKind === 'signed_intent_unhandled'
-          ? `Alexa recorded a signed IntentRequest, but the latest response source was ${lastSignedRequest?.responseSource || 'none'}, so it does not qualify as handled live proof yet.`
-          : assessment.proofKind === 'handled_intent' &&
-              assessment.proofFreshness === 'stale'
-            ? `Alexa did record a handled signed intent ${assessment.proofAgeLabel} ago, but proof older than 24 hours is treated as stale.`
-            : assessment.proofKind === 'none' && modelSyncStep
-              ? 'Alexa has not recorded a fresh handled signed turn on this host yet, and the latest repo interaction model still has not been marked as synced in the Alexa Developer Console.'
-              : 'Alexa listener, ingress, and account-link health can still be green even when no fresh handled signed live turn has been recorded on this host.';
-
-  return {
-    ...buildTruth({
-      proofState,
-      blocker: pilotProofFallback ? '' : assessment.blocker,
-      blockerOwner: proofState === 'live_proven' ? 'none' : 'external',
-      nextAction: combinedNextAction,
-      detail,
-    }),
-    lastSignedRequestAt: lastSignedRequest?.updatedAt || 'none',
-    lastSignedRequestType: lastSignedRequest?.requestType || 'none',
-    lastSignedIntent: lastSignedRequest?.intentName || 'none',
-    lastSignedResponseSource: lastSignedRequest?.responseSource || 'none',
-    lastHandledProofAt: lastHandledProofIntent?.updatedAt || 'none',
-    lastHandledProofIntent: lastHandledProofIntent?.intentName || 'none',
-    lastHandledProofResponseSource:
-      lastHandledProofIntent?.responseSource || 'none',
-    proofKind,
-    proofFreshness,
-    proofAgeMinutes,
-    proofAgeLabel,
-    recommendedUtterance,
-    confirmCommand,
-    successShape,
-    staleShape,
-    failureChecklist,
-  };
 }
 
 function buildBlueBubblesTruth(
@@ -2834,7 +2526,6 @@ function buildGoogleCalendarTruth(projectRoot: string): FieldTrialSurfaceTruth {
 function buildJourneyTruths(
   review: PilotReviewSnapshotLike,
   telegramTruth: FieldTrialSurfaceTruth,
-  alexaTruth: FieldTrialSurfaceTruth,
 ): FieldTrialJourneyTruthMap {
   return {
     ordinary_chat: buildJourneyTruthFromEvent({
@@ -2886,19 +2577,6 @@ function buildJourneyTruths(
       nearLiveNextAction:
         'Run `send me the full version` or `save that for later` from a flagship Telegram journey on this host.',
     }),
-    alexa_orientation:
-      alexaTruth.proofState === 'live_proven'
-        ? alexaTruth
-        : buildTruth({
-            proofState: alexaTruth.proofState,
-            blocker: alexaTruth.blocker,
-            blockerOwner: alexaTruth.blockerOwner,
-            nextAction: alexaTruth.nextAction,
-            detail:
-              alexaTruth.proofState === 'near_live_only'
-                ? 'Alexa orientation stays near-live until one fresh signed turn is recorded on this host.'
-                : alexaTruth.detail,
-          }),
   };
 }
 
@@ -2936,7 +2614,6 @@ export function buildFieldTrialOperatorTruth(
     options.repoDirtyPaths || readRepoDirtyPaths(projectRoot);
 
   const telegram = buildTelegramTruth(hostSnapshot, windowsHost);
-  const alexa = buildAlexaTruth(projectRoot, review);
   const bluebubbles = buildBlueBubblesTruth(projectRoot, hostSnapshot, review);
   const googleCalendar = buildGoogleCalendarTruth(projectRoot);
   const research = buildResearchTruth(
@@ -2961,7 +2638,7 @@ export function buildFieldTrialOperatorTruth(
     windowsHost,
     hostDiskHealth,
   );
-  const journeys = buildJourneyTruths(review, telegram, alexa);
+  const journeys = buildJourneyTruths(review, telegram);
 
   const workCockpit = buildSurfaceTruthFromPilotEvidence({
     label: 'Work cockpit',
@@ -3026,7 +2703,6 @@ export function buildFieldTrialOperatorTruth(
     hostSnapshot,
     windowsHost,
     telegram,
-    alexa,
     bluebubbles,
     googleCalendar,
     workCockpit,
@@ -3043,7 +2719,6 @@ export function buildFieldTrialOperatorTruth(
 
   return {
     telegram,
-    alexa,
     bluebubbles,
     googleCalendar,
     workCockpit,

@@ -42,7 +42,7 @@ async function approveStarterProfile(): Promise<void> {
   await handleEverydayCaptureCommand(buildInput('help me set this up'));
   await handleEverydayCaptureCommand(
     buildInput(
-      'Track groceries, errands, bills, meals, pills, and household follow-through for me. Telegram should be richer, and I use Alexa and calendar.',
+      'Track groceries, errands, bills, meals, pills, and household follow-through for me. Telegram should be richer, and I use Telegram and calendar.',
     ),
   );
   await handleEverydayCaptureCommand(buildInput('approve that'));
@@ -105,7 +105,7 @@ describe('everyday capture', () => {
 
     const proposal = await handleEverydayCaptureCommand(
       buildInput(
-        'Track groceries, errands, bills, meals, pills, and household follow-through for me. Telegram should be richer, and I use Alexa and calendar.',
+        'Track groceries, errands, bills, meals, pills, and household follow-through for me. Telegram should be richer, and I use Telegram and calendar.',
       ),
     );
 
@@ -433,32 +433,6 @@ describe('everyday capture', () => {
     ).toContain(threadLinkage.threadId);
   });
 
-  it('keeps Alexa list readout concise and offers Telegram when the slice is long', async () => {
-    await approveStarterProfile();
-    await handleEverydayCaptureCommand(
-      buildInput('add milk to my shopping list', { channel: 'alexa' }),
-    );
-    await handleEverydayCaptureCommand(
-      buildInput('put batteries on my list', { channel: 'alexa' }),
-    );
-    await handleEverydayCaptureCommand(
-      buildInput('add bread to my shopping list', { channel: 'alexa' }),
-    );
-    await handleEverydayCaptureCommand(
-      buildInput('add trash bags to my shopping list', { channel: 'alexa' }),
-    );
-
-    const readout = await handleEverydayCaptureCommand(
-      buildInput('what do I still need to buy', { channel: 'alexa' }),
-    );
-
-    expect(readout.replyText).toContain('From the store');
-    expect(readout.replyText).toContain(
-      'If you want, I can send the fuller list to Telegram.',
-    );
-    expect(readout.handoffOffer).toContain('fuller list to Telegram');
-  });
-
   it('treats explicit grocery-list read asks as readouts even with active list context', async () => {
     await approveStarterProfile();
 
@@ -629,7 +603,7 @@ describe('everyday capture', () => {
 
     const bills = await handleEverydayCaptureCommand(
       buildInput('what bills are due this week', {
-        channel: 'alexa',
+        channel: 'telegram',
         now: fridayMorning,
       }),
     );
@@ -637,7 +611,7 @@ describe('everyday capture', () => {
 
     const tonight = await handleEverydayCaptureCommand(
       buildInput("what's left for tonight", {
-        channel: 'alexa',
+        channel: 'telegram',
         now: fridayMorning,
       }),
     );

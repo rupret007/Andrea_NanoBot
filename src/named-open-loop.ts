@@ -27,7 +27,7 @@ import {
   type NamedReplyDelayTiming,
 } from './named-reply-delay.js';
 
-export type NamedOpenLoopChannel = 'alexa' | 'telegram' | 'bluebubbles';
+export type NamedOpenLoopChannel = 'telegram' | 'bluebubbles';
 
 export type NamedOpenLoopBinding =
   | { kind: 'denied'; reason: 'untrusted_named' }
@@ -441,39 +441,20 @@ export function formatNamedOpenLoopDraftNextStep(params: {
   const thatMedia = /^\d/.test(firstMediaLabel)
     ? `those ${firstMediaLabel}`
     : `that ${firstMediaLabel}`;
-  const lookPrompt =
-    params.channel === 'alexa'
-      ? NAMED_OPEN_LOOP_LOOK_PROMPT
-      : `\`${NAMED_OPEN_LOOP_LOOK_PROMPT}\``;
-  const remindPrompt =
-    params.channel === 'alexa'
-      ? NAMED_OPEN_LOOP_REMIND_LATER_PROMPT
-      : `\`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\``;
-  const savePrompt =
-    params.channel === 'alexa'
-      ? NAMED_OPEN_LOOP_SAVE_PROMPT
-      : `\`${NAMED_OPEN_LOOP_SAVE_PROMPT}\``;
+  const lookPrompt = `\`${NAMED_OPEN_LOOP_LOOK_PROMPT}\``;
+  const remindPrompt = `\`${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}\``;
+  const savePrompt = `\`${NAMED_OPEN_LOOP_SAVE_PROMPT}\``;
   if (params.withheld) {
     if (params.isGroup) {
       return "I won't guess your answer. Tell me what you want to say, and I can draft it unsent.";
     }
     if (mediaOnly && analyzableMedia) {
-      if (params.channel === 'alexa') {
-        return `I haven't looked at ${thatMedia} yet. Say ${NAMED_OPEN_LOOP_LOOK_PROMPT} and I can try. Or say ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT} or ${NAMED_OPEN_LOOP_SAVE_PROMPT}.`;
-      }
       return `I haven't looked at ${thatMedia} yet. Say ${lookPrompt} and I can try. Or say ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}.`;
     }
     if (mediaOnly) {
-      if (params.channel === 'alexa') {
-        return `I can see ${params.personLabel} sent ${mediaObject}, but I cannot play it here. Tell me what you want to say, or say ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT} or ${NAMED_OPEN_LOOP_SAVE_PROMPT}.`;
-      }
       return `I can see ${params.personLabel} sent ${mediaObject}, but I cannot play it here. Tell me what you want to say, or say ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}.`;
     }
-    if (params.channel === 'alexa') {
-      return analyzableMedia
-        ? `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${NAMED_OPEN_LOOP_LOOK_PROMPT}, ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}, or ${NAMED_OPEN_LOOP_SAVE_PROMPT}.`
-        : `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT} or ${NAMED_OPEN_LOOP_SAVE_PROMPT}.`;
-    }
+
     return analyzableMedia
       ? `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${lookPrompt} if you want me to try to read ${thatMedia}, ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}.`
       : `I won't guess your answer. Tell me what you want to say, and I can draft it unsent. Or say ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}.`;
@@ -481,57 +462,41 @@ export function formatNamedOpenLoopDraftNextStep(params: {
   if (params.isGroup) {
     return 'I can draft wording, but I will not create send controls for a group.';
   }
-  if (params.channel === 'alexa') {
-    return analyzableMedia
-      ? `Say draft ${params.personLabel} to create an unsent draft, or ${NAMED_OPEN_LOOP_LOOK_PROMPT}, or ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}, or ${NAMED_OPEN_LOOP_SAVE_PROMPT}. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`
-      : `Say draft ${params.personLabel} to create an unsent draft, or ${NAMED_OPEN_LOOP_REMIND_LATER_PROMPT}, or ${NAMED_OPEN_LOOP_SAVE_PROMPT}. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
-  }
+
   return analyzableMedia
     ? `Next: say \`draft ${params.personLabel}\` or yes for an unsent draft, ${lookPrompt} to try to read ${thatMedia}, ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}. That draft stays unsent and requires approval. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`
     : `Next: say \`draft ${params.personLabel}\` or yes for an unsent draft, ${remindPrompt} for a tonight reminder, or ${savePrompt} to keep this under ${params.personLabel}. That draft stays unsent and requires approval. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
 }
 
 export function appendNamedOpenLoopDraftCreatedNotice(
-  channel: NamedOpenLoopChannel,
+  _channel: NamedOpenLoopChannel,
   replyText: string,
   personLabel: string,
 ): string {
-  if (channel === 'alexa') {
-    return `${replyText} This draft for ${personLabel} stays unsent. ${NAMED_OPEN_LOOP_DRAFT_YES_NOTICE}`;
-  }
   return `${replyText}\n\nNext: this draft for ${personLabel} stays unsent. Review it first. Only \`send it\`, \`send it now\`, or \`send now\` can send. Yes still will not send.`;
 }
 
 export function appendNamedOpenLoopRemindCreatedNotice(
-  channel: NamedOpenLoopChannel,
+  _channel: NamedOpenLoopChannel,
   replyText: string,
   personLabel: string,
 ): string {
-  if (channel === 'alexa') {
-    return `${replyText} I did not send anything. Say draft ${personLabel} when you want an unsent draft.`;
-  }
   return `${replyText}\n\nI did not send anything. Next: say \`draft ${personLabel}\` when you want an unsent draft. Only \`send it\`, \`send it now\`, or \`send now\` can send.`;
 }
 
 export function appendNamedOpenLoopSaveCreatedNotice(
-  channel: NamedOpenLoopChannel,
+  _channel: NamedOpenLoopChannel,
   replyText: string,
   personLabel: string,
 ): string {
-  if (channel === 'alexa') {
-    return `${replyText} I did not send anything. Say draft ${personLabel} when you want an unsent draft.`;
-  }
   return `${replyText}\n\nI did not send anything. Next: say \`draft ${personLabel}\` when you want an unsent draft. Only \`send it\`, \`send it now\`, or \`send now\` can send.`;
 }
 
 export function appendNamedOpenLoopMediaLookedNotice(
-  channel: NamedOpenLoopChannel,
+  _channel: NamedOpenLoopChannel,
   replyText: string,
   personLabel: string,
 ): string {
-  if (channel === 'alexa') {
-    return `${replyText} I did not send anything. Say draft ${personLabel} when you want an unsent draft.`;
-  }
   return `${replyText}\n\nI did not send anything. Next: say \`draft ${personLabel}\` when you want an unsent draft. Only \`send it\`, \`send it now\`, or \`send now\` can send.`;
 }
 
@@ -551,18 +516,14 @@ export function formatNamedOpenLoopMediaLookReply(params: {
 }
 
 export function appendGenericOpenLoopNoCrawlNotice(
-  channel: NamedOpenLoopChannel,
+  _channel: NamedOpenLoopChannel,
   replyText: string,
   offerNamedHandoff = false,
 ): string {
   const handoff = offerNamedHandoff
-    ? channel === 'alexa'
-      ? " Name one person and ask what's still open with them."
-      : `\n${GENERIC_OPEN_LOOP_NAMED_HANDOFF}`
+    ? `\n${GENERIC_OPEN_LOOP_NAMED_HANDOFF}`
     : '';
-  if (channel === 'alexa') {
-    return `${replyText} ${GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE}${handoff}`;
-  }
+
   return `${replyText}\n\n${GENERIC_OPEN_LOOP_NO_CRAWL_NOTICE}${handoff}`;
 }
 
@@ -589,14 +550,12 @@ export function formatNamedMessagesOpenLoopReply(params: {
     latestInboundText: params.latestInboundText,
   });
   const clockHint =
-    params.gist.ownerOwesReply && !params.isGroup && params.channel !== 'alexa'
+    params.gist.ownerOwesReply && !params.isGroup
       ? 'For a specific time, say `remind me to reply tomorrow at 9am`, `remind me Friday at 9am`, or `remind me next Friday at 9am`. For a short delay, say `remind me in 30 minutes` or `remind me in an hour`.'
       : undefined;
   const coverage =
     'This is the current thread state from the available local synced snapshot, not device unread status. I did not send anything.';
-  if (params.channel === 'alexa') {
-    return [lead, digest, nextStep, clockHint].filter(Boolean).join(' ');
-  }
+
   if (params.channel === 'bluebubbles') {
     return [lead, digest, nextStep, clockHint, coverage]
       .filter(Boolean)

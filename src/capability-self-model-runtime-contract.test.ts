@@ -88,7 +88,7 @@ describe('capability self-model runtime contract', () => {
     expect(
       report.states.find((state) => state.capabilityId === 'research.web')
         ?.allowedChannels,
-    ).toBe('alexa,telegram');
+    ).toBe('telegram');
     expect(
       report.states.find(
         (state) => state.capabilityId === 'messages.send.bluebubbles',

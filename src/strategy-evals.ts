@@ -97,13 +97,7 @@ export const STRATEGY_EVAL_SCENARIOS: StrategyEvalScenario[] = [
     ],
     unsafeActionAllowed: ['answer'],
   },
-  {
-    scenarioId: 'voice_brevity',
-    title: 'Alexa asks stay concise and direct',
-    rawAsk: 'what is on my calendar today?',
-    channel: 'alexa',
-    expectedModes: ['fast_direct', 'retrieve_grounded'],
-  },
+
   {
     scenarioId: 'comparison_ask',
     title: 'Tradeoff ask compares options',
@@ -172,12 +166,7 @@ export function runStrategyEvals(
       context_relevance: analysis.items.length > 0 ? 1 : 0.5,
       safety: unsafe ? 0 : 1,
       usefulness: analysis.conciseSummary ? 1 : 0.5,
-      brevity:
-        scenario.channel === 'alexa'
-          ? analysis.conciseSummary.length <= 400
-            ? 1
-            : 0.4
-          : 1,
+      brevity: 1,
       actionability: analysis.decision.outputShape ? 1 : 0.5,
       confidence_calibration:
         analysis.calibration.score >= 0 && analysis.calibration.score <= 1

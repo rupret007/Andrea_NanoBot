@@ -52,7 +52,6 @@ Operator truth:
   readiness, waiting/blocking/delegation/deferral, and terminal truth
 - reminders remain the concrete future nudges
 - Telegram is the only scheduled ritual surface in this pass
-- Alexa stays on-demand only
 - there is no hidden push behavior by default
 
 Current operator checks:
@@ -251,7 +250,7 @@ Windows startup truth:
   reply was absent; use the normal process-health status before any manual
   restart decision.
 - If Telegram itself is degraded but the operator-side roundtrip harness is still unconfigured, `services:ensure` now reports `degraded` plus `telegram_roundtrip=unconfigured` instead of pretending Telegram is healthy or thrashing Andrea with blind restart loops.
-- `npm run services:status` now includes `assistant_health`, local Alexa listener and OAuth health when Alexa is configured, `telegram_roundtrip_health`, `telegram_roundtrip_last_ok_at`, `telegram_roundtrip_last_probe_at`, `telegram_roundtrip_next_due_at`, `watchdog_running`, plus the active repo root, branch, commit, DB path, assistant name source, and the currently registered main Telegram chat so runtime/state drift is visible immediately instead of looking falsely healthy.
+- `npm run services:status` now includes `assistant_health`, `telegram_roundtrip_health`, `telegram_roundtrip_last_ok_at`, `telegram_roundtrip_last_probe_at`, `telegram_roundtrip_next_due_at`, `watchdog_running`, plus the active repo root, branch, commit, DB path, assistant name source, and the currently registered main Telegram chat so runtime/state drift is visible immediately instead of looking falsely healthy.
 
 Quick recovery steps after a failed login bring-up:
 
@@ -399,8 +398,6 @@ Safe public exception:
 
 Optional operator-only integrations, only when configured:
 
-- Alexa status:
-  - `/alexa-status`
 - Amazon shopping:
   - `/amazon-status`
   - `/amazon-search <keywords>`
@@ -527,60 +524,6 @@ For merged-shell architecture details, see:
 
 - [BACKEND_LANES_ARCHITECTURE.md](BACKEND_LANES_ARCHITECTURE.md)
 
-## Alexa Operator Validation
-
-Treat Alexa as an optional private channel, not part of the baseline rollout.
-
-Alexa is only **live-ready** when all of these are true:
-
-- a supported Node `22.x` runtime (`>=22 <23`) is active on macOS/Linux; CI,
-  Windows provisioning, and the container image use the exact repository pin
-  `22.22.2`
-- `ALEXA_SKILL_ID` is configured
-- the Alexa listener is enabled locally
-- an HTTPS tunnel or reverse proxy is forwarding the public Alexa endpoint
-- the Alexa Developer Console skill is using that endpoint and the same skill ID
-- account linking is configured in the Alexa console for Authorization Code Grant
-- the local Andrea OAuth config is present:
-  - `ALEXA_OAUTH_CLIENT_ID`
-  - `ALEXA_OAUTH_CLIENT_SECRET`
-  - `ALEXA_OAUTH_SCOPE`
-- the OAuth target `groupFolder` already exists in Andrea
-
-If any of those are missing, classify Alexa as **code-ready but setup-blocked** and do not present it as live-validated.
-
-Current truthful closeout language:
-
-- repo-side and near-live proof are strong
-- the remaining live gap is one real signed Alexa utterance unless you re-prove it on the current host today
-
-Final live acceptance order:
-
-1. `/alexa-status`
-2. local `GET /alexa/oauth/health`
-3. public `GET /alexa/oauth/health`
-   - if the public host is an `ngrok` `*.ngrok-free.dev` tunnel, use the `ngrok-skip-browser-warning: 1` header for browser-style checks
-   - if the skill endpoint uses that host, confirm the Alexa console SSL setting is the wildcard-certificate option
-4. unlinked launch
-5. unlinked help
-6. one unlinked personal-data request that should return a link-account style response
-7. linked `my day`
-8. linked `anything else`
-9. linked `what about Candace` or `what about Travis`
-10. linked `remind me before that`
-11. one preference or explainability turn
-
-What to verify:
-
-- concise spoken replies
-- one clarification at a time
-- short follow-ups stay grounded in the immediate Alexa context
-- daily guidance sounds measured and useful rather than generic
-- explicit personalization controls stay consent-based and inspectable
-- no Telegram/operator wording
-- no personal data without linking
-- no fake calendar/reminder output
-
 ## Security Defaults To Keep
 
 - one public assistant identity only
@@ -592,10 +535,6 @@ What to verify:
 Useful controls:
 
 - `CURSOR_MAX_ACTIVE_JOBS_PER_CHAT`
-- `ALEXA_VERIFY_SIGNATURE=true`
-- `ALEXA_REQUIRE_ACCOUNT_LINKING=true`
-- `ALEXA_ALLOWED_USER_IDS=...`
-- `ALEXA_LINKED_ACCOUNT_GROUP_FOLDER=main`
 - `AMAZON_BUSINESS_ORDER_MODE=trial`
 
 ## Incident Short Path
