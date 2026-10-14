@@ -486,12 +486,6 @@ import {
   formatAmazonBusinessStatusMessage,
   getAmazonBusinessStatus,
 } from './amazon-business.js';
-import {
-  type AlexaRuntime,
-  formatAlexaStatusMessage,
-  getAlexaStatus,
-  startAlexaServer,
-} from './alexa.js';
 import { seedConfiguredAlexaLinkedAccount } from './alexa-identity.js';
 import {
   approveAmazonPurchaseRequest,
@@ -14236,7 +14230,6 @@ async function main(): Promise<void> {
     ensureOneCLIAgent(jid, group);
   }
 
-  let alexaRuntime: AlexaRuntime | null = null;
   let blueBubblesControlServer: ReturnType<
     typeof startBlueBubblesControlServer
   > = null;
@@ -14289,13 +14282,6 @@ async function main(): Promise<void> {
           ? 'Shutdown read-only sidecar drain reached its bounded timeout; unfinished non-durable work must be requested again after restart.'
           : 'Shutdown drained active read-only sidecars.',
       );
-    }
-    if (alexaRuntime) {
-      await alexaRuntime
-        .close()
-        .catch((err) =>
-          logger.warn({ err }, 'Alexa voice ingress shutdown failed'),
-        );
     }
     if (blueBubblesControlServer) {
       await new Promise<void>((resolve) =>
@@ -18465,8 +18451,10 @@ async function main(): Promise<void> {
     const channel = findChannel(channels, chatJid);
     if (!channel) return;
 
-    const status = alexaRuntime?.getStatus() || getAlexaStatus();
-    await channel.sendMessage(chatJid, formatAlexaStatusMessage(status));
+    await channel.sendMessage(
+      chatJid,
+      'Alexa voice ingress has been removed from Andrea. Voice requests are no longer served.',
+    );
   }
 
   async function handleAmazonSearch(
@@ -22255,42 +22243,10 @@ async function main(): Promise<void> {
     }
     return sendCompanionHandoffArtifactToChannel(chatJid, artifact, options);
   };
-  try {
-    alexaRuntime = await startAlexaServer(undefined, {
-      resolveHandoffTarget: resolveCompanionHandoffTarget,
-      resolveTelegramMainChat: resolveTelegramMainChatForAlexa,
-      resolveBlueBubblesCompanionChat,
-      sendHandoffMessage: sendCompanionHandoffMessage,
-      sendTelegramMessage: async (chatJid, text, options) => {
-        return sendCompanionHandoffMessageToChannel(chatJid, text, options);
-      },
-      sendBlueBubblesMessage: async (chatJid, text, options) => {
-        return sendCompanionHandoffMessageToChannel(chatJid, text, options);
-      },
-      sendHandoffArtifact: sendCompanionHandoffArtifact,
-      sendTelegramArtifact: async (chatJid, artifact, options) => {
-        return sendCompanionHandoffArtifactToChannel(
-          chatJid,
-          artifact,
-          options,
-        );
-      },
-    });
-  } catch (err) {
-    logger.error({ err }, 'Alexa voice ingress failed to start');
-  }
 
-  const hasAlexaIngress = alexaRuntime?.getStatus().running === true;
-  if (channels.length === 0 && !hasAlexaIngress) {
-    logger.fatal(
-      'No channels connected and Alexa voice ingress is not running',
-    );
+  if (channels.length === 0) {
+    logger.fatal('No channels connected');
     process.exit(1);
-  }
-  if (channels.length === 0 && hasAlexaIngress) {
-    logger.info(
-      'No chat channels connected; Alexa voice ingress is serving locally',
-    );
   }
 
   // Start subsystems (independently of connection handler)

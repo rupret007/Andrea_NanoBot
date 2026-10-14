@@ -441,7 +441,6 @@ Alexa is now a bounded companion channel for Andrea rather than a novelty skill.
 - use a supported Node `22.x` runtime (`>=22 <23`) for Alexa on macOS/Linux;
   reproducible CI, Windows provisioning, and the container image use the exact
   repository pin `22.22.2`
-- use `npm run debug:alexa-conversation -- --review` to see repeated Alexa misses, weak clarifiers, and carrier phrases worth adding from real use
 
 Alexa proof is status-led on each host:
 
@@ -466,7 +465,6 @@ Typed Alexa+ app chat is diagnosis-only right now. It may trigger a skill launch
 
 After any interaction-model change, re-import `docs/alexa/interaction-model.en-US.json` in the Alexa Developer Console, run `Build Model`, then run `npm run setup -- --step alexa-model-sync mark-synced` before treating live fallback as a repo bug.
 
-For repo-side conversation tuning on the operator host, use `npm run debug:alexa-conversation`.
 
 ## Andrea Pulse
 

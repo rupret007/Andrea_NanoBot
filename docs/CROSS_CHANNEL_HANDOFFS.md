@@ -157,7 +157,6 @@ Focused tests:
 
 - [src/cross-channel-handoffs.test.ts](../src/cross-channel-handoffs.test.ts)
 - [src/assistant-action-completion.test.ts](../src/assistant-action-completion.test.ts)
-- [src/alexa.test.ts](../src/alexa.test.ts)
 - [src/alexa-conversation.test.ts](../src/alexa-conversation.test.ts)
 - [src/assistant-capability-router.test.ts](../src/assistant-capability-router.test.ts)
 
