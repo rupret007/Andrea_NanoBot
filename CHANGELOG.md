@@ -223,7 +223,7 @@ people` does not crawl unnamed inbox or leftover person titles, already-
 - Added deterministic offline evaluation with network denial, isolated state,
   explicit live-evaluation budgets, and provenance-aware council evidence.
 - Expanded personal context, verified agency, outcome review, owner cockpit,
-  BlueBubbles, Telegram, Alexa, calendar, and deep-work validation without
+  BlueBubbles, Telegram, calendar, and deep-work validation without
   weakening fresh-approval boundaries.
 - Repaired Windows deterministic preload handling and split exact-SHA security
   gates for dependency audit, secret scanning, Semgrep, AGI, CodeQL, container,
@@ -237,12 +237,10 @@ For older upstream release notes, see the
 ### Earlier 1.2.42 product work carried forward from 2026-04-04
 
 - Added the v32 General Intelligence Control Plane: unified action lifecycle (intents, attempts, reviews with legal status transitions), a ten-check action preflight where the strictest of critic review, autonomy policy, reality/truth state, and tool reliability always wins, a bounded cognitive blackboard, reflective episodic memory with enforced retention and redaction, a capability self-model grounded in live proof and config presence (names only), an explicit autonomy governor (levels 0–7, levels 5+ always approval-gated, level 7 never executed), multi-strategy reasoning evals that feed strategy-learning signals, and a ten-scenario AGI-readiness gauntlet with new `debug:blackboard`, `debug:actions`, `debug:episodes`, `debug:capabilities`, `debug:autonomy`, and `debug:agi-readiness` surfaces. The control plane orchestrates existing systems, executes nothing itself, and is explicitly not an AGI claim.
-- Landed Andrea Alexa Companion Mode on the mainline integration path, including daily guidance, stronger follow-ups, household-aware phrasing, and explicit consent-based personalization.
-- Aligned the Alexa voice runbooks around the truthful current state: Node `22.22.2`, real OAuth account linking, strong near-live proof, and one remaining real signed Alexa utterance for full live acceptance when it has not been reproven on the host.
 - Preserved the merged shared-shell model with `/cursor` as the primary operator surface, reply-linked runtime follow-up, and a clearer runtime/backend-lane ownership story.
 - Closed the final live work-cockpit proof gap on the operator host: Telegram now has real end-to-end card proofs for both Cursor Cloud and Codex/OpenAI runtime, including reply-to-card continuation and shared current-work selection.
-- Polished repo-facing docs and release guidance so startup, runtime, Telegram operator testing, and Alexa validation all describe the same current behavior.
-- Hardened closeout diagnostics by exposing local Alexa listener and OAuth health in `npm run services:status`, tightening Alexa readiness wording, and making the default assistant identity stay explicitly Andrea in new `.env` setups and tests.
+- Polished repo-facing docs and release guidance so startup, runtime, and Telegram operator testing all describe the same current behavior.
+- Made the default assistant identity stay explicitly Andrea in new `.env` setups and tests.
 - Marked the deeper NanoClaw requirements/spec docs as historical reference where they still describe older trigger examples, and aligned their core naming/runtime examples with current Andrea reality.
 
 ## [1.2.35] - 2026-03-26

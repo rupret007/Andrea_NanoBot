@@ -131,7 +131,7 @@ describe('operator command gate', () => {
   });
 
   it('blocks optional operator commands in non-main chats across hyphen aliases too', () => {
-    const decision = getCommandAccessDecision('/alexa-status', {
+    const decision = getCommandAccessDecision('/integrations-status', {
       name: 'Family',
       folder: 'family',
       trigger: '@andrea',

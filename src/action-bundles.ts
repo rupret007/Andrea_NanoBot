@@ -1422,7 +1422,7 @@ async function executeBundleAction(
       title: payload.title,
       content: payload.content,
       sourceType: 'generated_note',
-      sourceChannel: deps.channel === 'alexa' ? 'alexa' : deps.channel,
+      sourceChannel: deps.channel,
       now,
     });
     if (!saved.ok || !saved.source) {

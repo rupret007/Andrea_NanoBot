@@ -116,7 +116,7 @@ work checklist is the first section of [MODERNIZATION_PLAN.md](../MODERNIZATION_
 | Container proof                           | Runner install/typecheck/build/contracts, image canary, and nested read-only mount canary passed                                                           |
 | Deterministic sweep                       | 94/94 selected from 109 total with 15 exclusions, 271.6 seconds; nested three-round stability passed in 204.0 seconds                                      |
 | Final commit/hosted CI/restart/provenance | Implementation `ac72ede1`; all exact-SHA jobs green; OpenClaw PID 42778; Andrea PID 43464; clean verified artifact serving `ac72ede1`                      |
-| Live Telegram/BlueBubbles/Alexa proof     | Transport/status-only checks completed; aged or missing user-action proofs remain explicit operator debt and never synthetic                               |
+| Live Telegram/BlueBubbles proof     | Transport/status-only checks completed; aged or missing user-action proofs remain explicit operator debt and never synthetic                               |
 
 Repository proof and runtime proof remain distinct. For this release, the
 implementation was published, exact-SHA hosted checks passed, the clean artifact
@@ -339,11 +339,6 @@ folded into a second production change.
   aliases with different provider IDs. OpenClaw therefore recorded two
   read-only calls. No send tool, message-action execution, calendar write, or
   other mutation occurred.
-- Alexa is `BLOCKED` for this pass and its prior proof is `STALE`. There is no
-  authenticated Alexa simulator/device client in this environment. The last
-  qualifying handled signed request remains `WhatAmIForgettingIntent` at
-  `2026-06-03T13:57:39.518Z`. No unsigned local call was substituted for signed
-  proof.
 
 BlueBubbles evidence is retained in the local message ledger and in these
 OpenClaw transcripts:
@@ -375,44 +370,12 @@ canonical Messages self-thread that requires exactly one read-only
 same-thread reply before changing the result to `VERIFIED`. Do not repeat the
 probe if provider outcome is indeterminate.
 
-For Alexa, use a real device or authenticated Alexa Developer Console
-simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and run
-`npm run services:status`. Success requires a fresh handled signed
-`IntentRequest` with `WhatAmIForgettingIntent`; local HTTP is diagnosis only.
-
 ### Next full-reset priorities
 
 1. Run one BlueBubbles/OpenClaw recertification after the alias-dedupe release
    and require exactly one read-only tool call and one same-thread reply.
-2. Complete the fresh signed Alexa device/simulator turn and confirm the
-   request type, intent, handled response source, and freshness marker.
 3. Complete one genuine BlueBubbles `message_action` continuation and one
    life-thread save/retrieval turn without manufacturing evidence.
-
-## Prior release handoff (preserved history)
-
-The pushed baseline inspected for the prior pass was
-`9dd2b1e7` on `main`, aligned with `origin/main` before the change below.
-The completed code-bearing pass was pushed as `d74b8191` (`Require Alexa
-calendar confirmation`). A later handoff-only commit may contain this line;
-use `git rev-parse origin/main` for the repository's current documentary HEAD.
-
-## Surgical improvement
-
-Alexa calendar creation bypassed the shared confirmation contract. A request
-with one writable calendar wrote immediately, and choosing a calendar from a
-multi-calendar draft also wrote instead of advancing to `confirm_create`.
-
-The Alexa adapter now persists every create draft, asks for fresh confirmation,
-and lets the shared `advancePendingGoogleCalendarCreate` state machine decide
-whether `AMAZON.YesIntent` authorizes the write. Calendar selection only
-selects. Existing stable provider identity remains attached to the persisted
-draft, so the subsequent confirmed write retains retry reconciliation.
-
-Changed implementation and proof:
-
-- `src/alexa.ts`
-- (Alexa voice endpoint removed 2026-10-14)
 
 ## Executed verification
 
@@ -428,18 +391,8 @@ Changed implementation and proof:
 - `npm run docs:check`: passed for 68 Markdown files.
 - `git diff --check`: passed.
 
-The tests prove that natural-language and structured Alexa calendar requests do
-not call the provider before confirmation, a calendar choice does not call the
-provider, and a subsequent explicit `yes` produces exactly one create call.
-Nearby tests also preserve targeted confirmation, provider-idempotency
-reconciliation, research-only non-mutation, and compound Calendar/research
-sequencing.
-
 ## Still unverified
 
-- No real Alexa device or authenticated simulator request was sent. The current
-  signed Alexa proof is stale, so voice recognition of the confirmation turn is
-  still operator evidence debt.
 - No real Google Calendar event was created or deleted for this pass. Provider
   acceptance, response delivery, and restart recovery are covered by isolated
   tests, not a new live destructive canary.
@@ -452,13 +405,6 @@ sequencing.
 
 ## Next full-budget objectives
 
-1. Add an Alexa end-to-end interruption fixture that stops after provider
-   acceptance but before spoken-response delivery, reloads persisted state,
-   and proves the retry reconciles the same event without a second write.
-2. With owner approval, run one disposable real-device Alexa canary: request a
-   clearly named event, verify no event exists before the confirmation turn,
-   say `yes`, verify exactly one matching event, then explicitly approve its
-   deletion.
 3. Run one genuine Telegram or BlueBubbles compound request using a disposable
    event and bounded research question; verify the event title excludes the
    research clause, research starts only after draft delivery, and mutation
@@ -471,6 +417,5 @@ npm run services:status
 npm run integrations:status -- --json
 ```
 
-For Alexa, use the real device or authenticated simulator. For Telegram or
-BlueBubbles, use the existing owner thread. Do not run the mutating canaries
+For Telegram or BlueBubbles, use the existing owner thread. Do not run the mutating canaries
 without explicit approval for the exact disposable event and cleanup.

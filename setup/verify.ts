@@ -25,19 +25,16 @@ import { buildDirectAssistantContinuationPrompt } from '../src/direct-assistant-
 import { readEnvFile } from '../src/env.js';
 import {
   buildFieldTrialOperatorTruth,
-  type FieldTrialAlexaTruth,
   type FieldTrialCoreStatus,
   type FieldTrialLaunchCandidateStatus,
 } from '../src/field-trial-readiness.js';
 import {
-  assessAlexaLiveProof,
   buildRuntimeCommitTruth,
   detectWindowsInstallArtifacts,
   detectWindowsInstallMode,
   formatInstallModeLabel,
   readHostControlSnapshot,
   reconcileWindowsHostState,
-  type AlexaLiveProofAssessment,
   type HostControlSnapshot,
 } from '../src/host-control.js';
 import { resolveGroupIpcPath } from '../src/group-folder.js';
@@ -1120,8 +1117,6 @@ export function buildVerifyNextSteps(input: {
   hostLastError?: string;
   runtimeBackendLocalExecutionState?: string;
   runtimeBackendAuthState?: string;
-  alexaConfigured?: boolean;
-  alexaProof?: AlexaLiveProofAssessment | null;
   outwardResearchStatus?:
     | 'not_configured'
     | 'misconfigured_native_openai_endpoint'
@@ -1248,32 +1243,6 @@ export function buildVerifyNextSteps(input: {
     );
   }
 
-  if (
-    input.alexaConfigured &&
-    input.alexaProof?.proofState !== 'live_proven'
-  ) {
-    if (input.alexaProof?.proofKind === 'launch_only') {
-      steps.push(
-        'Alexa has only recorded a signed LaunchRequest on this host. Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant`, then `What am I forgetting?`, and confirm `npm run services:status` shows `ALEXA_LAST_SIGNED_REQUEST_TYPE=IntentRequest` with `ALEXA_LIVE_PROOF_FRESHNESS=fresh`.',
-      );
-    } else if (input.alexaProof?.proofKind === 'signed_intent_unhandled') {
-      steps.push(
-        'Alexa recorded a signed IntentRequest, but it did not qualify as handled live proof. Repeat `Open Andrea Assistant` then `What am I forgetting?`, and confirm `npm run services:status` shows a handled response source instead of `received_trusted_request`, `barrier`, or `fallback`.',
-      );
-    } else if (
-      input.alexaProof?.proofKind === 'handled_intent' &&
-      input.alexaProof.proofFreshness === 'stale'
-    ) {
-      steps.push(
-        'Alexa has handled signed proof on this host, but it is stale. Run one fresh real voice or authenticated simulator turn with `Open Andrea Assistant` then `What am I forgetting?`, and confirm `npm run services:status` shows `ALEXA_LIVE_PROOF_FRESHNESS=fresh`.',
-      );
-    } else {
-      steps.push(
-        'Alexa live proof still needs one fresh handled signed turn. Use a real device or authenticated Alexa Developer Console simulator, say `Open Andrea Assistant` then `What am I forgetting?`, and confirm `npm run services:status` records a fresh handled `IntentRequest`.',
-      );
-    }
-  }
-
   if (steps.length === 0) {
     return 'No missing requirements detected.';
   }
@@ -1289,10 +1258,8 @@ export function buildReportedMissingRequirements(input: {
     | 'missing_direct_provider_credentials'
     | 'quota_blocked'
     | 'degraded'
-      | 'available';
+    | 'available';
   credentialRuntimeProbeReason?: string;
-  alexaConfigured?: boolean;
-  alexaProof?: AlexaLiveProofAssessment | null;
 }): string[] {
   const reported = new Set<string>();
 
@@ -1303,7 +1270,8 @@ export function buildReportedMissingRequirements(input: {
         ? 'outward_research_quota_blocked'
         : input.outwardResearchStatus === 'degraded'
           ? 'outward_research_runtime_probe_failed'
-          : input.outwardResearchStatus === 'misconfigured_native_openai_endpoint'
+          : input.outwardResearchStatus ===
+              'misconfigured_native_openai_endpoint'
             ? 'outward_research_endpoint_misconfigured'
             : null;
   const coreRuntimeRequirement =
@@ -1331,9 +1299,10 @@ export function buildReportedMissingRequirements(input: {
     ) {
       reported.add(
         requirement === 'credential_runtime_unusable' &&
-          !['local_gateway_unhealthy', 'core_runtime_model_alias_mismatch'].includes(
-            coreRuntimeRequirement,
-          )
+          ![
+            'local_gateway_unhealthy',
+            'core_runtime_model_alias_mismatch',
+          ].includes(coreRuntimeRequirement)
           ? 'core_runtime_runtime_probe_failed'
           : coreRuntimeRequirement,
       );
@@ -1342,74 +1311,7 @@ export function buildReportedMissingRequirements(input: {
     reported.add(requirement);
   }
 
-  if (input.alexaConfigured && input.alexaProof?.proofState !== 'live_proven') {
-    reported.add(
-      input.alexaProof?.proofKind === 'handled_intent' &&
-        input.alexaProof.proofFreshness === 'stale'
-        ? 'alexa_live_signed_turn_stale'
-        : 'alexa_live_signed_turn_missing',
-    );
-  }
-
   return [...reported];
-}
-
-export function buildVerifyAlexaProofAssessment(
-  alexaProof: AlexaLiveProofAssessment,
-  fieldTrialAlexa: FieldTrialAlexaTruth,
-): AlexaLiveProofAssessment {
-  if (
-    fieldTrialAlexa.proofState !== 'live_proven' ||
-    alexaProof.proofState === 'live_proven'
-  ) {
-    return alexaProof;
-  }
-
-  const handledProofUpdatedAt =
-    fieldTrialAlexa.lastHandledProofAt !== 'none'
-      ? fieldTrialAlexa.lastHandledProofAt
-      : alexaProof.lastHandledProofIntent?.updatedAt ||
-        alexaProof.lastSignedRequest?.updatedAt ||
-        new Date(0).toISOString();
-  const handledProofIntentName =
-    fieldTrialAlexa.lastHandledProofIntent !== 'none'
-      ? fieldTrialAlexa.lastHandledProofIntent
-      : alexaProof.lastHandledProofIntent?.intentName || null;
-  const handledProofResponseSource =
-    fieldTrialAlexa.lastHandledProofResponseSource !== 'none'
-      ? fieldTrialAlexa.lastHandledProofResponseSource
-      : alexaProof.lastHandledProofIntent?.responseSource ||
-        'pilot_recent_success';
-
-  return {
-    ...alexaProof,
-    lastHandledProofIntent: handledProofIntentName
-      ? {
-          updatedAt: handledProofUpdatedAt,
-          requestId:
-            alexaProof.lastHandledProofIntent?.requestId ||
-            `field-trial:${handledProofIntentName}:${handledProofUpdatedAt}`,
-          requestType: 'IntentRequest',
-          intentName: handledProofIntentName,
-          applicationIdVerified: true,
-          linkingResolved: true,
-          groupFolder: alexaProof.lastHandledProofIntent?.groupFolder || 'main',
-          responseSource: handledProofResponseSource,
-        }
-      : (alexaProof.lastHandledProofIntent ?? null),
-    proofState: fieldTrialAlexa.proofState,
-    proofKind: fieldTrialAlexa.proofKind,
-    proofFreshness: fieldTrialAlexa.proofFreshness,
-    proofAgeMs:
-      fieldTrialAlexa.proofAgeMinutes == null
-        ? alexaProof.proofAgeMs
-        : fieldTrialAlexa.proofAgeMinutes * 60 * 1000,
-    proofAgeMinutes: fieldTrialAlexa.proofAgeMinutes,
-    proofAgeLabel: fieldTrialAlexa.proofAgeLabel,
-    blocker: fieldTrialAlexa.blocker,
-    detail: fieldTrialAlexa.detail,
-    nextAction: fieldTrialAlexa.nextAction,
-  };
 }
 
 export interface CredentialStatusInput {
@@ -1458,9 +1360,9 @@ export function determineCredentialStatus(
       ? 'openai_compat'
       : input.hasAutoLocalGatewayCredential
         ? 'openai_compat_local_gateway_auto'
-      : hasOneCliCredential
-        ? 'onecli'
-        : 'missing';
+        : hasOneCliCredential
+          ? 'onecli'
+          : 'missing';
 
   const credentialSources = [
     ...(input.hasAnthropicDirectCredential || hasOpenAiRuntimeCredential
@@ -1530,7 +1432,8 @@ export function resolveVerifyStatus(input: {
   launchNextSteps: string[];
   assistantExecutionProbe: AssistantExecutionProbeResult;
 }): VerifyStatusResolution {
-  const assistantExecutionUsable = input.assistantExecutionProbe.status === 'ok';
+  const assistantExecutionUsable =
+    input.assistantExecutionProbe.status === 'ok';
   const nextSteps = input.launchNextSteps.filter(Boolean).join(' | ');
   const detail = truncateDetail(
     [
@@ -1546,7 +1449,6 @@ export function resolveVerifyStatus(input: {
 
   if (
     input.launchCandidateStatus === 'core_ready' ||
-    input.launchCandidateStatus === 'core_ready_with_manual_surface_sync' ||
     input.launchCandidateStatus === 'provider_blocked_but_core_usable'
   ) {
     return {
@@ -1642,11 +1544,6 @@ export async function run(_args: string[]): Promise<void> {
     projectRoot,
     runtimeAuditState: hostSnapshot?.runtimeAuditState,
   });
-  const alexaProof = assessAlexaLiveProof({ projectRoot });
-  const alexaLastSignedRequestType =
-    alexaProof.lastSignedRequest?.requestType || 'none';
-  const alexaLastSignedRequestAt =
-    alexaProof.lastSignedRequest?.updatedAt || 'none';
 
   if (!nodeOk && platform === 'windows' && hostSnapshot?.nodeRuntime) {
     nodeOk = hostSnapshot.nodeRuntime.version.startsWith('22.');
@@ -1791,18 +1688,18 @@ export async function run(_args: string[]): Promise<void> {
   );
   const hasAutoLocalGatewayCredential = Boolean(
     localGatewayState?.endpoint &&
-      hasDirectOpenAiProviderCredential &&
-      !nativeOpenAiEndpointMisconfig &&
-      !configuredOpenAiCompatibleEndpoint &&
-      !hasAnthropicDirectCredential,
+    hasDirectOpenAiProviderCredential &&
+    !nativeOpenAiEndpointMisconfig &&
+    !configuredOpenAiCompatibleEndpoint &&
+    !hasAnthropicDirectCredential,
   );
   const openAiCompatibleEndpoint =
     configuredOpenAiCompatibleEndpoint ||
     (hasAutoLocalGatewayCredential ? localGatewayState?.endpoint || '' : '');
   const hasOpenAiCompatibleCredential = Boolean(
     configuredOpenAiCompatibleEndpoint &&
-      openAiApiKey &&
-      !nativeOpenAiEndpointMisconfig,
+    openAiApiKey &&
+    !nativeOpenAiEndpointMisconfig,
   );
   const onecliCredentialState = await detectOneCliCredentialKeys();
   const coreRuntimeCredentialStatus = determineCredentialStatus({
@@ -1816,7 +1713,8 @@ export async function run(_args: string[]): Promise<void> {
   const coreRuntimeCredentialMode = coreRuntimeCredentialStatus.credentialMode;
   const coreRuntimeCredentialSources =
     coreRuntimeCredentialStatus.credentialSources;
-  const onecliCredentialStatus = coreRuntimeCredentialStatus.onecliCredentialStatus;
+  const onecliCredentialStatus =
+    coreRuntimeCredentialStatus.onecliCredentialStatus;
   const credentials =
     hasDirectOpenAiProviderCredential || coreRuntimeCredentials === 'configured'
       ? 'configured'
@@ -1845,10 +1743,6 @@ export async function run(_args: string[]): Promise<void> {
     configuredEndpoint: openAiCompatibleEndpoint,
     gatewayState: localGatewayState,
   });
-  const alexaEnvVars = readEnvFile(['ALEXA_SKILL_ID']);
-  const alexaConfigured = Boolean(
-    process.env.ALEXA_SKILL_ID || alexaEnvVars.ALEXA_SKILL_ID,
-  );
 
   const credentialRuntimeProbe =
     probeEndpoints.length > 0 && coreRuntimeCredentials !== 'missing'
@@ -2038,7 +1932,8 @@ export async function run(_args: string[]): Promise<void> {
 
   const missingRequirements: string[] = [];
   if (!nodeOk) missingRequirements.push('node_22');
-  if (coreRuntimeCredentials === 'missing') missingRequirements.push('credentials');
+  if (coreRuntimeCredentials === 'missing')
+    missingRequirements.push('credentials');
   if (!anyChannelConfigured) missingRequirements.push('channel_auth');
   if (registeredGroups === 0) missingRequirements.push('registered_groups');
   if (service === 'config_failed') {
@@ -2089,28 +1984,18 @@ export async function run(_args: string[]): Promise<void> {
       | 'degraded'
       | 'available',
   });
-  const effectiveAlexaProof = buildVerifyAlexaProofAssessment(
-    alexaProof,
-    fieldTrialTruth.alexa,
-  );
 
   const externalBlockers: string[] = [];
   if (outwardResearchStatus === 'missing_direct_provider_credentials') {
-    externalBlockers.push('outward_research_direct_provider_credentials_missing');
+    externalBlockers.push(
+      'outward_research_direct_provider_credentials_missing',
+    );
   } else if (outwardResearchStatus === 'quota_blocked') {
     externalBlockers.push('outward_research_quota_blocked');
   } else if (outwardResearchStatus === 'degraded') {
     externalBlockers.push('outward_research_runtime_probe_failed');
   } else if (outwardResearchStatus === 'misconfigured_native_openai_endpoint') {
     externalBlockers.push('outward_research_endpoint_misconfigured');
-  }
-  if (alexaConfigured && effectiveAlexaProof.proofState !== 'live_proven') {
-    externalBlockers.push(
-      effectiveAlexaProof.proofKind === 'handled_intent' &&
-        effectiveAlexaProof.proofFreshness === 'stale'
-        ? 'alexa_live_signed_turn_stale'
-        : 'alexa_live_signed_turn_missing',
-    );
   }
 
   const legacyNextSteps = buildVerifyNextSteps({
@@ -2122,8 +2007,6 @@ export async function run(_args: string[]): Promise<void> {
     hostLastError,
     runtimeBackendLocalExecutionState,
     runtimeBackendAuthState,
-    alexaConfigured,
-    alexaProof: effectiveAlexaProof,
     outwardResearchStatus: outwardResearchStatus as
       | 'not_configured'
       | 'misconfigured_native_openai_endpoint'
@@ -2137,31 +2020,25 @@ export async function run(_args: string[]): Promise<void> {
     missingRequirements,
     outwardResearchStatus,
     credentialRuntimeProbeReason: credentialRuntimeProbe.reason,
-    alexaConfigured,
-    alexaProof: effectiveAlexaProof,
   });
 
   const launchCandidateStatus = fieldTrialTruth.launchReadiness.status;
   const launchNextSteps = [
     ...fieldTrialTruth.launchReadiness.coreBlockers,
-    ...fieldTrialTruth.launchReadiness.manualSyncSteps,
     ...fieldTrialTruth.launchReadiness.optionalProviderNextActions,
     ...fieldTrialTruth.launchReadiness.proofFreshnessGaps,
   ];
   const nextSteps =
-    launchNextSteps.length > 0
-      ? launchNextSteps.join(' | ')
-      : legacyNextSteps;
+    launchNextSteps.length > 0 ? launchNextSteps.join(' | ') : legacyNextSteps;
 
   // Determine overall status
   const status =
     launchCandidateStatus === 'core_ready' ||
-    launchCandidateStatus === 'core_ready_with_manual_surface_sync' ||
     launchCandidateStatus === 'provider_blocked_but_core_usable'
       ? 'success'
       : launchCandidateStatus === 'near_live_only'
         ? 'attention_needed'
-      : 'failed';
+        : 'failed';
 
   logger.info({ status, channelAuth }, 'Verification complete');
 
@@ -2205,9 +2082,9 @@ export async function run(_args: string[]): Promise<void> {
       ? 'native_openai_unsupported_for_core_runtime'
       : hasAutoLocalGatewayCredential
         ? 'local_gateway_auto'
-      : openAiCompatibleEndpoint
-        ? 'anthropic_compatible_or_custom'
-        : 'not_configured',
+        : openAiCompatibleEndpoint
+          ? 'anthropic_compatible_or_custom'
+          : 'not_configured',
     ONECLI_STATUS: onecliCredentialStatus,
     ONECLI_CREDENTIAL_KEYS: onecliCredentialState.credentialKeys.join(','),
     CREDENTIAL_RUNTIME_PROBE: credentialRuntimeProbe.status,
@@ -2221,8 +2098,6 @@ export async function run(_args: string[]): Promise<void> {
     LAUNCH_CANDIDATE_STATUS: fieldTrialTruth.launchReadiness.status,
     CORE_STATUS: fieldTrialTruth.launchReadiness.coreStatus,
     LAUNCH_CANDIDATE_SUMMARY: fieldTrialTruth.launchReadiness.summary,
-    MANUAL_SYNC_STEPS:
-      fieldTrialTruth.launchReadiness.manualSyncSteps.join(' | ') || 'none',
     OPTIONAL_PROVIDER_BLOCKERS:
       fieldTrialTruth.launchReadiness.optionalProviderBlockers.join(' | ') ||
       'none',
@@ -2231,14 +2106,6 @@ export async function run(_args: string[]): Promise<void> {
       'none',
     PROOF_FRESHNESS_GAPS:
       fieldTrialTruth.launchReadiness.proofFreshnessGaps.join(' | ') || 'none',
-    ALEXA_MODEL_SYNC_STATUS:
-      fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus,
-    ALEXA_MODEL_HASH:
-      fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.interactionModelHash,
-    ALEXA_MODEL_LAST_SYNCED_HASH:
-      fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedHash,
-    ALEXA_MODEL_LAST_SYNCED_AT:
-      fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedAt,
     LOCAL_GATEWAY_HEALTH: localGatewayHealth.status,
     LOCAL_GATEWAY_HEALTH_REASON: localGatewayHealth.reason,
     LOCAL_GATEWAY_HEALTH_DETAIL: localGatewayHealth.detail || '',
@@ -2246,40 +2113,6 @@ export async function run(_args: string[]): Promise<void> {
     RUNTIME_BACKEND_AUTH_STATE: runtimeBackendAuthState,
     RUNTIME_BACKEND_LOCAL_EXECUTION_STATE: runtimeBackendLocalExecutionState,
     RUNTIME_BACKEND_DETAIL: runtimeBackendDetail,
-    ALEXA_LAST_SIGNED_REQUEST_TYPE: alexaLastSignedRequestType,
-    ALEXA_LAST_SIGNED_REQUEST_AT: alexaLastSignedRequestAt,
-    ALEXA_LAST_SIGNED_INTENT:
-      alexaProof.lastSignedRequest?.intentName || 'none',
-    ALEXA_LAST_SIGNED_RESPONSE_SOURCE:
-      alexaProof.lastSignedRequest?.responseSource || 'none',
-    ALEXA_LAST_HANDLED_PROOF_AT:
-      effectiveAlexaProof.lastHandledProofIntent?.updatedAt || 'none',
-    ALEXA_LAST_HANDLED_PROOF_INTENT:
-      effectiveAlexaProof.lastHandledProofIntent?.intentName || 'none',
-    ALEXA_LAST_HANDLED_PROOF_RESPONSE_SOURCE:
-      effectiveAlexaProof.lastHandledProofIntent?.responseSource || 'none',
-    ALEXA_LIVE_PROOF: alexaConfigured
-      ? effectiveAlexaProof.proofState
-      : 'not_configured',
-    ALEXA_LIVE_PROOF_KIND: alexaConfigured
-      ? effectiveAlexaProof.proofKind
-      : 'none',
-    ALEXA_LIVE_PROOF_FRESHNESS: alexaConfigured
-      ? effectiveAlexaProof.proofFreshness
-      : 'none',
-    ALEXA_LIVE_PROOF_AGE_MINUTES:
-      effectiveAlexaProof.proofAgeMinutes == null
-        ? 'none'
-        : effectiveAlexaProof.proofAgeMinutes,
-    ALEXA_LIVE_PROOF_AGE_LABEL: effectiveAlexaProof.proofAgeLabel,
-    ALEXA_LIVE_PROOF_RECOMMENDED_UTTERANCE:
-      fieldTrialTruth.alexa.recommendedUtterance,
-    ALEXA_LIVE_PROOF_CONFIRM_COMMAND: fieldTrialTruth.alexa.confirmCommand,
-    ALEXA_LIVE_PROOF_SUCCESS_SHAPE: fieldTrialTruth.alexa.successShape,
-    ALEXA_LIVE_PROOF_STALE_SHAPE: fieldTrialTruth.alexa.staleShape,
-    ALEXA_LIVE_PROOF_FAILURE_CHECKS: fieldTrialTruth.alexa.failureChecklist,
-    ALEXA_LIVE_PROOF_BLOCKER: fieldTrialTruth.alexa.blocker,
-    ALEXA_LIVE_PROOF_NEXT_ACTION: fieldTrialTruth.alexa.nextAction,
     TELEGRAM_LIVE_PROOF: fieldTrialTruth.telegram.proofState,
     TELEGRAM_LIVE_PROOF_DETAIL: fieldTrialTruth.telegram.detail,
     TELEGRAM_LIVE_PROOF_BLOCKER: fieldTrialTruth.telegram.blocker,
@@ -2313,18 +2146,18 @@ export async function run(_args: string[]): Promise<void> {
     PILOT_LOGGING_ENABLED: fieldTrialTruth.pilotIssues.loggingEnabled,
     PILOT_OPEN_ISSUES: fieldTrialTruth.pilotIssues.openCount,
     PILOT_LATEST_ISSUE_SUMMARY: fieldTrialTruth.pilotIssues.latestSummary,
-    JOURNEY_ORDINARY_CHAT_PROOF: fieldTrialTruth.journeys.ordinary_chat.proofState,
+    JOURNEY_ORDINARY_CHAT_PROOF:
+      fieldTrialTruth.journeys.ordinary_chat.proofState,
     JOURNEY_DAILY_GUIDANCE_PROOF:
       fieldTrialTruth.journeys.daily_guidance.proofState,
     JOURNEY_CANDACE_FOLLOWTHROUGH_PROOF:
       fieldTrialTruth.journeys.candace_followthrough.proofState,
     JOURNEY_MISSION_PLANNING_PROOF:
       fieldTrialTruth.journeys.mission_planning.proofState,
-    JOURNEY_WORK_COCKPIT_PROOF: fieldTrialTruth.journeys.work_cockpit.proofState,
+    JOURNEY_WORK_COCKPIT_PROOF:
+      fieldTrialTruth.journeys.work_cockpit.proofState,
     JOURNEY_CROSS_CHANNEL_HANDOFF_PROOF:
       fieldTrialTruth.journeys.cross_channel_handoff.proofState,
-    JOURNEY_ALEXA_ORIENTATION_PROOF:
-      fieldTrialTruth.journeys.alexa_orientation.proofState,
     BLUEBUBBLES_PROOF: fieldTrialTruth.bluebubbles.proofState,
     BLUEBUBBLES_PROOF_DETAIL: fieldTrialTruth.bluebubbles.detail,
     BLUEBUBBLES_PROOF_BLOCKER: fieldTrialTruth.bluebubbles.blocker,
@@ -2342,14 +2175,12 @@ export async function run(_args: string[]): Promise<void> {
     BLUEBUBBLES_REPLY_GATE: fieldTrialTruth.bluebubbles.replyGateMode,
     BLUEBUBBLES_MOST_RECENT_CHAT:
       fieldTrialTruth.bluebubbles.mostRecentEngagedChatJid,
-    BLUEBUBBLES_LAST_INBOUND:
-      fieldTrialTruth.bluebubbles.lastInboundObservedAt,
+    BLUEBUBBLES_LAST_INBOUND: fieldTrialTruth.bluebubbles.lastInboundObservedAt,
     BLUEBUBBLES_LAST_INBOUND_CHAT:
       fieldTrialTruth.bluebubbles.lastInboundChatJid,
     BLUEBUBBLES_LAST_INBOUND_SELF_AUTHORED:
       fieldTrialTruth.bluebubbles.lastInboundWasSelfAuthored,
-    BLUEBUBBLES_LAST_OUTBOUND:
-      fieldTrialTruth.bluebubbles.lastOutboundResult,
+    BLUEBUBBLES_LAST_OUTBOUND: fieldTrialTruth.bluebubbles.lastOutboundResult,
     BLUEBUBBLES_LAST_OUTBOUND_TARGET_KIND:
       fieldTrialTruth.bluebubbles.lastOutboundTargetKind,
     BLUEBUBBLES_LAST_OUTBOUND_TARGET:
@@ -2366,11 +2197,13 @@ export async function run(_args: string[]): Promise<void> {
     GOOGLE_CALENDAR_PROOF: fieldTrialTruth.googleCalendar.proofState,
     GOOGLE_CALENDAR_PROOF_DETAIL: fieldTrialTruth.googleCalendar.detail,
     GOOGLE_CALENDAR_PROOF_BLOCKER: fieldTrialTruth.googleCalendar.blocker,
-    GOOGLE_CALENDAR_PROOF_NEXT_ACTION: fieldTrialTruth.googleCalendar.nextAction,
+    GOOGLE_CALENDAR_PROOF_NEXT_ACTION:
+      fieldTrialTruth.googleCalendar.nextAction,
     IMAGE_GENERATION_PROOF: fieldTrialTruth.imageGeneration.proofState,
     IMAGE_GENERATION_PROOF_DETAIL: fieldTrialTruth.imageGeneration.detail,
     IMAGE_GENERATION_PROOF_BLOCKER: fieldTrialTruth.imageGeneration.blocker,
-    IMAGE_GENERATION_PROOF_NEXT_ACTION: fieldTrialTruth.imageGeneration.nextAction,
+    IMAGE_GENERATION_PROOF_NEXT_ACTION:
+      fieldTrialTruth.imageGeneration.nextAction,
     ASSISTANT_EXECUTION_PROBE: assistantExecutionProbe.status,
     ASSISTANT_EXECUTION_PROBE_REASON: assistantExecutionProbe.reason,
     ASSISTANT_EXECUTION_PROBE_DETAIL: assistantExecutionProbe.detail || '',

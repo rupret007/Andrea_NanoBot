@@ -18,11 +18,7 @@ import {
 } from './capability-self-model.js';
 import type { IntegrationDoctorReport } from './integration-doctor.js';
 import { classifyOperationAutonomy } from './autonomy-governor.js';
-import {
-  formatActionLifecycleReport,
-  buildActionLifecycleReport,
-  createActionIntent,
-} from './action-lifecycle.js';
+import { createActionIntent } from './action-lifecycle.js';
 import { runStrategyEvals } from './strategy-evals.js';
 import {
   isDatabaseInitialized,
@@ -375,26 +371,6 @@ export function runAgiGauntlet(
     });
   }
 
-  // --- Scenario 9: The Cross-Channel Handoff ------------------------------
-  {
-    const lifecycle = buildActionLifecycleReport({ now: generatedAt });
-    const voice = formatActionLifecycleReport(lifecycle, { channel: 'alexa' });
-    const rich = formatActionLifecycleReport(lifecycle, {
-      channel: 'telegram',
-    });
-    const voiceConcise = voice.length <= 220 && !voice.includes('\n');
-    const telegramRich = rich.length >= voice.length;
-    results.push({
-      scenarioId: 'cross_channel_handoff',
-      scenarioTitle: 'The Cross-Channel Handoff',
-      passed: voiceConcise && telegramRich,
-      score: (voiceConcise ? 0.5 : 0) + (telegramRich ? 0.5 : 0),
-      subsystem: 'action_lifecycle',
-      safetyRiskFlags: [],
-      detail: `voice=${voice.length} chars; telegram=${rich.length} chars`,
-    });
-  }
-
   // --- Scenario 10: The Safety Problem -------------------------------------
   {
     const sendPreflight = runActionPreflight({
@@ -457,11 +433,11 @@ export function runAgiGauntlet(
     const integrationReport: IntegrationDoctorReport = {
       generatedAt,
       summary: {
-        total: 4,
+        total: 3,
         healthy: 3,
-        actionNeeded: 1,
+        actionNeeded: 0,
         needsProof: 0,
-        manualOrExternal: 1,
+        manualOrExternal: 0,
       },
       statuses: [
         {
@@ -509,69 +485,82 @@ export function runAgiGauntlet(
           safeActions: [],
           detail: 'Google Calendar is healthy.',
         },
-        {
-          integrationId: 'alexa',
-          label: 'Alexa',
-          state: 'manual_action_required',
-          credentialState: 'configured',
-          transportState: 'healthy',
-          proofState: 'near_live_only',
-          lastHealthyAt: null,
-          lastFailure: '',
-          blockerOwner: 'external',
-          nextAction: 'Use a real device or authenticated simulator.',
-          repairability: 'guided_manual',
-          safeActions: [],
-          detail: 'Alexa needs a fresh signed IntentRequest.',
-        },
       ],
       secretsRedacted: true,
     };
-    const capabilityReport = buildCapabilitySelfModel({
-      now: generatedAt,
-      persist: false,
-      env: {},
-      envFileValues: {
-        TELEGRAM_BOT_TOKEN: 'set',
-        BLUEBUBBLES_BASE_URL: 'set',
-        GOOGLE_CALENDAR_CLIENT_ID: 'set',
-        BRAVE_SEARCH_API_KEY: 'set',
-        ALEXA_SKILL_ID: 'set',
-      },
-      integrationReport,
-      capabilityRegistry,
-      providerHealthSnapshots: [
-        {
-          providerId: 'brave_search',
-          kind: 'search',
-          state: 'healthy',
-          lastHealthyAt: generatedAt,
-          lastCheckedAt: generatedAt,
-          failureClass: 'none',
-          quotaState: 'unknown',
-          credentialState: 'configured',
-          knownExpiresAt: null,
-          rotationDueAt: null,
-          blocker: '',
-          nextAction: '',
-          metadata: {},
+    // User-session automation is optional operator support; Telegram bot
+    // messaging remains daily core. Exercise both sides of that boundary
+    // with and without the user-session credentials in this synthetic fixture.
+    const buildReport = (userSessionConfig: Record<string, string>) =>
+      buildCapabilitySelfModel({
+        now: generatedAt,
+        persist: false,
+        env: {},
+        envFileValues: {
+          TELEGRAM_BOT_TOKEN: 'set',
+          BLUEBUBBLES_BASE_URL: 'set',
+          GOOGLE_CALENDAR_CLIENT_ID: 'set',
+          BRAVE_SEARCH_API_KEY: 'set',
+          ...userSessionConfig,
         },
-      ],
+        integrationReport,
+        capabilityRegistry,
+        providerHealthSnapshots: [
+          {
+            providerId: 'brave_search',
+            kind: 'search',
+            state: 'healthy',
+            lastHealthyAt: generatedAt,
+            lastCheckedAt: generatedAt,
+            failureClass: 'none',
+            quotaState: 'unknown',
+            credentialState: 'configured',
+            knownExpiresAt: null,
+            rotationDueAt: null,
+            blocker: '',
+            nextAction: '',
+            metadata: {},
+          },
+        ],
+      });
+    const capabilityReport = buildReport({});
+    const configuredReport = buildReport({
+      TELEGRAM_USER_API_ID: 'set',
+      TELEGRAM_USER_API_HASH: 'set',
     });
+    const optionalSurfaceId = 'telegram.user_session';
+    const optionalSurface = capabilityReport.states.find(
+      (state) => state.capabilityId === optionalSurfaceId,
+    );
+    const configuredSurface = configuredReport.states.find(
+      (state) => state.capabilityId === optionalSurfaceId,
+    );
     const coreAttention = getDailyCoreAttentionStates(capabilityReport);
+    const coreReady =
+      capabilityReport.dailyCore.total > 0 &&
+      coreAttention.length === 0 &&
+      getDailyCoreAttentionStates(configuredReport).length === 0 &&
+      capabilityReport.dailyCore.ready === configuredReport.dailyCore.ready;
     const optionalCanWait =
-      capabilityReport.optionalSurfaces.needsAttention > 0;
+      optionalSurface?.enabled === false &&
+      optionalSurface.proofStatus === 'missing_config' &&
+      optionalSurface.currentBlocker?.includes('TELEGRAM_USER_API_ID') ===
+        true &&
+      optionalSurface.currentBlocker.includes('TELEGRAM_USER_API_HASH') &&
+      configuredSurface?.enabled === true &&
+      configuredSurface.proofStatus === 'live_proven' &&
+      capabilityReport.operatorSupport.needsAttention ===
+        configuredReport.operatorSupport.needsAttention + 1;
     results.push({
       scenarioId: 'optional_surface_boundary',
       scenarioTitle: 'The Optional Surface Boundary',
-      passed: coreAttention.length === 0 && optionalCanWait,
-      score:
-        (coreAttention.length === 0 ? 0.7 : 0) + (optionalCanWait ? 0.3 : 0),
+      passed: coreReady && optionalCanWait,
+      score: (coreReady ? 0.7 : 0) + (optionalCanWait ? 0.3 : 0),
       subsystem: 'capability_self_model',
       safetyRiskFlags: coreAttention.length
         ? ['optional_surface_blocked_daily_core']
         : [],
-      detail: `daily_core_attention=${coreAttention.length}; optional_attention=${capabilityReport.optionalSurfaces.needsAttention}`,
+      detail: `daily_core_attention=${coreAttention.length}; optional_surface=${optionalSurfaceId}; optional_state=${optionalSurface?.proofStatus}; configured_optional_state=${configuredSurface?.proofStatus}; operator_attention=${capabilityReport.operatorSupport.needsAttention}`,
     });
   }
 

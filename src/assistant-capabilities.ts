@@ -152,9 +152,9 @@ import {
 import { capturePilotIssue } from './pilot-mode.js';
 import { handleEverydayCaptureCommand } from './everyday-capture.js';
 import type {
-  AlexaCompanionGuidanceGoal,
-  AlexaConversationFollowupAction,
-  AlexaConversationSubjectKind,
+  AssistantCompanionGuidanceGoal,
+  AssistantConversationFollowupAction,
+  AssistantConversationSubjectKind,
   ChiefOfStaffContext,
   CompanionContinuationCandidate,
   CompanionHandoffPayload,
@@ -298,10 +298,8 @@ export type AssistantCapabilityCategory =
   | 'capture';
 
 export type AssistantCapabilityOutputShape =
-  | 'voice_brief'
   | 'chat_brief'
   | 'chat_rich'
-  | 'handoff_offer'
   | 'artifact_only';
 
 export type AssistantCapabilityHandlerKind =
@@ -324,7 +322,7 @@ type AssistantConversationTaskKind =
   | 'profile_setup';
 
 export interface AssistantCapabilityContext {
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   groupFolder?: string;
   chatJid?: string;
   ownerReviewAllowed?: boolean;
@@ -419,7 +417,7 @@ export interface AssistantCapabilityInput {
   timeWindowValue?: number | null;
   savedMaterialOnly?: boolean | null;
   replyStyle?: 'shorter' | 'warmer' | 'more_direct' | null;
-  followupAction?: AlexaConversationFollowupAction;
+  followupAction?: AssistantConversationFollowupAction;
   researchDepth?: 'brief' | 'standard' | 'deep';
   allowWebSearch?: boolean;
   personalContextMode?: 'auto' | 'explicit' | 'disabled';
@@ -429,7 +427,7 @@ export interface AssistantCapabilityInput {
 
 export interface AssistantCapabilityTrace {
   capabilityId: AssistantCapabilityId;
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   handlerKind: AssistantCapabilityHandlerKind;
   responseSource:
     | 'local_companion'
@@ -451,9 +449,9 @@ export interface AssistantCapabilityTrace {
 
 export interface AssistantCapabilityConversationSeed {
   flowKey: string;
-  subjectKind: AlexaConversationSubjectKind;
+  subjectKind: AssistantConversationSubjectKind;
   summaryText: string;
-  guidanceGoal: AlexaCompanionGuidanceGoal;
+  guidanceGoal: AssistantCompanionGuidanceGoal;
   subjectData?: {
     personName?: string;
     activePeople?: string[];
@@ -511,7 +509,7 @@ export interface AssistantCapabilityConversationSeed {
     activeOperatingProfileId?: string;
     activeTaskKind?: AssistantConversationTaskKind;
   };
-  supportedFollowups?: AlexaConversationFollowupAction[];
+  supportedFollowups?: AssistantConversationFollowupAction[];
   prioritizationLens?:
     | 'general'
     | 'calendar'
@@ -545,7 +543,7 @@ export interface AssistantCapabilityResult {
   mediaResult?: MediaGenerationResult;
   conversationSeed?: AssistantCapabilityConversationSeed;
   handoffOffer?: string;
-  followupActions?: AlexaConversationFollowupAction[];
+  followupActions?: AssistantConversationFollowupAction[];
   handoffPayload?: CompanionHandoffPayload;
   continuationCandidate?: CompanionContinuationCandidate;
   messageAction?: MessageActionRecord;
@@ -580,16 +578,15 @@ export interface AssistantCapabilityDescriptor {
   optionalInputs: string[];
   requiresLinkedAccount: boolean;
   requiresConfirmation: boolean;
-  safeForAlexa: boolean;
+
   safeForTelegram: boolean;
   safeForBlueBubbles: boolean;
   operatorOnly: boolean;
   preferredOutputShape: {
-    alexa: AssistantCapabilityOutputShape;
     telegram: AssistantCapabilityOutputShape;
     bluebubbles: AssistantCapabilityOutputShape;
   };
-  followupActions: AlexaConversationFollowupAction[];
+  followupActions: AssistantConversationFollowupAction[];
   handlerKind: AssistantCapabilityHandlerKind;
   availabilityNote?: string;
   execute?: (
@@ -743,10 +740,10 @@ function buildDailyContinuationCandidate(
 }
 
 function extendCompanionFollowups(
-  followups: AlexaConversationFollowupAction[] | undefined,
+  followups: AssistantConversationFollowupAction[] | undefined,
   candidate: CompanionContinuationCandidate | undefined,
-): AlexaConversationFollowupAction[] {
-  const next = new Set<AlexaConversationFollowupAction>(followups || []);
+): AssistantConversationFollowupAction[] {
+  const next = new Set<AssistantConversationFollowupAction>(followups || []);
   if (candidate?.handoffPayload) {
     next.add('send_details');
   }
@@ -782,7 +779,7 @@ function buildDailySeed(
   id: AssistantCapabilityId,
   flowKey: string,
   summaryText: string,
-  guidanceGoal: AlexaCompanionGuidanceGoal,
+  guidanceGoal: AssistantCompanionGuidanceGoal,
   defaults: Partial<AssistantCapabilityConversationSeed> = {},
 ): AssistantCapabilityConversationSeed {
   return {
@@ -1294,13 +1291,7 @@ async function runRitualFollowthroughCapability(
     return {
       handled: true,
       capabilityId: descriptor.id,
-      replyText:
-        context.channel === 'alexa'
-          ? activation.replyText
-              .replace(/\s+-\s+/g, '. ')
-              .replace(/\n+/g, ' ')
-              .slice(0, 700)
-          : activation.replyText,
+      replyText: activation.replyText,
       outputShape: descriptor.preferredOutputShape[context.channel],
       conversationSeed: {
         flowKey: descriptor.id.replace(/\./g, '_'),
@@ -1383,20 +1374,17 @@ async function runRitualFollowthroughCapability(
       dailyResponse.context.supportedFollowups,
       continuationCandidate,
     );
-    const replyText =
-      context.channel === 'alexa'
-        ? dailyResponse.reply
-        : [
-            dailyResponse.reply,
-            followthroughLines.length > 1
-              ? '\nStill open right now:'
-              : followthroughLines.length === 1
-                ? '\nStill open right now:'
-                : null,
-            ...followthroughLines.map((line) => `- ${line}`),
-          ]
-            .filter(Boolean)
-            .join('\n');
+    const replyText = [
+      dailyResponse.reply,
+      followthroughLines.length > 1
+        ? '\nStill open right now:'
+        : followthroughLines.length === 1
+          ? '\nStill open right now:'
+          : null,
+      ...followthroughLines.map((line) => `- ${line}`),
+    ]
+      .filter(Boolean)
+      .join('\n');
     return {
       handled: true,
       capabilityId: descriptor.id,
@@ -1446,12 +1434,10 @@ async function runRitualFollowthroughCapability(
   const fallbackText =
     followthroughLines.length === 0
       ? 'Nothing is standing out as an active follow-through risk right now.'
-      : context.channel === 'alexa'
-        ? followthroughLines[0]!
-        : [
-            'Follow-through right now:',
-            ...followthroughLines.map((line) => `- ${line}`),
-          ].join('\n');
+      : [
+          'Follow-through right now:',
+          ...followthroughLines.map((line) => `- ${line}`),
+        ].join('\n');
   return {
     handled: true,
     capabilityId: descriptor.id,
@@ -1553,7 +1539,7 @@ function formatResearchBlueBubblesReply(
   return lines.filter(Boolean).join('\n');
 }
 
-function formatResearchAlexaReply(
+function buildResearchContinuationSummary(
   result: ResearchResult,
   options: ResearchReplyFormattingOptions = {},
 ): {
@@ -1585,7 +1571,7 @@ function buildResearchContinuationCandidate(
   descriptor: AssistantCapabilityDescriptor,
   query: string,
   result: ResearchResult,
-  voice: ReturnType<typeof formatResearchAlexaReply>,
+  voice: ReturnType<typeof buildResearchContinuationSummary>,
   telegramReply: string,
 ): CompanionContinuationCandidate {
   const followupSuggestions =
@@ -1678,13 +1664,13 @@ function summarizeKnowledgeSourceList(
   hits?: ResearchSupportingSource[],
 ): {
   telegram: string;
-  alexa: string;
+
   bluebubbles: string;
 } {
   if (sources.length === 0) {
     return {
       telegram: 'I do not have any matching saved sources yet.',
-      alexa: 'I do not have any matching saved sources yet.',
+
       bluebubbles: 'I do not have any matching saved sources yet.',
     };
   }
@@ -1706,14 +1692,9 @@ function summarizeKnowledgeSourceList(
     );
   }
 
-  const alexaLead =
-    sources.length === 1
-      ? `I found one saved source: ${sources[0]!.title}.`
-      : `I found ${sources.length} saved sources. The strongest match is ${sources[0]!.title}.`;
-
   return {
     telegram: telegramLines.join('\n'),
-    alexa: alexaLead,
+
     bluebubbles: [
       'Saved sources:',
       ...sources.slice(0, 3).map((source) => `- ${source.title}`),
@@ -1744,17 +1725,6 @@ function buildKnowledgeSourceExplainReply(
     topic.length > 0
       ? `They were the strongest saved matches for "${topic}".`
       : 'They were the strongest saved matches in your library.';
-
-  if (channel === 'alexa') {
-    const names = supportingSources.slice(0, 3).map((source) => source.title);
-    const joinedNames =
-      names.length === 1
-        ? names[0]
-        : names.length === 2
-          ? `${names[0]} and ${names[1]}`
-          : `${names[0]}, ${names[1]}, and ${names[2]}`;
-    return `I would use ${joinedNames} because ${reason.toLowerCase()}`;
-  }
 
   if (channel === 'bluebubbles') {
     return [
@@ -1807,16 +1777,14 @@ function inferKnowledgeRequestedSourceIds(
 
 function resolveResearchTraceSource(
   result: ResearchResult,
-  context: AssistantCapabilityContext,
+  _context: AssistantCapabilityContext,
 ): AssistantCapabilityTrace['responseSource'] {
   if (
     result.providerUsed === 'openai_responses' ||
     result.providerUsed === 'brave_search_plus_openai' ||
     result.providerUsed === 'hybrid'
   ) {
-    return result.handoffOption && context.channel === 'alexa'
-      ? 'research_handoff'
-      : 'research_openai';
+    return 'research_openai';
   }
   if (
     result.providerUsed === 'brave_search_plus_minimax' ||
@@ -1841,18 +1809,15 @@ async function runResearchCapability(
     return {
       handled: true,
       capabilityId: descriptor.id,
-      replyText:
-        context.channel === 'alexa'
-          ? context.priorSubjectData.researchRouteExplanation
-          : [
-              '*Why this route*',
-              context.priorSubjectData.researchRouteExplanation,
-              context.priorSubjectData.researchProviderUsed
-                ? `Provider: ${context.priorSubjectData.researchProviderUsed}`
-                : '',
-            ]
-              .filter(Boolean)
-              .join('\n'),
+      replyText: [
+        '*Why this route*',
+        context.priorSubjectData.researchRouteExplanation,
+        context.priorSubjectData.researchProviderUsed
+          ? `Provider: ${context.priorSubjectData.researchProviderUsed}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
       outputShape: descriptor.preferredOutputShape[context.channel],
       conversationSeed: {
         flowKey: descriptor.id.replace(/\./g, '_'),
@@ -1880,7 +1845,7 @@ async function runResearchCapability(
     groupFolder: context.groupFolder,
     now: context.now,
     conversationSummary: context.conversationSummary,
-    preferBrief: context.channel === 'alexa',
+    preferBrief: false,
     requestedDepth: input.researchDepth,
     allowWebSearch: input.allowWebSearch,
     personalContextMode: input.personalContextMode,
@@ -1889,7 +1854,7 @@ async function runResearchCapability(
   const formattingOptions: ResearchReplyFormattingOptions = {
     followupMode: input.researchFollowupMode,
   };
-  const voice = formatResearchAlexaReply(result, formattingOptions);
+  const voice = buildResearchContinuationSummary(result, formattingOptions);
   const telegramReply = formatResearchTelegramReply(result, formattingOptions);
   const bluebubblesReply = formatResearchBlueBubblesReply(
     result,
@@ -1910,15 +1875,8 @@ async function runResearchCapability(
     handled: true,
     capabilityId: descriptor.id,
     replyText:
-      context.channel === 'alexa'
-        ? voice.replyText
-        : context.channel === 'bluebubbles'
-          ? bluebubblesReply
-          : telegramReply,
-    outputShape:
-      result.handoffOption && context.channel === 'alexa'
-        ? 'handoff_offer'
-        : descriptor.preferredOutputShape[context.channel],
+      context.channel === 'bluebubbles' ? bluebubblesReply : telegramReply,
+    outputShape: descriptor.preferredOutputShape[context.channel],
     researchResult: result,
     handoffOffer: voice.handoffOffer,
     handoffPayload: continuationCandidate.handoffPayload,
@@ -2115,7 +2073,7 @@ function buildCommunicationConversationSeed(input: {
   messageActionSummary?: string;
   recentTextReviewJson?: string;
   continuationCandidate?: CompanionContinuationCandidate;
-  supportedFollowups?: AlexaConversationFollowupAction[];
+  supportedFollowups?: AssistantConversationFollowupAction[];
 }): AssistantCapabilityConversationSeed {
   return {
     flowKey: input.descriptor.id.replace(/\./g, '_'),
@@ -2209,7 +2167,7 @@ function getChiefOfStaffGuidanceGoal(
     | 'decision_support'
     | 'explain'
     | 'configure',
-): AlexaCompanionGuidanceGoal {
+): AssistantCompanionGuidanceGoal {
   switch (mode) {
     case 'prepare':
       return 'meeting_prep';
@@ -2230,7 +2188,7 @@ function buildChiefOfStaffConversationSeed(input: {
   conversationFocus: string;
   chiefOfStaffContext: ChiefOfStaffContext;
   continuationCandidate?: CompanionContinuationCandidate;
-  supportedFollowups?: AlexaConversationFollowupAction[];
+  supportedFollowups?: AssistantConversationFollowupAction[];
 }): AssistantCapabilityConversationSeed {
   return {
     flowKey: input.descriptor.id.replace(/\./g, '_'),
@@ -2318,7 +2276,7 @@ function buildMissionConversationSeed(input: {
   summaryText: string;
   conversationFocus: string;
   continuationCandidate?: CompanionContinuationCandidate;
-  supportedFollowups?: AlexaConversationFollowupAction[];
+  supportedFollowups?: AssistantConversationFollowupAction[];
 }): AssistantCapabilityConversationSeed {
   return {
     flowKey: input.descriptor.id.replace(/\./g, '_'),
@@ -2368,7 +2326,7 @@ async function runKnowledgeSaveCapability(
         filePath,
         title,
         tags,
-        sourceChannel: context.channel === 'alexa' ? 'alexa' : context.channel,
+        sourceChannel: context.channel,
       })
     : saveKnowledgeSource({
         groupFolder: context.groupFolder,
@@ -2376,7 +2334,7 @@ async function runKnowledgeSaveCapability(
         content: pickKnowledgeSaveContent(context, input),
         sourceType: resolveKnowledgeSourceType(context, input),
         tags,
-        sourceChannel: context.channel === 'alexa' ? 'alexa' : context.channel,
+        sourceChannel: context.channel,
       });
 
   return {
@@ -2410,7 +2368,7 @@ function buildKnowledgeSourcesReply(
   supportingSources?: ResearchSupportingSource[],
 ): string {
   const formatted = summarizeKnowledgeSourceList(sources, supportingSources);
-  if (channel === 'alexa') return formatted.alexa;
+
   if (channel === 'bluebubbles') return formatted.bluebubbles;
   return formatted.telegram;
 }
@@ -2426,7 +2384,7 @@ async function runKnowledgeListCapability(
     groupFolder: context.groupFolder,
     query,
     requestedSourceIds: inferKnowledgeRequestedSourceIds(query, context),
-    limit: context.channel === 'alexa' ? 3 : 5,
+    limit: 5,
   });
   const replyText = buildKnowledgeSourcesReply(
     context.channel,
@@ -2484,15 +2442,12 @@ async function runKnowledgeResearchCapability(
     descriptor.id === 'knowledge.explain_sources' &&
     context.priorSubjectData?.knowledgeSourceMatches?.length
   ) {
-    const replyText =
-      context.channel === 'alexa'
-        ? `I used ${context.priorSubjectData.knowledgeSourceTitles?.slice(0, 2).join(' and ')} because they were the strongest saved matches.`
-        : [
-            '*Sources used*',
-            ...context.priorSubjectData.knowledgeSourceMatches.map(
-              (match) => `- ${match}`,
-            ),
-          ].join('\n');
+    const replyText = [
+      '*Sources used*',
+      ...context.priorSubjectData.knowledgeSourceMatches.map(
+        (match) => `- ${match}`,
+      ),
+    ].join('\n');
     return {
       handled: true,
       capabilityId: descriptor.id,
@@ -2539,7 +2494,7 @@ async function runKnowledgeResearchCapability(
       groupFolder: context.groupFolder,
       query: topicQuery,
       requestedSourceIds: inferKnowledgeRequestedSourceIds(query, context),
-      limit: context.channel === 'alexa' ? 2 : 4,
+      limit: 4,
     });
     const supportingSources = dedupeSupportingSources(
       search.hits.map((hit) => ({
@@ -2599,7 +2554,7 @@ async function runKnowledgeResearchCapability(
     groupFolder: context.groupFolder,
     now: context.now,
     conversationSummary: context.conversationSummary,
-    preferBrief: context.channel === 'alexa',
+    preferBrief: false,
     savedMaterialMode,
     requestedSourceIds,
     requestedDepth: input.researchDepth,
@@ -2608,7 +2563,7 @@ async function runKnowledgeResearchCapability(
   });
   if (!researchResult.handled) return { handled: false };
 
-  const voice = formatResearchAlexaReply(researchResult);
+  const voice = buildResearchContinuationSummary(researchResult);
   const supportingSourceIds = (researchResult.supportingSources || [])
     .map((source) => source.sourceId)
     .filter((sourceId): sourceId is string => Boolean(sourceId));
@@ -2650,15 +2605,10 @@ async function runKnowledgeResearchCapability(
     handled: true,
     capabilityId: descriptor.id,
     replyText:
-      context.channel === 'alexa'
-        ? voice.replyText
-        : context.channel === 'bluebubbles'
-          ? formatResearchBlueBubblesReply(researchResult)
-          : telegramReply,
-    outputShape:
-      researchResult.handoffOption && context.channel === 'alexa'
-        ? 'handoff_offer'
-        : descriptor.preferredOutputShape[context.channel],
+      context.channel === 'bluebubbles'
+        ? formatResearchBlueBubblesReply(researchResult)
+        : telegramReply,
+    outputShape: descriptor.preferredOutputShape[context.channel],
     researchResult,
     handoffOffer: voice.handoffOffer,
     handoffPayload: continuationCandidate.handoffPayload,
@@ -5389,168 +5339,164 @@ async function runCommunicationDraftCapability(
           reviewActionSourceKey,
         )
       : undefined;
-  const messageAction =
-    context.channel === 'alexa' || !context.chatJid
+  const messageAction = !context.chatJid
+    ? undefined
+    : namedSummaryTarget?.target.isGroup
       ? undefined
-      : namedSummaryTarget?.target.isGroup
-        ? undefined
-        : namedSummaryTarget
-          ? (() => {
-              const dedupeSeed = clipText(
-                normalizeText(draft.draftText || replyText).toLowerCase(),
-                80,
-              );
-              const exactCommunicationThreadId =
-                draft.thread?.channel === 'bluebubbles' &&
-                draft.thread.channelChatJid ===
-                  namedSummaryTarget.target.chatJid
-                  ? draft.thread.id
-                  : undefined;
-              return createOrRefreshMessageActionFromDraft({
+      : namedSummaryTarget
+        ? (() => {
+            const dedupeSeed = clipText(
+              normalizeText(draft.draftText || replyText).toLowerCase(),
+              80,
+            );
+            const exactCommunicationThreadId =
+              draft.thread?.channel === 'bluebubbles' &&
+              draft.thread.channelChatJid === namedSummaryTarget.target.chatJid
+                ? draft.thread.id
+                : undefined;
+            return createOrRefreshMessageActionFromDraft({
+              groupFolder: context.groupFolder,
+              presentationChannel: context.channel,
+              presentationChatJid: context.chatJid,
+              presentationThreadId: null,
+              sourceType: 'manual_prompt',
+              sourceKey: `named-messages-summary-draft:${namedSummaryTarget.target.chatJid}:${dedupeSeed}`,
+              sourceSummary:
+                draft.summaryText ||
+                `Draft text message to ${namedSummaryTarget.target.displayName}.`,
+              draftProvenance: draft.draftProvenance,
+              draftText: draft.draftText || replyText,
+              personName: namedSummaryTarget.target.displayName,
+              threadTitle: namedSummaryTarget.target.displayName,
+              communicationThreadId: exactCommunicationThreadId,
+              communicationContext: 'reply_followthrough',
+              namedMessagesSummary: buildNamedMessagesSummaryActionLink({
+                validation: namedSummaryTarget,
+                groupFolder: context.groupFolder,
+                presentationChatJid: context.chatJid,
+              }),
+              forceApproval: true,
+              targetOverride: {
+                kind: 'external_thread',
+                chatJid: namedSummaryTarget.target.chatJid,
+                threadId: null,
+                replyToMessageId: null,
+                isGroup: namedSummaryTarget.target.isGroup,
+                personName: namedSummaryTarget.target.displayName,
+                blueBubblesCreateChatAddress:
+                  namedSummaryTarget.target.blueBubblesCreateChatAddress,
+              },
+              targetChannelOverride: 'bluebubbles',
+              now: context.now,
+            });
+          })()
+        : draft.thread?.id
+          ? reusableReviewAction &&
+            reusableReviewAction.sendStatus !== 'sent' &&
+            reusableReviewAction.sendStatus !== 'skipped'
+            ? reusableReviewAction
+            : createOrRefreshMessageActionFromDraft({
                 groupFolder: context.groupFolder,
                 presentationChannel: context.channel,
                 presentationChatJid: context.chatJid,
-                presentationThreadId: null,
-                sourceType: 'manual_prompt',
-                sourceKey: `named-messages-summary-draft:${namedSummaryTarget.target.chatJid}:${dedupeSeed}`,
+                presentationThreadId: priorContextForDraft?.threadId || null,
+                sourceType: 'communication_thread',
+                sourceKey:
+                  reviewActionSourceKey ||
+                  selectedReviewItem?.communicationThreadId ||
+                  draft.thread.id,
                 sourceSummary:
+                  selectedReviewItem?.summaryText ||
                   draft.summaryText ||
-                  `Draft text message to ${namedSummaryTarget.target.displayName}.`,
+                  'Drafted reply',
                 draftProvenance: draft.draftProvenance,
                 draftText: draft.draftText || replyText,
-                personName: namedSummaryTarget.target.displayName,
-                threadTitle: namedSummaryTarget.target.displayName,
-                communicationThreadId: exactCommunicationThreadId,
+                personName:
+                  selectedReviewItem?.chatLabel ||
+                  draft.linkedSubjects[0]?.displayName ||
+                  draft.thread.title,
+                threadTitle:
+                  selectedReviewItem?.chatLabel ||
+                  draft.linkedLifeThreads[0]?.title ||
+                  draft.thread.title,
+                communicationThreadId:
+                  selectedReviewItem?.communicationThreadId || draft.thread.id,
+                threadId: draft.linkedLifeThreads[0]?.id,
                 communicationContext: 'reply_followthrough',
-                namedMessagesSummary: buildNamedMessagesSummaryActionLink({
-                  validation: namedSummaryTarget,
-                  groupFolder: context.groupFolder,
-                  presentationChatJid: context.chatJid,
-                }),
-                forceApproval: true,
-                targetOverride: {
-                  kind: 'external_thread',
-                  chatJid: namedSummaryTarget.target.chatJid,
-                  threadId: null,
-                  replyToMessageId: null,
-                  isGroup: namedSummaryTarget.target.isGroup,
-                  personName: namedSummaryTarget.target.displayName,
-                  blueBubblesCreateChatAddress:
-                    namedSummaryTarget.target.blueBubblesCreateChatAddress,
-                },
-                targetChannelOverride: 'bluebubbles',
+                recentTextReview: recentTextReviewActionLink,
+                forceApproval: Boolean(selectedReviewItem),
+                targetOverride:
+                  selectedReviewItem && selectedReviewTarget?.ok
+                    ? {
+                        kind: 'external_thread',
+                        chatJid: selectedReviewTarget.chatJid!,
+                        threadId: null,
+                        replyToMessageId: null,
+                        isGroup: selectedReviewTarget.isGroup || false,
+                        personName:
+                          selectedReviewTarget.personName ||
+                          selectedReviewItem.chatLabel,
+                      }
+                    : null,
+                targetChannelOverride:
+                  selectedReviewTargetChannel ??
+                  (selectedReviewItem
+                    ? selectedReviewItem.sourceChannel === 'telegram'
+                      ? 'telegram'
+                      : selectedReviewItem.sourceChannel === 'bluebubbles'
+                        ? 'bluebubbles'
+                        : selectedReviewTarget?.chatJid?.startsWith('tg:')
+                          ? 'telegram'
+                          : selectedReviewTarget?.chatJid?.startsWith('bb:')
+                            ? 'bluebubbles'
+                            : null
+                    : null),
                 now: context.now,
-              });
-            })()
-          : draft.thread?.id
-            ? reusableReviewAction &&
-              reusableReviewAction.sendStatus !== 'sent' &&
-              reusableReviewAction.sendStatus !== 'skipped'
-              ? reusableReviewAction
-              : createOrRefreshMessageActionFromDraft({
+              })
+          : context.channel === 'bluebubbles' &&
+              draft.linkedSubjects[0]?.displayName
+            ? (() => {
+                const resolvedTarget = resolveBlueBubblesThreadTargetByName(
+                  draft.linkedSubjects[0]!.displayName,
+                );
+                if (resolvedTarget.state !== 'resolved') {
+                  return undefined;
+                }
+                const dedupeSeed = clipText(
+                  normalizeText(draft.draftText || replyText).toLowerCase(),
+                  80,
+                );
+                return createOrRefreshMessageActionFromDraft({
                   groupFolder: context.groupFolder,
-                  presentationChannel: context.channel,
+                  presentationChannel: 'bluebubbles',
                   presentationChatJid: context.chatJid,
                   presentationThreadId: priorContextForDraft?.threadId || null,
-                  sourceType: 'communication_thread',
-                  sourceKey:
-                    reviewActionSourceKey ||
-                    selectedReviewItem?.communicationThreadId ||
-                    draft.thread.id,
+                  sourceType: 'manual_prompt',
+                  sourceKey: `bluebubbles-channel-draft:${resolvedTarget.target.chatJid}:${dedupeSeed}`,
                   sourceSummary:
-                    selectedReviewItem?.summaryText ||
                     draft.summaryText ||
-                    'Drafted reply',
+                    `Draft text message to ${resolvedTarget.target.displayName}.`,
                   draftProvenance: draft.draftProvenance,
                   draftText: draft.draftText || replyText,
-                  personName:
-                    selectedReviewItem?.chatLabel ||
-                    draft.linkedSubjects[0]?.displayName ||
-                    draft.thread.title,
+                  personName: resolvedTarget.target.displayName,
                   threadTitle:
-                    selectedReviewItem?.chatLabel ||
                     draft.linkedLifeThreads[0]?.title ||
-                    draft.thread.title,
-                  communicationThreadId:
-                    selectedReviewItem?.communicationThreadId ||
-                    draft.thread.id,
+                    resolvedTarget.target.displayName,
                   threadId: draft.linkedLifeThreads[0]?.id,
-                  communicationContext: 'reply_followthrough',
-                  recentTextReview: recentTextReviewActionLink,
-                  forceApproval: Boolean(selectedReviewItem),
-                  targetOverride:
-                    selectedReviewItem && selectedReviewTarget?.ok
-                      ? {
-                          kind: 'external_thread',
-                          chatJid: selectedReviewTarget.chatJid!,
-                          threadId: null,
-                          replyToMessageId: null,
-                          isGroup: selectedReviewTarget.isGroup || false,
-                          personName:
-                            selectedReviewTarget.personName ||
-                            selectedReviewItem.chatLabel,
-                        }
-                      : null,
-                  targetChannelOverride:
-                    selectedReviewTargetChannel ??
-                    (selectedReviewItem
-                      ? selectedReviewItem.sourceChannel === 'telegram'
-                        ? 'telegram'
-                        : selectedReviewItem.sourceChannel === 'bluebubbles'
-                          ? 'bluebubbles'
-                          : selectedReviewTarget?.chatJid?.startsWith('tg:')
-                            ? 'telegram'
-                            : selectedReviewTarget?.chatJid?.startsWith('bb:')
-                              ? 'bluebubbles'
-                              : null
-                      : null),
-                  now: context.now,
-                })
-            : context.channel === 'bluebubbles' &&
-                draft.linkedSubjects[0]?.displayName
-              ? (() => {
-                  const resolvedTarget = resolveBlueBubblesThreadTargetByName(
-                    draft.linkedSubjects[0]!.displayName,
-                  );
-                  if (resolvedTarget.state !== 'resolved') {
-                    return undefined;
-                  }
-                  const dedupeSeed = clipText(
-                    normalizeText(draft.draftText || replyText).toLowerCase(),
-                    80,
-                  );
-                  return createOrRefreshMessageActionFromDraft({
-                    groupFolder: context.groupFolder,
-                    presentationChannel: 'bluebubbles',
-                    presentationChatJid: context.chatJid,
-                    presentationThreadId:
-                      priorContextForDraft?.threadId || null,
-                    sourceType: 'manual_prompt',
-                    sourceKey: `bluebubbles-channel-draft:${resolvedTarget.target.chatJid}:${dedupeSeed}`,
-                    sourceSummary:
-                      draft.summaryText ||
-                      `Draft text message to ${resolvedTarget.target.displayName}.`,
-                    draftProvenance: draft.draftProvenance,
-                    draftText: draft.draftText || replyText,
+                  communicationContext: 'general',
+                  targetOverride: {
+                    kind: 'external_thread',
+                    chatJid: resolvedTarget.target.chatJid,
+                    threadId: null,
+                    replyToMessageId: null,
+                    isGroup: resolvedTarget.target.isGroup,
                     personName: resolvedTarget.target.displayName,
-                    threadTitle:
-                      draft.linkedLifeThreads[0]?.title ||
-                      resolvedTarget.target.displayName,
-                    threadId: draft.linkedLifeThreads[0]?.id,
-                    communicationContext: 'general',
-                    targetOverride: {
-                      kind: 'external_thread',
-                      chatJid: resolvedTarget.target.chatJid,
-                      threadId: null,
-                      replyToMessageId: null,
-                      isGroup: resolvedTarget.target.isGroup,
-                      personName: resolvedTarget.target.displayName,
-                    },
-                    targetChannelOverride: 'bluebubbles',
-                    now: context.now,
-                  });
-                })()
-              : undefined;
+                  },
+                  targetChannelOverride: 'bluebubbles',
+                  now: context.now,
+                });
+              })()
+            : undefined;
 
   let finalReplyText = namedSummaryTarget?.target.isGroup
     ? `${replyText}\n\nGroup draft only: this is unsent and not sendable from Andrea. I did not create any send controls.`
@@ -6234,10 +6180,8 @@ async function tryNamedOpenLoopMedia(
 
 function reminderChannelForNamedOpenLoop(
   channel: AssistantCapabilityContext['channel'],
-): 'telegram' | 'bluebubbles' | 'alexa' | 'internal' {
-  return channel === 'telegram' ||
-    channel === 'bluebubbles' ||
-    channel === 'alexa'
+): 'telegram' | 'bluebubbles' | 'internal' {
+  return channel === 'telegram' || channel === 'bluebubbles'
     ? channel
     : 'internal';
 }
@@ -6275,8 +6219,7 @@ function tryNamedOpenLoopRemind(
   }
   if (
     followup.kind === 'denied' ||
-    (exactTiming && context.ownerReviewAllowed !== true) ||
-    (delayTiming && context.channel === 'alexa')
+    (exactTiming && context.ownerReviewAllowed !== true)
   ) {
     return {
       handled: true,
@@ -6344,7 +6287,7 @@ function tryNamedOpenLoopRemind(
           timeZone: ownerTimeZone,
         },
       })
-    : delayTiming && context.channel !== 'alexa'
+    : delayTiming
       ? planNamedReplyDelayReminder({
           timing: delayTiming,
           receivedAt: context.currentMessageId
@@ -6757,10 +6700,7 @@ async function runUsefulDailyCommandCenterCapability(
   return {
     handled: true,
     capabilityId: descriptor.id,
-    replyText:
-      context.channel === 'alexa'
-        ? result.replyText.replace(/\n+/g, ' ').slice(0, 700)
-        : result.replyText,
+    replyText: result.replyText,
     outputShape: descriptor.preferredOutputShape[context.channel],
     conversationSeed: {
       flowKey: 'daily_command_center',
@@ -7133,7 +7073,7 @@ async function runMissionCapability(
       ),
       context: {
         ...context,
-        channel: context.channel === 'alexa' ? 'telegram' : context.channel,
+        channel: context.channel,
       },
       input: {
         text: executionContext.mission.objective,
@@ -7278,13 +7218,8 @@ async function runMediaCapability(
       handled: true,
       capabilityId: descriptor.id,
       replyText:
-        context.channel === 'alexa'
-          ? 'That media workflow is still a future hook.'
-          : 'That media workflow is still prepared, but not implemented yet.',
-      outputShape:
-        context.channel === 'alexa'
-          ? 'voice_brief'
-          : descriptor.preferredOutputShape[context.channel],
+        'That media workflow is still prepared, but not implemented yet.',
+      outputShape: descriptor.preferredOutputShape[context.channel],
       trace: buildCapabilityTrace(
         descriptor,
         context,
@@ -7313,15 +7248,9 @@ async function runMediaCapability(
     handled: true,
     capabilityId: descriptor.id,
     replyText: mediaResult.replyText || mediaResult.summaryText || 'Okay.',
-    outputShape:
-      context.channel === 'alexa'
-        ? 'handoff_offer'
-        : descriptor.preferredOutputShape[context.channel],
+    outputShape: descriptor.preferredOutputShape[context.channel],
     mediaResult,
-    handoffOffer:
-      context.channel === 'alexa'
-        ? 'I can generate that and send it to Telegram.'
-        : undefined,
+    handoffOffer: undefined,
     handoffPayload: continuationCandidate.handoffPayload,
     continuationCandidate,
     conversationSeed: {
@@ -7349,11 +7278,9 @@ async function runMediaCapability(
     trace: buildCapabilityTrace(
       descriptor,
       context,
-      context.channel === 'alexa'
-        ? 'media_handoff'
-        : mediaResult.providerUsed === 'openai_images'
-          ? 'media_openai'
-          : 'unavailable',
+      mediaResult.providerUsed === 'openai_images'
+        ? 'media_openai'
+        : 'unavailable',
       mediaResult.routeExplanation,
       mediaResult.debugPath,
     ),
@@ -7551,10 +7478,7 @@ async function runEverydayCaptureCapability(
       supportedFollowups,
       responseSource: 'local_companion',
     },
-    handoffOffer:
-      context.channel === 'alexa'
-        ? result.handoffOffer || undefined
-        : undefined,
+    handoffOffer: undefined,
     trace: buildCapabilityTrace(
       descriptor,
       context,
@@ -7575,12 +7499,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['text'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -7614,12 +7537,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['text'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -7658,12 +7580,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['text'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -7703,12 +7624,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['text'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -7748,12 +7668,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['text', 'personName'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -7802,12 +7721,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['text'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -7856,12 +7774,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: true,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -7877,12 +7794,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: true,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -7898,12 +7814,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -7920,12 +7835,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['text'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -7950,12 +7864,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -7976,12 +7889,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8002,12 +7914,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: true,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8028,12 +7939,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: true,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8054,12 +7964,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: true,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8080,12 +7989,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['text'],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8106,12 +8014,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['text'],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8132,12 +8039,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'handoff_offer',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8158,12 +8064,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'handoff_offer',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8184,12 +8089,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'handoff_offer',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8210,12 +8114,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'handoff_offer',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8236,12 +8139,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: false,
+
     safeForTelegram: true,
     safeForBlueBubbles: false,
     operatorOnly: true,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8257,12 +8159,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: false,
+
     safeForTelegram: true,
     safeForBlueBubbles: false,
     operatorOnly: true,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8278,12 +8179,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: false,
+
     safeForTelegram: true,
     safeForBlueBubbles: false,
     operatorOnly: true,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8299,19 +8199,18 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: false,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'handoff_offer',
       telegram: 'artifact_only',
       bluebubbles: 'artifact_only',
     },
     followupActions: [],
     handlerKind: 'edge_only',
     availabilityNote:
-      'Telegram image generation is wired when OpenAI credentials are configured; Alexa stays handoff-only',
+      'Telegram image generation is wired when OpenAI credentials are configured',
     execute: (context, input) =>
       runMediaCapability(
         CAPABILITY_DESCRIPTORS[24]!,
@@ -8327,12 +8226,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: false,
+
     safeForTelegram: true,
     safeForBlueBubbles: false,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'artifact_only',
       telegram: 'artifact_only',
       bluebubbles: 'artifact_only',
     },
@@ -8354,12 +8252,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: false,
+
     safeForTelegram: true,
     safeForBlueBubbles: false,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'artifact_only',
       telegram: 'artifact_only',
       bluebubbles: 'artifact_only',
     },
@@ -8381,12 +8278,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8407,12 +8303,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8433,12 +8328,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'handoff_offer',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8459,12 +8353,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'handoff_offer',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8485,12 +8378,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8511,12 +8403,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8537,12 +8428,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8563,12 +8453,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8589,12 +8478,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8615,12 +8503,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8641,12 +8528,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8667,12 +8553,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['personName'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8702,12 +8587,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['personName'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'handoff_offer',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8728,12 +8612,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['personName'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8762,12 +8645,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8788,12 +8670,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8822,12 +8703,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8855,12 +8735,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8889,12 +8768,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8922,12 +8800,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -8949,12 +8826,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -8976,12 +8852,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9010,12 +8885,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9043,12 +8917,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -9070,12 +8943,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -9097,12 +8969,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9124,12 +8995,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -9150,12 +9020,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9176,12 +9045,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9202,12 +9070,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -9228,12 +9095,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9254,12 +9120,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -9280,12 +9145,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_brief',
       bluebubbles: 'chat_brief',
     },
@@ -9306,12 +9170,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['targetChatName', 'targetChatJid', 'threadTitle'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: false,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'chat_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9332,12 +9195,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9358,12 +9220,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['timeWindowKind', 'timeWindowValue'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: false,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'chat_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9391,12 +9252,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['text'],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: true,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'voice_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9422,12 +9282,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: ['prompt'],
     requiresLinkedAccount: false,
     requiresConfirmation: false,
-    safeForAlexa: false,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'chat_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9450,12 +9309,11 @@ const CAPABILITY_DESCRIPTORS: AssistantCapabilityDescriptor[] = [
     optionalInputs: [],
     requiresLinkedAccount: true,
     requiresConfirmation: false,
-    safeForAlexa: false,
+
     safeForTelegram: true,
     safeForBlueBubbles: true,
     operatorOnly: false,
     preferredOutputShape: {
-      alexa: 'chat_brief',
       telegram: 'chat_rich',
       bluebubbles: 'chat_brief',
     },
@@ -9489,9 +9347,7 @@ export function isAssistantCapabilityAllowed(
   if (descriptor.operatorOnly) {
     return channel === 'telegram' && descriptor.safeForTelegram;
   }
-  if (channel === 'alexa') {
-    return descriptor.safeForAlexa;
-  }
+
   if (channel === 'bluebubbles') {
     return descriptor.safeForBlueBubbles;
   }
@@ -9523,13 +9379,10 @@ export async function executeAssistantCapability(params: {
       handled: true,
       capabilityId: descriptor.id,
       replyText:
-        params.context.channel === 'alexa'
-          ? 'I can help with that in Telegram, but not safely by voice here.'
-          : params.context.channel === 'bluebubbles'
-            ? 'That one stays on the Telegram or operator side for safety.'
-            : 'That action stays on the operator or Telegram side for safety.',
-      outputShape:
-        params.context.channel === 'alexa' ? 'voice_brief' : 'chat_brief',
+        params.context.channel === 'bluebubbles'
+          ? 'That one stays on the Telegram or operator side for safety.'
+          : 'That action stays on the operator or Telegram side for safety.',
+      outputShape: 'chat_brief',
       trace: buildCapabilityTrace(
         descriptor,
         params.context,

@@ -52,7 +52,7 @@ import type {
   ProfileFactWithSubject,
   ProfileSubject,
 } from './types.js';
-import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
+import { normalizeVoicePrompt } from './voice-ready.js';
 import {
   forgetReviewedCommunication,
   mentionsCompleteCommunicationForget,
@@ -72,7 +72,7 @@ export interface CommunicationPriorContext {
 
 export interface CommunicationContextInput {
   ownerReviewAllowed?: boolean;
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   groupFolder: string;
   chatJid?: string;
   text?: string;
@@ -1825,7 +1825,7 @@ function formatOpenLoopLine(item: CommunicationOpenLoopItem): string {
 function toSignalChannel(
   channel: CommunicationContextInput['channel'],
 ): CommunicationSignalRecord['sourceChannel'] {
-  return channel === 'alexa' ? 'alexa-originated handoff' : channel;
+  return channel;
 }
 
 export function analyzeCommunicationMessage(
@@ -2685,27 +2685,13 @@ export function getCommunicationCarryoverSignal(input: {
 }
 
 export function formatCommunicationAnalysisReply(
-  channel: CommunicationContextInput['channel'],
+  _channel: CommunicationContextInput['channel'],
   result: CommunicationAnalysisResult,
 ): string {
   if (!result.ok) {
     return result.clarificationQuestion || 'Show me the message first.';
   }
-  if (channel === 'alexa') {
-    return buildVoiceReply({
-      summary: result.summaryText || 'I looked at the message.',
-      details: [
-        result.followupState === 'reply_needed'
-          ? 'It still sounds like it wants a reply.'
-          : result.followupState === 'scheduled'
-            ? 'It feels like a later follow-up rather than something urgent right now.'
-            : result.followupState === 'waiting_on_them'
-              ? 'It sounds like they are carrying the next step.'
-              : result.explanation,
-      ],
-      offerMore: false,
-    });
-  }
+
   return buildSignatureFlowText({
     lead: result.summaryText || 'I looked at the conversation.',
     detailLines: [
@@ -2726,14 +2712,7 @@ export function formatCommunicationDraftReply(
   if (!result.ok) {
     return result.clarificationQuestion || 'Show me the message first.';
   }
-  if (channel === 'alexa') {
-    return buildVoiceReply({
-      summary: 'I drafted a reply.',
-      details: [clipText(result.draftText || '', 180)],
-      offerMore: false,
-      maxDetails: 1,
-    });
-  }
+
   if (channel === 'bluebubbles') {
     return [
       result.summaryText || 'I drafted a reply.',
@@ -2759,16 +2738,9 @@ export function formatCommunicationDraftReply(
 }
 
 export function formatCommunicationOpenLoopsReply(
-  channel: CommunicationContextInput['channel'],
+  _channel: CommunicationContextInput['channel'],
   result: CommunicationOpenLoopsResult,
 ): string {
-  if (channel === 'alexa') {
-    return buildVoiceReply({
-      summary: result.summaryText,
-      details: result.items.slice(0, 2).map((item) => formatOpenLoopLine(item)),
-      offerMore: false,
-    });
-  }
   return buildSignatureFlowText({
     lead: result.summaryText,
     detailLines: result.items

@@ -896,7 +896,7 @@ function reviewFromSeedOrFresh(params: {
 
 function recordEpisode(params: {
   groupFolder: string;
-  channel: 'telegram' | 'bluebubbles' | 'alexa';
+  channel: 'telegram' | 'bluebubbles';
   item: FollowThroughReviewItem;
   actionKind: FollowThroughOutcomeKind;
 }): string {
@@ -994,7 +994,7 @@ function oneQuestionForUnbound(): string {
 
 export async function handleFollowThroughActivationCommand(params: {
   groupFolder: string;
-  channel: 'telegram' | 'bluebubbles' | 'alexa';
+  channel: 'telegram' | 'bluebubbles';
   chatJid?: string | null;
   text?: string | null;
   now?: Date;
@@ -1441,7 +1441,7 @@ export async function applyFollowThroughActivation(params: {
   groupFolder: string;
   candidate?: FollowThroughActivationCandidateSelector;
   timing: string;
-  channel?: 'telegram' | 'bluebubbles' | 'alexa';
+  channel?: 'telegram' | 'bluebubbles';
   chatJid?: string | null;
   now?: Date;
   metadataOnly?: boolean;

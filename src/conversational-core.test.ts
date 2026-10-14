@@ -217,11 +217,7 @@ describe('graceful degraded replies', () => {
       channel: 'telegram',
       text: "What is Jar Jar Binks' species?",
     });
-    const alexaReply = buildGracefulDegradedReply({
-      kind: 'research_unavailable',
-      channel: 'alexa',
-      text: "What is Jar Jar Binks' species?",
-    });
+
     const bluebubblesReply = buildGracefulDegradedReply({
       kind: 'research_unavailable',
       channel: 'bluebubbles',
@@ -229,9 +225,7 @@ describe('graceful degraded replies', () => {
     });
 
     expect(telegramReply).toContain("can't check that live right now");
-    expect(alexaReply).not.toContain(
-      'saved material or help narrow the question',
-    );
+
     expect(bluebubblesReply).toContain('grounded');
   });
 
@@ -248,7 +242,7 @@ describe('graceful degraded replies', () => {
     });
     const unsupportedReply = buildGracefulDegradedReply({
       kind: 'unsupported_channel_capability',
-      channel: 'alexa',
+      channel: 'telegram',
       text: 'send me the full version',
       targetChannel: 'telegram',
     });

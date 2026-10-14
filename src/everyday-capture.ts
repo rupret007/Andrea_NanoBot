@@ -43,8 +43,8 @@ import {
 import { recordOpenAiUsageState } from './openai-usage-state.js';
 import { syncOutcomeFromReminderTask } from './outcome-reviews.js';
 import type {
-  AlexaConversationFollowupAction,
-  AlexaConversationSubjectKind,
+  AssistantConversationFollowupAction,
+  AssistantConversationSubjectKind,
   ChannelInlineAction,
   EverydayListGroup,
   EverydayListGroupKind,
@@ -108,7 +108,7 @@ export interface EverydayCaptureConversationData {
 }
 
 export interface EverydayCaptureCommandInput {
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   groupFolder: string;
   chatJid?: string;
   text: string;
@@ -123,9 +123,9 @@ export interface EverydayCaptureCommandResult {
   mode?: EverydayCaptureMode;
   replyText?: string;
   summaryText?: string;
-  subjectKind?: AlexaConversationSubjectKind;
+  subjectKind?: AssistantConversationSubjectKind;
   conversationData?: EverydayCaptureConversationData;
-  supportedFollowups?: AlexaConversationFollowupAction[];
+  supportedFollowups?: AssistantConversationFollowupAction[];
   sendOptions?: {
     inlineActions?: ChannelInlineAction[];
     inlineActionRows?: ChannelInlineAction[][];
@@ -315,7 +315,7 @@ const PROFILE_SETUP_QUESTIONS: ProfileSetupQuestion[] = [
     id: 'integrations',
     shortLabel: 'channels',
     prompt:
-      'Which channels and tools matter first? Telegram, texts, calendar, reminders, email, Alexa, or something else.',
+      'Which channels and tools matter first? Telegram, texts, calendar, reminders, email, or something else.',
   },
   {
     id: 'privacy',
@@ -434,9 +434,7 @@ function looksLikeOneShotSetup(text: string): boolean {
     /\bshopping|grocery|errand|bill|meal|meds?|household|follow-through|calendar|messages|texts?\b/.test(
       lower,
     ),
-    /\btelegram|alexa|bluebubbles|calendar|imessage|messages|texts?\b/.test(
-      lower,
-    ),
+    /\btelegram|bluebubbles|calendar|imessage|messages|texts?\b/.test(lower),
     lower.length > 140,
   ].filter(Boolean).length;
   return matches >= 2;
@@ -466,15 +464,13 @@ function nextProfileSetupQuestionId(
 }
 
 function formatProfileSetupQuestion(
-  channel: EverydayCaptureCommandInput['channel'],
+  _channel: EverydayCaptureCommandInput['channel'],
   question: ProfileSetupQuestion,
   answers: Partial<Record<ProfileSetupQuestionId, string>> = {},
 ): string {
   const questionIndex = PROFILE_SETUP_QUESTION_IDS.indexOf(question.id) + 1;
   const total = PROFILE_SETUP_QUESTIONS.length;
-  if (channel === 'alexa') {
-    return question.prompt;
-  }
+
   const answeredCount = PROFILE_SETUP_QUESTION_IDS.filter((id) =>
     normalizeText(answers[id] || ''),
   ).length;
@@ -991,7 +987,6 @@ function extractIntake(rawText: string): OperatingProfileIntake {
     addUnique(routines, 'weekly planning');
   }
   if (/\btelegram\b/.test(lower)) addUnique(integrationsWanted, 'Telegram');
-  if (/\balexa\b/.test(lower)) addUnique(integrationsWanted, 'Alexa');
   if (/\bcalendar\b/.test(lower))
     addUnique(integrationsWanted, 'Google Calendar');
   if (/\bbluebubbles|messages|imessage\b/.test(lower)) {
@@ -1013,11 +1008,9 @@ function extractIntake(rawText: string): OperatingProfileIntake {
     trackingPriorities,
     defaultGroups,
     integrationsWanted,
-    richerSurface: /alexa/.test(lower)
-      ? 'alexa'
-      : /bluebubbles|messages/.test(lower)
-        ? 'bluebubbles'
-        : 'telegram',
+    richerSurface: /bluebubbles|messages/.test(lower)
+      ? 'bluebubbles'
+      : 'telegram',
     scope: inferScope(lower),
     notes,
   };
@@ -1051,18 +1044,11 @@ function buildDeterministicPlan(
         : '',
     ].filter(Boolean),
     richerSurface: intake.richerSurface,
-    desiredIntegrations: [
-      'Telegram',
-      'Alexa',
-      'BlueBubbles',
-      'Google Calendar',
-    ].map(
+    desiredIntegrations: ['Telegram', 'BlueBubbles', 'Google Calendar'].map(
       (name): OperatingProfilePlanIntegration => ({
         name,
         readiness: intake.integrationsWanted.includes(name)
-          ? name === 'Google Calendar' ||
-            name === 'Telegram' ||
-            name === 'Alexa'
+          ? name === 'Google Calendar' || name === 'Telegram'
             ? 'connected'
             : 'missing_manual'
           : 'not_requested',
@@ -1278,7 +1264,6 @@ async function synthesizePlanWithOpenAi(
           ? normalizeProfilePlanTextList(parsed.reminderSuggestions, [])
           : [],
         richerSurface:
-          parsed.richerSurface === 'alexa' ||
           parsed.richerSurface === 'bluebubbles'
             ? parsed.richerSurface
             : 'telegram',
@@ -1295,7 +1280,7 @@ async function synthesizePlanWithOpenAi(
 }
 
 function formatPlanForChannel(
-  channel: EverydayCaptureCommandInput['channel'],
+  _channel: EverydayCaptureCommandInput['channel'],
   plan: OperatingProfilePlan,
 ): string {
   const groups = plan.defaultGroups.map((group) => group.title);
@@ -1305,17 +1290,7 @@ function formatPlanForChannel(
       (item) =>
         `${item.name} (${item.readiness === 'connected' ? 'connected' : 'manual'})`,
     );
-  if (channel === 'alexa') {
-    return [
-      plan.summary,
-      groups.length
-        ? `I would start with ${joinNaturalLanguage(groups.slice(0, 3))}.`
-        : '',
-      'Say approve that if you want me to use it.',
-    ]
-      .filter(Boolean)
-      .join(' ');
-  }
+
   return [
     '*Proposed Andrea setup*',
     '',
@@ -1341,13 +1316,11 @@ function formatPlanForChannel(
 }
 
 function formatCurrentSetup(
-  channel: EverydayCaptureCommandInput['channel'],
+  _channel: EverydayCaptureCommandInput['channel'],
   profile: OperatingProfile | null,
 ): string {
   if (!profile) {
-    return channel === 'alexa'
-      ? 'I do not have your setup yet. Say help me set this up and I can walk you through it.'
-      : 'I do not have an active setup yet. Say `help me set this up` and I will build one with you.';
+    return 'I do not have an active setup yet. Say `help me set this up` and I will build one with you.';
   }
   const plan = safeJsonParse<OperatingProfilePlan>(profile.planJson, {
     summary: 'Andrea is tracking your everyday follow-through.',
@@ -1359,18 +1332,7 @@ function formatCurrentSetup(
     desiredIntegrations: [],
     learningPolicy: DEFAULT_LEARNING_POLICY,
   });
-  if (channel === 'alexa') {
-    return [
-      plan.summary,
-      plan.defaultGroups.length
-        ? `Right now I am using ${joinNaturalLanguage(
-            plan.defaultGroups.slice(0, 3).map((group) => group.title),
-          )}.`
-        : '',
-    ]
-      .filter(Boolean)
-      .join(' ');
-  }
+
   return [
     '*Current Andrea setup*',
     '',
@@ -3382,34 +3344,6 @@ function formatReadout(params: {
     };
   }
 
-  if (params.channel === 'alexa') {
-    const slice = params.view.items
-      .slice(0, 3)
-      .map((item) => item.title.replace(/[.!?]+$/g, ''));
-    const summary =
-      params.view.lead ||
-      (params.target.kind === 'shopping'
-        ? `You still need ${joinNaturalLanguage(slice)}.`
-        : params.target.kind === 'bills'
-          ? `The biggest thing still open is ${slice[0]}.`
-          : params.target.kind === 'errands'
-            ? `You have ${params.view.items.length} errands left. ${joinNaturalLanguage(slice)}.`
-            : params.target.kind === 'recurring'
-              ? `Coming back soon, you have ${joinNaturalLanguage(slice)}.`
-              : `You still have ${joinNaturalLanguage(slice)}.`);
-    return {
-      replyText:
-        params.view.items.length > 3 || Boolean(params.view.handoffOffer)
-          ? `${summary} ${params.view.handoffOffer || 'If you want, I can send the fuller list to Telegram.'}`
-          : summary,
-      handoffOffer:
-        params.view.handoffOffer ||
-        (params.view.items.length > 3
-          ? 'If you want, I can send the fuller list to Telegram.'
-          : undefined),
-    };
-  }
-
   const lines: string[] = [];
   if (params.view.lead) {
     lines.push(params.view.lead);
@@ -3568,9 +3502,7 @@ async function handleProfileSetup(
     return buildResult({
       mode: 'profile_setup',
       replyText:
-        input.channel === 'alexa'
-          ? 'Okay. I saved that setup and I can start using it now.'
-          : 'Okay. I saved that setup and seeded the starter lists for it.',
+        'Okay. I saved that setup and seeded the starter lists for it.',
       summaryText: 'Andrea setup approved',
       subjectKind: 'general',
       conversationData: {
@@ -4148,10 +4080,7 @@ async function handleConvertItem(
     });
     return buildResult({
       mode: 'convert_item',
-      replyText:
-        input.channel === 'alexa'
-          ? `Okay. I turned ${item.title} into a plan.`
-          : mission.replyText,
+      replyText: mission.replyText,
       summaryText: mission.summaryText,
       subjectKind: 'mission',
       conversationData: {

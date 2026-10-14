@@ -109,10 +109,7 @@ const unboundApproval = transitionActionIntent({
   hasExplicitUserApproval: true,
 });
 assert.equal(unboundApproval.ok, false);
-assert.equal(
-  unboundApproval.error,
-  'approval_capability_binding_required',
-);
+assert.equal(unboundApproval.error, 'approval_capability_binding_required');
 
 // High-risk operator approvals need verified operator context.
 const patchIntent = createActionIntent({
@@ -151,10 +148,6 @@ assert.ok(sync.synced >= 0);
 const report = buildActionLifecycleReport();
 assert.ok(report.totalTracked >= 2);
 assert.match(formatActionLifecycleReport(report), /Action Lifecycle/);
-
-// Voice surface stays concise.
-const voice = formatActionLifecycleReport(report, { channel: 'alexa' });
-assert.ok(!voice.includes('\n'));
 
 assert.equal(isActionLifecycleNaturalRequest('what is waiting on me?'), true);
 assert.equal(isActionLifecycleNaturalRequest('what failed?'), true);

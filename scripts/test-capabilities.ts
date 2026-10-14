@@ -18,7 +18,6 @@ import {
   buildCapabilitySelfModel,
   formatCapabilityNaturalResponse,
   formatCapabilityReport,
-  getDailyCoreAttentionStates,
   isCapabilityNaturalRequest,
 } from '../src/capability-self-model.js';
 import type { IntegrationDoctorReport } from '../src/integration-doctor.js';
@@ -83,16 +82,6 @@ buildRealityGroundingReport({
           'none',
           'Send hi in Telegram.',
         ),
-      },
-      alexa: {
-        ...surface(
-          'near_live_only',
-          'external',
-          'Use Alexa simulator/device for a signed IntentRequest.',
-        ),
-        lastHandledProofAt: 'none',
-        lastSignedRequestAt: 'none',
-        proofFreshness: 'none',
       },
       bluebubbles: {
         ...surface(
@@ -242,16 +231,6 @@ buildRealityGroundingReport({
           'none',
           'Send hi in Telegram.',
         ),
-      },
-      alexa: {
-        ...surface(
-          'near_live_only',
-          'external',
-          'Use Alexa simulator/device for a signed IntentRequest.',
-        ),
-        lastHandledProofAt: 'none',
-        lastSignedRequestAt: 'none',
-        proofFreshness: 'none',
       },
       bluebubbles: {
         ...surface(
@@ -411,120 +390,6 @@ const reminders = reminderEvidenceReport.states.find(
 assert.ok(reminders);
 assert.equal(reminders.proofStatus, 'live_proven');
 assert.equal(reminders.currentBlocker, null);
-
-const coreReadyOptionalVoiceReport = buildCapabilitySelfModel({
-  now: '2026-06-09T16:03:00.000Z',
-  persist: false,
-  env: {},
-  envFileValues: {
-    TELEGRAM_BOT_TOKEN: 'set',
-    BLUEBUBBLES_BASE_URL: 'set',
-    GOOGLE_CALENDAR_CLIENT_ID: 'set',
-    BRAVE_SEARCH_API_KEY: 'set',
-    ALEXA_SKILL_ID: 'set',
-  },
-  providerHealthSnapshots: [
-    {
-      providerId: 'brave_search',
-      kind: 'search',
-      state: 'healthy',
-      lastHealthyAt: '2026-06-09T16:03:00.000Z',
-      lastCheckedAt: '2026-06-09T16:03:00.000Z',
-      failureClass: 'none',
-      quotaState: 'unknown',
-      credentialState: 'configured',
-      knownExpiresAt: null,
-      rotationDueAt: null,
-      blocker: '',
-      nextAction: '',
-      metadata: {},
-    },
-  ],
-  integrationReport: {
-    generatedAt: '2026-06-09T16:03:00.000Z',
-    summary: {
-      total: 4,
-      healthy: 3,
-      actionNeeded: 1,
-      needsProof: 0,
-      manualOrExternal: 1,
-    },
-    statuses: [
-      {
-        integrationId: 'telegram',
-        label: 'Telegram',
-        state: 'healthy',
-        credentialState: 'configured',
-        transportState: 'healthy',
-        proofState: 'healthy',
-        lastHealthyAt: '2026-06-09T16:03:00.000Z',
-        lastFailure: '',
-        blockerOwner: 'none',
-        nextAction: '',
-        repairability: 'status_only',
-        safeActions: [],
-        detail: 'Telegram is healthy.',
-      },
-      {
-        integrationId: 'bluebubbles',
-        label: 'BlueBubbles',
-        state: 'healthy',
-        credentialState: 'configured',
-        transportState: 'healthy',
-        proofState: 'healthy',
-        lastHealthyAt: '2026-06-09T16:03:00.000Z',
-        lastFailure: '',
-        blockerOwner: 'none',
-        nextAction: '',
-        repairability: 'status_only',
-        safeActions: [],
-        detail: 'BlueBubbles is healthy.',
-      },
-      {
-        integrationId: 'google_calendar',
-        label: 'Google Calendar',
-        state: 'healthy',
-        credentialState: 'configured',
-        transportState: 'healthy',
-        proofState: 'healthy',
-        lastHealthyAt: '2026-06-09T16:03:00.000Z',
-        lastFailure: '',
-        blockerOwner: 'none',
-        nextAction: '',
-        repairability: 'status_only',
-        safeActions: [],
-        detail: 'Google Calendar is healthy.',
-      },
-      {
-        integrationId: 'alexa',
-        label: 'Alexa',
-        state: 'manual_action_required',
-        credentialState: 'configured',
-        transportState: 'healthy',
-        proofState: 'near_live_only',
-        lastHealthyAt: null,
-        lastFailure: '',
-        blockerOwner: 'external',
-        nextAction: 'Use a real device or authenticated simulator.',
-        repairability: 'guided_manual',
-        safeActions: [],
-        detail: 'Alexa needs a fresh signed IntentRequest.',
-      },
-    ],
-    secretsRedacted: true,
-  },
-});
-assert.equal(
-  getDailyCoreAttentionStates(coreReadyOptionalVoiceReport).length,
-  0,
-);
-assert.equal(coreReadyOptionalVoiceReport.dailyCore.needsAttention, 0);
-assert.equal(coreReadyOptionalVoiceReport.optionalSurfaces.needsAttention, 1);
-assert.match(
-  formatCapabilityReport(coreReadyOptionalVoiceReport),
-  /Daily core: \d+\/\d+ ready \(0 need attention\)/,
-);
-assert.match(formatCapabilityReport(coreReadyOptionalVoiceReport), /OPTIONAL/);
 
 // External sends always require explicit approval regardless of proof.
 for (const id of [

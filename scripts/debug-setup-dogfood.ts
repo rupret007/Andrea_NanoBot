@@ -13,8 +13,7 @@ const groupFolder =
 const channelIndex = args.indexOf('--channel');
 const channel =
   channelIndex >= 0
-    ? (args[channelIndex + 1] as 'telegram' | 'bluebubbles' | 'alexa') ||
-      'telegram'
+    ? (args[channelIndex + 1] as 'telegram' | 'bluebubbles') || 'telegram'
     : 'telegram';
 
 if (apply) {

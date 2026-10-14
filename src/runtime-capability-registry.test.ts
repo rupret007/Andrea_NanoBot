@@ -114,7 +114,7 @@ describe('runtime capability registry', () => {
     ['messages.send.telegram', 'send', 'bluebubbles'],
     ['calendar.events.google', 'create', 'telegram'],
     ['reminders.local', 'create', 'bluebubbles'],
-    ['research.web', 'search', 'alexa'],
+    ['research.web', 'search', 'telegram'],
   ])(
     'never denies healthy, registered, exposed capability %s',
     (capabilityId, action, sourceChannel) => {
@@ -282,7 +282,7 @@ describe('runtime capability registry', () => {
         {
           capabilityId: 'research.web',
           action: 'search',
-          sourceChannel: 'alexa',
+          sourceChannel: 'telegram',
         },
         {
           ...READY_FACTS,

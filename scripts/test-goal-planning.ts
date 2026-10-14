@@ -93,14 +93,14 @@ planGoalDirectedRequest({
 });
 
 const currentReality = structuredClone(oldReality);
-currentReality.snapshot.snapshotId = 'reality-current-alexa-gap';
+currentReality.snapshot.snapshotId = 'reality-current-bluebubbles-gap';
 currentReality.verificationNeeds = currentReality.verificationNeeds.map(
   (need) => ({
     ...need,
-    needId: 'need-current-alexa-gap',
+    needId: 'need-current-bluebubbles-gap',
     snapshotId: currentReality.snapshot.snapshotId,
-    question: 'Is Alexa device proof fresh?',
-    nextAction: 'Refresh the Alexa signed device proof.',
+    question: 'Is BlueBubbles same-thread proof fresh?',
+    nextAction: 'Refresh the BlueBubbles same-thread proof.',
   }),
 );
 const reconciledReport = buildHierarchicalPlannerReport({
@@ -112,7 +112,7 @@ const reconciledReport = buildHierarchicalPlannerReport({
 assert.ok(reconciledReport.stalePlanStepsSuppressed > 0);
 assert.ok(
   reconciledReport.planSteps.some((step) =>
-    /Alexa signed device proof/i.test(step.nextAction),
+    /BlueBubbles same-thread proof/i.test(step.nextAction),
   ),
 );
 assert.doesNotMatch(
@@ -120,32 +120,32 @@ assert.doesNotMatch(
   /TELEGRAM_USER_API_ID/,
 );
 
-const manualAlexaOpportunity: ProactiveOpportunity = {
-  opportunityId: 'opportunity_manual_alexa_proof',
+const manualProofOpportunity: ProactiveOpportunity = {
+  opportunityId: 'opportunity_manual_bluebubbles_proof',
   createdAt: '2026-06-09T12:05:30.000Z',
   updatedAt: '2026-06-09T12:05:30.000Z',
   groupFolder: null,
-  triggerSource: 'proof:alexa_manual',
+  triggerSource: 'proof:bluebubbles_manual',
   relatedGoalId: null,
-  opportunitySummary: 'Alexa proof requires a real device turn.',
+  opportunitySummary: 'BlueBubbles proof requires a real phone turn.',
   reason: 'Manual proof debt should not become household planning advice.',
   urgency: 'normal',
   confidence: 0.8,
   suggestedAction:
-    'Use a real device or authenticated Alexa Developer Console simulator.',
+    'Use a real iPhone and send a same-thread BlueBubbles message.',
   approvalRequirement: 'manual_external',
   status: 'proposed',
   snoozedUntil: null,
-  evidenceRefsJson: JSON.stringify(['proof:alexa']),
+  evidenceRefsJson: JSON.stringify(['proof:bluebubbles']),
   privacyJson: JSON.stringify({ metadataOnly: true }),
 };
-upsertProactiveOpportunity(manualAlexaOpportunity);
+upsertProactiveOpportunity(manualProofOpportunity);
 const tonight = planGoalDirectedRequest({
   text: 'help me plan tonight',
   channel: 'telegram',
   now: '2026-06-09T12:06:00.000Z',
 });
-assert.doesNotMatch(tonight.response, /Alexa Developer Console|real device/);
+assert.doesNotMatch(tonight.response, /real iPhone|same-thread BlueBubbles/);
 
 const staleBraveOpportunity: ProactiveOpportunity = {
   opportunityId: 'opportunity_stale_brave_blocker',

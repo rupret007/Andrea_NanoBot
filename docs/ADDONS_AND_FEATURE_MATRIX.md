@@ -21,7 +21,6 @@ Important product split:
 - Cursor Cloud is the validated operator-enabled heavy-lift path
 - desktop bridge is operator-only and environment-dependent
 - runtime routing is a separate diagnostic/config surface
-- Alexa Companion Mode is an optional private voice channel, not a baseline public surface
 
 ## Core Runtime Features
 
@@ -130,7 +129,6 @@ only their explicit skill/tool policy.
 
 | Surface                          | What it does                                                                                                                             | Notes                                                                                                                                                                                           |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Alexa Companion Mode             | Routes approved Alexa voice requests into Andrea with daily guidance, short conversational continuity, and consent-based personalization | Optional operator-enabled ingress; requires supported Node `22.x` (`>=22 <23`), HTTPS, account linking, trust verification, and one real signed utterance for full live acceptance; CI, Windows, and the container use the exact `22.22.2` pin; status check is `/alexa-status` |
 | Amazon shopping approvals        | Search Amazon Business products and run approval-gated purchase requests                                                                 | Optional operator-enabled main-control workflow; prefer trial mode first; commands use `/amazon-status`, `/amazon-search`, and `/purchase-*`                                                    |
 | Marketplace and community skills | Discover and enable external skills per chat                                                                                             | Optional operator/runtime layer; not part of the default Telegram command surface                                                                                                               |
 

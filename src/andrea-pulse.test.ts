@@ -14,18 +14,6 @@ describe('Andrea Pulse', () => {
     expect(preference.scheduledDeliveryEnabled).toBe(false);
   });
 
-  it('builds a short Alexa-safe Pulse reply', () => {
-    const result = buildAndreaPulseReply({
-      channel: 'alexa',
-      query: 'Andrea Pulse',
-      now: new Date('2026-04-05T12:00:00.000Z'),
-    });
-
-    expect(result.replyText).toContain(result.item.summary);
-    expect(result.replyText.split('\n').length).toBeLessThanOrEqual(3);
-    expect(result.cooldown.lastTextureKind).toBe('pulse');
-  });
-
   it('keeps say more on the same item and expands the detail', () => {
     const first = buildAndreaPulseReply({
       channel: 'telegram',

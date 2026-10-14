@@ -1485,11 +1485,11 @@ describe('communication companion', () => {
     expect(result.draftText).not.toContain('circle back');
   });
 
-  it('strips programmatic open-loop phrasing out of Alexa-safe draft topics', () => {
+  it('strips programmatic open-loop phrasing out of Telegram draft topics', () => {
     seedCandace();
 
     const result = draftCommunicationReply({
-      channel: 'alexa',
+      channel: 'telegram',
       groupFolder: 'main',
       text: 'what should I say back',
       conversationSummary:
@@ -1509,7 +1509,7 @@ describe('communication companion', () => {
     );
   });
 
-  it('normalizes lowercase person names into cleaner Alexa-safe draft speech', () => {
+  it('normalizes lowercase person names in BlueBubbles drafts', () => {
     upsertProfileSubject({
       id: 'subject-candace-lower',
       groupFolder: 'main',
@@ -1522,7 +1522,7 @@ describe('communication companion', () => {
     });
 
     const result = draftCommunicationReply({
-      channel: 'alexa',
+      channel: 'bluebubbles',
       groupFolder: 'main',
       text: 'what should I say back',
       conversationSummary:

@@ -723,7 +723,7 @@ describe('buildDailyCompanionResponse', () => {
     const response = await buildDailyCompanionResponse(
       'What should I talk to Candace about?',
       {
-        channel: 'alexa',
+        channel: 'telegram',
         groupFolder: 'main',
         now: new Date('2026-04-04T12:30:00-05:00'),
         timeZone: 'America/Chicago',
@@ -749,7 +749,7 @@ describe('buildDailyCompanionResponse', () => {
     });
 
     const response = await buildDailyCompanionResponse('What about Candace', {
-      channel: 'alexa',
+      channel: 'telegram',
       groupFolder: 'main',
       now: new Date('2026-04-04T12:30:00-05:00'),
       timeZone: 'America/Chicago',
@@ -833,7 +833,7 @@ describe('buildDailyCompanionResponse', () => {
     );
   });
 
-  it('renders Alexa shorter than Telegram while using the same grounded snapshot', async () => {
+  it('renders Telegram guidance from the grounded snapshot', async () => {
     const fetchImpl = createGoogleCalendarFetchMock({
       eventsByCalendar: {
         primary: {
@@ -868,35 +868,9 @@ describe('buildDailyCompanionResponse', () => {
         ],
       },
     );
-    const alexa = await buildDailyCompanionResponse(
-      'What should I remember tonight?',
-      {
-        channel: 'alexa',
-        groupFolder: 'main',
-        now: new Date('2026-04-04T17:00:00-05:00'),
-        timeZone: 'America/Chicago',
-        env: baseEnv,
-        fetchImpl,
-        selectedWork,
-        tasks: [
-          createReminderTask(
-            'send the follow-up',
-            '2026-04-04T23:30:00.000Z',
-            'reminder-1',
-          ),
-        ],
-      },
-    );
 
-    expect(telegram?.grounded?.currentFocus.reason).toBe(
-      alexa?.grounded?.currentFocus.reason,
-    );
     expect(telegram?.reply).toContain('Next:');
     expect(telegram?.reply).toContain('Keep in mind:');
-    expect(alexa?.reply).not.toContain('- ');
-    expect((alexa?.reply.split('\n').length || 0) <= 3).toBe(true);
-    expect(alexa?.reply).not.toContain('Reminder:');
-    expect(alexa?.reply).not.toContain('Thread:');
   });
 
   it('does not surface generic Follow-up thread titles in tonight guidance detail lines', async () => {
@@ -936,145 +910,6 @@ describe('buildDailyCompanionResponse', () => {
       'The first fixed point in your day is pest control is coming today at 1:00 PM',
     );
     expect(response?.reply).not.toContain('Follow-up: Pest control');
-  });
-
-  it('makes Alexa anything-else follow-ups add a new point before recapping', async () => {
-    const priorContext: DailyCompanionContext = {
-      version: 1,
-      mode: 'open_guidance',
-      channel: 'alexa',
-      generatedAt: '2026-04-04T17:00:00.000Z',
-      summaryText: 'Dinner plans tonight still need a clean answer.',
-      shortText: 'Dinner plans tonight still need a clean answer.',
-      extendedText:
-        'Dinner plans tonight still need a clean answer. Pickup after rehearsal keeps it simpler. A reminder before 6 would help.',
-      leadReason: 'communication_carryover',
-      signalsUsed: ['communication_threads'],
-      signalsOmitted: [],
-      householdSignals: ['Candace still needs a dinner answer.'],
-      recommendationKind: 'do_now',
-      recommendationText: 'A reminder before 6 would help.',
-      subjectKind: 'household',
-      supportedFollowups: [
-        'anything_else',
-        'shorter',
-        'say_more',
-        'save_that',
-        'save_for_later',
-        'create_reminder',
-        'send_details',
-      ],
-      subjectData: {
-        personName: 'Candace',
-        activePeople: ['Candace'],
-        householdFocus: true,
-      },
-      extraDetails: [
-        'Dinner plans tonight still need a clean answer.',
-        'Pickup after rehearsal keeps it simpler.',
-      ],
-      memoryLines: [],
-      usedThreadIds: ['thread-candace'],
-      usedThreadTitles: ['Candace'],
-      usedThreadReasons: ['communication carryover'],
-      threadSummaryLines: ['Candace still needs a dinner answer.'],
-      comparisonKeys: {
-        nextEvent: null,
-        nextReminder: null,
-        recommendation: 'A reminder before 6 would help.',
-        household: 'Candace',
-        focus: 'Dinner plans tonight',
-        thread: 'Candace',
-      },
-      toneProfile: 'balanced',
-    };
-
-    const response = await buildDailyCompanionResponse('Anything else?', {
-      channel: 'alexa',
-      groupFolder: 'main',
-      now: new Date('2026-04-04T17:05:00-05:00'),
-      timeZone: 'America/Chicago',
-      env: baseEnv,
-      fetchImpl: createGoogleCalendarFetchMock({
-        eventsByCalendar: {
-          primary: {
-            items: [],
-          },
-        },
-      }),
-      tasks: [],
-      priorContext,
-    });
-
-    expect(
-      response?.reply.startsWith('Pickup after rehearsal keeps it simpler.'),
-    ).toBe(true);
-    expect(response?.reply).not.toContain(
-      'Dinner plans tonight still need a clean answer. Dinner plans tonight still need a clean answer.',
-    );
-  });
-
-  it('prefers thread context over keep-in-view phrasing for Alexa follow-ups', async () => {
-    const priorContext: DailyCompanionContext = {
-      version: 1,
-      mode: 'open_guidance',
-      channel: 'alexa',
-      generatedAt: '2026-04-04T17:00:00.000Z',
-      summaryText: 'Dinner plans tonight still need a clean answer.',
-      shortText: 'Dinner plans tonight still need a clean answer.',
-      extendedText: 'Dinner plans tonight still need a clean answer.',
-      leadReason: 'communication_carryover',
-      signalsUsed: ['communication_threads'],
-      signalsOmitted: [],
-      householdSignals: [],
-      recommendationKind: 'do_now',
-      recommendationText:
-        'Keep Candace in view, but it can wait for a calmer moment.',
-      subjectKind: 'household',
-      supportedFollowups: ['anything_else', 'shorter', 'say_more'],
-      subjectData: {
-        personName: 'Candace',
-        activePeople: ['Candace'],
-        householdFocus: true,
-      },
-      extraDetails: [],
-      memoryLines: [],
-      usedThreadIds: ['thread-candace'],
-      usedThreadTitles: ['Candace'],
-      usedThreadReasons: ['communication carryover'],
-      threadSummaryLines: ['Candace still needs a dinner answer.'],
-      comparisonKeys: {
-        nextEvent: null,
-        nextReminder: null,
-        recommendation:
-          'Keep Candace in view, but it can wait for a calmer moment.',
-        household: 'Candace',
-        focus: 'Dinner plans tonight',
-        thread: 'Candace',
-      },
-      toneProfile: 'balanced',
-    };
-
-    const response = await buildDailyCompanionResponse('Anything else?', {
-      channel: 'alexa',
-      groupFolder: 'main',
-      now: new Date('2026-04-04T17:05:00-05:00'),
-      timeZone: 'America/Chicago',
-      env: baseEnv,
-      fetchImpl: createGoogleCalendarFetchMock({
-        eventsByCalendar: {
-          primary: {
-            items: [],
-          },
-        },
-      }),
-      tasks: [],
-      priorContext,
-    });
-
-    expect(
-      response?.reply.startsWith('Candace still needs a dinner answer.'),
-    ).toBe(true);
   });
 
   it('surfaces slipping thread pressure during midday re-grounding', async () => {

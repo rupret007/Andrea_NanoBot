@@ -98,7 +98,6 @@ const SECRET_PATTERNS: RegExp[] = [
 ];
 
 const TARGET_ALIASES: Record<string, string> = {
-  alexa: 'alexa',
   anthropic: 'provider:anthropic_cloud',
   anthropic_cloud: 'provider:anthropic_cloud',
   bluebubbles: 'bluebubbles',
@@ -133,7 +132,6 @@ const PRIORITY: Record<string, number> = {
   telegram: 10,
   google_calendar: 20,
   bluebubbles: 30,
-  alexa: 40,
   feature_proofs: 60,
 };
 
@@ -257,7 +255,7 @@ function canApplyChecklist(
   if (recoveryClass === 'healthy') return false;
   if (itemId === 'feature_proofs') return false;
   return (
-    ['telegram', 'google_calendar', 'bluebubbles', 'alexa'].includes(itemId) ||
+    ['telegram', 'google_calendar', 'bluebubbles'].includes(itemId) ||
     itemId.startsWith('provider:') ||
     itemId.includes('assistant_session') ||
     itemId.includes('work_cockpit') ||
@@ -326,9 +324,6 @@ function commandForSuccessCheck(id: string): string {
   }
   if (id === 'bluebubbles') {
     return 'Run npm run debug:bluebubbles -- --live, complete the same-thread proof drill, then rerun /integrations.';
-  }
-  if (id === 'alexa') {
-    return 'Run /alexa-status, make one real signed simulator/device IntentRequest, then confirm npm run services:status.';
   }
   if (id === 'feature_proofs') {
     return 'Run npm run debug:pilot after the fresh proof journey turns are complete.';
@@ -472,20 +467,6 @@ export function buildIntegrationRecoveryReport(
       }),
     );
   }
-  const alexaStatus = statusById(integrationReport, 'alexa');
-  const alexaProof = proofByName(proofReport, /alexa signed/i);
-  if (alexaStatus || alexaProof) {
-    add(
-      itemFromSurface({
-        id: 'alexa',
-        label: 'Alexa signed IntentRequest',
-        status: alexaStatus,
-        proof: alexaProof,
-        repairReport,
-        priority: PRIORITY.alexa,
-      }),
-    );
-  }
 
   for (const provider of providers) {
     if (provider.state === 'healthy') continue;
@@ -517,7 +498,7 @@ export function buildIntegrationRecoveryReport(
   for (const status of integrationReport.statuses) {
     if (
       seen.has(status.integrationId) ||
-      ['telegram', 'google_calendar', 'bluebubbles', 'alexa'].includes(
+      ['telegram', 'google_calendar', 'bluebubbles'].includes(
         status.integrationId,
       )
     ) {
@@ -609,7 +590,7 @@ export function formatIntegrationRecoveryReport(
   }
   lines.push('', `Next: ${report.nextAction}`);
   lines.push(
-    'Apply policy: /integrations apply <id> records only whitelisted metadata, cooldown, or checklist repairs. OAuth grants, credentials, message sends, calendar writes, and Alexa signed turns remain human/external steps.',
+    'Apply policy: /integrations apply <id> records only whitelisted metadata, cooldown, or checklist repairs. OAuth grants, credentials, message sends, and calendar writes remain human/external steps.',
   );
   return redactRecoveryText(lines.join('\n'));
 }

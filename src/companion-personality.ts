@@ -64,8 +64,7 @@ export function buildPersonalityTexturePolicy(
       input.toneProfile === 'warmer' &&
       (input.context === 'pulse' || input.context === 'launch'),
     allowTexture,
-    maxTextureLines:
-      input.channel === 'alexa' ? (allowTexture ? 1 : 0) : allowTexture ? 2 : 0,
+    maxTextureLines: allowTexture ? 2 : 0,
   };
 }
 

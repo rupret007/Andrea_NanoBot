@@ -37,16 +37,6 @@ const proofReport = buildLiveProofGauntletReport({
     journeys: {
       ordinary_chat: surface('near_live_only', 'none', 'Send hi in Telegram.'),
     },
-    alexa: {
-      ...surface(
-        'near_live_only',
-        'external',
-        'Use Alexa simulator/device for a signed IntentRequest.',
-      ),
-      lastHandledProofAt: 'none',
-      lastSignedRequestAt: 'none',
-      proofFreshness: 'none',
-    },
     bluebubbles: {
       ...surface(
         'near_live_only',
@@ -110,16 +100,6 @@ const liveTelegramBotReport = buildRealityGroundingReport({
           'none',
           'Send hi in Telegram.',
         ),
-      },
-      alexa: {
-        ...surface(
-          'near_live_only',
-          'external',
-          'Use Alexa simulator/device for a signed IntentRequest.',
-        ),
-        lastHandledProofAt: 'none',
-        lastSignedRequestAt: 'none',
-        proofFreshness: 'none',
       },
       bluebubbles: {
         ...surface(

@@ -139,10 +139,14 @@ describe('AGI readiness', () => {
         proof('Telegram user-session proof', 'missing_config', {
           nextStep: 'Set TELEGRAM_USER_API_ID.',
         }),
-        proof('Alexa signed IntentRequest proof', 'near_live_only', {
-          blockerOwner: 'external',
-          nextStep: 'Send one real signed simulator/device turn.',
-        }),
+        proof(
+          'BlueBubbles same-thread message-action proof',
+          'near_live_only',
+          {
+            blockerOwner: 'external',
+            nextStep: 'Run one real same-thread message-action proof.',
+          },
+        ),
       ]),
       publishStatus: publish({ ghAuthenticated: true, blockers: [] }),
     });
@@ -170,7 +174,7 @@ describe('AGI readiness', () => {
         }),
       ]),
       liveProof: liveProof([
-        proof('Alexa signed IntentRequest proof', 'stale', {
+        proof('BlueBubbles same-thread message-action proof', 'stale', {
           nextStep: 'Run the exact proof step.',
         }),
       ]),
@@ -408,9 +412,7 @@ function liveProof(entries: LiveProofGauntletEntry[]): LiveProofGauntletReport {
   const liveProvenCount = entries.filter(
     (entry) => entry.status === 'live_proven',
   ).length;
-  const dailyCoreEntries = entries.filter(
-    (entry) => !/Alexa signed IntentRequest/i.test(entry.proofName),
-  );
+  const dailyCoreEntries = entries;
   return {
     generatedAt: '2026-06-29T12:00:00.000Z',
     entries,
@@ -422,11 +424,7 @@ function liveProof(entries: LiveProofGauntletEntry[]): LiveProofGauntletReport {
     dailyCoreProofDebtCount: dailyCoreEntries.filter(
       (entry) => entry.status !== 'live_proven',
     ).length,
-    optionalProofDebtCount: entries.filter(
-      (entry) =>
-        /Alexa signed IntentRequest/i.test(entry.proofName) &&
-        entry.status !== 'live_proven',
-    ).length,
+    optionalProofDebtCount: 0,
     repoWorkRequiredCount: entries.filter((entry) => entry.repoWorkRequired)
       .length,
     nextAction:

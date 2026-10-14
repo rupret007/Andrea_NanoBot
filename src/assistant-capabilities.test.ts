@@ -190,31 +190,31 @@ describe('assistant capabilities', () => {
 
     expect(getAssistantCapability('work.current_logs')).toMatchObject({
       operatorOnly: true,
-      safeForAlexa: false,
+
       safeForTelegram: true,
       safeForBlueBubbles: false,
     });
     expect(getAssistantCapability('capture.add_item')).toMatchObject({
       category: 'capture',
-      safeForAlexa: true,
+
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
     expect(getAssistantCapability('pulse.surprise_me')).toMatchObject({
       category: 'pulse',
-      safeForAlexa: true,
+
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
     expect(getAssistantCapability('knowledge.save_source')).toMatchObject({
       category: 'knowledge',
-      safeForAlexa: true,
+
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
     expect(getAssistantCapability('rituals.configure')).toMatchObject({
       category: 'rituals',
-      safeForAlexa: true,
+
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
@@ -222,7 +222,7 @@ describe('assistant capabilities', () => {
       getAssistantCapability('communication.understand_message'),
     ).toMatchObject({
       category: 'communication',
-      safeForAlexa: true,
+
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
@@ -230,7 +230,7 @@ describe('assistant capabilities', () => {
       getAssistantCapability('communication.review_recent_texts'),
     ).toMatchObject({
       category: 'communication',
-      safeForAlexa: false,
+
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
@@ -239,19 +239,19 @@ describe('assistant capabilities', () => {
     ).toMatchObject({
       category: 'communication',
       requiresConfirmation: false,
-      safeForAlexa: false,
+
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
     expect(getAssistantCapability('staff.prioritize')).toMatchObject({
       category: 'staff',
-      safeForAlexa: true,
+
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
     expect(getAssistantCapability('missions.propose')).toMatchObject({
       category: 'missions',
-      safeForAlexa: true,
+
       safeForTelegram: true,
       safeForBlueBubbles: true,
     });
@@ -5213,7 +5213,7 @@ describe('assistant capabilities', () => {
     const result = await executeAssistantCapability({
       capabilityId: 'staff.prioritize',
       context: {
-        channel: 'alexa',
+        channel: 'telegram',
         groupFolder: 'main',
         selectedWork: {
           laneLabel: 'Cursor',
@@ -5240,7 +5240,7 @@ describe('assistant capabilities', () => {
     const result = await executeAssistantCapability({
       capabilityId: 'missions.propose',
       context: {
-        channel: 'alexa',
+        channel: 'telegram',
         groupFolder: 'main',
         selectedWork: {
           laneLabel: 'Cursor',
@@ -5350,7 +5350,7 @@ describe('assistant capabilities', () => {
     const read = await executeAssistantCapability({
       capabilityId: 'capture.read_items',
       context: {
-        channel: 'alexa',
+        channel: 'telegram',
         groupFolder: 'main',
         chatJid: 'tg:100000001',
         now: new Date('2026-04-12T09:05:00-05:00'),
@@ -5440,7 +5440,7 @@ describe('assistant capabilities', () => {
     );
   });
 
-  it('adds companion continuation payloads to Alexa-safe daily answers', async () => {
+  it('adds companion continuation payloads to shared daily answers', async () => {
     createTask({
       id: 'task-daily-handoff',
       group_folder: 'main',
@@ -5457,7 +5457,7 @@ describe('assistant capabilities', () => {
     const result = await executeAssistantCapability({
       capabilityId: 'daily.loose_ends',
       context: {
-        channel: 'alexa',
+        channel: 'telegram',
         groupFolder: 'main',
       },
       input: {
@@ -5479,20 +5479,6 @@ describe('assistant capabilities', () => {
     expect(
       result.conversationSeed?.subjectData?.companionContinuationJson,
     ).toBeTruthy();
-  });
-
-  it('blocks operator-only capabilities on Alexa while keeping them registered', async () => {
-    const result = await executeAssistantCapability({
-      capabilityId: 'work.current_logs',
-      context: {
-        channel: 'alexa',
-        groupFolder: 'main',
-      },
-    });
-
-    expect(result.handled).toBe(true);
-    expect(result.replyText).toContain('Telegram');
-    expect(result.trace?.responseSource).toBe('unavailable');
   });
 
   it('blocks operator-only capabilities on BlueBubbles while keeping pulse available', async () => {
@@ -5594,7 +5580,7 @@ describe('assistant capabilities', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('formats research answers richly for Telegram and briefly for Alexa', async () => {
+  it('formats research answers richly for Telegram', async () => {
     createTask({
       id: 'task-research-rich',
       group_folder: 'main',
@@ -5619,32 +5605,9 @@ describe('assistant capabilities', () => {
         canonicalText: 'Summarize what matters from my current context',
       },
     });
-    const alexa = await executeAssistantCapability({
-      capabilityId: 'research.summarize',
-      context: {
-        channel: 'alexa',
-        groupFolder: 'main',
-      },
-      input: {
-        canonicalText: 'Summarize what matters from my current context',
-      },
-    });
 
     expect(telegram.replyText).toContain('*Research Summary*');
     expect(telegram.replyText).not.toContain('*Why this route*');
-    expect(alexa.replyText).toContain('Want');
-    expect(alexa.researchResult?.routeExplanation).toContain('local context');
-    expect(alexa.followupActions).toEqual(
-      expect.arrayContaining([
-        'send_details',
-        'save_to_library',
-        'track_thread',
-        'create_reminder',
-        'save_for_later',
-        'draft_follow_up',
-      ]),
-    );
-    expect(alexa.handoffPayload?.kind).toBe('message');
   });
 
   it('propagates explicit research depth and web permission into the research plan', async () => {
@@ -5684,7 +5647,7 @@ describe('assistant capabilities', () => {
       allowWebSearch: true,
     };
     const explicitResults = await Promise.all(
-      (['telegram', 'bluebubbles', 'alexa'] as const).map((channel) =>
+      (['telegram', 'bluebubbles'] as const).map((channel) =>
         executeAssistantCapability({
           capabilityId: 'research.recommend',
           context: {
@@ -5926,23 +5889,10 @@ describe('assistant capabilities', () => {
           'What do my saved notes say about Candace dinner timing?',
       },
     });
-    const alexa = await executeAssistantCapability({
-      capabilityId: 'knowledge.summarize_saved',
-      context: {
-        channel: 'alexa',
-        groupFolder: 'main',
-      },
-      input: {
-        canonicalText:
-          'What do my saved notes say about Candace dinner timing?',
-      },
-    });
 
     expect(telegram.replyText).toContain('*Supporting Sources*');
     expect(telegram.replyText).toContain('Candace');
     expect(telegram.replyText).toMatch(/updated \d{4}-\d{2}-\d{2}, fresh/);
-    expect(alexa.replyText).toContain('saved material');
-    expect(alexa.researchResult?.supportingSources?.[0]?.title).toBeTruthy();
 
     const providerAttempt = vi.fn(async () => {
       throw new Error('saved-only continuation attempted network access');
@@ -6029,7 +5979,7 @@ describe('assistant capabilities', () => {
     const openLoops = await executeAssistantCapability({
       capabilityId: 'communication.open_loops',
       context: {
-        channel: 'alexa',
+        channel: 'telegram',
         groupFolder: 'main',
       },
       input: {
@@ -6244,25 +6194,10 @@ describe('assistant capabilities', () => {
           'What sources are you using about Friday dinner after rehearsal?',
       },
     });
-    const alexa = await executeAssistantCapability({
-      capabilityId: 'knowledge.explain_sources',
-      context: {
-        channel: 'alexa',
-        groupFolder: 'main',
-      },
-      input: {
-        canonicalText:
-          'What sources are you using about Friday dinner after rehearsal?',
-      },
-    });
 
     expect(telegram.replyText).toContain('*Sources I would use*');
     expect(telegram.replyText).toContain('Knowledge Proof Dinner Title');
     expect(telegram.replyText).toContain('*Why these sources*');
-    expect(alexa.replyText).toContain('I would use');
-    expect((alexa.replyText || '').toLowerCase()).toContain(
-      'friday dinner after rehearsal',
-    );
   });
 
   it('keeps media image generation explicit and reports provider unavailability honestly', async () => {
@@ -6353,16 +6288,6 @@ describe('assistant capabilities', () => {
         canonicalText: 'what follow-ups am I carrying right now',
       },
     });
-    const alexaFollowthrough = await executeAssistantCapability({
-      capabilityId: 'rituals.followthrough',
-      context: {
-        channel: 'alexa',
-        groupFolder: 'main',
-      },
-      input: {
-        canonicalText: 'what should I follow up on',
-      },
-    });
 
     expect(status.handled).toBe(true);
     expect(status.replyText).toContain('Morning brief: scheduled');
@@ -6374,7 +6299,5 @@ describe('assistant capabilities', () => {
       source: 'followthrough_activation',
       outcomeKind: 'reviewed',
     });
-    expect(alexaFollowthrough.handled).toBe(true);
-    expect(alexaFollowthrough.replyText).not.toContain('- ');
   });
 });

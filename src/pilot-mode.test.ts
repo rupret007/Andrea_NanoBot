@@ -4,12 +4,13 @@ import {
   _closeDatabase,
   _initTestDatabase,
   findRecentPilotJourneyEvent,
+  insertPilotIssue,
+  insertPilotJourneyEvent,
   listPilotIssues,
   listRecentPilotJourneyEvents,
   upsertResponseFeedback,
 } from './db.js';
 import {
-  buildAlexaUtteranceReviewDigest,
   buildPilotReviewSnapshot,
   buildPilotReviewDigest,
   capturePilotIssue,
@@ -24,6 +25,7 @@ import {
   sanitizePilotSummary,
   startPilotJourney,
 } from './pilot-mode.js';
+import type { PilotIssueRecord, PilotJourneyEventRecord } from './types.js';
 
 describe('pilot mode', () => {
   beforeEach(() => {
@@ -339,6 +341,186 @@ describe('pilot mode', () => {
     ).toBeNull();
   });
 
+  it('does not let newer retired-channel history crowd current records out of the window', () => {
+    const now = new Date('2026-04-07T18:30:00.000Z');
+    const retiredChannel = 'alexa' as PilotIssueRecord['channel'];
+    const issue: PilotIssueRecord = {
+      issueId: 'telegram-issue',
+      createdAt: '2026-04-07T10:00:00.000Z',
+      status: 'open',
+      issueKind: 'manual_pilot_issue',
+      channel: 'telegram',
+      groupFolder: 'main',
+      blockerOwner: 'repo_side',
+      summaryText: 'Repair Telegram follow-through.',
+      assistantContextSummary: 'Telegram follow-through needs repair.',
+      linkedRefs: {},
+    };
+    const event: PilotJourneyEventRecord = {
+      eventId: 'telegram-event',
+      journeyId: 'ordinary_chat',
+      channel: 'telegram',
+      groupFolder: 'main',
+      systemsInvolved: ['assistant_shell'],
+      outcome: 'success',
+      blockerOwner: 'none',
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      summaryText: 'Telegram greeting succeeded.',
+      startedAt: '2026-04-07T10:00:00.000Z',
+      completedAt: '2026-04-07T10:00:02.000Z',
+    };
+    insertPilotIssue(issue);
+    insertPilotJourneyEvent(event);
+    // More newer retired rows than the snapshot's SQL LIMITs (300 / 1000).
+    for (let i = 0; i < 1001; i += 1) {
+      const at = new Date(
+        Date.parse('2026-04-07T11:00:00.000Z') + i * 1000,
+      ).toISOString();
+      insertPilotIssue({
+        ...issue,
+        issueId: `retired-issue-${i}`,
+        createdAt: at,
+        channel: retiredChannel,
+      });
+      if (i < 301) {
+        insertPilotJourneyEvent({
+          ...event,
+          eventId: `retired-event-${i}`,
+          channel: retiredChannel,
+          startedAt: at,
+          completedAt: at,
+        });
+      }
+    }
+
+    const review = buildPilotReviewSnapshot(now);
+    expect(review.openIssueCount).toBe(1);
+    expect(review.openIssues.map((i) => i.issueId)).toEqual(['telegram-issue']);
+    expect(review.recentEvents.map((e) => e.eventId)).toEqual([
+      'telegram-event',
+    ]);
+    expect(listPilotIssues({ status: 'open', limit: 2000 })).toHaveLength(1002);
+  });
+
+  it('excludes retired-channel history from current pilot reporting without changing stored records', () => {
+    const now = new Date('2026-04-07T18:30:00.000Z');
+    // Persisted pre-removal records can have a channel outside today's types.
+    const retiredChannel = 'alexa' as PilotIssueRecord['channel'];
+    const issueBase: PilotIssueRecord = {
+      issueId: 'telegram-issue',
+      createdAt: '2026-04-07T17:00:00.000Z',
+      status: 'open',
+      issueKind: 'manual_pilot_issue',
+      channel: 'telegram',
+      groupFolder: 'main',
+      blockerOwner: 'repo_side',
+      summaryText: 'Repair Telegram follow-through.',
+      assistantContextSummary: 'Telegram follow-through needs repair.',
+      linkedRefs: {},
+    };
+    insertPilotIssue(issueBase);
+    insertPilotIssue({
+      ...issueBase,
+      issueId: 'bluebubbles-issue',
+      createdAt: '2026-04-07T17:30:00.000Z',
+      channel: 'bluebubbles',
+      summaryText: 'Repair BlueBubbles follow-through.',
+      assistantContextSummary: 'BlueBubbles follow-through needs repair.',
+    });
+    insertPilotIssue({
+      ...issueBase,
+      issueId: 'retired-issue',
+      createdAt: '2026-04-07T18:00:00.000Z',
+      channel: retiredChannel,
+      summaryText: 'Repair the Alexa voice router.',
+      assistantContextSummary: 'Historical voice routing failure.',
+    });
+
+    const eventBase: PilotJourneyEventRecord = {
+      eventId: 'telegram-event',
+      journeyId: 'ordinary_chat',
+      channel: 'telegram',
+      groupFolder: 'main',
+      systemsInvolved: ['assistant_shell'],
+      outcome: 'success',
+      blockerOwner: 'none',
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      summaryText: 'Telegram greeting succeeded.',
+      startedAt: '2026-04-07T17:00:00.000Z',
+      completedAt: '2026-04-07T17:00:02.000Z',
+    };
+    insertPilotJourneyEvent(eventBase);
+    insertPilotJourneyEvent({
+      ...eventBase,
+      eventId: 'bluebubbles-event',
+      channel: 'bluebubbles',
+      outcome: 'internal_failure',
+      blockerOwner: 'repo_side',
+      summaryText: 'BlueBubbles greeting failed.',
+      startedAt: '2026-04-07T17:30:00.000Z',
+      completedAt: '2026-04-07T17:30:02.000Z',
+    });
+    insertPilotJourneyEvent({
+      ...eventBase,
+      eventId: 'retired-event',
+      channel: retiredChannel,
+      outcome: 'internal_failure',
+      blockerOwner: 'repo_side',
+      summaryText: 'Historical Alexa greeting failure.',
+      startedAt: '2026-04-07T18:00:00.000Z',
+      completedAt: '2026-04-07T18:00:02.000Z',
+    });
+    const storedIssues = listPilotIssues({ status: 'open' });
+    const storedEvents = listRecentPilotJourneyEvents();
+
+    const review = buildPilotReviewSnapshot(now);
+    const digest = buildPilotReviewDigest(now);
+
+    expect(storedIssues).toHaveLength(3);
+    expect(storedEvents).toHaveLength(3);
+    for (const report of [review, digest]) {
+      expect(report.openIssueCount).toBe(2);
+      expect(report.openIssues.map((issue) => issue.issueId)).toEqual([
+        'bluebubbles-issue',
+        'telegram-issue',
+      ]);
+      expect(report.latestOpenIssue?.issueId).toBe('bluebubbles-issue');
+      expect(report.latestOpenIssue?.summaryText).toBe(
+        'Repair BlueBubbles follow-through.',
+      );
+      expect(report.recentEvents.map((event) => event.eventId)).toEqual([
+        'bluebubbles-event',
+        'telegram-event',
+      ]);
+    }
+    expect(digest.totalUsage24h).toBe(2);
+    expect(digest.totalUsage7d).toBe(2);
+    expect(digest.journeyDigests.ordinary_chat.usage24h).toBe(2);
+    expect(digest.journeyDigests.ordinary_chat.usage7d).toBe(2);
+    expect(digest.journeyDigests.ordinary_chat.latestEvent?.eventId).toBe(
+      'bluebubbles-event',
+    );
+    expect(
+      digest.journeyDigests.ordinary_chat.latestProblemEvent?.eventId,
+    ).toBe('bluebubbles-event');
+    expect(digest.recentProblemEvents.map((event) => event.eventId)).toEqual([
+      'bluebubbles-event',
+    ]);
+    expect(
+      digest.currentActionableProblemEvents.map((event) => event.eventId),
+    ).toEqual(['bluebubbles-event']);
+    expect(listPilotIssues({ status: 'open' })).toEqual(storedIssues);
+    expect(listRecentPilotJourneyEvents()).toEqual(storedEvents);
+  });
+
   it('builds pilot review digests with usage counts and latest problems', () => {
     const success = startPilotJourney({
       journeyId: 'ordinary_chat',
@@ -459,127 +641,6 @@ describe('pilot mode', () => {
       channel: 'bluebubbles',
       blockerClass: 'message_action_missing',
       occurrences: 2,
-    });
-  });
-
-  it('builds a lightweight Alexa utterance review digest from pilot journey events', () => {
-    const first = startPilotJourney({
-      journeyId: 'alexa_orientation',
-      systemsInvolved: ['alexa', 'voice_router'],
-      summaryText: 'help me think through the school fundraiser note',
-      routeKey: 'alexa_voice_router:open_ask:assistant_bridge',
-      channel: 'alexa',
-      groupFolder: 'main',
-      startedAt: '2026-04-07T18:00:00.000Z',
-    });
-    completePilotJourney({
-      eventId: first!.eventId,
-      outcome: 'degraded_usable',
-      blockerClass: 'fallback_unmatched_open_utterance',
-      blockerOwner: 'repo_side',
-      completedAt: '2026-04-07T18:00:02.000Z',
-      summaryText: 'help me think through the school fundraiser note',
-    });
-
-    const second = startPilotJourney({
-      journeyId: 'alexa_orientation',
-      systemsInvolved: ['alexa', 'voice_router'],
-      summaryText: 'help me think through the school fundraiser note',
-      routeKey: 'alexa_voice_router:open_ask:assistant_bridge',
-      channel: 'alexa',
-      groupFolder: 'main',
-      startedAt: '2026-04-07T18:05:00.000Z',
-    });
-    completePilotJourney({
-      eventId: second!.eventId,
-      outcome: 'degraded_usable',
-      blockerClass: 'fallback_unmatched_open_utterance',
-      blockerOwner: 'repo_side',
-      completedAt: '2026-04-07T18:05:03.000Z',
-      summaryText: 'help me think through the school fundraiser note',
-    });
-
-    const third = startPilotJourney({
-      journeyId: 'alexa_orientation',
-      systemsInvolved: ['alexa', 'voice_router'],
-      summaryText: 'what should I know',
-      routeKey: 'alexa_voice_router:open_ask:clarify',
-      channel: 'alexa',
-      groupFolder: 'main',
-      startedAt: '2026-04-07T18:10:00.000Z',
-    });
-    completePilotJourney({
-      eventId: third!.eventId,
-      outcome: 'degraded_usable',
-      blockerClass: 'weak_clarifier_recovery',
-      blockerOwner: 'repo_side',
-      completedAt: '2026-04-07T18:10:01.000Z',
-      summaryText: 'what should I know',
-    });
-
-    const fourth = startPilotJourney({
-      journeyId: 'alexa_orientation',
-      systemsInvolved: ['alexa', 'voice_router'],
-      summaryText: 'what about that',
-      routeKey: 'alexa_voice_router:conversation_control:clarify',
-      channel: 'alexa',
-      groupFolder: 'main',
-      startedAt: '2026-04-07T18:12:00.000Z',
-    });
-    completePilotJourney({
-      eventId: fourth!.eventId,
-      outcome: 'degraded_usable',
-      blockerClass: 'no_context_reference',
-      blockerOwner: 'repo_side',
-      completedAt: '2026-04-07T18:12:01.000Z',
-      summaryText: 'what about that',
-    });
-
-    const fifth = startPilotJourney({
-      journeyId: 'alexa_orientation',
-      systemsInvolved: ['alexa', 'voice_router'],
-      summaryText: 'figure out tonight',
-      routeKey: 'alexa_voice_router:open_ask:assistant_bridge',
-      channel: 'alexa',
-      groupFolder: 'main',
-      startedAt: '2026-04-07T18:14:00.000Z',
-    });
-    completePilotJourney({
-      eventId: fifth!.eventId,
-      outcome: 'degraded_usable',
-      blockerClass: 'planning_should_route',
-      blockerOwner: 'repo_side',
-      completedAt: '2026-04-07T18:14:01.000Z',
-      summaryText: 'figure out tonight',
-    });
-
-    const digest = buildAlexaUtteranceReviewDigest(
-      new Date('2026-04-07T18:30:00.000Z'),
-    );
-
-    expect(digest.totalSignals).toBe(5);
-    expect(digest.groupedPatterns[0]).toMatchObject({
-      utterance: 'help me think through the school fundraiser note',
-      family: 'open_ask',
-      routeOutcome: 'assistant_bridge',
-      blockerClass: 'fallback_unmatched_open_utterance',
-      attempts: 2,
-    });
-    expect(digest.repeatedPatterns).toHaveLength(1);
-    expect(digest.clarifierRecoveries[0]).toMatchObject({
-      utterance: 'what should I know',
-      routeOutcome: 'clarify',
-      blockerClass: 'weak_clarifier_recovery',
-    });
-    expect(digest.noContextReferences[0]).toMatchObject({
-      utterance: 'what about that',
-      routeOutcome: 'clarify',
-      blockerClass: 'no_context_reference',
-    });
-    expect(digest.planningShouldRoute[0]).toMatchObject({
-      utterance: 'figure out tonight',
-      routeOutcome: 'assistant_bridge',
-      blockerClass: 'planning_should_route',
     });
   });
 });

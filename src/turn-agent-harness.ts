@@ -142,7 +142,7 @@ import type {
   VerifiedDeepWorkPacket,
 } from './types.js';
 
-export type TurnAgentChannel = 'telegram' | 'bluebubbles' | 'alexa' | 'system';
+export type TurnAgentChannel = 'telegram' | 'bluebubbles' | 'system';
 
 export type SkillSideEffectRisk = 'none' | 'low' | 'medium' | 'high';
 export type SkillApprovalNeed = 'none' | 'conditional' | 'explicit';

@@ -30,7 +30,6 @@ Andrea is strongest at:
 - summaries and light research
 - project help in normal language
 - fast direct replies for simple prompts, playful questions, and basic math
-- optional Alexa Companion Mode if your admin enabled the linked voice channel
 
 ## First Five Minutes In Telegram
 
@@ -62,12 +61,6 @@ tasks, life threads, profile facts, or calendar to the research provider; name
 the personal source explicitly if you want it considered. A provider problem
 cannot discard the draft, and no research call or cost starts if the primary
 calendar response cannot be delivered.
-
-Alexa uses the same write boundary for ordinary calendar creation. The first
-voice request stores a draft and asks for confirmation, even when only one
-writable calendar is available. If Andrea asks which calendar to use, choosing
-one only sets the destination; a following explicit confirmation is still
-required before exactly one event is created.
 
 This is a bounded convenience for an explicit second research clause, not
 permission to fan an arbitrary message out across tools or models. Graceful
@@ -225,9 +218,9 @@ Natural asks that now work:
 - `why didn't you do that?`
 - `what do you need approval for?`
 
-Telegram is the rich management surface; Alexa answers stay short; BlueBubbles stays calm and bounded; `debug:*` surfaces stay exact and operator-only.
+Telegram is the rich management surface; BlueBubbles stays calm and bounded; `debug:*` surfaces stay exact and operator-only.
 
-Andrea now tracks a small reliability ledger for the routes, tools, providers, and integrations it depends on. That lets the Cognitive Executive lower confidence, choose a fallback, or explain a blocker when BlueBubbles, Alexa, Calendar, provider quota, or a work lane is degraded.
+Andrea now tracks a small reliability ledger for the routes, tools, providers, and integrations it depends on. That lets the Cognitive Executive lower confidence, choose a fallback, or explain a blocker when BlueBubbles, Calendar, provider quota, or a work lane is degraded.
 The canonical service refreshes current metadata-only truth at startup and on a
 bounded cadence. Unchanged observations are deduplicated, current proof can
 recover a stale confidence cap, and configuration alone never promotes an
@@ -293,7 +286,7 @@ The lab produces:
 - candidate patch plans for human review,
 - outcomes and lessons for future dogfooding.
 
-It intentionally separates external proof debt from repo bugs. Missing Telegram user-session credentials, Alexa signed `IntentRequest` proof, and BlueBubbles same-thread proof may appear as high-priority operator items, but the lab will not pretend a code patch can complete those live steps.
+It intentionally separates external proof debt from repo bugs. Missing Telegram user-session credentials, and BlueBubbles same-thread proof may appear as high-priority operator items, but the lab will not pretend a code patch can complete those live steps.
 
 Safety boundaries stay firm. The lab does not create branches, apply product-behavior patches, restart services, send messages, write calendars, change credentials, commit, push, or mutate live channels automatically. Patch output is plans only unless you explicitly ask for implementation.
 
@@ -321,7 +314,7 @@ Andrea can now turn a shadow improvement report into a patch-workbench review. T
 
 The workbench may only prepare an isolated local candidate branch/worktree when explicitly invoked, and the first allowlisted recipe is limited to proof-debt/report clarity. It cannot merge, push, restart services, send messages, write calendars, change credentials, alter approval gates, or mutate live integrations.
 
-Live proof is tracked separately from repo bugs. The proof gauntlet reports Telegram user-session config, Telegram bot proof, Alexa signed `IntentRequest`, BlueBubbles same-thread message-action proof, Google Calendar live write proof, research/provider proof, and image generation proof with exact next steps.
+Live proof is tracked separately from repo bugs. The proof gauntlet reports Telegram user-session config, Telegram bot proof, BlueBubbles same-thread message-action proof, Google Calendar live write proof, research/provider proof, and image generation proof with exact next steps.
 
 Operator checks:
 
@@ -366,7 +359,6 @@ Important Cursor rule:
 Surface shorthand:
 
 - Telegram is the richest surface for normal day-to-day use.
-- Alexa stays shorter and voice-first when it is enabled.
 - The configured owner BlueBubbles self-thread is a bounded personal control surface; ordinary contact and group threads are data-only.
 
 From the registered main Telegram chat, you can send a text to an existing
@@ -408,15 +400,6 @@ For short greetings, playful prompts, and basic math, Andrea may answer immediat
 - summarize notes, chats, and lightweight research
 - help with project work in normal language
 - show `/cursor_status` as a safe readiness check when the coding/integration path matters
-
-If your admin enabled Alexa, Andrea can also answer short spoken questions like:
-
-- `what should I know about today`
-- `anything else`
-- `what about Candace`
-- `remind me before that`
-
-Those voice features stay linked-account only and use explicit personalization controls.
 
 If your admin enabled the work cockpit, Andrea can also keep one chat-scoped current work item across Cursor and Codex/OpenAI. That selection is operator-facing convenience only; explicit job or task ids still win whenever an admin uses them.
 
@@ -524,7 +507,6 @@ Normal users should not expect:
 - deep Cursor job control commands
 - desktop bridge terminal commands
 - Amazon ordering flows
-- Alexa admin setup
 - marketplace skill management
 
 Those are operator-managed extras, not the baseline user surface.

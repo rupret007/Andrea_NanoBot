@@ -82,7 +82,7 @@ The repo supports:
 - OneCLI Agent Vault as the preferred host-side credential boundary
 - Anthropic-compatible gateway flows
 - host-side shopping credentials for Amazon Business
-- host-side bridge/auth tokens for optional integrations like Cursor desktop bridge and Alexa
+- host-side bridge/auth tokens for optional integrations like Cursor desktop bridge
 
 Important rule:
 
@@ -199,7 +199,7 @@ Current policy:
 
 - core public commands stay available for normal users
 - `/cursor_status` is the safe public Cursor status exception
-- advanced Cursor, Amazon, and Alexa operator commands are gated to Andrea's registered main control chat
+- advanced Cursor and Amazon operator commands are gated to Andrea's registered main control chat
 - remote-control remains disabled in the runtime path
 
 Current Cursor trust split:
@@ -236,7 +236,6 @@ evidence; availability alone is not enough for this trust boundary.
 
 These are only as safe as their real deployment:
 
-- Alexa voice ingress
 - Amazon Business ordering
 - Cursor Cloud beyond the configured operator path
 - Cursor desktop bridge

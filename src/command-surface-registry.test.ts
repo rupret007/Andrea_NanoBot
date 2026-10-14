@@ -113,7 +113,6 @@ describe('command surface registry', () => {
         '/debug-logs',
         '/openclaw',
         '/integrations',
-        '/alexa-status',
         '/amazon-status',
         '/amazon-search',
         '/purchase-request',
@@ -161,17 +160,6 @@ describe('command surface registry', () => {
         (entry) => entry.prompt === 'what do we need from the store',
       ),
     ).toBe(true);
-
-    const alexaSpotlights = getPracticalDiscoverySpotlights('alexa').map(
-      (entry) => entry.prompt,
-    );
-    expect(alexaSpotlights).toEqual([
-      "what's on my calendar tomorrow",
-      'remind me to take my pills at 9',
-      'what should I say back',
-      'help me plan tonight',
-      'what am I forgetting',
-    ]);
     const telegramSpotlights = getPracticalDiscoverySpotlights('telegram').map(
       (entry) => entry.prompt,
     );
@@ -182,8 +170,6 @@ describe('command surface registry', () => {
       'what should I say back',
       'help me plan meals this week',
     ]);
-    expect(alexaSpotlights.join(' ')).not.toContain('Candace');
-    expect(alexaSpotlights.join(' ')).not.toContain('save that');
     expect(telegramSpotlights.join(' ')).not.toContain('Candace');
   });
 
@@ -232,8 +218,6 @@ describe('command surface registry', () => {
         (entry) => [entry.id, entry.truthClass] as const,
       ),
     );
-
-    expect(truthById.get('alexa_voice_surface')).toBe('live_proven');
     expect(truthById.get('bluebubbles_bounded_surface')).toBe(
       'degraded_but_usable',
     );
@@ -263,7 +247,6 @@ describe('command surface docs', () => {
     expect(publicGuide).toContain("What's on my calendar tomorrow?");
     expect(publicGuide).toContain('Remind me to take my pills at 9');
     expect(publicGuide).toContain('Help me plan tonight');
-    expect(publicGuide).not.toContain('/alexa-status');
     expect(publicGuide).not.toContain('/debug-status');
     expect(publicGuide).not.toContain('/integrations');
     expect(publicGuide).not.toContain('/amazon-search');
@@ -271,16 +254,10 @@ describe('command surface docs', () => {
     expect(publicGuide).not.toContain('/bundle-toggle');
   });
 
-  it('keeps host-proof docs status-led for Alexa and BlueBubbles', () => {
-    const alexaGuide = readDoc('docs', 'ALEXA_VOICE_INTEGRATION.md');
+  it('keeps host-proof docs status-led for BlueBubbles', () => {
     const bluebubblesGuide = readDoc('docs', 'BLUEBUBBLES_CHANNEL_PREP.md');
     const docsIndex = readDoc('docs', 'README.md');
     const runbook = readDoc('docs', 'TESTING_AND_RELEASE_RUNBOOK.md');
-
-    expect(alexaGuide).toContain('core_ready_with_manual_surface_sync');
-    expect(alexaGuide).toContain('alexa-model-sync mark-synced');
-    expect(alexaGuide).toContain('services:status');
-    expect(alexaGuide).not.toContain('Alexa is now live-proven on this host');
 
     expect(bluebubblesGuide).toContain('externally_blocked');
     expect(bluebubblesGuide).toContain('transport_unreachable');
@@ -296,9 +273,6 @@ describe('command surface docs', () => {
       'setup -- --step verify` now follows **pass core, warn extras**',
     );
     expect(runbook).toContain('debug:openbubbles-feasibility');
-    expect(runbook).toContain(
-      'if you changed `docs/alexa/interaction-model.en-US.json`, finish the console import/build and then run `npm run setup -- --step alexa-model-sync mark-synced`',
-    );
   });
 
   it('keeps send-path docs on the exact fence and AppleScript-only delivery', () => {
@@ -353,13 +327,13 @@ describe('command surface docs', () => {
       'Surface-shape and access overlays still appear in this reference too:',
     );
     expect(commandReference).toMatch(
-      /\|\s*Planning and next steps\s*\|\s*Telegram, Alexa\s*\|\s*`near_live_only`\s*\|/,
+      /\|\s*Planning and next steps\s*\|\s*Telegram\s*\|\s*`near_live_only`\s*\|/,
     );
     expect(commandReference).toMatch(
-      /\|\s*Communication and reply help\s*\|\s*Telegram, Alexa, BlueBubbles\s*\|\s*`live_proven`\s*\|/,
+      /\|\s*Communication and reply help\s*\|\s*Telegram, BlueBubbles\s*\|\s*`live_proven`\s*\|/,
     );
     expect(commandReference).toMatch(
-      /\|\s*Compare, explain, and saved context\s*\|\s*Telegram, Alexa\s*\|\s*`degraded_but_usable`\s*\|/,
+      /\|\s*Compare, explain, and saved context\s*\|\s*Telegram\s*\|\s*`degraded_but_usable`\s*\|/,
     );
     expect(commandReference).toContain(
       'daily guidance still needs one fresh Telegram proof turn',

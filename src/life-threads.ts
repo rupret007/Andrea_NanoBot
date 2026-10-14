@@ -53,7 +53,7 @@ import {
   shouldProactivelySurfaceCommitment,
   type CommitmentInterpretation,
 } from './life-thread-commitment.js';
-import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
+import { normalizeVoicePrompt } from './voice-ready.js';
 
 export interface LifeThreadContextReference {
   summaryText?: string;
@@ -433,14 +433,6 @@ function inferFollowupAnchor(rawText: string, now: Date): string | null {
   return null;
 }
 
-function formatThreadReference(thread: LifeThread, now: Date): string {
-  return `${thread.title} is ${thread.status}. ${describeLifeThreadCommitment(
-    thread,
-    now,
-    lifeThreadTimeZone(thread.groupFolder),
-  )}`;
-}
-
 function formatThreadListTelegram(threads: LifeThread[], now: Date): string {
   if (threads.length === 0) {
     return 'You do not have any active life threads right now.';
@@ -460,21 +452,6 @@ function formatThreadListTelegram(threads: LifeThread[], now: Date): string {
     return `- ${formatThreadSummaryLine(thread, now)} (${thread.scope}, ${thread.status})${followup}`;
   });
   return ['Active life threads:', ...lines].join('\n');
-}
-
-function formatThreadListAlexa(threads: LifeThread[], now: Date): string {
-  if (threads.length === 0) {
-    return 'You do not have any active life threads right now.';
-  }
-  const first = threads[0]!;
-  return buildVoiceReply({
-    summary: `You have ${threads.length} active life ${threads.length === 1 ? 'thread' : 'threads'}.`,
-    details: [
-      formatThreadSummaryLine(first, now),
-      threads[1] ? formatThreadSummaryLine(threads[1], now) : null,
-    ],
-    maxDetails: 2,
-  });
 }
 
 function findThreadByTitle(
@@ -1856,7 +1833,7 @@ export function buildLifeThreadSnapshot(params: {
 }
 
 function buildThreadDetailReply(
-  channel: LifeThreadCommandChannel,
+  _channel: LifeThreadCommandChannel,
   thread: LifeThread,
   now: Date,
 ): string {
@@ -1882,13 +1859,6 @@ function buildThreadDetailReply(
     signals[0] ? `Latest signal: ${signals[0].summaryText}` : null,
   ].filter((line): line is string => Boolean(line));
 
-  if (channel === 'alexa') {
-    return buildVoiceReply({
-      summary: formatThreadReference(thread, now),
-      details: [detailLines[1] || null, detailLines[2] || null],
-      maxDetails: 2,
-    });
-  }
   return [
     `${thread.title} (${thread.status})`,
     ...detailLines.map((line) => `- ${line}`),
@@ -1896,7 +1866,7 @@ function buildThreadDetailReply(
 }
 
 function buildWhyStillOpenReply(
-  channel: LifeThreadCommandChannel,
+  _channel: LifeThreadCommandChannel,
   thread: LifeThread,
   now: Date,
 ): string {
@@ -1906,15 +1876,7 @@ function buildWhyStillOpenReply(
     now,
     lifeThreadTimeZone(thread.groupFolder),
   );
-  if (channel === 'alexa') {
-    return buildVoiceReply({
-      summary: `I still treat ${thread.title} as open because ${reason}.`,
-      details: [
-        thread.nextFollowupAt ? 'It still has a follow-up attached.' : null,
-      ],
-      maxDetails: 1,
-    });
-  }
+
   return [
     `I still treat ${thread.title} as open because ${reason}.`,
     latestSignals[0] ? `Latest signal: ${latestSignals[0].summaryText}` : null,
@@ -1924,26 +1886,18 @@ function buildWhyStillOpenReply(
 }
 
 function buildThreadExplainabilityReply(
-  channel: LifeThreadCommandChannel,
+  _channel: LifeThreadCommandChannel,
   priorContext: LifeThreadContextReference | null | undefined,
 ): string {
   const titles = priorContext?.usedThreadTitles || [];
   if (titles.length === 0) {
-    return channel === 'alexa'
-      ? 'I am not leaning on a saved life thread for that answer.'
-      : 'I was not leaning on a saved life thread for that answer.';
+    return 'I was not leaning on a saved life thread for that answer.';
   }
   const reasons = priorContext?.usedThreadReasons || [];
   const details = titles.map((title, index) =>
     reasons[index] ? `${title} because ${reasons[index]}` : title,
   );
-  if (channel === 'alexa') {
-    return buildVoiceReply({
-      summary: `I was using ${details[0]}.`,
-      details: [details[1] || null],
-      maxDetails: 1,
-    });
-  }
+
   return [
     'Thread context in play:',
     ...details.map((detail) => `- ${detail}`),
@@ -1951,18 +1905,12 @@ function buildThreadExplainabilityReply(
 }
 
 function buildSaveConfirmation(
-  channel: LifeThreadCommandChannel,
+  _channel: LifeThreadCommandChannel,
   thread: LifeThread,
   summary: string,
 ): string {
   const safeSummary = redactLifeThreadCommitmentText(summary);
-  if (channel === 'alexa') {
-    return buildVoiceReply({
-      summary: `Okay. I saved that under ${thread.title}.`,
-      details: [safeSummary],
-      maxDetails: 1,
-    });
-  }
+
   return `Okay. I saved that under the ${thread.title} thread.\n- ${safeSummary}`;
 }
 
@@ -2033,10 +1981,7 @@ function confirmPendingSuggestion(
   }
   return {
     handled: true,
-    responseText:
-      input.channel === 'alexa'
-        ? `Okay. I will keep ${thread.title} as an active thread.`
-        : `Okay. I will keep ${thread.title} as an active life thread.`,
+    responseText: `Okay. I will keep ${thread.title} as an active life thread.`,
     referencedThread: thread,
   };
 }
@@ -2049,10 +1994,7 @@ function rejectPendingSuggestion(
   }
   return {
     handled: true,
-    responseText:
-      input.channel === 'alexa'
-        ? 'Okay. I will leave that out of your saved threads.'
-        : 'Okay. I will not turn that into a saved life thread.',
+    responseText: 'Okay. I will not turn that into a saved life thread.',
     referencedThread: null,
   };
 }
@@ -2087,10 +2029,7 @@ export function handleLifeThreadCommand(
     const threads = listLifeThreadsForGroup(input.groupFolder, ['active']);
     return {
       handled: true,
-      responseText:
-        input.channel === 'alexa'
-          ? formatThreadListAlexa(threads, now)
-          : formatThreadListTelegram(threads, now),
+      responseText: formatThreadListTelegram(threads, now),
       referencedThread: threads[0] || null,
     };
   }
@@ -2658,17 +2597,12 @@ export function handleLifeThreadCommand(
       : snapshot.activeThreads;
     return {
       handled: true,
-      responseText:
-        input.channel === 'alexa'
-          ? formatThreadListAlexa(threads.slice(0, 3), now)
-          : [
-              'Follow-through right now:',
-              ...threads
-                .slice(0, 5)
-                .map(
-                  (candidate) => `- ${formatThreadSummaryLine(candidate, now)}`,
-                ),
-            ].join('\n'),
+      responseText: [
+        'Follow-through right now:',
+        ...threads
+          .slice(0, 5)
+          .map((candidate) => `- ${formatThreadSummaryLine(candidate, now)}`),
+      ].join('\n'),
       referencedThread: threads[0] || null,
     };
   }
@@ -2686,21 +2620,14 @@ export function handleLifeThreadCommand(
       responseText:
         threads.length === 0
           ? 'Nothing is standing out as a neglected follow-up right now.'
-          : input.channel === 'alexa'
-            ? buildVoiceReply({
-                summary: `The thing most likely to be slipping is ${threads[0]!.title}.`,
-                details: [threads[0]!.nextAction || threads[0]!.summary],
-                maxDetails: 1,
-              })
-            : [
-                'The follow-through items most likely to be slipping:',
-                ...threads
-                  .slice(0, 4)
-                  .map(
-                    (candidate) =>
-                      `- ${formatThreadSummaryLine(candidate, now)}`,
-                  ),
-              ].join('\n'),
+          : [
+              'The follow-through items most likely to be slipping:',
+              ...threads
+                .slice(0, 4)
+                .map(
+                  (candidate) => `- ${formatThreadSummaryLine(candidate, now)}`,
+                ),
+            ].join('\n'),
       referencedThread: threads[0] || null,
     };
   }

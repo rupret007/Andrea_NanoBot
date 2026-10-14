@@ -48,7 +48,7 @@ primary, AGI, deterministic, security, and container test gates:
   real gap from metadata, rank existing resources, compile only exact
   declared identity/version-digest-pinned executor/evaluator bindings, and attach sandbox
   proof to canonical durable work, checkpoints, and receipts;
-- Telegram, BlueBubbles, Alexa, Google Calendar, OpenClaw, and other configured
+- Telegram, BlueBubbles, Google Calendar, OpenClaw, and other configured
   integration surfaces, with transport state kept separate from fresh
   end-to-end proof;
 - cross-platform shared builds and hosted Windows validation, plus a canonical
@@ -193,7 +193,7 @@ only when they improve evidence, and stop at configured time and cost limits.
   scans.
 - Keep runtime SHA, disk headroom, provider health, and integration proof debt
   visible instead of hiding them behind a readiness score.
-- Refresh Telegram, BlueBubbles, Alexa, Calendar, and other operator proofs
+- Refresh Telegram, BlueBubbles, Calendar, and other operator proofs
   through genuine user paths rather than synthetic substitutions.
 
 ## Future Candidates After The Baseline
@@ -205,7 +205,7 @@ canary before activation.
 | Candidate                         | Earliest useful form                                                        | Prerequisite                                                  |
 | --------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | Computer use                      | One allowlisted application and one reversible workflow                     | Trustworthy baseline plus one promoted workflow               |
-| Richer voice                      | Low-latency streaming conversation with the same approval rules             | Fresh Alexa/voice proof and latency budget                    |
+| Richer voice                      | Low-latency streaming conversation with the same approval rules             | Fresh voice proof and latency budget                    |
 | Document and visual understanding | Cited extraction from explicitly supplied files and images                  | Source isolation, redaction, and artifact verification        |
 | Specialist delegation             | Ephemeral research or coding specialists supervised by one task packet      | Reliable decomposition, cost limits, and verifier evidence    |
 | Strong local-first mode           | Selected assistant and retrieval paths that operate without cloud providers | Quality baseline, supported local models, and resource budget |

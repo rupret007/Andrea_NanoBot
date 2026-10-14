@@ -35,12 +35,6 @@ const proofReport = buildLiveProofGauntletReport({
     journeys: {
       ordinary_chat: surface('live_proven', 'none', 'No action needed.'),
     },
-    alexa: {
-      ...surface('near_live_only', 'external', 'Use Alexa simulator/device.'),
-      lastHandledProofAt: 'none',
-      lastSignedRequestAt: 'none',
-      proofFreshness: 'none',
-    },
     bluebubbles: {
       ...surface(
         'degraded_but_usable',

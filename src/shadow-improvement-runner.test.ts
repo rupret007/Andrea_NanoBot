@@ -28,7 +28,7 @@ describe('executed synthetic capability gauntlet', () => {
       ['messaging_followthrough', 'communication.draft_reply', 'passed'],
       ['household_command_center', 'household.family_open_loops', 'passed'],
       ['research_provider_blocked', 'knowledge.summarize_saved', 'passed'],
-      ['alexa_concise_voice_flow', 'daily.loose_ends', 'passed'],
+      ['daily_loose_ends', 'daily.loose_ends', 'passed'],
     ]);
     expect(JSON.stringify(report)).not.toMatch(
       /prepare dinner plan|replace kitchen filter|saved decision note|pickup timing/i,

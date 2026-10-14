@@ -362,36 +362,7 @@ export interface RuntimeBackendChatSelectionRecord {
   updated_at: string;
 }
 
-export interface AlexaLinkedAccount {
-  accessTokenHash: string;
-  displayName: string;
-  groupFolder: string;
-  allowedAlexaUserId?: string | null;
-  allowedAlexaPersonId?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  disabledAt?: string | null;
-}
-
-export type AlexaPendingSessionKind =
-  | 'capture_reminder_lead_time'
-  | 'confirm_reminder_before_next_meeting'
-  | 'capture_save_for_later_content'
-  | 'confirm_save_for_later'
-  | 'capture_follow_up_reference'
-  | 'confirm_profile_fact'
-  | 'confirm_companion_completion';
-
-export interface AlexaPendingSession {
-  principalKey: string;
-  accessTokenHash: string;
-  pendingKind: AlexaPendingSessionKind;
-  payloadJson: string;
-  expiresAt: string;
-  updatedAt: string;
-}
-
-export type AlexaConversationSubjectKind =
+export type AssistantConversationSubjectKind =
   | 'day_brief'
   | 'meeting'
   | 'event'
@@ -405,7 +376,7 @@ export type AlexaConversationSubjectKind =
   | 'memory_fact'
   | 'general';
 
-export type AlexaCompanionGuidanceGoal =
+export type AssistantCompanionGuidanceGoal =
   | 'daily_brief'
   | 'upcoming_soon'
   | 'next_action'
@@ -423,7 +394,7 @@ export type AlexaCompanionGuidanceGoal =
   | 'risk_check'
   | 'explainability';
 
-export type AlexaConversationFollowupAction =
+export type AssistantConversationFollowupAction =
   | 'anything_else'
   | 'shorter'
   | 'say_more'
@@ -450,7 +421,7 @@ export type AlexaConversationFollowupAction =
 export type CompanionToneProfile = 'plain' | 'balanced' | 'warmer';
 
 export interface PersonalityTexturePolicy {
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   toneProfile: CompanionToneProfile;
   allowWarmth: boolean;
   allowHumor: boolean;
@@ -1058,10 +1029,7 @@ export type ActionBundleOriginKind =
   | 'research'
   | 'handoff';
 
-export type ActionBundlePresentationChannel =
-  | 'telegram'
-  | 'alexa'
-  | 'bluebubbles';
+export type ActionBundlePresentationChannel = 'telegram' | 'bluebubbles';
 
 export type ActionBundleStatus =
   | 'open'
@@ -3692,7 +3660,6 @@ export type WorldModelDomain =
   | 'google_calendar'
   | 'telegram'
   | 'bluebubbles'
-  | 'alexa'
   | 'research'
   | 'image_generation'
   | 'user_preferences'
@@ -4687,7 +4654,6 @@ export type SessionGraphNodeKind =
   | 'agent_thread'
   | 'telegram_chat'
   | 'bluebubbles_thread'
-  | 'alexa_session'
   | 'communication_thread'
   | 'life_thread'
   | 'companion_handoff'
@@ -5273,7 +5239,7 @@ export interface CognitiveWorkspaceDoctorReport {
   privacy: CognitiveReplayPacket['privacy'];
 }
 
-export type CognitiveExecutiveChannel = 'telegram' | 'alexa' | 'bluebubbles';
+export type CognitiveExecutiveChannel = 'telegram' | 'bluebubbles';
 
 export type CognitiveExecutiveIntentFamily =
   | 'next_action'
@@ -5870,7 +5836,6 @@ export interface ToolReliabilityDoctorReport {
 
 export type RepairPlaybookId =
   | 'bluebubbles_refresh_all'
-  | 'alexa_ingress_probe'
   | 'google_calendar_auth_check'
   | 'telegram_user_session_auth_check'
   | 'provider_quota_cooldown_record'
@@ -7059,7 +7024,7 @@ export interface CommunicationThreadRecord {
   title: string;
   linkedSubjectIds: string[];
   linkedLifeThreadIds: string[];
-  channel: 'telegram' | 'bluebubbles' | 'alexa-originated handoff';
+  channel: 'telegram' | 'bluebubbles';
   channelChatJid?: string | null;
   lastInboundSummary?: string | null;
   lastOutboundSummary?: string | null;
@@ -7107,7 +7072,7 @@ export interface CommunicationSignalRecord {
   id: string;
   communicationThreadId: string;
   groupFolder: string;
-  sourceChannel: 'telegram' | 'bluebubbles' | 'alexa-originated handoff';
+  sourceChannel: 'telegram' | 'bluebubbles';
   chatJid?: string | null;
   messageId?: string | null;
   direction: CommunicationSignalDirection;
@@ -7124,8 +7089,7 @@ export type PilotJourneyId =
   | 'candace_followthrough'
   | 'mission_planning'
   | 'work_cockpit'
-  | 'cross_channel_handoff'
-  | 'alexa_orientation';
+  | 'cross_channel_handoff';
 
 export type PilotJourneyOutcome =
   | 'success'
@@ -7139,7 +7103,7 @@ export type PilotBlockerOwner = 'none' | 'repo_side' | 'external';
 export interface PilotJourneyEventRecord {
   eventId: string;
   journeyId: PilotJourneyId;
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   groupFolder: string;
   chatJid?: string | null;
   threadId?: string | null;
@@ -7250,7 +7214,7 @@ export interface PilotIssueRecord {
   createdAt: string;
   status: PilotIssueStatus;
   issueKind: PilotIssueKind;
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   groupFolder: string;
   chatJid?: string | null;
   threadId?: string | null;
@@ -7331,7 +7295,7 @@ export interface KnowledgeSourceRecord {
   sensitivity: KnowledgeSensitivity;
   ingestionState: KnowledgeIngestionState;
   indexState: KnowledgeIndexState;
-  sourceChannel?: 'alexa' | 'telegram' | 'bluebubbles' | 'system' | null;
+  sourceChannel?: 'telegram' | 'bluebubbles' | 'system' | null;
   createdAt: string;
   updatedAt: string;
   lastUsedAt?: string | null;
@@ -7373,7 +7337,7 @@ export interface ChannelArtifact {
 
 export interface MediaGenerationRequest {
   prompt: string;
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   groupFolder?: string;
   size?: '1024x1024' | '1536x1024' | '1024x1536' | 'auto';
   styleHint?: string;
@@ -7460,7 +7424,7 @@ export interface CompanionContinuationCandidate {
 export interface CompanionHandoffRecord {
   handoffId: string;
   groupFolder: string;
-  originChannel: 'alexa' | 'telegram' | 'bluebubbles';
+  originChannel: 'telegram' | 'bluebubbles';
   targetChannel: 'telegram' | 'bluebubbles';
   targetChatJid?: string | null;
   capabilityId?: string | null;
@@ -7494,21 +7458,6 @@ export interface CompanionHandoffRecord {
   dispatchStartedAt?: string | null;
   deliveredMessageId?: string | null;
   errorText?: string | null;
-}
-
-export interface AlexaConversationContext {
-  principalKey: string;
-  accessTokenHash: string;
-  groupFolder: string;
-  flowKey: string;
-  subjectKind: AlexaConversationSubjectKind;
-  subjectJson: string;
-  summaryText: string;
-  supportedFollowupsJson: string;
-  styleJson: string;
-  createdAt: string;
-  expiresAt: string;
-  updatedAt: string;
 }
 
 export type ProfileSubjectKind = 'self' | 'person' | 'household';
@@ -7570,7 +7519,7 @@ export interface OperatingProfileIntake {
   trackingPriorities: string[];
   defaultGroups: string[];
   integrationsWanted: string[];
-  richerSurface: 'telegram' | 'alexa' | 'bluebubbles';
+  richerSurface: 'telegram' | 'bluebubbles';
   scope: 'personal' | 'household' | 'family' | 'mixed';
   notes: string[];
 }
@@ -7601,7 +7550,7 @@ export interface OperatingProfilePlan {
   defaultGroups: OperatingProfilePlanGroup[];
   routines: string[];
   reminderSuggestions: string[];
-  richerSurface: 'telegram' | 'alexa' | 'bluebubbles';
+  richerSurface: 'telegram' | 'bluebubbles';
   desiredIntegrations: OperatingProfilePlanIntegration[];
   learningPolicy: OperatingProfileLearningMode;
 }
@@ -7614,7 +7563,7 @@ export interface OperatingProfile {
   basedOnProfileId?: string | null;
   intakeJson: string;
   planJson: string;
-  sourceChannel: 'telegram' | 'alexa' | 'bluebubbles' | 'system';
+  sourceChannel: 'telegram' | 'bluebubbles' | 'system';
   createdAt: string;
   updatedAt: string;
   approvedAt?: string | null;
@@ -7635,7 +7584,7 @@ export interface OperatingProfileSuggestion {
   summary: string;
   suggestionJson: string;
   state: OperatingProfileSuggestionState;
-  sourceChannel: 'telegram' | 'alexa' | 'bluebubbles' | 'system';
+  sourceChannel: 'telegram' | 'bluebubbles' | 'system';
   createdAt: string;
   updatedAt: string;
   decidedAt?: string | null;
@@ -7696,7 +7645,7 @@ export interface EverydayListItem {
   itemKind: EverydayListItemKind;
   state: EverydayListItemState;
   scope: EverydayListScope;
-  sourceChannel: 'telegram' | 'alexa' | 'bluebubbles' | 'system';
+  sourceChannel: 'telegram' | 'bluebubbles' | 'system';
   sourceSummary: string;
   detailJson?: string | null;
   linkageJson?: string | null;
@@ -7742,8 +7691,7 @@ export type LifeThreadSourceKind =
   | 'calendar'
   | 'draft'
   | 'action_layer'
-  | 'daily_companion'
-  | 'alexa_followup';
+  | 'daily_companion';
 
 export type LifeThreadConfidenceKind = 'explicit' | 'high' | 'medium' | 'low';
 
@@ -7898,7 +7846,7 @@ export type LifeThreadFollowthroughMode =
   | 'important_only'
   | 'scheduled';
 
-export type LifeThreadCommandChannel = 'telegram' | 'alexa' | 'bluebubbles';
+export type LifeThreadCommandChannel = 'telegram' | 'bluebubbles';
 
 export interface LifeThread {
   id: string;
@@ -7973,31 +7921,6 @@ export interface LifeThreadSnapshot {
   slippingThreads: LifeThread[];
   householdCarryover: LifeThread | null;
   recommendedNextThread: LifeThread | null;
-}
-
-export interface AlexaOAuthAuthorizationCodeRecord {
-  codeHash: string;
-  clientId: string;
-  redirectUri: string;
-  scope: string;
-  codeChallenge?: string | null;
-  codeChallengeMethod?: 'plain' | 'S256' | null;
-  groupFolder: string;
-  displayName: string;
-  createdAt: string;
-  expiresAt: string;
-  usedAt?: string | null;
-}
-
-export interface AlexaOAuthRefreshTokenRecord {
-  refreshTokenHash: string;
-  clientId: string;
-  scope: string;
-  groupFolder: string;
-  displayName: string;
-  createdAt: string;
-  expiresAt: string;
-  disabledAt?: string | null;
 }
 
 // --- Channel abstraction ---

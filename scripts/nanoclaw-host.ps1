@@ -21,7 +21,6 @@ $stderrLogPath = Join-Path $logsDir 'nanoclaw.error.log'
 $hostStatePath = Join-Path $runtimeDir 'nanoclaw-host-state.json'
 $readyStatePath = Join-Path $runtimeDir 'nanoclaw-ready.json'
 $assistantHealthPath = Join-Path $runtimeDir 'assistant-health.json'
-$alexaLastSignedRequestPath = Join-Path $runtimeDir 'alexa-last-signed-request.json'
 $telegramRoundtripPath = Join-Path $runtimeDir 'telegram-roundtrip-health.json'
 $telegramTransportPath = Join-Path $runtimeDir 'telegram-transport-health.json'
 $runtimeAuditPath = Join-Path $runtimeDir 'runtime-audit.json'
@@ -415,72 +414,6 @@ function Stop-AndreaPlatform {
   }
 }
 
-function Normalize-RoutePath {
-  param(
-    [string] $Value,
-    [string] $Fallback
-  )
-
-  $raw = if ([string]::IsNullOrWhiteSpace($Value)) {
-    $Fallback
-  } else {
-    $Value.Trim()
-  }
-
-  if ($raw.StartsWith('/')) {
-    return $raw
-  }
-
-  return "/$raw"
-}
-
-function Join-RoutePath {
-  param(
-    [string] $BasePath,
-    [string] $Suffix
-  )
-
-  if ($BasePath.EndsWith('/')) {
-    return "$BasePath$Suffix"
-  }
-
-  return "$BasePath/$Suffix"
-}
-
-function Get-LocalProbeHost {
-  param([string] $ConfiguredHost)
-
-  if ([string]::IsNullOrWhiteSpace($ConfiguredHost)) {
-    return '127.0.0.1'
-  }
-
-  $resolvedHost = $ConfiguredHost.Trim()
-  if ($resolvedHost -eq '0.0.0.0' -or $resolvedHost -eq '::' -or $resolvedHost -eq '[::]') {
-    return '127.0.0.1'
-  }
-
-  return $resolvedHost
-}
-
-function Invoke-LocalHealthProbe {
-  param([string] $Url)
-
-  try {
-    $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec 3 -ErrorAction Stop
-    return [pscustomobject]@{
-      status = 'healthy'
-      detail = ("HTTP {0}" -f [int] $response.StatusCode)
-      body = if ($response.Content) { [string] $response.Content } else { '' }
-    }
-  } catch {
-    return [pscustomobject]@{
-      status = 'unreachable'
-      detail = $_.Exception.Message
-      body = ''
-    }
-  }
-}
-
 function Get-FieldTrialTruthSnapshot {
   $runnerPath = Join-Path $projectRoot 'scripts\run-with-pinned-node.mjs'
   $scriptPath = Join-Path $projectRoot 'scripts\field-trial-readiness.ts'
@@ -509,230 +442,6 @@ function Get-FieldTrialTruthSnapshot {
     return $json | ConvertFrom-Json
   } catch {
     return $null
-  }
-}
-
-function Get-AlexaLocalStatus {
-  param([hashtable] $DotEnv)
-
-  $skillId = Get-EnvValue -DotEnv $DotEnv -Key 'ALEXA_SKILL_ID'
-  if ([string]::IsNullOrWhiteSpace($skillId)) {
-    return [pscustomobject]@{
-      configured = $false
-      bind = 'none'
-      healthPath = 'none'
-      oauthHealthPath = 'none'
-      listenerHealth = 'disabled'
-      listenerDetail = 'ALEXA_SKILL_ID is not set.'
-      oauthHealth = 'disabled'
-      oauthDetail = 'Alexa OAuth is unavailable until Alexa is configured.'
-    }
-  }
-
-  $configuredHost = Get-EnvValue -DotEnv $DotEnv -Key 'ALEXA_HOST'
-  if ([string]::IsNullOrWhiteSpace($configuredHost)) {
-    $configuredHost = '127.0.0.1'
-  }
-  $probeHost = Get-LocalProbeHost -ConfiguredHost $configuredHost
-  $configuredPort = Get-EnvValue -DotEnv $DotEnv -Key 'ALEXA_PORT'
-  if ([string]::IsNullOrWhiteSpace($configuredPort)) {
-    $configuredPort = '4300'
-  }
-  $pathValue = Normalize-RoutePath -Value (Get-EnvValue -DotEnv $DotEnv -Key 'ALEXA_PATH') -Fallback '/alexa'
-  $healthPath = Join-RoutePath -BasePath $pathValue -Suffix 'health'
-  $oauthHealthPath = Join-RoutePath -BasePath $pathValue -Suffix 'oauth/health'
-
-  $listenerUrl = "http://$probeHost`:$configuredPort$healthPath"
-  $oauthUrl = "http://$probeHost`:$configuredPort$oauthHealthPath"
-  $listenerProbe = Invoke-LocalHealthProbe -Url $listenerUrl
-  $oauthProbe = Invoke-LocalHealthProbe -Url $oauthUrl
-
-  return [pscustomobject]@{
-    configured = $true
-    bind = "$configuredHost`:$configuredPort$pathValue"
-    healthPath = $healthPath
-    oauthHealthPath = $oauthHealthPath
-    listenerHealth = $listenerProbe.status
-    listenerDetail = $listenerProbe.detail
-    oauthHealth = $oauthProbe.status
-    oauthDetail = $oauthProbe.detail
-  }
-}
-
-function Normalize-BaseUrl {
-  param([string] $Value)
-
-  if ([string]::IsNullOrWhiteSpace($Value)) {
-    return $null
-  }
-
-  return ([string] $Value).Trim().TrimEnd('/')
-}
-
-function Invoke-PublicHealthProbe {
-  param(
-    [string] $Url,
-    [hashtable] $Headers
-  )
-
-  try {
-    $params = @{
-      UseBasicParsing = $true
-      Uri = $Url
-      TimeoutSec = 6
-    }
-    if ($Headers -and $Headers.Count -gt 0) {
-      $params.Headers = $Headers
-    }
-
-    $response = Invoke-WebRequest @params
-    if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
-      return [pscustomobject]@{
-        status = 'degraded'
-        detail = "HTTP $($response.StatusCode)"
-      }
-    }
-
-    return [pscustomobject]@{
-      status = 'healthy'
-      detail = "HTTP $($response.StatusCode)"
-    }
-  } catch {
-    $detail = [string] $_.Exception.Message
-    $errorDetails = ''
-    try {
-      if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
-        $errorDetails = [string] $_.ErrorDetails.Message
-      }
-    } catch {
-      $errorDetails = ''
-    }
-    $responseBody = ''
-    try {
-      $response = $_.Exception.Response
-      if ($response -and $response.GetResponseStream) {
-        $stream = $response.GetResponseStream()
-        if ($stream) {
-          try {
-            $reader = New-Object System.IO.StreamReader($stream)
-            try {
-              $responseBody = [string] $reader.ReadToEnd()
-            } finally {
-              $reader.Dispose()
-            }
-          } finally {
-            $stream.Dispose()
-          }
-        }
-      }
-    } catch {
-      $responseBody = ''
-    }
-    $ngrokErrorContext = "$detail`n$errorDetails`n$responseBody"
-    if ($ngrokErrorContext -match 'ERR_NGROK_3200') {
-      $detail = 'The public ngrok Alexa endpoint is offline. Restart or refresh the tunnel, update ALEXA_PUBLIC_BASE_URL if it changed, and confirm the Alexa Developer Console endpoint and account-link URLs point to the current live host.'
-    } elseif ($ngrokErrorContext -match 'ERR_NGROK_6024') {
-      $detail = 'ngrok browser warning page intercepted the request. Use the ngrok-skip-browser-warning header for browser-style checks.'
-    }
-    return [pscustomobject]@{
-      status = 'degraded'
-      detail = $detail
-    }
-  }
-}
-
-function Get-AlexaPublicStatus {
-  param(
-    [hashtable] $DotEnv,
-    [pscustomobject] $LocalStatus
-  )
-
-  $publicBaseUrl = Normalize-BaseUrl -Value (Get-EnvValue -DotEnv $DotEnv -Key 'ALEXA_PUBLIC_BASE_URL')
-  if ([string]::IsNullOrWhiteSpace($publicBaseUrl)) {
-    return [pscustomobject]@{
-      configured = $false
-      baseUrl = 'none'
-      endpointUrl = 'none'
-      healthUrl = 'none'
-      oauthHealthUrl = 'none'
-      ingressKind = 'unknown'
-      certificateHint = 'Set ALEXA_PUBLIC_BASE_URL after you choose the live HTTPS ingress.'
-      browserHint = 'none'
-      listenerHealth = 'unconfigured'
-      listenerDetail = 'ALEXA_PUBLIC_BASE_URL is not set.'
-      oauthHealth = 'unconfigured'
-      oauthDetail = 'ALEXA_PUBLIC_BASE_URL is not set.'
-    }
-  }
-
-  $headers = @{}
-  $ingressKind = 'standard_certificate_domain'
-  $certificateHint = 'Make sure the Alexa Developer Console SSL certificate type matches the public endpoint certificate.'
-  $browserHint = 'none'
-
-  try {
-    $publicUri = [Uri] $publicBaseUrl
-    $publicHost = ([string] $publicUri.Host).ToLowerInvariant()
-    if ($publicHost.EndsWith('.ngrok-free.dev')) {
-      $ingressKind = 'wildcard_certificate_domain'
-      $certificateHint = 'Alexa Developer Console endpoint SSL type must be set to the wildcard certificate option for *.ngrok-free.dev.'
-      $browserHint = 'ngrok free tunnels can show a browser warning page unless the request sends the ngrok-skip-browser-warning header.'
-      $headers['ngrok-skip-browser-warning'] = '1'
-    }
-  } catch {
-  }
-
-  $endpointUrl = 'none'
-  $healthUrl = 'none'
-  $oauthHealthUrl = 'none'
-  if ($LocalStatus -and $LocalStatus.configured) {
-    $basePath = [string] $LocalStatus.bind
-    $routePath = $null
-    if (-not [string]::IsNullOrWhiteSpace($basePath)) {
-      $lastSlash = $basePath.IndexOf('/')
-      if ($lastSlash -ge 0) {
-        $routePath = $basePath.Substring($lastSlash)
-      }
-    }
-    if ([string]::IsNullOrWhiteSpace($routePath)) {
-      $routePath = '/alexa'
-    }
-    $endpointUrl = "$publicBaseUrl$routePath"
-    $healthUrl = "$publicBaseUrl$($LocalStatus.healthPath)"
-    $oauthHealthUrl = "$publicBaseUrl$($LocalStatus.oauthHealthPath)"
-  }
-
-  $listenerProbe = if ($healthUrl -ne 'none') {
-    Invoke-PublicHealthProbe -Url $healthUrl -Headers $headers
-  } else {
-    [pscustomobject]@{
-      status = 'unconfigured'
-      detail = 'Alexa is not configured locally.'
-    }
-  }
-
-  $oauthProbe = if ($oauthHealthUrl -ne 'none') {
-    Invoke-PublicHealthProbe -Url $oauthHealthUrl -Headers $headers
-  } else {
-    [pscustomobject]@{
-      status = 'unconfigured'
-      detail = 'Alexa is not configured locally.'
-    }
-  }
-
-  return [pscustomobject]@{
-    configured = $true
-    baseUrl = $publicBaseUrl
-    endpointUrl = $endpointUrl
-    healthUrl = $healthUrl
-    oauthHealthUrl = $oauthHealthUrl
-    ingressKind = $ingressKind
-    certificateHint = $certificateHint
-    browserHint = $browserHint
-    listenerHealth = $listenerProbe.status
-    listenerDetail = $listenerProbe.detail
-    oauthHealth = $oauthProbe.status
-    oauthDetail = $oauthProbe.detail
   }
 }
 
@@ -1991,7 +1700,6 @@ function Start-NanoClaw {
 
   Remove-FileIfExists $readyStatePath
   Remove-FileIfExists $assistantHealthPath
-  Remove-FileIfExists $alexaLastSignedRequestPath
   Stop-OrphanedRepoProcesses | Out-Null
   $dotEnv = Read-DotEnv
   $platformStart = Start-AndreaPlatform -DotEnv $dotEnv
@@ -2090,7 +1798,6 @@ function Start-NanoClaw {
   Remove-FileIfExists $pidFile
   Remove-FileIfExists $readyStatePath
   Remove-FileIfExists $assistantHealthPath
-  Remove-FileIfExists $alexaLastSignedRequestPath
   throw $lastError
 }
 
@@ -2124,7 +1831,6 @@ function Stop-NanoClaw {
   Remove-FileIfExists $pidFile
   Remove-FileIfExists $readyStatePath
   Remove-FileIfExists $assistantHealthPath
-  Remove-FileIfExists $alexaLastSignedRequestPath
   Remove-FileIfExists $telegramTransportPath
   Write-HostState -Phase 'stopped' -BootId '' -NodePath '' -NodeVersion '' -StartedAt '' -InstallModeValue $InstallMode
 }
@@ -2267,7 +1973,6 @@ function Show-Status {
   $hostState = Read-JsonFile $hostStatePath
   $readyState = Read-JsonFile $readyStatePath
   $assistantHealthMarker = Read-JsonFile $assistantHealthPath
-  $alexaLastSignedRequest = Read-JsonFile $alexaLastSignedRequestPath
   $runtimeAudit = Read-JsonFile $runtimeAuditPath
   $runtimeMetadata = Read-JsonFile $nodeRuntimeMetadataPath
   $runtimePid = Read-Pid
@@ -2307,8 +2012,6 @@ function Show-Status {
   $telegramTransport = Get-TelegramTransportStatus -AssistantHealthMarker $assistantHealthMarker
   $telegramRoundtrip = Get-TelegramRoundtripStatus -AssistantHealthMarker $assistantHealthMarker -HostState $hostState -ReadyState $readyState -TelegramTransport $telegramTransport
     $telegramProbeConfig = Get-TelegramLiveProbeConfigStatus
-    $alexaLocal = Get-AlexaLocalStatus -DotEnv (Read-DotEnv)
-    $alexaPublic = Get-AlexaPublicStatus -DotEnv (Read-DotEnv) -LocalStatus $alexaLocal
     $backendSnapshot = Get-AndreaOpenAiBackendSnapshot -DotEnv (Read-DotEnv)
     $watchdog = Get-WatchdogSnapshot
   $activeRepoRoot = if ($runtimeAudit -and $runtimeAudit.activeRepoRoot) { [string] $runtimeAudit.activeRepoRoot } else { $projectRoot }
@@ -2352,72 +2055,6 @@ function Show-Status {
   Write-Output ("HOST_STATUS: assistant_health={0}" -f ([string] $assistantHealth.status))
   Write-Output ("HOST_STATUS: assistant_health_detail={0}" -f ([string] $assistantHealth.detail))
   Write-Output ("HOST_STATUS: assistant_health_updated_at={0}" -f ($(if ($assistantHealth.updatedAt) { [string] $assistantHealth.updatedAt } else { 'none' })))
-  Write-Output ("HOST_STATUS: alexa_configured={0}" -f ([string] $alexaLocal.configured).ToLowerInvariant())
-  Write-Output ("HOST_STATUS: alexa_bind={0}" -f ([string] $alexaLocal.bind))
-  Write-Output ("HOST_STATUS: alexa_health_path={0}" -f ([string] $alexaLocal.healthPath))
-  Write-Output ("HOST_STATUS: alexa_listener_health={0}" -f ([string] $alexaLocal.listenerHealth))
-  Write-Output ("HOST_STATUS: alexa_listener_detail={0}" -f ([string] $alexaLocal.listenerDetail))
-  Write-Output ("HOST_STATUS: alexa_oauth_health_path={0}" -f ([string] $alexaLocal.oauthHealthPath))
-  Write-Output ("HOST_STATUS: alexa_oauth_health={0}" -f ([string] $alexaLocal.oauthHealth))
-  Write-Output ("HOST_STATUS: alexa_oauth_detail={0}" -f ([string] $alexaLocal.oauthDetail))
-  Write-Output ("HOST_STATUS: alexa_public_base_url={0}" -f ([string] $alexaPublic.baseUrl))
-  Write-Output ("HOST_STATUS: alexa_public_endpoint_url={0}" -f ([string] $alexaPublic.endpointUrl))
-  Write-Output ("HOST_STATUS: alexa_public_health_url={0}" -f ([string] $alexaPublic.healthUrl))
-  Write-Output ("HOST_STATUS: alexa_public_oauth_health_url={0}" -f ([string] $alexaPublic.oauthHealthUrl))
-  Write-Output ("HOST_STATUS: alexa_public_ingress_kind={0}" -f ([string] $alexaPublic.ingressKind))
-  Write-Output ("HOST_STATUS: alexa_public_certificate_hint={0}" -f ([string] $alexaPublic.certificateHint))
-  Write-Output ("HOST_STATUS: alexa_public_browser_hint={0}" -f ([string] $alexaPublic.browserHint))
-  Write-Output ("HOST_STATUS: alexa_public_listener_health={0}" -f ([string] $alexaPublic.listenerHealth))
-  Write-Output ("HOST_STATUS: alexa_public_listener_detail={0}" -f ([string] $alexaPublic.listenerDetail))
-  Write-Output ("HOST_STATUS: alexa_public_oauth_health={0}" -f ([string] $alexaPublic.oauthHealth))
-  Write-Output ("HOST_STATUS: alexa_public_oauth_detail={0}" -f ([string] $alexaPublic.oauthDetail))
-  $alexaProofState = if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.proofState) {
-    [string] $fieldTrialTruth.alexa.proofState
-  } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.requestType) {
-    'near_live_only'
-  } else {
-    'near_live_only'
-  }
-  $alexaProofKind = if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.proofKind) {
-    [string] $fieldTrialTruth.alexa.proofKind
-  } elseif ($alexaLastSignedRequest -and [string] $alexaLastSignedRequest.requestType -eq 'LaunchRequest') {
-    'launch_only'
-  } elseif ($alexaLastSignedRequest -and [string] $alexaLastSignedRequest.requestType -eq 'IntentRequest') {
-    'signed_intent_unhandled'
-  } else {
-    'none'
-  }
-  $alexaProofFreshness = if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.proofFreshness) {
-    [string] $fieldTrialTruth.alexa.proofFreshness
-  } else {
-    'none'
-  }
-  $alexaProofAgeLabel = if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.proofAgeLabel) {
-    [string] $fieldTrialTruth.alexa.proofAgeLabel
-  } else {
-    'none'
-  }
-  Write-Output ("HOST_STATUS: alexa_last_signed_request_at={0}" -f ($(if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.lastSignedRequestAt) { [string] $fieldTrialTruth.alexa.lastSignedRequestAt } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.updatedAt) { [string] $alexaLastSignedRequest.updatedAt } else { 'none' })))
-  Write-Output ("HOST_STATUS: alexa_last_signed_request_type={0}" -f ($(if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.lastSignedRequestType) { [string] $fieldTrialTruth.alexa.lastSignedRequestType } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.requestType) { [string] $alexaLastSignedRequest.requestType } else { 'none' })))
-  Write-Output ("HOST_STATUS: alexa_live_proof={0}" -f $alexaProofState)
-  Write-Output ("HOST_STATUS: alexa_live_proof_kind={0}" -f $alexaProofKind)
-  Write-Output ("HOST_STATUS: alexa_live_proof_freshness={0}" -f $alexaProofFreshness)
-  Write-Output ("HOST_STATUS: alexa_live_proof_age={0}" -f $alexaProofAgeLabel)
-  Write-Output ("HOST_STATUS: alexa_last_signed_intent={0}" -f ($(if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.lastSignedIntent) { [string] $fieldTrialTruth.alexa.lastSignedIntent } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.intentName) { [string] $alexaLastSignedRequest.intentName } else { 'none' })))
-  Write-Output ("HOST_STATUS: alexa_last_signed_group_folder={0}" -f ($(if ($alexaLastSignedRequest -and $alexaLastSignedRequest.groupFolder) { [string] $alexaLastSignedRequest.groupFolder } else { 'none' })))
-  Write-Output ("HOST_STATUS: alexa_last_signed_response_source={0}" -f ($(if ($fieldTrialTruth -and $fieldTrialTruth.alexa -and $fieldTrialTruth.alexa.lastSignedResponseSource) { [string] $fieldTrialTruth.alexa.lastSignedResponseSource } elseif ($alexaLastSignedRequest -and $alexaLastSignedRequest.responseSource) { [string] $alexaLastSignedRequest.responseSource } else { 'none' })))
-  if ($fieldTrialTruth -and $fieldTrialTruth.alexa) {
-    Write-Output ("HOST_STATUS: alexa_last_handled_proof_at={0}" -f ($(if ($fieldTrialTruth.alexa.lastHandledProofAt) { [string] $fieldTrialTruth.alexa.lastHandledProofAt } else { 'none' })))
-    Write-Output ("HOST_STATUS: alexa_last_handled_proof_intent={0}" -f ($(if ($fieldTrialTruth.alexa.lastHandledProofIntent) { [string] $fieldTrialTruth.alexa.lastHandledProofIntent } else { 'none' })))
-    Write-Output ("HOST_STATUS: alexa_last_handled_proof_response_source={0}" -f ($(if ($fieldTrialTruth.alexa.lastHandledProofResponseSource) { [string] $fieldTrialTruth.alexa.lastHandledProofResponseSource } else { 'none' })))
-    Write-Output ("HOST_STATUS: alexa_live_proof_blocker={0}" -f ($(if ($fieldTrialTruth.alexa.blocker) { [string] $fieldTrialTruth.alexa.blocker } else { 'none' })))
-    Write-Output ("HOST_STATUS: alexa_live_proof_next_action={0}" -f ($(if ($fieldTrialTruth.alexa.nextAction) { [string] $fieldTrialTruth.alexa.nextAction } else { 'none' })))
-    Write-Output ("HOST_STATUS: alexa_live_proof_utterance={0}" -f ($(if ($fieldTrialTruth.alexa.recommendedUtterance) { [string] $fieldTrialTruth.alexa.recommendedUtterance } else { 'none' })))
-    Write-Output ("HOST_STATUS: alexa_live_proof_confirm_command={0}" -f ($(if ($fieldTrialTruth.alexa.confirmCommand) { [string] $fieldTrialTruth.alexa.confirmCommand } else { 'none' })))
-    Write-Output ("HOST_STATUS: alexa_live_proof_success_shape={0}" -f ($(if ($fieldTrialTruth.alexa.successShape) { [string] $fieldTrialTruth.alexa.successShape } else { 'none' })))
-    Write-Output ("HOST_STATUS: alexa_live_proof_stale_shape={0}" -f ($(if ($fieldTrialTruth.alexa.staleShape) { [string] $fieldTrialTruth.alexa.staleShape } else { 'none' })))
-    Write-Output ("HOST_STATUS: alexa_live_proof_failure_checks={0}" -f ($(if ($fieldTrialTruth.alexa.failureChecklist) { [string] $fieldTrialTruth.alexa.failureChecklist } else { 'none' })))
-  }
   Write-Output ("HOST_STATUS: telegram_transport_mode={0}" -f ([string] $telegramTransport.mode))
   Write-Output ("HOST_STATUS: telegram_transport_health={0}" -f ([string] $telegramTransport.status))
   Write-Output ("HOST_STATUS: telegram_transport_detail={0}" -f ([string] $telegramTransport.detail))
@@ -2443,11 +2080,6 @@ function Show-Status {
     Write-Output ("HOST_STATUS: launch_candidate_status={0}" -f ([string] $fieldTrialTruth.launchReadiness.status))
     Write-Output ("HOST_STATUS: core_status={0}" -f ([string] $fieldTrialTruth.launchReadiness.coreStatus))
     Write-Output ("HOST_STATUS: launch_candidate_summary={0}" -f ([string] $fieldTrialTruth.launchReadiness.summary))
-    Write-Output ("HOST_STATUS: alexa_model_sync_status={0}" -f ([string] $fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.syncStatus))
-    Write-Output ("HOST_STATUS: alexa_model_hash={0}" -f ([string] $fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.interactionModelHash))
-    Write-Output ("HOST_STATUS: alexa_model_last_synced_hash={0}" -f ([string] $fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedHash))
-    Write-Output ("HOST_STATUS: alexa_model_last_synced_at={0}" -f ([string] $fieldTrialTruth.launchReadiness.manualSurfaceSyncs.alexa.lastSyncedAt))
-    Write-Output ("HOST_STATUS: manual_sync_steps={0}" -f ($(if ($fieldTrialTruth.launchReadiness.manualSyncSteps.Count -gt 0) { [string] ($fieldTrialTruth.launchReadiness.manualSyncSteps -join ' | ') } else { 'none' })))
     Write-Output ("HOST_STATUS: optional_provider_blockers={0}" -f ($(if ($fieldTrialTruth.launchReadiness.optionalProviderBlockers.Count -gt 0) { [string] ($fieldTrialTruth.launchReadiness.optionalProviderBlockers -join ' | ') } else { 'none' })))
     Write-Output ("HOST_STATUS: optional_provider_next_actions={0}" -f ($(if ($fieldTrialTruth.launchReadiness.optionalProviderNextActions.Count -gt 0) { [string] ($fieldTrialTruth.launchReadiness.optionalProviderNextActions -join ' | ') } else { 'none' })))
     Write-Output ("HOST_STATUS: proof_freshness_gaps={0}" -f ($(if ($fieldTrialTruth.launchReadiness.proofFreshnessGaps.Count -gt 0) { [string] ($fieldTrialTruth.launchReadiness.proofFreshnessGaps -join ' | ') } else { 'none' })))
@@ -2474,7 +2106,6 @@ function Show-Status {
     Write-Output ("HOST_STATUS: journey_mission_planning_proof={0}" -f ([string] $fieldTrialTruth.journeys.mission_planning.proofState))
     Write-Output ("HOST_STATUS: journey_work_cockpit_proof={0}" -f ([string] $fieldTrialTruth.journeys.work_cockpit.proofState))
     Write-Output ("HOST_STATUS: journey_cross_channel_handoff_proof={0}" -f ([string] $fieldTrialTruth.journeys.cross_channel_handoff.proofState))
-    Write-Output ("HOST_STATUS: journey_alexa_orientation_proof={0}" -f ([string] $fieldTrialTruth.journeys.alexa_orientation.proofState))
 Write-Output ("HOST_STATUS: bluebubbles_proof={0}" -f ([string] $fieldTrialTruth.bluebubbles.proofState))
 Write-Output ("HOST_STATUS: bluebubbles_provider={0}" -f ([string] $fieldTrialTruth.bluebubbles.providerName))
 Write-Output ("HOST_STATUS: messages_bridge_availability={0}" -f ([string] $fieldTrialTruth.bluebubbles.bridgeAvailability))

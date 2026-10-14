@@ -1,3 +1,4 @@
+import { listCurrentToolReliabilityRollups } from './tool-reliability.js';
 import { createHash } from 'node:crypto';
 
 import { redactCouncilText } from './council-safety.js';
@@ -10,7 +11,6 @@ import {
   listLearningDistillations,
   listSkillPlaybookRuns,
   listSkillPlaybooks,
-  listToolReliabilityRollups,
   upsertSkillPlaybook,
   upsertSkillPlaybookRun,
 } from './db.js';
@@ -480,7 +480,7 @@ export function matchSkillPlaybook(params: {
     taskFamily: params.taskFamily,
     limit: 100,
   });
-  const rollups = listToolReliabilityRollups({ limit: 100 });
+  const rollups = listCurrentToolReliabilityRollups({ limit: 100 });
   const reviewedDistillationIds = new Set(
     listLearningDistillations({
       groupFolder: params.groupFolder,

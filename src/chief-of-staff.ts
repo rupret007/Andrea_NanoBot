@@ -54,12 +54,12 @@ import {
   buildSignatureFlowText,
   buildSignatureSignalsWhyLine,
 } from './signature-flows.js';
-import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
+import { normalizeVoicePrompt } from './voice-ready.js';
 
 const CHIEF_OF_STAFF_FACT_KEY = 'chief_of_staff_preferences';
 
 export interface ChiefOfStaffTurnInput {
-  channel: 'alexa' | 'telegram' | 'bluebubbles';
+  channel: 'telegram' | 'bluebubbles';
   groupFolder: string;
   text: string;
   mode:
@@ -250,7 +250,7 @@ function resolveChiefOfStaffPreferences(
 function persistChiefOfStaffPreferences(params: {
   groupFolder: string;
   preferences: ChiefOfStaffPreferences;
-  sourceChannel: 'alexa' | 'telegram' | 'bluebubbles';
+  sourceChannel: 'telegram' | 'bluebubbles';
   sourceSummary: string;
   now: Date;
 }): void {
@@ -921,17 +921,6 @@ function formatChiefOfStaffReply(
   snapshot: ChiefOfStaffSnapshot,
   mode: ChiefOfStaffTurnInput['mode'],
 ): string {
-  if (channel === 'alexa') {
-    return buildVoiceReply({
-      summary: snapshot.summaryText,
-      details: [
-        snapshot.supportingSignals[0]?.summaryText || null,
-        snapshot.bestNextAction || null,
-      ],
-      maxDetails: mode === 'explain' ? 2 : 2,
-    });
-  }
-
   if (channel === 'bluebubbles') {
     return buildSignatureFlowText({
       lead: snapshot.summaryText,
@@ -1389,14 +1378,7 @@ export async function buildChiefOfStaffTurn(
       ],
     };
     return {
-      replyText:
-        input.channel === 'alexa'
-          ? buildVoiceReply({
-              summary: summaryText,
-              details: [],
-              offerMore: false,
-            })
-          : summaryText,
+      replyText: summaryText,
       summaryText,
       detailText: buildDetailText(configuredSnapshot),
       snapshot: configuredSnapshot,

@@ -55,7 +55,7 @@ function seedDelegationRule(
     userConfirmed: overrides.userConfirmed ?? true,
     channelApplicabilityJson:
       overrides.channelApplicabilityJson ||
-      JSON.stringify(['telegram', 'alexa', 'bluebubbles']),
+      JSON.stringify(['telegram', 'bluebubbles']),
     safetyLevel: overrides.safetyLevel || 'safe_to_auto_after_delegation',
   };
   upsertDelegationRule(record);
@@ -151,7 +151,7 @@ describe('action bundles', () => {
 
     const bundle = createOrRefreshActionBundle({
       groupFolder: 'main',
-      presentationChannel: 'alexa',
+      presentationChannel: 'bluebubbles',
       capabilityId: 'research.answer',
       continuationCandidate,
       summaryText: 'Busy week tradeoffs',

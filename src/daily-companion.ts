@@ -36,8 +36,8 @@ import {
   stripSignatureFlowSystemPrefix,
 } from './signature-flows.js';
 import type {
-  AlexaConversationFollowupAction,
-  AlexaConversationSubjectKind,
+  AssistantConversationFollowupAction,
+  AssistantConversationSubjectKind,
   CompanionToneProfile,
   LifeThread,
   PersonalityCooldownState,
@@ -48,7 +48,7 @@ import type {
   LifeThreadSnapshot,
 } from './types.js';
 import type { AssistantPresentation } from './assistant-presentation.js';
-import { buildVoiceReply, normalizeVoicePrompt } from './voice-ready.js';
+import { normalizeVoicePrompt } from './voice-ready.js';
 
 export type DailyCompanionMode =
   | 'morning_brief'
@@ -57,7 +57,7 @@ export type DailyCompanionMode =
   | 'open_guidance'
   | 'household_guidance';
 
-export type DailyCompanionChannel = 'telegram' | 'alexa' | 'bluebubbles';
+export type DailyCompanionChannel = 'telegram' | 'bluebubbles';
 
 export type DailyCompanionRecommendationKind =
   | 'do_now'
@@ -79,8 +79,8 @@ export interface DailyCompanionContext {
   householdSignals: string[];
   recommendationKind: DailyCompanionRecommendationKind;
   recommendationText: string | null;
-  subjectKind: AlexaConversationSubjectKind;
-  supportedFollowups: AlexaConversationFollowupAction[];
+  subjectKind: AssistantConversationSubjectKind;
+  supportedFollowups: AssistantConversationFollowupAction[];
   subjectData: {
     personName?: string;
     activePeople?: string[];
@@ -139,9 +139,9 @@ interface CompanionPreferences {
 
 interface CompanionDraft {
   mode: DailyCompanionMode;
-  subjectKind: AlexaConversationSubjectKind;
+  subjectKind: AssistantConversationSubjectKind;
   subjectData: DailyCompanionContext['subjectData'];
-  supportedFollowups: AlexaConversationFollowupAction[];
+  supportedFollowups: AssistantConversationFollowupAction[];
   lead: string;
   leadReason: string;
   detailLines: string[];
@@ -943,184 +943,6 @@ function ensureSentence(text: string): string {
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
-function humanizeAlexaDetailLine(line: string): string {
-  const trimmed = line.trim();
-  if (!trimmed) return trimmed;
-
-  const followThroughBundleMatch = trimmed.match(
-    /^If you want, I can set a reminder for the follow-through, save it under ([A-Za-z][A-Za-z' -]+), and pin it into the evening reset\.$/i,
-  );
-  if (followThroughBundleMatch?.[1]) {
-    const threadLabel = followThroughBundleMatch[1]
-      .trim()
-      .split(/\s+/)
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' ');
-    return `If you want, I can remind you about ${threadLabel} later tonight.`;
-  }
-
-  const replacements: Array<[RegExp, (value: string) => string]> = [
-    [/^Next:\s+/i, (value) => `Next up is ${value}`],
-    [/^Reminder:\s+/i, (value) => `You have ${value}`],
-    [
-      /^Open (?:window|block):\s+/i,
-      (value) => `You also have an open stretch ${value}`,
-    ],
-    [
-      /^Thread(?: carryover| follow-up)?:\s+/i,
-      (value) => `One loose end is ${value}`,
-    ],
-    [/^Household(?: thread)?:\s+/i, (value) => `At home, ${value}`],
-    [/^Shared plan:\s+/i, (value) => `The shared plan is ${value}`],
-    [/^Also:\s+/i, (value) => `Also, ${value}`],
-    [/^Current work:\s+/i, (value) => `Workwise, ${value}`],
-    [
-      /^Tomorrow pressure:\s+/i,
-      (value) => `Tomorrow's pressure point is ${value}`,
-    ],
-    [/^Tomorrow:\s+/i, (value) => `Tomorrow, ${value}`],
-    [/^Also tomorrow:\s+/i, (value) => `Also tomorrow, ${value}`],
-    [/^Tonight:\s+/i, (value) => `Tonight, ${value}`],
-    [/^Keep on deck:\s+/i, (value) => `Also keep in mind ${value}`],
-  ];
-
-  for (const [pattern, formatter] of replacements) {
-    const match = trimmed.match(pattern);
-    if (!match) continue;
-    const value = trimmed.replace(pattern, '').trim();
-    return ensureSentence(formatter(value));
-  }
-
-  return ensureSentence(trimmed);
-}
-
-function normalizeAlexaVoiceComparisonText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
-
-function isDistinctAlexaVoicePoint(
-  candidate: string,
-  existing: string[],
-): boolean {
-  const normalizedCandidate = normalizeAlexaVoiceComparisonText(candidate);
-  if (!normalizedCandidate) return false;
-  return !existing.some((existingLine) => {
-    const normalizedExisting = normalizeAlexaVoiceComparisonText(existingLine);
-    if (!normalizedExisting) return false;
-    return (
-      normalizedCandidate === normalizedExisting ||
-      normalizedCandidate.includes(normalizedExisting) ||
-      normalizedExisting.includes(normalizedCandidate)
-    );
-  });
-}
-
-function buildAlexaVoiceDetailLines(params: {
-  lead: string;
-  lines: string[];
-  recommendation: string | null;
-  directMode?: boolean;
-  personalityLine?: string | null;
-}): string[] {
-  const selected: string[] = [];
-  const seen = [params.lead];
-  const candidates = [
-    params.personalityLine,
-    ...params.lines.slice(0, params.directMode ? 1 : 2),
-    params.recommendation,
-  ].filter((line): line is string => Boolean(line?.trim()));
-
-  for (const candidate of candidates) {
-    const humanized = humanizeAlexaDetailLine(candidate);
-    if (!isDistinctAlexaVoicePoint(humanized, seen)) {
-      continue;
-    }
-    selected.push(humanized);
-    seen.push(humanized);
-  }
-
-  return selected;
-}
-
-function pickAlexaContinuationDetails(context: DailyCompanionContext): {
-  summary: string;
-  detail?: string;
-} {
-  const seen = [context.summaryText];
-  const preferredThreadSummary = context.threadSummaryLines
-    .map((line) => humanizeAlexaDetailLine(line))
-    .find((line) => isDistinctAlexaVoicePoint(line, seen));
-  const candidates = [
-    ...context.extraDetails,
-    ...context.threadSummaryLines,
-    ...context.householdSignals,
-    context.recommendationText,
-  ].filter((line): line is string => Boolean(line?.trim()));
-  const selected: string[] = [];
-
-  for (const candidate of candidates) {
-    const humanized = humanizeAlexaDetailLine(candidate);
-    if (!isDistinctAlexaVoicePoint(humanized, seen)) {
-      continue;
-    }
-    selected.push(humanized);
-    seen.push(humanized);
-  }
-
-  if (selected.length > 0) {
-    if (preferredThreadSummary && /^(?:Keep|Touch)\b/i.test(selected[0]!)) {
-      return {
-        summary: preferredThreadSummary,
-        detail: selected[0],
-      };
-    }
-    return {
-      summary: selected[0]!,
-      detail: selected[1],
-    };
-  }
-
-  if (preferredThreadSummary) {
-    return {
-      summary: preferredThreadSummary,
-    };
-  }
-
-  if (context.recommendationText?.trim()) {
-    return {
-      summary: humanizeAlexaDetailLine(context.recommendationText),
-    };
-  }
-
-  return {
-    summary:
-      'That is the main thing. Nothing else feels especially urgent right now.',
-  };
-}
-
-function formatAlexaReply(
-  lead: string,
-  lines: string[],
-  recommendation: string | null,
-  directMode = false,
-  personalityLine?: string | null,
-): string {
-  return buildVoiceReply({
-    summary: ensureSentence(lead),
-    details: buildAlexaVoiceDetailLines({
-      lead,
-      lines,
-      recommendation,
-      directMode,
-      personalityLine,
-    }),
-    maxDetails: directMode ? 1 : 2,
-  });
-}
-
 function isLowStakesLeadReason(leadReason: string): boolean {
   return [
     'nothing_urgent',
@@ -1168,12 +990,12 @@ function applyRitualProfileToDraft(
     toneStyle: RitualToneStyle;
     triggerStyle: RitualTriggerStyle;
   },
-  channel: DailyCompanionChannel,
+  _channel: DailyCompanionChannel,
 ): CompanionDraft {
   if (ritualProfile.toneStyle !== 'brief') {
     return draft;
   }
-  const detailLimit = channel === 'alexa' ? 1 : 3;
+  const detailLimit = 3;
   return {
     ...draft,
     detailLines: draft.detailLines.slice(0, detailLimit),
@@ -1341,12 +1163,11 @@ export function buildDailyJourneyWhyLine(input: {
 }
 
 function shouldUseSignatureJourneyEnvelope(
-  channel: DailyCompanionChannel,
+  _channel: DailyCompanionChannel,
   mode: DailyCompanionMode,
 ): boolean {
-  return (
-    channel !== 'alexa' &&
-    ['open_guidance', 'household_guidance', 'evening_reset'].includes(mode)
+  return ['open_guidance', 'household_guidance', 'evening_reset'].includes(
+    mode,
   );
 }
 
@@ -1496,54 +1317,27 @@ function finalizeDraft(
     whyLine: groundedWhyLine,
   });
   const usePracticalDailyReply =
-    channel !== 'alexa' &&
-    (draft.mode === 'midday_reground' || draft.mode === 'open_guidance');
-  const baseReply =
-    channel === 'alexa'
-      ? formatAlexaReply(
+    draft.mode === 'midday_reground' || draft.mode === 'open_guidance';
+  const baseReply = usePracticalDailyReply
+    ? formatPracticalDailyReply({
+        lead: draft.lead,
+        detailLines: draft.detailLines,
+        recommendation: draft.recommendationText,
+        whyLine: groundedWhyLine,
+      })
+    : shouldUseSignatureJourneyEnvelope(channel, draft.mode)
+      ? flagshipTextReply
+      : formatTextReply(
           draft.lead,
-          draft.detailLines,
-          draft.recommendationText,
-          prefs.directMode,
+          [...draft.detailLines, draft.recommendationText || null].filter(
+            Boolean,
+          ) as string[],
           personalityLine,
-        )
-      : usePracticalDailyReply
-        ? formatPracticalDailyReply({
-            lead: draft.lead,
-            detailLines: draft.detailLines,
-            recommendation: draft.recommendationText,
-            whyLine: groundedWhyLine,
-          })
-        : shouldUseSignatureJourneyEnvelope(channel, draft.mode)
-          ? flagshipTextReply
-          : formatTextReply(
-              draft.lead,
-              [...draft.detailLines, draft.recommendationText || null].filter(
-                Boolean,
-              ) as string[],
-              personalityLine,
-            );
+        );
   const reply = baseReply;
 
-  const shortText =
-    channel === 'alexa'
-      ? buildVoiceReply({
-          summary: ensureSentence(draft.recommendationText || draft.lead),
-          maxDetails: 0,
-        })
-      : draft.lead;
-  const extendedText =
-    channel === 'alexa'
-      ? shouldUseSignatureJourneyEnvelope('telegram', draft.mode)
-        ? flagshipTextReply
-        : formatTextReply(
-            draft.lead,
-            [...draft.detailLines, draft.recommendationText || null].filter(
-              Boolean,
-            ) as string[],
-            personalityLine,
-          )
-      : reply;
+  const shortText = draft.lead;
+  const extendedText = reply;
 
   const context: DailyCompanionContext = {
     version: 1,
@@ -2483,32 +2277,13 @@ function buildTomorrowDraft(params: {
 }
 
 function buildExplainabilityReply(
-  channel: DailyCompanionChannel,
+  _channel: DailyCompanionChannel,
   context: DailyCompanionContext,
 ): string {
   const signalText =
     context.signalsUsed.length > 0
       ? context.signalsUsed.join(', ')
       : 'your current schedule and reminders';
-  if (channel === 'alexa') {
-    const memoryLead =
-      context.memoryLines[0] != null
-        ? `I was also keeping in mind that ${context.memoryLines[0]}.`
-        : '';
-    const threadLead =
-      context.usedThreadTitles[0] != null
-        ? `I was also leaning on ${context.usedThreadTitles[0]}.`
-        : '';
-    const ritualLead =
-      context.ritualType && context.ritualToneStyle === 'brief'
-        ? `I was also keeping this ${context.ritualType.replace(/_/g, ' ')} tighter on purpose.`
-        : '';
-    return buildVoiceReply({
-      summary: `I brought that up because I was weighing ${signalText}.`,
-      details: [threadLead || memoryLead || ritualLead],
-      maxDetails: 1,
-    });
-  }
 
   const lines = [`I answered from ${signalText}.`];
   if (context.usedThreadTitles.length > 0) {
@@ -2530,42 +2305,33 @@ function buildExplainabilityReply(
 }
 
 function buildMemoryReply(
-  channel: DailyCompanionChannel,
+  _channel: DailyCompanionChannel,
   context: DailyCompanionContext,
 ): string {
   if (
     context.memoryLines.length === 0 &&
     context.threadSummaryLines.length === 0
   ) {
-    return channel === 'alexa'
-      ? 'I am not leaning on any strong remembered preferences for this one yet.'
-      : 'I am not leaning on any strong remembered preferences for this one yet.';
+    return 'I am not leaning on any strong remembered preferences for this one yet.';
   }
   const threadLead =
     context.threadSummaryLines.length > 0
       ? `Active thread context in play: ${context.threadSummaryLines.join('; ')}.`
       : null;
   if (context.memoryLines.length === 0) {
-    return channel === 'alexa'
-      ? threadLead ||
-          'I was mostly leaning on the current thread of the conversation.'
-      : threadLead || 'I was mostly leaning on current thread context.';
+    return threadLead || 'I was mostly leaning on current thread context.';
   }
-  return channel === 'alexa'
-    ? `What I was keeping in mind is ${context.memoryLines
-        .slice(0, 2)
-        .join(', ')}.`
-    : [
-        'Remembered context affecting this:',
-        ...context.memoryLines.map((line) => `- ${line}`),
-        threadLead ? `- ${threadLead}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n');
+  return [
+    'Remembered context affecting this:',
+    ...context.memoryLines.map((line) => `- ${line}`),
+    threadLead ? `- ${threadLead}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function buildChangedReply(
-  channel: DailyCompanionChannel,
+  _channel: DailyCompanionChannel,
   previous: DailyCompanionContext,
   current: DailyCompanionContext,
 ): string {
@@ -2592,14 +2358,10 @@ function buildChangedReply(
   }
 
   if (changes.length === 0) {
-    return channel === 'alexa'
-      ? `Nothing major shifted since the last read. ${current.summaryText}`
-      : `Nothing major shifted since the last read.\n${current.extendedText}`;
+    return `Nothing major shifted since the last read.\n${current.extendedText}`;
   }
 
-  return channel === 'alexa'
-    ? `The main change is ${changes[0]}. ${current.summaryText}`
-    : `What changed: ${changes.join('; ')}.\n${current.extendedText}`;
+  return `What changed: ${changes.join('; ')}.\n${current.extendedText}`;
 }
 
 function isSameLocalDay(leftIso: string, right: Date): boolean {
@@ -2675,24 +2437,16 @@ export async function buildDailyCompanionResponse(
       };
     }
     if (isAnythingElsePrompt(normalized) || isSayMorePrompt(normalized)) {
-      const continuation = pickAlexaContinuationDetails(deps.priorContext);
       const extra =
         deps.priorContext.extraDetails.length > 0
           ? deps.priorContext.extraDetails
           : deps.priorContext.recommendationText
             ? [deps.priorContext.recommendationText]
             : ['Nothing else feels especially pressing beyond the main read.'];
-      const reply =
-        deps.channel === 'alexa'
-          ? buildVoiceReply({
-              summary: continuation.summary,
-              details: [continuation.detail || null],
-              maxDetails: 1,
-            })
-          : [
-              deps.priorContext.summaryText,
-              ...extra.map((line) => `- ${line}`),
-            ].join('\n');
+      const reply = [
+        deps.priorContext.summaryText,
+        ...extra.map((line) => `- ${line}`),
+      ].join('\n');
       return {
         reply,
         mode: deps.priorContext.mode,
@@ -2729,10 +2483,7 @@ export async function buildDailyCompanionResponse(
         deps.priorContext.recommendationText ||
         deps.priorContext.summaryText;
       return {
-        reply:
-          deps.channel === 'alexa'
-            ? `The main thing I would watch is ${riskReply}.`
-            : `The main thing I would watch is ${riskReply}.`,
+        reply: `The main thing I would watch is ${riskReply}.`,
         mode: deps.priorContext.mode,
         channel: deps.channel,
         leadReason: 'risk_check',

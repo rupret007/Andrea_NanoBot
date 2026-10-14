@@ -262,7 +262,6 @@ export function importRedactedOnboardingProfilePack(params: {
     routines: profile?.routines || [],
     reminderSuggestions: [],
     richerSurface:
-      profile?.richerSurface === 'alexa' ||
       profile?.richerSurface === 'bluebubbles'
         ? profile.richerSurface
         : 'telegram',

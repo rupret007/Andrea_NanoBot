@@ -50,13 +50,6 @@ function truth(
       detectionDetail:
         'Direct 1:1 chat lacks fresh Andrea context and needs @Andrea once.',
     },
-    alexa: {
-      ...surface('near_live_only', {
-        detail: 'Alexa listener exists but no signed turn has reached host.',
-      }),
-      failureChecklist:
-        'Check public URL, Developer Console endpoint, and simulator turn.',
-    },
     hostHealth: surface('live_proven'),
     research: surface('live_proven'),
     imageGeneration: surface('live_proven'),

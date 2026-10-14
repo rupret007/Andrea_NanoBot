@@ -17,8 +17,9 @@ import type { RegisteredGroup } from './types.js';
  * exact Bob fence: send it / send it now / send now.
  */
 const PINNED_SEND_PATH_BLOBS = {
+  // Merge of #51's Web Bob dispatch-approval gate with the Alexa type removal (#55).
   'src/message-actions.ts':
-    '18d8367f1f0988f4b7b9aebc56bd013300a8df1975b1c21b2bce270c68ea5a0b',
+    'ed3b91efe40e3437fcec83025711bdc221114635b865df04fa1ca0680a92a096',
   'src/trusted-owner-review-surface.ts':
     '2e401cb1b0902f56085d8e6e61e07554af79f7cb4572ae0bc7de6630f4a897b1',
   'src/bluebubbles-outbound-request.ts':

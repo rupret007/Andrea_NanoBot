@@ -3,11 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { ALL_SYNCED_MESSAGES_TARGET } from './thread-summary-routing.js';
 import {
   continueAssistantCapabilityFromPriorSubjectData,
-  continueAssistantCapabilityFromAlexaState,
   matchAssistantCapabilityRequest,
-  resolveAlexaIntentToCapability,
 } from './assistant-capability-router.js';
-import type { AlexaConversationState } from './alexa-conversation.js';
 
 describe('assistant capability router', () => {
   it('matches shared daily and household requests', () => {
@@ -791,20 +788,6 @@ describe('assistant capability router', () => {
     });
   });
 
-  it('maps core Alexa intents into shared capabilities', () => {
-    expect(resolveAlexaIntentToCapability('MyDayIntent')).toMatchObject({
-      capabilityId: 'daily.morning_brief',
-    });
-    expect(resolveAlexaIntentToCapability('WhatNextIntent')).toMatchObject({
-      capabilityId: 'daily.whats_next',
-    });
-    expect(
-      resolveAlexaIntentToCapability('CandaceUpcomingIntent'),
-    ).toMatchObject({
-      capabilityId: 'household.candace_upcoming',
-    });
-  });
-
   it('continues everyday capture from prior subject data for updates, conversions, and setup approval', () => {
     expect(
       continueAssistantCapabilityFromPriorSubjectData('mark that done', {
@@ -851,121 +834,6 @@ describe('assistant capability router', () => {
       ),
     ).toMatchObject({
       capabilityId: 'capture.add_item',
-      continuation: true,
-    });
-  });
-
-  it('maps broad Alexa intent families into shared capabilities when carrier phrases are strong', () => {
-    expect(
-      resolveAlexaIntentToCapability('CompanionGuidanceIntent', {
-        slotValue: 'am i forgetting',
-      }),
-    ).toMatchObject({
-      capabilityId: 'daily.loose_ends',
-    });
-    expect(
-      resolveAlexaIntentToCapability('PeopleHouseholdIntent', {
-        slotValue: 'Candace',
-      }),
-    ).toMatchObject({
-      capabilityId: 'household.candace_upcoming',
-    });
-    expect(
-      resolveAlexaIntentToCapability('PlanningOrientationIntent', {
-        slotValue: 'tonight',
-      }),
-    ).toMatchObject({
-      capabilityId: 'missions.propose',
-    });
-    expect(
-      resolveAlexaIntentToCapability('OpenAskIntent', {
-        slotValue: 'Jar Jar Binks',
-      }),
-    ).toMatchObject({
-      capabilityId: 'research.topic',
-    });
-  });
-
-  it('leaves broad Alexa local voice asks for the Alexa dialogue layer', () => {
-    expect(
-      resolveAlexaIntentToCapability('CompanionGuidanceIntent', {
-        slotValue: 'up',
-      }),
-    ).toBeNull();
-    expect(
-      resolveAlexaIntentToCapability('CompanionGuidanceIntent', {
-        slotValue: 'time is it',
-      }),
-    ).toBeNull();
-    expect(
-      resolveAlexaIntentToCapability('CompanionGuidanceIntent', {
-        slotValue: 'what can you do',
-      }),
-    ).toBeNull();
-  });
-
-  it('continues the active capability for Alexa follow-ups when context is strong', () => {
-    const state: AlexaConversationState = {
-      flowKey: 'research_topic',
-      subjectKind: 'general',
-      subjectData: {
-        activeCapabilityId: 'research.topic',
-        lastAnswerSummary: 'meal delivery tradeoffs',
-      },
-      summaryText: 'meal delivery tradeoffs',
-      supportedFollowups: [
-        'anything_else',
-        'shorter',
-        'say_more',
-        'memory_control',
-      ],
-      styleHints: {
-        channelMode: 'alexa_companion',
-        responseSource: 'local_companion',
-      },
-    };
-
-    expect(
-      continueAssistantCapabilityFromAlexaState('anything else', state),
-    ).toMatchObject({
-      capabilityId: 'research.topic',
-      continuation: true,
-    });
-  });
-
-  it('continues the active mission context for blocker and execution follow-ups', () => {
-    const state: AlexaConversationState = {
-      flowKey: 'missions_propose',
-      subjectKind: 'mission',
-      subjectData: {
-        activeCapabilityId: 'missions.propose',
-        missionId: 'mission-1',
-        missionSummary: 'Plan Friday dinner with Candace.',
-      },
-      summaryText: 'Plan Friday dinner with Candace.',
-      supportedFollowups: ['anything_else', 'send_details', 'save_for_later'],
-      styleHints: {
-        channelMode: 'alexa_companion',
-        responseSource: 'local_companion',
-      },
-    };
-
-    expect(
-      continueAssistantCapabilityFromAlexaState("what's the blocker", state),
-    ).toMatchObject({
-      capabilityId: 'missions.explain',
-      continuation: true,
-    });
-    expect(
-      continueAssistantCapabilityFromAlexaState('remind me', state),
-    ).toMatchObject({
-      capabilityId: 'missions.execute',
-      continuation: true,
-    });
-    expect(
-      continueAssistantCapabilityFromAlexaState('handle this', state),
-    ).toMatchObject({
-      capabilityId: 'missions.execute',
       continuation: true,
     });
   });
@@ -1036,201 +904,6 @@ describe('assistant capability router', () => {
       ),
     ).toMatchObject({
       capabilityId: 'rituals.followthrough',
-      continuation: true,
-    });
-  });
-
-  it('keeps Pulse follow-ups on the active capability', () => {
-    const state: AlexaConversationState = {
-      flowKey: 'pulse_surprise_me',
-      subjectKind: 'general',
-      subjectData: {
-        activeCapabilityId: 'pulse.surprise_me',
-        lastAnswerSummary: 'A small odd one: octopuses have three hearts.',
-      },
-      summaryText: 'A small odd one: octopuses have three hearts.',
-      supportedFollowups: ['anything_else', 'shorter', 'say_more'],
-      styleHints: {
-        channelMode: 'alexa_companion',
-        responseSource: 'local_companion',
-      },
-    };
-
-    expect(
-      continueAssistantCapabilityFromAlexaState('say more', state),
-    ).toMatchObject({
-      capabilityId: 'pulse.surprise_me',
-      continuation: true,
-    });
-    expect(
-      continueAssistantCapabilityFromAlexaState(
-        'be a little more direct',
-        state,
-      ),
-    ).toMatchObject({
-      capabilityId: 'pulse.surprise_me',
-      continuation: true,
-    });
-  });
-
-  it('keeps research explainability follow-ups on the active capability', () => {
-    const state: AlexaConversationState = {
-      flowKey: 'research_compare',
-      subjectKind: 'general',
-      subjectData: {
-        activeCapabilityId: 'research.compare',
-        lastAnswerSummary: 'Meal delivery looks cheaper but less flexible.',
-      },
-      summaryText: 'Meal delivery looks cheaper but less flexible.',
-      supportedFollowups: [
-        'anything_else',
-        'shorter',
-        'say_more',
-        'memory_control',
-      ],
-      styleHints: {
-        channelMode: 'alexa_companion',
-        responseSource: 'local_companion',
-      },
-    };
-
-    expect(
-      continueAssistantCapabilityFromAlexaState(
-        'why did you choose that route',
-        state,
-      ),
-    ).toMatchObject({
-      capabilityId: 'research.compare',
-      continuation: true,
-    });
-  });
-
-  it('keeps chief-of-staff follow-ups on the active planning capability', () => {
-    const state: AlexaConversationState = {
-      flowKey: 'staff_prioritize',
-      subjectKind: 'general',
-      subjectData: {
-        activeCapabilityId: 'staff.prioritize',
-        lastAnswerSummary:
-          'Dinner reply and one work pressure are the main things in view.',
-      },
-      summaryText:
-        'Dinner reply and one work pressure are the main things in view.',
-      supportedFollowups: ['anything_else', 'shorter', 'say_more'],
-      styleHints: {
-        channelMode: 'alexa_companion',
-        responseSource: 'local_companion',
-      },
-    };
-
-    expect(
-      continueAssistantCapabilityFromAlexaState(
-        'why are you prioritizing that',
-        state,
-      ),
-    ).toMatchObject({
-      capabilityId: 'staff.explain',
-      continuation: true,
-    });
-    expect(
-      continueAssistantCapabilityFromAlexaState('be calmer', state),
-    ).toMatchObject({
-      capabilityId: 'staff.configure',
-      continuation: true,
-    });
-    expect(
-      continueAssistantCapabilityFromAlexaState(
-        'why is this suddenly a priority',
-        state,
-      ),
-    ).toMatchObject({
-      capabilityId: 'staff.explain',
-      continuation: true,
-    });
-    expect(
-      continueAssistantCapabilityFromAlexaState(
-        'what matters before my next meeting',
-        state,
-      ),
-    ).toMatchObject({
-      capabilityId: 'staff.prepare',
-      continuation: true,
-    });
-  });
-
-  it('keeps knowledge follow-ups on the active capability', () => {
-    const state: AlexaConversationState = {
-      flowKey: 'knowledge_summarize_saved',
-      subjectKind: 'saved_item',
-      subjectData: {
-        activeCapabilityId: 'knowledge.summarize_saved',
-        lastAnswerSummary:
-          'Your saved material points to the Candace Friday dinner note.',
-        knowledgeSourceIds: ['source-1'],
-        knowledgeSourceTitles: ['Candace Dinner Notes'],
-      },
-      summaryText:
-        'Your saved material points to the Candace Friday dinner note.',
-      supportedFollowups: [
-        'anything_else',
-        'shorter',
-        'say_more',
-        'memory_control',
-      ],
-      styleHints: {
-        channelMode: 'alexa_companion',
-        responseSource: 'local_companion',
-      },
-    };
-
-    expect(
-      continueAssistantCapabilityFromAlexaState('say more', state),
-    ).toMatchObject({
-      capabilityId: 'knowledge.summarize_saved',
-      continuation: true,
-    });
-  });
-
-  it('keeps communication follow-ups on the shared communication capability family', () => {
-    const state: AlexaConversationState = {
-      flowKey: 'communication_understand_message',
-      subjectKind: 'communication_thread',
-      subjectData: {
-        activeCapabilityId: 'communication.understand_message',
-        lastCommunicationSummary:
-          'Candace still wants an answer about whether dinner works tonight.',
-      },
-      summaryText:
-        'Candace still wants an answer about whether dinner works tonight.',
-      supportedFollowups: ['anything_else', 'shorter', 'say_more'],
-      styleHints: {
-        channelMode: 'alexa_companion',
-        responseSource: 'local_companion',
-      },
-    };
-
-    expect(
-      continueAssistantCapabilityFromAlexaState(
-        'what should I say back',
-        state,
-      ),
-    ).toMatchObject({
-      capabilityId: 'communication.draft_reply',
-      continuation: true,
-    });
-    expect(
-      continueAssistantCapabilityFromAlexaState(
-        'what conversations are still open',
-        state,
-      ),
-    ).toMatchObject({
-      capabilityId: 'communication.open_loops',
-      continuation: true,
-    });
-    expect(
-      continueAssistantCapabilityFromAlexaState('what texts need me', state),
-    ).toMatchObject({
-      capabilityId: 'communication.open_loops',
       continuation: true,
     });
   });
@@ -1323,21 +996,6 @@ describe('assistant capability router', () => {
         namedOpenLoopDraftOffered: true,
       }),
     ).toBeNull();
-    expect(
-      continueAssistantCapabilityFromAlexaState('yes', {
-        flowKey: 'communication_open_loops',
-        subjectKind: 'communication_thread',
-        subjectData: {
-          activeCapabilityId: 'communication.open_loops',
-        },
-        summaryText: 'You owe Bob a reply.',
-        supportedFollowups: ['draft_follow_up'],
-        styleHints: {
-          channelMode: 'alexa_companion',
-          responseSource: 'local_companion',
-        },
-      }),
-    ).toBeNull();
   });
 
   it('routes named-open-loop remind me later to an unsent reminder, not a send', () => {
@@ -1418,44 +1076,6 @@ describe('assistant capability router', () => {
         personName: 'Bob',
       }),
     ).toBeNull();
-    expect(
-      continueAssistantCapabilityFromAlexaState('remind me later', {
-        flowKey: 'communication_open_loops',
-        subjectKind: 'communication_thread',
-        subjectData: {
-          activeCapabilityId: 'communication.open_loops',
-          namedMessagesSummaryTargetJson: bobSeedJson,
-          namedOpenLoopRemindOffered: true,
-        },
-        summaryText: 'You owe Bob a reply.',
-        supportedFollowups: ['create_reminder', 'draft_follow_up'],
-        styleHints: {
-          channelMode: 'alexa_companion',
-          responseSource: 'local_companion',
-        },
-      }),
-    ).toMatchObject({
-      capabilityId: 'communication.manage_tracking',
-      continuation: true,
-    });
-    expect(
-      continueAssistantCapabilityFromAlexaState('yes', {
-        flowKey: 'communication_open_loops',
-        subjectKind: 'communication_thread',
-        subjectData: {
-          activeCapabilityId: 'communication.open_loops',
-          namedMessagesSummaryTargetJson: bobSeedJson,
-          namedOpenLoopDraftOffered: true,
-          namedOpenLoopRemindOffered: true,
-        },
-        summaryText: 'You owe Bob a reply.',
-        supportedFollowups: ['draft_follow_up'],
-        styleHints: {
-          channelMode: 'alexa_companion',
-          responseSource: 'local_companion',
-        },
-      }),
-    ).toBeNull();
   });
 
   it('routes named-open-loop save under thread to a local thread save, not a send', () => {
@@ -1518,26 +1138,6 @@ describe('assistant capability router', () => {
         personName: 'Bob',
       }),
     ).toBeNull();
-    expect(
-      continueAssistantCapabilityFromAlexaState('save under thread', {
-        flowKey: 'communication_open_loops',
-        subjectKind: 'communication_thread',
-        subjectData: {
-          activeCapabilityId: 'communication.open_loops',
-          namedMessagesSummaryTargetJson: bobSeedJson,
-          namedOpenLoopSaveOffered: true,
-        },
-        summaryText: 'You owe Bob a reply.',
-        supportedFollowups: ['save_for_later', 'draft_follow_up'],
-        styleHints: {
-          channelMode: 'alexa_companion',
-          responseSource: 'local_companion',
-        },
-      }),
-    ).toMatchObject({
-      capabilityId: 'communication.manage_tracking',
-      continuation: true,
-    });
   });
 
   it('routes named-open-loop look at that to the named thread, not a send', () => {
@@ -1599,26 +1199,6 @@ describe('assistant capability router', () => {
         personName: 'Bob',
       }),
     ).toBeNull();
-    expect(
-      continueAssistantCapabilityFromAlexaState('look at that', {
-        flowKey: 'communication_open_loops',
-        subjectKind: 'communication_thread',
-        subjectData: {
-          activeCapabilityId: 'communication.open_loops',
-          namedMessagesSummaryTargetJson: bobSeedJson,
-          namedOpenLoopMediaOffered: true,
-        },
-        summaryText: 'You owe Bob a reply.',
-        supportedFollowups: ['draft_follow_up'],
-        styleHints: {
-          channelMode: 'alexa_companion',
-          responseSource: 'local_companion',
-        },
-      }),
-    ).toMatchObject({
-      capabilityId: 'communication.open_loops',
-      continuation: true,
-    });
   });
 
   it('binds selected item follow-ups to the recent text review context', () => {
@@ -1739,56 +1319,5 @@ describe('assistant capability router', () => {
         continuation: true,
       });
     }
-  });
-
-  it('leaves explicit handoff and completion follow-ups to the Alexa action layer', () => {
-    const state: AlexaConversationState = {
-      flowKey: 'daily_loose_ends',
-      subjectKind: 'day_brief',
-      subjectData: {
-        activeCapabilityId: 'daily.loose_ends',
-        lastAnswerSummary: 'Candace still needs a dinner answer.',
-        companionContinuationJson: JSON.stringify({
-          capabilityId: 'daily.loose_ends',
-          voiceSummary: 'Candace still needs a dinner answer.',
-          completionText:
-            'Candace still needs a dinner answer tonight, and pickup works better after rehearsal.',
-        }),
-      },
-      summaryText: 'Candace still needs a dinner answer.',
-      supportedFollowups: [
-        'send_details',
-        'save_to_library',
-        'create_reminder',
-        'save_for_later',
-        'draft_follow_up',
-      ],
-      styleHints: {
-        channelMode: 'alexa_companion',
-        responseSource: 'local_companion',
-      },
-    };
-
-    expect(
-      continueAssistantCapabilityFromAlexaState('send me the details', state),
-    ).toBeNull();
-    expect(
-      continueAssistantCapabilityFromAlexaState(
-        'save that in my library',
-        state,
-      ),
-    ).toBeNull();
-    expect(
-      continueAssistantCapabilityFromAlexaState(
-        'turn that into a reminder tonight',
-        state,
-      ),
-    ).toBeNull();
-    expect(
-      continueAssistantCapabilityFromAlexaState('save that for later', state),
-    ).toBeNull();
-    expect(
-      continueAssistantCapabilityFromAlexaState('draft that for me', state),
-    ).toBeNull();
   });
 });

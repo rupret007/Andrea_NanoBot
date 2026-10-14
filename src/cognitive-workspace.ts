@@ -157,7 +157,7 @@ function taskFamilyForAction(
   if (/message|bluebubbles|reply|send|thread/.test(text))
     return 'communication';
   if (/research|search|source|web/.test(text)) return 'research';
-  if (/provider|integration|service|proof|alexa|telegram|operator/.test(text)) {
+  if (/provider|integration|service|proof|telegram|operator/.test(text)) {
     return 'operator';
   }
   return 'assistant';

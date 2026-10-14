@@ -10,7 +10,6 @@
 
 ## Description
 
-
 ## For Skills
 
 - [ ] SKILL.md contains instructions, not inline code (code goes in separate files)

@@ -152,7 +152,6 @@ export interface DelegationRuleListPresentation {
 
 const DEFAULT_RULE_CHANNELS: ActionBundlePresentationChannel[] = [
   'telegram',
-  'alexa',
   'bluebubbles',
 ];
 
