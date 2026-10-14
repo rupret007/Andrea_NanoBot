@@ -195,7 +195,7 @@ The goal is to avoid silently carrying a bad default forever.
 For repo-side validation, run:
 
 ```bash
-node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/delegation-rules.test.ts src/action-bundles.test.ts src/assistant-action-completion.test.ts src/alexa.test.ts src/outcome-reviews.test.ts
+node scripts/run-with-pinned-node.mjs ./node_modules/vitest/vitest.mjs run src/delegation-rules.test.ts src/action-bundles.test.ts src/assistant-action-completion.test.ts src/outcome-reviews.test.ts
 npm run typecheck
 npm run build
 npm run test

@@ -326,7 +326,6 @@ Helpful operator smoke paths:
 
 - `npm run debug:daily-companion`
 - `npm run debug:chief-of-staff`
-- `npm run debug:alexa-conversation`
 - `npm run debug:shared-capabilities` for the isolated, network-denied shared
   capability smoke; add `-- --live` only for intentional provider-backed use
 - `npm run debug:research-mode` for zero-cost status; add `-- --live` only for
@@ -934,8 +933,6 @@ Practical notes:
 - typed Alexa+ app chat is diagnosis-only unless it produces a real signed follow-up `IntentRequest` after skill launch
 - authoritative live proof should use voice in the Alexa app, voice on device, or the authenticated Alexa simulator
 - if you change `docs/alexa/interaction-model.en-US.json`, you must re-import it in the Alexa Developer Console and run `Build Model`
-- `npm run debug:alexa-conversation` is the near-live operator harness for tuning the multi-turn Alexa flow locally before or after a live voice attempt
-- `npm run debug:alexa-conversation -- --review` groups recent fallback misses, weak clarifiers, and carrier-phrase gaps so operator tuning can follow real phrasing instead of guesswork
 
 Recommended setup order:
 

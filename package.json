@@ -147,7 +147,6 @@
     "debug:reset": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts reset",
     "debug:logs": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-control.ts logs",
     "debug:daily-companion": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-daily-companion.ts",
-    "debug:alexa-conversation": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-alexa-conversation.ts",
     "debug:shared-capabilities": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-shared-capabilities.ts",
     "debug:research-mode": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-research-mode.ts",
     "debug:providers": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/debug-providers.ts providers",
@@ -304,12 +303,9 @@
     "agi:restore:check": "node scripts/run-with-pinned-node.mjs ./node_modules/tsx/dist/cli.mjs scripts/agi-memory-restore-check.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@onecli-sh/sdk": "^0.2.0",
     "@types/qrcode": "^1.5.5",
-    "ask-sdk-core": "^2.14.0",
-    "ask-sdk-express-adapter": "^2.14.0",
-    "ask-sdk-model": "^1.86.0",
     "better-sqlite3": "11.10.0",
     "cron-parser": "5.5.0",
     "ffmpeg-static": "^5.3.0",
@@ -335,5 +331,13 @@
   },
   "engines": {
     "node": ">=22 <23"
+  },
+  "overrides": {
+    "brace-expansion@<2": "^1.1.21",
+    "brace-expansion@>=4 <6": "^5.0.12",
+    "fast-uri@^3": "^3.1.8",
+    "js-yaml@^4": "^4.3.2",
+    "proxy-addr": "^2.0.8",
+    "source-map-js": "^1.2.2"
   }
 }

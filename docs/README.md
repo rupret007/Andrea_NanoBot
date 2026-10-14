@@ -223,8 +223,6 @@ Important limits:
 
 For Alexa-specific router tuning, also use:
 
-- `npm run debug:alexa-conversation`
-- `npm run debug:alexa-conversation -- --review`
 
 ## Operations, Security, And Release
 
