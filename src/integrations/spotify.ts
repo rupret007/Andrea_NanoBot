@@ -3,6 +3,7 @@
  * For Jeff's bands skill: build setlists from Spotify, queue practice tracks.
  */
 
+import { fetchWithTimeout } from './_fetch.js';
 import { redactForError } from './_redact.js';
 import type { Integration, RegisteredTool } from './types.js';
 
@@ -41,7 +42,7 @@ export const SpotifyIntegration: Integration = {
           const tok = await bearer(ctx);
           const q = encodeURIComponent(String(args.query));
           const t = String(args.type ?? 'track');
-          const r = await fetch(
+          const r = await fetchWithTimeout(
             `https://api.spotify.com/v1/search?q=${q}&type=${t}&limit=10`,
             { headers: { Authorization: `Bearer ${tok}` } },
           );
@@ -69,7 +70,7 @@ export const SpotifyIntegration: Integration = {
         },
         handler: async (args) => {
           const tok = await bearer(ctx);
-          const r = await fetch(
+          const r = await fetchWithTimeout(
             `https://api.spotify.com/v1/me/player/queue?uri=${encodeURIComponent(String(args.trackUri))}`,
             { method: 'POST', headers: { Authorization: `Bearer ${tok}` } },
           );
@@ -89,7 +90,7 @@ export const SpotifyIntegration: Integration = {
         schema: { type: 'object' },
         handler: async () => {
           const tok = await bearer(ctx);
-          const r = await fetch(
+          const r = await fetchWithTimeout(
             'https://api.spotify.com/v1/me/player/currently-playing',
             {
               headers: { Authorization: `Bearer ${tok}` },
