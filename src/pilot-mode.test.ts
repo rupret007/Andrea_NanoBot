@@ -4,6 +4,8 @@ import {
   _closeDatabase,
   _initTestDatabase,
   findRecentPilotJourneyEvent,
+  insertPilotIssue,
+  insertPilotJourneyEvent,
   listPilotIssues,
   listRecentPilotJourneyEvents,
   upsertResponseFeedback,
@@ -23,6 +25,7 @@ import {
   sanitizePilotSummary,
   startPilotJourney,
 } from './pilot-mode.js';
+import type { PilotIssueRecord, PilotJourneyEventRecord } from './types.js';
 
 describe('pilot mode', () => {
   beforeEach(() => {
@@ -336,6 +339,121 @@ describe('pilot mode', () => {
     expect(
       findRecentPilotJourneyEvent({ chatJid: 'tg:main', maxAgeMinutes: 30 }),
     ).toBeNull();
+  });
+
+  it('excludes retired-channel history from current pilot reporting without changing stored records', () => {
+    const now = new Date('2026-04-07T18:30:00.000Z');
+    // Persisted pre-removal records can have a channel outside today's types.
+    const retiredChannel = 'alexa' as PilotIssueRecord['channel'];
+    const issueBase: PilotIssueRecord = {
+      issueId: 'telegram-issue',
+      createdAt: '2026-04-07T17:00:00.000Z',
+      status: 'open',
+      issueKind: 'manual_pilot_issue',
+      channel: 'telegram',
+      groupFolder: 'main',
+      blockerOwner: 'repo_side',
+      summaryText: 'Repair Telegram follow-through.',
+      assistantContextSummary: 'Telegram follow-through needs repair.',
+      linkedRefs: {},
+    };
+    insertPilotIssue(issueBase);
+    insertPilotIssue({
+      ...issueBase,
+      issueId: 'bluebubbles-issue',
+      createdAt: '2026-04-07T17:30:00.000Z',
+      channel: 'bluebubbles',
+      summaryText: 'Repair BlueBubbles follow-through.',
+      assistantContextSummary: 'BlueBubbles follow-through needs repair.',
+    });
+    insertPilotIssue({
+      ...issueBase,
+      issueId: 'retired-issue',
+      createdAt: '2026-04-07T18:00:00.000Z',
+      channel: retiredChannel,
+      summaryText: 'Repair the Alexa voice router.',
+      assistantContextSummary: 'Historical voice routing failure.',
+    });
+
+    const eventBase: PilotJourneyEventRecord = {
+      eventId: 'telegram-event',
+      journeyId: 'ordinary_chat',
+      channel: 'telegram',
+      groupFolder: 'main',
+      systemsInvolved: ['assistant_shell'],
+      outcome: 'success',
+      blockerOwner: 'none',
+      handoffCreated: false,
+      missionCreated: false,
+      threadSaved: false,
+      reminderCreated: false,
+      librarySaved: false,
+      summaryText: 'Telegram greeting succeeded.',
+      startedAt: '2026-04-07T17:00:00.000Z',
+      completedAt: '2026-04-07T17:00:02.000Z',
+    };
+    insertPilotJourneyEvent(eventBase);
+    insertPilotJourneyEvent({
+      ...eventBase,
+      eventId: 'bluebubbles-event',
+      channel: 'bluebubbles',
+      outcome: 'internal_failure',
+      blockerOwner: 'repo_side',
+      summaryText: 'BlueBubbles greeting failed.',
+      startedAt: '2026-04-07T17:30:00.000Z',
+      completedAt: '2026-04-07T17:30:02.000Z',
+    });
+    insertPilotJourneyEvent({
+      ...eventBase,
+      eventId: 'retired-event',
+      channel: retiredChannel,
+      outcome: 'internal_failure',
+      blockerOwner: 'repo_side',
+      summaryText: 'Historical Alexa greeting failure.',
+      startedAt: '2026-04-07T18:00:00.000Z',
+      completedAt: '2026-04-07T18:00:02.000Z',
+    });
+    const storedIssues = listPilotIssues({ status: 'open' });
+    const storedEvents = listRecentPilotJourneyEvents();
+
+    const review = buildPilotReviewSnapshot(now);
+    const digest = buildPilotReviewDigest(now);
+
+    expect(storedIssues).toHaveLength(3);
+    expect(storedEvents).toHaveLength(3);
+    for (const report of [review, digest]) {
+      expect(report.openIssueCount).toBe(2);
+      expect(report.openIssues.map((issue) => issue.issueId)).toEqual([
+        'bluebubbles-issue',
+        'telegram-issue',
+      ]);
+      expect(report.latestOpenIssue?.issueId).toBe('bluebubbles-issue');
+      expect(report.latestOpenIssue?.summaryText).toBe(
+        'Repair BlueBubbles follow-through.',
+      );
+      expect(report.recentEvents.map((event) => event.eventId)).toEqual([
+        'bluebubbles-event',
+        'telegram-event',
+      ]);
+    }
+    expect(digest.totalUsage24h).toBe(2);
+    expect(digest.totalUsage7d).toBe(2);
+    expect(digest.journeyDigests.ordinary_chat.usage24h).toBe(2);
+    expect(digest.journeyDigests.ordinary_chat.usage7d).toBe(2);
+    expect(digest.journeyDigests.ordinary_chat.latestEvent?.eventId).toBe(
+      'bluebubbles-event',
+    );
+    expect(
+      digest.journeyDigests.ordinary_chat.latestProblemEvent?.eventId,
+    ).toBe('bluebubbles-event');
+    expect(digest.recentProblemEvents.map((event) => event.eventId)).toEqual([
+      'bluebubbles-event',
+    ]);
+    expect(
+      digest.currentActionableProblemEvents.map((event) => event.eventId),
+    ).toEqual(['bluebubbles-event']);
+    expect(listPilotIssues({ status: 'open' })).toEqual(storedIssues);
+    expect(listRecentPilotJourneyEvents()).toEqual(storedEvents);
   });
 
   it('builds pilot review digests with usage counts and latest problems', () => {

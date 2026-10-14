@@ -562,17 +562,24 @@ export function capturePilotIssue(params: PilotIssueCaptureParams): {
 export function buildPilotReviewSnapshot(
   now = new Date(),
 ): PilotReviewSnapshot {
+  const currentChannels = new Set<string>(['telegram', 'bluebubbles']);
   const retentionCutoffIso = new Date(
     now.getTime() - PILOT_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
   const liveProofCutoffIso = new Date(
     now.getTime() - PILOT_LIVE_PROOF_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
+  // Keep retired-channel records in storage, but exclude them from current
+  // usage, readiness, and repair recommendations.
   const recentEvents = listRecentPilotJourneyEvents({ limit: 300 }).filter(
-    (event) => event.startedAt >= retentionCutoffIso,
+    (event) =>
+      currentChannels.has(event.channel) &&
+      event.startedAt >= retentionCutoffIso,
   );
   const openIssues = reconcileOpenPilotIssues(
-    listPilotIssues({ status: 'open', limit: 1000 }),
+    listPilotIssues({ status: 'open', limit: 1000 }).filter((issue) =>
+      currentChannels.has(issue.channel),
+    ),
   );
   return {
     loggingEnabled: isPilotLoggingEnabled(),
